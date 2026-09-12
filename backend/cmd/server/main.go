@@ -62,11 +62,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if value := os.Getenv("P115_COOKIE"); value != "" {
-		if err = setCookie(value); err != nil {
-			log.Fatal(err)
-		}
-	}
 	r := gin.New()
 	r.Use(gin.Recovery())
 	// 记录路由模板，避免将播放凭证写入访问日志。
@@ -182,22 +177,27 @@ func main() {
 		p115QRID = ""
 		return nil
 	}, p115.NewAccountClient())
-	shareAPI := httpapi.NewShareAPI(secret, os.Getenv("PUBLIC_BASE_URL"), cookieValue)
+	shareAPI := httpapi.NewShareAPI(secret, cookieValue)
 	if root := os.Getenv("STRM_ROOT"); root != "" {
 		shareAPI.OutputRoot = root
 	}
-	automation, err := service.NewAutomationStore(filepath.Join(dataDir, "automation.json"), shareAPI.OutputRoot, os.Getenv("PUBLIC_BASE_URL"))
+	automation, err := service.NewAutomationStore(filepath.Join(dataDir, "automation.json"), shareAPI.OutputRoot, "")
 	if err != nil {
 		log.Fatal(err)
 	}
+	shareAPI.BaseURL = func() string { return automation.Value().Generation.BaseURL }
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: cookieValue, Root: shareAPI.OutputRoot}
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, cookieValue, automation, shareAPI.OutputRoot, dataDir)
-	shareAPI.Workflow = workflow
-	telegram, err := bot.NewTelegram(os.Getenv("TELEGRAM_BOT_TOKEN"), os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS"), dataDir, workflow, automation)
+	generationLogs := &service.GenerationLogs{}
+	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs}
+	shareAPI.Workflow = loggedGenerator
+	httpapi.RegisterLogs(admin, generationLogs)
+	telegram, err := bot.NewManager(dataDir, secret, loggedGenerator, automation)
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpapi.RegisterAutomation(admin, automation, telegram != nil)
+	httpapi.RegisterAutomation(admin, automation, func() bool { view := telegram.View(); return view.Enabled && view.Configured })
+	httpapi.RegisterTelegram(admin, telegram)
 	shareAPI.Register(r, admin)
 	if directory := os.Getenv("FRONTEND_DIST"); directory != "" {
 		if err := httpapi.RegisterFrontend(r, directory); err != nil {
@@ -217,7 +217,7 @@ func main() {
 	workerErrors := make(chan error, 2)
 	workers.Add(1)
 	go func() { defer workers.Done(); workerErrors <- server.Serve(listener) }()
-	if telegram != nil {
+	{
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -225,7 +225,6 @@ func main() {
 				workerErrors <- err
 			}
 		}()
-		log.Print("Telegram 消息接收已配置，仅处理允许的聊天")
 	}
 	log.Print("Cinema115 已启动，监听 :3002")
 	select {

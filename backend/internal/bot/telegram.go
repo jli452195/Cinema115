@@ -26,6 +26,7 @@ type Telegram struct {
 	StatePath    string
 	Generator    ShareGenerator
 	Settings     *service.AutomationStore
+	OnStatus     func(bool, string)
 }
 
 func NewTelegram(token, chats, dataDir string, generator ShareGenerator, settings *service.AutomationStore) (*Telegram, error) {
@@ -33,17 +34,17 @@ func NewTelegram(token, chats, dataDir string, generator ShareGenerator, setting
 		return nil, nil
 	}
 	if !regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]+$`).MatchString(token) {
-		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN 格式无效")
+		return nil, fmt.Errorf("Bot Token 格式无效，请在 Telegram 配置页面检查")
 	}
 	allowed := make(map[int64]bool)
 	for _, raw := range strings.Split(chats, ",") {
 		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil || id == 0 {
-			return nil, fmt.Errorf("请用 TELEGRAM_ALLOWED_CHAT_IDS 配置允许的聊天 ID，以逗号分隔")
+			return nil, fmt.Errorf("请在 Telegram 配置页面填写允许的数字聊天 ID，以逗号分隔")
 		}
 		allowed[id] = true
 	}
-	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state.json"), Generator: generator, Settings: settings}, nil
+	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state-"+strings.SplitN(token, ":", 2)[0]+".json"), Generator: generator, Settings: settings}, nil
 }
 
 type telegramMessage struct {
@@ -106,6 +107,12 @@ func (b *Telegram) call(ctx context.Context, method string, input, output any) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("Bot Token 无效或已被撤销")
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return fmt.Errorf("Bot 被其他接收器占用，或仍启用了 Webhook")
+		}
 		return fmt.Errorf("Telegram 返回 HTTP %d", resp.StatusCode)
 	}
 	var envelope struct {
@@ -190,10 +197,16 @@ func (b *Telegram) Run(ctx context.Context) error {
 				break
 			}
 			log.Printf("Telegram 拉取消息失败，请检查网络、令牌以及是否已设置 Webhook")
+			if b.OnStatus != nil {
+				b.OnStatus(false, err.Error())
+			}
 			if !botDelay(ctx) {
 				break
 			}
 			continue
+		}
+		if b.OnStatus != nil {
+			b.OnStatus(true, "")
 		}
 		for _, update := range updates {
 			if update.ID < state.Offset {
@@ -231,12 +244,12 @@ func (b *Telegram) Run(ctx context.Context) error {
 				input.URL = link
 				input.Password = password
 				taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-				result, genErr := b.Generator.Generate(taskCtx, input)
+				result, genErr := b.Generator.Generate(service.WithGenerationSource(taskCtx, "Telegram"), input)
 				cancel()
 				if genErr != nil {
 					state.Pending.Text = "处理失败：" + genErr.Error()
 				} else {
-					state.Pending.Text = fmt.Sprintf("STRM 生成完成：新增 %d，已存在 %d。", result.Written, result.Existing)
+					state.Pending.Text = fmt.Sprintf("STRM 生成完成：新增 %d。", result.Written)
 					if result.ReshareURL != "" {
 						state.Pending.Text += "\n自己的分享链接：" + result.ReshareURL
 						if result.Cleaned {

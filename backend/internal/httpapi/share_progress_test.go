@@ -26,7 +26,8 @@ func (g progressGenerator) Generate(context.Context, service.GenerateInput) (*se
 func TestGenerationStreamEndsWithResultOrError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, fail := range []bool{false, true} {
-		api := NewShareAPI("secret", "http://nas:8115", func() string { return "" })
+		api := NewShareAPI("secret", func() string { return "" })
+		api.BaseURL = func() string { return "http://nas:8115" }
 		api.Workflow = progressGenerator{fail: fail}
 		r := gin.New()
 		api.Register(r, r.Group("/api/admin"))

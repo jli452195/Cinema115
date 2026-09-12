@@ -10,17 +10,16 @@
 cp -n .env.example .env
 ```
 
-编辑 `.env`，填写管理员账号、密码、随机 `JWT_SECRET`，以及 NAS 访问地址和运行用户：
+编辑 `.env`，填写管理员账号、密码、随机 `JWT_SECRET`，以及端口和运行用户：
 
 ```dotenv
 HTTP_PORT=8115
-PUBLIC_BASE_URL=http://192.168.0.3:8115
 PUID=1000
 PGID=1000
 TZ=Asia/Shanghai
 ```
 
-用 NAS 上的 `id` 命令确认 UID/GID。`PUBLIC_BASE_URL` 要能被 Emby/播放器访问，不能填写容器 IP 或 localhost；有 HTTPS 反向代理时填写实际域名。
+用 NAS 上的 `id` 命令确认 UID/GID。启动后在「分享播放 / STRM」填写播放地址（例如 `http://192.168.0.3:8115`）并点击「保存生成设置」。地址要能被 Emby/播放器访问；有 HTTPS 反向代理时填写实际域名。Telegram Bot 在「Telegram 配置 → Bot 配置」中填写并保存，这些选项不需要环境变量。
 
 `compose.yaml` 只需要两条挂载，媒体库路径直接改左侧：
 
@@ -70,4 +69,4 @@ curl -f http://127.0.0.1:8115/api/health
 
 ## Windows 本地开发
 
-继续使用 Go/Air 和 Vite。媒体库根目录默认是项目 `data/media`，可在 `.env` 用 `STRM_ROOT` 修改；Docker 中固定为 `/strm`，不受 Windows 路径影响。Telegram 仍只预留代码接口。
+继续使用 Go/Air 和 Vite。媒体库根目录默认是项目 `data/media`，可在 `.env` 用 `STRM_ROOT` 修改；Docker 中固定为 `/strm`，不受 Windows 路径影响。Telegram Bot 也通过网页配置。

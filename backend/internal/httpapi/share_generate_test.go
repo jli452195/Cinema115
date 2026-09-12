@@ -23,7 +23,8 @@ func TestBatchGenerationHTTP(t *testing.T) {
 		_, _ = w.Write([]byte(`{"state":true,"data":{"count":1,"list":[{"fid":"3515174619050935343","n":"电影.mkv","s":100}]}}`))
 	}))
 	defer upstream.Close()
-	api := NewShareAPI("secret", "http://192.168.0.24:3002", func() string { return "cookie" })
+	api := NewShareAPI("secret", func() string { return "cookie" })
+	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
 	api.OutputRoot = t.TempDir()
 	directory := filepath.Join(api.OutputRoot, "strm")
 	api.Client.WebURL = upstream.URL
@@ -44,7 +45,6 @@ func TestBatchGenerationHTTP(t *testing.T) {
 	var result struct {
 		Directory string
 		Count     int
-		Existing  int
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -64,8 +64,8 @@ func TestBatchGenerationHTTP(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != 200 || result.Count != 0 || result.Existing != 1 {
-		t.Fatal("重复生成未跳过已有文件")
+	if w.Code != 200 || result.Count != 1 || strings.Contains(w.Body.String(), `"existing"`) {
+		t.Fatal("重复生成应返回本次写入数量，不返回已存在统计")
 	}
 	for _, tc := range []struct {
 		body string
@@ -83,7 +83,8 @@ func TestBatchGenerationHTTP(t *testing.T) {
 
 func TestSingleSTRMUsesSelectedBaseURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	api := NewShareAPI("secret", "http://old-server:3002", func() string { return "" })
+	api := NewShareAPI("secret", func() string { return "" })
+	api.BaseURL = func() string { return "http://old-server:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
 	for _, tc := range []struct {

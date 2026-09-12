@@ -181,7 +181,7 @@ onBeforeUnmount(cancel)
 <template>
   <main class="min-h-screen bg-slate-100 px-4 py-6 sm:p-8">
     <div class="mx-auto max-w-3xl">
-      <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="saving" @click="$emit('back')">← 返回首页</button>
+      <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="saving" @click="$emit('back')">← 返回 115 网盘</button>
       <header class="mb-6"><p class="text-xs font-medium tracking-widest text-slate-400">CINEMA115 / 存储连接</p><h1 class="mt-2 text-2xl font-semibold text-slate-900">115 网盘</h1><p class="mt-2 text-sm text-slate-500">管理登录凭证，为分享播放与媒体访问提供连接。</p></header>
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7">

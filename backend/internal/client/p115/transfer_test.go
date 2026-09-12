@@ -16,6 +16,13 @@ func TestTransferAPIFormsAndLargeIDs(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
+		if r.URL.Path == "/files" {
+			if r.Method != http.MethodGet || r.ContentLength != 0 {
+				t.Error("目录查询应使用 GET Query")
+			}
+		} else if r.Method != http.MethodPost || r.URL.RawQuery != "" || len(r.PostForm) == 0 || r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
+			t.Error("写操作应使用 POST 表单，不应将参数放入 Query")
+		}
 		switch r.URL.Path {
 		case "/files/add":
 			if r.Form.Get("pid") != "123" || r.Form.Get("cname") != "临时目录" {
@@ -47,7 +54,7 @@ func TestTransferAPIFormsAndLargeIDs(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	c := NewShareClient()
+	c := newTestShareClient()
 	c.WebURL = upstream.URL
 	ctx := context.Background()
 	cid, err := c.CreateDirectory(ctx, "123", "临时目录", "test-cookie")
@@ -84,20 +91,20 @@ func TestSharePermanentIsExplicitAndVerified(t *testing.T) {
 					if err := r.ParseForm(); err != nil {
 						t.Error(err)
 					}
-					if r.Method != "POST" || r.Form.Get("share_duration") != "-1" || r.Form.Get("share_code") != "own" || r.Form.Has("receive_code") {
+					if r.Method != "POST" || r.URL.RawQuery != "" || r.PostForm.Get("share_duration") != "-1" || r.PostForm.Get("share_code") != "own" || r.Form.Has("receive_code") {
 						t.Error("没有单独设置长期有效，或修改了提取码")
 					}
 					updated = true
 					w.Write([]byte(`{"state":true}`))
 					return
 				}
-				if r.URL.Path != "/share/shareinfo" || !updated || r.URL.Query().Get("share_code") != "own" {
+				if r.Method != http.MethodGet || r.URL.Path != "/share/shareinfo" || !updated || r.URL.Query().Get("share_code") != "own" {
 					t.Error("未回读实际有效期")
 				}
 				w.Write([]byte(`{"state":true,"data":{"share_duration":` + duration + `}}`))
 			}))
 			defer server.Close()
-			client := NewShareClient()
+			client := newTestShareClient()
 			client.WebURL = server.URL
 			err := client.SetSharePermanent(context.Background(), &ShareInfo{Code: "own"}, "cookie")
 			wantOK := duration == `-1` || duration == `"-1"`

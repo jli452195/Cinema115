@@ -48,7 +48,6 @@ type GenerationResult struct {
 	Files           []GeneratedSTRM
 	Skipped         int
 	Written         int
-	Existing        int
 }
 
 // STRMGenerator 只读取分享目录和写入播放入口，不转存或下载媒体文件。
@@ -183,6 +182,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 			if len(page.Files) == 0 && offset < page.Count {
 				return fmt.Errorf("分享分页不完整，请重试")
 			}
+			logGeneration(ctx, "DEBUG", fmt.Sprintf("读取分享目录第 %d 页，本页 %d 项", pages, len(page.Files)))
 			for _, file := range page.Files {
 				entries++
 				if entries > 20000 {
@@ -195,6 +195,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 				seen[key] = true
 				if !file.Directory && (!extensions[strings.ToLower(path.Ext(file.Name))] || file.Size < input.MinSizeMB*(1<<20)) {
 					result.Skipped++
+					logGeneration(ctx, "DEBUG", "按后缀或大小过滤："+safeSTRMName(file.Name))
 					continue
 				}
 				if file.Directory && !input.Recursive {
@@ -253,30 +254,37 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 		if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
 			return result, fmt.Errorf("创建视频子目录: %w", err)
 		}
-		// 排他创建保证并发生成和重复生成都不会覆盖现有文件。
-		stream, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-		if errors.Is(err, os.ErrExist) {
-			info, statErr := os.Lstat(destination)
-			if statErr != nil {
-				return result, fmt.Errorf("检查已有 STRM: %w", statErr)
-			}
-			if !info.Mode().IsRegular() {
-				return result, fmt.Errorf("目标位置存在非普通文件：%s", file.Path)
-			}
-			result.Existing++
-			continue
-		}
-		if err != nil {
-			return result, fmt.Errorf("创建 STRM: %w", err)
-		}
-		_, writeErr := stream.WriteString(file.Content)
-		closeErr := stream.Close()
-		if err := errors.Join(writeErr, closeErr); err != nil {
-			return result, fmt.Errorf("写入 STRM: %w", errors.Join(err, os.Remove(destination)))
+		if err := writeSTRM(ctx, destination, file.Content); err != nil {
+			return result, fmt.Errorf("写入 STRM: %w", err)
 		}
 		result.Written++
+		logGeneration(ctx, "INFO", "STRM 生成成功："+filepath.ToSlash(destination))
 	}
+	logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成完成：新增 %d", result.Written))
 	return result, nil
+}
+
+// 先完整写入同目录临时文件，再替换目标；无需检查已存在文件，也不会截断旧内容。
+func writeSTRM(ctx context.Context, destination, content string) error {
+	stream, err := os.CreateTemp(filepath.Dir(destination), ".strm-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(stream.Name())
+	defer stream.Close()
+	if err := stream.Chmod(0644); err != nil {
+		return err
+	}
+	if _, err := stream.WriteString(content); err != nil {
+		return err
+	}
+	if err := stream.Close(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return os.Rename(stream.Name(), destination)
 }
 
 // ResolveOutputDirectory 将相对目录限制在媒体库根目录内，禁止绝对路径和目录穿越。

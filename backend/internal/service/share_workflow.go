@@ -60,9 +60,10 @@ type reshareJob struct {
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
 	settings := w.Settings.Value()
 	if !settings.ReshareEnabled {
-		reportGeneration(ctx, "generating", "正在读取原分享并生成 STRM")
+		reportGeneration(ctx, "generating", "转存再分享已关闭：正在读取原分享并直接生成 STRM")
 		return w.Generator.Generate(ctx, input)
 	}
+	reportGeneration(ctx, "starting", "转存再分享已开启：完整校验转存后创建长期分享，再生成 STRM 和清理临时目录")
 	if err := ValidateGenerationOptions(w.Root, input); err != nil {
 		return nil, err
 	}
@@ -101,6 +102,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	job := reshareJob{ID: hex.EncodeToString(nonce[:]), Status: "creating", SourceURL: input.URL, SourceCID: input.CID}
 	job.DirectoryName = "Cinema115-临时-" + job.ID
+	logGeneration(ctx, "DEBUG", "转存任务记录编号："+job.ID)
 	persist := func(status string) error {
 		reportGeneration(ctx, status, stageMessage(status))
 		job.Status = status
@@ -120,6 +122,11 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	defer func() {
 		if err != nil {
+			if job.Status != "deleting" && job.Status != "deleted" && job.Status != "completed" {
+				logGeneration(ctx, "WARNING", "转存流程未完成，保留临时目录："+job.DirectoryName)
+			} else {
+				logGeneration(ctx, "WARNING", "清理或分享复查未完成，请根据转存任务记录核对网盘与回收站")
+			}
 			job.LastError = err.Error()
 			job.Finished = true
 			job.UpdatedAt = time.Now().UTC()

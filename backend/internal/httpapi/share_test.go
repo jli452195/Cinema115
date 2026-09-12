@@ -17,7 +17,7 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func TestQueryPlaybackWithoutSignature(t *testing.T) {
-	api := NewShareAPI("test-secret", "", func() string { return "" })
+	api := NewShareAPI("test-secret", func() string { return "" })
 	claim := playClaim{Code: "share-code", Password: "a+b&c", FileID: "3515174619050935343", Expires: time.Now().Add(time.Hour).Unix()}
 	u, err := url.Parse(api.queryURL(claim))
 	if err != nil {
@@ -54,7 +54,8 @@ func TestQueryPlaybackWithoutSignature(t *testing.T) {
 
 func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	api := NewShareAPI("test-secret", "http://192.168.0.24:3002", func() string { return "" })
+	api := NewShareAPI("test-secret", func() string { return "" })
+	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
 	request := httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(`{"url":"https://115.com/s/abc?password=1234","fileId":"123","name":"sample.mkv"}`))
@@ -91,7 +92,7 @@ func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestPlaybackTokenBoundary(t *testing.T) {
-	api := NewShareAPI("test-secret", "", func() string { return "" })
+	api := NewShareAPI("test-secret", func() string { return "" })
 	claim := playClaim{Code: "abc", FileID: "123", Expires: time.Now().Add(time.Hour).Unix()}
 	data, _ := json.Marshal(claim)
 	payload := base64.RawURLEncoding.EncodeToString(data)
@@ -113,7 +114,7 @@ func TestPlaybackTokenBoundary(t *testing.T) {
 func TestMediaRangeAndHEAD(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, method := range []string{"GET", "HEAD"} {
-		api := NewShareAPI("test-secret", "", func() string { return "" })
+		api := NewShareAPI("test-secret", func() string { return "" })
 		api.MediaHTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if r.Method != method || r.Header.Get("Range") != "bytes=4-7" || r.Header.Get("Cookie") != "" {
 				t.Error("请求方法或 Range 不正确，或泄露 Cookie")

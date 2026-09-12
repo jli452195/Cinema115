@@ -19,10 +19,15 @@ type ShareClient struct {
 	HTTP   *http.Client
 	WebURL string
 	AppURL string
+	// 请求策略在启动时设置，开始使用后不可并发修改。
+	RequestInterval time.Duration
+	ReadRetryDelays []time.Duration
+	requestGate     chan struct{}
+	nextRequest     time.Time
 }
 
 func NewShareClient() *ShareClient {
-	return &ShareClient{HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, WebURL: "https://webapi.115.com", AppURL: "https://proapi.115.com"}
+	return &ShareClient{HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, WebURL: "https://webapi.115.com", AppURL: "https://proapi.115.com", RequestInterval: time.Second, ReadRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second}, requestGate: make(chan struct{}, 1)}
 }
 
 type ShareFile struct {
@@ -57,6 +62,14 @@ func (c *ShareClient) request(ctx context.Context, method, endpoint, cookie stri
 
 // requestEnvelope 保留目录等接口位于顶层的返回字段，避免丢失大整数 ID。
 func (c *ShareClient) requestEnvelope(ctx context.Context, method, endpoint, cookie string, form url.Values) (json.RawMessage, error) {
+	// 播放直链查询不与目录扫描排队，避免影响已生成 STRM 的播放启动。
+	if strings.HasPrefix(endpoint, c.AppURL+"/app/share/downurl") {
+		return c.requestEnvelopeOnce(ctx, method, endpoint, cookie, form)
+	}
+	return c.metadataRequest(ctx, method, func() ([]byte, error) { return c.requestEnvelopeOnce(ctx, method, endpoint, cookie, form) })
+}
+
+func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint, cookie string, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -74,11 +87,14 @@ func (c *ShareClient) requestEnvelope(ctx context.Context, method, endpoint, coo
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("请求 115 分享接口失败")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("115 分享接口返回 HTTP %d", resp.StatusCode)
+		return nil, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	var envelope struct {
 		State   json.RawMessage `json:"state"`

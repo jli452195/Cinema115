@@ -26,14 +26,14 @@ type ShareAPI struct {
 	Client     *p115.ShareClient
 	Cookie     func() string
 	Secret     []byte
-	PublicURL  string
+	BaseURL    func() string
 	MediaHTTP  *http.Client
 }
 
-func NewShareAPI(secret, publicURL string, cookie func() string) *ShareAPI {
+func NewShareAPI(secret string, cookie func() string) *ShareAPI {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 25 * time.Second
-	return &ShareAPI{OutputRoot: "../data/media", Client: p115.NewShareClient(), Cookie: cookie, Secret: []byte(secret), PublicURL: strings.TrimRight(publicURL, "/"), MediaHTTP: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &ShareAPI{OutputRoot: "../data/media", Client: p115.NewShareClient(), Cookie: cookie, Secret: []byte(secret), MediaHTTP: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !p115.AllowedMediaURL(req.URL.String()) {
 			return fmt.Errorf("下载跳转地址无效")
 		}
@@ -137,7 +137,7 @@ func (a *ShareAPI) strm(c *gin.Context) {
 	name := path.Base(strings.ReplaceAll(input.Name, "\\", "/"))
 	claim := playClaim{Code: share.Code, Password: share.Password, FileID: input.FileID, Name: name}
 	relative := a.queryURL(claim)
-	base := a.PublicURL
+	base := a.generationBaseURL(c)
 	if input.BaseURL != "" {
 		base, err = service.ValidateBaseURL(input.BaseURL)
 		if err != nil {
@@ -145,17 +145,9 @@ func (a *ShareAPI) strm(c *gin.Context) {
 			return
 		}
 	}
-	if base == "" {
-		// 未配置公网地址时仅采用当前请求地址；部署到 Emby 前应设置 PUBLIC_BASE_URL。
-		scheme := "http"
-		if c.Request.TLS != nil {
-			scheme = "https"
-		}
-		base = scheme + "://" + c.Request.Host
-	}
 	public, err := url.Parse(base)
 	if err != nil || public.Host == "" || (public.Scheme != "http" && public.Scheme != "https") {
-		c.JSON(500, gin.H{"error": "PUBLIC_BASE_URL 配置无效"})
+		c.JSON(500, gin.H{"error": "STRM 播放地址无效，请在生成页面重新保存"})
 		return
 	}
 	c.JSON(200, gin.H{"name": strings.TrimSuffix(name, path.Ext(name)) + ".strm", "content": base + relative + "\n", "playUrl": relative})

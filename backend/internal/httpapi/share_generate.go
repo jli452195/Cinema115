@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,12 +22,20 @@ func (a *ShareAPI) generationConfig(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "无法解析媒体库根目录"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"baseUrl": a.generationBaseURL(c), "videoExtensions": service.DefaultVideoExtensions, "outputDir": "strm", "outputRoot": filepath.ToSlash(root), "directories": []string{"strm"}})
+	c.JSON(http.StatusOK, gin.H{"baseUrl": a.configuredBaseURL(), "videoExtensions": service.DefaultVideoExtensions, "outputDir": "strm", "outputRoot": filepath.ToSlash(root), "directories": []string{"strm"}})
+}
+
+// 网页保存的地址实时供网页、单文件生成和机器人使用，无需重启。
+func (a *ShareAPI) configuredBaseURL() string {
+	if a.BaseURL == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(a.BaseURL()), "/")
 }
 
 func (a *ShareAPI) generationBaseURL(c *gin.Context) string {
-	if a.PublicURL != "" {
-		return a.PublicURL
+	if base := a.configuredBaseURL(); base != "" {
+		return base
 	}
 	scheme := "http"
 	if c.Request.TLS != nil {
@@ -111,7 +120,7 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 		}
 		message := err.Error()
 		if result != nil {
-			message = fmt.Sprintf("%s；已写入 %d 个文件，重试会跳过已存在文件", message, result.Written)
+			message = fmt.Sprintf("%s；已写入 %d 个文件", message, result.Written)
 		}
 		response := gin.H{"error": message}
 		if result != nil {
@@ -122,5 +131,5 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 		respond(code, response)
 		return
 	}
-	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "existing": result.Existing, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
+	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
 }

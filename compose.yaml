@@ -13,10 +13,6 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:?请在根目录 .env 中填写 ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在根目录 .env 中填写 ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在根目录 .env 中填写 JWT_SECRET}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?请填写 NAS 的访问地址，例如 http://192.168.0.3:8115}
-      P115_COOKIE: ${P115_COOKIE:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
       # 容器路径固定，不使用 Windows 开发环境的 DATA_DIR。
       DATA_DIR: /data
       STRM_ROOT: /strm

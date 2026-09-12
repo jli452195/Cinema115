@@ -9,10 +9,10 @@ import (
 )
 
 // 自动化配置与 Cookie 一样只允许已登录管理员访问。
-func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, botConfigured bool) {
+func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, botConfigured func() bool) {
 	admin.GET("/p115/share/automation-config", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured})
+		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured()})
 	})
 	admin.POST("/p115/share/automation-config", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -30,6 +30,6 @@ func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, 
 			c.JSON(500, gin.H{"error": "保存自动化配置失败"})
 			return
 		}
-		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured})
+		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured()})
 	})
 }

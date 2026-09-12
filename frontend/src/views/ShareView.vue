@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ back: [] }>()
+defineEmits<{ back: []; openTelegram: [] }>()
 interface ShareFile { id: string; name: string; size: number; directory: boolean }
 const shareURL = ref('')
 const password = ref('')
@@ -27,7 +27,7 @@ const videoExtensions = ref('mp4,mkv,ts,iso,rmvb,avi,mov,mpeg,mpg,wmv,3gp,asf,m4
 const minSizeMB = ref(0)
 const recursive = ref(true)
 const startCID = ref('0')
-const generated = ref<{ count: number; existing: number; skipped: number; directory: string; reshareUrl?: string; cleaned?: boolean }>()
+const generated = ref<{ count: number; directory: string; reshareUrl?: string; cleaned?: boolean }>()
 const reshareEnabled = ref(false)
 const savedReshareEnabled = ref(false)
 const parentCID = ref('0')
@@ -69,7 +69,7 @@ async function saveAutomation() {
     const data = await request('automation-config', { reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), generation: settings() })
     savedReshareEnabled.value = data.settings.reshareEnabled
     parentCID.value = data.settings.parentCID
-    automationNotice.value = '已保存到服务器。网页和 Bot 共用此开关，Bot 使用本页当前生成选项。'
+    automationNotice.value = '生成设置已保存到服务器，播放地址与开关立即生效，Bot 使用本页保存的生成选项。'
     saveSettings()
   } catch (e) {
     reshareEnabled.value = savedReshareEnabled.value
@@ -211,13 +211,13 @@ onMounted(async () => {
     parentCID.value = automation.settings.parentCID
     botConfigured.value = automation.botConfigured
     automationReady.value = true
-    baseURL.value = config.baseUrl; videoExtensions.value = config.videoExtensions
+    baseURL.value = config.baseUrl || window.location.origin; videoExtensions.value = config.videoExtensions
     outputRoot.value = config.outputRoot
     try {
       // 保留旧版普通选项，绝对路径目录不会迁移到新的相对目录配置。
       const saved = JSON.parse(localStorage.getItem(settingsKey) ?? localStorage.getItem('cinema115.strm-settings.v1') ?? 'null')
       if (saved && typeof saved === 'object') {
-        if (typeof saved.baseUrl === 'string') baseURL.value = saved.baseUrl
+        // 播放地址以服务器保存值为准，旧浏览器缓存不能覆盖新地址。
         if (Array.isArray(saved.outputDirectories)) {
           const valid = saved.outputDirectories.filter(validDirectory)
           if (valid.length) outputDirectories.value = [...new Set(valid)] as string[]
@@ -239,8 +239,12 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 <template>
   <main class="min-h-screen bg-slate-100 px-4 py-6 md:p-10">
     <div class="mx-auto max-w-5xl">
-    <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="busy" @click="$emit('back')">← 返回首页</button>
+    <div class="mb-6 flex items-center justify-between gap-4">
+      <button class="text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="busy" @click="$emit('back')">← 返回 115 网盘</button>
+      <button type="button" class="shrink-0 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="busy || initializing || automationSaving || !automationReady" @click="saveAutomation">{{ automationSaving ? '保存中…' : '保存生成设置' }}</button>
+    </div>
     <header class="mb-6"><p class="text-xs tracking-widest text-slate-400">CINEMA115 / 分享播放</p><h1 class="mt-2 text-2xl font-semibold text-slate-900">STRM 生成配置</h1><p class="mt-2 text-sm leading-6 text-slate-500">粘贴 115 分享链接，生成 Emby 播放入口；也可先转换为自己的分享。</p></header>
+    <p v-if="automationNotice" role="status" class="mb-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">{{ automationNotice }}</p>
     <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-8">
       <form @submit.prevent="generate">
         <fieldset :disabled="busy || initializing || automationSaving || !automationReady" class="min-w-0 space-y-6 disabled:opacity-70">
@@ -261,15 +265,14 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">0 表示网盘根目录，每次自动创建独立临时目录。快照未完成或生成失败时保留目录；不会清空回收站。</p>
             </div>
-            <div class="mt-4 flex flex-wrap items-center gap-3"><button type="button" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs text-slate-700 hover:border-blue-400" @click="saveAutomation">保存 Bot 生成选项{{ reshareEnabled ? '和转存目录' : '' }}</button><span class="text-xs leading-5 text-slate-500">切换开关会立即保存，并同时应用于网页和 Bot。</span></div>
-            <p v-if="automationNotice" role="status" class="mt-3 text-xs leading-5 text-emerald-700">{{ automationNotice }}</p>
+            <p class="mt-4 text-xs leading-5 text-slate-500">播放地址和 Bot 生成选项通过右上角「保存生成设置」保存；切换开关立即保存。</p>
           </section>
           <div class="border-t border-slate-100 pt-6">
             <h2 class="mb-5 font-semibold text-slate-800">生成选项</h2>
             <div class="grid gap-x-6 gap-y-5 md:grid-cols-2">
               <div><p class="text-sm font-medium text-slate-700">使用 115 配置</p><p class="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">当前已保存的 115 登录凭证</p><p class="mt-2 text-xs leading-5 text-slate-400">在「115 网盘」页面扫码或配置 Cookie。</p></div>
               <label class="block text-sm font-medium text-slate-700">起始目录 ID<input v-model="startCID" inputmode="numeric" pattern="[0-9]*" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="0" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">默认 0 表示整个分享；预览中可选定子目录。</span></label>
-              <label class="block text-sm font-medium text-slate-700">STRM 播放地址<input v-model="baseURL" required type="url" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="http://192.168.0.24:3002" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">填写 Emby 能访问的 Cinema115 地址，默认读取服务器配置。</span></label>
+              <label class="block text-sm font-medium text-slate-700">STRM 播放地址<input v-model="baseURL" required type="url" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="http://NAS_IP:8115" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">填写 Emby 能访问的 Cinema115 地址，点击「保存生成设置」生效。首次使用默认填入当前访问地址。</span></label>
               <label class="block text-sm font-medium text-slate-700">最小文件大小（MB）<input v-model.number="minSizeMB" type="number" required min="0" max="1073741824" step="1" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">设为 0 不限制；小于此大小的文件会跳过。</span></label>
               <label class="block text-sm font-medium text-slate-700 md:col-span-2">视频后缀<input v-model="videoExtensions" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">使用逗号分隔，只为匹配的文件生成 STRM。</span></label>
             </div>
@@ -285,13 +288,13 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               </div>
             </div>
             <div class="mt-4 flex flex-wrap gap-3"><input v-model="newDirectory" aria-label="新生成目录" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none focus:border-blue-500" placeholder="strm2 或 strm/电影" maxlength="1024" @keydown.enter.prevent="addDirectory" /><button type="button" class="rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-600" :disabled="!newDirectory.trim()" @click="addDirectory">＋ 添加目录</button></div>
-            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ resolvedDirectory(outputDir) }}（媒体库内的 {{ outputDir }} 目录）</p><p class="text-xs leading-6 text-slate-400">保留分享文件夹结构，已存在的文件跳过。移除目录选项不会删除服务器文件。</p>
+            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ resolvedDirectory(outputDir) }}（媒体库内的 {{ outputDir }} 目录）</p><p class="text-xs leading-6 text-slate-400">保留分享文件夹结构，每次重新写入，同名 STRM 更新为本次生成内容。</p>
           </div>
           <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-6"><button type="submit" class="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"><svg v-if="generating" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" opacity=".3"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="3"/></svg>{{ initializing ? '载入配置中…' : generating ? '正在生成…' : '一键生成 STRM' }}</button><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50" :disabled="!shareURL.trim()" @click="browse()">{{ busy && !generating ? '读取中…' : '预览分享文件' }}</button><p class="text-xs text-slate-400">生成选项会保存在当前浏览器。</p></div>
         </fieldset>
       </form>
       <section v-if="generating" role="status" class="mt-5 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700"><div class="flex items-center justify-between gap-4"><p class="font-medium">{{ generationProgress }}</p><button type="button" class="shrink-0 rounded-lg border border-blue-200 px-3 py-1 text-xs hover:bg-white" @click="controller?.abort('user-cancelled')">停止等待</button></div><p class="mt-2 text-xs text-blue-600">已用时 {{ generationSeconds }} 秒 · 单阶段等待最多 90 秒，整个任务最多 5 分钟。请保持页面打开。</p></section>
-      <section v-if="generated" role="status" class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-5"><h2 class="font-semibold text-emerald-800">生成完成 · 新增 {{ generated.count }} 个 STRM</h2><p class="mt-2 text-sm text-emerald-700">已存在 {{ generated.existing }} 个，过滤 {{ generated.skipped }} 个不符合条件的文件。</p><p class="mt-2 break-all text-xs leading-6 text-emerald-700">已保存到：{{ generated.directory }}</p></section>
+      <section v-if="generated" role="status" class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-5"><h2 class="font-semibold text-emerald-800">生成完成 · 新增 {{ generated.count }} 个 STRM</h2><p class="mt-2 break-all text-xs leading-6 text-emerald-700">已保存到：{{ generated.directory }}</p></section>
       <section v-if="generated?.reshareUrl || partialShareURL" class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-5"><h2 class="text-sm font-semibold text-blue-900">自己的分享链接</h2><a :href="generated?.reshareUrl || partialShareURL" target="_blank" rel="noopener noreferrer" class="mt-2 block break-all text-sm text-blue-700 underline">{{ generated?.reshareUrl || partialShareURL }}</a><p v-if="generated?.cleaned" class="mt-2 text-xs leading-5 text-blue-700">临时目录已移入 115 回收站，新分享已复查通过。</p></section>
       <p v-if="error" role="alert" class="my-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="my-4 rounded-lg bg-blue-50 p-4 text-sm text-blue-700">{{ notice }}</p>
@@ -311,7 +314,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
       </section>
       <p class="mt-6 text-xs leading-6 text-slate-500">播放需要有效的 115 登录。Emby 必须能够访问 STRM 内的服务地址。浏览器直接播放取决于封装、视频和音频编码支持；此页面不执行转码。</p>
     </section>
-    <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未配置' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，每条消息发送一个 115 分享链接。Bot 按服务端保存的开关和生成选项处理，并回复结果。' : '在 Cinema115 根目录 .env 填写 TELEGRAM_BOT_TOKEN 和 TELEGRAM_ALLOWED_CHAT_IDS，再重启后端。' }}修改本页目录、后缀等选项后，点击「保存 Bot 生成选项」使其对 Bot 生效。</p></section>
+    <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，每条消息发送一个 115 分享链接。Bot 按服务端保存的开关和生成选项处理，并回复结果。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页目录、后缀等选项后，点击「保存生成设置」使其对 Bot 生效。</p><button type="button" :disabled="busy" class="mt-3 text-xs font-medium text-blue-600 disabled:opacity-40" @click="$emit('openTelegram')">打开 Telegram 配置 →</button></section>
     </div>
   </main>
 </template>
