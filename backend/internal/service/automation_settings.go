@@ -1,0 +1,145 @@
+package service
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
+type AutomationSettings struct {
+	ReshareEnabled bool          `json:"reshareEnabled"`
+	ParentCID      string        `json:"parentCID"`
+	Generation     GenerateInput `json:"generation"`
+}
+
+type AutomationStore struct {
+	mu         sync.RWMutex
+	path, root string
+	value      AutomationSettings
+}
+
+func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
+	s := &AutomationStore{path: path, root: root, value: AutomationSettings{ParentCID: "0", Generation: GenerateInput{BaseURL: baseURL, OutputDir: "strm", VideoExtensions: DefaultVideoExtensions, Recursive: true}}}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取自动化配置: %w", err)
+	}
+	if err := json.Unmarshal(data, &s.value); err != nil {
+		return nil, fmt.Errorf("自动化配置损坏: %w", err)
+	}
+	if err := s.validate(s.value); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *AutomationStore) Value() AutomationSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.value
+}
+
+var extensionsPattern = regexp.MustCompile(`^[a-zA-Z0-9.,，\s]+$`)
+
+// ValidateGenerationOptions 在转存之前检查所有本地生成选项。
+func ValidateGenerationOptions(root string, input GenerateInput) error {
+	if _, err := ValidateBaseURL(input.BaseURL); err != nil {
+		return err
+	}
+	if _, err := ResolveOutputDirectory(root, input.OutputDir); err != nil {
+		return err
+	}
+	if input.MinSizeMB < 0 || input.MinSizeMB > 1<<30 {
+		return generationInputError("最小文件大小超出范围")
+	}
+	if input.CID != "" {
+		if _, err := strconv.ParseUint(input.CID, 10, 64); err != nil {
+			return generationInputError("起始目录 ID 应为数字")
+		}
+	}
+	if len(input.VideoExtensions) > 1024 {
+		return generationInputError("视频后缀配置过长")
+	}
+	if value := strings.TrimSpace(input.VideoExtensions); value != "" {
+		if !extensionsPattern.MatchString(value) {
+			return generationInputError("视频后缀格式无效")
+		}
+		valid := false
+		for _, ext := range strings.Split(strings.ReplaceAll(value, "，", ","), ",") {
+			ext = strings.TrimPrefix(strings.TrimSpace(ext), ".")
+			if ext == "" {
+				continue
+			}
+			for _, r := range ext {
+				if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+					return generationInputError("视频后缀格式无效")
+				}
+			}
+			valid = true
+		}
+		if !valid {
+			return generationInputError("请至少填写一个视频后缀")
+		}
+	}
+	return nil
+}
+
+func (s *AutomationStore) validate(value AutomationSettings) error {
+	if _, err := strconv.ParseUint(value.ParentCID, 10, 64); err != nil {
+		return generationInputError("转存父目录 ID 应为数字，根目录使用 0")
+	}
+	return ValidateGenerationOptions(s.root, value.Generation)
+}
+
+func (s *AutomationStore) Save(value AutomationSettings) error {
+	// 配置仅保存生成选项，不保存上一次收到的分享链接及提取码。
+	value.Generation.URL = ""
+	value.Generation.Password = ""
+	value.Generation.CID = ""
+	if err := s.validate(value); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := writeAutomationJSON(s.path, value); err != nil {
+		return err
+	}
+	s.value = value
+	return nil
+}
+
+// 原子替换防止断电或进程退出时留下半份配置和任务记录。
+func writeAutomationJSON(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("编码自动化数据: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("创建自动化数据目录: %w", err)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".automation-*")
+	if err != nil {
+		return fmt.Errorf("创建自动化临时文件: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(data)
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return fmt.Errorf("写入自动化数据: %w", err)
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("保存自动化数据: %w", err)
+	}
+	return nil
+}

@@ -1,0 +1,60 @@
+# 环境配置与凭证，保留可提交的配置示例。
+.env
+.env.*
+!.env.example
+
+# Go 编译产物、Air 临时文件与测试输出。
+backend/bin/
+backend/tmp/
+backend/air_build.log
+backend/server
+backend/*.exe
+backend/*.exe~
+backend/*.dll
+backend/*.so
+backend/*.dylib
+backend/coverage.out
+backend/coverage.html
+backend/coverage/
+*.test
+*.prof
+
+# Node.js、Vite 与 TypeScript 生成文件；不屏蔽 src 中的手写 JS。
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# 运行数据、登录会话、任务记录、日志与临时文件。
+.tmp_p115/
+data/
+# Docker 默认挂载的生成目录。
+/strm/
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# 编辑器本地配置，保留团队共享的 VS Code 设置。
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# 操作系统生成的元数据。
+.DS_Store
+Thumbs.db
+Desktop.ini

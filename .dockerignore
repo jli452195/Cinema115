@@ -1,0 +1,30 @@
+# 敏感配置和运行数据不进入镜像构建上下文。
+.env
+.env.*
+**/.env
+**/.env.*
+data/
+strm/
+.tmp_p115/
+.git/
+.idea/
+.vscode/
+
+# 忽略本地依赖、构建结果与 Windows 开发缓存。
+**/node_modules/
+**/dist/
+**/.vite/
+**/.cache/
+**/tmp/
+**/bin/
+**/*.exe
+**/*.exe~
+**/*.log
+**/*.tsbuildinfo
+backend/.air.toml
+backend/coverage.*
+frontend/vite.config.js
+frontend/vite.config.d.ts
+*.zip
+*.tar
+*.tar.gz

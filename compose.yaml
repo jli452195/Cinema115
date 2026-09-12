@@ -1,0 +1,40 @@
+name: cinema115
+
+services:
+  cinema115:
+    image: cinema115:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # 使用 NAS 用户的 UID/GID，以便 Emby 和文件管理器读取生成结果。
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?请在根目录 .env 中填写 ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在根目录 .env 中填写 ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?请在根目录 .env 中填写 JWT_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?请填写 NAS 的访问地址，例如 http://192.168.0.3:8115}
+      P115_COOKIE: ${P115_COOKIE:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      # 容器路径固定，不使用 Windows 开发环境的 DATA_DIR。
+      DATA_DIR: /data
+      STRM_ROOT: /strm
+      GIN_MODE: release
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - "./data:/data"
+      # 左侧改为 NAS 媒体库路径；页面只填写此目录下的相对名称。
+      - "/vol1/1000/媒体库:/strm"
+    ports:
+      - "${HTTP_PORT:-8115}:3002"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
