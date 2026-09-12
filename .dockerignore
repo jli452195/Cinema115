@@ -6,6 +6,7 @@
 data/
 strm/
 .tmp_p115/
+tests/
 .git/
 .idea/
 .vscode/
@@ -25,6 +26,12 @@ backend/.air.toml
 backend/coverage.*
 frontend/vite.config.js
 frontend/vite.config.d.ts
+# 测试源码、夹具和报告仅用于开发，不进入构建上下文。
+**/*_test.go
+**/testdata/
+**/coverage/
+**/playwright-report/
+**/test-results/
 *.zip
 *.tar
 *.tar.gz

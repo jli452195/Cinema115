@@ -14,15 +14,18 @@ import (
 )
 
 type transferFake struct {
-	missingChildren int
-	childScans      int
-	fail            string
-	calls           []string
-	newSnapshots    int
-	deleted         bool
+	missingChildren    int
+	childScans         int
+	fail               string
+	calls              []string
+	newSnapshots       int
+	deleted            bool
+	configuredPassword string
+	listCalls          int
 }
 
 func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
+	f.listCalls++
 	if share.Code == "own" && cid == "0" {
 		f.newSnapshots++
 		if f.fail == "snapshot" || f.newSnapshots == 1 {
@@ -92,7 +95,7 @@ func (f *transferFake) DeleteDirectory(_ context.Context, cid, cookie string) er
 	return nil
 }
 
-func (f *transferFake) SetSharePermanent(_ context.Context, share *p115.ShareInfo, _ string) error {
+func (f *transferFake) ConfigureShare(_ context.Context, share *p115.ShareInfo, password, _ string) error {
 	f.calls = append(f.calls, "permanent")
 	if share.Code != "own" {
 		return errors.New("不能修改原分享的有效期")
@@ -100,6 +103,9 @@ func (f *transferFake) SetSharePermanent(_ context.Context, share *p115.ShareInf
 	if f.fail == "permanent" {
 		return errors.New("长期有效设置失败")
 	}
+	f.configuredPassword = password
+	share.Password = password
+	share.URL = "https://115cdn.com/s/own?password=" + password
 	return nil
 }
 
@@ -129,6 +135,9 @@ func setupWorkflow(t *testing.T, fake *transferFake) (*ShareWorkflow, GenerateIn
 		}
 		if !strings.Contains(in.URL, "/own?") || in.CID != "0" {
 			t.Error("没有使用新分享生成 STRM")
+		}
+		if in.Password != fake.configuredPassword || !strings.HasSuffix(in.URL, "password="+fake.configuredPassword) {
+			t.Error("生成未使用设置后的新密码")
 		}
 		if fake.fail == "generate" {
 			return nil, ErrNoMedia

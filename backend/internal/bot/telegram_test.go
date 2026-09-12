@@ -23,14 +23,14 @@ func (g *generatorFake) Generate(_ context.Context, in service.GenerateInput) (*
 }
 
 func TestTelegramMessageParsing(t *testing.T) {
-	link, password, err := ParseMessage("链接：https://115cdn.com/s/abc\n提取码：fwgl")
-	if err != nil || link != "https://115cdn.com/s/abc" || password != "fwgl" {
-		t.Fatal(link, password, err)
+	links := ParseMessages("链接：https://115cdn.com/s/abc\n提取码：fwgl")
+	if len(links) != 1 || links[0].URL != "https://115cdn.com/s/abc" || links[0].Password != "fwgl" {
+		t.Fatal(links)
 	}
-	if _, _, err := ParseMessage("https://115.com/s/abc https://115.com/s/def"); err == nil {
-		t.Fatal("应拒绝多链接")
+	if links := ParseMessages("https://115.com/s/abc https://115.com/s/def"); len(links) != 2 {
+		t.Fatal("应接收全部链接")
 	}
-	if link, _, _ := ParseMessage("https://115.com.attacker.test/s/abc"); link != "" {
+	if links := ParseMessages("https://115.com.attacker.test/s/abc"); len(links) != 0 {
 		t.Fatal("错误的分享域名")
 	}
 }

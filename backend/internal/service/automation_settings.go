@@ -14,9 +14,10 @@ import (
 
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
-	ReshareEnabled bool          `json:"reshareEnabled"`
-	ParentCID      string        `json:"parentCID"`
-	Generation     GenerateInput `json:"generation"`
+	ReshareEnabled     bool          `json:"reshareEnabled"`
+	FixedSharePassword string        `json:"fixedSharePassword"`
+	ParentCID          string        `json:"parentCID"`
+	Generation         GenerateInput `json:"generation"`
 }
 
 type AutomationStore struct {
@@ -95,6 +96,9 @@ func ValidateGenerationOptions(root string, input GenerateInput) error {
 }
 
 func (s *AutomationStore) validate(value AutomationSettings) error {
+	if value.FixedSharePassword != "" && !sharePasswordPattern.MatchString(value.FixedSharePassword) {
+		return generationInputError("固定分享密码应为 4 位英文字母或数字，留空则随机生成")
+	}
 	if _, err := strconv.ParseUint(value.ParentCID, 10, 64); err != nil {
 		return generationInputError("转存父目录 ID 应为数字，根目录使用 0")
 	}
@@ -102,6 +106,7 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 }
 
 func (s *AutomationStore) Save(value AutomationSettings) error {
+	value.FixedSharePassword = strings.TrimSpace(value.FixedSharePassword)
 	// 配置仅保存生成选项，不保存上一次收到的分享链接及提取码。
 	value.Generation.URL = ""
 	value.Generation.Password = ""

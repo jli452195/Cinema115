@@ -37,6 +37,9 @@ frontend/pnpm-debug.log*
 
 # 运行数据、登录会话、任务记录、日志与临时文件。
 .tmp_p115/
+# 本地验收脚本、依赖、截图及结果集中存放，保留目录说明。
+/tests/*
+!/tests/README.md
 data/
 # Docker 默认挂载的生成目录。
 /strm/

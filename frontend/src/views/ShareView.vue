@@ -31,6 +31,7 @@ const generated = ref<{ count: number; directory: string; reshareUrl?: string; c
 const reshareEnabled = ref(false)
 const savedReshareEnabled = ref(false)
 const parentCID = ref('0')
+const fixedSharePassword = ref('')
 const automationSaving = ref(false)
 const automationReady = ref(false)
 const botConfigured = ref(false)
@@ -66,9 +67,10 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
-    const data = await request('automation-config', { reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), generation: settings() })
+    const data = await request('automation-config', { reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), generation: settings() })
     savedReshareEnabled.value = data.settings.reshareEnabled
     parentCID.value = data.settings.parentCID
+    fixedSharePassword.value = data.settings.fixedSharePassword ?? ''
     automationNotice.value = '生成设置已保存到服务器，播放地址与开关立即生效，Bot 使用本页保存的生成选项。'
     saveSettings()
   } catch (e) {
@@ -209,6 +211,7 @@ onMounted(async () => {
     reshareEnabled.value = automation.settings.reshareEnabled
     savedReshareEnabled.value = automation.settings.reshareEnabled
     parentCID.value = automation.settings.parentCID
+    fixedSharePassword.value = automation.settings.fixedSharePassword ?? ''
     botConfigured.value = automation.botConfigured
     automationReady.value = true
     baseURL.value = config.baseUrl || window.location.origin; videoExtensions.value = config.videoExtensions
@@ -255,13 +258,15 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           </div>
           <section class="rounded-xl border p-5 transition" :class="reshareEnabled ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200 bg-slate-50'">
             <label class="flex cursor-pointer items-center justify-between gap-4">
-              <span><span class="block text-sm font-semibold text-slate-800">转存再分享</span><span class="mt-1 block text-xs leading-5 text-slate-500">{{ reshareEnabled ? '先转存，创建自己的分享，再清理本次临时目录。' : '当前直接使用收到的分享生成 STRM。' }}</span></span>
+              <span><span class="block text-sm font-semibold text-slate-800">转存再分享</span><span class="mt-1 block text-xs leading-5 text-slate-500">{{ reshareEnabled ? '密码匹配时直接生成；其他分享先转存，再创建自己的分享。' : '当前直接使用收到的分享生成 STRM。' }}</span></span>
               <input v-model="reshareEnabled" type="checkbox" role="switch" aria-label="转存再分享" class="peer sr-only" @change="saveAutomation" />
               <span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-300 transition after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400 peer-focus-visible:ring-offset-2"></span>
             </label>
             <div v-if="reshareEnabled" class="mt-5 border-t border-blue-100 pt-4">
               <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 创建长期分享并校验快照 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
+              <label class="mt-4 block text-sm text-slate-700">固定分享密码（可选）<input v-model="fixedSharePassword" maxlength="4" pattern="[a-zA-Z0-9]{4}" autocomplete="off" spellcheck="false" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="留空则每次随机生成" /></label>
+              <p class="mt-2 text-xs leading-5 text-slate-500">填写 4 位英文字母或数字，点击右上角保存。收到的链接提取码与固定密码一致时，直接使用原分享生成 STRM，沿用原分享有效期；不一致则转存并使用固定密码创建长期分享。留空时不匹配跳过，新分享密码每次随机生成。</p>
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">0 表示网盘根目录，每次自动创建独立临时目录。快照未完成或生成失败时保留目录；不会清空回收站。</p>
             </div>
@@ -314,7 +319,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
       </section>
       <p class="mt-6 text-xs leading-6 text-slate-500">播放需要有效的 115 登录。Emby 必须能够访问 STRM 内的服务地址。浏览器直接播放取决于封装、视频和音频编码支持；此页面不执行转码。</p>
     </section>
-    <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，每条消息发送一个 115 分享链接。Bot 按服务端保存的开关和生成选项处理，并回复结果。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页目录、后缀等选项后，点击「保存生成设置」使其对 Bot 生效。</p><button type="button" :disabled="busy" class="mt-3 text-xs font-medium text-blue-600 disabled:opacity-40" @click="$emit('openTelegram')">打开 Telegram 配置 →</button></section>
+    <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页目录、后缀等选项后，点击「保存生成设置」使其对 Bot 生效。</p><button type="button" :disabled="busy" class="mt-3 text-xs font-medium text-blue-600 disabled:opacity-40" @click="$emit('openTelegram')">打开 Telegram 配置 →</button></section>
     </div>
   </main>
 </template>

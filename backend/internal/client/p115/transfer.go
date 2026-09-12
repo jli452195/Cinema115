@@ -126,12 +126,25 @@ func (c *ShareClient) SendShare(ctx context.Context, ids []string, cookie string
 
 // SetSharePermanent 显式设置长期有效，并读取服务器保存的期限确认，不能依赖账号默认值。
 func (c *ShareClient) SetSharePermanent(ctx context.Context, share *ShareInfo, cookie string) error {
+	return c.ConfigureShare(ctx, share, "", cookie)
+}
+
+// ConfigureShare 设置并回读长期有效和指定密码，只有核实一致后才能生成与清理。
+func (c *ShareClient) ConfigureShare(ctx context.Context, share *ShareInfo, password, cookie string) error {
 	if share == nil || share.Code == "" {
 		return fmt.Errorf("分享码不能为空")
 	}
-	_, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/share/updateshare", cookie, url.Values{"share_code": {share.Code}, "share_duration": {"-1"}})
+	form := url.Values{"share_code": {share.Code}, "share_duration": {"-1"}}
+	if password != "" {
+		form.Set("receive_code", password)
+	}
+	_, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/share/updateshare", cookie, form)
 	if err != nil {
-		return fmt.Errorf("设置分享长期有效: %w", err)
+		return fmt.Errorf("设置分享密码及长期有效: %w", err)
+	}
+	if password != "" {
+		share.Password = password
+		share.URL = "https://115cdn.com/s/" + url.PathEscape(share.Code) + "?password=" + url.QueryEscape(password)
 	}
 	raw, err := c.request(ctx, http.MethodGet, c.WebURL+"/share/shareinfo?"+url.Values{"share_code": {share.Code}}.Encode(), cookie, nil)
 	if err != nil {
@@ -139,12 +152,16 @@ func (c *ShareClient) SetSharePermanent(ctx context.Context, share *ShareInfo, c
 	}
 	var info struct {
 		Duration json.Number `json:"share_duration"`
+		Password string      `json:"receive_code"`
 	}
 	if err := json.Unmarshal(raw, &info); err != nil {
 		return fmt.Errorf("解析分享有效期: %w", err)
 	}
 	if info.Duration.String() != "-1" {
 		return fmt.Errorf("115 未确认长期有效，已停止后续生成和清理")
+	}
+	if password != "" && info.Password != password {
+		return fmt.Errorf("115 未确认指定分享密码，已停止后续生成和清理")
 	}
 	return nil
 }

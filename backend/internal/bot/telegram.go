@@ -69,25 +69,7 @@ type pendingReply struct {
 type telegramState struct {
 	Offset  int64         `json:"offset"`
 	Pending *pendingReply `json:"pending,omitempty"`
-}
-
-var shareLinkPattern = regexp.MustCompile(`https?://(?:www\.)?(?:115\.com|115cdn\.com)/s/[A-Za-z0-9]+(?:\?[^\s<>"，。；）]*)?`)
-var sharePasswordPattern = regexp.MustCompile(`(?:提取码|访问码|密码)\s*[:：]?\s*([A-Za-z0-9]{4})\b`)
-
-// 每条消息只接收一个链接，避免一段转发文本意外创建大量云端任务。
-func ParseMessage(text string) (string, string, error) {
-	links := shareLinkPattern.FindAllString(text, -1)
-	if len(links) == 0 {
-		return "", "", nil
-	}
-	if len(links) > 1 {
-		return "", "", fmt.Errorf("每条消息请只发送一个 115 分享链接")
-	}
-	password := ""
-	if match := sharePasswordPattern.FindStringSubmatch(text); len(match) > 1 {
-		password = match[1]
-	}
-	return strings.TrimRight(links[0], ").,;]"), password, nil
+	Batch   *messageBatch `json:"batch,omitempty"`
 }
 
 func (b *Telegram) call(ctx context.Context, method string, input, output any) error {
@@ -166,6 +148,9 @@ func (b *Telegram) Run(ctx context.Context) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("读取 Telegram 处理进度: %w", err)
 	}
+	if batch := state.Batch; batch != nil && (len(batch.Items) == 0 || batch.Next < 0 || batch.Next > len(batch.Items)) {
+		return fmt.Errorf("Telegram 批次进度无效")
+	}
 	for ctx.Err() == nil {
 		if state.Pending != nil {
 			pending := state.Pending
@@ -173,6 +158,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 			if !b.AllowedChats[pending.ChatID] {
 				state.Offset = pending.UpdateID + 1
 				state.Pending = nil
+				state.Batch = nil
 				if err := b.save(state); err != nil {
 					return fmt.Errorf("保存 Telegram 处理进度: %w", err)
 				}
@@ -185,11 +171,28 @@ func (b *Telegram) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			state.Offset = pending.UpdateID + 1
+			if state.Batch == nil {
+				state.Offset = pending.UpdateID + 1
+			}
 			state.Pending = nil
 			if err := b.save(state); err != nil {
 				return fmt.Errorf("保存 Telegram 回复进度: %w", err)
 			}
+			continue
+		}
+		if batch := state.Batch; batch != nil {
+			if !b.AllowedChats[batch.ChatID] || batch.Next >= len(batch.Items) {
+				state.Offset = batch.UpdateID + 1
+				state.Batch = nil
+				if err := b.save(state); err != nil {
+					return fmt.Errorf("保存 Telegram 批次进度: %w", err)
+				}
+				continue
+			}
+			if err := b.processBatchLink(ctx, &state); err != nil {
+				return err
+			}
+			continue
 		}
 		var updates []telegramUpdate
 		if err := b.call(ctx, "getUpdates", map[string]any{"offset": state.Offset, "timeout": 25, "limit": 10, "allowed_updates": []string{"message"}}, &updates); err != nil {
@@ -224,50 +227,21 @@ func (b *Telegram) Run(ctx context.Context) error {
 			if text == "" {
 				text = m.Caption
 			}
-			link, password, parseErr := ParseMessage(text)
-			if link == "" && parseErr == nil {
+			links := ParseMessages(text)
+			if len(links) == 0 {
 				state.Offset = update.ID + 1
 				if err := b.save(state); err != nil {
 					return err
 				}
 				continue
 			}
-			state.Pending = &pendingReply{UpdateID: update.ID, ChatID: m.Chat.ID, Text: "Cinema115 任务被中断，请检查 STRM 和 data/reshare-jobs 任务记录；未自动重复转存。"}
-			// 先记录正在处理的消息，重启后不会再次执行云端变更。
+			state.Batch = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, Items: links}
+			if len(links) > 1 {
+				state.Pending = &pendingReply{UpdateID: update.ID, ChatID: m.Chat.ID, Text: fmt.Sprintf("已接收 %d 个 115 分享链接，将按顺序逐个处理并回复结果。", len(links))}
+			}
+			// 先保存整条消息的队列，服务重启后继续尚未开始的链接。
 			if err := b.save(state); err != nil {
 				return fmt.Errorf("记录 Telegram 任务: %w", err)
-			}
-			if parseErr != nil {
-				state.Pending.Text = parseErr.Error()
-			} else {
-				input := b.Settings.Value().Generation
-				input.URL = link
-				input.Password = password
-				taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-				result, genErr := b.Generator.Generate(service.WithGenerationSource(taskCtx, "Telegram"), input)
-				cancel()
-				if genErr != nil {
-					state.Pending.Text = "处理失败：" + genErr.Error()
-				} else {
-					state.Pending.Text = fmt.Sprintf("STRM 生成完成：新增 %d。", result.Written)
-					if result.ReshareURL != "" {
-						state.Pending.Text += "\n自己的分享链接：" + result.ReshareURL
-						if result.Cleaned {
-							state.Pending.Text += "\n本次临时目录已移入 115 回收站。"
-						}
-					}
-				}
-				if genErr != nil && result != nil && result.ReshareURL != "" {
-					state.Pending.Text += "\n已创建的分享：" + result.ReshareURL
-				}
-			}
-			// Telegram 限制单条文本长度，保守截断异常消息。
-			runes := []rune(state.Pending.Text)
-			if len(runes) > 1800 {
-				state.Pending.Text = string(runes[:1800]) + "…"
-			}
-			if err := b.save(state); err != nil {
-				return fmt.Errorf("保存 Telegram 任务结果: %w", err)
 			}
 			break
 		}

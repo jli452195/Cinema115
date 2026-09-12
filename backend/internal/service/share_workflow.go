@@ -22,7 +22,7 @@ type TransferClient interface {
 	ReceiveShare(context.Context, *p115.ShareInfo, []string, string, string) error
 	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
 	SendShare(context.Context, []string, string) (*p115.ShareInfo, error)
-	SetSharePermanent(context.Context, *p115.ShareInfo, string) error
+	ConfigureShare(context.Context, *p115.ShareInfo, string, string) error
 	DeleteDirectory(context.Context, string, string) error
 }
 
@@ -73,6 +73,14 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	if input.Password != "" {
 		share.Password = strings.TrimSpace(input.Password)
+	}
+	if settings.FixedSharePassword != "" && share.Password == settings.FixedSharePassword {
+		reportGeneration(ctx, "generating", "分享提取码匹配固定密码：跳过转存，直接使用原分享生成 STRM")
+		return w.Generator.Generate(ctx, input)
+	}
+	sharePassword, err := newSharePassword(settings.FixedSharePassword)
+	if err != nil {
+		return nil, err
 	}
 	cookie := w.Cookie()
 	if cookie == "" {
@@ -181,8 +189,11 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if err := persist("setting_duration"); err != nil {
 		return nil, err
 	}
-	if err := w.Client.SetSharePermanent(ctx, own, cookie); err != nil {
-		return nil, fmt.Errorf("新分享长期有效设置失败，保留临时目录: %w", err)
+	configureErr := w.Client.ConfigureShare(ctx, own, sharePassword, cookie)
+	// 更新成功后提取码会变化，即使后续核实失败也需记录新链接。
+	job.ShareURL = own.URL
+	if configureErr != nil {
+		return nil, fmt.Errorf("新分享密码或长期有效设置失败，保留临时目录: %w", configureErr)
 	}
 	if err := persist("waiting_snapshot"); err != nil {
 		return nil, err
@@ -266,7 +277,7 @@ func stageMessage(stage string) string {
 	case "sharing":
 		return "正在创建自己的分享链接"
 	case "setting_duration":
-		return "正在设置并确认分享长期有效"
+		return "正在设置并确认分享长期有效及分享密码"
 	case "waiting_snapshot":
 		return "正在核对新分享的完整快照"
 	case "generating":
