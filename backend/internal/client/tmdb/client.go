@@ -221,6 +221,11 @@ func (c *Client) Browse(ctx context.Context, options Options) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.readPage(ctx, options.Kind, endpoint, query)
+}
+
+// 看板和相关推荐共用列表归一化、海报地址校验及缓存。
+func (c *Client) readPage(ctx context.Context, kind, endpoint string, query url.Values) (*Page, error) {
 	var result struct {
 		Page       int `json:"page"`
 		TotalPages int `json:"total_pages"`
@@ -252,7 +257,7 @@ func (c *Client) Browse(ctx context.Context, options Options) (*Page, error) {
 			continue
 		}
 		title, original, date := entry.Name, entry.OriginalName, entry.AirDate
-		if options.Kind == "movie" {
+		if kind == "movie" {
 			title, original, date = entry.Title, entry.OriginalTitle, entry.ReleaseDate
 		}
 		if title == "" {
@@ -261,7 +266,7 @@ func (c *Client) Browse(ctx context.Context, options Options) (*Page, error) {
 		if title == "" {
 			title = "未命名"
 		}
-		page.Items = append(page.Items, Item{ID: entry.ID, Kind: options.Kind, Title: title, OriginalTitle: original, Overview: entry.Overview, PosterURL: posterURL(entry.Poster), Date: date, Rating: entry.Rating, Votes: entry.Votes})
+		page.Items = append(page.Items, Item{ID: entry.ID, Kind: kind, Title: title, OriginalTitle: original, Overview: entry.Overview, PosterURL: posterURL(entry.Poster), Date: date, Rating: entry.Rating, Votes: entry.Votes})
 	}
 	return page, nil
 }

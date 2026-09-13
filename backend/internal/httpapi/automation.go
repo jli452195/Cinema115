@@ -17,7 +17,8 @@ func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, 
 	admin.POST("/p115/share/automation-config", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		var settings service.AutomationSettings
+		// 旧客户端未传新字段时保留已保存的配置，显式传 0 则关闭等待。
+		settings := store.Value()
 		if c.ShouldBindJSON(&settings) != nil {
 			c.JSON(400, gin.H{"error": "自动化配置格式错误"})
 			return

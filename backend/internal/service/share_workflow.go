@@ -114,6 +114,17 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if len(roots) == 0 || len(roots) > 1000 {
 		return nil, generationInputError("转分享需要 1 至 1000 个顶层条目，请缩小分享范围")
 	}
+	return w.resharePrepared(ctx, settings, input, cookie, sharePassword, source, nil,
+		func(ctx context.Context, cid string) error {
+			return w.receiveRoots(ctx, share, roots, cid, cookie)
+		}, func(ctx context.Context, own *p115.ShareInfo) (*GenerationResult, error) {
+			input.URL, input.Password, input.CID = own.URL, own.Password, "0"
+			return w.Generator.Generate(ctx, input)
+		})
+}
+
+// 单链接和合并批次共用快照校验、长期分享、生成及清理流程。
+func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings AutomationSettings, input GenerateInput, cookie, sharePassword string, source []string, selectShare func(context.Context, []p115.ShareFile) ([]p115.ShareFile, []string, error), receive func(context.Context, string) error, generate func(context.Context, *p115.ShareInfo) (*GenerationResult, error)) (result *GenerationResult, err error) {
 	var nonce [12]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("创建任务编号: %w", err)
@@ -168,15 +179,8 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if err := persist("receiving"); err != nil {
 		return nil, err
 	}
-	ids := fileIDs(roots)
-	for start := 0; start < len(ids); start += 100 {
-		end := start + 100
-		if end > len(ids) {
-			end = len(ids)
-		}
-		if err := w.Client.ReceiveShare(ctx, share, ids[start:end], job.DirectoryID, cookie); err != nil {
-			return nil, fmt.Errorf("转存失败，保留临时目录: %w", err)
-		}
+	if err := receive(ctx, job.DirectoryID); err != nil {
+		return nil, fmt.Errorf("转存失败，保留临时目录: %w", err)
 	}
 	var transferred []p115.ShareFile
 	err = w.until(ctx, func(waitCtx context.Context) error {
@@ -196,6 +200,13 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	if err := persist("sharing"); err != nil {
 		return nil, err
+	}
+	// 合并批次仅分享来源目录中的原始条目，临时包装目录不进入公开分享。
+	if selectShare != nil {
+		transferred, source, err = selectShare(ctx, transferred)
+		if err != nil {
+			return nil, err
+		}
 	}
 	own, err := w.Client.SendShare(ctx, fileIDs(transferred), cookie)
 	if err != nil {
@@ -227,11 +238,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if err := persist("generating"); err != nil {
 		return nil, err
 	}
-	input.URL = own.URL
-	input.Password = own.Password
-	input.CID = "0"
-	// 新分享的生成与清理校验使用同一账号，避免任务中途切换登录影响读取。
-	result, err = w.Generator.Generate(context.WithValue(ctx, generationCookieKey{}, cookie), input)
+	result, err = generate(context.WithValue(ctx, generationCookieKey{}, cookie), own)
 	if result != nil {
 		result.ReshareURL = own.URL
 		result.TempDirectoryID = job.DirectoryID

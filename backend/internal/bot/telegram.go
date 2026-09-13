@@ -98,9 +98,11 @@ func (p *pendingReply) request() map[string]any {
 var errTelegramEditMessageMissing = errors.New("待更新的 Telegram 消息已删除")
 
 type telegramState struct {
-	Offset  int64         `json:"offset"`
-	Pending *pendingReply `json:"pending,omitempty"`
-	Batch   *messageBatch `json:"batch,omitempty"`
+	Replies []*pendingReply `json:"replies,omitempty"`
+	Queue   []*messageBatch `json:"queue,omitempty"`
+	Offset  int64           `json:"offset"`
+	Pending *pendingReply   `json:"pending,omitempty"`
+	Batch   *messageBatch   `json:"batch,omitempty"`
 }
 
 func (b *Telegram) call(ctx context.Context, method string, input, output any) error {
@@ -198,12 +200,28 @@ func (b *Telegram) Run(ctx context.Context) error {
 	if batch := state.Batch; batch != nil && (len(batch.Items) == 0 || batch.Next < 0 || batch.Next > len(batch.Items)) {
 		return fmt.Errorf("Telegram 批次进度无效")
 	}
+	for _, batch := range state.Queue {
+		if batch == nil || len(batch.Items) == 0 || batch.Next != 0 {
+			return fmt.Errorf("Telegram 等待队列无效")
+		}
+	}
+	for _, reply := range state.Replies {
+		if reply == nil {
+			return fmt.Errorf("Telegram 批次回复队列无效")
+		}
+	}
 	for ctx.Err() == nil {
+		if state.Pending == nil && len(state.Replies) > 0 {
+			state.Pending, state.Replies = state.Replies[0], state.Replies[1:]
+			if err := b.save(state); err != nil {
+				return fmt.Errorf("保存 Telegram 批次回复进度: %w", err)
+			}
+		}
 		if state.Pending != nil {
 			pending := state.Pending
 			// 白名单变化后，不再向已移除的聊天补发旧回复。
 			if !b.AllowedChats[pending.ChatID] {
-				state.Offset = pending.UpdateID + 1
+				state.Offset = max(state.Offset, pending.UpdateID+1)
 				state.Pending = nil
 				state.Batch = nil
 				if err := b.save(state); err != nil {
@@ -248,7 +266,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 				state.Batch.StatusMessageID = 0
 			}
 			if state.Batch == nil {
-				state.Offset = pending.UpdateID + 1
+				state.Offset = max(state.Offset, pending.UpdateID+1)
 			}
 			state.Pending = nil
 			if err := b.save(state); err != nil {
@@ -258,7 +276,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 		}
 		if batch := state.Batch; batch != nil {
 			if !b.AllowedChats[batch.ChatID] || batch.Next >= len(batch.Items) {
-				state.Offset = batch.UpdateID + 1
+				state.Offset = max(state.Offset, batch.UpdateID+1)
 				state.Batch = nil
 				if err := b.save(state); err != nil {
 					return fmt.Errorf("保存 Telegram 批次进度: %w", err)
@@ -270,50 +288,17 @@ func (b *Telegram) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		var updates []telegramUpdate
-		if err := b.call(ctx, "getUpdates", map[string]any{"offset": state.Offset, "timeout": 25, "limit": 10, "allowed_updates": []string{"message"}}, &updates); err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			log.Printf("Telegram 拉取消息失败，请检查网络、令牌以及是否已设置 Webhook")
-			if b.OnStatus != nil {
-				b.OnStatus(false, err.Error())
-			}
-			if !botDelay(ctx) {
-				break
+		if b.startReadyBatch(&state, time.Now()) {
+			if err := b.save(state); err != nil {
+				return fmt.Errorf("保存 Telegram 批次开始状态: %w", err)
 			}
 			continue
 		}
-		if b.OnStatus != nil {
-			b.OnStatus(true, "")
-		}
-		for _, update := range updates {
-			if update.ID < state.Offset {
-				continue
+		if err := b.collectUpdates(ctx, &state); err != nil {
+			if ctx.Err() != nil {
+				break
 			}
-			m := update.Message
-			if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
-				state.Offset = update.ID + 1
-				if err := b.save(state); err != nil {
-					return err
-				}
-				continue
-			}
-			links := parseTelegramMessage(m)
-			if len(links) == 0 {
-				state.Offset = update.ID + 1
-				if err := b.save(state); err != nil {
-					return err
-				}
-				continue
-			}
-			state.Batch = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Items: links}
-			state.Pending = &pendingReply{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(links))}
-			// 先保存整条消息的队列，服务重启后继续尚未开始的链接。
-			if err := b.save(state); err != nil {
-				return fmt.Errorf("记录 Telegram 任务: %w", err)
-			}
-			break
+			return err
 		}
 	}
 	return nil

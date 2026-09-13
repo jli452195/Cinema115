@@ -40,6 +40,7 @@ const reshareEnabled = ref(false)
 const savedReshareEnabled = ref(false)
 const parentCID = ref('0')
 const fixedSharePassword = ref('')
+const tgBatchWaitSeconds = ref(5)
 const automationSaving = ref(false)
 const automationReady = ref(false)
 const botConfigured = ref(false)
@@ -75,10 +76,12 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
-    const data = await request('automation-config', { reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
+    if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('TG 批处理等待应为 0～300 秒的整数')
+    const data = await request('automation-config', { tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
     savedReshareEnabled.value = data.settings.reshareEnabled
     parentCID.value = data.settings.parentCID
     fixedSharePassword.value = data.settings.fixedSharePassword ?? ''
+    tgBatchWaitSeconds.value = data.settings.tgBatchWaitSeconds ?? 5
     automationNotice.value = '生成设置已保存到服务器，播放地址与开关立即生效，Bot 使用本页保存的生成选项。'
     saveSettings()
   } catch (e) {
@@ -220,6 +223,7 @@ onMounted(async () => {
     savedReshareEnabled.value = automation.settings.reshareEnabled
     parentCID.value = automation.settings.parentCID
     fixedSharePassword.value = automation.settings.fixedSharePassword ?? ''
+    tgBatchWaitSeconds.value = automation.settings.tgBatchWaitSeconds ?? 5
     reviewRetryEnabled.value = automation.settings.reviewRetryEnabled ?? false
     reviewRetryMinutes.value = automation.settings.reviewRetryMinutes ?? 30
     reviewRetryMax.value = automation.settings.reviewRetryMax ?? 6
@@ -325,6 +329,8 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <section v-if="activeTab === 'reshare'" class="rounded-xl border border-blue-100 bg-blue-50/50 p-5">
               <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 创建长期分享并校验快照 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
+              <label class="mt-4 block text-sm text-slate-700">TG 批处理等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
+              <p class="mt-2 text-xs leading-5 text-slate-500">从首条 TG 消息起等待指定秒数，将同一聊天、同一话题内的正常转存链接合并成一个长期分享。审核链接单独移出，按基础设置自动重试；普通分享及固定密码匹配的链接直接生成。默认 5 秒，0 表示不等待，仅对 Bot 生效，点击右上角保存。</p>
               <label class="mt-4 block text-sm text-slate-700">固定分享密码（可选）<input v-model="fixedSharePassword" maxlength="4" pattern="[a-zA-Z0-9]{4}" autocomplete="off" spellcheck="false" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="留空则每次随机生成" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">填写 4 位英文字母或数字，点击右上角保存。收到的链接提取码与固定密码一致时，直接使用原分享生成 STRM，沿用原分享有效期；不一致则转存并使用固定密码创建长期分享。留空时不匹配跳过，新分享密码每次随机生成。</p>
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>

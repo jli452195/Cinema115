@@ -11,6 +11,14 @@ import (
 
 type tmdbReaderFake struct{ calls int }
 
+func (f *tmdbReaderFake) Recommendations(_ context.Context, kind string, id int) (*tmdb.Page, error) {
+	f.calls++
+	if id == 404 {
+		return nil, tmdb.ErrNotFound
+	}
+	return &tmdb.Page{Items: []tmdb.Item{{ID: 12, Kind: kind}}, Page: 1}, nil
+}
+
 func (f *tmdbReaderFake) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
 	f.calls++
 	if id == 404 {
@@ -44,6 +52,10 @@ func TestTMDBDetailRoutes(t *testing.T) {
 		status     int
 	}{
 		{"detail/movie/42", "", 401}, {"tv/42/season/0", "", 401},
+		{"recommendations/movie/42", "", 401}, {"recommendations/movie/42", "admin-test", 200},
+		{"recommendations/tv/42", "admin-test", 200}, {"recommendations/tv/404", "admin-test", 404},
+		{"recommendations/person/42", "admin-test", 400}, {"recommendations/movie/0", "admin-test", 400},
+		{"recommendations/tv/nope", "admin-test", 400}, {"recommendations/tv/999999999999999999999", "admin-test", 400},
 		{"detail/movie/42", "admin-test", 200}, {"detail/tv/42", "admin-test", 200},
 		{"detail/tv/404", "admin-test", 404}, {"tv/42/season/0", "admin-test", 200},
 		{"detail/person/42", "admin-test", 400}, {"detail/tv/nope", "admin-test", 400},
@@ -62,7 +74,7 @@ func TestTMDBDetailRoutes(t *testing.T) {
 			t.Error("详情未禁止浏览器缓存")
 		}
 	}
-	if client.calls != 4 {
+	if client.calls != 7 {
 		t.Fatal("非法或未授权详情请求访问上游")
 	}
 }

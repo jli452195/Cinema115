@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import MediaRecommendations from '../components/MediaRecommendations.vue'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
@@ -166,6 +167,7 @@ onBeforeUnmount(() => { cancelRequests(); document.title = previousTitle })
               </a>
             </div>
           </section>
+          <MediaRecommendations :token="token" :kind="kind" :tmdb-id="tmdbId" />
           <footer class="mt-12 border-t border-slate-200 pt-5 text-[11px] leading-6 text-slate-400"><a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="hover:text-cyan-600">在 TMDB 查看完整资料 ↗</a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
         </template>
       </div>

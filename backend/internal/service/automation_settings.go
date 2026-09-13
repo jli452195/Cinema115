@@ -15,6 +15,7 @@ import (
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
 	ReshareEnabled     bool          `json:"reshareEnabled"`
+	TGBatchWaitSeconds int           `json:"tgBatchWaitSeconds"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
 	ParentCID          string        `json:"parentCID"`
 	ReviewRetryEnabled bool          `json:"reviewRetryEnabled"`
@@ -32,6 +33,7 @@ type AutomationStore struct {
 func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
 	s := &AutomationStore{path: path, root: root, value: AutomationSettings{ParentCID: "0", Generation: GenerateInput{BaseURL: baseURL, OutputDir: "strm", VideoExtensions: DefaultVideoExtensions, Recursive: true}}}
 	s.value.ReviewRetryMinutes, s.value.ReviewRetryMax = 30, 6
+	s.value.TGBatchWaitSeconds = 5
 	s.value.Generation.MetadataExtensions = DefaultMetadataExtensions
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -112,6 +114,9 @@ func ValidateGenerationOptions(root string, input GenerateInput) error {
 }
 
 func (s *AutomationStore) validate(value AutomationSettings) error {
+	if value.TGBatchWaitSeconds < 0 || value.TGBatchWaitSeconds > 300 {
+		return generationInputError("TG 批处理等待应为 0～300 秒，0 表示不等待")
+	}
 	if value.ReviewRetryMinutes < 1 || value.ReviewRetryMinutes > 1440 || value.ReviewRetryMax < 1 || value.ReviewRetryMax > 100 {
 		return generationInputError("审核重试间隔应为 1～1440 分钟，最大重试次数应为 1～100")
 	}

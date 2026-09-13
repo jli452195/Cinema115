@@ -99,6 +99,12 @@ type LoggedGenerator struct {
 }
 
 func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
+	return g.generateLogged(ctx, input, func(ctx context.Context) (*GenerationResult, error) {
+		return g.Generator.Generate(ctx, input)
+	})
+}
+
+func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInput, run func(context.Context) (*GenerationResult, error)) (result *GenerationResult, err error) {
 	g.Logs.mu.Lock()
 	g.Logs.taskSequence++
 	task := fmt.Sprintf("STRM-%06d", g.Logs.taskSequence)
@@ -170,5 +176,40 @@ func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (re
 		}
 		logGeneration(ctx, level, fmt.Sprintf("%s%s，耗时 %.2f 秒", reason, counts, elapsed))
 	}()
-	return g.Generator.Generate(ctx, input)
+	return run(ctx)
+}
+
+func (g *LoggedGenerator) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
+	batch, ok := g.Generator.(BatchGenerator)
+	if !ok {
+		return nil, fmt.Errorf("生成服务未配置合并转存能力")
+	}
+	if len(inputs) == 0 {
+		return []BatchOutcome{}, nil
+	}
+	var outcomes []BatchOutcome
+	var batchErr error
+	_, _ = g.generateLogged(ctx, inputs[0], func(ctx context.Context) (*GenerationResult, error) {
+		outcomes, batchErr = batch.GenerateBatch(ctx, inputs)
+		total := &GenerationResult{}
+		if len(outcomes) != len(inputs) {
+			batchErr = errors.Join(batchErr, errors.New("合并转存返回结果数量不正确"))
+			return total, batchErr
+		}
+		loggedErr := batchErr
+		for i, out := range outcomes {
+			addBatchResult(total, out.Result)
+			if out.Result != nil && out.Result.ReshareURL != "" {
+				total.ReshareURL = out.Result.ReshareURL
+			}
+			if out.Err != nil {
+				logGeneration(ctx, "WARNING", fmt.Sprintf("合并批次第 %d 条：%s", i+1, generationErrorDetail(out.Err, inputs[i])))
+			} else {
+				logGeneration(ctx, "INFO", fmt.Sprintf("合并批次第 %d 条：STRM 生成完成", i+1))
+			}
+			loggedErr = errors.Join(loggedErr, out.Err)
+		}
+		return total, loggedErr
+	})
+	return outcomes, batchErr
 }

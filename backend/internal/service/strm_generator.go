@@ -185,6 +185,11 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	}()
 	visited := make(map[string]bool)
 	usedPaths := make(map[string]bool)
+	rootIDs, scoped := ctx.Value(generationRootIDsKey{}).([]string)
+	selectedRoots := make(map[string]bool, len(rootIDs))
+	for _, id := range rootIDs {
+		selectedRoots[id] = false
+	}
 	entries, pages := 0, 0
 	// 使用计数和深度上限防止异常分享目录导致无限分页或无限递归。
 	var walk func(string, string, int) error
@@ -226,9 +231,18 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 					return fmt.Errorf("分享文件列表存在空 ID 或重复条目，请重试")
 				}
 				seen[key] = true
+				selected := true
+				if scoped && depth == 0 {
+					_, selected = selectedRoots[file.ID]
+					if selected {
+						selectedRoots[file.ID] = true
+					}
+				}
 				isMetadata := !file.Directory && metadataExtensions[strings.ToLower(path.Ext(file.Name))]
 				if !file.Directory && !isMetadata && (!extensions[strings.ToLower(path.Ext(file.Name))] || file.Size < input.MinSizeMB*(1<<20)) {
-					result.Skipped++
+					if selected {
+						result.Skipped++
+					}
 					logGeneration(ctx, "DEBUG", "按后缀或大小过滤："+safeSTRMName(file.Name))
 					continue
 				}
@@ -248,6 +262,10 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 					relative = path.Join(parent, strings.TrimSuffix(name, ext)+" ("+strconv.Itoa(suffix)+")"+ext)
 				}
 				usedPaths[strings.ToLower(relative)] = true
+				// 先为其他来源的同名根条目保留名称，使分来源生成和重试的路径一致。
+				if !selected {
+					continue
+				}
 				if file.Directory {
 					if err := walk(file.ID, relative, depth+1); err != nil {
 						return err
@@ -276,6 +294,11 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	}
 	if err := walk(cid, "", 0); err != nil {
 		return nil, err
+	}
+	for _, found := range selectedRoots {
+		if !found {
+			return nil, fmt.Errorf("新分享缺少本来源的根条目，已停止生成")
+		}
 	}
 	if len(result.Files) == 0 {
 		return nil, ErrNoMedia

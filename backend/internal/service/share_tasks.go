@@ -26,9 +26,12 @@ type ShareTaskStore interface {
 }
 
 type shareTaskRequest struct {
-	Input      GenerateInput      `json:"input"`
-	Settings   AutomationSettings `json:"settings"`
-	CookieHash string             `json:"cookieHash"`
+	Merged      bool               `json:"merged,omitempty"`
+	OwnShareCID string             `json:"ownShareCID,omitempty"`
+	OwnRootIDs  []string           `json:"ownRootIDs,omitempty"`
+	Input       GenerateInput      `json:"input"`
+	Settings    AutomationSettings `json:"settings"`
+	CookieHash  string             `json:"cookieHash"`
 }
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
@@ -45,11 +48,22 @@ func cookieHash(cookie string) string {
 }
 
 func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
+	task, req, err := s.prepareTask(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return s.execute(ctx, task, req)
+}
+
+func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*model.ShareTask, shareTaskRequest, error) {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return nil, fmt.Errorf("创建分享任务: %w", err)
+		return nil, shareTaskRequest{}, fmt.Errorf("创建分享任务: %w", err)
 	}
 	settings := s.Settings.Value()
+	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
+		settings = saved
+	}
 	mode := input.Mode
 	if mode == "" {
 		mode = "direct"
@@ -58,7 +72,7 @@ func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*Genera
 		}
 	}
 	if mode != "direct" && mode != "reshare" {
-		return nil, generationInputError("分享模式无效")
+		return nil, shareTaskRequest{}, generationInputError("分享模式无效")
 	}
 	input.Mode = mode
 	link := ""
@@ -82,9 +96,9 @@ func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*Genera
 	task := model.ShareTask{ID: hex.EncodeToString(nonce[:]), Source: source, SourceURL: link, Mode: mode, Status: "running", CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
 	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(s.Cookie())}
 	if err := s.save(ctx, &task, req); err != nil {
-		return nil, err
+		return nil, shareTaskRequest{}, err
 	}
-	return s.execute(ctx, &task, req)
+	return &task, req, nil
 }
 
 func (s *ShareTasks) save(ctx context.Context, task *model.ShareTask, req shareTaskRequest) error {
@@ -99,8 +113,16 @@ func (s *ShareTasks) save(ctx context.Context, task *model.ShareTask, req shareT
 func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req shareTaskRequest) (*GenerationResult, error) {
 	started := time.Now()
 	ctx = context.WithValue(ctx, automationContextKey{}, req.Settings)
+	if len(req.OwnRootIDs) > 0 {
+		ctx = context.WithValue(ctx, generationRootIDsKey{}, req.OwnRootIDs)
+	}
 	result, err := s.Generator.Generate(WithGenerationSource(ctx, task.Source), req.Input)
-	task.Elapsed += time.Since(started).Seconds()
+	return s.finish(ctx, task, req, result, err, time.Since(started))
+}
+
+// 单条和合并执行共用审核重试判定及最终状态落盘。
+func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shareTaskRequest, result *GenerationResult, err error, elapsed time.Duration) (*GenerationResult, error) {
+	task.Elapsed += elapsed.Seconds()
 	task.NextRetryAt = nil
 	if result != nil {
 		task.Written, task.Total = result.Written, len(result.Files)
@@ -115,9 +137,12 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 			task.Status = "review"
 			// 只有只读生成或明确尚未转存的原分享可按原请求重试。
 			safe := task.Mode == "direct" || req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)
-			if result != nil && result.ReshareURL != "" {
+			if result != nil && result.ReshareURL != "" && (!req.Merged || req.OwnShareCID != "" || len(req.OwnRootIDs) > 0) {
 				// 新分享已经存在时复用该链接，不再转存或创建分享，也不自动删除临时目录。
 				req.Input.URL, req.Input.Password, req.Input.CID, req.Input.Mode = result.ReshareURL, "", "0", "direct"
+				if req.OwnShareCID != "" {
+					req.Input.CID = req.OwnShareCID
+				}
 				task.Note = "复用已创建的新分享重试；临时目录保留，请在转存任务记录中核对后处理。"
 				safe = true
 			}

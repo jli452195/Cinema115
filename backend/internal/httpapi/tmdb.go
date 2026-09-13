@@ -15,6 +15,7 @@ type TMDBReader interface {
 	Browse(context.Context, tmdb.Options) (*tmdb.Page, error)
 	Details(context.Context, string, int) (*tmdb.Detail, error)
 	Season(context.Context, int, int) (*tmdb.SeasonDetail, error)
+	Recommendations(context.Context, string, int) (*tmdb.Page, error)
 }
 
 func tmdbError(c *gin.Context, err error) {
@@ -37,6 +38,23 @@ func tmdbError(c *gin.Context, err error) {
 
 // RegisterTMDB 只开放管理员查询接口，浏览器不会接触 API 密钥。
 func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
+	admin.GET("/tmdb/recommendations/:kind/:id", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		id, err := strconv.Atoi(c.Param("id"))
+		kind := c.Param("kind")
+		if err != nil || id < 1 || (kind != "tv" && kind != "movie") {
+			tmdbError(c, tmdb.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
+		defer cancel()
+		result, err := client.Recommendations(ctx, kind, id)
+		if err != nil {
+			tmdbError(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
 	admin.GET("/tmdb/detail/:kind/:id", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		id, err := strconv.Atoi(c.Param("id"))
