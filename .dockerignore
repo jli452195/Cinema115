@@ -4,6 +4,14 @@
 **/.env
 **/.env.*
 data/
+# 数据库和事务文件只通过数据卷持久化，不进入镜像。
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm
 strm/
 .tmp_p115/
 tests/

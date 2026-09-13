@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
 )
 
 type TransferClient interface {
@@ -30,31 +30,23 @@ type MediaGenerator interface {
 	Generate(context.Context, GenerateInput) (*GenerationResult, error)
 }
 
+type ReshareJobWriter interface {
+	SaveReshareJob(context.Context, model.ReshareJob) error
+}
+
 type ShareWorkflow struct {
-	Client           TransferClient
-	Generator        MediaGenerator
-	Cookie           func() string
-	Settings         *AutomationStore
-	Root, JournalDir string
-	PollInterval     time.Duration
-	gate             chan struct{}
+	Client       TransferClient
+	Generator    MediaGenerator
+	Cookie       func() string
+	Settings     *AutomationStore
+	Root         string
+	Jobs         ReshareJobWriter
+	PollInterval time.Duration
+	gate         chan struct{}
 }
 
-func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie func() string, settings *AutomationStore, root, dataDir string) *ShareWorkflow {
-	return &ShareWorkflow{Client: client, Generator: generator, Cookie: cookie, Settings: settings, Root: root, JournalDir: filepath.Join(dataDir, "reshare-jobs"), PollInterval: 2 * time.Second, gate: make(chan struct{}, 1)}
-}
-
-type reshareJob struct {
-	SourceURL     string    `json:"sourceURL,omitempty"`
-	SourceCID     string    `json:"sourceCID,omitempty"`
-	LastError     string    `json:"lastError,omitempty"`
-	Finished      bool      `json:"finished"`
-	ID            string    `json:"id"`
-	DirectoryName string    `json:"directoryName"`
-	DirectoryID   string    `json:"directoryID,omitempty"`
-	ShareURL      string    `json:"shareURL,omitempty"`
-	Status        string    `json:"status"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie func() string, settings *AutomationStore, root string, jobs ReshareJobWriter) *ShareWorkflow {
+	return &ShareWorkflow{Client: client, Generator: generator, Cookie: cookie, Settings: settings, Root: root, Jobs: jobs, PollInterval: 2 * time.Second, gate: make(chan struct{}, 1)}
 }
 
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
@@ -108,25 +100,20 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("创建任务编号: %w", err)
 	}
-	job := reshareJob{ID: hex.EncodeToString(nonce[:]), Status: "creating", SourceURL: input.URL, SourceCID: input.CID}
+	if w.Jobs == nil {
+		return nil, fmt.Errorf("转存任务存储未初始化")
+	}
+	job := model.ReshareJob{ID: hex.EncodeToString(nonce[:]), Status: "creating", SourceURL: input.URL, SourceCID: input.CID}
 	job.DirectoryName = "Cinema115-临时-" + job.ID
 	logGeneration(ctx, "DEBUG", "转存任务记录编号："+job.ID)
 	persist := func(status string) error {
 		reportGeneration(ctx, status, stageMessage(status))
 		job.Status = status
 		job.UpdatedAt = time.Now().UTC()
-		return writeAutomationJSON(filepath.Join(w.JournalDir, job.ID+".json"), job)
+		return w.Jobs.SaveReshareJob(ctx, job)
 	}
 	if err := persist("creating"); err != nil {
 		return nil, err
-	}
-	job.DirectoryID, err = w.Client.CreateDirectory(ctx, settings.ParentCID, job.DirectoryName, cookie)
-	if err != nil {
-		return nil, fmt.Errorf("创建临时目录失败，若请求已在 115 执行请按名称 %s 检查: %w", job.DirectoryName, err)
-	}
-	// 只有本次新建目录可进入清理流程，不接受配置中的父目录作为删除目标。
-	if job.DirectoryID == "" || job.DirectoryID == "0" || job.DirectoryID == settings.ParentCID {
-		return nil, fmt.Errorf("115 返回了不安全的临时目录 ID，已停止")
 	}
 	defer func() {
 		if err != nil {
@@ -138,7 +125,10 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 			job.LastError = err.Error()
 			job.Finished = true
 			job.UpdatedAt = time.Now().UTC()
-			if saveErr := writeAutomationJSON(filepath.Join(w.JournalDir, job.ID+".json"), job); saveErr != nil {
+			// 取消请求后仍需保存最终检查点；独立的短超时仅用于本地持久化。
+			saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer saveCancel()
+			if saveErr := w.Jobs.SaveReshareJob(saveCtx, job); saveErr != nil {
 				err = errors.Join(err, saveErr)
 			}
 			if result == nil {
@@ -149,6 +139,14 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 			err = fmt.Errorf("%w；任务 %s，临时目录 ID %s（请查看任务记录中的清理状态）", err, job.ID, job.DirectoryID)
 		}
 	}()
+	job.DirectoryID, err = w.Client.CreateDirectory(ctx, settings.ParentCID, job.DirectoryName, cookie)
+	if err != nil {
+		return nil, fmt.Errorf("创建临时目录失败，若请求已在 115 执行请按名称 %s 检查: %w", job.DirectoryName, err)
+	}
+	// 只有本次新建目录可进入清理流程，不接受配置中的父目录作为删除目标。
+	if job.DirectoryID == "" || job.DirectoryID == "0" || job.DirectoryID == settings.ParentCID {
+		return nil, fmt.Errorf("115 返回了不安全的临时目录 ID，已停止")
+	}
 	if err := persist("receiving"); err != nil {
 		return nil, err
 	}

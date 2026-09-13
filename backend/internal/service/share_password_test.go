@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +46,7 @@ func TestFixedSharePasswordControlsTransfer(t *testing.T) {
 				if len(fake.calls) != 0 || fake.listCalls != 0 || result.ReshareURL != "" || result.Written != 8 {
 					t.Fatal("密码匹配仍执行了转存流程")
 				}
-				if _, err := os.Stat(w.JournalDir); !errors.Is(err, os.ErrNotExist) {
+				if len(workflowJobs(t, w)) != 0 {
 					t.Fatal("直接生成不应创建转存记录")
 				}
 			} else {

@@ -30,7 +30,7 @@ func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) e
 		label += "\n"
 	}
 	batch.Next++
-	state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, Text: label + "Cinema115 任务被中断，请检查 STRM 和 data/reshare-jobs 任务记录；本链接未自动重做，后续链接将继续处理。"}
+	state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, Text: label + "Cinema115 任务被中断，请检查 STRM 和数据库中的转存任务记录；本链接未自动重做，后续链接将继续处理。"}
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("记录 Telegram 链接任务: %w", err)
 	}

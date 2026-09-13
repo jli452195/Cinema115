@@ -16,7 +16,8 @@ RUN go mod download
 COPY backend/ ./
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
+    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/dbtool ./cmd/dbtool
 
 # 第三阶段：Go 同时提供页面和 API，运行时无需 Node.js 或 Nginx。
 FROM alpine:3.24 AS runner
@@ -27,6 +28,7 @@ RUN apk add --no-cache ca-certificates tzdata \
     && chown cinema:cinema /app /data /strm
 WORKDIR /app
 COPY --from=backend-builder /out/server /app/server
+COPY --from=backend-builder /out/dbtool /app/dbtool
 COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 USER 1000:1000
 ENV GIN_MODE=release DATA_DIR=/data STRM_ROOT=/strm FRONTEND_DIST=/app/frontend/dist TZ=Asia/Shanghai

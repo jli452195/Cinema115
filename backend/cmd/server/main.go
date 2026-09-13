@@ -18,6 +18,7 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/httpapi"
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/storage"
 	"sync"
 	"syscall"
 	"time"
@@ -61,6 +62,26 @@ func main() {
 	cookieStore, err = service.NewSessionStore(filepath.Join(dataDir, "p115-session.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
+	}
+	initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	database, err := storage.Open(initCtx, filepath.Join(dataDir, "cinema115.db"))
+	if err != nil {
+		initCancel()
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			log.Printf("关闭数据库: %v", err)
+		}
+	}()
+	migration, err := database.ImportLegacyJobs(initCtx, filepath.Join(dataDir, "reshare-jobs"))
+	initCancel()
+	if err != nil {
+		_ = database.Close()
+		log.Fatal(err)
+	}
+	if !migration.AlreadyDone {
+		log.Printf("旧转存任务迁移完成：导入 %d，数据库已有 %d；原 JSON 保留", migration.Imported, migration.Skipped)
 	}
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -187,7 +208,8 @@ func main() {
 	}
 	shareAPI.BaseURL = func() string { return automation.Value().Generation.BaseURL }
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: cookieValue, Root: shareAPI.OutputRoot}
-	workflow := service.NewShareWorkflow(shareAPI.Client, generator, cookieValue, automation, shareAPI.OutputRoot, dataDir)
+	workflow := service.NewShareWorkflow(shareAPI.Client, generator, cookieValue, automation, shareAPI.OutputRoot, database)
+	httpapi.RegisterReshareJobs(admin, database)
 	generationLogs := &service.GenerationLogs{}
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs}
 	shareAPI.Workflow = loggedGenerator

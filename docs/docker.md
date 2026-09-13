@@ -29,7 +29,7 @@ TZ=Asia/Shanghai
       - "/vol1/1000/媒体库:/strm"
 ```
 
-`./data` 保存加密登录会话，整个 NAS 媒体库挂载到容器 `/strm`。首次启动前创建目录，并通过 NAS 目录权限/ACL 给 `PUID:PGID` 读写权限，给 Emby 用户读取权限：
+`./data` 保存 SQLite 数据库、加密登录会话和配置，整个 NAS 媒体库挂载到容器 `/strm`。数据库使用 NAS 本机磁盘目录，避免放到 SMB/NFS 网络共享。首次启动前创建目录，并通过 NAS 目录权限/ACL 给 `PUID:PGID` 读写权限，给 Emby 用户读取权限：
 
 ```sh
 mkdir -p ./data
@@ -64,6 +64,8 @@ curl -f http://127.0.0.1:8115/api/health
 更新代码后重新执行构建启动命令。修改 `.env` 或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
 
 首次部署后在页面扫码登录 115。若迁移旧 `data/p115-session.enc`，同时保留原 `JWT_SECRET` 并保证文件权限正确；否则在 NAS 重新扫码。根目录密钥和登录凭证不会打包到镜像中。
+
+升级到 SQLite 版本前停止旧服务并备份 `data/` 和 `.env`。新版首次启动自动导入旧转存任务 JSON，原文件保留，新任务写入 `/data/cinema115.db`。无需增加端口或挂载。运行中通过 `docker compose exec cinema115 /app/dbtool -action status` 检查数据库；一致性备份和恢复方法见 [数据库说明](database.md)，不要只复制运行中的主 `.db` 文件。
 
 旧版浏览器保存的绝对路径目录需要按相对名称重新添加。已有 STRM 不自动搬移；更换播放地址时可选择新目录生成。NAS 外层反向代理若存在，应允许超过 5 分钟的请求并支持视频流转发。
 

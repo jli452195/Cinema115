@@ -2,15 +2,15 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
+	"strm115/backend/internal/storage"
 )
 
 type transferFake struct {
@@ -144,7 +144,16 @@ func setupWorkflow(t *testing.T, fake *transferFake) (*ShareWorkflow, GenerateIn
 		}
 		return &GenerationResult{Written: 1}, nil
 	})
-	w := NewShareWorkflow(fake, gen, func() string { return "original-cookie" }, store, dir, dir)
+	db, err := storage.Open(context.Background(), filepath.Join(dir, "cinema115.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	w := NewShareWorkflow(fake, gen, func() string { return "original-cookie" }, store, dir, db)
 	w.PollInterval = time.Millisecond
 	in := settings.Generation
 	in.URL = "https://115cdn.com/s/source?password=1234"
@@ -164,18 +173,11 @@ func TestShareWorkflowWaitsForSnapshotAndCleansOnlyOwnedDirectory(t *testing.T) 
 	if got := strings.Join(fake.calls, ","); got != "create,receive,share,permanent,generate,delete,verified-after-delete" {
 		t.Fatal(got)
 	}
-	files, err := filepath.Glob(filepath.Join(w.JournalDir, "*.json"))
-	if err != nil || len(files) != 1 {
+	jobs := workflowJobs(t, w)
+	if len(jobs) != 1 {
 		t.Fatal("缺少任务记录")
 	}
-	data, err := os.ReadFile(files[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var job reshareJob
-	if err := json.Unmarshal(data, &job); err != nil {
-		t.Fatal(err)
-	}
+	job := jobs[0]
 	if job.Status != "completed" || job.DirectoryID != "999" {
 		t.Fatalf("任务状态错误: %+v", job)
 	}
@@ -262,6 +264,47 @@ func TestShareWorkflowCancellationBeforeCleanup(t *testing.T) {
 	}
 	if fake.deleted {
 		t.Fatal("取消后仍删除目录")
+	}
+	jobs := workflowJobs(t, w)
+	if len(jobs) != 1 || !jobs[0].Finished || jobs[0].LastError == "" || jobs[0].DirectoryID != "999" {
+		t.Fatal("取消后未持久化最终检查点")
+	}
+}
+
+func workflowJobs(t *testing.T, w *ShareWorkflow) []model.ReshareJob {
+	t.Helper()
+	jobs, err := w.Jobs.(*storage.Store).ListReshareJobs(context.Background(), "", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jobs
+}
+
+type failingJobWriter struct {
+	store     ReshareJobWriter
+	failStage string
+}
+
+func (s failingJobWriter) SaveReshareJob(ctx context.Context, job model.ReshareJob) error {
+	if job.Status == s.failStage {
+		return errors.New("模拟磁盘写入失败")
+	}
+	return s.store.SaveReshareJob(ctx, job)
+}
+
+func TestCheckpointFailurePreventsCloudMutation(t *testing.T) {
+	for _, stage := range []string{"creating", "deleting"} {
+		t.Run(stage, func(t *testing.T) {
+			fake := &transferFake{}
+			w, in := setupWorkflow(t, fake)
+			w.Jobs = failingJobWriter{store: w.Jobs, failStage: stage}
+			if _, err := w.Generate(context.Background(), in); err == nil {
+				t.Fatal("检查点失败却报告成功")
+			}
+			if fake.deleted || stage == "creating" && len(fake.calls) != 0 {
+				t.Fatal("检查点保存失败后仍变更云端")
+			}
+		})
 	}
 }
 

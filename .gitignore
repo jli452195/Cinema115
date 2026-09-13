@@ -41,6 +41,14 @@ frontend/pnpm-debug.log*
 /tests/*
 !/tests/README.md
 data/
+# SQLite 数据库、事务文件和快照不提交。
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 # Docker 默认挂载的生成目录。
 /strm/
 *.log
