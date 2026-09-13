@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
 
 const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ back: []; home: []; openP115: []; openLogs: []; logout: [] }>()
+const emit = defineEmits<{ openDashboard: []; back: []; home: []; openP115: []; openLogs: []; logout: [] }>()
 interface Identity { id: number; first_name: string; username: string; webhookConfigured: boolean }
 interface Config { configured: boolean; enabled: boolean; allowedChatIDs: string; identity: Identity; source: string; running: boolean; connected: boolean; lastError: string }
 const config = ref<Config>()
@@ -87,7 +87,7 @@ onBeforeUnmount(() => { mounted = false; lifecycle.abort(); if (timer) window.cl
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-100 md:flex-row">
-    <WorkbenchSidebar active="telegram" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('back')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
+    <WorkbenchSidebar @open-dashboard="emit('openDashboard')" active="telegram" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('back')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
     <main class="min-w-0 flex-1 px-4 py-6 md:p-10">
       <div class="mx-auto max-w-4xl">
         <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="!!busy" @click="emit('back')">← 返回 Telegram 配置</button>
@@ -98,7 +98,7 @@ onBeforeUnmount(() => { mounted = false; lifecycle.abort(); if (timer) window.cl
             <fieldset :disabled="loading || !!busy || !config" class="min-w-0 space-y-6 disabled:opacity-60">
               <div><label for="tg-token" class="text-sm font-medium text-slate-700">Bot Token</label><div class="relative mt-2"><input id="tg-token" v-model="botToken" :type="showToken ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-3 pr-16 text-sm outline-none focus:border-blue-500" :placeholder="config?.configured ? '已保存 Token，留空保留；输入新值即可更换' : '123456789:AA…'" /><button type="button" class="absolute inset-y-0 right-0 px-4 text-xs text-slate-500 hover:text-blue-600" :aria-label="showToken ? '隐藏 Token' : '显示 Token'" @click="showToken = !showToken">{{ showToken ? '隐藏' : '显示' }}</button></div><p class="mt-2 text-xs leading-6 text-slate-500">在 Telegram 中通过 <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline">@BotFather</a> 创建 Bot，复制其提供的 Token。</p></div>
               <div><label for="tg-chats" class="text-sm font-medium text-slate-700">允许的聊天 ID</label><textarea id="tg-chats" v-model="chatIDs" rows="3" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500" placeholder="123456789&#10;-1001234567890"></textarea><p class="mt-2 text-xs leading-6 text-slate-500">填写数字 Chat ID，每行一个或用逗号分隔。私聊通常为正数，群组通常为负数；Bot 只处理并回复这些聊天。</p></div>
-              <label class="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4"><span><span class="block text-sm font-medium text-slate-700">启用消息接收</span><span class="mt-1 block text-xs leading-5 text-slate-500">保存后生效，按「分享播放 / STRM」中保存的生成选项处理链接。</span></span><input v-model="enabled" type="checkbox" role="switch" aria-label="启用消息接收" class="peer sr-only"/><span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-300 transition after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400"></span></label>
+              <label class="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4"><span><span class="block text-sm font-medium text-slate-700">启用消息接收</span><span class="mt-1 block text-xs leading-5 text-slate-500">保存后生效，按「115分享STRM」中保存的生成选项处理链接。</span></span><input v-model="enabled" type="checkbox" role="switch" aria-label="启用消息接收" class="peer sr-only"/><span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-300 transition after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400"></span></label>
               <div class="flex flex-wrap gap-3 border-t border-slate-100 pt-6"><button type="submit" class="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50" :disabled="!botToken.trim() && !config?.configured" @click="test">{{ busy === 'test' ? '正在测试…' : '测试连接' }}</button></div>
             </fieldset>
             <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-800">{{ notice }}</p>

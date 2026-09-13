@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -103,6 +103,17 @@ CREATE TABLE data_migrations (
 PRAGMA user_version=1;`)
 		if err != nil {
 			return fmt.Errorf("创建数据库结构: %w", err)
+		}
+	}
+	if version < 2 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE share_tasks (
+id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, mode TEXT NOT NULL,
+source_url TEXT NOT NULL, share_url TEXT NOT NULL, updated_at TEXT NOT NULL,
+next_retry_at TEXT NOT NULL, record TEXT NOT NULL, request TEXT NOT NULL);
+CREATE INDEX share_tasks_updated ON share_tasks(updated_at DESC, id DESC);
+CREATE INDEX share_tasks_due ON share_tasks(status, next_retry_at);
+PRAGMA user_version=2;`); err != nil {
+			return fmt.Errorf("迁移分享任务表: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

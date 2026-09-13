@@ -15,13 +15,16 @@ func WithGenerationProgress(ctx context.Context, report func(GenerationProgress)
 }
 
 func reportGeneration(ctx context.Context, stage, message string) {
-	level := "INFO"
-	if stage == "scanning" || stage == "waiting" {
-		level = "DEBUG"
-	}
+	// 默认阶段细节写 DEBUG；重试保留 WARNING。
+	level := "DEBUG"
 	if stage == "retrying" {
 		level = "WARNING"
 	}
+	reportGenerationWithLevel(ctx, level, stage, message)
+}
+
+// reportGenerationWithLevel 允许模式提示使用 INFO，同时保留网页进度阶段。
+func reportGenerationWithLevel(ctx context.Context, level, stage, message string) {
 	logMessage := message
 	if stage == "waiting" {
 		logMessage = "等待 115 完成处理，本阶段最多等待 90 秒"

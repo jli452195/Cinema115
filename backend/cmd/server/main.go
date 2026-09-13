@@ -16,6 +16,7 @@ import (
 	"strings"
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/httpapi"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
@@ -114,6 +115,7 @@ func main() {
 	admin := r.Group("/api/admin")
 	admin.Use(jwtMiddleware(secret))
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
+	httpapi.RegisterTMDB(admin, tmdb.New(os.Getenv("TMDB_API_KEY")))
 	admin.POST("/p115/qrcode", func(c *gin.Context) {
 		var req qrcodeRequest
 		_ = c.ShouldBindJSON(&req)
@@ -211,10 +213,15 @@ func main() {
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, cookieValue, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)
 	generationLogs := &service.GenerationLogs{}
-	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs}
-	shareAPI.Workflow = loggedGenerator
+	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
+	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: cookieValue}
+	if err := database.InterruptShareTasks(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	shareAPI.Workflow = shareTasks
+	httpapi.RegisterShareTasks(admin, database)
 	httpapi.RegisterLogs(admin, generationLogs)
-	telegram, err := bot.NewManager(dataDir, secret, loggedGenerator, automation)
+	telegram, err := bot.NewManager(dataDir, secret, shareTasks, automation)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -236,7 +243,14 @@ func main() {
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
-	workerErrors := make(chan error, 2)
+	workerErrors := make(chan error, 3)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := shareTasks.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() { defer workers.Done(); workerErrors <- server.Serve(listener) }()
 	{

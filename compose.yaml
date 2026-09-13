@@ -13,6 +13,8 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:?请在根目录 .env 中填写 ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在根目录 .env 中填写 ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在根目录 .env 中填写 JWT_SECRET}
+      # TMDB 密钥只传入运行容器，不参与前端或镜像构建。
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
       # 容器路径固定，不使用 Windows 开发环境的 DATA_DIR。
       DATA_DIR: /data
       STRM_ROOT: /strm

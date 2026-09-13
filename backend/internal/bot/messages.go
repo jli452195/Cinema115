@@ -1,8 +1,11 @@
 package bot
 
 import (
+	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"strm115/backend/internal/client/p115"
 )
@@ -10,6 +13,80 @@ import (
 type messageShare struct {
 	URL      string `json:"url"`
 	Password string `json:"password,omitempty"`
+}
+
+type telegramEntity struct {
+	Type   string `json:"type"`
+	Offset int    `json:"offset"`
+	Length int    `json:"length"`
+	URL    string `json:"url"`
+}
+
+func parseTelegramMessage(message *telegramMessage) []messageShare {
+	if message.Text != "" {
+		return ParseMessages(expandTelegramLinks(message.Text, message.Entities))
+	}
+	return ParseMessages(expandTelegramLinks(message.Caption, message.CaptionEntities))
+}
+
+// 将文字超链接按原位置展开，复用多链接排序、相邻提取码和去重逻辑。
+// Telegram 的偏移量按 UTF-16 计数，不能直接当作 Go 字节下标，特别是含 emoji 的图文说明。
+func expandTelegramLinks(text string, entities []telegramEntity) string {
+	if len(entities) == 0 {
+		return text
+	}
+	boundaries := make(map[int]int, utf8.RuneCountInString(text)+1)
+	units := 0
+	for index, r := range text {
+		boundaries[units] = index
+		units++
+		if r > 0xffff {
+			units++
+		}
+	}
+	boundaries[units] = len(text)
+	type linkSpan struct {
+		start, end int
+		url        string
+	}
+	spans := make([]linkSpan, 0, len(entities))
+	for _, entity := range entities {
+		if entity.Type != "text_link" || entity.Offset < 0 || entity.Length <= 0 || entity.Offset > units || entity.Length > units-entity.Offset {
+			continue
+		}
+		start, startOK := boundaries[entity.Offset]
+		end, endOK := boundaries[entity.Offset+entity.Length]
+		if !startOK || !endOK {
+			continue
+		}
+		link := strings.TrimSpace(entity.URL)
+		parsed, err := url.Parse(link)
+		// 只解析直接指向 115 的 HTTP 链接，不跟随外站跳转，也不把伪装的显示文字当作目标。
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil {
+			link = ""
+		} else if _, err := p115.ParseShareURL(link); err != nil {
+			link = ""
+		} else if match := shareLinkPattern.FindString(link); strings.TrimSuffix(link, "#") != match {
+			link = ""
+		}
+		spans = append(spans, linkSpan{start: start, end: end, url: link})
+	}
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	var expanded strings.Builder
+	expanded.Grow(len(text))
+	last := 0
+	for _, span := range spans {
+		if span.start < last {
+			continue
+		}
+		expanded.WriteString(text[last:span.start])
+		expanded.WriteByte(' ')
+		expanded.WriteString(span.url)
+		expanded.WriteByte(' ')
+		last = span.end
+	}
+	expanded.WriteString(text[last:])
+	return expanded.String()
 }
 
 var shareLinkPattern = regexp.MustCompile(`https?://(?:www\.)?(?:115\.com|115cdn\.com)/s/[A-Za-z0-9]+(?:\?[^\s<>"，。；、（）()\[\]{},;]*)?`)

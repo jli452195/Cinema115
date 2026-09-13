@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
 
 const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; logout: [] }>()
+const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
 interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string }
 const entries = ref<LogEntry[]>([])
-const level = ref<Level>('ALL')
+const level = ref<Level>('INFO')
 const search = ref('')
 const automatic = ref(true)
 const loading = ref(false)
@@ -66,9 +66,9 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-100 md:flex-row">
-    <WorkbenchSidebar active="logs" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @logout="emit('logout')" />
+    <WorkbenchSidebar @open-dashboard="emit('openDashboard')" active="logs" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @logout="emit('logout')" />
     <main class="min-w-0 flex-1 p-4 md:p-10">
-      <header class="mb-7"><p class="text-sm text-slate-500">控制台 / 查看日志</p><h1 class="mt-2 text-3xl font-semibold text-slate-900">实时日志</h1><p class="mt-3 text-sm leading-6 text-slate-500">查看 STRM 生成与转存再分享进度，最新记录显示在顶部。</p></header>
+      <header class="mb-7"><p class="text-sm text-slate-500">控制台 / 查看日志</p><h1 class="mt-2 text-3xl font-semibold text-slate-900">实时日志</h1><p class="mt-3 text-sm leading-6 text-slate-500">INFO 显示分享链接、消息批次、输出目录、生成进度、成功与失败数量及耗时，最新记录显示在顶部。逐文件路径和详细处理阶段请切换 DEBUG 查看。</p></header>
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="space-y-4 border-b border-slate-100 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">

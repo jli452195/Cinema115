@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,10 +14,52 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
 type batchGeneratorFunc func(context.Context, service.GenerateInput) (*service.GenerationResult, error)
+
+func TestBatchReviewStopsOnlyCurrentLink(t *testing.T) {
+	calls := 0
+	logs := &service.GenerationLogs{}
+	b := newBatchTestBot(t, &service.LoggedGenerator{Logs: logs, Generator: batchGeneratorFunc(func(_ context.Context, in service.GenerateInput) (*service.GenerationResult, error) {
+		calls++
+		if strings.HasSuffix(in.URL, "/review") {
+			return nil, fmt.Errorf("检查分享状态: %w", p115.ErrShareUnderReview)
+		}
+		return &service.GenerationResult{Written: 8}, nil
+	})})
+	state := telegramState{Batch: &messageBatch{UpdateID: 1, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/review"}, {URL: "https://115.com/s/normal"}}}}
+	if err := b.processBatchLink(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Batch.Next != 1 || !strings.Contains(state.Pending.Text, "❌ 【115网盘】") || !strings.Contains(state.Pending.Text, "审核") {
+		t.Fatal("审核结果不明确")
+	}
+	state.Pending = nil
+	if err := b.processBatchLink(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || state.Batch.Next != 2 || !strings.Contains(state.Pending.Text, "【2/2】") || !strings.Contains(state.Pending.Text, "成功 8 个") {
+		t.Fatal("审核影响了后续链接")
+	}
+	created, progress := 0, 0
+	for _, entry := range logs.Snapshot("INFO") {
+		if entry.Source != "Telegram" {
+			t.Fatal("批次日志缺少来源")
+		}
+		if entry.Message == "创建新的消息处理批次，2 个链接" {
+			created++
+		}
+		if entry.Message == "消息批次 1：正在处理 1/2" || entry.Message == "消息批次 1：正在处理 2/2" {
+			progress++
+		}
+	}
+	if created != 1 || progress != 2 {
+		t.Fatal("批次数量或序号日志错误")
+	}
+}
 
 func (f batchGeneratorFunc) Generate(ctx context.Context, in service.GenerateInput) (*service.GenerationResult, error) {
 	return f(ctx, in)
@@ -36,8 +79,56 @@ func newBatchTestBot(t *testing.T, generator ShareGenerator) *Telegram {
 	return b
 }
 
+func TestPollingReadsTextAndCaptionHiddenLinks(t *testing.T) {
+	var generated []string
+	b := newBatchTestBot(t, batchGeneratorFunc(func(_ context.Context, in service.GenerateInput) (*service.GenerationResult, error) {
+		share, err := p115.ParseShareURL(in.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generated = append(generated, share.Code+":"+share.Password)
+		return &service.GenerationResult{Written: 1}, nil
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	replies := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") || strings.HasSuffix(r.URL.Path, "/editMessageText") {
+			replies++
+			w.Write([]byte(`{"ok":true,"result":{"message_id":900}}`))
+			return
+		}
+		var input struct {
+			Offset int64 `json:"offset"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		if input.Offset == 105 {
+			w.Write([]byte(`{"ok":true,"result":[]}`))
+			cancel()
+			return
+		}
+		w.Write([]byte(`{"ok":true,"result":[
+		{"update_id":101,"message":{"chat":{"id":99},"text":"获取链接","entities":[{"type":"text_link","offset":0,"length":4,"url":"https://115.com/s/denied"}]}},
+		{"update_id":102,"message":{"chat":{"id":42},"from":{"is_bot":true},"text":"获取链接","entities":[{"type":"text_link","offset":0,"length":4,"url":"https://115.com/s/bot"}]}},
+		{"update_id":103,"message":{"chat":{"id":42},"text":"获取链接","entities":[{"type":"text_link","offset":0,"length":4,"url":"https://115.com/s/text?password=abcd"}]}},
+		{"update_id":104,"message":{"chat":{"id":42},"caption":"🎬 综艺\n🔗 获取链接","caption_entities":[{"type":"text_link","offset":9,"length":4,"url":"https://115cdn.com/s/swsa6rn3h9l?password=ayss"}]}}
+		]}`))
+	}))
+	defer server.Close()
+	b.BaseURL = server.URL
+	if err := b.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(generated, []string{"text:abcd", "swsa6rn3h9l:ayss"}) || replies != 4 {
+		t.Fatal("隐藏链接没有进入处理流程，或绕过聊天限制", generated, replies)
+	}
+}
+
 func TestBatchContinuesAfterFailureAndProcessesLaterMessages(t *testing.T) {
 	var generated []string
+	sends, edits := 0, 0
 	b := newBatchTestBot(t, batchGeneratorFunc(func(_ context.Context, in service.GenerateInput) (*service.GenerationResult, error) {
 		generated = append(generated, in.URL)
 		if strings.HasSuffix(in.URL, "/bad") {
@@ -57,12 +148,17 @@ func TestBatchContinuesAfterFailureAndProcessesLaterMessages(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			t.Error(err)
 		}
-		if strings.HasSuffix(r.URL.Path, "sendMessage") {
+		if strings.HasSuffix(r.URL.Path, "sendMessage") || strings.HasSuffix(r.URL.Path, "editMessageText") {
+			if strings.HasSuffix(r.URL.Path, "sendMessage") {
+				sends++
+			} else {
+				edits++
+			}
 			if in.ChatID != 42 {
 				t.Error("回复了未授权聊天")
 			}
 			replies = append(replies, in.Text)
-			w.Write([]byte(`{"ok":true,"result":{}}`))
+			w.Write([]byte(`{"ok":true,"result":{"message_id":900}}`))
 			return
 		}
 		if in.Offset == 13 {
@@ -80,8 +176,11 @@ func TestBatchContinuesAfterFailureAndProcessesLaterMessages(t *testing.T) {
 	if !reflect.DeepEqual(generated, []string{"https://115.com/s/a", "https://115.com/s/bad", "https://115.com/s/c", "https://115.com/s/a"}) {
 		t.Fatal("漏处理、乱序或跨消息错误去重", generated)
 	}
-	if len(replies) != 5 || !strings.Contains(replies[0], "已接收 3") || !strings.Contains(replies[2], "【2/3】") || !strings.Contains(replies[2], "示例失败") || !strings.Contains(replies[3], "新增 8") {
+	if len(replies) != 6 || !strings.Contains(replies[0], "开始处理 3 个链接") || !strings.Contains(replies[2], "【2/3】") || !strings.Contains(replies[2], "示例失败") || !strings.Contains(replies[3], "成功 8 个") {
 		t.Fatal("逐条结果不完整", replies)
+	}
+	if sends != 4 || edits != 2 {
+		t.Fatal("每条输入消息的开始提示应由首条结果覆盖，后续结果独立保留", sends, edits)
 	}
 	data, err := os.ReadFile(b.StatePath)
 	if err != nil {
@@ -115,9 +214,9 @@ func TestBatchRestartSkipsStartedItemAndResumesRemaining(t *testing.T) {
 			defer cancel()
 			replies := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "sendMessage") {
+				if strings.HasSuffix(r.URL.Path, "sendMessage") || strings.HasSuffix(r.URL.Path, "editMessageText") {
 					replies++
-					w.Write([]byte(`{"ok":true,"result":{}}`))
+					w.Write([]byte(`{"ok":true,"result":{"message_id":900}}`))
 					return
 				}
 				var in struct{ Offset int64 }
@@ -164,7 +263,7 @@ func TestBatchCheckpointPrecedesGeneration(t *testing.T) {
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Batch.Next != 1 || !strings.Contains(state.Pending.Text, "新增 1") {
+	if state.Batch.Next != 1 || !strings.Contains(state.Pending.Text, "成功 1 个") {
 		t.Fatal("处理结果未保存")
 	}
 }

@@ -56,12 +56,28 @@ func TestTelegramAllowlistAndDurablePendingReply(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 				}
-				if strings.HasSuffix(r.URL.Path, "sendMessage") {
+				if strings.HasSuffix(r.URL.Path, "sendMessage") || strings.HasSuffix(r.URL.Path, "editMessageText") {
 					replies.Add(1)
 					if string(input["chat_id"]) != "42" {
 						t.Error("向未授权聊天发送消息")
 					}
-					w.Write([]byte(`{"ok":true,"result":{}}`))
+					var reply struct {
+						MessageID int64 `json:"message_id"`
+						Allow     bool  `json:"allow_sending_without_reply"`
+					}
+					if strings.HasSuffix(r.URL.Path, "editMessageText") {
+						if string(input["message_id"]) != "900" || input["reply_parameters"] != nil || input["message_thread_id"] != nil {
+							t.Error("编辑没有复用 Bot 提示消息")
+						}
+					} else {
+						if err := json.Unmarshal(input["reply_parameters"], &reply); err != nil {
+							t.Error(err)
+						}
+						if reply.MessageID != 711 || !reply.Allow || string(input["message_thread_id"]) != "77" {
+							t.Error("没有引用当前聊天的原消息或丢失话题")
+						}
+					}
+					w.Write([]byte(`{"ok":true,"result":{"message_id":900}}`))
 					return
 				}
 				if string(input["offset"]) == "12" {
@@ -69,12 +85,12 @@ func TestTelegramAllowlistAndDurablePendingReply(t *testing.T) {
 					cancel()
 					return
 				}
-				w.Write([]byte(`{"ok":true,"result":[{"update_id":10,"message":{"chat":{"id":999},"text":"https://115.com/s/ignored"}},{"update_id":11,"message":{"chat":{"id":42},"text":"https://115.com/s/accepted"}}]}`))
+				w.Write([]byte(`{"ok":true,"result":[{"update_id":10,"message":{"chat":{"id":999},"text":"https://115.com/s/ignored"}},{"update_id":11,"message":{"message_id":711,"message_thread_id":77,"forward_origin":{"type":"channel","message_id":99999},"chat":{"id":42},"text":"https://115.com/s/accepted"}}]}`))
 			}))
 			defer server.Close()
 			bot.BaseURL = server.URL
 			if resume {
-				if err := bot.save(telegramState{Offset: 11, Pending: &pendingReply{UpdateID: 11, ChatID: 42, Text: "已保存的处理结果"}}); err != nil {
+				if err := bot.save(telegramState{Offset: 11, Pending: &pendingReply{UpdateID: 11, ChatID: 42, MessageID: 711, ThreadID: 77, Text: "已保存的处理结果"}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -82,10 +98,12 @@ func TestTelegramAllowlistAndDurablePendingReply(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := int32(1)
+			wantReplies := int32(2)
 			if resume {
 				want = 0
+				wantReplies = 1
 			}
-			if generator.calls.Load() != want || replies.Load() != 1 {
+			if generator.calls.Load() != want || replies.Load() != wantReplies {
 				t.Fatal("重复转存或回复数量异常", generator.calls.Load(), replies.Load())
 			}
 			data, err := os.ReadFile(bot.StatePath)

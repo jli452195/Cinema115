@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
@@ -22,7 +23,7 @@ func (a *ShareAPI) generationConfig(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "无法解析媒体库根目录"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"baseUrl": a.configuredBaseURL(), "videoExtensions": service.DefaultVideoExtensions, "outputDir": "strm", "outputRoot": filepath.ToSlash(root), "directories": []string{"strm"}})
+	c.JSON(http.StatusOK, gin.H{"baseUrl": a.configuredBaseURL(), "videoExtensions": service.DefaultVideoExtensions, "metadataExtensions": service.DefaultMetadataExtensions, "outputDir": "strm", "outputRoot": filepath.ToSlash(root), "directories": []string{"strm"}})
 }
 
 // 网页保存的地址实时供网页、单文件生成和机器人使用，无需重启。
@@ -102,7 +103,7 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 		if errors.Is(err, service.ErrGenerationInput) {
 			code = http.StatusBadRequest
 		}
-		if errors.Is(err, service.ErrNoMedia) {
+		if errors.Is(err, service.ErrNoMedia) || errors.Is(err, p115.ErrShareUnderReview) {
 			code = http.StatusUnprocessableEntity
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -131,5 +132,5 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 		respond(code, response)
 		return
 	}
-	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
+	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "metadataCount": result.MetadataWritten, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
 }

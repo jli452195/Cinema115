@@ -18,6 +18,7 @@ import (
 
 type TransferClient interface {
 	ShareLister
+	ListForTransfer(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error)
 	CreateDirectory(context.Context, string, string, string) (string, error)
 	ReceiveShare(context.Context, *p115.ShareInfo, []string, string, string) error
 	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
@@ -51,11 +52,23 @@ func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie fu
 
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
 	settings := w.Settings.Value()
+	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
+		settings = saved
+	}
+	switch input.Mode {
+	case "direct":
+		settings.ReshareEnabled = false
+	case "reshare":
+		settings.ReshareEnabled = true
+	case "":
+	default:
+		return nil, generationInputError("分享模式无效")
+	}
 	if !settings.ReshareEnabled {
-		reportGeneration(ctx, "generating", "转存再分享已关闭：正在读取原分享并直接生成 STRM")
+		reportGenerationWithLevel(ctx, "INFO", "generating", "转存再分享已关闭：正在读取原分享并直接生成 STRM")
 		return w.Generator.Generate(ctx, input)
 	}
-	reportGeneration(ctx, "starting", "转存再分享已开启：完整校验转存后创建长期分享，再生成 STRM 和清理临时目录")
+	reportGenerationWithLevel(ctx, "INFO", "starting", "转存再分享已开启：完整校验转存后创建长期分享，再生成 STRM 和清理临时目录")
 	if err := ValidateGenerationOptions(w.Root, input); err != nil {
 		return nil, err
 	}
@@ -67,7 +80,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 		share.Password = strings.TrimSpace(input.Password)
 	}
 	if settings.FixedSharePassword != "" && share.Password == settings.FixedSharePassword {
-		reportGeneration(ctx, "generating", "分享提取码匹配固定密码：跳过转存，直接使用原分享生成 STRM")
+		reportGenerationWithLevel(ctx, "INFO", "generating", "分享提取码匹配固定密码：跳过转存，直接使用原分享生成 STRM")
 		return w.Generator.Generate(ctx, input)
 	}
 	sharePassword, err := newSharePassword(settings.FixedSharePassword)
@@ -89,8 +102,13 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	reportGeneration(ctx, "scanning", "正在读取原分享的完整目录")
-	source, roots, err := w.snapshot(ctx, share, input.CID, cookie)
+	source, roots, err := w.scanDirectory(ctx, input.CID, "正在核对原分享目录及转存审核状态", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
+	})
 	if err != nil {
+		if errors.Is(err, p115.ErrShareUnderReview) {
+			err = errors.Join(err, errSourceShareReview)
+		}
 		return nil, fmt.Errorf("读取原分享: %w", err)
 	}
 	if len(roots) == 0 || len(roots) > 1000 {
@@ -212,7 +230,8 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	input.URL = own.URL
 	input.Password = own.Password
 	input.CID = "0"
-	result, err = w.Generator.Generate(ctx, input)
+	// 新分享的生成与清理校验使用同一账号，避免任务中途切换登录影响读取。
+	result, err = w.Generator.Generate(context.WithValue(ctx, generationCookieKey{}, cookie), input)
 	if result != nil {
 		result.ReshareURL = own.URL
 		result.TempDirectoryID = job.DirectoryID
@@ -222,6 +241,13 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	// 按本人 Cookie 的可读性校验完整快照，不以匿名访问时的审核状态阻止清理。
+	if err := persist("checking_cleanup"); err != nil {
+		return result, err
+	}
+	if err := verify(ctx); err != nil {
+		return result, fmt.Errorf("STRM 已生成，但使用本次登录 Cookie 复查新分享目录失败，保留临时目录: %w", err)
 	}
 	// Cookie 在任务内固定，避免用户切换账号后误删另一个账号的同名目录。
 	if err := persist("deleting"); err != nil {
@@ -247,20 +273,43 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 func (w *ShareWorkflow) until(ctx context.Context, check func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	var lastErr error
+	// 保留最后一次有效校验原因，避免截止时的网络取消覆盖目录差异或重复拼接超时。
+	stopped := func() error {
+		cause := ctx.Err()
+		message := "等待 115 处理已取消"
+		if errors.Is(cause, context.DeadlineExceeded) {
+			message = "等待 115 处理超时"
+		}
+		if lastErr != nil {
+			return fmt.Errorf("%s: %w；最后一次校验: %w", message, cause, lastErr)
+		}
+		return fmt.Errorf("%s: %w", message, cause)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return stopped()
 		}
 		err := check(ctx)
 		if err == nil {
 			return nil
+		}
+		// 审核不是快照生成延迟，立即结束，不进入 90 秒等待和后续清理。
+		if errors.Is(err, p115.ErrShareUnderReview) {
+			return err
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			lastErr = err
+		}
+		if ctx.Err() != nil {
+			return stopped()
 		}
 		reportGeneration(ctx, "waiting", "等待 115 完成处理（本阶段最多 90 秒）："+err.Error())
 		timer := time.NewTimer(w.PollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return errors.Join(ctx.Err(), err)
+			return stopped()
 		case <-timer.C:
 		}
 	}
@@ -280,10 +329,12 @@ func stageMessage(stage string) string {
 		return "正在核对新分享的完整快照"
 	case "generating":
 		return "正在使用新分享生成 STRM"
+	case "checking_cleanup":
+		return "STRM 已生成，正在使用本次登录 Cookie 核对新分享目录"
 	case "deleting":
 		return "正在将本次临时目录移入回收站"
 	case "deleted":
-		return "临时目录已删除，正在复查分享"
+		return "临时目录已删除，正在使用本次登录 Cookie 复查新分享"
 	case "completed":
 		return "生成和清理完成，新分享长期有效"
 	default:

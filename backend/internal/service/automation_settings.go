@@ -17,6 +17,9 @@ type AutomationSettings struct {
 	ReshareEnabled     bool          `json:"reshareEnabled"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
 	ParentCID          string        `json:"parentCID"`
+	ReviewRetryEnabled bool          `json:"reviewRetryEnabled"`
+	ReviewRetryMinutes int           `json:"reviewRetryMinutes"`
+	ReviewRetryMax     int           `json:"reviewRetryMax"`
 	Generation         GenerateInput `json:"generation"`
 }
 
@@ -28,6 +31,8 @@ type AutomationStore struct {
 
 func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
 	s := &AutomationStore{path: path, root: root, value: AutomationSettings{ParentCID: "0", Generation: GenerateInput{BaseURL: baseURL, OutputDir: "strm", VideoExtensions: DefaultVideoExtensions, Recursive: true}}}
+	s.value.ReviewRetryMinutes, s.value.ReviewRetryMax = 30, 6
+	s.value.Generation.MetadataExtensions = DefaultMetadataExtensions
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -54,6 +59,17 @@ var extensionsPattern = regexp.MustCompile(`^[a-zA-Z0-9.,，\s]+$`)
 
 // ValidateGenerationOptions 在转存之前检查所有本地生成选项。
 func ValidateGenerationOptions(root string, input GenerateInput) error {
+	videoTypes := make(map[string]bool)
+	videoRaw := input.VideoExtensions
+	if strings.TrimSpace(videoRaw) == "" {
+		videoRaw = DefaultVideoExtensions
+	}
+	for _, ext := range strings.Split(strings.ReplaceAll(videoRaw, "，", ","), ",") {
+		videoTypes["."+strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))] = true
+	}
+	if _, err := parseMetadataExtensions(input.MetadataExtensions, videoTypes); err != nil {
+		return err
+	}
 	if _, err := ValidateBaseURL(input.BaseURL); err != nil {
 		return err
 	}
@@ -96,6 +112,9 @@ func ValidateGenerationOptions(root string, input GenerateInput) error {
 }
 
 func (s *AutomationStore) validate(value AutomationSettings) error {
+	if value.ReviewRetryMinutes < 1 || value.ReviewRetryMinutes > 1440 || value.ReviewRetryMax < 1 || value.ReviewRetryMax > 100 {
+		return generationInputError("审核重试间隔应为 1～1440 分钟，最大重试次数应为 1～100")
+	}
 	if value.FixedSharePassword != "" && !sharePasswordPattern.MatchString(value.FixedSharePassword) {
 		return generationInputError("固定分享密码应为 4 位英文字母或数字，留空则随机生成")
 	}
@@ -106,11 +125,19 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 }
 
 func (s *AutomationStore) Save(value AutomationSettings) error {
+	// 兼容未传新字段的旧客户端，零值采用默认配置。
+	if value.ReviewRetryMinutes == 0 {
+		value.ReviewRetryMinutes = 30
+	}
+	if value.ReviewRetryMax == 0 {
+		value.ReviewRetryMax = 6
+	}
 	value.FixedSharePassword = strings.TrimSpace(value.FixedSharePassword)
 	// 配置仅保存生成选项，不保存上一次收到的分享链接及提取码。
 	value.Generation.URL = ""
 	value.Generation.Password = ""
 	value.Generation.CID = ""
+	value.Generation.Mode = ""
 	if err := s.validate(value); err != nil {
 		return err
 	}

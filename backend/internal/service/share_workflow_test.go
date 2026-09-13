@@ -14,6 +14,7 @@ import (
 )
 
 type transferFake struct {
+	reviewStage        string
 	missingChildren    int
 	childScans         int
 	fail               string
@@ -24,8 +25,21 @@ type transferFake struct {
 	listCalls          int
 }
 
-func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
+func (f *transferFake) ListForTransfer(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
+	return f.List(ctx, share, cid, offset, cookie)
+}
+
+func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string, _ int, cookie string) (*p115.SharePage, error) {
 	f.listCalls++
+	if cookie != "original-cookie" {
+		return nil, errors.New("校验没有使用本次登录 Cookie")
+	}
+	if f.reviewStage == "deleted" && f.deleted {
+		return nil, p115.ErrShareUnderReview
+	}
+	if f.reviewStage == "source" && share.Code == "source" || f.reviewStage == "own" && share.Code == "own" {
+		return nil, p115.ErrShareUnderReview
+	}
 	if share.Code == "own" && cid == "0" {
 		f.newSnapshots++
 		if f.fail == "snapshot" || f.newSnapshots == 1 {

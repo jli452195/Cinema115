@@ -34,6 +34,12 @@ func TestFrontendAndAPIShareServer(t *testing.T) {
 	}{
 		{"GET", "/", 200, "Cinema115", "no-cache"},
 		{"GET", "/login", 200, "Cinema115", "no-cache"},
+		{"GET", "/tv", 200, "Cinema115", "no-cache"},
+		{"GET", "/movie", 200, "Cinema115", "no-cache"},
+		{"HEAD", "/movie", 200, "", "no-cache"},
+		{"GET", "/movie/550", 200, "Cinema115", "no-cache"},
+		{"GET", "/tv/1399", 200, "Cinema115", "no-cache"},
+		{"HEAD", "/tv/1399", 200, "", "no-cache"},
 		{"GET", "/assets/app.js", 200, "console.log", "immutable"},
 		{"GET", "/assets/missing.js", 404, "", ""},
 		{"GET", "/assets/", 404, "", ""},

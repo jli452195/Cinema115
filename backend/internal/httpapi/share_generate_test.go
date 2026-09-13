@@ -81,6 +81,36 @@ func TestBatchGenerationHTTP(t *testing.T) {
 	}
 }
 
+func TestReviewReturnsActionableErrorToPage(t *testing.T) {
+	for _, endpoint := range []string{"generate", "generate-stream"} {
+		t.Run(endpoint, func(t *testing.T) {
+			requests := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Write([]byte(`{"state":false,"error":"分享正在审核中"}`))
+			}))
+			defer upstream.Close()
+			api := NewShareAPI("test-secret", func() string { return "test-cookie" })
+			api.OutputRoot = t.TempDir()
+			api.Client.WebURL = upstream.URL
+			r := gin.New()
+			api.Register(r, r.Group("/api/admin"))
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/share/"+endpoint, strings.NewReader(`{"url":"https://115.com/s/demo?password=abcd","outputDir":"strm"}`))
+			r.ServeHTTP(response, request)
+			if requests != 1 || !strings.Contains(response.Body.String(), "审核中") || !strings.Contains(response.Body.String(), "已停止") {
+				t.Fatal("网页未收到明确审核结果", response.Code)
+			}
+			if endpoint == "generate" && response.Code != 422 {
+				t.Fatal("审核应返回 422")
+			}
+			if endpoint == "generate-stream" && (!strings.Contains(response.Body.String(), `"event":"error"`) || !strings.Contains(response.Body.String(), `"status":422`) || strings.Contains(response.Body.String(), `"event":"result"`)) {
+				t.Fatal("流式生成未终止为错误事件")
+			}
+		})
+	}
+}
+
 func TestSingleSTRMUsesSelectedBaseURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	api := NewShareAPI("secret", func() string { return "" })

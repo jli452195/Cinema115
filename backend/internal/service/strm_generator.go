@@ -10,15 +10,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"strm115/backend/internal/client/p115"
 )
 
 const DefaultVideoExtensions = "mp4,mkv,ts,iso,rmvb,avi,mov,mpeg,mpg,wmv,3gp,asf,m4v,m2ts,webm"
+const DefaultMetadataExtensions = "srt,ass,ssa"
 
 var ErrGenerationInput = errors.New("生成配置无效")
 var ErrNoMedia = errors.New("没有符合条件的视频，请检查分享目录、视频后缀和最小文件大小")
+
+// generationCookieKey 仅在转存工作流内部传递本次会话，不进入请求参数、日志或持久化记录。
+type generationCookieKey struct{}
 
 type ShareLister interface {
 	List(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error)
@@ -26,19 +31,26 @@ type ShareLister interface {
 
 // GenerateInput 是网页和后续机器人共用的生成参数，不含管理员令牌和网盘凭证。
 type GenerateInput struct {
-	URL             string `json:"url"`
-	Password        string `json:"password"`
-	CID             string `json:"cid"`
-	OutputDir       string `json:"outputDir"`
-	BaseURL         string `json:"baseUrl"`
-	VideoExtensions string `json:"videoExtensions"`
-	MinSizeMB       int64  `json:"minSizeMB"`
-	Recursive       bool   `json:"recursive"`
+	Mode               string `json:"mode,omitempty"`
+	URL                string `json:"url"`
+	Password           string `json:"password"`
+	CID                string `json:"cid"`
+	OutputDir          string `json:"outputDir"`
+	BaseURL            string `json:"baseUrl"`
+	VideoExtensions    string `json:"videoExtensions"`
+	MetadataExtensions string `json:"metadataExtensions"`
+	MinSizeMB          int64  `json:"minSizeMB"`
+	Recursive          bool   `json:"recursive"`
 }
 
 type GeneratedSTRM struct {
 	Path    string
 	Content string
+}
+type GeneratedMetadata struct {
+	Path string
+	ID   string
+	Size int64
 }
 type GenerationResult struct {
 	ReshareURL      string
@@ -48,9 +60,13 @@ type GenerationResult struct {
 	Files           []GeneratedSTRM
 	Skipped         int
 	Written         int
+	Failed          int
+	MetadataFiles   []GeneratedMetadata
+	MetadataWritten int
+	MetadataFailed  int
 }
 
-// STRMGenerator 只读取分享目录和写入播放入口，不转存或下载媒体文件。
+// STRMGenerator 读取分享目录、写入播放入口及选定的配套元数据，不转存或下载视频。
 type STRMGenerator struct {
 	Client ShareLister
 	Cookie func() string
@@ -94,7 +110,7 @@ func safeSTRMName(raw string) string {
 	return name
 }
 
-func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
+func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (output *GenerationResult, err error) {
 	share, err := p115.ParseShareURL(input.URL)
 	if err != nil {
 		return nil, generationInputError(err.Error())
@@ -145,11 +161,28 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 	if len(extensions) == 0 {
 		return nil, generationInputError("请至少填写一个视频后缀")
 	}
-	cookie := g.Cookie()
+	metadataExtensions, err := parseMetadataExtensions(input.MetadataExtensions, extensions)
+	if err != nil {
+		return nil, err
+	}
+	cookie, pinned := ctx.Value(generationCookieKey{}).(string)
+	if !pinned {
+		cookie = g.Cookie()
+	}
 	if cookie == "" {
 		return nil, generationInputError("请先在 115 网盘页面完成登录")
 	}
 	result := &GenerationResult{Files: make([]GeneratedSTRM, 0)}
+	started := time.Now()
+	defer func() {
+		label := "STRM 生成完成！"
+		remainder := ""
+		if err != nil {
+			label = "STRM 生成中断！"
+			remainder = fmt.Sprintf("，未处理：%d", len(result.Files)-result.Written-result.Failed)
+		}
+		logGeneration(ctx, "INFO", fmt.Sprintf("%s成功：%d，失败：%d%s，耗时 %.2f 秒", label, result.Written, result.Failed, remainder, time.Since(started).Seconds()))
+	}()
 	visited := make(map[string]bool)
 	usedPaths := make(map[string]bool)
 	entries, pages := 0, 0
@@ -182,7 +215,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 			if len(page.Files) == 0 && offset < page.Count {
 				return fmt.Errorf("分享分页不完整，请重试")
 			}
-			logGeneration(ctx, "DEBUG", fmt.Sprintf("读取分享目录第 %d 页，本页 %d 项", pages, len(page.Files)))
+			logGeneration(ctx, "INFO", fmt.Sprintf("读取分享目录第 %d 页，本页 %d 项", pages, len(page.Files)))
 			for _, file := range page.Files {
 				entries++
 				if entries > 20000 {
@@ -193,7 +226,8 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 					return fmt.Errorf("分享文件列表存在空 ID 或重复条目，请重试")
 				}
 				seen[key] = true
-				if !file.Directory && (!extensions[strings.ToLower(path.Ext(file.Name))] || file.Size < input.MinSizeMB*(1<<20)) {
+				isMetadata := !file.Directory && metadataExtensions[strings.ToLower(path.Ext(file.Name))]
+				if !file.Directory && !isMetadata && (!extensions[strings.ToLower(path.Ext(file.Name))] || file.Size < input.MinSizeMB*(1<<20)) {
 					result.Skipped++
 					logGeneration(ctx, "DEBUG", "按后缀或大小过滤："+safeSTRMName(file.Name))
 					continue
@@ -202,7 +236,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 					continue
 				}
 				name := safeSTRMName(file.Name)
-				if !file.Directory {
+				if !file.Directory && !isMetadata {
 					name = safeSTRMName(strings.TrimSuffix(file.Name, path.Ext(file.Name))) + ".strm"
 				}
 				relative := path.Join(parent, name)
@@ -218,6 +252,13 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 					if err := walk(file.ID, relative, depth+1); err != nil {
 						return err
 					}
+					continue
+				}
+				if isMetadata {
+					if file.Size > p115.MaxMetadataSize {
+						return fmt.Errorf("元数据文件超过 32 MB：%s", safeSTRMName(file.Name))
+					}
+					result.MetadataFiles = append(result.MetadataFiles, GeneratedMetadata{Path: relative, ID: file.ID, Size: file.Size})
 					continue
 				}
 				if len(result.Files) >= 10000 {
@@ -252,15 +293,26 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (*Gen
 		}
 		destination := filepath.Join(directory, filepath.FromSlash(file.Path))
 		if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
+			result.Failed++
 			return result, fmt.Errorf("创建视频子目录: %w", err)
 		}
 		if err := writeSTRM(ctx, destination, file.Content); err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				result.Failed++
+			}
 			return result, fmt.Errorf("写入 STRM: %w", err)
 		}
 		result.Written++
-		logGeneration(ctx, "INFO", "STRM 生成成功："+filepath.ToSlash(destination))
+		logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(destination))
+		// INFO 每成功写入十个文件更新一次，最后不足十个也报告完整进度。
+		if result.Written%10 == 0 || result.Written == len(result.Files) {
+			logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成成功：%d/%d", result.Written, len(result.Files)))
+		}
 	}
-	logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成完成：新增 %d", result.Written))
+	logGeneration(ctx, "DEBUG", fmt.Sprintf("STRM 生成完成：新增 %d", result.Written))
+	if err := g.copyMetadata(ctx, share, cookie, directory, result); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 

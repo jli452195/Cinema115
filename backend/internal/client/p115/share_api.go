@@ -96,14 +96,7 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 	if resp.StatusCode != http.StatusOK {
 		return nil, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
-	var envelope struct {
-		State   json.RawMessage `json:"state"`
-		Code    json.RawMessage `json:"code"`
-		Errno   json.RawMessage `json:"errno"`
-		Error   string          `json:"error"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
-	}
+	var envelope shareResponse
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil {
 		return nil, fmt.Errorf("读取 115 响应: %w", err)
@@ -115,19 +108,24 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 		return nil, fmt.Errorf("115 返回了无法解析的分享数据")
 	}
 	if !upstreamOK(envelope.State) {
-		msg := envelope.Error
-		if msg == "" {
-			msg = envelope.Message
+		if envelope.underReview() {
+			return nil, ErrShareUnderReview
 		}
-		if msg == "" {
-			msg = "请检查分享有效期、提取码及 115 登录状态"
-		}
-		return nil, fmt.Errorf("115 拒绝请求：%s", msg)
+		return nil, fmt.Errorf("115 拒绝请求：%s", envelope.message())
 	}
 	return raw, nil
 }
 
 func (c *ShareClient) List(ctx context.Context, share *ShareInfo, cid string, offset int, cookie string) (*SharePage, error) {
+	return c.list(ctx, share, cid, offset, cookie, false)
+}
+
+// ListForTransfer 在同一次目录响应中检查审核与归属，不能将可读列表当作可转存许可。
+func (c *ShareClient) ListForTransfer(ctx context.Context, share *ShareInfo, cid string, offset int, cookie string) (*SharePage, error) {
+	return c.list(ctx, share, cid, offset, cookie, true)
+}
+
+func (c *ShareClient) list(ctx context.Context, share *ShareInfo, cid string, offset int, cookie string, forTransfer bool) (*SharePage, error) {
 	if cid == "" {
 		cid = "0"
 	}
@@ -135,12 +133,26 @@ func (c *ShareClient) List(ctx context.Context, share *ShareInfo, cid string, of
 		return nil, fmt.Errorf("分页偏移不能为负数")
 	}
 	query := url.Values{"share_code": {share.Code}, "receive_code": {share.Password}, "cid": {cid}, "offset": {strconv.Itoa(offset)}, "limit": {"100"}}
-	data, err := c.request(ctx, http.MethodGet, c.WebURL+"/share/snap?"+query.Encode(), cookie, nil)
+	response, err := c.requestEnvelope(ctx, http.MethodGet, c.WebURL+"/share/snap?"+query.Encode(), cookie, nil)
 	if err != nil {
 		return nil, err
 	}
+	var envelope shareResponse
+	if err := json.Unmarshal(response, &envelope); err != nil {
+		return nil, fmt.Errorf("解析分享响应: %w", err)
+	}
+	page, err := parseSharePage(envelope.Data, offset)
+	// 普通生成仍以列表可读为准；转存他人审核中的分享则必须在云端写入前停止。
+	// 无法确认归属时不放行待审核转存，缺失审核字段本身不作为审核证据。
+	if envelope.underReview() && (err != nil || forTransfer && !envelope.ownedBy(cookie)) {
+		return nil, ErrShareUnderReview
+	}
+	return page, err
+}
+
+func parseSharePage(data json.RawMessage, offset int) (*SharePage, error) {
 	var raw struct {
-		Count int `json:"count"`
+		Count *int `json:"count"`
 		List  []struct {
 			FID  json.Number `json:"fid"`
 			CID  json.Number `json:"cid"`
@@ -151,13 +163,21 @@ func (c *ShareClient) List(ctx context.Context, share *ShareInfo, cid string, of
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("解析分享文件列表: %w", err)
 	}
-	page := &SharePage{Files: make([]ShareFile, 0, len(raw.List)), Count: raw.Count, Offset: offset}
+	if raw.Count == nil || *raw.Count < 0 || raw.List == nil || len(raw.List) == 0 && offset < *raw.Count || len(raw.List) > 0 && int64(offset)+int64(len(raw.List)) > int64(*raw.Count) {
+		return nil, fmt.Errorf("分享文件列表缺失或分页不完整")
+	}
+	page := &SharePage{Files: make([]ShareFile, 0, len(raw.List)), Count: *raw.Count, Offset: offset}
+	seen := make(map[string]bool, len(raw.List))
 	for _, f := range raw.List {
 		directory := f.FID.String() == "" || f.FID.String() == "0"
 		id := f.FID.String()
 		if directory {
 			id = f.CID.String()
 		}
+		if _, err := strconv.ParseUint(id, 10, 64); err != nil || id == "0" || seen[id] {
+			return nil, fmt.Errorf("分享条目 ID 无效或重复")
+		}
+		seen[id] = true
 		size, err := strconv.ParseInt(f.Size.String(), 10, 64)
 		if err != nil && f.Size.String() != "" {
 			return nil, fmt.Errorf("文件大小无效: %w", err)

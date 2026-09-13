@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +25,7 @@ type GenerationLog struct {
 	Message string    `json:"message"`
 }
 
-// GenerationLogs 使用固定容量环形缓冲区，日志不含分享地址或登录凭证。
+// GenerationLogs 使用固定容量环形缓冲区，允许记录分享链接，不记录登录凭证。
 type GenerationLogs struct {
 	mu                     sync.RWMutex
 	entries                [GenerationLogCapacity]GenerationLog
@@ -61,6 +64,18 @@ func (s *GenerationLogs) Snapshot(level string) []GenerationLog {
 
 type generationLogKey struct{}
 type generationSourceKey struct{}
+type generationBatchKey struct{}
+
+type generationBatch struct {
+	id           int64
+	index, total int
+}
+
+// WithGenerationBatch 传递已保存的消息批次及当前链接序号，不改变队列执行方式。
+func WithGenerationBatch(ctx context.Context, id int64, index, total int) context.Context {
+	return context.WithValue(ctx, generationBatchKey{}, generationBatch{id, index, total})
+}
+
 type generationLogger struct {
 	store        *GenerationLogs
 	task, source string
@@ -80,6 +95,7 @@ func logGeneration(ctx context.Context, level, message string) {
 type LoggedGenerator struct {
 	Generator MediaGenerator
 	Logs      *GenerationLogs
+	Root      string
 }
 
 func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
@@ -94,7 +110,36 @@ func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (re
 	ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{g.Logs, task, source})
 	ctx = p115.WithRequestProgress(ctx, func(message string) { reportGeneration(ctx, "retrying", message) })
 	started := time.Now()
-	logGeneration(ctx, "INFO", "开始生成 STRM")
+	if batch, ok := ctx.Value(generationBatchKey{}).(generationBatch); ok && source == "Telegram" {
+		if batch.index == 1 {
+			logGeneration(ctx, "INFO", fmt.Sprintf("创建新的消息处理批次，%d 个链接", batch.total))
+		}
+		logGeneration(ctx, "INFO", fmt.Sprintf("消息批次 %d：正在处理 %d/%d", batch.id, batch.index, batch.total))
+	}
+	mode := "仅当前目录"
+	if input.Recursive {
+		mode = "包含所有子目录"
+	}
+	logGeneration(ctx, "INFO", "遍历模式："+mode)
+	if share, parseErr := p115.ParseShareURL(input.URL); parseErr == nil {
+		if input.Password != "" {
+			share.Password = strings.TrimSpace(input.Password)
+		}
+		// 仅重建分享码和实际提取码，避免原始 URL 夹带令牌、用户信息或其他参数。
+		link := "https://115cdn.com/s/" + url.PathEscape(share.Code)
+		if share.Password != "" {
+			link += "?password=" + url.QueryEscape(share.Password)
+		}
+		logGeneration(ctx, "INFO", "115链接："+link)
+		logGeneration(ctx, "INFO", "开始处理任务："+url.PathEscape(share.Code))
+	} else {
+		logGeneration(ctx, "INFO", "开始处理任务："+task)
+	}
+	if g.Root != "" {
+		if directory, resolveErr := ResolveOutputDirectory(g.Root, input.OutputDir); resolveErr == nil {
+			logGeneration(ctx, "INFO", fmt.Sprintf("使用配置的目录：%s（%s）", filepath.ToSlash(filepath.Clean(input.OutputDir)), filepath.ToSlash(directory)))
+		}
+	}
 	defer func() {
 		elapsed := time.Since(started).Seconds()
 		counts := ""
@@ -102,12 +147,18 @@ func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (re
 			counts = fmt.Sprintf("，新增 %d", result.Written)
 		}
 		if err == nil {
-			logGeneration(ctx, "INFO", fmt.Sprintf("任务完成%s，总耗时 %.2f 秒", counts, elapsed))
+			label := "分享生成 STRM 完成！"
+			if result != nil && result.ReshareURL != "" {
+				label = "转存分享生成 STRM 完成！"
+			}
+			logGeneration(ctx, "INFO", fmt.Sprintf("%s总耗时 %.2f 秒", label, elapsed))
 			return
 		}
 		level, reason := "ERROR", "生成失败："+generationErrorDetail(err, input)
 		// 保留错误上下文；地址和凭证先脱敏，再交给日志缓冲区限制长度。
 		switch {
+		case errors.Is(err, p115.ErrShareUnderReview):
+			level, reason = "WARNING", "分享审核中，已停止处理："+generationErrorDetail(err, input)
 		case errors.Is(err, context.Canceled):
 			level, reason = "WARNING", "任务已取消"
 		case errors.Is(err, context.DeadlineExceeded):

@@ -24,6 +24,29 @@ func generationOptions(t *testing.T) GenerateInput {
 	return GenerateInput{URL: "https://115.com/s/demo?password=old", Password: "a+b&c", BaseURL: "http://192.168.0.24:3002", OutputDir: "strm", MinSizeMB: 1, Recursive: true}
 }
 
+func TestSTRMFailureCountExcludesUnprocessedFiles(t *testing.T) {
+	root := t.TempDir()
+	input := generationOptions(t)
+	// 用非空同名目录模拟文件写入失败，第二个文件尚未尝试写入。
+	conflict := filepath.Join(root, input.OutputDir, "a.strm")
+	if err := os.MkdirAll(conflict, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conflict, "keep"), []byte("已有内容"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
+		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", Size: 2 << 20}, {ID: "2", Name: "b.mkv", Size: 2 << 20}}}, nil
+	})
+	result, err := (&STRMGenerator{Root: root, Client: client, Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
+	if err == nil || result == nil || result.Written != 0 || result.Failed != 1 || len(result.Files) != 2 {
+		t.Fatal("写入失败与未处理文件统计错误", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, input.OutputDir, "b.strm")); !os.IsNotExist(err) {
+		t.Fatal("失败后不应继续写入")
+	}
+}
+
 func TestGenerateRecursivePaginatedDirectory(t *testing.T) {
 	input := generationOptions(t)
 	calls := 0

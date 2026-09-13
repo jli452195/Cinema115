@@ -48,9 +48,13 @@ func NewTelegram(token, chats, dataDir string, generator ShareGenerator, setting
 }
 
 type telegramMessage struct {
-	Text    string `json:"text"`
-	Caption string `json:"caption"`
-	From    struct {
+	ID              int64            `json:"message_id"`
+	ThreadID        int64            `json:"message_thread_id"`
+	Text            string           `json:"text"`
+	Caption         string           `json:"caption"`
+	Entities        []telegramEntity `json:"entities"`
+	CaptionEntities []telegramEntity `json:"caption_entities"`
+	From            struct {
 		IsBot bool `json:"is_bot"`
 	} `json:"from"`
 	Chat struct {
@@ -62,10 +66,37 @@ type telegramUpdate struct {
 	Message *telegramMessage `json:"message"`
 }
 type pendingReply struct {
-	UpdateID int64  `json:"updateID"`
-	ChatID   int64  `json:"chatID"`
-	Text     string `json:"text"`
+	UpdateID      int64  `json:"updateID"`
+	ChatID        int64  `json:"chatID"`
+	Text          string `json:"text"`
+	MessageID     int64  `json:"messageID,omitempty"`
+	ThreadID      int64  `json:"threadID,omitempty"`
+	PreviewURL    string `json:"previewURL,omitempty"`
+	EditMessageID int64  `json:"editMessageID,omitempty"`
 }
+
+// 引用当前聊天收到的原消息，转发来源的消息编号不能用于当前聊天的回复。
+func (p *pendingReply) request() map[string]any {
+	input := map[string]any{"chat_id": p.ChatID, "text": p.Text, "link_preview_options": map[string]any{"is_disabled": true}}
+	if p.MessageID > 0 {
+		input["reply_parameters"] = map[string]any{"message_id": p.MessageID, "allow_sending_without_reply": true}
+	}
+	if p.ThreadID > 0 {
+		input["message_thread_id"] = p.ThreadID
+	}
+	if p.PreviewURL != "" {
+		input["link_preview_options"] = map[string]any{"is_disabled": false, "url": p.PreviewURL}
+	}
+	if p.EditMessageID > 0 {
+		input["message_id"] = p.EditMessageID
+		delete(input, "reply_parameters")
+		delete(input, "message_thread_id")
+	}
+	return input
+}
+
+var errTelegramEditMessageMissing = errors.New("待更新的 Telegram 消息已删除")
+
 type telegramState struct {
 	Offset  int64         `json:"offset"`
 	Pending *pendingReply `json:"pending,omitempty"`
@@ -88,6 +119,22 @@ func (b *Telegram) call(ctx context.Context, method string, input, output any) e
 		return fmt.Errorf("Telegram 网络请求失败")
 	}
 	defer resp.Body.Close()
+	// 编辑成功但本地尚未保存时，重试会返回内容未变化，应视为已经完成。
+	if resp.StatusCode == http.StatusBadRequest && method == "editMessageText" {
+		var failure struct {
+			Description string `json:"description"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&failure) == nil {
+			description := strings.ToLower(failure.Description)
+			if strings.Contains(description, "message is not modified") {
+				return nil
+			}
+			if strings.Contains(description, "message to edit not found") {
+				return errTelegramEditMessageMissing
+			}
+		}
+		return fmt.Errorf("Telegram 更新消息失败（HTTP 400）")
+	}
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("Bot Token 无效或已被撤销")
@@ -164,12 +211,41 @@ func (b *Telegram) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := b.call(ctx, "sendMessage", map[string]any{"chat_id": pending.ChatID, "text": pending.Text, "link_preview_options": map[string]bool{"is_disabled": true}}, nil); err != nil {
+			method := "sendMessage"
+			var sent telegramMessage
+			var output any
+			starting := state.Batch != nil && state.Batch.Next == 0
+			if pending.EditMessageID > 0 {
+				method = "editMessageText"
+			} else if starting {
+				output = &sent
+			}
+			if err := b.call(ctx, method, pending.request(), output); err != nil {
+				if errors.Is(err, errTelegramEditMessageMissing) {
+					// 提示被用户删除时补发已保存结果，不重新生成或转存。
+					pending.EditMessageID = 0
+					if state.Batch != nil {
+						state.Batch.StatusMessageID = 0
+					}
+					if err := b.save(state); err != nil {
+						return fmt.Errorf("保存 Telegram 补发状态: %w", err)
+					}
+					continue
+				}
 				log.Printf("Telegram 回复失败，稍后重试（不会重复转存）")
 				if !botDelay(ctx) {
 					break
 				}
 				continue
+			}
+			if starting {
+				if sent.ID <= 0 {
+					return fmt.Errorf("Telegram 未返回开始提示的消息 ID，已停止生成")
+				}
+				state.Batch.StatusMessageID = sent.ID
+			} else if state.Batch != nil {
+				// 首条结果覆盖开始提示；后续链接仍逐条保留结果，避免覆盖已完成链接。
+				state.Batch.StatusMessageID = 0
 			}
 			if state.Batch == nil {
 				state.Offset = pending.UpdateID + 1
@@ -223,11 +299,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			text := m.Text
-			if text == "" {
-				text = m.Caption
-			}
-			links := ParseMessages(text)
+			links := parseTelegramMessage(m)
 			if len(links) == 0 {
 				state.Offset = update.ID + 1
 				if err := b.save(state); err != nil {
@@ -235,10 +307,8 @@ func (b *Telegram) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			state.Batch = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, Items: links}
-			if len(links) > 1 {
-				state.Pending = &pendingReply{UpdateID: update.ID, ChatID: m.Chat.ID, Text: fmt.Sprintf("已接收 %d 个 115 分享链接，将按顺序逐个处理并回复结果。", len(links))}
-			}
+			state.Batch = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Items: links}
+			state.Pending = &pendingReply{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(links))}
 			// 先保存整条消息的队列，服务重启后继续尚未开始的链接。
 			if err := b.save(state); err != nil {
 				return fmt.Errorf("记录 Telegram 任务: %w", err)
