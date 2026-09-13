@@ -1,0 +1,151 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/storage"
+)
+
+type cacheTMDBFake struct {
+	calls    atomic.Int32
+	mu       sync.Mutex
+	episodes []tmdb.Episode
+	failure  bool
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (f *cacheTMDBFake) Genres(context.Context, string) ([]tmdb.Genre, error)     { return nil, nil }
+func (f *cacheTMDBFake) Browse(context.Context, tmdb.Options) (*tmdb.Page, error) { return nil, nil }
+func (f *cacheTMDBFake) Recommendations(context.Context, string, int) (*tmdb.Page, error) {
+	return nil, nil
+}
+func (f *cacheTMDBFake) Details(context.Context, string, int) (*tmdb.Detail, error) {
+	return &tmdb.Detail{Seasons: []tmdb.SeasonSummary{{Number: 1}}}, nil
+}
+func (f *cacheTMDBFake) Season(ctx context.Context, id, number int) (*tmdb.SeasonDetail, error) {
+	f.calls.Add(1)
+	if f.entered != nil {
+		select {
+		case f.entered <- struct{}{}:
+		default:
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-f.release:
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failure {
+		return nil, errors.New("模拟 TMDB 连接失败")
+	}
+	return &tmdb.SeasonDetail{ID: id, Number: number, Episodes: append([]tmdb.Episode{}, f.episodes...)}, nil
+}
+func TestTMDBCachePersistsAndRefreshReplacesSchedule(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "media.db")
+	db, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &cacheTMDBFake{episodes: []tmdb.Episode{{Number: 1, Date: "2026-09-14"}, {Number: 2, Date: "2026-09-15"}, {Number: 3, Date: ""}}}
+	s := NewTMDBService(source, db)
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	first, err := s.Schedule(ctx, 1396, 1)
+	if err != nil || len(first.Episodes) != 3 {
+		t.Fatal(first, err)
+	}
+	data, _, err := db.TMDBCache(ctx, "schedule:1396:1")
+	if err != nil || len(data) == 0 {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s = NewTMDBService(source, db)
+	s.now = func() time.Time { return now }
+	if _, err := s.Schedule(ctx, 1396, 1); err != nil || source.calls.Load() != 1 {
+		t.Fatal("重启后应命中持久化缓存", err)
+	}
+	now = now.Add(2 * time.Hour)
+	old, err := s.Schedule(ctx, 1396, 1)
+	if err != nil || !old.CacheStale || source.calls.Load() != 1 {
+		t.Fatal("过期缓存应立即返回", old, err)
+	}
+	source.failure = true
+	if _, err := s.Schedule(tmdb.WithFresh(ctx), 1396, 1); err == nil {
+		t.Fatal("刷新失败未返回错误")
+	}
+	retained, _ := s.Schedule(ctx, 1396, 1)
+	if retained.FetchedAt != first.FetchedAt || len(retained.Episodes) != 3 {
+		t.Fatal("失败不能覆盖缓存或延长有效期")
+	}
+	source.failure = false
+	source.episodes = []tmdb.Episode{{Number: 1, Date: "2026-09-14"}, {Number: 2, Date: "2026-10-01"}}
+	updated, err := s.Schedule(tmdb.WithFresh(ctx), 1396, 1)
+	if err != nil || updated.CacheStale || len(updated.Episodes) != 2 || updated.Episodes[1].Date != "2026-10-01" {
+		t.Fatal("必须替换删除、改期后的完整播出表", updated, err)
+	}
+	batch, err := s.Schedules(ctx, 1396)
+	if err != nil || len(batch) != 1 || len(batch[0].Episodes) != 2 {
+		t.Fatal(batch, err)
+	}
+	if empty, err := s.Schedules(ctx, 999); err != nil || len(empty) != 0 {
+		t.Fatal("冷缓存批量读取不能访问外网", err)
+	}
+}
+func TestTMDBCacheCoalescesAndCancelsWaiter(t *testing.T) {
+	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "media.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source := &cacheTMDBFake{entered: make(chan struct{}, 1), release: make(chan struct{}), episodes: []tmdb.Episode{{Number: 1}}}
+	s := NewTMDBService(source, db)
+	var wg sync.WaitGroup
+	leader := make(chan error, 1)
+	wg.Add(1)
+	go func() { defer wg.Done(); _, err := s.Schedule(context.Background(), 1, 1); leader <- err }()
+	<-source.entered
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Schedule(ctx, 1, 1); err == nil {
+		t.Fatal("取消的等待不能继续请求")
+	}
+	const count = 8
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.Schedule(context.Background(), 1, 1)
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	close(source.release)
+	wg.Wait()
+	if err := <-leader; err != nil {
+		t.Fatal(err)
+	}
+	if source.calls.Load() != 1 {
+		t.Fatalf("同一缓存键应合并请求，实际 %d", source.calls.Load())
+	}
+}

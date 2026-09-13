@@ -115,7 +115,17 @@ func main() {
 	admin := r.Group("/api/admin")
 	admin.Use(jwtMiddleware(secret))
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
-	httpapi.RegisterTMDB(admin, tmdb.New(os.Getenv("TMDB_API_KEY")))
+	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
+	httpapi.RegisterTMDB(admin, tmdbService)
+	embySecrets, err := service.NewSessionStore(filepath.Join(dataDir, "emby-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	embyService, err := service.NewEmbyService(embySecrets, database)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterEmby(r, admin, embyService)
 	admin.POST("/p115/qrcode", func(c *gin.Context) {
 		var req qrcodeRequest
 		_ = c.ShouldBindJSON(&req)
@@ -243,7 +253,18 @@ func main() {
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
-	workerErrors := make(chan error, 3)
+	if os.Getenv("TMDB_API_KEY") != "" {
+		workers.Add(1)
+		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
+	}
+	workerErrors := make(chan error, 4)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := embyService.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

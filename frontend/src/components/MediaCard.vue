@@ -2,10 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { MediaCardItem } from '../types/media'
+import type { EmbyMatch } from '../types/emby'
+import embyIcon from '../assets/emby.svg'
 
-const props = defineProps<{ item: MediaCardItem }>()
+const props = defineProps<{ item: MediaCardItem; library?: EmbyMatch }>()
 const imageFailed = ref(false)
 const detailPath = computed(() => `/${props.item.kind}/${props.item.id}`)
+const libraryLabel = computed(() => props.library?.state === 'stale' ? '已入库 · 待更新' : '已入库')
 const ratingLabel = computed(() => props.item.votes > 0 && Number.isFinite(props.item.rating)
   ? `★ ${props.item.rating.toFixed(1)}`
   : '暂无评分')
@@ -21,7 +24,7 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
     :aria-label="`${item.title}，查看详情`"
     :title="item.overview || item.originalTitle || item.title"
   >
-    <div class="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-200 shadow-sm transition group-hover:-translate-y-1 group-hover:shadow-lg motion-reduce:transform-none motion-reduce:transition-none">
+    <div class="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-200 shadow-[0_12px_24px_-14px_rgba(15,23,42,0.4)] transition group-hover:-translate-y-1 group-hover:shadow-lg motion-reduce:transform-none motion-reduce:transition-none">
       <img
         v-if="item.posterUrl && !imageFailed"
         :key="`${item.kind}-${item.id}-${item.posterUrl}`"
@@ -39,10 +42,16 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
         </svg>
         <span class="text-xs">暂无海报</span>
       </div>
-      <div class="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent"></div>
-      <span class="absolute left-2 top-2 rounded bg-slate-950/85 px-1.5 py-0.5 text-xs font-semibold text-white">{{ ratingLabel }}</span>
+      <span class="absolute left-2.5 top-2.5 rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold leading-4 text-white shadow-sm">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
+      <span class="absolute right-2.5 top-2.5 rounded bg-white/95 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-amber-600 shadow-sm">{{ ratingLabel }}</span>
     </div>
-    <h2 class="mt-3 line-clamp-2 text-sm font-semibold leading-6 text-slate-800 group-hover:text-amber-600">{{ item.title }}</h2>
-    <p class="mt-1 text-xs text-slate-400">{{ item.date?.slice(0, 4) || '年份未知' }}</p>
+    <h2 class="mt-2.5 truncate px-0.5 text-sm font-semibold leading-6 text-slate-800 group-hover:text-amber-600" :title="item.title">{{ item.title }}</h2>
+    <div class="mt-0.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs">
+      <span class="shrink-0 text-slate-500">{{ item.date?.slice(0, 4) || '年份未知' }}</span>
+      <span v-if="library?.items.length" class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-medium" :class="library.state === 'stale' ? 'text-amber-600' : 'text-emerald-600'" :aria-label="`Emby ${libraryLabel}`" :title="library.state === 'stale' ? 'Emby 索引待更新，当前显示上次入库记录' : 'Emby 已入库'">
+        <img :src="embyIcon" alt="" aria-hidden="true" class="h-3.5 w-3.5 shrink-0" />
+        {{ libraryLabel }}
+      </span>
+    </div>
   </RouterLink>
 </template>

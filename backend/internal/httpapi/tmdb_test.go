@@ -11,6 +11,51 @@ import (
 
 type tmdbReaderFake struct{ calls int }
 
+type tmdbScheduleFake struct {
+	tmdbReaderFake
+	refreshed bool
+}
+
+func (f *tmdbScheduleFake) Schedule(ctx context.Context, id, number int) (*tmdb.Schedule, error) {
+	f.calls++
+	f.refreshed = tmdb.WantsFresh(ctx)
+	return &tmdb.Schedule{Number: number, Episodes: []tmdb.ScheduledEpisode{}}, nil
+}
+func (f *tmdbScheduleFake) Schedules(context.Context, int) ([]tmdb.Schedule, error) {
+	f.calls++
+	return []tmdb.Schedule{}, nil
+}
+func TestTMDBSchedulesAuthAndRefresh(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	reader := &tmdbScheduleFake{}
+	group := r.Group("/api/admin", func(c *gin.Context) {
+		if c.GetHeader("Authorization") != "admin-test" {
+			c.AbortWithStatus(401)
+		}
+	})
+	RegisterTMDB(group, reader)
+	for _, tc := range []struct {
+		path, auth string
+		status     int
+	}{
+		{"tv/1396/schedules", "", 401}, {"tv/1396/schedule/1?refresh=1", "", 401},
+		{"tv/0/schedules", "admin-test", 400}, {"tv/1396/schedule/-1", "admin-test", 400},
+		{"tv/1396/schedules", "admin-test", 200}, {"tv/1396/schedule/1?refresh=1", "admin-test", 200},
+	} {
+		request := httptest.NewRequest("GET", "/api/admin/tmdb/"+tc.path, nil)
+		request.Header.Set("Authorization", tc.auth)
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		if response.Code != tc.status {
+			t.Fatalf("%s: %d", tc.path, response.Code)
+		}
+	}
+	if reader.calls != 2 || !reader.refreshed {
+		t.Fatal("未授权请求不得访问缓存，手动刷新必须透传")
+	}
+}
+
 func (f *tmdbReaderFake) Recommendations(_ context.Context, kind string, id int) (*tmdb.Page, error) {
 	f.calls++
 	if id == 404 {

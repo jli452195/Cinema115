@@ -64,6 +64,12 @@ type Options struct {
 
 func validKind(kind string) bool { return kind == "tv" || kind == "movie" }
 
+type freshKey struct{}
+
+// WithFresh 用于手动刷新，跳过客户端的短期内存缓存。
+func WithFresh(ctx context.Context) context.Context { return context.WithValue(ctx, freshKey{}, true) }
+func WantsFresh(ctx context.Context) bool           { value, _ := ctx.Value(freshKey{}).(bool); return value }
+
 func (c *Client) get(ctx context.Context, endpoint string, query url.Values, target any) error {
 	if c.key == "" {
 		return ErrNotConfigured
@@ -72,7 +78,7 @@ func (c *Client) get(ctx context.Context, endpoint string, query url.Values, tar
 	c.mu.Lock()
 	cached, ok := c.cache[cacheKey]
 	c.mu.Unlock()
-	if ok && time.Now().Before(cached.expires) {
+	if ok && !WantsFresh(ctx) && time.Now().Before(cached.expires) {
 		if err := json.Unmarshal(cached.data, target); err != nil {
 			return fmt.Errorf("解析 TMDB 缓存失败")
 		}

@@ -29,6 +29,7 @@ type Collection struct {
 }
 
 type Detail struct {
+	CacheInfo
 	Item
 	BackdropURL  string          `json:"backdropUrl"`
 	Tagline      string          `json:"tagline"`
@@ -57,11 +58,27 @@ type Episode struct {
 }
 
 type SeasonDetail struct {
+	CacheInfo
 	ID       int       `json:"id"`
 	Number   int       `json:"number"`
 	Name     string    `json:"name"`
 	Overview string    `json:"overview"`
 	Episodes []Episode `json:"episodes"`
+}
+
+// 这些字段由缓存读取时计算，不作为过期状态持久化。
+type CacheInfo struct {
+	FetchedAt  int64 `json:"fetchedAt,omitempty"`
+	CacheStale bool  `json:"cacheStale,omitempty"`
+}
+type ScheduledEpisode struct {
+	Number int    `json:"number"`
+	Date   string `json:"date"`
+}
+type Schedule struct {
+	CacheInfo
+	Number   int                `json:"number"`
+	Episodes []ScheduledEpisode `json:"episodes"`
 }
 
 type rawCast struct {

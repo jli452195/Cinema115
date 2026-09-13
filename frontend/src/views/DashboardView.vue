@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
 import MediaCard from '../components/MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
+import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 
 const props = defineProps<{ token: string; kind: 'tv' | 'movie' }>()
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
@@ -20,6 +21,7 @@ const totalPages = ref(0)
 const total = ref(0)
 const genres = ref<Genre[]>([])
 const items = ref<MediaCardItem[]>([])
+const libraryMatches = useEmbyLibrary(() => props.token, items)
 const loading = ref(true)
 const error = ref('')
 const genreError = ref('')
@@ -94,7 +96,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.a
       <div v-else-if="loading" aria-label="正在加载影视" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200"></div><div class="mt-4 h-4 w-3/4 rounded bg-slate-200"></div><div class="mt-2 h-3 w-10 rounded bg-slate-100"></div></div></div>
       <div v-else-if="!items.length" class="py-20 text-center text-sm text-slate-400">没有找到匹配的影视，试试其他关键词或筛选条件。</div>
       <div v-else class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-        <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" />
+        <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" />
       </div>
       <div v-if="!error && totalPages > 1" class="mt-9 flex items-center justify-center gap-5 text-sm"><button :disabled="loading || page <= 1" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-600 disabled:opacity-40" @click="page--">上一页</button><span class="text-xs text-slate-400">{{ page }} / {{ totalPages }}</span><button :disabled="loading || page >= totalPages" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-600 disabled:opacity-40" @click="page++">下一页</button></div>
       <footer class="mt-10 border-t border-slate-200 pt-5 text-xs leading-6 text-slate-400"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500">TMDB</a> · 评分为 TMDB 用户评分，地区按出品地筛选。点击海报查看影视详情。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>

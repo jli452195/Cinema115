@@ -2,9 +2,11 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MediaCard from './MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
+import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const items = ref<MediaCardItem[]>([])
+const libraryMatches = useEmbyLibrary(() => props.token, items)
 const loading = ref(true)
 const error = ref('')
 const rail = ref<HTMLUListElement>()
@@ -82,7 +84,7 @@ onBeforeUnmount(() => { controller?.abort(); controller = undefined; observer?.d
     <div v-else-if="error" role="status" class="rounded-xl border border-slate-200 bg-white/70 p-5 text-sm text-slate-500">{{ error }}<button type="button" class="ml-3 font-medium text-amber-600 hover:underline" @click="load">重新加载推荐</button></div>
     <p v-else-if="!items.length" class="py-4 text-sm text-slate-400">暂时没有相似影视推荐。</p>
     <ul v-show="!loading && !error && items.length" ref="rail" tabindex="0" aria-label="推荐影视列表" class="recommendation-rail flex snap-x snap-proximity gap-5 overflow-x-auto overscroll-x-contain px-1 pb-5 pt-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400" @scroll.passive="updateEdges" @keydown.left.prevent="scroll(-1)" @keydown.right.prevent="scroll(1)">
-      <li v-for="item in items" :key="`${item.kind}-${item.id}`" class="w-[136px] shrink-0 snap-start sm:w-[170px]"><MediaCard :item="item" /></li>
+      <li v-for="item in items" :key="`${item.kind}-${item.id}`" class="w-[136px] shrink-0 snap-start sm:w-[170px]"><MediaCard :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" /></li>
     </ul>
   </section>
 </template>

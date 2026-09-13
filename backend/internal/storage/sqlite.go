@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 4
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -114,6 +114,23 @@ CREATE INDEX share_tasks_updated ON share_tasks(updated_at DESC, id DESC);
 CREATE INDEX share_tasks_due ON share_tasks(status, next_retry_at);
 PRAGMA user_version=2;`); err != nil {
 			return fmt.Errorf("迁移分享任务表: %w", err)
+		}
+	}
+	if version < 3 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE emby_state (scope TEXT PRIMARY KEY, active TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'idle', count INTEGER NOT NULL DEFAULT 0, scanned INTEGER NOT NULL DEFAULT 0, synced_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', webhook_at TEXT NOT NULL DEFAULT '', webhook_event TEXT NOT NULL DEFAULT '', webhook_error TEXT NOT NULL DEFAULT '');
+CREATE TABLE emby_items (scope TEXT NOT NULL, generation TEXT NOT NULL, id TEXT NOT NULL, library_id TEXT NOT NULL, type TEXT NOT NULL, tmdb TEXT NOT NULL, series_id TEXT NOT NULL, parent_id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(scope,generation,id));
+CREATE INDEX emby_tmdb ON emby_items(scope,generation,type,tmdb);
+CREATE INDEX emby_series ON emby_items(scope,generation,series_id);
+CREATE TABLE emby_events (id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, item_id TEXT NOT NULL, kind TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, due INTEGER NOT NULL, last_error TEXT NOT NULL DEFAULT '', UNIQUE(scope,item_id));
+CREATE INDEX emby_due ON emby_events(scope,due);
+PRAGMA user_version=3;`); err != nil {
+			return fmt.Errorf("迁移 Emby 索引表: %w", err)
+		}
+	}
+	if version < 4 {
+		if err := migrateMediaCache(ctx, tx); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

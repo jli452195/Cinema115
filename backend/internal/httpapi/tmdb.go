@@ -38,6 +38,52 @@ func tmdbError(c *gin.Context, err error) {
 
 // RegisterTMDB 只开放管理员查询接口，浏览器不会接触 API 密钥。
 func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
+	admin = admin.Group("")
+	// 手动刷新与后台重新验证走同一路由，只跳过 TMDB 缓存，不暴露密钥。
+	admin.Use(func(c *gin.Context) {
+		if c.Query("refresh") == "1" {
+			c.Request = c.Request.WithContext(tmdb.WithFresh(c.Request.Context()))
+		}
+		c.Next()
+	})
+	if schedules, ok := client.(interface {
+		Schedule(context.Context, int, int) (*tmdb.Schedule, error)
+		Schedules(context.Context, int) ([]tmdb.Schedule, error)
+	}); ok {
+		admin.GET("/tmdb/tv/:id/schedules", func(c *gin.Context) {
+			c.Header("Cache-Control", "no-store")
+			id, err := strconv.Atoi(c.Param("id"))
+			if err != nil || id < 1 {
+				tmdbError(c, tmdb.ErrInput)
+				return
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			defer cancel()
+			data, err := schedules.Schedules(ctx, id)
+			if err != nil {
+				tmdbError(c, err)
+				return
+			}
+			c.JSON(200, gin.H{"seasons": data})
+		})
+		admin.GET("/tmdb/tv/:id/schedule/:number", func(c *gin.Context) {
+			c.Header("Cache-Control", "no-store")
+			id, e1 := strconv.Atoi(c.Param("id"))
+			number, e2 := strconv.Atoi(c.Param("number"))
+			if e1 != nil || e2 != nil || id < 1 || number < 0 || number > 10000 {
+				tmdbError(c, tmdb.ErrInput)
+				return
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+			defer cancel()
+			data, err := schedules.Schedule(ctx, id, number)
+			if err != nil {
+				tmdbError(c, err)
+				return
+			}
+			c.JSON(200, data)
+		})
+	}
 	admin.GET("/tmdb/recommendations/:kind/:id", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		id, err := strconv.Atoi(c.Param("id"))

@@ -6,6 +6,7 @@ import P115View from './views/P115View.vue'
 import ShareView from './views/ShareView.vue'
 import TelegramView from './views/TelegramView.vue'
 import LogsView from './views/LogsView.vue'
+import EmbyView from './views/EmbyView.vue'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
 export const router = createRouter({
@@ -21,6 +22,7 @@ export const router = createRouter({
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
     { path: '/logs', name: 'logs', component: LogsView },
+    { path: '/emby', name: 'emby', component: EmbyView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },
