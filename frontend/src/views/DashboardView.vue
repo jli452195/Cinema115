@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
@@ -14,9 +13,6 @@ const genre = ref('')
 const region = ref('')
 const year = ref('')
 const sort = ref('popular')
-const route = useRoute()
-const router = useRouter()
-const query = computed(() => typeof route.query.q === 'string' ? route.query.q : '')
 const page = ref(1)
 const totalPages = ref(0)
 const total = ref(0)
@@ -31,12 +27,10 @@ const sorts = [{ id: 'popular', name: '热门' }, { id: 'latest', name: '最新'
 const currentYear = new Date().getFullYear()
 const years = Array.from({ length: 12 }, (_, i) => String(currentYear - i))
 const olderYears = Array.from({ length: currentYear - 1911 }, (_, i) => String(currentYear - 12 - i))
-const searching = computed(() => !!query.value)
 let controller: AbortController | undefined
 let genreController: AbortController | undefined
 let mounted = true
 function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800' }
-function clearSearch() { void router.replace({ path: route.path, query: {} }) }
 async function request(path: string, signal: AbortSignal) {
   const response = await fetch(`/api/admin/tmdb/${path}`, { signal, headers: { Authorization: `Bearer ${props.token}` } })
   const data = await response.json().catch(() => null)
@@ -59,8 +53,7 @@ async function loadPage() {
   loading.value = true; error.value = ''; items.value = []; total.value = 0; totalPages.value = 0
   try {
     const params = new URLSearchParams({ kind: kind.value, page: String(page.value) })
-    if (query.value) params.set('query', query.value)
-    else { params.set('genre', genre.value); params.set('region', region.value); params.set('year', year.value); params.set('sort', sort.value) }
+    params.set('genre', genre.value); params.set('region', region.value); params.set('year', year.value); params.set('sort', sort.value)
     const data = await request(`browse?${params}`, current.signal)
     if (!Array.isArray(data.items)) throw new Error('影视数据格式不正确')
     if (!mounted || current.signal.aborted) return
@@ -69,7 +62,7 @@ async function loadPage() {
   finally { if (mounted && controller === current) loading.value = false }
 }
 watch(kind, () => { genre.value = ''; void loadGenres() })
-watch([kind, genre, region, year, sort, query], () => { if (page.value !== 1) page.value = 1; else void loadPage() })
+watch([kind, genre, region, year, sort], () => { if (page.value !== 1) page.value = 1; else void loadPage() })
 watch(page, () => { void loadPage() })
 onMounted(() => { void loadGenres(); void loadPage() })
 onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.abort() })
@@ -81,8 +74,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.a
     <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="space-y-3 border-b border-slate-200 pb-6 text-sm">
-        <p v-if="searching" class="rounded-lg bg-amber-50 p-3 text-xs leading-6 text-amber-700">正在搜索「{{ query }}」，结果按相关度排列。清空搜索后可按类型、地区、年份和评分筛选。<button class="ml-3 underline" @click="clearSearch">清空搜索</button></p>
-        <fieldset :disabled="searching" class="space-y-3 disabled:opacity-40">
+        <fieldset class="space-y-3">
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">类型</span><div class="flex flex-wrap gap-1"><button :aria-pressed="genre === ''" class="rounded-md border px-3 py-2" :class="chip(genre === '')" @click="genre = ''">全部</button><button v-for="item in genres" :key="item.id" :aria-pressed="genre === String(item.id)" class="rounded-md border px-3 py-2" :class="chip(genre === String(item.id))" @click="genre = String(item.id)">{{ item.name }}</button></div></div>
           <p v-if="genreError" class="ml-12 text-xs text-red-500">类型加载失败。<button class="underline" @click="loadGenres">重试</button></p>
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">地区</span><div class="flex flex-wrap gap-1"><button v-for="item in regions" :key="item.id" :aria-pressed="region === item.id" class="rounded-md border px-3 py-2" :class="chip(region === item.id)" @click="region = item.id">{{ item.name }}</button></div></div>
@@ -90,7 +82,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.a
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">排序</span><div class="flex flex-wrap gap-1"><button v-for="item in sorts" :key="item.id" :aria-pressed="sort === item.id" class="rounded-md border px-3 py-2" :class="chip(sort === item.id)" @click="sort = item.id">{{ item.name }}</button></div></div>
         </fieldset>
       </section>
-      <div class="my-5 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{{ loading ? '正在查询 TMDB…' : error ? '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><span v-if="!searching && sort === 'rating'">评分排序至少需要 100 人评价</span></div>
+      <div class="my-5 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{{ loading ? '正在查询 TMDB…' : error ? '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><span v-if="sort === 'rating'">评分排序至少需要 100 人评价</span></div>
       <div v-if="error" role="alert" class="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-600"><p>{{ error }}</p><button class="mt-4 rounded-lg border border-red-200 px-4 py-2" @click="loadGenres(); loadPage()">重新加载</button></div>
       <div v-else-if="loading" aria-label="正在加载影视" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200"></div><div class="mt-4 h-4 w-3/4 rounded bg-slate-200"></div><div class="mt-2 h-3 w-10 rounded bg-slate-100"></div></div></div>
       <div v-else-if="!items.length" class="py-20 text-center text-sm text-slate-400">没有找到匹配的影视，试试其他关键词或筛选条件。</div>

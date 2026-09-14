@@ -24,6 +24,15 @@ type cacheTMDBFake struct {
 
 func (f *cacheTMDBFake) Genres(context.Context, string) ([]tmdb.Genre, error)     { return nil, nil }
 func (f *cacheTMDBFake) Browse(context.Context, tmdb.Options) (*tmdb.Page, error) { return nil, nil }
+func (f *cacheTMDBFake) SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error) {
+	return &tmdb.PersonPage{Items: []tmdb.Person{}}, nil
+}
+func (f *cacheTMDBFake) PersonDetails(context.Context, int) (*tmdb.PersonDetail, error) {
+	return &tmdb.PersonDetail{Items: []tmdb.Item{}}, nil
+}
+func (f *cacheTMDBFake) CollectionDetails(context.Context, int) (*tmdb.CollectionDetail, error) {
+	return nil, nil
+}
 func (f *cacheTMDBFake) Recommendations(context.Context, string, int) (*tmdb.Page, error) {
 	return nil, nil
 }

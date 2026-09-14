@@ -17,6 +17,9 @@ import (
 )
 
 type TMDBSource interface {
+	SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error)
+	PersonDetails(context.Context, int) (*tmdb.PersonDetail, error)
+	CollectionDetails(context.Context, int) (*tmdb.CollectionDetail, error)
 	Genres(context.Context, string) ([]tmdb.Genre, error)
 	Browse(context.Context, tmdb.Options) (*tmdb.Page, error)
 	Details(context.Context, string, int) (*tmdb.Detail, error)
@@ -53,6 +56,15 @@ func (s *TMDBService) Genres(ctx context.Context, kind string) ([]tmdb.Genre, er
 }
 func (s *TMDBService) Browse(ctx context.Context, o tmdb.Options) (*tmdb.Page, error) {
 	return s.source.Browse(ctx, o)
+}
+func (s *TMDBService) CollectionDetails(ctx context.Context, id int) (*tmdb.CollectionDetail, error) {
+	return s.source.CollectionDetails(ctx, id)
+}
+func (s *TMDBService) SearchPeople(ctx context.Context, query string, page int) (*tmdb.PersonPage, error) {
+	return s.source.SearchPeople(ctx, query, page)
+}
+func (s *TMDBService) PersonDetails(ctx context.Context, id int) (*tmdb.PersonDetail, error) {
+	return s.source.PersonDetails(ctx, id)
 }
 func (s *TMDBService) Recommendations(ctx context.Context, kind string, id int) (*tmdb.Page, error) {
 	return s.source.Recommendations(ctx, kind, id)

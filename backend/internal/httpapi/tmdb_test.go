@@ -56,6 +56,15 @@ func TestTMDBSchedulesAuthAndRefresh(t *testing.T) {
 	}
 }
 
+func (f *tmdbReaderFake) SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error) {
+	return &tmdb.PersonPage{Items: []tmdb.Person{}}, nil
+}
+func (f *tmdbReaderFake) PersonDetails(context.Context, int) (*tmdb.PersonDetail, error) {
+	return &tmdb.PersonDetail{Items: []tmdb.Item{}}, nil
+}
+func (f *tmdbReaderFake) CollectionDetails(_ context.Context, id int) (*tmdb.CollectionDetail, error) {
+	return &tmdb.CollectionDetail{ID: id, Items: []tmdb.Item{}}, nil
+}
 func (f *tmdbReaderFake) Recommendations(_ context.Context, kind string, id int) (*tmdb.Page, error) {
 	f.calls++
 	if id == 404 {
@@ -144,7 +153,7 @@ func TestTMDBRoutesRequireAdmin(t *testing.T) {
 	for _, tc := range []struct {
 		path, auth string
 		status     int
-	}{{"browse", "", 401}, {"genres", "", 401}, {"genres?kind=tv", "admin-test", 200}, {"browse?kind=movie&page=2", "admin-test", 200}, {"browse?page=bad", "admin-test", 400}, {"browse?page=3", "admin-test", 400}} {
+	}{{"people?query=test", "", 401}, {"people?query=test", "admin-test", 200}, {"people?page=bad", "admin-test", 400}, {"person/1", "", 401}, {"person/1", "admin-test", 200}, {"person/0", "admin-test", 400}, {"collection/7", "", 401}, {"collection/7", "admin-test", 200}, {"collection/0", "admin-test", 400}, {"collection/bad", "admin-test", 400}, {"browse", "", 401}, {"genres", "", 401}, {"genres?kind=tv", "admin-test", 200}, {"browse?kind=movie&page=2", "admin-test", 200}, {"browse?page=bad", "admin-test", 400}, {"browse?page=3", "admin-test", 400}} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/admin/tmdb/"+tc.path, nil)
 		req.Header.Set("Authorization", tc.auth)

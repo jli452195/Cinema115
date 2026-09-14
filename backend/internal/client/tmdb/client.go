@@ -157,7 +157,7 @@ func (c *Client) Genres(ctx context.Context, kind string) ([]Genre, error) {
 }
 
 func optionsQuery(options Options) (string, url.Values, error) {
-	if !validKind(options.Kind) || options.Page < 1 || options.Page > 500 {
+	if (!validKind(options.Kind) && !(options.Kind == "multi" && strings.TrimSpace(options.Query) != "")) || options.Page < 1 || options.Page > 500 {
 		return "", nil, ErrInput
 	}
 	query := url.Values{"language": {"zh-CN"}, "page": {strconv.Itoa(options.Page)}, "include_adult": {"false"}}
@@ -237,6 +237,7 @@ func (c *Client) readPage(ctx context.Context, kind, endpoint string, query url.
 		TotalPages int `json:"total_pages"`
 		Total      int `json:"total_results"`
 		Results    []struct {
+			MediaType     string  `json:"media_type"`
 			ID            int     `json:"id"`
 			Name          string  `json:"name"`
 			Title         string  `json:"title"`
@@ -259,11 +260,19 @@ func (c *Client) readPage(ctx context.Context, kind, endpoint string, query url.
 	}
 	page := &Page{Items: make([]Item, 0, len(result.Results)), Page: result.Page, Total: result.Total, TotalPages: min(result.TotalPages, 500)}
 	for _, entry := range result.Results {
+		itemKind := kind
+		if kind == "multi" {
+			itemKind = entry.MediaType
+		}
+		// 聚合搜索沿用上游相关度和分页，只展示电影与剧集，过滤人物结果。
+		if !validKind(itemKind) {
+			continue
+		}
 		if entry.Adult || entry.ID <= 0 {
 			continue
 		}
 		title, original, date := entry.Name, entry.OriginalName, entry.AirDate
-		if kind == "movie" {
+		if itemKind == "movie" {
 			title, original, date = entry.Title, entry.OriginalTitle, entry.ReleaseDate
 		}
 		if title == "" {
@@ -272,7 +281,7 @@ func (c *Client) readPage(ctx context.Context, kind, endpoint string, query url.
 		if title == "" {
 			title = "未命名"
 		}
-		page.Items = append(page.Items, Item{ID: entry.ID, Kind: kind, Title: title, OriginalTitle: original, Overview: entry.Overview, PosterURL: posterURL(entry.Poster), Date: date, Rating: entry.Rating, Votes: entry.Votes})
+		page.Items = append(page.Items, Item{ID: entry.ID, Kind: itemKind, Title: title, OriginalTitle: original, Overview: entry.Overview, PosterURL: posterURL(entry.Poster), Date: date, Rating: entry.Rating, Votes: entry.Votes})
 	}
 	return page, nil
 }

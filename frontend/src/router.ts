@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from './views/DashboardView.vue'
+import SearchView from './views/SearchView.vue'
+import CollectionView from './views/CollectionView.vue'
+import PersonView from './views/PersonView.vue'
 import MediaDetailView from './views/MediaDetailView.vue'
 import HomeView from './views/HomeView.vue'
 import P115View from './views/P115View.vue'
@@ -15,6 +18,9 @@ export const router = createRouter({
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },
     { path: '/movie', name: 'movie', component: DashboardView, props: { kind: 'movie' } },
+    { path: '/search', name: 'search', component: SearchView },
+    { path: '/person/:tmdbId', name: 'person', component: PersonView, props: route => ({ tmdbId: String(route.params.tmdbId) }) },
+    { path: '/collection/:tmdbId', name: 'collection', component: CollectionView, props: route => ({ tmdbId: String(route.params.tmdbId) }) },
     { path: '/tv/:tmdbId', name: 'tv-detail', component: MediaDetailView, props: route => ({ kind: 'tv', tmdbId: String(route.params.tmdbId) }) },
     { path: '/movie/:tmdbId', name: 'movie-detail', component: MediaDetailView, props: route => ({ kind: 'movie', tmdbId: String(route.params.tmdbId) }) },
     { path: '/115', name: 'p115-category', component: HomeView, props: { category: 'p115' }, meta: { categoryPage: true } },
@@ -28,4 +34,11 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },
+})
+
+// 兼容旧看板搜索地址，搜索统一进入独立页面。
+router.beforeEach(to => {
+  if (['/', '/movie', '/tv'].includes(to.path) && typeof to.query.q === 'string' && to.query.q.trim()) {
+    return { path: '/search', query: { q: to.query.q.trim(), scope: to.path === '/movie' ? 'movie' : 'tv' }, replace: true }
+  }
 })

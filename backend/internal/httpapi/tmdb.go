@@ -11,6 +11,9 @@ import (
 )
 
 type TMDBReader interface {
+	SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error)
+	PersonDetails(context.Context, int) (*tmdb.PersonDetail, error)
+	CollectionDetails(context.Context, int) (*tmdb.CollectionDetail, error)
 	Genres(context.Context, string) ([]tmdb.Genre, error)
 	Browse(context.Context, tmdb.Options) (*tmdb.Page, error)
 	Details(context.Context, string, int) (*tmdb.Detail, error)
@@ -84,6 +87,54 @@ func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
 			c.JSON(200, data)
 		})
 	}
+	admin.GET("/tmdb/people", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+		if err != nil {
+			tmdbError(c, tmdb.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
+		defer cancel()
+		result, err := client.SearchPeople(ctx, c.Query("query"), page)
+		if err != nil {
+			tmdbError(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
+	admin.GET("/tmdb/person/:id", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		id, err := strconv.Atoi(c.Param("id"))
+		if err != nil || id < 1 {
+			tmdbError(c, tmdb.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
+		defer cancel()
+		result, err := client.PersonDetails(ctx, id)
+		if err != nil {
+			tmdbError(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
+	admin.GET("/tmdb/collection/:id", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		id, err := strconv.Atoi(c.Param("id"))
+		if err != nil || id < 1 {
+			tmdbError(c, tmdb.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
+		defer cancel()
+		result, err := client.CollectionDetails(ctx, id)
+		if err != nil {
+			tmdbError(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
 	admin.GET("/tmdb/recommendations/:kind/:id", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		id, err := strconv.Atoi(c.Param("id"))

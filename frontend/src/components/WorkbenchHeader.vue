@@ -1,18 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
-const router = useRouter()
 const header = ref<HTMLElement>()
 const accountButton = ref<HTMLButtonElement>()
-const searchButton = ref<HTMLButtonElement>()
-const searchField = ref<HTMLInputElement>()
 const accountOpen = ref(false)
-const searchOpen = ref(false)
-const keyword = ref('')
-const movieActive = computed(() => route.path.startsWith('/movie'))
+const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const managementLinks = [
   { label: '115 网盘', to: '/115' },
@@ -22,19 +17,10 @@ const managementLinks = [
 ]
 const managementActive = computed(() => managementLinks.some(link => route.path.startsWith(link.to)))
 
-function closePanels() { accountOpen.value = false; searchOpen.value = false }
-async function toggleSearch() {
-  accountOpen.value = false
-  searchOpen.value = !searchOpen.value
-  if (searchOpen.value) { await nextTick(); searchField.value?.focus() }
-}
-function toggleAccount() { searchOpen.value = false; accountOpen.value = !accountOpen.value }
-function submitSearch() {
-  const q = keyword.value.trim()
-  void router.push({ path: movieActive.value ? '/movie' : '/tv', query: q ? { q } : {} })
-  closePanels()
-  searchButton.value?.focus()
-}
+function closePanels() { accountOpen.value = false }
+
+function toggleAccount() { accountOpen.value = !accountOpen.value }
+
 function onPointerDown(event: PointerEvent) {
   if (!header.value?.contains(event.target as Node)) closePanels()
 }
@@ -42,17 +28,13 @@ function onFocusOut(event: FocusEvent) {
   if (!header.value?.contains(event.relatedTarget as Node | null)) closePanels()
 }
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || (!accountOpen.value && !searchOpen.value)) return
+  if (event.key !== 'Escape' || !accountOpen.value) return
   event.preventDefault()
-  const trigger = accountOpen.value ? accountButton.value : searchButton.value
+  const trigger = accountButton.value
   closePanels()
   trigger?.focus()
 }
-// 搜索词写入路由，刷新和浏览器前进后退时保持一致。
-watch(() => route.fullPath, () => {
-  keyword.value = typeof route.query.q === 'string' ? route.query.q : ''
-  closePanels()
-}, { immediate: true })
+watch(() => route.fullPath, closePanels)
 onMounted(() => { document.addEventListener('pointerdown', onPointerDown); document.addEventListener('keydown', onEscape) })
 onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onEscape) })
 </script>
@@ -71,18 +53,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink to="/tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 pl-2 sm:gap-3 sm:pl-5">
-        <button ref="searchButton" type="button" class="icon-button" aria-label="搜索影视" :aria-expanded="searchOpen" aria-controls="header-search" @click="toggleSearch">
+        <RouterLink to="/search" class="icon-button" :class="{ 'bg-amber-50 text-amber-700': route.path === '/search' }" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
-        </button>
+        </RouterLink>
         <button ref="accountButton" type="button" class="icon-button" :class="{ 'bg-amber-50 text-amber-700': managementActive || accountOpen }" aria-label="管理菜单" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
           <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
         </button>
-      </div>
-      <div v-if="searchOpen" id="header-search" class="absolute left-4 right-4 top-full mt-2 rounded-xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10 sm:left-auto sm:right-8 sm:w-96">
-        <form role="search" @submit.prevent="submitSearch">
-          <label for="header-keyword" class="mb-2 block text-xs font-medium text-slate-500">{{ movieActive ? '搜索电影' : '搜索剧集' }}</label>
-          <div class="flex gap-2"><input id="header-keyword" ref="searchField" v-model="keyword" aria-label="搜索片名" maxlength="100" placeholder="输入片名…" class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-400"/><button type="submit" class="shrink-0 rounded-lg bg-slate-900 px-4 text-sm text-white hover:bg-slate-700">搜索</button></div>
-        </form>
       </div>
       <nav v-if="accountOpen" id="header-management" aria-label="管理功能" class="absolute right-4 top-full mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 sm:right-8">
         <p class="px-3 py-2 text-xs text-slate-400">管理功能</p>
