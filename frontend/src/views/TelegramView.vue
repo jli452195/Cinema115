@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import ManagementLayout from '../components/ManagementLayout.vue'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; back: []; home: []; openP115: []; openLogs: []; logout: [] }>()
@@ -86,27 +86,21 @@ onBeforeUnmount(() => { mounted = false; lifecycle.abort(); if (timer) window.cl
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-100 md:flex-row">
-    <WorkbenchSidebar @open-dashboard="emit('openDashboard')" active="telegram" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('back')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
-    <main class="min-w-0 flex-1 px-4 py-6 md:p-10">
-      <div class="mx-auto max-w-4xl">
-        <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="!!busy" @click="emit('back')">← 返回 Telegram 配置</button>
-        <header class="mb-8"><p class="text-sm text-slate-500">控制台 / Telegram 配置 / Bot 配置</p><h1 class="mt-2 text-2xl font-semibold text-slate-900 md:text-3xl">Bot 配置</h1><p class="mt-3 text-sm leading-6 text-slate-500">连接你的 Bot，在指定聊天中接收分享链接并回复生成结果。</p></header>
+  <ManagementLayout title="Bot 配置" description="连接你的 Bot，在指定聊天中接收分享链接并回复生成结果。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="emit('logout')">
+    <template #actions><button type="submit" form="telegram-config-form" :disabled="loading || !!busy || !config" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button></template>
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-5 md:px-7"><div class="flex items-center gap-3"><span class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-sm font-semibold text-blue-600">01</span><div><h2 class="font-semibold text-slate-900">Bot 配置</h2><p class="mt-1 text-xs text-slate-400">Telegram Bot API</p></div></div><span class="rounded-full px-3 py-1 text-xs font-medium" :class="config?.connected ? 'bg-emerald-50 text-emerald-700' : config?.lastError ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-500'">{{ loading ? '读取中' : status }}</span></div>
-          <form class="space-y-6 p-5 md:p-7" @submit.prevent="save">
+          <form id="telegram-config-form" class="space-y-6 p-5 md:p-7" @submit.prevent="save">
             <fieldset :disabled="loading || !!busy || !config" class="min-w-0 space-y-6 disabled:opacity-60">
               <div><label for="tg-token" class="text-sm font-medium text-slate-700">Bot Token</label><div class="relative mt-2"><input id="tg-token" v-model="botToken" :type="showToken ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-3 pr-16 text-sm outline-none focus:border-blue-500" :placeholder="config?.configured ? '已保存 Token，留空保留；输入新值即可更换' : '123456789:AA…'" /><button type="button" class="absolute inset-y-0 right-0 px-4 text-xs text-slate-500 hover:text-blue-600" :aria-label="showToken ? '隐藏 Token' : '显示 Token'" @click="showToken = !showToken">{{ showToken ? '隐藏' : '显示' }}</button></div><p class="mt-2 text-xs leading-6 text-slate-500">在 Telegram 中通过 <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline">@BotFather</a> 创建 Bot，复制其提供的 Token。</p></div>
               <div><label for="tg-chats" class="text-sm font-medium text-slate-700">允许的聊天 ID</label><textarea id="tg-chats" v-model="chatIDs" rows="3" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500" placeholder="123456789&#10;-1001234567890"></textarea><p class="mt-2 text-xs leading-6 text-slate-500">填写数字 Chat ID，每行一个或用逗号分隔。私聊通常为正数，群组通常为负数；Bot 只处理并回复这些聊天。</p></div>
               <label class="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4"><span><span class="block text-sm font-medium text-slate-700">启用消息接收</span><span class="mt-1 block text-xs leading-5 text-slate-500">保存后生效，按「115分享STRM」中保存的生成选项处理链接。</span></span><input v-model="enabled" type="checkbox" role="switch" aria-label="启用消息接收" class="peer sr-only"/><span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-300 transition after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400"></span></label>
-              <div class="flex flex-wrap gap-3 border-t border-slate-100 pt-6"><button type="submit" class="rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50" :disabled="!botToken.trim() && !config?.configured" @click="test">{{ busy === 'test' ? '正在测试…' : '测试连接' }}</button></div>
+              <div class="flex flex-wrap gap-3 border-t border-slate-100 pt-6"><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50" :disabled="!botToken.trim() && !config?.configured" @click="test">{{ busy === 'test' ? '正在测试…' : '测试连接' }}</button></div>
             </fieldset>
             <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-800">{{ notice }}</p>
             <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm leading-6 text-red-700">{{ error }}</p>
           </form>
         </section>
         <section class="mt-5 rounded-2xl border border-slate-200 bg-white p-5 md:p-7"><div class="flex items-center justify-between"><h2 class="text-sm font-semibold text-slate-800">连接信息</h2><button type="button" :disabled="loading || !!busy" class="text-xs text-blue-600 disabled:opacity-40" @click="refresh()">刷新状态</button></div><dl class="mt-5 grid gap-5 text-sm sm:grid-cols-2"><div><dt class="text-xs text-slate-400">机器人</dt><dd class="mt-1.5 text-slate-700">{{ identity?.username ? `@${identity.username}` : '尚未验证' }}<span v-if="identity?.first_name" class="ml-2 text-xs text-slate-400">{{ identity.first_name }}</span></dd></div><div><dt class="text-xs text-slate-400">配置来源</dt><dd class="mt-1.5 text-slate-700">{{ config?.source === 'web' ? '网页配置 · 已加密保存' : '尚未配置' }}</dd></div></dl><p v-if="config?.lastError || pollingError" role="alert" class="mt-4 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">{{ pollingError || config?.lastError }}</p><p class="mt-5 text-xs leading-6 text-slate-400">首次私聊请先在 Telegram 打开 Bot 并点击 Start。接收器使用长轮询，同一个 Bot 请只交给一个服务接收消息。</p></section>
-      </div>
-    </main>
-  </div>
+  </ManagementLayout>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import ManagementLayout from '../components/ManagementLayout.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ back: [] }>()
+defineEmits<{ back: []; logout: [] }>()
 type Mode = 'cookie' | 'qrcode'
 type Status = 'checking' | 'empty' | 'valid' | 'invalid' | 'unknown'
 const mode = ref<Mode>('cookie')
@@ -179,10 +180,7 @@ onBeforeUnmount(cancel)
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-100 px-4 py-6 sm:p-8">
-    <div class="mx-auto max-w-3xl">
-      <button class="mb-6 text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="saving" @click="$emit('back')">← 返回 115 网盘</button>
-      <header class="mb-6"><p class="text-xs font-medium tracking-widest text-slate-400">CINEMA115 / 存储连接</p><h1 class="mt-2 text-2xl font-semibold text-slate-900">115 网盘</h1><p class="mt-2 text-sm text-slate-500">管理登录凭证，为分享播放与媒体访问提供连接。</p></header>
+  <ManagementLayout title="115 登录配置" description="管理登录凭证，为分享播放与媒体访问提供连接。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7">
           <div class="flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 19a5 5 0 0 1-1-9.9A7 7 0 0 1 18.7 8a5.5 5.5 0 0 1-.2 11H6Z" /></svg></span><div><h2 class="font-semibold text-slate-800">115 登录配置</h2><p class="mt-1 text-xs text-slate-400">凭证加密保存在服务器</p></div></div>
@@ -206,7 +204,7 @@ onBeforeUnmount(cancel)
           <div v-else class="space-y-5">
             <label class="block text-sm font-medium text-slate-700">客户端类型<select v-model="clientType" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-blue-500"><option value="alipay-miniapp">支付宝小程序</option><option value="wechat-miniapp">微信小程序</option><option value="115-life-android">115生活 Android</option><option value="115-android">115 Android</option><option value="115-life-ios">115生活 iOS</option><option value="115-ios">115 iOS</option></select></label>
             <div class="flex flex-col items-center gap-5 rounded-xl border border-slate-100 bg-slate-50 p-6 sm:flex-row">
-              <div class="flex h-52 w-52 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white"><img v-if="qrImage" :src="qrImage" alt="115 登录二维码" class="h-full w-full rounded-xl" /><svg v-else class="h-16 w-16 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h2v2h-2zM21 13v4h-2M13 21h4v-2M21 21h-2M3 12h9V3" /></svg></div>
+              <div class="flex aspect-square w-full max-w-52 shrink-0 items-center justify-center sm:h-52 sm:w-52 rounded-xl border border-slate-200 bg-white"><img v-if="qrImage" :src="qrImage" alt="115 登录二维码" class="h-full w-full rounded-xl" /><svg v-else class="h-16 w-16 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h2v2h-2zM21 13v4h-2M13 21h4v-2M21 21h-2M3 12h9V3" /></svg></div>
               <div class="text-center sm:text-left"><h3 class="font-medium text-slate-800" role="status">{{ qrStatus }}</h3><p class="mt-2 text-xs leading-6 text-slate-500">选择需要登录的客户端，使用手机 115 App 扫码并确认。切换类型后需要重新获取二维码。</p><button class="mt-4 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50" :disabled="!!busy" @click="createQRCode">{{ busy === 'qrcode' ? '获取中…' : qrImage ? '刷新二维码' : '获取二维码' }}</button></div>
             </div>
           </div>
@@ -218,6 +216,5 @@ onBeforeUnmount(cancel)
           <div v-else class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-400">{{ configured ? '重启后自动恢复已保存的凭证' : '扫码或保存有效 Cookie 后即可开始使用' }}</p><button class="text-xs text-red-500 hover:text-red-700 disabled:opacity-40" :disabled="!!busy || status === 'empty'" @click="confirmDisconnect = true">{{ busy === 'disconnect' ? '清除中…' : '清除登录信息' }}</button></div>
         </footer>
       </section>
-    </div>
-  </main>
+  </ManagementLayout>
 </template>

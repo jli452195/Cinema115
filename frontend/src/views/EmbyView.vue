@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import ManagementLayout from '../components/ManagementLayout.vue'
 import { embyRequest, type EmbyConfig, type EmbyStatus } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
@@ -82,11 +82,9 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer) })
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-100 md:flex-row">
-    <WorkbenchSidebar active="emby" @home="emit('home')" @open-dashboard="emit('openDashboard')" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
-    <main class="min-w-0 flex-1 px-4 py-6 md:p-10">
-      <div class="mx-auto max-w-5xl space-y-6">
-        <header class="flex flex-wrap items-center justify-between gap-4"><div><p class="text-sm text-slate-500">控制台 / 媒体服务</p><h1 class="mt-2 text-3xl font-semibold text-slate-900">Emby</h1><p class="mt-3 text-sm text-slate-500">同步指定媒体库，在看板与影视详情中查看入库状态。</p></div><button :disabled="loading || !!busy || !config || !selected.length || (testedURL !== url.trim() && !config?.configured)" class="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white disabled:opacity-40" @click="action('save')">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button></header>
+  <ManagementLayout title="媒体库同步" description="连接 Emby 并同步指定媒体库，通过 Webhook 持续更新影视入库状态。" :parent="{ label: 'Emby', to: '/emby' }" @logout="emit('logout')">
+    <template #actions><button :disabled="loading || !!busy || !config || !selected.length || (testedURL !== url.trim() && !config?.configured)" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="action('save')">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button></template>
+    <div class="space-y-5">
         <p v-if="error || pollingError" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error || pollingError }}</p>
         <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">{{ notice }}</p>
         <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
@@ -116,7 +114,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer) })
           <p v-else class="mt-4 text-sm text-slate-400">保存连接配置后生成专用 Webhook 地址。</p>
           <div class="mt-5 border-t border-slate-100 pt-4 text-xs leading-7 text-slate-500"><p>最近通知：{{ time(status?.webhookAt) }} · {{ status?.webhookEvent || '尚未收到' }}</p><p v-if="status?.webhookError" class="text-amber-700">{{ status.webhookError }}</p><p>测试通知只验证连通性；媒体变更收到后会延迟处理，等待 Emby 完成刮削。</p></div>
         </section>
-      </div>
-    </main>
-  </div>
+    </div>
+  </ManagementLayout>
 </template>

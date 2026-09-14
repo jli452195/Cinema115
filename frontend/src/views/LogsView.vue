@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import ManagementLayout from '../components/ManagementLayout.vue'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
@@ -65,10 +65,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-100 md:flex-row">
-    <WorkbenchSidebar @open-dashboard="emit('openDashboard')" active="logs" @home="emit('home')" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @logout="emit('logout')" />
-    <main class="min-w-0 flex-1 p-4 md:p-10">
-      <header class="mb-7"><p class="text-sm text-slate-500">控制台 / 查看日志</p><h1 class="mt-2 text-3xl font-semibold text-slate-900">实时日志</h1><p class="mt-3 text-sm leading-6 text-slate-500">INFO 显示分享链接、消息批次、输出目录、生成进度、成功与失败数量及耗时，最新记录显示在顶部。逐文件路径和详细处理阶段请切换 DEBUG 查看。</p></header>
+  <ManagementLayout title="实时日志" description="查看 STRM 生成进度与处理结果；详细阶段和文件路径可切换 DEBUG 查看。" @logout="emit('logout')">
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="space-y-4 border-b border-slate-100 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">
@@ -100,6 +97,5 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
         <div v-if="filtered.length > visibleCount" class="border-t border-slate-100 p-4 text-center"><button class="text-sm text-blue-600" @click="visibleCount += 100">加载更多（还剩 {{ filtered.length - visibleCount }} 条）</button></div>
       </section>
       <p class="mt-4 text-xs leading-6 text-slate-400">保留本次后端运行期间最近 {{ capacity.toLocaleString() }} 条日志，重启后清空。转存任务记录独立保留；此页仅显示新产生的日志。</p>
-    </main>
-  </div>
+  </ManagementLayout>
 </template>

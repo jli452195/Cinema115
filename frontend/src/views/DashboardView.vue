@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import { useRoute, useRouter } from 'vue-router'
+import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
@@ -14,8 +14,9 @@ const genre = ref('')
 const region = ref('')
 const year = ref('')
 const sort = ref('popular')
-const searchInput = ref('')
-const query = ref('')
+const route = useRoute()
+const router = useRouter()
+const query = computed(() => typeof route.query.q === 'string' ? route.query.q : '')
 const page = ref(1)
 const totalPages = ref(0)
 const total = ref(0)
@@ -35,8 +36,7 @@ let controller: AbortController | undefined
 let genreController: AbortController | undefined
 let mounted = true
 function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800' }
-function search() { query.value = searchInput.value.trim(); page.value = 1 }
-function clearSearch() { searchInput.value = ''; query.value = ''; page.value = 1 }
+function clearSearch() { void router.replace({ path: route.path, query: {} }) }
 async function request(path: string, signal: AbortSignal) {
   const response = await fetch(`/api/admin/tmdb/${path}`, { signal, headers: { Authorization: `Bearer ${props.token}` } })
   const data = await response.json().catch(() => null)
@@ -76,12 +76,11 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.a
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-50 md:flex-row">
-    <WorkbenchSidebar active="dashboard" @home="emit('home')" @open-dashboard="loadGenres(); loadPage()" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
-    <main class="min-w-0 flex-1 px-5 py-7 md:px-8 md:py-10">
-      <header class="mb-8 flex flex-wrap items-end justify-between gap-5"><div><p class="text-xs tracking-widest text-slate-400">CINEMA115 / DISCOVER</p><h1 class="mt-2 text-3xl font-semibold text-slate-900">看板</h1><p class="mt-2 text-sm text-slate-500">发现电影与剧集，数据和评分来自 TMDB。</p></div><form class="flex w-full gap-2 sm:w-auto" @submit.prevent="search"><input v-model="searchInput" aria-label="搜索影视" maxlength="100" placeholder="搜索片名…" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-amber-400 sm:w-60"/><button class="rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-white hover:bg-slate-700">搜索</button></form></header>
+  <div class="flex min-h-screen flex-col bg-slate-50">
+    <WorkbenchHeader @logout="emit('logout')" />
+    <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
+      <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="space-y-3 border-b border-slate-200 pb-6 text-sm">
-        <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">片库</span><div class="flex flex-wrap gap-1"><RouterLink v-for="item in [{ id: 'tv', name: '剧集' }, { id: 'movie', name: '电影' }] as const" :key="item.id" :to="`/${item.id}`" class="rounded-md border px-3 py-2 font-medium" :class="chip(kind === item.id)">{{ item.name }}</RouterLink></div></div>
         <p v-if="searching" class="rounded-lg bg-amber-50 p-3 text-xs leading-6 text-amber-700">正在搜索「{{ query }}」，结果按相关度排列。清空搜索后可按类型、地区、年份和评分筛选。<button class="ml-3 underline" @click="clearSearch">清空搜索</button></p>
         <fieldset :disabled="searching" class="space-y-3 disabled:opacity-40">
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">类型</span><div class="flex flex-wrap gap-1"><button :aria-pressed="genre === ''" class="rounded-md border px-3 py-2" :class="chip(genre === '')" @click="genre = ''">全部</button><button v-for="item in genres" :key="item.id" :aria-pressed="genre === String(item.id)" class="rounded-md border px-3 py-2" :class="chip(genre === String(item.id))" @click="genre = String(item.id)">{{ item.name }}</button></div></div>

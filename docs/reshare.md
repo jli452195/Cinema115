@@ -40,7 +40,7 @@
 
 ## Telegram 配置
 
-在侧边栏进入「Telegram 配置」，点击「Bot 配置」卡片，填写 BotFather 提供的 Bot Token 和允许的聊天 ID。点击「测试连接」可读取 Bot 身份和 Webhook 状态，不会发送消息。启用消息接收并保存后自动生效，无需重启后端。
+在右上角管理菜单进入「Telegram 配置」，点击「Bot 配置」卡片，填写 BotFather 提供的 Bot Token 和允许的聊天 ID。点击「测试连接」可读取 Bot 身份和 Webhook 状态，不会发送消息。启用消息接收并保存后自动生效，无需重启后端。
 
 Token 在页面中默认隐藏，保存后输入框清空，留空保存会保留原 Token。配置加密保存在 `data/telegram-config.enc`，接口不返回 Token。配置只从网页读取，包含网页保存的停用状态。切换配置时先停止旧接收器再启动新的接收器；进行中的任务可能取消并保留进度记录。
 

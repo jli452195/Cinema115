@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagementLayout from '../components/ManagementLayout.vue'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ShareTaskLogs from '../components/ShareTaskLogs.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
@@ -9,7 +10,7 @@ const tabs = [{ id: 'basic', label: '基础设置', icon: '⚙' }, { id: 'normal
 const reviewRetryEnabled = ref(false)
 const reviewRetryMinutes = ref(30)
 const reviewRetryMax = ref(6)
-defineEmits<{ back: []; openTelegram: [] }>()
+defineEmits<{ back: []; openTelegram: []; logout: [] }>()
 interface ShareFile { id: string; name: string; size: number; directory: boolean }
 const shareURL = ref('')
 const password = ref('')
@@ -268,19 +269,16 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-100 px-4 py-6 md:p-10">
-    <div class="mx-auto max-w-5xl">
-      <div class="mb-6 flex items-center justify-between gap-4">
-        <button class="text-sm text-slate-500 hover:text-blue-600 disabled:opacity-40" :disabled="busy" @click="$emit('back')">← 返回 115 网盘</button>
-        <button type="button" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50" :disabled="busy || initializing || automationSaving || !automationReady" @click="saveAutomation">{{ automationSaving ? '保存中…' : '保存设置' }}</button>
-      </div>
-      <header class="mb-6"><p class="text-xs tracking-widest text-slate-400">CINEMA115 / 115 网盘</p><h1 class="mt-2 inline-block border-b-2 border-blue-600 pb-3 text-2xl font-semibold text-slate-900">115分享STRM</h1></header>
+  <ManagementLayout title="115分享STRM" description="管理分享生成、转存再分享与审核重试，查看任务处理记录。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
+    <template #actions>
+      <button type="button" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" :disabled="busy || initializing || automationSaving || !automationReady" @click="saveAutomation">{{ automationSaving ? '保存中…' : '保存设置' }}</button>
+    </template>
       <nav class="mb-5 flex overflow-x-auto rounded-xl border border-slate-200 bg-white px-2 shadow-sm" aria-label="115 分享 STRM 功能">
         <button v-for="tab in tabs" :key="tab.id" type="button" :aria-current="activeTab === tab.id ? 'page' : undefined" class="flex shrink-0 items-center gap-2 border-b-2 px-4 py-4 text-sm transition" :class="activeTab === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-600 hover:bg-slate-50'" @click="activeTab = tab.id"><span aria-hidden="true">{{ tab.icon }}</span>{{ tab.label }}</button>
       </nav>
       <p v-if="automationNotice" role="status" class="mb-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{{ automationNotice }}</p>
       <ShareTaskLogs v-if="activeTab === 'logs'" :token="token" />
-      <section v-else class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm md:p-8">
+      <section v-else class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
         <form @submit.prevent="activeTab === 'basic' ? saveAutomation() : generate()">
           <fieldset :disabled="busy || initializing || automationSaving || !automationReady" class="min-w-0 space-y-6 disabled:opacity-70">
             <template v-if="activeTab === 'basic'">
@@ -369,6 +367,5 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
     <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页目录、后缀等选项后，点击「保存设置」使其对 Bot 生效。</p><button type="button" :disabled="busy" class="mt-3 text-xs font-medium text-blue-600 disabled:opacity-40" @click="$emit('openTelegram')">打开 Telegram 配置 →</button></section>
 
       </template>
-    </div>
-  </main>
+  </ManagementLayout>
 </template>

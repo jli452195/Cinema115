@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
-import WorkbenchSidebar from '../components/WorkbenchSidebar.vue'
+import { RouterLink } from 'vue-router'
+import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
@@ -12,7 +12,6 @@ import { episodeHasAired, localDateKey, seasonLibraryProgress } from '../types/s
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
-const router = useRouter()
 const { media: embyMedia, episodes: embyEpisodes } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
 interface SeasonSummary { id: number; number: number; name: string; episodeCount: number; date: string }
@@ -125,8 +124,8 @@ onBeforeUnmount(() => { cancelRequests(); window.clearInterval(dateTimer); windo
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-50 md:flex-row">
-    <WorkbenchSidebar active="dashboard" @home="emit('home')" @open-dashboard="router.push(`/${kind}`)" @open-p115="emit('openP115')" @open-telegram="emit('openTelegram')" @open-logs="emit('openLogs')" @logout="emit('logout')" />
+  <div class="flex min-h-screen flex-col bg-slate-50">
+    <WorkbenchHeader @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1 overflow-hidden">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
         <img :src="detail.backdropUrl" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
