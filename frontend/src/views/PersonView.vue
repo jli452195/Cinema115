@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
@@ -28,9 +29,9 @@ async function load() {
   document.title = '演员 · Cinema115'
   try {
     if (!/^[1-9]\d*$/.test(props.tmdbId) || !Number.isSafeInteger(Number(props.tmdbId))) throw new Error('演员 ID 无效')
-    const response = await fetch(`/api/admin/tmdb/person/${props.tmdbId}`, { headers: { Authorization: `Bearer ${props.token}` }, signal: AbortSignal.any([current.signal, AbortSignal.timeout(25000)]) })
+    const response = await fetch(catalogAPI(`tmdb/person/${props.tmdbId}`), { headers: { Authorization: `Bearer ${props.token}` }, signal: AbortSignal.any([current.signal, AbortSignal.timeout(25000)]) })
     const data = await response.json().catch(() => null)
-    if (!response.ok || !Array.isArray(data?.items)) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 404 ? '未找到该演员' : data?.error || '演员信息加载失败')
+    if (!response.ok || !Array.isArray(data?.items)) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : response.status === 404 ? '未找到该演员' : data?.error || '演员信息加载失败')
     if (current.signal.aborted) return
     person.value = data; document.title = `${data.name} · Cinema115`
   } catch (e) { if (!current.signal.aborted) error.value = e instanceof Error ? e.message : '演员信息加载失败' }

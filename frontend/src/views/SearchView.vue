@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
@@ -47,12 +48,12 @@ async function load() {
   loading.value = true
   try {
     const params = new URLSearchParams({ kind: scope.value, query: query.value, page: String(page.value) })
-    const response = await fetch(`/api/admin/tmdb/${scope.value === 'person' ? 'people' : 'browse'}?${params}`, {
+    const response = await fetch(catalogAPI(`tmdb/${scope.value === 'person' ? 'people' : 'browse'}?${params}`), {
       headers: { Authorization: `Bearer ${props.token}` },
       signal: AbortSignal.any([current.signal, AbortSignal.timeout(25000)]),
     })
     const data = await response.json().catch(() => null)
-    if (!response.ok || !Array.isArray(data?.items)) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : data?.error || '搜索失败，请稍后重试。')
+    if (!response.ok || !Array.isArray(data?.items)) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error || '搜索失败，请稍后重试。')
     if (current.signal.aborted) return
     if (scope.value === 'person') people.value = data.items
     else items.value = data.items

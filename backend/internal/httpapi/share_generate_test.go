@@ -113,7 +113,7 @@ func TestReviewReturnsActionableErrorToPage(t *testing.T) {
 
 func TestSingleSTRMUsesSelectedBaseURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	api := NewShareAPI("secret", func() string { return "" })
+	api := NewShareAPI("secret", func() string { return "selected-cookie" })
 	api.BaseURL = func() string { return "http://old-server:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))

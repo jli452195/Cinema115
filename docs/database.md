@@ -1,6 +1,6 @@
 # SQLite 数据库与旧任务迁移
 
-Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、系统 SQLite 或额外的数据库容器。当前锁定版本兼容项目 Go 1.22 基线、Windows 386 开发环境和 Linux amd64/arm64 NAS。数据库路径固定为 `DATA_DIR/cinema115.db`，默认在项目根目录 `data/`，Docker 内为 `/data/cinema115.db`。
+Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、系统 SQLite 或额外的数据库容器。当前锁定版本兼容项目 Go 1.22 基线，开发环境使用 Windows amd64，NAS 支持 Linux amd64/arm64。数据库路径固定为 `DATA_DIR/cinema115.db`，默认在项目根目录 `data/`，Docker 内为 `/data/cinema115.db`。从 32 位 Go 切换为 64 位 Go 后，现有 SQLite 数据文件可以直接使用，无需转换或重新同步媒体库。
 
 ## 当前迁移范围
 
@@ -16,9 +16,21 @@ Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、�
 
 迁移后的空闲页会保留供 SQLite 复用，因此主文件不一定立即缩小。不能根据文件大小直接推算当前媒体记录占用，也不要直接删除 WAL。运行中的一致性备份会生成整理后的独立数据库文件。
 
-管理员账号密码仍从根目录 `.env` 读取；115 Cookie、Telegram Bot 配置继续保存在原加密文件中。`automation.json`（含审核重试设置）和 Telegram 接收队列仍使用原文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。
+数据库结构版本 5 新增 `p115_accounts` 和 `p115_account_state`：保存账号编号、名称、AES-GCM 加密 Cookie、修改版本、卡片顺序与当前账号。密文绑定账号编号，密钥由 `JWT_SECRET` 派生；名称不加密。首次导入旧加密文件和 `p115_accounts_v1` 迁移标记在同一事务提交；损坏文件停止导入，旧文件保持不变。后续读写仅使用数据库，清空 Cookie 不会重新导入旧凭据。读取账号使用内存快照，播放不需要逐次查询数据库。
+
+版本 6 移除 `p115_account_state.active_id`，该表仅保留账号集合版本。旧全局选择通过 `p115_feature_migration` 暂存用于升级，分享设置成功固化为具体 `accountId` 后删除候选；该表不是运行时默认账号来源。各个 115 功能必须独立选择账号，没有全局回退。新安装的账号列表为空，删除所有账号后也不会重新创建默认卡片。
+
+管理员账号密码仍从根目录 `.env` 读取；Telegram Bot 配置继续保存在原加密文件中。`automation.json`（含审核重试设置和分享使用的 `accountId` 配置编号，不含 Cookie）及 Telegram 接收队列仍使用原文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。数据库备份现在包含 115 账号，恢复时需一并保留原 `JWT_SECRET`。
 
 服务重启后，审核等待任务按保存的时间继续执行；上次处于执行中的任务标记为中断，禁止自动重放执行状态不确定的云端操作。新任务日志从升级后开始记录，不将旧转存检查点当作新任务重新执行。
+
+版本 7 新增 `telegram_notifications`，保存 STRM 成功通知的任务编号、Bot 数字编号、单个目标聊天、格式化消息和重试状态。消息中包含分享链接及提取码，不保存 Bot Token、115 Cookie 或整份任务设置。任务、Bot 和聊天组成唯一键；发送结束清空正文，记录保留七天用于去重。目标仍由 Telegram 加密配置文件保存。
+
+版本 8 新增 `website_users`，保存普通网站用户、Argon2id 密码哈希和凭证版本。管理员仍使用 `.env` 凭据；新表与 115 账号独立。停用或重置密码会使旧登录凭证失效，详细用法见 [网站用户与权限](website-users.md)。
+
+版本 9 新增 `follow_requests` 和 `user_follows`，分别保存共享影视申请及各用户的独立订阅。取消只停用自己的关联，重复提交不新增记录，详细说明见 [影视追更](follows.md)。
+
+版本 10 为 `follow_requests` 增加用户可见处理说明、修改时间、版本和申请轮次，并增加 `follow_settings` 保存通知的网站根地址。新一轮追更的订阅与 Telegram 通知在同一事务提交；多人追更同一影视不重复通知。
 
 ## 首次启动与迁移
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { isWebsiteAdmin, websiteUser } from '../composables/useWebsiteAuth'
 
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
@@ -9,13 +10,15 @@ const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
-const managementLinks = [
+const managementLinks = computed(() => isWebsiteAdmin.value ? [
+  { label: '追更管理', to: '/follows/manage' },
+  { label: '用户管理', to: '/users' },
   { label: '115 网盘', to: '/115' },
   { label: 'Telegram 配置', to: '/telegram' },
   { label: '查看日志', to: '/logs' },
   { label: 'Emby', to: '/emby' },
-]
-const managementActive = computed(() => managementLinks.some(link => route.path.startsWith(link.to)))
+] : [])
+const managementActive = computed(() => managementLinks.value.some(link => route.path.startsWith(link.to)))
 
 function closePanels() { accountOpen.value = false }
 
@@ -61,7 +64,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         </button>
       </div>
       <nav v-if="accountOpen" id="header-management" aria-label="管理功能" class="absolute right-4 top-full mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 sm:right-8">
-        <p class="px-3 py-2 text-xs text-slate-400">管理功能</p>
+        <p class="px-3 py-2 text-xs text-slate-400">{{ websiteUser?.username }} · {{ isWebsiteAdmin ? '管理员' : '普通用户' }}</p>
+        <RouterLink to="/follows" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100" :aria-current="route.name === 'my-follows' ? 'page' : undefined" @click="closePanels">我的追更</RouterLink>
         <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="route.path.startsWith(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm hover:bg-slate-100" :class="route.path.startsWith(link.to) ? 'bg-amber-50 text-amber-700' : 'text-slate-600'" @click="closePanels">{{ link.label }}</RouterLink>
         <div class="my-1 border-t border-slate-100"></div>
         <button type="button" class="w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-red-50 hover:text-red-600" @click="closePanels(); emit('logout')">退出登录</button>

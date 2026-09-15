@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -24,21 +25,23 @@ type Identity struct {
 }
 
 type BotConfig struct {
-	Token          string   `json:"token"`
-	AllowedChatIDs string   `json:"allowedChatIDs"`
-	Enabled        bool     `json:"enabled"`
-	Identity       Identity `json:"identity"`
+	Token              string   `json:"token"`
+	AllowedChatIDs     string   `json:"allowedChatIDs"`
+	NotificationChatID string   `json:"notificationChatID"`
+	Enabled            bool     `json:"enabled"`
+	Identity           Identity `json:"identity"`
 }
 
 type ConfigView struct {
-	Configured     bool     `json:"configured"`
-	Enabled        bool     `json:"enabled"`
-	AllowedChatIDs string   `json:"allowedChatIDs"`
-	Identity       Identity `json:"identity"`
-	Source         string   `json:"source"`
-	Running        bool     `json:"running"`
-	Connected      bool     `json:"connected"`
-	LastError      string   `json:"lastError"`
+	Configured         bool     `json:"configured"`
+	Enabled            bool     `json:"enabled"`
+	AllowedChatIDs     string   `json:"allowedChatIDs"`
+	NotificationChatID string   `json:"notificationChatID"`
+	Identity           Identity `json:"identity"`
+	Source             string   `json:"source"`
+	Running            bool     `json:"running"`
+	Connected          bool     `json:"connected"`
+	LastError          string   `json:"lastError"`
 }
 
 // Manager 持有加密配置，串行更换接收器；令牌不进入返回给页面的配置。
@@ -53,6 +56,8 @@ type Manager struct {
 	store              *service.SessionStore
 	wake               chan struct{}
 	newWorker          func(BotConfig) (*Telegram, error)
+	Logs               *service.GenerationLogs // 启动 Run 前注入，运行期间不替换。
+	Notifications      NotificationStore       // 启动后台任务前注入。
 }
 
 func NewManager(dataDir, secret string, generator ShareGenerator, settings *service.AutomationStore) (*Manager, error) {
@@ -80,7 +85,7 @@ func normalizeChats(raw string) string {
 func (m *Manager) View() ConfigView {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return ConfigView{Configured: m.config.Token != "", Enabled: m.config.Enabled, AllowedChatIDs: m.config.AllowedChatIDs, Identity: m.config.Identity, Source: m.source, Running: m.running, Connected: m.connected, LastError: m.lastError}
+	return ConfigView{Configured: m.config.Token != "", Enabled: m.config.Enabled, AllowedChatIDs: m.config.AllowedChatIDs, NotificationChatID: m.config.NotificationChatID, Identity: m.config.Identity, Source: m.source, Running: m.running, Connected: m.connected, LastError: m.lastError}
 }
 
 // Test 只读取 Bot 身份和 Webhook 状态，不拉取消息、不向聊天发送消息。
@@ -126,6 +131,17 @@ func (m *Manager) Save(ctx context.Context, value BotConfig) error {
 		value.Token = old.Token
 	}
 	value.AllowedChatIDs = normalizeChats(value.AllowedChatIDs)
+	value.NotificationChatID = strings.TrimSpace(value.NotificationChatID)
+	if value.NotificationChatID != "" {
+		id, err := strconv.ParseInt(value.NotificationChatID, 10, 64)
+		if err != nil || id == 0 {
+			return fmt.Errorf("%w：通知聊天 ID 必须是单个非零数字 ID", ErrConfig)
+		}
+		value.NotificationChatID = strconv.FormatInt(id, 10)
+		if value.Token == "" {
+			return fmt.Errorf("%w：配置通知前请填写 Bot Token", ErrConfig)
+		}
+	}
 	if value.Enabled && value.Token == "" {
 		return fmt.Errorf("%w：启用前请填写 Bot Token", ErrConfig)
 	}
@@ -182,6 +198,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			<-done
 			cancel = nil
 			done = nil
+			m.Logs.Append("Telegram", "", "Bot", "INFO", "消息接收器已停止")
 		}
 		m.mu.Lock()
 		m.running = false
@@ -199,15 +216,26 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 		worker, err := m.newWorker(cfg)
 		if err != nil || worker == nil {
+			m.Logs.Append("Telegram", "", "Bot", "ERROR", "消息接收器启动失败：Bot 配置不完整")
 			m.mu.Lock()
 			m.lastError = "Bot 配置不完整，请检查 Token 和允许的聊天 ID"
 			m.mu.Unlock()
 			return
 		}
+		worker.Logs = m.Logs
+		statusKnown := false
 		worker.OnStatus = func(connected bool, message string) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			if m.version == version {
+				if !statusKnown || m.connected != connected {
+					if connected {
+						m.Logs.Append("Telegram", "", "Bot", "INFO", "消息接收器已连接")
+					} else {
+						m.Logs.Append("Telegram", "", "Bot", "WARNING", "消息拉取失败，正在重试；请检查网络、Token 和 Webhook 配置")
+					}
+					statusKnown = true
+				}
 				m.connected = connected
 				m.lastError = message
 			}
@@ -219,6 +247,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		m.running = true
 		m.mu.Unlock()
 		workerDone := done
+		m.Logs.Append("Telegram", "", "Bot", "INFO", "消息接收器启动")
 		go func() { workerDone <- worker.Run(workerCtx) }()
 	}
 	apply()
@@ -236,6 +265,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.running = false
 			m.connected = false
 			if err != nil {
+				m.Logs.Append("Telegram", "", "Bot", "ERROR", "消息接收器异常停止，请检查数据目录权限和处理进度文件")
 				m.lastError = "接收器已停止，请检查数据目录权限和处理进度文件"
 			}
 			m.mu.Unlock()

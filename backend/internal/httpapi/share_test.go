@@ -54,7 +54,8 @@ func TestQueryPlaybackWithoutSignature(t *testing.T) {
 
 func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	api := NewShareAPI("test-secret", func() string { return "" })
+	cookie := "selected-cookie"
+	api := NewShareAPI("test-secret", func() string { return cookie })
 	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
@@ -74,6 +75,14 @@ func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 	}
 	if generated.Content != "http://192.168.0.24:3002/api/?share_code=abc&id=123&receive_code=1234\n" {
 		t.Fatal("未生成查询参数形式")
+	}
+	cookie = ""
+	for _, endpoint := range []string{"strm", "files"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/"+endpoint, strings.NewReader(`{"url":"https://115.com/s/abc?password=1234","fileId":"123","name":"sample.mkv"}`)))
+		if w.Code != 400 {
+			t.Fatal("未选择有效账号必须阻止生成及读取")
+		}
 	}
 	for _, method := range []string{"GET", "HEAD"} {
 		recorder = httptest.NewRecorder()

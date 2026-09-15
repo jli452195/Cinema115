@@ -18,10 +18,11 @@ func RegisterLogs(admin *gin.RouterGroup, logs *service.GenerationLogs) {
 			c.JSON(400, gin.H{"error": "不支持的日志等级"})
 			return
 		}
-		if module := c.DefaultQuery("module", "STRM"); module != "STRM" {
-			c.JSON(400, gin.H{"error": "暂仅支持 STRM 日志"})
+		module := c.DefaultQuery("module", "STRM")
+		if module != "STRM" && module != "Telegram" && module != "ALL" {
+			c.JSON(400, gin.H{"error": "不支持的日志模块"})
 			return
 		}
-		c.JSON(200, gin.H{"entries": logs.Snapshot(level), "capacity": service.GenerationLogCapacity})
+		c.JSON(200, gin.H{"entries": logs.Snapshot(level, module), "capacity": service.GenerationLogCapacity})
 	})
 }

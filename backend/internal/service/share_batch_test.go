@@ -14,6 +14,7 @@ import (
 
 // 用独立的网盘树模拟转存与分享快照，分享中的目录 ID 与网盘 ID 不相同。
 type batchTransferFake struct {
+	owners                   map[string]string
 	review                   bool
 	failReceive              bool
 	next                     int
@@ -26,20 +27,24 @@ type batchTransferFake struct {
 }
 
 func (f *batchTransferFake) ListForTransfer(_ context.Context, share *p115.ShareInfo, _ string, _ int, cookie string) (*p115.SharePage, error) {
-	if cookie != "private-cookie" {
+	if cookie != "UID=42_A; SEID=private-cookie" {
 		return nil, errors.New("未使用本次登录 Cookie")
 	}
 	if share.Code == "review" && f.review {
 		return nil, p115.ErrShareUnderReview
 	}
-	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "同名电影.mkv", Size: 100}}}, nil
+	owner := "99"
+	if value, ok := f.owners[share.Code]; ok {
+		owner = value
+	}
+	return &p115.SharePage{OwnerID: owner, Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "同名电影.mkv", Size: 100}}}, nil
 }
 
 func (f *batchTransferFake) List(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
 	if share.Code != "own" {
 		return f.ListForTransfer(ctx, share, cid, offset, cookie)
 	}
-	if cookie != "private-cookie" {
+	if cookie != "UID=42_A; SEID=private-cookie" {
 		return nil, errors.New("本人分享校验未携带 Cookie")
 	}
 	var files []p115.ShareFile
@@ -62,7 +67,7 @@ func (f *batchTransferFake) List(ctx context.Context, share *p115.ShareInfo, cid
 }
 
 func (f *batchTransferFake) CreateDirectory(_ context.Context, parent, name, cookie string) (string, error) {
-	if cookie != "private-cookie" {
+	if cookie != "UID=42_A; SEID=private-cookie" {
 		return "", errors.New("创建目录账号错误")
 	}
 	if f.drive == nil {
@@ -78,7 +83,7 @@ func (f *batchTransferFake) CreateDirectory(_ context.Context, parent, name, coo
 }
 
 func (f *batchTransferFake) ReceiveShare(_ context.Context, share *p115.ShareInfo, ids []string, cid, cookie string) error {
-	if cookie != "private-cookie" || len(ids) != 1 || ids[0] != "10" {
+	if cookie != "UID=42_A; SEID=private-cookie" || len(ids) != 1 || ids[0] != "10" {
 		return errors.New("转存参数不正确")
 	}
 	f.received = append(f.received, share.Code)
@@ -90,7 +95,7 @@ func (f *batchTransferFake) ReceiveShare(_ context.Context, share *p115.ShareInf
 }
 
 func (f *batchTransferFake) DriveFiles(_ context.Context, cid string, _ int, cookie string) (*p115.SharePage, error) {
-	if cookie != "private-cookie" {
+	if cookie != "UID=42_A; SEID=private-cookie" {
 		return nil, errors.New("网盘读取账号错误")
 	}
 	return &p115.SharePage{Count: len(f.drive[cid]), Files: f.drive[cid]}, nil
@@ -117,7 +122,7 @@ func (f *batchTransferFake) ConfigureShare(_ context.Context, share *p115.ShareI
 }
 
 func (f *batchTransferFake) DeleteDirectory(_ context.Context, cid, cookie string) error {
-	if cookie != "private-cookie" || !strings.HasPrefix(f.names[cid], "Cinema115-临时-") {
+	if cookie != "UID=42_A; SEID=private-cookie" || !strings.HasPrefix(f.names[cid], "Cinema115-临时-") {
 		return errors.New("误删了父目录或来源目录")
 	}
 	f.deletes++
@@ -138,7 +143,7 @@ func TestMergedShareExcludesReviewAndRetriesOnlyThatSource(t *testing.T) {
 			}
 			var generated []GenerateInput
 			gen := generateFunc(func(ctx context.Context, in GenerateInput) (*GenerationResult, error) {
-				if ctx.Value(generationCookieKey{}) != "private-cookie" {
+				if ctx.Value(generationCookieKey{}) != "UID=42_A; SEID=private-cookie" {
 					t.Error("生成未固定使用本人 Cookie")
 				}
 				if in.CID != "0" || len(ctx.Value(generationRootIDsKey{}).([]string)) != 1 || in.URL != "https://115.com/s/own?password=abcd" {

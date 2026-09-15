@@ -73,21 +73,26 @@ func (response shareResponse) underReview() bool {
 	return false
 }
 
-// ownedBy 只比较当前会话 UID 与分享者 ID，不依赖昵称或公开可访问性。
+// ownerID 从目录响应读取分享者编号，不依赖昵称或公开可访问性。
 // 使用整数解析避免大整数经浮点数转换后发生误匹配，缺失或异常字段均不判为本人。
-func (response shareResponse) ownedBy(cookie string) bool {
+func (response shareResponse) ownerID() string {
 	var snapshot struct {
 		User struct {
 			ID json.Number `json:"user_id"`
 		} `json:"userinfo"`
 	}
 	if json.Unmarshal(response.Data, &snapshot) != nil {
-		return false
+		return ""
 	}
 	owner, err := strconv.ParseUint(snapshot.User.ID.String(), 10, 64)
 	if err != nil || owner == 0 {
-		return false
+		return ""
 	}
+	return strconv.FormatUint(owner, 10)
+}
+
+// CookieUserID 仅从 UID 的用户编号部分解析，不比较设备标识和其他 Cookie 内容。
+func CookieUserID(cookie string) string {
 	for _, part := range strings.Split(cookie, ";") {
 		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok || name != "UID" {
@@ -95,9 +100,17 @@ func (response shareResponse) ownedBy(cookie string) bool {
 		}
 		uid, _, _ := strings.Cut(value, "_")
 		user, err := strconv.ParseUint(uid, 10, 64)
-		return err == nil && user == owner
+		if err != nil || user == 0 {
+			return ""
+		}
+		return strconv.FormatUint(user, 10)
 	}
-	return false
+	return ""
+}
+
+func (response shareResponse) ownedBy(cookie string) bool {
+	owner := response.ownerID()
+	return owner != "" && owner == CookieUserID(cookie)
 }
 
 func (response shareResponse) message() string {

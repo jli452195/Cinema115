@@ -61,9 +61,11 @@ curl -f http://127.0.0.1:8115/api/health
 
 也可在根目录执行 `docker build -t cinema115:local .` 构建镜像，然后在 NAS 容器管理界面配置相同的环境变量、`8115:3002` 端口和两个挂载。支持 amd64 和 arm64 NAS。
 
+Go 构建使用默认并发与垃圾回收参数，不再固定为低内存编译。BuildKit 缓存依赖和编译结果，修改后端代码后可复用未变更的包；首次构建 Telegram 协议依赖耗时和内存占用较高，缓存仅用于构建，不进入最终镜像。
+
 更新代码后重新执行构建启动命令。修改 `.env` 或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
 
-首次部署后在页面扫码登录 115。若迁移旧 `data/p115-session.enc`，同时保留原 `JWT_SECRET` 并保证文件权限正确；否则在 NAS 重新扫码。根目录密钥和登录凭证不会打包到镜像中。
+首次部署后在「115 助手」页面添加账号并扫码登录，再到具体功能中选择账号。多账号配置保存于 `/data/cinema115.db`，Cookie 字段使用 AES-GCM 加密，没有全局当前账号。从 Windows 迁移到 NAS 时保留完整 `data/`、原 `JWT_SECRET` 并保证文件权限正确；运行中备份数据库应使用 `dbtool -action backup`。旧 `p115-accounts.enc` 或 `p115-session.enc` 首次启动时自动导入，成功后仅使用数据库，保留旧文件作为备份。根目录密钥和登录凭证不会打包到镜像中。
 
 升级到 SQLite 版本前停止旧服务并备份 `data/` 和 `.env`。新版首次启动自动导入旧转存任务 JSON，原文件保留，新任务写入 `/data/cinema115.db`。无需增加端口或挂载。运行中通过 `docker compose exec cinema115 /app/dbtool -action status` 检查数据库；一致性备份和恢复方法见 [数据库说明](database.md)，不要只复制运行中的主 `.db` 文件。
 

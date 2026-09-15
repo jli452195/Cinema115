@@ -12,11 +12,14 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY backend/ ./
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
+# 缓存依赖和编译结果，后续修改业务代码时复用；编译并发与垃圾回收使用 Go 默认值。
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
     && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/dbtool ./cmd/dbtool
 
 # 第三阶段：Go 同时提供页面和 API，运行时无需 Node.js 或 Nginx。

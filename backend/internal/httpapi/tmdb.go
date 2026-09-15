@@ -39,12 +39,12 @@ func tmdbError(c *gin.Context, err error) {
 	c.JSON(status, gin.H{"error": err.Error()})
 }
 
-// RegisterTMDB 只开放管理员查询接口，浏览器不会接触 API 密钥。
+// RegisterTMDB 挂载到调用方提供的鉴权分组，浏览器不会接触 API 密钥。
 func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
 	admin = admin.Group("")
 	// 手动刷新与后台重新验证走同一路由，只跳过 TMDB 缓存，不暴露密钥。
 	admin.Use(func(c *gin.Context) {
-		if c.Query("refresh") == "1" {
+		if c.Query("refresh") == "1" && c.GetString("website_role") != "user" {
 			c.Request = c.Request.WithContext(tmdb.WithFresh(c.Request.Context()))
 		}
 		c.Next()

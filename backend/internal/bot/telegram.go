@@ -27,6 +27,7 @@ type Telegram struct {
 	Generator    ShareGenerator
 	Settings     *service.AutomationStore
 	OnStatus     func(bool, string)
+	Logs         *service.GenerationLogs
 }
 
 func NewTelegram(token, chats, dataDir string, generator ShareGenerator, settings *service.AutomationStore) (*Telegram, error) {
@@ -210,6 +211,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 			return fmt.Errorf("Telegram 批次回复队列无效")
 		}
 	}
+	replyFailed := false
 	for ctx.Err() == nil {
 		if state.Pending == nil && len(state.Replies) > 0 {
 			state.Pending, state.Replies = state.Replies[0], state.Replies[1:]
@@ -240,6 +242,7 @@ func (b *Telegram) Run(ctx context.Context) error {
 			}
 			if err := b.call(ctx, method, pending.request(), output); err != nil {
 				if errors.Is(err, errTelegramEditMessageMissing) {
+					b.Logs.Append("Telegram", "", "Bot", "WARNING", "原状态消息已删除，将补发已保存结果")
 					// 提示被用户删除时补发已保存结果，不重新生成或转存。
 					pending.EditMessageID = 0
 					if state.Batch != nil {
@@ -251,10 +254,19 @@ func (b *Telegram) Run(ctx context.Context) error {
 					continue
 				}
 				log.Printf("Telegram 回复失败，稍后重试（不会重复转存）")
+				if !replyFailed && ctx.Err() == nil {
+					b.Logs.Append("Telegram", "", "Bot", "WARNING", "回复发送失败，稍后重试，不会重复转存")
+					replyFailed = true
+				}
 				if !botDelay(ctx) {
 					break
 				}
 				continue
+			}
+			b.Logs.Append("Telegram", "", "Bot", "DEBUG", "处理提示或结果回复已发送／更新")
+			if replyFailed {
+				b.Logs.Append("Telegram", "", "Bot", "INFO", "回复发送已恢复")
+				replyFailed = false
 			}
 			if starting {
 				if sent.ID <= 0 {

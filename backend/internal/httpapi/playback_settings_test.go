@@ -19,7 +19,7 @@ func TestPlaybackAddressUsesSavedWebConfigAndRequestFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := NewShareAPI("secret", func() string { return "" })
+	api := NewShareAPI("secret", func() string { return "selected-cookie" })
 	api.BaseURL = func() string { return store.Value().Generation.BaseURL }
 	api.OutputRoot = dir
 	r := gin.New()

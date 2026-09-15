@@ -68,7 +68,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 		reportGenerationWithLevel(ctx, "INFO", "generating", "转存再分享已关闭：正在读取原分享并直接生成 STRM")
 		return w.Generator.Generate(ctx, input)
 	}
-	reportGenerationWithLevel(ctx, "INFO", "starting", "转存再分享已开启：完整校验转存后创建长期分享，再生成 STRM 和清理临时目录")
+	reportGenerationWithLevel(ctx, "INFO", "starting", "正在核对分享者 user ID 与本功能所选账号")
 	if err := ValidateGenerationOptions(w.Root, input); err != nil {
 		return nil, err
 	}
@@ -79,17 +79,22 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if input.Password != "" {
 		share.Password = strings.TrimSpace(input.Password)
 	}
-	if settings.FixedSharePassword != "" && share.Password == settings.FixedSharePassword {
-		reportGenerationWithLevel(ctx, "INFO", "generating", "分享提取码匹配固定密码：跳过转存，直接使用原分享生成 STRM")
-		return w.Generator.Generate(ctx, input)
+	cookie := generationCookie(ctx, w.Cookie)
+	if cookie == "" {
+		return nil, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
-	sharePassword, err := newSharePassword(settings.FixedSharePassword)
+	first, own, err := w.inspectSource(ctx, share, input.CID, cookie)
 	if err != nil {
 		return nil, err
 	}
-	cookie := w.Cookie()
-	if cookie == "" {
-		return nil, generationInputError("请先登录 115")
+	if own {
+		reportGenerationWithLevel(ctx, "INFO", "generating", "分享者与所选账号一致：直接使用原分享生成 STRM")
+		return w.generateOriginal(ctx, input, cookie)
+	}
+	reportGenerationWithLevel(ctx, "INFO", "starting", "分享者与所选账号不同：转存后创建自己的长期分享并生成 STRM")
+	sharePassword, err := newSharePassword(settings.FixedSharePassword)
+	if err != nil {
+		return nil, err
 	}
 	// 整个转分享流程串行化，避免多个请求同时执行 115 的删除接口。
 	reportGeneration(ctx, "queued", "正在等待其他转分享任务完成")
@@ -102,9 +107,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	reportGeneration(ctx, "scanning", "正在读取原分享的完整目录")
-	source, roots, err := w.scanDirectory(ctx, input.CID, "正在核对原分享目录及转存审核状态", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
-		return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
-	})
+	source, roots, err := w.scanDirectory(ctx, input.CID, "正在核对原分享目录及转存审核状态", w.sourcePages(share, input.CID, cookie, first))
 	if err != nil {
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			err = errors.Join(err, errSourceShareReview)

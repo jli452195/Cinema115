@@ -51,9 +51,9 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
 	}
-	cookie := w.Cookie()
+	cookie := generationCookie(ctx, w.Cookie)
 	if cookie == "" {
-		return outcomes, generationInputError("请先登录 115")
+		return outcomes, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
 	select {
 	case w.gate <- struct{}{}:
@@ -80,18 +80,28 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 		if input.Password != "" {
 			share.Password = strings.TrimSpace(input.Password)
 		}
-		if input.Mode == "direct" || input.Mode == "" && !settings.ReshareEnabled || settings.FixedSharePassword != "" && settings.FixedSharePassword == share.Password {
-			input.Mode = "direct"
-			outcomes[i].Result, outcomes[i].Err = w.Generator.Generate(context.WithValue(ctx, generationCookieKey{}, cookie), input)
+		if input.Mode == "direct" || input.Mode == "" && !settings.ReshareEnabled {
+			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie)
 			continue
 		}
 		if input.Mode != "reshare" && input.Mode != "" {
 			outcomes[i].Err = generationInputError("分享模式无效")
 			continue
 		}
-		manifest, roots, err := w.scanDirectory(ctx, input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
-			return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
-		})
+		first, own, err := w.inspectSource(ctx, share, input.CID, cookie)
+		if err != nil {
+			if errors.Is(err, p115.ErrShareUnderReview) {
+				logGeneration(ctx, "INFO", fmt.Sprintf("批次第 %d 条原分享审核中，已移出合并转存，按审核重试设置处理", i+1))
+			}
+			outcomes[i].Err = err
+			continue
+		}
+		if own {
+			logGeneration(ctx, "INFO", fmt.Sprintf("批次第 %d 条分享属于所选账号，直接生成 STRM，不参与合并转存", i+1))
+			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie)
+			continue
+		}
+		manifest, roots, err := w.scanDirectory(ctx, input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), w.sourcePages(share, input.CID, cookie, first))
 		if err != nil {
 			if errors.Is(err, p115.ErrShareUnderReview) {
 				err = errors.Join(err, errSourceShareReview)

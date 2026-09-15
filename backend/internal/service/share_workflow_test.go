@@ -14,6 +14,7 @@ import (
 )
 
 type transferFake struct {
+	ownerID            string
 	reviewStage        string
 	missingChildren    int
 	childScans         int
@@ -26,12 +27,22 @@ type transferFake struct {
 }
 
 func (f *transferFake) ListForTransfer(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
-	return f.List(ctx, share, cid, offset, cookie)
+	page, err := f.List(ctx, share, cid, offset, cookie)
+	if page != nil {
+		page.OwnerID = f.ownerID
+		if f.ownerID == "" {
+			page.OwnerID = "99"
+		}
+		if f.ownerID == "missing" {
+			page.OwnerID = ""
+		}
+	}
+	return page, err
 }
 
 func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string, _ int, cookie string) (*p115.SharePage, error) {
 	f.listCalls++
-	if cookie != "original-cookie" {
+	if cookie != "UID=42_A; SEID=original-cookie" {
 		return nil, errors.New("校验没有使用本次登录 Cookie")
 	}
 	if f.reviewStage == "deleted" && f.deleted {
@@ -99,7 +110,7 @@ func (f *transferFake) SendShare(_ context.Context, ids []string, _ string) (*p1
 }
 func (f *transferFake) DeleteDirectory(_ context.Context, cid, cookie string) error {
 	f.calls = append(f.calls, "delete")
-	if cid != "999" || cookie != "original-cookie" {
+	if cid != "999" || cookie != "UID=42_A; SEID=original-cookie" {
 		return errors.New("清理范围或账号错误")
 	}
 	if f.fail == "delete" {
@@ -167,7 +178,7 @@ func setupWorkflow(t *testing.T, fake *transferFake) (*ShareWorkflow, GenerateIn
 			t.Error(err)
 		}
 	})
-	w := NewShareWorkflow(fake, gen, func() string { return "original-cookie" }, store, dir, db)
+	w := NewShareWorkflow(fake, gen, func() string { return "UID=42_A; SEID=original-cookie" }, store, dir, db)
 	w.PollInterval = time.Millisecond
 	in := settings.Generation
 	in.URL = "https://115cdn.com/s/source?password=1234"

@@ -35,7 +35,7 @@ func replySource(input service.GenerateInput) string {
 // 每条结果独立统计，批次序号区分多链接任务，不把未处理文件记为失败。
 func formatShareReply(input service.GenerateInput, settings service.AutomationSettings, result *service.GenerationResult, err error, index, total int) (string, string) {
 	reshare := input.Mode == "reshare" || input.Mode == "" && settings.ReshareEnabled
-	if share, parseErr := p115.ParseShareURL(replySource(input)); parseErr == nil && settings.FixedSharePassword != "" && share.Password == settings.FixedSharePassword {
+	if result != nil && result.Mode == "direct" {
 		reshare = false
 	}
 	if result != nil && result.ReshareURL != "" {

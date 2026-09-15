@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
@@ -26,9 +27,9 @@ async function load() {
   document.title = '电影系列 · Cinema115'
   try {
     if (!/^[1-9]\d*$/.test(props.tmdbId) || !Number.isSafeInteger(Number(props.tmdbId))) throw new Error('TMDB 系列 ID 无效')
-    const response = await fetch(`/api/admin/tmdb/collection/${props.tmdbId}`, { headers: { Authorization: `Bearer ${props.token}` }, signal: AbortSignal.any([current.signal, AbortSignal.timeout(25000)]) })
+    const response = await fetch(catalogAPI(`tmdb/collection/${props.tmdbId}`), { headers: { Authorization: `Bearer ${props.token}` }, signal: AbortSignal.any([current.signal, AbortSignal.timeout(25000)]) })
     const data = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 404 ? '没有找到这个电影系列。' : data?.error || '系列加载失败，请稍后重试。')
+    if (!response.ok) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : response.status === 404 ? '没有找到这个电影系列。' : data?.error || '系列加载失败，请稍后重试。')
     if (!data || !Array.isArray(data.items)) throw new Error('系列数据格式不正确')
     if (current.signal.aborted) return
     collection.value = data

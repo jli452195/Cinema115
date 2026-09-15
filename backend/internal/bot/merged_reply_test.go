@@ -58,3 +58,18 @@ func TestMergedReplyDoesNotClaimFailedSnapshotPassed(t *testing.T) {
 		t.Fatal("没有提示保留临时目录")
 	}
 }
+
+func TestMergedReplyDistinguishesOriginalShares(t *testing.T) {
+	inputs := []service.GenerateInput{{URL: "https://115.com/s/self"}}
+	out := []service.BatchOutcome{{Result: &service.GenerationResult{Mode: "direct", Written: 1}}}
+	text, preview := formatMergedReply(inputs, out)
+	if !strings.Contains(text, "原分享直接生成") || strings.Contains(text, "转存再分享") || strings.Contains(text, "新链接") || preview != inputs[0].URL {
+		t.Fatal("本人分享误报转存或新链接", text)
+	}
+	inputs = append(inputs, service.GenerateInput{URL: "https://115.com/s/other"})
+	out = append(out, service.BatchOutcome{Result: &service.GenerationResult{Written: 2, ReshareURL: "https://115.com/s/new", Cleaned: true}})
+	text, preview = formatMergedReply(inputs, out)
+	if strings.Count(text, "原分享直接生成") != 1 || !strings.Contains(text, "成功 2 个，失败 0 个") || preview != "https://115.com/s/new" {
+		t.Fatal("混合批次汇总错误", text)
+	}
+}

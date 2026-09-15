@@ -25,6 +25,14 @@ var ErrNoMedia = errors.New("没有符合条件的视频，请检查分享目录
 // generationCookieKey 仅在转存工作流内部传递本次会话，不进入请求参数、日志或持久化记录。
 type generationCookieKey struct{}
 
+// 新任务在入口固定凭据，账号切换只影响后续任务。
+func generationCookie(ctx context.Context, current func() string) string {
+	if cookie, ok := ctx.Value(generationCookieKey{}).(string); ok {
+		return cookie
+	}
+	return current()
+}
+
 type ShareLister interface {
 	List(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error)
 }
@@ -53,6 +61,8 @@ type GeneratedMetadata struct {
 	Size int64
 }
 type GenerationResult struct {
+	// 记录实际执行方式，供任务日志和 Telegram 回执使用。
+	Mode            string `json:"-"`
 	ReshareURL      string
 	TempDirectoryID string
 	Cleaned         bool
@@ -170,7 +180,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 		cookie = g.Cookie()
 	}
 	if cookie == "" {
-		return nil, generationInputError("请先在 115 网盘页面完成登录")
+		return nil, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
 	result := &GenerationResult{Files: make([]GeneratedSTRM, 0)}
 	started := time.Now()

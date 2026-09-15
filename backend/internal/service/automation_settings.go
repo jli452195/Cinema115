@@ -14,6 +14,7 @@ import (
 
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
+	AccountID          string        `json:"accountId"`
 	ReshareEnabled     bool          `json:"reshareEnabled"`
 	TGBatchWaitSeconds int           `json:"tgBatchWaitSeconds"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
@@ -25,9 +26,11 @@ type AutomationSettings struct {
 }
 
 type AutomationStore struct {
-	mu         sync.RWMutex
-	path, root string
-	value      AutomationSettings
+	// 启动时装配，保存时校验账号配置，不在读取旧设置时阻止服务启动。
+	ValidateAccount func(string) error
+	mu              sync.RWMutex
+	path, root      string
+	value           AutomationSettings
 }
 
 func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
@@ -114,6 +117,9 @@ func ValidateGenerationOptions(root string, input GenerateInput) error {
 }
 
 func (s *AutomationStore) validate(value AutomationSettings) error {
+	if len(value.AccountID) > 64 || strings.ContainsAny(value.AccountID, "\r\n\x00") {
+		return generationInputError("115 配置编号无效")
+	}
 	if value.TGBatchWaitSeconds < 0 || value.TGBatchWaitSeconds > 300 {
 		return generationInputError("TG 批处理等待应为 0～300 秒，0 表示不等待")
 	}
@@ -145,6 +151,11 @@ func (s *AutomationStore) Save(value AutomationSettings) error {
 	value.Generation.Mode = ""
 	if err := s.validate(value); err != nil {
 		return err
+	}
+	if s.ValidateAccount != nil {
+		if err := s.ValidateAccount(value.AccountID); err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

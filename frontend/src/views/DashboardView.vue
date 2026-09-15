@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
@@ -32,9 +33,9 @@ let genreController: AbortController | undefined
 let mounted = true
 function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800' }
 async function request(path: string, signal: AbortSignal) {
-  const response = await fetch(`/api/admin/tmdb/${path}`, { signal, headers: { Authorization: `Bearer ${props.token}` } })
+  const response = await fetch(catalogAPI(`tmdb/${path}`), { signal, headers: { Authorization: `Bearer ${props.token}` } })
   const data = await response.json().catch(() => null)
-  if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : data?.error ?? `查询失败（HTTP ${response.status}）`)
+  if (!response.ok || !data) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error ?? `查询失败（HTTP ${response.status}）`)
   return data
 }
 async function loadGenres() {

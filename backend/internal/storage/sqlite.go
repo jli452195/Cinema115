@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 4
+const schemaVersion = 10
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -131,6 +131,87 @@ PRAGMA user_version=3;`); err != nil {
 	if version < 4 {
 		if err := migrateMediaCache(ctx, tx); err != nil {
 			return err
+		}
+	}
+	if version < 5 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE p115_accounts (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, cookie_enc BLOB NOT NULL, revision INTEGER NOT NULL CHECK(revision > 0), position INTEGER NOT NULL);
+CREATE TABLE p115_account_state (id INTEGER PRIMARY KEY CHECK(id=1), active_id TEXT REFERENCES p115_accounts(id) DEFERRABLE INITIALLY DEFERRED, revision INTEGER NOT NULL CHECK(revision > 0));
+PRAGMA user_version=5;`); err != nil {
+			return fmt.Errorf("迁移 115 账号表: %w", err)
+		}
+	}
+	if version < 6 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE p115_feature_migration (feature TEXT PRIMARY KEY NOT NULL, account_id TEXT NOT NULL);
+INSERT INTO p115_feature_migration(feature,account_id) SELECT 'share',active_id FROM p115_account_state WHERE active_id IS NOT NULL;
+CREATE TABLE p115_account_state_v6 (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision > 0));
+INSERT INTO p115_account_state_v6(id,revision) SELECT id,revision FROM p115_account_state;
+DROP TABLE p115_account_state;
+ALTER TABLE p115_account_state_v6 RENAME TO p115_account_state;
+UPDATE p115_accounts SET name='账号 1',revision=revision+1 WHERE id='default' AND name='默认账号';
+PRAGMA user_version=6;`); err != nil {
+			return fmt.Errorf("迁移 115 功能独立账号选择: %w", err)
+		}
+	}
+	if version < 7 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE telegram_notifications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+ bot_id TEXT NOT NULL, chat_id INTEGER NOT NULL, text TEXT NOT NULL,
+ preview_url TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+ due INTEGER NOT NULL, created_at INTEGER NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending',
+ UNIQUE(task_id,bot_id,chat_id)
+);
+CREATE INDEX telegram_notifications_due ON telegram_notifications(status,bot_id,chat_id,due);
+PRAGMA user_version=7;`); err != nil {
+			return fmt.Errorf("迁移 Telegram 生成通知表: %w", err)
+		}
+	}
+	if version < 8 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE website_users (
+ id TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+ password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user' CHECK(role='user'),
+ disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
+ token_version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+);
+PRAGMA user_version=8;`); err != nil {
+			return fmt.Errorf("迁移网站用户表: %w", err)
+		}
+	}
+	if version < 9 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE follow_requests (
+ kind TEXT NOT NULL CHECK(kind IN ('movie','tv')), tmdb_id INTEGER NOT NULL CHECK(tmdb_id>0),
+ title TEXT NOT NULL, poster_url TEXT NOT NULL, release_date TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','completed')),
+ created_at TEXT NOT NULL, PRIMARY KEY(kind,tmdb_id)
+);
+CREATE TABLE user_follows (
+ user_id TEXT NOT NULL, kind TEXT NOT NULL, tmdb_id INTEGER NOT NULL,
+ active INTEGER NOT NULL CHECK(active IN (0,1)), subscribed_at TEXT NOT NULL,
+ PRIMARY KEY(user_id,kind,tmdb_id),
+ FOREIGN KEY(kind,tmdb_id) REFERENCES follow_requests(kind,tmdb_id)
+);
+CREATE INDEX user_follows_list ON user_follows(user_id,active,subscribed_at DESC,kind,tmdb_id);
+CREATE INDEX user_follows_request ON user_follows(kind,tmdb_id,active);
+PRAGMA user_version=9;`); err != nil {
+			return fmt.Errorf("迁移追更订阅表: %w", err)
+		}
+	}
+	if version < 10 {
+		if _, err := tx.ExecContext(ctx, `
+ALTER TABLE follow_requests ADD COLUMN note TEXT NOT NULL DEFAULT '';
+ALTER TABLE follow_requests ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE follow_requests ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE follow_requests ADD COLUMN cycle INTEGER NOT NULL DEFAULT 0;
+UPDATE follow_requests SET updated_at=created_at;
+CREATE TABLE follow_settings(id INTEGER PRIMARY KEY CHECK(id=1),base_url TEXT NOT NULL DEFAULT '');
+INSERT INTO follow_settings(id) VALUES(1);
+PRAGMA user_version=10;`); err != nil {
+			return fmt.Errorf("迁移追更管理与通知配置: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -51,7 +51,7 @@ type folderBatchFake struct{ batchTransferFake }
 
 func (f *folderBatchFake) ListForTransfer(_ context.Context, share *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
 	if cid == "0" || cid == "" {
-		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "剧集", Directory: true}}}, nil
+		return &p115.SharePage{OwnerID: "99", Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "剧集", Directory: true}}}, nil
 	}
 	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "11", Name: share.Code + ".mkv", Size: 100}}}, nil
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogAPI } from '../composables/useWebsiteAuth'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MediaCard from './MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
@@ -37,11 +38,11 @@ async function load() {
   const timeout = window.setTimeout(() => { timedOut = true; current.abort() }, 20000)
   try {
     if (!/^[1-9]\d*$/.test(props.tmdbId) || !Number.isSafeInteger(Number(props.tmdbId))) throw new Error('TMDB ID 无效')
-    const response = await fetch(`/api/admin/tmdb/recommendations/${props.kind}/${props.tmdbId}`, {
+    const response = await fetch(catalogAPI(`tmdb/recommendations/${props.kind}/${props.tmdbId}`), {
       signal: current.signal, headers: { Authorization: `Bearer ${props.token}` },
     })
     const data = await response.json().catch(() => null)
-    if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : data?.error ?? '推荐加载失败，请稍后重试')
+    if (!response.ok || !data) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error ?? '推荐加载失败，请稍后重试')
     if (!Array.isArray(data.items)) throw new Error('推荐数据格式不正确')
     if (current.signal.aborted) return
     items.value = data.items

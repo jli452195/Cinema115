@@ -27,6 +27,7 @@ func (b *Telegram) processMergedBatch(ctx context.Context, state *telegramState,
 	taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	taskCtx = service.WithGenerationBatch(service.WithGenerationSource(taskCtx, "Telegram"), batch.UpdateID, 1, len(inputs))
+	taskCtx = service.WithShareReplyManaged(taskCtx)
 	outcomes, batchErr := generator.GenerateBatch(taskCtx, inputs)
 	if len(outcomes) != len(inputs) {
 		outcomes = make([]service.BatchOutcome, len(inputs))

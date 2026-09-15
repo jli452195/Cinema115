@@ -17,8 +17,13 @@ func formatMergedReply(inputs []service.GenerateInput, outcomes []service.BatchO
 	newURL, tempID := "", ""
 	cleaned := true
 	ownFailed := false
+	direct := 0
 	for i, out := range outcomes {
 		link := replySource(inputs[i])
+		if out.Result != nil && out.Result.Mode == "direct" {
+			direct++
+			link += "（原分享直接生成）"
+		}
 		if out.Err == nil && out.Result != nil {
 			success = append(success, "• "+link)
 		} else {
@@ -54,14 +59,18 @@ func formatMergedReply(inputs []service.GenerateInput, outcomes []service.BatchO
 			}
 		}
 	}
-	title := "✅ 【115网盘】转存再分享再生成 STRM 完成"
+	action := "转存再分享再生成 STRM"
+	if direct > 0 {
+		action = "分享生成 STRM"
+	}
+	title := "✅ 【115网盘】" + action + " 完成"
 	if len(failure) > 0 {
-		title = "⚠️ 【115网盘】转存再分享再生成 STRM 部分完成"
+		title = "⚠️ 【115网盘】" + action + " 部分完成"
 	}
 	if len(success) == 0 {
-		title = "❌ 【115网盘】转存再分享再生成 STRM 失败"
+		title = "❌ 【115网盘】" + action + " 失败"
 		if written > 0 {
-			title = "⚠️ 【115网盘】转存再分享再生成 STRM 未完成（已有文件生成）"
+			title = "⚠️ 【115网盘】" + action + " 未完成（已有文件生成）"
 		}
 	}
 	header := fmt.Sprintf("%s\n\n📊 链接统计：成功 %d 个，失败 %d 个", title, len(success), len(failure))

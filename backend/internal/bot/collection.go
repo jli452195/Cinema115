@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
-	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
@@ -23,7 +21,11 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
 		}
-		for _, item := range parseTelegramMessage(m) {
+		items := parseTelegramMessage(m)
+		if len(items) > 0 {
+			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "Bot", "INFO", fmt.Sprintf("收到分享消息，识别 %d 个链接并加入队列", len(items)))
+		}
+		for _, item := range items {
 			mode := telegramShareMode(settings, item)
 			wait := time.Duration(0)
 			if mode == "reshare" {
@@ -50,17 +52,9 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 	}
 }
 
-func telegramShareMode(settings service.AutomationSettings, item messageShare) string {
+func telegramShareMode(settings service.AutomationSettings, _ messageShare) string {
 	if !settings.ReshareEnabled {
 		return "direct"
-	}
-	if share, err := p115.ParseShareURL(item.URL); err == nil && settings.FixedSharePassword != "" {
-		if item.Password != "" {
-			share.Password = strings.TrimSpace(item.Password)
-		}
-		if share.Password == settings.FixedSharePassword {
-			return "direct"
-		}
 	}
 	return "reshare"
 }
@@ -81,9 +75,14 @@ func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 				return true
 			}
 			state.Batch = batch
+			mode := "普通分享"
+			if batch.Mode == "reshare" {
+				mode = "合并转存再分享"
+			}
+			b.Logs.Append("Telegram", fmt.Sprintf("批次-%d", batch.UpdateID), "Bot", "INFO", fmt.Sprintf("开始处理批次：%d 个链接，%s", len(batch.Items), mode))
 			state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(batch.Items))}
 			if batch.Mode == "reshare" {
-				state.Pending.Text += "\n正常来源将合并转存并创建一个分享，审核来源单独处理。"
+				state.Pending.Text += "\n本人分享直接生成，其他账号的正常分享合并转存，审核来源单独处理。"
 			}
 			return true
 		}

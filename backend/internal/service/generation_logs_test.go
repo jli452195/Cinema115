@@ -157,7 +157,7 @@ func TestReshareStagesInGenerationLogs(t *testing.T) {
 	var permanent, cleaned bool
 	for _, entry := range all {
 		wantLevel := "DEBUG"
-		if strings.HasPrefix(entry.Message, "遍历模式：") || strings.HasPrefix(entry.Message, "115链接：") || strings.HasPrefix(entry.Message, "开始处理任务：") || strings.HasPrefix(entry.Message, "转存再分享已开启：") || strings.Contains(entry.Message, "总耗时") {
+		if strings.HasPrefix(entry.Message, "遍历模式：") || strings.HasPrefix(entry.Message, "115链接：") || strings.HasPrefix(entry.Message, "开始处理任务：") || strings.HasPrefix(entry.Message, "分享者与所选账号") || strings.HasPrefix(entry.Message, "正在核对分享者 user ID") || strings.Contains(entry.Message, "总耗时") {
 			wantLevel = "INFO"
 		}
 		if entry.Level != wantLevel {

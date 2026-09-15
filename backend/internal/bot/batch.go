@@ -47,6 +47,7 @@ func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) e
 	defer cancel()
 	taskCtx = service.WithGenerationSource(taskCtx, "Telegram")
 	taskCtx = service.WithGenerationBatch(taskCtx, batch.UpdateID, index+1, len(batch.Items))
+	taskCtx = service.WithShareReplyManaged(taskCtx)
 	result, genErr := b.Generator.Generate(taskCtx, input)
 	state.Pending.Text, state.Pending.PreviewURL = formatShareReply(input, settings, result, genErr, index+1, len(batch.Items))
 	if err := b.save(*state); err != nil {

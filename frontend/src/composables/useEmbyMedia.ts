@@ -17,7 +17,7 @@ export function useEmbyMedia(token: () => string, kind: () => 'tv' | 'movie', id
     } catch (e) {
       if (!current.signal.aborted) {
         error.value = e instanceof Error ? e.message : '入库状态查询失败'
-        if (media.value) media.value = { ...media.value, state: 'stale' }
+        // 读取失败时保留上次匹配结果，由页面单独提示刷新异常。
       }
     }
     finally { if (!current.signal.aborted) loading.value = false }

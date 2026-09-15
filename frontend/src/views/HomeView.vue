@@ -11,13 +11,13 @@ const categories = {
   p115: {
     title: '115 网盘', description: '管理网盘连接、分享播放与 STRM 生成。',
     features: [
-      { title: '115 登录配置', description: '使用 Cookie 或扫码连接网盘，为分享播放提供登录凭证。', to: '/115/login', icon: 'cloud' },
+      { title: '115 助手', description: '管理账号连接、扫码登录与 Cookie 校验，为分享播放提供凭证。', to: '/helper115', icon: 'cloud' },
       { title: '115分享STRM', description: '从分享链接生成 STRM，管理转存再分享、审核重试与任务记录。', to: '/115/share', icon: 'play' },
     ],
   },
   telegram: {
     title: 'Telegram 配置', description: '连接机器人，管理消息接收与自动处理。',
-    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }],
+    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }, { title: '用户账号 / 资源搜索', description: '登录 Telegram 用户账号，通过 ayclub_bot 搜索影视资源。', to: '/telegram/user', icon: 'telegram' }],
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',

@@ -129,7 +129,7 @@ func TestOwnShareCleanupUsesCookieAndReadableSnapshot(t *testing.T) {
 			password := ""
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.Header.Get("Cookie") != "original-cookie" {
+				if r.Header.Get("Cookie") != "UID=42_A; SEID=original-cookie" {
 					anonymousReads++
 					t.Error("新分享流程没有使用同一登录 Cookie")
 					w.Write([]byte(`{"state":false,"error":"分享审核中"}`))
@@ -150,7 +150,7 @@ func TestOwnShareCleanupUsesCookieAndReadableSnapshot(t *testing.T) {
 					if failure == "cleanup-mismatch" && ownReads == 3 {
 						size = 1
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "count": 1, "list": []map[string]any{{"fid": id, "n": "movie.mkv", "s": size}}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "userinfo": map[string]any{"user_id": "99"}, "count": 1, "list": []map[string]any{{"fid": id, "n": "movie.mkv", "s": size}}}})
 				case "/files/add":
 					w.Write([]byte(`{"state":true,"cid":"999"}`))
 				case "/share/receive":
@@ -240,7 +240,7 @@ func TestReadableForeignReviewStopsBeforeTransferAndSchedulesSafely(t *testing.T
 						return
 					}
 					if nested && r.URL.Query().Get("cid") == "0" {
-						w.Write([]byte(`{"state":true,"data":{"share_state":1,"count":1,"list":[{"cid":"123","n":"目录"}]}}`))
+						w.Write([]byte(`{"state":true,"data":{"share_state":1,"userinfo":{"user_id":"99"},"count":1,"list":[{"cid":"123","n":"目录"}]}}`))
 						return
 					}
 					w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"99"},"shareinfo":{"share_state":0,"forbid_reason":""},"count":1,"list":[{"fid":"1","n":"电影.mkv","s":"100"}]}}`))
@@ -253,6 +253,7 @@ func TestReadableForeignReviewStopsBeforeTransferAndSchedulesSafely(t *testing.T
 				workflow.Client = client
 				workflow.Cookie = func() string { return "UID=42_A1_100" }
 				s, db, _ := setupShareTasks(t, workflow)
+				s.Cookie = workflow.Cookie
 				s.Settings = workflow.Settings
 				settings := s.Settings.Value()
 				settings.ReviewRetryEnabled = retry

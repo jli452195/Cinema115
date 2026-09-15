@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import { p115Request } from '../lib/p115-api'
 
-const props = defineProps<{ token: string }>()
+const props = defineProps<{ token: string; accountId: string }>()
 const emit = defineEmits<{ close: []; connected: [] }>()
 const dialog = ref<HTMLDialogElement>()
 const clientType = ref('alipay-miniapp')
@@ -45,7 +45,8 @@ async function createQRCode() {
   failed.value = false
   message.value = '正在获取二维码…'
   try {
-    const data = await p115Request<{ qrId: string; qrcode: string }>(props.token, 'qrcode', {
+    if (!props.accountId) throw new Error('请先指定要登录的账号配置')
+    const data = await p115Request<{ qrId: string; qrcode: string }>(props.token, `accounts/${encodeURIComponent(props.accountId)}/qrcode`, {
       method: 'POST', body: JSON.stringify({ clientType: clientType.value }), signal,
     })
     const image = await QRCode.toDataURL(data.qrcode, { width: 256, margin: 2 })
@@ -64,7 +65,7 @@ async function createQRCode() {
 
 async function poll(qrId: string, current: number, signal: AbortSignal) {
   try {
-    const data = await p115Request<{ status: string; connected: boolean }>(props.token, `qrcode/status?qrId=${encodeURIComponent(qrId)}`, { signal })
+    const data = await p115Request<{ status: string; connected: boolean }>(props.token, `accounts/${encodeURIComponent(props.accountId)}/qrcode/status?qrId=${encodeURIComponent(qrId)}`, { signal })
     // 关闭、刷新或切换类型后，旧请求的结果不能覆盖当前扫码状态。
     if (current !== generation) return
     if (data.status === 'success' && data.connected) {

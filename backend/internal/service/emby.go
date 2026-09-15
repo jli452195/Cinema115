@@ -580,12 +580,11 @@ func (s *EmbyService) Matches(ctx context.Context, requests []model.EmbyMatch, d
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.config
-	state, err := s.statusLocked(ctx)
+	state, err := s.db.EmbyState(ctx, embyScope(c))
 	if err != nil {
 		return nil, err
 	}
 	ready := state.Active != ""
-	fresh := state.Connected && state.LastError == "" && state.Pending == state.MetadataPending && state.Failed == state.MetadataFailed && state.WebhookError == "" && state.Status == "idle"
 	results := make([]model.EmbyMatch, 0, len(requests))
 	for _, request := range requests {
 		result := model.EmbyMatch{Kind: request.Kind, TMDB: request.TMDB, State: "unknown", Items: []model.EmbyItem{}}
@@ -594,17 +593,11 @@ func (s *EmbyService) Matches(ctx context.Context, requests []model.EmbyMatch, d
 			if err != nil {
 				return nil, err
 			}
-			if fresh {
-				result.State = "absent"
-				// 无法识别的条目可能属于当前查询；已精确匹配的条目不受其他刮削失败影响。
-				if state.MetadataPending+state.MetadataFailed > 0 {
-					result.State = "stale"
-				}
-				if len(result.Items) > 0 {
-					result.State = "present"
-				}
-			} else {
-				result.State = "stale"
+			// 入库结果以当前范围最近发布的完整快照为准，通知成功后增量更新。
+			// 同步、连接及刮削异常由状态接口单独展示，不覆盖其他影视的匹配结果。
+			result.State = "absent"
+			if len(result.Items) > 0 {
+				result.State = "present"
 			}
 		}
 		if detail {

@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"log"
 	"net"
@@ -13,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/client/tguser"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/httpapi"
 	"strm115/backend/internal/service"
@@ -25,27 +23,9 @@ import (
 	"time"
 )
 
-type loginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
-type qrcodeRequest struct {
-	ClientType string `json:"clientType"`
-}
 type shareRequest struct {
 	URL string `json:"url" binding:"required"`
 }
-
-var cookieStore *service.SessionStore
-var p115QR = p115.NewClient()
-var p115QRID string
-var p115Mu sync.RWMutex
-
-func cookieValue() string          { return cookieStore.Value() }
-func setCookie(value string) error { return cookieStore.Save(value) }
-func qrValue() string              { p115Mu.RLock(); defer p115Mu.RUnlock(); return p115QRID }
-func setQR(value string)           { p115Mu.Lock(); defer p115Mu.Unlock(); p115QRID = value }
 
 func main() {
 	// 加载当前目录中的环境配置。
@@ -59,11 +39,6 @@ func main() {
 	if dataDir == "" {
 		dataDir = "../data"
 	}
-	var err error
-	cookieStore, err = service.NewSessionStore(filepath.Join(dataDir, "p115-session.enc"), secret)
-	if err != nil {
-		log.Fatal(err)
-	}
 	initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	database, err := storage.Open(initCtx, filepath.Join(dataDir, "cinema115.db"))
 	if err != nil {
@@ -75,6 +50,11 @@ func main() {
 			log.Printf("关闭数据库: %v", err)
 		}
 	}()
+	accounts, err := service.OpenP115AccountsSQLite(initCtx, database, dataDir, secret)
+	if err != nil {
+		initCancel()
+		log.Fatal(err)
+	}
 	migration, err := database.ImportLegacyJobs(initCtx, filepath.Join(dataDir, "reshare-jobs"))
 	initCancel()
 	if err != nil {
@@ -93,30 +73,17 @@ func main() {
 	})
 	r.Use(corsMiddleware())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "strm115"}) })
-	r.POST("/api/auth/login", func(c *gin.Context) {
-		var req loginRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "username and password are required"})
-			return
-		}
-		if !secureEqual(req.Username, user) || !secureEqual(req.Password, pass) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-			return
-		}
-		now := time.Now()
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": req.Username, "iat": now.Unix(), "exp": now.Add(24 * time.Hour).Unix()})
-		signed, err := token.SignedString([]byte(secret))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create token"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"token": signed, "expiresIn": 86400})
-	})
+	auth := service.NewWebsiteAuth(database, user, pass, secret)
+	httpapi.RegisterWebsiteAuth(r, auth)
 	admin := r.Group("/api/admin")
-	admin.Use(jwtMiddleware(secret))
+	admin.Use(httpapi.WebsiteAuthenticated(auth), httpapi.WebsiteAdminOnly())
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
+	httpapi.RegisterWebsiteUsers(admin, auth)
+	catalog := r.Group("/api/catalog")
+	catalog.Use(httpapi.WebsiteAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
+	httpapi.RegisterTMDB(catalog, tmdbService)
 	embySecrets, err := service.NewSessionStore(filepath.Join(dataDir, "emby-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -126,68 +93,12 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterEmby(r, admin, embyService)
-	admin.POST("/p115/qrcode", func(c *gin.Context) {
-		var req qrcodeRequest
-		_ = c.ShouldBindJSON(&req)
-		app := "alipaymini"
-		switch req.ClientType {
-		case "wechat-miniapp":
-			app = "wechatmini"
-		case "115-android":
-			app = "115android"
-		case "115-ios":
-			app = "115ios"
-		case "115-life-android":
-			app = "android"
-		case "115-life-ios":
-			app = "ios"
-		}
-		qr, err := p115QR.CreateQRCode(c.Request.Context(), app)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-			return
-		}
-		setQR(qr.ID)
-		c.JSON(http.StatusOK, gin.H{"qrId": qr.ID, "qrcode": qr.ImageURL, "expiresAt": qr.ExpiresAt})
-	})
-	admin.GET("/p115/qrcode/status", func(c *gin.Context) {
-		id := qrValue()
-		if requested := c.Query("qrId"); requested != "" && requested != id {
-			c.JSON(409, gin.H{"error": "二维码已更新，请重新获取"})
-			return
-		}
-		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先获取二维码"})
-			return
-		}
-		status, err := p115QR.CheckQRCode(c.Request.Context(), id)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-			return
-		}
-		if status.Status == "success" && status.Cookie == "" {
-			status.Cookie, err = p115QR.CompleteQRCodeLogin(c.Request.Context(), id)
-			if err != nil {
-				c.JSON(502, gin.H{"error": err.Error()})
-				return
-			}
-		}
-		if status.Cookie != "" {
-			// 切换登录方式后，不允许旧二维码覆盖新保存的 Cookie。
-			p115Mu.Lock()
-			defer p115Mu.Unlock()
-			if p115QRID != id {
-				c.JSON(409, gin.H{"error": "二维码已更新，请重新获取"})
-				return
-			}
-			if err = setCookie(status.Cookie); err != nil {
-				c.JSON(500, gin.H{"error": "登录成功，但保存会话失败"})
-				return
-			}
-			p115QRID = ""
-		}
-		c.JSON(http.StatusOK, gin.H{"status": status.Status, "connected": status.Cookie != ""})
-	})
+	httpapi.RegisterWebsiteCatalog(catalog, embyService)
+	member := r.Group("/api/me", httpapi.WebsiteAuthenticated(auth))
+	follows := &service.FollowService{Store: database, TMDB: tmdbService, Library: embyService}
+	httpapi.RegisterFollows(member, follows)
+	httpapi.RegisterFollowAdmin(admin, follows)
+	httpapi.RegisterP115Accounts(admin, accounts, p115.NewAccountClient(), p115.NewClient())
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -201,16 +112,7 @@ func main() {
 		}
 		c.JSON(http.StatusOK, info)
 	})
-	httpapi.RegisterAccount(admin, cookieValue, func(value string) error {
-		p115Mu.Lock()
-		defer p115Mu.Unlock()
-		if err := setCookie(value); err != nil {
-			return err
-		}
-		p115QRID = ""
-		return nil
-	}, p115.NewAccountClient())
-	shareAPI := httpapi.NewShareAPI(secret, cookieValue)
+	shareAPI := httpapi.NewShareAPI(secret, func() string { return "" })
 	if root := os.Getenv("STRM_ROOT"); root != "" {
 		shareAPI.OutputRoot = root
 	}
@@ -219,12 +121,21 @@ func main() {
 		log.Fatal(err)
 	}
 	shareAPI.BaseURL = func() string { return automation.Value().Generation.BaseURL }
-	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: cookieValue, Root: shareAPI.OutputRoot}
-	workflow := service.NewShareWorkflow(shareAPI.Client, generator, cookieValue, automation, shareAPI.OutputRoot, database)
+	accountMigrationCtx, accountMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = service.MigrateP115ShareSelection(accountMigrationCtx, database, automation)
+	accountMigrationCancel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	automation.ValidateAccount = accounts.ValidateSelection
+	shareCookie := func() string { return accounts.CookieFor(automation.Value().AccountID) }
+	shareAPI.Cookie = shareCookie
+	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
+	workflow := service.NewShareWorkflow(shareAPI.Client, generator, shareCookie, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)
 	generationLogs := &service.GenerationLogs{}
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
-	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: cookieValue}
+	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)
 	}
@@ -236,7 +147,24 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterAutomation(admin, automation, func() bool { view := telegram.View(); return view.Enabled && view.Configured })
-	httpapi.RegisterTelegram(admin, telegram)
+	telegram.Logs = generationLogs
+	telegram.Notifications = database
+	follows.Notifications = telegram
+	shareTasks.Notifier, shareTasks.Logs = telegram, generationLogs
+	httpapi.RegisterTelegram(admin, telegram, generationLogs)
+	userConfig, err := service.NewSessionStore(filepath.Join(dataDir, "telegram-user-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	userSession, err := service.NewSessionStore(filepath.Join(dataDir, "telegram-user-session.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	telegramUser, err := tguser.New(userConfig, userSession)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterTelegramUser(admin, telegramUser, tmdbService, generationLogs)
 	shareAPI.Register(r, admin)
 	if directory := os.Getenv("FRONTEND_DIST"); directory != "" {
 		if err := httpapi.RegisterFrontend(r, directory); err != nil {
@@ -247,12 +175,15 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	listener, err := net.Listen("tcp", ":3002")
 	if err != nil {
 		log.Fatal(err)
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); shareAPI.Runs.Run() }()
 	if os.Getenv("TMDB_API_KEY") != "" {
 		workers.Add(1)
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
@@ -284,6 +215,11 @@ func main() {
 		}()
 	}
 	log.Print("Cinema115 已启动，监听 :3002")
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		telegram.RunNotifications(ctx)
+	}()
 	select {
 	case <-ctx.Done():
 	case err := <-workerErrors:
@@ -299,30 +235,6 @@ func main() {
 		_ = server.Close()
 	}
 	workers.Wait()
-}
-func secureEqual(a, b string) bool {
-	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-func jwtMiddleware(secret string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		value := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		token, err := jwt.Parse(value, func(t *jwt.Token) (any, error) {
-			if t.Method != jwt.SigningMethodHS256 {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(secret), nil
-		})
-		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
-			return
-		}
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			if name, ok := claims["sub"].(string); ok {
-				c.Set("admin_username", name)
-			}
-		}
-		c.Next()
-	}
 }
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

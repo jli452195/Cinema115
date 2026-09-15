@@ -3,9 +3,15 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ShareTaskLogs from '../components/ShareTaskLogs.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
+import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
+import { p115Request } from '../lib/p115-api'
+import type { P115Account } from '../types/p115Accounts'
+import P115AccountSelect from '../components/P115AccountSelect.vue'
 
 const props = defineProps<{ token: string }>()
 const activeTab = ref<'basic' | 'normal' | 'reshare' | 'logs'>('basic')
+const accounts = ref<P115Account[]>([])
+const accountId = ref('')
 const tabs = [{ id: 'basic', label: '基础设置', icon: '⚙' }, { id: 'normal', label: '普通分享', icon: '↗' }, { id: 'reshare', label: '转存再分享', icon: '↻' }, { id: 'logs', label: '日志', icon: '▤' }] as const
 const reviewRetryEnabled = ref(false)
 const reviewRetryMinutes = ref(30)
@@ -49,6 +55,8 @@ const automationNotice = ref('')
 const partialShareURL = ref('')
 const generationProgress = ref('')
 const generationSeconds = ref(0)
+const activeRunID = ref('')
+const stoppingRun = ref(false)
 let controller: AbortController | undefined
 let mounted = true
 const settingsKey = 'cinema115.strm-settings.v2'
@@ -77,8 +85,10 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
+    if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先选择已登录的 115 账号配置')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('TG 批处理等待应为 0～300 秒的整数')
-    const data = await request('automation-config', { tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
+    const data = await request('automation-config', { accountId: accountId.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
+    accountId.value = data.settings.accountId ?? ''
     savedReshareEnabled.value = data.settings.reshareEnabled
     parentCID.value = data.settings.parentCID
     fixedSharePassword.value = data.settings.fixedSharePassword ?? ''
@@ -120,7 +130,7 @@ async function generate() {
   if (busy.value || initializing.value || automationSaving.value) return
   controller = new AbortController()
   busy.value = true; generating.value = true; error.value = ''; notice.value = ''; playURL.value = ''
-  generated.value = undefined; partialShareURL.value = ''
+  generated.value = undefined; partialShareURL.value = ''; activeRunID.value = ''; stoppingRun.value = false
   generationProgress.value = '正在连接服务器…'; generationSeconds.value = 0
   const activeController = controller
   const startedAt = Date.now()
@@ -136,48 +146,21 @@ async function generate() {
     generated.value = data
   } catch (e) {
     if (mounted) error.value = activeController.signal.aborted
-      ? (activeController.signal.reason === 'generation-timeout' ? '等待结果超时，已结束本次请求。请检查后端任务记录，避免重复转存。' : '已停止本次请求。已转存的目录可能保留，请按后端任务记录检查。')
+      ? '已停止查询进度，后台任务仍会继续。请查看分享日志或 Telegram 通知，避免重复转存。'
       : e instanceof Error ? e.message : String(e)
   }
   finally { window.clearTimeout(timeout); window.clearInterval(elapsedTimer); busy.value = false; generating.value = false }
 }
 
-async function generateWithProgress(body: object, signal: AbortSignal) {
-  const response = await fetch('/api/admin/p115/share/generate-stream', {
-    method: 'POST', signal, headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    const data = await response.json().catch(() => null)
-    throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : data?.error ?? `请求失败（HTTP ${response.status}）`)
-  }
-  if (!response.body || !response.headers.get('Content-Type')?.includes('application/x-ndjson')) throw new Error('服务器未返回处理进度，请更新后端并刷新页面')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-  let result: typeof generated.value
-  const consume = (line: string) => {
-    if (!line.trim()) return
-    const event = JSON.parse(line)
-    if (event.event === 'progress') generationProgress.value = event.data.message
-    if (event.event === 'error') {
-      if (event.data.reshareUrl) partialShareURL.value = event.data.reshareUrl
-      throw new Error(event.data.error ?? '生成失败')
-    }
-    if (event.event === 'result') result = event.data
-  }
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      // 流式解码保留跨网络分片的中文字符，不能逐块直接解析 JSON。
-      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
-      let newline: number
-      while ((newline = buffer.indexOf('\n')) >= 0) { consume(buffer.slice(0, newline)); buffer = buffer.slice(newline + 1) }
-      if (buffer.length > 65536) throw new Error('服务器进度数据异常')
-      if (done) { consume(buffer); break }
-    }
-  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
-  if (!result) throw new Error('连接已中断，未收到最终结果。请检查任务记录后再决定是否重试。')
-  return result
+function generateWithProgress(body: object, signal: AbortSignal) {
+  return generateShareSTRM(props.token, body, signal, message => { generationProgress.value = message }, url => { partialShareURL.value = url }, id => { activeRunID.value = id })
+}
+
+async function stopGeneration() {
+  if (!activeRunID.value || stoppingRun.value) return
+  stoppingRun.value = true
+  try { await cancelShareRun(props.token, activeRunID.value) }
+  catch (e) { error.value = e instanceof Error ? e.message : '停止后台任务失败'; stoppingRun.value = false }
 }
 
 async function browse(next = [{ id: startCID.value.trim() || '0', name: startCID.value.trim() && startCID.value !== '0' ? '选定目录' : '分享根目录' }], start = 0) {
@@ -218,8 +201,10 @@ watch([shareURL, password, startCID], () => { files.value = []; browsed.value = 
 onMounted(async () => {
   controller = new AbortController()
   try {
-    const [config, automation] = await Promise.all([request('generation-config'), request('automation-config')])
+    const [config, automation, accountData] = await Promise.all([request('generation-config'), request('automation-config'), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: controller.signal })])
     if (!mounted) return
+    accounts.value = accountData.accounts
+    accountId.value = automation.settings.accountId ?? ''
     reshareEnabled.value = automation.settings.reshareEnabled
     savedReshareEnabled.value = automation.settings.reshareEnabled
     parentCID.value = automation.settings.parentCID
@@ -285,7 +270,10 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <div><h2 class="font-semibold text-slate-800">基础设置</h2><p class="mt-2 text-sm leading-6 text-slate-500">普通分享、转存再分享与 Telegram 共用以下生成选项，修改后点击右上角保存。</p></div>
           <div>
             <div class="grid gap-x-6 gap-y-5 md:grid-cols-2">
-              <div><p class="text-sm font-medium text-slate-700">使用 115 配置</p><p class="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">当前已保存的 115 登录凭证</p><p class="mt-2 text-xs leading-5 text-slate-400">在「115 网盘」页面扫码或配置 Cookie。</p></div>
+              <div>
+                <P115AccountSelect id="share-account" v-model="accountId" :accounts="accounts" />
+                <p class="mt-2 text-xs leading-5 text-slate-400">选择后点击右上角保存，分享生成、Telegram 与 STRM 播放共用此配置。<RouterLink to="/helper115" class="text-blue-600 hover:underline">管理账号</RouterLink></p>
+              </div>
               <label class="block text-sm font-medium text-slate-700">起始目录 ID<input v-model="startCID" inputmode="numeric" pattern="[0-9]*" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="0" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">默认 0 表示整个分享；预览中可选定子目录。</span></label>
               <label class="block text-sm font-medium text-slate-700">STRM 播放地址<input v-model="baseURL" required type="url" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="http://NAS_IP:8115" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">填写 Emby 能访问的 Cinema115 地址，点击「保存设置」生效。首次使用默认填入当前访问地址。</span></label>
               <label class="block text-sm font-medium text-slate-700">最小文件大小（MB）<input v-model.number="minSizeMB" type="number" required min="0" max="1073741824" step="1" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">设为 0 不限制；小于此大小的文件会跳过。</span></label>
@@ -328,9 +316,9 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 创建长期分享并校验快照 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
               <label class="mt-4 block text-sm text-slate-700">TG 批处理等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
-              <p class="mt-2 text-xs leading-5 text-slate-500">从首条 TG 消息起等待指定秒数，将同一聊天、同一话题内的正常转存链接合并成一个长期分享。审核链接单独移出，按基础设置自动重试；普通分享及固定密码匹配的链接直接生成。默认 5 秒，0 表示不等待，仅对 Bot 生效，点击右上角保存。</p>
+              <p class="mt-2 text-xs leading-5 text-slate-500">转存模式从首条 TG 消息起等待指定秒数，执行时按分享者 user ID 判断：本账号的分享直接生成，其他账号的正常分享合并转存。审核链接单独移出，按基础设置自动重试。普通分享模式不等待。默认 5 秒，0 表示不等待，仅对 Bot 生效，点击右上角保存。</p>
               <label class="mt-4 block text-sm text-slate-700">固定分享密码（可选）<input v-model="fixedSharePassword" maxlength="4" pattern="[a-zA-Z0-9]{4}" autocomplete="off" spellcheck="false" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="留空则每次随机生成" /></label>
-              <p class="mt-2 text-xs leading-5 text-slate-500">填写 4 位英文字母或数字，点击右上角保存。收到的链接提取码与固定密码一致时，直接使用原分享生成 STRM，沿用原分享有效期；不一致则转存并使用固定密码创建长期分享。留空时不匹配跳过，新分享密码每次随机生成。</p>
+              <p class="mt-2 text-xs leading-5 text-slate-500">仅用于转存后创建的新分享，填写 4 位英文字母或数字，留空则随机生成。开启转存模式后，将分享者 user ID 与基础设置所选账号的 Cookie UID 比较：相同则直接生成 STRM，沿用原分享有效期；不同则转存后创建自己的长期分享。无法确认分享者时停止本条，提取码不再用于判断归属。</p>
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">0 表示网盘根目录，每次自动创建独立临时目录。快照未完成或生成失败时保留目录；不会清空回收站。</p>
 
@@ -341,7 +329,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
             </template>
           </fieldset>
         </form>
-      <section v-if="generating" role="status" class="mt-5 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700"><div class="flex items-center justify-between gap-4"><p class="font-medium">{{ generationProgress }}</p><button type="button" class="shrink-0 rounded-lg border border-blue-200 px-3 py-1 text-xs hover:bg-white" @click="controller?.abort('user-cancelled')">停止等待</button></div><p class="mt-2 text-xs text-blue-600">已用时 {{ generationSeconds }} 秒 · 单阶段等待最多 90 秒，整个任务最多 5 分钟。请保持页面打开。</p></section>
+      <section v-if="generating" role="status" class="mt-5 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700"><div class="flex items-center justify-between gap-4"><p class="font-medium">{{ generationProgress }}</p><button v-if="activeRunID" type="button" :disabled="stoppingRun" class="shrink-0 rounded-lg border border-blue-200 px-3 py-1 text-xs hover:bg-white disabled:opacity-50" @click="stopGeneration">{{ stoppingRun ? '正在停止…' : '停止任务' }}</button></div><p class="mt-2 text-xs text-blue-600">已用时 {{ generationSeconds }} 秒 · 提交成功后，关闭页面不会取消后台任务。每条执行最多 5 分钟，结果可在分享日志及 Telegram 通知查看。</p></section>
       <section v-if="generated" role="status" class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-5"><h2 class="font-semibold text-emerald-800">生成完成 · 新增 {{ generated.count }} 个 STRM</h2><p class="mt-2 break-all text-xs leading-6 text-emerald-700">已保存到：{{ generated.directory }}</p><p v-if="generated.metadataCount" class="mt-1 text-xs text-emerald-700">同步保存 {{ generated.metadataCount }} 个元数据文件</p></section>
       <section v-if="generated?.reshareUrl || partialShareURL" class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-5"><h2 class="text-sm font-semibold text-blue-900">自己的分享链接</h2><a :href="generated?.reshareUrl || partialShareURL" target="_blank" rel="noopener noreferrer" class="mt-2 block break-all text-sm text-blue-700 underline">{{ generated?.reshareUrl || partialShareURL }}</a><p v-if="generated?.cleaned" class="mt-2 text-xs leading-5 text-blue-700">临时目录已移入 115 回收站，新分享已复查通过。</p></section>
       <p v-if="error" role="alert" class="my-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>

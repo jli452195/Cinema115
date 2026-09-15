@@ -11,11 +11,11 @@ import (
 
 // GenerateBatch 为每个来源预先落盘，审核项可独立定时重试，不重复执行成功来源。
 func (s *ShareTasks) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
+	ctx = s.pinAccount(ctx)
 	batch, ok := s.Generator.(BatchGenerator)
 	if !ok {
 		return nil, fmt.Errorf("生成服务未配置合并转存能力")
 	}
-	ctx = context.WithValue(ctx, automationContextKey{}, s.Settings.Value())
 	tasks := make([]*model.ShareTask, len(inputs))
 	requests := make([]shareTaskRequest, len(inputs))
 	for i, input := range inputs {

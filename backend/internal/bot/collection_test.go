@@ -40,20 +40,25 @@ func TestCollectionWindowIsolationAndDirectBypass(t *testing.T) {
 		collectionUpdate(5, 42, 7, "https://115.com/s/e?password=abcd"),
 		collectionUpdate(6, 99, 7, "https://115.com/s/denied"),
 	}, now.Add(4*time.Second))
-	if state.Offset != 7 || len(state.Queue) != 4 || len(state.Queue[0].Items) != 2 || !state.Queue[0].ReadyAt.Equal(now.Add(5*time.Second)) {
+	if state.Offset != 7 || len(state.Queue) != 3 || len(state.Queue[0].Items) != 3 || !state.Queue[0].ReadyAt.Equal(now.Add(5*time.Second)) {
 		t.Fatal("窗口被延后、聊天混合或丢失消息", state)
 	}
 	if state.Queue[0].SourceMessageIDs[1] != 104 {
 		t.Fatal("合并丢失原消息引用")
 	}
-	if !b.startReadyBatch(&state, now.Add(4*time.Second)) || state.Batch.Mode != "direct" || state.Batch.Items[0].URL != "https://115.com/s/e?password=abcd" {
+	settings.ReshareEnabled = false
+	if err := b.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(7, 42, 7, "https://115.com/s/direct")}, now.Add(4*time.Second))
+	if !b.startReadyBatch(&state, now.Add(4*time.Second)) || state.Batch.Mode != "direct" || state.Batch.Items[0].URL != "https://115.com/s/direct" {
 		t.Fatal("直接生成被转存等待阻塞")
 	}
 	state.Batch, state.Pending = nil, nil
 	if b.startReadyBatch(&state, now.Add(4*time.Second)) {
 		t.Fatal("窗口结束前开始了转存")
 	}
-	if !b.startReadyBatch(&state, now.Add(5*time.Second)) || len(state.Batch.Items) != 2 {
+	if !b.startReadyBatch(&state, now.Add(5*time.Second)) || len(state.Batch.Items) != 3 {
 		t.Fatal("窗口结束未统一处理")
 	}
 }

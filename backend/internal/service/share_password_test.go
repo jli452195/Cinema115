@@ -8,17 +8,16 @@ import (
 	"testing"
 )
 
-func TestFixedSharePasswordControlsTransfer(t *testing.T) {
+func TestFixedSharePasswordOnlyConfiguresNewShare(t *testing.T) {
 	for _, tc := range []struct {
 		name, fixed, urlPassword, explicit string
-		bypass                             bool
 	}{
-		{"链接密码匹配", "ab12", "ab12", "", true},
-		{"手动密码优先匹配", "ab12", "other", " ab12 ", true},
-		{"手动密码覆盖链接密码", "ab12", "ab12", "zz99", false},
-		{"不同密码转存", "ab12", "zz99", "", false},
-		{"没有固定密码随机", "", "", "", false},
-		{"大小写精确匹配", "Ab12", "ab12", "", false},
+		{"他人相同密码仍转存", "ab12", "ab12", ""},
+		{"手动相同密码仍转存", "ab12", "other", " ab12 "},
+		{"手动密码覆盖链接密码", "ab12", "ab12", "zz99"},
+		{"不同密码转存", "ab12", "zz99", ""},
+		{"没有固定密码随机", "", "", ""},
+		{"保留新密码大小写", "Ab12", "ab12", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &transferFake{}
@@ -30,35 +29,18 @@ func TestFixedSharePasswordControlsTransfer(t *testing.T) {
 			}
 			input.URL = "https://115.com/s/source?password=" + tc.urlPassword
 			input.Password = tc.explicit
-			if tc.bypass {
-				w.Generator = generateFunc(func(_ context.Context, in GenerateInput) (*GenerationResult, error) {
-					if in != input {
-						t.Error("直接生成改变了原分享参数")
-					}
-					return &GenerationResult{Written: 8}, nil
-				})
-			}
 			result, err := w.Generate(context.Background(), input)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.bypass {
-				if len(fake.calls) != 0 || fake.listCalls != 0 || result.ReshareURL != "" || result.Written != 8 {
-					t.Fatal("密码匹配仍执行了转存流程")
-				}
-				if len(workflowJobs(t, w)) != 0 {
-					t.Fatal("直接生成不应创建转存记录")
-				}
-			} else {
-				if !fake.deleted || !sharePasswordPattern.MatchString(fake.configuredPassword) {
-					t.Fatal("未设置有效密码或未完成转存")
-				}
-				if tc.fixed != "" && fake.configuredPassword != tc.fixed {
-					t.Fatal("未设置固定密码")
-				}
-				if !strings.HasSuffix(result.ReshareURL, "password="+fake.configuredPassword) {
-					t.Fatal("结果链接密码未更新")
-				}
+			if !fake.deleted || !sharePasswordPattern.MatchString(fake.configuredPassword) {
+				t.Fatal("未设置有效密码或未完成转存")
+			}
+			if tc.fixed != "" && fake.configuredPassword != tc.fixed {
+				t.Fatal("未设置固定密码")
+			}
+			if !strings.HasSuffix(result.ReshareURL, "password="+fake.configuredPassword) {
+				t.Fatal("结果链接密码未更新")
 			}
 		})
 	}

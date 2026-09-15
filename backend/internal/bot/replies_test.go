@@ -44,9 +44,13 @@ func TestShareReplyFormats(t *testing.T) {
 		t.Fatal("部分成功的回复不准确", text)
 	}
 	settings.FixedSharePassword = "ayss"
-	text, _ = formatShareReply(input, settings, &service.GenerationResult{Written: 1}, nil, 1, 1)
+	text, _ = formatShareReply(input, settings, &service.GenerationResult{Written: 1, Mode: "direct"}, nil, 1, 1)
 	if !strings.Contains(text, "【115网盘】生成 STRM 完成") || strings.Contains(text, "转存再分享") {
-		t.Fatal("密码匹配时错误显示转存模式")
+		t.Fatal("本人原分享直接生成时错误显示转存模式")
+	}
+	text, _ = formatShareReply(input, settings, &service.GenerationResult{Written: 1}, nil, 1, 1)
+	if !strings.Contains(text, "转存再分享") {
+		t.Fatal("不能按密码匹配推断实际处理模式")
 	}
 }
 

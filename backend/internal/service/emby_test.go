@@ -221,16 +221,92 @@ func TestEmbyFullSyncExactMatchAndFailureKeepsSnapshot(t *testing.T) {
 	if err != nil || state.Status != "failed" || state.LastError == "" {
 		t.Fatal(state, err)
 	}
-	if got := f.match(t, "movie", "100"); got.State != "stale" || len(got.Items) != 2 {
+	if got := f.match(t, "movie", "100"); got.State != "present" || len(got.Items) != 2 {
 		t.Fatal("失败不应清空旧索引", got)
 	}
 	f.failPage = false
 	f.missingLibrary = true
 	f.sync(t)
-	if got := f.match(t, "movie", "100"); len(got.Items) != 2 || got.State != "stale" {
+	if got := f.match(t, "movie", "100"); len(got.Items) != 2 || got.State != "present" {
 		t.Fatal("媒体库消失不应覆盖快照", got)
 	}
 }
+func TestEmbyMatchesUseSnapshotIndependentlyOfSyncHealth(t *testing.T) {
+	f := newEmbyFixture(t)
+	f.sync(t)
+	ctx := context.Background()
+	scope := embyScope(f.service.snapshot())
+	assertMatches := func(t *testing.T) {
+		t.Helper()
+		// 详情页和卡片批量查询都应按当前快照匹配电影及剧集。
+		for _, detail := range []bool{false, true} {
+			requests := []model.EmbyMatch{
+				{Kind: "tv", TMDB: "100"}, {Kind: "movie", TMDB: "100"},
+				{Kind: "tv", TMDB: "456"}, {Kind: "movie", TMDB: "456"},
+			}
+			got, err := f.service.Matches(ctx, requests, detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, match := range got {
+				want := "absent"
+				if i < 2 {
+					want = "present"
+				}
+				if match.State != want || (i >= 2 && len(match.Items) != 0) {
+					t.Fatalf("同步健康状态不应覆盖入库结果：detail=%v match=%+v", detail, match)
+				}
+			}
+		}
+	}
+	t.Run("八条刮削失败仍显示未匹配影视为未入库", func(t *testing.T) {
+		for i := 0; i < 8; i++ {
+			event := f.event(t, fmt.Sprintf("unidentified-%d", i), "upsert")
+			event.Kind = "metadata"
+			for attempt := 0; attempt < 6; attempt++ {
+				if err := f.db.EmbyRetryEvent(ctx, event, "缺少 TMDB ID"); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		state, err := f.service.Status(ctx)
+		if err != nil || state.MetadataFailed != 8 || state.EventError == "" {
+			t.Fatal("刮削失败应保留在同步状态中", state, err)
+		}
+		assertMatches(t)
+	})
+	t.Run("普通通知待处理与失败不覆盖匹配结果", func(t *testing.T) {
+		event := f.event(t, "new-item", "upsert")
+		assertMatches(t)
+		for attempt := 0; attempt < 6; attempt++ {
+			if err := f.db.EmbyRetryEvent(ctx, event, "通知处理失败"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertMatches(t)
+	})
+	t.Run("同步中与失败继续使用已发布快照", func(t *testing.T) {
+		for _, status := range []string{"queued", "running", "failed"} {
+			if err := f.db.EmbyProgress(ctx, scope, status, 0, "同步状态测试"); err != nil {
+				t.Fatal(err)
+			}
+			assertMatches(t)
+		}
+	})
+	t.Run("离线与回调错误不覆盖匹配结果", func(t *testing.T) {
+		f.service.checkedAt = time.Now().Add(-11 * time.Minute)
+		f.service.connectionError = "连接失败"
+		if err := f.db.EmbyWebhook(ctx, scope, "library.new", "回调格式错误"); err != nil {
+			t.Fatal(err)
+		}
+		state, err := f.service.Status(ctx)
+		if err != nil || state.Connected || state.WebhookError == "" {
+			t.Fatal("连接及回调异常应单独保留", state, err)
+		}
+		assertMatches(t)
+	})
+}
+
 func TestEmbyWebhookTestAuthReplayDeletionAndRetry(t *testing.T) {
 	f := newEmbyFixture(t)
 	f.sync(t)
@@ -294,8 +370,8 @@ func TestEmbyWebhookTestAuthReplayDeletionAndRetry(t *testing.T) {
 	if got := f.match(t, "movie", "100"); got.State != "present" {
 		t.Fatal("不相关条目缺少刮削不应影响已匹配电影", got)
 	}
-	if got := f.match(t, "movie", "456"); got.State != "stale" {
-		t.Fatal("仍有无法识别的条目时不能直接判断未入库", got)
+	if got := f.match(t, "movie", "456"); got.State != "absent" {
+		t.Fatal("未识别条目不应阻止按当前索引显示未入库", got)
 	}
 	f.items[len(f.items)-1].ProviderIDs = map[string]string{"Tmdb": "456"}
 	f.apply(t, waiting)
@@ -400,8 +476,8 @@ func TestEmbyConfigEncryptionScopeAndRestart(t *testing.T) {
 	if err := f.service.Save(ctx, EmbyConfig{URL: f.server.URL, LibraryIDs: oldConfig.LibraryIDs}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.match(t, "movie", "100"); got.State != "stale" {
-		t.Fatal("切回历史范围需要重新同步", got)
+	if got := f.match(t, "movie", "100"); got.State != "present" {
+		t.Fatal("切回历史范围应显示该范围最近一次完整索引", got)
 	}
 	f.sync(t)
 	f.event(t, "new-id", "upsert")

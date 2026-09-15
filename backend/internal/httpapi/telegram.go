@@ -6,10 +6,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/service"
 	"time"
 )
 
-func RegisterTelegram(admin *gin.RouterGroup, manager *bot.Manager) {
+func RegisterTelegram(admin *gin.RouterGroup, manager *bot.Manager, sinks ...*service.GenerationLogs) {
+	admin = admin.Group("")
+	if len(sinks) > 0 {
+		admin.Use(telegramOperationLogs(sinks[0], "Bot", map[string]string{admin.BasePath() + "/telegram/config": "保存 Bot 配置", admin.BasePath() + "/telegram/test": "测试 Bot 连接"}))
+	}
 	admin.GET("/telegram/config", func(c *gin.Context) { c.Header("Cache-Control", "no-store"); c.JSON(200, manager.View()) })
 	handle := func(test bool) gin.HandlerFunc {
 		return func(c *gin.Context) {

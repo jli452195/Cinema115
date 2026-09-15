@@ -1,3 +1,4 @@
+import { catalogAPI } from './useWebsiteAuth'
 import { onBeforeUnmount, ref } from 'vue'
 import type { ScheduledEpisode } from '../types/seasonLibrary'
 import { createRequestQueue } from './requestQueue'
@@ -15,7 +16,7 @@ export function useTMDBSeasons(token: () => string, id: () => string) {
   const controllers = new Map<string, AbortController>()
   let epoch = 0
   async function request(path: string, signal: AbortSignal) {
-    const response = await fetch(`/api/admin/tmdb/tv/${id()}/${path}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]), headers: { Authorization: `Bearer ${token()}` } })
+    const response = await fetch(catalogAPI(`tmdb/tv/${id()}/${path}`), { signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]), headers: { Authorization: `Bearer ${token()}` } })
     const data = await response.json().catch(() => null)
     if (!response.ok || !data) throw new Error(data?.error || 'TMDB 请求失败')
     return data

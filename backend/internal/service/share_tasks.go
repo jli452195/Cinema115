@@ -36,10 +36,13 @@ type shareTaskRequest struct {
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
-	Generator MediaGenerator
-	Store     ShareTaskStore
-	Settings  *AutomationStore
-	Cookie    func() string
+	Generator     MediaGenerator
+	Store         ShareTaskStore
+	Settings      *AutomationStore
+	Cookie        func() string
+	AccountCookie func(string) string
+	Notifier      ShareSuccessNotifier
+	Logs          *GenerationLogs
 }
 
 func cookieHash(cookie string) string {
@@ -48,6 +51,7 @@ func cookieHash(cookie string) string {
 }
 
 func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
+	ctx = s.pinAccount(ctx)
 	task, req, err := s.prepareTask(ctx, input)
 	if err != nil {
 		return nil, err
@@ -84,9 +88,6 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 		if share.Password != "" {
 			link += "?password=" + url.QueryEscape(share.Password)
 		}
-		if mode == "reshare" && settings.FixedSharePassword != "" && settings.FixedSharePassword == share.Password {
-			mode = "direct"
-		}
 	}
 	source, _ := ctx.Value(generationSourceKey{}).(string)
 	if source != "Telegram" {
@@ -94,11 +95,25 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 	}
 	now := time.Now().UTC()
 	task := model.ShareTask{ID: hex.EncodeToString(nonce[:]), Source: source, SourceURL: link, Mode: mode, Status: "running", CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
-	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(s.Cookie())}
+	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(generationCookie(ctx, s.Cookie))}
 	if err := s.save(ctx, &task, req); err != nil {
 		return nil, shareTaskRequest{}, err
 	}
 	return &task, req, nil
+}
+
+// 生成设置和账号一次取快照，切换配置不会使同一任务的凭据与选项不一致。
+func (s *ShareTasks) pinAccount(ctx context.Context) context.Context {
+	settings, ok := ctx.Value(automationContextKey{}).(AutomationSettings)
+	if !ok {
+		settings = s.Settings.Value()
+	}
+	current := s.Cookie
+	if s.AccountCookie != nil {
+		current = func() string { return s.AccountCookie(settings.AccountID) }
+	}
+	ctx = context.WithValue(ctx, automationContextKey{}, settings)
+	return context.WithValue(ctx, generationCookieKey{}, generationCookie(ctx, current))
 }
 
 func (s *ShareTasks) save(ctx context.Context, task *model.ShareTask, req shareTaskRequest) error {
@@ -122,6 +137,9 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 
 // 单条和合并执行共用审核重试判定及最终状态落盘。
 func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shareTaskRequest, result *GenerationResult, err error, elapsed time.Duration) (*GenerationResult, error) {
+	if result != nil && result.Mode == "direct" {
+		task.Mode, req.Input.Mode, req.Merged = "direct", "direct", false
+	}
 	task.Elapsed += elapsed.Seconds()
 	task.NextRetryAt = nil
 	if result != nil {
@@ -162,6 +180,9 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 		task.Status = "running"
 		return result, errors.Join(err, saveErr)
 	}
+	if err == nil {
+		s.notifySuccess(saveCtx, task.ID, req.Input, result)
+	}
 	return result, err
 }
 
@@ -200,7 +221,13 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		if err := json.Unmarshal(task.Request, &req); err != nil {
 			return fmt.Errorf("解析审核重试请求: %w", err)
 		}
-		if !s.Settings.Value().ReviewRetryEnabled || req.CookieHash != cookieHash(s.Cookie()) {
+		cookie := ""
+		if s.AccountCookie != nil {
+			cookie = s.AccountCookie(req.Settings.AccountID)
+		} else if s.Cookie != nil {
+			cookie = s.Cookie()
+		}
+		if !s.Settings.Value().ReviewRetryEnabled || req.CookieHash != cookieHash(cookie) {
 			task.Status, task.NextRetryAt = "cancelled", nil
 			task.Error = "审核重试已关闭，或 115 登录已变化，本任务停止自动重试"
 			if err := s.save(ctx, &task, req); err != nil {
@@ -214,7 +241,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 			return err
 		}
 		retryCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		_, runErr := s.execute(retryCtx, &task, req)
+		_, runErr := s.execute(context.WithValue(retryCtx, generationCookieKey{}, cookie), &task, req)
 		cancel()
 		// 业务失败已保存在任务中；若最终状态仍未落盘，结束工作循环防止丢失检查点。
 		if runErr != nil && task.Status == "running" {

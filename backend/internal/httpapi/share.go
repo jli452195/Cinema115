@@ -21,6 +21,7 @@ import (
 )
 
 type ShareAPI struct {
+	Runs       *service.ShareRuns
 	Workflow   service.MediaGenerator
 	OutputRoot string
 	Client     *p115.ShareClient
@@ -42,6 +43,7 @@ func NewShareAPI(secret string, cookie func() string) *ShareAPI {
 }
 
 func (a *ShareAPI) Register(r *gin.Engine, admin *gin.RouterGroup) {
+	a.registerShareRuns(admin)
 	admin.POST("/p115/share/files", a.files)
 	admin.POST("/p115/share/strm", a.strm)
 	admin.GET("/p115/share/generation-config", a.generationConfig)
@@ -77,7 +79,12 @@ func (a *ShareAPI) files(c *gin.Context) {
 	if input.Password != "" {
 		share.Password = input.Password
 	}
-	page, err := a.Client.List(c.Request.Context(), share, input.CID, input.Offset, a.Cookie())
+	cookie := a.Cookie()
+	if cookie == "" {
+		c.JSON(400, gin.H{"error": "请在分享基础设置中选择已登录的 115 账号配置"})
+		return
+	}
+	page, err := a.Client.List(c.Request.Context(), share, input.CID, input.Offset, cookie)
 	if err != nil {
 		c.JSON(502, gin.H{"error": err.Error()})
 		return
@@ -121,6 +128,10 @@ func (a *ShareAPI) parseToken(token string) (*playClaim, error) {
 }
 
 func (a *ShareAPI) strm(c *gin.Context) {
+	if a.Cookie() == "" {
+		c.JSON(400, gin.H{"error": "请在分享基础设置中选择已登录的 115 账号配置"})
+		return
+	}
 	var input shareInput
 	if c.ShouldBindJSON(&input) != nil || input.FileID == "" || input.Name == "" {
 		c.JSON(400, gin.H{"error": "请选择分享中的文件"})
@@ -193,7 +204,7 @@ func (a *ShareAPI) streamQuery(c *gin.Context) {
 func (a *ShareAPI) play(c *gin.Context, claim *playClaim) {
 	cookie := a.Cookie()
 	if cookie == "" {
-		c.JSON(503, gin.H{"error": "115 未登录，请管理员先完成登录"})
+		c.JSON(503, gin.H{"error": "分享使用的 115 账号未选择、已删除或未登录，请管理员检查分享基础设置"})
 		return
 	}
 	link, err := a.Client.DownloadURL(c.Request.Context(), &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie)

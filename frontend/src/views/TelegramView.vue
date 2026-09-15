@@ -5,10 +5,11 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; back: []; home: []; openP115: []; openLogs: []; logout: [] }>()
 interface Identity { id: number; first_name: string; username: string; webhookConfigured: boolean }
-interface Config { configured: boolean; enabled: boolean; allowedChatIDs: string; identity: Identity; source: string; running: boolean; connected: boolean; lastError: string }
+interface Config { configured: boolean; enabled: boolean; allowedChatIDs: string; notificationChatID: string; identity: Identity; source: string; running: boolean; connected: boolean; lastError: string }
 const config = ref<Config>()
 const botToken = ref('')
 const chatIDs = ref('')
+const notificationChatID = ref('')
 const enabled = ref(false)
 const showToken = ref(false)
 const loading = ref(true)
@@ -47,7 +48,7 @@ async function refresh(initial = false) {
     const data: Config = await request('config')
     if (!mounted) return
     config.value = data; pollingError.value = ''
-    if (initialize) { enabled.value = data.enabled; chatIDs.value = data.allowedChatIDs }
+    if (initialize) { enabled.value = data.enabled; chatIDs.value = data.allowedChatIDs; notificationChatID.value = data.notificationChatID ?? '' }
   } catch (e) { if (mounted) pollingError.value = e instanceof Error ? e.message : '读取状态失败' }
   finally { if (mounted) loading.value = false }
 }
@@ -68,10 +69,11 @@ async function save() {
   if (busy.value) return
   busy.value = 'save'; error.value = ''; notice.value = ''
   try {
-    const data: Config = await request('config', { token: botToken.value.trim(), allowedChatIDs: chatIDs.value, enabled: enabled.value })
+    const data: Config = await request('config', { token: botToken.value.trim(), allowedChatIDs: chatIDs.value, notificationChatID: notificationChatID.value, enabled: enabled.value })
     if (!mounted) return
-    config.value = data; chatIDs.value = data.allowedChatIDs; botToken.value = ''; showToken.value = false; tested.value = undefined
+    config.value = data; chatIDs.value = data.allowedChatIDs; notificationChatID.value = data.notificationChatID; botToken.value = ''; showToken.value = false; tested.value = undefined
     notice.value = data.enabled ? '配置已加密保存，接收器正在应用新配置，无需重启后端。' : '配置已加密保存，消息接收已停用。'
+    notice.value += data.notificationChatID ? ' STRM 成功及追更申请通知已启用。' : ' 独立通知已关闭。'
   } catch (e) { if (mounted) error.value = e instanceof Error ? e.message : '保存配置失败' }
   finally { busy.value = '' }
 }
@@ -86,7 +88,7 @@ onBeforeUnmount(() => { mounted = false; lifecycle.abort(); if (timer) window.cl
 </script>
 
 <template>
-  <ManagementLayout title="Bot 配置" description="连接你的 Bot，在指定聊天中接收分享链接并回复生成结果。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="emit('logout')">
+  <ManagementLayout title="Bot 配置" description="接收分享链接，并将 STRM 成功及追更申请通知发送到指定聊天。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="emit('logout')">
     <template #actions><button type="submit" form="telegram-config-form" :disabled="loading || !!busy || !config" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button></template>
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-5 md:px-7"><div class="flex items-center gap-3"><span class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-sm font-semibold text-blue-600">01</span><div><h2 class="font-semibold text-slate-900">Bot 配置</h2><p class="mt-1 text-xs text-slate-400">Telegram Bot API</p></div></div><span class="rounded-full px-3 py-1 text-xs font-medium" :class="config?.connected ? 'bg-emerald-50 text-emerald-700' : config?.lastError ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-500'">{{ loading ? '读取中' : status }}</span></div>
@@ -94,6 +96,7 @@ onBeforeUnmount(() => { mounted = false; lifecycle.abort(); if (timer) window.cl
             <fieldset :disabled="loading || !!busy || !config" class="min-w-0 space-y-6 disabled:opacity-60">
               <div><label for="tg-token" class="text-sm font-medium text-slate-700">Bot Token</label><div class="relative mt-2"><input id="tg-token" v-model="botToken" :type="showToken ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-3 pr-16 text-sm outline-none focus:border-blue-500" :placeholder="config?.configured ? '已保存 Token，留空保留；输入新值即可更换' : '123456789:AA…'" /><button type="button" class="absolute inset-y-0 right-0 px-4 text-xs text-slate-500 hover:text-blue-600" :aria-label="showToken ? '隐藏 Token' : '显示 Token'" @click="showToken = !showToken">{{ showToken ? '隐藏' : '显示' }}</button></div><p class="mt-2 text-xs leading-6 text-slate-500">在 Telegram 中通过 <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline">@BotFather</a> 创建 Bot，复制其提供的 Token。</p></div>
               <div><label for="tg-chats" class="text-sm font-medium text-slate-700">允许的聊天 ID</label><textarea id="tg-chats" v-model="chatIDs" rows="3" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500" placeholder="123456789&#10;-1001234567890"></textarea><p class="mt-2 text-xs leading-6 text-slate-500">填写数字 Chat ID，每行一个或用逗号分隔。私聊通常为正数，群组通常为负数；Bot 只处理并回复这些聊天。</p></div>
+              <div><label for="tg-notify-chat" class="text-sm font-medium text-slate-700">独立通知聊天 ID</label><input id="tg-notify-chat" v-model="notificationChatID" type="text" inputmode="text" autocomplete="off" class="mt-2 block w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-blue-500" placeholder="填写单个聊天 ID，留空关闭通知" /><p class="mt-2 text-xs leading-6 text-slate-500">网页、Bot 搜索和后台审核重试生成成功，以及用户发起新的追更申请时，统一通知此聊天。请先与 Bot 发起会话，或将 Bot 加入目标群并允许发言。Telegram 内提交的生成任务继续更新原聊天回执，不重复通知。此配置独立于消息接收开关；留空关闭独立通知。追更通知的网站跳转地址在「追更管理 → 通知设置」中填写。</p></div>
               <label class="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4"><span><span class="block text-sm font-medium text-slate-700">启用消息接收</span><span class="mt-1 block text-xs leading-5 text-slate-500">保存后生效，按「115分享STRM」中保存的生成选项处理链接。</span></span><input v-model="enabled" type="checkbox" role="switch" aria-label="启用消息接收" class="peer sr-only"/><span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-300 transition after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400"></span></label>
               <div class="flex flex-wrap gap-3 border-t border-slate-100 pt-6"><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50" :disabled="!botToken.trim() && !config?.configured" @click="test">{{ busy === 'test' ? '正在测试…' : '测试连接' }}</button></div>
             </fieldset>

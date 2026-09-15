@@ -31,7 +31,7 @@ func setupShareTasks(t *testing.T, gen MediaGenerator) (*ShareTasks, *storage.St
 	if err := settings.Save(value); err != nil {
 		t.Fatal(err)
 	}
-	return &ShareTasks{Store: db, Generator: gen, Settings: settings, Cookie: func() string { return "private-cookie" }}, db, generationOptions(t)
+	return &ShareTasks{Store: db, Generator: gen, Settings: settings, Cookie: func() string { return "UID=42_A; SEID=private-cookie" }}, db, generationOptions(t)
 }
 
 func taskHistory(t *testing.T, db *storage.Store) []model.ShareTask {
@@ -62,7 +62,7 @@ func TestReviewRetryLimitAndSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			task := taskHistory(t, db)[0]
-			if task.Status != "waiting_review" || task.NextRetryAt == nil || task.Retries != 0 || strings.Contains(string(task.Request), "private-cookie") {
+			if task.Status != "waiting_review" || task.NextRetryAt == nil || task.Retries != 0 || strings.Contains(string(task.Request), "UID=42_A; SEID=private-cookie") {
 				t.Fatal("等待状态或凭证存储错误")
 			}
 			// 模拟重新装配调度器，不依赖原请求或内存队列。
@@ -88,6 +88,7 @@ func TestSourceReviewSchedulesWithoutCloudMutation(t *testing.T) {
 	fake := &transferFake{reviewStage: "source"}
 	workflow, input := setupWorkflow(t, fake)
 	s, db, _ := setupShareTasks(t, workflow)
+	s.Cookie = workflow.Cookie
 	s.Settings = workflow.Settings
 	settings := s.Settings.Value()
 	settings.ReviewRetryEnabled = true

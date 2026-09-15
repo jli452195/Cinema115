@@ -34,6 +34,14 @@ type GenerationLogs struct {
 }
 
 func (s *GenerationLogs) append(task, source, level, message string) {
+	s.Append("STRM", task, source, level, message)
+}
+
+// Append 接收已脱敏的模块日志，所有模块共用固定容量缓冲区。
+func (s *GenerationLogs) Append(module, task, source, level, message string) {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sequence++
@@ -41,7 +49,7 @@ func (s *GenerationLogs) append(task, source, level, message string) {
 	if len(runes) > 1000 {
 		message = string(runes[:1000]) + "…"
 	}
-	s.entries[s.next] = GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: "STRM", TaskID: task, Source: source, Message: message}
+	s.entries[s.next] = GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message}
 	s.next = (s.next + 1) % len(s.entries)
 	if s.size < len(s.entries) {
 		s.size++
@@ -49,12 +57,15 @@ func (s *GenerationLogs) append(task, source, level, message string) {
 }
 
 // Snapshot 返回独立副本，按最新优先排列，等级筛选采用精确匹配。
-func (s *GenerationLogs) Snapshot(level string) []GenerationLog {
+func (s *GenerationLogs) Snapshot(level string, modules ...string) []GenerationLog {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]GenerationLog, 0, s.size)
 	for i := 0; i < s.size; i++ {
 		entry := s.entries[(s.next-1-i+len(s.entries))%len(s.entries)]
+		if len(modules) > 0 && modules[0] != "ALL" && entry.Module != modules[0] {
+			continue
+		}
 		if level == "ALL" || entry.Level == level {
 			result = append(result, entry)
 		}
