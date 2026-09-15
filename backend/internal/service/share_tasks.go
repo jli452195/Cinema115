@@ -90,7 +90,7 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 		}
 	}
 	source, _ := ctx.Value(generationSourceKey{}).(string)
-	if source != "Telegram" {
+	if source != "Telegram" && source != "订阅" && source != "追更" {
 		source = "网页"
 	}
 	now := time.Now().UTC()

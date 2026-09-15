@@ -14,6 +14,22 @@ import (
 	"strm115/backend/internal/storage"
 )
 
+type followSettingsAccountFixture struct{}
+
+func (followSettingsAccountFixture) ValidateSelection(id string) error {
+	if id != "follow-account" {
+		return service.ErrAccountMissing
+	}
+	return nil
+}
+
+func (followSettingsAccountFixture) CookieFor(id string) string {
+	if id == "follow-account" {
+		return "UID=42_A; SEID=test"
+	}
+	return ""
+}
+
 func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
@@ -34,7 +50,12 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &service.FollowService{Store: db, TMDB: &followTMDBFixture{}, Library: &followLibraryFixture{}}
+	automation, err := service.NewAutomationStore(filepath.Join(t.TempDir(), "automation.json"), t.TempDir(), "http://example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	automation.ValidateAccount = followSettingsAccountFixture{}.ValidateSelection
+	s := &service.FollowService{Store: db, TMDB: &followTMDBFixture{}, Library: &followLibraryFixture{}, GenerationSettings: automation}
 	if err := db.Subscribe(ctx, u.ID, model.Follow{Kind: "tv", TMDBID: 100, Title: "标题"}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,5 +109,21 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 	settings := call("GET", "/api/admin/follows/settings", adminToken, nil, 200)
 	if settings["baseUrl"] != "http://192.168.0.24:5173" || settings["notificationsConfigured"] != false {
 		t.Fatal("通知配置状态错误", settings)
+	}
+	call("POST", "/api/admin/follows/settings", adminToken, map[string]any{"autoEnabled": true}, 400)
+	automationSettings := automation.Value()
+	automationSettings.AccountID = "follow-account"
+	if err := automation.Save(automationSettings); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", "/api/admin/follows/settings", adminToken, map[string]any{"baseUrl": "http://192.168.0.24:5173", "autoEnabled": true}, 200)
+	settings = call("GET", "/api/admin/follows/settings", adminToken, nil, 200)
+	if settings["autoEnabled"] != true {
+		t.Fatal("追更自动搜索开关未保存", settings)
+	}
+	call("POST", "/api/admin/follows/settings", adminToken, map[string]any{"autoEnabled": false}, 200)
+	settings = call("GET", "/api/admin/follows/settings", adminToken, nil, 200)
+	if settings["autoEnabled"] != false {
+		t.Fatal("关闭自动搜索失败", settings)
 	}
 }

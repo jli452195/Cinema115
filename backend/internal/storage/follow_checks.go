@@ -90,6 +90,14 @@ func (s *Store) SaveFollowCheck(ctx context.Context, job model.FollowCheck, p mo
 		return fmt.Errorf("保存追更检查: %w", err)
 	}
 	if p.Error == "" {
+		automationStatus := "no_need"
+		if p.State == "absent" || p.State == "tracking" && p.Owned < p.Aired {
+			automationStatus = "queued"
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE follow_bot_jobs SET status=?,due=0,last_error='',updated_at=?
+WHERE kind=? AND tmdb_id=? AND status='checking' AND cycle=(SELECT cycle FROM follow_requests WHERE kind=? AND tmdb_id=?)`, automationStatus, time.Now().UTC().Format(time.RFC3339Nano), job.Kind, job.TMDBID, job.Kind, job.TMDBID); err != nil {
+			return fmt.Errorf("更新追更自动搜索条件: %w", err)
+		}
 		// 完成由入库结果决定；丢失资源后重新进入待处理。
 		if _, err = tx.ExecContext(ctx, `UPDATE follow_requests SET status=CASE WHEN ?='completed' THEN 'completed' ELSE 'pending' END,updated_at=?,revision=revision+1 WHERE kind=? AND tmdb_id=? AND ((?='completed' AND status<>'completed') OR (?<>'completed' AND status='completed'))`, p.State, time.Now().UTC().Format(time.RFC3339Nano), job.Kind, job.TMDBID, p.State, p.State); err != nil {
 			return err

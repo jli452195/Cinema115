@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tguser"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/client/tmdbimage"
 	"strm115/backend/internal/httpapi"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
@@ -84,6 +87,19 @@ func main() {
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
+	imageCacheBytes := tmdbimage.DefaultMaxBytes
+	if configured := strings.TrimSpace(os.Getenv("TMDB_IMAGE_CACHE_MAX_GB")); configured != "" {
+		gigabytes, parseErr := strconv.ParseInt(configured, 10, 64)
+		if parseErr != nil || gigabytes < 1 || gigabytes > 1000 {
+			log.Fatal("TMDB_IMAGE_CACHE_MAX_GB 必须是 1 到 1000 之间的整数")
+		}
+		imageCacheBytes = gigabytes << 30
+	}
+	tmdbImages, err := tmdbimage.New(filepath.Join(dataDir, "tmdb-images"), imageCacheBytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterTMDBImages(r, tmdbImages)
 	embySecrets, err := service.NewSessionStore(filepath.Join(dataDir, "emby-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -141,9 +157,14 @@ func main() {
 		log.Fatal(err)
 	}
 	shareAPI.Workflow = shareTasks
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	httpapi.RegisterShareTasks(admin, database)
 	httpapi.RegisterLogs(admin, generationLogs)
-	telegram, err := bot.NewManager(dataDir, secret, shareTasks, automation)
+	telegram, err := bot.NewManager(dataDir, secret, shareAPI.Runs, automation)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -165,6 +186,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	follows.BotSearch = telegramUser
+	follows.ShareRuns = shareAPI.Runs
+	follows.GenerationSettings = automation
+	follows.Logs = generationLogs
 	httpapi.RegisterTelegramUser(admin, telegramUser, tmdbService, generationLogs)
 	shareAPI.Register(r, admin)
 	if directory := os.Getenv("FRONTEND_DIST"); directory != "" {
@@ -172,17 +197,14 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	listener, err := net.Listen("tcp", ":3002")
 	if err != nil {
 		log.Fatal(err)
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); shareAPI.Runs.Run() }()
 	if os.Getenv("TMDB_API_KEY") != "" {
@@ -194,6 +216,13 @@ func main() {
 	go func() {
 		defer workers.Done()
 		if err := follows.RunChecks(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := follows.RunBotJobs(ctx); err != nil {
 			workerErrors <- err
 		}
 	}()

@@ -9,6 +9,9 @@ import (
 )
 
 func TestSearchCacheReuseAndRefresh(t *testing.T) {
+	if searchCacheTTL != 24*time.Hour {
+		t.Fatalf("搜索缓存时长 = %s，期望 24h", searchCacheTTL)
+	}
 	c := testClient(t)
 	now := time.Now()
 	c.cacheResult("search:女生万岁", SearchResult{Text: "没有找到资源", Empty: true}, now)
@@ -35,6 +38,9 @@ func TestCacheActionsAndIsolation(t *testing.T) {
 	action, err := c.addAction(storedAction{direct: "https://115.com/s/one?password=abcd"}, "版本一", "resource", "1", "1G")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if remaining := time.Until(c.results[action.ID].expires); remaining < searchCacheTTL-time.Second || remaining > searchCacheTTL {
+		t.Fatalf("资源操作标识有效期 = %s，期望约 24h", remaining)
 	}
 	quota := 10
 	result := SearchResult{Items: []Action{action}, Links: []string{"https://115.com/s/one?password=abcd"}, Remaining: &quota}

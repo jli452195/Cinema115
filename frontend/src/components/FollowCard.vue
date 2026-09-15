@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Follow } from '../types/follows'
 import FollowDialog from './FollowDialog.vue'
+import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ item: Follow; admin?: boolean; subscriberCount?: number; busy?: boolean; cancelling?: boolean }>()
 const emit = defineEmits<{ edit: []; cancel: [] }>()
@@ -36,7 +37,7 @@ const dateLabel = computed(() => {
 <template>
   <article class="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
     <div class="flex min-w-0 items-start gap-3">
-      <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100"><img v-if="item.posterUrl && !failedImage" :src="item.posterUrl" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400">暂无海报</span></RouterLink>
+      <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400">暂无海报</span></RouterLink>
       <div class="min-w-0 flex-1 space-y-2">
         <RouterLink :to="path" :title="item.title" class="line-clamp-2 break-words text-sm font-semibold leading-5 text-slate-900 hover:text-amber-600">{{ item.title }}</RouterLink>
         <p class="text-[11px] leading-4 text-slate-400">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>

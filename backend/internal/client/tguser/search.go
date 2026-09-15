@@ -52,6 +52,16 @@ var webURL = regexp.MustCompile(`https?://[^\s<>"\x{3000}]+`)
 var startPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var passwordPattern = regexp.MustCompile(`(?:提取码|访问码|密码)\s*[:：]?\s*([A-Za-z0-9]{4})`)
 
+const botSearchTitleLimit = 18
+
+func limitBotSearchTitle(title string) string {
+	runes := []rune(title)
+	if len(runes) > botSearchTitleLimit {
+		return string(runes[:botSearchTitleLimit])
+	}
+	return title
+}
+
 func botCommand(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.Scheme != "https" || (u.Host != "t.me" && u.Host != "telegram.me") || !strings.EqualFold(strings.Trim(u.Path, "/"), BotUsername) {
@@ -129,7 +139,7 @@ func (c *Client) addAction(action storedAction, title, kind, tmdbID, size string
 		return Action{}, err
 	}
 	id := hex.EncodeToString(bytes[:])
-	action.expires = time.Now().Add(10 * time.Minute)
+	action.expires = time.Now().Add(searchCacheTTL)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for key, value := range c.results {
@@ -236,10 +246,11 @@ func (c *Client) parse(m *tg.Message) (SearchResult, bool, error) {
 // 搜索与取链接只向固定的 ayclub_bot 发送；每次先记住聊天快照，忽略历史回复。
 func (c *Client) Search(ctx context.Context, title string, refresh bool) (SearchResult, error) {
 	title = strings.TrimSpace(title)
-	if title == "" || len([]rune(title)) > 100 || strings.HasPrefix(title, "/") {
+	if title == "" || strings.HasPrefix(title, "/") {
 		return SearchResult{}, ErrInput
 	}
-	return c.exchange(ctx, storedAction{command: title}, "search:"+title, refresh)
+	query := limitBotSearchTitle(title)
+	return c.exchange(ctx, storedAction{command: query}, "search:"+query, refresh)
 }
 func (c *Client) Select(ctx context.Context, id string) (SearchResult, error) {
 	return c.exchange(ctx, storedAction{}, "select:"+id, false)

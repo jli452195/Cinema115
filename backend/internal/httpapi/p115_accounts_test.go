@@ -126,6 +126,26 @@ func TestAccountEndpointsRequireExplicitID(t *testing.T) {
 	}
 }
 
+func TestQRCodeClientTypesIncludeIPadAndTV(t *testing.T) {
+	qr := &accountQRFake{}
+	r, _, id := setupAccountsAPI(t, nil, qr)
+	for _, tc := range []struct {
+		clientType string
+		app        string
+	}{{"115-ipad", "115ipad"}, {"115-tv", "tv"}} {
+		w := accountRequest(t, r, "POST", "/accounts/"+id+"/qrcode", `{"clientType":"`+tc.clientType+`"}`, 200)
+		var result struct {
+			ID string `json:"qrId"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.ID != tc.app {
+			t.Fatalf("客户端 %s 映射错误：%s", tc.clientType, result.ID)
+		}
+	}
+}
+
 func TestQRAccountBindingAndStaleCompletion(t *testing.T) {
 	for _, change := range []string{"正常确认", "保存新凭据", "清除凭据", "删除账号", "刷新二维码"} {
 		t.Run(change, func(t *testing.T) {

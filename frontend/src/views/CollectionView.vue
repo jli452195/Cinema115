@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
+import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 import type { MediaCardItem } from '../types/media'
+import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ token: string; tmdbId: string }>()
 defineEmits<{ logout: [] }>()
@@ -45,14 +46,14 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
   <div class="flex min-h-screen flex-col bg-slate-50">
     <WorkbenchHeader @logout="$emit('logout')" />
     <main class="relative min-w-0 flex-1 overflow-hidden">
-      <div v-if="collection && hasImage(collection.backdropUrl)" class="pointer-events-none absolute inset-x-0 top-0 h-[560px]" aria-hidden="true"><img :src="collection.backdropUrl" alt="" referrerpolicy="no-referrer" class="h-full w-full object-cover opacity-[0.15]" @error="failedImages.add(collection.backdropUrl)"/><div class="absolute inset-0 bg-gradient-to-b from-slate-50/20 to-slate-50"></div></div>
+      <div v-if="collection && hasImage(collection.backdropUrl)" class="pointer-events-none absolute inset-x-0 top-0 h-[560px]" aria-hidden="true"><img :src="tmdbImageURL(collection.backdropUrl)" alt="" referrerpolicy="no-referrer" class="h-full w-full object-cover opacity-[0.15]" @error="failedImages.add(collection.backdropUrl)"/><div class="absolute inset-0 bg-gradient-to-b from-slate-50/20 to-slate-50"></div></div>
       <div class="relative mx-auto max-w-[1440px] px-4 py-6 sm:px-8 lg:px-10">
-        <nav aria-label="系列导航" class="mb-8 flex items-center justify-between text-xs text-slate-400"><RouterLink to="/movie" class="rounded py-2 text-sm hover:text-amber-600">← 返回电影看板</RouterLink><span>电影系列</span></nav>
+        <nav aria-label="系列导航" class="mb-8 flex items-center justify-between text-xs text-slate-400"><HistoryBackButton fallback="/movie" class="text-sm" /><span>电影系列</span></nav>
         <div v-if="loading" role="status" aria-label="正在加载电影系列" class="grid gap-8 motion-safe:animate-pulse sm:grid-cols-[200px_1fr]"><div class="aspect-[2/3] w-48 rounded-2xl bg-slate-200"></div><div class="space-y-6 py-5"><div class="h-10 w-3/4 rounded bg-slate-200"></div><div class="h-24 rounded bg-slate-200/60"></div></div></div>
         <section v-else-if="error" role="alert" class="rounded-2xl border border-red-100 bg-white p-8 text-center"><h1 class="text-xl font-semibold">暂时无法加载系列</h1><p class="mt-3 text-sm text-red-600">{{ error }}</p><button class="mt-5 rounded-lg bg-slate-900 px-5 py-2.5 text-sm text-white" @click="load">重新加载</button></section>
         <template v-else-if="collection">
           <section aria-label="系列信息" class="grid items-start gap-7 sm:grid-cols-[200px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
-            <div class="mx-auto aspect-[2/3] w-44 overflow-hidden rounded-2xl bg-slate-200 shadow-xl shadow-slate-900/10 sm:w-full"><img v-if="hasImage(collection.posterUrl)" :src="collection.posterUrl" :alt="collection.name" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(collection.posterUrl)"/><div v-else class="flex h-full items-center justify-center text-sm text-slate-400">暂无系列海报</div></div>
+            <div class="mx-auto aspect-[2/3] w-44 overflow-hidden rounded-2xl bg-slate-200 shadow-xl shadow-slate-900/10 sm:w-full"><img v-if="hasImage(collection.posterUrl)" :src="tmdbImageURL(collection.posterUrl)" :alt="collection.name" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(collection.posterUrl)"/><div v-else class="flex h-full items-center justify-center text-sm text-slate-400">暂无系列海报</div></div>
             <div class="min-w-0 py-2"><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">电影系列</span><h1 class="mt-5 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 lg:text-4xl">{{ collection.name || '未命名系列' }}</h1><p class="mt-4 text-sm text-slate-500">共 {{ collection.items.length }} 部电影 · 按上映时间排列</p><h2 class="mt-7 text-sm font-semibold text-slate-700">系列简介</h2><p class="mt-3 max-w-4xl whitespace-pre-line text-sm leading-7 text-slate-600">{{ collection.overview || 'TMDB 暂未提供该系列的中文简介。' }}</p></div>
           </section>
           <section aria-label="系列电影" class="mt-12"><h2 class="mb-6 text-xl font-semibold text-slate-900">系列电影 <span class="ml-2 text-sm font-normal text-slate-400">{{ collection.items.length }}</span></h2>

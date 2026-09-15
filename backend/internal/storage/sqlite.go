@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 11
+const schemaVersion = 13
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -234,6 +234,30 @@ CREATE INDEX website_notifications_list ON website_notifications(user_id,id DESC
 CREATE INDEX website_notifications_unread ON website_notifications(user_id,id) WHERE read_at=0;
 PRAGMA user_version=11;`); err != nil {
 			return fmt.Errorf("迁移追更入库检查与站内通知: %w", err)
+		}
+	}
+	if version < 12 {
+		if _, err := tx.ExecContext(ctx, `
+ALTER TABLE follow_settings ADD COLUMN auto_enabled INTEGER NOT NULL DEFAULT 0 CHECK(auto_enabled IN (0,1));
+ALTER TABLE follow_settings ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+CREATE TABLE follow_bot_jobs (
+ kind TEXT NOT NULL, tmdb_id INTEGER NOT NULL, cycle INTEGER NOT NULL,
+ status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
+ due INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ PRIMARY KEY(kind,tmdb_id,cycle),
+ FOREIGN KEY(kind,tmdb_id) REFERENCES follow_requests(kind,tmdb_id) ON DELETE CASCADE
+);
+CREATE INDEX follow_bot_jobs_due ON follow_bot_jobs(status,due,created_at);
+PRAGMA user_version=12;`); err != nil {
+			return fmt.Errorf("迁移追更自动搜索队列: %w", err)
+		}
+	}
+	if version < 13 {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE follow_bot_jobs SET status='checking',due=0,last_error='' WHERE status='queued' AND attempts=0;
+PRAGMA user_version=13;`); err != nil {
+			return fmt.Errorf("迁移追更搜索前入库检查: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

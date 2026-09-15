@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import type { MediaCardItem } from '../types/media'
 import type { EmbyMatch } from '../types/emby'
 import embyIcon from '../assets/emby.svg'
+import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ item: MediaCardItem; library?: EmbyMatch }>()
 const imageFailed = ref(false)
@@ -28,7 +29,7 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
       <img
         v-if="item.posterUrl && !imageFailed"
         :key="`${item.kind}-${item.id}-${item.posterUrl}`"
-        :src="item.posterUrl"
+        :src="tmdbImageURL(item.posterUrl)"
         :alt="item.title"
         loading="lazy"
         referrerpolicy="no-referrer"

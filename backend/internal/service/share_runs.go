@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +22,13 @@ var shareRunIDPattern = regexp.MustCompile("^[a-f0-9]{32}$")
 
 // ShareRunResult 仅保留页面需要的结果，避免轮询传输完整文件清单。
 type ShareRunResult struct {
+	Mode            string `json:"mode,omitempty"`
 	Count           int    `json:"count"`
+	Failed          int    `json:"failed,omitempty"`
+	Total           int    `json:"total,omitempty"`
 	MetadataCount   int    `json:"metadataCount"`
+	MetadataFailed  int    `json:"metadataFailed,omitempty"`
+	MetadataTotal   int    `json:"metadataTotal,omitempty"`
 	Directory       string `json:"directory"`
 	ReshareURL      string `json:"reshareUrl,omitempty"`
 	TempDirectoryID string `json:"tempDirectoryID,omitempty"`
@@ -46,7 +53,9 @@ type shareRun struct {
 	cancel   context.CancelFunc
 	tasks    []*model.ShareTask
 	requests []shareTaskRequest
+	readyAt  time.Time
 	finished time.Time
+	done     chan struct{}
 }
 
 // ShareRuns 将浏览器请求与执行生命周期分离。队列串行执行，不创建无主协程。
@@ -125,7 +134,21 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 		}
 		delete(s.runs, oldestKey)
 	}
-	pinned := s.tasks.pinAccount(WithGenerationSource(s.root, "网页"))
+	source, _ := ctx.Value(generationSourceKey{}).(string)
+	if source != "Telegram" && source != "订阅" {
+		source = "网页"
+	}
+	base := WithGenerationSource(s.root, source)
+	if settings, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
+		base = context.WithValue(base, automationContextKey{}, settings)
+	}
+	if batch, ok := ctx.Value(generationBatchKey{}).(generationBatch); ok {
+		base = context.WithValue(base, generationBatchKey{}, batch)
+	}
+	if managed, _ := ctx.Value(shareReplyManagedKey{}).(bool); managed {
+		base = WithShareReplyManaged(base)
+	}
+	pinned := s.tasks.pinAccount(base)
 	if generationCookie(pinned, s.tasks.Cookie) == "" {
 		return ShareRunView{}, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
@@ -141,7 +164,13 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 		}
 	}
 	runCtx, cancel := context.WithCancel(pinned)
-	run := &shareRun{view: ShareRunView{ID: id, Status: "queued", Items: make([]ShareRunItem, len(inputs))}, digest: digest, ctx: runCtx, cancel: cancel, tasks: make([]*model.ShareTask, len(inputs)), requests: make([]shareTaskRequest, len(inputs))}
+	readyAt := time.Now()
+	// Telegram 已在消息接收阶段完成同一窗口的收集；订阅批次在公共队列中应用相同等待设置。
+	if source == "订阅" {
+		settings, _ := pinned.Value(automationContextKey{}).(AutomationSettings)
+		readyAt = readyAt.Add(time.Duration(settings.TGBatchWaitSeconds) * time.Second)
+	}
+	run := &shareRun{view: ShareRunView{ID: id, Status: "queued", Items: make([]ShareRunItem, len(inputs))}, digest: digest, ctx: runCtx, cancel: cancel, tasks: make([]*model.ShareTask, len(inputs)), requests: make([]shareTaskRequest, len(inputs)), readyAt: readyAt, done: make(chan struct{})}
 	// 入队只写本地数据库，浏览器断开不会撤销已经接收的任务。
 	saveCtx, saveCancel := context.WithTimeout(runCtx, 10*time.Second)
 	defer saveCancel()
@@ -190,6 +219,65 @@ func (s *ShareRuns) Cancel(id string) (ShareRunView, error) {
 	return cloneShareRun(run.view), nil
 }
 
+func (s *ShareRuns) Wait(ctx context.Context, id string) (ShareRunView, error) {
+	s.mu.Lock()
+	run := s.runs[id]
+	if run == nil {
+		s.mu.Unlock()
+		return ShareRunView{}, ErrShareRunMissing
+	}
+	done := run.done
+	s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ShareRunView{}, ctx.Err()
+	case <-done:
+		return s.Get(id)
+	}
+}
+
+func newInternalShareRunID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", fmt.Errorf("创建后台批次编号: %w", err)
+	}
+	return hex.EncodeToString(id[:]), nil
+}
+
+// Generate 和 GenerateBatch 让 Telegram 等后台调用方与网页共用 ShareRuns FIFO 队列。
+func (s *ShareRuns) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
+	outcomes, err := s.GenerateBatch(ctx, []GenerateInput{input})
+	if len(outcomes) != 1 {
+		return nil, err
+	}
+	return outcomes[0].Result, errors.Join(err, outcomes[0].Err)
+}
+
+func (s *ShareRuns) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
+	id, err := newInternalShareRunID()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.Submit(ctx, id, inputs); err != nil {
+		return nil, err
+	}
+	// 提交成功后由队列根上下文负责生命周期，调用方的排队时间不占执行超时。
+	view, err := s.Wait(s.root, id)
+	if err != nil {
+		return nil, err
+	}
+	outcomes := make([]BatchOutcome, len(view.Items))
+	for i, item := range view.Items {
+		if item.Result != nil {
+			outcomes[i].Result = &GenerationResult{Mode: item.Result.Mode, Written: item.Result.Count, Failed: item.Result.Failed, Files: make([]GeneratedSTRM, item.Result.Total), MetadataWritten: item.Result.MetadataCount, MetadataFailed: item.Result.MetadataFailed, MetadataFiles: make([]GeneratedMetadata, item.Result.MetadataTotal), Directory: item.Result.Directory, ReshareURL: item.Result.ReshareURL, TempDirectoryID: item.Result.TempDirectoryID, Cleaned: item.Result.Cleaned}
+		}
+		if item.Status != "success" {
+			outcomes[i].Err = errors.New(item.Error)
+		}
+	}
+	return outcomes, nil
+}
+
 // Run 由主进程等待退出；停机时取消执行并给未执行的子任务保存结束状态。
 func (s *ShareRuns) Run() {
 	for {
@@ -204,6 +292,19 @@ func (s *ShareRuns) Run() {
 		}
 		s.mu.Unlock()
 		if run != nil {
+			if delay := time.Until(run.readyAt); delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-run.ctx.Done():
+				case <-timer.C:
+				}
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+			}
 			s.execute(run)
 			continue
 		}
@@ -221,30 +322,40 @@ func (s *ShareRuns) execute(run *shareRun) {
 		run.view.Status = "running"
 	}
 	s.mu.Unlock()
-	for i, task := range run.tasks {
-		var result *GenerationResult
-		var err error
-		if run.ctx.Err() != nil {
-			result, err = s.tasks.finish(run.ctx, task, run.requests[i], nil, run.ctx.Err(), 0)
-		} else {
-			s.mu.Lock()
-			run.view.Items[i].Status = "running"
-			run.view.Items[i].Message = "正在后台生成 STRM"
-			s.mu.Unlock()
-			itemCtx, cancel := context.WithTimeout(run.ctx, 5*time.Minute)
-			itemCtx = WithGenerationProgress(itemCtx, func(progress GenerationProgress) {
-				s.mu.Lock()
+	inputs := make([]GenerateInput, len(run.requests))
+	s.mu.Lock()
+	for i := range run.requests {
+		inputs[i] = run.requests[i].Input
+		run.view.Items[i].Status = "running"
+		run.view.Items[i].Message = "正在后台生成 STRM"
+	}
+	s.mu.Unlock()
+	itemCtx, cancel := context.WithTimeout(run.ctx, 5*time.Minute)
+	itemCtx = WithGenerationProgress(itemCtx, func(progress GenerationProgress) {
+		s.mu.Lock()
+		for i := range run.view.Items {
+			if run.view.Items[i].Status == "running" {
 				run.view.Items[i].Message = progress.Message
-				s.mu.Unlock()
-			})
-			result, err = s.tasks.execute(itemCtx, task, run.requests[i])
-			cancel()
+			}
+		}
+		s.mu.Unlock()
+	})
+	outcomes, batchErr := s.tasks.executePreparedBatch(itemCtx, run.tasks, run.requests, inputs)
+	cancel()
+	if len(outcomes) != len(inputs) {
+		outcomes = make([]BatchOutcome, len(inputs))
+		batchErr = errors.Join(batchErr, errors.New("后台批次未返回完整结果"))
+	}
+	for i := range outcomes {
+		result, err := outcomes[i].Result, outcomes[i].Err
+		if result == nil && err == nil {
+			err = batchErr
 		}
 		s.mu.Lock()
 		item := &run.view.Items[i]
 		item.Status, item.Message = "success", "生成成功"
 		if result != nil {
-			item.Result = &ShareRunResult{Count: result.Written, MetadataCount: result.MetadataWritten, Directory: result.Directory, ReshareURL: result.ReshareURL, TempDirectoryID: result.TempDirectoryID, Cleaned: result.Cleaned}
+			item.Result = &ShareRunResult{Mode: result.Mode, Count: result.Written, Failed: result.Failed, Total: len(result.Files), MetadataCount: result.MetadataWritten, MetadataFailed: result.MetadataFailed, MetadataTotal: len(result.MetadataFiles), Directory: result.Directory, ReshareURL: result.ReshareURL, TempDirectoryID: result.TempDirectoryID, Cleaned: result.Cleaned}
 		}
 		if err != nil {
 			item.Status = "failed"
@@ -269,6 +380,7 @@ func (s *ShareRuns) execute(run *shareRun) {
 	}
 	run.finished = time.Now()
 	run.cancel()
+	close(run.done)
 	// 结束后释放内存中的 Cookie 和生成设置，只保留不含凭据的页面状态。
 	run.ctx, run.cancel, run.requests, run.tasks = nil, nil, nil, nil
 	s.mu.Unlock()

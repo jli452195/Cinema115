@@ -29,11 +29,12 @@ func TestLogAPIValidationAndAdminBoundary(t *testing.T) {
 	_, _ = g.Generate(context.Background(), service.GenerateInput{})
 	logs.Append("Telegram", "", "Bot", "INFO", "消息接收器启动")
 	logs.Append("Telegram", "", "用户账号", "DEBUG", "资源搜索复用缓存")
+	logs.Append("订阅", "tv:100", "订阅", "INFO", "已追平，本轮跳过 Bot 搜索")
 	RegisterLogs(admin, logs)
 	for _, tc := range []struct {
 		query, auth string
 		code, count int
-	}{{"", "", 401, 0}, {"?level=ALL", "test-admin", 200, 3}, {"?level=INFO", "test-admin", 200, 2}, {"?level=WARNING", "test-admin", 200, 1}, {"?level=ERROR", "test-admin", 200, 0}, {"?level=invalid", "test-admin", 400, 0}, {"?module=API", "test-admin", 400, 0}, {"?module=Telegram", "test-admin", 200, 2}, {"?module=Telegram&level=INFO", "test-admin", 200, 1}, {"?module=ALL", "test-admin", 200, 5}, {"?module=ALL&level=DEBUG", "test-admin", 200, 1}} {
+	}{{"", "", 401, 0}, {"?level=ALL", "test-admin", 200, 3}, {"?level=INFO", "test-admin", 200, 2}, {"?level=WARNING", "test-admin", 200, 1}, {"?level=ERROR", "test-admin", 200, 0}, {"?level=invalid", "test-admin", 400, 0}, {"?module=API", "test-admin", 400, 0}, {"?module=Telegram", "test-admin", 200, 2}, {"?module=Telegram&level=INFO", "test-admin", 200, 1}, {"?module=订阅", "test-admin", 200, 1}, {"?module=ALL", "test-admin", 200, 6}, {"?module=ALL&level=DEBUG", "test-admin", 200, 1}} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/admin/logs"+tc.query, nil)
 		req.Header.Set("Authorization", tc.auth)

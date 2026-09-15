@@ -7,6 +7,7 @@ import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
 import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
+import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
 
 const props = defineProps<{ token: string }>()
 const activeTab = ref<'basic' | 'normal' | 'reshare' | 'logs'>('basic')
@@ -35,8 +36,7 @@ const browsed = ref(false)
 const baseURL = ref('')
 const outputDir = ref('strm')
 const outputDirectories = ref(['strm'])
-const newDirectory = ref('')
-const outputRoot = ref('/strm')
+const directoryDialogOpen = ref(false)
 const videoExtensions = ref('mp4,mkv,ts,iso,rmvb,avi,mov,mpeg,mpg,wmv,3gp,asf,m4v,m2ts,webm')
 const metadataExtensions = ref('srt,ass,ssa')
 const minSizeMB = ref(0)
@@ -86,7 +86,7 @@ async function saveAutomation() {
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
     if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先选择已登录的 115 账号配置')
-    if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('TG 批处理等待应为 0～300 秒的整数')
+    if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
     const data = await request('automation-config', { accountId: accountId.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
     accountId.value = data.settings.accountId ?? ''
     savedReshareEnabled.value = data.settings.reshareEnabled
@@ -102,21 +102,21 @@ async function saveAutomation() {
 }
 
 function resolvedDirectory(value: string) {
-  return `${outputRoot.value.replace(/\/$/, '')}/${value}`
+  return value ? `/strm/${value}` : '/strm'
 }
 
 function validDirectory(value: unknown): value is string {
   return typeof value === 'string' && !/[<>:"\\|?*\x00-\x1f]/.test(value) && value.split('/').every(part => part.trim() === part && part !== '' && part !== '.' && part !== '..')
 }
 
-function addDirectory() {
-  const value = newDirectory.value.trim()
-  if (!validDirectory(value)) {
-    error.value = '请输入媒体库内的相对目录，例如 strm2 或 strm/电影，不要填写绝对路径或 ..'
-    return
-  }
+function directoryName(value: string) {
+  return value.split('/').filter(Boolean).at(-1) ?? value
+}
+
+function addDirectory(value: string) {
+  if (!validDirectory(value)) return
   if (!outputDirectories.value.includes(value)) outputDirectories.value.push(value)
-  outputDir.value = value; newDirectory.value = ''; error.value = ''
+  outputDir.value = value; directoryDialogOpen.value = false; error.value = ''
   saveSettings()
 }
 
@@ -143,7 +143,7 @@ async function generate() {
     saveSettings()
     const data = await generateWithProgress({ ...options, mode: activeTab.value === 'reshare' ? 'reshare' : 'direct', url: shareURL.value.trim(), password: password.value.trim(), cid: startCID.value.trim() || '0' }, activeController.signal)
     if (!mounted) return
-    generated.value = data
+    generated.value = { ...data, directory: resolvedDirectory(options.outputDir) }
   } catch (e) {
     if (mounted) error.value = activeController.signal.aborted
       ? '已停止查询进度，后台任务仍会继续。请查看分享日志或 Telegram 通知，避免重复转存。'
@@ -216,7 +216,6 @@ onMounted(async () => {
     botConfigured.value = automation.botConfigured
     automationReady.value = true
     baseURL.value = config.baseUrl || window.location.origin; videoExtensions.value = config.videoExtensions
-    outputRoot.value = config.outputRoot
     try {
       // 保留旧版普通选项，绝对路径目录不会迁移到新的相对目录配置。
       const saved = JSON.parse(localStorage.getItem(settingsKey) ?? localStorage.getItem('cinema115.strm-settings.v1') ?? 'null')
@@ -282,7 +281,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
             </div>
             <div class="mt-6 grid gap-6 border-t border-slate-100 pt-6 md:grid-cols-2">
               <SettingSwitch v-model="recursive" label="包含子目录" description="自动扫描所有子目录，并保留文件夹层级。" />
-              <SettingSwitch v-model="reshareEnabled" label="Bot 默认使用转存再分享" description="关闭时 Bot 直接使用原分享，网页按当前分享标签执行。" />
+              <SettingSwitch v-model="reshareEnabled" label="默认使用转存再分享" description="开启后，未明确指定模式的分享 STRM 任务默认使用转存再分享；接口明确指定直接生成时跳过。网页手动生成按当前分享标签执行。" />
               <SettingSwitch v-model="reviewRetryEnabled" label="分享审核中自动重试" description="无法读取审核中的分享时，后台定时重试；进度可在日志查看。关闭并保存后停止待重试任务。" class="md:col-span-2">
                 <div v-if="reviewRetryEnabled" class="ml-12 mt-4 grid max-w-md grid-cols-2 gap-4">
                   <label class="text-xs text-slate-500">重试间隔（分钟）<input v-model.number="reviewRetryMinutes" type="number" min="1" max="1440" step="1" required class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800" /></label>
@@ -293,15 +292,16 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           </div>
           <div class="border-t border-slate-100 pt-6">
             <h2 class="mb-2 font-semibold text-slate-800">STRM 生成目录</h2>
-            <p class="mb-4 text-xs leading-6 text-slate-500">填写媒体库内的相对目录，例如 strm、strm2。添加子目录无需修改 Docker 挂载。</p>
+            <p class="mb-4 text-xs leading-6 text-slate-500">从媒体库挂载目录的真实文件夹中选择。页面统一显示为 /strm，Docker 中对应 NAS 挂载路径，Windows 中对应 STRM_ROOT。</p>
             <div class="grid gap-3 md:grid-cols-2">
               <div v-for="directory in outputDirectories" :key="directory" class="flex items-start gap-3 rounded-xl border p-4" :class="outputDir === directory ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-slate-50'">
-                <label class="flex min-w-0 flex-1 cursor-pointer items-start gap-3"><input v-model="outputDir" type="radio" name="output-directory" :value="directory" :aria-label="'生成到 ' + directory" class="mt-1 accent-blue-600" /><span class="min-w-0"><span class="block break-all text-sm font-medium text-slate-800">{{ directory }}</span><span class="mt-1 block break-all text-xs leading-5 text-slate-500">{{ resolvedDirectory(directory) }}</span></span></label>
-                <button type="button" :disabled="outputDirectories.length === 1" :aria-label="'移除目录 ' + directory" class="text-xs text-slate-400 hover:text-red-600 disabled:opacity-30" @click="removeDirectory(directory)">移除</button>
+                <label class="flex min-w-0 flex-1 cursor-pointer items-start gap-3"><input v-model="outputDir" type="radio" name="output-directory" :value="directory" :aria-label="'生成到 ' + resolvedDirectory(directory)" class="mt-3 accent-blue-600" /><span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-blue-100 bg-blue-50 text-amber-500"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7.5h6l2 2h10v9H3z"/><path d="M3 7.5V5h6l2 2h8v2.5"/></svg></span><span class="min-w-0 self-center"><span class="block break-all text-sm font-semibold text-slate-800">{{ directoryName(directory) }}</span><span class="mt-1 block break-all text-xs leading-5 text-slate-500">{{ resolvedDirectory(directory) }}</span></span></label>
+                <button type="button" :aria-label="'移除目录 ' + resolvedDirectory(directory)" class="text-xs text-slate-400 hover:text-red-600" @click="removeDirectory(directory)">移除</button>
               </div>
             </div>
-            <div class="mt-4 flex flex-wrap gap-3"><input v-model="newDirectory" aria-label="新生成目录" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none focus:border-blue-500" placeholder="strm2 或 strm/电影" maxlength="1024" @keydown.enter.prevent="addDirectory" /><button type="button" class="rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-600" :disabled="!newDirectory.trim()" @click="addDirectory">＋ 添加目录</button></div>
-            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ resolvedDirectory(outputDir) }}（媒体库内的 {{ outputDir }} 目录）</p><p class="text-xs leading-6 text-slate-400">保留分享文件夹结构，每次重新写入，同名 STRM 更新为本次生成内容。</p>
+            <p v-if="outputDirectories.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">尚未选择 STRM 生成目录</p>
+            <button type="button" class="mt-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-600 hover:bg-blue-100" @click="directoryDialogOpen = true">＋ 从真实文件夹添加目录</button>
+            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ outputDir ? resolvedDirectory(outputDir) : '未选择' }}</p><p class="text-xs leading-6 text-slate-400">选择器只显示媒体库挂载范围内的真实文件夹；移除选项不会删除文件夹。保留分享文件夹结构，每次重新写入，同名 STRM 更新为本次生成内容。</p>
           </div>
 
             </template>
@@ -315,15 +315,15 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <section v-if="activeTab === 'reshare'" class="rounded-xl border border-blue-100 bg-blue-50/50 p-5">
               <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 创建长期分享并校验快照 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
-              <label class="mt-4 block text-sm text-slate-700">TG 批处理等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
-              <p class="mt-2 text-xs leading-5 text-slate-500">转存模式从首条 TG 消息起等待指定秒数，执行时按分享者 user ID 判断：本账号的分享直接生成，其他账号的正常分享合并转存。审核链接单独移出，按基础设置自动重试。普通分享模式不等待。默认 5 秒，0 表示不等待，仅对 Bot 生效，点击右上角保存。</p>
+              <label class="mt-4 block text-sm text-slate-700">批次收集等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
+              <p class="mt-2 text-xs leading-5 text-slate-500">Telegram 连续消息和订阅自动资源从首项起等待指定秒数，再进入公共后台队列。执行时按分享者 user ID 判断：本账号分享直接生成，其他账号的正常分享合并转存。默认 5 秒，0 表示不等待。</p>
               <label class="mt-4 block text-sm text-slate-700">固定分享密码（可选）<input v-model="fixedSharePassword" maxlength="4" pattern="[a-zA-Z0-9]{4}" autocomplete="off" spellcheck="false" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="留空则每次随机生成" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">仅用于转存后创建的新分享，填写 4 位英文字母或数字，留空则随机生成。开启转存模式后，将分享者 user ID 与基础设置所选账号的 Cookie UID 比较：相同则直接生成 STRM，沿用原分享有效期；不同则转存后创建自己的长期分享。无法确认分享者时停止本条，提取码不再用于判断归属。</p>
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">0 表示网盘根目录，每次自动创建独立临时目录。快照未完成或生成失败时保留目录；不会清空回收站。</p>
 
               </section>
-              <div class="rounded-lg bg-slate-50 p-4 text-xs leading-6 text-slate-500">生成位置：{{ resolvedDirectory(outputDir) }}<br/>{{ recursive ? '包含子目录' : '仅当前目录' }} · 审核自动重试{{ reviewRetryEnabled ? '已开启（保存后生效）' : '未开启' }}<button type="button" class="ml-3 text-blue-600" @click="activeTab = 'basic'">修改基础设置</button></div>
+              <div class="rounded-lg bg-slate-50 p-4 text-xs leading-6 text-slate-500">生成位置：{{ outputDir ? resolvedDirectory(outputDir) : '未选择' }}<br/>{{ recursive ? '包含子目录' : '仅当前目录' }} · 审核自动重试{{ reviewRetryEnabled ? '已开启（保存后生效）' : '未开启' }}<button type="button" class="ml-3 text-blue-600" @click="activeTab = 'basic'">修改基础设置</button></div>
           <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-6"><button type="submit" class="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"><svg v-if="generating" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" opacity=".3"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="3"/></svg>{{ initializing ? '载入配置中…' : generating ? '正在生成…' : '一键生成 STRM' }}</button><button type="button" class="rounded-lg border border-slate-200 px-5 py-3 text-sm text-slate-600 hover:bg-slate-50" :disabled="!shareURL.trim()" @click="browse()">{{ busy && !generating ? '读取中…' : '预览分享文件' }}</button><p class="text-xs text-slate-400">使用基础设置中的输出目录与筛选条件。</p></div>
 
             </template>
@@ -355,5 +355,6 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
     <section class="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-5 md:px-8"><div class="flex items-center justify-between gap-4"><h2 class="text-sm font-semibold text-slate-800">Telegram Bot</h2><span class="rounded-full px-3 py-1 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span></div><p class="mt-3 text-xs leading-6 text-slate-500">{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页目录、后缀等选项后，点击「保存设置」使其对 Bot 生效。</p><button type="button" :disabled="busy" class="mt-3 text-xs font-medium text-blue-600 disabled:opacity-40" @click="$emit('openTelegram')">打开 Telegram 配置 →</button></section>
 
       </template>
+      <STRMDirectoryDialog v-if="directoryDialogOpen" :token="token" @close="directoryDialogOpen = false" @select="addDirectory" />
   </ManagementLayout>
 </template>

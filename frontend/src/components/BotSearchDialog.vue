@@ -147,7 +147,7 @@ onBeforeUnmount(() => { lifecycle.abort(); dialog.value?.close(); document.body.
             <details v-if="result.text" :open="!resources.length && !result.empty" class="mt-5 rounded-xl bg-slate-50 p-4 text-xs text-slate-500"><summary class="cursor-pointer">Bot 原始回复</summary><p class="mt-3 whitespace-pre-wrap break-words leading-6">{{ result.text }}</p></details>
           </template>
         </div>
-        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 p-5"><div class="text-xs text-slate-500"><RouterLink to="/telegram/user" @click="emit('close')">Telegram 用户配置</RouterLink><p class="mt-1">结果缓存 5 分钟；刷新搜索会重新查询 Bot。</p></div><button v-if="state?.configured && state.hasSession" :disabled="busy || checking" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="request(undefined, true)">刷新搜索</button></footer>
+        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 p-5"><div class="text-xs text-slate-500"><RouterLink to="/telegram/user" @click="emit('close')">Telegram 用户配置</RouterLink><p class="mt-1">结果缓存 24 小时；刷新搜索会重新查询 Bot。</p></div><button v-if="state?.configured && state.hasSession" :disabled="busy || checking" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="request(undefined, true)">刷新搜索</button></footer>
       </div>
     </dialog>
   </Teleport>

@@ -60,6 +60,15 @@ func (s *AutomationStore) Value() AutomationSettings {
 	return s.value
 }
 
+// ValidateCurrentAccount 校验分享功能明确保存的账号，不选择默认账号或其他可用账号。
+func (s *AutomationStore) ValidateCurrentAccount() error {
+	value := s.Value()
+	if s.ValidateAccount == nil {
+		return generationInputError("115 账号校验服务尚未初始化")
+	}
+	return s.ValidateAccount(value.AccountID)
+}
+
 var extensionsPattern = regexp.MustCompile(`^[a-zA-Z0-9.,，\s]+$`)
 
 // ValidateGenerationOptions 在转存之前检查所有本地生成选项。
@@ -121,7 +130,7 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 		return generationInputError("115 配置编号无效")
 	}
 	if value.TGBatchWaitSeconds < 0 || value.TGBatchWaitSeconds > 300 {
-		return generationInputError("TG 批处理等待应为 0～300 秒，0 表示不等待")
+		return generationInputError("批次收集等待应为 0～300 秒，0 表示不等待")
 	}
 	if value.ReviewRetryMinutes < 1 || value.ReviewRetryMinutes > 1440 || value.ReviewRetryMax < 1 || value.ReviewRetryMax > 100 {
 		return generationInputError("审核重试间隔应为 1～1440 分钟，最大重试次数应为 1～100")

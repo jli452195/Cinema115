@@ -58,3 +58,10 @@ func TestMovieCategoryQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestThailandRegionQuery(t *testing.T) {
+	_, q, err := optionsQuery(Options{Kind: "tv", Region: "TH", Page: 1})
+	if err != nil || q.Get("with_origin_country") != "TH" {
+		t.Fatal("泰国地区筛选参数错误", q, err)
+	}
+}

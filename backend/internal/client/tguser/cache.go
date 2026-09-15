@@ -2,7 +2,7 @@ package tguser
 
 import "time"
 
-const searchCacheTTL = 5 * time.Minute
+const searchCacheTTL = 24 * time.Hour
 const searchCacheLimit = 64
 
 type cachedSearch struct {

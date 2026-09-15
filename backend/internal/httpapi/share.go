@@ -47,6 +47,7 @@ func (a *ShareAPI) Register(r *gin.Engine, admin *gin.RouterGroup) {
 	admin.POST("/p115/share/files", a.files)
 	admin.POST("/p115/share/strm", a.strm)
 	admin.GET("/p115/share/generation-config", a.generationConfig)
+	admin.GET("/p115/share/output-directories", a.outputDirectories)
 	admin.POST("/p115/share/generate", a.generate)
 	admin.POST("/p115/share/generate-stream", a.generateStream)
 	r.GET("/api/stream/share/:token", a.stream)

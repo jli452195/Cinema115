@@ -52,13 +52,39 @@ func (s *FollowService) Update(ctx context.Context, kind string, id int, status,
 	return s.Store.UpdateFollow(ctx, kind, id, status, note, revision)
 }
 func (s *FollowService) SaveBaseURL(ctx context.Context, value string) error {
+	settings, err := s.Store.FollowSettings(ctx)
+	if err != nil {
+		return err
+	}
+	settings.BaseURL = value
+	return s.SaveSettings(ctx, settings)
+}
+
+func validateFollowBaseURL(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value != "" {
 		u, err := url.Parse(value)
 		if err != nil || len(value) > 2048 || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-			return fmt.Errorf("%w：请输入 http 或 https 网站根地址，不包含路径、账号和查询参数", ErrFollowInput)
+			return "", fmt.Errorf("%w：请输入 http 或 https 网站根地址，不包含路径、账号和查询参数", ErrFollowInput)
 		}
 		value = strings.TrimSuffix(u.String(), "/")
 	}
-	return s.Store.SaveFollowBaseURL(ctx, value)
+	return value, nil
+}
+
+func (s *FollowService) SaveSettings(ctx context.Context, value model.FollowSettings) error {
+	baseURL, err := validateFollowBaseURL(value.BaseURL)
+	if err != nil {
+		return err
+	}
+	value.BaseURL = baseURL
+	if value.AutoEnabled {
+		if s.GenerationSettings == nil {
+			return fmt.Errorf("%w：115分享STRM 服务尚未初始化", ErrFollowInput)
+		}
+		if err := s.GenerationSettings.ValidateCurrentAccount(); err != nil {
+			return fmt.Errorf("%w：请先在 115分享STRM 中配置账号：%v", ErrFollowInput, err)
+		}
+	}
+	return s.Store.SaveFollowSettings(ctx, value)
 }

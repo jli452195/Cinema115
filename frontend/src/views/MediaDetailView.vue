@@ -10,9 +10,11 @@ import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
 import SeasonLibraryProgress from '../components/SeasonLibraryProgress.vue'
 import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
+import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useTMDBSeasons, type CacheInfo, type TMDBEpisode as Episode } from '../composables/useTMDBSeasons'
 import { episodeHasAired, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
+import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const botSearchOpen = ref(false)
@@ -158,11 +160,11 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
     <WorkbenchHeader @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1 overflow-hidden">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
-        <img :src="detail.backdropUrl" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
+        <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
       </div>
       <div class="relative mx-auto max-w-[1440px] px-5 pb-8 pt-6 md:px-8 lg:px-10">
         <nav aria-label="详情导航" class="mb-8 flex items-center justify-between text-sm text-slate-500">
-          <RouterLink :to="`/${kind}`" class="inline-flex items-center gap-2 rounded-lg py-2 transition hover:text-amber-600"><span aria-hidden="true">←</span> 返回{{ mediaLabel }}看板</RouterLink>
+          <HistoryBackButton :fallback="`/${kind}`" />
           <span class="text-[10px] tracking-[0.2em] text-slate-400">CINEMA115 / DETAILS</span>
         </nav>
 
@@ -177,7 +179,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
         <template v-else-if="detail">
           <section aria-label="影视信息" class="grid items-start gap-7 sm:grid-cols-[200px_minmax(0,1fr)] lg:grid-cols-[255px_minmax(0,1fr)] lg:gap-12">
             <div class="mx-auto aspect-[2/3] w-48 overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-100 shadow-[0_20px_40px_-15px_rgba(15,23,42,0.4)] sm:w-full">
-              <img v-if="hasImage(detail.posterUrl)" :src="detail.posterUrl" :alt="detail.title" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(detail.posterUrl)" />
+              <img v-if="hasImage(detail.posterUrl)" :src="tmdbImageURL(detail.posterUrl)" :alt="detail.title" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(detail.posterUrl)" />
               <div v-else class="flex h-full items-center justify-center text-sm text-slate-400">暂无海报</div>
             </div>
             <div class="min-w-0 py-1">
@@ -224,7 +226,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
                         <p class="mt-2 flex flex-wrap gap-3 text-xs text-slate-400"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600">★ {{ episode.rating.toFixed(1) }}</span></p>
                         <p class="mt-3 text-sm leading-7 text-slate-500">{{ episode.overview || '暂无分集简介。' }}</p>
                         <EmbyMediaVersions v-if="isWebsiteAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
-                        <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100"><img :src="episode.stillUrl" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
+                        <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100"><img :src="tmdbImageURL(episode.stillUrl)" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
                       </article>
                     </div>
                     <InfiniteLoadMore v-if="seasons[season.number]?.data?.episodes.length" :key="`${tmdbId}-${season.number}`" :active="openSeasons.has(season.number)" :count="Math.min(episodeLimits[season.number] || 20, seasons[season.number]?.data?.episodes.length || 0)" :total="seasons[season.number]?.data?.episodes.length || 0" @load="episodeLimits[season.number] = Math.min((episodeLimits[season.number] || 20) + 20, seasons[season.number]?.data?.episodes.length || 0)" />
@@ -239,7 +241,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
             <p v-if="!detail.cast.length" class="text-sm text-slate-400">暂无演员信息</p>
             <div v-else class="flex gap-5 overflow-x-auto pb-5 sm:gap-7">
               <RouterLink v-for="member in detail.cast" :key="member.id" :to="{ name: 'person', params: { tmdbId: member.id } }" class="group w-20 shrink-0 text-center sm:w-24" :title="`${member.name}${member.character ? ' · ' + member.character : ''}`">
-                <div class="mx-auto h-20 w-20 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition group-hover:ring-2 group-hover:ring-amber-300"><img v-if="hasImage(member.profileUrl)" :src="member.profileUrl" :alt="member.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-[center_25%]" @error="failedImages.add(member.profileUrl)" /><div v-else class="flex h-full items-center justify-center bg-slate-100 text-xl text-slate-400">{{ member.name.slice(0, 1) }}</div></div><h3 class="mt-3 truncate text-xs font-semibold text-slate-800 group-hover:text-amber-600">{{ member.name }}</h3><p class="mt-1 truncate text-[11px] text-slate-500">{{ member.character || '角色未提供' }}</p>
+                <div class="mx-auto h-20 w-20 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition group-hover:ring-2 group-hover:ring-amber-300"><img v-if="hasImage(member.profileUrl)" :src="tmdbImageURL(member.profileUrl)" :alt="member.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-[center_25%]" @error="failedImages.add(member.profileUrl)" /><div v-else class="flex h-full items-center justify-center bg-slate-100 text-xl text-slate-400">{{ member.name.slice(0, 1) }}</div></div><h3 class="mt-3 truncate text-xs font-semibold text-slate-800 group-hover:text-amber-600">{{ member.name }}</h3><p class="mt-1 truncate text-[11px] text-slate-500">{{ member.character || '角色未提供' }}</p>
               </RouterLink>
             </div>
           </section>

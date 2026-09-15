@@ -121,7 +121,7 @@ func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInpu
 	task := fmt.Sprintf("STRM-%06d", g.Logs.taskSequence)
 	g.Logs.mu.Unlock()
 	source, _ := ctx.Value(generationSourceKey{}).(string)
-	if source != "Telegram" {
+	if source != "Telegram" && source != "订阅" && source != "追更" {
 		source = "网页"
 	}
 	ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{g.Logs, task, source})

@@ -36,11 +36,30 @@ func (s *Store) Subscribe(ctx context.Context, userID string, f model.Follow) er
 }
 
 func (s *Store) SubscribeWithNotification(ctx context.Context, userID string, f model.Follow, notification *model.TelegramNotification) error {
+	return s.SubscribeWithAutomation(ctx, userID, f, notification, false)
+}
+
+func (s *Store) SubscribeWithAutomation(ctx context.Context, userID string, f model.Follow, notification *model.TelegramNotification, auto bool) error {
+	return s.subscribe(ctx, userID, f, notification, &auto)
+}
+
+// SubscribeWithConfiguredAutomation 在订阅事务内读取开关，避免设置切换与首位订阅并发时漏建任务。
+func (s *Store) SubscribeWithConfiguredAutomation(ctx context.Context, userID string, f model.Follow, notification *model.TelegramNotification) error {
+	return s.subscribe(ctx, userID, f, notification, nil)
+}
+
+func (s *Store) subscribe(ctx context.Context, userID string, f model.Follow, notification *model.TelegramNotification, requestedAuto *bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开始追更事务: %w", err)
 	}
 	defer tx.Rollback()
+	auto := false
+	if requestedAuto != nil {
+		auto = *requestedAuto
+	} else if err := tx.QueryRowContext(ctx, "SELECT auto_enabled FROM follow_settings WHERE id=1").Scan(&auto); err != nil {
+		return fmt.Errorf("读取追更自动搜索设置: %w", err)
+	}
 	var count, existing int
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM user_follows WHERE user_id=? AND active=1", userID).Scan(&count); err != nil {
 		return fmt.Errorf("读取追更数量: %w", err)
@@ -78,6 +97,11 @@ func (s *Store) SubscribeWithNotification(ctx context.Context, userID string, f 
 				return err
 			}
 		}
+		if auto {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO follow_bot_jobs(kind,tmdb_id,cycle,status,created_at,updated_at) VALUES(?,?,?,'checking',?,?)`, f.Kind, f.TMDBID, cycle, now, now); err != nil {
+				return fmt.Errorf("创建追更自动搜索任务: %w", err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交追更申请: %w", err)
@@ -99,6 +123,9 @@ func (s *Store) CancelFollow(ctx context.Context, userID, kind string, id int) e
 	// 最后一人取消时撤销尚未发送的通知，其他用户仍追更则保持原通知。
 	if _, err := tx.ExecContext(ctx, `UPDATE telegram_notifications SET status='cancelled',text='',preview_url='' WHERE status='pending' AND task_id=(SELECT 'follow:'||kind||':'||tmdb_id||':'||cycle FROM follow_requests WHERE kind=? AND tmdb_id=?) AND NOT EXISTS(SELECT 1 FROM user_follows WHERE kind=? AND tmdb_id=? AND active=1)`, kind, id, kind, id); err != nil {
 		return fmt.Errorf("取消待发送追更通知: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE follow_bot_jobs SET status='cancelled',last_error='',updated_at=? WHERE kind=? AND tmdb_id=? AND status IN ('checking','queued','running') AND NOT EXISTS(SELECT 1 FROM user_follows WHERE kind=? AND tmdb_id=? AND active=1)`, time.Now().UTC().Format(time.RFC3339Nano), kind, id, kind, id); err != nil {
+		return fmt.Errorf("取消追更自动搜索任务: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交取消追更: %w", err)

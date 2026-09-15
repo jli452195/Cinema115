@@ -252,7 +252,7 @@ func (a *p115AccountsAPI) createQR(c *gin.Context) {
 		a.fail(c, service.ErrAccountInput)
 		return
 	}
-	app, ok := map[string]string{"": "alipaymini", "alipay-miniapp": "alipaymini", "wechat-miniapp": "wechatmini", "115-android": "115android", "115-ios": "115ios", "115-life-android": "android", "115-life-ios": "ios"}[in.ClientType]
+	app, ok := map[string]string{"": "alipaymini", "alipay-miniapp": "alipaymini", "wechat-miniapp": "wechatmini", "115-android": "115android", "115-ios": "115ios", "115-ipad": "115ipad", "115-tv": "tv", "115-life-android": "android", "115-life-ios": "ios"}[in.ClientType]
 	if !ok {
 		a.fail(c, service.ErrAccountInput)
 		return

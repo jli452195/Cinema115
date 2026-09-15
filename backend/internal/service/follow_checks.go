@@ -140,6 +140,10 @@ func (s *FollowService) RunChecks(ctx context.Context) error {
 			return err
 		}
 		for _, job := range jobs {
+			checkingAutomation, statusErr := s.Store.FollowBotJobChecking(ctx, job.Kind, job.TMDBID)
+			if statusErr != nil {
+				return statusErr
+			}
 			work, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			p, checkErr := s.EvaluateFollow(work, job, time.Now())
 			cancel()
@@ -160,6 +164,27 @@ func (s *FollowService) RunChecks(ctx context.Context) error {
 					return nil
 				}
 				return err
+			}
+			if checkingAutomation && s.Logs != nil {
+				taskID := job.Kind + ":" + strconv.Itoa(job.TMDBID)
+				level, message := "INFO", "入库检查完成"
+				switch {
+				case checkErr != nil:
+					level, message = "WARNING", "入库状态暂时无法确认，自动搜索等待复核"
+				case p.State == "absent":
+					message = "媒体库尚未入库，自动任务进入 Bot 搜索队列"
+				case p.State == "tracking" && p.Owned < p.Aired:
+					message = fmt.Sprintf("发现缺集：已播 %d 集、已入库 %d 集，自动任务进入 Bot 搜索队列", p.Aired, p.Owned)
+				case p.State == "caught_up":
+					message = fmt.Sprintf("已追平：已播出的 %d 集均已入库，本轮跳过 Bot 搜索", p.Aired)
+				case p.State == "completed":
+					message = "影视已完整入库，本轮跳过 Bot 搜索"
+				case p.State == "waiting":
+					message = "当前没有需要补充的已播内容，本轮跳过 Bot 搜索"
+				default:
+					message = "当前无需补充资源，本轮跳过 Bot 搜索"
+				}
+				s.Logs.Append("订阅", taskID, "订阅", level, message)
 			}
 		}
 	}

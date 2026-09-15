@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 )
 
@@ -41,27 +42,25 @@ func RegisterFollowAdmin(admin *gin.RouterGroup, s *service.FollowService) {
 		c.JSON(200, gin.H{"items": items, "hasMore": more, "counts": counts})
 	})
 	group.GET("/settings", func(c *gin.Context) {
-		baseURL, err := s.Store.FollowBaseURL(c.Request.Context())
+		settings, err := s.Store.FollowSettings(c.Request.Context())
 		if err != nil {
 			followError(c, err)
 			return
 		}
 		configured := s.Notifications != nil && s.Notifications.FollowNotificationsConfigured()
-		c.JSON(200, gin.H{"baseUrl": baseURL, "notificationsConfigured": configured})
+		c.JSON(200, gin.H{"baseUrl": settings.BaseURL, "notificationsConfigured": configured, "autoEnabled": settings.AutoEnabled})
 	})
 	group.POST("/settings", func(c *gin.Context) {
-		var input struct {
-			BaseURL string `json:"baseUrl"`
-		}
+		var input model.FollowSettings
 		if c.ShouldBindJSON(&input) != nil {
-			c.JSON(400, gin.H{"error": "网站地址格式无效"})
+			c.JSON(400, gin.H{"error": "追更设置格式无效"})
 			return
 		}
-		if err := s.SaveBaseURL(c.Request.Context(), input.BaseURL); err != nil {
+		if err := s.SaveSettings(c.Request.Context(), input); err != nil {
 			followError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"message": "通知跳转地址已保存"})
+		c.JSON(200, gin.H{"message": "追更设置已保存"})
 	})
 	group.POST("/:kind/:id", func(c *gin.Context) {
 		kind := c.Param("kind")

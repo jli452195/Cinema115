@@ -19,7 +19,7 @@ func RegisterLogs(admin *gin.RouterGroup, logs *service.GenerationLogs) {
 			return
 		}
 		module := c.DefaultQuery("module", "STRM")
-		if module != "STRM" && module != "Telegram" && module != "ALL" {
+		if module != "STRM" && module != "Telegram" && module != "订阅" && module != "ALL" {
 			c.JSON(400, gin.H{"error": "不支持的日志模块"})
 			return
 		}

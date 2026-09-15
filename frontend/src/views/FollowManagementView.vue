@@ -6,6 +6,7 @@ import FollowCard from '../components/FollowCard.vue'
 import FollowDialog from '../components/FollowDialog.vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import type { Follow } from '../types/follows'
+import SettingSwitch from '../components/SettingSwitch.vue'
 
 interface AdminFollow extends Follow { subscriberCount: number; createdAt: string; updatedAt: string; revision: number }
 const props = defineProps<{ token: string }>()
@@ -17,6 +18,7 @@ const counts = ref<Record<string, number>>({})
 const offset = ref(0), hasMore = ref(false), loading = ref(false), busy = ref(false)
 const error = ref(''), notice = ref('')
 const settingsOpen = ref(false), baseUrl = ref(''), notificationsConfigured = ref(false)
+const autoEnabled = ref(false)
 const editing = ref<AdminFollow>(), editStatus = ref('pending'), editNote = ref('')
 const editError = ref('')
 const lifecycle = new AbortController()
@@ -59,7 +61,7 @@ async function save() {
 async function saveSettings() {
   if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''
-  try { await request('/settings', { baseUrl: baseUrl.value }); notice.value = '通知跳转地址已保存。' }
+  try { await request('/settings', { baseUrl: baseUrl.value, autoEnabled: autoEnabled.value }); notice.value = '追更设置已保存。' }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = false }
 }
@@ -72,7 +74,11 @@ watch(() => [props.token, route.query.kind, route.query.status, route.query.q, r
   editing.value = undefined; error.value = ''; void load()
 }, { immediate: true })
 onMounted(async () => {
-  try { const data = await request('/settings'); baseUrl.value = data.baseUrl; notificationsConfigured.value = data.notificationsConfigured }
+  try {
+    const data = await request('/settings')
+    baseUrl.value = data.baseUrl; notificationsConfigured.value = data.notificationsConfigured
+    autoEnabled.value = data.autoEnabled ?? false
+  }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '通知配置读取失败' }
 })
 onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
@@ -99,7 +105,11 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
       <section v-if="settingsOpen" class="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
         <p class="text-sm" :class="notificationsConfigured ? 'text-emerald-700' : 'text-amber-700'">{{ notificationsConfigured ? '追更申请通知已配置' : '追更申请通知尚未配置' }}<RouterLink to="/telegram/bot" class="ml-3 text-blue-600">配置 Telegram Bot</RouterLink></p>
         <p class="text-xs leading-6 text-slate-500">使用 Bot 配置中的独立通知聊天 ID。同一影视在仍有人追更时仅发送一次申请通知；发送失败会自动重试。</p>
-        <form class="space-y-3" @submit.prevent="saveSettings"><label class="block text-sm text-slate-600">网站访问地址<input v-model="baseUrl" type="url" maxlength="2048" placeholder="例如 http://192.168.0.24:5173" class="mt-2 w-full rounded-lg border border-slate-200 p-3" /></label><p class="text-xs text-slate-400">用于 Telegram 通知中的管理页链接。请填写管理员可访问的网站根地址，留空时只发送片名与编号。</p><div class="flex flex-wrap gap-4"><button type="button" class="text-sm text-blue-600" @click="useCurrentAddress">使用当前访问地址</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">保存通知设置</button></div></form>
+        <form class="space-y-5" @submit.prevent="saveSettings">
+          <SettingSwitch v-model="autoEnabled" label="自动搜索并生成资源" description="同一影视由第一位订阅者创建一次后台任务；匹配资源生成后保持处理中，等待 Emby 确认入库。" />
+          <p class="text-xs leading-5 text-slate-500">自动任务使用「115分享STRM」明确保存的账号、输出目录、播放地址及转存设置，并进入与网页和 Telegram 相同的后台批次队列。<RouterLink to="/115/share" class="ml-2 text-blue-600">打开 115分享STRM</RouterLink></p>
+          <label class="block text-sm text-slate-600">网站访问地址<input v-model="baseUrl" type="url" maxlength="2048" placeholder="例如 http://192.168.0.24:5173" class="mt-2 w-full rounded-lg border border-slate-200 p-3" /></label><p class="text-xs text-slate-400">用于 Telegram 通知中的管理页链接。请填写管理员可访问的网站根地址，留空时只发送片名与编号。</p><div class="flex flex-wrap gap-4"><button type="button" class="text-sm text-blue-600" @click="useCurrentAddress">使用当前访问地址</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">保存追更设置</button></div>
+        </form>
       </section>
       <nav aria-label="处理状态筛选" class="flex flex-wrap gap-2">
         <button v-for="tab in ['pending', 'processing', 'completed']" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>

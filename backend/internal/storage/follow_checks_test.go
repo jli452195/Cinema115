@@ -16,7 +16,7 @@ func TestFollowCheckMigrationNotificationsAndRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE website_notifications; DROP TABLE follow_checks; PRAGMA user_version=10;`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; ALTER TABLE follow_settings DROP COLUMN account_id; ALTER TABLE follow_settings DROP COLUMN auto_enabled; PRAGMA user_version=10;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {

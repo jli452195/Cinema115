@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { isWebsiteAdmin, websiteUser } from '../composables/useWebsiteAuth'
 import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
+import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
@@ -60,8 +61,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <span>Cinema<span class="font-medium text-slate-500">115</span></span>
       </RouterLink>
       <nav aria-label="影视导航" class="flex items-center gap-1 sm:gap-2">
-        <RouterLink to="/movie" :aria-current="movieActive ? 'page' : undefined" class="top-link" :class="{ selected: movieActive }">电影</RouterLink>
-        <RouterLink to="/tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
+        <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link" :class="{ selected: movieActive }">电影</RouterLink>
+        <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 pl-2 sm:gap-3 sm:pl-5">
         <RouterLink to="/notifications" class="icon-button relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">

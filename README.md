@@ -22,7 +22,7 @@ TV 看板（`/tv` 和首页）提供「全部／剧集／动漫／纪录／综�
 
 详情与分集分别使用管理员接口 `GET /api/admin/tmdb/detail/:kind/:id`、`GET /api/admin/tmdb/tv/:id/season/:number`，使用 SQLite 压缩缓存并在过期后后台重新验证。剧集季标题一次读取 `/api/admin/tmdb/tv/:id/schedules` 的精简播出缓存；完整简介在展开季后读取，长剧每次显示二十集。缺集区间由前端计算，缓存字段和全局预热规则见 [Emby 入库索引](docs/emby.md)。无效参数返回 400，找不到条目返回 404；页面提供缺图占位、加载失败重试，并在切换影视时取消旧请求。
 
-在根目录 `.env` 的 `TMDB_API_KEY` 中填写 TMDB 账户「设置 → API」里的 API Key（v3 auth），可从 https://www.themoviedb.org/settings/api 获取。密钥只供后端访问固定的 TMDB API，浏览器通过管理员鉴权接口 `/api/admin/tmdb/genres` 和 `/api/admin/tmdb/browse` 查询，海报直接从 `image.tmdb.org` 加载。成功请求在后端缓存 5 分钟，单次最多等待 18 秒；未配置密钥、连接失败、海报缺失和空结果均有页面提示。Docker Compose 将密钥传入后端运行环境，不写入前端或镜像；修改后本地重启后端，NAS 使用 `docker compose up -d` 重新创建配置发生变化的容器。
+在根目录 `.env` 的 `TMDB_API_KEY` 中填写 TMDB 账户「设置 → API」里的 API Key（v3 auth），可从 https://www.themoviedb.org/settings/api 获取。密钥只供后端访问固定的 TMDB API，浏览器通过鉴权接口查询数据；海报、背景、演员照片和分集截图通过同源 `/api/tmdb/image` 由 NAS 按需代理，用户设备无需直接访问 `image.tmdb.org`。图片在浏览器缓存 24 小时，在 NAS 缓存 7 天后后台验证，90 天未使用或总量超过 `TMDB_IMAGE_CACHE_MAX_GB`（默认 5 GB）时清理；新图片路径会直接创建新缓存。Docker Compose 将密钥和缓存上限传入后端运行环境，不写入前端或镜像；修改后本地重启后端，NAS 使用 `docker compose up -d` 重新创建配置发生变化的容器。
 
 「115分享STRM」包含基础设置、普通分享、转存再分享和日志四个标签。基础设置新增「分享审核中自动重试」，默认关闭；开启并保存后默认间隔 30 分钟、最多重试 6 次，可自行调整。网页按当前分享标签执行，Telegram 使用保存的默认模式。
 
@@ -36,7 +36,7 @@ TV 看板（`/tv` 和首页）提供「全部／剧集／动漫／纪录／综�
 
 ## NAS 部署（Docker）
 
-生产环境使用根目录 `Dockerfile` 和 `compose.yaml`，多阶段构建后只运行一个容器，由 Go 同时提供前端页面与 API，默认通过 `http://NAS_IP:8115` 访问。根目录 `.env` 配置 NAS 访问地址和账号；`compose.yaml` 使用 `./data:/data` 与 `/vol1/1000/媒体库:/strm` 两条挂载。页面填写 `strm`、`strm2` 等相对目录，在同一个媒体库中生成。完整步骤见 [NAS Docker 部署](docs/docker.md)。
+生产环境使用根目录 `Dockerfile` 和 `compose.yaml`，多阶段构建后只运行一个容器，由 Go 同时提供前端页面与 API，默认通过 `http://NAS_IP:8115` 访问。根目录 `.env` 配置 NAS 访问地址和账号；`compose.yaml` 使用 `./data:/data` 与 `/vol1/1000/媒体库:/strm` 两条挂载。页面从 `/strm` 下的真实文件夹中选择生成目录，例如 `/strm/待整理` 对应 NAS 的 `媒体库/待整理`。完整步骤见 [NAS Docker 部署](docs/docker.md)。
 
 配置 `.env` 并创建挂载目录后执行：
 
@@ -78,7 +78,7 @@ air -c .air.toml
 
 1. 登录管理员后台，在「115 网盘」扫码并确认，等待后端获取 Cookie 并保存成功。
 2. 点击右上角管理菜单「115 网盘」，再进入「分享播放 / STRM」卡片，输入分享链接和提取码。
-3. 选择生成目录（例如 `strm` 或 `strm2`），点击「一键生成 STRM」。自动分页读取视频、按配置扫描子目录，直接保存到媒体库中的对应子目录。默认不转存；打开「转存再分享」后先转换为自己的分享。预览和单个下载仍使用原分享。
+3. 从媒体库真实文件夹中选择生成目录（例如 `/strm/待整理`），点击「一键生成 STRM」。自动分页读取视频、按配置扫描子目录，直接保存到媒体库中的对应子目录。默认不转存；打开「转存再分享」后先转换为自己的分享。预览和单个下载仍使用原分享。
 4. 把 STRM 放进 Emby 媒体库。Emby 必须能够访问 STRM 中的 Cinema115 地址。
 
 根目录 `.env` 可选配置：
@@ -100,11 +100,11 @@ STRM 写入固定的 Cinema115 代理地址。每次播放用已登录账户请�
 
 「115 网盘」的 Cookie 登录页默认隐藏凭证。留空点击「测试 Cookie」会验证服务器已保存的凭证；填写新值时只测试输入内容，不修改原配置。「验证并保存」在 115 验证通过后才替换凭证。状态区会区分未配置、已连接、已失效和暂时无法验证；网络故障不会被误判为登录失效。
 
-批量生成支持播放服务地址、视频后缀、最小文件大小、是否扫描子目录和起始目录 ID（默认 `0`）配置。预览中可进入文件夹并设为起始目录。页面支持添加、选择、移除多个相对目录选项；移除选项不删除服务器文件。挂载 `/vol1/1000/媒体库:/strm` 后，页面填写 `strm` 对应 NAS 的 `媒体库/strm`，填写 `strm2` 对应 `媒体库/strm2`，不需要分别挂载。子目录自动创建。Windows 开发默认根目录为项目 `data/media`，可用 `.env` 的 `STRM_ROOT` 配置。
+批量生成支持播放服务地址、视频后缀、最小文件大小、是否扫描子目录和起始目录 ID（默认 `0`）配置。预览中可进入文件夹并设为起始目录。页面通过目录选择器读取 `STRM_ROOT` 下的真实文件夹，统一显示为 `/strm/...`；移除选项不删除服务器文件。挂载 `/vol1/1000/媒体库:/strm` 后，页面选择 `/strm/已整理` 对应 NAS 的 `/vol1/1000/媒体库/已整理`。Windows 开发默认根目录为项目 `data/media`，可用 `.env` 的 `STRM_ROOT` 配置，页面仍显示 `/strm/...`。
 
 生成时直接保留分享的文件夹层级，不加批次目录，不打包 ZIP。每次重新写入全部匹配的 STRM，同名文件替换为本次生成的内容；其他工具移走文件后，可再次生成。结果只统计新增数量（本次成功写入数，包含同名替换），Emby 可直接读取该目录。普通选项保存在当前浏览器，分享链接和提取码不持久化到浏览器配置。
 
-`POST /api/admin/p115/share/generate` 使用管理员 JWT 鉴权，接收 `url`、`password`、`cid`、`baseUrl`、`outputDir`、`videoExtensions`、`minSizeMB`、`recursive`，返回 JSON：`directory`、`count`（本次成功写入数）、`skipped`、`total`；页面默认开启 `recursive`。`GET /api/admin/p115/share/generation-config` 返回默认配置和目录的实际路径。单次扫描限制为 5 分钟、500 页、20 层目录、20000 个条目和 10000 个视频，超限需缩小起始目录。扫描失败不写文件；每个文件先完整写入临时文件，再替换目标，重试会重新写入。
+`POST /api/admin/p115/share/generate` 使用管理员 JWT 鉴权，接收 `url`、`password`、`cid`、`baseUrl`、`outputDir`、`videoExtensions`、`minSizeMB`、`recursive`，返回 JSON：`directory`、`count`（本次成功写入数）、`skipped`、`total`；页面默认开启 `recursive`。`GET /api/admin/p115/share/generation-config` 返回默认配置和统一的 `/strm` 虚拟根路径，`GET /api/admin/p115/share/output-directories` 只枚举媒体库根目录内可安全选择的真实文件夹。单次扫描限制为 5 分钟、500 页、20 层目录、20000 个条目和 10000 个视频，超限需缩小起始目录。扫描失败不写文件；每个文件先完整写入临时文件，再替换目标，重试会重新写入。
 
 「转存再分享」开关保存到服务器，供网页和 Telegram 共用。开启后先判断分享者与所选账号是否一致，本人分享直接生成；其他分享在 115 创建独立临时目录，等待所有子文件完整转存后创建分享，显式设置并确认长期有效，再校验完整分享快照、生成 STRM，最后将临时目录移入回收站并复查分享。不会清空回收站。失败时保留目录及任务记录。网页与 Bot 搜索卡片统一提交后台任务，关闭弹窗或页面不会取消已接收的任务；只有「停止任务」会明确取消。单个等待阶段最多 90 秒，每条执行最多 5 分钟，完成后按配置发送 Telegram 通知。后端停机仍会中断执行并保留检查点。
 

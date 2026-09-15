@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,61 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestOutputDirectoryBrowserUsesVirtualSTRMRoot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	for _, directory := range []string{"已整理", "待整理", filepath.Join("待整理", "电影")} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "不是目录.txt"), []byte("ignore"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	_ = os.Symlink(outside, filepath.Join(root, "越界链接"))
+
+	api := NewShareAPI("secret", func() string { return "cookie" })
+	api.OutputRoot = root
+	r := gin.New()
+	api.Register(r, r.Group("/api/admin"))
+	call := func(path string) (int, struct {
+		Path        string                 `json:"path"`
+		DisplayPath string                 `json:"displayPath"`
+		Directories []outputDirectoryEntry `json:"directories"`
+	}) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		var body struct {
+			Path        string                 `json:"path"`
+			DisplayPath string                 `json:"displayPath"`
+			Directories []outputDirectoryEntry `json:"directories"`
+		}
+		if response.Code == http.StatusOK {
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return response.Code, body
+	}
+
+	code, body := call("/api/admin/p115/share/output-directories")
+	if code != http.StatusOK || body.Path != "" || body.DisplayPath != "/strm" || len(body.Directories) != 2 {
+		t.Fatalf("媒体库根目录响应错误：code=%d body=%+v", code, body)
+	}
+	if body.Directories[0].Name != "已整理" || body.Directories[0].Path != "已整理" || body.Directories[0].DisplayPath != "/strm/已整理" {
+		t.Fatal("没有返回统一的 /strm 虚拟路径", body.Directories)
+	}
+	code, body = call("/api/admin/p115/share/output-directories?path=" + url.QueryEscape("待整理"))
+	if code != http.StatusOK || body.Path != "待整理" || body.DisplayPath != "/strm/待整理" || len(body.Directories) != 1 || body.Directories[0].Path != "待整理/电影" {
+		t.Fatalf("子目录浏览错误：code=%d body=%+v", code, body)
+	}
+	if code, _ = call("/api/admin/p115/share/output-directories?path=../escape"); code != http.StatusBadRequest {
+		t.Fatal("目录浏览接受了越界路径", code)
+	}
+}
 
 func TestBatchGenerationHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)

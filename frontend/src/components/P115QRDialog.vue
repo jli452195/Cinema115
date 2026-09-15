@@ -109,6 +109,7 @@ onBeforeUnmount(() => {
         <option value="alipay-miniapp">支付宝小程序</option><option value="wechat-miniapp">微信小程序</option>
         <option value="115-life-android">115生活 Android</option><option value="115-android">115 Android</option>
         <option value="115-life-ios">115生活 iOS</option><option value="115-ios">115 iOS</option>
+        <option value="115-ipad">115 iPad</option><option value="115-tv">TV</option>
       </select>
       <div class="qr-area" :aria-busy="loading"><img v-if="qrImage" :src="qrImage" alt="115 登录二维码" :class="{ faded: failed }" /><span v-else>{{ loading ? '正在生成二维码…' : '点击下方按钮获取二维码' }}</span></div>
       <p class="qr-message" :class="{ error: failed }" role="status">{{ message }}</p>

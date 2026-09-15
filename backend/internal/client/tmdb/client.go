@@ -231,7 +231,7 @@ func optionsQuery(options Options) (string, url.Values, error) {
 			query.Set("with_genres", categoryGenres+","+genre)
 		}
 	}
-	regions := map[string]string{"CN": "CN", "HK": "HK", "TW": "TW", "JP": "JP", "KR": "KR", "western": "US|GB|FR|DE|CA|AU"}
+	regions := map[string]string{"CN": "CN", "HK": "HK", "TW": "TW", "JP": "JP", "KR": "KR", "TH": "TH", "western": "US|GB|FR|DE|CA|AU"}
 	if options.Region != "" {
 		region, ok := regions[options.Region]
 		if !ok {

@@ -12,10 +12,6 @@ import (
 // GenerateBatch 为每个来源预先落盘，审核项可独立定时重试，不重复执行成功来源。
 func (s *ShareTasks) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
 	ctx = s.pinAccount(ctx)
-	batch, ok := s.Generator.(BatchGenerator)
-	if !ok {
-		return nil, fmt.Errorf("生成服务未配置合并转存能力")
-	}
 	tasks := make([]*model.ShareTask, len(inputs))
 	requests := make([]shareTaskRequest, len(inputs))
 	for i, input := range inputs {
@@ -29,6 +25,26 @@ func (s *ShareTasks) GenerateBatch(ctx context.Context, inputs []GenerateInput) 
 			return nil, err
 		}
 		tasks[i], requests[i] = task, req
+	}
+	return s.executePreparedBatch(ctx, tasks, requests, inputs)
+}
+
+// executePreparedBatch 执行已在接收阶段落盘的批次，供网页、Telegram 和订阅共用同一后台队列。
+func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.ShareTask, requests []shareTaskRequest, inputs []GenerateInput) ([]BatchOutcome, error) {
+	batch, ok := s.Generator.(BatchGenerator)
+	if !ok {
+		outcomes := make([]BatchOutcome, len(inputs))
+		for i := range inputs {
+			if err := ctx.Err(); err != nil {
+				outcomes[i].Result, outcomes[i].Err = s.finish(ctx, tasks[i], requests[i], nil, err, 0)
+				continue
+			}
+			outcomes[i].Result, outcomes[i].Err = s.execute(ctx, tasks[i], requests[i])
+		}
+		return outcomes, nil
+	}
+	if len(tasks) != len(inputs) || len(requests) != len(inputs) {
+		return nil, fmt.Errorf("后台批次任务数量不一致")
 	}
 	started := time.Now()
 	if len(requests) > 0 {

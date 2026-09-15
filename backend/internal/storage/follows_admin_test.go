@@ -18,7 +18,7 @@ func TestFollowAdminMigrationAtomicNotificationsAndCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 还原版本 9 的表结构，升级不能丢失已存在的申请和订阅。
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; ALTER TABLE follow_requests DROP COLUMN note; ALTER TABLE follow_requests DROP COLUMN updated_at; ALTER TABLE follow_requests DROP COLUMN revision; ALTER TABLE follow_requests DROP COLUMN cycle; PRAGMA user_version=9;`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; ALTER TABLE follow_requests DROP COLUMN note; ALTER TABLE follow_requests DROP COLUMN updated_at; ALTER TABLE follow_requests DROP COLUMN revision; ALTER TABLE follow_requests DROP COLUMN cycle; PRAGMA user_version=9;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {

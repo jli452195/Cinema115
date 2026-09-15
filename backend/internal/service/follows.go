@@ -22,10 +22,14 @@ type FollowLibrary interface {
 	Matches(context.Context, []model.EmbyMatch, bool) ([]model.EmbyMatch, error)
 }
 type FollowService struct {
-	Store         *storage.Store
-	TMDB          FollowDetails
-	Library       FollowLibrary
-	Notifications FollowNotificationFactory
+	Store              *storage.Store
+	TMDB               FollowDetails
+	Library            FollowLibrary
+	Notifications      FollowNotificationFactory
+	BotSearch          FollowBotSearcher
+	ShareRuns          *ShareRuns
+	GenerationSettings *AutomationStore
+	Logs               *GenerationLogs
 }
 
 // 通知工厂只快照目标并格式化消息，不进行网络发送。
@@ -110,8 +114,11 @@ func (s *FollowService) Subscribe(ctx context.Context, userID, kind string, id i
 			return state, err
 		}
 	}
-	if err := s.Store.SubscribeWithNotification(ctx, userID, f, notification); err != nil {
+	if err := s.Store.SubscribeWithConfiguredAutomation(ctx, userID, f, notification); err != nil {
 		return state, err
+	}
+	if s.Logs != nil {
+		s.Logs.Append("订阅", kind+":"+strconv.Itoa(id), "订阅", "INFO", "订阅已保存；首位订阅者创建的自动任务将先检查入库状态")
 	}
 	return s.State(ctx, userID, kind, id)
 }

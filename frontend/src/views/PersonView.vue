@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
+import HistoryBackButton from '../components/HistoryBackButton.vue'
 import type { PersonItem } from '../types/person'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
+import { tmdbImageURL } from '../utils/tmdbImage'
 const props = defineProps<{ token: string; tmdbId: string }>()
 defineEmits<{ logout: [] }>()
 interface PersonDetail extends PersonItem { biography: string; birthday: string; deathday: string; placeOfBirth: string; items: MediaCardItem[] }
-const route = useRoute()
 const person = ref<PersonDetail>()
 const loading = ref(true)
 const error = ref('')
@@ -46,12 +46,12 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
   <div class="flex min-h-screen flex-col bg-slate-50">
     <WorkbenchHeader @logout="$emit('logout')" />
     <main class="mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-4 py-7 sm:px-8 lg:px-10">
-      <RouterLink :to="{ path: '/search', query: { scope: 'person', q: route.query.q, page: route.query.page } }" class="mb-8 inline-block rounded text-sm text-slate-500 hover:text-amber-600">← 返回演员搜索</RouterLink>
+      <HistoryBackButton fallback="/search?scope=person" class="mb-8 text-sm text-slate-500" />
       <div v-if="loading" role="status" class="rounded-xl bg-slate-200 p-16 text-center text-sm text-slate-500 motion-safe:animate-pulse">正在加载演员信息…</div>
       <div v-else-if="error" role="alert" class="rounded-xl border border-red-100 bg-white p-8 text-center"><p class="text-sm text-red-600">{{ error }}</p><button class="mt-4 rounded-lg bg-slate-900 px-5 py-2 text-sm text-white" @click="load">重新加载</button></div>
       <template v-else-if="person">
         <section class="grid items-start gap-8 sm:grid-cols-[200px_minmax(0,1fr)]">
-          <div class="mx-auto aspect-[2/3] w-44 overflow-hidden rounded-2xl bg-slate-200 sm:w-full"><img v-if="person.profileUrl && !failedImage" :src="person.profileUrl" :alt="person.name" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true"/><div v-else class="flex h-full items-center justify-center text-sm text-slate-400">暂无照片</div></div>
+          <div class="mx-auto aspect-[2/3] w-44 overflow-hidden rounded-2xl bg-slate-200 sm:w-full"><img v-if="person.profileUrl && !failedImage" :src="tmdbImageURL(person.profileUrl)" :alt="person.name" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true"/><div v-else class="flex h-full items-center justify-center text-sm text-slate-400">暂无照片</div></div>
           <div class="min-w-0"><span class="text-xs font-medium text-amber-600">演员</span><h1 class="mt-3 break-words text-3xl font-bold text-slate-900">{{ person.name }}</h1><div class="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500"><span v-if="person.birthday">出生：{{ person.birthday }}</span><span v-if="person.deathday">逝世：{{ person.deathday }}</span><span v-if="person.placeOfBirth">{{ person.placeOfBirth }}</span></div><p class="mt-6 whitespace-pre-line text-sm leading-7 text-slate-600" :class="{ 'line-clamp-6': !expanded }">{{ person.biography || 'TMDB 暂未提供中文简介。' }}</p><button v-if="person.biography.length > 200" class="mt-3 text-xs text-amber-600" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? '收起简介' : '展开简介' }}</button></div>
         </section>
         <section class="mt-10" aria-label="参演作品"><div class="mb-6 flex flex-wrap items-center justify-between gap-4"><h2 class="text-lg font-semibold text-slate-900">参演作品 <span class="ml-2 text-sm font-normal text-slate-400">{{ filtered.length }}</span></h2><div class="flex gap-1" role="group" aria-label="作品类型"><button v-for="tab in [{ id: 'all', label: '全部' }, { id: 'movie', label: '电影' }, { id: 'tv', label: '剧集' }]" :key="tab.id" :aria-pressed="kind === tab.id" class="rounded-lg px-4 py-2 text-sm" :class="kind === tab.id ? 'bg-amber-50 text-amber-700' : 'text-slate-500 hover:bg-slate-100'" @click="kind = tab.id">{{ tab.label }}</button></div></div>

@@ -31,6 +31,21 @@ type FollowCheck struct {
 	Version int64
 }
 
+type FollowSettings struct {
+	BaseURL     string `json:"baseUrl"`
+	AutoEnabled bool   `json:"autoEnabled"`
+}
+
+type FollowBotJob struct {
+	Kind     string
+	TMDBID   int
+	Cycle    int64
+	Title    string
+	Date     string
+	Status   string
+	Attempts int
+}
+
 type WebsiteNotification struct {
 	ID        int64  `json:"id"`
 	Kind      string `json:"kind"`
