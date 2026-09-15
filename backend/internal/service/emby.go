@@ -250,7 +250,7 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) error {
 	s.config = c
 	s.checkedAt = time.Now()
 	s.connectionError = ""
-	return nil
+	return s.db.RecheckFollows(ctx)
 }
 func (s *EmbyService) Status(ctx context.Context) (EmbyStatus, error) {
 	s.mu.RLock()

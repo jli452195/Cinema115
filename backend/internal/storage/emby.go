@@ -91,6 +91,7 @@ func (s *Store) EmbyPublish(ctx context.Context, scope, generation string, cutof
 		{`DELETE FROM emby_snapshots WHERE scope=? AND generation<>?`, []any{scope, generation}},
 		// 同步开始前已失败的通知由完整快照修复；同步期间的通知仍须重放。
 		{`DELETE FROM emby_events WHERE scope=? AND id<=? AND attempts>=6`, []any{scope, cutoff}},
+		{`UPDATE follow_checks SET due=0,version=version+1 WHERE ` + activeFollow, nil},
 	} {
 		if _, err := tx.ExecContext(ctx, q.sql, q.args...); err != nil {
 			return fmt.Errorf("切换 Emby 索引: %w", err)
@@ -208,6 +209,22 @@ func (s *Store) EmbyApplyEvent(ctx context.Context, scope, generation string, ev
 	if exists == 0 {
 		return nil
 	}
+	changedIDs := make([]string, 0, len(items)+1)
+	changedIDs = append(changedIDs, event.ItemID)
+	for _, item := range items {
+		changedIDs = append(changedIDs, item.ID)
+	}
+	changedJSON, err := json.Marshal(changedIDs)
+	if err != nil {
+		return fmt.Errorf("编码追更变化条目: %w", err)
+	}
+	removedID := ""
+	if remove {
+		removedID = event.ItemID
+	}
+	if err := dirtyEmbyFollows(ctx, tx, scope, generation, string(changedJSON), removedID); err != nil {
+		return err
+	}
 	var delta int64
 	if remove {
 		result, err := tx.ExecContext(ctx, `DELETE FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND (id=? OR series_id=? OR parent_id=? OR library_id=?)`, scope, generation, event.ItemID, event.ItemID, event.ItemID, event.ItemID)
@@ -240,6 +257,9 @@ func (s *Store) EmbyApplyEvent(ctx context.Context, scope, generation string, ev
 			return err
 		}
 		delta = int64(len(ids)) - existing
+	}
+	if err := dirtyEmbyFollows(ctx, tx, scope, generation, string(changedJSON), ""); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM emby_events WHERE id=?`, event.ID); err != nil {
 		return fmt.Errorf("完成 Emby 通知: %w", err)

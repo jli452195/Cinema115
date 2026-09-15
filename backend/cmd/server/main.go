@@ -97,6 +97,7 @@ func main() {
 	member := r.Group("/api/me", httpapi.WebsiteAuthenticated(auth))
 	follows := &service.FollowService{Store: database, TMDB: tmdbService, Library: embyService}
 	httpapi.RegisterFollows(member, follows)
+	httpapi.RegisterWebsiteNotifications(member, database)
 	httpapi.RegisterFollowAdmin(admin, follows)
 	httpapi.RegisterP115Accounts(admin, accounts, p115.NewAccountClient(), p115.NewClient())
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
@@ -188,7 +189,14 @@ func main() {
 		workers.Add(1)
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
 	}
-	workerErrors := make(chan error, 4)
+	workerErrors := make(chan error, 5)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := follows.RunChecks(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

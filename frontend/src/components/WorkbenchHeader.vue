@@ -2,9 +2,17 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { isWebsiteAdmin, websiteUser } from '../composables/useWebsiteAuth'
+import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
 
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
+const notificationController = new AbortController()
+let notificationTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  void refreshWebsiteUnread(notificationController.signal)
+  notificationTimer = setInterval(() => { void refreshWebsiteUnread(notificationController.signal) }, 60000)
+})
+onBeforeUnmount(() => { notificationController.abort(); clearInterval(notificationTimer) })
 const header = ref<HTMLElement>()
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
@@ -56,6 +64,10 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink to="/tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 pl-2 sm:gap-3 sm:pl-5">
+        <RouterLink to="/notifications" class="icon-button relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
+          <span v-if="websiteUnread" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] leading-4 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
+        </RouterLink>
         <RouterLink to="/search" class="icon-button" :class="{ 'bg-amber-50 text-amber-700': route.path === '/search' }" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </RouterLink>

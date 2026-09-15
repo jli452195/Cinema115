@@ -57,7 +57,7 @@ func TestShareTaskMigrationPersistenceFiltersAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟旧版数据库，验证从版本 1 自动新增任务表。
-	if _, err := s.db.ExecContext(ctx, "DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; DROP TABLE tmdb_cache; DROP TABLE emby_events; DROP TABLE emby_items; DROP TABLE emby_snapshots; DROP TABLE emby_state; DROP TABLE share_tasks; PRAGMA user_version=1;"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; DROP TABLE tmdb_cache; DROP TABLE emby_events; DROP TABLE emby_items; DROP TABLE emby_snapshots; DROP TABLE emby_state; DROP TABLE share_tasks; PRAGMA user_version=1;"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

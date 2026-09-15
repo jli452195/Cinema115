@@ -27,11 +27,15 @@ func (s *FollowService) AdminList(ctx context.Context, kind, status, query strin
 	for _, f := range items {
 		media = append(media, f.Follow)
 	}
+	if err := s.attachProgress(ctx, media); err != nil {
+		return nil, false, err
+	}
 	states, err := s.libraryStates(ctx, media)
 	if err != nil {
 		states = nil
 	}
 	for i := range items {
+		items[i].Progress = media[i].Progress
 		items[i].LibraryState = states[items[i].Kind+":"+strconv.Itoa(items[i].TMDBID)]
 		if items[i].LibraryState == "" {
 			items[i].LibraryState = "unknown"

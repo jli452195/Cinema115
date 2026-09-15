@@ -11,7 +11,7 @@ func TestP115AccountTransactionAndMigration(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	// 模拟现有版本 4 的数据库，升级账号表不能影响已有业务表。
-	if _, err := s.db.ExecContext(ctx, "DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; PRAGMA user_version=4;"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; PRAGMA user_version=4;"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {
@@ -61,7 +61,7 @@ func TestP115AccountTransactionAndMigration(t *testing.T) {
 func TestRemoveGlobalAccountFromVersionFive(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	_, err := s.db.ExecContext(ctx, `DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state;
+	_, err := s.db.ExecContext(ctx, `DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state;
 CREATE TABLE p115_account_state(id INTEGER PRIMARY KEY,active_id TEXT,revision INTEGER);
 INSERT INTO p115_accounts(id,name,cookie_enc,revision,position) VALUES('default','默认账号',x'1234',3,0),('other','自定义名称',x'5678',1,1);
 INSERT INTO p115_account_state VALUES(1,'default',4);

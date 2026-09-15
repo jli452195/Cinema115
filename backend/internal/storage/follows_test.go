@@ -12,7 +12,7 @@ import (
 func TestFollowMigrationDeduplicationIsolationAndPagination(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO website_users(id,username,password_hash,created_at) VALUES('reader','reader','hash','date'); DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; PRAGMA user_version=8;`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO website_users(id,username,password_hash,created_at) VALUES('reader','reader','hash','date'); DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; PRAGMA user_version=8;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {

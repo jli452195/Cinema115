@@ -47,7 +47,7 @@ func (s *Store) AdminFollows(ctx context.Context, kind, status, query string, of
 	return items, nil
 }
 func (s *Store) UpdateFollow(ctx context.Context, kind string, id int, status, note string, revision int64) error {
-	r, err := s.db.ExecContext(ctx, `UPDATE follow_requests SET status=?,note=?,updated_at=?,revision=revision+1 WHERE kind=? AND tmdb_id=? AND revision=? AND EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=follow_requests.kind AND f.tmdb_id=follow_requests.tmdb_id AND f.active=1)`, status, note, time.Now().UTC().Format(time.RFC3339Nano), kind, id, revision)
+	r, err := s.db.ExecContext(ctx, `UPDATE follow_requests SET status=CASE WHEN EXISTS(SELECT 1 FROM follow_checks c WHERE c.kind=follow_requests.kind AND c.tmdb_id=follow_requests.tmdb_id AND c.state='completed') THEN 'completed' ELSE ? END,note=?,updated_at=?,revision=revision+1 WHERE kind=? AND tmdb_id=? AND revision=? AND EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=follow_requests.kind AND f.tmdb_id=follow_requests.tmdb_id AND f.active=1)`, status, note, time.Now().UTC().Format(time.RFC3339Nano), kind, id, revision)
 	if err != nil {
 		return fmt.Errorf("保存追更处理状态: %w", err)
 	}

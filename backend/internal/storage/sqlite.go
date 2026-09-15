@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 10
+const schemaVersion = 11
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -212,6 +212,28 @@ CREATE TABLE follow_settings(id INTEGER PRIMARY KEY CHECK(id=1),base_url TEXT NO
 INSERT INTO follow_settings(id) VALUES(1);
 PRAGMA user_version=10;`); err != nil {
 			return fmt.Errorf("迁移追更管理与通知配置: %w", err)
+		}
+	}
+	if version < 11 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE follow_checks (
+ kind TEXT NOT NULL, tmdb_id INTEGER NOT NULL,
+ state TEXT NOT NULL DEFAULT 'unknown', aired INTEGER NOT NULL DEFAULT 0, owned INTEGER NOT NULL DEFAULT 0,
+ checked_at INTEGER NOT NULL DEFAULT 0, due INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1,
+ error TEXT NOT NULL DEFAULT '', PRIMARY KEY(kind,tmdb_id),
+ FOREIGN KEY(kind,tmdb_id) REFERENCES follow_requests(kind,tmdb_id) ON DELETE CASCADE
+);
+INSERT INTO follow_checks(kind,tmdb_id) SELECT kind,tmdb_id FROM follow_requests;
+UPDATE follow_checks SET due=9223372036854775807 WHERE NOT EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=follow_checks.kind AND f.tmdb_id=follow_checks.tmdb_id AND f.active=1);
+CREATE INDEX follow_checks_due ON follow_checks(due);
+CREATE TABLE website_notifications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, kind TEXT NOT NULL, tmdb_id INTEGER NOT NULL,
+ title TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL, read_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX website_notifications_list ON website_notifications(user_id,id DESC);
+CREATE INDEX website_notifications_unread ON website_notifications(user_id,id) WHERE read_at=0;
+PRAGMA user_version=11;`); err != nil {
+			return fmt.Errorf("迁移追更入库检查与站内通知: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

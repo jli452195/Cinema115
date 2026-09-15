@@ -65,6 +65,11 @@ func (s *FollowService) State(ctx context.Context, userID, kind string, id int) 
 	}
 	if f != nil {
 		f.LibraryState = state.LibraryState
+		items := []model.Follow{*f}
+		if err := s.attachProgress(ctx, items); err != nil {
+			return state, err
+		}
+		f.Progress = items[0].Progress
 	}
 	return state, nil
 }
@@ -129,6 +134,9 @@ func (s *FollowService) List(ctx context.Context, userID, kind string, offset in
 		if items[i].LibraryState == "" {
 			items[i].LibraryState = "unknown"
 		}
+	}
+	if err := s.attachProgress(ctx, items); err != nil {
+		return nil, false, err
 	}
 	return items, hasMore, nil
 }

@@ -63,6 +63,9 @@ func (s *Store) SubscribeWithNotification(ctx context.Context, userID string, f 
 		return fmt.Errorf("保存用户订阅: %w", err)
 	}
 	if followers == 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO follow_checks(kind,tmdb_id) VALUES(?,?) ON CONFLICT(kind,tmdb_id) DO UPDATE SET state='unknown',aired=0,owned=0,checked_at=0,due=0,error='',version=version+1`, f.Kind, f.TMDBID); err != nil {
+			return fmt.Errorf("重置追更入库检查: %w", err)
+		}
 		// 没有有效订阅时开启新一轮申请；后续加入者不重复通知。
 		var cycle int64
 		if err := tx.QueryRowContext(ctx, `UPDATE follow_requests SET status='pending',note='',updated_at=?,revision=revision+1,cycle=cycle+1 WHERE kind=? AND tmdb_id=? RETURNING cycle`, now, f.Kind, f.TMDBID).Scan(&cycle); err != nil {
@@ -89,6 +92,9 @@ func (s *Store) CancelFollow(ctx context.Context, userID, kind string, id int) e
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, "UPDATE user_follows SET active=0 WHERE user_id=? AND kind=? AND tmdb_id=? AND active=1", userID, kind, id); err != nil {
 		return fmt.Errorf("取消追更: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE follow_checks SET due=9223372036854775807,version=version+1 WHERE kind=? AND tmdb_id=? AND NOT EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=follow_checks.kind AND f.tmdb_id=follow_checks.tmdb_id AND f.active=1)`, kind, id); err != nil {
+		return fmt.Errorf("停止无人订阅的入库检查: %w", err)
 	}
 	// 最后一人取消时撤销尚未发送的通知，其他用户仍追更则保持原通知。
 	if _, err := tx.ExecContext(ctx, `UPDATE telegram_notifications SET status='cancelled',text='',preview_url='' WHERE status='pending' AND task_id=(SELECT 'follow:'||kind||':'||tmdb_id||':'||cycle FROM follow_requests WHERE kind=? AND tmdb_id=?) AND NOT EXISTS(SELECT 1 FROM user_follows WHERE kind=? AND tmdb_id=? AND active=1)`, kind, id, kind, id); err != nil {

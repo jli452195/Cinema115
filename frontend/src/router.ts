@@ -13,6 +13,7 @@ import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
+import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
 import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebsiteAuth'
 
@@ -20,6 +21,7 @@ import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebs
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
     { path: '/follows', name: 'my-follows', component: MyFollowsView },
     { path: '/users', name: 'users', component: WebsiteUsersView },
