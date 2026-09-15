@@ -33,7 +33,12 @@ func RegisterFollowAdmin(admin *gin.RouterGroup, s *service.FollowService) {
 			followError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"items": items, "hasMore": more})
+		counts, err := s.Store.FollowCounts(c.Request.Context(), "", kind, query)
+		if err != nil {
+			followError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"items": items, "hasMore": more, "counts": counts})
 	})
 	group.GET("/settings", func(c *gin.Context) {
 		baseURL, err := s.Store.FollowBaseURL(c.Request.Context())

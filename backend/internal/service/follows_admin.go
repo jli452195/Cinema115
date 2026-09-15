@@ -19,9 +19,9 @@ func (s *FollowService) AdminList(ctx context.Context, kind, status, query strin
 	if err != nil {
 		return nil, false, err
 	}
-	more := len(items) > 20
+	more := len(items) > model.FollowPageSize
 	if more {
-		items = items[:20]
+		items = items[:model.FollowPageSize]
 	}
 	media := make([]model.Follow, 0, len(items))
 	for _, f := range items {

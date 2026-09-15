@@ -2,6 +2,7 @@ package tmdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -67,6 +68,48 @@ func TestDetailsMovieTVAndSeason(t *testing.T) {
 	}
 	if _, err := c.Details(context.Background(), "movie", 404); !errors.Is(err, ErrNotFound) {
 		t.Fatal("不存在的条目应返回可识别的错误")
+	}
+}
+
+func TestLongSeasonResponseLimitAndRawCache(t *testing.T) {
+	episodes := make([]map[string]any, 2868)
+	for i := range episodes {
+		episodes[i] = map[string]any{"id": i + 1, "episode_number": i + 1, "name": "长季分集", "air_date": "2020-01-01", "guest_stars": []map[string]string{{"name": strings.Repeat("演员", 150)}}}
+	}
+	data, err := json.Marshal(map[string]any{"id": 1, "season_number": 1, "episodes": episodes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) <= defaultResponseLimit || len(data) > seasonResponseLimit {
+		t.Fatalf("测试数据大小不符合长季场景: %d", len(data))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(data) }))
+	defer server.Close()
+	c := New("test-key")
+	c.base = server.URL
+	season, err := c.Season(context.Background(), 91759, 1)
+	if err != nil || len(season.Episodes) != 2868 || season.Episodes[2867].Number != 2868 {
+		t.Fatalf("长季未完整读取: %v", err)
+	}
+	if len(c.cache) != 0 {
+		t.Fatal("大型原始季响应不应留在内存缓存")
+	}
+	if _, err := c.Details(context.Background(), "tv", 91759); err == nil || err.Error() != "TMDB 响应超过大小限制" {
+		t.Fatal("普通详情上限不应随季接口放宽", err)
+	}
+}
+
+func TestSeasonStillRejectsOversizedResponse(t *testing.T) {
+	data := []byte(`{"id":1,"season_number":1,"episodes":[],"unused":"` + strings.Repeat("x", seasonResponseLimit) + `"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(data) }))
+	defer server.Close()
+	c := New("test-key")
+	c.base = server.URL
+	if _, err := c.Season(context.Background(), 91759, 1); err == nil || err.Error() != "TMDB 响应超过大小限制" {
+		t.Fatal("季响应超限未拦截", err)
+	}
+	if len(c.cache) != 0 {
+		t.Fatal("失败响应不应缓存")
 	}
 }
 

@@ -51,17 +51,23 @@ func RegisterFollows(group *gin.RouterGroup, s *service.FollowService) {
 	})
 	group.GET("", func(c *gin.Context) {
 		kind := c.Query("kind")
+		status := c.DefaultQuery("status", "ongoing")
 		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		if (kind != "" && kind != "movie" && kind != "tv") || err != nil || offset < 0 || offset > 1000000 {
+		if (status != "ongoing" && status != "completed") || (kind != "" && kind != "movie" && kind != "tv") || err != nil || offset < 0 || offset > 1000000 {
 			c.JSON(400, gin.H{"error": "列表参数无效"})
 			return
 		}
-		items, more, err := s.List(c.Request.Context(), c.GetString("follow_user_id"), kind, offset)
+		items, more, err := s.List(c.Request.Context(), c.GetString("follow_user_id"), kind, status, offset)
 		if err != nil {
 			followError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"items": items, "hasMore": more})
+		counts, err := s.Store.FollowCounts(c.Request.Context(), c.GetString("follow_user_id"), kind, "")
+		if err != nil {
+			followError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"items": items, "hasMore": more, "counts": counts})
 	})
 	media := group.Group("/:kind/:id")
 	media.Use(func(c *gin.Context) {

@@ -72,20 +72,20 @@ func TestFollowMigrationDeduplicationIsolationAndPagination(t *testing.T) {
 	if err := s.Subscribe(ctx, "reader", f); err != nil {
 		t.Fatal(err)
 	}
-	for id := 101; id <= 121; id++ {
+	for id := 101; id <= 125; id++ {
 		if err := s.Subscribe(ctx, "reader", model.Follow{Kind: "movie", TMDBID: id, Title: fmt.Sprint(id)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	first, err := s.Follows(ctx, "reader", "movie", 0)
-	if err != nil || len(first) != 21 {
+	first, err := s.Follows(ctx, "reader", "movie", "ongoing", 0)
+	if err != nil || len(first) != 25 {
 		t.Fatal("分页预读错误", len(first), err)
 	}
-	last, err := s.Follows(ctx, "reader", "movie", 20)
+	last, err := s.Follows(ctx, "reader", "movie", "ongoing", 24)
 	if err != nil || len(last) != 1 || last[0].TMDBID != 101 {
 		t.Fatal("分页排序错误", last, err)
 	}
-	other, err := s.Follows(ctx, "other", "", 0)
+	other, err := s.Follows(ctx, "other", "", "ongoing", 0)
 	if err != nil || len(other) != 1 || other[0].Kind != "tv" {
 		t.Fatal("列表越权或类型过滤错误", other, err)
 	}

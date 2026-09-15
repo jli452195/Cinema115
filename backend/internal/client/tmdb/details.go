@@ -238,7 +238,8 @@ func (c *Client) Season(ctx context.Context, id, number int) (*SeasonDetail, err
 		} `json:"episodes"`
 	}
 	endpoint := "/tv/" + strconv.Itoa(id) + "/season/" + strconv.Itoa(number)
-	if err := c.get(ctx, endpoint, url.Values{"language": {"zh-CN"}}, &raw); err != nil {
+	// TMDB 按季返回全部分集，数千集的长季需要高于普通列表的读取上限。
+	if err := c.getLimited(ctx, endpoint, url.Values{"language": {"zh-CN"}}, &raw, seasonResponseLimit); err != nil {
 		return nil, err
 	}
 	if raw.ID < 1 || raw.Number != number || raw.Episodes == nil {

@@ -9,6 +9,7 @@ import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
 import SeasonLibraryProgress from '../components/SeasonLibraryProgress.vue'
+import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useTMDBSeasons, type CacheInfo, type TMDBEpisode as Episode } from '../composables/useTMDBSeasons'
 import { episodeHasAired, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
@@ -226,7 +227,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
                         <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100"><img :src="episode.stillUrl" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
                       </article>
                     </div>
-                    <button v-if="(seasons[season.number]?.data?.episodes.length || 0) > (episodeLimits[season.number] || 20)" class="mt-3 w-full rounded-lg border border-slate-200 py-3 text-xs text-blue-600 hover:bg-slate-50" @click="episodeLimits[season.number] = (episodeLimits[season.number] || 20) + 20">显示更多分集（已显示 {{ episodeLimits[season.number] || 20 }} / {{ seasons[season.number]?.data?.episodes.length }}）</button>
+                    <InfiniteLoadMore v-if="seasons[season.number]?.data?.episodes.length" :key="`${tmdbId}-${season.number}`" :active="openSeasons.has(season.number)" :count="Math.min(episodeLimits[season.number] || 20, seasons[season.number]?.data?.episodes.length || 0)" :total="seasons[season.number]?.data?.episodes.length || 0" @load="episodeLimits[season.number] = Math.min((episodeLimits[season.number] || 20) + 20, seasons[season.number]?.data?.episodes.length || 0)" />
                   </template>
                 </div>
               </section>

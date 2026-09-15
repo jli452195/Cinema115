@@ -26,14 +26,14 @@ func (s *Store) AdminFollows(ctx context.Context, kind, status, query string, of
 		q += " AND (instr(lower(r.title),lower(?))>0 OR CAST(r.tmdb_id AS TEXT)=?)"
 		args = append(args, query, query)
 	}
-	q += " ORDER BY f.subscribed_at DESC,r.kind,r.tmdb_id LIMIT 21 OFFSET ?"
-	args = append(args, offset)
+	q += " ORDER BY f.subscribed_at DESC,r.kind,r.tmdb_id LIMIT ? OFFSET ?"
+	args = append(args, model.FollowPageSize+1, offset)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询追更管理列表: %w", err)
 	}
 	defer rows.Close()
-	items := make([]model.AdminFollow, 0, 21)
+	items := make([]model.AdminFollow, 0, model.FollowPageSize+1)
 	for rows.Next() {
 		var f model.AdminFollow
 		if err := rows.Scan(&f.Kind, &f.TMDBID, &f.Title, &f.PosterURL, &f.Date, &f.Status, &f.SubscribedAt, &f.Note, &f.SubscriberCount, &f.CreatedAt, &f.UpdatedAt, &f.Revision); err != nil {

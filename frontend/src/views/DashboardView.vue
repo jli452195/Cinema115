@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/useWebsiteAuth'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
@@ -10,14 +11,42 @@ const props = defineProps<{ token: string; kind: 'tv' | 'movie' }>()
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 interface Genre { id: number; name: string }
 const kind = computed(() => props.kind)
-const genre = ref('')
-const region = ref('')
-const year = ref('')
-const sort = ref('popular')
-const page = ref(1)
+const route = useRoute(), router = useRouter()
+const categories = computed(() => kind.value === 'tv'
+  ? [{ id: '', name: '全部' }, { id: 'series', name: '剧集' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }, { id: 'variety', name: '综艺' }]
+  : [{ id: '', name: '全部' }, { id: 'film', name: '电影' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }])
+type FilterKey = 'category' | 'genre' | 'region' | 'year' | 'sort' | 'page'
+function setFilter(key: FilterKey, value: string) {
+  const query = { ...route.query }
+  if (!value || (key === 'page' && value === '1') || (key === 'sort' && value === 'popular')) delete query[key]
+  else query[key] = value
+  if (key !== 'page') delete query.page
+  if (key === 'category') delete query.genre
+  void router.push({ path: route.path, query })
+}
+function filter(key: FilterKey, fallback: string, valid: (value: string) => boolean) {
+  return computed({
+    get: () => { const value = route.query[key]; return typeof value === 'string' && valid(value) ? value : fallback },
+    set: (value: string) => setFilter(key, value),
+  })
+}
+const category = computed({ get: () => categories.value.some(item => item.id === route.query.category) ? String(route.query.category) : '', set: (value: string) => setFilter('category', value) })
+const genreFilter = filter('genre', '', value => /^[1-9]\d{0,4}$/.test(value))
+// 直接打开网址也排除与类别冲突或重复的类型。
+function hiddenGenre(id: number) {
+  if (category.value === 'film') return [16, 99].includes(id)
+  return category.value === 'series' ? [16, 99, 10764, 10767, 10763].includes(id) : category.value === 'animation' ? id === 16 : category.value === 'documentary' ? id === 99 : category.value === 'variety' ? [10764, 10767].includes(id) : false
+}
+const genre = computed({ get: () => hiddenGenre(Number(genreFilter.value)) ? '' : genreFilter.value, set: (value: string) => { genreFilter.value = value } })
+const region = filter('region', '', value => ['CN', 'HK', 'TW', 'JP', 'KR', 'western'].includes(value))
+const year = filter('year', '', value => /^\d{4}$/.test(value) && Number(value) >= 1900 && Number(value) <= new Date().getFullYear())
+const sort = filter('sort', 'popular', value => ['popular', 'latest', 'rating'].includes(value))
+const pageFilter = filter('page', '1', value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 500)
+const page = computed({ get: () => Number(pageFilter.value), set: (value: number) => { pageFilter.value = String(value) } })
 const totalPages = ref(0)
 const total = ref(0)
 const genres = ref<Genre[]>([])
+const visibleGenres = computed(() => genres.value.filter(item => !hiddenGenre(item.id)))
 const items = ref<MediaCardItem[]>([])
 const libraryMatches = useEmbyLibrary(() => props.token, items)
 const loading = ref(true)
@@ -54,6 +83,7 @@ async function loadPage() {
   loading.value = true; error.value = ''; items.value = []; total.value = 0; totalPages.value = 0
   try {
     const params = new URLSearchParams({ kind: kind.value, page: String(page.value) })
+    if (category.value) params.set('category', category.value)
     params.set('genre', genre.value); params.set('region', region.value); params.set('year', year.value); params.set('sort', sort.value)
     const data = await request(`browse?${params}`, current.signal)
     if (!Array.isArray(data.items)) throw new Error('影视数据格式不正确')
@@ -62,10 +92,9 @@ async function loadPage() {
   } catch (e) { if (mounted && !current.signal.aborted) error.value = e instanceof Error ? e.message : '看板加载失败' }
   finally { if (mounted && controller === current) loading.value = false }
 }
-watch(kind, () => { genre.value = ''; void loadGenres() })
-watch([kind, genre, region, year, sort], () => { if (page.value !== 1) page.value = 1; else void loadPage() })
-watch(page, () => { void loadPage() })
-onMounted(() => { void loadGenres(); void loadPage() })
+watch(kind, () => { void loadGenres() })
+watch([kind, category, genre, region, year, sort, page], () => { void loadPage() }, { immediate: true })
+onMounted(() => { void loadGenres() })
 onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.abort() })
 </script>
 
@@ -76,7 +105,8 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); genreController?.a
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="space-y-3 border-b border-slate-200 pb-6 text-sm">
         <fieldset class="space-y-3">
-          <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">类型</span><div class="flex flex-wrap gap-1"><button :aria-pressed="genre === ''" class="rounded-md border px-3 py-2" :class="chip(genre === '')" @click="genre = ''">全部</button><button v-for="item in genres" :key="item.id" :aria-pressed="genre === String(item.id)" class="rounded-md border px-3 py-2" :class="chip(genre === String(item.id))" @click="genre = String(item.id)">{{ item.name }}</button></div></div>
+          <div role="group" aria-label="影视类别" class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">类别</span><div class="flex flex-wrap gap-1"><button v-for="item in categories" :key="item.id" :aria-pressed="category === item.id" class="rounded-md border px-3 py-2" :class="chip(category === item.id)" @click="category = item.id">{{ item.name }}</button></div></div>
+          <div role="group" aria-label="影视类型" class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">类型</span><div class="flex flex-wrap gap-1"><button :aria-pressed="genre === ''" class="rounded-md border px-3 py-2" :class="chip(genre === '')" @click="genre = ''">全部</button><button v-for="item in visibleGenres" :key="item.id" :aria-pressed="genre === String(item.id)" class="rounded-md border px-3 py-2" :class="chip(genre === String(item.id))" @click="genre = String(item.id)">{{ item.name }}</button></div></div>
           <p v-if="genreError" class="ml-12 text-xs text-red-500">类型加载失败。<button class="underline" @click="loadGenres">重试</button></p>
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">地区</span><div class="flex flex-wrap gap-1"><button v-for="item in regions" :key="item.id" :aria-pressed="region === item.id" class="rounded-md border px-3 py-2" :class="chip(region === item.id)" @click="region = item.id">{{ item.name }}</button></div></div>
           <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800">年份</span><div class="flex min-w-0 flex-wrap gap-1"><button :aria-pressed="year === ''" class="rounded-md border px-3 py-2" :class="chip(year === '')" @click="year = ''">全部</button><button v-for="item in years" :key="item" :aria-pressed="year === item" class="rounded-md border px-3 py-2" :class="chip(year === item)" @click="year = item">{{ item }}</button><select aria-label="更早年份" :value="olderYears.includes(year) ? year : ''" class="max-w-32 rounded-md border border-slate-200 bg-transparent px-2 text-xs text-slate-500" @change="year = ($event.target as HTMLSelectElement).value"><option value="">更早年份</option><option v-for="item in olderYears" :key="item" :value="item">{{ item }}</option></select></div></div>

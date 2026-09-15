@@ -1,3 +1,4 @@
+export const FOLLOW_PAGE_SIZE = 24
 export interface Follow {
   kind: 'movie' | 'tv'; tmdbId: number; title: string; posterUrl: string; date: string
   status: 'pending' | 'processing' | 'completed'; subscribedAt: string

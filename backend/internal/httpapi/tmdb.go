@@ -206,7 +206,7 @@ func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
 		defer cancel()
-		result, err := client.Browse(ctx, tmdb.Options{Kind: c.DefaultQuery("kind", "tv"), Genre: c.Query("genre"), Region: c.Query("region"), Year: c.Query("year"), Sort: c.Query("sort"), Query: c.Query("query"), Page: page})
+		result, err := client.Browse(ctx, tmdb.Options{Kind: c.DefaultQuery("kind", "tv"), Category: c.Query("category"), Genre: c.Query("genre"), Region: c.Query("region"), Year: c.Query("year"), Sort: c.Query("sort"), Query: c.Query("query"), Page: page})
 		if err != nil {
 			tmdbError(c, err)
 			return

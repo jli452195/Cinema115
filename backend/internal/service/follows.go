@@ -115,14 +115,14 @@ func (s *FollowService) Subscribe(ctx context.Context, userID, kind string, id i
 	}
 	return s.State(ctx, userID, kind, id)
 }
-func (s *FollowService) List(ctx context.Context, userID, kind string, offset int) ([]model.Follow, bool, error) {
-	items, err := s.Store.Follows(ctx, userID, kind, offset)
+func (s *FollowService) List(ctx context.Context, userID, kind, status string, offset int) ([]model.Follow, bool, error) {
+	items, err := s.Store.Follows(ctx, userID, kind, status, offset)
 	if err != nil {
 		return nil, false, err
 	}
-	hasMore := len(items) > 20
+	hasMore := len(items) > model.FollowPageSize
 	if hasMore {
-		items = items[:20]
+		items = items[:model.FollowPageSize]
 	}
 	states, err := s.libraryStates(ctx, items)
 	if err != nil {

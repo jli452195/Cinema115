@@ -18,6 +18,9 @@ var ErrInput = errors.New("看板查询参数无效")
 var ErrNotConfigured = errors.New("请先在根目录 .env 中填写 TMDB_API_KEY 并重启后端")
 var ErrNotFound = errors.New("未找到对应的影视或季信息")
 
+const defaultResponseLimit = 2 << 20
+const seasonResponseLimit = 8 << 20
+
 type cachedResponse struct {
 	data    []byte
 	expires time.Time
@@ -58,8 +61,8 @@ type Page struct {
 	Total      int    `json:"total"`
 }
 type Options struct {
-	Kind, Genre, Region, Year, Sort, Query string
-	Page                                   int
+	Kind, Category, Genre, Region, Year, Sort, Query string
+	Page                                             int
 }
 
 func validKind(kind string) bool { return kind == "tv" || kind == "movie" }
@@ -71,6 +74,10 @@ func WithFresh(ctx context.Context) context.Context { return context.WithValue(c
 func WantsFresh(ctx context.Context) bool           { value, _ := ctx.Value(freshKey{}).(bool); return value }
 
 func (c *Client) get(ctx context.Context, endpoint string, query url.Values, target any) error {
+	return c.getLimited(ctx, endpoint, query, target, defaultResponseLimit)
+}
+
+func (c *Client) getLimited(ctx context.Context, endpoint string, query url.Values, target any, limit int64) error {
 	if c.key == "" {
 		return ErrNotConfigured
 	}
@@ -110,15 +117,19 @@ func (c *Client) get(ctx context.Context, endpoint string, query url.Values, tar
 			return fmt.Errorf("TMDB 返回 HTTP %d，请稍后重试", response.StatusCode)
 		}
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, 2<<20+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return fmt.Errorf("读取 TMDB 响应失败")
 	}
-	if len(data) > 2<<20 {
+	if int64(len(data)) > limit {
 		return fmt.Errorf("TMDB 响应超过大小限制")
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("TMDB 返回的数据格式不正确")
+	}
+	// 长季包含大量前端不用的演职员字段，归一化后由服务层压缩入库，不保留大型原始响应。
+	if len(data) > defaultResponseLimit {
+		return nil
 	}
 	c.mu.Lock()
 	// 有界缓存限制 NAS 内存占用，只缓存成功请求五分钟。
@@ -161,6 +172,9 @@ func optionsQuery(options Options) (string, url.Values, error) {
 		return "", nil, ErrInput
 	}
 	query := url.Values{"language": {"zh-CN"}, "page": {strconv.Itoa(options.Page)}, "include_adult": {"false"}}
+	if options.Category != "" && (!validKind(options.Kind) || options.Query != "") {
+		return "", nil, ErrInput
+	}
 	if options.Query != "" {
 		if len([]rune(options.Query)) > 100 || options.Genre != "" || options.Region != "" || options.Year != "" || options.Sort != "" {
 			return "", nil, ErrInput
@@ -174,6 +188,48 @@ func optionsQuery(options Options) (string, url.Values, error) {
 			return "", nil, ErrInput
 		}
 		query.Set("with_genres", strconv.Itoa(id))
+	}
+	// 类别在上游查询中筛选，保留 TMDB 的准确总数与分页。逗号取交集，竖线取并集。
+	categoryGenres := ""
+	switch options.Category {
+	case "":
+	case "series":
+		if options.Kind != "tv" {
+			return "", nil, ErrInput
+		}
+		query.Set("without_genres", "16,99,10764,10767,10763")
+		for _, excluded := range []string{"16", "99", "10764", "10767", "10763"} {
+			if query.Get("with_genres") == excluded {
+				return "", nil, ErrInput
+			}
+		}
+	case "film":
+		if options.Kind != "movie" {
+			return "", nil, ErrInput
+		}
+		query.Set("without_genres", "16,99")
+		if genre := query.Get("with_genres"); genre == "16" || genre == "99" {
+			return "", nil, ErrInput
+		}
+	case "animation":
+		categoryGenres = "16"
+	case "documentary":
+		categoryGenres = "99"
+	case "variety":
+		if options.Kind != "tv" {
+			return "", nil, ErrInput
+		}
+		categoryGenres = "10764|10767"
+	default:
+		return "", nil, ErrInput
+	}
+	if categoryGenres != "" {
+		genre := query.Get("with_genres")
+		if genre == "" || genre == categoryGenres {
+			query.Set("with_genres", categoryGenres)
+		} else {
+			query.Set("with_genres", categoryGenres+","+genre)
+		}
 	}
 	regions := map[string]string{"CN": "CN", "HK": "HK", "TW": "TW", "JP": "JP", "KR": "KR", "western": "US|GB|FR|DE|CA|AU"}
 	if options.Region != "" {

@@ -157,7 +157,7 @@ func TestFollowRoutesIdentityPersistenceAndAvailability(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := &service.FollowService{Store: db, TMDB: source, Library: library}
-	list, _, err := restored.List(ctx, u.ID, "", 0)
+	list, _, err := restored.List(ctx, u.ID, "", "ongoing", 0)
 	if err != nil || len(list) != 3 {
 		t.Fatal("重启丢失订阅或失败申请留下记录", len(list), err)
 	}

@@ -105,21 +105,27 @@ func (s *Store) CancelFollow(ctx context.Context, userID, kind string, id int) e
 	}
 	return nil
 }
-func (s *Store) Follows(ctx context.Context, userID, kind string, offset int) ([]model.Follow, error) {
+func (s *Store) Follows(ctx context.Context, userID, kind, status string, offset int) ([]model.Follow, error) {
 	query := "SELECT " + followColumns + " FROM user_follows f JOIN follow_requests r USING(kind,tmdb_id) WHERE f.user_id=? AND f.active=1"
 	args := []any{userID}
+	// 先在数据库筛选再分页，已完成记录不会占用追更中的页面名额。
+	if status == "completed" {
+		query += " AND r.status='completed'"
+	} else {
+		query += " AND r.status<>'completed'"
+	}
 	if kind != "" {
 		query += " AND f.kind=?"
 		args = append(args, kind)
 	}
-	query += " ORDER BY f.subscribed_at DESC,f.kind,f.tmdb_id LIMIT 21 OFFSET ?"
-	args = append(args, offset)
+	query += " ORDER BY f.subscribed_at DESC,f.kind,f.tmdb_id LIMIT ? OFFSET ?"
+	args = append(args, model.FollowPageSize+1, offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询我的追更: %w", err)
 	}
 	defer rows.Close()
-	items := make([]model.Follow, 0, 21)
+	items := make([]model.Follow, 0, model.FollowPageSize+1)
 	for rows.Next() {
 		f, err := scanFollow(rows)
 		if err != nil {

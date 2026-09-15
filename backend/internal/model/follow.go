@@ -1,5 +1,7 @@
 package model
 
+const FollowPageSize = 24
+
 // Follow 只含影视简介及当前用户的申请，不包含其他订阅者信息。
 type Follow struct {
 	Kind         string          `json:"kind"`
