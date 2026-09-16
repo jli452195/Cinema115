@@ -110,8 +110,11 @@ func main() {
 	}
 	httpapi.RegisterEmby(r, admin, embyService)
 	httpapi.RegisterWebsiteCatalog(catalog, embyService)
+	resourceMatcher := service.NewResourceMatchService(tmdbService, embyService)
+	httpapi.RegisterResourceMatch(admin, resourceMatcher)
+	httpapi.RegisterResourceMatch(catalog, resourceMatcher)
 	member := r.Group("/api/me", httpapi.WebsiteAuthenticated(auth))
-	follows := &service.FollowService{Store: database, TMDB: tmdbService, Library: embyService}
+	follows := &service.FollowService{Store: database, TMDB: tmdbService, Library: embyService, ResourceMatcher: resourceMatcher}
 	httpapi.RegisterFollows(member, follows)
 	httpapi.RegisterWebsiteNotifications(member, database)
 	httpapi.RegisterFollowAdmin(admin, follows)

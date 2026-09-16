@@ -23,6 +23,7 @@ type batchTransferFake struct {
 	shared                   []p115.ShareFile
 	received                 []string
 	shares, deletes, creates int
+	ownListCalls             int
 	password                 string
 }
 
@@ -44,6 +45,7 @@ func (f *batchTransferFake) List(ctx context.Context, share *p115.ShareInfo, cid
 	if share.Code != "own" {
 		return f.ListForTransfer(ctx, share, cid, offset, cookie)
 	}
+	f.ownListCalls++
 	if cookie != "UID=42_A; SEID=private-cookie" {
 		return nil, errors.New("本人分享校验未携带 Cookie")
 	}
@@ -170,6 +172,9 @@ func TestMergedShareExcludesReviewAndRetriesOnlyThatSource(t *testing.T) {
 			}
 			if f.shares != 1 || f.deletes != 1 || f.creates != 3 || strings.Join(f.received, ",") != "a,b" || len(generated) != 2 {
 				t.Fatal("没有统一转存分享或审核项被转存", f.shares, f.deletes, f.creates, f.received)
+			}
+			if f.ownListCalls != 1 {
+				t.Fatal("平铺新分享被重复读取", f.ownListCalls)
 			}
 			if out[0].Result.ReshareURL != out[2].Result.ReshareURL || !out[0].Result.Cleaned || out[0].Result.Written != 1 || out[0].RetryRootIDs[0] == out[2].RetryRootIDs[0] {
 				t.Fatal("共用分享、来源目录或计数错误")

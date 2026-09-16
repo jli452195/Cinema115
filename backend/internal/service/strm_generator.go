@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -61,6 +62,7 @@ type GeneratedMetadata struct {
 	Size int64
 }
 type GenerationResult struct {
+	Cached bool `json:"-"`
 	// 记录实际执行方式，供任务日志和 Telegram 回执使用。
 	Mode            string `json:"-"`
 	ReshareURL      string
@@ -74,7 +76,10 @@ type GenerationResult struct {
 	MetadataFiles   []GeneratedMetadata
 	MetadataWritten int
 	MetadataFailed  int
+	ConflictRenamed int
 }
+
+var generatedFileWriteMu sync.Mutex
 
 // STRMGenerator 读取分享目录、写入播放入口及选定的配套元数据，不转存或下载视频。
 type STRMGenerator struct {
@@ -196,6 +201,10 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	visited := make(map[string]bool)
 	usedPaths := make(map[string]bool)
 	rootIDs, scoped := ctx.Value(generationRootIDsKey{}).([]string)
+	firstPage, hasFirstPage := ctx.Value(generationFirstPageKey{}).(generationFirstPage)
+	firstPageUsed := false
+	snapshot, hasSnapshot := ctx.Value(generationSnapshotKey{}).(generationSnapshot)
+	hasSnapshot = hasSnapshot && snapshot.ShareCode == share.Code && snapshot.RootCID == cid
 	selectedRoots := make(map[string]bool, len(rootIDs))
 	for _, id := range rootIDs {
 		selectedRoots[id] = false
@@ -220,7 +229,19 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 			if pages > 500 {
 				return fmt.Errorf("分享扫描超过 500 页，请缩小生成范围")
 			}
-			page, err := g.Client.List(ctx, share, folderID, offset, cookie)
+			var page *p115.SharePage
+			var err error
+			if hasSnapshot {
+				var ok bool
+				page, ok = snapshot.Pages[generationSnapshotPageKey{CID: folderID, Offset: offset}]
+				if !ok {
+					return fmt.Errorf("已确认快照缺少目录页 %s/%d", folderID, offset)
+				}
+			} else if hasFirstPage && !firstPageUsed && firstPage.Page != nil && firstPage.ShareCode == share.Code && firstPage.CID == folderID && offset == 0 {
+				page, firstPageUsed = firstPage.Page, true
+			} else {
+				page, err = g.Client.List(ctx, share, folderID, offset, cookie)
+			}
 			if err != nil {
 				return fmt.Errorf("读取分享目录: %w", err)
 			}
@@ -320,37 +341,100 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	if err := ensureSTRMDirectory(directory); err != nil {
 		return result, fmt.Errorf("创建生成目录: %w", err)
 	}
+	reservedPaths := make(map[string]bool, len(result.Files)+len(result.MetadataFiles))
 	for _, file := range result.Files {
+		reservedPaths[strings.ToLower(file.Path)] = true
+	}
+	for _, file := range result.MetadataFiles {
+		reservedPaths[strings.ToLower(file.Path)] = true
+	}
+	for i := range result.Files {
+		file := &result.Files[i]
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		destination := filepath.Join(directory, filepath.FromSlash(file.Path))
-		if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
-			result.Failed++
-			return result, fmt.Errorf("创建视频子目录: %w", err)
-		}
-		if err := writeSTRM(ctx, destination, file.Content); err != nil {
+		delete(reservedPaths, strings.ToLower(file.Path))
+		originalPath := file.Path
+		actualPath, renamed, err := writeGeneratedFile(ctx, directory, file.Path, file.Content, reservedPaths)
+		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				result.Failed++
 			}
 			return result, fmt.Errorf("写入 STRM: %w", err)
 		}
+		file.Path = actualPath
+		reservedPaths[strings.ToLower(actualPath)] = true
+		if renamed {
+			result.ConflictRenamed++
+			logGeneration(ctx, "WARNING", fmt.Sprintf("同名目标内容不同，已保留旧文件并改名：%s -> %s", originalPath, actualPath))
+		}
 		result.Written++
-		logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(destination))
+		logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(filepath.Join(directory, filepath.FromSlash(actualPath))))
 		// INFO 每成功写入十个文件更新一次，最后不足十个也报告完整进度。
 		if result.Written%10 == 0 || result.Written == len(result.Files) {
 			logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成成功：%d/%d", result.Written, len(result.Files)))
 		}
 	}
 	logGeneration(ctx, "DEBUG", fmt.Sprintf("STRM 生成完成：新增 %d", result.Written))
-	if err := g.copyMetadata(ctx, share, cookie, directory, result); err != nil {
-		return result, err
+	if metadataErr := g.copyMetadata(ctx, share, cookie, directory, result, reservedPaths); metadataErr != nil {
+		if errors.Is(metadataErr, context.Canceled) || errors.Is(metadataErr, context.DeadlineExceeded) {
+			return result, metadataErr
+		}
+		logGeneration(ctx, "WARNING", fmt.Sprintf("STRM 已生成，元数据部分失败（%d/%d）；再次提交同一分享会继续重试：%v", result.MetadataFailed, len(result.MetadataFiles), metadataErr))
 	}
 	return result, nil
 }
 
+// writeGeneratedFile 保留内容不同的已有文件；相同内容直接复用，否则选择稳定的数字后缀。
+func writeGeneratedFile(ctx context.Context, directory, relative, content string, reserved map[string]bool) (string, bool, error) {
+	generatedFileWriteMu.Lock()
+	defer generatedFileWriteMu.Unlock()
+	for suffix := 1; suffix <= 10000; suffix++ {
+		candidate := relative
+		if suffix > 1 {
+			ext := path.Ext(relative)
+			candidate = strings.TrimSuffix(relative, ext) + " (" + strconv.Itoa(suffix) + ")" + ext
+		}
+		if reserved[strings.ToLower(candidate)] {
+			continue
+		}
+		destination := filepath.Join(directory, filepath.FromSlash(candidate))
+		info, err := os.Lstat(destination)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
+				return "", false, err
+			}
+			if err := writeSTRM(ctx, destination, content); err != nil {
+				return "", false, err
+			}
+			return candidate, candidate != relative, nil
+		case err != nil:
+			return "", false, err
+		case info.Mode().IsRegular():
+			existing, readErr := os.ReadFile(destination)
+			if readErr != nil {
+				return "", false, readErr
+			}
+			if string(existing) == content {
+				return candidate, candidate != relative, nil
+			}
+		}
+	}
+	return "", false, fmt.Errorf("同名输出超过 10000 个：%s", relative)
+}
+
 // 先完整写入同目录临时文件，再替换目标；无需检查已存在文件，也不会截断旧内容。
 func writeSTRM(ctx context.Context, destination, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(destination); err == nil && info.Mode().IsRegular() {
+		existing, readErr := os.ReadFile(destination)
+		if readErr == nil && string(existing) == content {
+			return nil
+		}
+	}
 	stream, err := os.CreateTemp(filepath.Dir(destination), ".strm-*")
 	if err != nil {
 		return err

@@ -27,6 +27,7 @@ type FollowService struct {
 	Library            FollowLibrary
 	Notifications      FollowNotificationFactory
 	BotSearch          FollowBotSearcher
+	ResourceMatcher    ResourceMatcher
 	ShareRuns          *ShareRuns
 	GenerationSettings *AutomationStore
 	Logs               *GenerationLogs

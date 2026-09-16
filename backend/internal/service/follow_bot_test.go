@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,7 +13,8 @@ import (
 )
 
 func TestFollowResourceMatches(t *testing.T) {
-	job := model.FollowBotJob{Kind: "tv", TMDBID: 30983, Title: "名侦探柯南", Date: "1996-01-08"}
+	target := MediaIdentity{Kind: "tv", TMDBID: 30983, Title: "名侦探柯南", Year: "1996"}
+	missing := []EpisodeRef{{Season: 1, Episode: 1198, Label: "S01E1198"}}
 	tests := []struct {
 		name   string
 		action tguser.Action
@@ -30,19 +32,21 @@ func TestFollowResourceMatches(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := followResourceMatches(job, tt.action); got != tt.want {
-				t.Fatalf("followResourceMatches(%q) = %v, want %v", tt.action.Title, got, tt.want)
+			got := MatchResource(target, missing, ResourceCandidate{ID: tt.action.ID, Title: tt.action.Title, TMDBID: tt.action.TMDBID})
+			if got.Matched != tt.want {
+				t.Fatalf("MatchResource(%q) = %+v, want matched=%v", tt.action.Title, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestFollowResourceMatchesChineseTitleAndYear(t *testing.T) {
-	job := model.FollowBotJob{Kind: "tv", TMDBID: 237233, Title: "昴宿七星", Date: "2018-07-06"}
-	if !followResourceMatches(job, tguser.Action{Title: "[动漫] 昴宿七星 (2018) 3.85G"}) {
+	target := MediaIdentity{Kind: "tv", TMDBID: 237233, Title: "昴宿七星", Year: "2018"}
+	missing := []EpisodeRef{{Season: 1, Episode: 1, Label: "S01E01"}}
+	if !MatchResource(target, missing, ResourceCandidate{Title: "[动漫] 昴宿七星 (2018) 3.85G"}).Matched {
 		t.Fatal("没有用中文名和年份匹配无 TMDB 编号的资源")
 	}
-	if followResourceMatches(job, tguser.Action{Title: "[动漫] 昴宿七星外传 (2018) 3.85G"}) {
+	if MatchResource(target, missing, ResourceCandidate{Title: "[动漫] 昴宿七星外传 (2018) 3.85G"}).Matched {
 		t.Fatal("使用了中文标题包含匹配")
 	}
 }
@@ -52,11 +56,39 @@ type followBotFake struct {
 	selections map[string]tguser.SearchResult
 }
 
+type followResourceMatcherFake struct {
+	err error
+}
+
+func (f followResourceMatcherFake) Match(_ context.Context, kind string, id int, candidates []ResourceCandidate) (ResourceMatchBatch, error) {
+	if f.err != nil {
+		results := make([]ResourceMatchDecision, 0, len(candidates))
+		for _, candidate := range candidates {
+			results = append(results, ResourceMatchDecision{ID: candidate.ID, Status: "unavailable"})
+		}
+		return ResourceMatchBatch{Status: "unavailable", Target: MediaIdentity{Kind: kind, TMDBID: id}, Results: results}, f.err
+	}
+	results := make([]ResourceMatchDecision, 0, len(candidates))
+	for _, candidate := range candidates {
+		results = append(results, ResourceMatchDecision{ID: candidate.ID, Status: "matched", Matched: candidate.ID == "right"})
+	}
+	return ResourceMatchBatch{Status: "available", Target: MediaIdentity{Kind: kind, TMDBID: id}, Missing: []EpisodeRef{{Season: 1, Episode: 1, Label: "S01E01"}}, Results: results}, nil
+}
+
 func (f *followBotFake) Search(context.Context, string, bool) (tguser.SearchResult, error) {
 	return f.result, nil
 }
 func (f *followBotFake) Select(_ context.Context, id string) (tguser.SearchResult, error) {
 	return f.selections[id], nil
+}
+
+func TestFollowBotLinksRetriesWhenMissingEpisodesUnavailable(t *testing.T) {
+	bot := &followBotFake{result: tguser.SearchResult{Items: []tguser.Action{{ID: "right", Kind: "resource", Title: "[日番] 测试剧集 (2020) S01"}}}}
+	s := &FollowService{BotSearch: bot, ResourceMatcher: followResourceMatcherFake{err: ErrResourceMatchUnavailable}}
+	links, err := s.followBotLinks(context.Background(), model.FollowBotJob{Kind: "tv", TMDBID: 9, Title: "测试剧集"})
+	if !errors.Is(err, ErrResourceMatchUnavailable) || len(links) != 0 {
+		t.Fatalf("unavailable match should be retried: links=%v err=%v", links, err)
+	}
 }
 
 type followAccountFake struct{}
@@ -141,7 +173,7 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); runs.Run() }()
 	defer func() { stopRuns(); <-done }()
-	s := &FollowService{Store: db, BotSearch: bot, ShareRuns: runs, GenerationSettings: automation}
+	s := &FollowService{Store: db, BotSearch: bot, ResourceMatcher: followResourceMatcherFake{}, ShareRuns: runs, GenerationSettings: automation}
 	if err := s.processFollowBotJob(ctx, *job); err != nil {
 		t.Fatal(err)
 	}

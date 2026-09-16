@@ -1,4 +1,4 @@
-export interface STRMResult { count: number; metadataCount?: number; directory: string; reshareUrl?: string; cleaned?: boolean }
+export interface STRMResult { cached?: boolean; count: number; metadataCount?: number; metadataFailed?: number; conflictRenamed?: number; directory: string; reshareUrl?: string; cleaned?: boolean }
 export interface STRMSettings { outputDir: string; baseUrl: string; videoExtensions: string; metadataExtensions: string; minSizeMB: number; recursive: boolean }
 
 export async function savedSTRMSettings(token: string, signal: AbortSignal): Promise<STRMSettings> {
@@ -50,9 +50,9 @@ export async function waitForShareRun(token: string, id: string, signal: AbortSi
 export async function generateShareSTRM(token: string, body: object, signal: AbortSignal, progress: (message: string) => void, partial: (url: string) => void = () => {}, accepted: (id: string) => void = () => {}): Promise<STRMResult> {
   signal.throwIfAborted()
   const id = newShareRunID()
-  await submitShareRun(token, id, [body])
-  accepted(id)
-  const run = await waitForShareRun(token, id, signal, view => progress(view.items[0]?.message ?? '后台任务正在执行'))
+  const submitted = await submitShareRun(token, id, [body])
+  accepted(submitted.id)
+  const run = await waitForShareRun(token, submitted.id, signal, view => progress(view.items[0]?.message ?? '后台任务正在执行'))
   const item = run.items[0]
   if (item?.result?.reshareUrl) partial(item.result.reshareUrl)
   if (run.status !== 'success' || !item?.result) throw new Error(item?.error ?? '后台任务未完成，请查看分享日志')

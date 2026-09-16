@@ -73,3 +73,24 @@ func TestMergedReplyDistinguishesOriginalShares(t *testing.T) {
 		t.Fatal("混合批次汇总错误", text)
 	}
 }
+
+func TestMergedReplyDescribesCacheMetadataWarningAndConflict(t *testing.T) {
+	inputs := []service.GenerateInput{{URL: "https://115.com/s/a"}, {URL: "https://115.com/s/b"}}
+	outcomes := []service.BatchOutcome{
+		{Result: &service.GenerationResult{Cached: true, Written: 1, ReshareURL: "https://115.com/s/own", Cleaned: true}},
+		{Result: &service.GenerationResult{Cached: true, Written: 2, ReshareURL: "https://115.com/s/own", Cleaned: true}},
+	}
+	text, _ := formatMergedReply(inputs, outcomes)
+	if !strings.Contains(text, "复用已生成 STRM") || strings.Count(text, "已复用快照") != 2 || !strings.Contains(text, "已复用本地成功快照") || strings.Contains(text, "校验成功") {
+		t.Fatal("合并缓存结果文案不准确", text)
+	}
+	outcomes[1].Result.Cached = false
+	outcomes[1].Result.MetadataFailed = 1
+	outcomes[1].Result.ConflictRenamed = 1
+	text, _ = formatMergedReply(inputs, outcomes)
+	for _, want := range []string{"⚠️", "元数据部分失败", "再次提交重试", "已保留旧文件，另存 1 个"} {
+		if !strings.Contains(text, want) {
+			t.Fatal("合并部分完成文案缺失", want, text)
+		}
+	}
+}

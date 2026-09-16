@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -95,6 +97,34 @@ func (s *Store) InterruptShareTasks(ctx context.Context) error {
 		if err := s.SaveShareTask(ctx, task); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Store) LoadShareRunCache(ctx context.Context, fingerprint string) (string, bool, error) {
+	var record string
+	err := s.db.QueryRowContext(ctx, `SELECT record FROM share_run_cache WHERE fingerprint=?`, fingerprint).Scan(&record)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("读取分享快照缓存: %w", err)
+	}
+	return record, true, nil
+}
+
+func (s *Store) SaveShareRunCache(ctx context.Context, fingerprint, record string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO share_run_cache(fingerprint,record,updated_at) VALUES(?,?,?)
+ON CONFLICT(fingerprint) DO UPDATE SET record=excluded.record,updated_at=excluded.updated_at`, fingerprint, record, time.Now().UTC().Format(databaseTime))
+	if err != nil {
+		return fmt.Errorf("保存分享快照缓存: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DeleteShareRunCache(ctx context.Context, fingerprint string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM share_run_cache WHERE fingerprint=?`, fingerprint); err != nil {
+		return fmt.Errorf("清理分享快照缓存: %w", err)
 	}
 	return nil
 }

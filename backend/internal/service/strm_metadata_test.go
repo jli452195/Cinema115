@@ -82,12 +82,60 @@ func TestMetadataFailurePreservesExistingFile(t *testing.T) {
 	cause := errors.New("元数据下载失败")
 	fake := &metadataClientFake{content: []byte("新字幕"), err: cause}
 	result, err := (&STRMGenerator{Client: fake, Root: root, Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
-	if !errors.Is(err, cause) || result == nil || result.MetadataWritten != 0 || result.MetadataFailed != 1 || result.Failed != 0 || result.Written != 1 {
-		t.Fatal("未传播下载失败")
+	if err != nil || result == nil || result.MetadataWritten != 0 || result.MetadataFailed != 1 || result.Failed != 0 || result.Written != 1 {
+		t.Fatal("元数据失败不应拖垮已生成的 STRM", err)
 	}
 	data, err := os.ReadFile(destination)
 	if err != nil || string(data) != "原有字幕" {
 		t.Fatal("失败覆盖了原有字幕")
+	}
+}
+
+func TestMetadataConflictIsPreservedAndRenamed(t *testing.T) {
+	root := t.TempDir()
+	input := generationOptions(t)
+	input.Password = "new1"
+	input.MetadataExtensions = "srt"
+	destination := filepath.Join(root, input.OutputDir, "剧集", "第1集.zh.srt")
+	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("旧字幕"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &metadataClientFake{content: []byte("新字幕")}
+	result, err := (&STRMGenerator{Client: fake, Root: root, Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
+	if err != nil || result.MetadataWritten != 1 || result.MetadataFailed != 0 || result.ConflictRenamed != 1 || result.MetadataFiles[0].Path != "剧集/第1集.zh (2).srt" {
+		t.Fatalf("同名元数据未安全另存：%+v %v", result, err)
+	}
+	old, oldErr := os.ReadFile(destination)
+	current, currentErr := os.ReadFile(filepath.Join(root, input.OutputDir, filepath.FromSlash(result.MetadataFiles[0].Path)))
+	if oldErr != nil || currentErr != nil || string(old) != "旧字幕" || string(current) != "新字幕" {
+		t.Fatal("元数据冲突处理破坏内容")
+	}
+}
+
+type metadataSequenceFake struct{ reads int }
+
+func (f *metadataSequenceFake) List(_ context.Context, _ *p115.ShareInfo, _ string, _ int, _ string) (*p115.SharePage, error) {
+	return &p115.SharePage{Count: 3, Files: []p115.ShareFile{{ID: "1", Name: "第1集.mkv", Size: 2 << 20}, {ID: "2", Name: "第1集.srt"}, {ID: "3", Name: "第1集.ass"}}}, nil
+}
+
+func (f *metadataSequenceFake) ReadMetadata(_ context.Context, _ *p115.ShareInfo, id, _ string) ([]byte, error) {
+	f.reads++
+	if id == "2" {
+		return nil, errors.New("第一份字幕失败")
+	}
+	return []byte("第二份字幕"), nil
+}
+
+func TestMetadataFailureDoesNotSkipRemainingFiles(t *testing.T) {
+	fake := &metadataSequenceFake{}
+	input := generationOptions(t)
+	input.MetadataExtensions = "srt,ass"
+	result, err := (&STRMGenerator{Client: fake, Root: t.TempDir(), Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
+	if err != nil || fake.reads != 2 || result.MetadataWritten != 1 || result.MetadataFailed != 1 {
+		t.Fatalf("单个元数据失败阻断了后续文件：%+v %v", result, err)
 	}
 }
 

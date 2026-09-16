@@ -110,3 +110,35 @@ func TestShareTaskMigrationPersistenceFiltersAndClear(t *testing.T) {
 		t.Fatal("恢复中断影响审核等待任务")
 	}
 }
+
+func TestShareRunCachePersistsAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "cache.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadShareRunCache(ctx, "snapshot"); err != nil || found {
+		t.Fatal("空缓存读取错误", found, err)
+	}
+	if err := s.SaveShareRunCache(ctx, "snapshot", `{"items":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if record, found, err := s.LoadShareRunCache(ctx, "snapshot"); err != nil || !found || record != `{"items":[]}` {
+		t.Fatal("缓存重启后未恢复", record, found, err)
+	}
+	if err := s.DeleteShareRunCache(ctx, "snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadShareRunCache(ctx, "snapshot"); err != nil || found {
+		t.Fatal("缓存未删除", found, err)
+	}
+}

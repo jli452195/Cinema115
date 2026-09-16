@@ -26,6 +26,11 @@ func testClient(t *testing.T) *Client {
 	return c
 }
 func TestAccountConfigAndSession(t *testing.T) {
+	legacyConfig := `{"apiId":123,"apiHash":"` + strings.Repeat("b", 32) + `"}`
+	legacy, err := New(&memoryStore{value: legacyConfig}, &memoryStore{})
+	if err != nil || legacy.View().Bot != DefaultBotUsername || !legacy.View().Configured {
+		t.Fatal("旧配置没有迁移默认 Bot", err)
+	}
 	c := testClient(t)
 	secret := strings.Repeat("a", 32)
 	if err := c.Save(Config{APIID: 123, APIHash: secret}); err != nil {
@@ -39,8 +44,14 @@ func TestAccountConfigAndSession(t *testing.T) {
 		t.Fatal("配置回显 API Hash")
 	}
 	restored, err := New(c.configStore, c.sessionStore)
-	if err != nil || !restored.View().Configured {
+	if err != nil || !restored.View().Configured || restored.View().Bot != DefaultBotUsername {
 		t.Fatal("配置不能恢复")
+	}
+	if err := c.Save(Config{APIID: 123, Bot: "@replacement_bot"}); err != nil || c.View().Bot != "replacement_bot" {
+		t.Fatal("Bot 用户名不能独立修改", err)
+	}
+	if err := c.Save(Config{APIID: 123, Bot: "not-a-bot"}); !errors.Is(err, ErrInput) {
+		t.Fatal("无效 Bot 用户名未被拒绝")
 	}
 	store := encryptedSession{c.sessionStore}
 	if err := store.StoreSession(context.Background(), []byte("session-bytes")); err != nil {
@@ -76,7 +87,7 @@ func TestBotLinksAndMultipleReplies(t *testing.T) {
 	text := "📁 本月剩余次数：734\n资源列表\n🔗 " + title + "\n第 1 页"
 	offset := len(utf16.Encode([]rune(text[:strings.Index(text, title)])))
 	message := &tg.Message{ID: 10, Message: text, Entities: []tg.MessageEntityClass{&tg.MessageEntityTextURL{Offset: offset, Length: len(utf16.Encode([]rune(title))), URL: "https://t.me/ayclub_bot?start=resource_1"}}, ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "下一页", Data: []byte("page2")}, &tg.KeyboardButtonCallback{Text: "悬赏资源", Data: []byte("pay")}}}}}}
-	result, ok, err := c.parse(message)
+	result, ok, err := c.parse(message, DefaultBotUsername, "search:天气之子")
 	if err != nil || !ok || len(result.Items) != 2 {
 		t.Fatal("资源/分页识别失败", err)
 	}
@@ -87,22 +98,25 @@ func TestBotLinksAndMultipleReplies(t *testing.T) {
 	if result.Items[1].Kind != "page" || result.Items[1].Title != "下一页" {
 		t.Fatal("未过滤悬赏按钮")
 	}
-	reply, ok, err := c.parse(&tg.Message{ID: 11, Message: "https://115cdn.com/s/one?password=abcd\nhttps://115.com/s/two?password=efgh"})
+	reply, ok, err := c.parse(&tg.Message{ID: 11, Message: "https://115cdn.com/s/one?password=abcd\nhttps://115.com/s/two?password=efgh"}, DefaultBotUsername, "")
 	if err != nil || !ok || len(reply.Links) != 2 {
 		t.Fatal("多分享解析失败")
 	}
-	single, _, _ := c.parse(&tg.Message{ID: 12, Message: "https://115.com/s/one\n提取码：abcd"})
+	single, _, _ := c.parse(&tg.Message{ID: 12, Message: "https://115.com/s/one\n提取码：abcd"}, DefaultBotUsername, "")
 	if len(single.Links) != 1 || !strings.Contains(single.Links[0], "password=abcd") {
 		t.Fatal("独立提取码没有补齐")
 	}
-	denied, ok, _ := c.parse(&tg.Message{ID: 13, Message: "请先完成认证"})
+	denied, ok, _ := c.parse(&tg.Message{ID: 13, Message: "请先完成认证"}, DefaultBotUsername, "")
 	if !ok || len(denied.Links) != 0 {
 		t.Fatal("认证失败回复不应变成资源")
 	}
 	for _, u := range []string{"https://t.me/other_bot?start=x", "https://evil.example/ayclub_bot?start=x", "https://t.me/ayclub_bot?start=%2Fpay", "https://t.me/ayclub_bot?start="} {
-		if botCommand(u) != "" {
+		if botCommand(u, DefaultBotUsername) != "" {
 			t.Fatal("允许了非授权命令")
 		}
+	}
+	if botCommand("https://t.me/replacement_bot?start=resource_1", "replacement_bot") != "/start resource_1" {
+		t.Fatal("自定义 Bot 深链接未被接受")
 	}
 	for _, u := range []string{"javascript:alert(1)", "https://115.com.evil.example/s/x", "https://user@115.com/s/x"} {
 		if shareLink(u) != "" {
@@ -123,5 +137,41 @@ func TestEditedAndMultipleReplies(t *testing.T) {
 	replies[1] = SearchResult{Text: "编辑后", Links: []string{"https://115.com/s/two"}}
 	if result := combineReplies(replies); len(result.Links) != 1 || strings.Contains(result.Text, "第一条") {
 		t.Fatal("消息编辑后残留旧内容")
+	}
+}
+
+func TestParseOnlyExposesNextPage(t *testing.T) {
+	c := testClient(t)
+	message := &tg.Message{ID: 20, Message: "资源列表", ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{
+		&tg.KeyboardButtonCallback{Text: "上一页", Data: []byte("previous")},
+		&tg.KeyboardButtonCallback{Text: "下一页", Data: []byte("next")},
+	}}}}}
+	result, _, err := c.parse(message, DefaultBotUsername, "search:测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Title != "下一页" {
+		t.Fatalf("应只暴露下一页操作：%+v", result.Items)
+	}
+	stored := c.results[result.Items[0].ID]
+	if stored.kind != "page" || stored.searchKey != "search:测试" {
+		t.Fatalf("分页动作没有关联原搜索：%+v", stored)
+	}
+}
+
+func TestSearchReplyComplete(t *testing.T) {
+	now := time.Now()
+	if searchReplyComplete(SearchResult{}, false, time.Time{}, now) {
+		t.Fatal("未识别的回复不能结束搜索")
+	}
+	if !searchReplyComplete(SearchResult{Empty: true}, true, now, now) {
+		t.Fatal("明确的空结果应立即结束搜索")
+	}
+	result := SearchResult{Links: []string{"https://115.com/s/demo"}}
+	if searchReplyComplete(result, true, now.Add(-time.Second), now) {
+		t.Fatal("资源回复仍应等待连续消息")
+	}
+	if !searchReplyComplete(result, true, now.Add(-2*time.Second), now) {
+		t.Fatal("资源回复静默两秒后应结束搜索")
 	}
 }

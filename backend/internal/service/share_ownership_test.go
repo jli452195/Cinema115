@@ -104,7 +104,7 @@ func TestReviewOwnershipThroughHTTPAndSTRMWriter(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || result.Written != 1 || result.Mode != "direct" {
+			if err != nil || result.Written != 1 || result.Mode != "direct" || requests != 1 {
 				t.Fatal("本人可读审核分享生成失败", err)
 			}
 			data, err := os.ReadFile(filepath.Join(w.Root, input.OutputDir, "电影.strm"))

@@ -75,3 +75,56 @@ func TestCacheActionsAndIsolation(t *testing.T) {
 		t.Fatal("退出后仍保留账号缓存")
 	}
 }
+
+func TestAppendSearchResultsKeepsResourcesAndLatestNextAction(t *testing.T) {
+	first := SearchResult{
+		Text:  "第一页",
+		Items: []Action{{ID: "resource-1", Title: "相同资源", Kind: "resource"}, {ID: "page-2", Title: "下一页", Kind: "page"}},
+		Links: []string{"https://115.com/s/one"},
+	}
+	second := SearchResult{
+		Text:      "第二页",
+		Items:     []Action{{ID: "resource-2", Title: "相同资源", Kind: "resource"}},
+		Links:     []string{"https://115.com/s/one"},
+		AllLoaded: true,
+	}
+	result := appendSearchResults(first, second)
+	if len(result.Items) != 2 || result.Items[0].ID != "resource-1" || result.Items[1].ID != "resource-2" {
+		t.Fatalf("资源未按原顺序完整追加：%+v", result.Items)
+	}
+	if len(result.Links) != 2 {
+		t.Fatalf("重复直达链接不应去重：%+v", result.Links)
+	}
+	if !result.AllLoaded || hasNextAction(result) {
+		t.Fatalf("末页状态或旧翻页动作未正确更新：%+v", result)
+	}
+	if result.Text != "第一页\n\n第二页" {
+		t.Fatalf("原始回复未累计：%q", result.Text)
+	}
+}
+
+func TestAppendSearchResultCachesWholeResourceStream(t *testing.T) {
+	c := testClient(t)
+	now := time.Now()
+	first, err := c.addAction(storedAction{}, "资源一", "resource", "1", "1G")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := c.addAction(storedAction{searchKey: "search:测试"}, "下一页", "page", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.appendSearchResult("search:测试", SearchResult{Items: []Action{first, next}}, now)
+	second, err := c.addAction(storedAction{}, "资源二", "resource", "2", "2G")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.appendSearchResult("search:测试", SearchResult{Items: []Action{second}, AllLoaded: true}, now.Add(time.Second))
+	result, ok := c.cachedResult("search:测试", now.Add(2*time.Second))
+	if !ok || len(result.Items) != 2 || result.Items[0].Title != "资源一" || result.Items[1].Title != "资源二" {
+		t.Fatalf("聚合缓存没有返回全部资源：%+v", result)
+	}
+	if !result.AllLoaded || hasNextAction(result) {
+		t.Fatalf("聚合缓存没有保存加载完成状态：%+v", result)
+	}
+}

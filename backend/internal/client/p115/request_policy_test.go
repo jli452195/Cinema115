@@ -18,6 +18,16 @@ func newTestShareClient() *ShareClient {
 	return c
 }
 
+func TestShareClientDefaultRequestPolicy(t *testing.T) {
+	c := NewShareClient()
+	if c.RequestInterval != 250*time.Millisecond {
+		t.Fatalf("默认请求间隔 = %s，期望 250ms", c.RequestInterval)
+	}
+	if len(c.ReadRetryDelays) != 2 || c.ReadRetryDelays[0] != 5*time.Second || c.ReadRetryDelays[1] != 15*time.Second {
+		t.Fatalf("默认只读重试间隔异常：%v", c.ReadRetryDelays)
+	}
+}
+
 func TestMetadataReadRecoversAfter405(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

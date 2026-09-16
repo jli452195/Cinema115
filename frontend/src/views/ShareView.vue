@@ -42,7 +42,7 @@ const metadataExtensions = ref('srt,ass,ssa')
 const minSizeMB = ref(0)
 const recursive = ref(true)
 const startCID = ref('0')
-const generated = ref<{ count: number; metadataCount?: number; directory: string; reshareUrl?: string; cleaned?: boolean }>()
+const generated = ref<{ cached?: boolean; count: number; metadataCount?: number; metadataFailed?: number; conflictRenamed?: number; directory: string; reshareUrl?: string; cleaned?: boolean }>()
 const reshareEnabled = ref(false)
 const savedReshareEnabled = ref(false)
 const parentCID = ref('0')
@@ -301,7 +301,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
             </div>
             <p v-if="outputDirectories.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">尚未选择 STRM 生成目录</p>
             <button type="button" class="mt-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-600 hover:bg-blue-100" @click="directoryDialogOpen = true">＋ 从真实文件夹添加目录</button>
-            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ outputDir ? resolvedDirectory(outputDir) : '未选择' }}</p><p class="text-xs leading-6 text-slate-400">选择器只显示媒体库挂载范围内的真实文件夹；移除选项不会删除文件夹。保留分享文件夹结构，每次重新写入，同名 STRM 更新为本次生成内容。</p>
+            <p class="mt-3 break-all text-xs leading-6 text-slate-500">生成位置：{{ outputDir ? resolvedDirectory(outputDir) : '未选择' }}</p><p class="text-xs leading-6 text-slate-400">选择器只显示媒体库挂载范围内的真实文件夹；移除选项不会删除文件夹。保留分享文件夹结构；相同内容直接复用，同名但内容不同会保留旧文件并另存。</p>
           </div>
 
             </template>
@@ -313,7 +313,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           </div>
 
               <section v-if="activeTab === 'reshare'" class="rounded-xl border border-blue-100 bg-blue-50/50 p-5">
-              <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 创建长期分享并校验快照 → 生成 STRM → 临时目录移入回收站</p>
+              <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 确认媒体数量并创建长期分享 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
               <label class="mt-4 block text-sm text-slate-700">批次收集等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">Telegram 连续消息和订阅自动资源从首项起等待指定秒数，再进入公共后台队列。执行时按分享者 user ID 判断：本账号分享直接生成，其他账号的正常分享合并转存。默认 5 秒，0 表示不等待。</p>
@@ -330,8 +330,8 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           </fieldset>
         </form>
       <section v-if="generating" role="status" class="mt-5 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700"><div class="flex items-center justify-between gap-4"><p class="font-medium">{{ generationProgress }}</p><button v-if="activeRunID" type="button" :disabled="stoppingRun" class="shrink-0 rounded-lg border border-blue-200 px-3 py-1 text-xs hover:bg-white disabled:opacity-50" @click="stopGeneration">{{ stoppingRun ? '正在停止…' : '停止任务' }}</button></div><p class="mt-2 text-xs text-blue-600">已用时 {{ generationSeconds }} 秒 · 提交成功后，关闭页面不会取消后台任务。每条执行最多 5 分钟，结果可在分享日志及 Telegram 通知查看。</p></section>
-      <section v-if="generated" role="status" class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-5"><h2 class="font-semibold text-emerald-800">生成完成 · 新增 {{ generated.count }} 个 STRM</h2><p class="mt-2 break-all text-xs leading-6 text-emerald-700">已保存到：{{ generated.directory }}</p><p v-if="generated.metadataCount" class="mt-1 text-xs text-emerald-700">同步保存 {{ generated.metadataCount }} 个元数据文件</p></section>
-      <section v-if="generated?.reshareUrl || partialShareURL" class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-5"><h2 class="text-sm font-semibold text-blue-900">自己的分享链接</h2><a :href="generated?.reshareUrl || partialShareURL" target="_blank" rel="noopener noreferrer" class="mt-2 block break-all text-sm text-blue-700 underline">{{ generated?.reshareUrl || partialShareURL }}</a><p v-if="generated?.cleaned" class="mt-2 text-xs leading-5 text-blue-700">临时目录已移入 115 回收站，新分享已复查通过。</p></section>
+      <section v-if="generated" role="status" class="mt-6 rounded-xl border p-5" :class="generated.metadataFailed ? 'border-amber-200 bg-amber-50' : 'border-emerald-100 bg-emerald-50'"><h2 class="font-semibold" :class="generated.metadataFailed ? 'text-amber-900' : 'text-emerald-800'">{{ generated.cached ? `本地文件完整 · 已复用 ${generated.count} 个 STRM` : generated.metadataFailed ? `STRM 已生成 ${generated.count} 个 · 元数据部分失败` : `生成完成 · 已处理 ${generated.count} 个 STRM` }}</h2><p class="mt-2 break-all text-xs leading-6" :class="generated.metadataFailed ? 'text-amber-800' : 'text-emerald-700'">已保存到：{{ generated.directory }}</p><p v-if="generated.metadataCount || generated.metadataFailed" class="mt-1 text-xs" :class="generated.metadataFailed ? 'text-amber-800' : 'text-emerald-700'">元数据成功 {{ generated.metadataCount ?? 0 }} 个，失败 {{ generated.metadataFailed ?? 0 }} 个<span v-if="generated.metadataFailed">；再次提交同一分享会继续重试</span></p><p v-if="generated.conflictRenamed" class="mt-1 text-xs" :class="generated.metadataFailed ? 'text-amber-800' : 'text-emerald-700'">{{ generated.conflictRenamed }} 个同名目标内容不同，已保留旧文件并另存。</p></section>
+      <section v-if="generated?.reshareUrl || partialShareURL" class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-5"><h2 class="text-sm font-semibold text-blue-900">自己的分享链接</h2><a :href="generated?.reshareUrl || partialShareURL" target="_blank" rel="noopener noreferrer" class="mt-2 block break-all text-sm text-blue-700 underline">{{ generated?.reshareUrl || partialShareURL }}</a><p v-if="generated?.cleaned" class="mt-2 text-xs leading-5 text-blue-700">新分享视频及元数据数量已确认，临时目录已移入 115 回收站。</p></section>
       <p v-if="error" role="alert" class="my-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="my-4 rounded-lg bg-blue-50 p-4 text-sm text-blue-700">{{ notice }}</p>
       <section v-if="browsed" class="mt-8 border-t border-slate-100 pt-6">

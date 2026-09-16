@@ -14,7 +14,7 @@ import (
 type generationRootIDsKey struct{}
 
 // 按名称、类型、大小和目录树匹配来源，使用新分享实际返回的 ID 生成播放入口。
-func (w *ShareWorkflow) matchSharedRoots(ctx context.Context, own *p115.ShareInfo, cookie string, item preparedShare, roots []p115.ShareFile, used map[string]bool) ([]string, error) {
+func (w *ShareWorkflow) matchSharedRoots(ctx context.Context, item preparedShare, roots []p115.ShareFile, used map[string]bool, snapshot generationSnapshot) ([]string, error) {
 	ids := make([]string, 0, len(item.roots))
 	for _, original := range item.roots {
 		matched := ""
@@ -23,7 +23,7 @@ func (w *ShareWorkflow) matchSharedRoots(ctx context.Context, own *p115.ShareInf
 				continue
 			}
 			if original.Directory {
-				children, _, err := w.snapshot(ctx, own, candidate.ID, cookie)
+				children, _, err := w.snapshotFromCaptured(ctx, candidate.ID, snapshot)
 				if err != nil {
 					return nil, err
 				}

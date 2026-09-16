@@ -24,6 +24,10 @@ type transferFake struct {
 	deleted            bool
 	configuredPassword string
 	listCalls          int
+	driveFileName      string
+	driveFileSize      int64
+	snapshotFileName   string
+	snapshotFileSize   int64
 }
 
 func (f *transferFake) ListForTransfer(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
@@ -56,9 +60,6 @@ func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string
 		if f.fail == "snapshot" || f.newSnapshots == 1 {
 			return nil, errors.New("快照生成中")
 		}
-		if f.deleted {
-			f.calls = append(f.calls, "verified-after-delete")
-		}
 	}
 	if cid == "0" || cid == "" {
 		id := "10"
@@ -68,10 +69,17 @@ func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string
 		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: id, Name: "剧集", Directory: true, Size: 100}}}, nil
 	}
 	id := "11"
+	name, size := "第一集.mkv", int64(100)
 	if share.Code == "own" {
 		id = "21"
+		if f.snapshotFileName != "" {
+			name = f.snapshotFileName
+		}
+		if f.snapshotFileSize != 0 {
+			size = f.snapshotFileSize
+		}
 	}
-	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: id, Name: "第一集.mkv", Size: 100}}}, nil
+	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: id, Name: name, Size: size}}}, nil
 }
 func (f *transferFake) CreateDirectory(_ context.Context, parent, name, _ string) (string, error) {
 	f.calls = append(f.calls, "create")
@@ -94,7 +102,14 @@ func (f *transferFake) DriveFiles(_ context.Context, cid string, _ int, _ string
 			f.missingChildren--
 			return &p115.SharePage{Count: 0, Files: []p115.ShareFile{}}, nil
 		}
-		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "21", Name: "第一集.mkv", Size: 100}}}, nil
+		name, size := f.driveFileName, f.driveFileSize
+		if name == "" {
+			name = "第一集.mkv"
+		}
+		if size == 0 {
+			size = 100
+		}
+		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "21", Name: name, Size: size}}}, nil
 	}
 	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "20", Name: "剧集", Directory: true, Size: 999}}}, nil
 }
@@ -195,7 +210,7 @@ func TestShareWorkflowWaitsForSnapshotAndCleansOnlyOwnedDirectory(t *testing.T) 
 	if !result.Cleaned || result.ReshareURL == "" || result.TempDirectoryID != "999" {
 		t.Fatalf("结果不完整: %+v", result)
 	}
-	if got := strings.Join(fake.calls, ","); got != "create,receive,share,permanent,generate,delete,verified-after-delete" {
+	if got := strings.Join(fake.calls, ","); got != "create,receive,share,permanent,generate,delete" {
 		t.Fatal(got)
 	}
 	jobs := workflowJobs(t, w)
@@ -221,12 +236,44 @@ func TestShareWorkflowWaitsForAllTransferredChildrenBeforeSharing(t *testing.T) 
 	}
 	var waiting bool
 	for _, event := range progress {
-		if event.Stage == "waiting" && strings.Contains(event.Message, "缺失或大小不同") {
+		if event.Stage == "waiting" && strings.Contains(event.Message, "转存数量尚未完成") {
 			waiting = true
 		}
 	}
 	if !waiting {
-		t.Fatal("未报告具体缺失条目")
+		t.Fatal("未报告转存数量进度")
+	}
+}
+
+func TestShareWorkflowUsesMediaCountsInsteadOfNamesAndSizes(t *testing.T) {
+	fake := &transferFake{driveFileName: "转存名称不同.mkv", driveFileSize: 999, snapshotFileName: "分享名称也不同.mkv", snapshotFileSize: 888}
+	w, input := setupWorkflow(t, fake)
+	result, err := w.Generate(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Cleaned || result.Written != 1 {
+		t.Fatalf("数量一致时未完成生成：%+v", result)
+	}
+}
+
+func TestTransferMediaCountsUseConfiguredFilters(t *testing.T) {
+	input := GenerateInput{VideoExtensions: "mkv,mp4", MetadataExtensions: "srt", MinSizeMB: 100}
+	files := []p115.ShareFile{
+		{Name: "合格.mkv", Size: 100 * 1024 * 1024},
+		{Name: "太小.mp4", Size: 99 * 1024 * 1024},
+		{Name: "字幕.SRT", Size: 1024},
+		{Name: "忽略.nfo", Size: 1024},
+	}
+	want := transferMediaCounts{Videos: 1, Metadata: 1}
+	if got := countTransferMedia(input, files); got != want {
+		t.Fatalf("媒体数量 = %+v，期望 %+v", got, want)
+	}
+	if err := compareTransferCounts(want, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := compareTransferCounts(want, transferMediaCounts{Videos: 2, Metadata: 1}); !errors.Is(err, errTransferCountExceeded) {
+		t.Fatalf("数量超出未立即识别：%v", err)
 	}
 }
 

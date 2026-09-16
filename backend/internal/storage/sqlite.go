@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 13
+const schemaVersion = 14
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -258,6 +258,17 @@ PRAGMA user_version=12;`); err != nil {
 UPDATE follow_bot_jobs SET status='checking',due=0,last_error='' WHERE status='queued' AND attempts=0;
 PRAGMA user_version=13;`); err != nil {
 			return fmt.Errorf("迁移追更搜索前入库检查: %w", err)
+		}
+	}
+	if version < 14 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS share_run_cache (
+ fingerprint TEXT PRIMARY KEY NOT NULL,
+ record TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+PRAGMA user_version=14;`); err != nil {
+			return fmt.Errorf("迁移分享快照复用缓存: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

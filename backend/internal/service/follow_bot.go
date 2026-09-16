@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"strm115/backend/internal/client/tguser"
 	"strm115/backend/internal/model"
@@ -27,107 +24,17 @@ type followBotFinalError struct{ err error }
 func (e *followBotFinalError) Error() string { return e.err.Error() }
 func (e *followBotFinalError) Unwrap() error { return e.err }
 
-var followYearPattern = regexp.MustCompile(`[（(]((?:19|20)\d{2})[）)]`)
-var followTMDBPattern = regexp.MustCompile(`(?i)\{tmdb\s*[-=:：]\s*\d+\}`)
-var followEpisodePattern = regexp.MustCompile(`(?i)(?:^|[^A-Z0-9])S\d{1,4}(?:E\d{1,4})?`)
-
-func splitFollowTitleTags(value string) (string, []string) {
-	value = strings.TrimSpace(value)
-	tags := make([]string, 0, 2)
-	for value != "" {
-		opening, closing := "", ""
-		if strings.HasPrefix(value, "[") {
-			opening, closing = "[", "]"
-		} else if strings.HasPrefix(value, "【") {
-			opening, closing = "【", "】"
-		} else {
-			break
-		}
-		index := strings.Index(value, closing)
-		if index < 0 {
-			break
-		}
-		tags = append(tags, strings.TrimSpace(value[len(opening):index]))
-		value = strings.TrimSpace(value[index+len(closing):])
-	}
-	return value, tags
-}
-
-func trimFollowTitleTags(value string) string {
-	title, _ := splitFollowTitleTags(value)
-	return title
-}
-
-func normalizeFollowTitle(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			return r
-		}
-		return -1
-	}, value)
-}
-
-func followResourceKind(raw string) string {
-	_, tags := splitFollowTitleTags(raw)
-	lower := strings.ToLower(strings.Join(tags, " "))
-	for _, marker := range []string{"动画电影", "动漫电影", "韩电影", "外语电影", "电影"} {
-		if strings.Contains(lower, marker) {
-			return "movie"
-		}
-	}
-	if followEpisodePattern.MatchString(raw) {
-		return "tv"
-	}
-	for _, marker := range []string{"日番", "日剧", "欧美剧", "韩剧", "国产剧", "电视剧", "剧集", "动漫", "动画"} {
-		if strings.Contains(lower, marker) {
-			return "tv"
-		}
-	}
-	return ""
-}
-
-func parseFollowResourceTitle(raw string) (title, year, kind string) {
-	kind = followResourceKind(raw)
-	end := len(raw)
-	if location := followYearPattern.FindStringSubmatchIndex(raw); len(location) >= 4 {
-		end = location[0]
-		year = raw[location[2]:location[3]]
-	} else if location := followTMDBPattern.FindStringIndex(raw); len(location) == 2 {
-		end = location[0]
-	}
-	title = strings.TrimSpace(trimFollowTitleTags(raw[:end]))
-	return title, year, kind
-}
-
-func followResourceMatches(job model.FollowBotJob, action tguser.Action) bool {
-	title, year, kind := parseFollowResourceTitle(action.Title)
-	if kind != "" && kind != job.Kind {
-		return false
-	}
-	if action.TMDBID != "" {
-		return action.TMDBID == strconv.Itoa(job.TMDBID)
-	}
-	if normalizeFollowTitle(title) == "" || normalizeFollowTitle(title) != normalizeFollowTitle(job.Title) {
-		return false
-	}
-	targetYear := ""
-	if len(job.Date) >= 4 {
-		targetYear = job.Date[:4]
-	}
-	if year != "" && targetYear != "" && year != targetYear {
-		return false
-	}
-	return year != "" && targetYear != "" && year == targetYear
-}
-
 func (s *FollowService) followBotLinks(ctx context.Context, job model.FollowBotJob) ([]string, error) {
+	if s.ResourceMatcher == nil {
+		return nil, fmt.Errorf("订阅资源匹配服务尚未配置")
+	}
 	result, err := s.BotSearch.Search(ctx, job.Title, false)
 	if err != nil {
 		return nil, err
 	}
 	results := []tguser.SearchResult{result}
 	actions := make([]tguser.Action, 0)
+	seenActions := make(map[string]bool)
 	seenPages := make(map[string]bool)
 	for page := 0; page < len(results) && page < followBotPageLimit; page++ {
 		current := results[page]
@@ -135,7 +42,8 @@ func (s *FollowService) followBotLinks(ctx context.Context, job model.FollowBotJ
 		for _, action := range current.Items {
 			switch action.Kind {
 			case "resource":
-				if len(actions) < followBotResourceLimit && followResourceMatches(job, action) {
+				if !seenActions[action.ID] && len(actions) < followBotResourceLimit {
+					seenActions[action.ID] = true
 					actions = append(actions, action)
 				}
 			case "page":
@@ -154,10 +62,25 @@ func (s *FollowService) followBotLinks(ctx context.Context, job model.FollowBotJ
 		}
 		results = append(results, nextResult)
 	}
+	candidates := make([]ResourceCandidate, 0, len(actions))
+	for _, action := range actions {
+		candidates = append(candidates, ResourceCandidate{ID: action.ID, Title: action.Title, TMDBID: action.TMDBID})
+	}
+	matched, err := s.ResourceMatcher.Match(ctx, job.Kind, job.TMDBID, candidates)
+	if err != nil {
+		return nil, fmt.Errorf("判断 Bot 资源覆盖范围: %w", err)
+	}
+	allowed := make(map[string]bool, len(matched.Results))
+	for _, result := range matched.Results {
+		allowed[result.ID] = result.Matched
+	}
 	links := make([]string, 0, len(actions))
 	seenLinks := make(map[string]bool)
 	var selectionErrors error
 	for _, action := range actions {
+		if !allowed[action.ID] {
+			continue
+		}
 		selected, err := s.BotSearch.Select(ctx, action.ID)
 		if err != nil {
 			selectionErrors = errors.Join(selectionErrors, err)

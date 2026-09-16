@@ -30,6 +30,7 @@ type preparedShare struct {
 	input    GenerateInput
 	share    *p115.ShareInfo
 	roots    []p115.ShareFile
+	files    []p115.ShareFile
 	manifest []string
 	name     string
 }
@@ -81,7 +82,7 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 			share.Password = strings.TrimSpace(input.Password)
 		}
 		if input.Mode == "direct" || input.Mode == "" && !settings.ReshareEnabled {
-			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie)
+			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie, nil)
 			continue
 		}
 		if input.Mode != "reshare" && input.Mode != "" {
@@ -98,10 +99,10 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 		}
 		if own {
 			logGeneration(ctx, "INFO", fmt.Sprintf("批次第 %d 条分享属于所选账号，直接生成 STRM，不参与合并转存", i+1))
-			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie)
+			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie, first)
 			continue
 		}
-		manifest, roots, err := w.scanDirectory(ctx, input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), w.sourcePages(share, input.CID, cookie, first))
+		manifest, roots, files, err := w.scanDirectory(ctx, input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), w.sourcePages(share, input.CID, cookie, first))
 		if err != nil {
 			if errors.Is(err, p115.ErrShareUnderReview) {
 				err = errors.Join(err, errSourceShareReview)
@@ -114,7 +115,7 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 			outcomes[i].Err = generationInputError("转分享需要 1 至 1000 个顶层条目，请缩小分享范围")
 			continue
 		}
-		prepared = append(prepared, preparedShare{index: i, input: input, share: share, roots: roots, manifest: manifest, name: fmt.Sprintf("来源-%03d-%s", i+1, share.Code)})
+		prepared = append(prepared, preparedShare{index: i, input: input, share: share, roots: roots, files: files, manifest: manifest, name: fmt.Sprintf("来源-%03d-%s", i+1, share.Code)})
 	}
 	if len(prepared) == 0 {
 		return outcomes, nil
@@ -127,12 +128,14 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 		return outcomes, err
 	}
 	manifest := make([]string, 0)
+	sourceFiles := make([]p115.ShareFile, 0)
 	for _, item := range prepared {
 		prefix := "/" + strconv.Quote(item.name)
 		manifest = append(manifest, prefix+":true:0")
 		for _, entry := range item.manifest {
 			manifest = append(manifest, prefix+entry)
 		}
+		sourceFiles = append(sourceFiles, item.files...)
 	}
 	if len(manifest) > 20000 {
 		return outcomes, generationInputError("合并分享超过 20000 个条目，请分批发送")
@@ -147,12 +150,12 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 	}
 	jobInput.URL = strings.Join(links, "\n")
 	generationFailed := false
-	combined, batchErr := w.resharePrepared(ctx, settings, jobInput, cookie, password, manifest,
+	combined, batchErr := w.resharePrepared(ctx, settings, jobInput, cookie, password, manifest, sourceFiles,
 		func(ctx context.Context, directories []p115.ShareFile) ([]p115.ShareFile, []string, error) {
 			files := make([]p115.ShareFile, 0)
 			expected := make([]string, 0)
 			for _, directory := range directories {
-				_, roots, err := w.scanDirectory(ctx, directory.ID, "正在整理合并分享的原始条目", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+				_, roots, _, err := w.scanDirectory(ctx, directory.ID, "正在整理合并分享的原始条目", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
 					return w.Client.DriveFiles(ctx, cid, offset, cookie)
 				})
 				if err != nil {
@@ -186,16 +189,13 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 				}
 			}
 			return nil
-		}, func(ctx context.Context, own *p115.ShareInfo) (*GenerationResult, error) {
-			_, roots, err := w.snapshot(ctx, own, "0", cookie)
-			if err != nil {
-				return nil, err
-			}
+		}, func(ctx context.Context, own *p115.ShareInfo, snapshot generationSnapshot) (*GenerationResult, error) {
+			roots := snapshot.Roots
 			used := make(map[string]bool, len(roots))
 			total := &GenerationResult{}
 			var failed error
 			for _, item := range prepared {
-				ids, err := w.matchSharedRoots(ctx, own, cookie, item, roots, used)
+				ids, err := w.matchSharedRoots(ctx, item, roots, used, snapshot)
 				if err != nil {
 					return total, err
 				}
@@ -241,6 +241,7 @@ func addBatchResult(total, result *GenerationResult) {
 	total.Skipped += result.Skipped
 	total.MetadataWritten += result.MetadataWritten
 	total.MetadataFailed += result.MetadataFailed
+	total.ConflictRenamed += result.ConflictRenamed
 	total.Files = append(total.Files, result.Files...)
 	total.MetadataFiles = append(total.MetadataFiles, result.MetadataFiles...)
 }

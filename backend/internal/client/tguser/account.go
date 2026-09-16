@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,10 +17,10 @@ import (
 	"github.com/gotd/td/tgerr"
 )
 
-const BotUsername = "ayclub_bot"
+const DefaultBotUsername = "ayclub_bot"
 
 var ErrBusy = errors.New("Telegram 正在处理另一项操作，请稍后再试")
-var ErrConfig = errors.New("请先配置 Telegram API ID 和 API Hash")
+var ErrConfig = errors.New("请先配置 Telegram API ID、API Hash 和资源 Bot")
 var ErrLogin = errors.New("请先在 Telegram 用户账号页面登录并检查连接")
 var ErrInput = errors.New("输入格式无效")
 
@@ -30,6 +31,7 @@ type Store interface {
 type Config struct {
 	APIID   int    `json:"apiId"`
 	APIHash string `json:"apiHash"`
+	Bot     string `json:"bot"`
 }
 type View struct {
 	APIID      int    `json:"apiId"`
@@ -79,6 +81,9 @@ func New(configStore, sessionStore Store) (*Client, error) {
 			return nil, errors.New("Telegram 用户配置无法读取")
 		}
 	}
+	if c.config.Bot == "" {
+		c.config.Bot = DefaultBotUsername
+	}
 	return c, nil
 }
 func (c *Client) lock() error {
@@ -101,11 +106,20 @@ func (c *Client) View() View {
 			stage = "code"
 		}
 	}
-	return View{APIID: c.config.APIID, Configured: c.config.APIID > 0 && c.config.APIHash != "", HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, Stage: stage, Bot: BotUsername}
+	return View{APIID: c.config.APIID, Configured: c.config.APIID > 0 && c.config.APIHash != "" && validBotUsername(c.config.Bot), HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, Stage: stage, Bot: c.config.Bot}
 }
 
 var hashPattern = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
 var phonePattern = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
+var botPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{1,28}(?i:bot)$`)
+
+func normalizeBotUsername(value string) string {
+	return strings.TrimPrefix(strings.TrimSpace(value), "@")
+}
+
+func validBotUsername(value string) bool {
+	return botPattern.MatchString(value)
+}
 
 func (c *Client) Save(input Config) error {
 	if err := c.lock(); err != nil {
@@ -117,7 +131,11 @@ func (c *Client) Save(input Config) error {
 	if input.APIHash == "" {
 		input.APIHash = c.config.APIHash
 	}
-	if input.APIID < 1 || !hashPattern.MatchString(input.APIHash) {
+	if strings.TrimSpace(input.Bot) == "" {
+		input.Bot = c.config.Bot
+	}
+	input.Bot = normalizeBotUsername(input.Bot)
+	if input.APIID < 1 || !hashPattern.MatchString(input.APIHash) || !validBotUsername(input.Bot) {
 		return ErrInput
 	}
 	if c.sessionStore.Value() != "" && (input.APIID != c.config.APIID || input.APIHash != c.config.APIHash) {

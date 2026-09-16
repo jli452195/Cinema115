@@ -38,6 +38,10 @@ func cloneResult(result SearchResult) SearchResult {
 func (c *Client) cachedResult(key string, now time.Time) (SearchResult, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.cachedResultLocked(key, now)
+}
+
+func (c *Client) cachedResultLocked(key string, now time.Time) (SearchResult, bool) {
 	entry, ok := c.searchCache[key]
 	if !ok {
 		return SearchResult{}, false
@@ -60,6 +64,10 @@ func (c *Client) cachedResult(key string, now time.Time) (SearchResult, bool) {
 func (c *Client) cacheResult(key string, result SearchResult, now time.Time) SearchResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.cacheResultLocked(key, result, now)
+}
+
+func (c *Client) cacheResultLocked(key string, result SearchResult, now time.Time) SearchResult {
 	// 权限、配额和其他提示不作为资源结果缓存；明确的“未找到”也缓存。
 	if !result.Empty && len(result.Items) == 0 && len(result.Links) == 0 {
 		delete(c.searchCache, key)
@@ -96,5 +104,62 @@ func (c *Client) cacheResult(key string, result SearchResult, now time.Time) Sea
 	result.Cached = false
 	result.ExpiresAt = &expires
 	c.searchCache[key] = cachedSearch{result: cloneResult(result), expires: expires}
+	return result
+}
+
+func (c *Client) previewAppendedResult(key string, result SearchResult, now time.Time) SearchResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if previous, ok := c.cachedResultLocked(key, now); ok {
+		return appendSearchResults(previous, result)
+	}
+	return cloneResult(result)
+}
+
+func (c *Client) appendSearchResult(key string, result SearchResult, now time.Time) SearchResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if previous, ok := c.cachedResultLocked(key, now); ok {
+		result = appendSearchResults(previous, result)
+	}
+	return c.cacheResultLocked(key, result, now)
+}
+
+// 搜索缓存保留所有已返回资源，但翻页动作只保留最新结果里的“下一页”。
+func appendSearchResults(previous, next SearchResult) SearchResult {
+	result := SearchResult{
+		Items:     make([]Action, 0, len(previous.Items)+len(next.Items)),
+		Links:     make([]string, 0, len(previous.Links)+len(next.Links)),
+		Remaining: next.Remaining,
+		Page:      next.Page,
+		Empty:     next.Empty,
+		AllLoaded: next.AllLoaded,
+	}
+	for _, item := range previous.Items {
+		if item.Kind == "resource" {
+			result.Items = append(result.Items, item)
+		}
+	}
+	for _, item := range next.Items {
+		if item.Kind == "resource" || item.Kind == "page" {
+			result.Items = append(result.Items, item)
+		}
+	}
+	result.Links = append(result.Links, previous.Links...)
+	result.Links = append(result.Links, next.Links...)
+	result.Text = previous.Text
+	if result.Text != "" && next.Text != "" {
+		result.Text += "\n\n"
+	}
+	result.Text += next.Text
+	if result.Remaining == nil {
+		result.Remaining = previous.Remaining
+	}
+	if result.Page == nil {
+		result.Page = previous.Page
+	}
+	if len(previous.Items) > 0 || len(previous.Links) > 0 {
+		result.Empty = false
+	}
 	return result
 }

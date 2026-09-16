@@ -57,12 +57,9 @@ func TestUnreadableReviewPreservesExistingSTRM(t *testing.T) {
 }
 
 func TestReviewStopsTransferAndSnapshotWait(t *testing.T) {
-	for _, stage := range []string{"source", "own", "deleted"} {
+	for _, stage := range []string{"source", "own"} {
 		t.Run(stage, func(t *testing.T) {
 			fake := &transferFake{reviewStage: stage}
-			if stage == "deleted" {
-				fake.newSnapshots = 1
-			}
 			workflow, input := setupWorkflow(t, fake)
 			// 若审核仍进入等待循环，应撞上任务超时而使测试失败。
 			workflow.PollInterval = time.Hour
@@ -84,9 +81,6 @@ func TestReviewStopsTransferAndSnapshotWait(t *testing.T) {
 			}
 			if stage == "own" && (fake.deleted || strings.Contains(strings.Join(fake.calls, ","), "generate")) {
 				t.Fatal("新分享审核后仍生成或删除")
-			}
-			if stage == "deleted" && (!fake.deleted || jobs[0].Status != "deleted") {
-				t.Fatal("删除后的复查丢失清理状态")
 			}
 		})
 	}
@@ -118,105 +112,72 @@ func TestReadableReviewCanGenerateSTRMWithoutPreflight(t *testing.T) {
 }
 
 func TestOwnShareCleanupUsesCookieAndReadableSnapshot(t *testing.T) {
-	for _, failure := range []string{"", "cleanup-unreadable", "cleanup-mismatch", "after-unreadable"} {
-		name := failure
-		if name == "" {
-			name = "本人审核中可读则生成并清理成功"
+	workflow, input := setupWorkflow(t, &transferFake{})
+	ownReads, anonymousReads, deletes, currentCookieReads := 0, 0, 0, 0
+	password := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Cookie") != "UID=42_A; SEID=original-cookie" {
+			anonymousReads++
+			t.Error("新分享流程没有使用同一登录 Cookie")
+			w.Write([]byte(`{"state":false,"error":"分享审核中"}`))
+			return
 		}
-		t.Run(name, func(t *testing.T) {
-			workflow, input := setupWorkflow(t, &transferFake{})
-			ownReads, anonymousReads, deletes, currentCookieReads := 0, 0, 0, 0
-			password := ""
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Header.Get("Cookie") != "UID=42_A; SEID=original-cookie" {
-					anonymousReads++
-					t.Error("新分享流程没有使用同一登录 Cookie")
-					w.Write([]byte(`{"state":false,"error":"分享审核中"}`))
-					return
-				}
-				switch r.URL.Path {
-				case "/share/snap":
-					state, id := 1, "11"
-					if r.URL.Query().Get("share_code") == "own" {
-						ownReads++
-						state, id = 0, "21"
-						if failure == "cleanup-unreadable" && ownReads == 3 || failure == "after-unreadable" && deletes > 0 {
-							w.Write([]byte(`{"state":true,"data":{"share_state":0,"count":1,"list":[]}}`))
-							return
-						}
-					}
-					size := 2000000
-					if failure == "cleanup-mismatch" && ownReads == 3 {
-						size = 1
-					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "userinfo": map[string]any{"user_id": "99"}, "count": 1, "list": []map[string]any{{"fid": id, "n": "movie.mkv", "s": size}}}})
-				case "/files/add":
-					w.Write([]byte(`{"state":true,"cid":"999"}`))
-				case "/share/receive":
-					w.Write([]byte(`{"state":true}`))
-				case "/files":
-					w.Write([]byte(`{"state":true,"count":1,"data":[{"fid":"21","n":"movie.mkv","s":"2000000"}]}`))
-				case "/share/send":
-					w.Write([]byte(`{"state":true,"data":{"share_code":"own","receive_code":"test"}}`))
-				case "/share/updateshare":
-					if err := r.ParseForm(); err != nil {
-						t.Error(err)
-					}
-					password = r.PostForm.Get("receive_code")
-					w.Write([]byte(`{"state":true}`))
-				case "/share/shareinfo":
-					_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_duration": "-1", "receive_code": password}})
-				case "/rb/delete":
-					if err := r.ParseForm(); err != nil {
-						t.Error(err)
-					}
-					if r.Method != "POST" || r.PostForm.Get("fid") != "999" || ownReads < 3 {
-						t.Error("清理范围或执行顺序错误")
-					}
-					if _, err := os.Stat(filepath.Join(workflow.Root, input.OutputDir, "movie.strm")); err != nil {
-						t.Error("STRM 写入前执行了清理")
-					}
-					deletes++
-					w.Write([]byte(`{"state":true}`))
-				default:
-					t.Error("出现未预期的请求", r.URL.Path)
-					w.WriteHeader(500)
-				}
-			}))
-			defer server.Close()
-			client := p115.NewShareClient()
-			client.WebURL = server.URL
-			client.RequestInterval = 0
-			workflow.Client = client
-			// 模拟任务开始后用户切换登录，生成器必须继续使用工作流固定的 Cookie。
-			workflow.Generator = &STRMGenerator{Root: workflow.Root, Client: client, Cookie: func() string { currentCookieReads++; return "other-account-cookie" }}
-			result, err := workflow.Generate(context.Background(), input)
-			if result == nil || result.Written != 1 || anonymousReads != 0 || currentCookieReads != 0 {
-				t.Fatal("本人 Cookie 的生成流程错误", err)
+		switch r.URL.Path {
+		case "/share/snap":
+			state, id := 1, "11"
+			if r.URL.Query().Get("share_code") == "own" {
+				ownReads++
+				state, id = 0, "21"
 			}
-			wantStatus, wantDeletes := "completed", 1
-			switch failure {
-			case "":
-				if err != nil || !result.Cleaned || ownReads != 4 {
-					t.Fatal("可读的本人审核分享仍被阻止清理", err, ownReads)
-				}
-			case "after-unreadable":
-				wantStatus = "deleted"
-				if !errors.Is(err, p115.ErrShareUnderReview) || !result.Cleaned || !strings.Contains(err.Error(), "回收站") {
-					t.Fatal("删除后不可读丢失恢复提示", err)
-				}
-			default:
-				wantStatus, wantDeletes = "checking_cleanup", 0
-				if err == nil || result.Cleaned {
-					t.Fatal("本人 Cookie 无法通过目录校验时仍清理")
-				}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "userinfo": map[string]any{"user_id": "99"}, "count": 1, "list": []map[string]any{{"fid": id, "n": "movie.mkv", "s": 2000000}}}})
+		case "/files/add":
+			w.Write([]byte(`{"state":true,"cid":"999"}`))
+		case "/share/receive":
+			w.Write([]byte(`{"state":true}`))
+		case "/files":
+			w.Write([]byte(`{"state":true,"count":1,"data":[{"fid":"21","n":"movie.mkv","s":"2000000"}]}`))
+		case "/share/send":
+			w.Write([]byte(`{"state":true,"data":{"share_code":"own","receive_code":"test"}}`))
+		case "/share/updateshare":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
 			}
-			jobs := workflowJobs(t, workflow)
-			if deletes != wantDeletes || len(jobs) != 1 || jobs[0].Status != wantStatus || !jobs[0].Finished {
-				t.Fatal("清理检查点或任务完成状态错误")
+			password = r.PostForm.Get("receive_code")
+			w.Write([]byte(`{"state":true}`))
+		case "/share/shareinfo":
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_duration": "-1", "receive_code": password}})
+		case "/rb/delete":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
 			}
-		})
+			if r.Method != "POST" || r.PostForm.Get("fid") != "999" || ownReads != 1 {
+				t.Error("清理范围、执行顺序或快照复用错误")
+			}
+			if _, err := os.Stat(filepath.Join(workflow.Root, input.OutputDir, "movie.strm")); err != nil {
+				t.Error("STRM 写入前执行了清理")
+			}
+			deletes++
+			w.Write([]byte(`{"state":true}`))
+		default:
+			t.Error("出现未预期的请求", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer server.Close()
+	client := p115.NewShareClient()
+	client.WebURL = server.URL
+	client.RequestInterval = 0
+	workflow.Client = client
+	// 模拟任务开始后用户切换登录；任务仍使用固定 Cookie，且生成器消费已确认快照。
+	workflow.Generator = &STRMGenerator{Root: workflow.Root, Client: client, Cookie: func() string { currentCookieReads++; return "other-account-cookie" }}
+	result, err := workflow.Generate(context.Background(), input)
+	if err != nil || result == nil || result.Written != 1 || !result.Cleaned || ownReads != 1 || deletes != 1 || anonymousReads != 0 || currentCookieReads != 0 {
+		t.Fatal("快照复用或清理流程错误", err, ownReads, deletes)
+	}
+	jobs := workflowJobs(t, workflow)
+	if len(jobs) != 1 || jobs[0].Status != "completed" || !jobs[0].Finished {
+		t.Fatal("清理完成状态错误")
 	}
 }
 

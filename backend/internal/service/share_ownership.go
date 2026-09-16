@@ -5,9 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"strm115/backend/internal/client/p115"
 )
+
+type generationFirstPageKey struct{}
+
+type generationFirstPage struct {
+	ShareCode string
+	CID       string
+	Page      *p115.SharePage
+}
+
+type generationSnapshotKey struct{}
+
+type generationSnapshotPageKey struct {
+	CID    string
+	Offset int
+}
+
+// generationSnapshot 只在一次任务内复用已读取且媒体数量确认的分享目录，不持久化 Cookie 或远端响应。
+type generationSnapshot struct {
+	ShareCode string
+	RootCID   string
+	Roots     []p115.ShareFile
+	Files     []p115.ShareFile
+	Pages     map[generationSnapshotPageKey]*p115.SharePage
+}
 
 // 单条和批次使用同一次带 Cookie 的目录响应判断归属及审核，禁止用提取码猜测归属。
 func (w *ShareWorkflow) inspectSource(ctx context.Context, share *p115.ShareInfo, cid, cookie string) (*p115.SharePage, bool, error) {
@@ -45,8 +70,19 @@ func (w *ShareWorkflow) sourcePages(share *p115.ShareInfo, cid, cookie string, f
 	}
 }
 
-func (w *ShareWorkflow) generateOriginal(ctx context.Context, input GenerateInput, cookie string) (*GenerationResult, error) {
+func (w *ShareWorkflow) generateOriginal(ctx context.Context, input GenerateInput, cookie string, first *p115.SharePage) (*GenerationResult, error) {
 	input.Mode = "direct"
+	if first != nil {
+		share, err := p115.ParseShareURL(input.URL)
+		if err != nil {
+			return nil, generationInputError(err.Error())
+		}
+		cid := strings.TrimSpace(input.CID)
+		if cid == "" {
+			cid = "0"
+		}
+		ctx = context.WithValue(ctx, generationFirstPageKey{}, generationFirstPage{ShareCode: share.Code, CID: cid, Page: first})
+	}
 	result, err := w.Generator.Generate(context.WithValue(ctx, generationCookieKey{}, cookie), input)
 	if result == nil {
 		result = &GenerationResult{}

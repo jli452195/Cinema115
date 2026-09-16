@@ -27,23 +27,22 @@ func generationOptions(t *testing.T) GenerateInput {
 func TestSTRMFailureCountExcludesUnprocessedFiles(t *testing.T) {
 	root := t.TempDir()
 	input := generationOptions(t)
-	// 用非空同名目录模拟文件写入失败，第二个文件尚未尝试写入。
-	conflict := filepath.Join(root, input.OutputDir, "a.strm")
-	if err := os.MkdirAll(conflict, 0700); err != nil {
+	// 用普通文件占据所需父目录，模拟真正无法通过改名规避的写入失败。
+	if err := os.MkdirAll(filepath.Join(root, input.OutputDir), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(conflict, "keep"), []byte("已有内容"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, input.OutputDir, "Series"), []byte("已有内容"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	client := shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
+	client := shareListFunc(func(_ context.Context, _ *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
+		if cid == "0" {
+			return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "dir", Name: "Series", Directory: true}}}, nil
+		}
 		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", Size: 2 << 20}, {ID: "2", Name: "b.mkv", Size: 2 << 20}}}, nil
 	})
 	result, err := (&STRMGenerator{Root: root, Client: client, Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
 	if err == nil || result == nil || result.Written != 0 || result.Failed != 1 || len(result.Files) != 2 {
 		t.Fatal("写入失败与未处理文件统计错误", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, input.OutputDir, "b.strm")); !os.IsNotExist(err) {
-		t.Fatal("失败后不应继续写入")
 	}
 }
 
@@ -222,7 +221,7 @@ func TestRelativeOutputDirectoryResolution(t *testing.T) {
 	}
 }
 
-func TestGenerationRefreshesFilesAndRegeneratesAfterOrganization(t *testing.T) {
+func TestGenerationPreservesConflictsAndRegeneratesAfterOrganization(t *testing.T) {
 	input := generationOptions(t)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, input.OutputDir), 0755); err != nil {
@@ -236,15 +235,24 @@ func TestGenerationRefreshesFilesAndRegeneratesAfterOrganization(t *testing.T) {
 		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "1", Name: "a.mp4", Size: 2 << 20}}}, nil
 	})}
 	result, err := g.Generate(context.Background(), input)
-	if err != nil || result.Written != 1 {
-		t.Fatalf("已有文件未重新生成：%v", err)
+	if err != nil || result.Written != 1 || result.ConflictRenamed != 1 || result.Files[0].Path != "a (2).strm" {
+		t.Fatalf("同名文件未安全另存：%+v %v", result, err)
 	}
 	content, err := os.ReadFile(existing)
-	if err != nil || string(content) != result.Files[0].Content {
-		t.Fatal("未写入最新分享内容")
+	if err != nil || string(content) != "existing content" {
+		t.Fatal("已有同名文件被覆盖")
+	}
+	generated := filepath.Join(root, input.OutputDir, filepath.FromSlash(result.Files[0].Path))
+	generatedContent, err := os.ReadFile(generated)
+	if err != nil || string(generatedContent) != result.Files[0].Content {
+		t.Fatal("另存的分享内容不正确")
+	}
+	stable, err := g.Generate(context.Background(), input)
+	if err != nil || stable.Files[0].Path != result.Files[0].Path {
+		t.Fatal("相同内容没有复用稳定的冲突后缀", err)
 	}
 	organized := filepath.Join(root, "整理后的电影.strm")
-	if err := os.Rename(existing, organized); err != nil {
+	if err := os.Rename(generated, organized); err != nil {
 		t.Fatal(err)
 	}
 	input.URL = "https://115.com/s/new-share"
@@ -253,21 +261,22 @@ func TestGenerationRefreshesFilesAndRegeneratesAfterOrganization(t *testing.T) {
 	if err != nil || regenerated.Written != 1 {
 		t.Fatal("整理后无法再次生成", err)
 	}
-	current, err := os.ReadFile(existing)
+	current, err := os.ReadFile(filepath.Join(root, input.OutputDir, "a (2).strm"))
 	if err != nil || !strings.Contains(string(current), "share_code=new-share") || !strings.Contains(string(current), "receive_code=new-code") {
 		t.Fatal("新生成文件未使用新分享参数")
 	}
 	preserved, err := os.ReadFile(organized)
-	if err != nil || string(preserved) != string(content) {
+	if err != nil || string(preserved) != string(generatedContent) {
 		t.Fatal("影响了其他工具整理后的文件")
 	}
-	// 同名目录不能作为已生成的 STRM 计入成功结果。
+	// 同名目录同样保留，输出使用下一个稳定名称。
 	input.OutputDir = "strm2"
 	if err := os.MkdirAll(filepath.Join(root, input.OutputDir, "a.strm"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Generate(context.Background(), input); err == nil {
-		t.Fatal("同名目录应返回写入冲突")
+	directoryConflict, err := g.Generate(context.Background(), input)
+	if err != nil || directoryConflict.Files[0].Path != "a (2).strm" || directoryConflict.ConflictRenamed != 1 {
+		t.Fatal("同名目录未安全另存", err)
 	}
 }
 
@@ -289,5 +298,28 @@ func TestCancelledSTRMWritePreservesPreviousContent(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 1 {
 		t.Fatal("临时文件未清理")
+	}
+}
+
+func TestIdenticalSTRMContentDoesNotRewriteFile(t *testing.T) {
+	dir := t.TempDir()
+	destination := filepath.Join(dir, "电影.strm")
+	content := "http://nas/api/?share_code=snapshot&id=1\n"
+	if err := os.WriteFile(destination, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSTRM(context.Background(), destination, content); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("相同 STRM 内容仍被重复改写")
 	}
 }

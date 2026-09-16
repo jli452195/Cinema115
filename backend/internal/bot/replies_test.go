@@ -67,6 +67,20 @@ func TestShareReplyLimitsAndIncompleteCounts(t *testing.T) {
 	}
 }
 
+func TestShareReplyDescribesCacheMetadataWarningAndConflict(t *testing.T) {
+	input := service.GenerateInput{URL: "https://115.com/s/source"}
+	cached, _ := formatShareReply(input, service.AutomationSettings{}, &service.GenerationResult{Cached: true, Written: 2, ReshareURL: "https://115.com/s/own", Cleaned: true}, nil, 1, 1)
+	if !strings.Contains(cached, "复用已生成 STRM") || !strings.Contains(cached, "已复用本地成功快照") || strings.Contains(cached, "目录校验成功") || strings.Contains(cached, "本次临时目录") || strings.Contains(cached, "新增") {
+		t.Fatal("缓存结果文案不准确", cached)
+	}
+	warning, _ := formatShareReply(input, service.AutomationSettings{}, &service.GenerationResult{Written: 2, MetadataWritten: 1, MetadataFailed: 1, ConflictRenamed: 2}, nil, 1, 1)
+	for _, want := range []string{"⚠️", "元数据部分失败", "再次提交重试", "已保留旧文件，另存 2 个"} {
+		if !strings.Contains(warning, want) {
+			t.Fatal("部分完成文案缺失", want, warning)
+		}
+	}
+}
+
 func TestPendingReplyQuotePreviewAndLegacyCompatibility(t *testing.T) {
 	pending := &pendingReply{ChatID: 42, MessageID: 700, ThreadID: 99, PreviewURL: "https://115.com/s/a", Text: "结果"}
 	encoded, err := json.Marshal(pending)

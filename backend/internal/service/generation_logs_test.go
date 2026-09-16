@@ -164,7 +164,7 @@ func TestReshareStagesInGenerationLogs(t *testing.T) {
 			t.Fatal("模式提示或处理阶段的等级错误", entry)
 		}
 		permanent = permanent || strings.Contains(entry.Message, "设置并确认分享长期有效")
-		cleaned = cleaned || strings.Contains(entry.Message, "临时目录已删除")
+		cleaned = cleaned || strings.Contains(entry.Message, "临时目录已移入回收站")
 	}
 	if !permanent || !cleaned || !strings.Contains(all[0].Message, "转存分享生成 STRM 完成！") {
 		t.Fatal("转存阶段日志缺失")
@@ -185,17 +185,27 @@ func TestInfoLogsReportStartPagesAndSuccessfulWriteMilestones(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			files := make([]p115.ShareFile, 0, tc.count+1)
 			for i := 1; i <= tc.count; i++ {
-				files = append(files, p115.ShareFile{ID: strconv.Itoa(i), Name: fmt.Sprintf("video-%d.mkv", i), Size: 2 << 20})
+				if i == tc.failAt {
+					files = append(files, p115.ShareFile{ID: "blocked-directory", Name: "blocked", Directory: true})
+				} else {
+					files = append(files, p115.ShareFile{ID: strconv.Itoa(i), Name: fmt.Sprintf("video-%d.mkv", i), Size: 2 << 20})
+				}
 			}
 			files = append(files, p115.ShareFile{ID: "subtitle", Name: "字幕.srt"})
-			client := shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
+			client := shareListFunc(func(_ context.Context, _ *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
+				if cid == "blocked-directory" {
+					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: strconv.Itoa(tc.failAt), Name: fmt.Sprintf("video-%d.mkv", tc.failAt), Size: 2 << 20}}}, nil
+				}
 				return &p115.SharePage{Count: len(files), Files: files}, nil
 			})
 			root := t.TempDir()
 			input := generationOptions(t)
 			if tc.failAt > 0 {
-				// 用目录占据目标文件路径，模拟写入中途失败，不改动真实媒体目录。
-				if err := os.MkdirAll(filepath.Join(root, input.OutputDir, fmt.Sprintf("video-%d.strm", tc.failAt)), 0700); err != nil {
+				// 用普通文件占据子目录，模拟无法通过数字后缀规避的父路径冲突。
+				if err := os.MkdirAll(filepath.Join(root, input.OutputDir), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, input.OutputDir, "blocked"), []byte("占位"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -34,15 +34,18 @@ type SearchResult struct {
 	Remaining *int       `json:"remaining,omitempty"`
 	Page      *int       `json:"page,omitempty"`
 	Empty     bool       `json:"empty"`
+	AllLoaded bool       `json:"allLoaded,omitempty"`
 	Cached    bool       `json:"cached"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 type storedAction struct {
-	expires time.Time
-	message int
-	command string
-	data    []byte
-	direct  string
+	expires   time.Time
+	message   int
+	command   string
+	data      []byte
+	direct    string
+	kind      string
+	searchKey string
 }
 type searchError struct{ message string }
 
@@ -62,9 +65,9 @@ func limitBotSearchTitle(title string) string {
 	return title
 }
 
-func botCommand(raw string) string {
+func botCommand(raw, botUsername string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.Scheme != "https" || (u.Host != "t.me" && u.Host != "telegram.me") || !strings.EqualFold(strings.Trim(u.Path, "/"), BotUsername) {
+	if err != nil || u.User != nil || u.Scheme != "https" || (u.Host != "t.me" && u.Host != "telegram.me") || !strings.EqualFold(strings.Trim(u.Path, "/"), botUsername) {
 		return ""
 	}
 	payload := u.Query().Get("start")
@@ -117,8 +120,8 @@ func fingerprint(m *tg.Message) [32]byte {
 	}{m.Message, m.Entities, m.ReplyMarkup})
 	return sha256.Sum256(raw)
 }
-func resolveBot(ctx context.Context, api *tg.Client) (*tg.InputPeerUser, error) {
-	resolved, err := api.ContactsResolveUsername(ctx, BotUsername)
+func resolveBot(ctx context.Context, api *tg.Client, botUsername string) (*tg.InputPeerUser, error) {
+	resolved, err := api.ContactsResolveUsername(ctx, botUsername)
 	if err != nil {
 		return nil, err
 	}
@@ -147,13 +150,15 @@ func (c *Client) addAction(action storedAction, title, kind, tmdbID, size string
 			delete(c.results, key)
 		}
 	}
-	if len(c.results) >= 200 {
+	if len(c.results) >= 2048 {
 		c.results = make(map[string]storedAction)
+		c.searchCache = make(map[string]cachedSearch)
 	}
+	action.kind = kind
 	c.results[id] = action
 	return Action{ID: id, Title: title, Kind: kind, TMDBID: tmdbID, Size: size}, nil
 }
-func (c *Client) parse(m *tg.Message) (SearchResult, bool, error) {
+func (c *Client) parse(m *tg.Message, botUsername, searchKey string) (SearchResult, bool, error) {
 	message := resourcesearch.Message{ID: m.ID, Text: m.Message, Entities: make([]resourcesearch.Entity, 0, len(m.Entities))}
 	links := make([]string, 0)
 	seen := make(map[string]bool)
@@ -190,7 +195,7 @@ func (c *Client) parse(m *tg.Message) (SearchResult, bool, error) {
 		}
 	}
 	for _, item := range parsed.Items {
-		action := storedAction{message: m.ID, command: botCommand(item.URL), direct: shareLink(item.URL)}
+		action := storedAction{message: m.ID, command: botCommand(item.URL, botUsername), direct: shareLink(item.URL), searchKey: searchKey}
 		if action.command == "" && action.direct == "" {
 			continue
 		}
@@ -206,11 +211,11 @@ func (c *Client) parse(m *tg.Message) (SearchResult, bool, error) {
 				switch button := raw.(type) {
 				case *tg.KeyboardButtonCallback:
 					title := button.Text
-					// 不自动发起悬赏、支付、订阅或权限申请，只暴露资源与翻页按钮。
-					if !strings.Contains(title, "下一页") && !strings.Contains(title, "上一页") {
+					// 单向追加资源，只暴露下一页；不自动发起其他 Bot 操作。
+					if !strings.Contains(title, "下一页") {
 						continue
 					}
-					entry, err := c.addAction(storedAction{message: m.ID, data: append([]byte(nil), button.Data...)}, title, "page", "", "")
+					entry, err := c.addAction(storedAction{message: m.ID, data: append([]byte(nil), button.Data...), searchKey: searchKey}, title, "page", "", "")
 					if err != nil {
 						return result, false, err
 					}
@@ -243,19 +248,25 @@ func (c *Client) parse(m *tg.Message) (SearchResult, bool, error) {
 	return result, recognized, nil
 }
 
-// 搜索与取链接只向固定的 ayclub_bot 发送；每次先记住聊天快照，忽略历史回复。
+// 搜索与取链接只向当前配置的 Bot 发送；每次先记住聊天快照，忽略历史回复。
 func (c *Client) Search(ctx context.Context, title string, refresh bool) (SearchResult, error) {
+	return c.SearchWithUpdates(ctx, title, refresh, nil)
+}
+
+// SearchWithUpdates 在 Bot 返回可识别内容时立即回调，最终返回值仍会收齐连续回复并写入缓存。
+func (c *Client) SearchWithUpdates(ctx context.Context, title string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
 	title = strings.TrimSpace(title)
 	if title == "" || strings.HasPrefix(title, "/") {
 		return SearchResult{}, ErrInput
 	}
 	query := limitBotSearchTitle(title)
-	return c.exchange(ctx, storedAction{command: query}, "search:"+query, refresh)
+	key := "search:" + query
+	return c.exchange(ctx, storedAction{command: query, kind: "search", searchKey: key}, key, refresh, onUpdate)
 }
 func (c *Client) Select(ctx context.Context, id string) (SearchResult, error) {
-	return c.exchange(ctx, storedAction{}, "select:"+id, false)
+	return c.exchange(ctx, storedAction{}, "select:"+id, false, nil)
 }
-func (c *Client) exchange(ctx context.Context, action storedAction, key string, refresh bool) (SearchResult, error) {
+func (c *Client) exchange(ctx context.Context, action storedAction, key string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
 	result := SearchResult{Items: []Action{}, Links: []string{}}
 	if err := c.lock(); err != nil {
 		return result, err
@@ -263,6 +274,12 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 	defer c.unlock()
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	c.mu.Lock()
+	botUsername := c.config.Bot
+	c.mu.Unlock()
+	if !validBotUsername(botUsername) {
+		return result, ErrConfig
 	}
 	if strings.HasPrefix(key, "select:") {
 		c.mu.Lock()
@@ -278,6 +295,11 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 	}
 	if !refresh {
 		if cached, ok := c.cachedResult(key, time.Now()); ok {
+			if action.kind == "page" {
+				if aggregate, exists := c.cachedResult(action.searchKey, time.Now()); exists {
+					return aggregate, nil
+				}
+			}
 			return cached, nil
 		}
 	}
@@ -293,7 +315,7 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 			return ErrLogin
 		}
 		api := client.API()
-		peer, err := resolveBot(ctx, api)
+		peer, err := resolveBot(ctx, api, botUsername)
 		if err != nil {
 			return err
 		}
@@ -322,7 +344,7 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 		if err != nil {
 			return err
 		}
-		timer := time.NewTimer(800 * time.Millisecond)
+		timer := time.NewTimer(250 * time.Millisecond)
 		defer timer.Stop()
 		var lastChange time.Time
 		var recognized bool
@@ -355,7 +377,7 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 				if previous, ok := seenMessages[m.ID]; ok && previous == fp {
 					continue
 				}
-				parsed, ok, e := c.parse(m)
+				parsed, ok, e := c.parse(m, botUsername, action.searchKey)
 				if e != nil {
 					return e
 				}
@@ -365,14 +387,21 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 				}
 				replies[m.ID] = parsed
 				result = combineReplies(replies)
+				if action.kind == "search" || action.kind == "page" {
+					result.AllLoaded = !hasNextAction(result)
+				}
 				recognized = true
 				lastChange = time.Now()
+				if onUpdate != nil {
+					onUpdate(c.previewAppendedResult(action.searchKey, result, time.Now()))
+				}
 			}
-			// 等待短暂静默，将 Bot 连续发出的多个分享链接一起收齐。
-			if recognized && time.Since(lastChange) >= 2*time.Second {
+			// 明确的空结果是终态，可以立即返回；资源结果等待短暂静默，
+			// 将 Bot 连续发出的多个分享链接一起收齐。
+			if searchReplyComplete(result, recognized, lastChange, time.Now()) {
 				return nil
 			}
-			timer.Reset(time.Second)
+			timer.Reset(500 * time.Millisecond)
 		}
 	})
 	if dispatched && err != nil {
@@ -383,9 +412,36 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 		return result, err
 	}
 	if err == nil {
-		result = c.cacheResult(key, result, time.Now())
+		now := time.Now()
+		switch action.kind {
+		case "search":
+			result = c.appendSearchResult(action.searchKey, result, now)
+		case "page":
+			result = c.appendSearchResult(action.searchKey, result, now)
+		default:
+			result = c.cacheResult(key, result, now)
+		}
 	}
 	return result, publicError(err)
+}
+
+func hasNextAction(result SearchResult) bool {
+	for _, item := range result.Items {
+		if item.Kind == "page" && strings.Contains(item.Title, "下一页") {
+			return true
+		}
+	}
+	return false
+}
+
+func searchReplyComplete(result SearchResult, recognized bool, lastChange, now time.Time) bool {
+	if !recognized {
+		return false
+	}
+	if result.Empty {
+		return true
+	}
+	return !lastChange.IsZero() && now.Sub(lastChange) >= 2*time.Second
 }
 
 // 同一条消息的编辑覆盖旧内容，多条回复则合并，避免丢失后续分享或保留旧链接。

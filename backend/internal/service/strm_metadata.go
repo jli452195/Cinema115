@@ -37,43 +37,62 @@ func parseMetadataExtensions(raw string, videos map[string]bool) (map[string]boo
 	return extensions, nil
 }
 
-// copyMetadata 将配套文件按原后缀保存，失败时阻止转存流程继续清理网盘源文件。
-func (g *STRMGenerator) copyMetadata(ctx context.Context, share *p115.ShareInfo, cookie, directory string, result *GenerationResult) error {
+// copyMetadata 将配套文件按原后缀保存。单个文件失败不妨碍其余文件继续尝试。
+func (g *STRMGenerator) copyMetadata(ctx context.Context, share *p115.ShareInfo, cookie, directory string, result *GenerationResult, reserved map[string]bool) error {
 	if len(result.MetadataFiles) == 0 {
 		return nil
 	}
 	reader, ok := g.Client.(shareMetadataReader)
 	if !ok {
+		result.MetadataFailed = len(result.MetadataFiles)
 		return fmt.Errorf("当前分享客户端不支持读取元数据")
 	}
-	recordFailure := func(err error) error {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			result.MetadataFailed++
+	failures := make([]error, 0, min(len(result.MetadataFiles), 10))
+	recordFailure := func(err error) {
+		result.MetadataFailed++
+		if len(failures) < 10 {
+			failures = append(failures, err)
 		}
-		return err
 	}
-	for _, file := range result.MetadataFiles {
+	for i := range result.MetadataFiles {
+		file := &result.MetadataFiles[i]
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		data, err := reader.ReadMetadata(ctx, share, file.ID, cookie)
 		if err != nil {
-			return recordFailure(fmt.Errorf("读取元数据 %s: %w", file.Path, err))
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			recordFailure(fmt.Errorf("读取元数据 %s: %w", file.Path, err))
+			continue
 		}
 		if file.Size > 0 && int64(len(data)) != file.Size {
-			return recordFailure(fmt.Errorf("元数据 %s 下载不完整，已停止生成", file.Path))
+			recordFailure(fmt.Errorf("元数据 %s 下载不完整", file.Path))
+			continue
 		}
-		destination := filepath.Join(directory, filepath.FromSlash(file.Path))
-		if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
-			return recordFailure(fmt.Errorf("创建元数据目录: %w", err))
+		delete(reserved, strings.ToLower(file.Path))
+		originalPath := file.Path
+		actualPath, renamed, err := writeGeneratedFile(ctx, directory, file.Path, string(data), reserved)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			recordFailure(fmt.Errorf("保存元数据 %s: %w", file.Path, err))
+			continue
 		}
-		// 复用同目录临时文件与原子替换，内容不转码、不写入下载地址。
-		if err := writeSTRM(ctx, destination, string(data)); err != nil {
-			return recordFailure(fmt.Errorf("保存元数据 %s: %w", file.Path, err))
+		file.Path = actualPath
+		reserved[strings.ToLower(actualPath)] = true
+		if renamed {
+			result.ConflictRenamed++
+			logGeneration(ctx, "WARNING", fmt.Sprintf("同名目标内容不同，已保留旧文件并改名：%s -> %s", originalPath, actualPath))
 		}
 		result.MetadataWritten++
-		logGeneration(ctx, "DEBUG", "元数据保存成功："+filepath.ToSlash(destination))
+		logGeneration(ctx, "DEBUG", "元数据保存成功："+filepath.ToSlash(filepath.Join(directory, filepath.FromSlash(actualPath))))
 	}
 	logGeneration(ctx, "INFO", fmt.Sprintf("元数据保存完成：%d/%d", result.MetadataWritten, len(result.MetadataFiles)))
-	return nil
+	if omitted := result.MetadataFailed - len(failures); omitted > 0 {
+		failures = append(failures, fmt.Errorf("另有 %d 个元数据失败，详见失败数量", omitted))
+	}
+	return errors.Join(failures...)
 }

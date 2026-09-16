@@ -17,7 +17,7 @@ const categories = {
   },
   telegram: {
     title: 'Telegram 配置', description: '连接机器人，管理消息接收与自动处理。',
-    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }, { title: '用户账号 / 资源搜索', description: '登录 Telegram 用户账号，通过 ayclub_bot 搜索影视资源。', to: '/telegram/user', icon: 'telegram' }],
+    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }, { title: '用户账号 / 资源搜索', description: '登录 Telegram 用户账号，通过指定资源 Bot 搜索影视资源。', to: '/telegram/user', icon: 'telegram' }],
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',

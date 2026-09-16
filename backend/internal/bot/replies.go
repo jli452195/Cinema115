@@ -45,13 +45,18 @@ func formatShareReply(input service.GenerateInput, settings service.AutomationSe
 	if reshare {
 		operation = "转存再分享再生成 STRM"
 	}
+	if result != nil && result.Cached {
+		operation = "复用已生成 STRM"
+	}
 	if result == nil && err == nil {
 		err = errors.New("生成器未返回处理结果")
 	}
 	source := replySource(input)
 	preview := source
 	var text strings.Builder
-	if err == nil {
+	if err == nil && result != nil && result.MetadataFailed > 0 {
+		fmt.Fprintf(&text, "⚠️ 【115网盘】%s 完成（元数据部分失败，可再次提交重试）", operation)
+	} else if err == nil {
 		fmt.Fprintf(&text, "✅ 【115网盘】%s 完成", operation)
 	} else if result != nil && result.Written > 0 {
 		fmt.Fprintf(&text, "⚠️ 【115网盘】%s 未完成（已有文件生成）", operation)
@@ -77,7 +82,9 @@ func formatShareReply(input service.GenerateInput, settings service.AutomationSe
 	}
 	if result != nil {
 		if result.ReshareURL != "" {
-			if err == nil {
+			if result.Cached {
+				text.WriteString("\n\n✅ 已复用本地成功快照\n🔗 原成功分享：")
+			} else if err == nil {
 				text.WriteString("\n\n✅ 目录校验成功\n🔗 新链接：")
 			} else {
 				text.WriteString("\n\n🔗 已创建的分享：")
@@ -88,13 +95,18 @@ func formatShareReply(input service.GenerateInput, settings service.AutomationSe
 			}
 		}
 		fmt.Fprintf(&text, "\n\n📁 生成 STRM：成功 %d 个，失败 %d 个\n📦 元数据：成功 %d 个，失败 %d 个", result.Written, result.Failed, result.MetadataWritten, result.MetadataFailed)
+		if result.ConflictRenamed > 0 {
+			fmt.Fprintf(&text, "\n🛡 同名内容不同：已保留旧文件，另存 %d 个", result.ConflictRenamed)
+		}
 		if remaining := len(result.Files) - result.Written - result.Failed; remaining > 0 {
 			fmt.Fprintf(&text, "\n⏸ STRM 未处理：%d 个", remaining)
 		}
 		if remaining := len(result.MetadataFiles) - result.MetadataWritten - result.MetadataFailed; remaining > 0 {
 			fmt.Fprintf(&text, "\n⏸ 元数据未处理：%d 个", remaining)
 		}
-		if result.Cleaned {
+		if result.Cached && result.Cleaned {
+			text.WriteString("\n🗑 原任务临时目录已移入回收站")
+		} else if result.Cleaned {
 			text.WriteString("\n🗑 本次临时目录已移入回收站")
 		} else if result.TempDirectoryID != "" {
 			fmt.Fprintf(&text, "\n📂 临时目录 ID：%s，请按任务记录核对清理状态", result.TempDirectoryID)

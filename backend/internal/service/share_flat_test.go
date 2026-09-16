@@ -30,6 +30,9 @@ func TestFlatShareWritesOriginalFilesWithoutOverwritingSameNames(t *testing.T) {
 	if f.shares != 1 || len(f.shared) != 2 || f.shared[0].Directory || f.shared[1].Directory || f.shared[0].Name != "同名电影.mkv" {
 		t.Fatal("分享根目录仍包含包装目录", f.shared)
 	}
+	if f.ownListCalls != 1 {
+		t.Fatal("平铺分享没有复用已确认快照", f.ownListCalls)
+	}
 	for i, name := range []string{"同名电影.strm", "同名电影 (2).strm"} {
 		data, err := os.ReadFile(filepath.Join(s.Settings.root, input.OutputDir, name))
 		if err != nil || !strings.Contains(string(data), fmt.Sprintf("id=%d", 11001+i)) || !strings.Contains(string(data), "share_code=own") {
@@ -102,5 +105,8 @@ func TestFlatSharePreservesOriginalFoldersAndMatchesTheirContents(t *testing.T) 
 	}
 	if out[0].RetryRootIDs[0] != "12001" || out[1].RetryRootIDs[0] != "12002" {
 		t.Fatal("来源范围使用了网盘 ID 而非新分享 ID")
+	}
+	if f.ownListCalls != 3 {
+		t.Fatal("嵌套分享没有复用根目录及两个子目录快照", f.ownListCalls)
 	}
 }

@@ -17,7 +17,7 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 	group := admin.Group("/telegram-user")
 	if len(sinks) > 0 {
 		actions := make(map[string]string)
-		for path, label := range map[string]string{"config": "保存 API 配置", "check": "检查用户账号连接", "send-code": "请求登录验证码", "sign-in": "验证用户登录", "disconnect": "退出用户账号", "search": "资源搜索", "select": "获取资源或翻页"} {
+		for path, label := range map[string]string{"config": "保存用户与资源 Bot 配置", "check": "检查用户账号连接", "send-code": "请求登录验证码", "sign-in": "验证用户登录", "disconnect": "退出用户账号", "search": "资源搜索", "search-stream": "流式资源搜索", "select": "获取资源或翻页"} {
 			actions[group.BasePath()+"/"+path] = label
 		}
 		group.Use(telegramOperationLogs(sinks[0], "用户账号", actions))
@@ -91,46 +91,100 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			c.JSON(200, account.View())
 		})
 	}
-	group.POST("/search", func(c *gin.Context) {
-		var input struct {
-			Kind    string `json:"kind"`
-			TMDBID  string `json:"tmdbId"`
-			Refresh bool   `json:"refresh"`
-		}
-		if c.ShouldBindJSON(&input) != nil || (input.Kind != "movie" && input.Kind != "tv") {
+	type searchInput struct {
+		Kind    string `json:"kind"`
+		TMDBID  string `json:"tmdbId"`
+		Refresh bool   `json:"refresh"`
+	}
+	loadSearchTitle := func(c *gin.Context, input searchInput) (string, bool) {
+		if input.Kind != "movie" && input.Kind != "tv" {
 			fail(c, tguser.ErrInput)
-			return
+			return "", false
 		}
 		id, err := strconv.Atoi(input.TMDBID)
 		if err != nil || id < 1 {
 			fail(c, tguser.ErrInput)
-			return
+			return "", false
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 65*time.Second)
 		defer cancel()
-		// 只发送服务端 TMDB 条目的中文标题，前端不能传任意 Bot 命令。
 		detail, err := tmdb.Details(ctx, input.Kind, id)
 		if err != nil {
 			tmdbError(c, err)
-			return
+			return "", false
 		}
-		searchCtx, stop := context.WithTimeout(ctx, 45*time.Second)
-		defer stop()
-		result, err := account.Search(searchCtx, detail.Title, input.Refresh)
-		if err != nil {
-			fail(c, err)
-			return
-		}
-		summary := fmt.Sprintf("%s/%d，资源 %d 项、链接 %d 条", input.Kind, id, len(result.Items), len(result.Links))
+		return detail.Title, true
+	}
+	setSearchSummary := func(c *gin.Context, input searchInput, result tguser.SearchResult) {
+		summary := fmt.Sprintf("%s/%s，资源 %d 项、链接 %d 条", input.Kind, input.TMDBID, len(result.Items), len(result.Links))
 		if result.Empty {
-			summary = fmt.Sprintf("%s/%d，未找到资源", input.Kind, id)
+			summary = fmt.Sprintf("%s/%s，未找到资源", input.Kind, input.TMDBID)
 		}
 		if result.Cached {
 			summary += "，复用缓存，未发送 Bot 查询"
 			c.Set("telegramLogCached", true)
 		}
 		c.Set("telegramLogSummary", summary)
+	}
+	group.POST("/search", func(c *gin.Context) {
+		var input searchInput
+		if c.ShouldBindJSON(&input) != nil || (input.Kind != "movie" && input.Kind != "tv") {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		// 只发送服务端 TMDB 条目的中文标题，前端不能传任意 Bot 命令。
+		title, ok := loadSearchTitle(c, input)
+		if !ok {
+			return
+		}
+		searchCtx, stop := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		defer stop()
+		result, err := account.Search(searchCtx, title, input.Refresh)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		setSearchSummary(c, input, result)
 		c.JSON(200, result)
+	})
+	group.POST("/search-stream", func(c *gin.Context) {
+		var input searchInput
+		if c.ShouldBindJSON(&input) != nil {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		title, ok := loadSearchTitle(c, input)
+		if !ok {
+			return
+		}
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "当前服务不支持流式响应"})
+			return
+		}
+		c.Header("Content-Type", "text/event-stream; charset=utf-8")
+		c.Header("Cache-Control", "no-cache, no-store")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(http.StatusOK)
+		flusher.Flush()
+		searchCtx, stop := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		defer stop()
+		push := func(result tguser.SearchResult, complete bool) {
+			c.SSEvent("result", gin.H{"complete": complete, "result": result})
+			flusher.Flush()
+		}
+		result, err := account.SearchWithUpdates(searchCtx, title, input.Refresh, func(update tguser.SearchResult) {
+			push(update, false)
+		})
+		if err != nil {
+			c.Set("telegramLogFailed", true)
+			c.SSEvent("error", gin.H{"error": err.Error()})
+			flusher.Flush()
+			return
+		}
+		setSearchSummary(c, input, result)
+		push(result, true)
 	})
 	group.POST("/select", func(c *gin.Context) {
 		var input struct {

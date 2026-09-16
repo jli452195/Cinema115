@@ -230,5 +230,5 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 		respond(code, response)
 		return
 	}
-	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "metadataCount": result.MetadataWritten, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
+	respond(http.StatusOK, gin.H{"directory": result.Directory, "count": result.Written, "metadataCount": result.MetadataWritten, "metadataFailed": result.MetadataFailed, "conflictRenamed": result.ConflictRenamed, "skipped": result.Skipped, "total": len(result.Files), "reshareUrl": result.ReshareURL, "tempDirectoryID": result.TempDirectoryID, "cleaned": result.Cleaned})
 }

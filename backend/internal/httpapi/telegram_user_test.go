@@ -55,3 +55,23 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramUserSearchStreamReturnsEventErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	account, err := tguser.New(&userTestStore{}, &userTestStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	RegisterTelegramUser(r.Group("/api/admin"), account, &tmdbReaderFake{})
+	req := httptest.NewRequest("POST", "/api/admin/telegram-user/search-stream", strings.NewReader(`{"kind":"movie","tmdbId":"42"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("流式响应状态错误：%d %s", w.Code, w.Header().Get("Content-Type"))
+	}
+	if body := w.Body.String(); !strings.Contains(body, "event:error") || !strings.Contains(body, `"error"`) {
+		t.Fatalf("流式错误事件缺失：%q", body)
+	}
+}
