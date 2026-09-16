@@ -19,6 +19,7 @@ const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
+const updatesActive = computed(() => route.path === '/updates')
 const managementLinks = computed(() => isWebsiteAdmin.value ? [
   { label: '追更管理', to: '/follows/manage' },
   { label: '用户管理', to: '/users' },
@@ -58,11 +59,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <span class="brand-mark flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-amber-400 sm:h-9 sm:w-9">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/><path d="m10 9 5 3-5 3Z" fill="currentColor" stroke="none"/></svg>
         </span>
-        <span>Cinema<span class="font-medium text-slate-500">115</span></span>
+        <span class="brand-name">Cinema<span class="font-medium text-slate-500">115</span></span>
       </RouterLink>
       <nav aria-label="影视导航" class="flex items-center gap-1 sm:gap-2">
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link" :class="{ selected: movieActive }">电影</RouterLink>
         <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
+        <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link" :class="{ selected: updatesActive }">更新</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 pl-2 sm:gap-3 sm:pl-5">
         <RouterLink to="/notifications" class="icon-button relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
@@ -102,5 +104,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #f59e0b; outline-offs
   .brand-mark { height: 1.75rem; width: 1.75rem; }
   .top-link { padding-inline: 0.5rem; }
   .icon-button { width: 2rem; height: 2rem; }
+  .brand-name { display: none; }
 }
 </style>

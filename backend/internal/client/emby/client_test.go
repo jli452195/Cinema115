@@ -28,12 +28,12 @@ func TestClientRejectsRedirectsAndInvalidURLs(t *testing.T) {
 }
 func TestEmbyResponsePreservesIDsAndStripsPrivateMediaFields(t *testing.T) {
 	var page Page
-	err := json.Unmarshal([]byte(`{"Items":[{"Id":"9007199254740993","Type":"Episode","SeriesId":"series","ParentId":"season","ParentIndexNumber":1,"IndexNumber":2,"IndexNumberEnd":3,"ProviderIds":{"Tmdb":"777"},"MediaSources":[{"Container":"mkv","Size":123,"Path":"private-path","RequiredHttpHeaders":{"Cookie":"private-cookie"},"MediaStreams":[{"Type":"Video","Codec":"hevc","Width":3840,"Height":2160,"VideoRange":"HDR"}]}]}],"TotalRecordCount":1}`), &page)
+	err := json.Unmarshal([]byte(`{"Items":[{"Id":"9007199254740993","Type":"Episode","SeriesId":"series","ParentId":"season","DateCreated":"2026-09-17T10:20:30.1234567+08:00","ParentIndexNumber":1,"IndexNumber":2,"IndexNumberEnd":3,"ProviderIds":{"Tmdb":"777"},"MediaSources":[{"Container":"mkv","Size":123,"Path":"private-path","RequiredHttpHeaders":{"Cookie":"private-cookie"},"MediaStreams":[{"Type":"Video","Codec":"hevc","Width":3840,"Height":2160,"VideoRange":"HDR"}]}]}],"TotalRecordCount":1}`), &page)
 	if err != nil {
 		t.Fatal(err)
 	}
 	item, ok := page.Items[0].Record("lib")
-	if !ok || item.ID != "9007199254740993" || item.SeriesID != "series" || item.Season != 1 || item.EndEpisode != 3 {
+	if !ok || item.ID != "9007199254740993" || item.SeriesID != "series" || item.Season != 1 || item.EndEpisode != 3 || item.DateCreated != "2026-09-17T02:20:30.1234567Z" {
 		t.Fatal(item)
 	}
 	data, _ := json.Marshal(page.Items[0].MediaSources)

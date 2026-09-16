@@ -69,6 +69,7 @@ type Source struct {
 type Item struct {
 	ID                                             string `json:"Id"`
 	Name, Type, SeriesID, ParentID, LocationType   string
+	DateCreated                                    string
 	ProviderIDs                                    map[string]string `json:"ProviderIds"`
 	IndexNumber, ParentIndexNumber, IndexNumberEnd *int
 	IsVirtualItem                                  bool
@@ -136,11 +137,11 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 func (c *Client) Items(ctx context.Context, library string, start int) (Page, error) {
 	var v Page
 	// 大型剧集库同名分集很多；按唯一 ID 排序，避免名称排序导致跨页重复。
-	err := c.get(ctx, "/Items", url.Values{"ParentId": {library}, "Recursive": {"true"}, "IncludeItemTypes": {"Movie,Series,Episode"}, "Fields": {"ProviderIds,ParentId"}, "StartIndex": {strconv.Itoa(start)}, "Limit": {"200"}, "SortBy": {"Id"}, "SortOrder": {"Ascending"}, "EnableImages": {"false"}, "EnableUserData": {"false"}}, &v)
+	err := c.get(ctx, "/Items", url.Values{"ParentId": {library}, "Recursive": {"true"}, "IncludeItemTypes": {"Movie,Series,Episode"}, "Fields": {"ProviderIds,ParentId,DateCreated"}, "StartIndex": {strconv.Itoa(start)}, "Limit": {"200"}, "SortBy": {"Id"}, "SortOrder": {"Ascending"}, "EnableImages": {"false"}, "EnableUserData": {"false"}}, &v)
 	return v, err
 }
 func (c *Client) Item(ctx context.Context, id string, versions bool) (*Item, error) {
-	fields := "ProviderIds,ParentId"
+	fields := "ProviderIds,ParentId,DateCreated"
 	if versions {
 		fields += ",MediaSources,MediaStreams"
 	}
@@ -179,7 +180,7 @@ func (c *Client) InLibrary(ctx context.Context, libraryID, itemID string) (bool,
 	return true, nil
 }
 func (i Item) Record(library string) (model.EmbyItem, bool) {
-	v := model.EmbyItem{ID: i.ID, LibraryID: library, Type: i.Type, SeriesID: i.SeriesID, ParentID: i.ParentID, Name: i.Name, Season: -1, Episode: -1, EndEpisode: -1}
+	v := model.EmbyItem{ID: i.ID, LibraryID: library, Type: i.Type, SeriesID: i.SeriesID, ParentID: i.ParentID, Name: i.Name, DateCreated: normalizeDateCreated(i.DateCreated), Season: -1, Episode: -1, EndEpisode: -1}
 	for key, value := range i.ProviderIDs {
 		if strings.EqualFold(key, "tmdb") {
 			if id, err := strconv.ParseInt(value, 10, 64); err == nil && id > 0 {
@@ -197,4 +198,23 @@ func (i Item) Record(library string) (model.EmbyItem, bool) {
 		v.EndEpisode = *i.IndexNumberEnd
 	}
 	return v, i.ID != "" && !i.IsVirtualItem && i.LocationType != "Virtual" && (i.Type == "Movie" || i.Type == "Series" || i.Type == "Episode")
+}
+
+func normalizeDateCreated(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse("2006-01-02T15:04:05.999999999", value)
+		if err != nil {
+			return ""
+		}
+		parsed = time.Date(parsed.Year(), parsed.Month(), parsed.Day(), parsed.Hour(), parsed.Minute(), parsed.Second(), parsed.Nanosecond(), time.UTC)
+	}
+	if parsed.Year() < 1970 {
+		return ""
+	}
+	return parsed.UTC().Format(time.RFC3339Nano)
 }

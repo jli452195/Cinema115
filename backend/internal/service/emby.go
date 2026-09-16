@@ -49,9 +49,11 @@ type EmbyStatus struct {
 	EventError      string `json:"eventError"`
 	MetadataPending int    `json:"metadataPending"`
 	MetadataFailed  int    `json:"metadataFailed"`
+	UpdatesStatus   string `json:"updatesStatus"`
 }
 
 var errEmbyMetadataPending = errors.New("Emby 刮削信息不完整")
+var errEmbyLibraryChanged = errors.New("Emby 媒体库在同步期间发生变化")
 
 type EmbyService struct {
 	mu              sync.RWMutex
@@ -279,7 +281,17 @@ func (s *EmbyService) statusLocked(ctx context.Context) (EmbyStatus, error) {
 	if err != nil {
 		return EmbyStatus{}, err
 	}
-	return EmbyStatus{EmbyState: state, Configured: c.APIKey != "", Pending: pending, Failed: failed, Connected: connected, ConnectionError: message, EventError: eventError, MetadataPending: metadataPending, MetadataFailed: metadataFailed}, nil
+	updatesStatus := "waiting"
+	if state.Active != "" && state.UpdatesGeneration == state.Active {
+		updatesStatus = "building"
+		if state.UpdatesReady {
+			updatesStatus = "ready"
+		}
+		if state.UpdatesError != "" {
+			updatesStatus = "failed"
+		}
+	}
+	return EmbyStatus{EmbyState: state, Configured: c.APIKey != "", Pending: pending, Failed: failed, Connected: connected, ConnectionError: message, EventError: eventError, MetadataPending: metadataPending, MetadataFailed: metadataFailed, UpdatesStatus: updatesStatus}, nil
 }
 func (s *EmbyService) StartSync(ctx context.Context) error {
 	s.mu.Lock()
@@ -299,6 +311,8 @@ func (s *EmbyService) Run(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var updatesRetryAt time.Time
+	var updatesRetryScope string
 	for {
 		select {
 		case <-ctx.Done():
@@ -347,6 +361,24 @@ func (s *EmbyService) Run(ctx context.Context) error {
 		if state.Active == "" {
 			continue
 		}
+		if state.UpdatesGeneration == state.Active && !state.UpdatesReady {
+			if updatesRetryScope != scope {
+				updatesRetryScope = scope
+				updatesRetryAt = time.Time{}
+			}
+			if !time.Now().Before(updatesRetryAt) {
+				_, buildErr := s.db.EmbyBuildMediaUpdates(ctx, scope, state.Active, 1000)
+				if ctx.Err() != nil {
+					return nil
+				}
+				if buildErr != nil {
+					if err := s.db.EmbyMediaUpdatesError(ctx, scope, state.Active, buildErr.Error()); err != nil {
+						return errors.Join(buildErr, err)
+					}
+					updatesRetryAt = time.Now().Add(30 * time.Second)
+				}
+			}
+		}
 		// 每轮最多处理十条，退出信号和配置变更能及时被观察到。
 		for n := 0; n < 10; n++ {
 			if ctx.Err() != nil {
@@ -367,36 +399,74 @@ func (s *EmbyService) Run(ctx context.Context) error {
 }
 func (s *EmbyService) syncLibrary(ctx context.Context, c EmbyConfig) error {
 	scope := embyScope(c)
-	generation := strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, _, cutoff, err := s.db.EmbyEventStats(ctx, scope)
+	state, err := s.db.EmbyState(ctx, scope)
 	if err != nil {
 		return err
 	}
-	if err := s.db.EmbyProgress(ctx, scope, "running", 0, ""); err != nil {
-		return err
+	if state.StagingComplete && state.StagingGeneration != "" {
+		return s.publishLibrary(ctx, c, state.StagingGeneration, state.StagingCutoff)
 	}
-	workCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
-	defer cancel()
-	count, scanErr := s.scan(workCtx, c, generation)
-	if ctx.Err() != nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if embyScope(s.config) != scope {
-		scanErr = fmt.Errorf("媒体库配置已更改，请按新配置重新同步")
-	}
-	if scanErr != nil {
-		if err := s.db.EmbyDiscard(ctx, scope, generation); err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		generation := strconv.FormatInt(time.Now().UnixNano(), 10)
+		_, _, cutoff, err := s.db.EmbyEventStats(ctx, scope)
+		if err != nil {
 			return err
 		}
-		return s.db.EmbyProgress(ctx, scope, "failed", count, scanErr.Error())
+		if err := s.db.EmbyBeginSync(ctx, scope, generation, cutoff); err != nil {
+			return err
+		}
+		workCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
+		count, scanErr := s.scan(workCtx, c, generation)
+		cancel()
+		if ctx.Err() != nil {
+			return nil
+		}
+		if embyScope(s.snapshot()) != scope {
+			scanErr = fmt.Errorf("媒体库配置已更改，请按新配置重新同步")
+		}
+		if scanErr != nil {
+			if err := s.db.EmbyFailSync(ctx, scope, generation, scanErr.Error(), true); err != nil {
+				return err
+			}
+			if !errors.Is(scanErr, errEmbyLibraryChanged) || attempt > 0 {
+				return nil
+			}
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+			continue
+		}
+		if err := s.db.EmbyCompleteStage(ctx, scope, generation, count); err != nil {
+			return err
+		}
+		return s.publishLibrary(ctx, c, generation, cutoff)
 	}
-	if err := s.db.EmbyPublish(ctx, scope, generation, cutoff); err != nil {
-		return err
+	return nil
+}
+
+func (s *EmbyService) publishLibrary(ctx context.Context, c EmbyConfig, generation string, cutoff int64) error {
+	scope := embyScope(c)
+	s.mu.Lock()
+	if embyScope(s.config) != scope {
+		s.mu.Unlock()
+		return s.db.EmbyFailSync(ctx, scope, generation, "媒体库配置已更改，请按新配置重新同步", true)
 	}
-	s.checkedAt = time.Now()
-	s.connectionError = ""
+	err := s.db.EmbyPublish(ctx, scope, generation, cutoff)
+	if err == nil {
+		s.checkedAt = time.Now()
+		s.connectionError = ""
+	}
+	s.mu.Unlock()
+	if err == nil {
+		return nil
+	}
+	if recordErr := s.db.EmbyFailSync(ctx, scope, generation, err.Error(), false); recordErr != nil {
+		return errors.Join(err, recordErr)
+	}
 	return nil
 }
 func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string) (int, error) {
@@ -436,7 +506,7 @@ func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string)
 				expected = page.TotalRecordCount
 			}
 			if page.TotalRecordCount != expected {
-				return count, fmt.Errorf("同步期间媒体库数量变化，请稍后重试全量同步")
+				return count, fmt.Errorf("%w，请稍后重试全量同步", errEmbyLibraryChanged)
 			}
 			if expected < 0 || start+len(page.Items) > expected {
 				return count, fmt.Errorf("Emby 分页总数无效，已保留旧索引")
@@ -454,10 +524,7 @@ func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string)
 					records = append(records, record)
 				}
 			}
-			if err := s.db.EmbyStage(ctx, scope, generation, records); err != nil {
-				return count, err
-			}
-			if err := s.db.EmbyQueueMetadata(ctx, scope, records); err != nil {
+			if err := s.db.EmbyStagePage(ctx, scope, generation, records); err != nil {
 				return count, err
 			}
 			start += len(page.Items)

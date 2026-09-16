@@ -19,6 +19,7 @@ type SeasonSummary struct {
 	ID           int    `json:"id"`
 	Number       int    `json:"number"`
 	Name         string `json:"name"`
+	PosterURL    string `json:"posterUrl"`
 	EpisodeCount int    `json:"episodeCount"`
 	Date         string `json:"date"`
 }
@@ -152,6 +153,7 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 			ID           int    `json:"id"`
 			Number       int    `json:"season_number"`
 			Name         string `json:"name"`
+			Poster       string `json:"poster_path"`
 			EpisodeCount int    `json:"episode_count"`
 			Date         string `json:"air_date"`
 		} `json:"seasons"`
@@ -210,7 +212,7 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		if season.Number < 0 {
 			continue
 		}
-		detail.Seasons = append(detail.Seasons, SeasonSummary{ID: season.ID, Number: season.Number, Name: season.Name, EpisodeCount: season.EpisodeCount, Date: season.Date})
+		detail.Seasons = append(detail.Seasons, SeasonSummary{ID: season.ID, Number: season.Number, Name: season.Name, PosterURL: imageURL(season.Poster, "w500"), EpisodeCount: season.EpisodeCount, Date: season.Date})
 	}
 	return detail, nil
 }

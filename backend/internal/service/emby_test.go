@@ -21,16 +21,17 @@ import (
 const testEmbyServerID = "30ffc4da1ff94898a54620e1b6aa5b90"
 
 type embyFixture struct {
-	mu             sync.Mutex
-	items          []emby.Item
-	failPage       bool
-	missingLibrary bool
-	detailCalls    int
-	pageCalls      int
-	server         *httptest.Server
-	service        *EmbyService
-	db             *storage.Store
-	path           string
+	mu              sync.Mutex
+	items           []emby.Item
+	failPage        bool
+	countChangeOnce bool
+	missingLibrary  bool
+	detailCalls     int
+	pageCalls       int
+	server          *httptest.Server
+	service         *EmbyService
+	db              *storage.Store
+	path            string
 }
 
 func number(n int) *int { return &n }
@@ -111,7 +112,12 @@ func newEmbyFixture(t *testing.T) *embyFixture {
 			if start > len(items) {
 				start = len(items)
 			}
-			json.NewEncoder(w).Encode(emby.Page{Items: items[start:end], TotalRecordCount: len(items)})
+			total := len(items)
+			if f.countChangeOnce && start > 0 {
+				f.countChangeOnce = false
+				total++
+			}
+			json.NewEncoder(w).Encode(emby.Page{Items: items[start:end], TotalRecordCount: total})
 		default:
 			if strings.HasSuffix(r.URL.Path, "/Ancestors") {
 				id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/emby/Items/"), "/Ancestors")
@@ -568,6 +574,16 @@ func TestEmbyMainConfigPreservesWebhookBaseURL(t *testing.T) {
 	}
 	if f.service.Config().WebhookBaseURL != "http://nas:3002" {
 		t.Fatal("主配置没有保存回调地址")
+	}
+}
+
+func TestEmbyFullSyncRetriesOneConcurrentLibraryChange(t *testing.T) {
+	f := newEmbyFixture(t)
+	f.countChangeOnce = true
+	f.sync(t)
+	state, err := f.service.Status(context.Background())
+	if err != nil || state.Status != "idle" || state.Count == 0 || f.countChangeOnce {
+		t.Fatalf("媒体数量变化后没有自动重试成功: %+v %v", state, err)
 	}
 }
 

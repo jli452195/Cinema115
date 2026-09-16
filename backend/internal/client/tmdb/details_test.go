@@ -27,7 +27,7 @@ func TestDetailsMovieTVAndSeason(t *testing.T) {
 			if r.URL.Query().Get("append_to_response") != "aggregate_credits,external_ids" {
 				t.Error("未附加全季演员")
 			}
-			w.Write([]byte(`{"id":42,"name":"剧集","original_name":"TV","first_air_date":"2020-03-04","episode_run_time":[45],"number_of_episodes":10,"genres":[{"id":18,"name":"剧情"}],"production_countries":[{"name":"China"}],"seasons":[{"id":2,"season_number":0,"name":"特别篇","episode_count":1},{"id":3,"season_number":1,"name":"第1季","episode_count":9}],"aggregate_credits":{"cast":[{"id":8,"name":"主演","roles":[{"character":"主角"}],"profile_path":"https://untrusted/image"}]},"external_ids":{"imdb_id":"tt12/evil"}}`))
+			w.Write([]byte(`{"id":42,"name":"剧集","original_name":"TV","first_air_date":"2020-03-04","episode_run_time":[45],"number_of_episodes":10,"genres":[{"id":18,"name":"剧情"}],"production_countries":[{"name":"China"}],"seasons":[{"id":2,"season_number":0,"name":"特别篇","poster_path":"/special.jpg","episode_count":1},{"id":3,"season_number":1,"name":"第1季","episode_count":9}],"aggregate_credits":{"cast":[{"id":8,"name":"主演","roles":[{"character":"主角"}],"profile_path":"https://untrusted/image"}]},"external_ids":{"imdb_id":"tt12/evil"}}`))
 		case "/tv/42/season/0":
 			w.Write([]byte(`{"id":2,"season_number":0,"name":"特别篇","episodes":[{"id":11,"episode_number":1,"name":"幕后","runtime":30,"vote_average":8.5,"vote_count":10,"still_path":"/still.jpg"}]}`))
 		default:
@@ -53,7 +53,7 @@ func TestDetailsMovieTVAndSeason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tv.Title != "剧集" || tv.Runtime != 45 || tv.Date != "2020-03-04" || tv.Cast[0].Character != "主角" || tv.Cast[0].ProfileURL != "" || tv.IMDBURL != "" || len(tv.Seasons) != 2 || tv.Seasons[0].Number != 0 || tv.EpisodeCount != 10 {
+	if tv.Title != "剧集" || tv.Runtime != 45 || tv.Date != "2020-03-04" || tv.Cast[0].Character != "主角" || tv.Cast[0].ProfileURL != "" || tv.IMDBURL != "" || len(tv.Seasons) != 2 || tv.Seasons[0].Number != 0 || !strings.Contains(tv.Seasons[0].PosterURL, "/w500/special.jpg") || tv.EpisodeCount != 10 {
 		t.Fatal("剧集详情或特殊季处理错误")
 	}
 	if calls["/tv/42/season/0"] != 0 {

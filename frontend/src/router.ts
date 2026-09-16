@@ -15,6 +15,7 @@ import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
+import UpdatesView from './views/UpdatesView.vue'
 import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebsiteAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
@@ -22,6 +23,7 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/notifications', name: 'notifications', component: NotificationsView },
+    { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
     { path: '/follows', name: 'my-follows', component: MyFollowsView },
     { path: '/users', name: 'users', component: WebsiteUsersView },

@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 16
+const schemaVersion = 18
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -338,6 +338,16 @@ PRAGMA user_version=14;`); err != nil {
 		}
 		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=16"); err != nil {
 			return fmt.Errorf("保存追更 Telegram Bot 迁移版本: %w", err)
+		}
+	}
+	if version < 17 {
+		if err := migrateMediaUpdates(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if version < 18 {
+		if err := migrateEmbySyncCheckpoints(ctx, tx); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

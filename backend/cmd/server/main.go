@@ -110,6 +110,9 @@ func main() {
 	}
 	httpapi.RegisterEmby(r, admin, embyService)
 	httpapi.RegisterWebsiteCatalog(catalog, embyService)
+	recentUpdates := &service.RecentUpdatesService{Source: embyService, Metadata: tmdbService}
+	httpapi.RegisterRecentUpdates(admin, recentUpdates)
+	httpapi.RegisterRecentUpdates(catalog, recentUpdates)
 	resourceMatcher := service.NewResourceMatchService(tmdbService, embyService)
 	httpapi.RegisterResourceMatch(admin, resourceMatcher)
 	httpapi.RegisterResourceMatch(catalog, resourceMatcher)

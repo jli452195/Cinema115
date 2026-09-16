@@ -11,7 +11,7 @@ export const websiteToken = readonly(token)
 export const websiteUser = readonly(user)
 export const websiteAuthError = readonly(error)
 export const isWebsiteAdmin = computed(() => user.value?.role === 'admin')
-export const websiteBrowseRoutes = new Set(['home', 'tv', 'movie', 'search', 'person', 'collection', 'tv-detail', 'movie-detail', 'my-follows', 'notifications'])
+export const websiteBrowseRoutes = new Set(['home', 'tv', 'movie', 'updates', 'search', 'person', 'collection', 'tv-detail', 'movie-detail', 'my-follows', 'notifications'])
 
 export function clearWebsiteSession() {
   token.value = ''; user.value = undefined; error.value = ''; checkedAt = 0
