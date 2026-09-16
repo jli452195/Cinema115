@@ -23,7 +23,7 @@ const editing = ref<AdminFollow>(), editStatus = ref('pending'), editNote = ref(
 const editError = ref('')
 const lifecycle = new AbortController()
 let reader: AbortController | undefined
-const labels: Record<string, string> = { pending: '待处理', processing: '处理中', completed: '已完成' }
+const labels: Record<string, string> = { pending: '待处理', processing: '处理中', closed: '已关闭', completed: '已完成' }
 async function request(path: string, body?: object, signal = lifecycle.signal) {
   const response = await fetch(`/api/admin/follows${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
   const data = await response.json().catch(() => null)
@@ -46,15 +46,16 @@ async function load() {
 function filter(nextOffset = 0) {
   return router.push({ path: '/follows/manage', query: { ...(kind.value ? { kind: kind.value } : {}), ...(status.value ? { status: status.value } : {}), ...(query.value.trim() ? { q: query.value.trim() } : {}), ...(nextOffset ? { offset: String(nextOffset) } : {}) } })
 }
-function edit(item: AdminFollow) { editing.value = item; editStatus.value = item.status === 'processing' ? 'processing' : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = ''; notice.value = '' }
+function edit(item: AdminFollow) { editing.value = item; editStatus.value = ['processing', 'closed'].includes(item.status) ? item.status : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = ''; notice.value = '' }
 async function save() {
   const item = editing.value
   if (!item || busy.value) return
   busy.value = true; error.value = ''; editError.value = ''; notice.value = ''
   try {
+    const savedStatus = editStatus.value
     await request(`/${item.kind}/${item.tmdbId}`, { status: editStatus.value, note: editNote.value, revision: item.revision })
     if (lifecycle.signal.aborted) return
-    editing.value = undefined; notice.value = '处理状态与说明已保存，订阅用户可以查看。'; await load()
+    editing.value = undefined; notice.value = savedStatus === 'closed' ? '已关闭资源搜索，并通知当前订阅用户。' : '处理状态与说明已保存，订阅用户可以查看。'; await load()
   } catch (e) { if (!lifecycle.signal.aborted) editError.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = false }
 }
@@ -68,7 +69,7 @@ async function saveSettings() {
 function useCurrentAddress() { baseUrl.value = window.location.origin }
 watch(() => [props.token, route.query.kind, route.query.status, route.query.q, route.query.offset], () => {
   kind.value = ['movie', 'tv'].includes(String(route.query.kind)) ? String(route.query.kind) : ''
-  status.value = ['pending', 'processing', 'completed'].includes(String(route.query.status)) ? String(route.query.status) : 'pending'
+  status.value = ['pending', 'processing', 'closed', 'completed'].includes(String(route.query.status)) ? String(route.query.status) : 'pending'
   query.value = typeof route.query.q === 'string' ? route.query.q.slice(0, 100) : ''
   const value = Number(route.query.offset || 0); offset.value = Number.isInteger(value) && value >= 0 && value <= 1000000 ? value : 0
   editing.value = undefined; error.value = ''; void load()
@@ -91,9 +92,10 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
       <form class="space-y-4" @submit.prevent="save">
         <p class="break-words text-sm font-semibold text-slate-900">{{ editing.title }}</p>
         <p v-if="editing.status === 'completed'" class="text-sm text-emerald-700">已由 Emby 入库检查自动完成，可更新处理说明。</p>
-        <label v-else class="block text-sm text-slate-600">处理状态<select v-model="editStatus" aria-label="处理状态" :disabled="busy" class="mt-2 w-full rounded-lg border border-slate-200 p-2.5"><option value="pending">待处理</option><option value="processing">处理中</option></select></label>
-        <label class="block text-sm text-slate-600">处理说明（用户可见）<textarea v-model="editNote" :disabled="busy" maxlength="500" rows="4" class="mt-2 w-full rounded-lg border border-slate-200 p-3" placeholder="例如：正在查找资源，或暂未找到合适版本" /></label>
-        <p class="text-xs text-slate-400">生成 STRM 不等于入库完成，入库以 Emby 索引为准。</p>
+        <label v-else class="block text-sm text-slate-600">处理状态<select v-model="editStatus" aria-label="处理状态" :disabled="busy" class="mt-2 w-full rounded-lg border border-slate-200 p-2.5"><option value="pending">待处理</option><option value="processing">处理中</option><option value="closed">已关闭</option></select></label>
+        <label class="block text-sm text-slate-600">处理说明（用户可见）<textarea v-model="editNote" :disabled="busy" :required="editStatus === 'closed'" maxlength="500" rows="4" class="mt-2 w-full rounded-lg border border-slate-200 p-3" :placeholder="editStatus === 'closed' ? '请填写关闭原因，例如：暂未找到可用资源' : '例如：正在查找资源，或暂未找到合适版本'" /></label>
+        <p v-if="editStatus === 'closed'" class="text-xs leading-5 text-amber-700">关闭后停止后续资源搜索并通知订阅用户；已经提交的 STRM 生成可能仍会完成，Emby 入库检查会继续。</p>
+        <p v-else class="text-xs text-slate-400">生成 STRM 不等于入库完成，入库以 Emby 索引为准。</p>
         <p v-if="editError" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-600">{{ editError }}</p>
         <div class="flex justify-end gap-4"><button type="button" :disabled="busy" class="px-3 py-2 text-sm text-slate-500 disabled:opacity-40" @click="editing = undefined">取消</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{{ busy ? '保存中…' : '保存处理' }}</button></div>
       </form>
@@ -112,7 +114,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         </form>
       </section>
       <nav aria-label="处理状态筛选" class="flex flex-wrap gap-2">
-        <button v-for="tab in ['pending', 'processing', 'completed']" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
+        <button v-for="tab in ['pending', 'processing', 'closed', 'completed']" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
       </nav>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
         <select v-model="kind" aria-label="影视类型" class="rounded-lg border border-slate-200 bg-white p-2.5 text-sm" @change="filter()"><option value="">全部类型</option><option value="movie">电影</option><option value="tv">剧集</option></select>

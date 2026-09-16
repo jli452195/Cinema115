@@ -73,7 +73,8 @@ func (s *Store) SaveFollowCheck(ctx context.Context, job model.FollowCheck, p mo
 	defer tx.Rollback()
 	var old model.FollowProgress
 	var title string
-	err = tx.QueryRowContext(ctx, `SELECT c.state,c.aired,c.owned,r.title FROM follow_checks c JOIN follow_requests r USING(kind,tmdb_id) WHERE c.kind=? AND c.tmdb_id=? AND c.version=? AND EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=c.kind AND f.tmdb_id=c.tmdb_id AND f.active=1)`, job.Kind, job.TMDBID, job.Version).Scan(&old.State, &old.Aired, &old.Owned, &title)
+	var searchClosed bool
+	err = tx.QueryRowContext(ctx, `SELECT c.state,c.aired,c.owned,r.title,r.search_closed FROM follow_checks c JOIN follow_requests r USING(kind,tmdb_id) WHERE c.kind=? AND c.tmdb_id=? AND c.version=? AND EXISTS(SELECT 1 FROM user_follows f WHERE f.kind=c.kind AND f.tmdb_id=c.tmdb_id AND f.active=1)`, job.Kind, job.TMDBID, job.Version).Scan(&old.State, &old.Aired, &old.Owned, &title, &searchClosed)
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -109,7 +110,11 @@ WHERE kind=? AND tmdb_id=? AND status='checking' AND cycle=(SELECT cycle FROM fo
 		case p.State == "caught_up" && (old.State != "caught_up" || p.Owned > old.Owned):
 			message = fmt.Sprintf("已追平，已播出的 %d 集正片全部入库；继续追踪后续更新", p.Aired)
 		case (old.State == "completed" || old.State == "caught_up") && p.State != old.State && p.State != "completed" && p.State != "caught_up":
-			message = "入库或播出信息已变化，已恢复追踪，请查看最新进度"
+			if searchClosed {
+				message = "入库或播出信息已变化，资源搜索仍为已关闭，请查看最新进度"
+			} else {
+				message = "入库或播出信息已变化，已恢复追踪，请查看最新进度"
+			}
 		case p.State == "tracking" && p.Owned > old.Owned:
 			message = fmt.Sprintf("剧集更新入库：已播 %d 集，已入库 %d 集", p.Aired, p.Owned)
 		}

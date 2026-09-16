@@ -10,6 +10,27 @@ import (
 	"strm115/backend/internal/model"
 )
 
+func TestFollowClosedMigrationFromFourteen(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE follow_requests DROP COLUMN search_closed; PRAGMA user_version=14;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var version, closed int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO follow_requests(kind,tmdb_id,title,poster_url,release_date,created_at) VALUES('tv',1,'迁移测试','','','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT search_closed FROM follow_requests WHERE tmdb_id=1`).Scan(&closed); err != nil || version != 15 || closed != 0 {
+		t.Fatalf("migration version=%d closed=%d err=%v", version, closed, err)
+	}
+}
+
 func TestFollowAdminMigrationAtomicNotificationsAndCycles(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
@@ -104,5 +125,110 @@ func TestFollowAdminMigrationAtomicNotificationsAndCycles(t *testing.T) {
 	var count int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM follow_requests WHERE tmdb_id=102").Scan(&count); err != nil || count != 0 {
 		t.Fatal("事务失败仍保留影视申请", err)
+	}
+}
+
+func TestAdminCloseFollowStopsSearchAndPreservesLibraryTracking(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	if err := s.SaveFollowSettings(ctx, model.FollowSettings{AutoEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	follow := model.Follow{Kind: "tv", TMDBID: 200, Title: "关闭测试剧集"}
+	for _, user := range []string{"alice", "bob"} {
+		if err := s.SubscribeWithConfiguredAutomation(ctx, user, follow, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := s.AdminFollows(ctx, "tv", "pending", "200", 0)
+	if err != nil || len(list) != 1 {
+		t.Fatal(list, err)
+	}
+	if err := s.UpdateFollow(ctx, "tv", 200, "closed", "暂未找到可用资源", list[0].Revision); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{"alice", "bob"} {
+		got, err := s.Follow(ctx, user, "tv", 200)
+		if err != nil || got == nil || got.Status != "closed" || got.Note != "暂未找到可用资源" {
+			t.Fatalf("%s did not see closed follow: %+v %v", user, got, err)
+		}
+		notifications, err := s.WebsiteNotifications(ctx, user, 0)
+		if err != nil || len(notifications) != 1 || notifications[0].Message != "追更已关闭：暂未找到可用资源" {
+			t.Fatalf("%s close notification: %+v %v", user, notifications, err)
+		}
+	}
+	var jobStatus string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM follow_bot_jobs WHERE kind='tv' AND tmdb_id=200`).Scan(&jobStatus); err != nil || jobStatus != "cancelled" {
+		t.Fatalf("closed search job status=%q err=%v", jobStatus, err)
+	}
+	if err := s.SubscribeWithConfiguredAutomation(ctx, "charlie", follow, nil); err != nil {
+		t.Fatal("closed follow should still accept subscribers", err)
+	}
+	charlie, err := s.Follow(ctx, "charlie", "tv", 200)
+	if err != nil || charlie == nil || charlie.Status != "closed" {
+		t.Fatalf("new subscriber did not inherit closed state: %+v %v", charlie, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM follow_bot_jobs WHERE kind='tv' AND tmdb_id=200`).Scan(&jobStatus); err != nil || jobStatus != "cancelled" {
+		t.Fatalf("new subscriber restarted closed search: %q %v", jobStatus, err)
+	}
+	counts, err := s.FollowCounts(ctx, "alice", "", "")
+	if err != nil || counts["closed"] != 1 || counts["ongoing"] != 0 {
+		t.Fatalf("closed counts=%v err=%v", counts, err)
+	}
+	closedItems, err := s.Follows(ctx, "alice", "", "closed", 0)
+	if err != nil || len(closedItems) != 1 || closedItems[0].Status != "closed" {
+		t.Fatalf("closed list=%+v err=%v", closedItems, err)
+	}
+	ongoingItems, err := s.Follows(ctx, "alice", "", "ongoing", 0)
+	if err != nil || len(ongoingItems) != 0 {
+		t.Fatalf("closed follow leaked into ongoing: %+v %v", ongoingItems, err)
+	}
+
+	checks, err := s.DueFollowChecks(ctx, time.Now().Unix())
+	if err != nil || len(checks) != 1 {
+		t.Fatalf("closed follow should keep library check: %+v %v", checks, err)
+	}
+	if err := s.SaveFollowCheck(ctx, checks[0], model.FollowProgress{State: "completed", CheckedAt: time.Now().Unix()}, time.Now().Add(6*time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Follow(ctx, "alice", "tv", 200)
+	if err != nil || got.Status != "completed" {
+		t.Fatalf("closed follow did not complete after library match: %+v %v", got, err)
+	}
+	if err := s.RecheckFollows(ctx); err != nil {
+		t.Fatal(err)
+	}
+	checks, err = s.DueFollowChecks(ctx, time.Now().Unix())
+	if err != nil || len(checks) != 1 {
+		t.Fatal(checks, err)
+	}
+	if err := s.SaveFollowCheck(ctx, checks[0], model.FollowProgress{State: "absent", CheckedAt: time.Now().Unix()}, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Follow(ctx, "alice", "tv", 200)
+	if err != nil || got.Status != "closed" {
+		t.Fatalf("removed library item should return to closed: %+v %v", got, err)
+	}
+
+	list, err = s.AdminFollows(ctx, "tv", "closed", "200", 0)
+	if err != nil || len(list) != 1 {
+		t.Fatal(list, err)
+	}
+	if err := s.SaveFollowSettings(ctx, model.FollowSettings{AutoEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateFollow(ctx, "tv", 200, "pending", "重新查找资源", list[0].Revision); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Follow(ctx, "alice", "tv", 200)
+	if err != nil || got.Status != "pending" {
+		t.Fatalf("follow was not reopened: %+v %v", got, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM follow_bot_jobs WHERE kind='tv' AND tmdb_id=200`).Scan(&jobStatus); err != nil || jobStatus != "checking" {
+		t.Fatalf("reopened search job status=%q err=%v", jobStatus, err)
+	}
+	notifications, err := s.WebsiteNotifications(ctx, "alice", 0)
+	if err != nil || len(notifications) != 4 || notifications[0].Message != "追更已恢复处理：重新查找资源" {
+		t.Fatalf("reopen notification: %+v %v", notifications, err)
 	}
 }

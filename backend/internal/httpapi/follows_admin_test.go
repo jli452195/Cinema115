@@ -102,6 +102,26 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 	if state["status"] != "processing" || state["note"] != "已开始寻找资源" {
 		t.Fatal("用户状态未更新", state)
 	}
+	list = call("GET", "/api/admin/follows?q=100", adminToken, nil, 200)["items"].([]any)
+	revision = list[0].(map[string]any)["revision"]
+	call("POST", "/api/admin/follows/tv/100", adminToken, map[string]any{"status": "closed", "revision": revision}, 400)
+	call("POST", "/api/admin/follows/tv/100", adminToken, map[string]any{"status": "closed", "note": "暂未找到可用资源", "revision": revision}, 200)
+	closed := call("GET", "/api/admin/follows?status=closed", adminToken, nil, 200)["items"].([]any)
+	if len(closed) != 1 || closed[0].(map[string]any)["status"] != "closed" {
+		t.Fatal("管理员已关闭筛选错误", closed)
+	}
+	state = call("GET", "/api/me/follows/tv/100", userToken, nil, 200)["request"].(map[string]any)
+	if state["status"] != "closed" || state["note"] != "暂未找到可用资源" {
+		t.Fatal("用户未看到关闭原因", state)
+	}
+	userClosed := call("GET", "/api/me/follows?status=closed", userToken, nil, 200)["items"].([]any)
+	if len(userClosed) != 1 || userClosed[0].(map[string]any)["status"] != "closed" {
+		t.Fatal("用户已关闭筛选错误", userClosed)
+	}
+	notifications, err := db.WebsiteNotifications(ctx, u.ID, 0)
+	if err != nil || len(notifications) != 1 || notifications[0].Message != "追更已关闭：暂未找到可用资源" {
+		t.Fatal("关闭通知错误", notifications, err)
+	}
 	for _, value := range []string{"javascript:alert(1)", "https://user:password@example.com", "https://example.com/path", "https://example.com/?token=secret"} {
 		call("POST", "/api/admin/follows/settings", adminToken, map[string]any{"baseUrl": value}, 400)
 	}

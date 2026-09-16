@@ -46,10 +46,20 @@ func (s *FollowService) AdminList(ctx context.Context, kind, status, query strin
 func (s *FollowService) Update(ctx context.Context, kind string, id int, status, note string, revision int64) error {
 	note = strings.TrimSpace(note)
 	// 处理状态不代表入库完成，禁止手动把未确认入库的影视标记完成。
-	if (status != "pending" && status != "processing") || revision < 1 || !utf8.ValidString(note) || utf8.RuneCountInString(note) > 500 {
-		return fmt.Errorf("%w：状态仅支持待处理或处理中，说明最多 500 字", ErrFollowInput)
+	if (status != "pending" && status != "processing" && status != "closed") || revision < 1 || !utf8.ValidString(note) || utf8.RuneCountInString(note) > 500 || status == "closed" && note == "" {
+		return fmt.Errorf("%w：状态仅支持待处理、处理中或已关闭；关闭原因必填，说明最多 500 字", ErrFollowInput)
 	}
-	return s.Store.UpdateFollow(ctx, kind, id, status, note, revision)
+	if err := s.Store.UpdateFollow(ctx, kind, id, status, note, revision); err != nil {
+		return err
+	}
+	if s.Logs != nil {
+		message := "管理员更新追更状态为" + status
+		if status == "closed" {
+			message = "管理员关闭追更搜索"
+		}
+		s.Logs.Append("订阅", kind+":"+strconv.Itoa(id), "订阅", "INFO", message)
+	}
+	return nil
 }
 func (s *FollowService) SaveBaseURL(ctx context.Context, value string) error {
 	settings, err := s.Store.FollowSettings(ctx)

@@ -53,7 +53,7 @@ func RegisterFollows(group *gin.RouterGroup, s *service.FollowService) {
 		kind := c.Query("kind")
 		status := c.DefaultQuery("status", "ongoing")
 		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		if (status != "ongoing" && status != "completed") || (kind != "" && kind != "movie" && kind != "tv") || err != nil || offset < 0 || offset > 1000000 {
+		if (status != "ongoing" && status != "closed" && status != "completed") || (kind != "" && kind != "movie" && kind != "tv") || err != nil || offset < 0 || offset > 1000000 {
 			c.JSON(400, gin.H{"error": "列表参数无效"})
 			return
 		}

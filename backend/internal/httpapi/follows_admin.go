@@ -25,7 +25,7 @@ func RegisterFollowAdmin(admin *gin.RouterGroup, s *service.FollowService) {
 	group.GET("", func(c *gin.Context) {
 		kind, status, query := c.Query("kind"), c.Query("status"), strings.TrimSpace(c.Query("q"))
 		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		if err != nil || offset < 0 || offset > 1000000 || (kind != "" && kind != "movie" && kind != "tv") || (status != "" && status != "pending" && status != "processing" && status != "completed") || !utf8.ValidString(query) || utf8.RuneCountInString(query) > 100 {
+		if err != nil || offset < 0 || offset > 1000000 || (kind != "" && kind != "movie" && kind != "tv") || (status != "" && status != "pending" && status != "processing" && status != "closed" && status != "completed") || !utf8.ValidString(query) || utf8.RuneCountInString(query) > 100 {
 			c.JSON(400, gin.H{"error": "筛选条件无效"})
 			return
 		}

@@ -12,7 +12,8 @@ import (
 
 var ErrFollowLimit = errors.New("追更数量已达上限，请先取消不需要的追更")
 
-const followColumns = "r.kind,r.tmdb_id,r.title,r.poster_url,r.release_date,r.status,f.subscribed_at,r.note"
+const effectiveFollowStatus = "CASE WHEN r.search_closed=1 AND r.status<>'completed' THEN 'closed' ELSE r.status END"
+const followColumns = "r.kind,r.tmdb_id,r.title,r.poster_url,r.release_date," + effectiveFollowStatus + ",f.subscribed_at,r.note"
 
 func scanFollow(row interface{ Scan(...any) error }) (model.Follow, error) {
 	var f model.Follow
@@ -75,6 +76,12 @@ func (s *Store) subscribe(ctx context.Context, userID string, f model.Follow, no
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM user_follows WHERE kind=? AND tmdb_id=? AND active=1", f.Kind, f.TMDBID).Scan(&followers); err != nil {
 		return fmt.Errorf("读取影视订阅人数: %w", err)
 	}
+	var searchClosed bool
+	var requestStatus string
+	err = tx.QueryRowContext(ctx, "SELECT search_closed,status FROM follow_requests WHERE kind=? AND tmdb_id=?", f.Kind, f.TMDBID).Scan(&searchClosed, &requestStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("读取追更关闭状态: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO follow_requests(kind,tmdb_id,title,poster_url,release_date,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(kind,tmdb_id) DO NOTHING`, f.Kind, f.TMDBID, f.Title, f.PosterURL, f.Date, now); err != nil {
 		return fmt.Errorf("保存影视申请: %w", err)
 	}
@@ -82,6 +89,15 @@ func (s *Store) subscribe(ctx context.Context, userID string, f model.Follow, no
 		return fmt.Errorf("保存用户订阅: %w", err)
 	}
 	if followers == 0 {
+		if searchClosed && requestStatus != "completed" {
+			if _, err := tx.ExecContext(ctx, `UPDATE follow_checks SET due=0,version=version+1 WHERE kind=? AND tmdb_id=?`, f.Kind, f.TMDBID); err != nil {
+				return fmt.Errorf("恢复已关闭追更的入库检查: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("提交已关闭追更订阅: %w", err)
+			}
+			return nil
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO follow_checks(kind,tmdb_id) VALUES(?,?) ON CONFLICT(kind,tmdb_id) DO UPDATE SET state='unknown',aired=0,owned=0,checked_at=0,due=0,error='',version=version+1`, f.Kind, f.TMDBID); err != nil {
 			return fmt.Errorf("重置追更入库检查: %w", err)
 		}
@@ -138,8 +154,10 @@ func (s *Store) Follows(ctx context.Context, userID, kind, status string, offset
 	// 先在数据库筛选再分页，已完成记录不会占用追更中的页面名额。
 	if status == "completed" {
 		query += " AND r.status='completed'"
+	} else if status == "closed" {
+		query += " AND r.search_closed=1 AND r.status<>'completed'"
 	} else {
-		query += " AND r.status<>'completed'"
+		query += " AND r.search_closed=0 AND r.status<>'completed'"
 	}
 	if kind != "" {
 		query += " AND f.kind=?"

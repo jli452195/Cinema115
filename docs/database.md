@@ -34,6 +34,8 @@ Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、�
 
 版本 10 为 `follow_requests` 增加用户可见处理说明、修改时间、版本和申请轮次，并增加 `follow_settings` 保存通知的网站根地址。新一轮追更的订阅与 Telegram 通知在同一事务提交；多人追更同一影视不重复通知。
 
+版本 15 为 `follow_requests` 增加独立的资源搜索关闭标记。关闭、停止未生成的 Bot 任务和站内通知在同一事务提交；Emby 入库检查继续运行，入库完成与管理员关闭不会互相覆盖。
+
 ## 首次启动与迁移
 
 1. 停止旧版后端，避免旧程序继续写 JSON；更新前备份 `data/` 和 `.env`。

@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 14
+const schemaVersion = 15
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -269,6 +269,38 @@ CREATE TABLE IF NOT EXISTS share_run_cache (
 );
 PRAGMA user_version=14;`); err != nil {
 			return fmt.Errorf("迁移分享快照复用缓存: %w", err)
+		}
+	}
+	if version < 15 {
+		rows, err := tx.QueryContext(ctx, "PRAGMA table_info(follow_requests)")
+		if err != nil {
+			return fmt.Errorf("读取追更表结构: %w", err)
+		}
+		hasSearchClosed := false
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("读取追更表字段: %w", err)
+			}
+			hasSearchClosed = hasSearchClosed || name == "search_closed"
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("遍历追更表字段: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("关闭追更表结构查询: %w", err)
+		}
+		if !hasSearchClosed {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE follow_requests ADD COLUMN search_closed INTEGER NOT NULL DEFAULT 0 CHECK(search_closed IN (0,1))`); err != nil {
+				return fmt.Errorf("增加追更关闭状态: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=15`); err != nil {
+			return fmt.Errorf("迁移追更关闭状态: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
