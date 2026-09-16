@@ -7,6 +7,7 @@ import FollowDialog from '../components/FollowDialog.vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import type { Follow } from '../types/follows'
 import SettingSwitch from '../components/SettingSwitch.vue'
+import SelectMenu from '../components/SelectMenu.vue'
 
 interface AdminFollow extends Follow { subscriberCount: number; createdAt: string; updatedAt: string; revision: number }
 const props = defineProps<{ token: string }>()
@@ -24,6 +25,8 @@ const editError = ref('')
 const lifecycle = new AbortController()
 let reader: AbortController | undefined
 const labels: Record<string, string> = { pending: '待处理', processing: '处理中', closed: '已关闭', completed: '已完成' }
+const kindOptions = [{ value: '', label: '全部类型' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
+const statusOptions = [{ value: 'pending', label: '待处理' }, { value: 'processing', label: '处理中' }, { value: 'closed', label: '已关闭' }]
 async function request(path: string, body?: object, signal = lifecycle.signal) {
   const response = await fetch(`/api/admin/follows${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
   const data = await response.json().catch(() => null)
@@ -92,7 +95,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
       <form class="space-y-4" @submit.prevent="save">
         <p class="break-words text-sm font-semibold text-slate-900">{{ editing.title }}</p>
         <p v-if="editing.status === 'completed'" class="text-sm text-emerald-700">已由 Emby 入库检查自动完成，可更新处理说明。</p>
-        <label v-else class="block text-sm text-slate-600">处理状态<select v-model="editStatus" aria-label="处理状态" :disabled="busy" class="mt-2 w-full rounded-lg border border-slate-200 p-2.5"><option value="pending">待处理</option><option value="processing">处理中</option><option value="closed">已关闭</option></select></label>
+        <label v-else class="block text-sm text-slate-600">处理状态<SelectMenu v-model="editStatus" :options="statusOptions" :disabled="busy" label="处理状态" class="mt-2 block w-full" /></label>
         <label class="block text-sm text-slate-600">处理说明（用户可见）<textarea v-model="editNote" :disabled="busy" :required="editStatus === 'closed'" maxlength="500" rows="4" class="mt-2 w-full rounded-lg border border-slate-200 p-3" :placeholder="editStatus === 'closed' ? '请填写关闭原因，例如：暂未找到可用资源' : '例如：正在查找资源，或暂未找到合适版本'" /></label>
         <p v-if="editStatus === 'closed'" class="text-xs leading-5 text-amber-700">关闭后停止后续资源搜索并通知订阅用户；已经提交的 STRM 生成可能仍会完成，Emby 入库检查会继续。</p>
         <p v-else class="text-xs text-slate-400">生成 STRM 不等于入库完成，入库以 Emby 索引为准。</p>
@@ -117,7 +120,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         <button v-for="tab in ['pending', 'processing', 'closed', 'completed']" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
       </nav>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
-        <select v-model="kind" aria-label="影视类型" class="rounded-lg border border-slate-200 bg-white p-2.5 text-sm" @change="filter()"><option value="">全部类型</option><option value="movie">电影</option><option value="tv">剧集</option></select>
+        <SelectMenu v-model="kind" :options="kindOptions" label="影视类型" class="w-[7.75rem]" @change="filter()" />
         <input v-model="query" aria-label="搜索追更申请" maxlength="100" placeholder="片名或 TMDB ID" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-2.5 text-sm" /><button class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">搜索</button><button type="button" :disabled="loading || busy" class="px-2 text-sm text-blue-600 disabled:opacity-50" @click="editing = undefined; error = ''; load()">刷新</button>
       </form>
       <p v-if="loading" role="status" class="py-8 text-center text-sm text-slate-400">正在读取申请…</p>
