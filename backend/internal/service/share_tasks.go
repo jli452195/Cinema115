@@ -180,9 +180,7 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 		task.Status = "running"
 		return result, errors.Join(err, saveErr)
 	}
-	if err == nil {
-		s.notifySuccess(saveCtx, task.ID, req.Input, result)
-	}
+	s.notifySuccess(saveCtx, task.ID, req.Input, result, err)
 	return result, err
 }
 

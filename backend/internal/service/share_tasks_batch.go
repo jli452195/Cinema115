@@ -31,16 +31,36 @@ func (s *ShareTasks) GenerateBatch(ctx context.Context, inputs []GenerateInput) 
 
 // executePreparedBatch 执行已在接收阶段落盘的批次，供网页、Telegram 和订阅共用同一后台队列。
 func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.ShareTask, requests []shareTaskRequest, inputs []GenerateInput) ([]BatchOutcome, error) {
+	_, mergeNotifications := s.Notifier.(ShareBatchSuccessNotifier)
+	mergeNotifications = mergeNotifications && len(inputs) > 1
+	executionCtx := ctx
+	if mergeNotifications {
+		executionCtx = withShareBatchNotificationManaged(ctx)
+	}
+	notifyBatch := func(outcomes []BatchOutcome) {
+		if !mergeNotifications || len(tasks) == 0 {
+			return
+		}
+		for i, task := range tasks {
+			if i < len(outcomes) && outcomes[i].Result != nil && outcomes[i].Result.Written > 0 && task.Status == "running" {
+				return
+			}
+		}
+		notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		s.notifyBatchSuccess(notifyCtx, "batch:"+tasks[0].ID, requests, outcomes)
+	}
 	batch, ok := s.Generator.(BatchGenerator)
 	if !ok {
 		outcomes := make([]BatchOutcome, len(inputs))
 		for i := range inputs {
-			if err := ctx.Err(); err != nil {
-				outcomes[i].Result, outcomes[i].Err = s.finish(ctx, tasks[i], requests[i], nil, err, 0)
+			if err := executionCtx.Err(); err != nil {
+				outcomes[i].Result, outcomes[i].Err = s.finish(executionCtx, tasks[i], requests[i], nil, err, 0)
 				continue
 			}
-			outcomes[i].Result, outcomes[i].Err = s.execute(ctx, tasks[i], requests[i])
+			outcomes[i].Result, outcomes[i].Err = s.execute(executionCtx, tasks[i], requests[i])
 		}
+		notifyBatch(outcomes)
 		return outcomes, nil
 	}
 	if len(tasks) != len(inputs) || len(requests) != len(inputs) {
@@ -48,9 +68,9 @@ func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.Sh
 	}
 	started := time.Now()
 	if len(requests) > 0 {
-		ctx = context.WithValue(ctx, automationContextKey{}, requests[0].Settings)
+		executionCtx = context.WithValue(executionCtx, automationContextKey{}, requests[0].Settings)
 	}
-	outcomes, batchErr := batch.GenerateBatch(ctx, inputs)
+	outcomes, batchErr := batch.GenerateBatch(executionCtx, inputs)
 	if len(outcomes) != len(inputs) {
 		outcomes = make([]BatchOutcome, len(inputs))
 		batchErr = errors.Join(batchErr, errors.New("合并转存返回结果数量不正确"))
@@ -72,7 +92,8 @@ func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.Sh
 				tasks[i].Note += "共同临时目录尚未清理，请核对转存任务记录。"
 			}
 		}
-		out.Result, out.Err = s.finish(ctx, tasks[i], requests[i], out.Result, out.Err, elapsed)
+		out.Result, out.Err = s.finish(executionCtx, tasks[i], requests[i], out.Result, out.Err, elapsed)
 	}
+	notifyBatch(outcomes)
 	return outcomes, nil
 }

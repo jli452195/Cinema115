@@ -53,6 +53,7 @@ func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 	first := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var calls, notifications atomic.Int32
+	var wrongBot atomic.Bool
 	s, db, input := setupShareTasks(t, generateFunc(func(ctx context.Context, in GenerateInput) (*GenerationResult, error) {
 		n := calls.Add(1)
 		if in.Mode != "reshare" || generationCookie(ctx, nil) != "UID=42_A; SEID=private-cookie" || ctx.Value(automationContextKey{}).(AutomationSettings).AccountID != "original" {
@@ -72,7 +73,10 @@ func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 		reportGeneration(ctx, "generating", "测试文件已生成")
 		return &GenerationResult{Written: 1}, nil
 	}))
-	s.Notifier = notificationFunc(func(context.Context, string, GenerateInput, *GenerationResult) error {
+	s.Notifier = notificationFunc(func(_ context.Context, botID, _ string, _ GenerateInput, _ *GenerationResult, _ error) error {
+		if botID != "test-bot" {
+			wrongBot.Store(true)
+		}
 		notifications.Add(1)
 		return nil
 	})
@@ -83,6 +87,10 @@ func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	input.Mode = ""
+	settings = s.Settings.Value()
+	settings.TelegramEnabled, settings.BotID = true, "test-bot"
+	s.Settings.value = settings
+	s.Settings.ValidateBot = func(string, bool) error { return nil }
 	runs := NewShareRuns(root, s)
 	caller, closePage := context.WithCancel(context.Background())
 	view, err := runs.Submit(caller, strings.Repeat("a", 32), []GenerateInput{input, input})
@@ -103,12 +111,13 @@ func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 	s.Cookie = func() string { return "UID=99_A" }
 	settings.ReshareEnabled = false
 	settings.AccountID = "changed"
+	settings.BotID = "changed-bot"
 	if err := s.Settings.Save(settings); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
 	completed := awaitRun(t, runs, view.ID)
-	if completed.Status != "success" || calls.Load() != 2 || notifications.Load() != 2 {
+	if completed.Status != "success" || calls.Load() != 2 || notifications.Load() != 2 || wrongBot.Load() {
 		t.Fatal("关页后未完成全部来源或未通知", completed.Status, calls.Load(), notifications.Load())
 	}
 	repeated, err := runs.Submit(context.Background(), view.ID, []GenerateInput{input, input})

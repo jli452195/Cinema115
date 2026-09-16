@@ -38,23 +38,29 @@ const dateLabel = computed(() => {
 </script>
 
 <template>
-  <article class="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
-    <div class="flex min-w-0 items-start gap-3">
-      <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400">暂无海报</span></RouterLink>
-      <div class="min-w-0 flex-1 space-y-2">
-        <RouterLink :to="path" :title="item.title" class="line-clamp-2 break-words text-sm font-semibold leading-5 text-slate-900 hover:text-amber-600">{{ item.title }}</RouterLink>
-        <p class="text-[11px] leading-4 text-slate-400">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>
-        <div class="flex flex-wrap gap-1.5 text-[11px]"><span class="rounded px-2 py-0.5" :class="statusClass">{{ label }}</span><span v-if="admin" class="rounded bg-slate-100 px-2 py-0.5 text-slate-500">{{ subscriberCount || 0 }} 人追更</span></div>
-        <p class="text-[11px] leading-4" :class="positive ? 'text-emerald-700' : 'text-slate-500'">{{ progress }}</p>
+  <article class="relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
+    <div v-if="item.posterUrl && !failedImage" class="pointer-events-none absolute inset-x-0 top-0 h-40 overflow-hidden" aria-hidden="true">
+      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full scale-105 object-cover opacity-[0.18]" @error="failedImage = true" />
+      <div class="absolute inset-0 bg-gradient-to-b from-white/45 via-white/80 to-white"></div>
+    </div>
+    <div class="relative z-10 flex h-full min-w-0 flex-col">
+      <div class="flex min-w-0 items-start gap-3">
+        <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100 shadow-sm"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400">暂无海报</span></RouterLink>
+        <div class="min-w-0 flex-1 space-y-2">
+          <RouterLink :to="path" :title="item.title" class="line-clamp-2 break-words text-sm font-semibold leading-5 text-slate-900 hover:text-amber-600">{{ item.title }}</RouterLink>
+          <p class="text-[11px] leading-4 text-slate-500">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>
+          <div class="flex flex-wrap gap-1.5 text-[11px]"><span class="rounded px-2 py-0.5" :class="statusClass">{{ label }}</span><span v-if="admin" class="rounded bg-white/80 px-2 py-0.5 text-slate-600 ring-1 ring-slate-200/70">{{ subscriberCount || 0 }} 人追更</span></div>
+          <p class="text-[11px] leading-4" :class="positive ? 'text-emerald-700' : 'text-slate-600'">{{ progress }}</p>
+        </div>
       </div>
+      <p class="mt-3 text-[11px] text-slate-400">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
+      <button v-if="item.note" type="button" aria-label="查看处理说明" class="mt-3 rounded-lg bg-slate-50/90 px-3 py-2 text-left text-xs leading-5 text-slate-600 ring-1 ring-slate-100 hover:bg-slate-100" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
+      <div class="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
+        <template v-if="admin"><button type="button" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="emit('edit')">处理申请</button><RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="text-blue-600">搜索资源</RouterLink></template>
+        <RouterLink :to="path" class="text-slate-500 hover:text-blue-600">查看详情</RouterLink>
+        <button v-if="!admin" type="button" :disabled="busy" class="text-slate-400 hover:text-red-600 disabled:opacity-40" @click="emit('cancel')">{{ cancelling ? '取消中…' : '取消追更' }}</button>
+      </div>
+      <FollowDialog v-if="noteOpen" title="处理说明" @close="noteOpen = false"><p class="mb-3 text-sm font-semibold text-slate-900">{{ item.title }}</p><p class="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{{ item.note }}</p></FollowDialog>
     </div>
-    <p class="mt-3 text-[11px] text-slate-400">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
-    <button v-if="item.note" type="button" aria-label="查看处理说明" class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-left text-xs leading-5 text-slate-600 hover:bg-slate-100" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
-    <div class="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
-      <template v-if="admin"><button type="button" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="emit('edit')">处理申请</button><RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="text-blue-600">搜索资源</RouterLink></template>
-      <RouterLink :to="path" class="text-slate-500 hover:text-blue-600">查看详情</RouterLink>
-      <button v-if="!admin" type="button" :disabled="busy" class="text-slate-400 hover:text-red-600 disabled:opacity-40" @click="emit('cancel')">{{ cancelling ? '取消中…' : '取消追更' }}</button>
-    </div>
-    <FollowDialog v-if="noteOpen" title="处理说明" @close="noteOpen = false"><p class="mb-3 text-sm font-semibold text-slate-900">{{ item.title }}</p><p class="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{{ item.note }}</p></FollowDialog>
   </article>
 </template>

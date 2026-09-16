@@ -151,7 +151,7 @@ func (s *Store) SaveFollowBaseURL(ctx context.Context, value string) error {
 
 func (s *Store) FollowSettings(ctx context.Context) (model.FollowSettings, error) {
 	var value model.FollowSettings
-	if err := s.db.QueryRowContext(ctx, "SELECT base_url,auto_enabled FROM follow_settings WHERE id=1").Scan(&value.BaseURL, &value.AutoEnabled); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT base_url,auto_enabled,telegram_enabled,telegram_bot_id FROM follow_settings WHERE id=1").Scan(&value.BaseURL, &value.AutoEnabled, &value.TelegramEnabled, &value.BotID); err != nil {
 		return value, fmt.Errorf("读取追更设置: %w", err)
 	}
 	return value, nil
@@ -163,7 +163,7 @@ func (s *Store) SaveFollowSettings(ctx context.Context, value model.FollowSettin
 		return fmt.Errorf("开始保存追更设置: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "UPDATE follow_settings SET base_url=?,auto_enabled=?,account_id='' WHERE id=1", value.BaseURL, value.AutoEnabled); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE follow_settings SET base_url=?,auto_enabled=?,account_id='',telegram_enabled=?,telegram_bot_id=? WHERE id=1", value.BaseURL, value.AutoEnabled, value.TelegramEnabled, value.BotID); err != nil {
 		return fmt.Errorf("保存追更设置: %w", err)
 	}
 	if value.AutoEnabled {
@@ -179,4 +179,12 @@ SELECT 1 FROM follow_bot_jobs j JOIN follow_requests r USING(kind,tmdb_id) WHERE
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) MigrateFollowTelegramBot(ctx context.Context, id string, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE follow_settings SET telegram_bot_id=?,telegram_enabled=? WHERE id=1 AND telegram_bot_id=''", id, enabled)
+	if err != nil {
+		return fmt.Errorf("迁移追更 Telegram Bot 绑定: %w", err)
+	}
+	return nil
 }

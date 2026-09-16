@@ -7,12 +7,18 @@ import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
 import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
+import TelegramBotSelect from '../components/TelegramBotSelect.vue'
+import { telegramRequest } from '../lib/telegram-api'
+import type { TelegramBotConfig } from '../types/telegramBots'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
 
 const props = defineProps<{ token: string }>()
 const activeTab = ref<'basic' | 'normal' | 'reshare' | 'logs'>('basic')
 const accounts = ref<P115Account[]>([])
 const accountId = ref('')
+const bots = ref<TelegramBotConfig[]>([])
+const botId = ref('')
+const telegramEnabled = ref(false)
 const tabs = [{ id: 'basic', label: '基础设置', icon: '⚙' }, { id: 'normal', label: '普通分享', icon: '↗' }, { id: 'reshare', label: '转存再分享', icon: '↻' }, { id: 'logs', label: '日志', icon: '▤' }] as const
 const reviewRetryEnabled = ref(false)
 const reviewRetryMinutes = ref(30)
@@ -86,9 +92,13 @@ async function saveAutomation() {
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
     if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先选择已登录的 115 账号配置')
+    if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
-    const data = await request('automation-config', { accountId: accountId.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
+    const data = await request('automation-config', { accountId: accountId.value, botId: botId.value, telegramEnabled: telegramEnabled.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
     accountId.value = data.settings.accountId ?? ''
+    botId.value = data.settings.botId ?? ''
+    telegramEnabled.value = data.settings.telegramEnabled ?? false
+    botConfigured.value = data.botConfigured ?? false
     savedReshareEnabled.value = data.settings.reshareEnabled
     parentCID.value = data.settings.parentCID
     fixedSharePassword.value = data.settings.fixedSharePassword ?? ''
@@ -201,10 +211,13 @@ watch([shareURL, password, startCID], () => { files.value = []; browsed.value = 
 onMounted(async () => {
   controller = new AbortController()
   try {
-    const [config, automation, accountData] = await Promise.all([request('generation-config'), request('automation-config'), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: controller.signal })])
+    const [config, automation, accountData, botData] = await Promise.all([request('generation-config'), request('automation-config'), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: controller.signal }), telegramRequest<{ bots: TelegramBotConfig[] }>(props.token, 'bots', { signal: controller.signal })])
     if (!mounted) return
     accounts.value = accountData.accounts
+    bots.value = botData.bots
     accountId.value = automation.settings.accountId ?? ''
+    botId.value = automation.settings.botId ?? ''
+    telegramEnabled.value = automation.settings.telegramEnabled ?? false
     reshareEnabled.value = automation.settings.reshareEnabled
     savedReshareEnabled.value = automation.settings.reshareEnabled
     parentCID.value = automation.settings.parentCID
@@ -273,6 +286,10 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                 <P115AccountSelect id="share-account" v-model="accountId" :accounts="accounts" />
                 <p class="mt-2 text-xs leading-5 text-slate-400">选择后点击右上角保存，分享生成、Telegram 与 STRM 播放共用此配置。<RouterLink to="/helper115" class="text-blue-600 hover:underline">管理账号</RouterLink></p>
               </div>
+              <div>
+                <TelegramBotSelect id="share-bot" v-model="botId" :bots="bots" :required="telegramEnabled" />
+                <p class="mt-2 text-xs leading-5 text-slate-400">生成成功通知和消息接收固定使用此配置。<RouterLink to="/telegram/bot" class="text-blue-600 hover:underline">管理 Bot</RouterLink></p>
+              </div>
               <label class="block text-sm font-medium text-slate-700">起始目录 ID<input v-model="startCID" inputmode="numeric" pattern="[0-9]*" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="0" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">默认 0 表示整个分享；预览中可选定子目录。</span></label>
               <label class="block text-sm font-medium text-slate-700">STRM 播放地址<input v-model="baseURL" required type="url" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="http://NAS_IP:8115" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">填写 Emby 能访问的 Cinema115 地址，点击「保存设置」生效。首次使用默认填入当前访问地址。</span></label>
               <label class="block text-sm font-medium text-slate-700">最小文件大小（MB）<input v-model.number="minSizeMB" type="number" required min="0" max="1073741824" step="1" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">设为 0 不限制；小于此大小的文件会跳过。</span></label>
@@ -280,6 +297,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <label class="block text-sm font-medium text-slate-700">元数据后缀<input v-model="metadataExtensions" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-normal outline-none focus:border-blue-500" placeholder="srt,ass,ssa" /><span class="mt-2 block text-xs font-normal leading-5 text-slate-400">使用逗号分隔，按原格式保存字幕等配套文件；留空则不下载，不受视频最小大小限制。</span></label>
             </div>
             <div class="mt-6 grid gap-6 border-t border-slate-100 pt-6 md:grid-cols-2">
+              <SettingSwitch v-model="telegramEnabled" label="启用 Telegram Bot" description="启用后，由所选 Bot 接收分享链接，并把生成成功结果发送到该 Bot 的通知聊天。" />
               <SettingSwitch v-model="recursive" label="包含子目录" description="自动扫描所有子目录，并保留文件夹层级。" />
               <SettingSwitch v-model="reshareEnabled" label="默认使用转存再分享" description="开启后，未明确指定模式的分享 STRM 任务默认使用转存再分享；接口明确指定直接生成时跳过。网页手动生成按当前分享标签执行。" />
               <SettingSwitch v-model="reviewRetryEnabled" label="分享审核中自动重试" description="无法读取审核中的分享时，后台定时重试；进度可在日志查看。关闭并保存后停止待重试任务。" class="md:col-span-2">

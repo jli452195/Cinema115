@@ -112,6 +112,25 @@ type followBatchFake struct {
 	cookie    string
 }
 
+type followNotificationFake struct {
+	singleCount int
+	batchCount  int
+	botID       string
+	inputCount  int
+}
+
+func (f *followNotificationFake) NotifyShareSuccess(context.Context, string, string, GenerateInput, *GenerationResult, error) error {
+	f.singleCount++
+	return nil
+}
+
+func (f *followNotificationFake) NotifyShareBatchSuccess(_ context.Context, botID, _ string, inputs []GenerateInput, _ []BatchOutcome) error {
+	f.batchCount++
+	f.botID = botID
+	f.inputCount = len(inputs)
+	return nil
+}
+
 func (f *followBatchFake) Generate(context.Context, GenerateInput) (*GenerationResult, error) {
 	return nil, nil
 }
@@ -133,7 +152,7 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := db.SaveFollowSettings(ctx, model.FollowSettings{AutoEnabled: true}); err != nil {
+	if err := db.SaveFollowSettings(ctx, model.FollowSettings{AutoEnabled: true, TelegramEnabled: true, BotID: "follow-bot"}); err != nil {
 		t.Fatal(err)
 	}
 	follow := model.Follow{Kind: "tv", TMDBID: 237233, Title: "昴宿七星", Date: "2018-07-06"}
@@ -154,7 +173,7 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 	bot := &followBotFake{result: tguser.SearchResult{Items: []tguser.Action{
 		{ID: "wrong", Kind: "resource", Title: "[动漫] 其他影视 (2018) 3G"},
 		{ID: "right", Kind: "resource", Title: "[动漫] 昴宿七星 (2018) 3.85G"},
-	}}, selections: map[string]tguser.SearchResult{"right": {Links: []string{"https://115.com/s/example?password=ayss"}}}}
+	}}, selections: map[string]tguser.SearchResult{"right": {Links: []string{"https://115.com/s/example?password=ayss", "https://115.com/s/second?password=ayss"}}}}
 	automation, err := NewAutomationStore(filepath.Join(t.TempDir(), "automation.json"), t.TempDir(), "http://example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +186,11 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	generator := &followBatchFake{}
-	shareTasks := &ShareTasks{Generator: generator, Store: db, Settings: automation, AccountCookie: followAccountFake{}.CookieFor}
+	notifications := &followNotificationFake{}
+	shareTasks := &ShareTasks{
+		Generator: generator, Store: db, Settings: automation, AccountCookie: followAccountFake{}.CookieFor,
+		Notifier: notifications,
+	}
 	runCtx, stopRuns := context.WithCancel(ctx)
 	runs := NewShareRuns(runCtx, shareTasks)
 	done := make(chan struct{})
@@ -177,8 +200,11 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 	if err := s.processFollowBotJob(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
-	if len(generator.inputs) != 1 || generator.inputs[0].URL != "https://115.com/s/example?password=ayss" || generator.accountID != "follow-account" || generator.cookie != "UID=42_A; SEID=follow-cookie" {
+	if len(generator.inputs) != 2 || generator.inputs[0].URL != "https://115.com/s/example?password=ayss" || generator.inputs[1].URL != "https://115.com/s/second?password=ayss" || generator.accountID != "follow-account" || generator.cookie != "UID=42_A; SEID=follow-cookie" {
 		t.Fatalf("生成任务没有固定追更配置：%+v account=%q cookie=%q", generator.inputs, generator.accountID, generator.cookie)
+	}
+	if notifications.singleCount != 0 || notifications.batchCount != 1 || notifications.botID != "follow-bot" || notifications.inputCount != 2 {
+		t.Fatalf("订阅生成没有合并通知明确绑定的 Bot：%+v", notifications)
 	}
 	got, err := db.Follow(ctx, "alice", "tv", 237233)
 	if err != nil || got == nil || got.Status != "processing" || got.Note != "资源待确认" {

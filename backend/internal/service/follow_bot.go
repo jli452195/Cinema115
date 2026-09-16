@@ -114,6 +114,8 @@ func (s *FollowService) processFollowBotJob(ctx context.Context, job model.Follo
 		return err
 	}
 	automation := s.GenerationSettings.Value()
+	// 追更任务复用分享的生成参数和 115 账号，但通知目标固定为追更功能自己的 Bot 绑定。
+	automation.BotID, automation.TelegramEnabled = settings.BotID, settings.TelegramEnabled
 	jobCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	if s.Logs != nil {
@@ -144,7 +146,7 @@ func (s *FollowService) processFollowBotJob(ctx context.Context, job model.Follo
 		return nil
 	}
 	generationCtx := context.WithValue(jobCtx, automationContextKey{}, automation)
-	generationCtx = WithShareReplyManaged(WithGenerationSource(generationCtx, "订阅"))
+	generationCtx = WithGenerationSource(generationCtx, "订阅")
 	inputs := make([]GenerateInput, 0, len(links))
 	for _, link := range links {
 		input := automation.Generation

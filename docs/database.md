@@ -22,7 +22,7 @@ Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、�
 
 版本 6 移除 `p115_account_state.active_id`，该表仅保留账号集合版本。旧全局选择通过 `p115_feature_migration` 暂存用于升级，分享设置成功固化为具体 `accountId` 后删除候选；该表不是运行时默认账号来源。各个 115 功能必须独立选择账号，没有全局回退。新安装的账号列表为空，删除所有账号后也不会重新创建默认卡片。
 
-管理员账号密码仍从根目录 `.env` 读取；Telegram Bot 配置继续保存在原加密文件中。`automation.json`（含审核重试设置和分享使用的 `accountId` 配置编号，不含 Cookie）及 Telegram 接收队列仍使用原文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。数据库备份现在包含 115 账号，恢复时需一并保留原 `JWT_SECRET`。
+管理员账号密码仍从根目录 `.env` 读取；多 Bot 配置库加密保存在 `telegram-bots.enc`，旧 `telegram-config.enc` 只用于一次性导入。`automation.json` 保存分享使用的 `accountId`、`botId` 和审核重试设置，不含 Cookie 或 Bot Token；Telegram 接收队列仍使用独立状态文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。恢复配置时需一并保留原 `JWT_SECRET`。
 
 服务重启后，审核等待任务按保存的时间继续执行；上次处于执行中的任务标记为中断，禁止自动重放执行状态不确定的云端操作。新任务日志从升级后开始记录，不将旧转存检查点当作新任务重新执行。
 

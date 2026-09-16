@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 )
 
@@ -47,11 +46,16 @@ func RegisterFollowAdmin(admin *gin.RouterGroup, s *service.FollowService) {
 			followError(c, err)
 			return
 		}
-		configured := s.Notifications != nil && s.Notifications.FollowNotificationsConfigured()
-		c.JSON(200, gin.H{"baseUrl": settings.BaseURL, "notificationsConfigured": configured, "autoEnabled": settings.AutoEnabled})
+		configured := settings.TelegramEnabled && s.Notifications != nil && s.Notifications.FollowNotificationsConfigured(settings.BotID)
+		c.JSON(200, gin.H{"baseUrl": settings.BaseURL, "notificationsConfigured": configured, "autoEnabled": settings.AutoEnabled, "telegramEnabled": settings.TelegramEnabled, "botId": settings.BotID})
 	})
 	group.POST("/settings", func(c *gin.Context) {
-		var input model.FollowSettings
+		// 旧客户端未传 Telegram 字段时保留已保存的明确绑定。
+		input, err := s.Store.FollowSettings(c.Request.Context())
+		if err != nil {
+			followError(c, err)
+			return
+		}
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "追更设置格式无效"})
 			return

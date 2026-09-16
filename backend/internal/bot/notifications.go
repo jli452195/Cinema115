@@ -20,7 +20,17 @@ type NotificationStore interface {
 }
 
 // NotifyShareSuccess 只进行本地入队，Telegram 网络请求不占用生成请求。
-func (m *Manager) NotifyShareSuccess(ctx context.Context, taskID string, input service.GenerateInput, result *service.GenerationResult) error {
+func (m *Manager) NotifyShareSuccess(ctx context.Context, taskID string, input service.GenerateInput, result *service.GenerationResult, generationErr error) error {
+	text, preview := formatShareReply(input, service.AutomationSettings{}, result, generationErr, 1, 1)
+	return m.enqueueShareNotification(ctx, taskID, text, preview)
+}
+
+func (m *Manager) NotifyShareBatchSuccess(ctx context.Context, taskID string, inputs []service.GenerateInput, outcomes []service.BatchOutcome) error {
+	text, preview := formatMergedReply(inputs, outcomes)
+	return m.enqueueShareNotification(ctx, taskID, text, preview)
+}
+
+func (m *Manager) enqueueShareNotification(ctx context.Context, taskID, text, preview string) error {
 	m.mu.RLock()
 	cfg := m.config
 	m.mu.RUnlock()
@@ -34,7 +44,6 @@ func (m *Manager) NotifyShareSuccess(ctx context.Context, taskID string, input s
 	if err != nil || chatID == 0 {
 		return fmt.Errorf("通知聊天 ID 无效")
 	}
-	text, preview := formatShareReply(input, service.AutomationSettings{}, result, nil, 1, 1)
 	n := model.TelegramNotification{TaskID: taskID, BotID: strings.SplitN(cfg.Token, ":", 2)[0], ChatID: chatID, Text: text, PreviewURL: preview}
 	if err := m.Notifications.EnqueueTelegramNotification(ctx, n); err != nil {
 		return err

@@ -15,6 +15,8 @@ import (
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
 	AccountID          string        `json:"accountId"`
+	BotID              string        `json:"botId"`
+	TelegramEnabled    bool          `json:"telegramEnabled"`
 	ReshareEnabled     bool          `json:"reshareEnabled"`
 	TGBatchWaitSeconds int           `json:"tgBatchWaitSeconds"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
@@ -28,6 +30,7 @@ type AutomationSettings struct {
 type AutomationStore struct {
 	// 启动时装配，保存时校验账号配置，不在读取旧设置时阻止服务启动。
 	ValidateAccount func(string) error
+	ValidateBot     func(string, bool) error
 	mu              sync.RWMutex
 	path, root      string
 	value           AutomationSettings
@@ -67,6 +70,17 @@ func (s *AutomationStore) ValidateCurrentAccount() error {
 		return generationInputError("115 账号校验服务尚未初始化")
 	}
 	return s.ValidateAccount(value.AccountID)
+}
+
+func (s *AutomationStore) ValidateCurrentBot() error {
+	value := s.Value()
+	if !value.TelegramEnabled {
+		return nil
+	}
+	if s.ValidateBot == nil {
+		return generationInputError("Telegram Bot 校验服务尚未初始化")
+	}
+	return s.ValidateBot(value.BotID, true)
 }
 
 var extensionsPattern = regexp.MustCompile(`^[a-zA-Z0-9.,，\s]+$`)
@@ -129,6 +143,9 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 	if len(value.AccountID) > 64 || strings.ContainsAny(value.AccountID, "\r\n\x00") {
 		return generationInputError("115 配置编号无效")
 	}
+	if len(value.BotID) > 64 || strings.ContainsAny(value.BotID, "\r\n\x00") {
+		return generationInputError("Telegram Bot 配置编号无效")
+	}
 	if value.TGBatchWaitSeconds < 0 || value.TGBatchWaitSeconds > 300 {
 		return generationInputError("批次收集等待应为 0～300 秒，0 表示不等待")
 	}
@@ -166,8 +183,35 @@ func (s *AutomationStore) Save(value AutomationSettings) error {
 			return err
 		}
 	}
+	if value.TelegramEnabled {
+		if s.ValidateBot == nil {
+			return generationInputError("Telegram Bot 校验服务尚未初始化")
+		}
+		if err := s.ValidateBot(value.BotID, true); err != nil {
+			return generationInputError(err.Error())
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := writeAutomationJSON(s.path, value); err != nil {
+		return err
+	}
+	s.value = value
+	return nil
+}
+
+// MigrateTelegramBotSelection 只用于把旧单 Bot 一次性固化为分享功能绑定。
+func (s *AutomationStore) MigrateTelegramBotSelection(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.value.BotID != "" {
+		return nil
+	}
+	value := s.value
+	value.BotID, value.TelegramEnabled = id, enabled
+	if err := s.validate(value); err != nil {
+		return err
+	}
 	if err := writeAutomationJSON(s.path, value); err != nil {
 		return err
 	}

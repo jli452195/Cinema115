@@ -88,6 +88,14 @@ func (s *FollowService) SaveSettings(ctx context.Context, value model.FollowSett
 		return err
 	}
 	value.BaseURL = baseURL
+	if value.TelegramEnabled {
+		if s.ValidateBot == nil {
+			return fmt.Errorf("%w：Telegram Bot 校验服务尚未初始化", ErrFollowInput)
+		}
+		if err := s.ValidateBot(value.BotID, true); err != nil {
+			return fmt.Errorf("%w：%v", ErrFollowInput, err)
+		}
+	}
 	if value.AutoEnabled {
 		if s.GenerationSettings == nil {
 			return fmt.Errorf("%w：115分享STRM 服务尚未初始化", ErrFollowInput)

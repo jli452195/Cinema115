@@ -32,8 +32,10 @@ type FollowCheck struct {
 }
 
 type FollowSettings struct {
-	BaseURL     string `json:"baseUrl"`
-	AutoEnabled bool   `json:"autoEnabled"`
+	BaseURL         string `json:"baseUrl"`
+	AutoEnabled     bool   `json:"autoEnabled"`
+	TelegramEnabled bool   `json:"telegramEnabled"`
+	BotID           string `json:"botId"`
 }
 
 type FollowBotJob struct {

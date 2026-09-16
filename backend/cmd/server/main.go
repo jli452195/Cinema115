@@ -167,16 +167,27 @@ func main() {
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	httpapi.RegisterShareTasks(admin, database)
 	httpapi.RegisterLogs(admin, generationLogs)
-	telegram, err := bot.NewManager(dataDir, secret, shareAPI.Runs, automation)
+	telegram, err := bot.NewHub(dataDir, secret, shareAPI.Runs, automation)
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpapi.RegisterAutomation(admin, automation, func() bool { view := telegram.View(); return view.Enabled && view.Configured })
+	automation.ValidateBot = telegram.ValidateSelection
+	follows.ValidateBot = telegram.ValidateSelection
+	telegramMigrationCtx, telegramMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = bot.MigrateLegacyBindings(telegramMigrationCtx, telegram.Profiles(), automation, database)
+	telegramMigrationCancel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterAutomation(admin, automation, func() bool {
+		value := automation.Value()
+		return value.TelegramEnabled && telegram.ValidateSelection(value.BotID, true) == nil
+	}, telegram.Refresh)
 	telegram.Logs = generationLogs
 	telegram.Notifications = database
 	follows.Notifications = telegram
 	shareTasks.Notifier, shareTasks.Logs = telegram, generationLogs
-	httpapi.RegisterTelegram(admin, telegram, generationLogs)
+	httpapi.RegisterTelegramHub(admin, telegram, generationLogs)
 	userConfig, err := service.NewSessionStore(filepath.Join(dataDir, "telegram-user-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -255,11 +266,6 @@ func main() {
 		}()
 	}
 	log.Print("Cinema115 已启动，监听 :3002")
-	workers.Add(1)
-	go func() {
-		defer workers.Done()
-		telegram.RunNotifications(ctx)
-	}()
 	select {
 	case <-ctx.Done():
 	case err := <-workerErrors:

@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 15
+const schemaVersion = 16
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -301,6 +301,43 @@ PRAGMA user_version=14;`); err != nil {
 		}
 		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=15`); err != nil {
 			return fmt.Errorf("迁移追更关闭状态: %w", err)
+		}
+	}
+	if version < 16 {
+		rows, err := tx.QueryContext(ctx, "PRAGMA table_info(follow_settings)")
+		if err != nil {
+			return fmt.Errorf("读取追更设置表结构: %w", err)
+		}
+		columns := make(map[string]bool)
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("读取追更设置字段: %w", err)
+			}
+			columns[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("遍历追更设置字段: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("关闭追更设置表结构查询: %w", err)
+		}
+		if !columns["telegram_enabled"] {
+			if _, err := tx.ExecContext(ctx, "ALTER TABLE follow_settings ADD COLUMN telegram_enabled INTEGER NOT NULL DEFAULT 0 CHECK(telegram_enabled IN (0,1))"); err != nil {
+				return fmt.Errorf("增加追更 Telegram 开关: %w", err)
+			}
+		}
+		if !columns["telegram_bot_id"] {
+			if _, err := tx.ExecContext(ctx, "ALTER TABLE follow_settings ADD COLUMN telegram_bot_id TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("增加追更 Telegram Bot 绑定: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=16"); err != nil {
+			return fmt.Errorf("保存追更 Telegram Bot 迁移版本: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

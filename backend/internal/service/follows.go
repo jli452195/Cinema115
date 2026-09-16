@@ -30,13 +30,14 @@ type FollowService struct {
 	ResourceMatcher    ResourceMatcher
 	ShareRuns          *ShareRuns
 	GenerationSettings *AutomationStore
+	ValidateBot        func(string, bool) error
 	Logs               *GenerationLogs
 }
 
 // 通知工厂只快照目标并格式化消息，不进行网络发送。
 type FollowNotificationFactory interface {
-	PrepareFollowNotification(model.Follow, string) (*model.TelegramNotification, error)
-	FollowNotificationsConfigured() bool
+	PrepareFollowNotification(model.Follow, string, string) (*model.TelegramNotification, error)
+	FollowNotificationsConfigured(string) bool
 }
 
 func (s *FollowService) libraryStates(ctx context.Context, items []model.Follow) (map[string]string, error) {
@@ -106,13 +107,15 @@ func (s *FollowService) Subscribe(ctx context.Context, userID, kind string, id i
 	f := model.Follow{Kind: kind, TMDBID: id, Title: detail.Title, PosterURL: detail.PosterURL, Date: detail.Date}
 	var notification *model.TelegramNotification
 	if s.Notifications != nil {
-		baseURL, err := s.Store.FollowBaseURL(ctx)
+		settings, err := s.Store.FollowSettings(ctx)
 		if err != nil {
 			return state, err
 		}
-		notification, err = s.Notifications.PrepareFollowNotification(f, baseURL)
-		if err != nil {
-			return state, err
+		if settings.TelegramEnabled {
+			notification, err = s.Notifications.PrepareFollowNotification(f, settings.BaseURL, settings.BotID)
+			if err != nil {
+				return state, err
+			}
 		}
 	}
 	if err := s.Store.SubscribeWithConfiguredAutomation(ctx, userID, f, notification); err != nil {

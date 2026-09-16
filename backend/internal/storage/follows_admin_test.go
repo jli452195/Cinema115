@@ -26,7 +26,7 @@ func TestFollowClosedMigrationFromFourteen(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO follow_requests(kind,tmdb_id,title,poster_url,release_date,created_at) VALUES('tv',1,'迁移测试','','','now')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT search_closed FROM follow_requests WHERE tmdb_id=1`).Scan(&closed); err != nil || version != 15 || closed != 0 {
+	if err := s.db.QueryRowContext(ctx, `SELECT search_closed FROM follow_requests WHERE tmdb_id=1`).Scan(&closed); err != nil || version != schemaVersion || closed != 0 {
 		t.Fatalf("migration version=%d closed=%d err=%v", version, closed, err)
 	}
 }

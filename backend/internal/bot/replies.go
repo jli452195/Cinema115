@@ -56,6 +56,8 @@ func formatShareReply(input service.GenerateInput, settings service.AutomationSe
 	var text strings.Builder
 	if err == nil && result != nil && result.MetadataFailed > 0 {
 		fmt.Fprintf(&text, "⚠️ 【115网盘】%s 完成（元数据部分失败，可再次提交重试）", operation)
+	} else if err == nil && result != nil && result.Failed > 0 {
+		fmt.Fprintf(&text, "⚠️ 【115网盘】%s 完成（部分 STRM 失败，可再次提交重试）", operation)
 	} else if err == nil {
 		fmt.Fprintf(&text, "✅ 【115网盘】%s 完成", operation)
 	} else if result != nil && result.Written > 0 {

@@ -50,7 +50,7 @@ func TestNotificationPersistsRetriesAndDoesNotBroadcast(t *testing.T) {
 	m.Notifications = db
 	input := service.GenerateInput{URL: "https://115.com/s/source", Password: "abcd", Mode: "reshare"}
 	result := &service.GenerationResult{Written: 2, MetadataWritten: 1, ReshareURL: "https://115.com/s/own?password=fwgl", Cleaned: true}
-	if err := m.NotifyShareSuccess(ctx, "task", input, result); err != nil {
+	if err := m.NotifyShareSuccess(ctx, "task", input, result, nil); err != nil {
 		t.Fatal(err)
 	}
 	if sends != 0 {
@@ -101,7 +101,7 @@ func TestNotificationPersistsRetriesAndDoesNotBroadcast(t *testing.T) {
 	if sends != 2 {
 		t.Fatal("失败后未恢复发送")
 	}
-	if err := m.NotifyShareSuccess(ctx, "task", input, result); err != nil {
+	if err := m.NotifyShareSuccess(ctx, "task", input, result, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.deliverNotification(ctx, now.Add(time.Hour)); err != nil {
@@ -139,7 +139,45 @@ func TestNotificationChatConfigValidationAndPersistence(t *testing.T) {
 	if m.View().NotificationChatID != "" {
 		t.Fatal("无法关闭独立通知")
 	}
-	if err := m.NotifyShareSuccess(ctx, "disabled", service.GenerateInput{}, nil); err != nil {
+	if err := m.NotifyShareSuccess(ctx, "disabled", service.GenerateInput{}, nil, nil); err != nil {
 		t.Fatal("未配置时不应入队", err)
+	}
+}
+
+func TestBatchNotificationQueuesOneMergedSummary(t *testing.T) {
+	m, dir := configTestManager(t, func(w http.ResponseWriter, r *http.Request) { identityHandler(t, w, r) })
+	ctx := context.Background()
+	if err := m.Save(ctx, BotConfig{Token: "123:valid-token", NotificationChatID: "42"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(ctx, filepath.Join(dir, "batch-notification.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m.Notifications = db
+	inputs := []service.GenerateInput{{URL: "https://115.com/s/source-a"}, {URL: "https://115.com/s/source-b"}}
+	outcomes := []service.BatchOutcome{
+		{Result: &service.GenerationResult{Written: 1, ReshareURL: "https://115.com/s/merged", Cleaned: true}},
+		{Result: &service.GenerationResult{Written: 2, ReshareURL: "https://115.com/s/merged", Cleaned: true}},
+	}
+	if err := m.NotifyShareBatchSuccess(ctx, "batch:task", inputs, outcomes); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := db.DueTelegramNotifications(ctx, "123", 42, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("合并批次通知数量错误：%d", len(pending))
+	}
+	text := pending[0].Text
+	for _, want := range []string{"成功 2 个，失败 0 个", inputs[0].URL, inputs[1].URL, "生成 STRM：成功 3 个"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("合并通知缺少 %q：%s", want, text)
+		}
+	}
+	if strings.Count(text, "https://115.com/s/merged") != 1 {
+		t.Fatal("共同新分享链接重复显示", text)
 	}
 }
