@@ -26,6 +26,7 @@ const managementLinks = computed(() => isWebsiteAdmin.value ? [
   { label: '用户管理', to: '/users' },
   { label: '115 网盘', to: '/115' },
   { label: 'Telegram 配置', to: '/telegram' },
+  { label: '观影搜索', to: '/gying' },
   { label: '查看日志', to: '/logs' },
   { label: 'Emby', to: '/emby' },
 ] : [])

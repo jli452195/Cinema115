@@ -87,6 +87,15 @@ func main() {
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
+	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	gyingService, err := service.NewGyingService(gyingStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterGying(admin, gyingService, tmdbService)
 	imageCacheBytes := tmdbimage.DefaultMaxBytes
 	if configured := strings.TrimSpace(os.Getenv("TMDB_IMAGE_CACHE_MAX_GB")); configured != "" {
 		gigabytes, parseErr := strconv.ParseInt(configured, 10, 64)

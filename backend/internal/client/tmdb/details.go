@@ -42,6 +42,7 @@ type Detail struct {
 	Cast         []CastMember    `json:"cast"`
 	Seasons      []SeasonSummary `json:"seasons"`
 	Collection   *Collection     `json:"collection"`
+	IMDBID       string          `json:"imdbId"`
 	IMDBURL      string          `json:"imdbUrl"`
 	TMDBURL      string          `json:"tmdbUrl"`
 }
@@ -100,7 +101,7 @@ func imageURL(path, size string) string {
 	return "https://image.tmdb.org/t/p/" + size + path
 }
 
-func imdbURL(id string) string {
+func validIMDBID(id string) string {
 	if !strings.HasPrefix(id, "tt") || len(id) < 3 || len(id) > 16 {
 		return ""
 	}
@@ -108,6 +109,14 @@ func imdbURL(id string) string {
 		if r < '0' || r > '9' {
 			return ""
 		}
+	}
+	return id
+}
+
+func imdbURL(id string) string {
+	id = validIMDBID(id)
+	if id == "" {
+		return ""
 	}
 	return "https://www.imdb.com/title/" + id + "/"
 }
@@ -190,7 +199,7 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		BackdropURL: imageURL(raw.Backdrop, "w1280"), Tagline: raw.Tagline, Status: raw.Status, Runtime: raw.Runtime, EpisodeCount: raw.EpisodeCount,
 		Genres: raw.Genres, Countries: make([]string, 0, len(raw.Countries)), Cast: make([]CastMember, 0, min(len(cast), 20)),
 		Seasons: make([]SeasonSummary, 0, len(raw.Seasons)), Collection: raw.Collection,
-		IMDBURL: imdbURL(raw.ExternalIDs.IMDB), TMDBURL: "https://www.themoviedb.org" + endpoint + "?language=zh-CN",
+		IMDBID: validIMDBID(raw.ExternalIDs.IMDB), IMDBURL: imdbURL(raw.ExternalIDs.IMDB), TMDBURL: "https://www.themoviedb.org" + endpoint + "?language=zh-CN",
 	}
 	for _, country := range raw.Countries {
 		detail.Countries = append(detail.Countries, country.Name)

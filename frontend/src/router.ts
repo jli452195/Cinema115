@@ -16,6 +16,7 @@ import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
 import UpdatesView from './views/UpdatesView.vue'
+import GyingView from './views/GyingView.vue'
 import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebsiteAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
@@ -43,6 +44,7 @@ export const router = createRouter({
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
     { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView },
     { path: '/logs', name: 'logs', component: LogsView },
+    { path: '/gying', name: 'gying', component: GyingView },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
