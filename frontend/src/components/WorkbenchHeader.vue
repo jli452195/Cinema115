@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import CinemaLogo from './CinemaLogo.vue'
 import { isWebsiteAdmin, websiteUser } from '../composables/useWebsiteAuth'
 import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
@@ -55,11 +56,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 <template>
   <header ref="header" class="workbench-header sticky top-0 z-40 w-full shrink-0 border-b border-slate-200/80 bg-white/95 backdrop-blur-md" @focusout="onFocusOut">
     <div class="header-inner relative mx-auto flex h-16 max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:h-[72px] lg:px-10">
-      <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto flex shrink-0 items-center gap-2 rounded-lg text-base font-bold tracking-tight text-slate-900 sm:gap-3 sm:text-xl">
-        <span class="brand-mark flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-amber-400 sm:h-9 sm:w-9">
-          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/><path d="m10 9 5 3-5 3Z" fill="currentColor" stroke="none"/></svg>
-        </span>
-        <span class="brand-name">Cinema<span class="font-medium text-slate-500">115</span></span>
+      <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
+        <CinemaLogo />
       </RouterLink>
       <nav aria-label="影视导航" class="flex items-center gap-1 sm:gap-2">
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link" :class="{ selected: movieActive }">电影</RouterLink>
@@ -100,10 +98,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid #f59e0b; outline-offs
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
 @media (max-width: 420px) {
   .header-inner { gap: 0.25rem; padding-inline: 0.75rem; }
-  .brand-link { gap: 0.375rem; font-size: 0.875rem; }
-  .brand-mark { height: 1.75rem; width: 1.75rem; }
   .top-link { padding-inline: 0.5rem; }
   .icon-button { width: 2rem; height: 2rem; }
-  .brand-name { display: none; }
 }
 </style>
