@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
+import { p115Request } from '../lib/p115-api'
 import { gyingRequest, type GyingConfigView, type GyingResourceLink, type GyingSearchAttempt, type GyingSearchItem, type GyingSearchResponse } from '../types/gying'
 import { normalize115Share } from '../utils/shareLink'
 
@@ -20,6 +21,10 @@ const busy = computed(() => phase.value !== '' || shareRuns.busy.value)
 const elapsedSeconds = ref(0)
 const error = ref('')
 const copied = ref('')
+type CloudDownloadConfig = { accountId: string; targetCID: string; targetPath: string }
+type CloudDownloadStatus = { success: boolean; message: string; needsConfig?: boolean }
+const cloudSubmitting = ref<Record<string, boolean>>({})
+const cloudStatuses = ref<Record<string, CloudDownloadStatus>>({})
 let progressTimer: number | undefined
 const previousFocus = document.activeElement as HTMLElement | null
 const previousOverflow = document.body.style.overflow
@@ -55,6 +60,45 @@ function allShareResources() {
 function restoreShareRuns() { void shareRuns.restore(allShareResources()) }
 function shareSTRM(item: GyingSearchItem, link: GyingResourceLink) { void shareRuns.submit(shareResource(item, link)) }
 function stopShareRun() { void shareRuns.stop() }
+function canCloudDownload(link: GyingResourceLink) { return link.type === 'magnet' && link.category === 'torrent' }
+function cloudResourceID(item: GyingSearchItem, link: GyingResourceLink) { return `${item.id}\u0000${link.url}` }
+function cloudErrorNeedsConfig(reason: unknown) {
+  const message = reason instanceof Error ? reason.message : ''
+  return /请先|尚未登录|不存在|配置/.test(message)
+}
+async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
+  if (!canCloudDownload(link)) return
+  const id = cloudResourceID(item, link)
+  if (cloudSubmitting.value[id]) return
+  cloudSubmitting.value = { ...cloudSubmitting.value, [id]: true }
+  const clearedStatuses = { ...cloudStatuses.value }
+  delete clearedStatuses[id]
+  cloudStatuses.value = clearedStatuses
+  try {
+    // Read the current configured account and directory immediately before
+    // submitting. The dialog never changes the cloud-download settings.
+    const config = await p115Request<CloudDownloadConfig>(props.token, 'cloud-download/config', {
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
+    })
+    if (!config.accountId) {
+      throw Object.assign(new Error('请先在“115 云下载”页面选择账号并保存配置'), { needsConfig: true })
+    }
+    await p115Request<{ accepted: boolean }>(props.token, `cloud-download/tasks?accountId=${encodeURIComponent(config.accountId)}`, {
+      method: 'POST', body: JSON.stringify({ url: link.url, targetCID: config.targetCID || '0' }),
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(35000)]),
+    })
+    cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: true, message: `已提交到 115 云下载：${config.targetPath || '115 根目录'}` } }
+  } catch (reason) {
+    if (!lifecycle.signal.aborted) {
+      const message = reason instanceof Error ? reason.message : '提交 115 云下载失败'
+      cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: false, message, needsConfig: Boolean((reason as { needsConfig?: boolean })?.needsConfig) || cloudErrorNeedsConfig(reason) } }
+    }
+  } finally {
+    const next = { ...cloudSubmitting.value }
+    delete next[id]
+    cloudSubmitting.value = next
+  }
+}
 const resultItems = computed(() => result.value?.items || [])
 const selectedItems = computed(() => {
   return activeItemId.value === 'all' ? resultItems.value : resultItems.value.filter(item => item.id === activeItemId.value)
@@ -220,12 +264,12 @@ onBeforeUnmount(() => {
               <article v-for="item in visibleItems" :key="item.id" class="rounded-xl border border-slate-200 p-4 sm:p-5">
                 <div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold leading-6 text-slate-900">{{ item.title }} <span v-if="item.year" class="font-normal text-slate-400">({{ item.year }})</span></h3><div class="mt-2 flex flex-wrap gap-2 text-[11px]"><span class="rounded bg-amber-50 px-2 py-1 text-amber-700">{{ mediaLabels[item.mediaType] }}</span><span v-if="linkCount(item, 'pan')" class="rounded bg-blue-50 px-2 py-1 text-blue-700">网盘 {{ linkCount(item, 'pan') }}</span><span v-if="linkCount(item, 'torrent')" class="rounded bg-violet-50 px-2 py-1 text-violet-700">种子 {{ linkCount(item, 'torrent') }}</span></div></div></div>
                 <p v-if="item.description" class="mt-3 break-words text-xs leading-6 text-slate-500">{{ item.description }}</p>
-                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canShareSTRM(link)" type="button" :disabled="busy || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.activeResource.value === shareResourceID(item, link) ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
+                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="busy || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.activeResource.value === shareResourceID(item, link) ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
               </article>
             </div>
           </template>
         </div>
-        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 p-5"><p class="text-xs text-slate-500">115 分享资源可复用“115分享STRM”的账号、生成设置和后台任务。</p><button v-if="config?.configured" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="search(true)">{{ phase === 'search' ? `搜索中（${elapsedSeconds} 秒）` : '重新搜索' }}</button><button v-else-if="!config && error" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="initialize">{{ phase === 'config' ? '读取中…' : '重试' }}</button></footer>
+        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 p-5"><p class="text-xs text-slate-500">115 分享资源可复用“115分享STRM”的账号；磁力可直接提交到“115 云下载”配置的账号和目录。</p><button v-if="config?.configured" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="search(true)">{{ phase === 'search' ? `搜索中（${elapsedSeconds} 秒）` : '重新搜索' }}</button><button v-else-if="!config && error" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="initialize">{{ phase === 'config' ? '读取中…' : '重试' }}</button></footer>
       </div>
     </dialog>
   </Teleport>
