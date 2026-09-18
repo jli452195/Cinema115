@@ -88,14 +88,17 @@ type SearchItem struct {
 }
 
 type ResourceLink struct {
-	Category  string `json:"category"` // pan or torrent
-	Type      string `json:"type"`
-	TypeLabel string `json:"typeLabel"`
-	URL       string `json:"url"`
-	Password  string `json:"password,omitempty"`
-	WorkTitle string `json:"workTitle,omitempty"`
-	Size      string `json:"size,omitempty"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	Category     string `json:"category"` // pan or torrent
+	Type         string `json:"type"`
+	TypeLabel    string `json:"typeLabel"`
+	SubType      string `json:"subType,omitempty"`
+	SubTypeLabel string `json:"subTypeLabel,omitempty"`
+	URL          string `json:"url"`
+	Password     string `json:"password,omitempty"`
+	WorkTitle    string `json:"workTitle,omitempty"`
+	Size         string `json:"size,omitempty"`
+	Seeds        *int   `json:"seeds,omitempty"`
+	UpdatedAt    string `json:"updatedAt,omitempty"`
 }
 
 type SearchResponse struct {
@@ -139,11 +142,17 @@ type detailData struct {
 }
 
 type downlistData struct {
+	Type struct {
+		Labels []string `json:"a"`
+		Codes  []string `json:"b"`
+	} `json:"type"`
 	List struct {
-		Hash    []string `json:"m"`
-		Title   []string `json:"t"`
-		Size    []string `json:"s"`
-		Updated []string `json:"n"`
+		Hash          []string `json:"m"`
+		Title         []string `json:"t"`
+		Size          []string `json:"s"`
+		Seeds         []int    `json:"e"`
+		CategoryCodes []string `json:"p"`
+		Updated       []string `json:"n"`
 	} `json:"list"`
 }
 
@@ -602,7 +611,22 @@ func detailLinks(detail detailData) []ResourceLink {
 			continue
 		}
 		seen[key] = struct{}{}
-		link := ResourceLink{Category: "torrent", Type: "magnet", TypeLabel: "磁力", URL: "magnet:?xt=urn:btih:" + hash}
+		link := ResourceLink{Category: "torrent", Type: "magnet", TypeLabel: "磁力", SubTypeLabel: "未知", URL: "magnet:?xt=urn:btih:" + hash}
+		// list.p contains category codes matching type.b; list.k is not a
+		// category index. The parallel type.a array provides display labels.
+		if i < len(detail.Downlist.List.CategoryCodes) {
+			code := strings.TrimSpace(detail.Downlist.List.CategoryCodes[i])
+			link.SubType = code
+			for typeIndex, knownCode := range detail.Downlist.Type.Codes {
+				if code != "" && code == strings.TrimSpace(knownCode) && typeIndex < len(detail.Downlist.Type.Labels) {
+					link.SubTypeLabel = strings.TrimSpace(detail.Downlist.Type.Labels[typeIndex])
+					break
+				}
+			}
+			if link.SubTypeLabel == "" {
+				link.SubTypeLabel = "未知"
+			}
+		}
 		if i < len(detail.Downlist.List.Title) {
 			link.WorkTitle = strings.TrimSpace(detail.Downlist.List.Title[i])
 			if link.WorkTitle != "" {
@@ -611,6 +635,10 @@ func detailLinks(detail detailData) []ResourceLink {
 		}
 		if i < len(detail.Downlist.List.Size) {
 			link.Size = strings.TrimSpace(detail.Downlist.List.Size[i])
+		}
+		if i < len(detail.Downlist.List.Seeds) && detail.Downlist.List.Seeds[i] >= 0 {
+			seeds := detail.Downlist.List.Seeds[i]
+			link.Seeds = &seeds
 		}
 		if i < len(detail.Downlist.List.Updated) {
 			link.UpdatedAt = strings.TrimSpace(detail.Downlist.List.Updated[i])
@@ -653,7 +681,7 @@ func classifyPanURL(raw string) string {
 		return "mobile"
 	case hostMatches(host, "115.com", "115cdn.com", "anxia.com"):
 		return "115"
-	case hostMatches(host, "123684.com", "123pan.com", "123pan.cn"):
+	case hostMatches(host, "123684.com", "123865.com", "123pan.com", "123pan.cn"):
 		return "123"
 	case hostMatches(host, "guangyapan.com"):
 		return "guangya"

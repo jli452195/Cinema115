@@ -336,6 +336,12 @@ func cloneGyingSearchResponse(result gying.SearchResponse) gying.SearchResponse 
 	for index := range result.Items {
 		links := make([]gying.ResourceLink, len(result.Items[index].Links))
 		copy(links, result.Items[index].Links)
+		for i := range links {
+			if links[i].Seeds != nil {
+				seeds := *links[i].Seeds
+				links[i].Seeds = &seeds
+			}
+		}
 		result.Items[index].Links = links
 	}
 	return result

@@ -35,6 +35,10 @@ func TestDetailLinksClassifiesAllLinkTypes(t *testing.T) {
 	detail.Downlist.List.Hash = []string{"0123456789ABCDEF0123456789ABCDEF01234567", "0123456789ABCDEF0123456789ABCDEF01234567"}
 	detail.Downlist.List.Title = []string{"种子"}
 	detail.Downlist.List.Size = []string{"1 GB"}
+	detail.Downlist.Type.Labels = []string{"720P", "中字720P", "1080P", "中字1080P", "4K", "中字4K", "原盘"}
+	detail.Downlist.Type.Codes = []string{"i1", "i2", "i7", "i3", "i0", "i9", "i4"}
+	detail.Downlist.List.CategoryCodes = []string{"i4", "i4"}
+	detail.Downlist.List.Seeds = []int{9, 1}
 	links := detailLinks(detail)
 	if len(links) != 3 {
 		t.Fatalf("重复链接没有去重或有效链接被丢弃: %#v", links)
@@ -48,6 +52,64 @@ func TestDetailLinksClassifiesAllLinkTypes(t *testing.T) {
 	if links[2].Category != "torrent" || !strings.HasPrefix(links[2].URL, "magnet:?xt=urn:btih:") {
 		t.Fatalf("磁力链接解析错误: %#v", links[2])
 	}
+	if links[2].SubType != "i4" || links[2].SubTypeLabel != "原盘" || links[2].Seeds == nil || *links[2].Seeds != 9 {
+		t.Fatalf("磁力分类或做种数解析错误: %#v", links[2])
+	}
+}
+
+func TestDetailLinksMapsMagnetCategoriesAndUnknownCode(t *testing.T) {
+	detail := detailData{}
+	detail.Downlist.Type.Labels = []string{"720P", "中字720P", "1080P"}
+	detail.Downlist.Type.Codes = []string{"i1", "i2", "i7"}
+	detail.Downlist.List.Hash = []string{
+		"0123456789abcdef0123456789abcdef01234567",
+		"1123456789abcdef0123456789abcdef01234567",
+		"2123456789abcdef0123456789abcdef01234567",
+	}
+	detail.Downlist.List.CategoryCodes = []string{"i1", "i7", "i9"}
+	detail.Downlist.List.Seeds = []int{2, 3, 4}
+	links := detailLinks(detail)
+	if len(links) != 3 {
+		t.Fatalf("磁力数量错误: %#v", links)
+	}
+	if links[0].SubTypeLabel != "720P" || links[1].SubTypeLabel != "1080P" || links[2].SubTypeLabel != "未知" {
+		t.Fatalf("磁力分类映射错误: %#v", links)
+	}
+	if links[2].SubType != "i9" || links[2].Seeds == nil || *links[2].Seeds != 4 {
+		t.Fatalf("未知分类编码或做种数丢失: %#v", links[2])
+	}
+}
+
+func TestMagnetMetadataFromResponsePreservesZeroAndMissingValues(t *testing.T) {
+	var detail detailData
+	// k is deliberately identical for every row; p carries the actual codes.
+	err := json.Unmarshal([]byte(`{"downlist":{"type":{"a":["原盘","1080P"],"b":["i4","i7","i9"]},"list":{
+		"m":["0123456789abcdef0123456789abcdef01234567","1123456789abcdef0123456789abcdef01234567","2123456789abcdef0123456789abcdef01234567","3123456789abcdef0123456789abcdef01234567"],
+		"p":["i4","i7","i9"],"k":[0,0,0,0],"e":[0,34,-1]
+	}}}`), &detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := detailLinks(detail)
+	if len(links) != 4 {
+		t.Fatalf("expected four magnets: %+v", links)
+	}
+	wantLabels := []string{"原盘", "1080P", "未知", "未知"}
+	for i, label := range wantLabels {
+		if links[i].SubTypeLabel != label {
+			t.Fatalf("row %d: expected %s, got %+v", i, label, links[i])
+		}
+	}
+	if links[0].Seeds == nil || *links[0].Seeds != 0 || links[1].Seeds == nil || *links[1].Seeds != 34 || links[2].Seeds != nil || links[3].Seeds != nil {
+		t.Fatalf("zero, positive, invalid and missing seed counts: %+v", links)
+	}
+	raw, err := json.Marshal(links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"seeds":0`) || strings.Count(string(raw), `"seeds"`) != 2 {
+		t.Fatalf("seed JSON must retain zero but omit missing values: %s", raw)
+	}
 }
 
 func TestDetailLinksPrefersRecognizedDomainOverReportedType(t *testing.T) {
@@ -55,13 +117,14 @@ func TestDetailLinksPrefersRecognizedDomainOverReportedType(t *testing.T) {
 	detail.Panlist.URL = []string{
 		"https://www.123684.com/s/actual-123",
 		"https://www.guangyapan.com/s/actual-guangya",
+		"https://www.123865.com/s/actual-123",
 	}
 	// The site currently reports these domains with legacy type codes. A known
 	// domain is more reliable than that metadata and must win classification.
-	detail.Panlist.Type = []int{5, 6}
+	detail.Panlist.Type = []int{5, 6, 5}
 
 	links := detailLinks(detail)
-	if len(links) != 2 {
+	if len(links) != 3 {
 		t.Fatalf("recognized links were lost: %#v", links)
 	}
 	if links[0].Type != "123" || links[0].TypeLabel != "123" {
@@ -69,6 +132,9 @@ func TestDetailLinksPrefersRecognizedDomainOverReportedType(t *testing.T) {
 	}
 	if links[1].Type != "guangya" || links[1].TypeLabel != "光鸭网盘" {
 		t.Fatalf("Guangya domain was overridden by the reported type: %#v", links[1])
+	}
+	if links[2].Type != "123" || links[2].TypeLabel != "123" {
+		t.Fatalf("123865 domain was overridden by the reported type: %#v", links[2])
 	}
 }
 
@@ -78,6 +144,11 @@ func TestClassifyPanURLUsesExactRootDomains(t *testing.T) {
 		want string
 	}{
 		{url: "https://www.123684.com/s/a", want: "123"},
+		{url: "https://www.123865.com/s/a", want: "123"},
+		{url: "https://123865.com/s/a", want: "123"},
+		{url: "https://share.123865.com/s/a", want: "123"},
+		{url: "https://not123865.com/s/a", want: "other"},
+		{url: "https://123865.com.example.org/s/a", want: "other"},
 		{url: "https://www.123pan.com/s/a", want: "123"},
 		{url: "https://share.123pan.cn/s/a", want: "123"},
 		{url: "https://www.guangyapan.com/s/a", want: "guangya"},

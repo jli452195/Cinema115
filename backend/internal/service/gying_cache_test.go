@@ -86,3 +86,23 @@ func TestGyingPartialSearchIsNotCached(t *testing.T) {
 		t.Fatalf("不完整结果不应缓存: %+v cache=%d", result, len(service.searchCache))
 	}
 }
+
+func TestGyingCacheIsolatesMagnetMetadata(t *testing.T) {
+	seeds := 0
+	result := gying.SearchResponse{Items: []gying.SearchItem{{ID: "movie", Links: []gying.ResourceLink{{Type: "magnet", SubType: "i4", SubTypeLabel: "原盘", Seeds: &seeds}}}}}
+	now := time.Now()
+	svc := &GyingService{searchCache: make(map[string]gyingSearchCacheEntry)}
+	fresh := svc.cacheSearchLocked("movie:test", result, now)
+	seeds = 10
+	*fresh.Items[0].Links[0].Seeds = 20
+	fresh.Items[0].Links[0].SubTypeLabel = "changed"
+	cached, ok := svc.cachedSearchLocked("movie:test", now)
+	if !ok || *cached.Items[0].Links[0].Seeds != 0 || cached.Items[0].Links[0].SubTypeLabel != "原盘" {
+		t.Fatal("cached metadata was mutated by the caller")
+	}
+	*cached.Items[0].Links[0].Seeds = 30
+	again, _ := svc.cachedSearchLocked("movie:test", now)
+	if *again.Items[0].Links[0].Seeds != 0 {
+		t.Fatal("cache reads share a seed pointer")
+	}
+}

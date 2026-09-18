@@ -16,10 +16,13 @@ export interface GyingResourceLink {
   category: 'pan' | 'torrent'
   type: string
   typeLabel: string
+  subType?: string
+  subTypeLabel?: string
   url: string
   password?: string
   workTitle?: string
   size?: string
+  seeds?: number
   updatedAt?: string
 }
 

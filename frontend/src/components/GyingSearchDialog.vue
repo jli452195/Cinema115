@@ -13,6 +13,7 @@ const config = ref<GyingConfigView>()
 const result = ref<GyingSearchResponse>()
 const activeItemId = ref('all')
 const activeResourceType = ref('all')
+const activeMagnetSubType = ref('all')
 type LoadPhase = '' | 'config' | 'search'
 const phase = ref<LoadPhase>('')
 const lifecycle = new AbortController()
@@ -35,6 +36,7 @@ const resourceColors: Record<string, string> = {
   guangya: '#ec4899', uc: '#f59e0b', tianyi: '#ef4444', other: '#94a3b8',
 }
 const defaultResourceOrder = ['magnet', 'aliyun', 'quark', 'baidu', 'xunlei', 'mobile', '115', '123', 'guangya', 'uc', 'tianyi', 'other']
+const magnetSubTypeOrder = ['720P', '中字720P', '1080P', '中字1080P', '4K', '中字4K', '原盘', '未知']
 const resourceOrder = computed(() => config.value?.resourceOrder?.length ? config.value.resourceOrder : defaultResourceOrder)
 function resourceRank(type: string) {
   const rank = resourceOrder.value.indexOf(type)
@@ -115,9 +117,29 @@ const resourceOptions = computed(() => {
   })
   return [{ type: 'all', label: '全部资源', count: options.reduce((sum, item) => sum + item.count, 0) }, ...options]
 })
+function magnetSubType(link: GyingResourceLink) { return link.subTypeLabel?.trim() || '未知' }
+const magnetSubTypeOptions = computed(() => {
+  const values = new Map<string, { type: string; label: string; count: number }>()
+  for (const item of selectedItems.value) for (const link of item.links) {
+    if (link.type !== 'magnet') continue
+    // Group by the site's label so missing/unrecognized codes form one
+    // Unknown option, and matching labels across film entries combine.
+    const type = magnetSubType(link)
+    const label = type
+    const current = values.get(type)
+    if (current) current.count++
+    else values.set(type, { type, label, count: 1 })
+  }
+  const options = [...values.values()].sort((a, b) => {
+    const rankA = magnetSubTypeOrder.indexOf(a.label), rankB = magnetSubTypeOrder.indexOf(b.label)
+    return (rankA < 0 ? magnetSubTypeOrder.length : rankA) - (rankB < 0 ? magnetSubTypeOrder.length : rankB) || a.label.localeCompare(b.label, 'zh-CN')
+  })
+  return [{ type: 'all', label: '全部磁力', count: options.reduce((sum, item) => sum + item.count, 0) }, ...options]
+})
 const visibleItems = computed(() => {
   return selectedItems.value.flatMap(item => {
-    const links = sortResourceLinks(activeResourceType.value === 'all' ? item.links : item.links.filter(link => link.type === activeResourceType.value))
+    const resourceLinks = activeResourceType.value === 'all' ? item.links : item.links.filter(link => link.type === activeResourceType.value)
+    const links = sortResourceLinks(resourceLinks.filter(link => activeResourceType.value !== 'magnet' || activeMagnetSubType.value === 'all' || magnetSubType(link) === activeMagnetSubType.value))
     return links.length ? [{ ...item, links }] : []
   })
 })
@@ -162,6 +184,12 @@ function requestErrorMessage(value: unknown, action: string) {
 function selectItem(id: string) {
   activeItemId.value = id
   activeResourceType.value = 'all'
+  activeMagnetSubType.value = 'all'
+}
+
+function selectResourceType(type: string) {
+  activeResourceType.value = type
+  activeMagnetSubType.value = 'all'
 }
 
 async function search(refresh = false) {
@@ -169,7 +197,7 @@ async function search(refresh = false) {
   beginPhase('search'); error.value = ''; copied.value = ''
   try {
     result.value = await gyingRequest<GyingSearchResponse>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: props.tmdbId, refresh })
-    activeItemId.value = 'all'; activeResourceType.value = 'all'
+    activeItemId.value = 'all'; activeResourceType.value = 'all'; activeMagnetSubType.value = 'all'
   } catch (e) { if (!lifecycle.signal.aborted) error.value = requestErrorMessage(e, '观影搜索') }
   finally { finishPhase('search') }
   if (result.value && !lifecycle.signal.aborted) restoreShareRuns()
@@ -253,8 +281,13 @@ onBeforeUnmount(() => {
                 <button v-for="item in resultItems" :key="item.id" type="button" class="max-w-[24rem] shrink-0 truncate rounded-xl border px-4 py-2.5 text-sm font-medium transition" :class="activeItemId === item.id ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" :title="`${item.title}${item.year ? ` (${item.year})` : ''}`" @click="selectItem(item.id)">{{ item.title }}<span v-if="item.year" class="ml-1 opacity-60">({{ item.year }})</span></button>
               </nav>
               <nav aria-label="资源网盘" class="filter-scroll mt-1 flex gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50/80 p-3">
-                <button v-for="option in resourceOptions" :key="option.type" type="button" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeResourceType === option.type ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" @click="activeResourceType = option.type">
+                <button v-for="option in resourceOptions" :key="option.type" type="button" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeResourceType === option.type ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" @click="selectResourceType(option.type)">
                   <span v-if="option.type !== 'all'" class="h-2 w-2 rounded-full" :style="{ backgroundColor: resourceColors[option.type] || resourceColors.other }" aria-hidden="true"></span>{{ option.label }} <span class="opacity-60">{{ option.count }}</span>
+                </button>
+              </nav>
+              <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" aria-label="磁力清晰度分类" class="filter-scroll flex gap-2 overflow-x-auto border-t border-slate-100 bg-white p-3">
+                <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeMagnetSubType === option.type ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-700'" @click="activeMagnetSubType = option.type">
+                  {{ option.label }} <span class="opacity-60">{{ option.count }}</span>
                 </button>
               </nav>
             </section>
@@ -264,7 +297,7 @@ onBeforeUnmount(() => {
               <article v-for="item in visibleItems" :key="item.id" class="rounded-xl border border-slate-200 p-4 sm:p-5">
                 <div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold leading-6 text-slate-900">{{ item.title }} <span v-if="item.year" class="font-normal text-slate-400">({{ item.year }})</span></h3><div class="mt-2 flex flex-wrap gap-2 text-[11px]"><span class="rounded bg-amber-50 px-2 py-1 text-amber-700">{{ mediaLabels[item.mediaType] }}</span><span v-if="linkCount(item, 'pan')" class="rounded bg-blue-50 px-2 py-1 text-blue-700">网盘 {{ linkCount(item, 'pan') }}</span><span v-if="linkCount(item, 'torrent')" class="rounded bg-violet-50 px-2 py-1 text-violet-700">种子 {{ linkCount(item, 'torrent') }}</span></div></div></div>
                 <p v-if="item.description" class="mt-3 break-words text-xs leading-6 text-slate-500">{{ item.description }}</p>
-                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="busy || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.activeResource.value === shareResourceID(item, link) ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
+                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.subTypeLabel" class="rounded bg-violet-50 px-2 py-1 font-medium text-violet-700">{{ link.subTypeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.seeds !== undefined" class="text-slate-400">做种 {{ link.seeds }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="busy || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.activeResource.value === shareResourceID(item, link) ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
               </article>
             </div>
           </template>
