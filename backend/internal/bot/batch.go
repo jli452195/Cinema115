@@ -12,6 +12,7 @@ type messageBatch struct {
 	SourceMessageIDs []int64        `json:"sourceMessageIDs,omitempty"`
 	ReadyAt          time.Time      `json:"readyAt,omitempty"`
 	Mode             string         `json:"mode,omitempty"`
+	CloudRedo        bool           `json:"cloudRedo,omitempty"`
 	UpdateID         int64          `json:"updateID"`
 	ChatID           int64          `json:"chatID"`
 	Items            []messageShare `json:"items"`

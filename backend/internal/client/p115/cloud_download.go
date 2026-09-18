@@ -2,6 +2,8 @@ package p115
 
 import (
 	"context"
+	"encoding/base32"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,14 +18,47 @@ import (
 // CloudTask is the stable subset of a 115 cloud-download task.  Raw keeps the
 // upstream fields available while 115 changes its response shape.
 type CloudTask struct {
-	InfoHash   string          `json:"infoHash,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	Status     int             `json:"status,omitempty"`
-	Progress   float64         `json:"progress,omitempty"`
-	DoneBytes  int64           `json:"doneBytes,omitempty"`
-	TotalBytes int64           `json:"totalBytes,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Raw        json.RawMessage `json:"-"`
+	InfoHash      string          `json:"infoHash,omitempty"`
+	Name          string          `json:"name,omitempty"`
+	Status        int             `json:"status,omitempty"`
+	Progress      float64         `json:"progress,omitempty"`
+	DoneBytes     int64           `json:"doneBytes,omitempty"`
+	TotalBytes    int64           `json:"totalBytes,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	DisplayStatus string          `json:"displayStatus,omitempty"`
+	StatusText    string          `json:"statusText,omitempty"`
+	StatusKnown   bool            `json:"-"`
+	Raw           json.RawMessage `json:"-"`
+}
+
+// RedoReady returns whether the task may be removed for a new submission and
+// whether the upstream state was understood. The single-task and list APIs use
+// different numeric status values, so explicit display state wins.
+func (t CloudTask) RedoReady() (ready, known bool) {
+	display := strings.ToLower(strings.TrimSpace(t.DisplayStatus))
+	switch display {
+	case "finished", "completed", "success", "failed", "stopped", "cancelled", "canceled":
+		return true, true
+	case "running", "downloading", "pending", "waiting", "parsing":
+		return false, true
+	}
+	if t.Progress >= 100 {
+		return true, true
+	}
+	if t.Error != "" {
+		return true, true
+	}
+	if !t.StatusKnown {
+		return false, false
+	}
+	switch t.Status {
+	case -1, 0, 2:
+		return true, true
+	case 1:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // CloudTaskPage is the normalized task-list response. The raw response is
@@ -72,6 +107,17 @@ type CloudPath struct {
 }
 
 var ErrCloudInput = errors.New("云下载链接或目录无效")
+var ErrCloudTaskMissing = errors.New("115 云下载任务不存在")
+
+type CloudResource struct {
+	Protocol string
+	Hash     string
+}
+
+func (r CloudResource) MatchesTaskHash(value string) bool {
+	normalized, ok := normalizeTaskHash(value, r.Protocol)
+	return ok && normalized == r.Hash
+}
 
 const cloudDownloadUserAgent = "Mozilla/5.0 115disk/36.2.28 115Browser/36.2.28 115wangpan_android/36.2.28"
 
@@ -79,41 +125,58 @@ const cloudDownloadUserAgent = "Mozilla/5.0 115disk/36.2.28 115Browser/36.2.28 1
 // links. Other protocols supported by 115 are deliberately outside this
 // feature's scope.
 func ValidateCloudURL(raw string) (string, error) {
+	if _, err := ParseCloudResource(raw); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(raw), nil
+}
+
+// ParseCloudResource extracts the stable identifier used by 115 to de-duplicate
+// cloud-download tasks. Magnet Base32 hashes are normalized to 40 lower-case
+// hex characters; ED2K keeps its 32-character MD4 hash.
+func ParseCloudResource(raw string) (CloudResource, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.ContainsAny(raw, "\r\n\x00") || len(raw) > 8192 {
-		return "", ErrCloudInput
+		return CloudResource{}, ErrCloudInput
 	}
 	lower := strings.ToLower(raw)
 	if strings.HasPrefix(lower, "magnet:?xt=urn:btih:") {
 		u, err := url.Parse(raw)
 		if err != nil {
-			return "", ErrCloudInput
+			return CloudResource{}, ErrCloudInput
 		}
 		xt := u.Query().Get("xt")
 		const prefix = "urn:btih:"
 		if !strings.HasPrefix(strings.ToLower(xt), prefix) {
-			return "", ErrCloudInput
+			return CloudResource{}, ErrCloudInput
 		}
 		hash := xt[len(prefix):]
-		if len(hash) != 32 && len(hash) != 40 {
-			return "", ErrCloudInput
-		}
-		for _, r := range hash {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') || (len(hash) == 32 && ((r >= 'g' && r <= 'z') || (r >= 'G' && r <= 'Z')))) {
-				return "", ErrCloudInput
+		if len(hash) == 40 {
+			if _, err := hex.DecodeString(hash); err != nil {
+				return CloudResource{}, ErrCloudInput
 			}
+			return CloudResource{Protocol: "magnet", Hash: strings.ToLower(hash)}, nil
 		}
-		return raw, nil
+		if len(hash) != 32 {
+			return CloudResource{}, ErrCloudInput
+		}
+		decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(hash))
+		if err != nil || len(decoded) != 20 {
+			return CloudResource{}, ErrCloudInput
+		}
+		return CloudResource{Protocol: "magnet", Hash: hex.EncodeToString(decoded)}, nil
 	}
 	if strings.HasPrefix(lower, "ed2k://|file|") && strings.HasSuffix(raw, "|/") {
 		parts := strings.Split(raw, "|")
 		if len(parts) >= 6 && parts[2] != "" && parts[3] != "" && len(parts[4]) == 32 {
-			if _, err := strconv.ParseInt(parts[3], 10, 64); err == nil {
-				return raw, nil
+			if size, err := strconv.ParseInt(parts[3], 10, 64); err == nil && size >= 0 {
+				if _, err := hex.DecodeString(parts[4]); err == nil {
+					return CloudResource{Protocol: "ed2k", Hash: strings.ToLower(parts[4])}, nil
+				}
 			}
 		}
 	}
-	return "", ErrCloudInput
+	return CloudResource{}, ErrCloudInput
 }
 
 func (c *CloudClient) AddURL(ctx context.Context, cookie, rawURL, targetCID string) (json.RawMessage, error) {
@@ -128,7 +191,11 @@ func (c *CloudClient) AddURL(ctx context.Context, cookie, rawURL, targetCID stri
 		}
 		form.Set("wp_path_id", strings.TrimSpace(targetCID))
 	}
-	return c.sspRequest(ctx, cookie, "add_task_url", form)
+	raw, err := c.sspRequest(ctx, cookie, "add_task_url", form)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapCloudData(raw)
 }
 
 // AddBT adds a torrent by info hash. wanted is an optional comma-separated
@@ -153,7 +220,74 @@ func (c *CloudClient) AddBT(ctx context.Context, cookie, infoHash, targetCID, wa
 		}
 		form.Set("wp_path_id", strings.TrimSpace(targetCID))
 	}
-	return c.sspRequest(ctx, cookie, "add_task_bt", form)
+	raw, err := c.sspRequest(ctx, cookie, "add_task_bt", form)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapCloudData(raw)
+}
+
+// LookupTask uses 115's single-hash endpoint. errcode 10021 is the documented
+// runtime response for an absent task and is returned as found=false.
+func (c *CloudClient) LookupTask(ctx context.Context, cookie string, resource CloudResource) (CloudTask, bool, error) {
+	task, err := c.GetTask(ctx, cookie, resource.Hash)
+	if errors.Is(err, ErrCloudTaskMissing) {
+		return CloudTask{}, false, nil
+	}
+	if err != nil {
+		return CloudTask{}, false, err
+	}
+	if !resource.MatchesTaskHash(task.InfoHash) {
+		return CloudTask{}, false, errors.New("115 返回的云下载任务 Hash 与查询目标不一致")
+	}
+	return task, true, nil
+}
+
+func normalizeTaskHash(value, protocol string) (string, bool) {
+	value = strings.TrimSpace(value)
+	switch protocol {
+	case "magnet":
+		if len(value) == 40 {
+			if _, err := hex.DecodeString(value); err == nil {
+				return strings.ToLower(value), true
+			}
+		}
+		if len(value) == 32 {
+			decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(value))
+			if err == nil && len(decoded) == 20 {
+				return hex.EncodeToString(decoded), true
+			}
+		}
+	case "ed2k":
+		if len(value) == 32 {
+			if _, err := hex.DecodeString(value); err == nil {
+				return strings.ToLower(value), true
+			}
+		}
+	}
+	return "", false
+}
+
+// DeleteTaskKeepFiles removes exactly one verified task record. Omitting flag
+// (equivalent to flag=0) is intentional: downloaded files must never be
+// removed by the Telegram redo workflow.
+func (c *CloudClient) DeleteTaskKeepFiles(ctx context.Context, cookie, infoHash string) error {
+	infoHash = strings.TrimSpace(infoHash)
+	if len(infoHash) != 32 && len(infoHash) != 40 {
+		return fmt.Errorf("%w：云下载任务 Hash 无效", ErrCloudInput)
+	}
+	if _, err := hex.DecodeString(infoHash); err != nil {
+		return fmt.Errorf("%w：云下载任务 Hash 无效", ErrCloudInput)
+	}
+	form := url.Values{"ac": {"task_del"}, "hash[0]": {infoHash}}
+	raw, err := c.webRequest(ctx, cookie, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/web/", nil, form)
+	if err != nil {
+		return err
+	}
+	if _, err := unwrapCloudData(raw); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *CloudClient) GetSign(ctx context.Context, cookie string) (CloudSign, error) {
@@ -380,7 +514,12 @@ func parseCloudTask(raw json.RawMessage) (CloudTask, error) {
 	task.InfoHash = firstString(fields, "info_hash", "infoHash", "hash")
 	task.Name = firstString(fields, "name", "file_name", "title")
 	task.Status = firstInt(fields, "status", "stat")
-	task.Progress = firstFloat(fields, "percent", "progress", "percent_done")
+	_, hasStatus := fields["status"]
+	_, hasStat := fields["stat"]
+	task.StatusKnown = hasStatus || hasStat
+	task.DisplayStatus = firstString(fields, "display_status", "displayStatus")
+	task.StatusText = firstString(fields, "status_text", "statusText")
+	task.Progress = firstFloat(fields, "percent", "progress", "percent_done", "percentDone", "display_percent")
 	task.DoneBytes = firstInt64(fields, "done_size", "done_bytes", "downloaded")
 	task.TotalBytes = firstInt64(fields, "size", "total_size", "total_bytes")
 	task.Error = firstString(fields, "error", "error_msg", "message", "errmsg")
@@ -399,9 +538,16 @@ func unwrapCloudData(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("解析 115 云下载响应: %w", err)
 	}
 	if state, ok := object["state"]; ok && !upstreamOK(state) {
+		code := firstInt64(object, "errno", "errcode", "code")
+		if code == 10021 {
+			return nil, ErrCloudTaskMissing
+		}
 		message := firstString(object, "error", "message", "msg", "errmsg")
 		if message == "" {
 			message = "115 拒绝云下载请求"
+			if code != 0 {
+				message += "（错误码 " + strconv.FormatInt(code, 10) + "）"
+			}
 		}
 		return nil, errors.New(message)
 	}

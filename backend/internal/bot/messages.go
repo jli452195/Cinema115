@@ -59,8 +59,13 @@ func isCloudCommand(text string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
-	return command == "/cloud" || command == "/磁力转存"
+	name := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
+	switch name {
+	case "/cloud", "/磁力转存", "/重新转存":
+		return true
+	default:
+		return false
+	}
 }
 
 // 将文字超链接按原位置展开，复用多链接排序、相邻提取码和去重逻辑。

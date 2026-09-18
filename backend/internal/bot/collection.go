@@ -31,8 +31,7 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		}
 		text := telegramMessageText(m)
 		cloudItems := parseCloudLinks(text)
-		cloudCommand := isCloudCommand(text)
-		if len(cloudItems) > 0 || cloudCommand {
+		if len(cloudItems) > 0 || isCloudCommand(text) {
 			switch {
 			case m.Chat.Type != "" && m.Chat.Type != "private":
 				b.queueTextReply(state, update, m, "⚠️ 磁力转存只允许在 Bot 私聊中使用，请私聊发送 /cloud。")
@@ -41,7 +40,7 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 				b.queueTextReply(state, update, m, "⚠️ 此 Bot 尚未配置磁力转存，请先在管理页面为它选择 115 账号和下载目录。")
 				cloudItems = nil
 			case len(cloudItems) == 0:
-				b.queueTextReply(state, update, m, "请发送 magnet 磁力链接或 ED2K 链接。\n\n也可以直接发送：/cloud <链接>")
+				b.queueTextReply(state, update, m, "请发送 magnet 磁力链接或 ED2K 链接。\n\n直接发送或使用 /cloud <链接>，都会默认执行智能删除重试。")
 			}
 		}
 		if len(items) > 0 {
@@ -49,7 +48,10 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		}
 		if len(cloudItems) > 0 {
 			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "云下载", "INFO", fmt.Sprintf("收到磁力转存消息，识别 %d 个链接并加入队列", len(cloudItems)))
-			batch := &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: "cloud", ReadyAt: now}
+			// Cloud download is administrator-only, so every new input uses the
+			// safe smart-redo path: exact terminal tasks are removed while files
+			// are kept; running or unverifiable tasks are untouched.
+			batch := &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: "cloud", CloudRedo: true, ReadyAt: now}
 			for _, link := range cloudItems {
 				batch.Items = append(batch.Items, messageShare{URL: link})
 				batch.SourceMessageIDs = append(batch.SourceMessageIDs, m.ID)
@@ -108,10 +110,13 @@ func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 			state.Batch = batch
 			mode := map[string]string{"direct": "普通分享", "cloud": "115 云下载", "reshare": "合并转存再分享"}[batch.Mode]
 			b.Logs.Append("Telegram", fmt.Sprintf("批次-%d", batch.UpdateID), "Bot", "INFO", fmt.Sprintf("开始处理批次：%d 个链接，%s", len(batch.Items), mode))
-			state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(batch.Items))}
 			if batch.Mode == "cloud" {
-				state.Pending.Text = fmt.Sprintf("⏳ 正在向 115 提交 %d 个云下载任务…", len(batch.Items))
+				// Cloud submissions produce one final summary only. The batch itself
+				// remains persisted before any 115 request is made.
+				state.Pending = nil
+				return true
 			}
+			state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(batch.Items))}
 			if batch.Mode == "reshare" {
 				state.Pending.Text += "\n本人分享直接生成，其他账号的正常分享合并转存，审核来源单独处理。"
 			}
