@@ -131,6 +131,18 @@ func main() {
 	httpapi.RegisterWebsiteNotifications(member, database)
 	httpapi.RegisterFollowAdmin(admin, follows)
 	httpapi.RegisterP115Accounts(admin, accounts, p115.NewAccountClient(), p115.NewClient())
+	cloudDownloadStore, err := service.NewSessionStore(filepath.Join(dataDir, "cloud-download-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cloudDownloadSettings, err := service.NewCloudDownloadSettings(cloudDownloadStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cloudDownloadSettings.ValidateAccount = accounts.ValidateSelection
+	cloudClient := p115.NewCloudClient()
+	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient}
+	httpapi.RegisterCloudDownload(admin, accounts, cloudDownloadSettings, cloudDownloads, cloudClient, p115.NewShareClient())
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -183,6 +195,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	telegram.CloudDownloads = cloudDownloads
 	automation.ValidateBot = telegram.ValidateSelection
 	follows.ValidateBot = telegram.ValidateSelection
 	telegramMigrationCtx, telegramMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -15,8 +15,9 @@ import (
 type GyingSearcher interface {
 	View() service.GyingView
 	Configure(context.Context, service.GyingConfigInput) (service.GyingView, error)
+	UpdateResourceOrder([]string) (service.GyingView, error)
 	Clear() error
-	Search(context.Context, string, string) (gying.SearchResponse, error)
+	Search(context.Context, service.GyingSearchInput) (service.GyingSearchResult, error)
 }
 
 func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBReader) {
@@ -61,10 +62,26 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 		}
 		c.JSON(http.StatusOK, searcher.View())
 	})
+	group.PUT("/resource-order", func(c *gin.Context) {
+		var input struct {
+			Types []string `json:"types"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			fail(c, gying.ErrInput)
+			return
+		}
+		view, err := searcher.UpdateResourceOrder(input.Types)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	})
 	group.POST("/search", func(c *gin.Context) {
 		var input struct {
-			Kind   string `json:"kind"`
-			TMDBID string `json:"tmdbId"`
+			Kind    string `json:"kind"`
+			TMDBID  string `json:"tmdbId"`
+			Refresh bool   `json:"refresh"`
 		}
 		if c.ShouldBindJSON(&input) != nil || (input.Kind != "movie" && input.Kind != "tv") {
 			fail(c, gying.ErrInput)
@@ -84,7 +101,12 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 		}
 		searchCtx, searchCancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
 		defer searchCancel()
-		result, err := searcher.Search(searchCtx, detail.OriginalTitle, detail.IMDBID)
+		result, err := searcher.Search(searchCtx, service.GyingSearchInput{
+			CacheKey:      input.Kind + ":" + strconv.Itoa(id),
+			OriginalTitle: detail.OriginalTitle,
+			IMDBID:        detail.IMDBID,
+			Refresh:       input.Refresh,
+		})
 		if err != nil {
 			fail(c, err)
 			return

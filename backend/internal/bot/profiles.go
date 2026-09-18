@@ -20,28 +20,41 @@ var ErrBotMissing = errors.New("Bot 配置不存在，请刷新页面")
 var ErrBotChanged = errors.New("Bot 配置已发生变化，请刷新后重试")
 
 type BotProfile struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	Token              string   `json:"token"`
-	AllowedChatIDs     string   `json:"allowedChatIDs"`
-	NotificationChatID string   `json:"notificationChatID"`
-	Enabled            bool     `json:"enabled"`
-	Identity           Identity `json:"identity"`
-	Revision           uint64   `json:"revision"`
+	ID                 string                 `json:"id"`
+	Name               string                 `json:"name"`
+	Token              string                 `json:"token"`
+	AllowedChatIDs     string                 `json:"allowedChatIDs"`
+	NotificationChatID string                 `json:"notificationChatID"`
+	Enabled            bool                   `json:"enabled"`
+	CloudDownload      BotCloudDownloadConfig `json:"cloudDownload"`
+	Identity           Identity               `json:"identity"`
+	Revision           uint64                 `json:"revision"`
+}
+
+type BotCloudDownloadConfig struct {
+	Enabled    bool   `json:"enabled"`
+	AccountID  string `json:"accountId"`
+	TargetCID  string `json:"targetCID"`
+	TargetPath string `json:"targetPath"`
+}
+
+func (c BotCloudDownloadConfig) ServiceConfig() service.CloudDownloadConfig {
+	return service.CloudDownloadConfig{AccountID: c.AccountID, TargetCID: c.TargetCID, TargetPath: c.TargetPath}
 }
 
 type BotProfileView struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	Configured         bool     `json:"configured"`
-	Enabled            bool     `json:"enabled"`
-	AllowedChatIDs     string   `json:"allowedChatIDs"`
-	NotificationChatID string   `json:"notificationChatID"`
-	Identity           Identity `json:"identity"`
-	Revision           uint64   `json:"revision"`
-	Running            bool     `json:"running"`
-	Connected          bool     `json:"connected"`
-	LastError          string   `json:"lastError"`
+	ID                 string                 `json:"id"`
+	Name               string                 `json:"name"`
+	Configured         bool                   `json:"configured"`
+	Enabled            bool                   `json:"enabled"`
+	AllowedChatIDs     string                 `json:"allowedChatIDs"`
+	NotificationChatID string                 `json:"notificationChatID"`
+	CloudDownload      BotCloudDownloadConfig `json:"cloudDownload"`
+	Identity           Identity               `json:"identity"`
+	Revision           uint64                 `json:"revision"`
+	Running            bool                   `json:"running"`
+	Connected          bool                   `json:"connected"`
+	LastError          string                 `json:"lastError"`
 }
 
 type botProfileDocument struct {

@@ -7,6 +7,7 @@ import MediaDetailView from './views/MediaDetailView.vue'
 import HomeView from './views/HomeView.vue'
 import P115View from './views/P115View.vue'
 import ShareView from './views/ShareView.vue'
+import CloudDownloadView from './views/CloudDownloadView.vue'
 import TelegramView from './views/TelegramView.vue'
 import TelegramUserView from './views/TelegramUserView.vue'
 import LogsView from './views/LogsView.vue'
@@ -40,6 +41,7 @@ export const router = createRouter({
     { path: '/helper115', name: 'helper115', component: P115View },
     { path: '/115/login', redirect: '/helper115' },
     { path: '/115/share', name: 'share', component: ShareView },
+    { path: '/115/cloud-download', name: 'cloud-download', component: CloudDownloadView },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
     { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView },

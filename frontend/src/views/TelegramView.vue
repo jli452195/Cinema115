@@ -3,11 +3,14 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import TelegramBotEditor from '../components/TelegramBotEditor.vue'
 import { telegramRequest } from '../lib/telegram-api'
+import { p115Request } from '../lib/p115-api'
 import type { TelegramBotConfig } from '../types/telegramBots'
+import type { P115Account } from '../types/p115Accounts'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 const bots = ref<TelegramBotConfig[]>([])
+const accounts = ref<P115Account[]>([])
 const loading = ref(true)
 const adding = ref(false)
 const error = ref('')
@@ -24,6 +27,15 @@ async function refresh() {
   finally { if (current === sequence) loading.value = false }
 }
 
+async function loadAccounts() {
+  try {
+    const data = await p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+    if (!lifecycle.signal.aborted) accounts.value = data.accounts
+  } catch (e) {
+    if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取 115 账号失败'
+  }
+}
+
 async function add() {
   if (adding.value) return
   adding.value = true; error.value = ''
@@ -35,7 +47,7 @@ async function add() {
 }
 
 onMounted(async () => {
-  await refresh()
+  await Promise.all([refresh(), loadAccounts()])
   const poll = async () => { if (!lifecycle.signal.aborted && !adding.value) await refresh(); if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 5000) }
   if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 5000)
 })
@@ -53,6 +65,6 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
     <p v-if="error" role="alert" class="mb-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
     <p v-if="loading" role="status" class="py-10 text-sm text-slate-500">正在读取 Bot 配置…</p>
     <p v-else-if="!bots.length && !error" class="py-10 text-sm text-slate-500">暂无 Bot，请添加配置，再到具体功能中选择使用。</p>
-    <div class="grid items-start gap-5 xl:grid-cols-2"><TelegramBotEditor v-for="bot in bots" :key="`${bot.id}:${bot.revision}`" :bot="bot" :token="token" @changed="refresh" /></div>
+    <div class="grid items-start gap-5 xl:grid-cols-2"><TelegramBotEditor v-for="bot in bots" :key="`${bot.id}:${bot.revision}`" :bot="bot" :token="token" :accounts="accounts" @changed="refresh" /></div>
   </ManagementLayout>
 </template>

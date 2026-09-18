@@ -5,6 +5,7 @@ export async function savedSTRMSettings(token: string, signal: AbortSignal): Pro
   const response = await fetch('/api/admin/p115/share/automation-config', { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
   const data = await response.json().catch(() => null)
   if (!response.ok || !data?.settings?.generation) throw new Error(data?.error || '读取 STRM 生成配置失败')
+  if (!data.settings.accountId) throw new Error('请先在「115分享STRM」基础设置中明确选择并保存已登录的 115 账号配置')
   const settings = data.settings.generation as STRMSettings
   if (!settings.baseUrl?.trim() || !settings.outputDir?.trim()) throw new Error('请先在「115分享STRM」基础设置中保存播放地址和输出目录')
   return settings

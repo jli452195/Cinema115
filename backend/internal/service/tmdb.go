@@ -205,7 +205,9 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 	if (kind != "tv" && kind != "movie") || id < 1 {
 		return nil, tmdb.ErrInput
 	}
-	value, info, err := cachedTMDB[tmdb.Detail](ctx, s, "detail:"+kind+":"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, kind, id) })
+	// v2 includes IMDb identifiers used by independent resource-search fallbacks.
+	// Keeping the version in the key makes legacy detail records expire naturally.
+	value, info, err := cachedTMDB[tmdb.Detail](ctx, s, "detail:v2:"+kind+":"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, kind, id) })
 	if err != nil {
 		return nil, err
 	}

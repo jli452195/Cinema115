@@ -12,6 +12,12 @@ export interface TelegramBotConfig {
   enabled: boolean
   allowedChatIDs: string
   notificationChatID: string
+  cloudDownload: {
+    enabled: boolean
+    accountId: string
+    targetCID: string
+    targetPath: string
+  }
   identity: TelegramBotIdentity
   revision: number
   running: boolean

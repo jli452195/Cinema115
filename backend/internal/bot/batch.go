@@ -24,6 +24,9 @@ type messageBatch struct {
 // 每个链接分别保存开始与结束状态；重启只继续尚未开始的链接，不重复转存。
 func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) error {
 	batch := state.Batch
+	if batch.Mode == "cloud" {
+		return b.processCloudDownload(ctx, state)
+	}
 	if generator, ok := b.Generator.(service.BatchGenerator); ok && batch.Mode == "reshare" && batch.Next == 0 {
 		return b.processMergedBatch(ctx, state, generator)
 	}

@@ -19,15 +19,18 @@ import (
 )
 
 type Telegram struct {
-	Token        string
-	AllowedChats map[int64]bool
-	HTTP         *http.Client
-	BaseURL      string
-	StatePath    string
-	Generator    ShareGenerator
-	Settings     *service.AutomationStore
-	OnStatus     func(bool, string)
-	Logs         *service.GenerationLogs
+	Token               string
+	AllowedChats        map[int64]bool
+	HTTP                *http.Client
+	BaseURL             string
+	StatePath           string
+	Generator           ShareGenerator
+	Settings            *service.AutomationStore
+	OnStatus            func(bool, string)
+	Logs                *service.GenerationLogs
+	ShareEnabled        bool
+	CloudDownloads      CloudDownloadSubmitter
+	CloudDownloadConfig BotCloudDownloadConfig
 }
 
 func NewTelegram(token, chats, dataDir string, generator ShareGenerator, settings *service.AutomationStore) (*Telegram, error) {
@@ -45,7 +48,7 @@ func NewTelegram(token, chats, dataDir string, generator ShareGenerator, setting
 		}
 		allowed[id] = true
 	}
-	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state-"+strings.SplitN(token, ":", 2)[0]+".json"), Generator: generator, Settings: settings}, nil
+	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state-"+strings.SplitN(token, ":", 2)[0]+".json"), Generator: generator, Settings: settings, ShareEnabled: true}, nil
 }
 
 type telegramMessage struct {
@@ -59,7 +62,8 @@ type telegramMessage struct {
 		IsBot bool `json:"is_bot"`
 	} `json:"from"`
 	Chat struct {
-		ID int64 `json:"id"`
+		ID   int64  `json:"id"`
+		Type string `json:"type"`
 	} `json:"chat"`
 }
 type telegramUpdate struct {

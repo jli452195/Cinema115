@@ -1,6 +1,7 @@
 package gying
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -98,11 +99,23 @@ type ResourceLink struct {
 }
 
 type SearchResponse struct {
-	Query     string       `json:"query"`
-	MatchedBy string       `json:"matchedBy,omitempty"`
-	Items     []SearchItem `json:"items"`
-	Total     int          `json:"total"`
-	Truncated bool         `json:"truncated,omitempty"`
+	Query         string          `json:"query"`
+	MatchedBy     string          `json:"matchedBy,omitempty"`
+	Items         []SearchItem    `json:"items"`
+	Total         int             `json:"total"`
+	Truncated     bool            `json:"truncated,omitempty"`
+	Attempts      []SearchAttempt `json:"attempts"`
+	Partial       bool            `json:"partial,omitempty"`
+	FailedDetails int             `json:"failedDetails,omitempty"`
+}
+
+type SearchAttempt struct {
+	Method    string `json:"method"`
+	Query     string `json:"query"`
+	Total     int    `json:"total"`
+	Usable    int    `json:"usable"`
+	Failed    int    `json:"failed,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type searchData struct {
@@ -120,24 +133,70 @@ type searchData struct {
 }
 
 type detailData struct {
-	Code     int `json:"code"`
-	Downlist struct {
-		List struct {
-			Hash    []string `json:"m"`
-			Title   []string `json:"t"`
-			Size    []string `json:"s"`
-			Updated []string `json:"n"`
-		} `json:"list"`
-	} `json:"downlist"`
-	Panlist struct {
-		ID    []string `json:"id"`
-		Name  []string `json:"name"`
-		Pass  []string `json:"p"`
-		URL   []string `json:"url"`
-		Type  []int    `json:"type"`
-		Time  []string `json:"time"`
-		TName []string `json:"tname"`
-	} `json:"panlist"`
+	Code     int          `json:"code"`
+	Downlist downlistData `json:"downlist"`
+	Panlist  panlistData  `json:"panlist"`
+}
+
+type downlistData struct {
+	List struct {
+		Hash    []string `json:"m"`
+		Title   []string `json:"t"`
+		Size    []string `json:"s"`
+		Updated []string `json:"n"`
+	} `json:"list"`
+}
+
+type panlistData struct {
+	ID    []string `json:"id"`
+	Name  []string `json:"name"`
+	Pass  []string `json:"p"`
+	URL   []string `json:"url"`
+	Type  []int    `json:"type"`
+	Time  []string `json:"time"`
+	TName []string `json:"tname"`
+}
+
+func (value *downlistData) UnmarshalJSON(data []byte) error {
+	type plainDownlistData downlistData
+	return decodeDetailObject(data, (*plainDownlistData)(value), "downlist")
+}
+
+func (value *panlistData) UnmarshalJSON(data []byte) error {
+	type plainPanlistData panlistData
+	return decodeDetailObject(data, (*plainPanlistData)(value), "panlist")
+}
+
+// Some detail responses use [] instead of an object when a resource group is
+// empty. Accept only an empty array so a future non-empty array shape cannot be
+// silently discarded.
+func decodeDetailObject[T any](data []byte, target *T, field string) error {
+	trimmed := bytes.TrimSpace(data)
+	var zero T
+	switch {
+	case bytes.Equal(trimmed, []byte("null")):
+		*target = zero
+		return nil
+	case len(trimmed) > 0 && trimmed[0] == '{':
+		var decoded T
+		if err := json.Unmarshal(trimmed, &decoded); err != nil {
+			return fmt.Errorf("detail field %s: %w", field, err)
+		}
+		*target = decoded
+		return nil
+	case len(trimmed) > 0 && trimmed[0] == '[':
+		var items []json.RawMessage
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			return fmt.Errorf("detail field %s: %w", field, err)
+		}
+		if len(items) != 0 {
+			return fmt.Errorf("detail field %s: non-empty array is unsupported", field)
+		}
+		*target = zero
+		return nil
+	default:
+		return fmt.Errorf("detail field %s: expected object, null, or empty array", field)
+	}
 }
 
 var panTypes = map[int]string{
@@ -147,7 +206,7 @@ var panTypes = map[int]string{
 
 var panTypeLabels = map[string]string{
 	"xunlei": "迅雷", "baidu": "百度", "quark": "夸克", "tianyi": "天翼",
-	"mobile": "移动云盘", "115": "115", "123": "123", "uc": "UC", "aliyun": "阿里云盘",
+	"mobile": "移动云盘", "115": "115", "123": "123", "guangya": "光鸭网盘", "uc": "UC", "aliyun": "阿里云盘",
 }
 
 var (
@@ -171,18 +230,34 @@ func (c *Client) SearchByTitle(ctx context.Context, originalTitle, imdbID string
 		if err != nil {
 			return SearchResponse{}, err
 		}
+		result.Attempts[0].Method = "title"
 		result.MatchedBy = "title"
 		if len(result.Items) > 0 || imdbID == "" {
 			return result, nil
 		}
+		titleAttempt := result.Attempts[0]
+		if !validIMDbID(imdbID) {
+			return result, nil
+		}
+		result, err = c.search(ctx, imdbID)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		result.Attempts[0].Method = "imdb"
+		result.Attempts = append([]SearchAttempt{titleAttempt}, result.Attempts...)
+		result.Partial = titleAttempt.Failed > 0 || result.Partial
+		result.FailedDetails += titleAttempt.Failed
+		result.MatchedBy = "imdb"
+		return result, nil
 	}
 	if !validIMDbID(imdbID) {
-		return SearchResponse{Query: originalTitle, MatchedBy: "title", Items: []SearchItem{}}, nil
+		return SearchResponse{Query: originalTitle, MatchedBy: "title", Items: []SearchItem{}, Attempts: []SearchAttempt{}}, nil
 	}
 	result, err := c.search(ctx, imdbID)
 	if err != nil {
 		return SearchResponse{}, err
 	}
+	result.Attempts[0].Method = "imdb"
 	result.MatchedBy = "imdb"
 	return result, nil
 }
@@ -328,8 +403,16 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 	jobs := make(chan int)
 	searchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var forbidden error
-	var forbiddenMu sync.Mutex
+	eligible := 0
+	for i := 0; i < count; i++ {
+		if searchItemEligible(data, i) {
+			eligible++
+		}
+	}
+	var fatalError error
+	var firstDetailError error
+	detailErrors := 0
+	var resultMu sync.Mutex
 	workers := 6
 	if count < workers {
 		workers = count
@@ -342,12 +425,21 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 			for i := range jobs {
 				item, err := c.fetchSearchItem(searchCtx, data, i)
 				if errors.Is(err, ErrForbidden) {
-					forbiddenMu.Lock()
-					if forbidden == nil {
-						forbidden = err
+					resultMu.Lock()
+					if fatalError == nil {
+						fatalError = err
 						cancel()
 					}
-					forbiddenMu.Unlock()
+					resultMu.Unlock()
+					continue
+				}
+				if err != nil {
+					resultMu.Lock()
+					detailErrors++
+					if firstDetailError == nil {
+						firstDetailError = err
+					}
+					resultMu.Unlock()
 					continue
 				}
 				if err == nil && item != nil {
@@ -365,11 +457,14 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 	}
 	close(jobs)
 	wg.Wait()
-	if forbidden != nil {
-		return SearchResponse{}, forbidden
+	if fatalError != nil {
+		return SearchResponse{}, fatalError
 	}
 	if err := searchCtx.Err(); err != nil {
 		return SearchResponse{}, err
+	}
+	if eligible > 0 && detailErrors == eligible {
+		return SearchResponse{}, fmt.Errorf("读取观影资源详情失败: %w", firstDetailError)
 	}
 	items := make([]SearchItem, 0, count)
 	for _, item := range results {
@@ -377,11 +472,19 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 			items = append(items, *item)
 		}
 	}
-	return SearchResponse{Query: query, Items: items, Total: total, Truncated: truncated}, nil
+	attempt := SearchAttempt{Query: query, Total: total, Usable: len(items), Failed: detailErrors, Truncated: truncated}
+	return SearchResponse{
+		Query: query, Items: items, Total: total, Truncated: truncated,
+		Attempts: []SearchAttempt{attempt}, Partial: detailErrors > 0, FailedDetails: detailErrors,
+	}, nil
+}
+
+func searchItemEligible(data searchData, i int) bool {
+	return i < len(data.L.Title) && i < len(data.L.Kind) && strings.TrimSpace(data.L.ID[i]) != ""
 }
 
 func (c *Client) fetchSearchItem(ctx context.Context, data searchData, i int) (*SearchItem, error) {
-	if i >= len(data.L.Title) || i >= len(data.L.Kind) || strings.TrimSpace(data.L.ID[i]) == "" {
+	if !searchItemEligible(data, i) {
 		return nil, nil
 	}
 	detail, err := c.fetchDetail(ctx, data.L.Kind[i], data.L.ID[i])
@@ -540,21 +643,32 @@ func classifyPanURL(raw string) string {
 		return "uc"
 	case host == "pan.baidu.com":
 		return "baidu"
-	case host == "alipan.com" || strings.HasSuffix(host, ".alipan.com") || host == "aliyundrive.com" || strings.HasSuffix(host, ".aliyundrive.com"):
+	case hostMatches(host, "alipan.com", "aliyundrive.com"):
 		return "aliyun"
 	case host == "pan.xunlei.com":
 		return "xunlei"
-	case host == "cloud.189.cn" || strings.HasSuffix(host, ".tianyi.cloud") || host == "tianyi.cloud":
+	case host == "cloud.189.cn" || hostMatches(host, "tianyi.cloud"):
 		return "tianyi"
 	case host == "yun.139.com" || host == "caiyun.139.com" || host == "caiyun.feixin.10086.cn":
 		return "mobile"
-	case host == "115.com" || strings.HasSuffix(host, ".115.com") || host == "115cdn.com" || strings.HasSuffix(host, ".115cdn.com") || host == "anxia.com":
+	case hostMatches(host, "115.com", "115cdn.com", "anxia.com"):
 		return "115"
-	case strings.HasPrefix(host, "123"):
+	case hostMatches(host, "123684.com", "123pan.com", "123pan.cn"):
 		return "123"
+	case hostMatches(host, "guangyapan.com"):
+		return "guangya"
 	default:
 		return "other"
 	}
+}
+
+func hostMatches(host string, roots ...string) bool {
+	for _, root := range roots {
+		if host == root || strings.HasSuffix(host, "."+root) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyPanName(raw string) string {

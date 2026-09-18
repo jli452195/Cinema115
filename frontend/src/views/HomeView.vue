@@ -13,6 +13,7 @@ const categories = {
     features: [
       { title: '115 助手', description: '管理账号连接、扫码登录与 Cookie 校验，为分享播放提供凭证。', to: '/helper115', icon: 'cloud' },
       { title: '115分享STRM', description: '从分享链接生成 STRM，管理转存再分享、审核重试与任务记录。', to: '/115/share', icon: 'play' },
+      { title: '115 云下载', description: '提交磁力或 ED2K 到指定的 115 账号和目录，查看云下载任务进度。', to: '/115/cloud-download', icon: 'download' },
     ],
   },
   telegram: {
@@ -36,6 +37,7 @@ const current = computed(() => categories[props.category])
           <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
             <path v-if="feature.icon === 'cloud'" d="M6 19a5 5 0 0 1-1-9.9A7 7 0 0 1 18.7 8a5.5 5.5 0 0 1-.2 11H6Z" />
             <template v-else-if="feature.icon === 'play'"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4V8Z"/></template>
+            <template v-else-if="feature.icon === 'download'"><path d="M12 3v11m0 0 4-4m-4 4-4-4"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></template>
             <path v-else d="m21 3-5 18-5-7-8-3L21 3Zm-10 11 5-6" />
           </svg>
         </span>

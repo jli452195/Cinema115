@@ -29,6 +29,40 @@ func parseTelegramMessage(message *telegramMessage) []messageShare {
 	return ParseMessages(expandTelegramLinks(message.Caption, message.CaptionEntities))
 }
 
+var magnetLinkPattern = regexp.MustCompile(`(?i)magnet:\?xt=urn:btih:[A-Z0-9]{32,40}(?:&[^\s<>"，。；、（）\[\]{},;]+)*`)
+var ed2kLinkPattern = regexp.MustCompile(`(?i)ed2k://\|file\|[^\r\n<>]+?\|/`)
+
+func telegramMessageText(message *telegramMessage) string {
+	if message.Text != "" {
+		return message.Text
+	}
+	return message.Caption
+}
+
+func parseCloudLinks(text string) []string {
+	positions := append(magnetLinkPattern.FindAllStringIndex(text, -1), ed2kLinkPattern.FindAllStringIndex(text, -1)...)
+	sort.SliceStable(positions, func(i, j int) bool { return positions[i][0] < positions[j][0] })
+	links := make([]string, 0, len(positions))
+	seen := make(map[string]bool, len(positions))
+	for _, position := range positions {
+		link := text[position[0]:position[1]]
+		if normalized, err := p115.ValidateCloudURL(link); err == nil && !seen[normalized] {
+			seen[normalized] = true
+			links = append(links, normalized)
+		}
+	}
+	return links
+}
+
+func isCloudCommand(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return false
+	}
+	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
+	return command == "/cloud" || command == "/磁力转存"
+}
+
 // 将文字超链接按原位置展开，复用多链接排序、相邻提取码和去重逻辑。
 // Telegram 的偏移量按 UTF-16 计数，不能直接当作 Go 字节下标，特别是含 emoji 的图文说明。
 func expandTelegramLinks(text string, entities []telegramEntity) string {

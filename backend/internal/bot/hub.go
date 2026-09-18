@@ -15,15 +15,16 @@ import (
 
 // Hub 管理 Bot 配置库及运行实例。每个 Bot 最多启动一个 getUpdates 消费者。
 type Hub struct {
-	mu            sync.RWMutex
-	profiles      *BotProfiles
-	dataDir       string
-	generator     ShareGenerator
-	settings      *service.AutomationStore
-	runtimes      map[string]*Manager
-	wake          chan struct{}
-	Logs          *service.GenerationLogs
-	Notifications NotificationStore
+	mu             sync.RWMutex
+	profiles       *BotProfiles
+	dataDir        string
+	generator      ShareGenerator
+	settings       *service.AutomationStore
+	runtimes       map[string]*Manager
+	wake           chan struct{}
+	Logs           *service.GenerationLogs
+	Notifications  NotificationStore
+	CloudDownloads *service.CloudDownloadService
 }
 
 func NewHub(dataDir, secret string, generator ShareGenerator, settings *service.AutomationStore) (*Hub, error) {
@@ -43,11 +44,17 @@ func (h *Hub) Refresh() {
 	}
 }
 
-func (h *Hub) newManager(profile BotProfile, receive bool) *Manager {
-	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receive, Identity: profile.Identity}
+func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
+	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || profile.CloudDownload.Enabled, Identity: profile.Identity}
 	m := &Manager{config: cfg, source: "web", wake: make(chan struct{}, 1)}
 	m.newWorker = func(value BotConfig) (*Telegram, error) {
-		return NewTelegram(value.Token, value.AllowedChatIDs, h.dataDir, h.generator, h.settings)
+		worker, err := NewTelegram(value.Token, value.AllowedChatIDs, h.dataDir, h.generator, h.settings)
+		if worker != nil {
+			worker.ShareEnabled = receiveShare
+			worker.CloudDownloads = h.CloudDownloads
+			worker.CloudDownloadConfig = profile.CloudDownload
+		}
+		return worker, err
 	}
 	m.Logs, m.Notifications = h.Logs, h.Notifications
 	return m
@@ -71,7 +78,7 @@ func (h *Hub) List() []BotProfileView {
 	defer h.mu.RUnlock()
 	result := make([]BotProfileView, 0, len(profiles))
 	for _, profile := range profiles {
-		view := BotProfileView{ID: profile.ID, Name: profile.Name, Configured: profile.Token != "", Enabled: profile.Enabled, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Identity: profile.Identity, Revision: profile.Revision}
+		view := BotProfileView{ID: profile.ID, Name: profile.Name, Configured: profile.Token != "", Enabled: profile.Enabled, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, CloudDownload: profile.CloudDownload, Identity: profile.Identity, Revision: profile.Revision}
 		if runtime := h.runtimes[profile.ID]; runtime != nil {
 			state := runtime.View()
 			view.Running, view.Connected, view.LastError = state.Running, state.Connected, state.LastError
@@ -86,6 +93,9 @@ func normalizeBotProfile(profile BotProfile) (BotProfile, error) {
 	profile.Token = strings.TrimSpace(profile.Token)
 	profile.AllowedChatIDs = normalizeChats(profile.AllowedChatIDs)
 	profile.NotificationChatID = strings.TrimSpace(profile.NotificationChatID)
+	profile.CloudDownload.AccountID = strings.TrimSpace(profile.CloudDownload.AccountID)
+	profile.CloudDownload.TargetCID = strings.TrimSpace(profile.CloudDownload.TargetCID)
+	profile.CloudDownload.TargetPath = strings.TrimSpace(profile.CloudDownload.TargetPath)
 	if !validBotName(profile.Name) {
 		return profile, fmt.Errorf("%w：名称应为 1～50 字", ErrConfig)
 	}
@@ -121,6 +131,17 @@ func (h *Hub) Update(ctx context.Context, input BotProfile, revision uint64) err
 	input, err = normalizeBotProfile(input)
 	if err != nil {
 		return err
+	}
+	if input.CloudDownload.Enabled {
+		if !input.Enabled {
+			return fmt.Errorf("%w：请先启用 Bot，再启用磁力转存", ErrConfig)
+		}
+		if h.CloudDownloads == nil {
+			return fmt.Errorf("%w：云下载服务尚未初始化", ErrConfig)
+		}
+		if err := h.CloudDownloads.ValidateConfig(input.CloudDownload.ServiceConfig()); err != nil {
+			return fmt.Errorf("%w：%s", ErrConfig, err.Error())
+		}
 	}
 	input.Identity = current.Identity
 	for _, other := range h.profiles.List() {
@@ -188,7 +209,8 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	runtimes := make(map[string]*Manager, len(profiles))
 	for _, profile := range profiles {
 		if profile.Enabled && profile.Token != "" {
-			runtimes[profile.ID] = h.newManager(profile, profile.ID == receiverID)
+			receive := profile.ID == receiverID || profile.CloudDownload.Enabled
+			runtimes[profile.ID] = h.newManager(profile, receive)
 		}
 	}
 	h.mu.Lock()

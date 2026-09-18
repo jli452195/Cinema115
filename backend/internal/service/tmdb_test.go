@@ -14,12 +14,13 @@ import (
 )
 
 type cacheTMDBFake struct {
-	calls    atomic.Int32
-	mu       sync.Mutex
-	episodes []tmdb.Episode
-	failure  bool
-	entered  chan struct{}
-	release  chan struct{}
+	calls       atomic.Int32
+	detailCalls atomic.Int32
+	mu          sync.Mutex
+	episodes    []tmdb.Episode
+	failure     bool
+	entered     chan struct{}
+	release     chan struct{}
 }
 
 func (f *cacheTMDBFake) Genres(context.Context, string) ([]tmdb.Genre, error)     { return nil, nil }
@@ -37,7 +38,37 @@ func (f *cacheTMDBFake) Recommendations(context.Context, string, int) (*tmdb.Pag
 	return nil, nil
 }
 func (f *cacheTMDBFake) Details(context.Context, string, int) (*tmdb.Detail, error) {
-	return &tmdb.Detail{Seasons: []tmdb.SeasonSummary{{Number: 1}}}, nil
+	f.detailCalls.Add(1)
+	return &tmdb.Detail{IMDBID: "tt0807675", Seasons: []tmdb.SeasonSummary{{Number: 1}}}, nil
+}
+
+func TestTMDBDetailV2IgnoresLegacyCacheWithoutIMDb(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "media.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	legacy, err := encodeTMDB(&tmdb.Detail{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveTMDBCache(ctx, "detail:tv:34793", legacy, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	source := &cacheTMDBFake{}
+	service := NewTMDBService(source, db)
+	detail, err := service.Details(ctx, "tv", 34793)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.IMDBID != "tt0807675" || source.detailCalls.Load() != 1 {
+		t.Fatalf("v2 详情没有跳过旧缓存: detail=%+v calls=%d", detail, source.detailCalls.Load())
+	}
+	data, _, err := db.TMDBCache(ctx, "detail:v2:tv:34793")
+	if err != nil || len(data) == 0 {
+		t.Fatalf("v2 详情缓存未保存: bytes=%d err=%v", len(data), err)
+	}
 }
 func (f *cacheTMDBFake) Season(ctx context.Context, id, number int) (*tmdb.SeasonDetail, error) {
 	f.calls.Add(1)

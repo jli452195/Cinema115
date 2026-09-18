@@ -51,7 +51,9 @@ func (c *ShareClient) ReceiveShare(ctx context.Context, share *ShareInfo, ids []
 }
 
 func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, cookie string) (*SharePage, error) {
-	if !validDriveID(cid, false) || offset < 0 {
+	// 0 is the virtual root used by the own-drive browser; child IDs remain
+	// strictly positive and are validated when parsing the response.
+	if !validDriveID(cid, true) || offset < 0 {
 		return nil, fmt.Errorf("网盘目录参数无效")
 	}
 	q := url.Values{"cid": {cid}, "offset": {strconv.Itoa(offset)}, "limit": {"100"}, "show_dir": {"1"}, "o": {"file_name"}, "asc": {"1"}}

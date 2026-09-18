@@ -50,6 +50,115 @@ func TestDetailLinksClassifiesAllLinkTypes(t *testing.T) {
 	}
 }
 
+func TestDetailLinksPrefersRecognizedDomainOverReportedType(t *testing.T) {
+	detail := detailData{}
+	detail.Panlist.URL = []string{
+		"https://www.123684.com/s/actual-123",
+		"https://www.guangyapan.com/s/actual-guangya",
+	}
+	// The site currently reports these domains with legacy type codes. A known
+	// domain is more reliable than that metadata and must win classification.
+	detail.Panlist.Type = []int{5, 6}
+
+	links := detailLinks(detail)
+	if len(links) != 2 {
+		t.Fatalf("recognized links were lost: %#v", links)
+	}
+	if links[0].Type != "123" || links[0].TypeLabel != "123" {
+		t.Fatalf("123 domain was overridden by the reported type: %#v", links[0])
+	}
+	if links[1].Type != "guangya" || links[1].TypeLabel != "光鸭网盘" {
+		t.Fatalf("Guangya domain was overridden by the reported type: %#v", links[1])
+	}
+}
+
+func TestClassifyPanURLUsesExactRootDomains(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{url: "https://www.123684.com/s/a", want: "123"},
+		{url: "https://www.123pan.com/s/a", want: "123"},
+		{url: "https://share.123pan.cn/s/a", want: "123"},
+		{url: "https://www.guangyapan.com/s/a", want: "guangya"},
+		{url: "https://cdn.guangyapan.com/s/a", want: "guangya"},
+		{url: "https://anxia.com/s/a", want: "115"},
+		{url: "https://www.anxia.com/s/a", want: "115"},
+		{url: "https://not123684.com/s/a", want: "other"},
+		{url: "https://123evil.example/s/a", want: "other"},
+	}
+	for _, test := range tests {
+		t.Run(test.url, func(t *testing.T) {
+			if got := classifyPanURL(test.url); got != test.want {
+				t.Fatalf("classifyPanURL(%q) = %q, want %q", test.url, got, test.want)
+			}
+		})
+	}
+}
+
+func TestDetailDataAcceptsObjectNullAndEmptyArrayResourceGroups(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		panURLs    int
+		downHashes int
+	}{
+		{
+			name:       "objects",
+			body:       `{"code":200,"panlist":{"url":["https://pan.quark.cn/s/test"]},"downlist":{"list":{"m":["0123456789abcdef0123456789abcdef01234567"]}}}`,
+			panURLs:    1,
+			downHashes: 1,
+		},
+		{name: "nulls", body: `{"code":200,"panlist":null,"downlist":null}`},
+		{name: "empty arrays", body: `{"code":200,"panlist":[],"downlist":[]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var detail detailData
+			if err := json.Unmarshal([]byte(test.body), &detail); err != nil {
+				t.Fatal(err)
+			}
+			if len(detail.Panlist.URL) != test.panURLs || len(detail.Downlist.List.Hash) != test.downHashes {
+				t.Fatalf("unexpected decoded detail: %#v", detail)
+			}
+		})
+	}
+}
+
+func TestDetailDataRejectsUnsupportedResourceGroupShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		field string
+	}{
+		{name: "non-empty panlist array", body: `{"panlist":[{"url":[]}]}`, field: "panlist"},
+		{name: "non-empty downlist array", body: `{"downlist":[{"list":{}}]}`, field: "downlist"},
+		{name: "panlist scalar", body: `{"panlist":"invalid"}`, field: "panlist"},
+		{name: "downlist scalar", body: `{"downlist":42}`, field: "downlist"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var detail detailData
+			err := json.Unmarshal([]byte(test.body), &detail)
+			if err == nil || !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("expected an error naming %s, got %v", test.field, err)
+			}
+		})
+	}
+}
+
+func TestDetailLinksKeepsDownlistWhenPanlistIsEmptyArray(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	var detail detailData
+	if err := json.Unmarshal([]byte(`{"code":200,"panlist":[],"downlist":{"list":{"m":["`+hash+`"],"t":["test"]}}}`), &detail); err != nil {
+		t.Fatal(err)
+	}
+	links := detailLinks(detail)
+	if len(links) != 1 || links[0].Category != "torrent" || !strings.Contains(links[0].URL, hash) {
+		t.Fatalf("downlist resource was not preserved: %#v", links)
+	}
+}
+
 func TestClientSearchKeepsMultipleItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -117,6 +226,10 @@ func TestLoginAcceptsStringCodeAndUsesHomePageFirst(t *testing.T) {
 func TestSearchByTitleFallsBackToIMDb(t *testing.T) {
 	queries := make([]string, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/res/downurl/") {
+			_, _ = w.Write([]byte(`{"code":200,"panlist":{"url":[]}}`))
+			return
+		}
 		if r.URL.Path != "/search" {
 			http.NotFound(w, r)
 			return
@@ -133,8 +246,6 @@ func TestSearchByTitleFallsBackToIMDb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The fallback query needs a detail response as well; this test only checks
-	// query selection, so an empty detail endpoint is intentionally tolerated.
 	result, err := client.SearchByTitle(context.Background(), "原名", "tt33332385")
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +255,57 @@ func TestSearchByTitleFallsBackToIMDb(t *testing.T) {
 	}
 	if result.MatchedBy != "imdb" {
 		t.Fatalf("兜底来源错误: %#v", result)
+	}
+	if len(result.Attempts) != 2 || result.Attempts[0].Method != "title" || result.Attempts[1].Method != "imdb" {
+		t.Fatalf("搜索过程记录错误: %#v", result.Attempts)
+	}
+}
+
+func TestSearchReportsPartialDetailFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			_, _ = w.Write([]byte(`<script>_obj.search = {"q":"测试","l":{"title":["有效","失败"],"year":[2025,2025],"d":["tv","tv"],"i":["ok","failed"]}};</script>`))
+		case "/res/downurl/tv/ok":
+			_, _ = w.Write([]byte(`{"code":200,"panlist":{"url":["https://pan.quark.cn/s/ok"],"type":[2]}}`))
+		case "/res/downurl/tv/failed":
+			http.Error(w, "temporary", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Search(context.Background(), "测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Partial || result.FailedDetails != 1 || len(result.Items) != 1 {
+		t.Fatalf("部分失败状态错误: %#v", result)
+	}
+	if len(result.Attempts) != 1 || result.Attempts[0].Total != 2 || result.Attempts[0].Usable != 1 || result.Attempts[0].Failed != 1 {
+		t.Fatalf("部分失败统计错误: %#v", result.Attempts)
+	}
+}
+
+func TestSearchFailsWhenEveryDetailFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/search" {
+			_, _ = w.Write([]byte(`<script>_obj.search = {"q":"测试","l":{"title":["失败"],"d":["tv"],"i":["failed"]}};</script>`))
+			return
+		}
+		http.Error(w, "temporary", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Search(context.Background(), "测试"); err == nil || !strings.Contains(err.Error(), "读取观影资源详情失败") {
+		t.Fatalf("详情全部失败没有返回明确错误: %v", err)
 	}
 }
 

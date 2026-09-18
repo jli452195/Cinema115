@@ -1,8 +1,15 @@
+export interface GyingResourceType {
+  type: string
+  label: string
+}
+
 export interface GyingConfigView {
   baseUrl: string
   username: string
   configured: boolean
   hasSession: boolean
+  resourceOrder: string[]
+  resourceTypes: GyingResourceType[]
 }
 
 export interface GyingResourceLink {
@@ -25,12 +32,26 @@ export interface GyingSearchItem {
   links: GyingResourceLink[]
 }
 
+export interface GyingSearchAttempt {
+  method: 'title' | 'imdb'
+  query: string
+  total: number
+  usable: number
+  failed?: number
+  truncated?: boolean
+}
+
 export interface GyingSearchResponse {
   query: string
   matchedBy: 'title' | 'imdb'
   items: GyingSearchItem[]
   total: number
   truncated?: boolean
+  attempts: GyingSearchAttempt[]
+  partial?: boolean
+  failedDetails?: number
+  cached: boolean
+  cacheExpiresAt?: string
 }
 
 export async function gyingRequest<T>(token: string, path: string, signal: AbortSignal, method = 'GET', body?: object): Promise<T> {

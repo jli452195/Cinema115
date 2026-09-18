@@ -1,42 +1,27 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { is115Share } from '../utils/shareLink'
-import { cancelShareRun, newShareRunID, savedSTRMSettings, ShareRunError, submitShareRun, waitForShareRun, type ShareRun } from '../utils/shareGeneration'
+import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
+import { is115Share, normalize115Share } from '../utils/shareLink'
 import { telegramUserRequest, telegramUserSearchStream, type TelegramUserStatus, type BotSearchResult } from '../types/telegramUser'
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
 const state = ref<TelegramUserStatus>()
 const result = ref<BotSearchResult>()
-const busy = ref(false)
+const searchBusy = ref(false)
 const loadingMore = ref(false)
 const checking = ref(true)
 const error = ref('')
 const searchStage = ref<'waiting' | 'collecting'>('waiting')
-const generating = ref(false)
-const activeResource = ref('')
-const generationStatus = ref<Record<string, { message: string; success: boolean }>>({})
-const activeRunID = ref('')
-const stopping = ref(false)
-const runStorageKey = 'cinema115.bot-strm-runs.v1'
-type SavedRun = { key: string; id: string; time: number }
-function savedRuns(): SavedRun[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(runStorageKey) || '[]')
-    return Array.isArray(value) ? value.filter((entry): entry is SavedRun => typeof entry?.key === 'string' && /^[a-f0-9]{32}$/.test(entry?.id) && Date.now() - entry.time < 86400000).slice(-100) : []
-  } catch { return [] }
-}
-function runKey(item: (typeof resources.value)[number]) {
-  // 仅保存任务编号和资源标识，不把链接、Cookie 或令牌写入浏览器。
-  return `${props.kind}/${props.tmdbId}/${item.direct ? item.title : item.id}`
-}
-function rememberRun(key: string, id?: string) {
-  const entries = savedRuns().filter(entry => entry.key !== key)
-  if (id) entries.push({ key, id, time: Date.now() })
-  try { localStorage.setItem(runStorageKey, JSON.stringify(entries.slice(-100))) } catch { /* 禁用存储时仍可在分享日志查看任务。 */ }
-}
 const lifecycle = new AbortController()
+const shareRuns = useShareSTRMRun(props.token, lifecycle.signal)
+const generating = shareRuns.busy
+const activeResource = shareRuns.activeResource
+const generationStatus = shareRuns.statuses
+const activeRunID = shareRuns.activeRunID
+const stopping = shareRuns.stopping
+const busy = computed(() => searchBusy.value || generating.value)
 const previousFocus = document.activeElement as HTMLElement | null
 const previousOverflow = document.body.style.overflow
 const resources = computed(() => {
@@ -44,10 +29,21 @@ const resources = computed(() => {
   if (items.length) return items.map(item => ({ ...item, direct: '' }))
   return (result.value?.links.filter(is115Share) || []).map((link, index) => ({ id: `link:${index}:${link}`, title: `${props.title} · 资源 ${index + 1}`, kind: 'resource' as const, tmdbId: '', size: '', direct: link }))
 })
+function shareResource(item: (typeof resources.value)[number]): ShareSTRMResource {
+  const identity = item.direct ? `bot/${props.kind}/${props.tmdbId}/direct/${normalize115Share(item.direct)}` : `bot/${props.kind}/${props.tmdbId}/item/${item.id}`
+  return {
+    id: item.id,
+    identity,
+    load: async () => {
+      const selection = item.direct ? { links: [item.direct] } : await telegramUserRequest<BotSearchResult>(props.token, 'select', lifecycle.signal, { id: item.id })
+      return selection.links.map(url => ({ url }))
+    },
+  }
+}
 const nextPage = computed(() => result.value?.items.find(item => item.kind === 'page' && item.title.includes('下一页')))
 async function request(id?: string, refresh = false) {
   if (busy.value) return
-  busy.value = true; loadingMore.value = !!id; error.value = ''; searchStage.value = 'waiting'
+  searchBusy.value = true; loadingMore.value = !!id; error.value = ''; searchStage.value = 'waiting'
   try {
     if (id) {
       const data = await telegramUserRequest<BotSearchResult>(props.token, 'select', lifecycle.signal, { id })
@@ -60,74 +56,11 @@ async function request(id?: string, refresh = false) {
       })
     }
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '搜索失败' }
-  finally { busy.value = false; loadingMore.value = false; searchStage.value = 'waiting' }
-  if (!lifecycle.signal.aborted) await restoreRuns()
+  finally { searchBusy.value = false; loadingMore.value = false; searchStage.value = 'waiting' }
+  if (!lifecycle.signal.aborted) await shareRuns.restore(resources.value.map(shareResource))
 }
-function showRun(item: (typeof resources.value)[number], run: ShareRun) {
-  let written = 0, metadata = 0, metadataFailed = 0, conflictRenamed = 0
-  for (const entry of run.items) { written += entry.result?.count ?? 0; metadata += entry.result?.metadataCount ?? 0; metadataFailed += entry.result?.metadataFailed ?? 0; conflictRenamed += entry.result?.conflictRenamed ?? 0 }
-  const current = run.items.findIndex(entry => entry.status === 'running')
-  const failures = run.items.flatMap((entry, index) => entry.error ? [`链接 ${index + 1}：${entry.error}`] : [])
-  const cached = run.items.length > 0 && run.items.every(entry => entry.result?.cached)
-  const detail = `${metadata || metadataFailed ? `，元数据成功 ${metadata} 个、失败 ${metadataFailed} 个` : ''}${conflictRenamed ? `，同名另存 ${conflictRenamed} 个` : ''}`
-  let message = current >= 0 ? `${current + 1}/${run.items.length} · ${run.items[current]?.message}` : '已提交后台，等待执行'
-  if (run.status === 'success') message = cached ? `本地文件完整：已复用 ${written} 个 STRM${detail} · ${run.items[0]?.result?.directory ?? ''}` : `生成成功：已处理 ${written} 个 STRM${detail}${metadataFailed ? '；再次提交会继续重试元数据' : ''} · ${run.items[0]?.result?.directory ?? ''}`
-  else if (run.status === 'failed') message = `新增 ${written} 个 STRM；${failures.join('；')}`
-  else if (run.status === 'cancelled') message = `后台任务已停止，新增 ${written} 个 STRM；请在分享日志核对已转存目录。`
-  else if (run.status === 'cancelling') message = '正在停止后台任务，等待保存处理结果…'
-  generationStatus.value[item.id] = { message, success: run.status === 'success' }
-}
-async function followRun(item: (typeof resources.value)[number], id: string) {
-  busy.value = true; generating.value = true; activeResource.value = item.id; activeRunID.value = id
-  try {
-    await waitForShareRun(props.token, id, lifecycle.signal, run => showRun(item, run))
-    rememberRun(runKey(item))
-  } catch (e) {
-    if (!lifecycle.signal.aborted) {
-      if (e instanceof ShareRunError && e.status === 404) rememberRun(runKey(item))
-      generationStatus.value[item.id] = { message: `暂时无法查询进度：${e instanceof Error ? e.message : '网络异常'}。后台任务不会因页面断开而取消，请查看分享日志或 Telegram 通知。`, success: false }
-    }
-  } finally { busy.value = false; generating.value = false; activeResource.value = ''; activeRunID.value = ''; stopping.value = false }
-}
-async function restoreRuns() {
-  for (const item of resources.value) {
-    if (lifecycle.signal.aborted || generating.value) return
-    const existing = savedRuns().find(entry => entry.key === runKey(item))
-    if (existing) await followRun(item, existing.id)
-  }
-}
-async function stopRun() {
-  if (!activeRunID.value || stopping.value) return
-  stopping.value = true
-  try { await cancelShareRun(props.token, activeRunID.value) }
-  catch (e) { error.value = e instanceof Error ? e.message : '停止任务失败'; stopping.value = false }
-}
-async function shareSTRM(item: (typeof resources.value)[number]) {
-  if (busy.value || generationStatus.value[item.id]?.success) return
-  const existing = savedRuns().find(entry => entry.key === runKey(item))
-  if (existing) { await followRun(item, existing.id); return }
-  busy.value = true; generating.value = true; activeResource.value = item.id; error.value = ''
-  const signal = lifecycle.signal
-  const update = (message: string, success = false) => { generationStatus.value[item.id] = { message, success } }
-  update('正在读取生成配置…')
-  try {
-    const settings = await savedSTRMSettings(props.token, signal)
-    update('正在获取资源链接…')
-    const selection = item.direct ? { links: [item.direct] } : await telegramUserRequest<BotSearchResult>(props.token, 'select', signal, { id: item.id })
-    const links = [...new Set(selection.links.filter(is115Share))]
-    if (!links.length) throw new Error('Bot 未返回可用的 115 链接，请查看原始回复或刷新搜索')
-    signal.throwIfAborted()
-    const id = newShareRunID()
-    rememberRun(runKey(item), id)
-    update('正在提交全部链接到后台…')
-    // 一次交给后端排队，关闭页面后其余链接仍会执行；模式与账号由后端固定。
-    const run = await submitShareRun(props.token, id, links.map(url => ({ ...settings, mode: '', url, password: '', cid: '0' })))
-    if (run.id !== id) rememberRun(runKey(item), run.id)
-    if (!signal.aborted) { showRun(item, run); await followRun(item, run.id) }
-  } catch (e) {
-    if (!lifecycle.signal.aborted) update(`${e instanceof Error ? e.message : '提交失败'}；若未收到确认，请重新打开弹窗查询原任务或查看分享日志。`)
-  } finally { busy.value = false; generating.value = false; activeResource.value = '' }
-}
+function stopRun() { void shareRuns.stop() }
+function shareSTRM(item: (typeof resources.value)[number]) { void shareRuns.submit(shareResource(item)) }
 onMounted(async () => {
   document.body.style.overflow = 'hidden'; dialog.value?.showModal()
   try { state.value = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', lifecycle.signal) }

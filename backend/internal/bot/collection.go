@@ -9,6 +9,10 @@ import (
 	"strm115/backend/internal/service"
 )
 
+func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, message *telegramMessage, text string) {
+	state.Replies = append(state.Replies, &pendingReply{UpdateID: update.ID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID, Text: text})
+}
+
 // 等待窗口从首条消息开始计算，持续发送不会无限延后；不同聊天和话题各自收集。
 func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
 	settings := b.Settings.Value()
@@ -21,9 +25,36 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
 		}
-		items := parseTelegramMessage(m)
+		var items []messageShare
+		if b.ShareEnabled {
+			items = parseTelegramMessage(m)
+		}
+		text := telegramMessageText(m)
+		cloudItems := parseCloudLinks(text)
+		cloudCommand := isCloudCommand(text)
+		if len(cloudItems) > 0 || cloudCommand {
+			switch {
+			case m.Chat.Type != "" && m.Chat.Type != "private":
+				b.queueTextReply(state, update, m, "⚠️ 磁力转存只允许在 Bot 私聊中使用，请私聊发送 /cloud。")
+				cloudItems = nil
+			case !b.CloudDownloadConfig.Enabled || b.CloudDownloads == nil:
+				b.queueTextReply(state, update, m, "⚠️ 此 Bot 尚未配置磁力转存，请先在管理页面为它选择 115 账号和下载目录。")
+				cloudItems = nil
+			case len(cloudItems) == 0:
+				b.queueTextReply(state, update, m, "请发送 magnet 磁力链接或 ED2K 链接。\n\n也可以直接发送：/cloud <链接>")
+			}
+		}
 		if len(items) > 0 {
 			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "Bot", "INFO", fmt.Sprintf("收到分享消息，识别 %d 个链接并加入队列", len(items)))
+		}
+		if len(cloudItems) > 0 {
+			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "云下载", "INFO", fmt.Sprintf("收到磁力转存消息，识别 %d 个链接并加入队列", len(cloudItems)))
+			batch := &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: "cloud", ReadyAt: now}
+			for _, link := range cloudItems {
+				batch.Items = append(batch.Items, messageShare{URL: link})
+				batch.SourceMessageIDs = append(batch.SourceMessageIDs, m.ID)
+			}
+			state.Queue = append(state.Queue, batch)
 		}
 		for _, item := range items {
 			mode := telegramShareMode(settings, item)
@@ -61,10 +92,10 @@ func telegramShareMode(settings service.AutomationSettings, _ messageShare) stri
 
 // 普通分享可越过尚未到期的转存批次，执行中的云端操作仍保持串行。
 func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
-	// 两类都已就绪时优先处理普通分享，不让它进入合并转存路径。
-	for _, direct := range []bool{true, false} {
+	// 普通分享与云下载不等待合并窗口；同一 Bot 仍串行执行云端操作。
+	for _, selectedMode := range []string{"direct", "cloud", "reshare"} {
 		for i, batch := range state.Queue {
-			if (batch.Mode == "direct") != direct {
+			if batch.Mode != selectedMode {
 				continue
 			}
 			if now.Before(batch.ReadyAt) && b.AllowedChats[batch.ChatID] {
@@ -75,12 +106,12 @@ func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 				return true
 			}
 			state.Batch = batch
-			mode := "普通分享"
-			if batch.Mode == "reshare" {
-				mode = "合并转存再分享"
-			}
+			mode := map[string]string{"direct": "普通分享", "cloud": "115 云下载", "reshare": "合并转存再分享"}[batch.Mode]
 			b.Logs.Append("Telegram", fmt.Sprintf("批次-%d", batch.UpdateID), "Bot", "INFO", fmt.Sprintf("开始处理批次：%d 个链接，%s", len(batch.Items), mode))
 			state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: fmt.Sprintf("🔄 开始处理 %d 个链接…", len(batch.Items))}
+			if batch.Mode == "cloud" {
+				state.Pending.Text = fmt.Sprintf("⏳ 正在向 115 提交 %d 个云下载任务…", len(batch.Items))
+			}
 			if batch.Mode == "reshare" {
 				state.Pending.Text += "\n本人分享直接生成，其他账号的正常分享合并转存，审核来源单独处理。"
 			}
