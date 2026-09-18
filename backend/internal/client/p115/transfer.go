@@ -50,6 +50,24 @@ func (c *ShareClient) ReceiveShare(ctx context.Context, share *ShareInfo, ids []
 	return err
 }
 
+// MoveEntries moves exactly the supplied entries into one destination
+// directory. Each entry is sent separately so a checkpoint can safely resume
+// after a timeout without moving an unrelated newly-arrived item.
+func (c *ShareClient) MoveEntries(ctx context.Context, ids []string, cid, cookie string) error {
+	if !validDriveID(cid, false) || len(ids) == 0 || len(ids) > 1000 {
+		return fmt.Errorf("移动参数无效")
+	}
+	for _, id := range ids {
+		if !validDriveID(id, false) {
+			return fmt.Errorf("移动条目 ID 无效")
+		}
+		if _, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/files/move", cookie, url.Values{"fid": {id}, "pid": {cid}}); err != nil {
+			return fmt.Errorf("移动条目 %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
 func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, cookie string) (*SharePage, error) {
 	// 0 is the virtual root used by the own-drive browser; child IDs remain
 	// strictly positive and are validated when parsing the response.
@@ -170,9 +188,24 @@ func (c *ShareClient) ConfigureShare(ctx context.Context, share *ShareInfo, pass
 
 // DeleteDirectory 仅移动到回收站，不调用清空回收站或永久删除接口。
 func (c *ShareClient) DeleteDirectory(ctx context.Context, cid, cookie string) error {
-	if !validDriveID(cid, false) {
-		return fmt.Errorf("禁止删除网盘根目录或无效目录")
+	return c.DeleteEntries(ctx, []string{cid}, cookie)
+}
+
+// DeleteEntries moves exactly the supplied files or directories to the 115
+// recycle bin. It never accepts the virtual root and never empties the bin.
+// Calling one entry at a time keeps the checkpoint boundary precise: a retry
+// cannot accidentally delete a newly arrived item in the monitored directory.
+func (c *ShareClient) DeleteEntries(ctx context.Context, ids []string, cookie string) error {
+	if len(ids) == 0 || len(ids) > 1000 {
+		return fmt.Errorf("回收站删除条目数量无效")
 	}
-	_, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/rb/delete", cookie, url.Values{"fid": {cid}})
-	return err
+	for _, id := range ids {
+		if !validDriveID(id, false) {
+			return fmt.Errorf("禁止删除网盘根目录或无效条目")
+		}
+		if _, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/rb/delete", cookie, url.Values{"fid": {id}}); err != nil {
+			return fmt.Errorf("移入回收站 %s: %w", id, err)
+		}
+	}
+	return nil
 }

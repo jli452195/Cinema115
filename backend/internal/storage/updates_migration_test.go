@@ -46,7 +46,7 @@ PRAGMA user_version=17;`)
 		}
 	}
 	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 18 {
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal("迁移版本错误", version, err)
 	}
 }

@@ -180,6 +180,9 @@ func main() {
 	generationLogs := &service.GenerationLogs{}
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
 	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
+	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
+	folderMonitors.SetSharedSettings(automation.Value)
+	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)
 	}
@@ -250,7 +253,14 @@ func main() {
 		workers.Add(1)
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
 	}
-	workerErrors := make(chan error, 5)
+	workerErrors := make(chan error, 8)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := folderMonitors.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

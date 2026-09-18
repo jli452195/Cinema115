@@ -40,10 +40,11 @@ type ShareFile struct {
 }
 
 type SharePage struct {
-	OwnerID string      `json:"ownerId,omitempty"`
-	Files   []ShareFile `json:"files"`
-	Count   int         `json:"count"`
-	Offset  int         `json:"offset"`
+	OwnerID     string      `json:"ownerId,omitempty"`
+	UnderReview bool        `json:"underReview,omitempty"`
+	Files       []ShareFile `json:"files"`
+	Count       int         `json:"count"`
+	Offset      int         `json:"offset"`
 }
 
 // 115 同时使用整数和布尔值表示请求是否成功。
@@ -147,6 +148,7 @@ func (c *ShareClient) list(ctx context.Context, share *ShareInfo, cid string, of
 	page, err := parseSharePage(envelope.Data, offset)
 	if page != nil {
 		page.OwnerID = envelope.ownerID()
+		page.UnderReview = envelope.underReview()
 	}
 	// 普通生成仍以列表可读为准；转存他人审核中的分享则必须在云端写入前停止。
 	// 无法确认归属时不放行待审核转存，缺失审核字段本身不作为审核证据。

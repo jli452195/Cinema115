@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 18
+const schemaVersion = 19
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -348,6 +348,20 @@ PRAGMA user_version=14;`); err != nil {
 	if version < 18 {
 		if err := migrateEmbySyncCheckpoints(ctx, tx); err != nil {
 			return err
+		}
+	}
+	if version < 19 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS p115_folder_monitors (
+ id TEXT PRIMARY KEY NOT NULL,
+ account_id TEXT NOT NULL,
+ status TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ record TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS p115_folder_monitors_status ON p115_folder_monitors(status,updated_at);
+PRAGMA user_version=19;`); err != nil {
+			return fmt.Errorf("迁移 115 目录监控: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

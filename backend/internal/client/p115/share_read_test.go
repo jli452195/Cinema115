@@ -100,6 +100,19 @@ func TestShareOwnerComparison(t *testing.T) {
 	}
 }
 
+func TestReadableReviewPageKeepsReviewStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"42"},"count":1,"list":[{"fid":"1","n":"film.mkv","s":"20"}]}}`))
+	}))
+	defer server.Close()
+	client := newTestShareClient()
+	client.WebURL = server.URL
+	page, err := client.List(context.Background(), &ShareInfo{Code: "test"}, "0", 0, "UID=42_A1_100")
+	if err != nil || page == nil || !page.UnderReview || len(page.Files) != 1 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+}
+
 func TestLaterPageFailureRetainsReviewReason(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"state":true,"data":{"share_state":0,"count":200,"list":[]}}`))

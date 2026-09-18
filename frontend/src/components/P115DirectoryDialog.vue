@@ -4,7 +4,7 @@ import { p115Request } from '../lib/p115-api'
 
 interface Directory { id: string; name: string }
 
-const props = defineProps<{ token: string; accountId: string }>()
+const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string }>(), { title: '选择下载目录' })
 const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentCID = ref('0')
@@ -68,7 +68,7 @@ onBeforeUnmount(() => {
     <dialog ref="dialog" aria-labelledby="p115-directory-title" class="m-auto h-[min(720px,calc(100dvh-2rem))] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-950/50" @cancel.prevent="close" @click="event => { if (event.target === dialog) close() }">
       <section class="flex h-full min-h-0 flex-col">
         <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
-          <h2 id="p115-directory-title" class="font-semibold text-slate-900">选择下载目录</h2>
+          <h2 id="p115-directory-title" class="font-semibold text-slate-900">{{ title }}</h2>
           <button type="button" aria-label="关闭目录选择器" class="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700" @click="close">×</button>
         </header>
         <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3">

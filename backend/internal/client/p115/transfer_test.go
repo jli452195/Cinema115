@@ -114,3 +114,31 @@ func TestSharePermanentIsExplicitAndVerified(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteEntriesMovesOnlyExactItemsToRecycleBin(t *testing.T) {
+	deleted := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rb/delete" || r.Method != http.MethodPost {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		deleted = append(deleted, r.Form.Get("fid"))
+		w.Write([]byte(`{"state":true}`))
+	}))
+	defer server.Close()
+	client := newTestShareClient()
+	client.WebURL = server.URL
+	if err := client.DeleteEntries(context.Background(), []string{"11", "3516637914517734609"}, "cookie"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 2 || deleted[0] != "11" || deleted[1] != "3516637914517734609" {
+		t.Fatalf("deleted=%v", deleted)
+	}
+	for _, ids := range [][]string{nil, {"0"}, {"1", "bad"}} {
+		if err := client.DeleteEntries(context.Background(), ids, "cookie"); err == nil {
+			t.Fatalf("accepted unsafe ids=%v", ids)
+		}
+	}
+}
