@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tguser"
 	"strm115/backend/internal/client/tmdb"
@@ -88,6 +89,7 @@ func main() {
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
 	generationLogs := &service.GenerationLogs{}
+	httpapi.RegisterMikan(admin, service.NewMikanService(mikan.New(), generationLogs))
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
