@@ -41,7 +41,11 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 		case errors.Is(err, context.DeadlineExceeded):
 			status = http.StatusGatewayTimeout
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		message := err.Error()
+		if errors.Is(err, gying.ErrDetailFormat) {
+			message = gying.ErrDetailFormat.Error()
+		}
+		c.JSON(status, gin.H{"error": message})
 	}
 	group.GET("/config", func(c *gin.Context) { c.JSON(http.StatusOK, searcher.View()) })
 	group.POST("/config", func(c *gin.Context) {

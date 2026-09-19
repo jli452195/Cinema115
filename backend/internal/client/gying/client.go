@@ -28,6 +28,7 @@ var (
 	ErrForbidden     = errors.New("观影站登录状态已失效")
 	ErrChallenge     = errors.New("观影站安全验证失败")
 	ErrNotConfigured = errors.New("观影站尚未配置")
+	ErrDetailFormat  = errors.New("观影资源详情格式异常，暂时无法读取，请查看观影日志或稍后重试")
 )
 
 const (
@@ -147,12 +148,12 @@ type downlistData struct {
 		Codes  []string `json:"b"`
 	} `json:"type"`
 	List struct {
-		Hash          []string `json:"m"`
-		Title         []string `json:"t"`
-		Size          []string `json:"s"`
-		Seeds         []int    `json:"e"`
-		CategoryCodes []string `json:"p"`
-		Updated       []string `json:"n"`
+		Hash          []string   `json:"m"`
+		Title         []string   `json:"t"`
+		Size          []string   `json:"s"`
+		Seeds         seedCounts `json:"e"`
+		CategoryCodes []string   `json:"p"`
+		Updated       []string   `json:"n"`
 	} `json:"list"`
 }
 
@@ -557,10 +558,20 @@ func (c *Client) fetchDetail(ctx context.Context, kind, id string) (detailData, 
 	}
 	var detail detailData
 	if err := json.Unmarshal(body, &detail); err != nil {
-		return detailData{}, fmt.Errorf("解析详情响应: %w", err)
+		return detailData{}, fmt.Errorf("%w: %w", ErrDetailFormat, err)
 	}
 	if detail.Code == http.StatusForbidden {
 		return detailData{}, ErrForbidden
+	}
+	unknownSeeds := 0
+	for i, count := range detail.Downlist.List.Seeds {
+		if i < len(detail.Downlist.List.Hash) && count < 0 {
+			unknownSeeds++
+		}
+	}
+	if unknownSeeds > 0 {
+		// 只记录字段名和数量，不记录响应原文或字段内容；每个详情最多一条汇总。
+		reportProgress(ctx, "DEBUG", fmt.Sprintf("资源详情 downlist.list.e 有 %d 项做种数未知，已保留对应资源并省略做种数显示", unknownSeeds))
 	}
 	return detail, nil
 }

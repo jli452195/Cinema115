@@ -24,6 +24,10 @@ func (s *mikanTestReader) Search(_ context.Context, q, g string) (mikan.Result, 
 	return mikan.Result{Items: []mikan.Item{}, Groups: []mikan.Group{}}, nil
 }
 
+func (s *mikanTestReader) Bangumi(_ context.Context, id, group string, take int) (mikan.Result, error) {
+	return mikan.Result{Items: []mikan.Item{}, Groups: []mikan.Group{}, Bangumi: &mikan.Bangumi{ID: id, Title: "一弦定音！"}}, nil
+}
+
 func TestMikanAdminSearchAndLogs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
@@ -79,6 +83,27 @@ func TestMikanAdminSearchAndLogs(t *testing.T) {
 	}
 	if reader.calls != 2 {
 		t.Fatal("鉴权或缓存未阻止重复请求", reader.calls)
+	}
+	for _, tc := range []struct {
+		token, body string
+		status      int
+	}{
+		{"", `{"id":"1940"}`, 401}, {userToken, `{"id":"1940"}`, 403},
+		{adminToken, `{"id":"1940"}`, 200}, {adminToken, `{"id":"1940","group":"19","take":65}`, 200},
+		{adminToken, `{"id":"https://evil.test"}`, 400}, {adminToken, `{"id":"1940","group":"19","take":0}`, 400},
+		{adminToken, `{"id":"1940","group":"19","take":10001}`, 400}, {adminToken, `{broken`, 400},
+	} {
+		request := httptest.NewRequest("POST", "/api/admin/mikan/bangumi", strings.NewReader(tc.body))
+		request.Header.Set("Authorization", "Bearer "+tc.token)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		if response.Code != tc.status {
+			t.Fatalf("番剧接口状态 %d，预期 %d：%s", response.Code, tc.status, response.Body.String())
+		}
+		if tc.status == 200 && (!strings.Contains(response.Body.String(), "一弦定音！") || response.Header().Get("Cache-Control") != "no-store") {
+			t.Fatal(response.Body.String())
+		}
 	}
 	request := httptest.NewRequest("GET", "/api/admin/logs?module=蜜柑&level=ALL", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)

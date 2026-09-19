@@ -19,7 +19,7 @@ import (
 const BaseURL = "https://mikanani.me"
 
 var (
-	ErrInput          = errors.New("搜索词或字幕组参数无效")
+	ErrInput          = errors.New("蜜柑搜索词、番剧或字幕组参数无效")
 	ErrBlocked        = errors.New("蜜柑访问受限或需要安全验证，请稍后重试或访问原站")
 	ErrParse          = errors.New("蜜柑页面结构异常，无法确认搜索结果，请访问原站核对")
 	ErrNetwork        = errors.New("无法连接蜜柑，请检查网络后重试")
@@ -37,6 +37,7 @@ type Item struct {
 	URL        string `json:"url"`
 	TorrentURL string `json:"torrentUrl"`
 	Resolution string `json:"resolution"`
+	GroupID    string `json:"groupId,omitempty"`
 }
 
 type Group struct {
@@ -44,8 +45,11 @@ type Group struct {
 	Name string `json:"name"`
 }
 type Result struct {
-	Items  []Item  `json:"items"`
-	Groups []Group `json:"groups"`
+	Items    []Item      `json:"items"`
+	Groups   []Group     `json:"groups"`
+	Bangumis []Bangumi   `json:"bangumis"`
+	Bangumi  *Bangumi    `json:"bangumi,omitempty"`
+	More     []Expansion `json:"more"`
 }
 
 type Client struct {
@@ -76,7 +80,11 @@ func (c *Client) Search(ctx context.Context, query, group string) (Result, error
 	if group != "" {
 		params.Set("subgroupid", group)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/Home/Search?"+params.Encode(), nil)
+	return c.read(ctx, "/Home/Search?"+params.Encode(), "", "", 0)
+}
+
+func (c *Client) read(ctx context.Context, path, bangumiID, group string, take int) (Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return Result{}, ErrInput
 	}
@@ -106,7 +114,7 @@ func (c *Client) Search(ctx context.Context, query, group string) (Result, error
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	return Parse(strings.NewReader(string(body)))
+	return parse(strings.NewReader(string(body)), bangumiID, group, take)
 }
 
 func attr(n *html.Node, key string) string {
@@ -171,18 +179,50 @@ func resolution(title string) string {
 	return m[2] + "P"
 }
 
-// 只解析搜索表格，不加载原站脚本、广告或逐条详情；桌面和移动端重复内容只保留一份。
+// 解析搜索结果和可选番剧卡片，不加载原站脚本、广告或逐条资源详情。
 func Parse(reader io.Reader) (Result, error) {
+	return parse(reader, "", "", 0)
+}
+
+func parse(reader io.Reader, bangumiID, group string, take int) (Result, error) {
 	doc, err := html.Parse(reader)
 	if err != nil {
 		return Result{}, ErrParse
 	}
-	result := Result{Items: make([]Item, 0, 64), Groups: make([]Group, 0, 16)}
+	result := Result{Items: make([]Item, 0, 64), Groups: make([]Group, 0, 16), Bangumis: make([]Bangumi, 0, 8), More: make([]Expansion, 0, 8)}
+	if bangumiID != "" {
+		result.Bangumi = &Bangumi{ID: bangumiID, URL: BaseURL + "/Home/Bangumi/" + bangumiID}
+	}
+	parseBangumis(doc, &result)
+	currentGroup, rowCount := group, 0
 	seen := make(map[string]bool, 64)
 	groups := make(map[string]bool, 16)
 	tableFound, bodyFound, badRow := false, false, false
 	emptyFound, searchInputFound := false, false
 	walk(doc, func(n *html.Node) {
+		if bangumiID != "" {
+			if hasClass(n, "bangumi-title") {
+				result.Bangumi.Title = content(n)
+			}
+			if hasClass(n, "subgroup-text") {
+				currentGroup = attr(n, "id")
+			}
+			if n.Data == "a" && hasClass(n, "subgroup-name") {
+				id := strings.TrimPrefix(attr(n, "data-anchor"), "#")
+				if ValidID(id) && content(n) != "" && !groups[id] {
+					result.Groups = append(result.Groups, Group{id, content(n)})
+					groups[id] = true
+				}
+			}
+			if hasClass(n, "js-expand-episode") {
+				expansion, ok := parseExpansion(n, bangumiID)
+				if !ok {
+					badRow = true
+				} else {
+					result.More = append(result.More, expansion)
+				}
+			}
+		}
 		if n.Data == "input" && attr(n, "id") == "header-search" && attr(n, "name") == "searchstr" {
 			searchInputFound = true
 		}
@@ -201,7 +241,7 @@ func Parse(reader io.Reader) (Result, error) {
 				if n.Data == "tbody" {
 					bodyFound = true
 				}
-				if n.Data == "tr" {
+				if n.Data == "tr" && bangumiID == "" {
 					for child := n.FirstChild; child != nil; child = child.NextSibling {
 						if child.Data == "td" {
 							badRow = true
@@ -219,7 +259,10 @@ func Parse(reader io.Reader) (Result, error) {
 				groups[id] = true
 			}
 		}
-		if n.Data != "tr" || !hasClass(n, "js-search-results-row") {
+		if n.Data != "tr" || (bangumiID == "" && !hasClass(n, "js-search-results-row")) {
+			return
+		}
+		if bangumiID != "" && !insideEpisodeTable(n) {
 			return
 		}
 		cells := make([]*html.Node, 0, 6)
@@ -228,7 +271,18 @@ func Parse(reader io.Reader) (Result, error) {
 				cells = append(cells, child)
 			}
 		}
-		item := Item{}
+		if len(cells) == 0 {
+			if bangumiID == "" {
+				badRow = true
+			}
+			return
+		}
+		rowCount++
+		item := Item{GroupID: currentGroup}
+		if bangumiID != "" && !ValidID(currentGroup) {
+			badRow = true
+			return
+		}
 		walk(n, func(child *html.Node) {
 			if child.Data == "a" && hasClass(child, "magnet-link-wrap") {
 				item.Title = content(child)
@@ -275,8 +329,14 @@ func Parse(reader io.Reader) (Result, error) {
 	if !tableFound && emptyFound && searchInputFound && !badRow && len(result.Items) == 0 {
 		return result, nil
 	}
+	if bangumiID != "" && take == 0 && !tableFound && result.Bangumi.Title != "" && len(result.Groups) == 0 && !badRow {
+		return result, nil
+	}
 	if !tableFound || !bodyFound || badRow {
 		return Result{}, ErrParse
+	}
+	if bangumiID != "" && take > 0 && rowCount >= take {
+		result.More = append(result.More, Expansion{GroupID: group, Take: take + 50})
 	}
 	// 原站时间不带时区，按原站显示值排序，不擅自转换为用户本地时间。
 	sort.SliceStable(result.Items, func(i, j int) bool { return result.Items[i].UpdatedAt > result.Items[j].UpdatedAt })

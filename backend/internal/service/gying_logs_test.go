@@ -185,3 +185,47 @@ func TestGyingLogsConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestGyingLogsSeedCompatibilityAndCache(t *testing.T) {
+	var requests atomic.Int32
+	svc := loggedGyingFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path == "/search" {
+			fmt.Fprint(w, `<script>_obj.search={"l":{"title":["鸭子的天空"],"d":["ac"],"i":["test"]}};</script>`)
+			return
+		}
+		fmt.Fprint(w, `{"panlist":{"url":["https://115.com/s/test"]},"downlist":{"list":{"m":["0123456789abcdef0123456789abcdef01234567"],"e":["private-cookie"]}}}`)
+	})
+	input := GyingSearchInput{CacheKey: "tv:92892", OriginalTitle: "あひるの空", IMDBID: "tt10937602"}
+	result, err := svc.Search(context.Background(), input)
+	if err != nil || len(result.Items) != 1 || result.Partial || result.CacheExpiresAt == nil {
+		t.Fatal(result, err)
+	}
+	count := requests.Load()
+	result, err = svc.Search(context.Background(), input)
+	if err != nil || !result.Cached || requests.Load() != count {
+		t.Fatal("兼容结果未复用缓存", result, err)
+	}
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
+	if !strings.Contains(logs, "downlist.list.e 有 1 项") || strings.Contains(logs, "private-cookie") || len(svc.Logs.Snapshot("ERROR", "观影")) != 0 {
+		t.Fatal(logs)
+	}
+}
+
+func TestGyingLogsDetailFieldWithoutRawValues(t *testing.T) {
+	svc := loggedGyingFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/search" {
+			fmt.Fprint(w, `<script>_obj.search={"l":{"title":["test"],"d":["ac"],"i":["test"]}};</script>`)
+			return
+		}
+		fmt.Fprint(w, `{"downlist":{"list":{"m":[{}],"e":["private-cookie"]}}}`)
+	})
+	_, err := svc.Search(context.Background(), GyingSearchInput{OriginalTitle: "test", IMDBID: "tt10937602"})
+	if !errors.Is(err, gying.ErrDetailFormat) {
+		t.Fatal(err)
+	}
+	logs := gyingMessages(svc.Logs.Snapshot("ERROR", "观影"))
+	if !strings.Contains(logs, "list.m") || strings.Contains(logs, "private-cookie") {
+		t.Fatal(logs, err)
+	}
+}

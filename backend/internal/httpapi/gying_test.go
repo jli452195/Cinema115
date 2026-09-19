@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,28 @@ func (f *gyingSearcherFake) Search(_ context.Context, input service.GyingSearchI
 }
 
 type gyingTMDBFake struct{ tmdbReaderFake }
+
+type gyingMalformedDetailFake struct{ gyingSearcherFake }
+
+func (f *gyingMalformedDetailFake) Search(context.Context, service.GyingSearchInput) (service.GyingSearchResult, error) {
+	return service.GyingSearchResult{}, fmt.Errorf("读取详情失败: %w: plainDownlistData private-response cookie=secret", gying.ErrDetailFormat)
+}
+
+func TestGyingDetailErrorUsesSafeChineseMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterGying(router.Group("/api/admin"), &gyingMalformedDetailFake{}, &gyingTMDBFake{})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/admin/gying/search", strings.NewReader(`{"kind":"tv","tmdbId":"92892"}`)))
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), gying.ErrDetailFormat.Error()) {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	for _, forbidden := range []string{"plainDownlistData", "private-response", "secret"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatal("响应暴露内部错误", response.Body.String())
+		}
+	}
+}
 
 type gyingFailingTMDB struct{ tmdbReaderFake }
 

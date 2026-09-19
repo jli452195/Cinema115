@@ -63,6 +63,12 @@ func NewMikanService(client MikanReader, logs *GenerationLogs) *MikanService {
 func cloneMikan(result mikan.Result) mikan.Result {
 	result.Items = append([]mikan.Item{}, result.Items...)
 	result.Groups = append([]mikan.Group{}, result.Groups...)
+	result.Bangumis = append([]mikan.Bangumi{}, result.Bangumis...)
+	result.More = append([]mikan.Expansion{}, result.More...)
+	if result.Bangumi != nil {
+		copy := *result.Bangumi
+		result.Bangumi = &copy
+	}
 	return result
 }
 
@@ -103,6 +109,8 @@ func (s *MikanService) Search(ctx context.Context, input MikanInput) (output Mik
 		queries = append(queries, fallback)
 	}
 	output.Attempts = make([]MikanAttempt, 0, len(queries))
+	cards := make([]mikan.Bangumi, 0, 8)
+	seenCards := make(map[string]bool, 8)
 	for i, q := range queries {
 		if i > 0 {
 			log("DEBUG", "标题搜索无结果，使用原名兜底")
@@ -123,6 +131,14 @@ func (s *MikanService) Search(ctx context.Context, input MikanInput) (output Mik
 		}
 		output.Attempts = append(output.Attempts, MikanAttempt{q, len(entry.result.Items), cached})
 		output.Result = cloneMikan(entry.result)
+		// 原名兜底不能覆盖中文搜索已找到的番剧入口。
+		for _, card := range entry.result.Bangumis {
+			if !seenCards[card.ID] {
+				cards = append(cards, card)
+				seenCards[card.ID] = true
+			}
+		}
+		output.Bangumis = append([]mikan.Bangumi{}, cards...)
 		output.Query, output.Group, output.Cached = q, input.Group, cached
 		output.FetchedAt, output.ExpiresAt = entry.fetched, entry.expires
 		if len(entry.result.Items) > 0 {
@@ -135,6 +151,10 @@ func (s *MikanService) Search(ctx context.Context, input MikanInput) (output Mik
 // 首个调用者同步执行请求，其余调用者等待结果；不创建脱离请求生命周期的后台协程。
 func (s *MikanService) search(ctx context.Context, query, group string, refresh bool) (mikanCache, bool, error) {
 	key := query + "\x00" + group
+	return s.cachedRead(ctx, key, refresh, func(ctx context.Context) (mikan.Result, error) { return s.Client.Search(ctx, query, group) })
+}
+
+func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool, read func(context.Context) (mikan.Result, error)) (mikanCache, bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return mikanCache{}, false, err
@@ -164,10 +184,10 @@ func (s *MikanService) search(ctx context.Context, query, group string, refresh 
 		flight := &mikanFlight{done: make(chan struct{})}
 		s.flights[key] = flight
 		s.mu.Unlock()
-		result, err := s.fetch(ctx, query, group)
+		result, err := s.fetch(ctx, read)
 		entry := mikanCache{result: result, fetched: time.Now()}
 		ttl := 10 * time.Minute
-		if len(result.Items) == 0 {
+		if len(result.Items) == 0 && len(result.Bangumis) == 0 {
 			ttl = time.Minute
 		}
 		entry.expires = entry.fetched.Add(ttl)
@@ -198,7 +218,7 @@ func (s *MikanService) search(ctx context.Context, query, group string, refresh 
 	}
 }
 
-func (s *MikanService) fetch(ctx context.Context, query, group string) (mikan.Result, error) {
+func (s *MikanService) fetch(ctx context.Context, read func(context.Context) (mikan.Result, error)) (mikan.Result, error) {
 	select {
 	case s.gate <- struct{}{}:
 	case <-ctx.Done():
@@ -216,5 +236,5 @@ func (s *MikanService) fetch(ctx context.Context, query, group string) (mikan.Re
 		}
 	}
 	s.lastRequest = time.Now()
-	return s.Client.Search(ctx, query, group)
+	return read(ctx)
 }

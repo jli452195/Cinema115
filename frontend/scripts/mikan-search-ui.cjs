@@ -13,11 +13,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied') } } })
     })
     const page = await context.newPage()
-    const errors = [], searches = [], submissions = []
+    const errors = [], searches = [], submissions = [], bangumiRequests = []
     page.on('pageerror', e => errors.push(e.message))
-    let role = 'admin', configured = false, fail = false
+    let role = 'admin', configured = false, fail = false, failBangumi = false
+    const bangumis = [{ id: '1940', title: '一弦定音！', coverUrl: '', url: 'https://mikanani.me/Home/Bangumi/1940' }, { id: '2077', title: '一弦定音！第2部分', coverUrl: 'https://mikanani.me/images/Bangumi/missing.jpg', url: 'https://mikanani.me/Home/Bangumi/2077' }]
     let genres = [{ id: 16, name: '动画' }], countries = ['JP']
     const items = Array.from({ length: 61 }, (_, i) => ({ id: i.toString(16).padStart(40, '0'), title: `[测试字幕组] Re：从零开始的异世界生活 第四季 - ${i + 1} [${i % 2 ? '2160p' : '1080p'}][简繁内封]`, size: '1.1 GB', updatedAt: '2026/09/17 02:57', resolution: i % 2 ? '2160P' : '1080P', magnet: 'magnet:?xt=urn:btih:' + i.toString(16).padStart(40, '0'), url: 'https://mikanani.me/Home/Episode/' + i.toString(16).padStart(40, '0'), torrentUrl: '' }))
+    await page.route('https://mikanani.me/**', route => route.fulfill({ status: 404, body: '' }))
     await page.route('**/api/**', async route => {
       const u = new URL(route.request().url())
       let data = {}, status = 200
@@ -29,7 +31,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         if (fail) { status = 502; data = { error: '蜜柑访问受限，请稍后重试' } }
         else {
           const rows = input.query === '空结果' ? [] : input.group ? items.slice(0, 2) : items
-          data = { items: rows, groups: [{ id: '615', name: '测试字幕组' }], query: input.query, group: input.group, cached: !input.refresh, fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(), attempts: [{ query: input.query, count: rows.length, cached: !input.refresh }] }
+          data = { items: rows, bangumis: input.query === '空结果' ? [] : bangumis, groups: [{ id: '615', name: '测试字幕组' }], query: input.query, group: input.group, cached: !input.refresh, fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(), attempts: [{ query: input.query, count: rows.length, cached: !input.refresh }] }
+        }
+      } else if (u.pathname.endsWith('/mikan/bangumi')) {
+        const input = route.request().postDataJSON()
+        bangumiRequests.push(input)
+        if (failBangumi) { status = 502; data = { error: '番剧读取暂时失败' } }
+        else {
+          const rows = input.group ? items.slice(0, 4).map(item => ({ ...item, groupId: '615' })) : items.slice(0, 2).map((item, i) => ({ ...item, groupId: i ? '19' : '615' }))
+          data = { items: rows, bangumi: bangumis.find(item => item.id === input.id), groups: [{ id: '615', name: '测试字幕组' }, { id: '19', name: '其他字幕组' }], more: input.group ? [] : [{ groupId: '615', take: 65 }], attempts: [], fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString() }
         }
       } else if (u.pathname.endsWith('/cloud-download/config')) data = { accountId: configured ? 'account-mikan-test' : '', targetCID: '987', targetPath: '/测试目录' }
       else if (u.pathname.endsWith('/cloud-download/tasks')) { submissions.push({ account: u.searchParams.get('accountId'), ...route.request().postDataJSON() }); data = { accepted: true } }
@@ -71,6 +81,37 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '强制刷新', exact: true }).click()
     await count(2)
     assert.equal(searches.at(-1).refresh, true)
+    // 番剧按编号读取；失败保留已加载内容，返回恢复搜索筛选且不额外请求。
+    await page.getByRole('textbox', { name: '筛选蜜柑结果' }).fill('第四季')
+    const searchesBeforeBangumi = searches.length
+    await page.getByRole('button', { name: '查看番剧：一弦定音！', exact: true }).click()
+    await page.getByText('番剧资源：一弦定音！', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '加载更多：测试字幕组', exact: true }).waitFor()
+    await count(2)
+    assert.equal(bangumiRequests.at(-1).id, '1940')
+    await page.getByRole('combobox', { name: '蜜柑字幕组' }).selectOption('615')
+    await count(1)
+    failBangumi = true
+    await page.getByRole('button', { name: '加载更多：测试字幕组', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '番剧读取暂时失败' }).waitFor()
+    await count(1)
+    failBangumi = false
+    await page.getByRole('button', { name: '加载更多：测试字幕组', exact: true }).click()
+    await count(4)
+    assert.equal(bangumiRequests.at(-1).group, '615')
+    assert.equal(bangumiRequests.at(-1).take, 65)
+    assert.equal(await page.getByRole('button', { name: '加载更多：测试字幕组', exact: true }).count(), 0)
+    await page.getByRole('button', { name: '查看番剧：一弦定音！第2部分', exact: true }).click()
+    await count(2)
+    assert.equal(bangumiRequests.at(-1).id, '2077')
+    await page.getByRole('button', { name: '强制刷新', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('[aria-label="蜜柑搜索词"]').disabled)
+    assert.equal(bangumiRequests.at(-1).refresh, true)
+    await page.getByRole('button', { name: '返回搜索结果', exact: true }).click()
+    await count(2)
+    assert.equal(await page.getByRole('combobox', { name: '蜜柑字幕组' }).inputValue(), '615')
+    assert.equal(await page.getByRole('textbox', { name: '筛选蜜柑结果' }).inputValue(), '第四季')
+    assert.equal(searches.length, searchesBeforeBangumi)
     await page.setViewportSize({ width: 390, height: 844 })
     const screenshot = path.join(os.tmpdir(), 'cinema-mikan-mobile.png')
     await page.screenshot({ path: screenshot })
@@ -79,6 +120,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('textbox', { name: '蜜柑搜索词' }).fill('空结果')
     await page.getByRole('button', { name: '搜索', exact: true }).click()
     await page.getByText('蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。').waitFor()
+    assert.equal(await page.locator('[aria-label="蜜柑相关番剧"]').count(), 0)
     assert.equal(searches.at(-1).fallback, '')
     fail = true
     await page.getByRole('button', { name: '强制刷新', exact: true }).click()
@@ -112,6 +154,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('heading', { name: 'Re：从零开始的异世界生活', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '蜜柑搜索', exact: true }).count(), 0)
     assert.deepEqual(errors, [])
-    console.log(JSON.stringify({ passed: true, searches: searches.length, cloudSubmissions: submissions.length, adminOnly: true, mobile: dimensions, pageErrors: errors, screenshot }))
+    console.log(JSON.stringify({ passed: true, searches: searches.length, bangumiRequests: bangumiRequests.length, cloudSubmissions: submissions.length, adminOnly: true, mobile: dimensions, pageErrors: errors, screenshot }))
   } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exitCode = 1 })

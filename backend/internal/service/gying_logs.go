@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -120,6 +121,22 @@ func gyingLogError(err error) string {
 	}
 	var syntax *json.SyntaxError
 	var field *json.UnmarshalTypeError
+	if errors.Is(err, gying.ErrDetailFormat) {
+		if errors.As(err, &field) {
+			// 只记录已知 JSON 字段路径，不输出上游值、响应正文或凭据。
+			fieldPath := field.Field
+			if dot := strings.LastIndexByte(fieldPath, '.'); dot >= 0 {
+				if _, parseErr := strconv.ParseUint(fieldPath[dot+1:], 10, 32); parseErr == nil {
+					fieldPath = fieldPath[:dot]
+				}
+			}
+			switch fieldPath {
+			case "code", "list.e", "downlist.list.e", "list.m", "downlist.list.m", "list.t", "downlist.list.t", "list.s", "downlist.list.s", "list.p", "downlist.list.p", "list.n", "downlist.list.n", "type.a", "type.b", "url", "type", "name", "p", "time", "tname", "id":
+				return "观影资源详情字段 " + field.Field + " 类型不兼容"
+			}
+		}
+		return "观影资源详情结构无法解析，未记录上游响应内容"
+	}
 	if errors.As(err, &syntax) || errors.As(err, &field) {
 		return "站点响应格式无法解析"
 	}
