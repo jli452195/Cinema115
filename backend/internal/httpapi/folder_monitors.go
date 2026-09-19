@@ -50,6 +50,7 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"minSizeMB": value.MinSizeMB, "recursive": value.Recursive,
 		"enabled": value.Enabled, "intervalSeconds": value.IntervalSeconds,
 		"running": value.Running, "queued": value.TaskPending && !value.Running, "trigger": value.TaskTrigger,
+		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt,
 		"hasBatch": value.BatchDirectoryID != "",
 		"stage":    value.Stage, "shareUrl": value.ShareURL, "shareReviewing": value.ShareReviewing, "stableScans": value.StableScans,
 		"batchCount": batchCount, "batchMoved": value.BatchMoveIndex, "cleanupIndex": value.CleanupIndex,

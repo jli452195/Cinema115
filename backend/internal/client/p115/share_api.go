@@ -3,6 +3,7 @@ package p115
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 const PlaybackUserAgent = "Mozilla/5.0"
 
 const defaultShareRequestInterval = 250 * time.Millisecond
+
+// ErrShareSnapshotPending 仅表示分享快照正在生成，不代表登录失效或分享审核中。
+var ErrShareSnapshotPending = errors.New("115 正在生成文件快照")
 
 // ShareClient 只请求固定的 115 API 地址，分享链接不作为网络请求目标。
 type ShareClient struct {
@@ -114,6 +118,9 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 	if !upstreamOK(envelope.State) {
 		if envelope.underReview() {
 			return nil, ErrShareUnderReview
+		}
+		if req.URL.Path == "/share/snap" && strings.TrimSpace(envelope.message()) == "正在生成文件快照" {
+			return nil, ErrShareSnapshotPending
 		}
 		return nil, fmt.Errorf("115 拒绝请求：%s", envelope.message())
 	}

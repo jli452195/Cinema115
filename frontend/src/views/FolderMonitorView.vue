@@ -10,6 +10,7 @@ interface Monitor {
   shareUrl: string; shareReviewing: boolean; batchDirectoryName?: string; batchMoved?: number
   lastScanAt: string; nextScanAt: string; lastError: string
   running: boolean; queued: boolean; trigger: string; hasBatch: boolean
+  logTaskID?: string; logAttempt?: number; cleanupIndex?: number
 }
 interface AutomationSettings { accountId: string }
 
@@ -39,7 +40,7 @@ let revision = 0
 const stageLabels: Record<string, string> = {
   waiting: '暂无任务', empty: '目录为空，等待新文件', moving: '正在移动目录内容',
   stabilizing: '确认临时目录内容', sharing: '正在创建分享', configuring: '正在设置长期分享',
-  verifying: '正在核对分享', generating: '正在生成 STRM', cleaning: '正在移入回收站',
+  verifying: '正在等待并读取分享快照', generating: '正在生成 STRM', cleaning: '正在移入回收站',
   checking_share: '正在复核分享', completed: '上一批已完成', error: '处理失败，等待重试', blocked: '需要人工核对',
   sharing_legacy: '正在创建分享',
 }
@@ -47,6 +48,8 @@ const stageText = computed(() => {
   if (loading.value) return '正在读取设置…'
   if (!monitor.value) return '尚未配置'
   if (monitor.value.queued) return '已排队，等待处理'
+  if (monitor.value.lastError && monitor.value.stage === 'checking_share') return 'STRM 已生成，清理后分享复核失败'
+  if (monitor.value.lastError && monitor.value.cleanupIndex) return '临时目录已清理，后续处理未完成'
   if (monitor.value.lastError && monitor.value.stage !== 'blocked') return monitor.value.hasBatch ? '本次任务失败，临时目录已保留' : '检查失败，等待重试'
   return stageLabels[monitor.value.stage] || monitor.value.stage
 })
@@ -252,7 +255,10 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer) })
             <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full" :class="monitor?.lastError || monitor?.stage === 'blocked' ? 'bg-amber-500' : taskActive ? 'bg-blue-500' : 'bg-slate-300'"></span>
             任务：{{ stageText }}<span v-if="triggerText" class="text-xs text-slate-400">· {{ triggerText }}</span>
           </p>
-          <a v-if="monitor?.shareUrl" :href="monitor.shareUrl" target="_blank" rel="noopener noreferrer" class="rounded text-xs text-blue-600 hover:underline focus-visible:outline-blue-500">最近分享：查看链接 <span aria-hidden="true">↗</span></a>
+          <div class="flex flex-wrap gap-4 text-xs text-blue-600">
+            <RouterLink v-if="monitor?.logTaskID" :to="{ path: '/logs', query: { module: 'STRM', level: 'ALL', taskID: monitor.logTaskID } }" class="rounded hover:underline focus-visible:outline-blue-500">查看本次日志</RouterLink>
+            <a v-if="monitor?.shareUrl" :href="monitor.shareUrl" target="_blank" rel="noopener noreferrer" class="rounded hover:underline focus-visible:outline-blue-500">最近分享：查看链接 <span aria-hidden="true">↗</span></a>
+          </div>
         </div>
         <template v-if="monitor">
           <div class="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs leading-6 text-slate-400">
@@ -267,6 +273,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer) })
               <div><dt class="text-slate-400">已保存的检查间隔</dt><dd class="mt-1">{{ formatInterval(monitor.intervalSeconds) }}</dd></div>
               <div><dt class="text-slate-400">已搬入临时目录</dt><dd class="mt-1">{{ monitor.batchMoved || 0 }} 项</dd></div>
               <div class="sm:col-span-2"><dt class="text-slate-400">临时目录</dt><dd class="mt-1 break-all">{{ monitor.batchDirectoryName || '无' }}</dd></div>
+              <div v-if="monitor.logTaskID" class="sm:col-span-2"><dt class="text-slate-400">日志任务</dt><dd class="mt-1 break-all">{{ monitor.logTaskID }} · 第 {{ monitor.logAttempt || 1 }} 次执行</dd></div>
             </dl>
             <p v-if="monitor.shareReviewing" class="mt-3 leading-6">最近分享仍在审核中，处理时已使用任务账号验证可读。</p>
           </details>

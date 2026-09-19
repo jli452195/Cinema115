@@ -25,6 +25,7 @@ type folderMonitorClientFake struct {
 	shareCalls         [][]string
 	configureErr       error
 	onShare            func()
+	listHook           func(context.Context, string, int, string) error
 }
 
 func (f *folderMonitorClientFake) CreateDirectory(_ context.Context, parent, name, _ string) (string, error) {
@@ -225,7 +226,12 @@ func (f *folderMonitorClientFake) ConfigureShare(_ context.Context, share *p115.
 	return nil
 }
 
-func (f *folderMonitorClientFake) List(_ context.Context, _ *p115.ShareInfo, cid string, offset int, _ string) (*p115.SharePage, error) {
+func (f *folderMonitorClientFake) List(ctx context.Context, _ *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
+	if f.listHook != nil {
+		if err := f.listHook(ctx, cid, offset, cookie); err != nil {
+			return nil, err
+		}
+	}
 	return pageOf(f.share[cid], offset), nil
 }
 

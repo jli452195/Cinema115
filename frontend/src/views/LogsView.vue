@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 
 const props = defineProps<{ token: string }>()
@@ -10,6 +10,12 @@ type Level = typeof levels[number]
 const modules = ['ALL', 'STRM', 'Telegram', '订阅', '观影', 'Emby', '蜜柑'] as const
 type Module = typeof modules[number]
 const route = useRoute()
+const router = useRouter()
+const taskID = computed(() => typeof route.query.taskID === 'string' ? route.query.taskID : '')
+function clearTaskFilter() {
+  const { taskID: _, ...query } = route.query
+  void router.replace({ query })
+}
 interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string }
 const entries = ref<LogEntry[]>([])
 const level = ref<Level>('INFO')
@@ -31,9 +37,9 @@ let mounted = true
 const colors: Record<Level, string> = { ALL: 'bg-slate-800 text-white', INFO: 'bg-emerald-500 text-white', DEBUG: 'bg-sky-500 text-white', ERROR: 'bg-red-500 text-white', WARNING: 'bg-amber-400 text-slate-900' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
-  return entries.value.filter(entry => (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source}`.toLowerCase().includes(query)))
+  return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source}`.toLowerCase().includes(query)))
 })
-watch([level, module, search], () => { visibleCount.value = 100 })
+watch([level, module, search, taskID], () => { visibleCount.value = 100 })
 
 function timestamp(value: string) {
   const date = new Date(value)
@@ -88,6 +94,10 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
             </div>
           </div>
           <input v-model="search" aria-label="搜索日志" placeholder="搜索日志内容、任务编号或来源" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-blue-500" />
+          <div v-if="taskID" class="flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            <span class="break-all">仅查看任务：{{ taskID }}</span>
+            <button class="ml-auto shrink-0 rounded px-2 py-1 hover:bg-blue-100" @click="clearTaskFilter">取消任务筛选</button>
+          </div>
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-slate-400"><span>{{ automatic ? '每 2 秒自动更新' : '已暂停自动更新' }}<span v-if="updated"> · 更新于 {{ updated }}</span></span><span>匹配 {{ filtered.length }} 条 / 已缓存 {{ entries.length }} 条</span></div>
           <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}。{{ entries.length ? '当前保留上次读取的日志。' : '' }}</p>
         </div>

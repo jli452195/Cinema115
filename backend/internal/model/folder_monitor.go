@@ -20,6 +20,8 @@ type FolderMonitor struct {
 	Enabled              bool      `json:"enabled"`
 	TaskPending          bool      `json:"taskPending,omitempty"`
 	TaskTrigger          string    `json:"taskTrigger,omitempty"`
+	LogTaskID            string    `json:"logTaskID,omitempty"`
+	LogAttempt           int       `json:"logAttempt,omitempty"`
 	Running              bool      `json:"-"`
 	IntervalSeconds      int       `json:"intervalSeconds"`
 	Stage                string    `json:"stage"`

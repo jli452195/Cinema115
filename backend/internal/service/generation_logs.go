@@ -90,6 +90,7 @@ func WithGenerationBatch(ctx context.Context, id int64, index, total int) contex
 type generationLogger struct {
 	store        *GenerationLogs
 	task, source string
+	redact       func(string) string
 }
 
 func WithGenerationSource(ctx context.Context, source string) context.Context {
@@ -98,6 +99,9 @@ func WithGenerationSource(ctx context.Context, source string) context.Context {
 
 func logGeneration(ctx context.Context, level, message string) {
 	if logger, ok := ctx.Value(generationLogKey{}).(generationLogger); ok {
+		if logger.redact != nil {
+			message = logger.redact(message)
+		}
 		logger.store.append(logger.task, logger.source, level, message)
 	}
 }
@@ -124,7 +128,7 @@ func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInpu
 	if source != "Telegram" && source != "订阅" && source != "追更" {
 		source = "网页"
 	}
-	ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{g.Logs, task, source})
+	ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: g.Logs, task: task, source: source})
 	ctx = p115.WithRequestProgress(ctx, func(message string) { reportGeneration(ctx, "retrying", message) })
 	started := time.Now()
 	if batch, ok := ctx.Value(generationBatchKey{}).(generationBatch); ok && source == "Telegram" {
