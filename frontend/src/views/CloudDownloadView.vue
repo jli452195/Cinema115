@@ -4,6 +4,7 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import { p115Request } from '../lib/p115-api'
+import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import type { P115Account } from '../types/p115Accounts'
 
 const props = defineProps<{ token: string }>()
@@ -59,11 +60,14 @@ async function selectDirectory(value: { id: string; path: string; name: string }
 async function submit() {
   if (!canSubmit.value) return
   submitting.value = true; error.value = ''; notice.value = ''
+  // 提交开始后固定账号、链接和目录，保存配置期间的界面改动不改变本次任务。
+  const snapshot = { accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
+  const rawURL = url.value.trim()
   try {
-    await p115Request(props.token, 'cloud-download/config', { method: 'PUT', body: JSON.stringify({ accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
-    await p115Request(props.token, 'cloud-download/tasks?accountId=' + encodeURIComponent(accountId.value), { method: 'POST', body: JSON.stringify({ url: url.value.trim(), targetCID: targetCID.value }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(35000)]) })
-    notice.value = '磁力已提交到 115 云下载。'
-    url.value = ''
+    await p115Request(props.token, 'cloud-download/config', { method: 'PUT', body: JSON.stringify(snapshot), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+    const receipt = await submitCloudDownload(props.token, snapshot.accountId, rawURL, snapshot.targetCID, lifecycle.signal)
+    notice.value = cloudDownloadNotice(receipt, snapshot.targetPath)
+    if (url.value.trim() === rawURL) url.value = ''
   } catch (reason) {
     if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '提交云下载失败'
   } finally { submitting.value = false }
@@ -102,7 +106,7 @@ onBeforeUnmount(() => { lifecycle.abort() })
     <div class="max-w-3xl">
       <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <h2 class="text-base font-semibold text-slate-900">磁力转存</h2>
-        <p class="mt-1 text-sm leading-6 text-slate-500">选择账号和目录后，提交 magnet 磁力链接到 115。</p>
+        <p class="mt-1 text-sm leading-6 text-slate-500">提交磁力或 ED2K 到指定目录。相同的已结束任务会自动删除记录后重新提交，网盘文件保留；运行中的任务不会删除。</p>
         <div class="mt-5"><P115AccountSelect id="cloud-download-account" v-model="accountId" :accounts="accounts" /></div>
         <label class="mt-5 block text-sm font-medium text-slate-700">磁力或 ED2K 链接<textarea v-model="url" rows="4" maxlength="8192" placeholder="magnet:?xt=urn:btih:… 或 ed2k://|file|…" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
         <div class="mt-5 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><div class="min-w-0"><p class="text-sm font-medium text-slate-700">下载目录</p><p class="mt-1 truncate text-xs text-slate-500">{{ currentName }}（{{ targetCID }}）</p></div><button type="button" :disabled="!accountId || applyingConfig" class="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 disabled:opacity-40" @click="openDirectoryDialog">选择目录</button></div>

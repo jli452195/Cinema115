@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"strm115/backend/internal/client/imagecache"
+
 	"golang.org/x/net/html"
 )
 
@@ -76,22 +78,9 @@ func parseBangumis(doc *html.Node, result *Result) {
 	})
 }
 
-// 封面只接受蜜柑站内图片，重新生成缩略图参数，不透传任意抓取地址。
+// 封面统一返回本站缓存地址，浏览器不直接连接蜜柑。
 func coverLink(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.Fragment != "" {
-		return ""
-	}
-	if u.IsAbs() && (u.Scheme != "https" || u.Host != "mikanani.me") {
-		return ""
-	}
-	if !u.IsAbs() && u.Host != "" {
-		return ""
-	}
-	if !strings.HasPrefix(u.Path, "/images/Bangumi/") || strings.Contains(u.Path, "..") || strings.Contains(u.Path, "\\") {
-		return ""
-	}
-	return BaseURL + u.EscapedPath() + "?width=240&height=336&format=webp"
+	return imagecache.MikanCoverURL(raw)
 }
 
 func insideEpisodeTable(n *html.Node) bool {

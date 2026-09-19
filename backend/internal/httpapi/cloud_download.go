@@ -121,25 +121,50 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			c.JSON(http.StatusBadRequest, gin.H{"error": "云下载链接参数无效"})
 			return
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), service.CloudDownloadTimeout)
 		defer cancel()
 		targetCID := strings.TrimSpace(input.TargetCID)
 		targetPath := "/"
-		if saved := settings.View(); targetCID == "" && saved.AccountID == value.ID {
-			targetCID, targetPath = saved.TargetCID, saved.TargetPath
+		if saved := settings.View(); saved.AccountID == value.ID {
+			if targetCID == "" {
+				targetCID = saved.TargetCID
+			}
+			if targetCID == saved.TargetCID {
+				targetPath = saved.TargetPath
+			}
 		}
 		if targetCID == "" {
 			targetCID = "0"
 		}
 		receipt, err := downloads.Submit(ctx, service.CloudDownloadConfig{AccountID: value.ID, TargetCID: targetCID, TargetPath: targetPath}, input.URL)
 		if err != nil {
-			fail(c, err)
+			status := http.StatusBadGateway
+			var upstream *p115.HTTPError
+			switch {
+			case errors.Is(err, service.ErrCloudTaskBusy), errors.Is(err, service.ErrCloudTaskRunning), errors.Is(err, service.ErrCloudTaskUnclear):
+				status = http.StatusConflict
+			case errors.Is(err, p115.ErrCloudInput), errors.Is(err, service.ErrGenerationInput), errors.Is(err, service.ErrAccountInput):
+				status = http.StatusBadRequest
+			case errors.Is(err, context.DeadlineExceeded):
+				status = http.StatusGatewayTimeout
+			case errors.Is(err, service.ErrAccountMissing):
+				status = http.StatusNotFound
+			case errors.As(err, &upstream) && (upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden):
+				status = http.StatusConflict
+			}
+			message := service.CloudDownloadErrorMessage(err)
+			if receipt.RemovedOldTask {
+				prefix := "旧任务记录已移除，但重新提交失败；原有网盘文件已保留。"
+				if service.CloudDownloadUncertain(err) {
+					prefix = "旧任务记录已移除，但重新提交结果尚未确认；原有网盘文件已保留。"
+				}
+				message = prefix + message
+			}
+			c.JSON(status, gin.H{"accepted": false, "error": message, "removedOldTask": receipt.RemovedOldTask, "outcomeUncertain": service.CloudDownloadUncertain(err)})
 			return
 		}
-		// Do not return the upstream payload wholesale: it can contain fields
-		// that are not part of our stable API. The task list is the source of
-		// truth for subsequent progress polling.
-		c.JSON(http.StatusAccepted, gin.H{"accepted": true, "task": taskView(receipt.Task)})
+		// 只返回稳定字段；已接受不代表下载完成，不暴露上游原始响应。
+		c.JSON(http.StatusAccepted, gin.H{"accepted": true, "removedOldTask": receipt.RemovedOldTask, "task": taskView(receipt.Task)})
 	})
 
 	group.GET("/tasks", func(c *gin.Context) {

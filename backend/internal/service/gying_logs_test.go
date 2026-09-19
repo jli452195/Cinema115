@@ -47,6 +47,7 @@ func TestGyingLogsSearchReloginCacheAndRefresh(t *testing.T) {
 			searches.Add(1)
 			if !loggedIn.Load() {
 				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"code":403,"msg":"请先登录"}`)
 				return
 			}
 			fmt.Fprint(w, `<script>_obj.search={"l":{"title":["Movie"],"d":["mv"],"i":["one"]}};</script>`)
@@ -95,6 +96,55 @@ func TestGyingLogsSearchReloginCacheAndRefresh(t *testing.T) {
 	}
 	if len(svc.Logs.Snapshot("ERROR", "观影")) != 0 {
 		t.Fatal("successful flow logged errors")
+	}
+}
+
+func TestGyingUnavailableDoesNotReloginAndCachesResults(t *testing.T) {
+	var searches, logins atomic.Int32
+	svc := loggedGyingFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			searches.Add(1)
+			fmt.Fprint(w, `<script>_obj.search={"l":{"title":["已下架","正常资源"],"d":["mv","ac"],"i":["gone","ok"]}};</script>`)
+		case "/res/downurl/mv/gone":
+			fmt.Fprint(w, `{"code":403,"msg":"应版权方要求，已删除相关资源 private-password"}`)
+		case "/res/downurl/ac/ok":
+			fmt.Fprint(w, `{"code":200,"panlist":{"url":["https://115.com/s/test"]}}`)
+		case "/user/login":
+			logins.Add(1)
+			fmt.Fprint(w, `<html>login</html>`)
+		default:
+			w.WriteHeader(500)
+		}
+	})
+	input := GyingSearchInput{CacheKey: "tv:3570", OriginalTitle: "美少女戦士セーラームーン", IMDBID: "tt0103369"}
+	for i := 0; i < 2; i++ {
+		result, err := svc.Search(context.Background(), input)
+		if err != nil || len(result.Items) != 1 || result.UnavailableDetails != 1 || result.Partial || result.Cached != (i == 1) {
+			t.Fatal(result, err)
+		}
+	}
+	if searches.Load() != 1 || logins.Load() != 0 {
+		t.Fatal("下架不应重新登录或阻止有效结果缓存")
+	}
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
+	if !strings.Contains(logs, "跳过本轮第 1 个条目") || strings.Contains(logs, "private-password") || strings.Contains(logs, "会话失效") || len(svc.Logs.Snapshot("ERROR", "观影")) > 0 {
+		t.Fatal(logs)
+	}
+}
+
+func TestGyingUnknown403DoesNotReloginOrCache(t *testing.T) {
+	var logins atomic.Int32
+	svc := loggedGyingFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/login" {
+			logins.Add(1)
+		}
+		w.WriteHeader(403)
+		fmt.Fprint(w, `<html>Access denied</html>`)
+	})
+	_, err := svc.Search(context.Background(), GyingSearchInput{CacheKey: "tv:3570", OriginalTitle: "测试"})
+	if !errors.Is(err, gying.ErrAccessDenied) || logins.Load() != 0 || len(svc.searchCache) != 0 {
+		t.Fatal(err, logins.Load())
 	}
 }
 

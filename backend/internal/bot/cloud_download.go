@@ -2,10 +2,8 @@ package bot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
@@ -13,12 +11,10 @@ import (
 
 type CloudDownloadSubmitter interface {
 	Submit(context.Context, service.CloudDownloadConfig, string) (service.CloudDownloadReceipt, error)
-	Redo(context.Context, service.CloudDownloadConfig, string) (service.CloudDownloadReceipt, error)
 }
 
 type cloudBatchOutcome struct {
 	label   string
-	redo    bool
 	removed bool
 	err     error
 }
@@ -42,16 +38,11 @@ func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramStat
 			return fmt.Errorf("记录 Telegram 云下载任务: %w", err)
 		}
 
-		taskCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-		var receipt service.CloudDownloadReceipt
-		var err error
-		if batch.CloudRedo {
-			receipt, err = b.CloudDownloads.Redo(taskCtx, b.CloudDownloadConfig.ServiceConfig(), item.URL)
-		} else {
-			receipt, err = b.CloudDownloads.Submit(taskCtx, b.CloudDownloadConfig.ServiceConfig(), item.URL)
-		}
+		taskCtx, cancel := context.WithTimeout(ctx, service.CloudDownloadTimeout)
+		// 旧批次的 CloudRedo 标记不再控制策略，所有入口默认安全重提。
+		receipt, err := b.CloudDownloads.Submit(taskCtx, b.CloudDownloadConfig.ServiceConfig(), item.URL)
 		cancel()
-		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), redo: batch.CloudRedo, removed: receipt.RemovedOldTask, err: err})
+		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), removed: receipt.RemovedOldTask, err: err})
 		if err != nil {
 			b.Logs.Append("Telegram", fmt.Sprintf("云下载-%d", batch.UpdateID), "云下载", "ERROR", fmt.Sprintf("第 %d/%d 个任务提交失败：%s", index+1, len(batch.Items), cloudDownloadError(err)))
 		} else {
@@ -90,8 +81,11 @@ func formatCloudBatchReply(outcomes []cloudBatchOutcome, targetPath string) stri
 		outcome := outcomes[0]
 		if outcome.err != nil {
 			prefix := "❌ 115 云下载提交失败"
-			if outcome.redo && outcome.removed {
+			if outcome.removed {
 				prefix = "❌ 旧任务记录已移除，但重新提交失败\n已下载文件没有被删除"
+				if service.CloudDownloadUncertain(outcome.err) {
+					prefix = "⚠️ 旧任务记录已移除，但重新提交结果尚未确认\n已下载文件没有被删除"
+				}
 			}
 			return prefix + "\n资源：" + outcome.label + "\n原因：" + cloudDownloadError(outcome.err)
 		}
@@ -106,7 +100,7 @@ func formatCloudBatchReply(outcomes []cloudBatchOutcome, targetPath string) stri
 	for _, outcome := range outcomes {
 		if outcome.err != nil {
 			detail := outcome.label + "：" + cloudDownloadError(outcome.err)
-			if outcome.redo && outcome.removed {
+			if outcome.removed {
 				detail += "（旧任务已移除，文件保留）"
 			}
 			failures = append(failures, detail)
@@ -137,18 +131,5 @@ func formatCloudBatchReply(outcomes []cloudBatchOutcome, targetPath string) stri
 }
 
 func cloudDownloadError(err error) string {
-	switch {
-	case errors.Is(err, p115.ErrCloudInput):
-		return "链接格式无效，请发送完整的 magnet 或 ED2K 链接"
-	case errors.Is(err, service.ErrCloudTaskRunning):
-		return "相同任务仍在 115 中运行，未删除或重新提交"
-	case errors.Is(err, service.ErrCloudTaskUnclear):
-		return "无法安全确认旧任务状态，未执行删除"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "连接 115 超时，请先检查 115 任务列表再决定是否重试"
-	case errors.Is(err, service.ErrGenerationInput):
-		return strings.TrimPrefix(err.Error(), service.ErrGenerationInput.Error()+"：")
-	default:
-		return err.Error()
-	}
+	return service.CloudDownloadErrorMessage(err)
 }

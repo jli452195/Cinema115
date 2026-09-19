@@ -111,6 +111,12 @@ func gyingLogError(err error) string {
 		return "登录状态失效或访问受限"
 	case errors.Is(err, gying.ErrChallenge):
 		return "安全验证未通过或验证重试耗尽"
+	case errors.Is(err, gying.ErrResourceUnavailable):
+		return "资源已下架或不可用"
+	case errors.Is(err, gying.ErrAccessDenied):
+		return "观影站访问受限，未判定为登录失效"
+	case errors.Is(err, gying.ErrLoginFormat):
+		return "登录接口响应格式异常，可能是验证页或站点异常，未记录原始响应"
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {

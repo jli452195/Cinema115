@@ -48,6 +48,25 @@ type gyingTMDBFake struct{ tmdbReaderFake }
 
 type gyingMalformedDetailFake struct{ gyingSearcherFake }
 
+type gyingMalformedLoginFake struct{ gyingSearcherFake }
+
+func (f *gyingMalformedLoginFake) Search(context.Context, service.GyingSearchInput) (service.GyingSearchResult, error) {
+	return service.GyingSearchResult{}, fmt.Errorf("会话失效且重新登录失败: %w: invalid character '<' cookie=secret", gying.ErrLoginFormat)
+}
+
+func TestGyingLoginFormatErrorUsesSafeChineseMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterGying(router.Group("/api/admin"), &gyingMalformedLoginFake{}, &gyingTMDBFake{})
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/gying/search", strings.NewReader(`{"kind":"tv","tmdbId":"3570"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != 502 || !strings.Contains(response.Body.String(), gying.ErrLoginFormat.Error()) || strings.Contains(response.Body.String(), "secret") || strings.Contains(response.Body.String(), "invalid character") {
+		t.Fatal(response.Code, response.Body.String())
+	}
+}
+
 func (f *gyingMalformedDetailFake) Search(context.Context, service.GyingSearchInput) (service.GyingSearchResult, error) {
 	return service.GyingSearchResult{}, fmt.Errorf("读取详情失败: %w: plainDownlistData private-response cookie=secret", gying.ErrDetailFormat)
 }

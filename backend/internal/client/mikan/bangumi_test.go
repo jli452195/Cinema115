@@ -29,7 +29,7 @@ func TestParseBangumiCardsOptionalAndSafe(t *testing.T) {
 	if err != nil || len(result.Bangumis) != 2 || len(result.Items) != 1 {
 		t.Fatal(result, err)
 	}
-	if result.Bangumis[0].Title != "一弦定音！" || !strings.HasPrefix(result.Bangumis[0].CoverURL, BaseURL+"/images/Bangumi/") || result.Bangumis[1].CoverURL != "" {
+	if result.Bangumis[0].Title != "一弦定音！" || result.Bangumis[0].CoverURL != "/api/mikan/image/201904/poster.jpg" || result.Bangumis[1].CoverURL != "" {
 		t.Fatal(result.Bangumis)
 	}
 	for _, raw := range []string{"//evil.test/images/Bangumi/a.jpg", "javascript:alert(1)", "https://mikanani.me@evil.test/images/Bangumi/a.jpg", "/images/Bangumi/../../secret", "/images/Bangumi/a/../x.jpg"} {

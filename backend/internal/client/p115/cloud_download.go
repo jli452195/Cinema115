@@ -268,9 +268,7 @@ func normalizeTaskHash(value, protocol string) (string, bool) {
 	return "", false
 }
 
-// DeleteTaskKeepFiles removes exactly one verified task record. Omitting flag
-// (equivalent to flag=0) is intentional: downloaded files must never be
-// removed by the Telegram redo workflow.
+// 仅删除精确匹配的任务记录；不传 flag（等价于 0），所有入口始终保留已下载文件。
 func (c *CloudClient) DeleteTaskKeepFiles(ctx context.Context, cookie, infoHash string) error {
 	infoHash = strings.TrimSpace(infoHash)
 	if len(infoHash) != 32 && len(infoHash) != 40 {

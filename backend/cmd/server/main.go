@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tguser"
@@ -113,6 +114,16 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterTMDBImages(r, tmdbImages)
+	mikanImages, err := imagecache.NewMikan(filepath.Join(dataDir, "mikan-images"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterMikanImages(r, mikanImages)
+	gyingImages, err := imagecache.NewGying(filepath.Join(dataDir, "gying-images"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterGyingImages(r, gyingImages)
 	embySecrets, err := service.NewSessionStore(filepath.Join(dataDir, "emby-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -251,6 +262,10 @@ func main() {
 	var workers sync.WaitGroup
 	workers.Add(1)
 	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); mikanImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); gyingImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); shareAPI.Runs.Run() }()
 	if os.Getenv("TMDB_API_KEY") != "" {

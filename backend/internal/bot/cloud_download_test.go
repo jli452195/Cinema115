@@ -26,7 +26,7 @@ func (s *cloudSubmitterStub) Redo(_ context.Context, config service.CloudDownloa
 func (s *cloudSubmitterStub) Submit(_ context.Context, config service.CloudDownloadConfig, rawURL string) (service.CloudDownloadReceipt, error) {
 	s.config, s.url = config, rawURL
 	s.calls++
-	return service.CloudDownloadReceipt{AccountName: "家庭账号", TargetPath: "/下载"}, nil
+	return service.CloudDownloadReceipt{AccountName: "家庭账号", TargetPath: "/下载", RemovedOldTask: s.removed}, nil
 }
 
 func cloudUpdate(id, chat int64, chatType, text string) telegramUpdate {
@@ -108,7 +108,21 @@ func TestCloudDownloadRedoCommandAndOneBatchReply(t *testing.T) {
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if stub.redos != 2 || stub.calls != 0 || state.Pending == nil || !strings.Contains(state.Pending.Text, "已重新提交：2 个") {
+	if stub.redos != 0 || stub.calls != 2 || state.Pending == nil || !strings.Contains(state.Pending.Text, "已重新提交：2 个") {
 		t.Fatalf("没有生成单条 redo 汇总：stub=%+v pending=%+v", stub, state.Pending)
+	}
+}
+
+func TestCloudDownloadLegacyBatchAlsoUsesDefaultResubmit(t *testing.T) {
+	b := newBatchTestBot(t, nil)
+	stub := &cloudSubmitterStub{removed: true}
+	b.CloudDownloads = stub
+	b.CloudDownloadConfig = BotCloudDownloadConfig{Enabled: true, AccountID: "fixed-account", TargetCID: "99", TargetPath: "/电影"}
+	state := telegramState{Batch: &messageBatch{Mode: "cloud", UpdateID: 7, ChatID: 42, Items: []messageShare{{URL: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}}}}
+	if err := b.processBatchLink(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if stub.calls != 1 || stub.redos != 0 || !strings.Contains(state.Pending.Text, "已重新提交到 115 云下载") || !strings.Contains(state.Pending.Text, "网盘文件已保留") {
+		t.Fatal("旧批次未使用统一入口")
 	}
 }

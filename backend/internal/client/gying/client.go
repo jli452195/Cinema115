@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strm115/backend/internal/client/imagecache"
 )
 
 var (
@@ -82,6 +84,7 @@ func New(baseURL string, httpClient *http.Client) (*Client, error) {
 type SearchItem struct {
 	ID          string         `json:"id"`
 	Title       string         `json:"title"`
+	CoverURL    string         `json:"coverUrl,omitempty"`
 	Year        int            `json:"year,omitempty"`
 	MediaType   string         `json:"mediaType"`
 	Description string         `json:"description,omitempty"`
@@ -103,23 +106,25 @@ type ResourceLink struct {
 }
 
 type SearchResponse struct {
-	Query         string          `json:"query"`
-	MatchedBy     string          `json:"matchedBy,omitempty"`
-	Items         []SearchItem    `json:"items"`
-	Total         int             `json:"total"`
-	Truncated     bool            `json:"truncated,omitempty"`
-	Attempts      []SearchAttempt `json:"attempts"`
-	Partial       bool            `json:"partial,omitempty"`
-	FailedDetails int             `json:"failedDetails,omitempty"`
+	Query              string          `json:"query"`
+	MatchedBy          string          `json:"matchedBy,omitempty"`
+	Items              []SearchItem    `json:"items"`
+	Total              int             `json:"total"`
+	Truncated          bool            `json:"truncated,omitempty"`
+	Attempts           []SearchAttempt `json:"attempts"`
+	Partial            bool            `json:"partial,omitempty"`
+	FailedDetails      int             `json:"failedDetails,omitempty"`
+	UnavailableDetails int             `json:"unavailableDetails,omitempty"`
 }
 
 type SearchAttempt struct {
-	Method    string `json:"method"`
-	Query     string `json:"query"`
-	Total     int    `json:"total"`
-	Usable    int    `json:"usable"`
-	Failed    int    `json:"failed,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Method      string `json:"method"`
+	Query       string `json:"query"`
+	Total       int    `json:"total"`
+	Usable      int    `json:"usable"`
+	Failed      int    `json:"failed,omitempty"`
+	Unavailable int    `json:"unavailable,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
 }
 
 type searchData struct {
@@ -259,6 +264,7 @@ func (c *Client) SearchByTitle(ctx context.Context, originalTitle, imdbID string
 		result.Attempts = append([]SearchAttempt{titleAttempt}, result.Attempts...)
 		result.Partial = titleAttempt.Failed > 0 || result.Partial
 		result.FailedDetails += titleAttempt.Failed
+		result.UnavailableDetails += titleAttempt.Unavailable
 		result.MatchedBy = "imdb"
 		return result, nil
 	}
@@ -322,8 +328,8 @@ func (c *Client) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if status == http.StatusForbidden || isLoginShell(body) {
-		return ErrForbidden
+	if err := responseError(body, status, false); err != nil {
+		return err
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("检查观影会话失败: HTTP %d", status)
@@ -364,7 +370,7 @@ func (c *Client) login(ctx context.Context, username, password string) error {
 		Code json.RawMessage `json:"code"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("解析登录响应: %w", err)
+		return fmt.Errorf("%w: %w", ErrLoginFormat, err)
 	}
 	code, err := strconv.Atoi(strings.Trim(string(result.Code), `"`))
 	if err != nil || code != http.StatusOK {
@@ -396,8 +402,8 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 	if err != nil {
 		return SearchResponse{}, err
 	}
-	if status == http.StatusForbidden {
-		return SearchResponse{}, ErrForbidden
+	if err := responseError(body, status, false); err != nil {
+		return SearchResponse{}, err
 	}
 	if status != http.StatusOK {
 		return SearchResponse{}, fmt.Errorf("搜索失败: HTTP %d", status)
@@ -427,6 +433,7 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 	var fatalError error
 	var firstDetailError error
 	detailErrors := 0
+	unavailableDetails := 0
 	var resultMu sync.Mutex
 	workers := 6
 	if count < workers {
@@ -439,6 +446,14 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 			defer wg.Done()
 			for i := range jobs {
 				item, err := c.fetchSearchItem(searchCtx, data, i)
+				if errors.Is(err, ErrResourceUnavailable) {
+					resultMu.Lock()
+					unavailableDetails++
+					resultMu.Unlock()
+					// 只记录本轮条目序号，不透传上游说明或链接。
+					reportProgress(ctx, "WARNING", fmt.Sprintf("跳过本轮第 %d 个条目：资源已下架或不可用，不重新登录", i+1))
+					continue
+				}
 				if errors.Is(err, ErrForbidden) {
 					resultMu.Lock()
 					if fatalError == nil {
@@ -463,11 +478,12 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 			}
 		}()
 	}
+sendJobs:
 	for i := 0; i < count; i++ {
 		select {
 		case jobs <- i:
 		case <-searchCtx.Done():
-			break
+			break sendJobs
 		}
 	}
 	close(jobs)
@@ -487,11 +503,12 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 			items = append(items, *item)
 		}
 	}
-	attempt := SearchAttempt{Query: query, Total: total, Usable: len(items), Failed: detailErrors, Truncated: truncated}
+	attempt := SearchAttempt{Query: query, Total: total, Usable: len(items), Failed: detailErrors, Unavailable: unavailableDetails, Truncated: truncated}
 	reportProgress(ctx, "DEBUG", fmt.Sprintf("本轮查询与详情读取完成：%d 个可用条目、%d 个详情失败，耗时 %.2f 秒", len(items), detailErrors, time.Since(started).Seconds()))
 	return SearchResponse{
 		Query: query, Items: items, Total: total, Truncated: truncated,
 		Attempts: []SearchAttempt{attempt}, Partial: detailErrors > 0, FailedDetails: detailErrors,
+		UnavailableDetails: unavailableDetails,
 	}, nil
 }
 
@@ -525,7 +542,7 @@ func (c *Client) fetchSearchItem(ctx context.Context, data searchData, i int) (*
 	if i < len(data.L.Year) {
 		year = data.L.Year[i]
 	}
-	return &SearchItem{ID: data.L.Kind[i] + ":" + data.L.ID[i], Title: strings.TrimSpace(data.L.Title[i]), Year: year, MediaType: mediaType(data.L.Kind[i]), Description: strings.Join(content, " | "), Links: links}, nil
+	return &SearchItem{ID: data.L.Kind[i] + ":" + data.L.ID[i], Title: strings.TrimSpace(data.L.Title[i]), CoverURL: imagecache.GyingCoverURL(data.L.Kind[i], data.L.ID[i]), Year: year, MediaType: mediaType(data.L.Kind[i]), Description: strings.Join(content, " | "), Links: links}, nil
 }
 
 func mediaType(value string) string {
@@ -547,21 +564,15 @@ func (c *Client) fetchDetail(ctx context.Context, kind, id string) (detailData, 
 	if err != nil {
 		return detailData{}, err
 	}
-	if status == http.StatusForbidden {
-		return detailData{}, ErrForbidden
+	if err := responseError(body, status, true); err != nil {
+		return detailData{}, err
 	}
 	if status != http.StatusOK {
 		return detailData{}, fmt.Errorf("详情请求失败: HTTP %d", status)
 	}
-	if isLoginShell(body) {
-		return detailData{}, ErrForbidden
-	}
 	var detail detailData
 	if err := json.Unmarshal(body, &detail); err != nil {
 		return detailData{}, fmt.Errorf("%w: %w", ErrDetailFormat, err)
-	}
-	if detail.Code == http.StatusForbidden {
-		return detailData{}, ErrForbidden
 	}
 	unknownSeeds := 0
 	for i, count := range detail.Downlist.List.Seeds {

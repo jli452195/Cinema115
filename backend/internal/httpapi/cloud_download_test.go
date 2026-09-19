@@ -1,16 +1,100 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
+
+type cloudSubmitAPIFake struct {
+	task              p115.CloudTask
+	found             bool
+	removeErr, addErr error
+	steps             []string
+	cid               string
+	budget            time.Duration
+}
+
+func (f *cloudSubmitAPIFake) LookupTask(ctx context.Context, _ string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+	f.steps = append(f.steps, "lookup")
+	if deadline, ok := ctx.Deadline(); ok {
+		f.budget = time.Until(deadline)
+	}
+	return f.task, f.found, nil
+}
+func (f *cloudSubmitAPIFake) DeleteTaskKeepFiles(_ context.Context, _, hash string) error {
+	f.steps = append(f.steps, "delete:"+hash)
+	return f.removeErr
+}
+func (f *cloudSubmitAPIFake) AddURL(_ context.Context, _, _, cid string) (json.RawMessage, error) {
+	f.steps = append(f.steps, "add")
+	f.cid = cid
+	return json.RawMessage(`{"info_hash":"0123456789abcdef0123456789abcdef01234567"}`), f.addErr
+}
+
+func TestCloudDownloadPOSTDefaultsToSafeResubmit(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	for _, tc := range []struct {
+		name, display, errorText string
+		found                    bool
+		removeErr, addErr        error
+		status                   int
+		removed, uncertain       bool
+		steps                    int
+	}{
+		{name: "新任务", status: 202, steps: 2},
+		{name: "网页默认删除重提", found: true, display: "finished", status: 202, removed: true, steps: 3},
+		{name: "运行任务不动", found: true, display: "running", status: 409, steps: 1, errorText: "未删除或重新提交"},
+		{name: "未知任务不动", found: true, status: 409, steps: 1, errorText: "未执行删除"},
+		{name: "删除失败不提交", found: true, display: "finished", removeErr: errors.New("删除被拒绝"), status: 502, steps: 2, errorText: "删除被拒绝"},
+		{name: "删除后提交失败", found: true, display: "finished", addErr: errors.New("提交被拒绝"), status: 502, removed: true, steps: 3, errorText: "旧任务记录已移除，但重新提交失败"},
+		{name: "删除后超时", found: true, display: "finished", addErr: context.DeadlineExceeded, status: 504, removed: true, uncertain: true, steps: 3, errorText: "重新提交结果尚未确认"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, accounts, _ := setupAccountsAPI(t, nil, nil)
+			settings := testCloudDownloadSettings(t, accounts)
+			client := &cloudSubmitAPIFake{task: p115.CloudTask{InfoHash: hash, DisplayStatus: tc.display}, found: tc.found, removeErr: tc.removeErr, addErr: tc.addErr}
+			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client}, p115.NewCloudClient(), p115.NewShareClient())
+			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId=default", strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
+			response := httptest.NewRecorder()
+			r.ServeHTTP(response, request)
+			var body struct {
+				Accepted         bool
+				RemovedOldTask   bool
+				OutcomeUncertain bool
+				Error            string
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != tc.status || body.Accepted != (tc.status == 202) || body.RemovedOldTask != tc.removed || body.OutcomeUncertain != tc.uncertain || !strings.Contains(body.Error, tc.errorText) || len(client.steps) != tc.steps {
+				t.Fatalf("status=%d body=%s steps=%v", response.Code, response.Body.String(), client.steps)
+			}
+			if tc.removed && tc.status != 202 && !strings.Contains(body.Error, "网盘文件已保留") {
+				t.Fatal("未报告文件保留")
+			}
+			if tc.status == 202 && client.cid != "99" {
+				t.Fatal("未提交到本次指定目录")
+			}
+			if client.budget < 85*time.Second || client.budget > service.CloudDownloadTimeout {
+				t.Fatal("提交预算不是 90 秒", client.budget)
+			}
+			if strings.Contains(response.Body.String(), "UID=") {
+				t.Fatal("响应泄露凭据")
+			}
+		})
+	}
+}
 
 func TestCloudDownloadRequiresExplicitAccount(t *testing.T) {
 	r, accounts, _ := setupAccountsAPI(t, nil, nil)

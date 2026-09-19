@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/p115"
@@ -92,7 +93,7 @@ func TestCloudDownloadRedoDeletesOnlyVerifiedTerminalTaskAndKeepsFiles(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !receipt.RemovedOldTask || client.deleted != client.task.InfoHash || client.url != link || client.cid != "9" {
+	if !receipt.RemovedOldTask || client.deleted != strings.ToLower(client.task.InfoHash) || client.url != link || client.cid != "9" {
 		t.Fatalf("没有精确删除旧任务并重新提交：receipt=%+v client=%+v", receipt, client)
 	}
 }

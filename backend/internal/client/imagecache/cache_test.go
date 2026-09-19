@@ -1,4 +1,4 @@
-package tmdbimage
+package imagecache
 
 import (
 	"context"

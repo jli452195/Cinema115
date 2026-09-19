@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import MikanFilterSelect from './MikanFilterSelect.vue'
 import { p115Request } from '../lib/p115-api'
+import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
+import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
+import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 
 const props = defineProps<{ token: string; title: string; originalTitle: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -24,14 +28,18 @@ const copied = ref('')
 const copyError = ref('')
 const selectedBangumi = ref<Bangumi>()
 const brokenCovers = ref<Record<string, boolean>>({})
+const coverRetries = ref<Record<string, number>>({})
 const searchSnapshot = ref<{ result: Result; query: string; group: string; groups: Group[]; filter: string; resolution: string; visible: number }>()
 const bangumis = computed(() => searchSnapshot.value?.result.bangumis || result.value?.bangumis || [])
+const hasBrokenCovers = computed(() => bangumis.value.some(card => brokenCovers.value[card.id]))
 const expansions = computed(() => (result.value?.more || []).filter(item => !group.value || item.groupId === group.value))
 const lifecycle = new AbortController()
 const previousFocus = document.activeElement as HTMLElement | null
 const previousOverflow = document.body.style.overflow
 const submissions = ref<Record<string, { busy?: boolean; success?: boolean; message?: string; needsConfig?: boolean }>>({})
 const resolutions = computed(() => ['全部', ...['2160P', '1080P', '720P', '480P', '未知'].filter(value => result.value?.items.some(item => item.resolution === value))])
+const groupOptions = computed(() => [{ value: '', label: '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: item.name }))])
+const resolutionOptions = computed(() => resolutions.value.map(value => ({ value, label: value === '全部' ? '全部分辨率' : value })))
 const filtered = computed(() => {
   const words = filter.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
   return (result.value?.items || []).filter(item => (!selectedBangumi.value || !group.value || item.groupId === group.value) && (resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
@@ -74,15 +82,27 @@ async function search(refresh = false, selectedGroup = '') {
     if (!lifecycle.signal.aborted) error.value = e instanceof Error && e.name === 'TimeoutError' ? '蜜柑搜索超时，请稍后重试' : e instanceof Error ? e.message : '蜜柑搜索失败，请稍后重试'
   } finally { busy.value = false }
 }
-function selectGroup(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
+function selectGroup(value: string) {
   if (selectedBangumi.value) { group.value = value; visible.value = 50 }
   else void search(false, value)
 }
 function useTitle(value: string) { query.value = value; void search() }
 function refreshCurrent() {
+  retryCovers()
   if (selectedBangumi.value) void loadBangumi(selectedBangumi.value, true)
   else void search(true, group.value)
+}
+function retryCovers() {
+  for (const card of bangumis.value) {
+    if (!brokenCovers.value[card.id]) continue
+    coverRetries.value[card.id] = Date.now()
+    delete brokenCovers.value[card.id]
+  }
+}
+function coverSource(card: Bangumi) {
+  // 只允许本站封面接口，错误或旧版远程地址不回退为浏览器直连。
+  if (!/^\/api\/mikan\/image\/\d{6}\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/i.test(card.coverUrl)) return ''
+  return card.coverUrl + (coverRetries.value[card.id] ? `?retry=${coverRetries.value[card.id]}` : '')
 }
 function backToSearch() {
   if (busy.value || !searchSnapshot.value) return
@@ -140,7 +160,6 @@ async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion
     if (!lifecycle.signal.aborted) error.value = e instanceof Error && e.name === 'TimeoutError' ? '蜜柑番剧读取超时，可重试或返回搜索结果' : e instanceof Error ? e.message : '蜜柑番剧读取失败，请稍后重试'
   } finally { busy.value = false }
 }
-function time(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 async function copy(item: Item) {
   copyError.value = ''
   try { await navigator.clipboard.writeText(item.magnet); copied.value = item.id }
@@ -149,25 +168,18 @@ async function copy(item: Item) {
 async function submit(item: Item) {
   if (submissions.value[item.id]?.busy || submissions.value[item.id]?.success) return
   submissions.value[item.id] = { busy: true }
-  let submitting = false
   try {
     // 复用云下载功能明确绑定的账号和目录，不选择默认账号，也不改写配置。
     const config = await p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', {
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
     if (!config.accountId) throw new Error('请先在“115 云下载”选择账号并保存配置')
-    submitting = true
-    const response = await p115Request<{ accepted: boolean }>(props.token, `cloud-download/tasks?accountId=${encodeURIComponent(config.accountId)}`, {
-      method: 'POST', body: JSON.stringify({ url: item.magnet, targetCID: config.targetCID || '0' }),
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(35000)]),
-    })
-    if (!response.accepted) throw new Error('115 未确认接收任务，请前往云下载页面核对')
-    submissions.value[item.id] = { success: true, message: `已提交到 ${config.targetPath || '115 根目录'}，不代表下载已完成` }
+    const receipt = await submitCloudDownload(props.token, config.accountId, item.magnet, config.targetCID || '0', lifecycle.signal)
+    submissions.value[item.id] = { success: true, message: cloudDownloadNotice(receipt, config.targetPath) }
   } catch (e) {
     if (lifecycle.signal.aborted) return
     const message = e instanceof Error ? e.message : '提交失败'
-    const uncertain = submitting && (e instanceof TypeError || (e instanceof Error && ['TimeoutError', 'AbortError'].includes(e.name)))
-    submissions.value[item.id] = { message: uncertain ? '提交结果尚未确认，请先到 115 云下载核对，避免重复提交' : message, needsConfig: /请先|尚未登录|账号.*不存在|配置|凭据/.test(message) }
+    submissions.value[item.id] = { message, needsConfig: /请先.*(?:选择|配置)|尚未登录|账号.*不存在|配置|凭据/.test(message) }
   }
 }
 onMounted(() => {
@@ -187,9 +199,16 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <dialog ref="dialog" aria-labelledby="mikan-search-title" class="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl backdrop:bg-slate-950/40" @cancel.prevent="emit('close')">
       <div class="flex max-h-[90dvh] flex-col">
-        <header class="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-5">
-          <div class="min-w-0"><h2 id="mikan-search-title" class="text-lg font-semibold text-slate-900">蜜柑搜索</h2><p class="mt-1 break-words text-sm text-slate-500">{{ title }}</p></div>
-          <button autofocus type="button" aria-label="关闭蜜柑搜索" class="rounded-lg px-2 py-1 text-xl text-slate-500 hover:bg-slate-100" @click="emit('close')">×</button>
+        <header class="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+          <div class="flex min-w-0 items-center gap-3 sm:gap-4">
+            <h2 id="mikan-search-title" class="sr-only">蜜柑搜索</h2>
+            <div aria-hidden="true" class="flex shrink-0 items-center gap-1.5" data-mikan-brand>
+              <img :src="mikanMascot" alt="" width="400" height="400" class="h-10 w-10 shrink-0 object-contain sm:h-12 sm:w-12" draggable="false" />
+              <img :src="mikanWordmark" alt="" width="117" height="29" class="h-[22px] w-auto shrink-0 sm:h-[26px]" draggable="false" />
+            </div>
+            <p class="relative top-1 min-w-0 truncate text-xs text-slate-500 sm:text-sm" :title="title" data-mikan-brand-title>{{ title }}</p>
+          </div>
+          <button autofocus type="button" aria-label="关闭蜜柑搜索" class="shrink-0 rounded-lg px-2 py-1 text-xl text-slate-500 hover:bg-slate-100" @click="emit('close')">×</button>
         </header>
         <div class="min-h-0 overflow-y-auto p-5">
           <form class="flex flex-wrap gap-2" @submit.prevent="search()">
@@ -203,13 +222,19 @@ onBeforeUnmount(() => {
             <a :href="siteURL" target="_blank" rel="noopener noreferrer" class="text-blue-600">{{ selectedBangumi ? '打开蜜柑番剧原页 ↗' : '打开蜜柑搜索 ↗' }}</a>
           </div>
           <section v-if="bangumis.length" class="mt-4" aria-label="蜜柑相关番剧">
-            <h3 class="text-sm font-medium text-slate-700">相关番剧 <span class="ml-1 text-xs font-normal text-slate-500">点击查看对应资源，不自动匹配 TMDB 季度</span></h3>
-            <ul class="mt-3 flex gap-3 overflow-x-auto pb-2">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-medium text-slate-700">相关番剧</h3>
+              <button v-if="hasBrokenCovers" type="button" class="text-xs text-blue-600" @click="retryCovers">重试封面</button>
+            </div>
+            <ul class="mt-3 flex gap-3 overflow-x-auto p-1">
               <li v-for="card in bangumis" :key="card.id" class="w-32 shrink-0">
-                <button type="button" :disabled="busy" :aria-pressed="selectedBangumi?.id === card.id" :aria-label="`查看番剧：${card.title}`" class="h-full w-full overflow-hidden rounded-xl border text-left transition disabled:opacity-50" :class="selectedBangumi?.id === card.id ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-500' : 'border-slate-200 bg-slate-50 hover:border-amber-400'" @click="loadBangumi(card)">
-                  <img v-if="card.coverUrl && !brokenCovers[card.id]" :src="card.coverUrl" alt="" loading="lazy" referrerpolicy="no-referrer" class="aspect-[5/7] w-full object-cover" @error="brokenCovers[card.id] = true" />
-                  <div v-else class="flex aspect-[5/7] items-center justify-center bg-slate-100 text-xs text-slate-400">暂无封面</div>
-                  <p class="break-words p-2 text-xs leading-5 text-slate-700">{{ card.title }}</p>
+                <button type="button" :disabled="busy" :aria-pressed="selectedBangumi?.id === card.id" :aria-label="`查看番剧：${card.title}`" :title="card.title" class="relative block aspect-[5/7] w-full overflow-hidden rounded-xl border bg-slate-200 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:opacity-50" :class="selectedBangumi?.id === card.id ? 'border-amber-500 ring-1 ring-amber-500' : 'border-slate-200 hover:border-amber-400'" @click="loadBangumi(card)">
+                  <img v-if="coverSource(card) && !brokenCovers[card.id]" :src="coverSource(card)" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" @error="brokenCovers[card.id] = true" />
+                  <span v-else class="absolute inset-0 flex items-center justify-center pb-10 text-xs text-slate-500">暂无封面</span>
+                  <span class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-2 pb-2 pt-10">
+                    <span class="line-clamp-3 break-words text-xs font-medium leading-5 text-white">{{ card.title }}</span>
+                  </span>
+                  <span v-if="selectedBangumi?.id === card.id" aria-hidden="true" class="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white shadow-sm">✓</span>
                 </button>
               </li>
             </ul>
@@ -221,14 +246,10 @@ onBeforeUnmount(() => {
           <p v-if="busy" role="status" class="mt-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-800">{{ selectedBangumi ? '正在读取番剧资源…按字幕组加载；关闭浮窗可取消等待。' : '正在搜索蜜柑…中文标题没有结果时尝试原名；关闭浮窗可取消等待。' }}</p>
           <p v-if="error" role="alert" class="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
           <template v-if="result">
-            <section class="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-6 text-slate-500" aria-label="蜜柑搜索过程">
-              <p v-for="(attempt, index) in result.attempts" :key="index" class="break-words">{{ index ? '原名兜底' : '关键词' }}：{{ attempt.query }} · {{ attempt.count }} 条{{ attempt.cached ? ' · 复用缓存/请求结果' : '' }}</p>
-              <p>{{ selectedBangumi ? '首屏' : '' }}取得时间：{{ time(result.fetchedAt) }} · 缓存有效至 {{ time(result.expiresAt) }}</p>
-              <p>保留蜜柑返回的全部版本；标题中的季集、分辨率仅供参考，不自动匹配 TMDB 季集。</p>
-            </section>
+            <p v-if="!selectedBangumi && result.attempts.length > 1" role="status" class="mt-3 break-words text-xs leading-5 text-slate-500">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
             <div class="mt-4 flex flex-wrap gap-3">
-              <select :value="group" aria-label="蜜柑字幕组" :disabled="busy" class="min-w-0 max-w-full rounded-lg border border-slate-200 p-2 text-sm" @change="selectGroup"><option value="">全部字幕组</option><option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option></select>
-              <select v-model="resolution" aria-label="蜜柑分辨率" class="rounded-lg border border-slate-200 p-2 text-sm"><option v-for="r in resolutions" :key="r" :value="r">{{ r === '全部' ? '全部分辨率' : r }}</option></select>
+              <MikanFilterSelect :model-value="group" :options="groupOptions" label="蜜柑字幕组" :disabled="busy" class="w-44 max-w-full sm:w-48" @update:model-value="selectGroup" />
+              <MikanFilterSelect v-model="resolution" :options="resolutionOptions" label="蜜柑分辨率" :disabled="busy" class="w-32" />
               <input v-model="filter" aria-label="筛选蜜柑结果" placeholder="结果内筛选：合集 / 第二季 / 简繁…" class="min-w-0 flex-1 basis-52 rounded-lg border border-slate-200 p-2 text-sm" />
             </div>
             <p class="my-3 text-xs text-slate-500">匹配 {{ filtered.length }} 条 / {{ selectedBangumi ? '已加载' : '本次取得' }} {{ result.items.length }} 条 · 更新时间从新到旧{{ result.more?.length ? ' · 仍有字幕组资源未加载，筛选仅针对已加载内容' : '' }}</p>

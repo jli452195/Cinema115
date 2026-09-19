@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { p115Request } from '../lib/p115-api'
+import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import { gyingRequest, type GyingConfigView, type GyingResourceLink, type GyingSearchAttempt, type GyingSearchItem, type GyingSearchResponse } from '../types/gying'
 import { normalize115Share } from '../utils/shareLink'
 
@@ -22,6 +23,12 @@ const busy = computed(() => phase.value !== '' || shareRuns.busy.value)
 const elapsedSeconds = ref(0)
 const error = ref('')
 const copied = ref('')
+const coverErrors = ref<Record<string, boolean>>({})
+function coverSource(item: GyingSearchItem) {
+  // 仅加载 NAS 同源封面，不回退到外站，也不向图片地址传递凭据。
+  const source = item.coverUrl || ''
+  return /^\/api\/gying\/image\/(mv|tv|ac|zy)\/[A-Za-z0-9]{1,64}\.webp$/.test(source) ? source : ''
+}
 type CloudDownloadConfig = { accountId: string; targetCID: string; targetPath: string }
 type CloudDownloadStatus = { success: boolean; message: string; needsConfig?: boolean }
 const cloudSubmitting = ref<Record<string, boolean>>({})
@@ -66,7 +73,7 @@ function canCloudDownload(link: GyingResourceLink) { return link.type === 'magne
 function cloudResourceID(item: GyingSearchItem, link: GyingResourceLink) { return `${item.id}\u0000${link.url}` }
 function cloudErrorNeedsConfig(reason: unknown) {
   const message = reason instanceof Error ? reason.message : ''
-  return /请先|尚未登录|不存在|配置/.test(message)
+  return /请先.*(?:选择|配置)|尚未登录|账号.*不存在|配置|凭据/.test(message)
 }
 async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
   if (!canCloudDownload(link)) return
@@ -77,19 +84,15 @@ async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
   delete clearedStatuses[id]
   cloudStatuses.value = clearedStatuses
   try {
-    // Read the current configured account and directory immediately before
-    // submitting. The dialog never changes the cloud-download settings.
+    // 提交前读取云下载明确绑定的账号和目录，弹窗不改写配置。
     const config = await p115Request<CloudDownloadConfig>(props.token, 'cloud-download/config', {
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
     if (!config.accountId) {
       throw Object.assign(new Error('请先在“115 云下载”页面选择账号并保存配置'), { needsConfig: true })
     }
-    await p115Request<{ accepted: boolean }>(props.token, `cloud-download/tasks?accountId=${encodeURIComponent(config.accountId)}`, {
-      method: 'POST', body: JSON.stringify({ url: link.url, targetCID: config.targetCID || '0' }),
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(35000)]),
-    })
-    cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: true, message: `已提交到 115 云下载：${config.targetPath || '115 根目录'}` } }
+    const receipt = await submitCloudDownload(props.token, config.accountId, link.url, config.targetCID || '0', lifecycle.signal)
+    cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: true, message: cloudDownloadNotice(receipt, config.targetPath) } }
   } catch (reason) {
     if (!lifecycle.signal.aborted) {
       const message = reason instanceof Error ? reason.message : '提交 115 云下载失败'
@@ -146,6 +149,8 @@ const visibleItems = computed(() => {
 const searchAttempts = computed(() => result.value?.attempts || [])
 const truncatedAttempts = computed(() => searchAttempts.value.filter(attempt => attempt.truncated))
 const emptySummary = computed(() => {
+  if (result.value?.partial) return '部分资源详情读取失败，尚不能确认是否有可用资源，请稍后重新搜索。'
+  if (result.value?.unavailableDetails) return '匹配资源已下架或不可用，暂未取得可用的网盘或磁力资源。'
   const methods = new Set(searchAttempts.value.map(attempt => attempt.method))
   if (methods.has('title') && methods.has('imdb')) return '已搜索影视原名和 IMDb 编号，均未发现可用资源。'
   if (methods.has('imdb')) return 'IMDb 编号搜索未发现可用资源。'
@@ -155,7 +160,7 @@ const emptySummary = computed(() => {
 function attemptDescription(attempt: GyingSearchAttempt) {
   if (!attempt.total) return '站点未返回匹配条目'
   const detail = attempt.usable ? `读取到 ${attempt.usable} 个可用资源条目` : '未发现可用网盘或磁力资源'
-  return `站点匹配 ${attempt.total} 个条目，${detail}${attempt.failed ? `，另有 ${attempt.failed} 个详情读取失败` : ''}`
+  return `站点匹配 ${attempt.total} 个条目，${detail}${attempt.unavailable ? `，已跳过 ${attempt.unavailable} 个下架或不可用条目` : ''}${attempt.failed ? `，另有 ${attempt.failed} 个详情读取失败` : ''}`
 }
 
 function beginPhase(next: Exclude<LoadPhase, ''>) {
@@ -197,6 +202,7 @@ async function search(refresh = false) {
   beginPhase('search'); error.value = ''; copied.value = ''
   try {
     result.value = await gyingRequest<GyingSearchResponse>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: props.tmdbId, refresh })
+    coverErrors.value = {}
     activeItemId.value = 'all'; activeResourceType.value = 'all'; activeMagnetSubType.value = 'all'
   } catch (e) { if (!lifecycle.signal.aborted) error.value = requestErrorMessage(e, '观影搜索') }
   finally { finishPhase('search') }
@@ -276,9 +282,17 @@ onBeforeUnmount(() => {
             <p v-if="result.partial" role="status" class="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-700">有 {{ result.failedDetails }} 个资源详情读取失败，当前展示其余成功结果；本次不写入搜索缓存。</p>
             <p v-for="attempt in truncatedAttempts" :key="`truncated:${attempt.method}`" role="status" class="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-700">{{ attempt.method === 'imdb' ? 'IMDb' : '原名' }}搜索返回 {{ attempt.total }} 个条目，本次为保护服务稳定性仅读取前 100 个。</p>
             <section v-if="resultItems.length" class="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white" aria-label="观影结果筛选">
-              <nav aria-label="影视条目" class="filter-scroll flex gap-2 overflow-x-auto p-3 pb-2">
-                <button type="button" class="max-w-[19rem] shrink-0 truncate rounded-xl border px-4 py-2.5 text-sm font-medium transition" :class="activeItemId === 'all' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" title="显示全部影视条目" @click="selectItem('all')">全部条目 <span class="opacity-60">{{ resultItems.length }}</span></button>
-                <button v-for="item in resultItems" :key="item.id" type="button" class="max-w-[24rem] shrink-0 truncate rounded-xl border px-4 py-2.5 text-sm font-medium transition" :class="activeItemId === item.id ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" :title="`${item.title}${item.year ? ` (${item.year})` : ''}`" @click="selectItem(item.id)">{{ item.title }}<span v-if="item.year" class="ml-1 opacity-60">({{ item.year }})</span></button>
+              <div class="flex items-center justify-between gap-3 px-3 pt-3">
+                <span class="text-xs text-slate-500">选择影视条目</span>
+                <button type="button" :aria-pressed="activeItemId === 'all'" class="rounded-lg border px-3 py-1.5 text-xs font-medium transition" :class="activeItemId === 'all' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600 hover:border-slate-300'" @click="selectItem('all')">全部条目 <span class="opacity-60">{{ resultItems.length }}</span></button>
+              </div>
+              <nav aria-label="影视条目" class="filter-scroll flex gap-3 overflow-x-auto p-3">
+                <button v-for="item in resultItems" :key="item.id" type="button" :aria-label="`${item.title}${item.year ? ` (${item.year})` : ''}`" :aria-pressed="activeItemId === item.id" class="relative aspect-[5/7] w-28 shrink-0 overflow-hidden rounded-xl border-2 bg-slate-100 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 sm:w-32" :class="activeItemId === item.id ? 'border-amber-500 ring-2 ring-amber-200' : 'border-transparent hover:border-amber-300'" :title="`${item.title}${item.year ? ` (${item.year})` : ''}`" @click="selectItem(item.id)">
+                  <img v-if="coverSource(item) && !coverErrors[item.id]" :src="coverSource(item)" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" @error="coverErrors[item.id] = true">
+                  <span v-else class="absolute inset-0 flex items-center justify-center pb-12 text-xs text-slate-400">{{ coverErrors[item.id] ? '封面暂不可用' : '暂无封面' }}</span>
+                  <span class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-2 pb-2 pt-10 text-white"><span class="line-clamp-3 text-xs font-medium leading-5">{{ item.title }}</span><span v-if="item.year" class="mt-0.5 block text-[11px] text-white/75">{{ item.year }}</span></span>
+                  <span v-if="activeItemId === item.id" aria-hidden="true" class="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs text-white">✓</span>
+                </button>
               </nav>
               <nav aria-label="资源网盘" class="filter-scroll mt-1 flex gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50/80 p-3">
                 <button v-for="option in resourceOptions" :key="option.type" type="button" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeResourceType === option.type ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'" @click="selectResourceType(option.type)">

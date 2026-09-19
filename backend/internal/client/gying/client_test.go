@@ -259,6 +259,9 @@ func TestClientSearchKeepsMultipleItems(t *testing.T) {
 	if result.Items[0].Title != "第一季" || result.Items[1].Title != "第二季" {
 		t.Fatalf("结果顺序或标题错误: %#v", result.Items)
 	}
+	if result.Items[0].CoverURL != "/api/gying/image/tv/one.webp" || result.Items[1].CoverURL != "/api/gying/image/tv/two.webp" {
+		t.Fatalf("封面未使用条目对应的 NAS 地址: %#v", result.Items)
+	}
 }
 
 func TestLoginAcceptsStringCodeAndUsesHomePageFirst(t *testing.T) {

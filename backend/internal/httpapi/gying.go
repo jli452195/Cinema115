@@ -45,6 +45,9 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 		if errors.Is(err, gying.ErrDetailFormat) {
 			message = gying.ErrDetailFormat.Error()
 		}
+		if errors.Is(err, gying.ErrLoginFormat) {
+			message = gying.ErrLoginFormat.Error()
+		}
 		c.JSON(status, gin.H{"error": message})
 	}
 	group.GET("/config", func(c *gin.Context) { c.JSON(http.StatusOK, searcher.View()) })

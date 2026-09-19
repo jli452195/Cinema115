@@ -29,6 +29,7 @@ export interface GyingResourceLink {
 export interface GyingSearchItem {
   id: string
   title: string
+  coverUrl?: string
   year?: number
   mediaType: 'movie' | 'tv' | 'anime' | 'other'
   description?: string
@@ -41,6 +42,7 @@ export interface GyingSearchAttempt {
   total: number
   usable: number
   failed?: number
+  unavailable?: number
   truncated?: boolean
 }
 
@@ -53,6 +55,7 @@ export interface GyingSearchResponse {
   attempts: GyingSearchAttempt[]
   partial?: boolean
   failedDetails?: number
+  unavailableDetails?: number
   cached: boolean
   cacheExpiresAt?: string
 }
