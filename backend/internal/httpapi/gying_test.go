@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,28 @@ func (f *gyingSearcherFake) Search(_ context.Context, input service.GyingSearchI
 }
 
 type gyingTMDBFake struct{ tmdbReaderFake }
+
+type gyingFailingTMDB struct{ tmdbReaderFake }
+
+func (f *gyingFailingTMDB) Details(context.Context, string, int) (*tmdb.Detail, error) {
+	return nil, errors.New("private-response token=do-not-log")
+}
+
+func TestGyingSearchLogsMetadataFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	logs := &service.GenerationLogs{}
+	RegisterGying(router.Group("/api/admin"), &gyingSearcherFake{}, &gyingFailingTMDB{}, logs)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/admin/gying/search", strings.NewReader(`{"kind":"movie","tmdbId":"42"}`)))
+	entries := logs.Snapshot("ALL", "观影")
+	if len(entries) != 2 || entries[0].Level != "ERROR" || entries[0].TaskID != entries[1].TaskID || !strings.Contains(entries[0].Message, "TMDB 42") {
+		t.Fatalf("metadata failure missing from operation: %+v", entries)
+	}
+	if strings.Contains(entries[0].Message, "do-not-log") {
+		t.Fatal("raw metadata error leaked")
+	}
+}
 
 func (f *gyingTMDBFake) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
 	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, OriginalTitle: "Original Name"}, IMDBID: "tt1234567"}, nil

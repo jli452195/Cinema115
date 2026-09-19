@@ -1,15 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
+const modules = ['ALL', 'STRM', 'Telegram', '订阅', '观影', 'Emby'] as const
+type Module = typeof modules[number]
+const route = useRoute()
 interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string }
 const entries = ref<LogEntry[]>([])
 const level = ref<Level>('INFO')
-const module = ref<'ALL' | 'STRM' | 'Telegram' | '订阅'>('ALL')
+const module = ref<Module>('ALL')
+watch(() => [route.query.module, route.query.level], ([queryModule, queryLevel]) => {
+  module.value = modules.includes(queryModule as Module) ? queryModule as Module : 'ALL'
+  level.value = levels.includes(queryLevel as Level) ? queryLevel as Level : 'INFO'
+}, { immediate: true })
 const search = ref('')
 const automatic = ref(true)
 const loading = ref(false)
@@ -66,14 +74,14 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 </script>
 
 <template>
-  <ManagementLayout title="实时日志" description="查看 STRM 生成、Telegram 与订阅自动任务记录；详细过程和缓存命中可切换 DEBUG 查看。" @logout="emit('logout')">
+  <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、观影与 Emby 日志；详细过程可切换 DEBUG，排查问题请选择全部等级。" @logout="emit('logout')">
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="space-y-4 border-b border-slate-100 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex max-w-full overflow-x-auto rounded-lg border border-slate-200 p-1" role="group" aria-label="日志等级">
               <button v-for="item in levels" :key="item" class="shrink-0 rounded-md px-3 py-2 text-xs font-medium transition" :class="level === item ? colors[item] : 'text-slate-500 hover:bg-slate-100'" :aria-pressed="level === item" @click="level = item">{{ item }}</button>
             </div>
-            <select v-model="module" aria-label="日志模块" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700"><option value="ALL">全部</option><option value="STRM">STRM</option><option value="Telegram">Telegram</option><option value="订阅">订阅</option></select>
+            <select v-model="module" aria-label="日志模块" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700"><option v-for="item in modules" :key="item" :value="item">{{ item === 'ALL' ? '全部' : item }}</option></select>
             <div class="flex gap-2 md:ml-auto">
               <button class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50" :aria-pressed="automatic" @click="toggleAutomatic">{{ automatic ? '暂停更新' : '继续更新' }}</button>
               <button class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50" :disabled="loading" @click="refresh">{{ loading ? '读取中…' : '刷新' }}</button>
@@ -83,7 +91,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-slate-400"><span>{{ automatic ? '每 2 秒自动更新' : '已暂停自动更新' }}<span v-if="updated"> · 更新于 {{ updated }}</span></span><span>匹配 {{ filtered.length }} 条 / 已缓存 {{ entries.length }} 条</span></div>
           <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}。{{ entries.length ? '当前保留上次读取的日志。' : '' }}</p>
         </div>
-        <div v-if="!filtered.length" class="px-6 py-20 text-center text-sm text-slate-500">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? '暂时无法读取日志，请稍后刷新。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行 STRM、Telegram 或订阅操作后会显示在这里。' }}</div>
+        <div v-if="!filtered.length" class="px-6 py-20 text-center text-sm text-slate-500">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? '暂时无法读取日志，请稍后刷新。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行 STRM、Telegram、订阅、观影或 Emby 操作后会显示在这里。' }}</div>
         <ol v-else class="divide-y divide-slate-100">
           <li v-for="entry in filtered.slice(0, visibleCount)" :key="entry.id" class="px-4 py-4 hover:bg-slate-50/70 md:px-6">
             <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">

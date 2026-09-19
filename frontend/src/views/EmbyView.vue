@@ -83,7 +83,10 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer) })
 
 <template>
   <ManagementLayout title="媒体库同步" description="连接 Emby 并同步指定媒体库，通过 Webhook 持续更新影视入库状态。" :parent="{ label: 'Emby', to: '/emby' }" @logout="emit('logout')">
-    <template #actions><button :disabled="loading || !!busy || !config || !selected.length || (testedURL !== url.trim() && !config?.configured)" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="action('save')">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button></template>
+    <template #actions>
+      <RouterLink :to="{ path: '/logs', query: { module: 'Emby', level: 'ALL' } }" class="shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">查看日志</RouterLink>
+      <button :disabled="loading || !!busy || !config || !selected.length || (testedURL !== url.trim() && !config?.configured)" class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="action('save')">{{ busy === 'save' ? '正在保存…' : '保存配置' }}</button>
+    </template>
     <div class="space-y-5">
         <p v-if="error || pollingError" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error || pollingError }}</p>
         <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">{{ notice }}</p>

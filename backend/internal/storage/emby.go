@@ -271,6 +271,21 @@ func (s *Store) EmbyNextEvent(ctx context.Context, scope string) (*model.EmbyEve
 	}
 	return v, nil
 }
+
+// EmbyEventForItem also sees delayed events, so receipt and retries can be
+// correlated, and superseded notifications are not reported as applied.
+func (s *Store) EmbyEventForItem(ctx context.Context, scope, item string) (*model.EmbyEvent, error) {
+	v := &model.EmbyEvent{}
+	err := s.db.QueryRowContext(ctx, `SELECT id,item_id,kind,attempts FROM emby_events WHERE scope=? AND item_id=? ORDER BY id DESC LIMIT 1`, scope, item).Scan(&v.ID, &v.ItemID, &v.Kind, &v.Attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取 Emby 条目通知: %w", err)
+	}
+	return v, nil
+}
+
 func (s *Store) EmbyRetryEvent(ctx context.Context, event model.EmbyEvent, message string) error {
 	delay := time.Duration(30*(1<<event.Attempts)) * time.Second
 	return s.embyExec(ctx, `UPDATE emby_events SET attempts=attempts+1,last_error=?,due=?,kind=? WHERE id=?`, message, time.Now().Add(delay).Unix(), event.Kind, event.ID)

@@ -20,7 +20,11 @@ type GyingSearcher interface {
 	Search(context.Context, service.GyingSearchInput) (service.GyingSearchResult, error)
 }
 
-func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBReader) {
+func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBReader, logStores ...*service.GenerationLogs) {
+	var logs *service.GenerationLogs
+	if len(logStores) > 0 {
+		logs = logStores[0]
+	}
 	group := admin.Group("/gying")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -92,14 +96,22 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 			fail(c, gying.ErrInput)
 			return
 		}
-		metadataCtx, metadataCancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+		kindLabel := "电影"
+		if input.Kind == "tv" {
+			kindLabel = "剧集"
+		}
+		operationCtx, finish := service.StartGyingOperation(c.Request.Context(), logs, "网页搜索", "搜索："+kindLabel+" · TMDB "+strconv.Itoa(id))
+		var operationErr error
+		defer func() { finish(operationErr) }()
+		metadataCtx, metadataCancel := context.WithTimeout(operationCtx, 20*time.Second)
 		detail, err := tmdb.Details(metadataCtx, input.Kind, id)
 		metadataCancel()
 		if err != nil {
+			operationErr = err
 			tmdbError(c, err)
 			return
 		}
-		searchCtx, searchCancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+		searchCtx, searchCancel := context.WithTimeout(operationCtx, 2*time.Minute)
 		defer searchCancel()
 		result, err := searcher.Search(searchCtx, service.GyingSearchInput{
 			CacheKey:      input.Kind + ":" + strconv.Itoa(id),
@@ -108,6 +120,10 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 			Refresh:       input.Refresh,
 		})
 		if err != nil {
+			operationErr = err
+			if searchCtx.Err() != nil {
+				operationErr = searchCtx.Err()
+			}
 			fail(c, err)
 			return
 		}

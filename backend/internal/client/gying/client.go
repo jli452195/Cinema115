@@ -235,6 +235,7 @@ func (c *Client) SearchByTitle(ctx context.Context, originalTitle, imdbID string
 		return SearchResponse{}, ErrInput
 	}
 	if originalTitle != "" {
+		reportProgress(ctx, "DEBUG", "开始按影视原名查询")
 		result, err := c.search(ctx, originalTitle)
 		if err != nil {
 			return SearchResponse{}, err
@@ -248,6 +249,7 @@ func (c *Client) SearchByTitle(ctx context.Context, originalTitle, imdbID string
 		if !validIMDbID(imdbID) {
 			return result, nil
 		}
+		reportProgress(ctx, "DEBUG", "原名搜索未发现可用资源，开始 IMDb 兜底查询")
 		result, err = c.search(ctx, imdbID)
 		if err != nil {
 			return SearchResponse{}, err
@@ -262,6 +264,7 @@ func (c *Client) SearchByTitle(ctx context.Context, originalTitle, imdbID string
 	if !validIMDbID(imdbID) {
 		return SearchResponse{Query: originalTitle, MatchedBy: "title", Items: []SearchItem{}, Attempts: []SearchAttempt{}}, nil
 	}
+	reportProgress(ctx, "DEBUG", "缺少原名，使用 IMDb 编号查询")
 	result, err := c.search(ctx, imdbID)
 	if err != nil {
 		return SearchResponse{}, err
@@ -382,6 +385,7 @@ func (c *Client) Search(ctx context.Context, query string) (SearchResponse, erro
 }
 
 func (c *Client) search(ctx context.Context, query string) (SearchResponse, error) {
+	started := time.Now()
 	query = strings.TrimSpace(query)
 	if query == "" || len([]rune(query)) > 120 {
 		return SearchResponse{}, ErrInput
@@ -402,6 +406,7 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 		return SearchResponse{}, err
 	}
 	count := len(data.L.ID)
+	reportProgress(ctx, "DEBUG", fmt.Sprintf("查询返回 %d 个影视条目，开始读取资源详情", count))
 	total := count
 	truncated := false
 	if count > maxSearchItems {
@@ -482,6 +487,7 @@ func (c *Client) search(ctx context.Context, query string) (SearchResponse, erro
 		}
 	}
 	attempt := SearchAttempt{Query: query, Total: total, Usable: len(items), Failed: detailErrors, Truncated: truncated}
+	reportProgress(ctx, "DEBUG", fmt.Sprintf("本轮查询与详情读取完成：%d 个可用条目、%d 个详情失败，耗时 %.2f 秒", len(items), detailErrors, time.Since(started).Seconds()))
 	return SearchResponse{
 		Query: query, Items: items, Total: total, Truncated: truncated,
 		Attempts: []SearchAttempt{attempt}, Partial: detailErrors > 0, FailedDetails: detailErrors,
@@ -739,6 +745,7 @@ func (c *Client) requestWithChallengeRetry(ctx context.Context, method, path str
 		}
 		if isBotChallengePage(body) {
 			if attempt > 0 {
+				reportProgress(ctx, "DEBUG", "安全验证重试后仍处于验证页，本请求已停止")
 				return nil, status, headers, fmt.Errorf("%w: 重试后仍处于验证页", ErrChallenge)
 			}
 			// One session has one anti-bot cookie jar. Serialize challenge work and
@@ -754,10 +761,14 @@ func (c *Client) requestWithChallengeRetry(ctx context.Context, method, path str
 				c.challengeMu.Unlock()
 				return probeBody, probeStatus, probeHeaders, nil
 			}
+			started := time.Now()
+			reportProgress(ctx, "DEBUG", "遇到站点安全验证，开始处理（本请求第 1 次，最多 1 次）")
 			if err := c.solveChallenge(ctx, path, probeBody); err != nil {
+				reportProgress(ctx, "DEBUG", fmt.Sprintf("安全验证未完成，耗时 %.2f 秒，本请求已停止", time.Since(started).Seconds()))
 				c.challengeMu.Unlock()
 				return nil, status, headers, err
 			}
+			reportProgress(ctx, "DEBUG", fmt.Sprintf("安全验证通过，耗时 %.2f 秒，重试原请求", time.Since(started).Seconds()))
 			c.challengeMu.Unlock()
 			continue
 		}

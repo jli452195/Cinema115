@@ -87,6 +87,7 @@ func main() {
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
+	generationLogs := &service.GenerationLogs{}
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -95,7 +96,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpapi.RegisterGying(admin, gyingService, tmdbService)
+	gyingService.Logs = generationLogs
+	httpapi.RegisterGying(admin, gyingService, tmdbService, generationLogs)
 	imageCacheBytes := tmdbimage.DefaultMaxBytes
 	if configured := strings.TrimSpace(os.Getenv("TMDB_IMAGE_CACHE_MAX_GB")); configured != "" {
 		gigabytes, parseErr := strconv.ParseInt(configured, 10, 64)
@@ -117,6 +119,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	embyService.Logs = generationLogs
 	httpapi.RegisterEmby(r, admin, embyService)
 	httpapi.RegisterWebsiteCatalog(catalog, embyService)
 	recentUpdates := &service.RecentUpdatesService{Source: embyService, Metadata: tmdbService}
@@ -177,7 +180,6 @@ func main() {
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, shareCookie, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)
-	generationLogs := &service.GenerationLogs{}
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
 	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)

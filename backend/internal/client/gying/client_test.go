@@ -430,11 +430,21 @@ func TestRemotePoWPostsVerificationToPowEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Check(context.Background()); err != nil {
+	var progress []string
+	ctx := WithProgress(context.Background(), func(level, message string) {
+		if level != "DEBUG" {
+			t.Errorf("unexpected progress level: %s", level)
+		}
+		progress = append(progress, message)
+	})
+	if err := client.Check(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if !verified {
 		t.Fatal("没有提交远程 PoW")
+	}
+	if len(progress) != 2 || !strings.Contains(progress[0], "开始处理") || !strings.Contains(progress[1], "安全验证通过") {
+		t.Fatalf("challenge progress missing: %v", progress)
 	}
 }
 

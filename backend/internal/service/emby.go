@@ -56,12 +56,17 @@ var errEmbyMetadataPending = errors.New("Emby 刮削信息不完整")
 var errEmbyLibraryChanged = errors.New("Emby 媒体库在同步期间发生变化")
 
 type EmbyService struct {
+	// Logs is wired once before the background worker starts.
+	Logs            *GenerationLogs
 	mu              sync.RWMutex
 	config          EmbyConfig
 	secrets         *SessionStore
 	db              *storage.Store
 	checkedAt       time.Time
 	connectionError string
+	syncLogScope    string
+	syncLogTask     string
+	webhookRejectAt time.Time
 }
 
 func NewEmbyService(secrets *SessionStore, db *storage.Store) (*EmbyService, error) {
@@ -115,7 +120,9 @@ func normalizeWebhookBaseURL(raw string) (string, error) {
 }
 
 // 单独保存回调地址，无需连接 Emby，也不改变 API Key、媒体库或索引。
-func (s *EmbyService) SaveWebhookBaseURL(ctx context.Context, raw string) error {
+func (s *EmbyService) SaveWebhookBaseURL(ctx context.Context, raw string) (resultErr error) {
+	ctx, finish := s.startOperation(ctx, "保存 Webhook 地址")
+	defer func() { finish(resultErr) }()
 	base, err := normalizeWebhookBaseURL(raw)
 	if err != nil {
 		return err
@@ -160,7 +167,9 @@ func (s *EmbyService) candidate(input EmbyConfig) (EmbyConfig, error) {
 	input.WebhookSecret = current.WebhookSecret
 	return input, nil
 }
-func (s *EmbyService) Test(ctx context.Context, input EmbyConfig) (emby.Server, []emby.Library, error) {
+func (s *EmbyService) Test(ctx context.Context, input EmbyConfig) (result emby.Server, libraries []emby.Library, resultErr error) {
+	ctx, finish := s.startOperation(ctx, "测试 Emby 连接", input.APIKey)
+	defer func() { finish(resultErr) }()
 	c, err := s.candidate(input)
 	if err != nil {
 		return emby.Server{}, nil, err
@@ -171,9 +180,14 @@ func (s *EmbyService) Test(ctx context.Context, input EmbyConfig) (emby.Server, 
 		return server, nil, err
 	}
 	libs, err := client.Libraries(ctx)
+	if err == nil {
+		logEmby(ctx, "INFO", fmt.Sprintf("连接成功，读取到 %d 个媒体库", len(libs)))
+	}
 	return server, libs, err
 }
-func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) error {
+func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr error) {
+	ctx, finish := s.startOperation(ctx, "保存 Emby 配置", input.APIKey)
+	defer func() { finish(resultErr) }()
 	c, err := s.candidate(input)
 	if err != nil {
 		return err
@@ -249,9 +263,15 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) error {
 	if err := s.secrets.Save(string(data)); err != nil {
 		return fmt.Errorf("保存 Emby 加密配置: %w", err)
 	}
+	changed := embyScope(c) != embyScope(s.config)
+	s.logConnection(ctx, c, nil)
 	s.config = c
 	s.checkedAt = time.Now()
 	s.connectionError = ""
+	logEmby(ctx, "INFO", fmt.Sprintf("配置已保存，同步范围 %d 个媒体库", len(c.LibraryIDs)))
+	if changed {
+		logEmby(ctx, "WARNING", "服务器或同步范围已改变，请执行全量同步")
+	}
 	return s.db.RecheckFollows(ctx)
 }
 func (s *EmbyService) Status(ctx context.Context) (EmbyStatus, error) {
@@ -293,16 +313,47 @@ func (s *EmbyService) statusLocked(ctx context.Context) (EmbyStatus, error) {
 	}
 	return EmbyStatus{EmbyState: state, Configured: c.APIKey != "", Pending: pending, Failed: failed, Connected: connected, ConnectionError: message, EventError: eventError, MetadataPending: metadataPending, MetadataFailed: metadataFailed, UpdatesStatus: updatesStatus}, nil
 }
-func (s *EmbyService) StartSync(ctx context.Context) error {
+func (s *EmbyService) StartSync(ctx context.Context) (resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.config
+	ctx = s.logContext(ctx, c, s.newLogTask(), "全量同步")
+	defer func() {
+		if resultErr != nil {
+			logEmby(ctx, "ERROR", "提交全量同步失败："+embyLogError(resultErr))
+		}
+	}()
 	if c.APIKey == "" || len(c.LibraryIDs) == 0 {
 		return fmt.Errorf("请先保存 Emby 配置并选择媒体库")
 	}
-	return s.db.EmbyQueueSync(ctx, embyScope(c))
+	scope := embyScope(c)
+	state, err := s.db.EmbyState(ctx, scope)
+	if err != nil {
+		return err
+	}
+	if state.Status == "queued" || state.Status == "running" {
+		logEmby(ctx, "DEBUG", "全量同步已在排队或执行中，未重复提交")
+		return nil
+	}
+	if err := s.db.EmbyQueueSync(ctx, scope); err != nil {
+		return err
+	}
+	s.syncLogScope = scope
+	s.syncLogTask = ctx.Value(embyLogKey{}).(embyOperationLog).task
+	logEmby(ctx, "INFO", "全量同步已加入后台队列，离开页面不影响处理")
+	return nil
 }
-func (s *EmbyService) Run(ctx context.Context) error {
+func (s *EmbyService) Run(ctx context.Context) (resultErr error) {
+	defer func() {
+		if resultErr != nil && ctx.Err() == nil {
+			logCtx := s.logContext(ctx, s.snapshot(), "EMBY-WORKER", "后台处理")
+			var operationErr *embyOperationError
+			if errors.As(resultErr, &operationErr) {
+				logCtx = context.WithValue(ctx, embyLogKey{}, operationErr.logger)
+			}
+			logEmby(logCtx, "ERROR", "Emby 后台处理停止，本次操作未完成："+embyLogError(resultErr))
+		}
+	}()
 	if err := s.db.EmbyRecover(ctx); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -334,6 +385,9 @@ func (s *EmbyService) Run(ctx context.Context) error {
 			}
 			s.mu.Lock()
 			if scope == embyScope(s.config) {
+				if ctx.Err() == nil {
+					s.logConnection(ctx, c, err)
+				}
 				s.checkedAt = time.Now()
 				s.connectionError = ""
 				if err != nil {
@@ -367,7 +421,7 @@ func (s *EmbyService) Run(ctx context.Context) error {
 				updatesRetryAt = time.Time{}
 			}
 			if !time.Now().Before(updatesRetryAt) {
-				_, buildErr := s.db.EmbyBuildMediaUpdates(ctx, scope, state.Active, 1000)
+				ready, buildErr := s.db.EmbyBuildMediaUpdates(ctx, scope, state.Active, 1000)
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -376,6 +430,11 @@ func (s *EmbyService) Run(ctx context.Context) error {
 						return errors.Join(buildErr, err)
 					}
 					updatesRetryAt = time.Now().Add(30 * time.Second)
+					if state.UpdatesError == "" {
+						logEmby(s.logContext(ctx, c, "EMBY-UPDATES", "最近更新"), "WARNING", "最近更新索引构建失败，30 秒后重试："+embyLogError(buildErr))
+					}
+				} else if ready {
+					logEmby(s.logContext(ctx, c, "EMBY-UPDATES", "最近更新"), "INFO", "最近更新索引构建完成")
 				}
 			}
 		}
@@ -397,13 +456,27 @@ func (s *EmbyService) Run(ctx context.Context) error {
 		}
 	}
 }
-func (s *EmbyService) syncLibrary(ctx context.Context, c EmbyConfig) error {
+func (s *EmbyService) syncLibrary(ctx context.Context, c EmbyConfig) (resultErr error) {
 	scope := embyScope(c)
+	s.mu.Lock()
+	if s.syncLogScope != scope || s.syncLogTask == "" {
+		s.syncLogScope, s.syncLogTask = scope, s.newLogTask()
+	}
+	ctx = s.logContext(ctx, c, s.syncLogTask, "全量同步")
+	s.mu.Unlock()
+	logEmby(ctx, "INFO", fmt.Sprintf("开始全量同步，共 %d 个媒体库", len(c.LibraryIDs)))
+	defer func() {
+		resultErr = embyFailure(ctx, resultErr)
+		if ctx.Err() != nil {
+			logEmby(ctx, "WARNING", "全量同步已中断，未发布未完成的索引")
+		}
+	}()
 	state, err := s.db.EmbyState(ctx, scope)
 	if err != nil {
 		return err
 	}
 	if state.StagingComplete && state.StagingGeneration != "" {
+		logEmby(ctx, "INFO", "恢复发布已完成的媒体快照，无需重新扫描")
 		return s.publishLibrary(ctx, c, state.StagingGeneration, state.StagingCutoff)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
@@ -429,8 +502,14 @@ func (s *EmbyService) syncLibrary(ctx context.Context, c EmbyConfig) error {
 				return err
 			}
 			if !errors.Is(scanErr, errEmbyLibraryChanged) || attempt > 0 {
+				level := "ERROR"
+				if embyScope(s.snapshot()) != scope {
+					level = "WARNING"
+				}
+				logEmby(ctx, level, fmt.Sprintf("全量同步未完成，未替换现有索引：%s，耗时 %.2f 秒", embyLogError(scanErr), embyElapsed(ctx)))
 				return nil
 			}
+			logEmby(ctx, "WARNING", "同步期间媒体库发生变化，3 秒后重新扫描（最多重试一次）")
 			timer := time.NewTimer(3 * time.Second)
 			select {
 			case <-ctx.Done():
@@ -443,6 +522,7 @@ func (s *EmbyService) syncLibrary(ctx context.Context, c EmbyConfig) error {
 		if err := s.db.EmbyCompleteStage(ctx, scope, generation, count); err != nil {
 			return err
 		}
+		logEmby(ctx, "INFO", fmt.Sprintf("扫描完成，暂存 %d 条索引，正在发布快照", count))
 		return s.publishLibrary(ctx, c, generation, cutoff)
 	}
 	return nil
@@ -453,20 +533,27 @@ func (s *EmbyService) publishLibrary(ctx context.Context, c EmbyConfig, generati
 	s.mu.Lock()
 	if embyScope(s.config) != scope {
 		s.mu.Unlock()
-		return s.db.EmbyFailSync(ctx, scope, generation, "媒体库配置已更改，请按新配置重新同步", true)
+		if err := s.db.EmbyFailSync(ctx, scope, generation, "媒体库配置已更改，请按新配置重新同步", true); err != nil {
+			return err
+		}
+		logEmby(ctx, "WARNING", "媒体库配置已更改，未发布本次快照，请按新配置重新同步")
+		return nil
 	}
 	err := s.db.EmbyPublish(ctx, scope, generation, cutoff)
 	if err == nil {
+		s.logConnection(ctx, c, nil)
 		s.checkedAt = time.Now()
 		s.connectionError = ""
 	}
 	s.mu.Unlock()
 	if err == nil {
+		logEmby(ctx, "INFO", fmt.Sprintf("全量同步完成，新索引已发布，耗时 %.2f 秒", embyElapsed(ctx)))
 		return nil
 	}
 	if recordErr := s.db.EmbyFailSync(ctx, scope, generation, err.Error(), false); recordErr != nil {
 		return errors.Join(err, recordErr)
 	}
+	logEmby(ctx, "ERROR", "快照发布失败，未替换现有索引；已保留扫描结果供重试："+embyLogError(err))
 	return nil
 }
 func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string) (int, error) {
@@ -489,6 +576,10 @@ func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string)
 		available[lib.ID] = true
 	}
 	for _, library := range c.LibraryIDs {
+		libraryStarted := time.Now()
+		libraryCount := count
+		logEmby(ctx, "DEBUG", "开始读取媒体库 "+library)
+		lastProgress := time.Now()
 		if !available[library] {
 			return count, fmt.Errorf("所选媒体库已不存在，请重新选择同步范围")
 		}
@@ -532,32 +623,70 @@ func (s *EmbyService) scan(ctx context.Context, c EmbyConfig, generation string)
 			if err := s.db.EmbyProgress(ctx, scope, "running", count, ""); err != nil {
 				return count, err
 			}
+			if time.Since(lastProgress) >= 10*time.Second {
+				logEmby(ctx, "DEBUG", fmt.Sprintf("媒体库 %s：已读取 %d/%d 条，累计暂存 %d 条索引", library, start, expected, count))
+				lastProgress = time.Now()
+			}
 			if start >= expected {
 				break
 			}
 		}
+		logEmby(ctx, "INFO", fmt.Sprintf("媒体库 %s 读取完成，暂存 %d 条索引，耗时 %.2f 秒（尚未发布）", library, count-libraryCount, time.Since(libraryStarted).Seconds()))
 	}
 	return count, nil
 }
-func (s *EmbyService) applyEvent(ctx context.Context, c EmbyConfig, generation string, event model.EmbyEvent) error {
+func (s *EmbyService) applyEvent(ctx context.Context, c EmbyConfig, generation string, event model.EmbyEvent) (resultErr error) {
+	ctx = s.logContext(ctx, c, fmt.Sprintf("EMBY-EVENT-%d", event.ID), "Webhook / 刮削补查")
+	defer func() { resultErr = embyFailure(ctx, resultErr) }()
+	logEmby(ctx, "DEBUG", fmt.Sprintf("开始处理条目 %s，尝试 %d/6", event.ItemID, event.Attempts+1))
 	workCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	items, remove, fetchErr := s.eventItems(workCtx, c, event)
 	if ctx.Err() != nil {
+		logEmby(ctx, "WARNING", "通知处理已中断，保留队列供后续处理")
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if embyScope(s.config) != embyScope(c) {
+		logEmby(ctx, "WARNING", "同步配置已改变，本次通知未应用到索引")
+		return nil
+	}
+	current, err := s.db.EmbyEventForItem(ctx, embyScope(c), event.ItemID)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.ID != event.ID {
+		logEmby(ctx, "DEBUG", "通知已被合并或处理，本次结果未重复应用")
 		return nil
 	}
 	if fetchErr != nil {
 		if errors.Is(fetchErr, errEmbyMetadataPending) {
 			event.Kind = "metadata"
 		}
-		return s.db.EmbyRetryEvent(ctx, event, fetchErr.Error())
+		if err := s.db.EmbyRetryEvent(ctx, event, fetchErr.Error()); err != nil {
+			return err
+		}
+		if event.Attempts+1 >= 6 {
+			logEmby(ctx, "ERROR", fmt.Sprintf("条目 %s 处理失败，已达 6 次尝试上限，请修复后发送更新通知或全量同步：%s", event.ItemID, embyLogError(fetchErr)))
+		} else {
+			level := "WARNING"
+			if errors.Is(fetchErr, errEmbyMetadataPending) {
+				level = "DEBUG"
+			}
+			logEmby(ctx, level, fmt.Sprintf("条目 %s 暂未更新，%d 秒后重试（%d/6）：%s", event.ItemID, 30*(1<<event.Attempts), event.Attempts+1, embyLogError(fetchErr)))
+		}
+		return nil
 	}
-	return s.db.EmbyApplyEvent(ctx, embyScope(c), generation, event, items, remove)
+	if err := s.db.EmbyApplyEvent(ctx, embyScope(c), generation, event, items, remove); err != nil {
+		return err
+	}
+	if remove {
+		logEmby(ctx, "INFO", fmt.Sprintf("条目 %s 本地索引清理完成（不存在、范围外或不符合索引条件），未删除 Emby 文件，耗时 %.2f 秒", event.ItemID, embyElapsed(ctx)))
+	} else {
+		logEmby(ctx, "INFO", fmt.Sprintf("条目 %s 索引更新完成，写入 %d 条，耗时 %.2f 秒", event.ItemID, len(items), embyElapsed(ctx)))
+	}
+	return nil
 }
 func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.EmbyEvent) ([]model.EmbyItem, bool, error) {
 	client := emby.New(c.URL, c.APIKey)
@@ -567,6 +696,7 @@ func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.
 	}
 	if item == nil {
 		if event.Kind == "delete" {
+			logEmby(ctx, "DEBUG", "Emby 条目已不存在，准备移除本地索引")
 			return nil, true, nil
 		}
 		return nil, false, fmt.Errorf("Emby 条目暂不可读，等待媒体扫描完成")
@@ -587,9 +717,11 @@ func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.
 		}
 	}
 	if library == "" {
+		logEmby(ctx, "DEBUG", "条目不在所选媒体库范围内，不纳入索引；如有旧索引则清理")
 		return nil, true, nil
 	}
 	if item.IsVirtualItem || item.LocationType == "Virtual" {
+		logEmby(ctx, "DEBUG", "条目为虚拟媒体，不纳入索引；如有旧索引则清理")
 		return nil, true, nil
 	}
 	record, ok := item.Record(library)
@@ -803,13 +935,28 @@ type embyWebhook struct {
 	ItemID embyWebhookID `json:"ItemId"`
 }
 
-func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (int, error) {
+func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (status int, resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.config
 	if c.WebhookSecret == "" || subtle.ConstantTimeCompare([]byte(token), []byte(c.WebhookSecret)) != 1 {
+		if time.Since(s.webhookRejectAt) >= time.Minute {
+			s.webhookRejectAt = time.Now()
+			logEmby(s.logContext(ctx, c, "EMBY-WEBHOOK", "Webhook 接收"), "WARNING", "Webhook 尚未配置或密钥无效，通知未接收（同类提醒每分钟最多一次）")
+		}
 		return 401, fmt.Errorf("Webhook 密钥无效")
 	}
+	// Rate-limit unauthenticated traffic above; never record tokens or bodies.
+	ctx = s.logContext(ctx, c, s.newLogTask(), "Webhook 接收")
+	defer func() {
+		if resultErr != nil {
+			level := "WARNING"
+			if status >= 500 {
+				level = "ERROR"
+			}
+			logEmby(ctx, level, "Webhook 接收失败："+embyLogError(resultErr))
+		}
+	}()
 	var payload embyWebhook
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return 400, fmt.Errorf("Webhook JSON 格式无效")
@@ -827,6 +974,7 @@ func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (i
 		if err := s.db.EmbyWebhook(ctx, scope, event, ""); err != nil {
 			return 503, err
 		}
+		logEmby(ctx, "INFO", "收到 Emby 测试通知（"+event+"），仅验证连通性，未修改索引")
 		return 200, nil
 	}
 	kind := ""
@@ -845,6 +993,7 @@ func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (i
 		if err := s.db.EmbyWebhook(ctx, scope, event, message); err != nil {
 			return 503, err
 		}
+		logEmby(ctx, "WARNING", message+"，未加入处理队列")
 		return 202, nil
 	}
 	if err := s.db.EmbyEnqueue(ctx, scope, id, kind); err != nil {
@@ -853,5 +1002,10 @@ func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (i
 	if err := s.db.EmbyWebhook(ctx, scope, event, ""); err != nil {
 		return 503, err
 	}
+	queued, readErr := s.db.EmbyEventForItem(ctx, scope, id)
+	if readErr == nil && queued != nil {
+		ctx = s.logContext(ctx, c, fmt.Sprintf("EMBY-EVENT-%d", queued.ID), "Webhook 接收")
+	}
+	logEmby(ctx, "DEBUG", fmt.Sprintf("收到 %s，条目 %s 已入队（同条目待处理通知合并），约 10 秒后尝试处理；等待全量同步或刮削时会延后", event, id))
 	return 202, nil
 }
