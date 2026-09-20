@@ -38,6 +38,10 @@ func TestShareTaskRoutesProtectHistoryAndPendingRetries(t *testing.T) {
 		code                     int
 	}{
 		{"GET", "tasks", "", "", 401}, {"POST", "tasks/clear", "", "{}", 401},
+		{"POST", "tasks/retry", "", `{"ids":["waiting_review"]}`, 401},
+		{"POST", "tasks/retry", "test", `{"ids":[]}`, 400},
+		{"POST", "tasks/retry", "test", `{"ids":["waiting_review"]}`, 503},
+		{"GET", "tasks?status=retry_queued", "test", "", 200},
 		{"GET", "tasks?status=success&mode=direct", "test", "", 200},
 		{"GET", "tasks?status=invalid", "test", "", 400}, {"GET", "tasks?offset=-1", "test", "", 400},
 		{"POST", "tasks/clear", "test", "{}", 200},

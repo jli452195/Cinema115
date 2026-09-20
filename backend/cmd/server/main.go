@@ -207,7 +207,8 @@ func main() {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
-	httpapi.RegisterShareTasks(admin, database)
+	shareTasks.RetryWake = make(chan struct{}, 1)
+	httpapi.RegisterShareTasks(admin, database, shareTasks)
 	httpapi.RegisterLogs(admin, generationLogs)
 	telegram, err := bot.NewHub(dataDir, secret, shareAPI.Runs, automation)
 	if err != nil {

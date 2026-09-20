@@ -21,11 +21,14 @@ type automationContextKey struct{}
 var errSourceShareReview = errors.New("原分享审核中，尚未执行转存")
 
 type ShareTaskStore interface {
+	GetShareTask(context.Context, string) (model.ShareTask, error)
+	CompareShareTask(context.Context, model.ShareTask, model.ShareTask) (bool, error)
 	SaveShareTask(context.Context, model.ShareTask) error
 	DueShareTasks(context.Context, time.Time) ([]model.ShareTask, error)
 }
 
 type shareTaskRequest struct {
+	RetrySafe   bool               `json:"retrySafe,omitempty"`
 	Merged      bool               `json:"merged,omitempty"`
 	OwnShareCID string             `json:"ownShareCID,omitempty"`
 	OwnRootIDs  []string           `json:"ownRootIDs,omitempty"`
@@ -36,6 +39,7 @@ type shareTaskRequest struct {
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
+	RetryWake     chan struct{}
 	Generator     MediaGenerator
 	Store         ShareTaskStore
 	Settings      *AutomationStore
@@ -149,7 +153,9 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 		}
 	}
 	task.Status, task.Error = "success", ""
+	req.RetrySafe = false
 	if err != nil {
+		req.RetrySafe = req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)
 		task.Status, task.Error = "failed", generationErrorDetail(err, req.Input)
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			task.Status = "review"
@@ -171,6 +177,7 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 			} else if task.Retries >= task.MaxRetries {
 				task.Error += "；审核重试次数已用尽"
 			}
+			req.RetrySafe = safe
 		}
 	}
 	// 请求取消后也保存最终状态，写入失败不会继续下一次云端操作。
@@ -199,6 +206,7 @@ func (s *ShareTasks) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+		case <-s.RetryWake:
 		}
 	}
 }
@@ -212,6 +220,8 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		return err
 	}
 	for _, task := range tasks {
+		before := task
+		manual := task.Status == "retry_queued"
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -225,18 +235,33 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		} else if s.Cookie != nil {
 			cookie = s.Cookie()
 		}
-		if !s.Settings.Value().ReviewRetryEnabled || req.CookieHash != cookieHash(cookie) {
+		if (!manual && !s.Settings.Value().ReviewRetryEnabled) || (s.AccountCookie != nil && req.Settings.AccountID == "") || strings.TrimSpace(cookie) == "" || req.CookieHash != cookieHash(cookie) {
 			task.Status, task.NextRetryAt = "cancelled", nil
-			task.Error = "审核重试已关闭，或 115 登录已变化，本任务停止自动重试"
-			if err := s.save(ctx, &task, req); err != nil {
+			task.Error = "审核重试已关闭，或原任务的 115 账号及登录凭据不可用，本次重试已停止"
+			task.UpdatedAt = time.Now().UTC()
+			if _, err := s.Store.CompareShareTask(ctx, before, task); err != nil {
 				return err
 			}
 			continue
 		}
 		task.Status, task.NextRetryAt = "running", nil
-		task.Retries++
-		if err := s.save(ctx, &task, req); err != nil {
+		if manual {
+			task.ManualRetries++
+		} else {
+			task.Retries++
+		}
+		req.RetrySafe = false
+		task.Request, err = json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("编码重试请求: %w", err)
+		}
+		task.UpdatedAt = time.Now().UTC()
+		claimed, err := s.Store.CompareShareTask(ctx, before, task)
+		if err != nil {
 			return err
+		}
+		if !claimed {
+			continue
 		}
 		retryCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		_, runErr := s.execute(context.WithValue(retryCtx, generationCookieKey{}, cookie), &task, req)

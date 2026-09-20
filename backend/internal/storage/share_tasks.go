@@ -62,12 +62,41 @@ ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`, status, status, status, stat
 }
 
 func (s *Store) DueShareTasks(ctx context.Context, now time.Time) ([]model.ShareTask, error) {
-	return s.queryShareTasks(ctx, `SELECT record,request FROM share_tasks WHERE status='waiting_review' AND next_retry_at<=? ORDER BY next_retry_at,id LIMIT 20`, now.UTC().Format(databaseTime))
+	return s.queryShareTasks(ctx, `SELECT record,request FROM share_tasks WHERE status='retry_queued' OR (status='waiting_review' AND next_retry_at<=?) ORDER BY next_retry_at,id LIMIT 20`, now.UTC().Format(databaseTime))
+}
+
+func (s *Store) GetShareTask(ctx context.Context, id string) (model.ShareTask, error) {
+	tasks, err := s.queryShareTasks(ctx, `SELECT record,request FROM share_tasks WHERE id=?`, id)
+	if err != nil {
+		return model.ShareTask{}, err
+	}
+	if len(tasks) == 0 {
+		return model.ShareTask{}, sql.ErrNoRows
+	}
+	return tasks[0], nil
+}
+
+// CompareShareTask 原子抢占，防止手动、定时重试和清理互相覆盖。
+func (s *Store) CompareShareTask(ctx context.Context, before, task model.ShareTask) (bool, error) {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return false, fmt.Errorf("编码重试任务: %w", err)
+	}
+	next := ""
+	if task.NextRetryAt != nil {
+		next = task.NextRetryAt.UTC().Format(databaseTime)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE share_tasks SET status=?,updated_at=?,next_retry_at=?,record=?,request=? WHERE id=? AND status=? AND updated_at=? AND request=?`, task.Status, task.UpdatedAt.UTC().Format(databaseTime), next, string(data), string(task.Request), before.ID, before.Status, before.UpdatedAt.UTC().Format(databaseTime), string(before.Request))
+	if err != nil {
+		return false, fmt.Errorf("抢占重试任务: %w", err)
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 // ClearShareTasks 只清理已结束的展示记录，不删除网盘文件和转存检查点。
 func (s *Store) ClearShareTasks(ctx context.Context, ids []string) (int64, error) {
-	query := `DELETE FROM share_tasks WHERE status NOT IN ('running','waiting_review')`
+	query := `DELETE FROM share_tasks WHERE status NOT IN ('running','waiting_review','retry_queued')`
 	args := make([]any, 0, len(ids))
 	if len(ids) > 0 {
 		query += " AND id IN (?"
