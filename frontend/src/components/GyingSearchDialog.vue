@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
@@ -18,11 +19,12 @@ const activeMagnetSubType = ref('all')
 type LoadPhase = '' | 'config' | 'search'
 const phase = ref<LoadPhase>('')
 const lifecycle = new AbortController()
-const shareRuns = useShareSTRMRun(props.token, lifecycle.signal)
-const busy = computed(() => phase.value !== '' || shareRuns.busy.value)
+const shareRuns = useShareSTRMRun(props.token, lifecycle.signal, { scope: `gying/${props.kind}/${props.tmdbId}` })
+const busy = computed(() => phase.value !== '' || shareRuns.preparing.value > 0)
 const elapsedSeconds = ref(0)
 const error = ref('')
 const copied = ref('')
+const copyError = ref('')
 const coverErrors = ref<Record<string, boolean>>({})
 function coverSource(item: GyingSearchItem) {
   // 仅加载 NAS 同源封面，不回退到外站，也不向图片地址传递凭据。
@@ -226,18 +228,12 @@ async function initialize() {
 
 async function copyLink(link: GyingResourceLink) {
   const text = `${link.url}${link.password ? `  提取码：${link.password}` : ''}`
+  copied.value = ''; copyError.value = ''
   try {
-    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text)
-    else {
-      const input = document.createElement('textarea')
-      input.value = text; input.style.position = 'fixed'; input.style.opacity = '0'
-      document.body.appendChild(input); input.select()
-      const ok = document.execCommand('copy'); input.remove()
-      if (!ok) throw new Error('copy denied')
-    }
-    copied.value = link.url; error.value = ''
+    await copyText(text, dialog.value)
+    copied.value = link.url
   }
-  catch { error.value = '浏览器未允许复制，请手动选择链接。' }
+  catch { copied.value = ''; copyError.value = link.url }
 }
 
 function linkCount(item: GyingSearchItem, category: 'pan' | 'torrent') { return item.links.filter(link => link.category === category).length }
@@ -272,7 +268,7 @@ onBeforeUnmount(() => {
           <div v-if="config && !config.configured" class="rounded-xl bg-slate-50 p-6 text-sm leading-7 text-slate-600"><p>请先配置并登录观影站账号。</p><RouterLink to="/gying" class="mt-3 inline-block font-medium text-blue-600" @click="emit('close')">前往观影搜索配置 →</RouterLink></div>
           <p v-if="phase === 'config'" role="status" class="rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">正在读取观影搜索配置…<span v-if="elapsedSeconds >= 10" class="block text-xs">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
           <p v-else-if="phase === 'search'" role="status" class="rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">正在依次搜索影视原名并读取资源详情…<span class="block text-xs"><template v-if="elapsedSeconds < 10">原名没有有效资源时会自动尝试 IMDb 编号；通常数秒，匹配条目较多时会更久。</template><template v-else>正在读取较多资源详情，已等待 {{ elapsedSeconds }} 秒；最多等待约 2 分钟。</template></span></p>
-          <p v-if="shareRuns.busy.value" role="status" class="mb-4 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">{{ shareRuns.activeRunID.value ? 'STRM 任务正在后台执行，关闭弹窗或页面后仍会继续。' : '正在准备并提交 STRM 任务…' }}<button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="ml-3 underline disabled:opacity-50" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止任务' }}</button></p>
+          <p v-if="shareRuns.busy.value" role="status" class="mb-4 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">{{ shareRuns.activeRunID.value ? 'STRM 任务正在后台执行，可继续选择其他资源；关闭页面不影响已提交任务。' : '正在准备并提交 STRM 任务…' }}<button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="ml-3 underline disabled:opacity-50" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止已提交批次' }}</button></p>
           <p v-if="error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
           <template v-if="result">
             <section class="mb-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600" aria-label="搜索过程">
@@ -311,7 +307,7 @@ onBeforeUnmount(() => {
               <article v-for="item in visibleItems" :key="item.id" class="rounded-xl border border-slate-200 p-4 sm:p-5">
                 <div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold leading-6 text-slate-900">{{ item.title }} <span v-if="item.year" class="font-normal text-slate-400">({{ item.year }})</span></h3><div class="mt-2 flex flex-wrap gap-2 text-[11px]"><span class="rounded bg-amber-50 px-2 py-1 text-amber-700">{{ mediaLabels[item.mediaType] }}</span><span v-if="linkCount(item, 'pan')" class="rounded bg-blue-50 px-2 py-1 text-blue-700">网盘 {{ linkCount(item, 'pan') }}</span><span v-if="linkCount(item, 'torrent')" class="rounded bg-violet-50 px-2 py-1 text-violet-700">种子 {{ linkCount(item, 'torrent') }}</span></div></div></div>
                 <p v-if="item.description" class="mt-3 break-words text-xs leading-6 text-slate-500">{{ item.description }}</p>
-                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.subTypeLabel" class="rounded bg-violet-50 px-2 py-1 font-medium text-violet-700">{{ link.subTypeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.seeds !== undefined" class="text-slate-400">做种 {{ link.seeds }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="busy || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.activeResource.value === shareResourceID(item, link) ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
+                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white px-2 py-1 font-medium text-slate-700 ring-1 ring-slate-200">{{ link.typeLabel }}</span><span v-if="link.subTypeLabel" class="rounded bg-violet-50 px-2 py-1 font-medium text-violet-700">{{ link.subTypeLabel }}</span><span v-if="link.size" class="text-slate-400">{{ link.size }}</span><span v-if="link.seeds !== undefined" class="text-slate-400">做种 {{ link.seeds }}</span><span v-if="link.updatedAt" class="text-slate-400">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.pending.value[shareResourceID(item, link)] ? '已加入任务…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><div v-if="copyError === link.url" role="alert" class="mt-2 text-amber-700"><p>浏览器未允许复制，请手动复制下方链接：</p><textarea :value="`${link.url}${link.password ? `  提取码：${link.password}` : ''}`" readonly aria-label="手动复制资源链接" class="mt-2 w-full rounded border border-amber-200 bg-white p-2 text-slate-700" @focus="($event.target as HTMLTextAreaElement).select()" /></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
               </article>
             </div>
           </template>

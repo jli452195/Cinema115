@@ -56,12 +56,6 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 	if cookie == "" {
 		return outcomes, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
-	select {
-	case w.gate <- struct{}{}:
-		defer func() { <-w.gate }()
-	case <-ctx.Done():
-		return outcomes, ctx.Err()
-	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	prepared := make([]preparedShare, 0, len(inputs))

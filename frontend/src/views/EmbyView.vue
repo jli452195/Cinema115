@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import { embyRequest, type EmbyConfig, type EmbyStatus } from '../types/emby'
@@ -6,7 +7,6 @@ import { embyRequest, type EmbyConfig, type EmbyStatus } from '../types/emby'
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ home: []; openDashboard: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 interface Library { ItemId: string; Name: string; CollectionType: string }
-const defaults = new Set(['电视剧', '电影', '动漫', '动漫电影', '豆瓣top250', '国漫', '华语电影', '纪录片', '美剧', '日韩剧', '泰剧', '综艺'])
 const config = ref<EmbyConfig>()
 const status = ref<EmbyStatus>()
 const url = ref('http://192.168.0.3:8096')
@@ -48,7 +48,8 @@ async function action(kind: 'test' | 'save' | 'save-webhook' | 'sync') {
       const result = await request('test', { url: url.value.trim(), apiKey: apiKey.value.trim() })
       libraries.value = result.libraries; testedURL.value = url.value.trim()
       const available = new Set(libraries.value.map(lib => lib.ItemId))
-      selected.value = config.value?.configured ? selected.value.filter(id => available.has(id)) : libraries.value.filter(lib => defaults.has(lib.Name)).map(lib => lib.ItemId)
+      // 不按名称预选媒体库，只保留用户已有选择中仍存在的媒体库 ID。
+      selected.value = selected.value.filter(id => available.has(id))
       notice.value = `连接成功：${result.server.ServerName} · ${result.server.Version}，请选择媒体库并保存。`
     } else if (kind === 'save') {
       config.value = await request('config', { url: url.value.trim(), apiKey: apiKey.value.trim(), libraryIds: selected.value, webhookBaseUrl: webhookBase.value.trim() })
@@ -67,7 +68,8 @@ async function action(kind: 'test' | 'save' | 'save-webhook' | 'sync') {
   finally { busy.value = '' }
 }
 async function copy() {
-  try { await navigator.clipboard.writeText(webhookURL.value); notice.value = 'Webhook 地址已复制。' }
+  notice.value = ''
+  try { await copyText(webhookURL.value); notice.value = 'Webhook 地址已复制。' }
   catch { notice.value = '当前浏览器不支持复制，请选中地址手动复制。' }
 }
 onMounted(async () => {
@@ -97,7 +99,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer) })
             <label class="text-sm text-slate-700">API Key<input v-model="apiKey" type="password" autocomplete="new-password" :placeholder="config?.configured ? '已保存，留空保留原密钥' : '在 Emby 控制台 → API 密钥中创建'" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /></label>
             <div class="sm:col-span-2"><button class="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50" @click="action('test')">{{ busy === 'test' ? '正在连接…' : '测试连接并读取媒体库' }}</button><span class="ml-3 text-xs text-slate-400">API Key 加密保存，不回显到页面。</span></div>
           </fieldset>
-          <div class="mt-6 border-t border-slate-100 pt-6"><div class="flex items-center justify-between"><h3 class="text-sm font-semibold text-slate-800">同步范围</h3><span class="text-xs text-slate-400">已选 {{ selected.length }} 个媒体库</span></div><p class="mt-2 text-xs leading-6 text-slate-500">首次读取默认勾选约定的 12 个媒体库；仅按勾选的媒体库 ID 建立索引。</p>
+          <div class="mt-6 border-t border-slate-100 pt-6"><div class="flex items-center justify-between"><h3 class="text-sm font-semibold text-slate-800">同步范围</h3><span class="text-xs text-slate-400">已选 {{ selected.length }} 个媒体库</span></div><p class="mt-2 text-xs leading-6 text-slate-500">首次读取不默认勾选，请选择需要同步的媒体库；已保存的选择会保留，仅按勾选的媒体库 ID 建立索引。</p>
             <div v-if="libraries.length" class="mt-4 grid gap-3 sm:grid-cols-3"><label v-for="library in libraries" :key="library.ItemId" class="flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm" :class="selected.includes(library.ItemId) ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-slate-200 text-slate-600'"><input v-model="selected" type="checkbox" :value="library.ItemId" :disabled="!!busy" class="h-4 w-4 accent-blue-600" />{{ library.Name }}</label></div>
             <p v-else class="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">{{ config?.configured ? '已保留选中的媒体库。点击「测试连接并读取媒体库」可查看或更改。' : '填写服务器地址与 API Key 后，点击上方按钮读取媒体库。' }}</p>
           </div>

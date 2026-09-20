@@ -12,7 +12,7 @@ export async function savedSTRMSettings(token: string, signal: AbortSignal): Pro
 }
 
 export interface ShareRunItem { taskId: string; status: string; message: string; error?: string; result?: STRMResult }
-export interface ShareRun { id: string; status: string; items: ShareRunItem[] }
+export interface ShareRun { id: string; status: string; items: ShareRunItem[]; readyAt?: string; selectedTaskIds?: string[] }
 export class ShareRunError extends Error { constructor(message: string, public status: number) { super(message) } }
 export function newShareRunID() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('')
@@ -28,8 +28,8 @@ async function runRequest(token: string, path: string, signal: AbortSignal, body
   return data
 }
 // 提交成功后任务由后端持有，页面卸载只取消后续轮询。
-export function submitShareRun(token: string, id: string, inputs: object[]) {
-  return runRequest(token, '', AbortSignal.timeout(20000), { id, inputs })
+export function submitShareRun(token: string, id: string, inputs: object[], collectionScope?: string) {
+  return runRequest(token, '', AbortSignal.timeout(20000), { id, inputs, collectionScope })
 }
 export function cancelShareRun(token: string, id: string) {
   return runRequest(token, '/' + encodeURIComponent(id) + '/cancel', AbortSignal.timeout(15000), {})

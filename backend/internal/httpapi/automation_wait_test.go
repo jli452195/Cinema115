@@ -61,3 +61,39 @@ func TestAutomationBatchWaitDefaultValidationAndPersistence(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomationParallelBatchesValidationAndPersistence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "automation.json")
+	store, err := service.NewAutomationStore(path, dir, "http://nas:3002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Value().MaxParallelBatches != 0 {
+		t.Fatal("不应默认限制为两批")
+	}
+	r := gin.New()
+	RegisterAutomation(r.Group("/api/admin"), store, func() bool { return false })
+	for _, tc := range []struct {
+		body       string
+		code, want int
+	}{
+		{`{"maxParallelBatches":4}`, 200, 4},
+		{`{"parentCID":"0"}`, 200, 4},
+		{`{"maxParallelBatches":-1}`, 400, 4},
+		{`{"maxParallelBatches":21}`, 400, 4},
+		{`{"maxParallelBatches":1.5}`, 400, 4},
+		{`{"maxParallelBatches":0}`, 200, 0},
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/automation-config", strings.NewReader(tc.body)))
+		if w.Code != tc.code || store.Value().MaxParallelBatches != tc.want {
+			t.Fatalf("并发配置校验失败: %s %d", tc.body, w.Code)
+		}
+		reloaded, err := service.NewAutomationStore(path, dir, "")
+		if err != nil || reloaded.Value().MaxParallelBatches != tc.want {
+			t.Fatal("并发配置未持久化", err)
+		}
+	}
+}

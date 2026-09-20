@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "test:share-runs": "node --test tests/share-strm-run.test.mjs",
+    "test:season-library": "node --test tests/season-library.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

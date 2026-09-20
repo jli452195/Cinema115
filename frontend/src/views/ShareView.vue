@@ -54,6 +54,7 @@ const savedReshareEnabled = ref(false)
 const parentCID = ref('0')
 const fixedSharePassword = ref('')
 const tgBatchWaitSeconds = ref(5)
+const maxParallelBatches = ref(0)
 const automationSaving = ref(false)
 const automationReady = ref(false)
 const botConfigured = ref(false)
@@ -93,8 +94,9 @@ async function saveAutomation() {
   try {
     if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先选择已登录的 115 账号配置')
     if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
+    if (!Number.isInteger(maxParallelBatches.value) || maxParallelBatches.value < 0 || maxParallelBatches.value > 20) throw new Error('最大并行批次应为 0～20 的整数')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
-    const data = await request('automation-config', { accountId: accountId.value, botId: botId.value, telegramEnabled: telegramEnabled.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
+    const data = await request('automation-config', { accountId: accountId.value, botId: botId.value, telegramEnabled: telegramEnabled.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, maxParallelBatches: maxParallelBatches.value, reshareEnabled: reshareEnabled.value, parentCID: parentCID.value.trim(), fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
     accountId.value = data.settings.accountId ?? ''
     botId.value = data.settings.botId ?? ''
     telegramEnabled.value = data.settings.telegramEnabled ?? false
@@ -103,6 +105,7 @@ async function saveAutomation() {
     parentCID.value = data.settings.parentCID
     fixedSharePassword.value = data.settings.fixedSharePassword ?? ''
     tgBatchWaitSeconds.value = data.settings.tgBatchWaitSeconds ?? 5
+    maxParallelBatches.value = data.settings.maxParallelBatches ?? 0
     automationNotice.value = '生成设置已保存到服务器，播放地址与开关立即生效，Bot 使用本页保存的生成选项。'
     saveSettings()
   } catch (e) {
@@ -223,6 +226,7 @@ onMounted(async () => {
     parentCID.value = automation.settings.parentCID
     fixedSharePassword.value = automation.settings.fixedSharePassword ?? ''
     tgBatchWaitSeconds.value = automation.settings.tgBatchWaitSeconds ?? 5
+    maxParallelBatches.value = automation.settings.maxParallelBatches ?? 0
     reviewRetryEnabled.value = automation.settings.reviewRetryEnabled ?? false
     reviewRetryMinutes.value = automation.settings.reviewRetryMinutes ?? 30
     reviewRetryMax.value = automation.settings.reviewRetryMax ?? 6
@@ -334,7 +338,9 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <p class="text-xs leading-6 text-blue-800">接收分享 → 转存到独立临时目录 → 确认媒体数量并创建长期分享 → 生成 STRM → 临时目录移入回收站</p>
               <p class="mt-2 text-xs leading-5 text-blue-700">新分享有效期：长期（无到期日期），设置成功后才会继续。</p>
               <label class="mt-4 block text-sm text-slate-700">批次收集等待（秒）<input v-model.number="tgBatchWaitSeconds" type="number" min="0" max="300" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
-              <p class="mt-2 text-xs leading-5 text-slate-500">Telegram 连续消息和订阅自动资源从首项起等待指定秒数，再进入公共后台队列。执行时按分享者 user ID 判断：本账号分享直接生成，其他账号的正常分享合并转存。默认 5 秒，0 表示不等待。</p>
+              <label class="mt-4 block text-sm text-slate-700">最大并行批次<input v-model.number="maxParallelBatches" type="number" min="0" max="20" step="1" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" /></label>
+              <p class="mt-2 text-xs leading-5 text-slate-500">默认 0，不额外限制并行批次；仍保留后台最多 20 个未完成批次的容量保护和 115 接口限速。修改后影响后续调度，不中断执行中的批次。</p>
+              <p class="mt-2 text-xs leading-5 text-slate-500">详情页 Bot／观影搜索从首条链接入队起收集，窗口内可继续选择；后续选择不延长窗口。Telegram 消息保留原有收集规则，订阅批次使用相同等待时间。执行时按分享者 user ID 判断：本账号分享直接生成，其他账号的正常分享合并转存。默认 5 秒，0 表示不等待。</p>
               <label class="mt-4 block text-sm text-slate-700">固定分享密码（可选）<input v-model="fixedSharePassword" maxlength="4" pattern="[a-zA-Z0-9]{4}" autocomplete="off" spellcheck="false" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="留空则每次随机生成" /></label>
               <p class="mt-2 text-xs leading-5 text-slate-500">仅用于转存后创建的新分享，填写 4 位英文字母或数字，留空则随机生成。开启转存模式后，将分享者 user ID 与基础设置所选账号的 Cookie UID 比较：相同则直接生成 STRM，沿用原分享有效期；不同则转存后创建自己的长期分享。无法确认分享者时停止本条，提取码不再用于判断归属。</p>
               <label class="mt-4 block text-sm text-slate-700">115 转存父目录 ID<input v-model="parentCID" inputmode="numeric" pattern="[0-9]+" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-3 md:max-w-sm" placeholder="0" /></label>

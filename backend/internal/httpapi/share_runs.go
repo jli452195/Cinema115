@@ -38,8 +38,9 @@ func (a *ShareAPI) registerShareRuns(admin *gin.RouterGroup) {
 	routes.POST("", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
 		var request struct {
-			ID     string                  `json:"id"`
-			Inputs []service.GenerateInput `json:"inputs"`
+			ID              string                  `json:"id"`
+			CollectionScope string                  `json:"collectionScope"`
+			Inputs          []service.GenerateInput `json:"inputs"`
 		}
 		if c.ShouldBindJSON(&request) != nil {
 			c.JSON(400, gin.H{"error": "后台生成请求格式错误"})
@@ -50,7 +51,12 @@ func (a *ShareAPI) registerShareRuns(admin *gin.RouterGroup) {
 				request.Inputs[i].BaseURL = a.generationBaseURL(c)
 			}
 		}
-		view, err := a.Runs.Submit(c.Request.Context(), request.ID, request.Inputs)
+		if len(request.CollectionScope) > 160 {
+			c.JSON(400, gin.H{"error": "收集范围无效"})
+			return
+		}
+		ctx := service.WithShareCollectionScope(c.Request.Context(), request.CollectionScope)
+		view, err := a.Runs.Submit(ctx, request.ID, request.Inputs)
 		respond(c, view, err, 202)
 	})
 	routes.GET("/:id", func(c *gin.Context) { view, err := a.Runs.Get(c.Param("id")); respond(c, view, err, 200) })

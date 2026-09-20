@@ -19,6 +19,7 @@ type AutomationSettings struct {
 	TelegramEnabled    bool          `json:"telegramEnabled"`
 	ReshareEnabled     bool          `json:"reshareEnabled"`
 	TGBatchWaitSeconds int           `json:"tgBatchWaitSeconds"`
+	MaxParallelBatches int           `json:"maxParallelBatches"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
 	ParentCID          string        `json:"parentCID"`
 	ReviewRetryEnabled bool          `json:"reviewRetryEnabled"`
@@ -148,6 +149,9 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 	}
 	if value.TGBatchWaitSeconds < 0 || value.TGBatchWaitSeconds > 300 {
 		return generationInputError("批次收集等待应为 0～300 秒，0 表示不等待")
+	}
+	if value.MaxParallelBatches < 0 || value.MaxParallelBatches > 20 {
+		return generationInputError("最大并行批次应为 0～20，0 表示不额外限制并行数")
 	}
 	if value.ReviewRetryMinutes < 1 || value.ReviewRetryMinutes > 1440 || value.ReviewRetryMax < 1 || value.ReviewRetryMax > 100 {
 		return generationInputError("审核重试间隔应为 1～1440 分钟，最大重试次数应为 1～100")

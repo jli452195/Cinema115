@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
@@ -161,8 +162,8 @@ async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion
   } finally { busy.value = false }
 }
 async function copy(item: Item) {
-  copyError.value = ''
-  try { await navigator.clipboard.writeText(item.magnet); copied.value = item.id }
+  copyError.value = ''; copied.value = ''
+  try { await copyText(item.magnet); copied.value = item.id }
   catch { copied.value = ''; copyError.value = item.id }
 }
 async function submit(item: Item) {

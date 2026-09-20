@@ -50,22 +50,25 @@ type ShareRunItem struct {
 	Result  *ShareRunResult `json:"result,omitempty"`
 }
 type ShareRunView struct {
-	ID     string         `json:"id"`
-	Status string         `json:"status"`
-	Items  []ShareRunItem `json:"items"`
+	ReadyAt         time.Time      `json:"readyAt,omitempty"`
+	SelectedTaskIDs []string       `json:"selectedTaskIds,omitempty"`
+	ID              string         `json:"id"`
+	Status          string         `json:"status"`
+	Items           []ShareRunItem `json:"items"`
 }
 type shareRun struct {
-	view        ShareRunView
-	digest      [32]byte
-	fingerprint string
-	cacheKey    string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	tasks       []*model.ShareTask
-	requests    []shareTaskRequest
-	readyAt     time.Time
-	finished    time.Time
-	done        chan struct{}
+	view          ShareRunView
+	digest        [32]byte
+	fingerprint   string
+	cacheKey      string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	tasks         []*model.ShareTask
+	requests      []shareTaskRequest
+	readyAt       time.Time
+	finished      time.Time
+	done          chan struct{}
+	collectionKey string
 }
 
 type shareRunCacheStore interface {
@@ -79,7 +82,7 @@ type shareRunCacheRecord struct {
 	Paths []string       `json:"paths"`
 }
 
-// ShareRuns 将浏览器请求与执行生命周期分离。队列串行执行，不创建无主协程。
+// ShareRuns 将浏览器请求与执行生命周期分离，有界并发执行并等待所有工作器退出。
 type ShareRuns struct {
 	mu                  sync.Mutex
 	root                context.Context
@@ -88,10 +91,11 @@ type ShareRuns struct {
 	activeByFingerprint map[string]string
 	queue               []string
 	wake                chan struct{}
+	accepted            map[string]shareRunAccepted
 }
 
 func NewShareRuns(root context.Context, tasks *ShareTasks) *ShareRuns {
-	return &ShareRuns{root: root, tasks: tasks, runs: make(map[string]*shareRun), activeByFingerprint: make(map[string]string), wake: make(chan struct{}, 1)}
+	return &ShareRuns{root: root, tasks: tasks, runs: make(map[string]*shareRun), activeByFingerprint: make(map[string]string), accepted: make(map[string]shareRunAccepted), wake: make(chan struct{}, 1)}
 }
 
 type shareRunFingerprintInput struct {
@@ -187,6 +191,7 @@ func shareRunFingerprint(settings AutomationSettings, credentialHash string, inp
 
 func cloneShareRun(view ShareRunView) ShareRunView {
 	out := view
+	out.SelectedTaskIDs = append([]string(nil), view.SelectedTaskIDs...)
 	out.Items = append([]ShareRunItem(nil), view.Items...)
 	for i := range out.Items {
 		if out.Items[i].Result != nil {
@@ -349,6 +354,17 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	digest := sha256.Sum256(data)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if accepted, ok := s.accepted[id]; ok {
+		if accepted.digest != digest {
+			return ShareRunView{}, generationInputError("同一任务编号不能提交不同链接或生成参数")
+		}
+		if run := s.runs[accepted.runID]; run != nil {
+			view := cloneShareRun(run.view)
+			view.SelectedTaskIDs = append([]string(nil), accepted.taskIDs...)
+			return view, nil
+		}
+		delete(s.accepted, id)
+	}
 	if existing := s.runs[id]; existing != nil {
 		if existing.digest != digest {
 			return ShareRunView{}, generationInputError("同一任务编号不能提交不同链接或生成参数")
@@ -360,6 +376,14 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	}
 	if err := s.root.Err(); err != nil {
 		return ShareRunView{}, err
+	}
+	for key, accepted := range s.accepted {
+		if run := s.runs[accepted.runID]; run == nil || !run.finished.IsZero() && time.Since(run.finished) > 24*time.Hour {
+			delete(s.accepted, key)
+		}
+	}
+	if len(s.accepted) >= 10000 {
+		return ShareRunView{}, ErrShareRunBusy
 	}
 	active := 0
 	for key, run := range s.runs {
@@ -423,12 +447,33 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	}
 	if existingID := s.activeByFingerprint[fingerprint]; existingID != "" {
 		if existing := s.runs[existingID]; existing != nil && existing.finished.IsZero() {
-			return cloneShareRun(existing.view), nil
+			view := cloneShareRun(existing.view)
+			for _, accepted := range s.accepted {
+				if accepted.runID == existingID && accepted.fingerprint == fingerprint {
+					view.SelectedTaskIDs = append([]string(nil), accepted.taskIDs...)
+					break
+				}
+			}
+			s.accepted[id] = shareRunAccepted{runID: existingID, digest: digest, fingerprint: fingerprint, taskIDs: append([]string(nil), view.SelectedTaskIDs...)}
+			return view, nil
 		}
 		delete(s.activeByFingerprint, fingerprint)
 	}
 	if cached, ok := s.restoreSuccessfulRun(pinned, id, digest, fingerprint, cacheKey, len(inputs), source); ok {
 		return cached, nil
+	}
+	// 只在显式网页收集范围内合并，账号、凭据及所有设置不同的任务必须隔离。
+	collectionKey, err := shareCollectionKey(ctx, settings, generationCookie(pinned, s.tasks.Cookie), inputs)
+	if err != nil {
+		return ShareRunView{}, err
+	}
+	if collectionKey != "" {
+		for _, queuedID := range s.queue {
+			target := s.runs[queuedID]
+			if target != nil && target.collectionKey == collectionKey && target.view.Status == "queued" && target.ctx.Err() == nil && time.Now().Before(target.readyAt) && len(target.tasks)+len(inputs) <= 100 {
+				return s.appendCollected(ctx, target, id, digest, fingerprint, inputs)
+			}
+		}
 	}
 	if active >= 20 {
 		return ShareRunView{}, ErrShareRunBusy
@@ -436,10 +481,11 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	runCtx, cancel := context.WithCancel(pinned)
 	readyAt := time.Now()
 	// Telegram 已在消息接收阶段完成同一窗口的收集；订阅批次在公共队列中应用相同等待设置。
-	if source == "订阅" {
+	if source == "订阅" || collectionKey != "" {
 		readyAt = readyAt.Add(time.Duration(settings.TGBatchWaitSeconds) * time.Second)
 	}
 	run := &shareRun{view: ShareRunView{ID: id, Status: "queued", Items: make([]ShareRunItem, len(inputs))}, digest: digest, fingerprint: fingerprint, cacheKey: cacheKey, ctx: runCtx, cancel: cancel, tasks: make([]*model.ShareTask, len(inputs)), requests: make([]shareTaskRequest, len(inputs)), readyAt: readyAt, done: make(chan struct{})}
+	run.collectionKey, run.view.ReadyAt = collectionKey, readyAt
 	// 入队只写本地数据库，浏览器断开不会撤销已经接收的任务。
 	saveCtx, saveCancel := context.WithTimeout(runCtx, 10*time.Second)
 	defer saveCancel()
@@ -459,25 +505,40 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	s.runs[id] = run
 	s.activeByFingerprint[fingerprint] = id
 	s.queue = append(s.queue, id)
+	view := s.rememberSubmission(id, digest, fingerprint, run, run.view.Items)
+	if collectionKey != "" {
+		s.tasks.Logs.Append("STRM", id, "网页", "INFO", fmt.Sprintf("开始收集网页资源：%d 个链接，等待 %d 秒，后续提交不延长窗口", len(inputs), settings.TGBatchWaitSeconds))
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	return cloneShareRun(run.view), nil
+	return view, nil
 }
 
 func (s *ShareRuns) Get(id string) (ShareRunView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	accepted, hasAccepted := s.accepted[id]
+	if hasAccepted {
+		id = accepted.runID
+	}
 	run := s.runs[id]
 	if run == nil {
 		return ShareRunView{}, ErrShareRunMissing
 	}
-	return cloneShareRun(run.view), nil
+	view := cloneShareRun(run.view)
+	if hasAccepted {
+		view.SelectedTaskIDs = append([]string(nil), accepted.taskIDs...)
+	}
+	return view, nil
 }
 func (s *ShareRuns) Cancel(id string) (ShareRunView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if accepted, ok := s.accepted[id]; ok {
+		id = accepted.runID
+	}
 	run := s.runs[id]
 	if run == nil {
 		return ShareRunView{}, ErrShareRunMissing
@@ -485,6 +546,10 @@ func (s *ShareRuns) Cancel(id string) (ShareRunView, error) {
 	if run.finished.IsZero() {
 		run.view.Status = "cancelling"
 		run.cancel()
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
 	}
 	return cloneShareRun(run.view), nil
 }
@@ -514,7 +579,7 @@ func newInternalShareRunID() (string, error) {
 	return hex.EncodeToString(id[:]), nil
 }
 
-// Generate 和 GenerateBatch 让 Telegram 等后台调用方与网页共用 ShareRuns FIFO 队列。
+// Generate 和 GenerateBatch 让后台调用方与网页共用可并行执行的批次队列。
 func (s *ShareRuns) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
 	outcomes, err := s.GenerateBatch(ctx, []GenerateInput{input})
 	if len(outcomes) != 1 {
@@ -551,39 +616,63 @@ func (s *ShareRuns) GenerateBatch(ctx context.Context, inputs []GenerateInput) (
 
 // Run 由主进程等待退出；停机时取消执行并给未执行的子任务保存结束状态。
 func (s *ShareRuns) Run() {
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	active := 0
+	completed := make(chan struct{})
 	for {
+		// 持续有新任务入队时也及时回收已完成工作器，避免完成通知被饿死。
+		draining := true
+		for draining {
+			select {
+			case <-completed:
+				active--
+			default:
+				draining = false
+			}
+		}
 		s.mu.Lock()
 		var run *shareRun
-		if len(s.queue) > 0 {
-			run = s.runs[s.queue[0]]
-			s.queue = s.queue[1:]
-		} else if s.root.Err() != nil {
+		limit := s.tasks.Settings.Value().MaxParallelBatches
+		if limit == 0 || active < limit {
+			for i, id := range s.queue {
+				candidate := s.runs[id]
+				if candidate.ctx.Err() != nil || !time.Now().Before(candidate.readyAt) {
+					run = candidate
+					s.queue = append(s.queue[:i], s.queue[i+1:]...)
+					// 出队即冻结批次，后续提交不能再修改工作器读取的切片。
+					if run.ctx.Err() == nil {
+						run.view.Status = "running"
+					}
+					break
+				}
+			}
+		}
+		if len(s.queue) == 0 && active == 0 && run == nil && s.root.Err() != nil {
 			s.mu.Unlock()
 			return
 		}
 		s.mu.Unlock()
 		if run != nil {
-			if delay := time.Until(run.readyAt); delay > 0 {
-				timer := time.NewTimer(delay)
-				select {
-				case <-run.ctx.Done():
-				case <-timer.C:
-				}
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-			}
-			s.execute(run)
+			active++
+			s.tasks.Logs.Append("STRM", run.view.ID, "后台队列", "INFO", fmt.Sprintf("批次开始执行：%d 个链接，当前并行批次 %d", len(run.requests), active))
+			workers.Add(1)
+			go func(run *shareRun) {
+				defer workers.Done()
+				s.execute(run)
+				completed <- struct{}{}
+			}(run)
 			continue
 		}
+		// 收集中的批次不占执行名额；短定时器用于窗口到期调度。
+		timer := time.NewTimer(100 * time.Millisecond)
 		select {
-		case <-s.root.Done():
-			// 等待可能正在入队的提交释放锁，再处理其已落盘子任务。
+		case <-completed:
+			active--
 		case <-s.wake:
+		case <-timer.C:
 		}
+		timer.Stop()
 	}
 }
 
@@ -672,8 +761,10 @@ func (s *ShareRuns) execute(run *shareRun) {
 	run.finished = time.Now()
 	run.cancel()
 	close(run.done)
-	if s.activeByFingerprint[run.fingerprint] == run.view.ID {
-		delete(s.activeByFingerprint, run.fingerprint)
+	for fingerprint, id := range s.activeByFingerprint {
+		if id == run.view.ID {
+			delete(s.activeByFingerprint, fingerprint)
+		}
 	}
 	// 结束后释放内存中的 Cookie 和生成设置，只保留不含凭据的页面状态。
 	run.ctx, run.cancel, run.requests, run.tasks = nil, nil, nil, nil

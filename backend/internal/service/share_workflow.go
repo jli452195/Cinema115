@@ -44,11 +44,10 @@ type ShareWorkflow struct {
 	Root         string
 	Jobs         ReshareJobWriter
 	PollInterval time.Duration
-	gate         chan struct{}
 }
 
 func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie func() string, settings *AutomationStore, root string, jobs ReshareJobWriter) *ShareWorkflow {
-	return &ShareWorkflow{Client: client, Generator: generator, Cookie: cookie, Settings: settings, Root: root, Jobs: jobs, PollInterval: 2 * time.Second, gate: make(chan struct{}, 1)}
+	return &ShareWorkflow{Client: client, Generator: generator, Cookie: cookie, Settings: settings, Root: root, Jobs: jobs, PollInterval: 2 * time.Second}
 }
 
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
@@ -97,14 +96,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if err != nil {
 		return nil, err
 	}
-	// 整个转分享流程串行化，避免多个请求同时执行 115 的删除接口。
-	reportGeneration(ctx, "queued", "正在等待其他转分享任务完成")
-	select {
-	case w.gate <- struct{}{}:
-		defer func() { <-w.gate }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	// 每批使用独立临时目录，批次并发由公共任务队列管理，接口请求仍保留限速。
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	reportGeneration(ctx, "scanning", "正在读取原分享的完整目录")

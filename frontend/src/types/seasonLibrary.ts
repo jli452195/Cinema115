@@ -24,6 +24,9 @@ export function seasonLibraryProgress(episodes: ScheduledEpisode[], owned: Reado
   const aired = unique.filter(episode => episodeHasAired(episode, today))
   const missing = aired.filter(episode => !owned.has(episode.number)).map(episode => episode.number)
   const collected = aired.length - missing.length
+  // 实际入库数量独立于播出日期；进度条仍只比较 TMDB 已确认播出的分集。
+  const ownedNumbers = [...owned].filter(number => Number.isInteger(number) && number >= 0).sort((a, b) => a - b)
+  const undatedCount = unique.filter(episode => !/^\d{4}-\d{2}-\d{2}$/.test(episode.date)).length
   const missingSet = new Set(missing)
   const segments: { owned: boolean; count: number }[] = []
   // 连续同色合成一段，千集长剧不再为每集创建一个进度条节点。
@@ -33,5 +36,8 @@ export function seasonLibraryProgress(episodes: ScheduledEpisode[], owned: Reado
     else segments.push({ owned, count: 1 })
   }
   const complete = aired.length > 0 && aired.length >= Math.max(total, unique.length) && missing.length === 0
-  return { aired, missing, segments, missingLabel: formatEpisodeRanges(missing), collected, complete, caughtUp: aired.length > 0 && !missing.length && !complete }
+  return { aired, missing, segments, missingLabel: formatEpisodeRanges(missing), collected, complete,
+    ownedCount: ownedNumbers.length, ownedLabel: formatEpisodeRanges(ownedNumbers), undatedCount,
+    extraOwned: ownedNumbers.length - collected,
+    caughtUp: aired.length > 0 && !missing.length && !complete && undatedCount === 0 }
 }
