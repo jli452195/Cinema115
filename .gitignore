@@ -64,6 +64,7 @@ temp/
 !.vscode/settings.json
 *.swp
 *.swo
+.workbuddy/
 
 # 操作系统生成的元数据。
 .DS_Store
