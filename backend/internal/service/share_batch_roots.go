@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"strm115/backend/internal/client/p115"
@@ -19,7 +18,11 @@ func (w *ShareWorkflow) matchSharedRoots(ctx context.Context, item preparedShare
 	for _, original := range item.roots {
 		matched := ""
 		for _, candidate := range roots {
-			if used[candidate.ID] || candidate.Name != original.Name || candidate.Directory != original.Directory || !original.Directory && candidate.Size != original.Size {
+			// 115 的分享快照在“原分享”和“新分享”接口中可能返回不同的
+			// size（有时新分享暂时返回 0）。名称和目录类型才是稳定身份；
+			// 仅当两边都提供明确大小且确实冲突时才排除候选。
+			if used[candidate.ID] || strings.TrimSpace(candidate.Name) != strings.TrimSpace(original.Name) || candidate.Directory != original.Directory ||
+				!original.Directory && original.Size > 0 && candidate.Size > 0 && candidate.Size != original.Size {
 				continue
 			}
 			if original.Directory {
@@ -27,11 +30,12 @@ func (w *ShareWorkflow) matchSharedRoots(ctx context.Context, item preparedShare
 				if err != nil {
 					return nil, err
 				}
-				prefix := "/" + strconv.Quote(original.Name)
 				expected := make([]string, 0)
 				for _, entry := range item.manifest {
-					if strings.HasPrefix(entry, prefix+"/") {
-						expected = append(expected, strings.TrimPrefix(entry, prefix))
+					// 根名称可能带有 115 返回的首尾换行/空格；目录树比较
+					// 只需要比较根目录下的相对路径，不应依赖根名称字节完全一致。
+					if index := strings.Index(entry[1:], "/"); index >= 0 {
+						expected = append(expected, entry[index+1:])
 					}
 				}
 				sort.Strings(expected)
