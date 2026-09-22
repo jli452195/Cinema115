@@ -13,8 +13,15 @@ const dataModule = source => `data:text/javascript;base64,${Buffer.from(source).
 const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
 const libraryURL = dataModule(compile(await readFile(new URL('../src/types/seasonLibrary.ts', import.meta.url), 'utf8')))
 const { seasonLibraryProgress } = await import(libraryURL)
+const namingURL = dataModule(compile(await readFile(new URL('../src/utils/mediaNaming.ts', import.meta.url), 'utf8')))
+const { formatScrapeName } = await import(namingURL)
 const today = '2026-09-20'
 const episodes = (count, date = '') => Array.from({ length: count }, (_, i) => ({ number: i + 1, date }))
+
+test('详情页标题使用 TMDB 刮削命名格式', () => {
+  assert.equal(formatScrapeName('暗杀教室', '2015-01-09', '62110'), '暗杀教室 (2015) {tmdb-62110}')
+  assert.equal(formatScrapeName('无日期剧集', '', 42), '无日期剧集 {tmdb-42}')
+})
 
 test('小猪佩奇：63 集无日期，实际入库 1–21 集，不误报缺集或追平', () => {
   const progress = seasonLibraryProgress(episodes(63), new Set(Array.from({ length: 21 }, (_, i) => i + 1)), 63, today)

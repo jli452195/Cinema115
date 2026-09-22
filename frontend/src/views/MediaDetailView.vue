@@ -16,6 +16,8 @@ import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useTMDBSeasons, type CacheInfo, type TMDBEpisode as Episode } from '../composables/useTMDBSeasons'
 import { episodeHasAired, formatEpisodeRanges, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
+import { copyText } from '../utils/clipboard'
+import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
@@ -47,6 +49,9 @@ const { seasons, schedules, reset: resetSeasons, prime: primeSchedules, loadSeas
 const episodeLimits = ref<Record<number, number>>({})
 const metadataRefreshing = ref(false)
 const metadataError = ref('')
+const namingCopied = ref(false)
+const namingCopyError = ref(false)
+let namingNoticeTimer: number | undefined
 const metadataBusy = computed(() => metadataRefreshing.value || Object.values(schedules.value).some(state => state.loading) || Object.values(seasons.value).some(state => state.loading))
 const today = ref(localDateKey())
 const dateTimer = window.setInterval(() => { today.value = localDateKey() }, 60000)
@@ -74,6 +79,20 @@ const scheduleTimer = window.setInterval(() => {
   if (!document.hidden && props.kind === 'tv' && hasIndexedEpisodes.value && detail.value && detailController && !metadataBusy.value) void primeSchedules(detailController.signal)
 }, 300000)
 const previousTitle = document.title
+const scrapeName = computed(() => formatScrapeName(detail.value?.title || '', detail.value?.date || '', props.tmdbId))
+async function copyScrapeName() {
+  if (!detail.value) return
+  namingCopied.value = false
+  namingCopyError.value = false
+  try {
+    await copyText(scrapeName.value)
+    namingCopied.value = true
+  } catch {
+    namingCopyError.value = true
+  }
+  window.clearTimeout(namingNoticeTimer)
+  namingNoticeTimer = window.setTimeout(() => { namingCopied.value = false; namingCopyError.value = false }, 2400)
+}
 
 async function request(path: string, signal: AbortSignal) {
   const response = await fetch(catalogAPI(`tmdb/${path}`), { signal, headers: { Authorization: `Bearer ${props.token}` } })
@@ -146,12 +165,12 @@ function isEpisodeAvailable(season: number, episode: Episode) {
   return (embyMedia.value?.state === 'present' || embyMedia.value?.state === 'stale') && !!embyEpisodes.value[season]?.has(episode.number)
 }
 // 同一个组件会复用于不同影视，路由变化时取消旧请求并清空季缓存。
-watch(() => [props.kind, props.tmdbId, props.token], () => { void loadDetail() }, { immediate: true })
+watch(() => [props.kind, props.tmdbId, props.token], () => { namingCopied.value = false; namingCopyError.value = false; void loadDetail() }, { immediate: true })
 // 首次打开和入库状态更新后，仅为已有分集的剧集预读播出缓存，不阻塞详情显示。
 watch(() => [detail.value?.id, hasIndexedEpisodes.value], () => {
   if (props.kind === 'tv' && detail.value?.id === Number(props.tmdbId) && hasIndexedEpisodes.value && detailController) void primeSchedules(detailController.signal)
 })
-onBeforeUnmount(() => { cancelRequests(); window.clearInterval(dateTimer); window.clearInterval(scheduleTimer); document.title = previousTitle })
+onBeforeUnmount(() => { cancelRequests(); window.clearInterval(dateTimer); window.clearInterval(scheduleTimer); window.clearTimeout(namingNoticeTimer); document.title = previousTitle })
 // 管理员从追更管理点搜索后打开已有资源浮窗，只消费一次跳转参数。
 watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin.value], () => {
   if (isWebsiteAdmin.value && detail.value?.id === Number(props.tmdbId) && detail.value?.kind === props.kind && route.query.botSearch === '1') {
@@ -194,7 +213,8 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
             </div>
             <div class="min-w-0 py-1">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-600"><span class="rounded-full bg-amber-400 px-3 py-1 text-[11px] font-bold text-slate-950">{{ mediaLabel }}</span><span>{{ detail.date || '日期待定' }}</span><span v-if="detail.genres.length" class="border-l border-slate-300 pl-3 font-semibold text-slate-700">{{ detail.genres.map(item => item.name).join(' / ') }}</span></div>
-              <h1 class="mt-4 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 lg:text-5xl">{{ detail.title }}</h1>
+              <h1 class="mt-4 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
+              <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white/80 px-3 py-2 text-xs text-slate-600 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500">▱</span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 →</span></RouterLink>
               <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-blue-200 bg-white/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-violet-200 bg-white/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
