@@ -15,7 +15,7 @@ import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useTMDBSeasons, type CacheInfo, type TMDBEpisode as Episode } from '../composables/useTMDBSeasons'
-import { episodeHasAired, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
+import { episodeHasAired, formatEpisodeRanges, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
 import { tmdbImageURL } from '../utils/tmdbImage'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
@@ -228,6 +228,8 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
                   <div v-if="seasons[season.number]?.error" role="alert" class="py-5 text-sm text-amber-600">{{ seasons[season.number]?.error }}<button class="ml-3 underline" @click="loadSeason(season.number, true)">重试</button></div>
                   <template v-if="seasons[season.number]?.data">
                     <p v-if="reliableLibrary && seasonProgress[season.number]?.missing.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true"></span><span class="min-w-0 break-words">缺失集数：{{ seasonProgress[season.number]?.missingLabel }}</span></p>
+                    <p v-if="reliableLibrary && seasonProgress[season.number]?.numberingMode && seasonProgress[season.number]?.displayMissing.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true"></span><span class="min-w-0 break-words">中间缺集：{{ seasonProgress[season.number]?.displayMissingLabel }}</span></p>
+                    <p v-if="reliableLibrary && seasonProgress[season.number]?.unlistedOwned.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-300" aria-hidden="true"></span><span class="min-w-0 break-words">额外入库集数：{{ formatEpisodeRanges(seasonProgress[season.number]?.unlistedOwned || []) }}（TMDB 本季未收录）</span></p>
                     <p v-if="seasons[season.number]?.data?.overview" class="py-4 text-sm leading-7 text-slate-500">{{ seasons[season.number]?.data?.overview }}</p>
                     <p v-if="!seasons[season.number]?.data?.episodes.length" class="py-5 text-sm text-slate-400">暂无分集信息</p>
                     <div class="divide-y divide-slate-200/80">

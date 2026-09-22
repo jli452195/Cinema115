@@ -24,8 +24,25 @@ test('小猪佩奇：63 集无日期，实际入库 1–21 集，不误报缺集
   assert.equal(progress.aired.length, 0)
   assert.deepEqual(progress.missing, [])
   assert.deepEqual(progress.segments, [])
+  assert.equal(progress.numberingMode, true)
+  assert.equal(progress.displayTotal, 63)
+  assert.equal(progress.displayCollected, 21)
+  assert.deepEqual(progress.displayMissing, [])
+  assert.deepEqual(progress.displaySegments, [{ state: 'owned', count: 21 }, { state: 'unknown', count: 42 }])
   assert.equal(progress.complete, false)
   assert.equal(progress.caughtUp, false)
+})
+
+test('无日期时只标记已入库范围内部的断档', () => {
+  const owned = new Set([...Array.from({ length: 21 }, (_, i) => i + 1), ...Array.from({ length: 23 }, (_, i) => i + 34)])
+  const progress = seasonLibraryProgress(episodes(63), owned, 63, today)
+  assert.equal(progress.displayCollected, 44)
+  assert.equal(progress.displayMissingLabel, '22-33')
+  assert.deepEqual(progress.displayMissing, Array.from({ length: 12 }, (_, i) => i + 22))
+  assert.deepEqual(progress.displaySegments, [
+    { state: 'owned', count: 21 }, { state: 'missing', count: 12 },
+    { state: 'owned', count: 23 }, { state: 'unknown', count: 7 },
+  ])
 })
 
 test('日期混合时仅统计已播缺集，未来和无日期入库单独计数', () => {
@@ -57,6 +74,12 @@ test('正常已播完和未播完的进度不变，特别篇第 0 集和额外�
   assert.equal(specials.ownedLabel, '0-1、3')
 })
 
+test('TMDB 未收录的入库集不扩展本季范围', () => {
+  const progress = seasonLibraryProgress(episodes(23, '2026-01-01'), new Set([...Array.from({ length: 23 }, (_, i) => i + 1), 24]), 23, today)
+  assert.deepEqual(progress.unlistedOwned, [24])
+  assert.equal(progress.complete, true)
+})
+
 const source = await readFile(new URL('../src/components/SeasonLibraryProgress.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
 const compiled = compile(compileScript(descriptor, { id: 'season-progress-test', inlineTemplate: true }).content)
@@ -64,13 +87,22 @@ const compiled = compile(compileScript(descriptor, { id: 'season-progress-test',
   .replaceAll(/from ["']\.\.\/types\/seasonLibrary["']/g, `from '${libraryURL}'`)
 const { default: SeasonLibraryProgress } = await import(dataModule(compiled))
 
-test('季卡片展示实际入库集数，无日期不渲染进度条', async () => {
+test('季卡片在无日期时只展示紧凑的集号进度条', async () => {
   const progress = seasonLibraryProgress(episodes(63), new Set(Array.from({ length: 21 }, (_, i) => i + 1)), 63, today)
   const html = await renderToString(createSSRApp(SeasonLibraryProgress, { state: 'present', progress, loading: false, error: '', hasUndated: true }))
-  assert.match(html, /已入库 21 集/)
-  assert.match(html, /入库集数：1-21/)
-  assert.match(html, /TMDB 播出日期未提供/)
-  assert.doesNotMatch(html, /role="progressbar"|已追平|整季已入库/)
+  assert.match(html, /已入库 1-21/)
+  assert.match(html, /role="progressbar"/)
+  assert.match(html, /aria-valuemax="63"/)
+  assert.match(html, /其余集数尚未确认/)
+  assert.doesNotMatch(html, /TMDB 播出日期未提供|入库集数：1-21/)
+})
+
+test('季卡片用缺集色标记无日期范围内的中间断档', async () => {
+  const owned = new Set([...Array.from({ length: 21 }, (_, i) => i + 1), ...Array.from({ length: 23 }, (_, i) => i + 34)])
+  const progress = seasonLibraryProgress(episodes(63), owned, 63, today)
+  const html = await renderToString(createSSRApp(SeasonLibraryProgress, { state: 'present', progress, loading: false, error: '', hasUndated: true }))
+  assert.match(html, /缺集 22-33/)
+  assert.match(html, /bg-amber-400/)
 })
 
 test('TMDB 加载失败不隐藏已入库事实，过期索引仍明确标注', async () => {
