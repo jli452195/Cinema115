@@ -103,6 +103,15 @@ WHERE kind=? AND tmdb_id=? AND status='checking' AND cycle=(SELECT cycle FROM fo
 		if _, err = tx.ExecContext(ctx, `UPDATE follow_requests SET status=CASE WHEN ?='completed' THEN 'completed' ELSE 'pending' END,updated_at=?,revision=revision+1 WHERE kind=? AND tmdb_id=? AND ((?='completed' AND status<>'completed') OR (?<>'completed' AND status='completed'))`, p.State, time.Now().UTC().Format(time.RFC3339Nano), job.Kind, job.TMDBID, p.State, p.State); err != nil {
 			return err
 		}
+		// 只在已追平后首次出现缺集时恢复待处理，不覆盖后续人工处理。
+		// 异常检查保留旧汇总，因此故障恢复后仍能识别这一变化。
+		wasCaughtUp := job.Kind == "tv" && old.Aired > 0 && old.Owned >= old.Aired && (old.State == "tracking" || old.State == "caught_up")
+		hasMissing := p.State == "absent" || p.State == "tracking" && p.Owned < p.Aired
+		if wasCaughtUp && hasMissing && !searchClosed {
+			if _, err := tx.ExecContext(ctx, `UPDATE follow_requests SET status='pending',updated_at=?,revision=revision+1 WHERE kind=? AND tmdb_id=? AND status='processing' AND search_closed=0`, time.Now().UTC().Format(time.RFC3339Nano), job.Kind, job.TMDBID); err != nil {
+				return fmt.Errorf("恢复缺集追更待处理状态: %w", err)
+			}
+		}
 		message := ""
 		switch {
 		case p.State == "completed" && old.State != "completed":

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Follow } from '../types/follows'
+import { FOLLOW_STATUS_LABELS, isFollowCaughtUp } from '../types/follows'
 import FollowDialog from './FollowDialog.vue'
 import { tmdbImageURL } from '../utils/tmdbImage'
 
@@ -12,10 +13,11 @@ watch(() => props.item.posterUrl, () => { failedImage.value = false })
 const path = computed(() => `/${props.item.kind}/${props.item.tmdbId}`)
 const label = computed(() => {
   const p = props.item.progress
+  if (props.admin && props.item.effectiveStatus) return FOLLOW_STATUS_LABELS[props.item.effectiveStatus]
+  if (isFollowCaughtUp(props.item)) return '已追平'
   if (p?.state === 'completed' || props.item.status === 'completed') return '已完成'
   if (props.item.status === 'closed') return '已关闭'
   if (p?.error) return '等待复核'
-  if (p?.state === 'caught_up') return '已追平'
   if (p?.state === 'waiting') return '等待播出'
   if (!props.admin && p?.state === 'tracking') return '待追齐'
   return props.item.status === 'processing' ? '处理中' : '待处理'
@@ -26,7 +28,7 @@ const progress = computed(() => {
   const p = props.item.progress
   if (props.item.status === 'closed') return '已停止资源搜索，仍会确认 Emby 入库'
   if (p?.error) return '等待自动复核入库信息'
-  if (props.item.kind === 'tv' && p && p.aired > 0 && p.state !== 'absent') return `已入库 ${p.owned}/${p.aired} 集${p.state === 'caught_up' ? ' · 继续追更' : ''}`
+  if (props.item.kind === 'tv' && p && p.aired > 0 && p.state !== 'absent') return `已入库 ${p.owned}/${p.aired} 集${isFollowCaughtUp(props.item) ? ' · 继续追更' : ''}`
   if (props.item.libraryState === 'present') return props.item.kind === 'movie' ? '已入库' : '有入库记录'
   if (props.item.libraryState === 'absent') return '未入库'
   return '入库状态待确认'

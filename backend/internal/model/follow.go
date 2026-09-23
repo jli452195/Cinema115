@@ -4,16 +4,17 @@ const FollowPageSize = 24
 
 // Follow 只含影视简介及当前用户的申请，不包含其他订阅者信息。
 type Follow struct {
-	Kind         string          `json:"kind"`
-	TMDBID       int             `json:"tmdbId"`
-	Title        string          `json:"title"`
-	PosterURL    string          `json:"posterUrl"`
-	Date         string          `json:"date"`
-	Status       string          `json:"status"`
-	SubscribedAt string          `json:"subscribedAt"`
-	LibraryState string          `json:"libraryState"`
-	Note         string          `json:"note"`
-	Progress     *FollowProgress `json:"progress,omitempty"`
+	Kind            string          `json:"kind"`
+	TMDBID          int             `json:"tmdbId"`
+	Title           string          `json:"title"`
+	PosterURL       string          `json:"posterUrl"`
+	Date            string          `json:"date"`
+	Status          string          `json:"status"`
+	EffectiveStatus string          `json:"effectiveStatus"`
+	SubscribedAt    string          `json:"subscribedAt"`
+	LibraryState    string          `json:"libraryState"`
+	Note            string          `json:"note"`
+	Progress        *FollowProgress `json:"progress,omitempty"`
 }
 
 // 只保存集数汇总，不重复保存 Emby 集索引或缺集区间。

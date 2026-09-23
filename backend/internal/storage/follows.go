@@ -12,16 +12,24 @@ import (
 
 var ErrFollowLimit = errors.New("追更数量已达上限，请先取消不需要的追更")
 
-const effectiveFollowStatus = "CASE WHEN r.search_closed=1 AND r.status<>'completed' THEN 'closed' ELSE r.status END"
-const followColumns = "r.kind,r.tmdb_id,r.title,r.poster_url,r.release_date," + effectiveFollowStatus + ",f.subscribed_at,r.note"
+// 保留原有处理状态（包括关闭投影）供编辑使用；展示分类由本地检查汇总派生。
+const storedFollowStatus = "CASE WHEN r.search_closed=1 AND r.status<>'completed' THEN 'closed' ELSE r.status END"
+const effectiveFollowStatus = `CASE
+ WHEN r.status='completed' THEN 'completed'
+ WHEN r.search_closed=1 THEN 'closed'
+ WHEN r.kind='tv' AND COALESCE(c.error,'')='' AND c.aired>0 AND c.owned>=c.aired
+      AND c.state IN ('tracking','caught_up') THEN 'caught_up'
+ ELSE r.status END`
+const followCheckJoin = " LEFT JOIN follow_checks c ON c.kind=r.kind AND c.tmdb_id=r.tmdb_id "
+const followColumns = "r.kind,r.tmdb_id,r.title,r.poster_url,r.release_date," + storedFollowStatus + "," + effectiveFollowStatus + ",f.subscribed_at,r.note"
 
 func scanFollow(row interface{ Scan(...any) error }) (model.Follow, error) {
 	var f model.Follow
-	err := row.Scan(&f.Kind, &f.TMDBID, &f.Title, &f.PosterURL, &f.Date, &f.Status, &f.SubscribedAt, &f.Note)
+	err := row.Scan(&f.Kind, &f.TMDBID, &f.Title, &f.PosterURL, &f.Date, &f.Status, &f.EffectiveStatus, &f.SubscribedAt, &f.Note)
 	return f, err
 }
 func (s *Store) Follow(ctx context.Context, userID, kind string, id int) (*model.Follow, error) {
-	f, err := scanFollow(s.db.QueryRowContext(ctx, "SELECT "+followColumns+" FROM user_follows f JOIN follow_requests r USING(kind,tmdb_id) WHERE f.user_id=? AND f.kind=? AND f.tmdb_id=? AND f.active=1", userID, kind, id))
+	f, err := scanFollow(s.db.QueryRowContext(ctx, "SELECT "+followColumns+" FROM user_follows f JOIN follow_requests r USING(kind,tmdb_id)"+followCheckJoin+"WHERE f.user_id=? AND f.kind=? AND f.tmdb_id=? AND f.active=1", userID, kind, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -149,7 +157,7 @@ func (s *Store) CancelFollow(ctx context.Context, userID, kind string, id int) e
 	return nil
 }
 func (s *Store) Follows(ctx context.Context, userID, kind, status string, offset int) ([]model.Follow, error) {
-	query := "SELECT " + followColumns + " FROM user_follows f JOIN follow_requests r USING(kind,tmdb_id) WHERE f.user_id=? AND f.active=1"
+	query := "SELECT " + followColumns + " FROM user_follows f JOIN follow_requests r USING(kind,tmdb_id)" + followCheckJoin + "WHERE f.user_id=? AND f.active=1"
 	args := []any{userID}
 	// 先在数据库筛选再分页，已完成记录不会占用追更中的页面名额。
 	if status == "completed" {

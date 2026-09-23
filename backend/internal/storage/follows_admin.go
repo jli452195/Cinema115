@@ -13,22 +13,15 @@ import (
 var ErrFollowConflict = errors.New("申请已被修改或已无人追更，请刷新后重试")
 
 func (s *Store) AdminFollows(ctx context.Context, kind, status, query string, offset int) ([]model.AdminFollow, error) {
-	q := `SELECT r.kind,r.tmdb_id,r.title,r.poster_url,r.release_date,` + effectiveFollowStatus + `,f.subscribed_at,r.note,f.subscribers,r.created_at,r.updated_at,r.revision FROM follow_requests r JOIN (SELECT kind,tmdb_id,COUNT(*) subscribers,MAX(subscribed_at) subscribed_at FROM user_follows WHERE active=1 GROUP BY kind,tmdb_id) f USING(kind,tmdb_id) WHERE 1=1`
+	q := `SELECT ` + followColumns + `,f.subscribers,r.created_at,r.updated_at,r.revision FROM follow_requests r JOIN (SELECT kind,tmdb_id,COUNT(*) subscribers,MAX(subscribed_at) subscribed_at FROM user_follows WHERE active=1 GROUP BY kind,tmdb_id) f USING(kind,tmdb_id)` + followCheckJoin + `WHERE 1=1`
 	args := make([]any, 0, 4)
 	if kind != "" {
 		q += " AND r.kind=?"
 		args = append(args, kind)
 	}
 	if status != "" {
-		switch status {
-		case "closed":
-			q += " AND r.search_closed=1 AND r.status<>'completed'"
-		case "completed":
-			q += " AND r.status='completed'"
-		default:
-			q += " AND r.search_closed=0 AND r.status=?"
-			args = append(args, status)
-		}
+		q += " AND (" + effectiveFollowStatus + ")=?"
+		args = append(args, status)
 	}
 	if query != "" {
 		q += " AND (instr(lower(r.title),lower(?))>0 OR CAST(r.tmdb_id AS TEXT)=?)"
@@ -44,7 +37,7 @@ func (s *Store) AdminFollows(ctx context.Context, kind, status, query string, of
 	items := make([]model.AdminFollow, 0, model.FollowPageSize+1)
 	for rows.Next() {
 		var f model.AdminFollow
-		if err := rows.Scan(&f.Kind, &f.TMDBID, &f.Title, &f.PosterURL, &f.Date, &f.Status, &f.SubscribedAt, &f.Note, &f.SubscriberCount, &f.CreatedAt, &f.UpdatedAt, &f.Revision); err != nil {
+		if err := rows.Scan(&f.Kind, &f.TMDBID, &f.Title, &f.PosterURL, &f.Date, &f.Status, &f.EffectiveStatus, &f.SubscribedAt, &f.Note, &f.SubscriberCount, &f.CreatedAt, &f.UpdatedAt, &f.Revision); err != nil {
 			return nil, fmt.Errorf("读取追更管理记录: %w", err)
 		}
 		items = append(items, f)

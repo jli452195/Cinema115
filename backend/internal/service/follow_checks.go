@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"strm115/backend/internal/client/tmdb"
@@ -63,7 +64,7 @@ func (s *FollowService) EvaluateFollow(ctx context.Context, job model.FollowChec
 		return p, ErrFollowMetadata
 	}
 	seen := make(map[[2]int]bool)
-	regular, allAired := 0, true
+	regular, allAired, unknownDates := 0, true, false
 	today := now.UTC().Format("2006-01-02")
 	for _, season := range detail.Seasons {
 		if season.Number <= 0 {
@@ -88,6 +89,13 @@ func (s *FollowService) EvaluateFollow(ctx context.Context, job model.FollowChec
 				return p, ErrFollowMetadata
 			}
 			seen[key] = true
+			// TMDB may list future episodes before their air dates are known.
+			// An empty date is unknown metadata, not a malformed schedule.
+			if strings.TrimSpace(episode.Date) == "" {
+				unknownDates = true
+				allAired = false
+				continue
+			}
 			date, err := time.Parse("2006-01-02", episode.Date)
 			if err != nil {
 				return p, ErrFollowMetadata
@@ -110,7 +118,7 @@ func (s *FollowService) EvaluateFollow(ctx context.Context, job model.FollowChec
 		p.State = "waiting"
 		return p, nil
 	}
-	if p.Owned == p.Aired {
+	if p.Owned == p.Aired && !unknownDates {
 		p.State = "caught_up"
 		if (detail.Status == "Ended" || detail.Status == "Canceled") && allAired {
 			p.State = "completed"

@@ -124,7 +124,8 @@ func TestFollowAiredEpisodesAndVersions(t *testing.T) {
 		{name: "未来集使完结仍未完成", status: "Ended", state: "present", episodeDate: "2026-09-16", items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1}}, want: "caught_up", owned: 1, aired: 1},
 		{name: "播出后恢复缺集", status: "Returning Series", state: "present", episodeDate: "2026-09-15", items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1}}, want: "tracking", owned: 1, aired: 2},
 		{name: "只有特别篇不算入库", status: "Ended", state: "present", items: []model.EmbyItem{{Type: "Episode", Season: 0, Episode: 1}}, want: "absent"},
-		{name: "日期未知不完成", status: "Ended", state: "present", items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1}}, wantErr: true},
+		{name: "日期未知保持追更", status: "Ended", state: "present", items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1}}, want: "tracking", owned: 1, aired: 1},
+		{name: "日期格式错误", status: "Ended", state: "present", episodeDate: "2026/09/02", items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1}}, wantErr: true},
 		{name: "过期信息不完成", status: "Ended", state: "present", episodeDate: "2026-09-14", stale: true, items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1, EndEpisode: 2}}, wantErr: true},
 		{name: "空季数据不完成", status: "Ended", state: "present", episodeDate: "2026-09-14", empty: true, items: []model.EmbyItem{{Type: "Episode", Season: 1, Episode: 1, EndEpisode: 2}}, wantErr: true},
 	}

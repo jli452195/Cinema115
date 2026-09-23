@@ -7,12 +7,73 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
+
+func TestFollowAdminCaughtUpClassification(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Subscribe(ctx, "alice", model.Follow{Kind: "tv", TMDBID: 282326, Title: "兰香如故"}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := db.AdminFollows(ctx, "tv", "pending", "", 0)
+	if err != nil || len(items) != 1 {
+		t.Fatal(items, err)
+	}
+	if err := db.UpdateFollow(ctx, "tv", 282326, "processing", "资源待确认", items[0].Revision); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := db.DueFollowChecks(ctx, time.Now().Unix())
+	if err != nil || len(jobs) != 1 {
+		t.Fatal(jobs, err)
+	}
+	if err := db.SaveFollowCheck(ctx, jobs[0], model.FollowProgress{State: "tracking", Aired: 28, Owned: 28, CheckedAt: time.Now().Unix()}, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	RegisterFollowAdmin(r.Group("/api/admin"), &service.FollowService{Store: db, TMDB: &followTMDBFixture{}, Library: &followLibraryFixture{}})
+	for _, status := range []string{"caught_up", "pending", "processing"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/follows?status="+status, nil))
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		var response struct {
+			Items   []model.AdminFollow `json:"items"`
+			Counts  map[string]int      `json:"counts"`
+			HasMore bool                `json:"hasMore"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.HasMore || response.Counts["caught_up"] != 1 || response.Counts["processing"] != 0 || response.Counts["pending"] != 0 {
+			t.Fatalf("counts/pagination: %+v", response)
+		}
+		if status != "caught_up" {
+			if len(response.Items) != 0 {
+				t.Fatal("追平不得重复归入待处理或处理中", response.Items)
+			}
+			continue
+		}
+		if len(response.Items) != 1 || response.Items[0].Status != "processing" || response.Items[0].EffectiveStatus != "caught_up" || response.Items[0].Progress == nil || response.Items[0].Progress.State != "tracking" {
+			t.Fatalf("追平展示不应修改原始状态: %+v", response.Items)
+		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/follows/tv/282326", strings.NewReader(`{"status":"caught_up","revision":1}`)))
+	if w.Code != 400 {
+		t.Fatal("禁止手动写入已追平", w.Code, w.Body.String())
+	}
+}
 
 type followSettingsAccountFixture struct{}
 

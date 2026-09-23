@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { FOLLOW_PAGE_SIZE } from '../types/follows'
+import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
 import FollowDialog from '../components/FollowDialog.vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
@@ -29,7 +29,8 @@ const editing = ref<AdminFollow>(), editStatus = ref('pending'), editNote = ref(
 const editError = ref('')
 const lifecycle = new AbortController()
 let reader: AbortController | undefined
-const labels: Record<string, string> = { pending: '待处理', processing: '处理中', closed: '已关闭', completed: '已完成' }
+const labels: Record<string, string> = FOLLOW_STATUS_LABELS
+const statusTabs = ['pending', 'processing', 'caught_up', 'closed', 'completed']
 const kindOptions = [{ value: '', label: '全部类型' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
 const statusOptions = [{ value: 'pending', label: '待处理' }, { value: 'processing', label: '处理中' }, { value: 'closed', label: '已关闭' }]
 async function request(path: string, body?: object, signal = lifecycle.signal) {
@@ -80,7 +81,7 @@ async function saveSettings() {
 function useCurrentAddress() { baseUrl.value = window.location.origin }
 watch(() => [props.token, route.query.kind, route.query.status, route.query.q, route.query.offset], () => {
   kind.value = ['movie', 'tv'].includes(String(route.query.kind)) ? String(route.query.kind) : ''
-  status.value = ['pending', 'processing', 'closed', 'completed'].includes(String(route.query.status)) ? String(route.query.status) : 'pending'
+  status.value = statusTabs.includes(String(route.query.status)) ? String(route.query.status) : 'pending'
   query.value = typeof route.query.q === 'string' ? route.query.q.slice(0, 100) : ''
   const value = Number(route.query.offset || 0); offset.value = Number.isInteger(value) && value >= 0 && value <= 1000000 ? value : 0
   editing.value = undefined; error.value = ''; void load()
@@ -129,7 +130,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         </form>
       </section>
       <nav aria-label="处理状态筛选" class="flex flex-wrap gap-2">
-        <button v-for="tab in ['pending', 'processing', 'closed', 'completed']" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
+        <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-100'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
       </nav>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
         <SelectMenu v-model="kind" :options="kindOptions" label="影视类型" class="w-[7.75rem]" @change="filter()" />
