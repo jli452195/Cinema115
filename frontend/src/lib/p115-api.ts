@@ -3,7 +3,7 @@ export async function p115Request<T>(token: string, path: string, init: RequestI
   const response = await fetch(`/api/admin/p115/${path}`, {
     ...init,
     cache: 'no-store',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) },
   })
   if (response.status === 204) return undefined as T
   const data = await response.json().catch(() => null)

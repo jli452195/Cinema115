@@ -5,6 +5,8 @@ import DirectoryShareButton from '../components/DirectoryShareButton.vue'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import OrganizeCleanupDialog from '../components/OrganizeCleanupDialog.vue'
+import SubtitleImportDialog from '../components/SubtitleImportDialog.vue'
+import type { SubtitleImport } from '../types/subtitleImport'
 import { p115Request } from '../lib/p115-api'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import type { P115Account } from '../types/p115Accounts'
@@ -39,6 +41,8 @@ const startEpisode = ref(1)
 const preview = ref<OrganizeJob>()
 const jobs = ref<OrganizeJob[]>([])
 const cleanupJobs = ref<OrganizeCleanup[]>([])
+const subtitleJobs = ref<SubtitleImport[]>([])
+const subtitleJob = ref<OrganizeJob>()
 const cleanupPlan = ref<OrganizeCleanup>()
 const deleteIDs = ref<string[]>([])
 const sourcePanel = ref<HTMLElement>()
@@ -50,7 +54,7 @@ let historyRevision = 0
 
 const accountReady = computed(() => accounts.value.some(a => a.id === config.value.accountId && a.configured))
 const configured = computed(() => accountReady.value && !!config.value.sourceCID && !!config.value.targetCID)
-const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running') || cleanupJobs.value.some(j => j.status === 'running'))
+const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running') || cleanupJobs.value.some(j => j.status === 'running') || subtitleJobs.value.some(j => j.status === 'running'))
 const cleanupBlocked = computed(() => !historyReady.value || !!historyError.value || active.value || !accountReady.value || !config.value.sourceCID)
 const allPageSelected = computed(() => files.value.length > 0 && files.value.every(file => deleteIDs.value.includes(file.id)))
 const selectedRows = computed(() => rows.value.filter(row => row.selected))
@@ -190,10 +194,11 @@ async function execute() {
 async function refreshHistory() {
   const revision = ++historyRevision
   try {
-    const [data, cleanup] = await Promise.all([request<{ jobs: OrganizeJob[] }>('jobs'), request<{ jobs: OrganizeCleanup[] }>('cleanup')])
+    const [data, cleanup, subtitles] = await Promise.all([request<{ jobs: OrganizeJob[] }>('jobs'), request<{ jobs: OrganizeCleanup[] }>('cleanup'), request<{ jobs: SubtitleImport[] }>('subtitles')])
     if (revision !== historyRevision || lifecycle.signal.aborted) return
     jobs.value = data.jobs
     cleanupJobs.value = cleanup.jobs
+    subtitleJobs.value = subtitles.jobs
     historyError.value = ''; historyReady.value = true
   } catch (reason) { if (!lifecycle.signal.aborted && revision === historyRevision) historyError.value = message(reason) }
 }
@@ -334,6 +339,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
           <summary class="cursor-pointer text-sm font-medium text-slate-800">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
           <p class="mt-3 break-all text-xs text-slate-500">账号：{{ accounts.find(a => a.id === job.config.accountId)?.name || job.config.accountId }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
           <button v-if="job.status !== 'running' && job.status !== 'queued'" class="secondary mt-3" :disabled="!!busy || active" @click="work('查看源目录剩余内容', () => showSource(job))">查看源目录剩余内容</button>
+          <button v-if="job.status !== 'running' && job.status !== 'queued' && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')" class="secondary ml-2 mt-3" :disabled="!!busy || active || !historyReady || !!historyError || !accounts.some(account => account.id === job.config.accountId && account.configured)" @click="subtitleJob = job">补充字幕</button>
           <p v-if="job.message" class="mt-2 text-sm" :class="job.status === 'completed' ? 'text-emerald-700' : 'text-amber-700'">{{ job.message }}</p>
           <div v-if="job.stats?.batchSize" class="mt-3 text-xs leading-6 text-slate-500">
             <p>已完成 {{ job.stats.batchesCompleted }}/{{ job.stats.batchesTotal }} 批 · 每批最多 {{ job.stats.batchSize }} 个文件 · 累计用时 {{ duration(job.stats.elapsedMs) }}</p>
@@ -348,9 +354,18 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
           <div class="mt-3 max-h-96 space-y-2 overflow-y-auto"><div v-for="item in job.items" :key="item.file.id" class="rounded-lg bg-slate-50 p-3 text-xs leading-5"><p class="break-all text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all">→ {{ item.targetPath }}</p><p class="mt-1 font-medium" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ statuses[item.status] || item.status }}{{ item.message ? `：${item.message}` : '' }}</p></div></div>
         </details>
       </section>
+      <section v-if="subtitleJobs.length" class="panel">
+        <h2 class="heading">字幕导入记录</h2>
+        <details v-for="job in subtitleJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 p-3" :open="job.status !== 'completed'">
+          <summary class="cursor-pointer text-sm">{{ job.status === 'running' ? '字幕上传中' : statuses[job.status] || job.status }} · 已上传 {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} · {{ new Date(job.createdAt).toLocaleString() }}</summary>
+          <p class="mt-2 text-xs text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.message }}</p>
+          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.localId" class="break-all rounded-lg bg-slate-50 p-2"><p>{{ item.originalName }} → {{ item.targetPath }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || statuses[item.status] || item.status }}</p></li></ul>
+        </details>
+      </section>
     </div>
     <P115DirectoryDialog v-if="directoryDialog" :token="token" :account-id="config.accountId" :title="directoryDialog === 'source' ? '选择来源目录' : '选择目标目录'" endpoint="manual-organize/files" @close="directoryDialog = ''" @select="selectDirectory" />
     <OrganizeCleanupDialog v-if="cleanupPlan" :plan="cleanupPlan" :account-name="accounts.find(account => account.id === cleanupPlan?.accountId)?.name || cleanupPlan.accountId" :busy="busy === '执行清理'" :blocked="cleanupBlocked" :error="error" @close="cleanupPlan = undefined" @confirm="work('执行清理', executeCleanup)" />
+    <SubtitleImportDialog v-if="subtitleJob" :token="token" :job="subtitleJob" :account-name="accounts.find(account => account.id === subtitleJob?.config.accountId)?.name || subtitleJob.config.accountId" @close="subtitleJob = undefined" @changed="refreshHistory" />
   </ManagementLayout>
 </template>
 

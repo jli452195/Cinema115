@@ -15,7 +15,11 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 	group := admin.Group("/p115/manual-organize")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
+		limit := int64(512 << 10)
+		if c.Request.Method == http.MethodPost && c.FullPath() == "/api/admin/p115/manual-organize/subtitles/import" {
+			limit = service.MaxSubtitleImportBytes + (1 << 20)
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	})
 	fail := func(c *gin.Context, err error) {
@@ -31,6 +35,7 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 	}
+	registerOrganizeSubtitles(group, organizer, fail)
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, organizer.Config()) })
 	group.PUT("/config", func(c *gin.Context) {
 		var input service.OrganizeConfig

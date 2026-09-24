@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:subtitles": "node --test tests/subtitle-import.test.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test:share-runs": "node --test tests/share-strm-run.test.mjs",
@@ -13,6 +14,8 @@
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",
+    "fflate": "^0.8.3",
+    "js-sha256": "^1.0.0",
     "qrcode": "^1.5.4",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"
