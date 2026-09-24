@@ -159,6 +159,15 @@ func main() {
 	cloudClient := p115.NewCloudClient()
 	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient}
 	httpapi.RegisterCloudDownload(admin, accounts, cloudDownloadSettings, cloudDownloads, cloudClient, p115.NewShareClient())
+	organizeStore, err := service.NewSessionStore(filepath.Join(dataDir, "manual-organize.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	manualOrganize, err := service.NewManualOrganize(organizeStore, accounts, p115.NewShareClient(), tmdbService)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterManualOrganize(admin, manualOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -274,6 +283,13 @@ func main() {
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
 	}
 	workerErrors := make(chan error, 8)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := manualOrganize.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

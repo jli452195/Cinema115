@@ -80,6 +80,10 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 		return nil, err
 	}
 	var response struct {
+		CID  json.Number `json:"cid"`
+		Path []struct {
+			CID json.Number `json:"cid"`
+		} `json:"path"`
 		Count json.Number `json:"count"`
 		Data  []struct {
 			FID  json.Number `json:"fid"`
@@ -90,6 +94,14 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return nil, fmt.Errorf("解析网盘目录: %w", err)
+	}
+	// Deleted or invalid directories can be redirected to another directory by
+	// upstream. Never treat that listing as the requested mutation destination.
+	if response.CID != "" && response.CID.String() != cid {
+		return nil, fmt.Errorf("115 返回了其他目录，请重新选择目录")
+	}
+	if len(response.Path) > 0 && response.Path[len(response.Path)-1].CID.String() != cid {
+		return nil, fmt.Errorf("115 目录路径已变化，请重新选择目录")
 	}
 	count, err := strconv.Atoi(response.Count.String())
 	if err != nil || count < 0 {

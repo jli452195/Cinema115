@@ -14,6 +14,7 @@ const categories = {
       { title: '115 助手', description: '管理账号连接、扫码登录与 Cookie 校验，为分享播放提供凭证。', to: '/helper115', icon: 'cloud' },
       { title: '115分享STRM', description: '从分享链接生成 STRM，管理转存再分享、审核重试与任务记录。', to: '/115/share', icon: 'play' },
       { title: '115 云下载', description: '提交磁力或 ED2K 到指定的 115 账号和目录，查看云下载任务进度。', to: '/115/cloud-download', icon: 'download' },
+      { title: '手动整理', description: '选择文件或文件夹，手动匹配 TMDB，校正季集与命名后移动到目标目录。', to: '/115/manual-organize', icon: 'monitor' },
       { title: '115 目录自动分享', description: '监控指定目录，自动创建长期分享、生成 STRM，并将已处理文件移入回收站。', to: '/115/folder-monitor', icon: 'monitor' },
     ],
   },

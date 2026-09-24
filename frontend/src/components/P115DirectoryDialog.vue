@@ -4,7 +4,7 @@ import { p115Request } from '../lib/p115-api'
 
 interface Directory { id: string; name: string }
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string }>(), { title: '选择下载目录' })
+const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; endpoint?: string }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths' })
 const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentCID = ref('0')
@@ -21,9 +21,17 @@ async function loadCID(cid: string) {
   loading.value = true
   error.value = ''
   try {
-    const query = `?accountId=${encodeURIComponent(props.accountId)}&cid=${encodeURIComponent(cid)}`
-    const data = await p115Request<{ directories: Directory[] }>(props.token, `cloud-download/paths${query}`, { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(25000)]) })
-    if (!lifecycle.signal.aborted) directories.value = data.directories
+    const found: Directory[] = []
+    for (let offset = 0; ;) {
+      const query = `?accountId=${encodeURIComponent(props.accountId)}&cid=${encodeURIComponent(cid)}&offset=${offset}`
+      const data = await p115Request<{ directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean }>(props.token, `${props.endpoint}${query}`, { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(45000)]) })
+      found.push(...(data.directories ?? data.files?.filter(file => file.directory) ?? []))
+      const length = data.files?.length ?? 100
+      if (data.files ? offset + length >= (data.count ?? 0) : !data.hasMore) break
+      if (!length || offset >= 20000) throw new Error('目录分页不完整，请刷新重试')
+      offset += length
+    }
+    if (!lifecycle.signal.aborted) directories.value = found
   } catch (reason) {
     if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取 115 目录失败'
   } finally {

@@ -29,6 +29,27 @@ func (e *HTTPError) Error() string {
 
 type requestProgressKey struct{}
 
+type requestTimingKey struct{}
+
+// RequestTiming contains only counts and durations, never URLs or credentials.
+// The observer is invoked synchronously by the caller, once per HTTP attempt
+// (including read retries), or with Requests=0 when canceled while waiting.
+type RequestTiming struct {
+	Requests int
+	Wait     time.Duration
+	HTTP     time.Duration
+}
+
+func WithRequestTiming(ctx context.Context, observe func(RequestTiming)) context.Context {
+	return context.WithValue(ctx, requestTimingKey{}, observe)
+}
+
+func reportRequestTiming(ctx context.Context, value RequestTiming) {
+	if observe, ok := ctx.Value(requestTimingKey{}).(func(RequestTiming)); ok {
+		observe(value)
+	}
+}
+
 func WithRequestProgress(ctx context.Context, report func(string)) context.Context {
 	return context.WithValue(ctx, requestProgressKey{}, report)
 }
@@ -65,18 +86,25 @@ func retryAfter(value string) time.Duration {
 
 // metadataRequest 在客户端内串行限速；仅重试只读 GET，云端写操作不会自动重放。
 func (c *ShareClient) metadataRequest(ctx context.Context, method string, request func() ([]byte, error)) ([]byte, error) {
+	waitStarted := time.Now()
 	select {
 	case c.requestGate <- struct{}{}:
 	case <-ctx.Done():
+		reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
 		return nil, ctx.Err()
 	}
 	defer func() { <-c.requestGate }()
 	for attempt := 0; ; attempt++ {
 		if err := waitRequest(ctx, c.nextRequest); err != nil {
+			reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
 			return nil, err
 		}
+		waited := time.Since(waitStarted)
+		requestStarted := time.Now()
 		data, err := request()
+		reportRequestTiming(ctx, RequestTiming{Requests: 1, Wait: waited, HTTP: time.Since(requestStarted)})
 		c.nextRequest = time.Now().Add(c.RequestInterval)
+		waitStarted = time.Now()
 		var upstream *HTTPError
 		if !errors.As(err, &upstream) || (upstream.Status != 405 && upstream.Status != 429) {
 			return data, err

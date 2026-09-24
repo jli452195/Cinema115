@@ -128,3 +128,38 @@ func TestRetryAfterParsing(t *testing.T) {
 		t.Fatal("Retry-After 日期解析错误", got)
 	}
 }
+
+func TestRequestTimingSeparatesHTTPAndWaitAndCountsRetries(t *testing.T) {
+	client := newTestShareClient()
+	client.ReadRetryDelays = []time.Duration{10 * time.Millisecond}
+	var samples []RequestTiming
+	ctx := WithRequestTiming(context.Background(), func(value RequestTiming) { samples = append(samples, value) })
+	calls := 0
+	_, err := client.metadataRequest(ctx, http.MethodGet, func() ([]byte, error) {
+		calls++
+		time.Sleep(2 * time.Millisecond)
+		if calls == 1 {
+			return nil, &HTTPError{Status: 429}
+		}
+		return []byte("ok"), nil
+	})
+	if err != nil || len(samples) != 2 || calls != 2 {
+		t.Fatal("重试计数不正确", samples, err)
+	}
+	if samples[0].Requests != 1 || samples[1].Requests != 1 || samples[1].Wait < 10*time.Millisecond || samples[0].HTTP < 2*time.Millisecond || samples[1].HTTP < 2*time.Millisecond {
+		t.Fatal("未区分等待与接口耗时", samples)
+	}
+}
+
+func TestRequestTimingCancellationDoesNotCountHTTPAttempt(t *testing.T) {
+	client := newTestShareClient()
+	client.nextRequest = time.Now().Add(time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	var samples []RequestTiming
+	ctx = WithRequestTiming(ctx, func(value RequestTiming) { samples = append(samples, value) })
+	_, err := client.metadataRequest(ctx, http.MethodPost, func() ([]byte, error) { t.Error("冷却期不应发出请求"); return nil, nil })
+	if !errors.Is(err, context.DeadlineExceeded) || len(samples) != 1 || samples[0].Requests != 0 || samples[0].HTTP != 0 || samples[0].Wait <= 0 {
+		t.Fatal("取消等待的统计错误", samples, err)
+	}
+}
