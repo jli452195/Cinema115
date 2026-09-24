@@ -30,6 +30,8 @@ type ShareTaskStore interface {
 type shareTaskRequest struct {
 	DirectoryLogID       string             `json:"directoryLogId,omitempty"`
 	DirectoryFingerprint string             `json:"directoryFingerprint,omitempty"`
+	DirectoryID          string             `json:"directoryId,omitempty"`
+	DirectoryEnded       bool               `json:"directoryEnded,omitempty"`
 	RetrySafe            bool               `json:"retrySafe,omitempty"`
 	Merged               bool               `json:"merged,omitempty"`
 	OwnShareCID          string             `json:"ownShareCID,omitempty"`
@@ -41,7 +43,7 @@ type shareTaskRequest struct {
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
-	DirectoryPrepare func(context.Context, GenerateInput, string) error
+	DirectoryPrepare func(context.Context, GenerateInput, string, string) error
 	RetryWake        chan struct{}
 	Generator        MediaGenerator
 	Store            ShareTaskStore
@@ -109,6 +111,7 @@ func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput,
 	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(generationCookie(ctx, s.Cookie))}
 	req.DirectoryLogID, _ = ctx.Value(directoryGenerationKey{}).(string)
 	req.DirectoryFingerprint, _ = ctx.Value(directoryFingerprintKey{}).(string)
+	req.DirectoryID, _ = ctx.Value(directoryIDKey{}).(string)
 	if err := s.save(ctx, &task, req); err != nil {
 		return nil, shareTaskRequest{}, err
 	}
@@ -149,7 +152,7 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 		cookie := generationCookie(ctx, s.Cookie)
 		ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: s.Logs, task: req.DirectoryLogID, source: "目录分享", redact: func(message string) string { return monitorLogDetail(message, cookie) }})
 		if s.DirectoryPrepare != nil {
-			if err := s.DirectoryPrepare(ctx, req.Input, req.DirectoryFingerprint); err != nil {
+			if err := s.DirectoryPrepare(ctx, req.Input, req.DirectoryFingerprint, req.DirectoryID); err != nil {
 				return s.finish(ctx, task, req, nil, err, time.Since(started))
 			}
 		}
@@ -163,6 +166,9 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 
 // 单条和合并执行共用审核重试判定及最终状态落盘。
 func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shareTaskRequest, result *GenerationResult, err error, elapsed time.Duration) (*GenerationResult, error) {
+	if req.DirectoryLogID != "" && errors.Is(err, ErrNoMedia) {
+		err = fmt.Errorf("%w；当前重试沿用本批规则：视频后缀=%s，最小=%d MB，递归=%t。文件已变动或需要应用新设置时，请结束本次目录任务再重新分享", err, req.Input.VideoExtensions, req.Input.MinSizeMB, req.Input.Recursive)
+	}
 	if result != nil && result.Mode == "direct" {
 		task.Mode, req.Input.Mode, req.Merged = "direct", "direct", false
 	}
@@ -251,6 +257,9 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		var req shareTaskRequest
 		if err := json.Unmarshal(task.Request, &req); err != nil {
 			return fmt.Errorf("解析审核重试请求: %w", err)
+		}
+		if req.DirectoryEnded {
+			continue
 		}
 		cookie := ""
 		if s.AccountCookie != nil {

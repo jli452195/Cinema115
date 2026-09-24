@@ -165,12 +165,12 @@ func TestFolderMonitorSnapshotCancellationPreservesBatch(t *testing.T) {
 	}
 }
 
-func TestFolderMonitorPostCleanupFailureDoesNotClaimFilesRetained(t *testing.T) {
+func TestFolderMonitorCompletesWithoutReadingShareAfterCleanup(t *testing.T) {
 	svc, client, generator, value := newMonitorScheduleTest(t)
 	svc.Logs = &GenerationLogs{}
-	svc.snapshotTimeout, svc.snapshotInterval = 10*time.Millisecond, time.Millisecond
 	client.listHook = func(context.Context, string, int, string) error {
 		if len(client.deleted) > 0 {
+			t.Error("share was read after cleanup")
 			return p115.ErrShareSnapshotPending
 		}
 		return nil
@@ -183,21 +183,73 @@ func TestFolderMonitorPostCleanupFailureDoesNotClaimFilesRetained(t *testing.T) 
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	if value.Stage != "checking_share" || value.CleanupIndex != 1 || generator.calls != 1 {
-		t.Fatal("清理后状态错误")
+	if value.Stage != "completed" || value.TaskPending || value.BatchDirectoryID != "" || generator.calls != 1 || len(client.deleted) != 1 {
+		t.Fatalf("cleanup did not complete task: %+v", value)
 	}
-	warnings := svc.Logs.Snapshot("WARNING")
-	if len(warnings) != 1 || strings.Contains(warnings[0].Message, "已保留") || !strings.Contains(warnings[0].Message, "已完成清理") {
-		t.Fatalf("清理状态日志错误: %+v", warnings)
-	}
-	client.listHook = nil
-	if err := svc.ScanNow(ctx, value.ID); err != nil {
-		t.Fatal(err)
+	if len(svc.Logs.Snapshot("WARNING")) != 0 {
+		t.Fatal("unexpected post-cleanup warning")
 	}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if generator.calls != 1 || len(client.deleted) != 1 {
-		t.Fatal("复核重试重复生成或清理")
+		t.Fatal("completed task was replayed")
+	}
+}
+
+func TestFolderMonitorLegacyPostCleanupResumesLocally(t *testing.T) {
+	for _, stage := range []string{"checking_share", "cleaning"} {
+		t.Run(stage, func(t *testing.T) {
+			svc, client, generator, value := newMonitorScheduleTest(t)
+			ctx := context.Background()
+			value.Stage, value.CleanupIndex = stage, 1
+			value.BatchDirectoryID, value.LogTaskID = "900", "legacy-log"
+			value.ShareURL, value.LastError = "no-longer-readable", "old post-cleanup failure"
+			value.BatchCredentialHash, value.BatchAccountRevision = "old-credentials", 999
+			if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
+				t.Fatal(err)
+			}
+			// No account/client/generator is needed, nor any local media file.
+			restarted := NewFolderMonitorService(svc.Store, nil, nil, nil, svc.Root, nil)
+			if err := restarted.runDue(ctx); err != nil {
+				t.Fatal(err)
+			}
+			completed := loadMonitor(t, restarted, value.ID)
+			if completed.Stage != "completed" || completed.LastError != "" || completed.TaskPending || completed.BatchDirectoryID != "" || completed.LogTaskID != "legacy-log" {
+				t.Fatalf("legacy recovery: %+v", completed)
+			}
+			if generator.calls != 0 || len(client.deleted) != 0 || len(client.shareCalls) != 0 {
+				t.Fatal("recovery replayed cloud work")
+			}
+			if err := restarted.runDue(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.Delete(ctx, value.ID); err != nil {
+				t.Fatal("configuration was not unlocked", err)
+			}
+		})
+	}
+}
+
+func TestFolderMonitorLegacyVerificationWithoutCleanupReceiptStops(t *testing.T) {
+	svc, _, _, value := newMonitorScheduleTest(t)
+	ctx := context.Background()
+	value.Stage, value.BatchDirectoryID, value.LastError = "checking_share", "900", "legacy error"
+	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewFolderMonitorService(svc.Store, nil, nil, nil, svc.Root, nil)
+	if err := restarted.runDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	blocked := loadMonitor(t, restarted, value.ID)
+	if blocked.Stage != "blocked" || blocked.BatchDirectoryID != "900" {
+		t.Fatalf("missing cleanup receipt accepted: %+v", blocked)
+	}
+	if err := restarted.runDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.EndBatch(ctx, value.ID, blocked.LogTaskID); err != nil {
+		t.Fatal(err)
 	}
 }

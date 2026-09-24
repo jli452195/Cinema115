@@ -7,6 +7,7 @@ export interface DirectoryShareConfig {
   stage: string; running: boolean; queued: boolean; hasBatch: boolean
   lastError: string; logTaskID?: string; logAttempt?: number; generationTaskId?: string
   shareUrl?: string; batchDirectoryName?: string; batchMoved?: number; cleanupIndex?: number
+  endedBatches?: { logTaskId: string; directoryId?: string; directoryName?: string; shareUrl?: string; accountId: string; cleaned: boolean; endedAt: string }[]
 }
 
 export const directoryShareActive = (value?: DirectoryShareConfig | null) => !!value && (value.running || value.queued || (value.hasBatch && !value.lastError && !['blocked', 'sharing_legacy'].includes(value.stage)))
@@ -24,6 +25,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
   let timer: ReturnType<typeof setTimeout> | undefined
   let revision = 0
   const active = computed(() => directoryShareActive(monitor.value))
+  const canEnd = computed(() => !!monitor.value && !monitor.value.running && !loading.value && !submitting.value && (monitor.value.hasBatch || monitor.value.queued || ['blocked', 'sharing_legacy'].includes(monitor.value.stage)))
   const bindingChanged = computed(() => !!monitor.value && !monitor.value.hasBatch && monitor.value.accountId !== accountId.value)
   const unavailable = computed(() => {
     if (loading.value || submitting.value) return '正在读取或提交任务'
@@ -40,8 +42,9 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     const value = monitor.value
     if (!value) return '尚未配置分享目录'
     if (value.lastError) return value.lastError
+    if (value.stage === 'ended') return '上次任务已结束，可修改目录或重新发起分享'
     if (value.queued && ['waiting', 'empty', 'completed'].includes(value.stage)) return '已排队，等待后台处理'
-    const stages: Record<string, string> = { waiting: '等待手动分享', empty: '目录为空', moving: '正在搬入临时目录', sharing: '正在创建分享', configuring: '正在配置分享', verifying: '正在等待并校验分享', generating: '公共 STRM 任务处理中，审核等待及重试见分享日志', cleaning: '正在清理临时目录', checking_share: '正在复核分享', completed: '分享及 STRM 生成完成', blocked: '需要人工核对', error: '任务未完成' }
+    const stages: Record<string, string> = { waiting: '等待手动分享', empty: '目录为空', moving: '正在搬入临时目录', sharing: '正在创建分享', configuring: '正在配置分享', verifying: '正在等待并校验分享', generating: '公共 STRM 任务处理中，审核等待及重试见分享日志', cleaning: '正在清理临时目录', checking_share: '正在结束已清理的旧任务', completed: '分享及 STRM 生成完成', blocked: '需要人工核对', error: '任务未完成' }
     return stages[value.stage] || '任务处理中'
   })
 
@@ -82,11 +85,26 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     } finally { submitting.value = false }
   }
 
+  async function endBatch() {
+    if (!canEnd.value || !monitor.value) return
+    if (!window.confirm('结束本次目录任务并解除配置占用？不会删除或移回网盘文件，不会取消分享或删除已生成的 STRM。剩余临时文件需自行整理，原位置保存在历史记录中。')) return
+    submitting.value = true; error.value = ''; notice.value = ''
+    try {
+      await p115Request(token, `folder-monitors/${monitor.value.id}/end`, {
+        method: 'POST', body: JSON.stringify({ taskId: monitor.value.logTaskID || '' }),
+        signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
+      })
+      notice.value = '本次任务已结束，目录配置已解锁。若要重新处理剩余文件，请先移回配置目录。'
+      await refresh()
+    } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '结束任务失败' }
+    finally { submitting.value = false }
+  }
+
   async function poll() {
     if (!submitting.value) await refresh()
     if (!lifecycle.signal.aborted) timer = setTimeout(poll, active.value ? 3000 : 10000)
   }
   onMounted(() => { void poll() })
   onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(timer) })
-  return { monitor, accountId, accountName, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, submit }
+  return { monitor, accountId, accountName, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, submit, canEnd, endBatch }
 }

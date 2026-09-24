@@ -75,6 +75,7 @@ func (s *FolderMonitorService) sharedGeneration(ctx context.Context, value *mode
 		ctx = WithGenerationSource(ctx, "目录分享")
 		ctx = context.WithValue(ctx, directoryGenerationKey{}, value.LogTaskID)
 		ctx = context.WithValue(ctx, directoryFingerprintKey{}, value.BatchFingerprint)
+		ctx = context.WithValue(ctx, directoryIDKey{}, value.BatchDirectoryID)
 		_, _, err = s.Tasks.prepareTaskRecord(ctx, s.generationInput(*value, value.ShareURL), value.GenerationTaskID, "queued")
 		if err != nil {
 			return false, s.failAt(ctx, value, "generating", "提交分享 STRM 任务失败："+err.Error())
@@ -110,16 +111,49 @@ func (s *FolderMonitorService) sharedGeneration(ctx context.Context, value *mode
 
 type directoryGenerationKey struct{}
 type directoryFingerprintKey struct{}
+type directoryIDKey struct{}
+
+var ErrDirectoryBatchChanged = errors.New("本批临时目录或文件已删除、移动或变化，请结束本次任务后重新分享；不会自动清理剩余文件")
 
 // VerifyGeneration belongs to the shared generation task so both snapshot
 // waits and review retries use the task's saved settings and credentials.
-func (s *FolderMonitorService) VerifyGeneration(ctx context.Context, input GenerateInput, fingerprint string) error {
+func (s *FolderMonitorService) VerifyGeneration(ctx context.Context, input GenerateInput, fingerprint, directoryID string) error {
 	share, err := p115.ParseShareURL(input.URL)
 	if err != nil {
 		return err
 	}
 	value := model.FolderMonitor{VideoExtensions: input.VideoExtensions, MinSizeMB: input.MinSizeMB, Recursive: input.Recursive}
 	cookie := generationCookie(ctx, nil)
+	if directoryID == "" {
+		// Resolve older requests through their exact parent checkpoint.
+		logID, _ := ctx.Value(directoryGenerationKey{}).(string)
+		if logID != "" {
+			values, err := s.Store.ListFolderMonitors(ctx)
+			if err != nil {
+				return err
+			}
+			for _, batch := range values {
+				if batch.LogTaskID == logID && batch.BatchDirectoryID != "" {
+					directoryID = batch.BatchDirectoryID
+					if fingerprint == "" {
+						fingerprint = batch.BatchFingerprint
+					}
+					break
+				}
+			}
+		}
+	}
+	// Check the owned directory before treating incomplete share contents as
+	// an eventually consistent snapshot. A real deletion will never converge.
+	if directoryID != "" {
+		current, _, err := s.scanDrive(ctx, directoryID, nil, cookie)
+		if err != nil {
+			return fmt.Errorf("读取本批临时目录失败，请核对目录是否已被删除或移动；可结束任务解除占用: %w", err)
+		}
+		if len(current) == 0 || (fingerprint != "" && !manifestMatchesFingerprint(current, fingerprint)) {
+			return ErrDirectoryBatchChanged
+		}
+	}
 	manifest, mediaID, _, err := s.waitShareSnapshot(ctx, &value, share, cookie)
 	if err != nil {
 		return err
@@ -128,7 +162,7 @@ func (s *FolderMonitorService) VerifyGeneration(ctx context.Context, input Gener
 		return fmt.Errorf("分享快照尚未包含本批完整内容: %w", p115.ErrShareSnapshotPending)
 	}
 	if mediaID == "" {
-		return ErrNoMedia
+		return fmt.Errorf("%w；分享读取 %d 项，没有匹配的视频", ErrNoMedia, len(manifest))
 	}
 	if _, err := s.Client.DownloadURL(ctx, share, mediaID, cookie); err != nil {
 		return fmt.Errorf("验证分享视频可读性: %w", err)

@@ -56,6 +56,7 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"batchDirectoryName": value.BatchDirectoryName, "batchMoveIndex": value.BatchMoveIndex,
 		"lastScanAt": value.LastScanAt, "nextScanAt": value.NextScanAt,
 		"lastError": value.LastError, "updatedAt": value.UpdatedAt,
+		"endedBatches": value.EndedBatches,
 	}
 }
 
@@ -149,6 +150,21 @@ func RegisterFolderMonitors(admin *gin.RouterGroup, monitors *service.FolderMoni
 		c.JSON(status, gin.H{"accepted": accepted, "taskId": value.LogTaskID, "monitorId": value.ID, "generationTaskId": value.GenerationTaskID})
 	}
 	group.POST("/:id/share", trigger)
+	group.POST("/:id/end", func(c *gin.Context) {
+		var input struct {
+			TaskID string `json:"taskId"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请提供当前任务编号"})
+			return
+		}
+		value, err := monitors.EndBatch(c.Request.Context(), c.Param("id"), input.TaskID)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, folderMonitorView(value))
+	})
 	// Preserve the old manual trigger for bookmarks/older clients.
 	group.POST("/:id/scan", trigger)
 	group.GET("/defaults", func(c *gin.Context) {

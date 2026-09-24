@@ -79,4 +79,13 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 	}
 	request(http.MethodPost, "/test/scan", `{}`, http.StatusBadRequest)
 	request(http.MethodPost, "/missing/scan", `{}`, http.StatusNotFound)
+	request(http.MethodPost, "/test/end", `{"taskId":"stale"}`, http.StatusBadRequest)
+	ended := request(http.MethodPost, "/test/end", `{"taskId":"existing-task"}`, http.StatusOK)
+	if ended["stage"] != "ended" || ended["hasBatch"] != false || ended["queued"] != false {
+		t.Fatalf("not released: %v", ended)
+	}
+	if len(ended["endedBatches"].([]any)) != 1 {
+		t.Fatal("lost retained directory history")
+	}
+	request(http.MethodPost, "/test/end", `{"taskId":"existing-task"}`, http.StatusOK)
 }

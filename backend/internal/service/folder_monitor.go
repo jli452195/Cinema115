@@ -187,11 +187,12 @@ func (s *FolderMonitorService) SaveUsingSharedSettings(ctx context.Context, valu
 }
 
 func monitorEditable(stage string) bool {
-	return stage == "waiting" || stage == "empty" || stage == "completed" || stage == "error"
+	return stage == "waiting" || stage == "empty" || stage == "completed" || stage == "error" || stage == "ended"
 }
 
 func copyMonitorRuntime(dst *model.FolderMonitor, src model.FolderMonitor) {
 	dst.LogTaskID, dst.LogAttempt = src.LogTaskID, src.LogAttempt
+	dst.EndedBatches = append([]model.EndedFolderBatch(nil), src.EndedBatches...)
 	dst.GenerationTaskID, dst.GenerationSettings = src.GenerationTaskID, append(json.RawMessage(nil), src.GenerationSettings...)
 	dst.TaskPending, dst.TaskTrigger = src.TaskPending, src.TaskTrigger
 	dst.Stage, dst.ShareURL, dst.SharePassword, dst.ShareReviewing = src.Stage, src.ShareURL, src.SharePassword, src.ShareReviewing
@@ -221,7 +222,7 @@ func (s *FolderMonitorService) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if s.running[id] || value.TaskPending || (!monitorEditable(value.Stage) && value.Stage != "blocked") {
+	if s.running[id] || value.TaskPending || value.BatchDirectoryID != "" || !monitorEditable(value.Stage) {
 		return generationInputError("当前批次正在处理，不能删除监控配置")
 	}
 	return s.Store.DeleteFolderMonitor(ctx, id)
@@ -348,7 +349,7 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 					if value.LastError != "" && !task.UpdatedAt.After(value.UpdatedAt) {
 						continue
 					}
-				case "failed", "review", "cancelled":
+				case "failed", "review", "cancelled", "interrupted":
 					if value.LastError != "" {
 						continue
 					}
@@ -365,7 +366,7 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 		} else if latest, err := s.Store.GetFolderMonitor(ctx, value.ID); err == nil && latest.LogTaskID != "" {
 			level, message := "INFO", "本次执行结束"
 			if latest.Stage == "completed" {
-				message = "整批处理完成：STRM 已生成，临时目录已清理，分享复核通过"
+				message = "整批处理完成：STRM 已生成，临时目录已清理"
 			} else if latest.Stage == "empty" {
 				level, message = "DEBUG", "监控目录为空，本次检查结束"
 			}
@@ -380,7 +381,7 @@ func monitorDue(value model.FolderMonitor, _ time.Time) bool {
 		return false
 	}
 	// Resume submitted work only. Legacy timer fields never discover new batches.
-	return value.TaskPending || (value.BatchDirectoryID != "" && value.LastError == "") || (value.Stage == "generating" && value.GenerationTaskID != "")
+	return value.Stage == "checking_share" || (value.Stage == "cleaning" && value.CleanupIndex >= 1) || value.TaskPending || (value.BatchDirectoryID != "" && value.LastError == "") || (value.Stage == "generating" && value.GenerationTaskID != "")
 }
 
 func (s *FolderMonitorService) runOne(root context.Context, id string) error {
@@ -420,6 +421,11 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 		return generationErrorDetail(errors.New(message), GenerateInput{})
 	}})
 	logGeneration(root, "INFO", fmt.Sprintf("开始目录监控处理：触发=%s，第 %d 次执行，阶段=%s，目录=%s（%s），账号编号=%s", value.TaskTrigger, value.LogAttempt, value.Stage, value.SourcePath, value.SourceCID, value.AccountID))
+	// Old post-cleanup failures only need a local checkpoint update. Do not
+	// require the old account, share or local STRM paths to remain available.
+	if value.Stage == "checking_share" || (value.Stage == "cleaning" && value.CleanupIndex >= 1) {
+		return s.completeCleanedBatch(root, &value)
+	}
 	account, err := s.Accounts.Get(value.AccountID)
 	if err != nil || account.Cookie == "" {
 		return s.fail(root, &value, "所选 115 账号已删除或未登录")
@@ -436,7 +442,7 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 		return s.failAt(ctx, &value, "blocked", "本批次启动后账号凭据已经变化，已停止；请人工核对")
 	}
 	switch value.Stage {
-	case "waiting", "empty", "completed", "error":
+	case "waiting", "empty", "completed", "error", "ended":
 		if value.BatchDirectoryID != "" {
 			return s.failAt(ctx, &value, "blocked", "旧批次保留了临时目录但缺少恢复阶段，请人工核对；不会创建新批次")
 		}
@@ -472,7 +478,7 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 
 func monitorIdleStage(stage string) bool {
 	switch stage {
-	case "waiting", "empty", "completed", "error":
+	case "waiting", "empty", "completed", "error", "ended":
 		return true
 	default:
 		return false
@@ -689,6 +695,9 @@ func (s *FolderMonitorService) moveBatch(ctx context.Context, value *model.Folde
 }
 
 func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMonitor, account P115Account) error {
+	if value.Stage == "checking_share" || (value.Stage == "cleaning" && value.CleanupIndex >= 1) {
+		return s.completeCleanedBatch(ctx, value)
+	}
 	if value.Stage == "sharing" {
 		logGeneration(ctx, "INFO", "开始读取临时目录顶层内容并创建分享")
 		entries, err := s.listRootEntries(ctx, value.BatchDirectoryID, account.Cookie)
@@ -836,32 +845,26 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 				return err
 			}
 		}
-		value.Stage = "checking_share"
-		logGeneration(ctx, "INFO", "临时目录清理完成，开始复核分享")
-		if err := s.checkpoint(ctx, value); err != nil {
-			return err
-		}
-	}
-	if value.Stage == "checking_share" {
-		logGeneration(ctx, "INFO", "正在复核清理后的分享可读性")
-		manifest, _, reviewing, err := s.waitShareSnapshot(ctx, value, share, account.Cookie)
-		if err != nil || (value.BatchFingerprint != "" && !manifestMatchesFingerprint(manifest, value.BatchFingerprint)) {
-			if err == nil {
-				err = errors.New("清理后分享内容发生变化")
-			}
-			return s.failAt(ctx, value, "checking_share", "临时目录已清理，但分享复核失败："+err.Error(), err)
-		}
-		value.ShareReviewing = reviewing
-		value.Stage, value.LastError = "completed", ""
-		value.TaskPending = false
-		value.StableFingerprint, value.StableScans = "", 0
-		value.BatchIDs, value.BatchFingerprint = nil, ""
-		value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex, value.BatchParentCID = "", "", 0, ""
-		value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
-		value.NextScanAt = time.Time{}
-		return s.checkpoint(ctx, value)
+		logGeneration(ctx, "INFO", "临时目录清理完成")
+		return s.completeCleanedBatch(ctx, value)
 	}
 	return nil
+}
+
+// completeCleanedBatch is a local-only terminal transition. A persisted cleanup
+// receipt is required; the old verification stage alone is not proof of cleanup.
+func (s *FolderMonitorService) completeCleanedBatch(ctx context.Context, value *model.FolderMonitor) error {
+	if value.CleanupIndex < 1 {
+		return s.failAt(ctx, value, "blocked", "旧任务缺少清理完成记录，请人工核对；可结束本次任务解除占用")
+	}
+	value.Stage, value.LastError, value.TaskPending = "completed", "", false
+	value.StableFingerprint, value.StableScans = "", 0
+	value.BatchIDs, value.BatchFingerprint = nil, ""
+	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex, value.BatchParentCID = "", "", 0, ""
+	value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
+	value.ShareReviewing = false
+	value.NextScanAt = time.Time{}
+	return s.checkpoint(ctx, value)
 }
 
 func (s *FolderMonitorService) listRootEntries(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {

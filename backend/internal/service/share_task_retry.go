@@ -25,6 +25,9 @@ func (s *ShareTasks) RetryReason(task model.ShareTask) string {
 	if json.Unmarshal(task.Request, &req) != nil || req.Input.URL == "" {
 		return "缺少可恢复的请求信息"
 	}
+	if req.DirectoryEnded {
+		return "目录批次已结束，请从目录分享发起新任务"
+	}
 	if task.Status == "interrupted" && (req.DirectoryLogID == "" || req.Input.Mode != "direct") {
 		return "任务中断，请核对原任务记录"
 	}

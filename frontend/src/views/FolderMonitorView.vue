@@ -101,7 +101,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <button type="button" :disabled="loading || saving || !editable" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 disabled:opacity-40" @click="openSource">选择目录</button>
         </div>
         <p v-if="bindingChanged && !monitor?.hasBatch" class="mt-2 text-xs text-amber-700">分享账号已变化，请重新选择目录并保存。</p>
-        <p v-if="!editable" class="mt-2 text-xs text-slate-500">本批次尚未结束，完成或恢复当前任务后可修改目录。</p>
+        <p v-if="!editable" class="mt-2 text-xs text-slate-500">本批次尚未结束。可以继续处理，或点击“结束本次任务”解除目录占用。</p>
       </div>
       <div class="flex gap-3">
         <button type="button" :disabled="loading || saving || !editable || !sourceCID || bindingChanged" class="rounded-xl border border-slate-200 px-5 py-2.5 text-sm text-slate-700 disabled:opacity-40" @click="save">{{ saving ? '保存中…' : '保存目录' }}</button>
@@ -115,6 +115,14 @@ onBeforeUnmount(() => lifecycle.abort())
       <details class="text-xs leading-6 text-slate-500">
         <summary class="cursor-pointer">目录内容如何处理</summary>
         <p class="mt-2">点击后检查目录，固定本批范围并搬入临时目录，创建长期分享后交给分享 STRM 任务生成。后来进入的内容留待下次点击；成功后临时目录移入回收站，失败时保留供重试。</p>
+      </details>
+      <details v-if="monitor?.endedBatches?.length" class="text-xs leading-6 text-slate-500">
+        <summary class="cursor-pointer">已结束批次的原文件位置（{{ monitor.endedBatches.length }}）</summary>
+        <div v-for="(batch, index) in monitor.endedBatches" :key="index" class="mt-2 rounded-lg bg-slate-50 p-3 break-all">
+          <p>{{ batch.directoryName || '尚未创建临时目录' }} <span v-if="batch.directoryId">· 目录编号 {{ batch.directoryId }}</span></p>
+          <p>账号编号：{{ batch.accountId }} · {{ batch.cleaned ? '结束前已清理' : '结束任务未清理网盘内容，请自行核对' }}</p>
+          <a v-if="batch.shareUrl" :href="batch.shareUrl" target="_blank" rel="noopener noreferrer" class="text-blue-600">查看原分享</a>
+        </div>
       </details>
       <div v-if="monitor?.hasBatch || monitor?.shareUrl" class="space-y-2 rounded-xl bg-slate-50 p-4 text-xs leading-6 text-slate-500">
         <p v-if="monitor.batchDirectoryName" class="break-all">临时目录：{{ monitor.batchDirectoryName }} · 已搬入 {{ monitor.batchMoved || 0 }} 项</p>
