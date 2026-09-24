@@ -6,6 +6,23 @@ export interface OrganizeConfig {
   targetPath: string
 }
 export interface DriveFile { id: string; name: string; directory: boolean; size: number }
+export interface OrganizeCleanupItem extends DriveFile {
+  parentId: string
+  path: string
+  status: string
+  message?: string
+}
+export interface OrganizeCleanup {
+  id: string
+  accountId: string
+  parentId: string
+  parentPath: string
+  mode: 'selected' | 'empty'
+  status: string
+  message?: string
+  createdAt: string
+  items: OrganizeCleanupItem[]
+}
 export interface OrganizeFile extends DriveFile {
   parentId: string
   sourcePath: string

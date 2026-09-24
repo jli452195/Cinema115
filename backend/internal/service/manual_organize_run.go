@@ -30,8 +30,8 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	if a.Revision != job.Revision {
 		return OrganizeJob{}, fmt.Errorf("%w：账号配置已变化，请重新扫描", ErrOrganizeConflict)
 	}
-	if s.pending != nil {
-		return OrganizeJob{}, fmt.Errorf("%w：已有整理任务执行中，请等待完成", ErrOrganizeConflict)
+	if s.pending != nil || s.cleaning {
+		return OrganizeJob{}, fmt.Errorf("%w：已有整理或清理操作执行中，请等待完成", ErrOrganizeConflict)
 	}
 	for _, item := range job.Items {
 		if item.Conflict != "" {

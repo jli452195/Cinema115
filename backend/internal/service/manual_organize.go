@@ -103,9 +103,10 @@ type OrganizeJob struct {
 }
 
 type organizeDocument struct {
-	Version int            `json:"version"`
-	Config  OrganizeConfig `json:"config"`
-	Jobs    []OrganizeJob  `json:"jobs"`
+	Version     int               `json:"version"`
+	Config      OrganizeConfig    `json:"config"`
+	Jobs        []OrganizeJob     `json:"jobs"`
+	CleanupJobs []OrganizeCleanup `json:"cleanupJobs,omitempty"`
 }
 
 type organizePending struct {
@@ -116,16 +117,18 @@ type organizePending struct {
 // Only the live worker keeps a credential snapshot. Neither plans nor history
 // contain credentials. A restart interrupts work instead of rebinding accounts.
 type ManualOrganize struct {
-	mu       sync.Mutex
-	store    accountSecretStore
-	doc      organizeDocument
-	accounts *P115Accounts
-	drive    OrganizeDrive
-	metadata OrganizeMetadata
-	scans    map[string]OrganizeScan
-	plans    map[string]OrganizeJob
-	pending  *organizePending
-	wake     chan struct{}
+	mu           sync.Mutex
+	store        accountSecretStore
+	doc          organizeDocument
+	accounts     *P115Accounts
+	drive        OrganizeDrive
+	metadata     OrganizeMetadata
+	scans        map[string]OrganizeScan
+	plans        map[string]OrganizeJob
+	pending      *organizePending
+	wake         chan struct{}
+	cleanupPlans map[string]OrganizeCleanup
+	cleaning     bool
 }
 
 func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*ManualOrganize, error) {
@@ -139,6 +142,12 @@ func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive O
 		job := &s.doc.Jobs[i]
 		if job.Status == "running" || job.Status == "queued" {
 			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查文件当前位置后重新扫描预览"
+		}
+	}
+	for i := range s.doc.CleanupJobs {
+		if s.doc.CleanupJobs[i].Status == "running" {
+			s.doc.CleanupJobs[i].Status = "interrupted"
+			s.doc.CleanupJobs[i].Message = "服务重启，清理已中断；请检查网盘和回收站后重新预览"
 		}
 	}
 	if err := s.saveLocked(s.doc); err != nil {

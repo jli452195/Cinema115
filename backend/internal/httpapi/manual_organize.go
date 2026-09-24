@@ -110,4 +110,38 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		c.JSON(http.StatusAccepted, result)
 	})
 	group.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": organizer.History()}) })
+	group.GET("/cleanup", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": organizer.CleanupHistory()}) })
+	group.POST("/cleanup/preview", func(c *gin.Context) {
+		var input service.OrganizeCleanupInput
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "清理参数无效"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Minute)
+		defer cancel()
+		result, err := organizer.PreviewCleanup(ctx, input)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
+	group.POST("/cleanup", func(c *gin.Context) {
+		var input struct {
+			AccountID string `json:"accountId"`
+			PreviewID string `json:"previewId"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "清理确认参数无效"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Minute)
+		defer cancel()
+		result, err := organizer.ExecuteCleanup(ctx, input.AccountID, input.PreviewID)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
 }

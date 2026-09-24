@@ -4,11 +4,12 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import DirectoryShareButton from '../components/DirectoryShareButton.vue'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
+import OrganizeCleanupDialog from '../components/OrganizeCleanupDialog.vue'
 import { p115Request } from '../lib/p115-api'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import type { P115Account } from '../types/p115Accounts'
 import type { MediaCardItem } from '../types/media'
-import type { DriveFile, OrganizeConfig, OrganizeFile, OrganizeJob, OrganizeRow } from '../types/manualOrganize'
+import type { DriveFile, OrganizeCleanup, OrganizeConfig, OrganizeFile, OrganizeJob, OrganizeRow } from '../types/manualOrganize'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
@@ -37,6 +38,10 @@ const batchSeason = ref(1)
 const startEpisode = ref(1)
 const preview = ref<OrganizeJob>()
 const jobs = ref<OrganizeJob[]>([])
+const cleanupJobs = ref<OrganizeCleanup[]>([])
+const cleanupPlan = ref<OrganizeCleanup>()
+const deleteIDs = ref<string[]>([])
+const sourcePanel = ref<HTMLElement>()
 const historyError = ref('')
 const historyReady = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -45,7 +50,9 @@ let historyRevision = 0
 
 const accountReady = computed(() => accounts.value.some(a => a.id === config.value.accountId && a.configured))
 const configured = computed(() => accountReady.value && !!config.value.sourceCID && !!config.value.targetCID)
-const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running'))
+const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running') || cleanupJobs.value.some(j => j.status === 'running'))
+const cleanupBlocked = computed(() => !historyReady.value || !!historyError.value || active.value || !accountReady.value || !config.value.sourceCID)
+const allPageSelected = computed(() => files.value.length > 0 && files.value.every(file => deleteIDs.value.includes(file.id)))
 const selectedRows = computed(() => rows.value.filter(row => row.selected))
 const conflicts = computed(() => preview.value?.items.filter(item => item.conflict).length ?? 0)
 const statuses: Record<string, string> = { preview: '待确认', queued: '排队中', running: '整理中', completed: '已完成', partial: '已停止', interrupted: '已中断', pending: '未处理', preparing: '检查目录', renaming: '重命名中', renamed: '已命名', moving: '移动中', done: '完成', blocked: '已停止', uncertain: '结果待核实' }
@@ -67,8 +74,44 @@ async function work(label: string, action: () => Promise<void>) {
 function clearSelection() { scanId.value = ''; rows.value = []; preview.value = undefined; selectedName.value = '' }
 async function save() { await request('config', { method: 'PUT', body: JSON.stringify(config.value) }); notice.value = '账号、来源目录和目标目录已保存。' }
 async function browse(nextOffset = 0) {
+  deleteIDs.value = []; cleanupPlan.value = undefined
   const data = await request<{ files: DriveFile[]; count: number }>(`files?accountId=${encodeURIComponent(config.value.accountId)}&cid=${config.value.sourceCID}&offset=${nextOffset}`)
   files.value = data.files; offset.value = nextOffset; count.value = data.count
+}
+function togglePageSelection() { deleteIDs.value = allPageSelected.value ? [] : files.value.map(file => file.id) }
+async function previewCleanup(mode: 'selected' | 'empty', ids = deleteIDs.value) {
+  cleanupPlan.value = undefined
+  const plan = await request<OrganizeCleanup>('cleanup/preview', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: config.value.sourceCID, parentPath: config.value.sourcePath, mode, ids: mode === 'empty' ? [] : ids }) }, 190000)
+  if (!plan.items.length) { notice.value = '当前目录下没有可清理的空文件夹。'; return }
+  cleanupPlan.value = plan
+}
+async function executeCleanup() {
+  const plan = cleanupPlan.value
+  if (!plan) return
+  clearSelection()
+  try {
+    const result = await request<OrganizeCleanup>('cleanup', { method: 'POST', body: JSON.stringify({ accountId: plan.accountId, previewId: plan.id }) }, 190000)
+    cleanupJobs.value = [result, ...cleanupJobs.value.filter(job => job.id !== result.id)]
+    const done = result.items.filter(item => item.status === 'done').length
+    notice.value = `已移入回收站 ${done} / ${result.items.length} 项。${result.message || ''}`
+  } catch (reason) {
+    throw new Error(`${message(reason)}；请查看清理记录并刷新网盘核实结果。`)
+  } finally {
+    cleanupPlan.value = undefined
+    deleteIDs.value = []
+    await refreshHistory()
+    try { await browse() } catch (reason) { error.value = `文件列表刷新失败：${message(reason)}` }
+  }
+}
+async function showSource(job: OrganizeJob) {
+  if (!accounts.value.some(account => account.id === job.config.accountId && account.configured)) throw new Error('此任务的账号已删除或未登录，请先配置凭据。')
+  applying = true
+  config.value = { ...job.config }
+  applying = false
+  breadcrumbs.value = []; files.value = []; count.value = 0
+  clearSelection()
+  await browse()
+  sourcePanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 function selectDirectory(value: { id: string; path: string }) {
   if (directoryDialog.value === 'source') {
@@ -147,9 +190,10 @@ async function execute() {
 async function refreshHistory() {
   const revision = ++historyRevision
   try {
-    const data = await request<{ jobs: OrganizeJob[] }>('jobs')
+    const [data, cleanup] = await Promise.all([request<{ jobs: OrganizeJob[] }>('jobs'), request<{ jobs: OrganizeCleanup[] }>('cleanup')])
     if (revision !== historyRevision || lifecycle.signal.aborted) return
     jobs.value = data.jobs
+    cleanupJobs.value = cleanup.jobs
     historyError.value = ''; historyReady.value = true
   } catch (reason) { if (!lifecycle.signal.aborted && revision === historyRevision) historyError.value = message(reason) }
 }
@@ -162,7 +206,7 @@ watch(() => config.value.accountId, () => {
   config.value.sourceCID = ''; config.value.sourcePath = ''; config.value.targetCID = ''; config.value.targetPath = ''
   directoryDialog.value = ''; files.value = []; count.value = 0; breadcrumbs.value = []
 }, { flush: 'sync' })
-watch(config, () => { if (!applying) clearSelection() }, { deep: true, flush: 'sync' })
+watch(config, () => { if (!applying) { clearSelection(); deleteIDs.value = []; cleanupPlan.value = undefined } }, { deep: true, flush: 'sync' })
 watch([rows, media, subtitles], () => { preview.value = undefined }, { deep: true, flush: 'sync' })
 watch(kind, () => { results.value = []; searchTotalPages.value = 0 })
 onMounted(() => {
@@ -198,15 +242,25 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         </section>
 
         <div class="grid items-start gap-6 xl:grid-cols-2">
-          <section class="panel">
+          <section ref="sourcePanel" class="panel scroll-mt-6">
             <div class="flex items-center justify-between gap-3"><h2 class="heading">1. 选择文件或文件夹</h2><button class="secondary" :disabled="!config.sourceCID || !accountReady" @click="work('读取文件', () => browse())">刷新</button></div>
             <div class="my-4 flex items-center gap-3"><button v-if="breadcrumbs.length" class="text-sm text-blue-600" @click="work('读取文件', goBack)">返回上级</button><p class="min-w-0 break-all text-xs text-slate-500">{{ config.sourcePath || '先选择来源目录' }}</p></div>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" :checked="allPageSelected" :disabled="cleanupBlocked || !files.length" @change="togglePageSelection" />全选当前页</label>
+              <button class="danger" :disabled="cleanupBlocked || !deleteIDs.length" @click="work('生成删除预览', () => previewCleanup('selected'))">删除所选（{{ deleteIDs.length }}）</button>
+              <button class="secondary" :disabled="cleanupBlocked" @click="work('扫描空目录', () => previewCleanup('empty'))">清理空目录</button>
+            </div>
+            <p class="mb-2 text-xs leading-5 text-slate-500">勾选用于删除；点击目录名进入查看。删除移入 115 回收站，清理前会显示确认列表。</p>
             <div class="max-h-[420px] overflow-y-auto divide-y divide-slate-100">
-              <div v-for="file in files" :key="file.id" class="flex items-center gap-3 py-3">
+              <div v-for="file in files" :key="file.id" class="flex flex-wrap items-center gap-2 py-3">
+                <input v-model="deleteIDs" :value="file.id" type="checkbox" :aria-label="`勾选删除 ${file.name}`" :disabled="cleanupBlocked" class="shrink-0" />
                 <span class="shrink-0 text-xs" :class="file.directory ? 'text-amber-600' : 'text-slate-400'">{{ file.directory ? '目录' : '文件' }}</span>
                 <button v-if="file.directory" class="min-w-0 flex-1 break-all text-left text-sm text-blue-700 hover:underline" @click="work('读取文件', () => enter(file))">{{ file.name }}</button>
                 <span v-else class="min-w-0 flex-1 break-all text-sm text-slate-700">{{ file.name }}</span>
-                <button class="secondary shrink-0" :disabled="!configured || active" @click="work('展开所选条目', () => scan(file))">选择</button>
+                <div class="ml-auto flex w-full shrink-0 justify-end gap-2 sm:w-auto">
+                  <button class="secondary" :disabled="!configured || active" @click="work('展开所选条目', () => scan(file))">选择整理</button>
+                  <button class="danger" :aria-label="`删除 ${file.name}`" :disabled="cleanupBlocked" @click="work('生成删除预览', () => previewCleanup('selected', [file.id]))">删除</button>
+                </div>
               </div>
               <p v-if="!files.length" class="py-12 text-center text-sm text-slate-400">{{ config.sourceCID ? '当前目录没有文件' : '选择目录后显示网盘内容' }}</p>
             </div>
@@ -262,6 +316,16 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         </section>
       </fieldset>
 
+      <section v-if="cleanupJobs.length" class="panel">
+        <h2 class="heading">清理记录</h2>
+        <details v-for="job in cleanupJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 p-3" :open="job.status !== 'completed'">
+          <summary class="cursor-pointer text-sm">{{ job.mode === 'empty' ? '清理空目录' : '删除所选条目' }} · {{ job.status === 'running' ? '清理中' : job.status === 'partial' ? '部分未删除' : statuses[job.status] || job.status }} · {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} <span class="text-xs text-slate-400">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
+          <p class="mt-2 break-all text-xs text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.parentPath }}</p>
+          <p class="mt-2 text-sm text-slate-600">{{ job.message }}</p>
+          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.id" class="break-all rounded-lg bg-slate-50 p-2"><p>{{ item.path }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || (item.status === 'skipped' ? '已跳过' : statuses[item.status] || item.status) }}</p></li></ul>
+        </details>
+      </section>
+
       <section class="panel">
         <div class="flex items-center justify-between"><h2 class="heading">整理记录</h2><button class="secondary" @click="refreshHistory">刷新</button></div>
         <p v-if="historyError" role="alert" class="mt-3 text-sm text-red-600">{{ historyError }}</p>
@@ -269,6 +333,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <details v-for="job in jobs" :key="job.id" class="mt-4 rounded-xl border border-slate-200 p-4" :open="job.status === 'running' || job.status === 'queued'">
           <summary class="cursor-pointer text-sm font-medium text-slate-800">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
           <p class="mt-3 break-all text-xs text-slate-500">账号：{{ accounts.find(a => a.id === job.config.accountId)?.name || job.config.accountId }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
+          <button v-if="job.status !== 'running' && job.status !== 'queued'" class="secondary mt-3" :disabled="!!busy || active" @click="work('查看源目录剩余内容', () => showSource(job))">查看源目录剩余内容</button>
           <p v-if="job.message" class="mt-2 text-sm" :class="job.status === 'completed' ? 'text-emerald-700' : 'text-amber-700'">{{ job.message }}</p>
           <div v-if="job.stats?.batchSize" class="mt-3 text-xs leading-6 text-slate-500">
             <p>已完成 {{ job.stats.batchesCompleted }}/{{ job.stats.batchesTotal }} 批 · 每批最多 {{ job.stats.batchSize }} 个文件 · 累计用时 {{ duration(job.stats.elapsedMs) }}</p>
@@ -285,6 +350,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
       </section>
     </div>
     <P115DirectoryDialog v-if="directoryDialog" :token="token" :account-id="config.accountId" :title="directoryDialog === 'source' ? '选择来源目录' : '选择目标目录'" endpoint="manual-organize/files" @close="directoryDialog = ''" @select="selectDirectory" />
+    <OrganizeCleanupDialog v-if="cleanupPlan" :plan="cleanupPlan" :account-name="accounts.find(account => account.id === cleanupPlan?.accountId)?.name || cleanupPlan.accountId" :busy="busy === '执行清理'" :blocked="cleanupBlocked" :error="error" @close="cleanupPlan = undefined" @confirm="work('执行清理', executeCleanup)" />
   </ManagementLayout>
 </template>
 
@@ -296,5 +362,6 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 .input { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500; }
 .primary { @apply rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40; }
 .secondary { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40; }
+.danger { @apply rounded-lg border border-red-200 bg-white px-3 py-2 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40; }
 button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
 </style>
