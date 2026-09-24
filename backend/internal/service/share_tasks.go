@@ -28,25 +28,28 @@ type ShareTaskStore interface {
 }
 
 type shareTaskRequest struct {
-	RetrySafe   bool               `json:"retrySafe,omitempty"`
-	Merged      bool               `json:"merged,omitempty"`
-	OwnShareCID string             `json:"ownShareCID,omitempty"`
-	OwnRootIDs  []string           `json:"ownRootIDs,omitempty"`
-	Input       GenerateInput      `json:"input"`
-	Settings    AutomationSettings `json:"settings"`
-	CookieHash  string             `json:"cookieHash"`
+	DirectoryLogID       string             `json:"directoryLogId,omitempty"`
+	DirectoryFingerprint string             `json:"directoryFingerprint,omitempty"`
+	RetrySafe            bool               `json:"retrySafe,omitempty"`
+	Merged               bool               `json:"merged,omitempty"`
+	OwnShareCID          string             `json:"ownShareCID,omitempty"`
+	OwnRootIDs           []string           `json:"ownRootIDs,omitempty"`
+	Input                GenerateInput      `json:"input"`
+	Settings             AutomationSettings `json:"settings"`
+	CookieHash           string             `json:"cookieHash"`
 }
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
-	RetryWake     chan struct{}
-	Generator     MediaGenerator
-	Store         ShareTaskStore
-	Settings      *AutomationStore
-	Cookie        func() string
-	AccountCookie func(string) string
-	Notifier      ShareSuccessNotifier
-	Logs          *GenerationLogs
+	DirectoryPrepare func(context.Context, GenerateInput, string) error
+	RetryWake        chan struct{}
+	Generator        MediaGenerator
+	Store            ShareTaskStore
+	Settings         *AutomationStore
+	Cookie           func() string
+	AccountCookie    func(string) string
+	Notifier         ShareSuccessNotifier
+	Logs             *GenerationLogs
 }
 
 func cookieHash(cookie string) string {
@@ -68,6 +71,10 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, shareTaskRequest{}, fmt.Errorf("创建分享任务: %w", err)
 	}
+	return s.prepareTaskRecord(ctx, input, hex.EncodeToString(nonce[:]), "running")
+}
+
+func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput, id, status string) (*model.ShareTask, shareTaskRequest, error) {
 	settings := s.Settings.Value()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
@@ -94,12 +101,14 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 		}
 	}
 	source, _ := ctx.Value(generationSourceKey{}).(string)
-	if source != "Telegram" && source != "订阅" && source != "追更" {
+	if source != "Telegram" && source != "订阅" && source != "追更" && source != "目录分享" {
 		source = "网页"
 	}
 	now := time.Now().UTC()
-	task := model.ShareTask{ID: hex.EncodeToString(nonce[:]), Source: source, SourceURL: link, Mode: mode, Status: "running", CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
+	task := model.ShareTask{ID: id, Source: source, SourceURL: link, Mode: mode, Status: status, CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
 	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(generationCookie(ctx, s.Cookie))}
+	req.DirectoryLogID, _ = ctx.Value(directoryGenerationKey{}).(string)
+	req.DirectoryFingerprint, _ = ctx.Value(directoryFingerprintKey{}).(string)
 	if err := s.save(ctx, &task, req); err != nil {
 		return nil, shareTaskRequest{}, err
 	}
@@ -135,7 +144,20 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 	if len(req.OwnRootIDs) > 0 {
 		ctx = context.WithValue(ctx, generationRootIDsKey{}, req.OwnRootIDs)
 	}
+	if req.DirectoryLogID != "" {
+		ctx = context.WithValue(ctx, directoryGenerationKey{}, req.DirectoryLogID)
+		cookie := generationCookie(ctx, s.Cookie)
+		ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: s.Logs, task: req.DirectoryLogID, source: "目录分享", redact: func(message string) string { return monitorLogDetail(message, cookie) }})
+		if s.DirectoryPrepare != nil {
+			if err := s.DirectoryPrepare(ctx, req.Input, req.DirectoryFingerprint); err != nil {
+				return s.finish(ctx, task, req, nil, err, time.Since(started))
+			}
+		}
+	}
 	result, err := s.Generator.Generate(WithGenerationSource(ctx, task.Source), req.Input)
+	if req.DirectoryLogID != "" && err == nil && (result == nil || result.Written == 0 || result.Failed != 0 || result.MetadataFailed != 0) {
+		err = errors.New("STRM 或元数据未全部生成成功，目录批次保留，重试会复用当前分享")
+	}
 	return s.finish(ctx, task, req, result, err, time.Since(started))
 }
 
@@ -157,7 +179,7 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 	if err != nil {
 		req.RetrySafe = req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)
 		task.Status, task.Error = "failed", generationErrorDetail(err, req.Input)
-		if errors.Is(err, p115.ErrShareUnderReview) {
+		if errors.Is(err, p115.ErrShareUnderReview) || (req.DirectoryLogID != "" && errors.Is(err, p115.ErrShareSnapshotPending)) {
 			task.Status = "review"
 			// 只有只读生成或明确尚未转存的原分享可按原请求重试。
 			safe := task.Mode == "direct" || req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)
@@ -222,6 +244,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 	for _, task := range tasks {
 		before := task
 		manual := task.Status == "retry_queued"
+		initial := task.Status == "queued"
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -235,7 +258,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		} else if s.Cookie != nil {
 			cookie = s.Cookie()
 		}
-		if (!manual && !s.Settings.Value().ReviewRetryEnabled) || (s.AccountCookie != nil && req.Settings.AccountID == "") || strings.TrimSpace(cookie) == "" || req.CookieHash != cookieHash(cookie) {
+		if (!manual && !initial && !s.Settings.Value().ReviewRetryEnabled) || (s.AccountCookie != nil && req.Settings.AccountID == "") || strings.TrimSpace(cookie) == "" || req.CookieHash != cookieHash(cookie) {
 			task.Status, task.NextRetryAt = "cancelled", nil
 			task.Error = "审核重试已关闭，或原任务的 115 账号及登录凭据不可用，本次重试已停止"
 			task.UpdatedAt = time.Now().UTC()
@@ -247,7 +270,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		task.Status, task.NextRetryAt = "running", nil
 		if manual {
 			task.ManualRetries++
-		} else {
+		} else if !initial {
 			task.Retries++
 		}
 		req.RetrySafe = false

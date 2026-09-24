@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -50,7 +49,7 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"minSizeMB": value.MinSizeMB, "recursive": value.Recursive,
 		"enabled": value.Enabled, "intervalSeconds": value.IntervalSeconds,
 		"running": value.Running, "queued": value.TaskPending && !value.Running, "trigger": value.TaskTrigger,
-		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt,
+		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt, "generationTaskId": value.GenerationTaskID,
 		"hasBatch": value.BatchDirectoryID != "",
 		"stage":    value.Stage, "shareUrl": value.ShareURL, "shareReviewing": value.ShareReviewing, "stableScans": value.StableScans,
 		"batchCount": batchCount, "batchMoved": value.BatchMoveIndex, "cleanupIndex": value.CleanupIndex,
@@ -137,22 +136,22 @@ func RegisterFolderMonitors(admin *gin.RouterGroup, monitors *service.FolderMoni
 		}
 		c.JSON(http.StatusOK, folderMonitorView(value))
 	})
-	group.POST("/:id/scan", func(c *gin.Context) {
-		if err := monitors.ScanNow(c.Request.Context(), c.Param("id")); err != nil {
-			if errors.Is(err, service.ErrFolderMonitorBusy) {
-				c.JSON(http.StatusOK, gin.H{"accepted": false, "message": err.Error()})
-				return
-			}
+	trigger := func(c *gin.Context) {
+		value, accepted, err := monitors.Trigger(c.Request.Context(), c.Param("id"))
+		if err != nil {
 			fail(c, err)
 			return
 		}
-		c.JSON(http.StatusAccepted, gin.H{"accepted": true})
-	})
-	group.GET("/defaults", func(c *gin.Context) {
-		seconds, _ := strconv.Atoi(c.DefaultQuery("intervalSeconds", "300"))
-		if seconds < 30 || seconds > 86400 {
-			seconds = 300
+		status := http.StatusAccepted
+		if !accepted {
+			status = http.StatusOK
 		}
-		c.JSON(http.StatusOK, gin.H{"intervalSeconds": seconds, "videoExtensions": service.DefaultVideoExtensions, "metadataExtensions": service.DefaultMetadataExtensions})
+		c.JSON(status, gin.H{"accepted": accepted, "taskId": value.LogTaskID, "monitorId": value.ID, "generationTaskId": value.GenerationTaskID})
+	}
+	group.POST("/:id/share", trigger)
+	// Preserve the old manual trigger for bookmarks/older clients.
+	group.POST("/:id/scan", trigger)
+	group.GET("/defaults", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"videoExtensions": service.DefaultVideoExtensions, "metadataExtensions": service.DefaultMetadataExtensions})
 	})
 }

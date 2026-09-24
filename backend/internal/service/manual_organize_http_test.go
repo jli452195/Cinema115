@@ -17,7 +17,7 @@ import (
 // Exercise the actual form encoding, response parsing, context timing observer
 // and batch reconciler together against a local in-memory drive.
 func TestManualOrganizeBatchHTTPIntegrationAndStats(t *testing.T) {
-	s, drive, id, plan := organizeBatchFixture(t, 25)
+	s, drive, id, plan := organizeBatchFixture(t, 51)
 	var mu sync.Mutex
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

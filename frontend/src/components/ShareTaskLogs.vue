@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{ token: string }>()
 interface Task { id: string; source: string; sourceUrl: string; shareUrl: string; mode: string; status: string; written: number; total: number; error: string; note: string; retries: number; manualRetries: number; canRetry: boolean; retryReason?: string; maxRetries: number; nextRetryAt: string | null; createdAt: string; updatedAt: string; elapsed: number }
-const statuses: Record<string, string> = { success: '成功', failed: '失败', running: '运行中', retry_queued: '等待手动重试', review: '审核中' }
+const statuses: Record<string, string> = { success: '成功', failed: '失败', queued: '等待生成', running: '运行中', retry_queued: '等待手动重试', review: '审核中' }
 // 展示状态合并，内部状态仍用于判断任务能否清理及是否继续重试。
 function statusGroup(value: string) {
   if (value === 'interrupted' || value === 'cancelled') return 'failed'
@@ -29,12 +29,12 @@ let timer: number | undefined
 let debounce: number | undefined
 let controller: AbortController | undefined
 let mounted = true
-const clearable = (task: Task) => !['running', 'waiting_review', 'retry_queued'].includes(task.status)
+const clearable = (task: Task) => !['queued', 'running', 'waiting_review', 'retry_queued'].includes(task.status)
 const selectable = computed(() => entries.value.filter(task => selectionMode.value === 'retry' ? task.canRetry : clearable(task)).map(task => task.id))
 const allSelected = computed(() => selectable.value.length > 0 && selectable.value.every(id => selected.value.includes(id)))
 function toggleAll() { selected.value = allSelected.value ? [] : [...selectable.value] }
 function date(value: string) { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
-function color(value: string) { const group = statusGroup(value); return group === 'success' ? 'bg-emerald-100 text-emerald-700' : ['running', 'retry_queued'].includes(group) ? 'bg-blue-100 text-blue-700' : group === 'review' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600' }
+function color(value: string) { const group = statusGroup(value); return group === 'success' ? 'bg-emerald-100 text-emerald-700' : ['queued', 'running', 'retry_queued'].includes(group) ? 'bg-blue-100 text-blue-700' : group === 'review' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600' }
 async function refresh() {
   controller?.abort()
   const current = new AbortController()
@@ -63,7 +63,7 @@ async function clear() {
     const data = await response.json()
     if (!response.ok) throw new Error(data.error ?? '清理失败')
     if (!mounted) return
-    notice.value = `已清理 ${data.deleted} 条记录。执行中和等待重试的任务继续保留。`
+    notice.value = `已清理 ${data.deleted} 条记录。执行中、等待重试及未完成目录批次关联的任务继续保留。`
     confirmClear.value = ''; selected.value = []; offset.value = 0
     await refresh()
   } catch (e) { if (mounted) error.value = e instanceof Error ? e.message : '清理失败' }

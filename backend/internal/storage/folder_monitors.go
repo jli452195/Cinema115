@@ -17,7 +17,7 @@ func validateFolderMonitor(value model.FolderMonitor) error {
 	if value.Stage == "" {
 		return fmt.Errorf("目录监控缺少状态")
 	}
-	if value.IntervalSeconds < 30 || value.IntervalSeconds > 86400 {
+	if value.IntervalSeconds != 0 && (value.IntervalSeconds < 30 || value.IntervalSeconds > 86400) {
 		return fmt.Errorf("目录监控扫描间隔必须为 30 到 86400 秒")
 	}
 	if value.MinSizeMB < 0 {

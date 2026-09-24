@@ -11,7 +11,7 @@ import (
 
 // DriveMutationBatchLimit is our conservative chunk size, not an upstream limit.
 // Mutations are serialized by metadataRequest and are never automatically retried.
-const DriveMutationBatchLimit = 20
+const DriveMutationBatchLimit = 50
 
 type RenameTarget struct {
 	ID   string

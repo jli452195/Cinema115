@@ -24,7 +24,7 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	value := model.FolderMonitor{ID: "test", Name: "monitor", AccountID: "explicit-account", SourceCID: "100", Stage: "waiting", Enabled: true, IntervalSeconds: 30, UpdatedAt: time.Now().UTC()}
+	value := model.FolderMonitor{ID: "test", Name: "monitor", AccountID: "explicit-account", SourceCID: "100", Stage: "verifying", BatchDirectoryID: "900", LogTaskID: "existing-task", LastError: "snapshot pending", Enabled: true, IntervalSeconds: 30, UpdatedAt: time.Now().UTC()}
 	if err := db.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
 	}
@@ -47,16 +47,17 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 		return result
 	}
 	request(http.MethodPut, "/test/schedule", `{}`, http.StatusBadRequest)
+	request(http.MethodPut, "/test/schedule", `{"enabled":true}`, http.StatusBadRequest)
 	off := request(http.MethodPut, "/test/schedule", `{"enabled":false}`, http.StatusOK)
 	if off["enabled"] != false {
 		t.Fatalf("off=%v", off)
 	}
-	accepted := request(http.MethodPost, "/test/scan", `{}`, http.StatusAccepted)
+	accepted := request(http.MethodPost, "/test/share", `{}`, http.StatusAccepted)
 	if accepted["accepted"] != true {
 		t.Fatalf("accepted=%v", accepted)
 	}
 	duplicate := request(http.MethodPost, "/test/scan", `{}`, http.StatusOK)
-	if duplicate["accepted"] != false {
+	if duplicate["accepted"] != false || duplicate["taskId"] != accepted["taskId"] {
 		t.Fatalf("duplicate=%v", duplicate)
 	}
 	listed := request(http.MethodGet, "", "", http.StatusOK)

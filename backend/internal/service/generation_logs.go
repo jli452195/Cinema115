@@ -125,10 +125,18 @@ func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInpu
 	task := fmt.Sprintf("STRM-%06d", g.Logs.taskSequence)
 	g.Logs.mu.Unlock()
 	source, _ := ctx.Value(generationSourceKey{}).(string)
-	if source != "Telegram" && source != "订阅" && source != "追更" {
+	if source != "Telegram" && source != "订阅" && source != "追更" && source != "目录分享" {
 		source = "网页"
 	}
-	ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: g.Logs, task: task, source: source})
+	if directoryTask, ok := ctx.Value(directoryGenerationKey{}).(string); ok && directoryTask != "" {
+		task = directoryTask
+	}
+	logger := generationLogger{store: g.Logs, task: task, source: source}
+	if _, ok := ctx.Value(directoryGenerationKey{}).(string); ok {
+		cookie := generationCookie(ctx, nil)
+		logger.redact = func(message string) string { return monitorLogDetail(message, cookie) }
+	}
+	ctx = context.WithValue(ctx, generationLogKey{}, logger)
 	ctx = p115.WithRequestProgress(ctx, func(message string) { reportGeneration(ctx, "retrying", message) })
 	started := time.Now()
 	if batch, ok := ctx.Value(generationBatchKey{}).(generationBatch); ok && source == "Telegram" {

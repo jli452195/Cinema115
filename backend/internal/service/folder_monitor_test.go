@@ -25,6 +25,7 @@ type folderMonitorClientFake struct {
 	shareCalls         [][]string
 	configureErr       error
 	onShare            func()
+	onMove             func()
 	listHook           func(context.Context, string, int, string) error
 }
 
@@ -50,10 +51,13 @@ func (f *folderMonitorClientFake) MoveEntries(_ context.Context, ids []string, c
 		remaining = append(remaining, item)
 	}
 	f.drive["100"] = remaining
+	if f.onMove != nil {
+		f.onMove()
+	}
 	return nil
 }
 
-func TestFolderMonitorDrainsInboxWithoutPersistingSourceIDs(t *testing.T) {
+func TestFolderMonitorLegacyMoveFreezesRemainingSourceIDs(t *testing.T) {
 	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "monitor.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +92,7 @@ func TestFolderMonitorDrainsInboxWithoutPersistingSourceIDs(t *testing.T) {
 	if err := svc.moveBatch(context.Background(), &value, account); err != nil {
 		t.Fatal(err)
 	}
-	if value.Stage != "sharing" || value.BatchMoveIndex != 2 || len(value.BatchIDs) != 0 {
+	if value.Stage != "sharing" || value.BatchMoveIndex != 2 || len(value.BatchIDs) != 2 {
 		t.Fatalf("value=%+v", value)
 	}
 	if len(client.moveCalls) != 1 || len(client.moveCalls[0]) != 2 {
@@ -101,8 +105,8 @@ func TestFolderMonitorDrainsInboxWithoutPersistingSourceIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.BatchIDs) != 0 {
-		t.Fatalf("source IDs were persisted: %+v", saved.BatchIDs)
+	if !sameIDs(saved.BatchIDs, []string{"11", "12"}) {
+		t.Fatalf("source IDs were not frozen: %+v", saved.BatchIDs)
 	}
 }
 

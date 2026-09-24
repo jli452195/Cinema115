@@ -107,11 +107,11 @@ func TestFolderMonitorDisabledManualTaskSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestFolderMonitorToggleDuringTaskDoesNotCancelOrReenable(t *testing.T) {
+func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
 	svc, _, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
-	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
-		t.Fatal(err)
+	if _, err := svc.SetSchedule(ctx, value.ID, true); err == nil {
+		t.Fatal("legacy schedule should be rejected")
 	}
 	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -213,43 +213,38 @@ func TestFolderMonitorInterruptedBatchResumesWithScheduleOff(t *testing.T) {
 	}
 }
 
-func TestFolderMonitorScheduleAndIntervalReplan(t *testing.T) {
+func TestFolderMonitorLegacyTimerNeverScans(t *testing.T) {
 	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
-	before := time.Now()
-	updated, err := svc.SetSchedule(ctx, value.ID, true)
-	if err != nil {
+	value.Enabled, value.IntervalSeconds, value.NextScanAt = true, 30, time.Now().Add(-time.Hour)
+	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
-	}
-	if updated.NextScanAt.Before(before.Add(30 * time.Second)) {
-		t.Fatal("enabling must wait one interval")
-	}
-	// A stale form with enabled=false must not undo an independent switch.
-	value.IntervalSeconds = 60
-	updated, err = svc.Save(ctx, value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !updated.Enabled || updated.NextScanAt.Before(before.Add(time.Minute)) {
-		t.Fatalf("save=%+v", updated)
 	}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.createdNames) != 0 {
-		t.Fatal("scheduled too early")
+		t.Fatal("legacy timer started a new batch")
+	}
+	if err := svc.DisableLegacySchedules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	value = loadMonitor(t, svc, value.ID)
+	if value.Enabled || value.IntervalSeconds != 0 || !value.NextScanAt.IsZero() {
+		t.Fatal("legacy timer was not cleared")
+	}
+	if _, err := svc.SetSchedule(ctx, value.ID, true); err == nil {
+		t.Fatal("schedule re-enabled")
 	}
 	client.drive["100"] = nil
-	updated.NextScanAt = before.Add(-time.Hour)
-	if err := svc.Store.SaveFolderMonitor(ctx, updated); err != nil {
+	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	updated = loadMonitor(t, svc, value.ID)
-	if updated.Stage != "empty" || updated.TaskPending || updated.TaskTrigger != "scheduled" || updated.NextScanAt.Before(before.Add(time.Minute)) {
-		t.Fatalf("empty=%+v", updated)
+	if value = loadMonitor(t, svc, value.ID); value.Stage != "empty" || value.TaskPending {
+		t.Fatalf("empty directory: %+v", value)
 	}
 }
 

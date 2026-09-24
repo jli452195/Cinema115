@@ -62,7 +62,7 @@ ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`, status, status, status, stat
 }
 
 func (s *Store) DueShareTasks(ctx context.Context, now time.Time) ([]model.ShareTask, error) {
-	return s.queryShareTasks(ctx, `SELECT record,request FROM share_tasks WHERE status='retry_queued' OR (status='waiting_review' AND next_retry_at<=?) ORDER BY next_retry_at,id LIMIT 20`, now.UTC().Format(databaseTime))
+	return s.queryShareTasks(ctx, `SELECT record,request FROM share_tasks WHERE status IN ('queued','retry_queued') OR (status='waiting_review' AND next_retry_at<=?) ORDER BY next_retry_at,id LIMIT 20`, now.UTC().Format(databaseTime))
 }
 
 func (s *Store) GetShareTask(ctx context.Context, id string) (model.ShareTask, error) {
@@ -96,7 +96,7 @@ func (s *Store) CompareShareTask(ctx context.Context, before, task model.ShareTa
 
 // ClearShareTasks 只清理已结束的展示记录，不删除网盘文件和转存检查点。
 func (s *Store) ClearShareTasks(ctx context.Context, ids []string) (int64, error) {
-	query := `DELETE FROM share_tasks WHERE status NOT IN ('running','waiting_review','retry_queued')`
+	query := `DELETE FROM share_tasks WHERE status NOT IN ('queued','running','waiting_review','retry_queued') AND NOT EXISTS (SELECT 1 FROM p115_folder_monitors m WHERE json_extract(m.record, '$.generationTaskId') = share_tasks.id AND COALESCE(json_extract(m.record, '$.batchDirectoryID'), '') <> '')`
 	args := make([]any, 0, len(ids))
 	if len(ids) > 0 {
 		query += " AND id IN (?"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import DirectoryShareButton from '../components/DirectoryShareButton.vue'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import { p115Request } from '../lib/p115-api'
@@ -37,6 +38,7 @@ const startEpisode = ref(1)
 const preview = ref<OrganizeJob>()
 const jobs = ref<OrganizeJob[]>([])
 const historyError = ref('')
+const historyReady = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
 let applying = false
 let historyRevision = 0
@@ -148,7 +150,7 @@ async function refreshHistory() {
     const data = await request<{ jobs: OrganizeJob[] }>('jobs')
     if (revision !== historyRevision || lifecycle.signal.aborted) return
     jobs.value = data.jobs
-    historyError.value = ''
+    historyError.value = ''; historyReady.value = true
   } catch (reason) { if (!lifecycle.signal.aborted && revision === historyRevision) historyError.value = message(reason) }
 }
 async function poll() {
@@ -177,6 +179,10 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 <template>
   <ManagementLayout title="手动整理" description="选择网盘文件，指定 TMDB 作品，核对命名后移动到目标目录。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <div class="space-y-6">
+      <section class="rounded-2xl border border-slate-200 bg-white p-5">
+        <h2 class="mb-3 font-semibold text-slate-900">整理后的目录分享</h2>
+        <DirectoryShareButton :token="token" :disabled="!historyReady || active || !!busy || !!historyError" :disabled-reason="historyError ? '整理状态读取失败，请等待刷新后再分享' : '请等待当前整理操作完成后再分享'" />
+      </section>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-blue-50 p-4 text-sm text-blue-700">{{ notice }}</p>
       <p v-if="busy" role="status" class="text-sm text-slate-500">{{ busy }}…</p>

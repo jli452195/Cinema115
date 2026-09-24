@@ -206,6 +206,11 @@ func main() {
 	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
 	folderMonitors.SetSharedSettings(automation.Value)
+	folderMonitors.Tasks = shareTasks
+	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
+	if err := folderMonitors.DisableLegacySchedules(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)

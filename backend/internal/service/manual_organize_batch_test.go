@@ -50,15 +50,15 @@ func TestManualOrganizeBatchRequestReduction(t *testing.T) {
 		reads += count
 	}
 	requests := reads + drive.creates + drive.renames + drive.moves
-	if requests != 37 || drive.renames != 5 || drive.moves != 5 || drive.listCalls["20"] != 1 || drive.listCalls["40"] != 1 {
+	if requests != 16 || drive.renames != 2 || drive.moves != 2 || drive.listCalls["20"] != 1 || drive.listCalls["40"] != 1 {
 		t.Fatalf("重复扫描或批量写入退化: requests=%d reads=%v renames=%d moves=%d", requests, drive.listCalls, drive.renames, drive.moves)
 	}
-	if job.Stats.DirectoryRequests != reads || job.Stats.RenameRequests != 5 || job.Stats.MoveRequests != 5 || job.Stats.BatchesCompleted != 5 || job.Stats.Checkpoints != 22 {
+	if job.Stats.DirectoryRequests != reads || job.Stats.RenameRequests != 2 || job.Stats.MoveRequests != 2 || job.Stats.BatchesCompleted != 2 || job.Stats.Checkpoints != 10 {
 		t.Fatalf("批次统计错误: %+v", job.Stats)
 	}
 	for _, batch := range drive.renameBatches {
-		if len(batch) != 20 {
-			t.Fatal("未按 20 个文件发送改名", len(batch))
+		if len(batch) != 50 {
+			t.Fatal("未按 50 个文件发送改名", len(batch))
 		}
 	}
 	t.Logf("100 files, existing folders, single-page directories: 900 -> %d drive requests; 502 -> %d execution checkpoints", requests, job.Stats.Checkpoints)
@@ -68,7 +68,7 @@ func TestManualOrganizeBatchPartialOutcomes(t *testing.T) {
 	for _, phase := range []string{"rename", "move"} {
 		for _, responseError := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/error=%v", phase, responseError), func(t *testing.T) {
-				s, drive, id, plan := organizeBatchFixture(t, 21)
+				s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 				applied := map[string]bool{plan.Items[0].File.ID: true, plan.Items[2].File.ID: true}
 				if phase == "rename" {
 					drive.renameApplyIDs = applied
@@ -82,10 +82,10 @@ func TestManualOrganizeBatchPartialOutcomes(t *testing.T) {
 					}
 				}
 				job := organizeTestRun(t, s, id, plan)
-				if job.Status != "partial" || job.Stats.BatchesCompleted != 0 || drive.renames != 1 || job.Items[20].Status != "pending" {
-					t.Fatal("部分成功后不能处理后续批次", job.Status, drive.renames, job.Items[20])
+				if job.Status != "partial" || job.Stats.BatchesCompleted != 0 || drive.renames != 1 || job.Items[p115.DriveMutationBatchLimit].Status != "pending" {
+					t.Fatal("部分成功后不能处理后续批次", job.Status, drive.renames, job.Items[p115.DriveMutationBatchLimit])
 				}
-				for i := 0; i < 20; i++ {
+				for i := 0; i < p115.DriveMutationBatchLimit; i++ {
 					want := "uncertain"
 					if applied[job.Items[i].File.ID] {
 						want = "renamed"
@@ -113,43 +113,43 @@ func TestManualOrganizeBatchPartialOutcomes(t *testing.T) {
 
 func TestManualOrganizeBatchConflictChecksStayFresh(t *testing.T) {
 	t.Run("collision in last row blocks whole batch", func(t *testing.T) {
-		s, drive, id, plan := organizeBatchFixture(t, 21)
-		drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[19].Name})
+		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
+		drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[p115.DriveMutationBatchLimit-1].Name})
 		job := organizeTestRun(t, s, id, plan)
 		if job.Status != "partial" || drive.renames+drive.moves != 0 {
 			t.Fatal("必须先验证整批，不可改动前面的文件")
 		}
 	})
 	t.Run("destination changes after rename", func(t *testing.T) {
-		s, drive, id, plan := organizeBatchFixture(t, 21)
+		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 		drive.afterRename = func() {
 			drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[2].Name})
 		}
 		job := organizeTestRun(t, s, id, plan)
-		if job.Status != "partial" || drive.moves != 0 || job.Items[0].Status != "renamed" || job.Items[20].Status != "pending" {
+		if job.Status != "partial" || drive.moves != 0 || job.Items[0].Status != "renamed" || job.Items[p115.DriveMutationBatchLimit].Status != "pending" {
 			t.Fatal("移动前未重新检查目标")
 		}
 	})
 	t.Run("destination changes between batches", func(t *testing.T) {
-		s, drive, id, plan := organizeBatchFixture(t, 21)
+		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 		drive.afterMove = func() {
-			drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[20].Name})
+			drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[p115.DriveMutationBatchLimit].Name})
 		}
 		job := organizeTestRun(t, s, id, plan)
-		if job.Status != "partial" || drive.moves != 1 || drive.renames != 1 || job.Items[19].Status != "done" || job.Items[20].Status != "blocked" {
+		if job.Status != "partial" || drive.moves != 1 || drive.renames != 1 || job.Items[p115.DriveMutationBatchLimit-1].Status != "done" || job.Items[p115.DriveMutationBatchLimit].Status != "blocked" {
 			t.Fatal("下一批不得使用旧的目标目录内容")
 		}
 	})
 	t.Run("source changes between batches", func(t *testing.T) {
-		s, drive, id, plan := organizeBatchFixture(t, 21)
+		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 		drive.afterMove = func() { drive.dirs["30"][0].Name = "changed.mkv" }
 		job := organizeTestRun(t, s, id, plan)
-		if job.Status != "partial" || drive.renames != 1 || job.Items[20].Status != "blocked" {
+		if job.Status != "partial" || drive.renames != 1 || job.Items[p115.DriveMutationBatchLimit].Status != "blocked" {
 			t.Fatal("下一批不得使用旧的来源目录内容")
 		}
 	})
 	t.Run("cached directory deleted", func(t *testing.T) {
-		s, drive, id, plan := organizeBatchFixture(t, 21)
+		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 		drive.beforeRead = func(cid string, _ int) error {
 			if drive.moves > 0 && cid == "30" {
 				delete(drive.dirs, "50")
@@ -164,16 +164,16 @@ func TestManualOrganizeBatchConflictChecksStayFresh(t *testing.T) {
 }
 
 func TestManualOrganizeBatchFullPaginationAndExactSelection(t *testing.T) {
-	s, drive, id, plan := organizeBatchFixture(t, 41)
+	s, drive, id, plan := organizeBatchFixture(t, 101)
 	drive.pageSize = 7
 	drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: "900", Name: "new-arrival.mkv", Size: 999})
 	job := organizeTestRun(t, s, id, plan)
-	if job.Status != "completed" || drive.moves != 3 || len(drive.dirs["50"]) != 41 || len(drive.dirs["30"]) != 1 || drive.dirs["30"][0].ID != "900" {
+	if job.Status != "completed" || drive.moves != 3 || len(drive.dirs["50"]) != 101 || len(drive.dirs["30"]) != 1 || drive.dirs["30"][0].ID != "900" {
 		t.Fatal("分页或精确文件范围被破坏")
 	}
 	seen := make(map[string]bool)
 	for _, batch := range drive.moveBatches {
-		if len(batch) > 20 {
+		if len(batch) > p115.DriveMutationBatchLimit {
 			t.Fatal("批次超限")
 		}
 		for _, id := range batch {
@@ -183,7 +183,7 @@ func TestManualOrganizeBatchFullPaginationAndExactSelection(t *testing.T) {
 			seen[id] = true
 		}
 	}
-	if len(seen) != 41 {
+	if len(seen) != 101 {
 		t.Fatal("文件遗漏")
 	}
 }
@@ -212,7 +212,7 @@ func TestManualOrganizeBatchNoUnnecessaryWrites(t *testing.T) {
 }
 
 func TestManualOrganizeBatchReadbackFailureStopsWithoutReplay(t *testing.T) {
-	s, drive, id, plan := organizeBatchFixture(t, 21)
+	s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 	drive.beforeRead = func(cid string, _ int) error {
 		if drive.renames > 0 && cid == "30" {
 			return errors.New("read unavailable")
@@ -223,7 +223,7 @@ func TestManualOrganizeBatchReadbackFailureStopsWithoutReplay(t *testing.T) {
 	if job.Status != "partial" || drive.moves != 0 || drive.renames != 1 {
 		t.Fatal("读回失败不得继续或重试写操作")
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < p115.DriveMutationBatchLimit; i++ {
 		if job.Items[i].Status != "uncertain" {
 			t.Fatal("未确认状态丢失")
 		}
@@ -257,7 +257,7 @@ func (s *organizeCheckpointStore) Save(raw string) error {
 func TestManualOrganizeBatchDurableIntentBeforeWrites(t *testing.T) {
 	for _, stage := range []string{"renaming", "moving"} {
 		t.Run(stage, func(t *testing.T) {
-			s, drive, id, plan := organizeBatchFixture(t, 21)
+			s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 			store := &organizeCheckpointStore{failStage: stage}
 			s.store = store
 			if _, err := s.Start(id, plan.ID); err != nil {

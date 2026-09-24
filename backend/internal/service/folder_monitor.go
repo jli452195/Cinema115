@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -49,7 +50,7 @@ type folderManifestEntry struct {
 }
 
 // FolderMonitorService treats each configured directory as an inbox. A batch
-// drains the inbox into an isolated temporary directory, then shares that
+// freezes the discovered entries into an isolated temporary directory, then shares that
 // directory's direct children. Cookies exist only in the current execution
 // context.
 type FolderMonitorService struct {
@@ -57,6 +58,7 @@ type FolderMonitorService struct {
 	Accounts  *P115Accounts
 	Client    FolderMonitorClient
 	Generator FolderMonitorGenerator
+	Tasks     *ShareTasks
 	Root      string
 	Logs      *GenerationLogs
 	// SharedSettings supplies the explicitly selected transfer account, parent
@@ -103,9 +105,7 @@ func (s *FolderMonitorService) validate(value model.FolderMonitor) error {
 	if _, err := strconv.ParseUint(value.SourceCID, 10, 64); err != nil {
 		return generationInputError("监控目录编号无效")
 	}
-	if value.IntervalSeconds < 30 || value.IntervalSeconds > 86400 {
-		return generationInputError("扫描间隔必须为 30 秒到 24 小时")
-	}
+
 	return ValidateGenerationOptions(s.Root, s.generationInput(value, ""))
 }
 
@@ -116,9 +116,7 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 	value.AccountID = strings.TrimSpace(value.AccountID)
 	value.SourceCID = strings.TrimSpace(value.SourceCID)
 	value.SourcePath = strings.TrimSpace(value.SourcePath)
-	if value.IntervalSeconds == 0 {
-		value.IntervalSeconds = 300
-	}
+	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
 	if strings.TrimSpace(value.VideoExtensions) == "" {
 		value.VideoExtensions = DefaultVideoExtensions
 	}
@@ -135,7 +133,7 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 			return model.FolderMonitor{}, fmt.Errorf("创建目录监控编号: %w", err)
 		}
 		value.ID = hex.EncodeToString(nonce[:])
-		value.Stage, value.NextScanAt = "waiting", now.Add(time.Duration(value.IntervalSeconds)*time.Second)
+		value.Stage = "waiting"
 	} else {
 		existing, err := s.Store.GetFolderMonitor(ctx, value.ID)
 		if err != nil {
@@ -145,11 +143,7 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 			return model.FolderMonitor{}, generationInputError("当前批次正在处理，不能修改监控配置")
 		}
 		copyMonitorRuntime(&value, existing)
-		// Scheduling has its own endpoint; a stale settings form must not undo it.
-		value.Enabled = existing.Enabled
-		if value.IntervalSeconds != existing.IntervalSeconds {
-			value.NextScanAt = now.Add(time.Duration(value.IntervalSeconds) * time.Second)
-		}
+		value.Enabled, value.NextScanAt = false, time.Time{}
 	}
 	value.UpdatedAt = now
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
@@ -178,8 +172,11 @@ func (s *FolderMonitorService) SaveUsingSharedSettings(ctx context.Context, valu
 			return model.FolderMonitor{}, generationInputError("已存在收件箱监控，请直接修改现有配置")
 		}
 	}
+	if strings.TrimSpace(value.AccountID) != strings.TrimSpace(settings.AccountID) {
+		return model.FolderMonitor{}, generationInputError("分享 STRM 账号已变化，请使用当前账号重新选择目录")
+	}
 	value.AccountID = strings.TrimSpace(settings.AccountID)
-	value.Name = "收件箱监控"
+	value.Name = "目录分享"
 	value.BaseURL = settings.Generation.BaseURL
 	value.OutputDir = settings.Generation.OutputDir
 	value.VideoExtensions = settings.Generation.VideoExtensions
@@ -195,6 +192,7 @@ func monitorEditable(stage string) bool {
 
 func copyMonitorRuntime(dst *model.FolderMonitor, src model.FolderMonitor) {
 	dst.LogTaskID, dst.LogAttempt = src.LogTaskID, src.LogAttempt
+	dst.GenerationTaskID, dst.GenerationSettings = src.GenerationTaskID, append(json.RawMessage(nil), src.GenerationSettings...)
 	dst.TaskPending, dst.TaskTrigger = src.TaskPending, src.TaskTrigger
 	dst.Stage, dst.ShareURL, dst.SharePassword, dst.ShareReviewing = src.Stage, src.ShareURL, src.SharePassword, src.ShareReviewing
 	dst.BatchIDs, dst.BatchFingerprint = append([]string(nil), src.BatchIDs...), src.BatchFingerprint
@@ -211,6 +209,7 @@ func (s *FolderMonitorService) List(ctx context.Context) ([]model.FolderMonitor,
 	values, err := s.Store.ListFolderMonitors(ctx)
 	for i := range values {
 		values[i].Running = s.running[values[i].ID]
+		values[i].Enabled, values[i].IntervalSeconds, values[i].NextScanAt = false, 0, time.Time{}
 	}
 	return values, err
 }
@@ -230,7 +229,7 @@ func (s *FolderMonitorService) Delete(ctx context.Context, id string) error {
 
 var ErrFolderMonitorBusy = errors.New("当前任务已排队或正在处理")
 
-// SetSchedule only controls future timed checks; it never cancels a batch.
+// SetSchedule only accepts disabling legacy schedules; submitted work is preserved.
 func (s *FolderMonitorService) SetSchedule(ctx context.Context, id string, enabled bool) (model.FolderMonitor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -238,12 +237,10 @@ func (s *FolderMonitorService) SetSchedule(ctx context.Context, id string, enabl
 	if err != nil {
 		return model.FolderMonitor{}, err
 	}
-	if enabled && !value.Enabled {
-		if err := s.validate(value); err != nil {
-			return model.FolderMonitor{}, err
-		}
-		value.NextScanAt = time.Now().UTC().Add(time.Duration(value.IntervalSeconds) * time.Second)
+	if enabled {
+		return model.FolderMonitor{}, generationInputError("目录分享已改为手动触发，不再支持定时扫描")
 	}
+	value.NextScanAt, value.IntervalSeconds = time.Time{}, 0
 	value.Enabled, value.UpdatedAt = enabled, time.Now().UTC()
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
 		return model.FolderMonitor{}, err
@@ -268,7 +265,37 @@ func (s *FolderMonitorService) ScanNow(ctx context.Context, id string) error {
 	}
 	if value.BatchDirectoryID == "" && monitorIdleStage(value.Stage) {
 		value.Stage, value.LastError = "waiting", ""
+		if err := s.pinSettings(&value); err != nil {
+			return err
+		}
+		value.GenerationTaskID = ""
+		var nonce [12]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return fmt.Errorf("创建目录任务编号: %w", err)
+		}
+		value.LogTaskID, value.LogAttempt = "STRM-MON-"+hex.EncodeToString(nonce[:]), 0
 	}
+	if value.GenerationTaskID != "" && value.Stage == "generating" && s.Tasks != nil {
+		task, err := s.Tasks.Store.GetShareTask(ctx, value.GenerationTaskID)
+		if err != nil {
+			return err
+		}
+		switch task.Status {
+		case "queued", "running", "retry_queued", "waiting_review":
+			return ErrFolderMonitorBusy
+		case "success": // Only the remaining directory verification/cleanup needs retrying.
+		default:
+			results, err := s.Tasks.RetryTasks(ctx, []string{value.GenerationTaskID})
+			if err != nil {
+				return err
+			}
+			if len(results) != 1 || !results[0].Accepted {
+				return generationInputError("分享任务暂不能重试，请查看分享任务日志")
+			}
+		}
+	}
+	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
+	value.LogAttempt++
 	value.TaskPending, value.TaskTrigger, value.LastError = true, "manual", ""
 	value.UpdatedAt = time.Now().UTC()
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
@@ -311,6 +338,23 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 		if !monitorDue(value, now) {
 			continue
 		}
+		if value.Stage == "generating" && value.GenerationTaskID != "" && s.Tasks != nil {
+			task, taskErr := s.Tasks.Store.GetShareTask(ctx, value.GenerationTaskID)
+			if taskErr == nil {
+				switch task.Status {
+				case "queued", "running", "retry_queued", "waiting_review":
+					continue
+				case "success":
+					if value.LastError != "" && !task.UpdatedAt.After(value.UpdatedAt) {
+						continue
+					}
+				case "failed", "review", "cancelled":
+					if value.LastError != "" {
+						continue
+					}
+				}
+			}
+		}
 		started := time.Now()
 		if err := s.runOne(ctx, value.ID); err != nil {
 			// 调度边界统一记录失败；下层只返回错误，避免重复刷屏。
@@ -331,14 +375,12 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 	return nil
 }
 
-func monitorDue(value model.FolderMonitor, now time.Time) bool {
+func monitorDue(value model.FolderMonitor, _ time.Time) bool {
 	if value.Stage == "blocked" {
 		return false
 	}
-	// One-shot requests and interrupted, nonfailed batches survive disabling
-	// the timer and service restarts. Failed batches retry only on a new trigger.
-	return value.TaskPending || (value.BatchDirectoryID != "" && value.LastError == "") ||
-		(value.Enabled && !value.NextScanAt.After(now))
+	// Resume submitted work only. Legacy timer fields never discover new batches.
+	return value.TaskPending || (value.BatchDirectoryID != "" && value.LastError == "") || (value.Stage == "generating" && value.GenerationTaskID != "")
 }
 
 func (s *FolderMonitorService) runOne(root context.Context, id string) error {
@@ -353,9 +395,9 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 		return err
 	}
 	if !value.TaskPending && (value.BatchDirectoryID == "" || value.LastError != "") {
-		value.TaskTrigger = "scheduled"
+		value.TaskTrigger = "manual"
 	}
-	if value.LogTaskID == "" || value.BatchDirectoryID == "" && (value.Stage == "waiting" || value.Stage == "empty" || value.Stage == "completed") {
+	if value.LogTaskID == "" {
 		var nonce [12]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			s.mu.Unlock()
@@ -363,7 +405,9 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 		}
 		value.LogTaskID, value.LogAttempt = "STRM-MON-"+hex.EncodeToString(nonce[:]), 0
 	}
-	value.LogAttempt++
+	if value.LogAttempt == 0 {
+		value.LogAttempt = 1
+	}
 	value.TaskPending, value.LastError, value.UpdatedAt = true, "", time.Now().UTC()
 	if err := s.Store.SaveFolderMonitor(root, value); err != nil {
 		s.mu.Unlock()
@@ -439,16 +483,13 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 	logGeneration(ctx, "INFO", "开始检查监控目录")
 	// Capture shared feature settings once, before any remote work. Never
 	// silently switch to another account when the stored binding is invalid.
-	settings := s.sharedSettings(value)
-	if settings.AccountID == "" || settings.AccountID != value.AccountID {
-		return s.fail(ctx, value, "请在 115 分享设置中确认账号，并重新保存目录自动分享配置")
+	if len(value.GenerationSettings) == 0 {
+		if err := s.pinSettings(value); err != nil {
+			return s.fail(ctx, value, err.Error())
+		}
 	}
-	if s.SharedSettings != nil {
-		value.BaseURL, value.OutputDir = settings.Generation.BaseURL, settings.Generation.OutputDir
-		value.VideoExtensions, value.MetadataExtensions = settings.Generation.VideoExtensions, settings.Generation.MetadataExtensions
-		value.MinSizeMB, value.Recursive = settings.Generation.MinSizeMB, settings.Generation.Recursive
-	}
-	if err := s.validate(*value); err != nil {
+	settings, err := s.batchSettings(value)
+	if err != nil {
 		return s.fail(ctx, value, err.Error())
 	}
 	roots, err := s.listRootEntries(ctx, value.SourceCID, account.Cookie)
@@ -456,11 +497,34 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 		return s.fail(ctx, value, "扫描监控目录失败："+err.Error())
 	}
 	now := time.Now().UTC()
-	value.LastScanAt, value.NextScanAt = now, now.Add(time.Duration(value.IntervalSeconds)*time.Second)
+	value.LastScanAt, value.NextScanAt = now, time.Time{}
 	if len(roots) == 0 {
 		value.TaskPending = false
 		value.Stage, value.StableFingerprint, value.StableScans, value.LastError = "empty", "", 0, ""
 		return s.checkpoint(ctx, value)
+	}
+	if len(roots) > 1000 {
+		return s.fail(ctx, value, "单次分享最多支持 1000 个顶层条目，请缩小目录范围")
+	}
+	ids := make([]string, 0, len(roots))
+	for _, entry := range roots {
+		ids = append(ids, entry.ID)
+	}
+	manifest, foundIDs, err := s.scanDrive(ctx, value.SourceCID, ids, account.Cookie)
+	if err != nil {
+		return s.fail(ctx, value, "读取目录内容失败："+err.Error())
+	}
+	if len(foundIDs) != len(ids) {
+		return s.fail(ctx, value, "读取期间来源条目发生变化，请重新提交；源文件未移动")
+	}
+	media := 0
+	for _, entry := range manifest {
+		if !entry.Directory && monitorVideoFile(*value, entry.Path) && entry.Size >= value.MinSizeMB*(1<<20) && (value.Recursive || !strings.Contains(entry.Path, "/")) {
+			media++
+		}
+	}
+	if media == 0 {
+		return s.fail(ctx, value, "目录中没有符合生成规则的视频，请检查视频后缀、最小大小及递归设置；源文件未移动")
 	}
 	password, err := newSharePassword(settings.FixedSharePassword)
 	if err != nil {
@@ -479,9 +543,11 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 	if err != nil {
 		return s.fail(ctx, value, "创建监控批次目录失败："+err.Error())
 	}
-	// Root IDs are intentionally not persisted. The temporary directory is the
-	// recovery boundary; the inbox is drained again after a restart.
-	value.BatchIDs, value.BatchFingerprint = nil, ""
+	if directoryID == "" || directoryID == "0" || directoryID == value.SourceCID || directoryID == parent {
+		return s.fail(ctx, value, "115 返回了无效的临时目录编号，已停止")
+	}
+	// Persist a fixed range: later arrivals must never join this batch.
+	value.BatchIDs, value.BatchFingerprint = ids, manifestFingerprint(manifest)
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex = directoryID, name, 0
 	value.BatchParentCID = parent
 	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
@@ -528,106 +594,97 @@ func batchDirectoryName() string {
 	return fmt.Sprintf("Cinema115-临时-%d", time.Now().UnixNano())
 }
 
-func (s *FolderMonitorService) moveBatchLegacy(ctx context.Context, value *model.FolderMonitor, account P115Account) error {
-	if value.BatchDirectoryID == "" || value.BatchDirectoryID == "0" {
-		return s.failAt(ctx, value, "blocked", "监控批次目录编号无效，已停止")
-	}
+// moveSelected reconciles a fixed manifest against both directories before
+// issuing a move, making recovery safe even after a lost move response.
+func (s *FolderMonitorService) moveSelected(ctx context.Context, value *model.FolderMonitor, account P115Account) error {
 	for value.BatchMoveIndex < len(value.BatchIDs) {
-		id := value.BatchIDs[value.BatchMoveIndex]
-		inSource, err := s.driveRootContains(ctx, value.SourceCID, id, account.Cookie)
+		source, err := s.listRootEntries(ctx, value.SourceCID, account.Cookie)
 		if err != nil {
-			return s.failAt(ctx, value, "moving", "核对收件目录失败："+err.Error())
+			return s.failAt(ctx, value, "moving", "读取来源目录失败："+err.Error())
 		}
-		inBatch, err := s.driveRootContains(ctx, value.BatchDirectoryID, id, account.Cookie)
+		batch, err := s.listRootEntries(ctx, value.BatchDirectoryID, account.Cookie)
 		if err != nil {
-			return s.failAt(ctx, value, "moving", "核对批次目录失败："+err.Error())
+			return s.failAt(ctx, value, "moving", "读取临时目录失败："+err.Error())
 		}
-		if inSource && !inBatch {
-			if err := s.Client.MoveEntries(ctx, []string{id}, value.BatchDirectoryID, account.Cookie); err != nil {
-				return s.failAt(ctx, value, "moving", "移动到批次目录失败："+err.Error())
+		inSource, inBatch := make(map[string]bool, len(source)), make(map[string]bool, len(batch))
+		for _, entry := range source {
+			inSource[entry.ID] = true
+		}
+		for _, entry := range batch {
+			inBatch[entry.ID] = true
+		}
+		end := value.BatchMoveIndex + 1000
+		if end > len(value.BatchIDs) {
+			end = len(value.BatchIDs)
+		}
+		ids := make([]string, 0, end-value.BatchMoveIndex)
+		for _, id := range value.BatchIDs[value.BatchMoveIndex:end] {
+			if inSource[id] && inBatch[id] {
+				return s.failAt(ctx, value, "blocked", "文件同时出现在来源和临时目录，请人工核对")
 			}
-			inBatch, err = s.driveRootContains(ctx, value.BatchDirectoryID, id, account.Cookie)
+			if !inSource[id] && !inBatch[id] {
+				return s.failAt(ctx, value, "blocked", "批次条目已从来源和临时目录消失，请人工核对")
+			}
+			if !inBatch[id] {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			if err := s.Client.MoveEntries(ctx, ids, value.BatchDirectoryID, account.Cookie); err != nil {
+				return s.failAt(ctx, value, "moving", "移动到临时目录失败："+err.Error())
+			}
+			batch, err = s.listRootEntries(ctx, value.BatchDirectoryID, account.Cookie)
 			if err != nil {
 				return s.failAt(ctx, value, "moving", "确认移动结果失败："+err.Error())
 			}
+			for _, entry := range batch {
+				inBatch[entry.ID] = true
+			}
+			for _, id := range ids {
+				if !inBatch[id] {
+					return s.failAt(ctx, value, "moving", "移动结果尚未确认，请稍后重试")
+				}
+			}
 		}
-		if inSource && !inBatch {
-			return s.failAt(ctx, value, "moving", "移动结果无法确认，已暂停避免重复移动")
-		}
-		if !inSource && !inBatch {
-			return s.failAt(ctx, value, "blocked", "批次文件已同时从两处消失："+id)
-		}
-		value.BatchMoveIndex++
+		value.BatchMoveIndex = end
 		if err := s.checkpoint(ctx, value); err != nil {
 			return err
 		}
 	}
 	value.Stage, value.StableFingerprint, value.StableScans = "sharing", "", 0
-	value.NextScanAt = time.Now().UTC()
 	return s.checkpoint(ctx, value)
 }
 
 func (s *FolderMonitorService) moveBatch(ctx context.Context, value *model.FolderMonitor, account P115Account) error {
-	logGeneration(ctx, "INFO", "开始批量移动监控目录内容到临时目录")
-	if value.BatchDirectoryID == "" || value.BatchDirectoryID == "0" {
-		return s.failAt(ctx, value, "blocked", "监控批次目录编号无效，已停止")
+	logGeneration(ctx, "INFO", "开始批量移动本次选定内容到临时目录")
+	if value.BatchDirectoryID == "" || value.BatchDirectoryID == "0" || value.BatchDirectoryID == value.SourceCID {
+		return s.failAt(ctx, value, "blocked", "批次目录编号无效，已停止")
 	}
-	for pass := 0; pass < 100; pass++ {
+	if len(value.BatchIDs) == 0 {
+		// Capture a fixed range when recovering a legacy batch without IDs.
 		entries, err := s.listRootEntries(ctx, value.SourceCID, account.Cookie)
 		if err != nil {
-			return s.failAt(ctx, value, "moving", "读取收件目录失败："+err.Error())
+			return s.failAt(ctx, value, "moving", "读取旧批次来源失败："+err.Error())
 		}
-		if len(entries) == 0 {
-			logGeneration(ctx, "INFO", fmt.Sprintf("监控目录已排空，累计移动 %d 个顶层条目；之后到达的内容留给下次处理", value.BatchMoveIndex))
-			// The inbox is intentionally fire-and-forget: once this pass is empty,
-			// share whatever is currently visible in the temporary directory. A
-			// file arriving in the inbox after this point belongs to the next batch.
-			value.Stage, value.StableFingerprint, value.StableScans = "sharing", "", 0
-			value.NextScanAt = time.Now().UTC()
-			return s.checkpoint(ctx, value)
+		for _, entry := range entries {
+			value.BatchIDs = append(value.BatchIDs, entry.ID)
 		}
-		for start := 0; start < len(entries); start += 1000 {
-			end := start + 1000
-			if end > len(entries) {
-				end = len(entries)
-			}
-			ids := make([]string, 0, end-start)
-			for _, entry := range entries[start:end] {
-				ids = append(ids, entry.ID)
-			}
-			if err := s.Client.MoveEntries(ctx, ids, value.BatchDirectoryID, account.Cookie); err != nil {
-				return s.failAt(ctx, value, "moving", "批量移动到临时目录失败："+err.Error())
-			}
-			value.BatchMoveIndex += len(ids)
-			logGeneration(ctx, "INFO", fmt.Sprintf("批量移动完成：本次 %d 个，累计 %d 个顶层条目", len(ids), value.BatchMoveIndex))
-			if err := s.checkpoint(ctx, value); err != nil {
-				return err
-			}
-		}
-		if pass == 99 {
-			return s.failAt(ctx, value, "moving", "收件目录持续有新文件，暂未完成排空")
+		value.BatchMoveIndex = 0
+		if err := s.checkpoint(ctx, value); err != nil {
+			return err
 		}
 	}
-	return nil
-}
-
-func (s *FolderMonitorService) stabilizeBatch(ctx context.Context, value *model.FolderMonitor, account P115Account) error {
-	manifest, _, err := s.scanDrive(ctx, value.BatchDirectoryID, nil, account.Cookie)
-	if err != nil {
-		return s.failAt(ctx, value, "stabilizing", "扫描批次目录失败："+err.Error())
+	if err := s.moveSelected(ctx, value, account); err != nil {
+		return err
 	}
-	fingerprint := manifestFingerprint(manifest)
-	if value.StableFingerprint != fingerprint {
-		value.StableFingerprint, value.StableScans = fingerprint, 1
-		value.NextScanAt = time.Now().UTC().Add(15 * time.Second)
-		return s.checkpoint(ctx, value)
+	logGeneration(ctx, "INFO", fmt.Sprintf("批量移动完成：本批 %d 个顶层条目，新增内容留待下次处理", value.BatchMoveIndex))
+	if value.BatchFingerprint == "" {
+		manifest, _, err := s.scanDrive(ctx, value.BatchDirectoryID, nil, account.Cookie)
+		if err != nil {
+			return s.failAt(ctx, value, "sharing", "读取目录内容失败："+err.Error())
+		}
+		value.BatchFingerprint = manifestFingerprint(manifest)
 	}
-	value.StableScans++
-	if value.StableScans < 2 {
-		value.NextScanAt = time.Now().UTC().Add(15 * time.Second)
-		return s.checkpoint(ctx, value)
-	}
-	value.BatchFingerprint, value.Stage, value.NextScanAt = fingerprint, "sharing", time.Now().UTC()
 	return s.checkpoint(ctx, value)
 }
 
@@ -685,11 +742,20 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 		}
 	}
 	share, _ = p115.ParseShareURL(value.ShareURL)
+	if value.Stage == "verifying" && s.Tasks != nil {
+		value.Stage = "generating"
+		if err := s.checkpoint(ctx, value); err != nil {
+			return err
+		}
+	}
 	if value.Stage == "verifying" {
 		logGeneration(ctx, "INFO", "开始读取分享快照，使用本批次固定账号凭据")
-		_, mediaID, reviewing, err := s.waitShareSnapshot(ctx, value, share, account.Cookie)
+		manifest, mediaID, reviewing, err := s.waitShareSnapshot(ctx, value, share, account.Cookie)
 		if err != nil {
 			return s.failAt(ctx, value, "verifying", "读取分享快照未完成，临时目录已保留："+err.Error(), err)
+		}
+		if value.BatchFingerprint != "" && !manifestMatchesFingerprint(manifest, value.BatchFingerprint) {
+			return s.failAt(ctx, value, "verifying", "分享快照内容尚未与本批文件一致，临时目录已保留，请稍后重试")
 		}
 		if mediaID == "" {
 			return s.failAt(ctx, value, "verifying", "分享中没有符合条件的视频，源文件已保留")
@@ -705,22 +771,32 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 		}
 	}
 	if value.Stage == "generating" {
-		generationStarted := time.Now()
-		logGeneration(ctx, "INFO", "开始生成 STRM，输出目录："+value.OutputDir)
-		input := s.generationInput(*value, value.ShareURL)
-		settings := AutomationSettings{AccountID: value.AccountID, ParentCID: "0", Generation: input, ReviewRetryMinutes: 30, ReviewRetryMax: 6}
-		generationCtx := context.WithValue(ctx, automationContextKey{}, settings)
-		generationCtx = context.WithValue(generationCtx, generationCookieKey{}, account.Cookie)
-		generationCtx = WithGenerationSource(generationCtx, "目录监控")
-		result, err := s.Generator.Generate(generationCtx, input)
-		if result != nil {
-			logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成结果：写入 %d，失败 %d；元数据写入 %d，失败 %d；耗时 %.2f 秒", result.Written, result.Failed, result.MetadataWritten, result.MetadataFailed, time.Since(generationStarted).Seconds()))
-		}
-		if err != nil || result == nil || result.Failed != 0 || result.MetadataFailed != 0 {
-			if err == nil {
-				err = errors.New("STRM 或元数据没有全部生成成功")
+		if s.Tasks != nil {
+			ready, err := s.sharedGeneration(ctx, value)
+			if err != nil {
+				return err
 			}
-			return s.failAt(ctx, value, "generating", "STRM 生成未完成，源文件已保留："+err.Error(), err)
+			if !ready {
+				return nil
+			}
+		} else {
+			generationStarted := time.Now()
+			logGeneration(ctx, "INFO", "开始生成 STRM，输出目录："+value.OutputDir)
+			input := s.generationInput(*value, value.ShareURL)
+			settings := AutomationSettings{AccountID: value.AccountID, ParentCID: "0", Generation: input, ReviewRetryMinutes: 30, ReviewRetryMax: 6}
+			generationCtx := context.WithValue(ctx, automationContextKey{}, settings)
+			generationCtx = context.WithValue(generationCtx, generationCookieKey{}, account.Cookie)
+			generationCtx = WithGenerationSource(generationCtx, "目录监控")
+			result, err := s.Generator.Generate(generationCtx, input)
+			if result != nil {
+				logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成结果：写入 %d，失败 %d；元数据写入 %d，失败 %d；耗时 %.2f 秒", result.Written, result.Failed, result.MetadataWritten, result.MetadataFailed, time.Since(generationStarted).Seconds()))
+			}
+			if err != nil || result == nil || result.Failed != 0 || result.MetadataFailed != 0 {
+				if err == nil {
+					err = errors.New("STRM 或元数据没有全部生成成功")
+				}
+				return s.failAt(ctx, value, "generating", "STRM 生成未完成，源文件已保留："+err.Error(), err)
+			}
 		}
 		if value.BatchFingerprint != "" {
 			manifest, _, err := s.scanDrive(ctx, value.BatchDirectoryID, nil, account.Cookie)
@@ -782,7 +858,7 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 		value.BatchIDs, value.BatchFingerprint = nil, ""
 		value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex, value.BatchParentCID = "", "", 0, ""
 		value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
-		value.NextScanAt = time.Now().UTC().Add(time.Duration(value.IntervalSeconds) * time.Second)
+		value.NextScanAt = time.Time{}
 		return s.checkpoint(ctx, value)
 	}
 	return nil
@@ -833,15 +909,11 @@ func (s *FolderMonitorService) driveRootContains(ctx context.Context, cid, targe
 func (s *FolderMonitorService) checkpoint(ctx context.Context, value *model.FolderMonitor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	latest, err := s.Store.GetFolderMonitor(ctx, value.ID)
+	_, err := s.Store.GetFolderMonitor(ctx, value.ID)
 	if err != nil {
 		return err
 	}
-	// The worker owns batch fields, the schedule endpoint owns Enabled.
-	value.Enabled = latest.Enabled
-	if value.TaskPending && value.LastError == "" {
-		value.NextScanAt = latest.NextScanAt
-	}
+	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
 	value.UpdatedAt = time.Now().UTC()
 	return s.Store.SaveFolderMonitor(ctx, *value)
 }
@@ -858,7 +930,7 @@ func (s *FolderMonitorService) failAt(ctx context.Context, value *model.FolderMo
 	message = monitorLogDetail(message, cookie)
 	value.TaskPending = false
 	value.Stage, value.LastError = stage, message
-	value.NextScanAt = time.Now().UTC().Add(time.Duration(value.IntervalSeconds) * time.Second)
+	value.NextScanAt = time.Time{}
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	err := errors.New(message)
@@ -962,7 +1034,7 @@ func (s *FolderMonitorService) scanShare(ctx context.Context, value *model.Folde
 					if err := walk(file.ID, relative, depth+1); err != nil {
 						return err
 					}
-				} else if mediaID == "" && monitorVideoFile(*value, file.Name) {
+				} else if mediaID == "" && monitorVideoFile(*value, file.Name) && file.Size >= value.MinSizeMB*(1<<20) && (value.Recursive || depth == 0) {
 					mediaID = file.ID
 				}
 			}
@@ -981,7 +1053,7 @@ func (s *FolderMonitorService) scanShare(ctx context.Context, value *model.Folde
 
 func monitorVideoFile(value model.FolderMonitor, name string) bool {
 	extension := strings.ToLower(strings.TrimPrefix(path.Ext(name), "."))
-	for _, item := range strings.Split(value.VideoExtensions, ",") {
+	for _, item := range strings.Split(normalizedExtensionList(value.VideoExtensions, DefaultVideoExtensions), ",") {
 		if strings.TrimSpace(strings.TrimPrefix(strings.ToLower(item), ".")) == extension {
 			return true
 		}
