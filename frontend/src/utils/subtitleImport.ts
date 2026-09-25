@@ -11,28 +11,80 @@ const stem = (name: string) => base(name).replace(/\.[^.]+$/, '')
 
 export function episodeNumber(name: string): { season?: number; episode: number } | undefined {
   const title = stem(name)
-  // Multi-episode files need explicit selection.
-  if (/S\d+E\d+(?:E\d+|[- ]E?\d+)/i.test(title)) return undefined
-  let match = title.match(/S(\d{1,3})[ ._-]*E(\d{1,4})(?!\d)/i)
-  if (match) return { season: Number(match[1]), episode: Number(match[2]) }
-  match = title.match(/(?:第\s*(\d{1,4})\s*[集话話]|(?:^|[ ._\[-])(?:EP?|ep?)\s*(\d{1,4})(?!\d)|^\s*(\d{1,3})(?:\D|$))/)
-  if (match) return { episode: Number(match[1] || match[2] || match[3]) }
-  match = title.match(/[\[【](\d{1,3})[\]】]/)
-  return match ? { episode: Number(match[1]) } : undefined
+  // Ranges, specials, resolutions, years and release revisions are not episodes.
+  if (ambiguousEpisode(title)) return undefined
+  const explicit = [...title.matchAll(/(?:^|[^a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?=$|[^a-z0-9])/gi)]
+  if (explicit.length) {
+    const keys = new Set(explicit.map(m => `${Number(m[1])}:${Number(m[2])}`))
+    return keys.size === 1 ? { season: Number(explicit[0][1]), episode: Number(explicit[0][2]) } : undefined
+  }
+  const numbers: number[] = []
+  for (const pattern of [
+    /第\s*(\d{1,4})\s*[集话話]/g,
+    /(?:^|[ ._\[【-])EP?(\d{1,4})(?=$|[ ._\]】\[-])/gi,
+    /^\s*(\d{1,3})(?=$|[ ._\[【-])/g,
+    /[\[【](\d{1,3})[\]】]/g,
+    /(?:\s-\s*|_)(\d{1,3})(?=$|[ ._\[【])/g,
+  ]) for (const m of title.matchAll(pattern)) numbers.push(Number(m[1]))
+  const unique = [...new Set(numbers.filter(n => n > 0 && ![480, 576, 720].includes(n)))]
+  return unique.length === 1 ? { episode: unique[0] } : undefined
 }
 
-export function matchSubtitle(name: string, videos: SubtitleVideo[], season: number): string {
+function ambiguousEpisode(title: string) {
+  return /(?:S\d+[ ._-]*E\d+|\bEP?\d+|\b\d{1,3})\s*(?:[-~～–+]\s*(?:E(?:P)?)?\d{1,3}(?![\da-z])|E\d{1,4}(?![\da-z]))/i.test(title)
+    || /(?:S\d+[ ._-]*E|(?:^|[ _\[【-])(?:EP?)?)(\d{1,3})\.\d/i.test(title)
+    || /(?:^|[ ._\[【-])(?:SP|OVA|OAD|NCOP|NCED|OP|ED|PV)(?:\d|\b)|特典|特别篇|特別篇|总集篇|總集篇/i.test(title)
+}
+
+export interface SubtitleMatch {
+  videoId: string
+  confidence: 'high' | 'medium' | 'low' | 'none'
+  reason: string
+  candidates: { id: string; reason: string; score: number }[]
+}
+
+function titleTokens(name: string) {
+  return new Set(stem(name).toLowerCase().replace(/\[[^\]]*\]|【[^】]*】/g, ' ').replace(/s\d+e\d+|\b(?:\d{3,4}p|bluray|bdrip|web[ .-]?dl|hevc|x26[45]|h26[45]|flac|aac|chs|cht|eng|ass|srt)\b/g, ' ').match(/[a-z]{3,}|[\u3400-\u9fff]{2,}/g) || [])
+}
+
+function rankCandidates(name: string, videos: SubtitleVideo[]) {
+  const title = titleTokens(name)
+  const resolution = name.match(/\b(2160|1080|720|480)p\b/i)?.[1]
+  return videos.map(video => {
+    const tokens = titleTokens(video.name)
+    const overlap = [...title].filter(token => tokens.has(token)).length
+    const quality = !!resolution && video.name.toLowerCase().includes(`${resolution}p`)
+    return { id: video.id, score: overlap * 2 + (quality ? 1 : 0), reason: [overlap ? '标题词相近' : '', quality ? '分辨率一致' : ''].filter(Boolean).join('、') || '季集候选，需核对版本' }
+  }).sort((a, b) => b.score - a.score)
+}
+
+export function analyzeSubtitle(name: string, videos: SubtitleVideo[], season: number): SubtitleMatch {
+  const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
   const exact = videos.filter(video => stem(name).toLowerCase() === stem(video.name).toLowerCase())
-  if (exact.length === 1) return exact[0].id
+  if (exact.length === 1) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
+  if (ambiguousEpisode(stem(name))) return no('特典或多集范围，请手动指定视频')
   const episode = episodeNumber(name)
   if (episode) {
+    if (!Number.isInteger(season) || season < 0 || season > 1000) return no('请填写有效默认季')
     const candidates = videos.filter(video => {
       const target = episodeNumber(video.name)
       return target && target.episode === episode.episode && (target.season ?? season) === (episode.season ?? season)
     })
-    return candidates.length === 1 ? candidates[0].id : ''
+    const label = `S${String(episode.season ?? season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
+    if (candidates.length === 1) return { videoId: candidates[0].id, confidence: 'high', reason: `${label} 唯一对应${episode.season === undefined ? '（使用默认季）' : ''}`, candidates: [] }
+    if (!candidates.length) return no(`${label} 没有对应视频，可能缺集或季不一致`)
+    return { videoId: '', confidence: 'medium', reason: `${label} 有 ${candidates.length} 个版本，请确认候选`, candidates: rankCandidates(name, candidates) }
   }
-  return videos.length === 1 && !episodeNumber(videos[0].name) && !/S\d{1,3}[ ._-]*E\d/i.test(videos[0].name) ? videos[0].id : ''
+  if (videos.length === 1 && !episodeNumber(videos[0].name) && !ambiguousEpisode(stem(videos[0].name)) && !/S\d+[ ._-]*E\d/i.test(videos[0].name)) {
+    return { videoId: '', confidence: 'low', reason: '仅有一个视频，但未识别到集号，请确认', candidates: [{ id: videos[0].id, score: 0, reason: '当前唯一视频' }] }
+  }
+  return no('未识别到明确集号，请按顺序匹配或手动选择')
+}
+
+export function matchSubtitle(name: string, videos: SubtitleVideo[], season: number): string { return analyzeSubtitle(name, videos, season).videoId }
+
+export function subtitlePairKey(name: string): string {
+  return /\.(idx|sub)$/i.test(name) ? name.replace(/\\/g, '/').replace(/\.(idx|sub)$/i, '').toLowerCase() : ''
 }
 
 export function subtitleLanguage(name: string): string {

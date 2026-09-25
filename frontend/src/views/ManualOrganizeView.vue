@@ -6,6 +6,9 @@ import P115AccountSelect from '../components/P115AccountSelect.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import OrganizeCleanupDialog from '../components/OrganizeCleanupDialog.vue'
 import SubtitleImportDialog from '../components/SubtitleImportDialog.vue'
+import OrganizeFileSelection from '../components/OrganizeFileSelection.vue'
+import SelectMenu from '../components/SelectMenu.vue'
+import { directoryGroups } from '../utils/organizeSelection'
 import type { SubtitleImport } from '../types/subtitleImport'
 import { p115Request } from '../lib/p115-api'
 import { tmdbImageURL } from '../utils/tmdbImage'
@@ -28,15 +31,20 @@ const count = ref(0)
 const breadcrumbs = ref<{ id: string; path: string }[]>([])
 const scanId = ref('')
 const selectedName = ref('')
+const selectionRoot = ref('')
 const rows = ref<OrganizeRow[]>([])
 const query = ref('')
-const kind = ref<'movie' | 'tv'>('movie')
+const kind = ref('multi')
+const kindOptions = [{ value: 'multi', label: '全部' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
+let scannedEntryKey = ''
 const results = ref<MediaCardItem[]>([])
 const searchPage = ref(1)
 const searchTotalPages = ref(0)
 const media = ref<(MediaCardItem & { seasons?: { number: number; name: string; episodeCount: number }[] })>()
 const subtitles = ref(true)
 const batchSeason = ref(1)
+const seasonValue = computed({ get: () => String(batchSeason.value), set: (value: string) => { batchSeason.value = Number(value) } })
+const seasonOptions = computed(() => media.value?.kind === 'tv' ? (media.value.seasons ?? []).map(season => ({ value: String(season.number), label: `${season.name}（${season.episodeCount} 集）` })) : [{ value: '1', label: media.value ? '电影无需设置季集' : '请先选择剧集作品' }])
 const startEpisode = ref(1)
 const preview = ref<OrganizeJob>()
 const jobs = ref<OrganizeJob[]>([])
@@ -75,7 +83,10 @@ async function work(label: string, action: () => Promise<void>) {
   try { await action() } catch (reason) { if (!lifecycle.signal.aborted) error.value = message(reason) }
   finally { busy.value = '' }
 }
-function clearSelection() { scanId.value = ''; rows.value = []; preview.value = undefined; selectedName.value = '' }
+function clearSelection(resetMedia = true) {
+  scanId.value = ''; rows.value = []; preview.value = undefined; selectedName.value = ''; selectionRoot.value = ''
+  if (resetMedia) { media.value = undefined; results.value = []; searchTotalPages.value = 0; scannedEntryKey = '' }
+}
 async function save() { await request('config', { method: 'PUT', body: JSON.stringify(config.value) }); notice.value = '账号、来源目录和目标目录已保存。' }
 async function browse(nextOffset = 0) {
   deleteIDs.value = []; cleanupPlan.value = undefined
@@ -140,14 +151,17 @@ async function goBack() {
   await browse()
 }
 async function scan(file: DriveFile) {
-  clearSelection()
+  const entryKey = `${config.value.accountId}/${config.value.sourceCID}/${file.id}`
+  const sameEntry = entryKey === scannedEntryKey
+  clearSelection(!sameEntry)
   await save()
   const data = await request<{ id: string; files: OrganizeFile[] }>('scan', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: config.value.sourceCID, entryId: file.id }) }, 190000)
   scanId.value = data.id; selectedName.value = file.name
+  scannedEntryKey = entryKey
+  selectionRoot.value = file.directory ? `${config.value.sourcePath.replace(/\/$/, '')}/${file.name}` : config.value.sourcePath
   rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: '' }))
-  query.value = file.name.replace(/\.(mkv|mp4|avi|mov|ts|m2ts|iso)$/i, '')
-  media.value = undefined; results.value = []; searchTotalPages.value = 0
-  notice.value = rows.value.length ? `已展开 ${rows.value.length} 个视频，请指定 TMDB 作品。` : '所选条目中没有支持的视频文件。'
+  if (!sameEntry) query.value = file.name.replace(/\.(mkv|mp4|avi|mov|ts|m2ts|iso)$/i, '')
+  notice.value = rows.value.length ? `已展开 ${rows.value.length} 个视频，${media.value ? '已保留作品及季选择，请核对文件。' : '请指定 TMDB 作品。'}` : '所选条目中没有支持的视频文件。'
 }
 async function tmdb<T>(path: string): Promise<T> {
   const response = await fetch(`/api/admin/tmdb/${path}`, { headers: { Authorization: `Bearer ${props.token}` }, signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(45000)]) })
@@ -163,6 +177,7 @@ async function search(page = 1) {
   const text = query.value.trim(); if (!text) return
   const link = text.match(/themoviedb\.org\/(movie|tv)\/(\d+)/i)
   if (link || /^\d+$/.test(text)) {
+    if (!link && kind.value === 'multi') { results.value = []; searchTotalPages.value = 0; notice.value = '纯 TMDB ID 需要先选择电影或剧集，也可以粘贴包含类型的 TMDB 作品链接。'; return }
     const selectedKind = link ? link[1] : kind.value
     const id = Number(link ? link[2] : text)
     const detail = await tmdb<MediaCardItem>(`detail/${selectedKind}/${id}`)
@@ -175,7 +190,7 @@ async function search(page = 1) {
 }
 function numberEpisodes() {
   let number = Number(startEpisode.value)
-  for (const row of rows.value) if (row.selected) { row.season = Number(batchSeason.value); row.episode = number++; row.endEpisode = '' }
+  for (const group of directoryGroups(rows.value, selectionRoot.value)) for (const row of group.rows) if (row.selected) { row.season = Number(batchSeason.value); row.episode = number++; row.endEpisode = '' }
 }
 async function makePreview() {
   if (!media.value) return
@@ -275,7 +290,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
           <section class="panel">
             <h2 class="heading">2. 指定 TMDB 作品</h2>
             <form class="mt-4 flex flex-wrap gap-2" @submit.prevent="work('搜索 TMDB', () => search())">
-              <select v-model="kind" aria-label="作品类型" class="input w-24"><option value="movie">电影</option><option value="tv">剧集</option></select>
+              <SelectMenu v-model="kind" :options="kindOptions" label="作品类型" :disabled="!!busy" class="w-28" />
               <input v-model="query" aria-label="搜索 TMDB" placeholder="片名、TMDB ID 或链接" maxlength="300" class="input min-w-0 flex-1" />
               <button class="primary" :disabled="!query.trim()">搜索</button>
             </form>
@@ -283,7 +298,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
             <div class="mt-4 max-h-[360px] space-y-2 overflow-y-auto">
               <button v-for="item in results" :key="`${item.kind}:${item.id}`" class="flex w-full gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-blue-400" @click="work('读取作品信息', () => choose(item))">
                 <img v-if="item.posterUrl" :src="tmdbImageURL(item.posterUrl)" alt="" class="h-24 w-16 shrink-0 rounded-md object-cover" loading="lazy" />
-                <div class="min-w-0"><p class="text-sm font-medium text-slate-800">{{ item.title }} <span class="text-slate-400">{{ item.date?.slice(0, 4) }}</span></p><p class="mt-1 text-xs text-slate-400">{{ item.originalTitle }} · TMDB {{ item.id }}</p><p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ item.overview || '暂无简介' }}</p></div>
+                <div class="min-w-0"><p class="text-sm font-medium text-slate-800">{{ item.title }} <span class="text-slate-400">{{ item.date?.slice(0, 4) }} · {{ item.kind === 'tv' ? '剧集' : '电影' }}</span></p><p class="mt-1 text-xs text-slate-400">{{ item.originalTitle }} · TMDB {{ item.id }}</p><p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ item.overview || '暂无简介' }}</p></div>
               </button>
               <p v-if="!results.length && !media" class="py-12 text-center text-sm text-slate-400">搜索后选择正确的作品</p>
             </div>
@@ -295,21 +310,15 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
           <h2 class="heading">3. 校正文件与命名</h2>
           <p class="mt-2 break-all text-sm text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
           <div class="my-4 flex flex-wrap items-center gap-3 text-sm">
-            <button class="secondary" @click="rows.forEach(row => row.selected = true)">全选</button><button class="secondary" @click="rows.forEach(row => row.selected = false)">全不选</button>
             <label class="flex items-center gap-2"><input v-model="subtitles" type="checkbox" />同时整理匹配的外挂字幕</label>
           </div>
-          <div v-if="media?.kind === 'tv'" class="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm">
-            <label>季 <select v-model.number="batchSeason" class="input ml-1 w-36"><option v-for="season in media.seasons" :key="season.number" :value="season.number">{{ season.name }}（{{ season.episodeCount }} 集）</option></select></label>
-            <label>起始集 <input v-model.number="startEpisode" type="number" min="1" max="10000" class="input ml-1 w-20" /></label>
-            <button class="secondary" :disabled="!selectedRows.length || startEpisode < 1" @click="numberEpisodes">按当前顺序连续编号</button>
-            <p class="w-full text-xs text-slate-500">按文件路径自然排序。请核对集数；合并多集文件可填写结束集，单集留空。</p>
+          <div class="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm">
+            <div class="flex items-center gap-2"><span>季</span><SelectMenu v-model="seasonValue" :options="seasonOptions" label="整理季" :disabled="!!busy || active || media?.kind !== 'tv' || !seasonOptions.length" class="w-48" /></div>
+            <label>起始集 <input v-model.number="startEpisode" aria-label="起始集" :disabled="media?.kind !== 'tv' || active" type="number" min="1" max="10000" class="input ml-1 w-20" /></label>
+            <button class="secondary" :disabled="media?.kind !== 'tv' || !seasonOptions.length || active || !selectedRows.length || startEpisode < 1" @click="numberEpisodes">按当前顺序连续编号</button>
+            <p class="w-full text-xs text-slate-500">{{ !media ? '请先在第 2 步选择 TMDB 剧集作品，再设置季集。' : media.kind === 'movie' ? '已选择电影，无需设置季集。' : `将为全部已选 ${selectedRows.length} 个视频编号，包含搜索隐藏或折叠的已选文件。按目录分组及文件名自然排序。` }}</p>
           </div>
-          <div class="overflow-x-auto">
-            <table class="w-full min-w-[620px] text-left text-sm">
-              <thead class="border-b text-xs text-slate-500"><tr><th class="p-2">选择</th><th class="p-2">原文件</th><template v-if="media?.kind === 'tv'"><th class="p-2">季</th><th class="p-2">集</th><th class="p-2">结束集</th></template><th class="p-2">版本标记（可修改）</th></tr></thead>
-              <tbody><tr v-for="row in rows" :key="row.id" class="border-b border-slate-100"><td class="p-2"><input v-model="row.selected" type="checkbox" :aria-label="`选择 ${row.name}`" /></td><td class="max-w-sm break-all p-2 text-xs leading-5">{{ row.sourcePath }}</td><template v-if="media?.kind === 'tv'"><td class="p-2"><input v-model.number="row.season" :aria-label="`${row.name} 季`" type="number" min="0" max="1000" class="input w-20" /></td><td class="p-2"><input v-model.number="row.episode" :aria-label="`${row.name} 集`" type="number" min="1" max="10000" class="input w-20" /></td><td class="p-2"><input v-model.number="row.endEpisode" :aria-label="`${row.name} 结束集`" type="number" min="0" max="10000" class="input w-20" /></td></template><td class="p-2"><input v-model="row.suffix" :aria-label="`${row.name} 版本标记`" maxlength="100" placeholder="如 1080p WEB-DL" class="input w-44" /></td></tr></tbody>
-            </table>
-          </div>
+          <OrganizeFileSelection :key="scanId" :rows="rows" :root-path="selectionRoot" :tv="media?.kind !== 'movie'" :episode-editable="media?.kind === 'tv'" :disabled="!!busy || active" />
           <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-500">字幕按同目录、原视频文件名匹配，保留语言后缀。未勾选内容保留原位。</p><button class="primary" :disabled="!media || !selectedRows.length || !configured || active" @click="work('生成整理预览', makePreview)">预览整理结果</button></div>
         </section>
 
