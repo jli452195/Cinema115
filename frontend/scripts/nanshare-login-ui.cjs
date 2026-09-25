@@ -24,7 +24,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           const input = request.postDataJSON(); logins.push(input)
           if (failLogin) { status = 409; data = { error: 'NanShare 登录失败或会话已过期，请重新登录' } }
           else {
-            config = { baseUrl: input.baseUrl, username: input.username || 'token-user', configured: true, checkedAt: new Date().toISOString(), session: { ok: true, message: '登录验证通过' }, re0: { ok: true, message: 'RE0 搜索配置读取成功' }, share: { ok: true, message: '分享 STRM 配置读取成功（尚未验证任务执行）' } }
+            config = { baseUrl: input.baseUrl, username: input.username, autoLogin: true, configured: true, checkedAt: new Date().toISOString(), session: { ok: true, message: '登录验证通过' }, re0: { ok: true, message: 'RE0 搜索配置读取成功' }, share: { ok: true, message: '分享 STRM 配置读取成功（尚未验证任务执行）' } }
             data = config
           }
         } else { if (request.method() === 'DELETE') config = blank(); data = config }
@@ -42,6 +42,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByText('登录验证通过', { exact: true }).waitFor()
     assert.equal(await page.getByLabel('密码', { exact: true }).inputValue(), '')
     assert.equal(logins[0].password, 'mock-password')
+    assert.equal(logins[0].token, undefined)
+    assert.equal(await page.getByLabel('登录方式').count(), 0)
+    assert.equal(await page.getByLabel('会话令牌', { exact: true }).count(), 0)
+    await page.getByText('已启用自动登录：密码已加密保存。', { exact: true }).waitFor()
     await page.getByRole('button', { name: '测试搜索', exact: true }).click()
     await page.getByRole('status').filter({ hasText: '139' }).waitFor()
     assert.deepEqual(searches, [{ kind: 'tv', tmdbId: 106449 }])
@@ -53,21 +57,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByText('NanShare 登录失败或会话已过期，请重新登录', { exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '测试搜索', exact: true }).isDisabled(), true)
     expired = false
-    await page.getByLabel('登录方式').selectOption('token')
-    await page.getByLabel('用户名', { exact: true }).fill('')
-    await page.getByLabel('会话令牌', { exact: true }).fill('mock-imported-token')
+    await page.getByLabel('密码', { exact: true }).fill('updated-password')
     await page.getByRole('button', { name: '保存并登录' }).click()
     await page.getByText('登录验证通过', { exact: true }).waitFor()
-    assert.equal(await page.getByLabel('会话令牌', { exact: true }).inputValue(), '')
-    assert.equal(await page.getByLabel('用户名', { exact: true }).inputValue(), 'token-user')
-    assert.equal(logins[1].token, 'mock-imported-token')
-    assert.equal(logins[1].password, undefined)
-    assert.ok(!(await page.evaluate(() => JSON.stringify(localStorage))).includes('mock-imported-token'))
+    assert.equal(await page.getByLabel('密码', { exact: true }).inputValue(), '')
+    assert.equal(await page.getByLabel('用户名', { exact: true }).inputValue(), 'test-user')
+    assert.equal(logins[1].password, 'updated-password')
+    assert.ok(!(await page.evaluate(() => JSON.stringify(localStorage))).includes('updated-password'))
     failLogin = true
-    await page.getByLabel('会话令牌', { exact: true }).fill('invalid-token')
+    await page.getByLabel('密码', { exact: true }).fill('invalid-password')
     await page.getByRole('button', { name: '保存并登录' }).click()
     await page.getByRole('alert').waitFor()
-    assert.equal(await page.getByLabel('会话令牌', { exact: true }).inputValue(), '')
+    assert.equal(await page.getByLabel('密码', { exact: true }).inputValue(), '')
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
     await page.getByRole('button', { name: '清除登录信息', exact: true }).click()
@@ -78,6 +79,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.reload()
     await page.waitForURL(base + '/')
     assert.deepEqual(errors, [])
-    console.log('NanShare UI passed: password/token login, search, stale credentials, expiry, clear, mobile, access control')
+    console.log('NanShare UI passed: password-only login, automatic-login status, secret clearing, search, expiry, clear, mobile, access control')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

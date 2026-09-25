@@ -1,4 +1,5 @@
 export interface NanShareConfigView {
+  autoLogin: boolean
   baseUrl: string
   username: string
   configured: boolean

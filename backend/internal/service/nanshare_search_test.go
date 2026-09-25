@@ -20,6 +20,10 @@ func TestNanShareSearchSubmissionAndConfigurationChanges(t *testing.T) {
 	var cancelDuringSubmit context.CancelFunc
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/session/login" {
+			_, _ = w.Write([]byte(`{"ok":true,"data":{"username":"user","token":"test-session"}}`))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer test-session" {
 			t.Error("wrong session credential")
 		}
@@ -75,7 +79,7 @@ func TestNanShareSearchSubmissionAndConfigurationChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := svc.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Token: "test-session"}); err != nil {
+	if _, err := svc.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Username: "user", Password: "test-password"}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := svc.Search(ctx, "tv", 42, false)

@@ -24,7 +24,8 @@ func TestNanShareLoginPersistenceAndFeatureChecks(t *testing.T) {
 		if r.URL.Path == "/api/session/login" {
 			var input map[string]string
 			if json.NewDecoder(r.Body).Decode(&input) != nil || input["username"] != "user" || input["password"] != "test-password" {
-				t.Error("wrong login payload")
+				w.WriteHeader(401)
+				return
 			}
 			_, _ = w.Write([]byte(`{"ok":true,"success":true,"data":{"token":"test-secret-token","username":"user"}}`))
 			return
@@ -76,14 +77,14 @@ func TestNanShareLoginPersistenceAndFeatureChecks(t *testing.T) {
 		t.Fatalf("feature checks failed: %+v", view)
 	}
 	encoded, _ := json.Marshal(view)
-	if strings.Contains(string(encoded), "secret") || strings.Contains(store.Value(), "test-password") {
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "test-password") || !view.AutoLogin {
 		t.Fatal("credentials leaked")
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "test-secret-token") {
+	if strings.Contains(string(data), "test-secret-token") || strings.Contains(string(data), "test-password") {
 		t.Fatal("token persisted unencrypted")
 	}
 	reopened, err := NewSessionStore(file, "test-key")
@@ -110,13 +111,13 @@ func TestNanShareLoginPersistenceAndFeatureChecks(t *testing.T) {
 		t.Fatal("empty account fell back")
 	}
 	// Feature configuration is independent from successful login.
-	view, err = restored.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Token: "test-secret-token"})
+	view, err = restored.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Username: "user", Password: "test-password"})
 	if err != nil || !view.Configured || view.RE0.OK {
 		t.Fatalf("login rejected due to missing RE0 account: %v", err)
 	}
 	before := restored.View()
-	if _, err := restored.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Token: "invalid"}); err == nil {
-		t.Fatal("invalid token accepted")
+	if _, err := restored.Configure(ctx, NanShareConfigInput{BaseURL: server.URL, Username: "user", Password: "invalid"}); err == nil {
+		t.Fatal("invalid password accepted")
 	}
 	if restored.View() != before {
 		t.Fatal("failed login replaced saved configuration")
@@ -136,8 +137,8 @@ func TestNanShareLoginPersistenceAndFeatureChecks(t *testing.T) {
 
 // Explicit opt-in; credentials are supplied by the operator, never stored in test fixtures.
 func TestNanShareLive(t *testing.T) {
-	base, token := os.Getenv("NANSHARE_TEST_URL"), os.Getenv("NANSHARE_TEST_TOKEN")
-	if base == "" || token == "" {
+	base, username, password := os.Getenv("NANSHARE_TEST_URL"), os.Getenv("NANSHARE_TEST_USERNAME"), os.Getenv("NANSHARE_TEST_PASSWORD")
+	if base == "" || username == "" || password == "" {
 		t.Skip("live NanShare credentials not provided")
 	}
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "session.enc"), "temporary-live-test-key")
@@ -150,7 +151,7 @@ func TestNanShareLive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	view, err := svc.Configure(ctx, NanShareConfigInput{BaseURL: base, Token: token})
+	view, err := svc.Configure(ctx, NanShareConfigInput{BaseURL: base, Username: username, Password: password})
 	if err != nil {
 		t.Fatal(err)
 	}

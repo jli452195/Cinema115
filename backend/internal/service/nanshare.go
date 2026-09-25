@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,7 +17,6 @@ type NanShareConfigInput struct {
 	BaseURL  string `json:"baseUrl"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Token    string `json:"token"`
 }
 
 type NanShareCheck struct {
@@ -24,6 +25,7 @@ type NanShareCheck struct {
 }
 
 type NanShareView struct {
+	AutoLogin  bool          `json:"autoLogin"`
 	BaseURL    string        `json:"baseUrl"`
 	Username   string        `json:"username"`
 	Configured bool          `json:"configured"`
@@ -34,6 +36,8 @@ type NanShareView struct {
 }
 
 type nanShareDocument struct {
+	ConfigID string `json:"configId,omitempty"`
+	Password string `json:"password,omitempty"`
 	Version  int    `json:"version"`
 	BaseURL  string `json:"baseUrl"`
 	Username string `json:"username"`
@@ -43,6 +47,7 @@ type nanShareDocument struct {
 type NanShareService struct {
 	mu       sync.RWMutex
 	opMu     sync.Mutex
+	authMu   sync.Mutex
 	store    *SessionStore
 	doc      nanShareDocument
 	view     NanShareView
@@ -61,7 +66,7 @@ func NewNanShareService(store *SessionStore) (*NanShareService, error) {
 	if _, err := nanshare.New(s.doc.BaseURL, s.doc.Token); err != nil {
 		return nil, fmt.Errorf("恢复 NanShare 配置: %w", err)
 	}
-	s.view = NanShareView{BaseURL: s.doc.BaseURL, Username: s.doc.Username, Configured: true}
+	s.view = NanShareView{BaseURL: s.doc.BaseURL, Username: s.doc.Username, Configured: true, AutoLogin: s.doc.Password != ""}
 	return s, nil
 }
 
@@ -74,32 +79,27 @@ func (s *NanShareService) View() NanShareView {
 func (s *NanShareService) Configure(ctx context.Context, input NanShareConfigInput) (NanShareView, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
 	base, err := nanshare.NormalizeBaseURL(input.BaseURL)
 	if err != nil {
 		return NanShareView{}, err
 	}
 	input.Username = strings.TrimSpace(input.Username)
-	input.Token = strings.TrimSpace(input.Token)
-	if len(input.Username) > 100 || len(input.Password) > 4096 || strings.ContainsAny(input.Username, "\r\n\x00") || (input.Token != "" && input.Password != "") {
+	if input.Username == "" || input.Password == "" || len(input.Username) > 100 || len(input.Password) > 4096 || strings.ContainsAny(input.Username, "\r\n\x00") {
 		return NanShareView{}, nanshare.ErrInput
 	}
-	client, err := nanshare.New(base, input.Token)
+	client, err := nanshare.New(base, "")
 	if err != nil {
 		return NanShareView{}, err
 	}
-	token := input.Token
-	if token == "" {
-		if input.Username == "" || input.Password == "" {
-			return NanShareView{}, fmt.Errorf("%w：请输入用户名和密码", nanshare.ErrInput)
-		}
-		token, _, err = client.Login(ctx, input.Username, input.Password)
-		if err != nil {
-			return NanShareView{}, err
-		}
-		client, err = nanshare.New(base, token)
-		if err != nil {
-			return NanShareView{}, err
-		}
+	token, _, err := client.Login(ctx, input.Username, input.Password)
+	if err != nil {
+		return NanShareView{}, err
+	}
+	client, err = nanshare.New(base, token)
+	if err != nil {
+		return NanShareView{}, err
 	}
 	username, err := client.Session(ctx)
 	if err != nil {
@@ -108,7 +108,11 @@ func (s *NanShareService) Configure(ctx context.Context, input NanShareConfigInp
 	if input.Username != "" && username != input.Username {
 		return NanShareView{}, fmt.Errorf("%w：会话账号与填写的用户名不一致", nanshare.ErrInput)
 	}
-	doc := nanShareDocument{Version: 1, BaseURL: base, Username: username, Token: token}
+	var identity [16]byte
+	if _, err := rand.Read(identity[:]); err != nil {
+		return NanShareView{}, fmt.Errorf("创建 NanShare 配置编号: %w", err)
+	}
+	doc := nanShareDocument{Version: 1, BaseURL: base, Username: username, Token: token, Password: input.Password, ConfigID: hex.EncodeToString(identity[:])}
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		return NanShareView{}, fmt.Errorf("编码 NanShare 配置: %w", err)
@@ -116,7 +120,7 @@ func (s *NanShareService) Configure(ctx context.Context, input NanShareConfigInp
 	if err := s.store.Save(string(encoded)); err != nil {
 		return NanShareView{}, fmt.Errorf("保存 NanShare 会话: %w", err)
 	}
-	view := NanShareView{BaseURL: base, Username: username, Configured: true, Session: NanShareCheck{OK: true, Message: "登录验证通过"}}
+	view := NanShareView{BaseURL: base, Username: username, Configured: true, AutoLogin: doc.Password != "", Session: NanShareCheck{OK: true, Message: "登录验证通过"}}
 	// Save the login even if an optional remote feature is unconfigured.
 	s.mu.Lock()
 	s.doc = doc
@@ -180,7 +184,7 @@ func (s *NanShareService) snapshot() (*nanshare.Client, NanShareView, error) {
 	if s.doc.Token == "" {
 		return nil, NanShareView{}, fmt.Errorf("%w：请先登录 NanShare", nanshare.ErrInput)
 	}
-	client, err := nanshare.New(s.doc.BaseURL, s.doc.Token)
+	client, err := s.clientFor(s.doc)
 	return client, s.view, err
 }
 
@@ -203,6 +207,8 @@ func (s *NanShareService) SearchTest(ctx context.Context, kind string, id int64)
 func (s *NanShareService) Clear() error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
 	if err := s.store.Save(""); err != nil {
 		return fmt.Errorf("清除 NanShare 会话: %w", err)
 	}
@@ -211,4 +217,75 @@ func (s *NanShareService) Clear() error {
 	s.view = NanShareView{}
 	s.mu.Unlock()
 	return nil
+}
+
+// Token renewal preserves the same configured identity and search receipts.
+func sameNanShareConfig(a, b nanShareDocument) bool {
+	a.Token = ""
+	b.Token = ""
+	return a == b
+}
+
+func (s *NanShareService) clientFor(doc nanShareDocument) (*nanshare.Client, error) {
+	client, err := nanshare.New(doc.BaseURL, doc.Token)
+	if err != nil {
+		return nil, err
+	}
+	return client.WithRenewal(func(ctx context.Context, rejected string) (string, error) {
+		return s.renewSession(ctx, doc, rejected)
+	}), nil
+}
+
+func (s *NanShareService) renewSession(ctx context.Context, expected nanShareDocument, rejected string) (string, error) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	s.mu.RLock()
+	current := s.doc
+	s.mu.RUnlock()
+	if !sameNanShareConfig(expected, current) {
+		return "", nanshare.ErrChanged
+	}
+	if current.Token != rejected {
+		return current.Token, nil
+	}
+	if current.Password == "" {
+		return "", fmt.Errorf("%w：请用账号密码重新登录一次以启用自动登录", nanshare.ErrAuth)
+	}
+	client, err := nanshare.New(current.BaseURL, "")
+	if err != nil {
+		return "", err
+	}
+	token, username, err := client.Login(ctx, current.Username, current.Password)
+	if err != nil {
+		return "", fmt.Errorf("NanShare 自动登录失败: %w", err)
+	}
+	if username != current.Username {
+		return "", fmt.Errorf("%w：自动登录返回的账号不一致", nanshare.ErrAuth)
+	}
+	verified, err := nanshare.New(current.BaseURL, token)
+	if err != nil {
+		return "", err
+	}
+	username, err = verified.Session(ctx)
+	if err != nil {
+		return "", err
+	}
+	if username != current.Username {
+		return "", nanshare.ErrAuth
+	}
+	current.Token = token
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		return "", fmt.Errorf("编码 NanShare 会话: %w", err)
+	}
+	if err := s.store.Save(string(encoded)); err != nil {
+		return "", fmt.Errorf("保存 NanShare 会话: %w", err)
+	}
+	s.mu.Lock()
+	s.doc = current
+	s.mu.Unlock()
+	return token, nil
 }

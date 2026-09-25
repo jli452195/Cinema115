@@ -1,8 +1,10 @@
 # NanShare RE0 登录与验证
 
-管理员在右上角管理菜单进入「RE0 资源搜索」（`/nanshare`），填写 NanShare 地址和账号密码，点击「保存并登录」。也可切换为「已有会话令牌」，填写 NanShare 登录接口返回的 `data.token`；用户名可留空，由服务端验证会话后读取。
+管理员在右上角管理菜单进入「RE0 资源搜索」（`/nanshare`），填写 NanShare 地址、用户名和密码，点击「保存并登录」。仅支持账号密码登录，不再提供手动导入令牌。
 
-密码只用于本次登录，不持久保存。令牌使用项目现有 SessionStore 加密保存在数据目录的 `nanshare-config.enc`，API 不返回令牌或远端原始配置。重新登录验证失败保留原连接；会话过期需重新登录。清除登录信息只删除 Cinema115 保存的连接，不修改 NanShare 账号。
+用户名、密码和令牌使用项目现有 AES-GCM SessionStore 加密保存在数据目录的 `nanshare-config.enc`，API 不返回密码、令牌或远端原始配置。密码框提交后清空，不在浏览器持久保存。旧版仅令牌配置仍可读取，需要用账号密码重新登录一次以启用自动登录；页面显示是否已启用。重新登录验证失败保留原配置。清除登录信息删除本项目保存的密码和会话，不修改 NanShare 账号。
+
+读取会话、配置或搜索遇到认证失效时，使用保存的密码自动登录一次，验证返回账号后加密保存新令牌，原读取请求重试一次。网络故障、解析错误不触发登录循环；并发请求共用已更新的令牌。更新会话不改变搜索编号及提交回执，显式修改配置会使旧搜索失效。STRM 提交前的配置读取可以自动恢复登录，但实际任务提交不会自动重发（包括认证失败或结果不确定），避免重复任务。
 
 登录和重新检查会读取 `/api/session`、`/api/discover/resource/options` 与 `/api/strm/share/config`，分别显示会话、RE0 账号配置、分享 STRM 模式及目录的检查结果。登录成功会独立保存，远端功能未配置时显示对应提示。重启后状态重新验证，不把存在令牌当成在线验证通过。
 
@@ -20,4 +22,4 @@
 
 所有本地 API 均在管理员鉴权下的 `/api/admin/nanshare`：`GET/POST/DELETE /config`、`POST /verify`、`POST /search-test`、`POST /search`、`GET /share-options/:searchId`、`POST /submit`。站点支持 HTTP(S) 和内网地址，禁止携带用户信息、查询参数或路径，HTTP 客户端不跟随重定向以免转发凭据。
 
-验证：后端 `go test ./internal/client/nanshare ./internal/service ./internal/httpapi ./cmd/server`；前端 `npm run build`，运行开发服务后执行 `node scripts/nanshare-login-ui.cjs` 和 `node scripts/re0-search-ui.cjs`。可通过环境变量 `NANSHARE_TEST_URL` 和 `NANSHARE_TEST_TOKEN` 显式开启 `go test ./internal/service -run '^TestNanShareLive$' -v -count=1`，仅执行会话、配置和示例搜索验证。
+验证：后端 `go test ./internal/client/nanshare ./internal/service ./internal/httpapi ./cmd/server`；前端 `npm run build`，运行开发服务后执行 `node scripts/nanshare-login-ui.cjs` 和 `node scripts/re0-search-ui.cjs`。可通过环境变量 `NANSHARE_TEST_URL`、`NANSHARE_TEST_USERNAME`、`NANSHARE_TEST_PASSWORD` 显式开启 `go test ./internal/service -run '^TestNanShareLive$' -v -count=1`，仅执行登录、配置和示例搜索验证。

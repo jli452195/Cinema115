@@ -25,6 +25,15 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	renew   func(context.Context, string) (string, error)
+	renewed bool
+}
+
+// WithRenewal is configured before use. A client belongs to one operation;
+// renewal is attempted at most once, only for read-only endpoints.
+func (c *Client) WithRenewal(renew func(context.Context, string) (string, error)) *Client {
+	c.renew = renew
+	return c
 }
 
 // LAN addresses are intentional: NanShare is a user-configured NAS service.
@@ -59,6 +68,21 @@ type envelope struct {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, input, output any) error {
+	err := c.requestOnce(ctx, method, path, input, output)
+	readOnly := method == http.MethodGet || path == "/discover/resource/hdhive"
+	if !errors.Is(err, ErrAuth) || !readOnly || c.renew == nil || c.renewed {
+		return err
+	}
+	c.renewed = true
+	token, err := c.renew(ctx, c.token)
+	if err != nil {
+		return err
+	}
+	c.token = token
+	return c.requestOnce(ctx, method, path, input, output)
+}
+
+func (c *Client) requestOnce(ctx context.Context, method, path string, input, output any) error {
 	var reader io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)

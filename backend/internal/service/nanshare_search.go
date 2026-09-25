@@ -70,14 +70,14 @@ func (s *NanShareService) Search(ctx context.Context, kind string, id int64, ref
 			delete(s.searches, searchID)
 			continue
 		}
-		if !refresh && cached.key == key && cached.doc == doc {
+		if !refresh && cached.key == key && sameNanShareConfig(cached.doc, doc) {
 			result := searchView(cached)
 			s.searchMu.Unlock()
 			return result, nil
 		}
 	}
 	s.searchMu.Unlock()
-	client, err := nanshare.New(doc.BaseURL, doc.Token)
+	client, err := s.clientFor(doc)
 	if err != nil {
 		return NanShareSearchView{}, err
 	}
@@ -97,7 +97,7 @@ func (s *NanShareService) Search(ctx context.Context, kind string, id int64, ref
 		return NanShareSearchView{}, fmt.Errorf("创建搜索会话: %w", err)
 	}
 	s.mu.RLock()
-	unchanged := s.doc == doc
+	unchanged := sameNanShareConfig(s.doc, doc)
 	s.mu.RUnlock()
 	if !unchanged {
 		return NanShareSearchView{}, nanshare.ErrChanged
@@ -107,7 +107,7 @@ func (s *NanShareService) Search(ctx context.Context, kind string, id int64, ref
 	defer s.searchMu.Unlock()
 	// Preserve receipts across refreshes and concurrent searches for this media.
 	for oldID, old := range s.searches {
-		if old.key == key && old.doc == doc {
+		if old.key == key && sameNanShareConfig(old.doc, doc) {
 			if !refresh {
 				return searchView(old), nil
 			}
@@ -146,12 +146,13 @@ func (s *NanShareService) searchSnapshot(id string) (nanShareSearch, error) {
 
 func (s *NanShareService) currentSearchClient(cached nanShareSearch) (*nanshare.Client, error) {
 	s.mu.RLock()
-	same := s.doc == cached.doc
+	current := s.doc
+	same := sameNanShareConfig(current, cached.doc)
 	s.mu.RUnlock()
 	if !same {
 		return nil, nanshare.ErrChanged
 	}
-	return nanshare.New(cached.doc.BaseURL, cached.doc.Token)
+	return s.clientFor(current)
 }
 
 func (s *NanShareService) ShareOptions(ctx context.Context, searchID string) (nanshare.ShareOptions, error) {
