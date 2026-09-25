@@ -6,6 +6,7 @@ import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import BotSearchDialog from '../components/BotSearchDialog.vue'
 import GyingSearchDialog from '../components/GyingSearchDialog.vue'
 import MikanSearchDialog from '../components/MikanSearchDialog.vue'
+import RE0SearchDialog from '../components/RE0SearchDialog.vue'
 import FollowButton from '../components/FollowButton.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
@@ -24,8 +25,9 @@ const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string 
 const botSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
+const re0SearchOpen = ref(false)
 const route = useRoute(), router = useRouter()
-watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; mikanSearchOpen.value = false })
+watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
@@ -184,6 +186,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50">
     <BotSearchDialog v-if="isWebsiteAdmin && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="botSearchOpen = false" />
+    <RE0SearchDialog v-if="isWebsiteAdmin && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isWebsiteAdmin && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
     <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" @close="mikanSearchOpen = false" />
     <WorkbenchHeader @logout="emit('logout')" />
@@ -217,7 +220,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white/80 px-3 py-2 text-xs text-slate-600 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500">▱</span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 →</span></RouterLink>
-              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-blue-200 bg-white/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-violet-200 bg-white/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
+              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-emerald-200 bg-white/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-blue-200 bg-white/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-violet-200 bg-white/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
               <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
                 <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><span class="text-[10px] font-extrabold tracking-wider">TMDB</span><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400">/10</span></span></a>
                 <span v-if="detail.votes > 0" class="text-slate-400">{{ detail.votes.toLocaleString() }} 人评价</span>

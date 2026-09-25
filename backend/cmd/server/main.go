@@ -101,6 +101,15 @@ func main() {
 	}
 	gyingService.Logs = generationLogs
 	httpapi.RegisterGying(admin, gyingService, tmdbService, generationLogs)
+	nanShareStore, err := service.NewSessionStore(filepath.Join(dataDir, "nanshare-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	nanShareService, err := service.NewNanShareService(nanShareStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterNanShare(admin, nanShareService)
 	imageCacheBytes := tmdbimage.DefaultMaxBytes
 	if configured := strings.TrimSpace(os.Getenv("TMDB_IMAGE_CACHE_MAX_GB")); configured != "" {
 		gigabytes, parseErr := strconv.ParseInt(configured, 10, 64)
