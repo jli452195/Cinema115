@@ -247,9 +247,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	embyProxyLogs := service.NewEmbyProxyLogs(generationLogs)
 	embyProxy, err := service.NewEmbyProxy(ctx, proxyStore, accounts, func(config service.EmbyProxyConfig) http.Handler {
-		return httpapi.NewEmbyProxyHandler(config, accounts, shareAPI)
-	})
+		return httpapi.NewEmbyProxyHandler(config, accounts, shareAPI, embyProxyLogs)
+	}, embyProxyLogs)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -7,7 +7,7 @@ const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
-const modules = ['ALL', 'STRM', 'Telegram', '订阅', '观影', 'Emby', '蜜柑'] as const
+const modules = ['ALL', 'STRM', 'Telegram', '订阅', '观影', 'Emby', 'Emby 302', '蜜柑'] as const
 type Module = typeof modules[number]
 const route = useRoute()
 const router = useRouter()
@@ -80,7 +80,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 </script>
 
 <template>
-  <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、观影、Emby 与蜜柑日志；详细过程可切换 DEBUG，排查问题请选择全部等级。" @logout="emit('logout')">
+  <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、观影、Emby、Emby 302 与蜜柑日志；详细过程可切换 DEBUG，排查问题请选择全部等级。" @logout="emit('logout')">
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="space-y-4 border-b border-slate-100 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">

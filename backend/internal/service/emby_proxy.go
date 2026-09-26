@@ -31,8 +31,17 @@ type EmbyProxyStatus struct {
 	Error     string          `json:"error"`
 }
 
+type embyProxyLifecycleKey struct{}
+
+// EmbyProxyStopping distinguishes listener shutdown from cancellation of an individual HTTP request.
+func EmbyProxyStopping(ctx context.Context) bool {
+	lifecycle, ok := ctx.Value(embyProxyLifecycleKey{}).(context.Context)
+	return ok && lifecycle.Err() != nil
+}
+
 // EmbyProxy owns the independent listener. A failed bind/save leaves the active listener intact.
 type EmbyProxy struct {
+	Logs         *EmbyProxyLogs
 	mu           sync.Mutex
 	store        *SessionStore
 	accounts     *P115Accounts
@@ -47,8 +56,11 @@ type EmbyProxy struct {
 	wg           sync.WaitGroup
 }
 
-func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler) (*EmbyProxy, error) {
+func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler, logs ...*EmbyProxyLogs) (*EmbyProxy, error) {
 	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097}}
+	if len(logs) > 0 {
+		s.Logs = logs[0]
+	}
 	if raw := store.Value(); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &s.config); err != nil {
 			return nil, fmt.Errorf("读取 Emby 302 配置: %w", err)
@@ -98,7 +110,13 @@ func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
 	return c, nil
 }
 
-func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) error {
+func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr error) {
+	ctx = s.Logs.Trace(ctx)
+	defer func() {
+		if resultErr != nil {
+			s.Logs.Add(ctx, "ERROR", "反代配置未生效，请检查页面错误提示；原配置与监听保持不变")
+		}
+	}()
 	c, err := normalizeEmbyProxy(input)
 	if err != nil {
 		return err
@@ -143,7 +161,9 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) error {
 	}
 	if listener != nil {
 		serverContext, serverCancel := context.WithCancel(s.ctx)
-		server := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return serverContext }}
+		server := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context {
+			return context.WithValue(serverContext, embyProxyLifecycleKey{}, serverContext)
+		}}
 		s.server = server
 		s.serverCancel = serverCancel
 		s.wg.Add(1)
@@ -157,6 +177,7 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) error {
 				s.server = nil
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					s.lastError = "反代监听已停止，请重新保存配置"
+					s.Logs.Add(s.ctx, "ERROR", s.lastError)
 				}
 			}
 		}()
@@ -164,6 +185,11 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) error {
 	if old != nil && old != s.server {
 		s.wg.Add(1)
 		go func() { defer s.wg.Done(); stopEmbyProxy(old, oldCancel) }()
+	}
+	if c.Enabled {
+		s.Logs.Add(ctx, "INFO", fmt.Sprintf("反代配置生效，监听端口 %d", c.Port))
+	} else {
+		s.Logs.Add(ctx, "INFO", "反代已停用")
 	}
 	return nil
 }

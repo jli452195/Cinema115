@@ -94,6 +94,33 @@ func TestLogsEmbyModule(t *testing.T) {
 	}
 }
 
+func TestLogsEmby302Module(t *testing.T) {
+	logs := &service.GenerationLogs{}
+	proxy := service.NewEmbyProxyLogs(logs)
+	ctx := proxy.Trace(context.Background())
+	proxy.Add(ctx, "INFO", "直链获取成功")
+	proxy.Add(ctx, "ERROR", "直链获取失败")
+	logs.Append("Emby", "index", "同步", "INFO", "同步完成")
+	router := gin.New()
+	RegisterLogs(router.Group("/api/admin"), logs)
+	for _, tc := range []struct {
+		query string
+		count int
+	}{
+		{"module=Emby%20302&level=ALL", 2},
+		{"module=Emby%20302&level=ERROR", 1},
+		{"module=Emby&level=ALL", 1},
+		{"module=ALL&level=ALL", 3},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/logs?"+tc.query, nil))
+		var body struct{ Entries []service.GenerationLog }
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil || len(body.Entries) != tc.count {
+			t.Fatal("统一日志模块筛选错误", tc.query, w.Body.String())
+		}
+	}
+}
+
 func TestLogsGyingModule(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

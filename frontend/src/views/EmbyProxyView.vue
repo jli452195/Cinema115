@@ -53,7 +53,10 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <template>
   <ManagementLayout title="Emby 302 反代" description="通过 Emby 登录与播放权限校验，将分享 STRM 的直放请求跳转到 115。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
-    <template #actions><button :disabled="busy || !loaded" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="save">{{ busy ? '正在处理…' : '保存配置' }}</button></template>
+    <template #actions>
+      <RouterLink :to="{ path: '/logs', query: { module: 'Emby 302', level: 'ALL' } }" class="shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">查看日志</RouterLink>
+      <button :disabled="busy || !loaded" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="save">{{ busy ? '正在处理…' : '保存配置' }}</button>
+    </template>
     <div class="space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <button v-if="!loaded && !busy" class="rounded-lg border px-4 py-2 text-sm" @click="load">重新加载</button>
@@ -79,7 +82,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
         <h2 class="font-semibold text-slate-900">NAS / Docker 端口</h2>
         <p class="mt-3 text-sm leading-7 text-slate-600">桥接网络需要在容器设置中添加 TCP 端口映射 <code class="rounded bg-slate-100 px-2 py-1">{{ mapping }}</code>（宿主机端口 : 容器端口）。项目 compose 使用 host 网络，无需映射；仅切换为桥接网络时需要配置映射。网页保存不会自动修改 Docker。</p>
-        <p class="mt-3 text-xs leading-6 text-slate-500">使用 host 网络时通常无需映射，但端口不能与 NAS 上的其他服务冲突。直放成功时视频流量由客户端直接访问 115；非匹配来源、转码、字幕、海报和播放进度继续由 Emby 处理。本次不包含朋友账号秒传与播放缓存清理。</p>
+        <p class="mt-3 text-xs leading-6 text-slate-500">使用 host 网络时通常无需映射，但端口不能与 NAS 上的其他服务冲突。直放成功时视频流量由客户端直接访问 115；转码与封装转换已关闭，不兼容原文件格式时请更换播放器；字幕、海报和播放进度继续由 Emby 处理。本次不包含朋友账号秒传与播放缓存清理。</p>
       </section>
     </div>
   </ManagementLayout>
