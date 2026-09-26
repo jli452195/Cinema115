@@ -2,10 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -26,15 +22,14 @@ type ShareAPI struct {
 	OutputRoot string
 	Client     *p115.ShareClient
 	Cookie     func() string
-	Secret     []byte
 	BaseURL    func() string
 	MediaHTTP  *http.Client
 }
 
-func NewShareAPI(secret string, cookie func() string) *ShareAPI {
+func NewShareAPI(cookie func() string) *ShareAPI {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 25 * time.Second
-	return &ShareAPI{OutputRoot: "../data/media", Client: p115.NewShareClient(), Cookie: cookie, Secret: []byte(secret), MediaHTTP: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &ShareAPI{OutputRoot: "../data/media", Client: p115.NewShareClient(), Cookie: cookie, MediaHTTP: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !p115.AllowedMediaURL(req.URL.String()) {
 			return fmt.Errorf("下载跳转地址无效")
 		}
@@ -50,8 +45,6 @@ func (a *ShareAPI) Register(r *gin.Engine, admin *gin.RouterGroup) {
 	admin.GET("/p115/share/output-directories", a.outputDirectories)
 	admin.POST("/p115/share/generate", a.generate)
 	admin.POST("/p115/share/generate-stream", a.generateStream)
-	r.GET("/api/stream/share/:token", a.stream)
-	r.HEAD("/api/stream/share/:token", a.stream)
 	r.GET("/api/", a.streamQuery)
 	r.HEAD("/api/", a.streamQuery)
 }
@@ -93,39 +86,12 @@ func (a *ShareAPI) files(c *gin.Context) {
 	c.JSON(200, page)
 }
 
-// 播放凭证与管理员 JWT 使用不同格式和签名域，播放器无需持有管理员权限。
-type playClaim struct {
+// 分享播放参数；不包含身份凭证或有效期。
+type sharePlaybackParams struct {
 	Code     string `json:"code"`
 	Password string `json:"password"`
 	FileID   string `json:"fileId"`
 	Name     string `json:"name"`
-	Expires  int64  `json:"expires"`
-}
-
-func (a *ShareAPI) sign(payload string) []byte {
-	mac := hmac.New(sha256.New, a.Secret)
-	mac.Write([]byte("cinema115-share-play\x00" + payload))
-	return mac.Sum(nil)
-}
-
-func (a *ShareAPI) parseToken(token string) (*playClaim, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 2 || len(token) > 8192 {
-		return nil, fmt.Errorf("播放凭证无效")
-	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || !hmac.Equal(signature, a.sign(parts[0])) {
-		return nil, fmt.Errorf("播放凭证无效")
-	}
-	data, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("播放凭证无效")
-	}
-	var claim playClaim
-	if json.Unmarshal(data, &claim) != nil || claim.Expires <= time.Now().Unix() || claim.FileID == "" || claim.Code == "" {
-		return nil, fmt.Errorf("播放凭证无效或已过期")
-	}
-	return &claim, nil
 }
 
 func (a *ShareAPI) strm(c *gin.Context) {
@@ -147,7 +113,7 @@ func (a *ShareAPI) strm(c *gin.Context) {
 		share.Password = input.Password
 	}
 	name := path.Base(strings.ReplaceAll(input.Name, "\\", "/"))
-	claim := playClaim{Code: share.Code, Password: share.Password, FileID: input.FileID, Name: name}
+	claim := sharePlaybackParams{Code: share.Code, Password: share.Password, FileID: input.FileID, Name: name}
 	relative := a.queryURL(claim)
 	base := a.generationBaseURL(c)
 	if input.BaseURL != "" {
@@ -165,36 +131,37 @@ func (a *ShareAPI) strm(c *gin.Context) {
 	c.JSON(200, gin.H{"name": strings.TrimSuffix(name, path.Ext(name)) + ".strm", "content": base + relative + "\n", "playUrl": relative})
 }
 
-func (a *ShareAPI) stream(c *gin.Context) {
-	c.Header("Cache-Control", "no-store")
-	claim, err := a.parseToken(c.Param("token"))
-	if err != nil {
-		c.JSON(401, gin.H{"error": err.Error()})
-		return
-	}
-	a.play(c, claim)
-}
-
-// 播放入口使用分享码、文件 ID 和提取码，不要求播放签名。
-func (a *ShareAPI) queryURL(claim playClaim) string {
+// 播放入口使用分享码、文件 ID 和提取码。
+func (a *ShareAPI) queryURL(claim sharePlaybackParams) string {
 	return "/api/?share_code=" + url.QueryEscape(claim.Code) + "&id=" + url.QueryEscape(claim.FileID) + "&receive_code=" + url.QueryEscape(claim.Password)
 }
 
-func (a *ShareAPI) parseQuery(q url.Values) (*playClaim, error) {
+func (a *ShareAPI) parseQuery(q url.Values) (*sharePlaybackParams, error) {
 	for _, key := range []string{"share_code", "id", "receive_code"} {
-		if len(q[key]) != 1 || len(q.Get(key)) > 1024 {
-			return nil, fmt.Errorf("播放参数缺失、重复或过长")
+		if len(q[key]) == 0 {
+			return nil, fmt.Errorf("缺少必要参数 share_code、receive_code 或 id")
+		}
+		if len(q[key]) > 1 {
+			return nil, fmt.Errorf("必要参数 share_code、receive_code 或 id 重复")
+		}
+		if len(q.Get(key)) > 1024 {
+			return nil, fmt.Errorf("分享播放参数过长")
 		}
 	}
 	if q.Get("id") == "" || q.Get("share_code") == "" {
 		return nil, fmt.Errorf("分享码和文件 ID 不能为空")
 	}
-	return &playClaim{Code: q.Get("share_code"), Password: q.Get("receive_code"), FileID: q.Get("id"), Name: q.Get("id")}, nil
+	return &sharePlaybackParams{Code: q.Get("share_code"), Password: q.Get("receive_code"), FileID: q.Get("id"), Name: q.Get("id")}, nil
 }
 
 func (a *ShareAPI) streamQuery(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	claim, err := a.parseQuery(c.Request.URL.Query())
+	q, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分享参数编码无效"})
+		return
+	}
+	claim, err := a.parseQuery(q)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -202,7 +169,7 @@ func (a *ShareAPI) streamQuery(c *gin.Context) {
 	a.play(c, claim)
 }
 
-func (a *ShareAPI) play(c *gin.Context, claim *playClaim) {
+func (a *ShareAPI) play(c *gin.Context, claim *sharePlaybackParams) {
 	cookie := a.Cookie()
 	if cookie == "" {
 		c.JSON(503, gin.H{"error": "分享使用的 115 账号未选择、已删除或未登录，请管理员检查分享基础设置"})

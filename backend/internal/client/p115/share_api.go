@@ -120,6 +120,9 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 		return nil, fmt.Errorf("115 返回了无法解析的分享数据")
 	}
 	if !upstreamOK(envelope.State) {
+		if req.URL.Path == "/app/share/downurl" {
+			return nil, shareDownloadError(envelope)
+		}
 		if envelope.underReview() {
 			return nil, ErrShareUnderReview
 		}
@@ -212,44 +215,62 @@ func (c *ShareClient) DownloadURL(ctx context.Context, share *ShareInfo, fileID,
 }
 
 // DownloadURLWithUA binds link acquisition to the actual player, without changing shared client state.
+// DownloadInfo preserves source metadata for instant upload. Signed URLs never serialize.
+type DownloadInfo struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	SHA1 string `json:"sha1"`
+	URL  string `json:"-"`
+}
+
 func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (string, error) {
-	if cookie == "" {
-		return "", fmt.Errorf("请先登录 115，再获取分享播放地址")
+	info, err := c.DownloadInfoWithUA(ctx, share, fileID, cookie, userAgent)
+	if err != nil {
+		return "", err
+	}
+	return info.URL, nil
+}
+func (c *ShareClient) DownloadInfoWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (*DownloadInfo, error) {
+	if share == nil || cookie == "" {
+		return nil, fmt.Errorf("请先登录 115，再获取分享播放地址")
 	}
 	payload, err := json.Marshal(map[string]string{"share_code": share.Code, "receive_code": share.Password, "file_id": fileID})
 	if err != nil {
-		return "", fmt.Errorf("编码分享下载参数: %w", err)
+		return nil, fmt.Errorf("编码分享下载参数: %w", err)
 	}
 	if userAgent == "" {
 		userAgent = PlaybackUserAgent
 	}
 	if len(userAgent) > 2048 || strings.ContainsAny(userAgent, "\r\n") {
-		return "", fmt.Errorf("播放器 User-Agent 无效")
+		return nil, fmt.Errorf("播放器 User-Agent 无效")
 	}
 	raw, err := c.requestEnvelopeWithUA(ctx, http.MethodPost, c.AppURL+"/app/share/downurl", cookie, url.Values{"data": {RSAEncrypt(payload)}}, userAgent)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return "", fmt.Errorf("解析直链响应: %w", err)
+		return nil, fmt.Errorf("解析直链响应: %w", err)
 	}
 	data := envelope.Data
 	var encrypted string
 	if err = json.Unmarshal(data, &encrypted); err != nil {
-		return "", fmt.Errorf("115 未返回加密直链数据")
+		return nil, fmt.Errorf("115 未返回加密直链数据")
 	}
 	decoded, err := RSADecrypt(encrypted)
 	if err != nil {
-		return "", fmt.Errorf("解密分享直链: %w", err)
+		return nil, fmt.Errorf("解密分享直链: %w", err)
 	}
 	var result struct {
-		URL json.RawMessage `json:"url"`
+		URL  json.RawMessage `json:"url"`
+		Name string          `json:"fn"`
+		Size json.Number     `json:"fs"`
+		SHA1 string          `json:"sha1"`
 	}
 	if err = json.Unmarshal(decoded, &result); err != nil {
-		return "", fmt.Errorf("解析分享直链: %w", err)
+		return nil, fmt.Errorf("解析分享直链: %w", err)
 	}
 	var link string
 	if json.Unmarshal(result.URL, &link) != nil {
@@ -257,14 +278,15 @@ func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, f
 			URL string `json:"url"`
 		}
 		if err = json.Unmarshal(result.URL, &nested); err != nil {
-			return "", fmt.Errorf("分享直链格式无效")
+			return nil, fmt.Errorf("分享直链格式无效")
 		}
 		link = nested.URL
 	}
 	if !AllowedMediaURL(link) {
-		return "", fmt.Errorf("115 返回的下载域名不在允许范围内")
+		return nil, fmt.Errorf("115 返回的下载域名不在允许范围内")
 	}
-	return link, nil
+	size, _ := result.Size.Int64()
+	return &DownloadInfo{Name: result.Name, Size: size, SHA1: strings.ToUpper(result.SHA1), URL: link}, nil
 }
 
 // 只代理 115 返回的公开媒体域名，禁止将播放器接口变为任意地址代理。

@@ -45,7 +45,7 @@ func TestBackgroundSubmissionAndCancellationHTTP(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); runs.Run() }()
 	defer func() { cancel(); <-done }()
-	api := NewShareAPI("secret", tasks.Cookie)
+	api := NewShareAPI(tasks.Cookie)
 	api.Runs = runs
 	api.BaseURL = func() string { return "http://nas:3002" }
 	router := gin.New()

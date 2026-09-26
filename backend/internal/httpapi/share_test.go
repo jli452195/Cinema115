@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,16 +8,15 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func TestQueryPlaybackWithoutSignature(t *testing.T) {
-	api := NewShareAPI("test-secret", func() string { return "" })
-	claim := playClaim{Code: "share-code", Password: "a+b&c", FileID: "3515174619050935343", Expires: time.Now().Add(time.Hour).Unix()}
+func TestQueryPlaybackParameters(t *testing.T) {
+	api := NewShareAPI(func() string { return "" })
+	claim := sharePlaybackParams{Code: "share-code", Password: "a+b&c", FileID: "3515174619050935343"}
 	u, err := url.Parse(api.queryURL(claim))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +53,7 @@ func TestQueryPlaybackWithoutSignature(t *testing.T) {
 func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cookie := "selected-cookie"
-	api := NewShareAPI("test-secret", func() string { return cookie })
+	api := NewShareAPI(func() string { return cookie })
 	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
@@ -85,6 +83,21 @@ func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 		}
 	}
 	for _, method := range []string{"GET", "HEAD"} {
+		old := httptest.NewRecorder()
+		r.ServeHTTP(old, httptest.NewRequest(method, "/api/stream/share/obsolete.payload", nil))
+		if old.Code != 404 {
+			t.Fatal("已废除的播放入口仍然存在", old.Code)
+		}
+		extra := httptest.NewRecorder()
+		r.ServeHTTP(extra, httptest.NewRequest(method, generated.PlayURL+"&filename=movie.mkv", nil))
+		if extra.Code != 503 {
+			t.Fatal("带额外参数的链接未到达账号检查", extra.Code)
+		}
+		bad := httptest.NewRecorder()
+		r.ServeHTTP(bad, httptest.NewRequest(method, generated.PlayURL+"&extra=%ZZ", nil))
+		if bad.Code != 400 {
+			t.Fatal("接受无效参数编码")
+		}
 		recorder = httptest.NewRecorder()
 		r.ServeHTTP(recorder, httptest.NewRequest(method, generated.PlayURL, nil))
 		if recorder.Code != 503 {
@@ -100,30 +113,10 @@ func TestGenerateAndRouteQuerySTRM(t *testing.T) {
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestPlaybackTokenBoundary(t *testing.T) {
-	api := NewShareAPI("test-secret", func() string { return "" })
-	claim := playClaim{Code: "abc", FileID: "123", Expires: time.Now().Add(time.Hour).Unix()}
-	data, _ := json.Marshal(claim)
-	payload := base64.RawURLEncoding.EncodeToString(data)
-	token := payload + "." + base64.RawURLEncoding.EncodeToString(api.sign(payload))
-	if _, err := api.parseToken(token); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := api.parseToken("x" + token); err == nil {
-		t.Fatal("接受了篡改凭证")
-	}
-	claim.Expires = 1
-	data, _ = json.Marshal(claim)
-	payload = base64.RawURLEncoding.EncodeToString(data)
-	if _, err := api.parseToken(payload + "." + base64.RawURLEncoding.EncodeToString(api.sign(payload))); err == nil {
-		t.Fatal("接受了过期凭证")
-	}
-}
-
 func TestMediaRangeAndHEAD(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, method := range []string{"GET", "HEAD"} {
-		api := NewShareAPI("test-secret", func() string { return "" })
+		api := NewShareAPI(func() string { return "" })
 		api.MediaHTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if r.Method != method || r.Header.Get("Range") != "bytes=4-7" || r.Header.Get("Cookie") != "" {
 				t.Error("请求方法或 Range 不正确，或泄露 Cookie")

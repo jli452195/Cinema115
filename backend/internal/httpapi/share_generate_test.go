@@ -28,7 +28,7 @@ func TestOutputDirectoryBrowserUsesVirtualSTRMRoot(t *testing.T) {
 	outside := t.TempDir()
 	_ = os.Symlink(outside, filepath.Join(root, "越界链接"))
 
-	api := NewShareAPI("secret", func() string { return "cookie" })
+	api := NewShareAPI(func() string { return "cookie" })
 	api.OutputRoot = root
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
@@ -79,7 +79,7 @@ func TestBatchGenerationHTTP(t *testing.T) {
 		_, _ = w.Write([]byte(`{"state":true,"data":{"count":1,"list":[{"fid":"3515174619050935343","n":"电影.mkv","s":100}]}}`))
 	}))
 	defer upstream.Close()
-	api := NewShareAPI("secret", func() string { return "cookie" })
+	api := NewShareAPI(func() string { return "cookie" })
 	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
 	api.OutputRoot = t.TempDir()
 	directory := filepath.Join(api.OutputRoot, "strm")
@@ -146,7 +146,7 @@ func TestReviewReturnsActionableErrorToPage(t *testing.T) {
 				w.Write([]byte(`{"state":false,"error":"分享正在审核中"}`))
 			}))
 			defer upstream.Close()
-			api := NewShareAPI("test-secret", func() string { return "test-cookie" })
+			api := NewShareAPI(func() string { return "test-cookie" })
 			api.OutputRoot = t.TempDir()
 			api.Client.WebURL = upstream.URL
 			r := gin.New()
@@ -169,7 +169,7 @@ func TestReviewReturnsActionableErrorToPage(t *testing.T) {
 
 func TestSingleSTRMUsesSelectedBaseURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	api := NewShareAPI("secret", func() string { return "selected-cookie" })
+	api := NewShareAPI(func() string { return "selected-cookie" })
 	api.BaseURL = func() string { return "http://old-server:3002" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))

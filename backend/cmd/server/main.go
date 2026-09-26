@@ -198,7 +198,7 @@ func main() {
 		}
 		c.JSON(http.StatusOK, info)
 	})
-	shareAPI := httpapi.NewShareAPI(secret, func() string { return "" })
+	shareAPI := httpapi.NewShareAPI(func() string { return "" })
 	if root := os.Getenv("STRM_ROOT"); root != "" {
 		shareAPI.OutputRoot = root
 	}
@@ -248,14 +248,41 @@ func main() {
 		log.Fatal(err)
 	}
 	embyProxyLogs := service.NewEmbyProxyLogs(generationLogs)
+	playbackStore, err := service.NewSessionStore(filepath.Join(dataDir, "playback-cache.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	playbackCache, err := service.NewPlaybackCache(ctx, playbackStore, accounts, shareAPI.Client, embyProxyLogs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer playbackCache.Close()
+	identityStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-playback-identities.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	playbackIdentities, err := service.NewEmbyPlaybackIdentities(identityStore)
+	if err != nil {
+		log.Fatal(err)
+	}
 	embyProxy, err := service.NewEmbyProxy(ctx, proxyStore, accounts, func(config service.EmbyProxyConfig) http.Handler {
-		return httpapi.NewEmbyProxyHandler(config, accounts, shareAPI, embyProxyLogs)
+		return httpapi.NewEmbyCachedProxyHandler(config, accounts, shareAPI, playbackCache, embyProxyLogs, playbackIdentities)
 	}, embyProxyLogs)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer embyProxy.Close()
 	httpapi.RegisterEmbyProxy(admin, embyProxy)
+	httpapi.RegisterPlaybackCache(admin, playbackCache, embyProxy, embyService)
+	instantStore, err := service.NewSessionStore(filepath.Join(dataDir, "instant-upload.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	instantUploads, err := service.NewInstantUploads(instantStore, accounts, shareAPI.Client, embyProxyLogs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterInstantUploads(admin, instantUploads, shareAPI)
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	shareTasks.RetryWake = make(chan struct{}, 1)
 	httpapi.RegisterShareTasks(admin, database, shareTasks)

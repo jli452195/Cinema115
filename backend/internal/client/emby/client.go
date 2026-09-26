@@ -91,6 +91,22 @@ func NormalizeURL(raw string) (string, error) {
 func New(base, key string) *Client {
 	return &Client{BaseURL: base, Key: key, HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 }
+
+type User struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Policy struct {
+		IsDisabled bool `json:"IsDisabled"`
+	} `json:"Policy"`
+}
+
+func (c *Client) Users(ctx context.Context) ([]User, error) {
+	var users []User
+	if err := c.get(ctx, "/Users", nil, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/emby"+path+"?"+query.Encode(), nil)
 	if err != nil {

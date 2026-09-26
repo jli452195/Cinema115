@@ -1,0 +1,91 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/service"
+)
+
+type instantAPIClient struct{ reads, writes int }
+
+func (f *instantAPIClient) DownloadInfoWithUA(_ context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
+	f.reads++
+	return &p115.DownloadInfo{Name: "sample.mkv", SHA1: strings.Repeat("A", 40), Size: 100, URL: "https://cdn.115.com/private-link"}, nil
+}
+func (f *instantAPIClient) InstantUpload(_ context.Context, _ *p115.DownloadInfo, cid, cookie string, progress func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
+	f.writes++
+	return &p115.InstantUploadResult{PickCode: "pick1234"}, nil
+}
+
+func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
+	accounts, id := proxyTestAccounts(t)
+	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "instant.enc"), "test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &instantAPIClient{}
+	s, err := service.NewInstantUploads(store, accounts, fake, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	share := NewShareAPI(func() string { return "forbidden-fallback" })
+	RegisterInstantUploads(r.Group("/api/admin"), s, share)
+	call := func(path string, payload any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/api/admin/emby/instant-upload"+path, strings.NewReader(string(raw)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	config := service.InstantUploadConfig{SourceAccountID: id, AccountID: id, STRMBaseURL: "http://cinema:8115", StrictSTRMOrigin: true, TargetCID: "0"}
+	bad := config
+	bad.AccountID = ""
+	if w := call("", bad); w.Code != 400 {
+		t.Fatalf("空账号未被拒绝: %d", w.Code)
+	}
+	if w := call("", config); w.Code != 200 {
+		t.Fatalf("保存失败 %d %s", w.Code, w.Body.String())
+	}
+	for _, strm := range []string{"http://evil.test/api/?share_code=abc&id=123&receive_code=private", "http://cinema:8115/api/?share_code=abc&id=invalid", "http://cinema:8115/api/stream/share/badtoken", "/outside/sample.strm", strings.Repeat("x", 21000)} {
+		w := call("/run", gin.H{"id": "http-test-request-001", "strm": strm})
+		if w.Code != 400 {
+			t.Fatalf("异常 STRM 未被拒绝: %d", w.Code)
+		}
+	}
+	if fake.reads != 0 || fake.writes != 0 {
+		t.Fatal("无效输入产生上游请求")
+	}
+	for i := 0; i < 2; i++ {
+		w := call("/run", gin.H{"id": "http-test-request-002", "strm": "http://cinema:8115/api/?share_code=abc&id=123&receive_code=private"})
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"success"`) || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("验证接口失败: %d %s", w.Code, w.Body.String())
+		}
+		for _, secret := range []string{"private", "SEID", "cookie", "forbidden-fallback"} {
+			if strings.Contains(w.Body.String(), secret) {
+				t.Fatal("响应包含敏感信息")
+			}
+		}
+	}
+	if fake.reads != 1 || fake.writes != 1 {
+		t.Fatal("相同请求被重复执行")
+	}
+	config.StrictSTRMOrigin = false
+	config.STRMBaseURL = ""
+	if w := call("", config); w.Code != 200 {
+		t.Fatalf("宽松模式无需来源地址: %d %s", w.Code, w.Body.String())
+	}
+	w := call("/run", gin.H{"id": "http-test-request-003", "strm": "https://other-nas:9443/api/?share_code=abc&id=123&receive_code=pass"})
+	if w.Code != 200 || fake.writes != 2 {
+		t.Fatal("不同来源未进入秒传验证", w.Code, w.Body.String())
+	}
+}

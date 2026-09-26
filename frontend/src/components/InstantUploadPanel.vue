@@ -1,0 +1,114 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import P115AccountSelect from './P115AccountSelect.vue'
+import SettingSwitch from './SettingSwitch.vue'
+import P115DirectoryDialog from './P115DirectoryDialog.vue'
+import type { P115Account } from '../types/p115Accounts'
+import { embyRequest } from '../types/emby'
+
+const props = defineProps<{ token: string; accounts: P115Account[]; source?: { accountId: string; strmBaseUrl: string; strictStrmOrigin?: boolean } }>()
+interface Config { sourceAccountId: string; accountId: string; targetCid: string; targetPath: string; strmBaseUrl: string; strictStrmOrigin: boolean }
+interface Record { id: string; sourceAccountId: string; accountId: string; targetCid: string; status: string; message: string; name: string; size: number; sha1: string; fileId?: string; pickCode?: string; challenged: boolean; startedAt: string; durationMs: number }
+interface Status { config: Config; records: Record[]; running: boolean }
+const config = ref<Config>({ sourceAccountId: '', accountId: '', targetCid: '', targetPath: '', strmBaseUrl: '', strictStrmOrigin: false })
+const saved = ref<Config>()
+const records = ref<Record[]>([])
+const running = ref(false)
+const busy = ref(false)
+const loaded = ref(false)
+const directoryOpen = ref(false)
+const strm = ref('')
+const error = ref('')
+const notice = ref('')
+const requestId = ref('')
+const lifecycle = new AbortController()
+const dirty = computed(() => JSON.stringify(config.value) !== JSON.stringify(saved.value))
+const blocked = computed(() => busy.value || running.value || !loaded.value)
+const selectedReady = (id: string) => props.accounts.some(account => account.id === id && account.configured)
+const ready = computed(() => selectedReady(config.value.sourceAccountId) && selectedReady(config.value.accountId) && /^\d+$/.test(config.value.targetCid) && (!config.value.strictStrmOrigin || !!config.value.strmBaseUrl))
+watch(strm, () => { requestId.value = '' })
+function targetChanged(id: string) { config.value.accountId = id; config.value.targetCid = ''; config.value.targetPath = ''; requestId.value = '' }
+function chooseDirectory(value: { id: string; path: string }) { config.value.targetCid = value.id; config.value.targetPath = value.path; directoryOpen.value = false }
+function acceptStatus(data: Status, replaceConfig: boolean) {
+  records.value = data.records; running.value = data.running; saved.value = { ...data.config, strictStrmOrigin: data.config.strictStrmOrigin ?? false }
+  if (replaceConfig) config.value = { ...data.config, strictStrmOrigin: data.config.strictStrmOrigin ?? false }
+  loaded.value = true
+}
+async function load(replaceConfig = false) {
+  busy.value = true; error.value = ''
+  try { acceptStatus(await embyRequest(props.token, 'instant-upload', lifecycle.signal), replaceConfig || !loaded.value) }
+  catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取秒传配置失败' }
+  finally { busy.value = false }
+}
+async function save() {
+  busy.value = true; error.value = ''; notice.value = ''
+  try {
+    acceptStatus(await embyRequest(props.token, 'instant-upload', lifecycle.signal, { ...config.value }), true)
+    requestId.value = ''; notice.value = '秒传配置已保存。'
+  } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存失败' }
+  finally { busy.value = false }
+}
+async function run() {
+  if (blocked.value || dirty.value || !ready.value || !strm.value.trim()) return
+  busy.value = true; error.value = ''; notice.value = ''
+  if (!requestId.value) requestId.value = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
+  try {
+    const result: Record = await embyRequest(props.token, 'instant-upload/run', lifecycle.signal, { id: requestId.value, strm: strm.value.trim() })
+    records.value = [result, ...records.value.filter(item => item.id !== result.id)].slice(0, 20)
+    notice.value = result.message
+    // Keep the ID until the sample or saved config changes, so retrying cannot repeat a write.
+  } catch (reason) {
+    if (!lifecycle.signal.aborted) error.value = `${reason instanceof Error ? reason.message : '验证请求失败'}。如请求已发出，请刷新记录并核查目标目录。`
+  } finally { busy.value = false }
+}
+function statusLabel(value: string) { return ({ success: '秒传成功', unsupported: '需要普通上传', uncertain: '结果待确认', failed: '验证失败', running: '验证中' } as { [key: string]: string })[value] || value }
+function accountName(id: string) { return props.accounts.find(account => account.id === id)?.name || '账号已删除' }
+onMounted(() => load(true))
+onBeforeUnmount(() => lifecycle.abort())
+</script>
+
+<template>
+  <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2 class="font-semibold text-slate-900">单文件秒传验证</h2>
+      <button type="button" :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40" @click="load()">刷新记录</button>
+    </div>
+    <p class="mt-2 text-sm leading-6 text-slate-500">将一个分享 STRM 对应的视频秒传到指定账号。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
+    <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
+    <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{{ notice }}</p>
+    <form class="mt-5" @submit.prevent="save">
+      <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
+        <SettingSwitch v-model="config.strictStrmOrigin" label="严格匹配验证 STRM 来源地址" description="默认按分享格式识别；开启后额外核对来源协议、主机和端口。" />
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div><p class="mb-2 text-sm font-semibold text-slate-800">源文件取链账号</p><P115AccountSelect id="instant-source-account" v-model="config.sourceAccountId" :accounts="accounts" /></div>
+          <div><p class="mb-2 text-sm font-semibold text-slate-800">目标账号（朋友账号）</p><P115AccountSelect id="instant-target-account" :model-value="config.accountId" :accounts="accounts" @update:model-value="targetChanged" /></div>
+          <label v-if="config.strictStrmOrigin" class="text-sm text-slate-700">STRM 来源地址<input v-model.trim="config.strmBaseUrl" type="url" :required="config.strictStrmOrigin" placeholder="http://192.168.0.3:8115" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3" /><span class="mt-2 block text-xs text-slate-400">填写 STRM 中的协议、主机和端口。</span></label>
+          <label class="text-sm text-slate-700">目标缓存目录 ID<input v-model.trim="config.targetCid" required inputmode="numeric" pattern="[0-9]+" placeholder="手动填写，根目录为 0" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3" @input="config.targetPath = ''" /><span v-if="config.targetPath" class="mt-2 block break-all text-xs text-slate-500">{{ config.targetPath }}</span></label>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600" @click="config.sourceAccountId = source.accountId; config.strmBaseUrl = source.strmBaseUrl; config.strictStrmOrigin = source.strictStrmOrigin ?? false">填入已保存的 302 来源配置</button>
+          <button type="button" :disabled="!selectedReady(config.accountId)" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40" @click="directoryOpen = true">选择目标目录</button>
+          <button type="submit" :disabled="!ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">保存秒传配置</button>
+        </div>
+      </fieldset>
+    </form>
+    <div class="mt-6 border-t border-slate-100 pt-5">
+      <label for="instant-strm" class="text-sm text-slate-700">单个 STRM 文件中的播放地址</label>
+      <textarea id="instant-strm" v-model="strm" :disabled="blocked" rows="3" spellcheck="false" autocomplete="off" placeholder="打开一个 .strm 文件，粘贴其中的完整地址" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm disabled:opacity-50" />
+      <p class="mt-2 text-xs leading-6 text-slate-500">验证只尝试秒传；如 115 要求普通上传，会停止。校验最多读取 8 MB 片段。这里生成的验证文件会保留，不纳入上方播放缓存的定期清理。</p>
+      <p v-if="dirty && loaded" class="mt-2 text-xs text-amber-700">请先保存上面的账号与目录配置。</p>
+      <button type="button" :disabled="blocked || dirty || !ready || !strm.trim()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40" @click="run">{{ busy || running ? '正在处理…' : '开始单文件秒传' }}</button>
+    </div>
+    <div v-if="records.length" class="mt-6 space-y-3" aria-live="polite">
+      <h3 class="text-sm font-semibold text-slate-800">最近验证记录</h3>
+      <article v-for="record in records" :key="record.id" class="rounded-xl border border-slate-200 p-4 text-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2"><span class="font-medium" :class="record.status === 'success' ? 'text-emerald-700' : record.status === 'failed' ? 'text-red-600' : 'text-amber-700'">{{ statusLabel(record.status) }}</span><time class="text-xs text-slate-400">{{ new Date(record.startedAt).toLocaleString() }}</time></div>
+        <p v-if="record.name" class="mt-2 break-all text-slate-800">{{ record.name }}</p>
+        <p class="mt-2 text-slate-600">{{ record.message }}</p>
+        <p class="mt-2 text-xs text-slate-500">目标：{{ accountName(record.accountId) }} · 目录 {{ record.targetCid }} · 耗时 {{ (record.durationMs / 1000).toFixed(2) }} 秒<span v-if="record.challenged"> · 已完成片段校验</span></p>
+        <p v-if="record.fileId || record.pickCode" class="mt-2 break-all text-xs text-slate-500"><span v-if="record.fileId">目标文件 ID：{{ record.fileId }} </span><span v-if="record.pickCode">PickCode：{{ record.pickCode }}</span></p>
+      </article>
+    </div>
+    <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="config.accountId" title="选择目标缓存目录" @close="directoryOpen = false" @select="chooseDirectory" />
+  </section>
+</template>

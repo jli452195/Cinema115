@@ -62,7 +62,7 @@ func TestEmbyProxyCancellationAndUpstreamFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			shared := &service.GenerationLogs{}
 			logs := service.NewEmbyProxyLogs(shared)
-			h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: "http://emby:8096"}, nil, NewShareAPI("secret", func() string { return "" }), logs).(*embyProxyHandler)
+			h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: "http://emby:8096"}, nil, NewShareAPI(func() string { return "" }), logs).(*embyProxyHandler)
 			h.proxy.Transport = embyProxyErrorTransport{tc.err}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -101,7 +101,7 @@ func TestEmbyProxyActualClientCancellation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(started); <-r.Context().Done(); close(stopped) }))
 	defer upstream.Close()
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
-	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL}, nil, NewShareAPI("secret", func() string { return "" }), logs)
+	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL}, nil, NewShareAPI(func() string { return "" }), logs)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	done := make(chan struct{})
@@ -136,7 +136,9 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 	accounts, id := proxyTestAccounts(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/emby/Users/Me":
+		case "/emby/Users/AuthenticateByName":
+			fmt.Fprint(w, `{"AccessToken":"viewer-token","User":{"Id":"user1"},"SessionInfo":{"UserId":"user1"}}`)
+		case "/emby/Users/user1":
 			if r.Header.Get("X-Emby-Token") == "invalid" {
 				w.WriteHeader(401)
 				return
@@ -162,7 +164,7 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	share := NewShareAPI("secret", func() string { return "wrong-account" })
+	share := NewShareAPI(func() string { return "wrong-account" })
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
 	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, STRMBaseURL: "http://cinema:8115"}, accounts, share, logs).(*embyProxyHandler)
 	calls := 0
@@ -180,6 +182,9 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w
+	}
+	if w := call("POST", "/emby/Users/AuthenticateByName"); w.Code != 200 {
+		t.Fatal("登录失败", w.Code)
 	}
 	for _, method := range []string{"GET", "HEAD"} {
 		w := call(method, "/cinema115/play?ItemId=movie&MediaSourceId=source1&api_key=viewer-token")
@@ -317,9 +322,9 @@ func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://cinema:8115/api/?share_code=abc&id=123&receive_code=pass\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	share := NewShareAPI("secret", func() string { return "" })
+	share := NewShareAPI(func() string { return "" })
 	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{STRMBaseURL: "http://cinema:8115", EmbyPathPrefix: "/media"}, share: share}
+	h := &embyProxyHandler{config: service.EmbyProxyConfig{STRMBaseURL: "http://cinema:8115", StrictSTRMOrigin: true, EmbyPathPrefix: "/media"}, share: share}
 	for _, tc := range []struct {
 		path  string
 		valid bool

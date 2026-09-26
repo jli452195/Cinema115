@@ -17,18 +17,42 @@ import (
 )
 
 type EmbyProxyConfig struct {
-	Enabled        bool   `json:"enabled"`
-	Port           int    `json:"port"`
-	URL            string `json:"url"`
-	AccountID      string `json:"accountId"`
-	STRMBaseURL    string `json:"strmBaseUrl"`
-	EmbyPathPrefix string `json:"embyPathPrefix"`
+	Enabled                bool   `json:"enabled"`
+	Debug                  bool   `json:"debug"`
+	DirectLinkCacheMinutes int    `json:"directLinkCacheMinutes"`
+	Port                   int    `json:"port"`
+	URL                    string `json:"url"`
+	AccountID              string `json:"accountId"`
+	STRMBaseURL            string `json:"strmBaseUrl"`
+	StrictSTRMOrigin       bool   `json:"strictStrmOrigin"`
+	EmbyPathPrefix         string `json:"embyPathPrefix"`
 }
 
 type EmbyProxyStatus struct {
 	Config    EmbyProxyConfig `json:"config"`
 	Listening bool            `json:"listening"`
 	Error     string          `json:"error"`
+}
+
+type directLinkCacheHandler interface {
+	DirectLinkStatus() DirectLinkCacheStatus
+	ClearDirectLinks(string)
+}
+
+func (s *EmbyProxy) DirectLinkStatus() DirectLinkCacheStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h, ok := s.handler.(directLinkCacheHandler); ok {
+		return h.DirectLinkStatus()
+	}
+	return DirectLinkCacheStatus{Entries: []DirectLinkCacheEntry{}}
+}
+func (s *EmbyProxy) ClearDirectLinks(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h, ok := s.handler.(directLinkCacheHandler); ok {
+		h.ClearDirectLinks(id)
+	}
 }
 
 type embyProxyLifecycleKey struct{}
@@ -57,7 +81,7 @@ type EmbyProxy struct {
 }
 
 func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler, logs ...*EmbyProxyLogs) (*EmbyProxy, error) {
-	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097}}
+	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097, DirectLinkCacheMinutes: 9}}
 	if len(logs) > 0 {
 		s.Logs = logs[0]
 	}
@@ -82,6 +106,9 @@ func (s *EmbyProxy) Status() EmbyProxyStatus {
 }
 
 func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
+	if c.DirectLinkCacheMinutes < 0 || c.DirectLinkCacheMinutes > 30 {
+		return c, fmt.Errorf("直链缓存时间须为 0～30 分钟，0 表示关闭")
+	}
 	if c.Port < 1024 || c.Port > 65535 {
 		return c, fmt.Errorf("反代端口须为 1024～65535，且不能使用已占用的端口")
 	}
@@ -97,7 +124,7 @@ func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
 			return c, fmt.Errorf("Emby 上游端口不能与反代监听端口相同")
 		}
 	}
-	if c.Enabled || c.STRMBaseURL != "" {
+	if c.StrictSTRMOrigin || c.STRMBaseURL != "" {
 		c.STRMBaseURL, err = normalizeWebhookBaseURL(c.STRMBaseURL)
 		if err != nil {
 			return c, fmt.Errorf("STRM 来源地址: %w", err)

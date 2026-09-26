@@ -24,6 +24,21 @@ func proxyFreePort(t *testing.T) int {
 	return port
 }
 
+func TestEmbyProxyOptionalOriginConfig(t *testing.T) {
+	c := EmbyProxyConfig{Enabled: true, Port: 8097, URL: "http://nas:8096"}
+	if _, err := normalizeEmbyProxy(c); err != nil {
+		t.Fatal("默认模式不应要求来源地址", err)
+	}
+	c.StrictSTRMOrigin = true
+	if _, err := normalizeEmbyProxy(c); err == nil {
+		t.Fatal("严格模式缺少来源地址")
+	}
+	c.STRMBaseURL = "http://nas:8115"
+	if _, err := normalizeEmbyProxy(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	accounts, err := newP115Accounts(&failingAccountStore{}, "")
 	if err != nil {
@@ -70,6 +85,15 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 		if err != nil || string(body) != id {
 			t.Fatal("监听未提供配置的处理器")
 		}
+	}
+	check(c.Port)
+	// Same-port debug changes apply immediately and persist with the rest of the config.
+	c.Debug = true
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Status().Config.Debug {
+		t.Fatal("debug setting was not saved")
 	}
 	check(c.Port)
 	busy, err := net.Listen("tcp", ":0")

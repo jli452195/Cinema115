@@ -15,6 +15,7 @@ import TelegramUserView from './views/TelegramUserView.vue'
 import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
 import EmbyProxyView from './views/EmbyProxyView.vue'
+import EmbyCacheView from './views/EmbyCacheView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -57,6 +58,7 @@ export const router = createRouter({
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },
     { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView },
+    { path: '/emby/cache', name: 'emby-cache', component: EmbyCacheView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },

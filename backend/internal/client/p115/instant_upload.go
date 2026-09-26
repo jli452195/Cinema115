@@ -1,0 +1,280 @@
+package p115
+
+import (
+	"bytes"
+	"context"
+	"crypto/md5"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/crc32"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Protocol reference: p115client upload_init/upload_file_init and p115cipher.
+// No OSS upload or automatic replay of a write is performed.
+const instantAppVersion = "36.2.28"
+const MaxInstantRangeBytes int64 = 8 << 20
+
+var ErrInstantUnsupported = errors.New("115 要求普通上传，此文件未秒传；已停止，不上传整部视频")
+var ErrInstantUncertain = errors.New("秒传结果未确认，请先检查目标目录，避免重复提交")
+var instantHash = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
+var instantPickCode = regexp.MustCompile(`^[a-zA-Z0-9]{6,64}$`)
+var instantRange = regexp.MustCompile(`^([0-9]+)-([0-9]+)$`)
+
+type InstantUploadResult struct {
+	FileID     string `json:"fileId,omitempty"`
+	PickCode   string `json:"pickCode,omitempty"`
+	Challenged bool   `json:"challenged"`
+}
+
+// InstantProgress contains only fixed stage names and byte counts, never credentials or URLs.
+type InstantProgress struct {
+	Stage string
+	Bytes int64
+}
+
+func ValidateInstantSource(info *DownloadInfo) error {
+	if info == nil || !instantHash.MatchString(info.SHA1) || info.Size <= 0 || strings.TrimSpace(info.Name) == "" || len([]rune(info.Name)) > 255 || strings.ContainsAny(info.Name, "/\\\r\n\x00") {
+		return fmt.Errorf("源文件缺少有效的完整 SHA1、文件名或大小，无法秒传")
+	}
+	if !AllowedMediaURL(info.URL) {
+		return fmt.Errorf("源文件直链无效")
+	}
+	return nil
+}
+
+// InstantUpload uses only the pinned destination Cookie; range reads never receive it.
+func (c *ShareClient) InstantUpload(ctx context.Context, info *DownloadInfo, cid, cookie string, progress func(InstantProgress)) (*InstantUploadResult, error) {
+	if err := ValidateInstantSource(info); err != nil {
+		return nil, err
+	}
+	if !validDriveID(cid, true) || CookieUserID(cookie) == "" {
+		return nil, fmt.Errorf("请选择已登录的目标账号和缓存目录")
+	}
+	report := func(stage string, n int64) {
+		if progress != nil {
+			progress(InstantProgress{stage, n})
+		}
+	}
+	report("target", 0)
+	// Require explicit directory identity, since deleted directories may silently resolve to root.
+	q := url.Values{"cid": {cid}, "limit": {"1"}, "offset": {"0"}}
+	raw, err := c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
+	if err != nil {
+		return nil, err
+	}
+	var directory struct {
+		State json.RawMessage
+		CID   json.Number
+		Path  []struct{ CID json.Number }
+	}
+	if json.Unmarshal(raw, &directory) != nil || !upstreamOK(directory.State) || (directory.CID.String() != cid && len(directory.Path) == 0) || (directory.CID != "" && directory.CID.String() != cid) || (len(directory.Path) > 0 && directory.Path[len(directory.Path)-1].CID.String() != cid) {
+		return nil, fmt.Errorf("目标缓存目录无法确认，请重新选择目录")
+	}
+	raw, err = c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files/uploadinfo", cookie, nil)
+	if err != nil {
+		return nil, err
+	}
+	var identity struct {
+		UserID  json.Number     `json:"user_id"`
+		UserKey string          `json:"userkey"`
+		State   json.RawMessage `json:"state"`
+	}
+	if json.Unmarshal(raw, &identity) != nil || (len(identity.State) > 0 && !upstreamOK(identity.State)) || identity.UserID.String() != CookieUserID(cookie) || identity.UserKey == "" || len(identity.UserKey) > 256 {
+		return nil, fmt.Errorf("无法获取目标账号的上传凭据，请检查该账号登录状态")
+	}
+	form := url.Values{"filename": {info.Name}, "fileid": {strings.ToUpper(info.SHA1)}, "filesize": {strconv.FormatInt(info.Size, 10)}, "target": {"U_1_" + cid}, "userid": {identity.UserID.String()}, "userkey": {identity.UserKey}, "appversion": {instantAppVersion}, "topupload": {"true"}}
+	challenged := false
+	for attempt := 0; attempt < 2; attempt++ {
+		body, token, err := instantPayload(form, time.Now().Unix())
+		if err != nil {
+			return nil, err
+		}
+		report("init", 0)
+		raw, err = c.instantRequest(ctx, http.MethodPost, "https://uplb.115.com/4.0/initupload.php?k_ec="+url.QueryEscape(token), cookie, body)
+		if err != nil {
+			return nil, fmt.Errorf("%w：上传初始化请求中断", ErrInstantUncertain)
+		}
+		// initupload may append a non-block trailer (observed: 12 bytes).
+		// The upload protocol decrypts only complete AES blocks; keep generic AES strict.
+		decoded, err := AESDecryptCBC(raw[:len(raw)/16*16])
+		if err == nil {
+			decoded, err = LZ4Decompress(decoded)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w：上传响应解密失败", ErrInstantUncertain)
+		}
+		var response struct {
+			Status    json.Number `json:"status"`
+			SignKey   string      `json:"sign_key"`
+			SignCheck string      `json:"sign_check"`
+			PickCode  string      `json:"pickcode"`
+			FileID    json.Number `json:"file_id"`
+		}
+		if json.Unmarshal(decoded, &response) != nil {
+			return nil, fmt.Errorf("%w：上传响应格式无效", ErrInstantUncertain)
+		}
+		switch response.Status.String() {
+		case "2":
+			result := &InstantUploadResult{Challenged: challenged}
+			if validDriveID(response.FileID.String(), false) {
+				result.FileID = response.FileID.String()
+			}
+			if instantPickCode.MatchString(response.PickCode) {
+				result.PickCode = response.PickCode
+			}
+			if result.FileID == "" && result.PickCode == "" {
+				return nil, fmt.Errorf("%w：115 已返回成功，但缺少目标文件标识", ErrInstantUncertain)
+			}
+			return result, nil
+		case "1":
+			return nil, ErrInstantUnsupported
+		case "7":
+			if attempt != 0 || response.SignKey == "" || len(response.SignKey) > 256 {
+				return nil, fmt.Errorf("115 二次校验未通过或校验参数无效")
+			}
+			start, end, err := parseInstantRange(response.SignCheck, info.Size)
+			if err != nil {
+				return nil, err
+			}
+			report("range", end-start+1)
+			hash, err := c.instantRangeHash(ctx, info.URL, start, end, info.Size)
+			if err != nil {
+				return nil, err
+			}
+			report("range_done", end-start+1)
+			form.Set("sign_key", response.SignKey)
+			form.Set("sign_val", hash)
+			challenged = true
+		default:
+			return nil, fmt.Errorf("115 未返回秒传成功状态，请检查目标账号权限和容量")
+		}
+	}
+	return nil, fmt.Errorf("115 二次校验未完成")
+}
+
+func instantPayload(input url.Values, timestamp int64) ([]byte, string, error) {
+	form := make(url.Values, len(input)+3)
+	for k, v := range input {
+		form[k] = append([]string(nil), v...)
+	}
+	form.Set("t", strconv.FormatInt(timestamp, 10))
+	inner := sha1.Sum([]byte(form.Get("userid") + form.Get("fileid") + form.Get("target") + "0"))
+	sign := sha1.Sum([]byte(form.Get("userkey") + hex.EncodeToString(inner[:]) + "000000"))
+	form.Set("sig", strings.ToUpper(hex.EncodeToString(sign[:])))
+	uidMD5 := md5.Sum([]byte(form.Get("userid")))
+	tokenMD5 := md5.Sum([]byte("Qclm8MGWUv59TnrR0XPg" + form.Get("fileid") + form.Get("filesize") + form.Get("sign_key") + form.Get("sign_val") + form.Get("userid") + form.Get("t") + hex.EncodeToString(uidMD5[:]) + form.Get("appversion")))
+	form.Set("token", hex.EncodeToString(tokenMD5[:]))
+	for k := range form {
+		if form.Get(k) == "" {
+			delete(form, k)
+		}
+	}
+	// Go leaves '~' unescaped, matching Python's quote_plus used by the protocol.
+	body, err := AESEncryptCBC([]byte(form.Encode()))
+	if err != nil {
+		return nil, "", fmt.Errorf("编码秒传请求: %w", err)
+	}
+	pub := []byte{0x1d, 0x03, 0x0e, 0x80, 0xa1, 0x78, 0xdc, 0xee, 0xce, 0xcd, 0xa3, 0x77, 0xde, 0x12, 0x8d, 0x8e, 0xd9, 0xdd, 0xcf, 0x55, 0xae, 0x61, 0xed, 0x46, 0xea, 0x12, 0x1a, 0x1c, 0xfc, 0x81}
+	token := make([]byte, 48)
+	copy(token, pub[:15])
+	token[16] = 0x73
+	binary.LittleEndian.PutUint32(token[20:24], uint32(timestamp))
+	copy(token[24:39], pub[15:])
+	token[40] = 1
+	binary.LittleEndian.PutUint32(token[44:], crc32.ChecksumIEEE(append([]byte("^j>WD3Kr?J2gLFjD4W2y@"), token[:44]...)))
+	return body, base64.StdEncoding.EncodeToString(token), nil
+}
+
+func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cookie string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("创建秒传接口请求失败")
+	}
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("User-Agent", "Mozilla/5.0 115disk/"+instantAppVersion+" 115Browser/"+instantAppVersion+" 115wangpan_android/"+instantAppVersion)
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("115 秒传接口连接失败")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("115 秒传接口返回 HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil || len(raw) > 1<<20 {
+		return nil, fmt.Errorf("115 秒传接口响应读取失败")
+	}
+	return raw, nil
+}
+
+func parseInstantRange(value string, size int64) (int64, int64, error) {
+	parts := instantRange.FindStringSubmatch(value)
+	if parts == nil {
+		return 0, 0, fmt.Errorf("115 返回了无效的校验范围")
+	}
+	start, a := strconv.ParseInt(parts[1], 10, 64)
+	end, b := strconv.ParseInt(parts[2], 10, 64)
+	if a != nil || b != nil || start < 0 || end < start || end >= size || end-start >= MaxInstantRangeBytes {
+		return 0, 0, fmt.Errorf("115 校验范围越界或超过 8 MB 上限")
+	}
+	return start, end, nil
+}
+
+func (c *ShareClient) instantRangeHash(ctx context.Context, link string, start, end, total int64) (string, error) {
+	if !AllowedMediaURL(link) {
+		return "", fmt.Errorf("校验直链域名无效")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return "", fmt.Errorf("创建片段校验请求失败")
+	}
+	req.Header.Set("User-Agent", PlaybackUserAgent)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	req.Header.Set("Accept-Encoding", "identity")
+	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 25 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !AllowedMediaURL(req.URL.String()) {
+			return fmt.Errorf("校验直链重定向无效")
+		}
+		return nil
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("读取校验片段连接失败")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		return "", fmt.Errorf("校验片段返回 HTTP %d，已停止读取", resp.StatusCode)
+	}
+	expected := fmt.Sprintf("bytes %d-%d/%d", start, end, total)
+	if resp.Header.Get("Content-Range") != expected || (resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity") {
+		return "", fmt.Errorf("校验片段范围或编码不匹配")
+	}
+	hash := sha1.New()
+	n, err := io.Copy(hash, io.LimitReader(resp.Body, end-start+2))
+	if err != nil || n != end-start+1 {
+		return "", fmt.Errorf("校验片段长度不匹配或读取失败")
+	}
+	return strings.ToUpper(hex.EncodeToString(hash.Sum(nil))), nil
+}

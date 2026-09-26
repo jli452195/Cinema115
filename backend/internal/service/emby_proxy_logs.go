@@ -3,8 +3,37 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync/atomic"
+	"unicode"
 )
+
+// PlaybackLogName keeps display names on one bounded log line.
+func PlaybackLogName(name string) string {
+	clean := make([]rune, 0, 80)
+	for _, r := range name {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		clean = append(clean, r)
+		if len(clean) == 80 {
+			break
+		}
+	}
+	value := strings.TrimSpace(string(clean))
+	if value == "" {
+		value = "未提供名称"
+	}
+	return strconv.Quote(value)
+}
+
+func PlaybackAccountLabel(name, uid, accountID string) string {
+	if uid == "" {
+		uid = "未知"
+	}
+	return PlaybackLogName(name) + "（UID " + uid + "，配置=" + accountID + "）"
+}
 
 // EmbyProxyLogs writes to the shared real-time log buffer under its own module.
 // Callers supply fixed diagnostic messages and validated identifiers, never raw URLs or credentials.

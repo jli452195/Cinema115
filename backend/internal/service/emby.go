@@ -91,6 +91,15 @@ func (s *EmbyService) snapshot() EmbyConfig {
 	c.LibraryIDs = append([]string{}, c.LibraryIDs...)
 	return c
 }
+
+// User listing is administration only. Playback continues to authorize with the player's token.
+func (s *EmbyService) PlaybackUsers(ctx context.Context, proxyURL string) ([]emby.User, error) {
+	c := s.snapshot()
+	if c.URL != proxyURL || c.APIKey == "" {
+		return nil, fmt.Errorf("请先在 Emby 设置中配置与反代相同的服务器及 API Key")
+	}
+	return emby.New(c.URL, c.APIKey).Users(ctx)
+}
 func (s *EmbyService) CachedSeriesIDs(ctx context.Context) ([]int, error) {
 	c := s.snapshot()
 	if c.APIKey == "" || len(c.LibraryIDs) == 0 {
