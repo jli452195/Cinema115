@@ -78,6 +78,10 @@ func (c *ShareClient) requestEnvelope(ctx context.Context, method, endpoint, coo
 }
 
 func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint, cookie string, form url.Values) (json.RawMessage, error) {
+	return c.requestEnvelopeWithUA(ctx, method, endpoint, cookie, form, PlaybackUserAgent)
+}
+
+func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoint, cookie string, form url.Values, userAgent string) (json.RawMessage, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -86,7 +90,7 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 	if err != nil {
 		return nil, fmt.Errorf("创建分享请求: %w", err)
 	}
-	req.Header.Set("User-Agent", PlaybackUserAgent)
+	req.Header.Set("User-Agent", userAgent)
 	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
@@ -204,6 +208,11 @@ func parseSharePage(data json.RawMessage, offset int) (*SharePage, error) {
 
 // DownloadURL 获取有权访问的分享文件直链，不执行转存操作。
 func (c *ShareClient) DownloadURL(ctx context.Context, share *ShareInfo, fileID, cookie string) (string, error) {
+	return c.DownloadURLWithUA(ctx, share, fileID, cookie, PlaybackUserAgent)
+}
+
+// DownloadURLWithUA binds link acquisition to the actual player, without changing shared client state.
+func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (string, error) {
 	if cookie == "" {
 		return "", fmt.Errorf("请先登录 115，再获取分享播放地址")
 	}
@@ -211,10 +220,23 @@ func (c *ShareClient) DownloadURL(ctx context.Context, share *ShareInfo, fileID,
 	if err != nil {
 		return "", fmt.Errorf("编码分享下载参数: %w", err)
 	}
-	data, err := c.request(ctx, http.MethodPost, c.AppURL+"/app/share/downurl", cookie, url.Values{"data": {RSAEncrypt(payload)}})
+	if userAgent == "" {
+		userAgent = PlaybackUserAgent
+	}
+	if len(userAgent) > 2048 || strings.ContainsAny(userAgent, "\r\n") {
+		return "", fmt.Errorf("播放器 User-Agent 无效")
+	}
+	raw, err := c.requestEnvelopeWithUA(ctx, http.MethodPost, c.AppURL+"/app/share/downurl", cookie, url.Values{"data": {RSAEncrypt(payload)}}, userAgent)
 	if err != nil {
 		return "", err
 	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return "", fmt.Errorf("解析直链响应: %w", err)
+	}
+	data := envelope.Data
 	var encrypted string
 	if err = json.Unmarshal(data, &encrypted); err != nil {
 		return "", fmt.Errorf("115 未返回加密直链数据")

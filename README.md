@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-已安装 Air 时在 `backend` 执行 `air -c .air.toml`。不要同时运行两个后端占用 3002。
+已安装 Air 时在 `backend` 执行 `air -c .air.toml`。后端监听 `.env` 的 `HTTP_PORT`（未设置时为 3002），Vite API 代理同步读取该配置；不要同时运行两个后端占用同一端口。
 
 从 32 位 Go 切换后，先停止正在运行的 Air，再用新的 Go 重新安装同版本工具（安装 Go 不会自动更新已有的 `air.exe`）：
 
@@ -93,6 +93,8 @@ DATA_DIR=../data
 在「分享播放 / STRM」填写 Emby 能访问的「STRM 播放地址」，点击「保存生成设置」。地址保存在服务器并立即生效，不从环境变量读取；首次未配置时页面默认填入当前访问地址。已有 STRM 不会自动改写。
 
 STRM 写入固定的 Cinema115 代理地址。每次播放用已登录账户请求最新 115 直链，并转发 Range、HEAD 和媒体响应头；不会落盘保存视频。代理流量经过后端，受后端带宽限制。
+
+需要客户端直接读取 115 时，可在「Emby → Emby 302 反代」配置独立监听端口、明确选择 115 账号，并让 Emby 客户端连接反代入口。已有分享 STRM 无需重新生成。项目采用 host 网络，无需端口映射；管理端口由 `HTTP_PORT` 配置，详见 [Emby 302 反代](docs/emby-proxy.md)。
 
 新生成的链接格式为 `/api/?share_code=分享码&id=文件ID&receive_code=提取码`，可直接拼接使用，不要求签名、过期时间或管理员 JWT。无提取码的分享使用 `receive_code=`。后台分享管理接口仍需管理员登录。旧的 `/api/stream/share/{token}` 地址继续支持。
 

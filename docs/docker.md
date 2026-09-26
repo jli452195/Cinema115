@@ -1,24 +1,26 @@
 # NAS Docker 部署
 
-根目录 `Dockerfile` 分别构建 Vue 和 Go，最终一个镜像、一个容器、一个 Go 进程同时提供页面和 API。默认通过 `http://NAS_IP:8115` 访问，容器端口为 3002。NAS 无需安装 Go、Node.js 或 Nginx。
+根目录 `Dockerfile` 分别构建 Vue 和 Go，最终一个镜像、一个容器、一个 Go 进程同时提供页面和 API。项目 compose 使用 Linux NAS 的 host 网络，默认通过 `http://NAS_IP:8115` 访问。NAS 无需安装 Go、Node.js 或 Nginx。
 
 ## 配置
 
-在项目根目录首次创建配置（已有 `.env` 则保留原账号和密钥）：
+直接编辑 `compose.yaml`，无需 `.env`。填写 `environment` 中的管理员账号、密码、`JWT_SECRET` 和 TMDB 密钥；端口及运行用户也直接填写：
 
-```sh
-cp -n .env.example .env
+```yaml
+    user: "1000:1000"
+    environment:
+      HTTP_PORT: "8115"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "填写你的密码"
+      JWT_SECRET: "填写足够长的随机密钥，已有部署沿用原值"
+      TMDB_API_KEY: "填写你的 TMDB API Key"
+      TZ: "Asia/Shanghai"
+      TMDB_IMAGE_CACHE_MAX_GB: "5"
 ```
 
-编辑 `.env`，填写管理员账号、密码、随机 `JWT_SECRET`，以及端口和运行用户：
+仓库模板的密码和 `JWT_SECRET` 留空，填写后才能启动。使用已有 `data` 时必须保留原 `JWT_SECRET`，否则无法解密已保存的凭据。不要将填好真实凭据的 Compose 提交到公开仓库。
 
-```dotenv
-HTTP_PORT=8115
-PUID=1000
-PGID=1000
-TZ=Asia/Shanghai
-TMDB_IMAGE_CACHE_MAX_GB=5
-```
+`HTTP_PORT` 是后端实际监听端口，管理页、API 和分享 STRM 共用它，可设置为未占用的 `1024～65535` 端口。host 模式不配置 `ports:`。例如改为 `HTTP_PORT=9000`，重新创建容器后访问 `http://NAS_IP:9000`，健康检查自动跟随。保留 `8115` 可以兼容原先写入该端口的 STRM；改变端口不会自动改写旧 STRM、Webhook 或外部网关。Emby 302 反代端口独立在网页设置，不能与管理端口相同。
 
 用 NAS 上的 `id` 命令确认 UID/GID。启动后在「分享播放 / STRM」填写播放地址（例如 `http://192.168.0.3:8115`）并点击「保存生成设置」。地址要能被 Emby/播放器访问；有 HTTPS 反向代理时填写实际域名。Telegram Bot 在「Telegram 配置 → Bot 配置」中填写并保存，这些选项不需要环境变量。
 
@@ -60,11 +62,11 @@ docker compose ps
 curl -f http://127.0.0.1:8115/api/health
 ```
 
-也可在根目录执行 `docker build -t cinema115:local .` 构建镜像，然后在 NAS 容器管理界面配置相同的环境变量、`8115:3002` 端口和两个挂载。支持 amd64 和 arm64 NAS。
+也可在根目录执行 `docker build -t cinema115:local .` 构建镜像，然后在 NAS 容器管理界面选择 host 网络、添加环境变量 `HTTP_PORT=8115` 以及上述环境变量和两个挂载，无需发布端口。支持 amd64 和 arm64 NAS。若自行改用 bridge 网络，删除 `network_mode: host`，并将宿主机端口映射到实际 `HTTP_PORT`（例如 `8115:8115`）；Emby 反代端口也需另行映射。
 
 Go 构建使用默认并发与垃圾回收参数，不再固定为低内存编译。BuildKit 缓存依赖和编译结果，修改后端代码后可复用未变更的包；首次构建 Telegram 协议依赖耗时和内存占用较高，缓存仅用于构建，不进入最终镜像。
 
-更新代码后重新执行构建启动命令。修改 `.env` 或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
+更新代码后重新执行构建启动命令。修改 Compose 环境变量或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
 
 首次部署后在「115 助手」页面添加账号并扫码登录，再到具体功能中选择账号。多账号配置保存于 `/data/cinema115.db`，Cookie 字段使用 AES-GCM 加密，没有全局当前账号。从 Windows 迁移到 NAS 时保留完整 `data/`、原 `JWT_SECRET` 并保证文件权限正确；运行中备份数据库应使用 `dbtool -action backup`。旧 `p115-accounts.enc` 或 `p115-session.enc` 首次启动时自动导入，成功后仅使用数据库，保留旧文件作为备份。根目录密钥和登录凭证不会打包到镜像中。
 
@@ -75,3 +77,5 @@ Go 构建使用默认并发与垃圾回收参数，不再固定为低内存编�
 ## Windows 本地开发
 
 继续使用 Go/Air 和 Vite。媒体库根目录默认是项目 `data/media`，可在 `.env` 用 `STRM_ROOT=D:/媒体库` 等路径修改；目录选择器读取该 Windows 目录的真实文件夹，但页面仍统一显示 `/strm/...`。Docker 中固定读取 `/strm`，不受 Windows 路径影响。Telegram Bot 也通过网页配置。
+
+Go/Air 也读取 `HTTP_PORT`，不设置时默认 `3002`。Vite 的 API 代理读取项目根目录同一配置；修改后重启后端和 Vite。需要保留本地 3002 时，在本地 `.env` 填写 `HTTP_PORT=3002`。

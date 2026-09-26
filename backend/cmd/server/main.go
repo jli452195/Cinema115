@@ -36,6 +36,14 @@ func main() {
 	// 加载当前目录中的环境配置。
 	_ = godotenv.Load(".env")
 	_ = godotenv.Load("../.env")
+	httpPort := os.Getenv("HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "3002"
+	}
+	port, portErr := strconv.Atoi(httpPort)
+	if portErr != nil || port < 1024 || port > 65535 || strconv.Itoa(port) != httpPort {
+		log.Fatal("HTTP_PORT 必须是 1024～65535 之间的整数")
+	}
 	user, pass, secret := os.Getenv("ADMIN_USERNAME"), os.Getenv("ADMIN_PASSWORD"), os.Getenv("JWT_SECRET")
 	if user == "" || pass == "" || secret == "" {
 		panic("ADMIN_USERNAME, ADMIN_PASSWORD and JWT_SECRET must be configured")
@@ -229,6 +237,24 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Reserve the management port before restoring the independently configured Emby listener.
+	listener, err := net.Listen("tcp", ":"+httpPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+	proxyStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-proxy.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	embyProxy, err := service.NewEmbyProxy(ctx, proxyStore, accounts, func(config service.EmbyProxyConfig) http.Handler {
+		return httpapi.NewEmbyProxyHandler(config, accounts, shareAPI)
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer embyProxy.Close()
+	httpapi.RegisterEmbyProxy(admin, embyProxy)
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	shareTasks.RetryWake = make(chan struct{}, 1)
 	httpapi.RegisterShareTasks(admin, database, shareTasks)
@@ -277,10 +303,6 @@ func main() {
 		if err := httpapi.RegisterFrontend(r, directory); err != nil {
 			log.Fatal(err)
 		}
-	}
-	listener, err := net.Listen("tcp", ":3002")
-	if err != nil {
-		log.Fatal(err)
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
@@ -350,7 +372,7 @@ func main() {
 			}
 		}()
 	}
-	log.Print("Cinema115 已启动，监听 :3002")
+	log.Printf("Cinema115 已启动，监听 :%s", httpPort)
 	select {
 	case <-ctx.Done():
 	case err := <-workerErrors:
@@ -359,6 +381,7 @@ func main() {
 		}
 	}
 	cancel()
+	embyProxy.Close()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {

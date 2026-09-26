@@ -14,6 +14,7 @@ import TelegramView from './views/TelegramView.vue'
 import TelegramUserView from './views/TelegramUserView.vue'
 import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
+import EmbyProxyView from './views/EmbyProxyView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -55,6 +56,7 @@ export const router = createRouter({
     { path: '/nanshare', name: 'nanshare', component: NanShareView },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },
+    { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },

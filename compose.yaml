@@ -3,30 +3,35 @@ name: cinema115
 services:
   cinema115:
     image: cinema115:local
+    # Linux NAS 直接使用宿主机网络，无需端口映射。
+    # 管理页面与 STRM 服务由 HTTP_PORT 指定；Emby 反代端口在网页中设置。
+    network_mode: host
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     # 使用 NAS 用户的 UID/GID，以便 Emby 和文件管理器读取生成结果。
-    user: "${PUID:-1000}:${PGID:-1000}"
+    user: "1000:1000"
     environment:
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?请在根目录 .env 中填写 ADMIN_USERNAME}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在根目录 .env 中填写 ADMIN_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:?请在根目录 .env 中填写 JWT_SECRET}
+      # 直接修改这里即可，不需要 .env；修改后重新创建容器。
+      HTTP_PORT: "8115"
+      ADMIN_USERNAME: "admin"
+      # 必填；留空时后端不会启动。已有部署请填写原来的值。
+      ADMIN_PASSWORD: ""
+      # 必填；已有 data 必须沿用原 JWT_SECRET，否则无法解密已保存的凭据。
+      JWT_SECRET: ""
       # TMDB 密钥只传入运行容器，不参与前端或镜像构建。
-      TMDB_API_KEY: ${TMDB_API_KEY:-}
-      TMDB_IMAGE_CACHE_MAX_GB: ${TMDB_IMAGE_CACHE_MAX_GB:-5}
+      TMDB_API_KEY: ""
+      TMDB_IMAGE_CACHE_MAX_GB: "5"
       # 容器路径固定，不使用 Windows 开发环境的 DATA_DIR。
       DATA_DIR: /data
       STRM_ROOT: /strm
       GIN_MODE: release
-      TZ: ${TZ:-Asia/Shanghai}
+      TZ: "Asia/Shanghai"
     volumes:
       - "./data:/data"
       # 左侧改为 NAS 媒体库路径；页面只填写此目录下的相对名称。
       - "/vol1/1000/媒体库:/strm"
-    ports:
-      - "${HTTP_PORT:-8115}:3002"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m

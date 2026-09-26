@@ -24,7 +24,7 @@ const categories = {
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',
-    features: [{ title: '媒体库同步', description: '配置 Emby 连接与同步范围，通过 Webhook 更新影视入库状态。', to: '/emby/library', icon: 'emby' }],
+    features: [{ title: '媒体库同步', description: '配置 Emby 连接与同步范围，通过 Webhook 更新影视入库状态。', to: '/emby/library', icon: 'emby' }, { title: 'Emby 302 反代', description: '设置独立播放端口与 115 账号，将分享 STRM 直放跳转到 115。', to: '/emby/proxy', icon: 'emby' }],
   },
 }
 const current = computed(() => categories[props.category])
