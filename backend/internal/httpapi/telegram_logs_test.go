@@ -21,7 +21,7 @@ func TestTelegramOperationLogsExcludeCredentialsAndReads(t *testing.T) {
 	RegisterTelegramUser(r.Group("/api/admin"), account, &tmdbReaderFake{}, logs)
 	secret := strings.Repeat("b", 32)
 	for _, request := range []struct{ method, path, body string }{
-		{"POST", "config", `{"apiId":123,"apiHash":"` + secret + `"}`},
+		{"POST", "config", `{"apiId":123,"apiHash":"` + secret + `","bot":"example_bot"}`},
 		{"POST", "send-code", `{"phone":"private-phone"}`},
 		{"POST", "sign-in", `{"code":"private-code","password":"private-password"}`},
 		{"GET", "config", ""},

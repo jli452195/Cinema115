@@ -30,6 +30,7 @@ func TestLimitBotSearchTitle(t *testing.T) {
 
 func TestSearchUsesLimitedTitleForCache(t *testing.T) {
 	c := testClient(t)
+	c.config.Bot = testBotUsername
 	query := "一二三四五六七八九十一二三四五六七八"
 	c.cacheResult("search:"+query, SearchResult{Text: "cached result", Empty: true}, time.Now())
 

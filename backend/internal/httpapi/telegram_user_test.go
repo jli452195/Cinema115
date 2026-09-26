@@ -33,7 +33,8 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 	}{
 		{"GET", "config", "", "", 401}, {"POST", "search", `{"kind":"movie","tmdbId":"42"}`, "", 401},
 		{"POST", "config", `{"apiId":0,"apiHash":"bad"}`, "test-admin", 400},
-		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `"}`, "test-admin", 200},
+		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `"}`, "test-admin", 400},
+		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `","bot":"example_bot"}`, "test-admin", 200},
 		{"GET", "config", "", "test-admin", 200},
 		{"POST", "send-code", `{"phone":"bad"}`, "test-admin", 400},
 		{"POST", "select", `{"id":"x"}`, "test-admin", 400},

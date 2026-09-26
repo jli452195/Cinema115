@@ -17,8 +17,6 @@ import (
 	"github.com/gotd/td/tgerr"
 )
 
-const DefaultBotUsername = "ayclub_bot"
-
 var ErrBusy = errors.New("Telegram 正在处理另一项操作，请稍后再试")
 var ErrConfig = errors.New("请先配置 Telegram API ID、API Hash 和资源 Bot")
 var ErrLogin = errors.New("请先在 Telegram 用户账号页面登录并检查连接")
@@ -81,9 +79,6 @@ func New(configStore, sessionStore Store) (*Client, error) {
 			return nil, errors.New("Telegram 用户配置无法读取")
 		}
 	}
-	if c.config.Bot == "" {
-		c.config.Bot = DefaultBotUsername
-	}
 	return c, nil
 }
 func (c *Client) lock() error {
@@ -130,9 +125,6 @@ func (c *Client) Save(input Config) error {
 	defer c.mu.Unlock()
 	if input.APIHash == "" {
 		input.APIHash = c.config.APIHash
-	}
-	if strings.TrimSpace(input.Bot) == "" {
-		input.Bot = c.config.Bot
 	}
 	input.Bot = normalizeBotUsername(input.Bot)
 	if input.APIID < 1 || !hashPattern.MatchString(input.APIHash) || !validBotUsername(input.Bot) {

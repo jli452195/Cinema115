@@ -13,6 +13,8 @@ import (
 	"github.com/gotd/td/tgerr"
 )
 
+const testBotUsername = "example_bot"
+
 type memoryStore struct{ value string }
 
 func (s *memoryStore) Value() string           { return s.value }
@@ -28,15 +30,18 @@ func testClient(t *testing.T) *Client {
 func TestAccountConfigAndSession(t *testing.T) {
 	legacyConfig := `{"apiId":123,"apiHash":"` + strings.Repeat("b", 32) + `"}`
 	legacy, err := New(&memoryStore{value: legacyConfig}, &memoryStore{})
-	if err != nil || legacy.View().Bot != DefaultBotUsername || !legacy.View().Configured {
-		t.Fatal("旧配置没有迁移默认 Bot", err)
+	if err != nil || legacy.View().Bot != "" || legacy.View().Configured {
+		t.Fatal("未指定 Bot 的旧配置不应自动填充或视为已配置", err)
 	}
 	c := testClient(t)
+	if c.View().Bot != "" || c.View().Configured {
+		t.Fatal("新配置不应预填 Bot")
+	}
 	secret := strings.Repeat("a", 32)
-	if err := c.Save(Config{APIID: 123, APIHash: secret}); err != nil {
+	if err := c.Save(Config{APIID: 123, APIHash: secret, Bot: testBotUsername}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Save(Config{APIID: 123}); err != nil {
+	if err := c.Save(Config{APIID: 123, Bot: testBotUsername}); err != nil {
 		t.Fatal("留空应保留 hash", err)
 	}
 	data, _ := json.Marshal(c.View())
@@ -44,7 +49,7 @@ func TestAccountConfigAndSession(t *testing.T) {
 		t.Fatal("配置回显 API Hash")
 	}
 	restored, err := New(c.configStore, c.sessionStore)
-	if err != nil || !restored.View().Configured || restored.View().Bot != DefaultBotUsername {
+	if err != nil || !restored.View().Configured || restored.View().Bot != testBotUsername {
 		t.Fatal("配置不能恢复")
 	}
 	if err := c.Save(Config{APIID: 123, Bot: "@replacement_bot"}); err != nil || c.View().Bot != "replacement_bot" {
@@ -52,6 +57,9 @@ func TestAccountConfigAndSession(t *testing.T) {
 	}
 	if err := c.Save(Config{APIID: 123, Bot: "not-a-bot"}); !errors.Is(err, ErrInput) {
 		t.Fatal("无效 Bot 用户名未被拒绝")
+	}
+	if err := c.Save(Config{APIID: 123, Bot: "  "}); !errors.Is(err, ErrInput) {
+		t.Fatal("未填写 Bot 不应沿用已有配置")
 	}
 	store := encryptedSession{c.sessionStore}
 	if err := store.StoreSession(context.Background(), []byte("session-bytes")); err != nil {
@@ -61,7 +69,7 @@ func TestAccountConfigAndSession(t *testing.T) {
 	if err != nil || string(value) != "session-bytes" {
 		t.Fatal("会话不能恢复")
 	}
-	if err := c.Save(Config{APIID: 456, APIHash: secret}); err == nil {
+	if err := c.Save(Config{APIID: 456, APIHash: secret, Bot: "replacement_bot"}); err == nil {
 		t.Fatal("带会话不能更换 API 身份")
 	}
 	if err := c.lock(); err != nil {
@@ -86,8 +94,8 @@ func TestBotLinksAndMultipleReplies(t *testing.T) {
 	title := "[动画电影] 天气之子 (2019) {tmdb-568160} 4K 48.43G"
 	text := "📁 本月剩余次数：734\n资源列表\n🔗 " + title + "\n第 1 页"
 	offset := len(utf16.Encode([]rune(text[:strings.Index(text, title)])))
-	message := &tg.Message{ID: 10, Message: text, Entities: []tg.MessageEntityClass{&tg.MessageEntityTextURL{Offset: offset, Length: len(utf16.Encode([]rune(title))), URL: "https://t.me/ayclub_bot?start=resource_1"}}, ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "下一页", Data: []byte("page2")}, &tg.KeyboardButtonCallback{Text: "悬赏资源", Data: []byte("pay")}}}}}}
-	result, ok, err := c.parse(message, DefaultBotUsername, "search:天气之子")
+	message := &tg.Message{ID: 10, Message: text, Entities: []tg.MessageEntityClass{&tg.MessageEntityTextURL{Offset: offset, Length: len(utf16.Encode([]rune(title))), URL: "https://t.me/example_bot?start=resource_1"}}, ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "下一页", Data: []byte("page2")}, &tg.KeyboardButtonCallback{Text: "悬赏资源", Data: []byte("pay")}}}}}}
+	result, ok, err := c.parse(message, testBotUsername, "search:天气之子")
 	if err != nil || !ok || len(result.Items) != 2 {
 		t.Fatal("资源/分页识别失败", err)
 	}
@@ -98,20 +106,20 @@ func TestBotLinksAndMultipleReplies(t *testing.T) {
 	if result.Items[1].Kind != "page" || result.Items[1].Title != "下一页" {
 		t.Fatal("未过滤悬赏按钮")
 	}
-	reply, ok, err := c.parse(&tg.Message{ID: 11, Message: "https://115cdn.com/s/one?password=abcd\nhttps://115.com/s/two?password=efgh"}, DefaultBotUsername, "")
+	reply, ok, err := c.parse(&tg.Message{ID: 11, Message: "https://115cdn.com/s/one?password=abcd\nhttps://115.com/s/two?password=efgh"}, testBotUsername, "")
 	if err != nil || !ok || len(reply.Links) != 2 {
 		t.Fatal("多分享解析失败")
 	}
-	single, _, _ := c.parse(&tg.Message{ID: 12, Message: "https://115.com/s/one\n提取码：abcd"}, DefaultBotUsername, "")
+	single, _, _ := c.parse(&tg.Message{ID: 12, Message: "https://115.com/s/one\n提取码：abcd"}, testBotUsername, "")
 	if len(single.Links) != 1 || !strings.Contains(single.Links[0], "password=abcd") {
 		t.Fatal("独立提取码没有补齐")
 	}
-	denied, ok, _ := c.parse(&tg.Message{ID: 13, Message: "请先完成认证"}, DefaultBotUsername, "")
+	denied, ok, _ := c.parse(&tg.Message{ID: 13, Message: "请先完成认证"}, testBotUsername, "")
 	if !ok || len(denied.Links) != 0 {
 		t.Fatal("认证失败回复不应变成资源")
 	}
-	for _, u := range []string{"https://t.me/other_bot?start=x", "https://evil.example/ayclub_bot?start=x", "https://t.me/ayclub_bot?start=%2Fpay", "https://t.me/ayclub_bot?start="} {
-		if botCommand(u, DefaultBotUsername) != "" {
+	for _, u := range []string{"https://t.me/other_bot?start=x", "https://evil.example/example_bot?start=x", "https://t.me/example_bot?start=%2Fpay", "https://t.me/example_bot?start="} {
+		if botCommand(u, testBotUsername) != "" {
 			t.Fatal("允许了非授权命令")
 		}
 	}
@@ -146,7 +154,7 @@ func TestParseOnlyExposesNextPage(t *testing.T) {
 		&tg.KeyboardButtonCallback{Text: "上一页", Data: []byte("previous")},
 		&tg.KeyboardButtonCallback{Text: "下一页", Data: []byte("next")},
 	}}}}}
-	result, _, err := c.parse(message, DefaultBotUsername, "search:测试")
+	result, _, err := c.parse(message, testBotUsername, "search:测试")
 	if err != nil {
 		t.Fatal(err)
 	}

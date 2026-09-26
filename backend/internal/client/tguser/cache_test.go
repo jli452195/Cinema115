@@ -13,6 +13,7 @@ func TestSearchCacheReuseAndRefresh(t *testing.T) {
 		t.Fatalf("搜索缓存时长 = %s，期望 24h", searchCacheTTL)
 	}
 	c := testClient(t)
+	c.config.Bot = testBotUsername
 	now := time.Now()
 	c.cacheResult("search:女生万岁", SearchResult{Text: "没有找到资源", Empty: true}, now)
 	got, err := c.Search(context.Background(), " 女生万岁 ", false)
