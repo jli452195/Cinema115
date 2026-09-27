@@ -23,8 +23,6 @@ type EmbyProxyConfig struct {
 	Port                   int    `json:"port"`
 	URL                    string `json:"url"`
 	AccountID              string `json:"accountId"`
-	STRMBaseURL            string `json:"strmBaseUrl"`
-	StrictSTRMOrigin       bool   `json:"strictStrmOrigin"`
 	EmbyPathPrefix         string `json:"embyPathPrefix"`
 }
 
@@ -122,12 +120,6 @@ func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
 		// Conservatively reject all targets using our listener port, including NAS aliases.
 		if u.Port() == strconv.Itoa(c.Port) {
 			return c, fmt.Errorf("Emby 上游端口不能与反代监听端口相同")
-		}
-	}
-	if c.StrictSTRMOrigin || c.STRMBaseURL != "" {
-		c.STRMBaseURL, err = normalizeWebhookBaseURL(c.STRMBaseURL)
-		if err != nil {
-			return c, fmt.Errorf("STRM 来源地址: %w", err)
 		}
 	}
 	c.EmbyPathPrefix = strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(c.EmbyPathPrefix), "\\", "/"), "/")

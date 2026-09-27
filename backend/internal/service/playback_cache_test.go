@@ -265,3 +265,7 @@ func TestPlaybackCacheForgetOnlyLocalAndMissingFileFails(t *testing.T) {
 		t.Fatal("移除记录不应删除云文件")
 	}
 }
+
+func (f *cacheDriveFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
+	return f.DownloadInfoWithUA(ctx, share, id, cookie, ua)
+}

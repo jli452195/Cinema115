@@ -15,12 +15,10 @@ import (
 )
 
 type InstantUploadConfig struct {
-	SourceAccountID  string `json:"sourceAccountId"`
-	AccountID        string `json:"accountId"`
-	TargetCID        string `json:"targetCid"`
-	TargetPath       string `json:"targetPath"`
-	STRMBaseURL      string `json:"strmBaseUrl"`
-	StrictSTRMOrigin bool   `json:"strictStrmOrigin"`
+	SourceAccountID string `json:"sourceAccountId"`
+	AccountID       string `json:"accountId"`
+	TargetCID       string `json:"targetCid"`
+	TargetPath      string `json:"targetPath"`
 }
 
 type InstantUploadRecord struct {
@@ -50,7 +48,7 @@ type InstantUploadStatus struct {
 	Running bool                  `json:"running"`
 }
 type instantUploadClient interface {
-	DownloadInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
+	DownloadInstantInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
 	InstantUpload(context.Context, *p115.DownloadInfo, string, string, func(p115.InstantProgress)) (*p115.InstantUploadResult, error)
 }
 
@@ -123,13 +121,6 @@ func (s *InstantUploads) Apply(config InstantUploadConfig) error {
 	}
 	if len(config.TargetPath) > 2048 || strings.ContainsAny(config.TargetPath, "\r\n\x00") {
 		return fmt.Errorf("%w：目录路径无效", ErrInstantConfig)
-	}
-	if config.StrictSTRMOrigin || config.STRMBaseURL != "" {
-		base, err := normalizeWebhookBaseURL(config.STRMBaseURL)
-		if err != nil {
-			return fmt.Errorf("%w：请填写有效的 STRM 来源地址，严格模式下必填", ErrInstantConfig)
-		}
-		config.STRMBaseURL = base
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,7 +204,7 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 		}
 	}()
 	s.logs.Add(ctx, "INFO", "单文件秒传开始；源账号="+source.ID+"；目标账号="+target.ID+"；目录="+expected.TargetCID)
-	info, err := s.client.DownloadInfoWithUA(ctx, share, fileID, source.Cookie, p115.PlaybackUserAgent)
+	info, err := s.client.DownloadInstantInfoWithUA(ctx, share, fileID, source.Cookie, p115.PlaybackUserAgent)
 	if err != nil {
 		record.Status = "failed"
 		record.Message = "源文件取链失败，请检查分享和源账号登录状态"

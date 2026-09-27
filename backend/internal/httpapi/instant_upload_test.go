@@ -15,7 +15,7 @@ import (
 
 type instantAPIClient struct{ reads, writes int }
 
-func (f *instantAPIClient) DownloadInfoWithUA(_ context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
+func (f *instantAPIClient) DownloadInstantInfoWithUA(_ context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
 	f.reads++
 	return &p115.DownloadInfo{Name: "sample.mkv", SHA1: strings.Repeat("A", 40), Size: 100, URL: "https://cdn.115.com/private-link"}, nil
 }
@@ -47,7 +47,7 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 		r.ServeHTTP(w, req)
 		return w
 	}
-	config := service.InstantUploadConfig{SourceAccountID: id, AccountID: id, STRMBaseURL: "http://cinema:8115", StrictSTRMOrigin: true, TargetCID: "0"}
+	config := service.InstantUploadConfig{SourceAccountID: id, AccountID: id, TargetCID: "0"}
 	bad := config
 	bad.AccountID = ""
 	if w := call("", bad); w.Code != 400 {
@@ -56,7 +56,7 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 	if w := call("", config); w.Code != 200 {
 		t.Fatalf("保存失败 %d %s", w.Code, w.Body.String())
 	}
-	for _, strm := range []string{"http://evil.test/api/?share_code=abc&id=123&receive_code=private", "http://cinema:8115/api/?share_code=abc&id=invalid", "http://cinema:8115/api/stream/share/badtoken", "/outside/sample.strm", strings.Repeat("x", 21000)} {
+	for _, strm := range []string{"http://cinema:8115/api/?share_code=abc&id=invalid", "http://cinema:8115/api/stream/share/badtoken", "/outside/sample.strm", strings.Repeat("x", 21000)} {
 		w := call("/run", gin.H{"id": "http-test-request-001", "strm": strm})
 		if w.Code != 400 {
 			t.Fatalf("异常 STRM 未被拒绝: %d", w.Code)
@@ -79,13 +79,15 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 	if fake.reads != 1 || fake.writes != 1 {
 		t.Fatal("相同请求被重复执行")
 	}
-	config.StrictSTRMOrigin = false
-	config.STRMBaseURL = ""
 	if w := call("", config); w.Code != 200 {
 		t.Fatalf("宽松模式无需来源地址: %d %s", w.Code, w.Body.String())
 	}
 	w := call("/run", gin.H{"id": "http-test-request-003", "strm": "https://other-nas:9443/api/?share_code=abc&id=123&receive_code=pass"})
 	if w.Code != 200 || fake.writes != 2 {
 		t.Fatal("不同来源未进入秒传验证", w.Code, w.Body.String())
+	}
+	w = call("/run", gin.H{"id": "http-test-request-004", "strm": "http://other-tool:9527/s/abc_pass_123.mp4?/movie.mp4"})
+	if w.Code != 200 || fake.writes != 3 {
+		t.Fatal("路径形式未进入单文件秒传验证", w.Code)
 	}
 }

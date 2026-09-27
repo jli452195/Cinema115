@@ -24,21 +24,6 @@ func proxyFreePort(t *testing.T) int {
 	return port
 }
 
-func TestEmbyProxyOptionalOriginConfig(t *testing.T) {
-	c := EmbyProxyConfig{Enabled: true, Port: 8097, URL: "http://nas:8096"}
-	if _, err := normalizeEmbyProxy(c); err != nil {
-		t.Fatal("默认模式不应要求来源地址", err)
-	}
-	c.StrictSTRMOrigin = true
-	if _, err := normalizeEmbyProxy(c); err == nil {
-		t.Fatal("严格模式缺少来源地址")
-	}
-	c.STRMBaseURL = "http://nas:8115"
-	if _, err := normalizeEmbyProxy(c); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	accounts, err := newP115Accounts(&failingAccountStore{}, "")
 	if err != nil {
@@ -65,7 +50,7 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	c := EmbyProxyConfig{Enabled: true, Port: proxyFreePort(t), URL: "http://127.0.0.1:8096", STRMBaseURL: "http://cinema:8115"}
+	c := EmbyProxyConfig{Enabled: true, Port: proxyFreePort(t), URL: "http://127.0.0.1:8096"}
 	if err := s.Apply(context.Background(), c); err == nil {
 		t.Fatal("自动使用了唯一账号")
 	}
@@ -165,7 +150,7 @@ func TestEmbyProxyRejectsInvalidPortsAndLoop(t *testing.T) {
 			t.Fatal("接受了无效端口", port)
 		}
 	}
-	_, err := normalizeEmbyProxy(EmbyProxyConfig{Enabled: true, Port: 8097, URL: "http://nas:8097", STRMBaseURL: "http://nas:8115"})
+	_, err := normalizeEmbyProxy(EmbyProxyConfig{Enabled: true, Port: 8097, URL: "http://nas:8097"})
 	if err == nil || !strings.Contains(err.Error(), "上游端口") {
 		t.Fatal("未阻止上游反代循环", err)
 	}

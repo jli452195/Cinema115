@@ -108,7 +108,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 	if err := cache.Apply(service.PlaybackCacheConfig{Enabled: true, EmbyURL: upstream.URL, RetentionHours: 72, Bindings: []service.PlaybackBinding{{UserID: uid, AccountID: target, ParentCID: "0"}}}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: source, STRMBaseURL: "http://cinema:8115"}, accounts, NewShareAPI(func() string { return "forbidden" }), cache, logs).(*embyProxyHandler)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: source}, accounts, NewShareAPI(func() string { return "forbidden" }), cache, logs).(*embyProxyHandler)
 	login := httptest.NewRecorder()
 	h.ServeHTTP(login, httptest.NewRequest("POST", "/emby/Users/AuthenticateByName", nil))
 	if login.Code != 200 {
@@ -196,4 +196,8 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 	if resultCounts["朋友分享直取"] != 2 || resultCounts["新建秒传缓存"] != 1 || resultCounts["复用秒传缓存"] != 1 {
 		t.Fatal("成功分支或失败请求的结果日志错误", resultCounts)
 	}
+}
+
+func (f *proxyCacheFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
+	return f.DownloadInfoWithUA(ctx, share, id, cookie, ua)
 }

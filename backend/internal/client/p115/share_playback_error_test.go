@@ -31,8 +31,10 @@ func TestShareDownloadFailureClassification(t *testing.T) {
 		{"malformed", `{`, 200, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/app/share/downurl" || r.Header.Get("Cookie") != "friend-cookie" || r.UserAgent() != "player-UA" {
+				calls++
+				if r.URL.Path != "/os_windows/2.0/share/downurl" || r.Method != "GET" || r.URL.Query().Get("dl") != "0" || r.Header.Get("Cookie") != "friend-cookie" || r.UserAgent() != "player-UA" {
 					t.Error("wrong request")
 				}
 				w.WriteHeader(tc.status)
@@ -44,6 +46,9 @@ func TestShareDownloadFailureClassification(t *testing.T) {
 			_, err := client.DownloadInfoWithUA(context.Background(), &ShareInfo{Code: "share"}, "1", "friend-cookie", "player-UA")
 			if err == nil {
 				t.Fatal("expected failure")
+			}
+			if calls != 1 {
+				t.Fatal("share failure retried or used another endpoint")
 			}
 			if tc.want != nil && !errors.Is(err, tc.want) {
 				t.Fatal("wrong classification", err)

@@ -50,6 +50,7 @@ type PlaybackCacheStatus struct {
 type playbackCacheClient interface {
 	ValidateCacheParent(context.Context, string, string) error
 	DownloadInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
+	DownloadInstantInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
 	InstantUpload(context.Context, *p115.DownloadInfo, string, string, func(p115.InstantProgress)) (*p115.InstantUploadResult, error)
 	CreateDirectory(context.Context, string, string, string) (string, error)
 	CacheDirectoryFiles(context.Context, string, string) ([]p115.DrivePlaybackFile, error)
@@ -323,7 +324,7 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 	}
 	defer func() { <-s.gate }()
 	s.logs.Add(ctx, "INFO", "朋友账号播放解析，目标账号="+selection.binding.AccountID)
-	info, err := s.client.DownloadInfoWithUA(ctx, share, fileID, sourceCookie, p115.PlaybackUserAgent)
+	info, err := s.client.DownloadInstantInfoWithUA(ctx, share, fileID, sourceCookie, p115.PlaybackUserAgent)
 	if err != nil {
 		return "", fmt.Errorf("源账号读取秒传文件信息失败：%s", p115.SharePlaybackFailureReason(err))
 	}

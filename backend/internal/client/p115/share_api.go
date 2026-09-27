@@ -15,6 +15,10 @@ import (
 
 const PlaybackUserAgent = "Mozilla/5.0"
 
+// The legacy /app/share/downurl endpoint can receive shared files into the
+// caller's drive. Use the desktop share endpoint without falling back to it.
+const sharePlaybackPath = "/os_windows/2.0/share/downurl"
+
 const defaultShareRequestInterval = 250 * time.Millisecond
 
 // ErrShareSnapshotPending 仅表示分享快照正在生成，不代表登录失效或分享审核中。
@@ -71,7 +75,7 @@ func (c *ShareClient) request(ctx context.Context, method, endpoint, cookie stri
 // requestEnvelope 保留目录等接口位于顶层的返回字段，避免丢失大整数 ID。
 func (c *ShareClient) requestEnvelope(ctx context.Context, method, endpoint, cookie string, form url.Values) (json.RawMessage, error) {
 	// 播放直链查询不与目录扫描排队，避免影响已生成 STRM 的播放启动。
-	if strings.HasPrefix(endpoint, c.AppURL+"/app/share/downurl") {
+	if strings.HasPrefix(endpoint, c.AppURL+sharePlaybackPath+"?") {
 		return c.requestEnvelopeOnce(ctx, method, endpoint, cookie, form)
 	}
 	return c.metadataRequest(ctx, method, func() ([]byte, error) { return c.requestEnvelopeOnce(ctx, method, endpoint, cookie, form) })
@@ -120,7 +124,7 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 		return nil, fmt.Errorf("115 返回了无法解析的分享数据")
 	}
 	if !upstreamOK(envelope.State) {
-		if req.URL.Path == "/app/share/downurl" {
+		if req.URL.Path == sharePlaybackPath {
 			return nil, shareDownloadError(envelope)
 		}
 		if envelope.underReview() {
@@ -234,17 +238,14 @@ func (c *ShareClient) DownloadInfoWithUA(ctx context.Context, share *ShareInfo, 
 	if share == nil || cookie == "" {
 		return nil, fmt.Errorf("请先登录 115，再获取分享播放地址")
 	}
-	payload, err := json.Marshal(map[string]string{"share_code": share.Code, "receive_code": share.Password, "file_id": fileID})
-	if err != nil {
-		return nil, fmt.Errorf("编码分享下载参数: %w", err)
-	}
+	query := url.Values{"share_code": {share.Code}, "receive_code": {share.Password}, "file_id": {fileID}, "dl": {"0"}}
 	if userAgent == "" {
 		userAgent = PlaybackUserAgent
 	}
 	if len(userAgent) > 2048 || strings.ContainsAny(userAgent, "\r\n") {
 		return nil, fmt.Errorf("播放器 User-Agent 无效")
 	}
-	raw, err := c.requestEnvelopeWithUA(ctx, http.MethodPost, c.AppURL+"/app/share/downurl", cookie, url.Values{"data": {RSAEncrypt(payload)}}, userAgent)
+	raw, err := c.requestEnvelopeWithUA(ctx, http.MethodGet, c.AppURL+sharePlaybackPath+"?"+query.Encode(), cookie, nil, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -254,22 +255,13 @@ func (c *ShareClient) DownloadInfoWithUA(ctx context.Context, share *ShareInfo, 
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("解析直链响应: %w", err)
 	}
-	data := envelope.Data
-	var encrypted string
-	if err = json.Unmarshal(data, &encrypted); err != nil {
-		return nil, fmt.Errorf("115 未返回加密直链数据")
-	}
-	decoded, err := RSADecrypt(encrypted)
-	if err != nil {
-		return nil, fmt.Errorf("解密分享直链: %w", err)
-	}
 	var result struct {
 		URL  json.RawMessage `json:"url"`
 		Name string          `json:"fn"`
 		Size json.Number     `json:"fs"`
 		SHA1 string          `json:"sha1"`
 	}
-	if err = json.Unmarshal(decoded, &result); err != nil {
+	if err = json.Unmarshal(envelope.Data, &result); err != nil {
 		return nil, fmt.Errorf("解析分享直链: %w", err)
 	}
 	var link string

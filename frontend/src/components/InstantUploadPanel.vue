@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import P115AccountSelect from './P115AccountSelect.vue'
-import SettingSwitch from './SettingSwitch.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import type { P115Account } from '../types/p115Accounts'
 import { embyRequest } from '../types/emby'
 
-const props = defineProps<{ token: string; accounts: P115Account[]; source?: { accountId: string; strmBaseUrl: string; strictStrmOrigin?: boolean } }>()
-interface Config { sourceAccountId: string; accountId: string; targetCid: string; targetPath: string; strmBaseUrl: string; strictStrmOrigin: boolean }
+const props = defineProps<{ token: string; accounts: P115Account[]; source?: { accountId: string } }>()
+interface Config { sourceAccountId: string; accountId: string; targetCid: string; targetPath: string }
 interface Record { id: string; sourceAccountId: string; accountId: string; targetCid: string; status: string; message: string; name: string; size: number; sha1: string; fileId?: string; pickCode?: string; challenged: boolean; startedAt: string; durationMs: number }
 interface Status { config: Config; records: Record[]; running: boolean }
-const config = ref<Config>({ sourceAccountId: '', accountId: '', targetCid: '', targetPath: '', strmBaseUrl: '', strictStrmOrigin: false })
+const config = ref<Config>({ sourceAccountId: '', accountId: '', targetCid: '', targetPath: '' })
 const saved = ref<Config>()
 const records = ref<Record[]>([])
 const running = ref(false)
@@ -25,13 +24,13 @@ const lifecycle = new AbortController()
 const dirty = computed(() => JSON.stringify(config.value) !== JSON.stringify(saved.value))
 const blocked = computed(() => busy.value || running.value || !loaded.value)
 const selectedReady = (id: string) => props.accounts.some(account => account.id === id && account.configured)
-const ready = computed(() => selectedReady(config.value.sourceAccountId) && selectedReady(config.value.accountId) && /^\d+$/.test(config.value.targetCid) && (!config.value.strictStrmOrigin || !!config.value.strmBaseUrl))
+const ready = computed(() => selectedReady(config.value.sourceAccountId) && selectedReady(config.value.accountId) && /^\d+$/.test(config.value.targetCid))
 watch(strm, () => { requestId.value = '' })
 function targetChanged(id: string) { config.value.accountId = id; config.value.targetCid = ''; config.value.targetPath = ''; requestId.value = '' }
 function chooseDirectory(value: { id: string; path: string }) { config.value.targetCid = value.id; config.value.targetPath = value.path; directoryOpen.value = false }
 function acceptStatus(data: Status, replaceConfig: boolean) {
-  records.value = data.records; running.value = data.running; saved.value = { ...data.config, strictStrmOrigin: data.config.strictStrmOrigin ?? false }
-  if (replaceConfig) config.value = { ...data.config, strictStrmOrigin: data.config.strictStrmOrigin ?? false }
+  records.value = data.records; running.value = data.running; saved.value = { ...data.config }
+  if (replaceConfig) config.value = { ...data.config }
   loaded.value = true
 }
 async function load(replaceConfig = false) {
@@ -78,15 +77,13 @@ onBeforeUnmount(() => lifecycle.abort())
     <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{{ notice }}</p>
     <form class="mt-5" @submit.prevent="save">
       <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
-        <SettingSwitch v-model="config.strictStrmOrigin" label="严格匹配验证 STRM 来源地址" description="默认按分享格式识别；开启后额外核对来源协议、主机和端口。" />
         <div class="grid gap-5 sm:grid-cols-2">
           <div><p class="mb-2 text-sm font-semibold text-slate-800">源文件取链账号</p><P115AccountSelect id="instant-source-account" v-model="config.sourceAccountId" :accounts="accounts" /></div>
           <div><p class="mb-2 text-sm font-semibold text-slate-800">目标账号（朋友账号）</p><P115AccountSelect id="instant-target-account" :model-value="config.accountId" :accounts="accounts" @update:model-value="targetChanged" /></div>
-          <label v-if="config.strictStrmOrigin" class="text-sm text-slate-700">STRM 来源地址<input v-model.trim="config.strmBaseUrl" type="url" :required="config.strictStrmOrigin" placeholder="http://192.168.0.3:8115" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3" /><span class="mt-2 block text-xs text-slate-400">填写 STRM 中的协议、主机和端口。</span></label>
           <label class="text-sm text-slate-700">目标缓存目录 ID<input v-model.trim="config.targetCid" required inputmode="numeric" pattern="[0-9]+" placeholder="手动填写，根目录为 0" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3" @input="config.targetPath = ''" /><span v-if="config.targetPath" class="mt-2 block break-all text-xs text-slate-500">{{ config.targetPath }}</span></label>
         </div>
         <div class="flex flex-wrap gap-3">
-          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600" @click="config.sourceAccountId = source.accountId; config.strmBaseUrl = source.strmBaseUrl; config.strictStrmOrigin = source.strictStrmOrigin ?? false">填入已保存的 302 来源配置</button>
+          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600" @click="config.sourceAccountId = source.accountId">填入已保存的 302 源账号</button>
           <button type="button" :disabled="!selectedReady(config.accountId)" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40" @click="directoryOpen = true">选择目标目录</button>
           <button type="submit" :disabled="!ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">保存秒传配置</button>
         </div>

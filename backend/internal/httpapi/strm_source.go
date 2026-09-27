@@ -11,10 +11,11 @@ import (
 var strmShareCode = regexp.MustCompile(`^[a-zA-Z0-9]{1,128}$`)
 var strmReceiveCode = regexp.MustCompile(`^[a-zA-Z0-9]{0,32}$`)
 var strmFileID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
+var strmSharePath = regexp.MustCompile(`^/s/([a-zA-Z0-9]{1,128})_([a-zA-Z0-9]{0,32})_([1-9][0-9]{0,19})(?:\.[a-zA-Z0-9]{1,16})?$`)
 
 // parseSTRMURL only extracts a supported share identity. The URL is never fetched.
-// Origin matching is optional; required parameter validation is not.
-func (a *ShareAPI) parseSTRMURL(raw string, strict bool, origin string) (*sharePlaybackParams, error) {
+// HTTP origins do not affect recognition; only the path and share parameters do.
+func (a *ShareAPI) parseSTRMURL(raw string) (*sharePlaybackParams, error) {
 	if len(raw) > 16384 {
 		return nil, fmt.Errorf("STRM 地址过长")
 	}
@@ -31,22 +32,26 @@ func (a *ShareAPI) parseSTRMURL(raw string, strict bool, origin string) (*shareP
 	if strings.HasSuffix(u.Host, ":") {
 		return nil, errNotShareSTRM
 	}
-	if strict {
-		base, err := url.Parse(origin)
-		if err != nil || base.Host == "" || !strings.EqualFold(u.Scheme, base.Scheme) || !strings.EqualFold(u.Host, base.Host) {
-			return nil, fmt.Errorf("%w：严格模式下来源协议、主机或端口不匹配", errNotShareSTRM)
+	var claim *sharePlaybackParams
+	switch {
+	case u.Path == "/api/":
+		q, parseErr := url.ParseQuery(u.RawQuery)
+		if parseErr != nil {
+			return nil, fmt.Errorf("STRM 分享参数编码无效")
 		}
-	}
-	if u.Path != "/api/" {
+		claim, err = a.parseQuery(q)
+		if err != nil {
+			return nil, err
+		}
+	case strings.HasPrefix(u.Path, "/s/"):
+		parts := strmSharePath.FindStringSubmatch(u.Path)
+		if parts == nil {
+			return nil, fmt.Errorf("STRM 分享路径格式无效，须为 /s/分享码_提取码_文件ID，可附扩展名")
+		}
+		// Everything after '?' is an optional filename hint, not share parameters.
+		claim = &sharePlaybackParams{Code: parts[1], Password: parts[2], FileID: parts[3], Name: parts[3]}
+	default:
 		return nil, errNotShareSTRM
-	}
-	q, parseErr := url.ParseQuery(u.RawQuery)
-	if parseErr != nil {
-		return nil, fmt.Errorf("STRM 分享参数编码无效")
-	}
-	claim, err := a.parseQuery(q)
-	if err != nil {
-		return nil, err
 	}
 	if !strmShareCode.MatchString(claim.Code) || !strmReceiveCode.MatchString(claim.Password) || !strmFileID.MatchString(claim.FileID) {
 		return nil, fmt.Errorf("STRM 分享码、提取码或文件 ID 格式无效")

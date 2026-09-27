@@ -515,13 +515,13 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	claim, err := h.sourceClaim(source)
 	if errors.Is(err, errNotShareSTRM) && fallback {
 		outcome = "转交 Emby"
-		h.logs.Add(ctx, "WARNING", "媒体源不匹配配置的分享来源或路径映射，转交 Emby 原播放链路")
+		h.logs.Add(ctx, "WARNING", "媒体源不符合支持的分享链接格式或本地路径映射，转交 Emby 原播放链路")
 		h.proxy.ServeHTTP(w, r)
 		return
 	}
 	if err != nil {
 		h.logs.Add(ctx, "ERROR", "STRM 读取解析失败："+err.Error())
-		fail("无法解析分享 STRM，请检查来源地址和媒体路径映射", 422)
+		fail("无法解析分享 STRM，请检查链接格式、必要分享参数及本地媒体路径映射", 422)
 		return
 	}
 	if cookie == "" && cacheSelection == nil {
@@ -646,7 +646,7 @@ func (h *embyProxyHandler) sourceClaim(source map[string]json.RawMessage) (*shar
 		}
 		raw = strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff"))
 	}
-	return h.share.parseSTRMURL(raw, h.config.StrictSTRMOrigin, h.config.STRMBaseURL)
+	return h.share.parseSTRMURL(raw)
 }
 
 func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
@@ -698,7 +698,7 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 			continue
 		}
 		if _, err := h.sourceClaim(source); err != nil {
-			h.logs.Add(ctx, "WARNING", sourceLabel+"："+err.Error()+"；请检查来源地址、路径映射及文件权限，保留原直放链路")
+			h.logs.Add(ctx, "WARNING", sourceLabel+"："+err.Error()+"；请检查链接格式、必要分享参数及本地路径映射和文件权限，保留原直放链路")
 			continue
 		}
 		id := jsonString(source["Id"])

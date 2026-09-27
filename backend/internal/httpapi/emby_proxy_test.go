@@ -166,7 +166,7 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 	defer upstream.Close()
 	share := NewShareAPI(func() string { return "wrong-account" })
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
-	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, STRMBaseURL: "http://cinema:8115"}, accounts, share, logs).(*embyProxyHandler)
+	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id}, accounts, share, logs).(*embyProxyHandler)
 	calls := 0
 	h.download = func(ctx context.Context, info *p115.ShareInfo, file, cookie, ua string) (string, error) {
 		calls++
@@ -324,7 +324,7 @@ func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
 	}
 	share := NewShareAPI(func() string { return "" })
 	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{STRMBaseURL: "http://cinema:8115", StrictSTRMOrigin: true, EmbyPathPrefix: "/media"}, share: share}
+	h := &embyProxyHandler{config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}, share: share}
 	for _, tc := range []struct {
 		path  string
 		valid bool
@@ -332,7 +332,7 @@ func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
 		{"/media/movie.strm", true},
 		{"/media/../outside.strm", false},
 		{"/media2/movie.strm", false},
-		{"http://evil/api/?share_code=abc&id=123&receive_code=pass", false},
+		{"http://other-tool/api/?share_code=abc&id=123&receive_code=pass", true},
 		{"http://cinema:8115/api/?share_code=abc&id=123&id=456&receive_code=pass", false},
 	} {
 		path, _ := json.Marshal(tc.path)

@@ -101,3 +101,7 @@ func TestFriendShareFirstBranches(t *testing.T) {
 		})
 	}
 }
+
+func (f *shareFirstFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
+	return f.DownloadInfoWithUA(ctx, share, id, cookie, ua)
+}

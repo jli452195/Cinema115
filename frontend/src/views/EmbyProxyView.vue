@@ -11,9 +11,9 @@ import { embyRequest } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; strmBaseUrl: string; strictStrmOrigin: boolean; embyPathPrefix: string }
+interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
 interface Status { config: Config; listening: boolean; error: string }
-const config = ref<Config>({ enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', strmBaseUrl: '', strictStrmOrigin: false, embyPathPrefix: '' })
+const config = ref<Config>({ enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' })
 const status = ref<Status>()
 const accounts = ref<P115Account[]>([])
 const busy = ref(true)
@@ -32,7 +32,7 @@ async function load() {
       p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: lifecycle.signal }),
     ])
     const [proxy, accountList] = results
-    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, strictStrmOrigin: false, ...proxy.value.config } }
+    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, ...proxy.value.config } }
     if (accountList.status === 'fulfilled') accounts.value = accountList.value.accounts
     const failed = results.find(result => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason
@@ -68,13 +68,11 @@ onBeforeUnmount(() => lifecycle.abort())
         <fieldset :disabled="busy || !loaded" class="space-y-6 disabled:opacity-50">
           <SettingSwitch v-model="config.enabled" label="启用 Emby 302 反代" description="保存后立即生效。播放器连接下面的反代端口，原有 STRM 无需重新生成。" />
           <SettingSwitch v-model="config.debug" label="反代调试日志" description="默认关闭，保存后生效。在实时日志的 Emby 302 模块选择 DEBUG 或全部，查看请求类别、客户端识别、路由分支和响应耗时。排查结束后关闭；不记录原始凭据、完整地址或请求正文。" />
-          <SettingSwitch v-model="config.strictStrmOrigin" label="严格匹配 STRM 来源地址" description="默认关闭，按分享路径与必要参数识别，允许额外参数，兼容不同 IP、域名和端口。开启后只识别下方指定来源。" />
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="text-sm text-slate-700">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
             <label class="text-sm text-slate-700">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
             <label class="text-sm text-slate-700">反代监听端口<input v-model.number="config.port" type="number" min="1024" max="65535" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">建议 8097。不能与管理服务或其他程序使用相同端口；更换端口后需更新播放器连接地址。</span></label>
             <div><P115AccountSelect id="emby-proxy-account" v-model="config.accountId" :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400">本功能独立选择取直链账号，账号失效时停止解析。<RouterLink to="/helper115" class="text-blue-600">管理账号</RouterLink></p></div>
-            <label v-if="config.strictStrmOrigin" class="text-sm text-slate-700">STRM 中的 Cinema115 来源地址<input v-model.trim="config.strmBaseUrl" type="url" :required="config.strictStrmOrigin" placeholder="http://192.168.0.3:8115" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">填写现有 STRM 第一行的协议、主机与端口，不含 /api/ 和查询参数。严格模式只处理这个来源的分享链接。</span></label>
             <label class="text-sm text-slate-700 sm:col-span-2">Emby 中对应 STRM 根目录的路径（按需填写）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media，对应 Cinema115 容器内的 /strm" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">Emby 返回本地 .strm 路径时使用。该路径下的相对目录必须与 Cinema115 的 STRM 根目录一致；如果返回的是 STRM 内的 HTTP 链接，可留空。</span></label>
           </div>
         </fieldset>

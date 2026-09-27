@@ -12,7 +12,7 @@ func TestDownloadURLUsesPerRequestUserAgent(t *testing.T) {
 	var mu sync.Mutex
 	seen := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/app/share/downurl" || r.Method != "POST" || r.Header.Get("Cookie") != "fixed-cookie" {
+		if r.URL.Path != "/os_windows/2.0/share/downurl" || r.Method != "GET" || r.URL.Query().Get("dl") != "0" || r.Header.Get("Cookie") != "fixed-cookie" {
 			t.Error("下载查询请求不正确")
 		}
 		mu.Lock()

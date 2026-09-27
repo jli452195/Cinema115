@@ -18,7 +18,7 @@ type instantClientFake struct {
 	calls  int
 }
 
-func (f *instantClientFake) DownloadInfoWithUA(_ context.Context, _ *p115.ShareInfo, _ string, cookie, _ string) (*p115.DownloadInfo, error) {
+func (f *instantClientFake) DownloadInstantInfoWithUA(_ context.Context, _ *p115.ShareInfo, _ string, cookie, _ string) (*p115.DownloadInfo, error) {
 	if f.read != nil {
 		f.read(cookie)
 	}
@@ -61,7 +61,7 @@ func setupInstantService(t *testing.T) (*InstantUploads, *instantClientFake, Ins
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := InstantUploadConfig{SourceAccountID: source, AccountID: target, TargetCID: "0", STRMBaseURL: "http://cinema:8115"}
+	config := InstantUploadConfig{SourceAccountID: source, AccountID: target, TargetCID: "0"}
 	if err := s.Apply(config); err != nil {
 		t.Fatal(err)
 	}
@@ -153,26 +153,6 @@ func TestInstantRequiresBothExplicitAccountsAndDirectory(t *testing.T) {
 				t.Fatal("错误回退其他账号")
 			}
 		})
-	}
-}
-
-func TestInstantOptionalOriginConfig(t *testing.T) {
-	s, _, config, store := setupInstantService(t)
-	config.STRMBaseURL = ""
-	if err := s.Apply(config); err != nil {
-		t.Fatal("默认模式无需来源地址", err)
-	}
-	config.StrictSTRMOrigin = true
-	if err := s.Apply(config); err == nil {
-		t.Fatal("严格模式缺少来源地址")
-	}
-	config.STRMBaseURL = "http://nas:8115"
-	if err := s.Apply(config); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := NewInstantUploads(store, s.accounts, s.client, s.logs)
-	if err != nil || !restored.Status().Config.StrictSTRMOrigin {
-		t.Fatal("严格模式未持久保存", err)
 	}
 }
 

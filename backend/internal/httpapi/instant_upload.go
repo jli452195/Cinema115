@@ -51,7 +51,7 @@ func RegisterInstantUploads(admin *gin.RouterGroup, s *service.InstantUploads, s
 		}
 		config := s.Status().Config
 		// Same URL checks as playback; this endpoint never reads local paths.
-		claim, err := share.parseSTRMURL(strings.TrimSpace(strings.TrimPrefix(input.STRM, "\ufeff")), config.StrictSTRMOrigin, config.STRMBaseURL)
+		claim, err := share.parseSTRMURL(strings.TrimSpace(strings.TrimPrefix(input.STRM, "\ufeff")))
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return

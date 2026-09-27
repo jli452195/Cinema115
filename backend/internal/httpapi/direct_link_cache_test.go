@@ -15,6 +15,7 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 	accounts, id := proxyTestAccounts(t)
 	denied := false
 	authorizations, downloads := 0, 0
+	sourcePath := "http://nas/api/?share_code=abc&receive_code=pass&id=1"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/emby/Users/viewer":
@@ -27,7 +28,7 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 		case "/emby/Users/viewer/Items/movie":
 			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full"}`)
 		case "/emby/Items/movie/PlaybackInfo":
-			fmt.Fprint(w, `{"MediaSources":[{"Id":"src","Path":"http://nas/api/?share_code=abc&receive_code=pass&id=1"}]}`)
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","Path":%q}]}`, sourcePath)
 		default:
 			w.WriteHeader(404)
 		}
@@ -55,6 +56,10 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 	}
 	if downloads != 1 || authorizations != 2 {
 		t.Fatal("cache bypassed auth or did not reuse URL")
+	}
+	sourcePath = "http://other-tool:9527/s/abc_pass_1.mp4?/movie.mp4"
+	if code := call("player"); code != 302 || downloads != 1 {
+		t.Fatal("路径式 STRM 未与普通参数链接共用缓存", code)
 	}
 	denied = true
 	if code := call("player"); code != 401 || downloads != 1 {
