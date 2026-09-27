@@ -108,10 +108,13 @@ func TestDirectLinkCacheTTLIsolationClearAndPrivacy(t *testing.T) {
 		t.Fatal("hit extended expiry or refetched")
 	}
 	raw, _ := json.Marshal(c.Status())
-	for _, secret := range []string{"cookie-secret", "share-password", "private", "token", "https://"} {
+	for _, secret := range []string{"cookie-secret", "share-password"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatal("status leaked secrets")
 		}
+	}
+	if c.Status().Entries[0].URL != "https://cdn.115.com/private?secret=token" || c.Status().Entries[0].CreatedAt.IsZero() {
+		t.Fatal("admin cache missing complete link or creation time")
 	}
 	for _, other := range []string{DirectLinkKey("new-cookie", "share-password", "UA"), DirectLinkKey("cookie-secret", "share-password", "other-UA")} {
 		if _, hit, _, err := c.Get(context.Background(), other, time.Minute, DirectLinkCacheEntry{}, fetch); err != nil || hit {

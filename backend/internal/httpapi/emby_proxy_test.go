@@ -277,7 +277,7 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 	}
 	foundStart := false
 	for _, entry := range entries {
-		if entry.TaskID == trace && strings.Contains(entry.Message, "开始直链播放解析") {
+		if entry.TaskID == trace && entry.Details != nil && strings.Contains(entry.Details.Steps, "开始直链播放解析") {
 			foundStart = true
 		}
 	}

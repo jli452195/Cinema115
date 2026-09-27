@@ -17,14 +17,19 @@ type DirectLinkValue struct {
 	Report PlaybackResolution
 }
 type DirectLinkCacheEntry struct {
-	ID          string    `json:"id"`
-	User        string    `json:"user"`
-	MediaSource string    `json:"mediaSource"`
-	Account     string    `json:"account"`
-	Mode        string    `json:"mode"`
-	CDN         string    `json:"cdn"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	Hits        uint64    `json:"hits"`
+	ID             string    `json:"id"`
+	User           string    `json:"user"`
+	MediaSource    string    `json:"mediaSource"`
+	Account        string    `json:"account"`
+	Mode           string    `json:"mode"`
+	CDN            string    `json:"cdn"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	Hits           uint64    `json:"hits"`
+	URL            string    `json:"url"`
+	CreatedAt      time.Time `json:"createdAt"`
+	TraceID        string    `json:"traceId"`
+	RequestHeaders string    `json:"requestHeaders"`
+	LookupHeaders  string    `json:"lookupHeaders"`
 }
 type DirectLinkCacheStatus struct {
 	Entries []DirectLinkCacheEntry `json:"entries"`
@@ -42,7 +47,7 @@ type directLinkFlight struct {
 	expires time.Time
 }
 
-// One cache per immutable proxy configuration. Status never exposes URLs or credentials.
+// One cache per immutable proxy configuration. Full URLs are administrator-only.
 type DirectLinkCache struct {
 	mu           sync.Mutex
 	entries      map[string]directLinkEntry
@@ -157,6 +162,8 @@ func (c *DirectLinkCache) Get(ctx context.Context, key string, ttl time.Duration
 			delete(c.entries, oldest)
 		}
 		view.ID = key
+		view.URL = value.URL
+		view.CreatedAt = expires.Add(-ttl)
 		view.ExpiresAt = expires
 		view.Account = value.Report.AccountLabel
 		view.Mode = value.Report.Mode

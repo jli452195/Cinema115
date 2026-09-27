@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,15 +29,18 @@ var errNotShareSTRM = errors.New("不是支持的分享 STRM")
 var embyProxyID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 type embyProxyHandler struct {
-	directLinks service.DirectLinkCache
-	identities  *service.EmbyPlaybackIdentities
-	cache       *service.PlaybackCache
-	logs        *service.EmbyProxyLogs
-	config      service.EmbyProxyConfig
-	accounts    *service.P115Accounts
-	share       *ShareAPI
-	http        *http.Client
-	proxy       *httputil.ReverseProxy
+	debugMu         sync.Mutex
+	debugQuietSince time.Time
+	debugQuietCount uint64
+	directLinks     service.DirectLinkCache
+	identities      *service.EmbyPlaybackIdentities
+	cache           *service.PlaybackCache
+	logs            *service.EmbyProxyLogs
+	config          service.EmbyProxyConfig
+	accounts        *service.P115Accounts
+	share           *ShareAPI
+	http            *http.Client
+	proxy           *httputil.ReverseProxy
 	// Injection point for protocol tests; production always uses the 115 client.
 	download func(context.Context, *p115.ShareInfo, string, string, string) (string, error)
 }
@@ -255,6 +259,9 @@ func staticStreamItem(r *http.Request) string {
 
 func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(h.logs.Trace(r.Context()))
+	ctx, finish := h.logs.BeginRequest(r.Context(), h.config.Debug)
+	defer finish()
+	r = r.WithContext(ctx)
 	r = r.WithContext(context.WithValue(r.Context(), proxyRequestStartedKey{}, time.Now()))
 	if h.config.Debug {
 		h.serveDebug(w, r)
@@ -296,8 +303,6 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "播放协商参数无效或过大", 400)
 			return
 		}
-	} else if strings.Contains(strings.ToLower(r.URL.Path), "/videos/") {
-		h.logs.Add(r.Context(), "DEBUG", "普通视频附属请求交由 Emby 处理（例如字幕）")
 	}
 	h.proxy.ServeHTTP(w, r)
 }
@@ -549,7 +554,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		}
 		return value, nil
 	}
-	view := service.DirectLinkCacheEntry{User: service.PlaybackLogName(user.Name) + "（" + user.ID + "）", MediaSource: proxyLogID(jsonString(source["Id"]))}
+	view := service.DirectLinkCacheEntry{User: service.PlaybackLogName(user.Name) + "（" + user.ID + "）", MediaSource: proxyLogID(jsonString(source["Id"])), TraceID: service.ProxyTraceID(ctx), RequestHeaders: proxyDiagnosticHeaders(r.Header, r.Host), LookupHeaders: proxyLookupHeaders(r.UserAgent())}
 	value, hit, expires, err := h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
 	if err == nil && hit && value.Report.FileCacheKey != "" {
 		if touchErr := h.cache.TouchDirectLink(ctx, value.Report.FileCacheKey, value.Report.FileCacheID); touchErr != nil {
@@ -576,7 +581,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	if hit {
 		h.logs.Add(ctx, "INFO", fmt.Sprintf("直链缓存命中｜取链账号=%s｜剩余 %d 秒（有效期不顺延）", report.AccountLabel, max(0, int(time.Until(expires).Seconds()))))
 	}
-	h.logs.Add(ctx, "INFO", fmt.Sprintf("115 直链获取成功，CDN=%s，耗时 %d ms（地址路径和签名已隐藏）", cdn.Hostname(), time.Since(downloadStarted).Milliseconds()))
+	h.logs.Add(ctx, "INFO", fmt.Sprintf("115 直链获取成功，CDN=%s，耗时 %d ms", cdn.Hostname(), time.Since(downloadStarted).Milliseconds()))
 	outcome = "HTTP 302"
 	summary := "播放取链结果：用户=" + service.PlaybackLogName(user.Name) + "（ID=" + user.ID + "）｜条目=" + proxyLogID(item) + "｜媒体源=" + proxyLogID(jsonString(source["Id"])) + "｜播放方式=" + report.Mode + "｜取链账号=" + report.AccountLabel
 	if hit {

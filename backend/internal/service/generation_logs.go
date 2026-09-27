@@ -16,13 +16,14 @@ import (
 const GenerationLogCapacity = 2000
 
 type GenerationLog struct {
-	ID      uint64    `json:"id"`
-	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`
-	Module  string    `json:"module"`
-	TaskID  string    `json:"taskID"`
-	Source  string    `json:"source"`
-	Message string    `json:"message"`
+	ID      uint64           `json:"id"`
+	Time    time.Time        `json:"time"`
+	Level   string           `json:"level"`
+	Module  string           `json:"module"`
+	TaskID  string           `json:"taskID"`
+	Source  string           `json:"source"`
+	Message string           `json:"message"`
+	Details *ProxyLogDetails `json:"details,omitempty"`
 }
 
 // GenerationLogs 使用固定容量环形缓冲区，允许记录分享链接，不记录登录凭证。
@@ -39,6 +40,10 @@ func (s *GenerationLogs) append(task, source, level, message string) {
 
 // Append 接收已脱敏的模块日志，所有模块共用固定容量缓冲区。
 func (s *GenerationLogs) Append(module, task, source, level, message string) {
+	s.appendDetails(module, task, source, level, message, nil)
+}
+
+func (s *GenerationLogs) appendDetails(module, task, source, level, message string, details *ProxyLogDetails) {
 	if s == nil {
 		return
 	}
@@ -49,7 +54,11 @@ func (s *GenerationLogs) Append(module, task, source, level, message string) {
 	if len(runes) > 1000 {
 		message = string(runes[:1000]) + "…"
 	}
-	s.entries[s.next] = GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message}
+	if details != nil {
+		copy := *details
+		details = &copy
+	}
+	s.entries[s.next] = GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message, Details: details}
 	s.next = (s.next + 1) % len(s.entries)
 	if s.size < len(s.entries) {
 		s.size++
@@ -63,6 +72,10 @@ func (s *GenerationLogs) Snapshot(level string, modules ...string) []GenerationL
 	result := make([]GenerationLog, 0, s.size)
 	for i := 0; i < s.size; i++ {
 		entry := s.entries[(s.next-1-i+len(s.entries))%len(s.entries)]
+		if entry.Details != nil {
+			copy := *entry.Details
+			entry.Details = &copy
+		}
 		if len(modules) > 0 && modules[0] != "ALL" && entry.Module != modules[0] {
 			continue
 		}

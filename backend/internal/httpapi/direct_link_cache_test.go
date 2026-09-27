@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/p115"
@@ -34,7 +35,8 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 		}
 	}))
 	defer upstream.Close()
-	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, DirectLinkCacheMinutes: 9}, accounts, NewShareAPI(func() string { return "" })).(*embyProxyHandler)
+	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
+	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, DirectLinkCacheMinutes: 9, Debug: true}, accounts, NewShareAPI(func() string { return "" }), logs).(*embyProxyHandler)
 	if err := h.identities.Remember(upstream.URL, "token", "viewer"); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +58,17 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 	}
 	if downloads != 1 || authorizations != 2 {
 		t.Fatal("cache bypassed auth or did not reuse URL")
+	}
+	if len(logs.Snapshot()) != 2 {
+		t.Fatal("playback produced more than one row per request")
+	}
+	for _, entry := range logs.Snapshot() {
+		if entry.Details == nil || entry.Details.URL != "https://cdn.115.com/v" || !strings.Contains(entry.Details.RequestHeaders, "player") {
+			t.Fatal("missing URL/headers on cache miss or hit")
+		}
+	}
+	if h.DirectLinkStatus().Entries[0].URL != "https://cdn.115.com/v" {
+		t.Fatal("admin cache link differs from response")
 	}
 	sourcePath = "http://other-tool:9527/s/abc_pass_1.mp4?/movie.mp4"
 	if code := call("player"); code != 302 || downloads != 1 {

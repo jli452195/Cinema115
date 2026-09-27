@@ -5,9 +5,59 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/service"
 )
+
+// Only known diagnostic values are exposed. Unknown headers and credentials
+// retain their names but not values; URL-bearing headers lose all query values.
+func proxyDiagnosticHeaders(headers http.Header, host string) string {
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys)+1)
+	total := 0
+	if host != "" {
+		lines = append(lines, "Host: "+host)
+	}
+	for _, key := range keys {
+		lower := strings.ToLower(key)
+		value := "[已隐藏]"
+		switch lower {
+		case "user-agent", "range", "accept", "accept-encoding", "accept-language", "connection", "content-type", "content-length", "content-range", "cache-control", "pragma", "if-modified-since", "if-none-match", "if-range", "etag", "last-modified", "date", "server", "accept-ranges", "transfer-encoding", "upgrade", "x-forwarded-for", "x-forwarded-proto", "x-real-ip":
+			value = strings.Join(headers.Values(key), ", ")
+		case "origin", "referer":
+			if u, err := url.Parse(headers.Get(key)); err == nil && u.Host != "" {
+				value = u.Scheme + "://" + u.Host + "/[路径和参数已隐藏]"
+			}
+		}
+		if len(value) > 2048 {
+			value = value[:2048] + "…[已截断]"
+		}
+		line := key + ": " + value
+		if total+len(line) > 16384 {
+			lines = append(lines, "…[请求头过长，其余已省略]")
+			break
+		}
+		total += len(line)
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func proxyLookupHeaders(ua string) string {
+	if ua == "" {
+		ua = p115.PlaybackUserAgent
+	}
+	return proxyDiagnosticHeaders(http.Header{"User-Agent": {ua}, "Cookie": {"[已隐藏]"}}, "")
+}
 
 // Log fixed templates, never arbitrary path segments, query values or raw headers.
 func proxyDebugRoute(r *http.Request) (string, string) {
@@ -85,7 +135,7 @@ func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
 	default:
 		method = "其他方法"
 	}
-	h.logs.Add(r.Context(), "DEBUG", "反代调试：收到请求｜方法="+method+"｜路径="+path+"｜客户端="+proxyDebugClient(r)+"｜凭据来源="+proxyDebugCredential(r)+"｜路由="+route)
+	requestHeaders := proxyDiagnosticHeaders(r.Header, r.Host)
 	writer := &proxyDebugWriter{ResponseWriter: w}
 	completed := false
 	defer func() {
@@ -100,7 +150,37 @@ func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
 		if status == 0 && completed {
 			status = http.StatusOK
 		}
-		h.logs.Add(r.Context(), "DEBUG", fmt.Sprintf("反代调试：请求结束｜HTTP %d｜状态=%s｜耗时 %d ms｜路径=%s｜路由=%s", status, state, time.Since(started).Milliseconds(), path, route))
+		quiet := route == "图片透传" || route == "会话/进度透传" || route == "普通透传"
+		if quiet && (status < 400 || r.Context().Err() != nil) {
+			h.debugMu.Lock()
+			h.debugQuietCount++
+			if h.debugQuietSince.IsZero() {
+				h.debugQuietSince = time.Now()
+			}
+			if time.Since(h.debugQuietSince) < 30*time.Second {
+				h.debugMu.Unlock()
+				return
+			}
+			count := h.debugQuietCount
+			h.debugQuietCount = 0
+			h.debugQuietSince = time.Now()
+			h.debugMu.Unlock()
+			h.logs.Add(r.Context(), "DEBUG", fmt.Sprintf("反代调试：过去 30 秒合并 %d 次图片、会话及普通透传请求；无逐条详情，异常单独记录", count))
+			return
+		}
+		details := service.ProxyLogDetails{Method: method, Path: path, Status: status, DurationMS: time.Since(started).Milliseconds(), RequestHeaders: requestHeaders, ResponseHeaders: proxyDiagnosticHeaders(w.Header(), "")}
+		if status == 302 && (path == "/cinema115/play" || staticStreamItem(r) != "") && p115.AllowedMediaURL(w.Header().Get("Location")) {
+			details.URL = w.Header().Get("Location")
+			details.LookupHeaders = proxyLookupHeaders(r.UserAgent())
+			details.Lookup = "取链使用的 UA；Cookie 已隐藏。缓存命中时本次未请求 115。播放器访问 CDN 的实际请求头不可由反代观察。"
+		}
+		level := "DEBUG"
+		if status >= 500 {
+			level = "ERROR"
+		} else if status >= 400 {
+			level = "WARNING"
+		}
+		h.logs.AddDetails(r.Context(), level, fmt.Sprintf("反代调试：%s｜HTTP %d｜状态=%s｜耗时 %d ms｜路径=%s｜路由=%s｜客户端=%s｜凭据来源=%s", method, status, state, details.DurationMS, path, route, proxyDebugClient(r), proxyDebugCredential(r)), details)
 	}()
 	h.serveRequest(writer, r)
 	completed = true

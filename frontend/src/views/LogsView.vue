@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import PlaybackDiagnostics from '../components/PlaybackDiagnostics.vue'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
@@ -16,7 +17,7 @@ function clearTaskFilter() {
   const { taskID: _, ...query } = route.query
   void router.replace({ query })
 }
-interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string }
+interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string; details?: { url?: string; requestHeaders?: string; responseHeaders?: string; lookupHeaders?: string; lookup?: string; steps?: string; method?: string; path?: string; durationMs?: number; status?: number } }
 const entries = ref<LogEntry[]>([])
 const level = ref<Level>('INFO')
 const module = ref<Module>('ALL')
@@ -37,7 +38,7 @@ let mounted = true
 const colors: Record<Level, string> = { ALL: 'bg-slate-800 text-white', INFO: 'bg-emerald-500 text-white', DEBUG: 'bg-sky-500 text-white', ERROR: 'bg-red-500 text-white', WARNING: 'bg-amber-400 text-slate-900' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
-  return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source}`.toLowerCase().includes(query)))
+  return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source} ${entry.details ? JSON.stringify(entry.details) : ''}`.toLowerCase().includes(query)))
 })
 watch([level, module, search, taskID], () => { visibleCount.value = 100 })
 
@@ -111,6 +112,10 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
               <span class="text-slate-400">{{ entry.source }} · {{ entry.taskID }}</span>
             </div>
             <p class="whitespace-pre-wrap break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{{ entry.message }}</p>
+            <details v-if="entry.details && Object.values(entry.details).some(Boolean)" class="mt-2 min-w-0">
+              <summary class="cursor-pointer text-xs text-blue-600">请求详情与解析步骤</summary>
+              <PlaybackDiagnostics v-bind="entry.details" />
+            </details>
           </li>
         </ol>
         <div v-if="filtered.length > visibleCount" class="border-t border-slate-100 p-4 text-center"><button class="text-sm text-blue-600" @click="visibleCount += 100">加载更多（还剩 {{ filtered.length - visibleCount }} 条）</button></div>

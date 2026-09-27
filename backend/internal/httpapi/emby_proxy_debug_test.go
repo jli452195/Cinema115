@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -48,22 +49,26 @@ func TestProxyDebugToggleRoutesAndRedaction(t *testing.T) {
 			debug := make([]service.GenerationLog, 0, 2)
 			entries := logs.Snapshot()
 			for _, entry := range entries[:len(entries)-before] {
-				if strings.HasPrefix(entry.Message, "反代调试：") {
+				if entry.Details != nil && entry.Details.RequestHeaders != "" {
 					debug = append(debug, entry)
 				}
-				for _, secret := range []string{"secret-signature", "secret-token", "secret-password", "secret-id", "secret-ua", "secret-cookie", "secret-location"} {
-					if strings.Contains(entry.Message, secret) {
+				raw, _ := json.Marshal(entry)
+				for _, secret := range []string{"secret-signature", "secret-token", "secret-password", "secret-id", "secret-cookie", "secret-location"} {
+					if strings.Contains(string(raw), secret) {
 						t.Fatal("debug leaked secret", secret)
 					}
 				}
 			}
-			if enabled {
-				if len(debug) != 2 {
+			if enabled && tc.status != 307 {
+				if len(debug) != 1 {
 					t.Fatal("missing request/response logs", len(debug))
 				}
-				all := debug[0].Message + debug[1].Message
+				all := debug[0].Message + debug[0].Details.Steps
 				if !strings.Contains(all, tc.route) || !strings.Contains(all, "yamby") || !strings.Contains(all, fmt.Sprintf("HTTP %d", tc.status)) {
 					t.Fatal("missing debug details", all)
+				}
+				if !strings.Contains(debug[0].Details.RequestHeaders, "Yamby/1 secret-ua") {
+					t.Fatal("raw UA missing")
 				}
 			} else if len(debug) != 0 {
 				t.Fatal("debug switch ignored")

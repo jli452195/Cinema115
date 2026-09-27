@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import PlaybackDiagnostics from './PlaybackDiagnostics.vue'
 const props = defineProps<{ token: string; minutes: number }>()
-interface Entry { id: string; user: string; mediaSource: string; account: string; mode: string; cdn: string; expiresAt: string; hits: number }
+interface Entry { id: string; user: string; mediaSource: string; account: string; mode: string; cdn: string; expiresAt: string; hits: number; url?: string; createdAt?: string; traceId?: string; requestHeaders?: string; lookupHeaders?: string }
 const entries = ref<Entry[]>([])
 const hits = ref(0), misses = ref(0), now = ref(Date.now())
 const search = ref(''), category = ref('all'), error = ref('')
@@ -13,7 +14,7 @@ const active = computed(() => entries.value.filter(e => remaining(e) > 0))
 const instant = computed(() => active.value.filter(e => e.mode.includes('秒传')).length)
 const visible = computed(() => active.value.filter(e =>
   (category.value === 'all' || e.mode.includes('秒传') === (category.value === 'instant')) &&
-  [e.user, e.mediaSource, e.account, e.mode, e.cdn].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
+  [e.user, e.mediaSource, e.account, e.mode, e.cdn, e.url, e.traceId, e.requestHeaders].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
 async function request(method = 'GET', id = '') {
   if (busy.value) return
   busy.value = true; error.value = ''
@@ -53,7 +54,12 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearInterval(timer) })
       <p class="mt-3 break-all text-slate-700">Emby 用户：{{ entry.user }}</p>
       <p class="mt-1 break-all text-slate-600">媒体源：{{ entry.mediaSource }}</p>
       <p class="mt-1 break-all text-slate-600">取链账号：{{ entry.account }}</p>
-      <p class="mt-1 break-all text-xs text-slate-400">CDN：{{ entry.cdn }} · 完整直链和凭据已隐藏</p>
+      <p class="mt-1 break-all text-xs text-slate-400">CDN：{{ entry.cdn }}</p>
+      <p v-if="entry.createdAt" class="mt-1 break-all text-xs text-slate-500">建链：{{ new Date(entry.createdAt).toLocaleString() }} · 到期：{{ new Date(entry.expiresAt).toLocaleString() }}</p>
+      <RouterLink v-if="entry.traceId" class="mt-1 block text-xs text-blue-600" :to="{ path: '/logs', query: { module: 'Emby 302', level: 'ALL', taskID: entry.traceId } }">建链请求 {{ entry.traceId }} · 查看日志</RouterLink>
+      <details v-if="entry.url" class="mt-3 min-w-0"><summary class="cursor-pointer text-blue-600">查看完整直链和建链请求头</summary>
+        <PlaybackDiagnostics :url="entry.url" :request-headers="entry.requestHeaders" :lookup-headers="entry.lookupHeaders" lookup="这里保存首次建链时的请求头，缓存命中不会更新；115 Cookie 与登录令牌已隐藏。CDN 请求由播放器发送，实际请求头不可见。" />
+      </details>
     </div>
     <p v-if="!visible.length" class="py-6 text-center text-sm text-slate-400">{{ active.length ? '没有匹配的缓存' : '暂无有效直链缓存，播放后会自动建立' }}</p>
   </section>

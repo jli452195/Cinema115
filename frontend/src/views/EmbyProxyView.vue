@@ -67,7 +67,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <form class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7" @submit.prevent="save">
         <fieldset :disabled="busy || !loaded" class="space-y-6 disabled:opacity-50">
           <SettingSwitch v-model="config.enabled" label="启用 Emby 302 反代" description="保存后立即生效。播放器连接下面的反代端口，原有 STRM 无需重新生成。" />
-          <SettingSwitch v-model="config.debug" label="反代调试日志" description="默认关闭，保存后生效。在实时日志的 Emby 302 模块选择 DEBUG 或全部，查看请求类别、客户端识别、路由分支和响应耗时。排查结束后关闭；不记录原始凭据、完整地址或请求正文。" />
+          <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。每次请求合并为一条日志，展开查看完整 CDN 直链、请求与响应头、解析步骤。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="text-sm text-slate-700">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
             <label class="text-sm text-slate-700">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
