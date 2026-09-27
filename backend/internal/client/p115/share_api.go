@@ -35,6 +35,8 @@ type ShareClient struct {
 	requestGate         chan struct{}
 	nextRequest         time.Time
 	playbackPreparation playbackPreparationCache
+	playbackReaders     playbackReadPool
+	playbackSources     playbackSourceCache
 }
 
 func NewShareClient() *ShareClient {
@@ -222,10 +224,11 @@ func (c *ShareClient) DownloadURL(ctx context.Context, share *ShareInfo, fileID,
 // DownloadURLWithUA binds link acquisition to the actual player, without changing shared client state.
 // DownloadInfo preserves source metadata for instant upload. Signed URLs never serialize.
 type DownloadInfo struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	SHA1 string `json:"sha1"`
-	URL  string `json:"-"`
+	Name            string `json:"name"`
+	Size            int64  `json:"size"`
+	SHA1            string `json:"sha1"`
+	URL             string `json:"-"`
+	loadPlaybackURL func(context.Context) (string, error)
 }
 
 func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (string, error) {

@@ -110,8 +110,13 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 }
 
 func TestPickCodeRecognition(t *testing.T) {
+	const hash = "e63d59350688066658c5d8cf2748b97abb684251"
 	for _, raw := range []string{
 		"http://nas:8115/api/redirect115/abc123", "https://another:443/api/redirect115/abc123/电影.mkv", "http://nas/api/redirect115/abc123/", "http://nas/api/redirect115/abc123/%E7%94%B5%E5%BD%B1.mkv",
+		"http://nas/api/redirect115/abc123/" + hash,
+		"http://nas/api/redirect115/abc123/" + hash + "/",
+		"http://nas/api/redirect115/abc123/" + hash + "/[标题] 日本語 文件.mkv",
+		"http://nas/api/redirect115/abc123/" + strings.ToUpper(hash) + "/%E7%94%B5%E5%BD%B1.mkv",
 	} {
 		if pc, ok := parsePickCodeSTRM(raw); !ok || pc != "abc123" {
 			t.Fatal("supported link rejected", raw)
@@ -119,6 +124,15 @@ func TestPickCodeRecognition(t *testing.T) {
 	}
 	for _, raw := range []string{
 		"http://nas/api/redirect115/abc", "http://nas/api/redirect115/%61bc123", "http://nas/api/redirect115/abc123/a%2fb", "http://nas/api/redirect115/abc123/..", "http://nas/api/redirect115/abc123?token=x", "http://nas/api/redirect115/abc123#x", "http://u:p@nas/api/redirect115/abc123", "file:///api/redirect115/abc123", "http://nas/api/redirect115/abc123/a/b",
+		"http://nas/api/redirect115/abc123/" + hash[:39] + "/movie.mkv",
+		"http://nas/api/redirect115/abc123/" + hash + "z/movie.mkv",
+		"http://nas/api/redirect115/abc123/" + hash + "/a%2fb",
+		"http://nas/api/redirect115/abc123/" + hash + "/a%5cb",
+		"http://nas/api/redirect115/abc123/" + hash + "/%2e%2e",
+		"http://nas/api/redirect115/abc123/" + hash + "/a%0ab",
+		"http://nas/api/redirect115/abc123/" + hash + "/a%00b",
+		"http://nas/api/redirect115/abc123/" + hash + "/a/b",
+		"http://nas/api/redirect115/abc123/" + hash + "/movie.mkv?token=x",
 	} {
 		if _, ok := parsePickCodeSTRM(raw); ok {
 			t.Fatal("invalid link accepted", raw)

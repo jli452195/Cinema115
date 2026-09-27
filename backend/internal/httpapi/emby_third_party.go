@@ -8,6 +8,7 @@ import (
 )
 
 var pickCodePattern = regexp.MustCompile("^[a-zA-Z0-9]{6,64}$")
+var pickCodePathSHA1Pattern = regexp.MustCompile("^[a-fA-F0-9]{40}$")
 var originalStreamPath = regexp.MustCompile("(?i)^/(?:emby/)?videos/([a-zA-Z0-9_-]+)/original\\.[a-zA-Z0-9]{1,16}$")
 
 func originalStreamItem(r *http.Request) string {
@@ -32,11 +33,16 @@ func parsePickCodeSTRM(raw string) (string, bool) {
 		return "", false
 	}
 	parts := strings.Split(strings.TrimPrefix(u.EscapedPath(), prefix), "/")
-	if len(parts) > 2 || !pickCodePattern.MatchString(parts[0]) {
+	if len(parts) > 3 || !pickCodePattern.MatchString(parts[0]) {
 		return "", false
 	}
-	if len(parts) == 2 {
-		name, err := url.PathUnescape(parts[1])
+	// Some generators include a SHA1 before the optional filename. It is a
+	// format hint only; source metadata is still read with the configured account.
+	if len(parts) == 3 && !pickCodePathSHA1Pattern.MatchString(parts[1]) {
+		return "", false
+	}
+	if len(parts) >= 2 {
+		name, err := url.PathUnescape(parts[len(parts)-1])
 		if err != nil || name == "." || name == ".." || strings.ContainsAny(name, "/\\\r\n\x00") {
 			return "", false
 		}

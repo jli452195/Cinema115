@@ -18,8 +18,8 @@ func (c *ShareClient) FindPlaybackFileBySHA1(ctx context.Context, hash, cookie s
 	}
 	expectedCount := int64(-1)
 	for offset := 0; offset < 10000; offset += 100 {
-		q := url.Values{"aid": {"1"}, "cid": {"0"}, "fc": {"0"}, "show_dir": {"0"}, "search_value": {strings.ToUpper(hash)}, "offset": {strconv.Itoa(offset)}, "limit": {"100"}}
-		raw, err := c.requestEnvelope(ctx, http.MethodGet, c.WebURL+"/files/search?"+q.Encode(), cookie, nil)
+		q := url.Values{"aid": {"1"}, "cid": {"0"}, "fc": {"2"}, "type": {"99"}, "show_dir": {"0"}, "search_value": {strings.ToUpper(hash)}, "offset": {strconv.Itoa(offset)}, "limit": {"100"}}
+		raw, err := c.playbackReader(cookie).requestEnvelope(ctx, http.MethodGet, c.WebURL+"/files/search?"+q.Encode(), cookie, nil)
 		if err != nil {
 			return nil, fmt.Errorf("SHA1 搜索请求失败: %w", err)
 		}
@@ -37,11 +37,6 @@ func (c *ShareClient) FindPlaybackFileBySHA1(ctx context.Context, hash, cookie s
 		if json.Unmarshal(raw, &response) != nil {
 			return nil, fmt.Errorf("SHA1 搜索响应无效")
 		}
-		count, err := response.Count.Int64()
-		if err != nil || count < 0 || response.Data == nil || len(response.Data) > 100 || int64(offset+len(response.Data)) > count || (expectedCount >= 0 && count != expectedCount) {
-			return nil, fmt.Errorf("SHA1 搜索结果不完整")
-		}
-		expectedCount = count
 		for _, f := range response.Data {
 			if !strings.EqualFold(f.SHA1, hash) {
 				continue
@@ -53,6 +48,11 @@ func (c *ShareClient) FindPlaybackFileBySHA1(ctx context.Context, hash, cookie s
 			size, _ := f.Size.Int64()
 			return &DrivePlaybackFile{ID: f.ID.String(), CID: f.CID.String(), Name: f.Name, Size: size, SHA1: strings.ToUpper(f.SHA1), PickCode: f.PickCode}, nil
 		}
+		count, err := response.Count.Int64()
+		if err != nil || count < 0 || response.Data == nil || len(response.Data) > 100 || int64(offset+len(response.Data)) > count || (expectedCount >= 0 && count != expectedCount) {
+			return nil, fmt.Errorf("SHA1 搜索结果不完整")
+		}
+		expectedCount = count
 		if int64(offset+len(response.Data)) == count {
 			return nil, nil
 		}

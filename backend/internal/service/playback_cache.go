@@ -39,6 +39,9 @@ type PlaybackCacheEntry struct {
 	LastUsed        time.Time              `json:"lastUsed"`
 	CreatedAt       time.Time              `json:"createdAt"`
 	Message         string                 `json:"message"`
+	RetryNotBefore  time.Time              `json:"retryNotBefore,omitempty"`
+	SourceKey       string                 `json:"sourceKey,omitempty"` // Hash only; no STRM, Cookie or URL.
+	TargetScope     string                 `json:"targetScope,omitempty"`
 }
 type PlaybackCacheStatus struct {
 	Directories []PlaybackCacheDirectory `json:"directories,omitempty"`
@@ -82,7 +85,7 @@ func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Ac
 		e := &s.doc.Entries[i]
 		if e.Status == "creating" || e.Status == "uploading" || e.Status == "deleting" {
 			e.Status = "uncertain"
-			e.Message = "服务中断；下次播放先按 SHA1 查找，未确认的写入不会自动重放"
+			e.Message = "服务中断；下次播放先按 SHA1 查找，冷却结束且未命中时允许重新秒传"
 			changed = true
 		}
 	}
@@ -329,6 +332,11 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 	}
 	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope()))
 	link, err := s.resolveInstant(ctx, selection, sourceCookie, ua, &report, func() (*p115.DownloadInfo, error) {
+		if lazy, ok := s.client.(interface {
+			PlaybackPickCodeSource(context.Context, string, string, string) (*p115.DownloadInfo, error)
+		}); ok {
+			return lazy.PlaybackPickCodeSource(ctx, sourceID, pickCode, sourceCookie)
+		}
 		return s.client.PickCodeInstantInfo(ctx, pickCode, sourceCookie)
 	})
 	if err != nil {

@@ -20,6 +20,9 @@ type PlaybackCacheDirectory struct {
 	Status    string `json:"status"`
 }
 type playbackSourceKey struct{}
+
+const playbackRetryCooldown = 30 * time.Second
+
 type fastPlaybackClient interface {
 	PreparePlaybackAccount(context.Context, string, string) (*p115.PlaybackUploadTicket, error)
 	UploadPlayback(context.Context, *p115.DownloadInfo, string, string, string, *p115.PlaybackUploadTicket, func(p115.InstantProgress)) (*p115.InstantUploadResult, error)
@@ -71,9 +74,20 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	defer func() { <-s.gate }()
 	sourceKey, _ := ctx.Value(playbackSourceKey{}).(string)
+	targetScope := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
+	failedMapping := ""
+	// Rebuild a verified mapping after restart without querying the source.
+	if sourceKey != "" && s.sourceMappings[sourceKey] == "" {
+		for _, entry := range s.Status().Entries {
+			if entry.SourceKey == sourceKey && entry.Status == "ready" {
+				s.rememberSource(sourceKey, entry.Key)
+				break
+			}
+		}
+	}
 	if key := s.sourceMappings[sourceKey]; sourceKey != "" && key != "" {
 		for _, e := range s.Status().Entries {
-			if e.Key != key || e.AccountID != selected.binding.AccountID || e.UID != selected.uid || e.ParentCID != selected.binding.ParentCID || e.Status != "ready" {
+			if e.Key != key || e.AccountID != selected.binding.AccountID || e.UID != selected.uid || e.TargetScope != targetScope || e.ParentCID != selected.binding.ParentCID || e.Status != "ready" {
 				continue
 			}
 			next("朋友账号取链")
@@ -86,6 +100,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
+			failedMapping = e.Key
 			break
 		}
 		delete(s.sourceMappings, sourceKey)
@@ -100,12 +115,28 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	report.UsedSource = true
 	key := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.binding.ParentCID, strings.ToUpper(info.SHA1))
+	for _, entry := range s.Status().Entries {
+		if entry.Key != failedMapping && entry.AccountID == selected.binding.AccountID && entry.UID == selected.uid && entry.TargetScope == targetScope && entry.Status == "ready" && cacheMatches(entry.File, info) {
+			next("朋友账号文件映射取链")
+			entry.SourceKey = sourceKey
+			link, err := s.reuseFastEntry(ctx, entry, selected, ua, report)
+			if err == nil {
+				s.rememberSource(sourceKey, entry.Key)
+				return link, nil
+			}
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			break
+		}
+	}
 	next("目标账号 SHA1 查找")
 	f, err := fast.FindPlaybackFileBySHA1(ctx, info.SHA1, selected.cookie)
 	if err != nil {
 		return "", fmt.Errorf("朋友账号 SHA1 查找失败，未执行秒传：%s", p115.SharePlaybackFailureReason(err))
 	}
 	e := PlaybackCacheEntry{Key: key, AccountID: selected.binding.AccountID, UID: selected.uid, ParentCID: selected.binding.ParentCID, DirectoryID: selected.binding.ParentCID, File: p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}, Status: "uploading", CreatedAt: time.Now().UTC(), LastUsed: time.Now().UTC()}
+	e.SourceKey, e.TargetScope = sourceKey, targetScope
 	if f != nil {
 		if !cacheMatches(*f, info) || f.ID == "" || f.PickCode == "" {
 			return "", fmt.Errorf("目标搜索结果 SHA1 或文件标识无效")
@@ -121,22 +152,42 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		s.logs.Add(ctx, "INFO", "朋友账号 SHA1 命中，直接取链；无需秒传")
 		return link, nil
 	}
-	// A search miss cannot prove an earlier interrupted write never completed.
+	// Old uncertain records are diagnostic only. Newly interrupted writes get a
+	// bounded cooldown; a positive SHA1 hit above always bypasses it.
+	var previous *PlaybackCacheEntry
+	var retryAt time.Time
+	count := 0
 	for _, old := range s.Status().Entries {
 		if old.AccountID == selected.binding.AccountID && old.UID == selected.uid && strings.EqualFold(old.File.SHA1, info.SHA1) && old.Status != "ready" {
-			return "", fmt.Errorf("历史秒传结果未确认且尚未查到同 SHA1 文件，请核查后移除本地记录")
+			count++
+			if previous == nil || old.CreatedAt.After(previous.CreatedAt) {
+				copy := old
+				previous = &copy
+			}
+			if old.RetryNotBefore.After(retryAt) {
+				retryAt = old.RetryNotBefore
+			}
 		}
+	}
+	if previous != nil {
+		s.logs.Add(ctx, "INFO", fmt.Sprintf("SHA1 搜索完成，未命中；SHA1=%s｜历史记录数=%d｜最近记录=%s｜状态=%s｜原因=%s", strings.ToUpper(info.SHA1), count, previous.Key, previous.Status, previous.Message))
+	}
+	if remaining := time.Until(retryAt); remaining > 0 {
+		seconds := int64((remaining + time.Second - 1) / time.Second)
+		return "", fmt.Errorf("上次秒传结果未确认，SHA1 暂未命中；请在 %d 秒后重试，无需移除本地记录", seconds)
 	}
 	next("账号上传预检")
 	ticket, err := fast.PreparePlaybackAccount(ctx, selected.binding.AccountID, selected.cookie)
 	if err != nil {
 		return "", fmt.Errorf("朋友账号秒传预检失败：%s", p115.SharePlaybackFailureReason(err))
 	}
+	// Persist a finite deadline before submitting, including for process crashes.
+	e.RetryNotBefore = time.Now().UTC().Add(playbackRetryCooldown)
 	if err := s.put(e); err != nil {
 		return "", err
 	}
 	next("秒传预检")
-	s.logs.Add(ctx, "INFO", "朋友账号未查到同 SHA1 文件，秒传到配置目录="+selected.binding.ParentCID)
+	s.logs.Add(ctx, "INFO", "朋友账号未查到同 SHA1 文件，允许秒传；SHA1="+strings.ToUpper(info.SHA1)+"｜保存目录="+selected.binding.ParentCID)
 	result, err := fast.UploadPlayback(ctx, info, selected.binding.AccountID, selected.binding.ParentCID, selected.cookie, ticket, func(p p115.InstantProgress) {
 		switch p.Stage {
 		case "init":
@@ -156,22 +207,34 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			}
 			return "", fmt.Errorf("朋友账号 %s：%w", selected.binding.AccountID, preflight)
 		}
-		e.Status, e.Message = "uncertain", "秒传结果未确认；下次先按 SHA1 查找，不自动重复写入"
+		reason := p115.InstantUploadFailureReason(err)
+		e.Status, e.Message = "uncertain", reason+"；下次先按 SHA1 查找，30 秒冷却结束且未命中时允许重新秒传"
+		e.RetryNotBefore = time.Now().UTC().Add(playbackRetryCooldown)
 		if saveErr := s.put(e); saveErr != nil {
 			return "", saveErr
 		}
-		return "", fmt.Errorf("朋友账号秒传未确认，请检查记录")
+		return "", fmt.Errorf("朋友账号秒传未完成：%s", reason)
 	}
 	next("目标 SHA1 校验与取链")
+	s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
 	file, link, err := fast.CompletePlaybackUpload(ctx, info, selected.binding.ParentCID, result, selected.cookie, ua)
 	if err != nil || !cacheMatches(file, info) || file.ID == "" || file.PickCode == "" || !p115.AllowedDirectPlaybackURL(link) {
-		e.Status, e.Message = "uncertain", "秒传已提交，目标 SHA1 或取链未确认；下次先查找再复用"
+		reason := "目标 SHA1、文件标识或直链未通过核验"
+		var detailed *p115.PlaybackCompletionError
+		if errors.As(err, &detailed) {
+			reason = detailed.Reason
+		} else if err != nil {
+			reason = p115.SharePlaybackFailureReason(err)
+		}
+		e.Status, e.Message = "uncertain", "秒传已成功，"+reason+"；下次先查找，30 秒冷却结束且未命中时允许重新秒传"
+		e.RetryNotBefore = time.Now().UTC().Add(playbackRetryCooldown)
 		if saveErr := s.put(e); saveErr != nil {
 			return "", saveErr
 		}
-		return "", fmt.Errorf("秒传目标 SHA1 校验或取链失败，请检查记录")
+		return "", fmt.Errorf("秒传已成功，%s（fileID=%s，pickcode=%s）", reason, result.FileID, result.PickCode)
 	}
 	e.File, e.DirectoryID, e.Status, e.Message = file, file.CID, "ready", "秒传完成，SHA1 核对通过；云端文件由用户手动管理"
+	e.RetryNotBefore = time.Time{}
 	next("保存文件记录")
 	if err := s.put(e); err != nil {
 		return "", err

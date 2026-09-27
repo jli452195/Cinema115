@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -106,14 +105,14 @@ func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid,
 	if time.Now().Before(expires) {
 		return nil
 	}
-	if err := c.ValidateCacheParent(ctx, cid, cookie); err != nil {
+	if err := c.playbackReader(cookie).ValidateCacheParent(ctx, cid, cookie); err != nil {
 		return err
 	}
 	c.playbackPreparation.mu.Lock()
 	if c.playbackPreparation.directories == nil || len(c.playbackPreparation.directories) >= 256 {
 		c.playbackPreparation.directories = make(map[string]time.Time)
 	}
-	c.playbackPreparation.directories[key] = time.Now().Add(time.Minute)
+	c.playbackPreparation.directories[key] = time.Now().Add(10 * time.Minute)
 	c.playbackPreparation.mu.Unlock()
 	return nil
 }
@@ -144,39 +143,4 @@ func (c *ShareClient) UploadPlayback(ctx context.Context, info *DownloadInfo, sc
 		}
 	}
 	return result, err
-}
-
-// A receipt and matching SHA1 in downurl metadata avoid another search.
-// Incomplete metadata falls back to a SHA1 lookup in the selected account.
-func (c *ShareClient) CompletePlaybackUpload(ctx context.Context, info *DownloadInfo, cid string, result *InstantUploadResult, cookie, ua string) (DrivePlaybackFile, string, error) {
-	if result == nil || !validDriveID(cid, true) || info == nil {
-		return DrivePlaybackFile{}, "", fmt.Errorf("秒传结果无效")
-	}
-	var verifiedLink string
-	if validDriveID(result.FileID, false) && instantPickCode.MatchString(result.PickCode) {
-		got, id, err := c.pickCodeInfo(ctx, result.PickCode, cookie, ua)
-		if err == nil {
-			if id != result.FileID || (instantHash.MatchString(got.SHA1) && !strings.EqualFold(got.SHA1, info.SHA1)) {
-				return DrivePlaybackFile{}, "", fmt.Errorf("目标取链元数据与秒传文件不一致")
-			}
-			verifiedLink = got.URL
-			if strings.EqualFold(got.SHA1, info.SHA1) {
-				return DrivePlaybackFile{ID: id, CID: cid, Name: got.Name, Size: got.Size, SHA1: got.SHA1, PickCode: result.PickCode}, got.URL, nil
-			}
-		}
-	}
-	// Search by SHA1 when the upload receipt lacks complete metadata. A matching
-	// file is reusable regardless of its name, size, folder or duplicate copies.
-	f, err := c.FindPlaybackFileBySHA1(ctx, info.SHA1, cookie)
-	if err != nil {
-		return DrivePlaybackFile{}, "", err
-	}
-	if f == nil {
-		return DrivePlaybackFile{}, "", fmt.Errorf("秒传后尚未查到同 SHA1 文件")
-	}
-	if verifiedLink != "" && f.ID == result.FileID && f.PickCode == result.PickCode {
-		return *f, verifiedLink, nil
-	}
-	link, err := c.DriveDownloadURLWithUA(ctx, f.ID, f.PickCode, cookie, ua)
-	return *f, link, err
 }

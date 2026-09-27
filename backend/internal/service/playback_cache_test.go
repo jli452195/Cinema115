@@ -79,6 +79,15 @@ func (f *cacheDriveFake) DriveDownloadURLWithUA(_ context.Context, id, pc, cooki
 	f.links++
 	f.cookie = cookie
 	f.ua = ua
+	found := false
+	for _, file := range f.files {
+		if file.ID == id && file.PickCode == pc {
+			found = true
+		}
+	}
+	if !found {
+		return "", errors.New("missing file")
+	}
 	return "https://cdn.115.com/fresh?private", nil
 }
 func (f *cacheDriveFake) DeleteEntries(_ context.Context, ids []string, cookie string) error {

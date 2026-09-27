@@ -619,8 +619,8 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		}
 	}
 	link, report := value.URL, value.Report
-	if hit && report.Mode == "新建秒传缓存" {
-		report.Mode = "复用秒传缓存"
+	if hit && (report.Mode == "新建秒传缓存" || report.Mode == "新建秒传文件") {
+		report.Mode = "复用同 SHA1 文件"
 	}
 	if err != nil && cacheSelection != nil {
 		fail(err.Error(), 502)

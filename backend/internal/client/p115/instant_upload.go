@@ -48,7 +48,7 @@ func ValidateInstantSource(info *DownloadInfo) error {
 	if info == nil || !instantHash.MatchString(info.SHA1) || info.Size <= 0 || strings.TrimSpace(info.Name) == "" || len([]rune(info.Name)) > 255 || strings.ContainsAny(info.Name, "/\\\r\n\x00") {
 		return fmt.Errorf("源文件缺少有效的完整 SHA1、文件名或大小，无法秒传")
 	}
-	if !AllowedMediaURL(info.URL) {
+	if !AllowedMediaURL(info.URL) && info.loadPlaybackURL == nil {
 		return fmt.Errorf("源文件直链无效")
 	}
 	return nil
@@ -141,6 +141,7 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 	form := url.Values{"filename": {info.Name}, "fileid": {strings.ToUpper(info.SHA1)}, "filesize": {strconv.FormatInt(info.Size, 10)}, "target": {"U_1_" + cid}, "userid": {identity.UserID.String()}, "userkey": {identity.UserKey}, "appversion": {instantAppVersion}, "topupload": {"true"}}
 	challenged := false
 	for attempt := 0; attempt < 2; attempt++ {
+		stage := fmt.Sprintf("第 %d 次秒传提交", attempt+1)
 		body, token, err := instantPayload(form, time.Now().Unix())
 		if err != nil {
 			return nil, err
@@ -148,16 +149,17 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 		report("init", 0)
 		raw, err = c.instantRequest(ctx, http.MethodPost, "https://uplb.115.com/4.0/initupload.php?k_ec="+url.QueryEscape(token), cookie, body)
 		if err != nil {
-			return nil, fmt.Errorf("%w：上传初始化请求中断", ErrInstantUncertain)
+			return nil, instantFailure(stage, InstantUploadFailureReason(err), errors.Join(ErrInstantUncertain, err))
 		}
 		// initupload may append a non-block trailer (observed: 12 bytes).
 		// The upload protocol decrypts only complete AES blocks; keep generic AES strict.
 		decoded, err := AESDecryptCBC(raw[:len(raw)/16*16])
-		if err == nil {
-			decoded, err = LZ4Decompress(decoded)
-		}
 		if err != nil {
-			return nil, fmt.Errorf("%w：上传响应解密失败", ErrInstantUncertain)
+			return nil, instantFailure(stage, fmt.Sprintf("上传响应 AES 解密失败（响应字节数=%d）", len(raw)), ErrInstantUncertain)
+		}
+		decoded, err = LZ4Decompress(decoded)
+		if err != nil {
+			return nil, instantFailure(stage, fmt.Sprintf("上传响应 LZ4 解压失败（响应字节数=%d）", len(raw)), ErrInstantUncertain)
 		}
 		var response struct {
 			Status    json.Number `json:"status"`
@@ -167,7 +169,7 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 			FileID    json.Number `json:"file_id"`
 		}
 		if json.Unmarshal(decoded, &response) != nil {
-			return nil, fmt.Errorf("%w：上传响应格式无效", ErrInstantUncertain)
+			return nil, instantFailure(stage, "上传响应 JSON 格式或字段类型无效", ErrInstantUncertain)
 		}
 		switch response.Status.String() {
 		case "2":
@@ -179,30 +181,37 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 				result.PickCode = response.PickCode
 			}
 			if result.FileID == "" && result.PickCode == "" {
-				return nil, fmt.Errorf("%w：115 已返回成功，但缺少目标文件标识", ErrInstantUncertain)
+				return nil, instantFailure(stage, "115 返回 status=2，但缺少有效 file_id 和 pickcode", ErrInstantUncertain)
 			}
 			return result, nil
 		case "1":
-			return nil, ErrInstantUnsupported
+			return nil, instantFailure(stage, "115 要求普通上传，未执行整文件上传（"+instantResponseCodes(decoded)+"）", ErrInstantUnsupported)
 		case "7":
 			if attempt != 0 || response.SignKey == "" || len(response.SignKey) > 256 {
-				return nil, fmt.Errorf("115 二次校验未通过或校验参数无效")
+				return nil, instantFailure(stage, "115 返回 status=7，但重复要求二次校验或校验凭据无效", nil)
 			}
 			start, end, err := parseInstantRange(response.SignCheck, info.Size)
 			if err != nil {
-				return nil, err
+				return nil, instantFailure(stage, "115 返回 status=7，但校验范围格式错误、越界或超过 8 MB", err)
 			}
 			report("range", end-start+1)
-			hash, err := c.instantRangeHash(ctx, info.URL, start, end, info.Size)
+			link := info.URL
+			if info.loadPlaybackURL != nil {
+				link, err = info.loadPlaybackURL(ctx)
+				if err != nil {
+					return nil, instantFailure("二次校验源直链", SharePlaybackFailureReason(err), err)
+				}
+			}
+			hash, err := c.instantRangeHash(ctx, link, start, end, info.Size)
 			if err != nil {
-				return nil, err
+				return nil, instantFailure("二次校验片段读取", SharePlaybackFailureReason(err), err)
 			}
 			report("range_done", end-start+1)
 			form.Set("sign_key", response.SignKey)
 			form.Set("sign_val", hash)
 			challenged = true
 		default:
-			return nil, fmt.Errorf("115 未返回秒传成功状态，请检查目标账号权限和容量")
+			return nil, instantFailure(stage, "115 未返回秒传成功状态（"+instantResponseCodes(decoded)+"）", nil)
 		}
 	}
 	return nil, fmt.Errorf("115 二次校验未完成")
@@ -257,15 +266,18 @@ func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cook
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("115 秒传接口连接失败")
+		return nil, instantFailure("秒传接口连接", SharePlaybackFailureReason(err), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("115 秒传接口返回 HTTP %d", resp.StatusCode)
+		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-	if err != nil || len(raw) > 1<<20 {
-		return nil, fmt.Errorf("115 秒传接口响应读取失败")
+	if err != nil {
+		return nil, instantFailure("秒传响应读取", SharePlaybackFailureReason(err), err)
+	}
+	if len(raw) > 1<<20 {
+		return nil, instantFailure("秒传响应读取", "响应超过 1 MB 上限", nil)
 	}
 	return raw, nil
 }

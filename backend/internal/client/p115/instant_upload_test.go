@@ -20,13 +20,15 @@ func instantResponse(status int, raw []byte) *http.Response {
 func encryptedInstantResponse(t *testing.T, value string) []byte {
 	t.Helper()
 	// A literal-only LZ4 block, independently framed with a 16-bit length and terminator.
-	block := []byte{0xf0}
-	n := len(value) - 15
-	for n >= 255 {
-		block = append(block, 255)
-		n -= 255
+	block := []byte{byte(min(len(value), 15) << 4)}
+	if len(value) >= 15 {
+		n := len(value) - 15
+		for n >= 255 {
+			block = append(block, 255)
+			n -= 255
+		}
+		block = append(block, byte(n))
 	}
-	block = append(block, byte(n))
 	block = append(block, []byte(value)...)
 	framed := make([]byte, 2)
 	binary.LittleEndian.PutUint16(framed, uint16(len(block)))

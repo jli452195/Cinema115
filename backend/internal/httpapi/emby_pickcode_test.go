@@ -12,6 +12,12 @@ import (
 )
 
 func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
+	for _, suffix := range []string{"", "/movie.mkv", "/e63d59350688066658c5d8cf2748b97abb684251", "/e63d59350688066658c5d8cf2748b97abb684251/[标题] 日本語.mkv"} {
+		t.Run("abc123"+suffix, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, suffix) })
+	}
+}
+
+func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string) {
 	const userID = "8be403a10974486c94a987b8036c8484"
 	accounts, sourceID := proxyTestAccounts(t)
 	targetID, err := accounts.Add("friend")
@@ -34,7 +40,9 @@ func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
 		case "/emby/Users/" + userID + "/Items/movie":
 			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true}`)
 		case "/emby/Items/movie/PlaybackInfo":
-			fmt.Fprint(w, `{"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115/api/redirect115/abc123"}]}`)
+			// The path SHA1 deliberately differs from the source account metadata.
+			// It must not replace the trusted source SHA1 or trigger a host request.
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115/api/redirect115/abc123%s"}]}`, suffix)
 		default:
 			w.WriteHeader(403)
 		}

@@ -38,6 +38,12 @@ func TestPickCodeSkipsShareAndReusesInstantCache(t *testing.T) {
 	}
 	f.fail = true
 	s.sourceMappings = nil
+	for _, entry := range s.Status().Entries {
+		entry.SourceKey = ""
+		if err := s.put(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, _, err := s.ResolvePickCodeWithReport(context.Background(), selection, "abc123", "source-private", "player-UA"); err == nil {
 		t.Fatal("source failure accepted")
 	}

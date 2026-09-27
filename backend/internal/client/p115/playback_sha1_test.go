@@ -16,6 +16,7 @@ func TestPlaybackSHA1Search(t *testing.T) {
 		hit, fail  bool
 	}{
 		{"hit", fmt.Sprintf(`{"state":true,"count":1,"data":[{"fid":"12","cid":"0","n":"renamed","s":999,"sha":"%s","pc":"pick123"}]}`, strings.ToLower(hash)), true, false},
+		{"hit-inaccurate-count", fmt.Sprintf(`{"state":true,"count":0,"data":[{"fid":"12","cid":"0","n":"renamed","s":999,"sha":"%s","pc":"pick123"}]}`, hash), true, false},
 		{"miss", `{"state":true,"count":0,"data":[]}`, false, false},
 		{"different_hash", fmt.Sprintf(`{"state":true,"count":1,"data":[{"fid":"12","cid":"0","n":"same","sha":"%s","pc":"pick123"}]}`, strings.Repeat("B", 40)), false, false},
 		{"expired_cookie", `{"state":false,"error":"login required"}`, false, true},
@@ -56,24 +57,5 @@ func TestPlaybackExplicitRootReachesUpload(t *testing.T) {
 	_, err := c.UploadPlayback(context.Background(), testInstantInfo(), "account", "0", "UID=22_A", ticket, nil)
 	if posts != 1 || err == nil {
 		t.Fatal("explicit root failed before submission", posts, err)
-	}
-}
-
-func TestCompletePlaybackUploadSearchComparesOnlySHA1(t *testing.T) {
-	c := newTestShareClient()
-	info := testInstantInfo()
-	c.HTTP.Transport = metadataTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/files/search" {
-			return instantResponse(200, []byte(fmt.Sprintf(`{"state":true,"count":1,"data":[{"fid":"12","cid":"77","n":"renamed","s":1,"sha":"%s","pc":"pick123"}]}`, info.SHA1))), nil
-		}
-		if r.URL.Path != "/app/chrome/downurl" {
-			t.Fatal("unexpected call", r.URL.Path)
-		}
-		// A transport failure here proves the SHA1-only match reached URL lookup.
-		return nil, fmt.Errorf("expected downurl reached")
-	})
-	f, _, err := c.CompletePlaybackUpload(context.Background(), info, "0", &InstantUploadResult{}, "UID=22_A", "player")
-	if f.ID != "12" || f.CID != "77" || err == nil {
-		t.Fatal("same SHA1 different name/size/folder rejected", f, err)
 	}
 }
