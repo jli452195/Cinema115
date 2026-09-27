@@ -30,10 +30,11 @@ type ShareClient struct {
 	WebURL string
 	AppURL string
 	// 请求策略在启动时设置，开始使用后不可并发修改。
-	RequestInterval time.Duration
-	ReadRetryDelays []time.Duration
-	requestGate     chan struct{}
-	nextRequest     time.Time
+	RequestInterval     time.Duration
+	ReadRetryDelays     []time.Duration
+	requestGate         chan struct{}
+	nextRequest         time.Time
+	playbackPreparation playbackPreparationCache
 }
 
 func NewShareClient() *ShareClient {

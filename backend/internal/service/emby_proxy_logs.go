@@ -148,7 +148,7 @@ func (s *EmbyProxyLogs) Add(ctx context.Context, level, message string) {
 			group.level = level
 			group.summary = message
 		}
-		if strings.HasPrefix(message, "播放取链结果：") && group.level == "INFO" {
+		if (strings.HasPrefix(message, "播放取链结果：") || strings.HasPrefix(message, "下载取链结果：")) && group.level == "INFO" {
 			group.summary = message
 		}
 		return

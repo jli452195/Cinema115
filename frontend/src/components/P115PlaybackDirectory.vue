@@ -27,10 +27,10 @@ onBeforeUnmount(() => lifecycle.abort())
 <template>
   <form class="space-y-3 border-t border-slate-100 pt-5" @submit.prevent="save">
     <h3 class="text-sm font-semibold text-slate-800">秒传播放缓存目录</h3>
-    <p class="text-xs leading-6 text-slate-500">仅用于绑定此账号的 Emby 用户。分享直取不需要目录；分享受限时，程序在此目录下创建专用秒传缓存子目录。</p>
-    <label class="block text-sm text-slate-700">缓存父目录 ID<input v-model.trim="cid" :disabled="busy" pattern="[0-9]*" inputmode="numeric" placeholder="未设置；根目录请明确填写 0" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" /></label>
+    <p class="text-xs leading-6 text-slate-500">仅用于绑定此账号的 Emby 用户。分享直取不需要目录；需要秒传时直接保存到此目录，不创建子目录，网盘文件由你手动删除。</p>
+    <label class="block text-sm text-slate-700">秒传保存目录 ID<input v-model.trim="cid" :disabled="busy" pattern="[0-9]*" inputmode="numeric" placeholder="未设置；根目录请明确填写 0" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" /></label>
     <div class="flex flex-wrap gap-3"><button type="button" :disabled="busy || !account.configured" class="text-sm text-blue-600 disabled:opacity-40" @click="selecting = true">选择此账号的父目录</button><button type="submit" :disabled="busy" class="rounded-lg border border-blue-200 px-3 py-2 text-sm text-blue-600 disabled:opacity-40">{{ busy ? '保存中…' : '保存缓存目录' }}</button></div>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p><p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
   </form>
-  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :title="'选择 ' + account.name + ' 的缓存父目录'" @close="selecting = false" @select="cid = $event.id; selecting = false; notice = '已选择，点击保存缓存目录后生效。'" />
+  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :title="'选择 ' + account.name + ' 的秒传保存目录'" @close="selecting = false" @select="cid = $event.id; selecting = false; notice = '已选择，点击保存缓存目录后生效。'" />
 </template>

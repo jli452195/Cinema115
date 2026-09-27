@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
+
+type proxyLookupDiagnosticKey struct{}
+type proxyLookupDiagnostic struct{ headers, description string }
 
 // Only known diagnostic values are exposed. Unknown headers and credentials
 // retain their names but not values; URL-bearing headers lose all query values.
@@ -73,6 +77,9 @@ func proxyDebugRoute(r *http.Request) (string, string) {
 	if staticStreamItem(r) != "" {
 		return "/Videos/{Id}/stream.*", "静态流解析入口（不匹配 STRM 时透传）"
 	}
+	if downloadItem(r.URL.Path) != "" {
+		return "/Items/{Id}/Download", "下载权限校验与直链解析（不支持的源交由 Emby）"
+	}
 	if originalStreamItem(r) != "" {
 		return "/Videos/{Id}/original.*", "原文件入口（配置第三方适配时检查接管，否则透传）"
 	}
@@ -130,6 +137,8 @@ func proxyDebugCredential(r *http.Request) string {
 }
 
 func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
+	lookup := &proxyLookupDiagnostic{}
+	r = r.WithContext(context.WithValue(r.Context(), proxyLookupDiagnosticKey{}, lookup))
 	started := time.Now()
 	path, route := proxyDebugRoute(r)
 	method := r.Method
@@ -172,10 +181,13 @@ func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		details := service.ProxyLogDetails{Method: method, Path: path, Status: status, DurationMS: time.Since(started).Milliseconds(), RequestHeaders: requestHeaders, ResponseHeaders: proxyDiagnosticHeaders(w.Header(), "")}
-		if status == 302 && (path == "/cinema115/play" || staticStreamItem(r) != "") && p115.AllowedMediaURL(w.Header().Get("Location")) {
+		if status == 302 && (path == "/cinema115/play" || staticStreamItem(r) != "" || originalStreamItem(r) != "" || downloadItem(r.URL.Path) != "") && p115.AllowedMediaURL(w.Header().Get("Location")) {
 			details.URL = w.Header().Get("Location")
 			details.LookupHeaders = proxyLookupHeaders(r.UserAgent())
 			details.Lookup = "取链使用的 UA；Cookie 已隐藏。缓存命中时本次未请求 115。播放器访问 CDN 的实际请求头不可由反代观察。"
+			if lookup.headers != "" {
+				details.LookupHeaders, details.Lookup = lookup.headers, lookup.description
+			}
 		}
 		level := "DEBUG"
 		if status >= 500 {

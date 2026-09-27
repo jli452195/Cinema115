@@ -10,9 +10,9 @@ import { embyRequest } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string; thirdPartyUrl: string }
+interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
 interface Status { config: Config; listening: boolean; error: string }
-const config = ref<Config>({ enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '', thirdPartyUrl: '' })
+const config = ref<Config>({ enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' })
 const status = ref<Status>()
 const accounts = ref<P115Account[]>([])
 const busy = ref(true)
@@ -31,7 +31,7 @@ async function load() {
       p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: lifecycle.signal }),
     ])
     const [proxy, accountList] = results
-    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, thirdPartyUrl: '', ...proxy.value.config } }
+    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, ...proxy.value.config } }
     if (accountList.status === 'fulfilled') accounts.value = accountList.value.accounts
     const failed = results.find(result => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason
@@ -75,10 +75,9 @@ onBeforeUnmount(() => lifecycle.abort())
             <label class="text-sm text-slate-700 sm:col-span-2">Emby 中对应 STRM 根目录的路径（按需填写）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media，对应 Cinema115 容器内的 /strm" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">Emby 返回本地 .strm 路径时使用。该路径下的相对目录必须与 Cinema115 的 STRM 根目录一致；如果返回的是 STRM 内的 HTTP 链接，可留空。</span></label>
           </div>
           <div class="space-y-3 border-t border-slate-100 pt-5">
-            <h2 class="font-semibold text-slate-900">第三方直链适配</h2>
-            <label class="block text-sm text-slate-700">第三方取链服务地址<input v-model.trim="config.thirdPartyUrl" type="url" placeholder="http://192.168.0.3:8115（留空关闭）" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /></label>
-            <p class="text-xs leading-6 text-slate-500">仅接管与此地址协议、主机和端口一致的 /api/redirect115/{pickcode}/文件名 链接。使用播放器 UA 获取 115 CDN 地址，再返回 302；复用上方直链缓存时间，不传输视频正文。STRM 仍指向 Docker 内部地址时，需要先修正来源地址。</p>
-            <p class="text-xs leading-6 text-amber-700">此类链接使用第三方工具配置的 115 账号，不使用本项目的个人账号绑定，不触发分享秒传。留空后保存可关闭。</p>
+            <h2 class="font-semibold text-slate-900">网盘 pickcode STRM</h2>
+            <p class="text-xs leading-6 text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由上方明确选择的源账号读取文件；不会访问原工具地址。</p>
+            <p class="text-xs leading-6 text-slate-500">Emby 用户绑定其他 115 账号后，直接秒传到绑定账号的播放缓存目录，再用该账号取链。已缓存的文件会复用；未绑定或绑定源账号时直接读取源文件。分享 STRM 仍优先尝试朋友账号读取分享。</p>
           </div>
         </fieldset>
       </form>

@@ -17,6 +17,20 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		c.Next()
 	})
 	group.GET("", func(c *gin.Context) { c.JSON(200, s.Status()) })
+	group.POST("/forget-directory", func(c *gin.Context) {
+		var input struct {
+			Key string `json:"key"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "目录记录参数无效"})
+			return
+		}
+		if err := s.ForgetDirectory(c.Request.Context(), input.Key); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Status())
+	})
 	group.GET("/users/:userID/avatar", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer cancel()
@@ -124,29 +138,12 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		}
 		c.JSON(200, s.Status())
 	})
+	// Retired endpoints cannot re-enable cloud deletion, even for older clients.
 	group.POST("/policy", func(c *gin.Context) {
-		var in struct {
-			Enabled bool `json:"cleanupEnabled"`
-			Hours   int  `json:"retentionHours"`
-		}
-		if c.ShouldBindJSON(&in) != nil {
-			c.JSON(400, gin.H{"error": "缓存清理设置无效"})
-			return
-		}
-		if err := s.ApplyCleanup(in.Enabled, in.Hours); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, s.Status())
+		c.JSON(http.StatusGone, gin.H{"error": "网盘文件自动清理已停用，请在 115 中手动删除"})
 	})
 	group.POST("/cleanup", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 80*time.Second)
-		defer cancel()
-		if err := s.Cleanup(ctx); err != nil {
-			c.JSON(400, gin.H{"error": "清理未完成，请查看 Emby 302 日志"})
-			return
-		}
-		c.JSON(200, s.Status())
+		c.JSON(http.StatusGone, gin.H{"error": "网盘文件清理已停用，请在 115 中手动删除"})
 	})
 	group.POST("/forget", func(c *gin.Context) {
 		var in struct {

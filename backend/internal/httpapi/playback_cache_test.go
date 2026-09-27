@@ -13,16 +13,18 @@ import (
 )
 
 type proxyCacheFake struct {
-	directURL      string
-	sourceReads    int
-	files          []p115.DrivePlaybackFile
-	uploads, links int
-	t              *testing.T
+	pickReads, shareReads int
+	directURL             string
+	sourceReads           int
+	files                 []p115.DrivePlaybackFile
+	uploads, links        int
+	t                     *testing.T
 }
 
 func (f *proxyCacheFake) ValidateCacheParent(context.Context, string, string) error { return nil }
 
 func (f *proxyCacheFake) DownloadInfoWithUA(_ context.Context, _ *p115.ShareInfo, _ string, cookie, ua string) (*p115.DownloadInfo, error) {
+	f.shareReads++
 	if cookie == "UID=456_B; SEID=friend-private" {
 		if ua != "player-UA" {
 			f.t.Fatal("朋友分享取链未使用播放器 UA")
@@ -38,13 +40,21 @@ func (f *proxyCacheFake) DownloadInfoWithUA(_ context.Context, _ *p115.ShareInfo
 	}
 	return &p115.DownloadInfo{Name: "movie", Size: 100, SHA1: strings.Repeat("A", 40), URL: "https://cdn.115.com/source"}, nil
 }
+
+func (f *proxyCacheFake) PickCodeInstantInfo(_ context.Context, pc, cookie string) (*p115.DownloadInfo, error) {
+	f.pickReads++
+	if pc != "abc123" || cookie != "UID=123_A; SEID=private" {
+		f.t.Fatal("pickcode source account mismatch")
+	}
+	return &p115.DownloadInfo{Name: "movie", Size: 100, SHA1: strings.Repeat("A", 40), URL: "https://cdn.115.com/source"}, nil
+}
 func (f *proxyCacheFake) CreateDirectory(context.Context, string, string, string) (string, error) {
 	return "9", nil
 }
 func (f *proxyCacheFake) CacheDirectoryFiles(context.Context, string, string) ([]p115.DrivePlaybackFile, error) {
 	return f.files, nil
 }
-func (f *proxyCacheFake) InstantUpload(_ context.Context, info *p115.DownloadInfo, cid, cookie string, _ func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
+func (f *proxyCacheFake) InstantUploadToEmptyDirectory(_ context.Context, info *p115.DownloadInfo, cid, cookie string, _ func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
 	if cookie != "UID=456_B; SEID=friend-private" {
 		f.t.Fatal("错误目标账号")
 	}
@@ -178,7 +188,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 			if !strings.Contains(entry.Message, `用户="liuqianqian"`) || !strings.Contains(entry.Message, "媒体源=src") || !strings.Contains(entry.Message, `取链账号="朋友"（UID 456`) {
 				t.Fatal("播放结果缺少用户、实际媒体源或目标账号", entry.Message)
 			}
-			for _, mode := range []string{"朋友分享直取", "新建秒传缓存", "复用秒传缓存"} {
+			for _, mode := range []string{"朋友分享直取", "新建秒传文件", "复用同 SHA1 文件"} {
 				if strings.Contains(entry.Message, "播放方式="+mode) {
 					resultCounts[mode]++
 					if strings.Contains(entry.Message, "源读取账号=") != (mode != "朋友分享直取") {
@@ -196,11 +206,34 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 			}
 		}
 	}
-	if resultCounts["朋友分享直取"] != 2 || resultCounts["新建秒传缓存"] != 1 || resultCounts["复用秒传缓存"] != 1 {
+	if resultCounts["朋友分享直取"] != 2 || resultCounts["新建秒传文件"] != 1 || resultCounts["复用同 SHA1 文件"] != 1 {
 		t.Fatal("成功分支或失败请求的结果日志错误", resultCounts)
 	}
 }
 
 func (f *proxyCacheFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
 	return f.DownloadInfoWithUA(ctx, share, id, cookie, ua)
+}
+
+func (f *proxyCacheFake) FindPlaybackFileBySHA1(_ context.Context, hash, cookie string) (*p115.DrivePlaybackFile, error) {
+	for _, v := range f.files {
+		if strings.EqualFold(v.SHA1, hash) {
+			return &v, nil
+		}
+	}
+	return nil, nil
+}
+func (f *proxyCacheFake) PreparePlaybackAccount(context.Context, string, string) (*p115.PlaybackUploadTicket, error) {
+	return &p115.PlaybackUploadTicket{}, nil
+}
+func (f *proxyCacheFake) ValidatePlaybackDirectory(context.Context, string, string, string) error {
+	return nil
+}
+func (f *proxyCacheFake) UploadPlayback(ctx context.Context, info *p115.DownloadInfo, scope, cid, cookie string, ticket *p115.PlaybackUploadTicket, progress func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
+	return f.InstantUploadToEmptyDirectory(ctx, info, cid, cookie, progress)
+}
+func (f *proxyCacheFake) CompletePlaybackUpload(ctx context.Context, info *p115.DownloadInfo, cid string, result *p115.InstantUploadResult, cookie, ua string) (p115.DrivePlaybackFile, string, error) {
+	file := f.files[0]
+	link, err := f.DriveDownloadURLWithUA(ctx, file.ID, file.PickCode, cookie, ua)
+	return file, link, err
 }

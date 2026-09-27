@@ -171,8 +171,8 @@ func TestPlaybackPagesSaveIndependently(t *testing.T) {
 	if c.CleanupEnabled || c.RetentionHours != 96 {
 		t.Fatal("binding save reset cleanup")
 	}
-	if err := s.ApplyCleanup(true, 120); err != nil {
-		t.Fatal(err)
+	if err := s.ApplyCleanup(true, 120); err == nil {
+		t.Fatal("retired cleanup enabled")
 	}
 	c = s.Status().Config
 	if len(c.Bindings) != 1 {

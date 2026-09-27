@@ -21,9 +21,17 @@ type cacheDriveFake struct {
 	started                          chan struct{}
 	uploadErr                        error
 	deleteErr                        error
+	searchErr                        error
 }
 
 func (f *cacheDriveFake) ValidateCacheParent(context.Context, string, string) error { return nil }
+
+func (f *cacheDriveFake) PickCodeInstantInfo(ctx context.Context, pc, cookie string) (*p115.DownloadInfo, error) {
+	if pc != "abc123" {
+		return nil, errors.New("wrong pickcode")
+	}
+	return f.DownloadInfoWithUA(ctx, nil, "", cookie, p115.PlaybackUserAgent)
+}
 
 func (f *cacheDriveFake) DownloadInfoWithUA(ctx context.Context, _ *p115.ShareInfo, _ string, cookie, ua string) (*p115.DownloadInfo, error) {
 	if cookie == "UID=22_A; SEID=private" {
@@ -48,7 +56,7 @@ func (f *cacheDriveFake) CacheDirectoryFiles(_ context.Context, cid, cookie stri
 	}
 	return append([]p115.DrivePlaybackFile{}, f.files...), nil
 }
-func (f *cacheDriveFake) InstantUpload(ctx context.Context, info *p115.DownloadInfo, cid, cookie string, _ func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
+func (f *cacheDriveFake) InstantUploadToEmptyDirectory(ctx context.Context, info *p115.DownloadInfo, cid, cookie string, _ func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
 	f.uploads++
 	if f.started != nil {
 		close(f.started)
@@ -144,7 +152,7 @@ func TestPlaybackCacheConcurrentReusePinnedAccountAndFreshUA(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if f.creates != 1 || f.uploads != 1 || f.links != 2 || f.ua != "player-UA" || f.cookie != "UID=22_A; SEID=private" {
+	if f.creates != 0 || f.uploads != 1 || f.links != 2 || f.ua != "player-UA" || f.cookie != "UID=22_A; SEID=private" {
 		t.Fatalf("未合并秒传或固定凭据 %+v", f)
 	}
 	if len(s.Status().Entries) != 1 || s.Status().Entries[0].Status != "ready" {
@@ -180,7 +188,7 @@ func TestPlaybackCacheUncertainDoesNotRepeatWrite(t *testing.T) {
 			t.Fatal("未确认上传被当成成功")
 		}
 	}
-	if f.uploads != 1 || f.creates != 1 || s.Status().Entries[0].Status != "uncertain" {
+	if f.uploads != 1 || f.creates != 0 || s.Status().Entries[0].Status != "uncertain" {
 		t.Fatal("重复上传未确认结果")
 	}
 	if err := s.Cleanup(context.Background()); err != nil {
@@ -227,39 +235,24 @@ func TestPlaybackCacheCleanupScopeAndRetention(t *testing.T) {
 			if err := s.Cleanup(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			expected := 0
-			if mode == "expired" || mode == "failed_delete" {
-				expected = 1
-			}
-			if f.deletes != expected {
-				t.Fatalf("意外删除: %d", f.deletes)
-			}
-			if mode == "expired" && len(s.Status().Entries) != 0 {
-				t.Fatal("清理后记录未移除")
-			}
-			if mode == "failed_delete" {
-				if err := s.Cleanup(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				if f.deletes != 1 {
-					t.Fatal("重放删除请求")
-				}
+			if f.deletes != 0 || len(s.Status().Entries) != 1 {
+				t.Fatal("retired cleanup mutated cloud or record")
 			}
 		})
 	}
 }
-func TestPlaybackCacheForgetOnlyLocalAndMissingFileFails(t *testing.T) {
+func TestPlaybackCacheForgetOnlyLocalAndDeletedFileUploadsAgain(t *testing.T) {
 	s, f, selection := setupPlaybackCache(t)
 	if _, err := resolveTestCache(s, selection); err != nil {
 		t.Fatal(err)
 	}
 	key := s.Status().Entries[0].Key
 	f.files = nil
-	if _, err := resolveTestCache(s, selection); err == nil {
-		t.Fatal("缓存消失仍返回直链")
+	if _, err := resolveTestCache(s, selection); err != nil {
+		t.Fatal("confirmed miss did not upload", err)
 	}
-	if f.uploads != 1 {
-		t.Fatal("重复写入")
+	if f.uploads != 2 {
+		t.Fatal("confirmed missing file not recreated")
 	}
 	if err := s.Forget(context.Background(), key); err != nil {
 		t.Fatal(err)
@@ -271,4 +264,39 @@ func TestPlaybackCacheForgetOnlyLocalAndMissingFileFails(t *testing.T) {
 
 func (f *cacheDriveFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {
 	return f.DownloadInfoWithUA(ctx, share, id, cookie, ua)
+}
+
+func (f *cacheDriveFake) FindPlaybackFileBySHA1(_ context.Context, hash, cookie string) (*p115.DrivePlaybackFile, error) {
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	for _, v := range f.files {
+		if strings.EqualFold(v.SHA1, hash) {
+			return &v, nil
+		}
+	}
+	return nil, nil
+}
+func (f *cacheDriveFake) PreparePlaybackAccount(context.Context, string, string) (*p115.PlaybackUploadTicket, error) {
+	return &p115.PlaybackUploadTicket{}, nil
+}
+func (f *cacheDriveFake) ValidatePlaybackDirectory(context.Context, string, string, string) error {
+	return nil
+}
+func (f *cacheDriveFake) UploadPlayback(ctx context.Context, info *p115.DownloadInfo, scope, cid, cookie string, ticket *p115.PlaybackUploadTicket, progress func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {
+	for _, stage := range []string{"init", "range", "range_done", "init"} {
+		progress(p115.InstantProgress{Stage: stage, Bytes: 140209})
+	}
+	return f.InstantUploadToEmptyDirectory(ctx, info, cid, cookie, progress)
+}
+func (f *cacheDriveFake) CompletePlaybackUpload(ctx context.Context, info *p115.DownloadInfo, cid string, result *p115.InstantUploadResult, cookie, ua string) (p115.DrivePlaybackFile, string, error) {
+	file, err := f.FindPlaybackFileBySHA1(ctx, info.SHA1, cookie)
+	if err != nil {
+		return p115.DrivePlaybackFile{}, "", err
+	}
+	if file == nil {
+		return p115.DrivePlaybackFile{}, "", errors.New("missing")
+	}
+	link, err := f.DriveDownloadURLWithUA(ctx, file.ID, file.PickCode, cookie, ua)
+	return *file, link, err
 }

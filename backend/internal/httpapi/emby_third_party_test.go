@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
+	"strm115/backend/internal/client/p115"
 	"testing"
 
 	"strm115/backend/internal/service"
@@ -18,19 +18,8 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 	calls := 0
 	fail := false
 	third := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.UserAgent() == "" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" || r.Header.Get("X-Emby-Token") != "" {
-			t.Error("missing UA or leaked credentials")
-		}
-		if r.Header.Get("Range") != "bytes=0-0" {
-			t.Error("unbounded request")
-		}
-		if fail {
-			w.WriteHeader(500)
-			return
-		}
-		w.Header().Set("Location", "https://cdn.115cdn.net/video?sign=test")
-		w.WriteHeader(302)
+		t.Error("STRM host must never be contacted")
+		w.WriteHeader(500)
 	}))
 	defer third.Close()
 	source := third.URL + "/api/redirect115/abc123/%E7%94%B5%E5%BD%B1.mkv"
@@ -52,7 +41,21 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 	}))
 	defer upstream.Close()
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
-	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, ThirdPartyURL: third.URL, DirectLinkCacheMinutes: 9}, accounts, NewShareAPI(func() string { return "" }), logs).(*embyProxyHandler)
+	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, DirectLinkCacheMinutes: 9}, accounts, NewShareAPI(func() string { return "" }), logs).(*embyProxyHandler)
+	h.pickDownload = func(_ context.Context, pc, cookie, ua string) (string, error) {
+		calls++
+		if pc != "abc123" || cookie != "UID=123_A; SEID=private" {
+			t.Fatal("wrong source credentials or pickcode")
+		}
+		if fail {
+			return "", fmt.Errorf("source unavailable")
+		}
+		if ua == "" {
+			ua = p115.PlaybackUserAgent
+		}
+		return "https://cdn.115cdn.net/video?sign=test", nil
+	}
+
 	call := func(method, path, ua string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, nil)
 		r.Header.Set("User-Agent", ua)
@@ -90,11 +93,9 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 	if calls != 2 {
 		t.Fatal("UA cache not isolated")
 	}
-	if w := call("GET", path, ""); w.Code != 502 || calls != 2 {
-		t.Fatal("empty UA reached upstream")
-	}
+
 	entries := h.DirectLinkStatus().Entries
-	if len(entries) != 2 || entries[0].Mode != "第三方接口取链" || !strings.Contains(entries[0].Account, "由第三方管理") {
+	if len(entries) != 2 || entries[0].Mode != "源账号网盘直取" || !strings.Contains(entries[0].Account, id) {
 		t.Fatal("wrong ownership report")
 	}
 	fail = true
@@ -108,33 +109,19 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 	}
 }
 
-func TestThirdPartyRejectsOtherOriginsAndRedirects(t *testing.T) {
-	h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: "http://emby:8096", ThirdPartyURL: "http://nas:8115"}, nil, NewShareAPI(func() string { return "" })).(*embyProxyHandler)
-	for _, raw := range []string{"http://other:8115/api/redirect115/abc/movie.mkv", "http://nas:8115/api/redirect115/%61bc/movie.mkv", "http://nas:8115/api/redirect115/abc/a%2fb", "http://nas:8115/api/redirect115/abc/movie?token=x", "http://nas:8115/private", "http://u:p@nas:8115/api/redirect115/abc"} {
-		if _, ok := h.thirdPartyURL(raw); ok {
-			t.Fatal("accepted unsafe endpoint", raw)
+func TestPickCodeRecognition(t *testing.T) {
+	for _, raw := range []string{
+		"http://nas:8115/api/redirect115/abc123", "https://another:443/api/redirect115/abc123/电影.mkv", "http://nas/api/redirect115/abc123/", "http://nas/api/redirect115/abc123/%E7%94%B5%E5%BD%B1.mkv",
+	} {
+		if pc, ok := parsePickCodeSTRM(raw); !ok || pc != "abc123" {
+			t.Fatal("supported link rejected", raw)
 		}
 	}
-	for _, raw := range []string{"http://nas:8115/api/redirect115/abc", "http://nas:8115/api/redirect115/abc/%E7%94%B5%E5%BD%B1.mkv"} {
-		if _, ok := h.thirdPartyURL(raw); !ok {
-			t.Fatal("rejected supported endpoint")
+	for _, raw := range []string{
+		"http://nas/api/redirect115/abc", "http://nas/api/redirect115/%61bc123", "http://nas/api/redirect115/abc123/a%2fb", "http://nas/api/redirect115/abc123/..", "http://nas/api/redirect115/abc123?token=x", "http://nas/api/redirect115/abc123#x", "http://u:p@nas/api/redirect115/abc123", "file:///api/redirect115/abc123", "http://nas/api/redirect115/abc123/a/b",
+	} {
+		if _, ok := parsePickCodeSTRM(raw); ok {
+			t.Fatal("invalid link accepted", raw)
 		}
-	}
-	for _, location := range []string{"http://127.0.0.1/private", "https://evil.example/video", "/api/redirect115/abc"} {
-		calls := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls++
-			w.Header().Set("Location", location)
-			w.WriteHeader(302)
-		}))
-		h.config.ThirdPartyURL = server.URL
-		target, _ := url.Parse(server.URL + "/api/redirect115/abc")
-		if _, err := h.thirdPartyLink(context.Background(), target, "player"); err == nil {
-			t.Error("unsafe redirect accepted")
-		}
-		if calls > 3 {
-			t.Error("unbounded redirect chain")
-		}
-		server.Close()
 	}
 }

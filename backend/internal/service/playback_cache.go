@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,57 +27,62 @@ type PlaybackCacheConfig struct {
 	Bindings       []PlaybackBinding `json:"bindings"`
 }
 type PlaybackCacheEntry struct {
-	Key           string                 `json:"key"`
-	AccountID     string                 `json:"accountId"`
-	UID           string                 `json:"uid"`
-	ParentCID     string                 `json:"parentCid"`
-	DirectoryID   string                 `json:"directoryId"`
-	DirectoryName string                 `json:"directoryName"`
-	File          p115.DrivePlaybackFile `json:"file"`
-	Status        string                 `json:"status"`
-	LastUsed      time.Time              `json:"lastUsed"`
-	CreatedAt     time.Time              `json:"createdAt"`
-	Message       string                 `json:"message"`
+	SharedDirectory bool                   `json:"sharedDirectory,omitempty"`
+	Key             string                 `json:"key"`
+	AccountID       string                 `json:"accountId"`
+	UID             string                 `json:"uid"`
+	ParentCID       string                 `json:"parentCid"`
+	DirectoryID     string                 `json:"directoryId"`
+	DirectoryName   string                 `json:"directoryName"`
+	File            p115.DrivePlaybackFile `json:"file"`
+	Status          string                 `json:"status"`
+	LastUsed        time.Time              `json:"lastUsed"`
+	CreatedAt       time.Time              `json:"createdAt"`
+	Message         string                 `json:"message"`
 }
 type PlaybackCacheStatus struct {
-	Config  PlaybackCacheConfig  `json:"config"`
-	Entries []PlaybackCacheEntry `json:"entries"`
+	Directories []PlaybackCacheDirectory `json:"directories,omitempty"`
+	Config      PlaybackCacheConfig      `json:"config"`
+	Entries     []PlaybackCacheEntry     `json:"entries"`
 }
 type playbackCacheClient interface {
 	ValidateCacheParent(context.Context, string, string) error
 	DownloadInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
 	DownloadInstantInfoWithUA(context.Context, *p115.ShareInfo, string, string, string) (*p115.DownloadInfo, error)
-	InstantUpload(context.Context, *p115.DownloadInfo, string, string, func(p115.InstantProgress)) (*p115.InstantUploadResult, error)
-	CreateDirectory(context.Context, string, string, string) (string, error)
-	CacheDirectoryFiles(context.Context, string, string) ([]p115.DrivePlaybackFile, error)
+	PickCodeInstantInfo(context.Context, string, string) (*p115.DownloadInfo, error)
 	DriveDownloadURLWithUA(context.Context, string, string, string, string) (string, error)
-	DeleteEntries(context.Context, []string, string) error
 }
 type PlaybackCache struct {
-	mu       sync.Mutex
-	gate     chan struct{}
-	store    accountSecretStore
-	accounts *P115Accounts
-	client   playbackCacheClient
-	logs     *EmbyProxyLogs
-	doc      PlaybackCacheStatus
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	sourceMappings map[string]string // bounded, memory-only; guarded by gate
+	mu             sync.Mutex
+	gate           chan struct{}
+	store          accountSecretStore
+	accounts       *P115Accounts
+	client         playbackCacheClient
+	logs           *EmbyProxyLogs
+	doc            PlaybackCacheStatus
 }
 
 func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
 	s := &PlaybackCache{store: store, accounts: accounts, client: client, logs: logs, gate: make(chan struct{}, 1), doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{RetentionHours: 72, Bindings: []PlaybackBinding{}}, Entries: []PlaybackCacheEntry{}}}
 	if raw := store.Value(); raw != "" {
-		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > 2000 {
+		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > 2000 || len(s.doc.Directories) > 1000 {
 			return nil, fmt.Errorf("播放缓存配置或记录损坏")
 		}
 	}
-	changed := false
+	changed := s.doc.Config.CleanupEnabled
+	s.doc.Config.CleanupEnabled = false
+	for i := range s.doc.Directories {
+		if s.doc.Directories[i].Status == "creating" {
+			s.doc.Directories[i].Status = "uncertain"
+			changed = true
+		}
+	}
 	for i := range s.doc.Entries {
 		e := &s.doc.Entries[i]
 		if e.Status == "creating" || e.Status == "uploading" || e.Status == "deleting" {
 			e.Status = "uncertain"
-			e.Message = "服务中断，需核查专用目录；不会自动重放写入"
+			e.Message = "服务中断；下次播放先按 SHA1 查找，未确认的写入不会自动重放"
 			changed = true
 		}
 	}
@@ -89,36 +91,16 @@ func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Ac
 			return nil, err
 		}
 	}
-	workerCtx, cancel := context.WithCancel(ctx)
-	s.cancel = cancel
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-workerCtx.Done():
-				return
-			case <-ticker.C:
-				cleanCtx, stop := context.WithTimeout(workerCtx, 10*time.Minute)
-				err := s.Cleanup(cleanCtx)
-				stop()
-				if err != nil && workerCtx.Err() == nil {
-					s.logs.Add(workerCtx, "WARNING", "播放缓存定时清理未完成，请检查缓存记录")
-				}
-			}
-		}
-	}()
 	return s, nil
 }
-func (s *PlaybackCache) Close() { s.cancel(); s.wg.Wait() }
+func (s *PlaybackCache) Close() {}
 func (s *PlaybackCache) Status() PlaybackCacheStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc
 	doc.Config.Bindings = append([]PlaybackBinding{}, doc.Config.Bindings...)
 	doc.Entries = append([]PlaybackCacheEntry{}, doc.Entries...)
+	doc.Directories = append([]PlaybackCacheDirectory{}, doc.Directories...)
 	return doc
 }
 func (s *PlaybackCache) saveLocked(doc PlaybackCacheStatus) error {
@@ -136,7 +118,7 @@ func (s *PlaybackCache) Apply(c PlaybackCacheConfig) error {
 	return s.applyConfig(c, false)
 }
 
-// Only replace binding fields, so saving another page cannot reset cleanup policy.
+// Only replace binding fields; obsolete cleanup fields remain compatibility data.
 func (s *PlaybackCache) ApplyBindings(embyURL string, bindings []PlaybackBinding) error {
 	return s.applyConfig(PlaybackCacheConfig{EmbyURL: embyURL, Bindings: bindings, RetentionHours: 72}, true)
 }
@@ -148,14 +130,17 @@ func (s *PlaybackCache) ApplyCleanup(enabled bool, hours int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc
-	doc.Config.CleanupEnabled = enabled
+	if enabled {
+		return fmt.Errorf("网盘文件自动清理已停用，请在 115 中手动删除")
+	}
+	doc.Config.CleanupEnabled = false
 	doc.Config.RetentionHours = hours
 	return s.saveLocked(doc)
 }
 
 var ErrPlaybackBindingChanged = errors.New("该用户绑定已变化，请刷新后重试")
 
-// Update only this user's binding under lock; other cards and cleanup settings remain intact.
+// Update only this user's binding under lock; other cards remain intact.
 func (s *PlaybackCache) UpdateBinding(embyURL string, binding PlaybackBinding, expectedAccountID string, remove bool) error {
 	normalized, err := emby.NormalizeURL(embyURL)
 	if err != nil {
@@ -232,6 +217,7 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 		c.CleanupEnabled = doc.Config.CleanupEnabled
 		c.RetentionHours = doc.Config.RetentionHours
 	}
+	c.CleanupEnabled = false
 	doc.Config = c
 	return s.saveLocked(doc)
 }
@@ -299,13 +285,13 @@ func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 		}
 	}
 	if len(doc.Entries) >= 2000 {
-		return fmt.Errorf("缓存记录达到上限，请清理后重试")
+		return fmt.Errorf("文件记录达到上限，请在缓存管理移除不再需要的本地记录后重试")
 	}
 	doc.Entries = append(doc.Entries, e)
 	return s.saveLocked(doc)
 }
 func cacheMatches(f p115.DrivePlaybackFile, info *p115.DownloadInfo) bool {
-	return f.Size == info.Size && strings.EqualFold(f.SHA1, info.SHA1) && f.Name == info.Name
+	return info != nil && len(info.SHA1) == 40 && strings.EqualFold(f.SHA1, info.SHA1)
 }
 
 // PlaybackResolution contains display metadata only; it never contains credentials or URLs.
@@ -324,8 +310,35 @@ func (s *PlaybackCacheSelection) DirectLinkScope() string {
 	return DirectLinkKey(s.binding.UserID, s.binding.AccountID, s.binding.ParentCID, s.cookie, strconv.FormatUint(s.accountRevision, 10))
 }
 
+func (s *PlaybackCacheSelection) UsesSourceAccount(accountID string) bool {
+	return s != nil && s.binding.AccountID == accountID
+}
+
+// Pickcodes are owned by the configured source. Never probe the friend's drive
+// or a share endpoint using the source pickcode.
+func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection *PlaybackCacheSelection, pickCode, sourceCookie, ua string, sourceAccountIDs ...string) (string, PlaybackResolution, error) {
+	var report PlaybackResolution
+	if selection == nil || selection.cookie == "" || selection.err != nil {
+		return "", report, fmt.Errorf("未选择有效的朋友账号")
+	}
+	report.AccountLabel = PlaybackAccountLabel(selection.accountName, selection.uid, selection.binding.AccountID)
+	s.logs.Add(ctx, "INFO", "pickcode 属于配置的源账号，直接进入朋友账号秒传缓存流程；目标账号="+report.AccountLabel)
+	var sourceID string
+	if len(sourceAccountIDs) > 0 {
+		sourceID = sourceAccountIDs[0]
+	}
+	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope()))
+	link, err := s.resolveInstant(ctx, selection, sourceCookie, ua, &report, func() (*p115.DownloadInfo, error) {
+		return s.client.PickCodeInstantInfo(ctx, pickCode, sourceCookie)
+	})
+	if err != nil {
+		return "", PlaybackResolution{}, err
+	}
+	return link, report, nil
+}
+
 // A cached target link must not outlive a removed/uncertain file-cache record.
-// Refresh retention on link reuse, serialized with cleanup and file mutations.
+// Refresh last use on link reuse, serialized with local record mutations.
 func (s *PlaybackCache) TouchDirectLink(ctx context.Context, key, fileID string) error {
 	if key == "" {
 		return nil
@@ -379,195 +392,21 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return "", fmt.Errorf("朋友分享取链失败：%s；未尝试源账号秒传", p115.SharePlaybackFailureReason(err))
 	}
 	s.logs.Add(ctx, "INFO", "朋友账号无法读取此分享文件，尝试配置的源账号辅助秒传（不返回源账号直链）")
-	if sourceCookie == "" {
-		return "", fmt.Errorf("秒传使用的源账号未选择、已删除或未登录，请检查 302 账号配置")
-	}
-	report.UsedSource = true
-	if selection.binding.ParentCID == "" {
-		return "", fmt.Errorf("朋友分享不可读且未配置秒传目录，请在 115 助手中设置该账号的秒传播放缓存父目录")
-	}
-	// One gate serializes mutation, reuse and cleanup. Waiters recheck the committed record.
-	if err := s.enter(ctx); err != nil {
-		return "", err
-	}
-	defer func() { <-s.gate }()
-	s.logs.Add(ctx, "INFO", "朋友账号播放解析，目标账号="+selection.binding.AccountID)
-	info, err := s.client.DownloadInstantInfoWithUA(ctx, share, fileID, sourceCookie, p115.PlaybackUserAgent)
-	if err != nil {
-		return "", fmt.Errorf("源账号读取秒传文件信息失败：%s", p115.SharePlaybackFailureReason(err))
-	}
-	if err := p115.ValidateInstantSource(info); err != nil {
-		return "", err
-	}
-	s.logs.Add(ctx, "INFO", "源账号读取成功，开始检查朋友账号缓存；未命中时执行秒传")
-	sum := sha256.Sum256([]byte(selection.binding.AccountID + "\x00" + selection.uid + "\x00" + selection.binding.ParentCID + "\x00" + strings.ToUpper(info.SHA1) + "\x00" + strconv.FormatInt(info.Size, 10)))
-	key := hex.EncodeToString(sum[:])
-	report.FileCacheKey = key
-	var entry PlaybackCacheEntry
-	for _, e := range s.Status().Entries {
-		if e.Key == key {
-			entry = e
-			break
-		}
-	}
-	if entry.Key != "" && entry.Status != "ready" {
-		return "", fmt.Errorf("缓存结果待核查，请在缓存页面检查；不会重复秒传")
-	}
-	if entry.Key == "" {
-		report.Mode = "新建秒传缓存"
-		if err := s.client.ValidateCacheParent(ctx, selection.binding.ParentCID, selection.cookie); err != nil {
-			return "", err
-		}
-		var nonce [12]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return "", fmt.Errorf("生成缓存目录编号失败")
-		}
-		entry = PlaybackCacheEntry{Key: key, AccountID: selection.binding.AccountID, UID: selection.uid, ParentCID: selection.binding.ParentCID, DirectoryName: "Cinema115-cache-" + hex.EncodeToString(nonce[:]), Status: "creating", CreatedAt: time.Now().UTC(), LastUsed: time.Now().UTC(), File: p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}}
-		if err := s.put(entry); err != nil {
-			return "", err
-		}
-		cid, err := s.client.CreateDirectory(ctx, entry.ParentCID, entry.DirectoryName, selection.cookie)
-		if err != nil {
-			entry.Status = "uncertain"
-			entry.Message = "缓存目录创建结果未确认"
-			_ = s.put(entry)
-			return "", fmt.Errorf("缓存目录创建结果未确认，请检查目标目录")
-		}
-		entry.DirectoryID = cid
-		entry.Status = "uploading"
-		if err := s.put(entry); err != nil {
-			return "", err
-		}
-		// A new dedicated directory must be empty before the only supported write.
-		files, err := s.client.CacheDirectoryFiles(ctx, cid, selection.cookie)
-		if err != nil || len(files) != 0 {
-			entry.Status = "uncertain"
-			entry.Message = "新缓存目录未能确认为空"
-			_ = s.put(entry)
-			return "", fmt.Errorf("新缓存目录未能确认为空，已停止秒传")
-		}
-		s.logs.Add(ctx, "INFO", "缓存未命中，开始向朋友账号秒传")
-		result, err := s.client.InstantUpload(ctx, info, cid, selection.cookie, func(p p115.InstantProgress) {
-			if p.Stage == "range" {
-				s.logs.Add(ctx, "INFO", "秒传二次校验，读取片段字节数="+strconv.FormatInt(p.Bytes, 10))
-			}
-		})
-		if err != nil || result == nil {
-			entry.Status = "uncertain"
-			entry.Message = "秒传未确认成功，请核查专用目录"
-			if err != nil {
-				entry.Message = err.Error()
-				s.logs.Add(ctx, "ERROR", "朋友账号秒传失败："+err.Error())
-			}
-			_ = s.put(entry)
-			return "", fmt.Errorf("朋友账号秒传未成功，请检查缓存记录与账号权限")
-		}
-		files, err = s.client.CacheDirectoryFiles(ctx, cid, selection.cookie)
-		if err != nil || len(files) != 1 || !cacheMatches(files[0], info) || (result.PickCode != "" && files[0].PickCode != result.PickCode) || (result.FileID != "" && files[0].ID != result.FileID) {
-			entry.Status = "uncertain"
-			entry.Message = "115 返回成功，目标文件校验尚未通过"
-			_ = s.put(entry)
-			return "", fmt.Errorf("秒传目标文件校验失败，已停止取链")
-		}
-		entry.File = files[0]
-		entry.Status = "ready"
-		entry.Message = "目标文件校验通过"
-		s.logs.Add(ctx, "INFO", "朋友账号秒传成功，目标文件 SHA1、大小和标识校验通过")
-	} else {
-		report.Mode = "复用秒传缓存"
-		files, err := s.client.CacheDirectoryFiles(ctx, entry.DirectoryID, selection.cookie)
-		if err != nil || len(files) != 1 || files[0].ID != entry.File.ID || files[0].SHA1 != entry.File.SHA1 || files[0].Size != entry.File.Size || files[0].PickCode != entry.File.PickCode {
-			return "", fmt.Errorf("缓存文件已删除、移动或改变，请检查缓存记录")
-		}
-		s.logs.Add(ctx, "INFO", "朋友账号缓存命中，复用已秒传文件")
-	}
-	entry.LastUsed = time.Now().UTC()
-	report.FileCacheID = entry.File.ID
-	if err := s.put(entry); err != nil {
-		return "", err
-	}
-	s.logs.Add(ctx, "INFO", "使用朋友账号及当前播放器 UA 获取目标文件直链")
-	link, err := s.client.DriveDownloadURLWithUA(ctx, entry.File.ID, entry.File.PickCode, selection.cookie, ua)
-	if err != nil || !p115.AllowedMediaURL(link) {
-		return "", fmt.Errorf("朋友账号直链读取失败，请检查账号和客户端")
-	}
-	return link, nil
+	return s.resolveInstant(ctx, selection, sourceCookie, ua, report, func() (*p115.DownloadInfo, error) {
+		return s.client.DownloadInstantInfoWithUA(ctx, share, fileID, sourceCookie, p115.PlaybackUserAgent)
+	})
 }
 
-// Cleanup recycles only exact recorded file IDs. The dedicated empty folders remain,
-// avoiding recursive deletion of files added by the account owner during a race.
-func (s *PlaybackCache) Cleanup(ctx context.Context) error {
-	if err := s.enter(ctx); err != nil {
-		return err
+func (s *PlaybackCache) resolveInstant(ctx context.Context, selection *PlaybackCacheSelection, sourceCookie, ua string, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (string, error) {
+	fast, ok := s.client.(fastPlaybackClient)
+	if !ok {
+		return "", fmt.Errorf("播放客户端不支持 SHA1 秒传流程")
 	}
-	defer func() { <-s.gate }()
-	snapshot := s.Status()
-	if !snapshot.Config.CleanupEnabled {
-		return nil
-	}
-	cutoff := time.Now().Add(-time.Duration(snapshot.Config.RetentionHours) * time.Hour)
-	// Pin every referenced account once for this cleanup task, including missing accounts.
-	credentials := make(map[string]P115Account, len(snapshot.Entries))
-	for _, e := range snapshot.Entries {
-		if _, seen := credentials[e.AccountID]; !seen {
-			a, _ := s.accounts.Get(e.AccountID)
-			credentials[e.AccountID] = a
-		}
-	}
-	for _, e := range snapshot.Entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if e.Status != "ready" || !e.LastUsed.Before(cutoff) {
-			continue
-		}
-		account := credentials[e.AccountID]
-		if account.Cookie == "" || p115.CookieUserID(account.Cookie) != e.UID {
-			s.logs.Add(ctx, "WARNING", "缓存清理跳过：原账号缺失、未登录或用户身份改变")
-			continue
-		}
-		files, err := s.client.CacheDirectoryFiles(ctx, e.DirectoryID, account.Cookie)
-		if err != nil || len(files) != 1 || files[0] != e.File {
-			s.logs.Add(ctx, "WARNING", "缓存清理跳过：目录或文件信息已改变")
-			continue
-		}
-		e.Status = "deleting"
-		if err := s.put(e); err != nil {
-			return err
-		}
-		if err := s.client.DeleteEntries(ctx, []string{e.File.ID}, account.Cookie); err != nil {
-			e.Status = "uncertain"
-			e.Message = "清理结果未确认，需检查专用目录"
-			_ = s.put(e)
-			s.logs.Add(ctx, "WARNING", "播放缓存清理结果未确认，停止重试")
-			continue
-		}
-		remaining, err := s.client.CacheDirectoryFiles(ctx, e.DirectoryID, account.Cookie)
-		if err != nil {
-			e.Status = "uncertain"
-			e.Message = "删除后目录核查失败"
-			_ = s.put(e)
-			continue
-		}
-		present := false
-		for _, f := range remaining {
-			if f.ID == e.File.ID {
-				present = true
-			}
-		}
-		if present {
-			e.Status = "uncertain"
-			e.Message = "删除后目标文件仍存在"
-			_ = s.put(e)
-			continue
-		}
-		if err := s.ForgetLocked(e.Key); err != nil {
-			return err
-		}
-		s.logs.Add(ctx, "INFO", "过期播放缓存已移入回收站；账号="+e.AccountID+"；文件="+e.File.ID)
-	}
-	return nil
+	return s.resolveFastInstant(ctx, fast, selection, sourceCookie, ua, report, loadSource)
 }
+
+// Kept for callers of the retired API. Cloud files are only deleted by the user.
+func (s *PlaybackCache) Cleanup(ctx context.Context) error { return ctx.Err() }
 func (s *PlaybackCache) ForgetLocked(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

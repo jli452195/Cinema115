@@ -56,6 +56,24 @@ func ValidateInstantSource(info *DownloadInfo) error {
 
 // InstantUpload uses only the pinned destination Cookie; range reads never receive it.
 func (c *ShareClient) InstantUpload(ctx context.Context, info *DownloadInfo, cid, cookie string, progress func(InstantProgress)) (*InstantUploadResult, error) {
+	return c.instantUpload(ctx, info, cid, cookie, progress, false)
+}
+
+// InstantUploadToEmptyDirectory combines directory identity and emptiness checks
+// in the same preflight request. Playback uses a newly created dedicated folder.
+func (c *ShareClient) InstantUploadToEmptyDirectory(ctx context.Context, info *DownloadInfo, cid, cookie string, progress func(InstantProgress)) (*InstantUploadResult, error) {
+	// A dedicated playback folder must never silently resolve to drive root.
+	if !validDriveID(cid, false) {
+		return nil, fmt.Errorf("缓存子目录编号无效，禁止向根目录秒传播放缓存")
+	}
+	return c.instantUpload(ctx, info, cid, cookie, progress, true)
+}
+
+func (c *ShareClient) instantUpload(ctx context.Context, info *DownloadInfo, cid, cookie string, progress func(InstantProgress), requireEmpty bool) (*InstantUploadResult, error) {
+	return c.instantUploadPrepared(ctx, info, cid, cookie, progress, requireEmpty, nil)
+}
+
+func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadInfo, cid, cookie string, progress func(InstantProgress), requireEmpty bool, prepared *PlaybackUploadTicket) (*InstantUploadResult, error) {
 	if err := ValidateInstantSource(info); err != nil {
 		return nil, err
 	}
@@ -68,31 +86,57 @@ func (c *ShareClient) InstantUpload(ctx context.Context, info *DownloadInfo, cid
 		}
 	}
 	report("target", 0)
-	// Require explicit directory identity, since deleted directories may silently resolve to root.
-	q := url.Values{"cid": {cid}, "limit": {"1"}, "offset": {"0"}}
-	raw, err := c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
-	if err != nil {
-		return nil, err
-	}
-	var directory struct {
-		State json.RawMessage
-		CID   json.Number
-		Path  []struct{ CID json.Number }
-	}
-	if json.Unmarshal(raw, &directory) != nil || !upstreamOK(directory.State) || (directory.CID.String() != cid && len(directory.Path) == 0) || (directory.CID != "" && directory.CID.String() != cid) || (len(directory.Path) > 0 && directory.Path[len(directory.Path)-1].CID.String() != cid) {
-		return nil, fmt.Errorf("目标缓存目录无法确认，请重新选择目录")
-	}
-	raw, err = c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files/uploadinfo", cookie, nil)
-	if err != nil {
-		return nil, err
-	}
 	var identity struct {
 		UserID  json.Number     `json:"user_id"`
 		UserKey string          `json:"userkey"`
 		State   json.RawMessage `json:"state"`
 	}
-	if json.Unmarshal(raw, &identity) != nil || (len(identity.State) > 0 && !upstreamOK(identity.State)) || identity.UserID.String() != CookieUserID(cookie) || identity.UserKey == "" || len(identity.UserKey) > 256 {
-		return nil, fmt.Errorf("无法获取目标账号的上传凭据，请检查该账号登录状态")
+	var raw []byte
+	var err error
+	if prepared != nil {
+		if prepared.cookieHash != playbackCredentialHash(cookie) || time.Now().After(prepared.expires) || prepared.uid != CookieUserID(cookie) || !validDriveID(cid, true) {
+			return nil, fmt.Errorf("秒传预检凭据已失效，请重新请求播放")
+		}
+		identity.UserID, identity.UserKey = json.Number(prepared.uid), prepared.key
+	} else {
+		// Require explicit directory identity, since deleted directories may silently resolve to root.
+		q := url.Values{"cid": {cid}, "limit": {"1"}, "offset": {"0"}}
+		if requireEmpty {
+			q.Set("show_dir", "1")
+		}
+		if requireEmpty {
+			// Preserve the original cache-directory read's throttling, Retry-After
+			// and read-only retry policy while eliminating the duplicate request.
+			raw, err = c.requestEnvelope(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
+		} else {
+			raw, err = c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
+		}
+		if err != nil {
+			return nil, err
+		}
+		var directory struct {
+			State json.RawMessage
+			CID   json.Number
+			Path  []struct{ CID json.Number }
+			Count json.Number
+			Data  []json.RawMessage
+		}
+		if json.Unmarshal(raw, &directory) != nil || !upstreamOK(directory.State) || (directory.CID.String() != cid && len(directory.Path) == 0) || (directory.CID != "" && directory.CID.String() != cid) || (len(directory.Path) > 0 && directory.Path[len(directory.Path)-1].CID.String() != cid) {
+			return nil, fmt.Errorf("目标缓存目录无法确认，请重新选择目录")
+		}
+		if requireEmpty {
+			count, err := directory.Count.Int64()
+			if err != nil || count != 0 || directory.Data == nil || len(directory.Data) != 0 {
+				return nil, fmt.Errorf("新缓存目录未能确认为空，已停止秒传")
+			}
+		}
+		raw, err = c.instantRequest(ctx, http.MethodGet, c.WebURL+"/files/uploadinfo", cookie, nil)
+		if err != nil {
+			return nil, err
+		}
+		if json.Unmarshal(raw, &identity) != nil || (len(identity.State) > 0 && !upstreamOK(identity.State)) || identity.UserID.String() != CookieUserID(cookie) || identity.UserKey == "" || len(identity.UserKey) > 256 {
+			return nil, fmt.Errorf("无法获取目标账号的上传凭据，请检查该账号登录状态")
+		}
 	}
 	form := url.Values{"filename": {info.Name}, "fileid": {strings.ToUpper(info.SHA1)}, "filesize": {strconv.FormatInt(info.Size, 10)}, "target": {"U_1_" + cid}, "userid": {identity.UserID.String()}, "userkey": {identity.UserKey}, "appversion": {instantAppVersion}, "topupload": {"true"}}
 	challenged := false

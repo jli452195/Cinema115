@@ -92,6 +92,7 @@ type sharePlaybackParams struct {
 	Password string `json:"password"`
 	FileID   string `json:"fileId"`
 	Name     string `json:"name"`
+	PickCode string `json:"pickCode,omitempty"`
 }
 
 func (a *ShareAPI) strm(c *gin.Context) {
