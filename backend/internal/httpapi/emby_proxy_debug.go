@@ -73,6 +73,9 @@ func proxyDebugRoute(r *http.Request) (string, string) {
 	if staticStreamItem(r) != "" {
 		return "/Videos/{Id}/stream.*", "静态流解析入口（不匹配 STRM 时透传）"
 	}
+	if originalStreamItem(r) != "" {
+		return "/Videos/{Id}/original.*", "原文件入口（配置第三方适配时检查接管，否则透传）"
+	}
 	if playbackItem(r.URL.Path) != "" {
 		return "/Items/{Id}/PlaybackInfo", "播放信息透传并检查改写"
 	}

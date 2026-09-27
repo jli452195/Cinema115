@@ -296,6 +296,10 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 		h.redirect(w, r, staticStreamItem(r), true)
 		return
 	}
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && h.config.ThirdPartyURL != "" && originalStreamItem(r) != "" {
+		h.redirect(w, r, originalStreamItem(r), true)
+		return
+	}
 	if item := playbackItem(r.URL.Path); item != "" {
 		h.logs.Add(r.Context(), "INFO", "读取 Emby 播放信息，条目="+item)
 		if err := disablePlaybackTranscoding(r); err != nil {
@@ -479,11 +483,6 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	h.logs.Add(ctx, "INFO", "Emby 用户与条目播放权限校验通过，用户="+service.PlaybackLogName(user.Name)+"（ID="+user.ID+"）")
-	cacheSelection, err := cacheSnapshot.Select(h.config.URL, user.ID)
-	if err != nil {
-		fail(err.Error(), 503)
-		return
-	}
 	sourceID := proxyQuery(r.URL.Query(), "MediaSourceId")
 	query := url.Values{"UserId": {user.ID}}
 	if sourceID != "" {
@@ -517,6 +516,19 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始读取并解析 STRM，媒体源="+proxyLogID(jsonString(source["Id"])))
+	if target, ok := h.thirdPartySource(source); ok {
+		if err := h.redirectThirdParty(ctx, w, r, target, item, user.ID, user.Name, jsonString(source["Id"])); err != nil {
+			fail(err.Error(), 502)
+		} else {
+			outcome = "HTTP 302"
+		}
+		return
+	}
+	cacheSelection, err := cacheSnapshot.Select(h.config.URL, user.ID)
+	if err != nil {
+		fail(err.Error(), 503)
+		return
+	}
 	claim, err := h.sourceClaim(source)
 	if errors.Is(err, errNotShareSTRM) && fallback {
 		outcome = "转交 Emby"
@@ -613,45 +625,53 @@ func jsonTrue(raw json.RawMessage) bool {
 }
 
 func (h *embyProxyHandler) sourceClaim(source map[string]json.RawMessage) (*sharePlaybackParams, error) {
+	raw, err := h.sourceURL(source)
+	if err != nil {
+		return nil, err
+	}
+	return h.share.parseSTRMURL(raw)
+}
+
+func (h *embyProxyHandler) sourceURL(source map[string]json.RawMessage) (string, error) {
 	raw := jsonString(source["Path"])
 	if strings.EqualFold(filepath.Ext(raw), ".strm") {
 		prefix := h.config.EmbyPathPrefix
 		remote := strings.ReplaceAll(raw, "\\", "/")
 		if prefix == "" || !strings.HasPrefix(remote, prefix+"/") {
-			return nil, errNotShareSTRM
+			return "", errNotShareSTRM
 		}
 		relative := strings.TrimPrefix(remote, prefix+"/")
 		if !filepath.IsLocal(filepath.FromSlash(relative)) {
-			return nil, fmt.Errorf("STRM 路径越界")
+			return "", fmt.Errorf("STRM 路径越界")
 		}
 		root, err := filepath.EvalSymlinks(h.share.OutputRoot)
 		if err != nil {
-			return nil, fmt.Errorf("无法读取 STRM 根目录")
+			return "", fmt.Errorf("无法读取 STRM 根目录")
 		}
 		file, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(relative)))
 		if err != nil {
-			return nil, fmt.Errorf("无法找到 STRM 文件")
+			return "", fmt.Errorf("无法找到 STRM 文件")
 		}
 		rel, err := filepath.Rel(root, file)
 		if err != nil || !filepath.IsLocal(rel) {
-			return nil, fmt.Errorf("STRM 路径越界")
+			return "", fmt.Errorf("STRM 路径越界")
 		}
 		f, err := os.Open(file)
 		if err != nil {
-			return nil, fmt.Errorf("无法读取 STRM 文件")
+			return "", fmt.Errorf("无法读取 STRM 文件")
 		}
 		defer f.Close()
 		stat, err := f.Stat()
 		if err != nil || !stat.Mode().IsRegular() {
-			return nil, fmt.Errorf("STRM 不是普通文件")
+			return "", fmt.Errorf("STRM 不是普通文件")
 		}
 		data, err := io.ReadAll(io.LimitReader(f, 16385))
 		if err != nil || len(data) > 16384 {
-			return nil, fmt.Errorf("STRM 内容无效")
+			return "", fmt.Errorf("STRM 内容无效")
 		}
 		raw = strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff"))
 	}
-	return h.share.parseSTRMURL(raw)
+	return raw, nil
 }
 
 func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
@@ -702,9 +722,12 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 		if token == "" {
 			continue
 		}
-		if _, err := h.sourceClaim(source); err != nil {
-			h.logs.Add(ctx, "WARNING", sourceLabel+"："+err.Error()+"；请检查链接格式、必要分享参数及本地路径映射和文件权限，保留原直放链路")
-			continue
+		_, thirdParty := h.thirdPartySource(source)
+		if !thirdParty {
+			if _, err := h.sourceClaim(source); err != nil {
+				h.logs.Add(ctx, "WARNING", sourceLabel+"："+err.Error()+"；未接管取链，交由 Emby 原链路处理（不保证上游可播放）")
+				continue
+			}
 		}
 		id := jsonString(source["Id"])
 		if id == "" {
@@ -717,10 +740,14 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 		source["SupportsDirectPlay"] = json.RawMessage("false")
 		source["SupportsDirectStream"] = json.RawMessage("true")
 		rewritten++
-		h.logs.Add(ctx, "INFO", sourceLabel+"：分享 STRM 识别成功，播放入口已改写为 302 解析入口")
+		if thirdParty {
+			h.logs.Add(ctx, "INFO", sourceLabel+"：第三方 redirect115 识别成功，播放入口已改写为 302 解析入口；账号由第三方管理")
+		} else {
+			h.logs.Add(ctx, "INFO", sourceLabel+"：分享 STRM 识别成功，播放入口已改写为 302 解析入口")
+		}
 	}
 	if rewritten == 0 {
-		h.logs.Add(ctx, "INFO", "没有可改写的分享直放源；转码已禁用")
+		h.logs.Add(ctx, "INFO", "没有可接管的分享或第三方直放源；转码已禁用")
 	}
 	if !playable {
 		info["ErrorCode"] = json.RawMessage(`"NoCompatibleStream"`)

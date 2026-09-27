@@ -24,6 +24,7 @@ type EmbyProxyConfig struct {
 	URL                    string `json:"url"`
 	AccountID              string `json:"accountId"`
 	EmbyPathPrefix         string `json:"embyPathPrefix"`
+	ThirdPartyURL          string `json:"thirdPartyUrl"`
 }
 
 type EmbyProxyStatus struct {
@@ -111,6 +112,23 @@ func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
 		return c, fmt.Errorf("反代端口须为 1024～65535，且不能使用已占用的端口")
 	}
 	var err error
+	c.ThirdPartyURL = strings.TrimRight(strings.TrimSpace(c.ThirdPartyURL), "/")
+	if c.ThirdPartyURL != "" {
+		u, parseErr := url.Parse(c.ThirdPartyURL)
+		if parseErr != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != "" || strings.ContainsAny(u.Host, "\\\r\n\t ") {
+			return c, fmt.Errorf("第三方取链地址须为 HTTP/HTTPS 服务地址，不含路径、凭据或查询参数")
+		}
+		port := u.Port()
+		if port != "" {
+			n, e := strconv.Atoi(port)
+			if e != nil || n < 1 || n > 65535 {
+				return c, fmt.Errorf("第三方取链端口无效")
+			}
+		}
+		if strings.HasSuffix(u.Host, ":") || port == strconv.Itoa(c.Port) {
+			return c, fmt.Errorf("第三方取链地址或端口无效，不能指向反代监听端口")
+		}
+	}
 	if c.Enabled || c.URL != "" {
 		c.URL, err = emby.NormalizeURL(c.URL)
 		if err != nil {
