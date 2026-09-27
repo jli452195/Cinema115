@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strm115/backend/internal/service"
@@ -16,23 +17,82 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		c.Next()
 	})
 	group.GET("", func(c *gin.Context) { c.JSON(200, s.Status()) })
+	group.GET("/users/:userID/avatar", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+		data, kind, err := emby.PlaybackUserImage(ctx, proxy.Status().Config.URL, c.Param("userID"))
+		if err != nil {
+			c.Status(404)
+			return
+		}
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(200, kind, data)
+	})
 	group.GET("/users", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
 		defer cancel()
-		users, err := emby.PlaybackUsers(ctx, proxy.Status().Config.URL)
+		proxyURL := proxy.Status().Config.URL
+		users, err := emby.PlaybackUsers(ctx, proxyURL)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"users": users, "embyUrl": proxy.Status().Config.URL})
+		c.JSON(200, gin.H{"users": users, "embyUrl": proxyURL})
 	})
-	group.POST("", func(c *gin.Context) {
+	group.POST("/bindings/:userID", func(c *gin.Context) {
+		var in struct {
+			EmbyURL           string  `json:"embyUrl"`
+			Mode              string  `json:"mode"`
+			AccountID         string  `json:"accountId"`
+			ExpectedAccountID *string `json:"expectedAccountId"`
+		}
+		if c.ShouldBindJSON(&in) != nil || in.ExpectedAccountID == nil || (in.Mode != "source" && in.Mode != "personal") || (in.Mode == "source" && in.AccountID != "") {
+			c.JSON(400, gin.H{"error": "用户播放配置无效"})
+			return
+		}
+		binding := service.PlaybackBinding{UserID: c.Param("userID"), AccountID: in.AccountID}
+		if in.Mode == "personal" {
+			proxyURL := proxy.Status().Config.URL
+			if in.EmbyURL != proxyURL {
+				c.JSON(400, gin.H{"error": "Emby 服务已变化，请刷新用户列表"})
+				return
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+			defer cancel()
+			users, err := emby.PlaybackUsers(ctx, proxyURL)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			found := false
+			for _, user := range users {
+				if user.ID == binding.UserID && !user.Policy.IsDisabled {
+					binding.UserName, found = user.Name, true
+					break
+				}
+			}
+			if !found {
+				c.JSON(400, gin.H{"error": "绑定的 Emby 用户不存在或已停用"})
+				return
+			}
+		}
+		if err := s.UpdateBinding(in.EmbyURL, binding, *in.ExpectedAccountID, in.Mode == "source"); err != nil {
+			code := 400
+			if errors.Is(err, service.ErrPlaybackBindingChanged) {
+				code = 409
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Status())
+	})
+	group.POST("/bindings", func(c *gin.Context) {
 		var config service.PlaybackCacheConfig
 		if c.ShouldBindJSON(&config) != nil {
 			c.JSON(400, gin.H{"error": "播放缓存配置无效"})
 			return
 		}
-		if config.Enabled {
+		if len(config.Bindings) > 0 {
 			proxyURL := proxy.Status().Config.URL
 			if config.EmbyURL != proxyURL {
 				c.JSON(400, gin.H{"error": "Emby 服务已变化，请刷新用户列表"})
@@ -58,7 +118,22 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 				}
 			}
 		}
-		if err := s.Apply(config); err != nil {
+		if err := s.ApplyBindings(config.EmbyURL, config.Bindings); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Status())
+	})
+	group.POST("/policy", func(c *gin.Context) {
+		var in struct {
+			Enabled bool `json:"cleanupEnabled"`
+			Hours   int  `json:"retentionHours"`
+		}
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(400, gin.H{"error": "缓存清理设置无效"})
+			return
+		}
+		if err := s.ApplyCleanup(in.Enabled, in.Hours); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

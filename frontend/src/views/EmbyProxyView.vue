@@ -4,7 +4,6 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import P115AccountSelect from '../components/P115AccountSelect.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import InstantUploadPanel from '../components/InstantUploadPanel.vue'
-import PlaybackCachePanel from '../components/PlaybackCachePanel.vue'
 import type { P115Account } from '../types/p115Accounts'
 import { p115Request } from '../lib/p115-api'
 import { embyRequest } from '../types/emby'
@@ -84,7 +83,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <p class="mt-2 text-xs leading-6 text-slate-500">使用原 Emby 用户登录。若有独立域名、HTTPS 网关或不同的宿主机端口，请使用实际对外地址。监听成功只表示服务已启动，仍需实际验证客户端播放与拖动。</p>
 		<p class="mt-2 text-sm leading-6 text-amber-700">首次使用或升级后，请在播放器中通过反代地址退出并重新登录一次，以识别播放用户。正常重启无需重复登录；提示“尚未记录此 Emby 登录身份”时需重新登录。</p>
       </section>
-      <PlaybackCachePanel :token="token" :accounts="accounts" />
+      <div class="flex flex-wrap gap-4 text-sm"><RouterLink to="/emby/users" class="text-blue-600">Emby 用户与 115 账号绑定</RouterLink><RouterLink to="/emby/cache" class="text-blue-600">直链与秒传文件缓存管理</RouterLink></div>
       <InstantUploadPanel :token="token" :accounts="accounts" :source="status?.config" />
       <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
         <h2 class="font-semibold text-slate-900">NAS / Docker 端口</h2>

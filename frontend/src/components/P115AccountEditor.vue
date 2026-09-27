@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import P115AccountCard from '../components/P115AccountCard.vue'
+import P115PlaybackDirectory from './P115PlaybackDirectory.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import type { P115Account } from '../types/p115Accounts'
@@ -236,6 +237,7 @@ onBeforeUnmount(() => { cancel(); cookie.value = ''; visible.value = false })
             <h3 class="mt-4 text-sm font-medium text-slate-800" role="status">{{ qrStatus }}</h3><p class="mt-2 text-xs leading-6 text-slate-500">使用手机 115 App 扫码并确认，成功后自动保存到当前账号配置。</p><button type="button" class="mt-4 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50" :disabled="!!busy" @click="createQRCode">{{ busy === 'qrcode' ? '获取中…' : qrImage ? '刷新二维码' : '获取二维码' }}</button>
           </div>
         </div>
+        <P115PlaybackDirectory :token="token" :account="account" @changed="emit('changed')" />
         <p v-if="message" :role="tone === 'error' ? 'alert' : 'status'" class="rounded-lg px-4 py-3 text-sm leading-6" :class="tone === 'error' ? 'bg-red-50 text-red-700' : tone === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'">{{ message }}</p>
         <template #footer>
           <div v-if="confirmDelete" class="mb-3 flex flex-wrap items-center gap-3 text-sm"><span>删除这张账号配置？使用它的功能将需要重新选择账号，不会删除网盘文件。</span><button class="text-slate-500" @click="confirmDelete = false">取消删除</button><button :disabled="!!busy" class="rounded-lg bg-red-600 px-3 py-2 text-white disabled:opacity-40" @click="remove">确认删除</button></div>

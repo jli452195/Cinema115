@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 19
+const schemaVersion = 20
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -362,6 +362,20 @@ CREATE TABLE IF NOT EXISTS p115_folder_monitors (
 CREATE INDEX IF NOT EXISTS p115_folder_monitors_status ON p115_folder_monitors(status,updated_at);
 PRAGMA user_version=19;`); err != nil {
 			return fmt.Errorf("迁移 115 目录监控: %w", err)
+		}
+	}
+	if version < 20 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('p115_accounts') WHERE name='playback_parent_cid'`).Scan(&exists); err != nil {
+			return fmt.Errorf("检查账号播放目录字段: %w", err)
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE p115_accounts ADD COLUMN playback_parent_cid TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("迁移账号播放目录: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=20;`); err != nil {
+			return fmt.Errorf("迁移账号播放目录: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

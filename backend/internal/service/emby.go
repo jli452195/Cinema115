@@ -100,6 +100,14 @@ func (s *EmbyService) PlaybackUsers(ctx context.Context, proxyURL string) ([]emb
 	}
 	return emby.New(c.URL, c.APIKey).Users(ctx)
 }
+
+func (s *EmbyService) PlaybackUserImage(ctx context.Context, proxyURL, userID string) ([]byte, string, error) {
+	c := s.snapshot()
+	if c.URL != proxyURL || c.APIKey == "" {
+		return nil, "", fmt.Errorf("请先配置与反代相同的 Emby 服务和 API Key")
+	}
+	return emby.New(c.URL, c.APIKey).UserImage(ctx, userID)
+}
 func (s *EmbyService) CachedSeriesIDs(ctx context.Context) ([]int, error) {
 	c := s.snapshot()
 	if c.APIKey == "" || len(c.LibraryIDs) == 0 {

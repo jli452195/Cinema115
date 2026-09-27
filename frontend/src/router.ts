@@ -16,6 +16,7 @@ import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
 import EmbyProxyView from './views/EmbyProxyView.vue'
 import EmbyCacheView from './views/EmbyCacheView.vue'
+import EmbyUsersView from './views/EmbyUsersView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -59,6 +60,7 @@ export const router = createRouter({
     { path: '/emby/library', name: 'emby', component: EmbyView },
     { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView },
     { path: '/emby/cache', name: 'emby-cache', component: EmbyCacheView },
+    { path: '/emby/users', name: 'emby-users', component: EmbyUsersView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },

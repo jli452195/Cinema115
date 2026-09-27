@@ -57,6 +57,21 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 		c.JSON(200, gin.H{"id": id, "accounts": store.List()})
 	})
 	group.PUT("/accounts/:accountID", a.save)
+	group.PUT("/accounts/:accountID/playback-directory", func(c *gin.Context) {
+		var in struct {
+			Revision  uint64 `json:"revision"`
+			ParentCID string `json:"parentCid"`
+		}
+		if c.ShouldBindJSON(&in) != nil {
+			a.fail(c, service.ErrAccountInput)
+			return
+		}
+		if err := store.UpdatePlaybackDirectory(c.Param("accountID"), in.Revision, in.ParentCID); err != nil {
+			a.fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"accounts": store.List()})
+	})
 	group.DELETE("/accounts/:accountID", a.remove)
 	for _, prefix := range []string{"/accounts/:accountID"} {
 		group.GET(prefix+"/status", a.status)

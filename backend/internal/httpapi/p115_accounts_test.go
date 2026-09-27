@@ -86,6 +86,24 @@ func accountRequest(t *testing.T, r *gin.Engine, method, path, body string, code
 	return w
 }
 
+func TestAccountPlaybackDirectoryAPI(t *testing.T) {
+	r, accounts, id := setupAccountsAPI(t, nil, nil)
+	path := "/accounts/" + id + "/playback-directory"
+	w := accountRequest(t, r, "PUT", path, `{"parentCid":"0","revision":2}`, 200)
+	if strings.Contains(w.Body.String(), "SEID") || strings.Contains(w.Body.String(), "cookie") {
+		t.Fatal("directory response exposed credentials")
+	}
+	a, _ := accounts.Get(id)
+	b, _ := accounts.Get("default")
+	if a.PlaybackParentCID != "0" || b.PlaybackParentCID != "" {
+		t.Fatal("directory update crossed accounts")
+	}
+	accountRequest(t, r, "PUT", path, `{"parentCid":"456","revision":2}`, 409)
+	accountRequest(t, r, "PUT", path, `{"parentCid":"-1","revision":3}`, 400)
+	accountRequest(t, r, "PUT", "/accounts/missing/playback-directory", `{"parentCid":"0","revision":3}`, 404)
+	accountRequest(t, r, "PUT", path, `{"parentCid":"","revision":3}`, 200)
+}
+
 func TestMultiAccountSaveSwitchAndClear(t *testing.T) {
 	r, s, id := setupAccountsAPI(t, nil, nil)
 	path := "/accounts/" + id

@@ -16,17 +16,19 @@ var ErrAccountChanged = errors.New("账号配置已发生变化，请刷新后�
 var ErrAccountInput = errors.New("账号配置无效")
 
 type P115Account struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Cookie   string `json:"cookie"`
-	Revision uint64 `json:"revision"`
+	PlaybackParentCID string `json:"playbackParentCid"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Cookie            string `json:"cookie"`
+	Revision          uint64 `json:"revision"`
 }
 type P115AccountView struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	UID        string `json:"uid"`
-	Configured bool   `json:"configured"`
-	Revision   uint64 `json:"revision"`
+	PlaybackParentCID string `json:"playbackParentCid"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	UID               string `json:"uid"`
+	Configured        bool   `json:"configured"`
+	Revision          uint64 `json:"revision"`
 }
 type accountDocument struct {
 	Version int `json:"version"`
@@ -111,7 +113,7 @@ func (s *P115Accounts) List() []P115AccountView {
 	defer s.mu.RUnlock()
 	result := make([]P115AccountView, 0, len(s.value.Accounts))
 	for _, a := range s.value.Accounts {
-		result = append(result, P115AccountView{a.ID, a.Name, accountUID(a.Cookie), a.Cookie != "", a.Revision})
+		result = append(result, P115AccountView{ID: a.ID, Name: a.Name, UID: accountUID(a.Cookie), Configured: a.Cookie != "", Revision: a.Revision, PlaybackParentCID: a.PlaybackParentCID})
 	}
 	return result
 }
@@ -184,8 +186,39 @@ func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *s
 		a.Name = name
 		a.Revision++
 		if cookie != nil {
+			if oldUID, newUID := accountUID(a.Cookie), accountUID(*cookie); *cookie == "" || oldUID != newUID {
+				a.PlaybackParentCID = ""
+			}
 			a.Cookie = *cookie
 		}
+		value.Accounts[i] = a
+		return s.commit(value)
+	}
+	return ErrAccountMissing
+}
+
+// Playback directories belong to a specific persisted account, never a global selection.
+func (s *P115Accounts) UpdatePlaybackDirectory(id string, revision uint64, cid string) error {
+	if cid != "" {
+		if _, err := strconv.ParseUint(cid, 10, 64); err != nil || strings.Trim(cid, "0123456789") != "" {
+			return fmt.Errorf("%w：缓存父目录须为数字，根目录请填写 0", ErrAccountInput)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.copy()
+	for i, a := range value.Accounts {
+		if a.ID != id {
+			continue
+		}
+		if a.Revision != revision {
+			return ErrAccountChanged
+		}
+		if cid != "" && a.Cookie == "" {
+			return fmt.Errorf("%w：请先登录该账号", ErrAccountInput)
+		}
+		a.PlaybackParentCID = cid
+		a.Revision++
 		value.Accounts[i] = a
 		return s.commit(value)
 	}

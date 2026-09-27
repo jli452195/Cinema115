@@ -21,10 +21,9 @@ type PlaybackBinding struct {
 	UserID    string `json:"userId"`
 	UserName  string `json:"userName"`
 	AccountID string `json:"accountId"`
-	ParentCID string `json:"parentCid"`
+	ParentCID string `json:"-"` // Request snapshot only; configured on the selected 115 account.
 }
 type PlaybackCacheConfig struct {
-	Enabled        bool              `json:"enabled"`
 	EmbyURL        string            `json:"embyUrl"`
 	CleanupEnabled bool              `json:"cleanupEnabled"`
 	RetentionHours int               `json:"retentionHours"`
@@ -134,6 +133,76 @@ func (s *PlaybackCache) saveLocked(doc PlaybackCacheStatus) error {
 	return nil
 }
 func (s *PlaybackCache) Apply(c PlaybackCacheConfig) error {
+	return s.applyConfig(c, false)
+}
+
+// Only replace binding fields, so saving another page cannot reset cleanup policy.
+func (s *PlaybackCache) ApplyBindings(embyURL string, bindings []PlaybackBinding) error {
+	return s.applyConfig(PlaybackCacheConfig{EmbyURL: embyURL, Bindings: bindings, RetentionHours: 72}, true)
+}
+
+func (s *PlaybackCache) ApplyCleanup(enabled bool, hours int) error {
+	if hours < 24 || hours > 720 {
+		return fmt.Errorf("缓存保留时间须为 24～720 小时")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc := s.doc
+	doc.Config.CleanupEnabled = enabled
+	doc.Config.RetentionHours = hours
+	return s.saveLocked(doc)
+}
+
+var ErrPlaybackBindingChanged = errors.New("该用户绑定已变化，请刷新后重试")
+
+// Update only this user's binding under lock; other cards and cleanup settings remain intact.
+func (s *PlaybackCache) UpdateBinding(embyURL string, binding PlaybackBinding, expectedAccountID string, remove bool) error {
+	normalized, err := emby.NormalizeURL(embyURL)
+	if err != nil {
+		return err
+	}
+	if !instantRunID.MatchString(binding.UserID) || len([]rune(binding.UserName)) > 100 || strings.ContainsAny(binding.UserName, "\r\n\x00") {
+		return fmt.Errorf("Emby 用户信息无效")
+	}
+	if !remove {
+		if err := s.accounts.ValidateSelection(binding.AccountID); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc := s.doc
+	if len(doc.Config.Bindings) > 0 && doc.Config.EmbyURL != normalized {
+		return fmt.Errorf("Emby 服务已变化，请先移除原服务的用户绑定")
+	}
+	index, current := -1, ""
+	for i, b := range doc.Config.Bindings {
+		if b.UserID == binding.UserID {
+			index, current = i, b.AccountID
+			break
+		}
+	}
+	if current != expectedAccountID {
+		return ErrPlaybackBindingChanged
+	}
+	doc.Config.Bindings = append([]PlaybackBinding{}, doc.Config.Bindings...)
+	if remove {
+		if index >= 0 {
+			doc.Config.Bindings = append(doc.Config.Bindings[:index], doc.Config.Bindings[index+1:]...)
+		}
+	} else if index >= 0 {
+		doc.Config.Bindings[index] = binding
+	} else {
+		if len(doc.Config.Bindings) >= 100 {
+			return fmt.Errorf("最多配置 100 个 Emby 用户绑定")
+		}
+		doc.Config.Bindings = append(doc.Config.Bindings, binding)
+	}
+	doc.Config.EmbyURL = normalized
+	return s.saveLocked(doc)
+}
+
+func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) error {
 	if c.RetentionHours < 24 || c.RetentionHours > 720 {
 		return fmt.Errorf("缓存保留时间须为 24～720 小时")
 	}
@@ -151,22 +220,18 @@ func (s *PlaybackCache) Apply(c PlaybackCacheConfig) error {
 			return fmt.Errorf("Emby 用户 ID 无效或重复")
 		}
 		seen[b.UserID] = true
-		if _, err := strconv.ParseUint(b.ParentCID, 10, 64); err != nil || b.ParentCID == "" {
-			return fmt.Errorf("请明确填写缓存父目录，根目录为 0")
+		if err := s.accounts.ValidateSelection(b.AccountID); err != nil {
+			return err
 		}
-		if c.Enabled {
-			if err := s.accounts.ValidateSelection(b.AccountID); err != nil {
-				return err
-			}
-		}
-	}
-	if c.Enabled && len(c.Bindings) == 0 {
-		return fmt.Errorf("启用前请添加用户绑定")
 	}
 	c.Bindings = append([]PlaybackBinding{}, c.Bindings...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc
+	if bindingsOnly {
+		c.CleanupEnabled = doc.Config.CleanupEnabled
+		c.RetentionHours = doc.Config.RetentionHours
+	}
 	doc.Config = c
 	return s.saveLocked(doc)
 }
@@ -181,16 +246,16 @@ type PlaybackCacheSelection struct {
 
 // Selection is captured with proxy settings at request start, before network I/O.
 type PlaybackCacheSnapshot struct {
-	enabled    bool
 	embyURL    string
 	selections map[string]PlaybackCacheSelection
 }
 
 func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	c := s.Status().Config
-	snap := PlaybackCacheSnapshot{enabled: c.Enabled, embyURL: c.EmbyURL, selections: make(map[string]PlaybackCacheSelection, len(c.Bindings))}
+	snap := PlaybackCacheSnapshot{embyURL: c.EmbyURL, selections: make(map[string]PlaybackCacheSelection, len(c.Bindings))}
 	for _, b := range c.Bindings {
 		a, err := s.accounts.Get(b.AccountID)
+		b.ParentCID = a.PlaybackParentCID
 		if err == nil && (a.Cookie == "" || p115.CookieUserID(a.Cookie) == "") {
 			err = fmt.Errorf("绑定的朋友账号未登录")
 		}
@@ -199,7 +264,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	return snap
 }
 func (snap PlaybackCacheSnapshot) Select(embyURL, userID string) (*PlaybackCacheSelection, error) {
-	if !snap.enabled {
+	if len(snap.selections) == 0 {
 		return nil, nil
 	}
 	if snap.embyURL != embyURL {
@@ -318,6 +383,9 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return "", fmt.Errorf("秒传使用的源账号未选择、已删除或未登录，请检查 302 账号配置")
 	}
 	report.UsedSource = true
+	if selection.binding.ParentCID == "" {
+		return "", fmt.Errorf("朋友分享不可读且未配置秒传目录，请在 115 助手中设置该账号的秒传播放缓存父目录")
+	}
 	// One gate serializes mutation, reuse and cleanup. Waiters recheck the committed record.
 	if err := s.enter(ctx); err != nil {
 		return "", err

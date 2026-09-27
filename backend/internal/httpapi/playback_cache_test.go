@@ -71,6 +71,9 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 	if err := accounts.Update(target, 1, "朋友", &cookie); err != nil {
 		t.Fatal(err)
 	}
+	if err := accounts.UpdatePlaybackDirectory(target, 2, "0"); err != nil {
+		t.Fatal(err)
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/emby/Users/AuthenticateByName" {
 			fmt.Fprintf(w, `{"AccessToken":"viewer","User":{"Id":"%s"},"SessionInfo":{"UserId":"%s"}}`, uid, uid)
@@ -105,7 +108,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 		t.Fatal(err)
 	}
 	defer cache.Close()
-	if err := cache.Apply(service.PlaybackCacheConfig{Enabled: true, EmbyURL: upstream.URL, RetentionHours: 72, Bindings: []service.PlaybackBinding{{UserID: uid, AccountID: target, ParentCID: "0"}}}); err != nil {
+	if err := cache.Apply(service.PlaybackCacheConfig{EmbyURL: upstream.URL, RetentionHours: 72, Bindings: []service.PlaybackBinding{{UserID: uid, AccountID: target, ParentCID: "0"}}}); err != nil {
 		t.Fatal(err)
 	}
 	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: source}, accounts, NewShareAPI(func() string { return "forbidden" }), cache, logs).(*embyProxyHandler)
@@ -163,7 +166,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 		t.Fatal("缓存未复用")
 	}
 	empty := ""
-	if err := accounts.Update(target, 2, "朋友", &empty); err != nil {
+	if err := accounts.Update(target, 3, "朋友", &empty); err != nil {
 		t.Fatal(err)
 	}
 	if w := call("GET", "movie", "viewer"); w.Code != 503 {

@@ -11,9 +11,10 @@ var ErrAccountRevision = errors.New("115 账号存储版本已变化")
 
 // 存储层只接触密文，不持有加密密钥或 Cookie 明文。
 type P115AccountRow struct {
-	ID, Name string
-	Cookie   []byte
-	Revision uint64
+	PlaybackParentCID string
+	ID, Name          string
+	Cookie            []byte
+	Revision          uint64
 }
 type P115AccountState struct {
 	// 仅供旧加密文件首次导入时保留分享使用账号，运行时不作回退。
@@ -36,7 +37,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	if err != nil {
 		return state, fmt.Errorf("读取 115 账号存储版本: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision FROM p115_accounts ORDER BY position,id")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid FROM p115_accounts ORDER BY position,id")
 	if err != nil {
 		return state, err
 	}
@@ -44,7 +45,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	state.Accounts = make([]P115AccountRow, 0, 20)
 	for rows.Next() {
 		var row P115AccountRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision); err != nil {
+		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID); err != nil {
 			return state, err
 		}
 		state.Accounts = append(state.Accounts, row)
@@ -79,9 +80,9 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState) er
 			return errors.New("115 账号编号无效")
 		}
 		ids[row.ID] = true
-		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position) VALUES(?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position
-WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position`, row.ID, row.Name, row.Cookie, row.Revision, position)
+		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid) VALUES(?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid
+WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID)
 		if err != nil {
 			return fmt.Errorf("保存 115 账号: %w", err)
 		}

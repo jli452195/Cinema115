@@ -93,11 +93,46 @@ func New(base, key string) *Client {
 }
 
 type User struct {
-	ID     string `json:"Id"`
-	Name   string `json:"Name"`
-	Policy struct {
-		IsDisabled bool `json:"IsDisabled"`
+	ID              string `json:"Id"`
+	Name            string `json:"Name"`
+	PrimaryImageTag string `json:"PrimaryImageTag,omitempty"`
+	Policy          struct {
+		IsDisabled      bool `json:"IsDisabled"`
+		IsAdministrator bool `json:"IsAdministrator"`
 	} `json:"Policy"`
+}
+
+func (c *Client) UserImage(ctx context.Context, id string) ([]byte, string, error) {
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdefABCDEF") != "" {
+		return nil, "", fmt.Errorf("Emby 用户 ID 无效")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/emby/Users/"+id+"/Images/Primary?maxWidth=128&maxHeight=128", nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("创建头像请求: %w", err)
+	}
+	req.Header.Set("X-Emby-Token", c.Key)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("无法读取 Emby 头像")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("Emby 头像返回 HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("读取头像: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return nil, "", fmt.Errorf("头像超过大小限制")
+	}
+	kind := http.DetectContentType(data)
+	switch kind {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return data, kind, nil
+	default:
+		return nil, "", fmt.Errorf("头像格式不支持")
+	}
 }
 
 func (c *Client) Users(ctx context.Context) ([]User, error) {

@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestPlaybackDirectoryMigrationFromNineteen(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position) VALUES('friend','friend',x'1234',2,0);
+ALTER TABLE p115_accounts DROP COLUMN playback_parent_cid; PRAGMA user_version=19;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var cid string
+	var revision int
+	var cookie []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT playback_parent_cid,revision,cookie_enc FROM p115_accounts WHERE id='friend'`).Scan(&cid, &revision, &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if cid != "" || revision != 2 || string(cookie) != string([]byte{0x12, 0x34}) {
+		t.Fatal("migration changed credentials or implicitly selected a directory")
+	}
+}
+
 func TestP115AccountTransactionAndMigration(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()

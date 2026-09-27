@@ -95,6 +95,9 @@ func setupPlaybackCache(t *testing.T) (*PlaybackCache, *cacheDriveFake, *Playbac
 	if err := accounts.Update(id, 1, "朋友", &cookie); err != nil {
 		t.Fatal(err)
 	}
+	if err := accounts.UpdatePlaybackDirectory(id, 2, "0"); err != nil {
+		t.Fatal(err)
+	}
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "cache.enc"), "secret")
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +108,7 @@ func setupPlaybackCache(t *testing.T) (*PlaybackCache, *cacheDriveFake, *Playbac
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	config := PlaybackCacheConfig{Enabled: true, EmbyURL: "http://emby:8096", CleanupEnabled: true, RetentionHours: 72, Bindings: []PlaybackBinding{{UserID: cacheTestUser, UserName: "friend", AccountID: id, ParentCID: "0"}}}
+	config := PlaybackCacheConfig{EmbyURL: "http://emby:8096", CleanupEnabled: true, RetentionHours: 72, Bindings: []PlaybackBinding{{UserID: cacheTestUser, UserName: "friend", AccountID: id, ParentCID: "0"}}}
 	if err := s.Apply(config); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +132,7 @@ func TestPlaybackCacheConcurrentReusePinnedAccountAndFreshUA(t *testing.T) {
 	go func() { defer wg.Done(); _, err := resolveTestCache(s, selection); errs <- err }()
 	<-started
 	replacement := "UID=33_A; SEID=replacement"
-	if err := s.accounts.Update(selection.binding.AccountID, 2, "朋友", &replacement); err != nil {
+	if err := s.accounts.Update(selection.binding.AccountID, 3, "朋友", &replacement); err != nil {
 		t.Fatal(err)
 	}
 	go func() { defer wg.Done(); _, err := resolveTestCache(s, selection); errs <- err }()
@@ -162,7 +165,7 @@ func TestPlaybackCacheSelectionNeverFallsBack(t *testing.T) {
 	if _, err := s.Snapshot().Select("http://other:8096", cacheTestUser); err == nil {
 		t.Fatal("跨 Emby 复用了绑定")
 	}
-	if err := s.accounts.Delete(selection.binding.AccountID, 2); err != nil {
+	if err := s.accounts.Delete(selection.binding.AccountID, 3); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Snapshot().Select("http://emby:8096", cacheTestUser); err == nil || got != nil {
@@ -209,9 +212,9 @@ func TestPlaybackCacheCleanupScopeAndRetention(t *testing.T) {
 				f.files[0].SHA1 = strings.Repeat("B", 40)
 			case "rebound":
 				cookie := "UID=33_A"
-				_ = s.accounts.Update(e.AccountID, 2, "朋友", &cookie)
+				_ = s.accounts.Update(e.AccountID, 3, "朋友", &cookie)
 			case "deleted_account":
-				_ = s.accounts.Delete(e.AccountID, 2)
+				_ = s.accounts.Delete(e.AccountID, 3)
 			case "failed_delete":
 				f.deleteErr = errors.New("network")
 			case "disabled":
