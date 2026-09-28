@@ -290,14 +290,37 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
 
 <style>
 .dark .detail-page { background: #0f172a !important; }
-.dark .detail-backdrop img { opacity: 0.25 !important; }
-.dark .detail-backdrop::after { background: linear-gradient(90deg, rgb(15 23 42 / 75%), transparent 70%), linear-gradient(180deg, rgb(15 23 42 / 15%) 25%, #0f172a 100%) !important; }
+/* 在深色模式下，背景图保持全尺寸和较高透明度，因为此时主体是黑色的沉浸感 */
+.dark .detail-backdrop { 
+    height: 100vh !important; 
+    max-height: 900px;
+}
+.dark .detail-backdrop img { 
+    opacity: 0.25 !important; 
+    mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+}
+.dark .detail-backdrop::after { 
+    background: linear-gradient(90deg, rgb(15 23 42 / 90%), transparent 70%), linear-gradient(180deg, transparent 0%, rgb(15 23 42 / 80%) 60%, #0f172a 100%) !important; 
+}
 </style>
 <style scoped>
+/* 浅色模式保持顶部导航栏的透明融合 */
 .detail-page { background: #f8fafc; }
-.detail-backdrop { height: 800px; }
-.detail-backdrop img { opacity: 0.12; }
-.detail-backdrop::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(248 250 252 / 65%), transparent 70%), linear-gradient(180deg, rgb(248 250 252 / 15%) 25%, #f8fafc 100%); }
+.detail-backdrop { height: 100vh; max-height: 800px; }
+.detail-backdrop img { 
+    opacity: 0.15; 
+    /* 使用遮罩技术让图片本身产生从左到右、从上到下的渐变透明，而不是用白色盖住它 */
+    -webkit-mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
+}
+.detail-backdrop::after { 
+    content: ''; position: absolute; inset: 0; 
+    /* 配合 mask 让图片更好地融入背景 */
+    background: linear-gradient(90deg, rgb(248 250 252 / 90%), transparent 70%), linear-gradient(180deg, transparent 0%, rgb(248 250 252 / 80%) 60%, #f8fafc 100%); 
+}
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse { animation: none; }
   .transition, .transition-transform { transition: none; }
