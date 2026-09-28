@@ -45,7 +45,7 @@ onBeforeUnmount(() => controller?.abort())
 <template>
   <div class="space-y-2">
     <div class="flex flex-wrap items-center gap-3">
-      <button type="button" :disabled="loading || busy || !state || available || state.subscribed" class="rounded-lg border px-4 py-2 text-xs font-medium disabled:cursor-default" :class="state?.subscribed || available ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50'" @click="change()">{{ label }}</button>
+      <button type="button" :disabled="loading || busy || !state || available || state.subscribed" class="rounded-lg border px-4 py-2 text-xs font-medium disabled:cursor-default" :class="state?.subscribed || available ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-500 dark:hover:bg-amber-500/20 disabled:opacity-50'" @click="change()">{{ label }}</button>
       <button v-if="state?.subscribed" type="button" :disabled="busy" class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-50" @click="change(true)">取消追更</button>
       <RouterLink v-if="state?.subscribed" to="/follows" class="text-xs text-blue-600">我的追更</RouterLink>
     </div>

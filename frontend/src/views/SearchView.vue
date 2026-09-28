@@ -71,7 +71,7 @@ onBeforeUnmount(() => controller?.abort())
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="$emit('logout')" />
-    <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-7 sm:px-8 lg:px-10 lg:py-10">
+    <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-7 sm:px-8 lg:px-10 lg:pb-10">
       <header class="mx-auto max-w-2xl text-center">
         <h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">搜索影视</h1>
         <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">发现电影、剧集与喜爱的演员</p>

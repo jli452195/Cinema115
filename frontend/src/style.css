@@ -3,6 +3,53 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Keep the existing light palette; dark mode swaps these shared tokens. */
+    --color-slate-50: 248 250 252;
+    --color-slate-100: 241 245 249;
+    --color-slate-200: 226 232 240;
+    --color-slate-300: 203 213 225;
+    --color-slate-400: 148 163 184;
+    --color-slate-500: 100 116 139;
+    --color-slate-600: 71 85 105;
+    --color-slate-700: 51 65 85;
+    --color-slate-800: 30 41 59;
+    --color-slate-900: 15 23 42;
+    --color-slate-950: 2 6 23;
+    --color-border: var(--color-slate-800);
+    --color-text-muted: var(--color-slate-500);
+    --color-accent: 245 158 11;
+    --color-accent-text: 217 119 6;
+    --workbench-header-height: 4rem;
+    --scrollbar-thumb: rgb(var(--color-slate-300));
+    --scrollbar-track: rgb(var(--color-slate-50));
+    color-scheme: light;
+  }
+  :root.dark {
+    --color-slate-50: 250 250 250;
+    --color-slate-100: 243 244 245;
+    --color-slate-200: 225 227 229;
+    --color-slate-300: 208 211 214;
+    --color-slate-400: 156 163 170;
+    --color-slate-500: 139 146 154;
+    --color-slate-600: 99 106 114;
+    --color-slate-700: 54 59 65;
+    --color-slate-800: 45 49 54;
+    --color-slate-900: 33 37 41;
+    --color-slate-950: 24 25 28;
+    --color-border: var(--color-slate-700);
+    --color-text-muted: var(--color-slate-400);
+    --color-accent: 245 181 68;
+    --color-accent-text: var(--color-accent);
+    --scrollbar-thumb: rgb(var(--color-slate-600));
+    --scrollbar-track: rgb(var(--color-slate-950));
+    color-scheme: dark;
+  }
+  @screen lg {
+    :root {
+      --workbench-header-height: 4.5rem;
+    }
+  }
   body {
     @apply bg-slate-50 text-slate-900 transition-colors duration-300;
   }
@@ -11,21 +58,29 @@
   }
 }
 
-/* Global Scrollbar Dark Mode Support */
+@layer components {
+  .workbench-content {
+    /* Fixed header, its bottom border, and a compact content gap. */
+    padding-top: calc(var(--workbench-header-height) + 1px + 1rem);
+  }
+}
+
+/* Include the root scrollbar and use the same sizing in both themes. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
 ::-webkit-scrollbar {
   height: 8px;
   width: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background-color: var(--scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1;
+  background-color: var(--scrollbar-thumb);
   border-radius: 4px;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background-color: #334155;
-}
-.dark * {
-  scrollbar-color: #334155 transparent;
+::-webkit-scrollbar-corner {
+  background-color: var(--scrollbar-track);
 }

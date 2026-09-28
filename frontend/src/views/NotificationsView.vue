@@ -43,7 +43,7 @@ onBeforeUnmount(() => controller.abort())
 <template>
   <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
-    <main class="mx-auto max-w-3xl space-y-5 px-4 py-10 sm:px-8">
+    <main class="workbench-content mx-auto max-w-3xl space-y-5 px-4 pb-10 sm:px-8">
       <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">站内通知</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">追更入库、追平及后续变化会保存在这里。</p></div><div class="flex gap-4 text-sm"><button :disabled="loading || busy" class="text-blue-600 disabled:opacity-40" @click="load()">刷新</button><button :disabled="busy || loading || !websiteUnread || !items.length" class="text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="read(items[0]!.id, true)">全部已读</button></div></div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="!items.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ loading ? '正在加载通知…' : error ? '请刷新重试' : '暂无通知' }}</p>

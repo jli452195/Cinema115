@@ -23,7 +23,7 @@ const label = computed(() => {
   return props.item.status === 'processing' ? '处理中' : '待处理'
 })
 const positive = computed(() => ['已完成', '已追平'].includes(label.value))
-const statusClass = computed(() => label.value === '已关闭' ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 dark:text-slate-500' : positive.value ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')
+const statusClass = computed(() => label.value === '已关闭' ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400' : positive.value ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-500')
 const progress = computed(() => {
   const p = props.item.progress
   if (props.item.status === 'closed') return '已停止资源搜索，仍会确认 Emby 入库'
@@ -43,7 +43,7 @@ const dateLabel = computed(() => {
   <article class="relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
     <div v-if="item.posterUrl && !failedImage" class="pointer-events-none absolute inset-x-0 top-0 h-40 overflow-hidden" aria-hidden="true">
       <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full scale-105 object-cover opacity-[0.18]" @error="failedImage = true" />
-      <div class="absolute inset-0 bg-gradient-to-b from-white/45 via-white/80 to-white"></div>
+      <div class="absolute inset-0 bg-gradient-to-b from-white/45 via-white/80 to-white dark:from-slate-900/45 dark:via-slate-900/80 dark:to-slate-900"></div>
     </div>
     <div class="relative z-10 flex h-full min-w-0 flex-col">
       <div class="flex min-w-0 items-start gap-3">

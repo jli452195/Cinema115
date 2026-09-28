@@ -137,5 +137,12 @@ select { width: 100%; background: #f5f7fa; border: 1px solid #e5e9ef; border-rad
 .generate { width: 100%; border-radius: 8px; background: #367bf5; color: white; padding: 11px; font-size: 14px; }
 .generate:disabled { opacity: .6; cursor: wait; }
 .note { text-align: center; line-height: 1.6; margin-top: 14px; }
+.dark .qr-dialog { background: rgb(var(--color-slate-900)); color: rgb(var(--color-slate-300)); box-shadow: 0 24px 80px rgb(0 0 0 / 30%); }
+.dark .qr-dialog::backdrop { background: rgb(var(--color-slate-950) / 65%); }
+.dark h2 { color: rgb(var(--color-slate-100)); }
+.dark header p, .dark .note, .dark .close, .dark .qr-message { color: rgb(var(--color-text-muted)); }
+.dark select { background: rgb(var(--color-slate-800)); border-color: rgb(var(--color-border)); }
+.dark .qr-area { border-color: rgb(var(--color-border)); color: rgb(var(--color-text-muted)); }
+.dark .error { color: #fca5a5; }
 button:focus-visible, select:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
 </style>

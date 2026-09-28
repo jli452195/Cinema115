@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
 import FollowDialog from '../components/FollowDialog.vue'
-import WorkbenchHeader from '../components/WorkbenchHeader.vue'
+import ManagementLayout from '../components/ManagementLayout.vue'
 import type { Follow } from '../types/follows'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
@@ -100,8 +100,8 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader @logout="emit('logout')" />
+  <ManagementLayout title="追更管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
+    <template #actions><button class="text-sm text-blue-600" @click="settingsOpen = !settingsOpen">通知设置</button></template>
     <FollowDialog v-if="editing" title="处理追更申请" :busy="busy" @close="editing = undefined">
       <form class="space-y-4" @submit.prevent="save">
         <p class="break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{{ editing.title }}</p>
@@ -114,8 +114,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         <div class="flex justify-end gap-4"><button type="button" :disabled="busy" class="px-3 py-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="editing = undefined">取消</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{{ busy ? '保存中…' : '保存处理' }}</button></div>
       </form>
     </FollowDialog>
-    <main class="mx-auto max-w-[1600px] space-y-5 px-4 py-10 sm:px-8">
-      <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">追更管理</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">按影视合并用户申请，搜索资源并跟进处理。</p></div><button class="text-sm text-blue-600" @click="settingsOpen = !settingsOpen">通知设置</button></div>
+    <div class="space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
       <section v-if="settingsOpen" class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
@@ -130,7 +129,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         </form>
       </section>
       <nav aria-label="处理状态筛选" class="flex flex-wrap gap-2">
-        <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white' : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
+        <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white dark:bg-slate-700' : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
       </nav>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
         <SelectMenu v-model="kind" :options="kindOptions" label="影视类型" class="w-[7.75rem]" @change="filter()" />
@@ -138,10 +137,10 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
       </form>
       <p v-if="loading" role="status" class="py-8 text-center text-sm text-slate-400 dark:text-slate-500">正在读取申请…</p>
       <p v-else-if="!items.length && !error" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-14 text-center text-sm text-slate-400 dark:text-slate-500">暂无符合条件的有效追更申请</p>
-      <div v-else class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-follow-grid>
+      <div v-else class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
         <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" admin :subscriber-count="item.subscriberCount" :busy="busy" @edit="edit(item)" />
       </div>
       <div v-if="offset || hasMore" class="flex justify-center gap-6 text-sm"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="filter(Math.max(0, offset - FOLLOW_PAGE_SIZE))">上一页</button><span class="text-slate-400 dark:text-slate-500">第 {{ Math.floor(offset / FOLLOW_PAGE_SIZE) + 1 }} 页</span><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="filter(offset + FOLLOW_PAGE_SIZE)">下一页</button></div>
-    </main>
-  </div>
+    </div>
+  </ManagementLayout>
 </template>

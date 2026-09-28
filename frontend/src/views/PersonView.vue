@@ -45,7 +45,7 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="$emit('logout')" />
-    <main class="mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-4 py-7 sm:px-8 lg:px-10">
+    <main class="workbench-content mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-4 pb-7 sm:px-8 lg:px-10">
       <HistoryBackButton fallback="/search?scope=person" class="mb-8 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500" />
       <div v-if="loading" role="status" class="rounded-xl bg-slate-200 dark:bg-slate-700 p-16 text-center text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 motion-safe:animate-pulse">正在加载演员信息…</div>
       <div v-else-if="error" role="alert" class="rounded-xl border border-red-100 bg-white dark:bg-slate-900 p-8 text-center"><p class="text-sm text-red-600">{{ error }}</p><button class="mt-4 rounded-lg bg-slate-900 px-5 py-2 text-sm text-white" @click="load">重新加载</button></div>

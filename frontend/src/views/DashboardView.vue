@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
-    <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
+    <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="space-y-3 border-b border-slate-200 dark:border-slate-800 pb-6 text-sm">
         <fieldset class="space-y-3">

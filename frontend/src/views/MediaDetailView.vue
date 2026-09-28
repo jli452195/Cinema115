@@ -20,12 +20,36 @@ import { episodeHasAired, formatEpisodeRanges, localDateKey, seasonLibraryProgre
 import { copyText } from '../utils/clipboard'
 import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
+import tmdbLogo from '../assets/tmdb.svg'
+import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
+import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
+import { gyingRequest, type GyingConfigView } from '../types/gying'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const botSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
+const searchConfigured = ref({ re0: false, bot: false, gying: false })
+watch(() => [props.token, isWebsiteAdmin.value] as const, ([token, admin], _, onCleanup) => {
+  searchConfigured.value = { re0: false, bot: false, gying: false }
+  re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
+  if (!admin || !token) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
+  async function check(key: keyof typeof searchConfigured.value, request: Promise<{ configured: boolean }>) {
+    try {
+      const config = await request
+      if (!signal.aborted) searchConfigured.value[key] = config.configured === true
+    } catch {
+      // 无法确认配置时隐藏对应入口，不影响其他搜索服务。
+    }
+  }
+  void check('re0', nanShareRequest<NanShareConfigView>(token, 'config', signal))
+  void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal))
+  void check('gying', gyingRequest<GyingConfigView>(token, 'config', signal))
+}, { immediate: true })
 const route = useRoute(), router = useRouter()
 watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
@@ -185,16 +209,16 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <BotSearchDialog v-if="isWebsiteAdmin && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="botSearchOpen = false" />
-    <RE0SearchDialog v-if="isWebsiteAdmin && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
-    <GyingSearchDialog v-if="isWebsiteAdmin && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
+    <BotSearchDialog v-if="isWebsiteAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="botSearchOpen = false" />
+    <RE0SearchDialog v-if="isWebsiteAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
+    <GyingSearchDialog v-if="isWebsiteAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
     <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" @close="mikanSearchOpen = false" />
-    <WorkbenchHeader @logout="emit('logout')" />
-    <main class="detail-page relative min-w-0 flex-1 overflow-hidden">
+    <WorkbenchHeader :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
+    <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
         <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
       </div>
-      <div class="relative mx-auto max-w-[1440px] px-5 pb-8 pt-6 md:px-8 lg:px-10">
+      <div class="workbench-content relative mx-auto max-w-[1440px] px-5 pb-8 md:px-8 lg:px-10">
         <nav aria-label="详情导航" class="mb-8 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">
           <HistoryBackButton :fallback="`/${kind}`" />
           <span class="text-[10px] tracking-[0.2em] text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">CINEMA115 / DETAILS</span>
@@ -220,9 +244,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500">▱</span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 →</span></RouterLink>
-              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-blue-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin" type="button" class="rounded-lg border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
+              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin && searchConfigured.re0" type="button" class="rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isWebsiteAdmin && searchConfigured.bot" type="button" class="rounded-lg border border-blue-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin && searchConfigured.gying" type="button" class="rounded-lg border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
               <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
-                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><span class="text-[10px] font-extrabold tracking-wider">TMDB</span><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">/10</span></span></a>
+                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">/10</span></span></a>
                 <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.votes.toLocaleString() }} 人评价</span>
                 <a v-if="detail.imdbUrl" :href="detail.imdbUrl" target="_blank" rel="noopener noreferrer" aria-label="在 IMDb 查看条目" class="rounded bg-yellow-400 px-1.5 py-0.5 font-black text-black hover:bg-yellow-300">IMDb ↗</a>
               </div>
@@ -238,10 +262,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
             <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无季信息</p>
             <div class="space-y-3">
-              <section v-for="season in detail.seasons" :key="season.number" class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/90 shadow-sm">
-                <button :id="`season-button-${season.number}`" class="group/season flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 focus-visible:outline-blue-500 sm:px-5" :aria-expanded="openSeasons.has(season.number)" :aria-controls="`season-${season.number}`" @click="toggleSeason(season.number)">
+              <section v-for="season in detail.seasons" :key="season.number" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
+                <button :id="`season-button-${season.number}`" class="group/season flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/25 focus-visible:outline-blue-500 sm:px-5" :aria-expanded="openSeasons.has(season.number)" :aria-controls="`season-${season.number}`" @click="toggleSeason(season.number)">
                   <span class="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-3">
-                    <span class="inline-flex shrink-0 items-center gap-3"><span class="text-sm font-semibold text-slate-900 dark:text-slate-100 dark:text-slate-100">{{ seasonName(season) }}</span><span class="rounded-full border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300">{{ season.episodeCount }} 集</span></span>
+                    <span class="inline-flex shrink-0 items-center gap-3"><span class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ seasonName(season) }}</span><span class="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-600/30 dark:bg-slate-700/40 dark:text-slate-300">{{ season.episodeCount }} 集</span></span>
                     <SeasonLibraryProgress :key="`${tmdbId}-${season.number}`" :state="seasonState(season.number)" :owned-episodes="[...(embyEpisodes[season.number] || [])]" :progress="seasonProgress[season.number]" :loading="!!schedules[season.number]?.loading" :error="schedules[season.number]?.error || ''" :stale="schedules[season.number]?.data?.cacheStale" :has-undated="seasonState(season.number) === 'present' && !!schedules[season.number]?.data?.episodes.some(episode => !episode.date)" @load="loadSeasonSchedule(season.number)" @refresh="loadSeasonSchedule(season.number, true)" />
                   </span>
                   <svg class="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 transition-transform" :class="{ 'rotate-180': openSeasons.has(season.number) }" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 8 5 5 5-5" /></svg>
@@ -257,7 +281,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
                     <p v-if="!seasons[season.number]?.data?.episodes.length" class="py-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无分集信息</p>
                     <div class="divide-y divide-slate-200 dark:divide-slate-700/80">
                       <article v-for="episode in seasons[season.number]?.data?.episodes.slice(0, episodeLimits[season.number] || 20)" :key="episode.id" class="min-w-0 py-6">
-                        <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold text-slate-800 dark:text-slate-200 dark:text-slate-200"><span class="mr-2 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true">✓</span></div>
+                        <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold text-slate-800 dark:text-slate-200 dark:text-slate-200"><span class="mr-2 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600 dark:bg-amber-500/10 dark:text-amber-500">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true">✓</span></div>
                         <p class="mt-2 flex flex-wrap gap-3 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600">★ {{ episode.rating.toFixed(1) }}</span></p>
                         <p class="mt-3 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.overview || '暂无分集简介。' }}</p>
                         <EmbyMediaVersions v-if="isWebsiteAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
@@ -288,38 +312,21 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
   </div>
 </template>
 
-<style>
-.dark .detail-page { background: #0f172a !important; }
-/* 在深色模式下，背景图保持全尺寸和较高透明度，因为此时主体是黑色的沉浸感 */
-.dark .detail-backdrop { 
-    height: 100vh !important; 
-    max-height: 900px;
-}
-.dark .detail-backdrop img { 
-    opacity: 0.25 !important; 
-    mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
-    -webkit-mask-composite: source-in;
-    mask-composite: intersect;
-}
-.dark .detail-backdrop::after { 
-    background: linear-gradient(90deg, rgb(15 23 42 / 90%), transparent 70%), linear-gradient(180deg, transparent 0%, rgb(15 23 42 / 80%) 60%, #0f172a 100%) !important; 
-}
-</style>
 <style scoped>
-/* 浅色模式保持顶部导航栏的透明融合 */
-.detail-page { background: #f8fafc; }
-.detail-backdrop { height: 100vh; max-height: 800px; }
-.detail-backdrop img { 
-    opacity: 0.15; 
-    /* 使用遮罩技术让图片本身产生从左到右、从上到下的渐变透明，而不是用白色盖住它 */
-    -webkit-mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
-    mask-image: linear-gradient(to right, transparent, black 30%), linear-gradient(to bottom, black 50%, transparent 100%);
+.detail-page { background: rgb(var(--color-slate-50)); }
+.dark .detail-page { background: rgb(var(--color-slate-950)); }
+.detail-backdrop { height: 75vh; max-height: 800px; }
+.detail-backdrop img {
+    opacity: 0.9;
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
+    mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
 }
-.detail-backdrop::after { 
-    content: ''; position: absolute; inset: 0; 
-    /* 配合 mask 让图片更好地融入背景 */
-    background: linear-gradient(90deg, rgb(248 250 252 / 90%), transparent 70%), linear-gradient(180deg, transparent 0%, rgb(248 250 252 / 80%) 60%, #f8fafc 100%); 
+.detail-backdrop::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(180deg, transparent 0%, rgb(var(--color-slate-50) / 60%) 50%, rgb(var(--color-slate-50)) 100%);
+}
+.dark .detail-backdrop::after {
+    background: linear-gradient(180deg, transparent 0%, rgb(var(--color-slate-950) / 60%) 50%, rgb(var(--color-slate-950)) 100%);
 }
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse { animation: none; }

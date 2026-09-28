@@ -123,7 +123,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
-    <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
+    <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <div class="flex flex-col gap-4 border-b border-slate-200 dark:border-slate-800 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 class="text-xl font-bold text-slate-900 dark:text-slate-100">最近更新</h1>
@@ -131,7 +131,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <div role="group" aria-label="更新时间范围" class="inline-flex h-10 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1">
-            <button v-for="range in ranges" :key="range.id" type="button" :aria-pressed="selectedRange === range.id" class="rounded-md px-3 text-sm transition" :class="selectedRange === range.id ? 'bg-slate-900 text-white shadow-sm dark:shadow-none' : 'text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-800 dark:bg-slate-800'" @click="selectRange(range.id)">{{ range.label }}</button>
+            <button v-for="range in ranges" :key="range.id" type="button" :aria-pressed="selectedRange === range.id" class="rounded-md px-3 text-sm transition" :class="selectedRange === range.id ? 'bg-slate-900 text-white shadow-sm dark:bg-slate-700 dark:text-slate-100 dark:shadow-none' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'" @click="selectRange(range.id)">{{ range.label }}</button>
           </div>
           <input type="date" aria-label="选择更新日期" :value="selectedDate" :max="today" class="h-10 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 text-sm text-slate-600 dark:text-slate-300" @change="selectDate" />
         </div>

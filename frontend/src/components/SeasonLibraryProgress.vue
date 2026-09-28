@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import embyIcon from '../assets/emby.svg'
 import type { EmbyMatch } from '../types/emby'
 import { formatEpisodeRanges, type seasonLibraryProgress } from '../types/seasonLibrary'
 
@@ -68,14 +69,14 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <template>
   <span ref="root" class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
-    <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-semibold" :title="hint" :class="reliable && ownedCount ? ((progress?.missing.length || progress?.displayMissing.length) ? 'text-amber-600' : 'text-emerald-600') : 'text-slate-400 dark:text-slate-500'">
-      <svg v-if="reliable && ownedCount" class="h-3.5 w-3.5 text-green-500" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="m8 0 8 8-8 8-8-8z"/><path fill="white" d="m6 4 5 4-5 4z"/></svg>
+    <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-semibold" :title="hint" :class="reliable && ownedCount ? ((progress?.missing.length || progress?.displayMissing.length) ? 'text-amber-600 dark:text-amber-300/90' : 'text-emerald-600 dark:text-emerald-300/90') : 'text-slate-400 dark:text-slate-400'">
+      <img v-if="reliable && ownedCount" :src="embyIcon" class="h-3.5 w-3.5 shrink-0" alt="" aria-hidden="true" />
       <span v-else-if="state === 'absent' || (reliable && (progress?.aired.length || progress?.displayMissing.length))" class="h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden="true"></span>
       {{ label }}
     </span>
-    <span v-if="state === 'present' && activeTotal && activeCollected" class="group/progress relative inline-flex w-44 max-w-full items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/90 px-2.5 py-2" :title="hint">
-      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-300">
-        <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? (segment.state === 'owned' ? 'bg-blue-500' : segment.state === 'missing' ? 'bg-amber-400' : 'bg-slate-300') : (segment.owned ? 'bg-blue-500' : 'bg-slate-300')"></span>
+    <span v-if="state === 'present' && activeTotal && activeCollected" class="group/progress relative inline-flex w-44 max-w-full items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2.5 py-2" :title="hint">
+      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-300 dark:bg-slate-600">
+        <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? (segment.state === 'owned' ? 'bg-blue-500 dark:bg-blue-400/70' : segment.state === 'missing' ? 'bg-amber-400 dark:bg-amber-400/60' : 'bg-slate-300 dark:bg-slate-600') : (segment.owned ? 'bg-blue-500 dark:bg-blue-400/70' : 'bg-slate-300 dark:bg-slate-600')"></span>
       </span>
       <span aria-hidden="true" class="pointer-events-none absolute left-1/2 top-1/2 z-10 hidden w-max max-w-[min(28rem,70vw)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-center text-[11px] font-medium text-slate-700 dark:text-slate-300 shadow-md group-hover/progress:block group-focus-visible/season:block">{{ hint }}</span>
     </span>

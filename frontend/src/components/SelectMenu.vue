@@ -66,7 +66,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
       :aria-expanded="open"
       :aria-controls="listboxID"
       :aria-activedescendant="open ? `${listboxID}-${activeIndex}` : undefined"
-      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-700 dark:text-slate-300 outline-none transition hover:border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:ring-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-700 dark:text-slate-300 outline-none transition hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:focus:ring-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
       @click="toggle"
       @keydown="keydown"
     >
@@ -85,12 +85,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
           type="button"
           tabindex="-1"
           class="flex w-full items-center justify-between gap-6 rounded-md px-3 py-2 text-left text-sm transition"
-          :class="option.value === modelValue ? 'bg-slate-900 text-white' : index === activeIndex ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950'"
+          :class="option.value === modelValue ? 'bg-slate-900 text-white dark:bg-slate-700 dark:text-slate-100' : index === activeIndex ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
           @pointerenter="activeIndex = index"
           @click="choose(index)"
         >
           <span class="whitespace-nowrap">{{ option.label }}</span>
-          <span v-if="option.value === modelValue" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white dark:bg-slate-900" aria-hidden="true" />
+          <span v-if="option.value === modelValue" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white dark:bg-amber-500" aria-hidden="true" />
         </button>
       </li>
     </ul>

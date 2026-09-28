@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import WorkbenchHeader from '../components/WorkbenchHeader.vue'
+import ManagementLayout from '../components/ManagementLayout.vue'
 import type { WebsiteUser } from '../composables/useWebsiteAuth'
 
 const props = defineProps<{ token: string }>()
@@ -48,10 +48,8 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader @logout="emit('logout')" />
-    <main class="mx-auto max-w-5xl space-y-6 px-4 py-10 sm:px-8">
-      <div><h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">用户管理</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">创建独立网站账号，让用户浏览电影、剧集与入库状态。</p></div>
+  <ManagementLayout title="用户管理" description="创建独立网站账号，让用户浏览电影、剧集与入库状态。" @logout="emit('logout')">
+    <div class="space-y-6">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
       <form class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6" @submit.prevent="mutate('', { username, password }, '账号已创建，请将账号和密码交给用户。')">
@@ -78,6 +76,6 @@ onBeforeUnmount(() => lifecycle.abort())
         <label class="block text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">新密码<input v-model="resetPassword" required minlength="8" maxlength="128" type="password" autocomplete="new-password" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3" /></label>
         <div class="flex gap-4"><button :disabled="busy" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm text-white disabled:opacity-50">保存新密码</button><button type="button" :disabled="busy" class="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500" @click="resetUser = undefined; resetPassword = ''">取消</button></div>
       </form>
-    </main>
-  </div>
+    </div>
+  </ManagementLayout>
 </template>

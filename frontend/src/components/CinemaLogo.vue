@@ -19,7 +19,7 @@
 
     <span class="flex flex-col justify-center max-[520px]:hidden">
       <span class="brand-spectrum whitespace-nowrap font-mono text-[15px] font-black uppercase leading-[1]">Cinema115</span>
-      <span class="mt-1 whitespace-nowrap text-[9px] font-semibold leading-[1] text-slate-500 dark:text-slate-400 dark:text-slate-500">
+      <span class="mt-1 whitespace-nowrap text-[9px] font-semibold leading-[1] text-slate-500 dark:text-slate-300">
         影视资源与媒体自动化
       </span>
     </span>
@@ -36,6 +36,10 @@
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 1px 1px rgb(15 23 42 / 0.12));
   animation: cinema-brand-spectrum 9s linear infinite;
+}
+
+.dark .brand-spectrum {
+  background-image: linear-gradient(100deg, #93c5fd, #67e8f9 28%, #fcd34d 52%, #67e8f9 74%, #93c5fd);
 }
 
 @keyframes cinema-brand-spectrum {

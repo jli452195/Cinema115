@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .filter-scroll {
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   scrollbar-width: thin;
 }
 
@@ -330,6 +330,6 @@ onBeforeUnmount(() => {
 
 .filter-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: #cbd5e1;
+  background: var(--scrollbar-thumb);
 }
 </style>

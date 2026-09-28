@@ -32,7 +32,6 @@ async function load(more = false) {
     if (current.signal.aborted) return
     versions.value = more ? [...versions.value, ...data.versions] : data.versions
     loaded.value = true; hasMore.value = !!data.hasMore; offset.value = data.nextOffset
-    if (props.kind === 'movie' && !more && rows.value.length) openKey.value = rows.value[0]!.key
   } catch (e) { if (!current.signal.aborted) error.value = e instanceof Error ? e.message : '媒体版本读取失败' }
   finally { if (!current.signal.aborted) loading.value = false }
 }
