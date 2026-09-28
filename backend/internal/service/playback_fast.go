@@ -173,8 +173,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		s.logs.Add(ctx, "INFO", fmt.Sprintf("SHA1 搜索完成，未命中；SHA1=%s｜历史记录数=%d｜最近记录=%s｜状态=%s｜原因=%s", strings.ToUpper(info.SHA1), count, previous.Key, previous.Status, previous.Message))
 	}
 	if remaining := time.Until(retryAt); remaining > 0 {
-		seconds := int64((remaining + time.Second - 1) / time.Second)
-		return "", fmt.Errorf("上次秒传结果未确认，SHA1 暂未命中；请在 %d 秒后重试，无需移除本地记录", seconds)
+		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
 	next("账号上传预检")
 	ticket, err := fast.PreparePlaybackAccount(ctx, selected.binding.AccountID, selected.cookie)
@@ -212,6 +211,18 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		e.RetryNotBefore = time.Now().UTC().Add(playbackRetryCooldown)
 		if saveErr := s.put(e); saveErr != nil {
 			return "", saveErr
+		}
+		var httpFailure *p115.HTTPError
+		if (errors.Is(err, p115.ErrInstantUncertain) || err == nil) && ctx.Err() == nil && !errors.As(err, &httpFailure) {
+			next("异常响应 SHA1 确认")
+			link, found, confirmErr := s.confirmUncertainUpload(ctx, fast, e, info, selected, ua, report)
+			if found {
+				return link, nil
+			}
+			if confirmErr != nil {
+				reason += "；只读确认未完成：" + p115.SharePlaybackFailureReason(confirmErr)
+			}
+			return "", &PlaybackPendingError{RetryAt: e.RetryNotBefore, Reason: reason}
 		}
 		return "", fmt.Errorf("朋友账号秒传未完成：%s", reason)
 	}

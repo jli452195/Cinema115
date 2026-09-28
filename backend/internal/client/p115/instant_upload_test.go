@@ -17,7 +17,7 @@ func instantResponse(status int, raw []byte) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(raw))}
 }
 
-func encryptedInstantResponse(t *testing.T, value string) []byte {
+func encryptedInstantResponse(t *testing.T, value string, tails ...[]byte) []byte {
 	t.Helper()
 	// A literal-only LZ4 block, independently framed with a 16-bit length and terminator.
 	block := []byte{byte(min(len(value), 15) << 4)}
@@ -33,7 +33,11 @@ func encryptedInstantResponse(t *testing.T, value string) []byte {
 	framed := make([]byte, 2)
 	binary.LittleEndian.PutUint16(framed, uint16(len(block)))
 	framed = append(framed, block...)
-	framed = append(framed, 0, 0)
+	tail := []byte{0, 0}
+	if len(tails) > 0 {
+		tail = tails[0]
+	}
+	framed = append(framed, tail...)
 	result, err := AESEncryptCBC(framed)
 	if err != nil {
 		t.Fatal(err)

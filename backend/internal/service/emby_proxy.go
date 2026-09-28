@@ -19,6 +19,7 @@ import (
 type EmbyProxyConfig struct {
 	Enabled                bool   `json:"enabled"`
 	Debug                  bool   `json:"debug"`
+	Prewarm                bool   `json:"prewarm"`
 	DirectLinkCacheMinutes int    `json:"directLinkCacheMinutes"`
 	Port                   int    `json:"port"`
 	URL                    string `json:"url"`
@@ -174,7 +175,11 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	}
 	old, oldCancel := s.server, s.serverCancel
 	s.config, s.lastError = c, ""
+	previousHandler := s.handler
 	s.handler = s.factory(c)
+	if closer, ok := previousHandler.(interface{ Close() }); ok {
+		closer.Close()
+	}
 	if !c.Enabled {
 		s.server = nil
 		s.serverCancel = nil
@@ -242,9 +247,13 @@ func (s *EmbyProxy) Close() {
 	s.closed = true
 	server := s.server
 	cancelRequests := s.serverCancel
+	handler := s.handler
 	s.server = nil
 	s.serverCancel = nil
 	s.mu.Unlock()
+	if closer, ok := handler.(interface{ Close() }); ok {
+		closer.Close()
+	}
 	if server != nil {
 		stopEmbyProxy(server, cancelRequests)
 	}

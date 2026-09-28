@@ -157,9 +157,10 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 		if err != nil {
 			return nil, instantFailure(stage, fmt.Sprintf("上传响应 AES 解密失败（响应字节数=%d）", len(raw)), ErrInstantUncertain)
 		}
-		decoded, err = LZ4Decompress(decoded)
+		decryptedBytes := len(decoded)
+		decoded, err = decompressInstantLZ4(decoded)
 		if err != nil {
-			return nil, instantFailure(stage, fmt.Sprintf("上传响应 LZ4 解压失败（响应字节数=%d）", len(raw)), ErrInstantUncertain)
+			return nil, instantFailure(stage, fmt.Sprintf("上传响应 LZ4 解压失败（响应字节数=%d，AES输入字节=%d，密文尾部字节=%d，解密后字节=%d）：%s", len(raw), len(raw)/16*16, len(raw)%16, decryptedBytes, err), ErrInstantUncertain)
 		}
 		var response struct {
 			Status    json.Number `json:"status"`

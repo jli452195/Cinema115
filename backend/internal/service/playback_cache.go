@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"strm115/backend/internal/client/emby"
@@ -56,14 +57,15 @@ type playbackCacheClient interface {
 	DriveDownloadURLWithUA(context.Context, string, string, string, string) (string, error)
 }
 type PlaybackCache struct {
-	sourceMappings map[string]string // bounded, memory-only; guarded by gate
-	mu             sync.Mutex
-	gate           chan struct{}
-	store          accountSecretStore
-	accounts       *P115Accounts
-	client         playbackCacheClient
-	logs           *EmbyProxyLogs
-	doc            PlaybackCacheStatus
+	foregroundWaiting atomic.Int64
+	sourceMappings    map[string]string // bounded, memory-only; guarded by gate
+	mu                sync.Mutex
+	gate              chan struct{}
+	store             accountSecretStore
+	accounts          *P115Accounts
+	client            playbackCacheClient
+	logs              *EmbyProxyLogs
+	doc               PlaybackCacheStatus
 }
 
 func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
@@ -268,7 +270,30 @@ func (snap PlaybackCacheSnapshot) Select(embyURL, userID string) (*PlaybackCache
 	}
 	return &selected, nil
 }
+
+type playbackPrewarmKey struct{}
+
+func PlaybackPrewarmContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, playbackPrewarmKey{}, true)
+}
+
 func (s *PlaybackCache) enter(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if warm, _ := ctx.Value(playbackPrewarmKey{}).(bool); warm {
+		if s.foregroundWaiting.Load() > 0 {
+			return fmt.Errorf("正式播放正在等待，跳过本次预热")
+		}
+		select {
+		case s.gate <- struct{}{}:
+			return nil
+		default:
+			return fmt.Errorf("播放缓存正在使用，跳过本次预热")
+		}
+	}
+	s.foregroundWaiting.Add(1)
+	defer s.foregroundWaiting.Add(-1)
 	select {
 	case s.gate <- struct{}{}:
 		return nil

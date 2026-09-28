@@ -10,9 +10,9 @@ import { embyRequest } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
+interface Config { enabled: boolean; debug: boolean; prewarm: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
 interface Status { config: Config; listening: boolean; error: string }
-const config = ref<Config>({ enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' })
+const config = ref<Config>({ enabled: false, debug: false, prewarm: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' })
 const status = ref<Status>()
 const accounts = ref<P115Account[]>([])
 const busy = ref(true)
@@ -31,7 +31,7 @@ async function load() {
       p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: lifecycle.signal }),
     ])
     const [proxy, accountList] = results
-    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, ...proxy.value.config } }
+    if (proxy.status === 'fulfilled') { status.value = proxy.value; config.value = { directLinkCacheMinutes: 9, debug: false, prewarm: false, ...proxy.value.config } }
     if (accountList.status === 'fulfilled') accounts.value = accountList.value.accounts
     const failed = results.find(result => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason
@@ -67,6 +67,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <fieldset :disabled="busy || !loaded" class="space-y-6 disabled:opacity-50">
           <SettingSwitch v-model="config.enabled" label="启用 Emby 302 反代" description="保存后立即生效。播放器连接下面的反代端口，原有 STRM 无需重新生成。" />
           <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。每次请求合并为一条日志，展开查看完整 CDN 直链、请求与响应头、解析步骤。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
+          <SettingSwitch v-model="config.prewarm" label="播放预热" description="默认关闭，保存后生效。收到播放信息时后台取链，必要时提前秒传；仅预热唯一或明确选中的媒体源。打开详情但未播放也可能产生网盘文件，需手动删除。相同 UA 复用有效直链，不同 UA 重新取链；能否提前触发取决于播放器。" />
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="text-sm text-slate-700">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
             <label class="text-sm text-slate-700">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>

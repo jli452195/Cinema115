@@ -83,3 +83,28 @@ func TestInstantDiagnosticIgnoresUntrustedText(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestInstantUploadDecodesShortProtocolTail(t *testing.T) {
+	for _, tail := range [][]byte{{0x81}, {0xff, 0xff}} {
+		c := newTestShareClient()
+		posts := 0
+		c.HTTP.Transport = metadataTransport(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.Path {
+			case "/files":
+				return instantResponse(200, []byte(`{"state":true,"cid":"0"}`)), nil
+			case "/files/uploadinfo":
+				return instantResponse(200, []byte(`{"user_id":22,"userkey":"secret"}`)), nil
+			case "/4.0/initupload.php":
+				posts++
+				return instantResponse(200, encryptedInstantResponse(t, `{"status":2,"pickcode":"pick1234"}`, tail)), nil
+			default:
+				t.Fatal("unexpected request")
+				return nil, nil
+			}
+		})
+		result, err := c.InstantUpload(context.Background(), testInstantInfo(), "0", "UID=22_A; SEID=secret", nil)
+		if err != nil || result.PickCode != "pick1234" || posts != 1 {
+			t.Fatal("short-tail upload failed", err)
+		}
+	}
+}

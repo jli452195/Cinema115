@@ -13,11 +13,15 @@ import (
 
 func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
 	for _, suffix := range []string{"", "/movie.mkv", "/e63d59350688066658c5d8cf2748b97abb684251", "/e63d59350688066658c5d8cf2748b97abb684251/[标题] 日本語.mkv"} {
-		t.Run("abc123"+suffix, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, suffix) })
+		t.Run("abc123"+suffix, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, suffix, false) })
 	}
 }
 
-func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string) {
+func TestPickCodeFriendPrewarm(t *testing.T) {
+	testPickCodeFriendPlaybackDownloadAndCache(t, "", true)
+}
+
+func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, prewarm bool) {
 	const userID = "8be403a10974486c94a987b8036c8484"
 	accounts, sourceID := proxyTestAccounts(t)
 	targetID, err := accounts.Add("friend")
@@ -42,7 +46,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string) {
 		case "/emby/Items/movie/PlaybackInfo":
 			// The path SHA1 deliberately differs from the source account metadata.
 			// It must not replace the trusted source SHA1 or trigger a host request.
-			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115/api/redirect115/abc123%s"}]}`, suffix)
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115/api/redirect115/abc123%s"}]}`, suffix)
 		default:
 			w.WriteHeader(403)
 		}
@@ -62,7 +66,8 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string) {
 	if err := cache.ApplyBindings(upstream.URL, []service.PlaybackBinding{{UserID: userID, AccountID: targetID}}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
+	defer h.Close()
 	h.pickDownload = func(context.Context, string, string, string) (string, error) {
 		t.Fatal("source direct link returned to friend")
 		return "", nil
@@ -81,6 +86,15 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string) {
 	}
 	if fake.pickReads != 0 || fake.uploads != 0 {
 		t.Fatal("cloud access before authorization")
+	}
+	if prewarm {
+		if w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer"); w.Code != 200 {
+			t.Fatal(w.Code)
+		}
+		awaitPrewarm(t, h)
+		if fake.uploads != 1 {
+			t.Fatal("friend file not prepared")
+		}
 	}
 	for _, p := range []string{path, "/Items/movie/Download?api_key=viewer", path} {
 		w := call("GET", p)
