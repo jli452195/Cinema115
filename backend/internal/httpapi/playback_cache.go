@@ -17,6 +17,20 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		c.Next()
 	})
 	group.GET("", func(c *gin.Context) { c.JSON(200, s.Status()) })
+	group.POST("/forget-material", func(c *gin.Context) {
+		var input struct {
+			ID string `json:"id"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "秒传资料参数无效"})
+			return
+		}
+		if err := s.ForgetMaterial(c.Request.Context(), input.ID); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Status())
+	})
 	group.POST("/forget-directory", func(c *gin.Context) {
 		var input struct {
 			Key string `json:"key"`

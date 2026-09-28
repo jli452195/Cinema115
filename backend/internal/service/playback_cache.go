@@ -28,6 +28,7 @@ type PlaybackCacheConfig struct {
 	Bindings       []PlaybackBinding `json:"bindings"`
 }
 type PlaybackCacheEntry struct {
+	MaterialID      string                 `json:"materialId,omitempty"`
 	SharedDirectory bool                   `json:"sharedDirectory,omitempty"`
 	Key             string                 `json:"key"`
 	AccountID       string                 `json:"accountId"`
@@ -45,6 +46,7 @@ type PlaybackCacheEntry struct {
 	TargetScope     string                 `json:"targetScope,omitempty"`
 }
 type PlaybackCacheStatus struct {
+	Materials   []PlaybackMaterial       `json:"materials"`
 	Directories []PlaybackCacheDirectory `json:"directories,omitempty"`
 	Config      PlaybackCacheConfig      `json:"config"`
 	Entries     []PlaybackCacheEntry     `json:"entries"`
@@ -71,8 +73,11 @@ type PlaybackCache struct {
 func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
 	s := &PlaybackCache{store: store, accounts: accounts, client: client, logs: logs, gate: make(chan struct{}, 1), doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{RetentionHours: 72, Bindings: []PlaybackBinding{}}, Entries: []PlaybackCacheEntry{}}}
 	if raw := store.Value(); raw != "" {
-		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > 2000 || len(s.doc.Directories) > 1000 {
+		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > 2000 || len(s.doc.Directories) > 1000 || len(s.doc.Materials) > maxPlaybackMaterials {
 			return nil, fmt.Errorf("播放缓存配置或记录损坏")
+		}
+		if err := validatePlaybackMaterials(s.doc.Materials); err != nil {
+			return nil, err
 		}
 	}
 	changed := s.doc.Config.CleanupEnabled
@@ -106,6 +111,7 @@ func (s *PlaybackCache) Status() PlaybackCacheStatus {
 	doc.Config.Bindings = append([]PlaybackBinding{}, doc.Config.Bindings...)
 	doc.Entries = append([]PlaybackCacheEntry{}, doc.Entries...)
 	doc.Directories = append([]PlaybackCacheDirectory{}, doc.Directories...)
+	doc.Materials = clonePlaybackMaterials(doc.Materials)
 	return doc
 }
 func (s *PlaybackCache) saveLocked(doc PlaybackCacheStatus) error {
@@ -228,6 +234,7 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 }
 
 type PlaybackCacheSelection struct {
+	donors          []P115Account // Request snapshot only; never persisted or returned by Status.
 	binding         PlaybackBinding
 	accountName     string
 	accountRevision uint64
@@ -243,6 +250,15 @@ type PlaybackCacheSnapshot struct {
 
 func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	c := s.Status().Config
+	// Freeze all eligible source credentials before the request starts network I/O.
+	s.accounts.mu.RLock()
+	donors := make([]P115Account, 0, len(s.accounts.value.Accounts))
+	for _, a := range s.accounts.value.Accounts {
+		if !a.Primary && a.Cookie != "" && p115.CookieUserID(a.Cookie) == a.UID {
+			donors = append(donors, a)
+		}
+	}
+	s.accounts.mu.RUnlock()
 	snap := PlaybackCacheSnapshot{embyURL: c.EmbyURL, selections: make(map[string]PlaybackCacheSelection, len(c.Bindings))}
 	for _, b := range c.Bindings {
 		a, err := s.accounts.Get(b.AccountID)
@@ -250,7 +266,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 		if err == nil && (a.Cookie == "" || p115.CookieUserID(a.Cookie) == "") {
 			err = fmt.Errorf("绑定的朋友账号未登录")
 		}
-		snap.selections[b.UserID] = PlaybackCacheSelection{binding: b, accountName: a.Name, accountRevision: a.Revision, cookie: a.Cookie, uid: p115.CookieUserID(a.Cookie), err: err}
+		snap.selections[b.UserID] = PlaybackCacheSelection{donors: donors, binding: b, accountName: a.Name, accountRevision: a.Revision, cookie: a.Cookie, uid: p115.CookieUserID(a.Cookie), err: err}
 	}
 	return snap
 }
@@ -356,6 +372,11 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 		sourceID = sourceAccountIDs[0]
 	}
 	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope()))
+	origin := DirectLinkKey("pickcode-material", sourceID, pickCode)
+	if sourceID == "" {
+		origin = DirectLinkKey("pickcode-material", sourceCookie, pickCode)
+	}
+	ctx = context.WithValue(ctx, playbackMaterialOrigin{}, origin)
 	link, err := s.resolveInstant(ctx, selection, sourceCookie, ua, &report, func() (*p115.DownloadInfo, error) {
 		if lazy, ok := s.client.(interface {
 			PlaybackPickCodeSource(context.Context, string, string, string) (*p115.DownloadInfo, error)
@@ -425,6 +446,9 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return "", fmt.Errorf("朋友分享取链失败：%s；未尝试源账号秒传", p115.SharePlaybackFailureReason(err))
 	}
 	s.logs.Add(ctx, "INFO", "朋友账号无法读取此分享文件，尝试配置的源账号辅助秒传（不返回源账号直链）")
+	if share != nil {
+		ctx = context.WithValue(ctx, playbackMaterialOrigin{}, DirectLinkKey("share-material", share.Code, share.Password, fileID))
+	}
 	return s.resolveInstant(ctx, selection, sourceCookie, ua, report, func() (*p115.DownloadInfo, error) {
 		return s.client.DownloadInstantInfoWithUA(ctx, share, fileID, sourceCookie, p115.PlaybackUserAgent)
 	})

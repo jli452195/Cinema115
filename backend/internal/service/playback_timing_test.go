@@ -40,7 +40,7 @@ func TestPlaybackTimingStaysInOneRequestAndCoversFailure(t *testing.T) {
 		if strings.Count(steps, "秒传链路耗时：") != 1 {
 			t.Fatal("missing or repeated timing summary")
 		}
-		for _, stage := range []string{"等待缓存操作=", "源文件解析=", "秒传预检=", "秒传提交=", "二次校验片段读取=", "合计="} {
+		for _, stage := range []string{"等待缓存操作=", "文件秒传资料=", "秒传预检=", "秒传提交=", "二次校验片段读取=", "合计="} {
 			if !strings.Contains(steps, stage) {
 				t.Fatal("missing stage", stage)
 			}

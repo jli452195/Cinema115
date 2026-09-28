@@ -44,10 +44,10 @@ func TestPickCodeSkipsShareAndReusesInstantCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.ResolvePickCodeWithReport(context.Background(), selection, "abc123", "source-private", "player-UA"); err == nil {
-		t.Fatal("source failure accepted")
+	if _, r, err := s.ResolvePickCodeWithReport(context.Background(), selection, "abc123", "source-private", "player-UA"); err != nil || r.UsedSource {
+		t.Fatal("saved material should survive source failure", err)
 	}
-	if drive.links != 2 || drive.uploads != 1 {
+	if drive.links != 3 || drive.uploads != 1 || f.reads != 1 {
 		t.Fatal("unexpected fallback")
 	}
 }

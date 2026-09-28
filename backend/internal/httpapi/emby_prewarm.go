@@ -103,7 +103,7 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		return
 	}
 	snapshot := &prewarmSnapshot{}
-	snapshot.source, _ = h.accounts.Primary("")
+	snapshot.source, _ = h.accounts.Get(h.accounts.PrimaryID())
 	if h.cache != nil {
 		snapshot.bindings = h.cache.Snapshot()
 	}

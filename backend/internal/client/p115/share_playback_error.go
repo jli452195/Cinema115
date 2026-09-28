@@ -45,6 +45,9 @@ func shareDownloadError(response shareResponse) error {
 
 // SharePlaybackFailureReason is safe for logs: no upstream response text or URLs.
 func SharePlaybackFailureReason(err error) string {
+	if errors.Is(err, ErrPlaybackRangeUnavailable) {
+		return ErrPlaybackRangeUnavailable.Error()
+	}
 	for _, known := range []error{ErrShareNotReadable, ErrShareLoginRequired, ErrShareThrottled, ErrSharePassword, ErrShareDownloadRejected, ErrShareUnderReview} {
 		if errors.Is(err, known) {
 			return known.Error()

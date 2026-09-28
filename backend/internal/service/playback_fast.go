@@ -65,8 +65,8 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		next("结束")
 		s.logs.Add(ctx, "INFO", fmt.Sprintf("秒传链路耗时：%s｜合计=%d ms", strings.Join(stages, "｜"), time.Since(started).Milliseconds()))
 	}()
-	if sourceCookie == "" || selected.binding.ParentCID == "" {
-		return "", fmt.Errorf("请配置源账号凭据及朋友账号的秒传保存目录")
+	if selected.binding.ParentCID == "" {
+		return "", fmt.Errorf("请配置绑定账号的秒传保存目录")
 	}
 	next("等待缓存操作")
 	if err := s.enter(ctx); err != nil {
@@ -105,20 +105,25 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		}
 		delete(s.sourceMappings, sourceKey)
 	}
-	next("源文件解析")
-	info, err := loadSource()
+	next("文件秒传资料")
+	info, materialID, commitRanges, err := s.preparePlaybackMaterial(ctx, selected, report, func() (*p115.DownloadInfo, error) {
+		if sourceCookie == "" {
+			return nil, fmt.Errorf("请配置主账号凭据")
+		}
+		return loadSource()
+	})
 	if err != nil {
-		return "", fmt.Errorf("源文件解析失败：%s", p115.SharePlaybackFailureReason(err))
+		return "", err
 	}
 	if err := p115.ValidateInstantSource(info); err != nil {
 		return "", err
 	}
-	report.UsedSource = true
 	key := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.binding.ParentCID, strings.ToUpper(info.SHA1))
 	for _, entry := range s.Status().Entries {
 		if entry.Key != failedMapping && entry.AccountID == selected.binding.AccountID && entry.UID == selected.uid && entry.TargetScope == targetScope && entry.Status == "ready" && cacheMatches(entry.File, info) {
 			next("朋友账号文件映射取链")
 			entry.SourceKey = sourceKey
+			entry.MaterialID = materialID
 			link, err := s.reuseFastEntry(ctx, entry, selected, ua, report)
 			if err == nil {
 				s.rememberSource(sourceKey, entry.Key)
@@ -137,6 +142,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	e := PlaybackCacheEntry{Key: key, AccountID: selected.binding.AccountID, UID: selected.uid, ParentCID: selected.binding.ParentCID, DirectoryID: selected.binding.ParentCID, File: p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}, Status: "uploading", CreatedAt: time.Now().UTC(), LastUsed: time.Now().UTC()}
 	e.SourceKey, e.TargetScope = sourceKey, targetScope
+	e.MaterialID = materialID
 	if f != nil {
 		if !cacheMatches(*f, info) || f.ID == "" || f.PickCode == "" {
 			return "", fmt.Errorf("目标搜索结果 SHA1 或文件标识无效")
@@ -225,6 +231,10 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			return "", &PlaybackPendingError{RetryAt: e.RetryNotBefore, Reason: reason}
 		}
 		return "", fmt.Errorf("朋友账号秒传未完成：%s", reason)
+	}
+	// Only an explicit successful upload response proves the challenge accepted.
+	if err := commitRanges(); err != nil {
+		return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
 	}
 	next("目标 SHA1 校验与取链")
 	s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))

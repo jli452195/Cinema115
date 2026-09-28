@@ -229,6 +229,8 @@ type DownloadInfo struct {
 	SHA1            string `json:"sha1"`
 	URL             string `json:"-"`
 	loadPlaybackURL func(context.Context) (string, error)
+	// Request-local resolver. Credentials, URLs and callbacks never serialize.
+	ResolveRangeSHA1 func(context.Context, int64, int64) (string, error) `json:"-"`
 }
 
 func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (string, error) {

@@ -24,10 +24,10 @@ func TestPlaybackMappingSurvivesRestartAndSeparatesCredentials(t *testing.T) {
 	changed := *selected
 	changed.cookie = "UID=22_B"
 	changed.accountRevision++
-	if _, r, err := restarted.ResolvePickCodeWithReport(context.Background(), &changed, "pickaaa", "src", "newUA", "source-id"); err != nil || !r.UsedSource {
-		t.Fatal("credential change reused mapping", err)
+	if _, r, err := restarted.ResolvePickCodeWithReport(context.Background(), &changed, "pickaaa", "src", "newUA", "source-id"); err != nil || r.UsedSource {
+		t.Fatal("credential change should reuse metadata, not credentials", err)
 	}
-	if f.reads != 2 || f.uploads != 1 {
+	if f.reads != 1 || f.uploads != 1 || f.cookie != changed.cookie {
 		t.Fatal("credential isolation failed")
 	}
 }

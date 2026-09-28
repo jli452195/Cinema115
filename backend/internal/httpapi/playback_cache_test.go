@@ -191,10 +191,10 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 			for _, mode := range []string{"朋友分享直取", "新建秒传文件", "复用同 SHA1 文件"} {
 				if strings.Contains(entry.Message, "播放方式="+mode) {
 					resultCounts[mode]++
-					if strings.Contains(entry.Message, "源读取账号=") != (mode != "朋友分享直取") {
+					if strings.Contains(entry.Message, "源读取账号=") != (mode == "新建秒传文件") {
 						t.Fatal("错误标记源账号参与取链")
 					}
-					if mode != "朋友分享直取" && !strings.Contains(entry.Message, `源读取账号="播放账号"（UID 123`) {
+					if mode == "新建秒传文件" && !strings.Contains(entry.Message, `源读取账号="播放账号"（UID 123`) {
 						t.Fatal("源账号标识错误")
 					}
 				}

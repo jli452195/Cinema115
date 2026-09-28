@@ -122,7 +122,7 @@ func TestFastSHA1ReuseAndCredentialIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if f.reads != 4 || f.uploads != 2 || f.prepares != 2 {
+	if f.reads != 3 || f.uploads != 2 || f.prepares != 2 {
 		t.Fatal("credential isolation or SHA1 reuse failed")
 	}
 }

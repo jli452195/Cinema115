@@ -70,7 +70,7 @@ func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc,
 		if err != nil {
 			return "", err
 		}
-		if id != f.ID || (got.SHA1 != "" && !strings.EqualFold(got.SHA1, f.SHA1)) {
+		if got == nil || id != f.ID || got.Size != f.Size || (got.SHA1 != "" && !strings.EqualFold(got.SHA1, f.SHA1)) {
 			return "", fmt.Errorf("源直链文件身份或 SHA1 已变化")
 		}
 		return got.URL, nil

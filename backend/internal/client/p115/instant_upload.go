@@ -28,6 +28,7 @@ const MaxInstantRangeBytes int64 = 8 << 20
 
 var ErrInstantUnsupported = errors.New("115 要求普通上传，此文件未秒传；已停止，不上传整部视频")
 var ErrInstantUncertain = errors.New("秒传结果未确认，请先检查目标目录，避免重复提交")
+var ErrPlaybackRangeUnavailable = errors.New("缺少本次校验片段，已知副本及源文件暂不可读；资料已保留，请恢复来源后重试")
 var instantHash = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
 var instantPickCode = regexp.MustCompile(`^[a-zA-Z0-9]{6,64}$`)
 var instantRange = regexp.MustCompile(`^([0-9]+)-([0-9]+)$`)
@@ -48,7 +49,7 @@ func ValidateInstantSource(info *DownloadInfo) error {
 	if info == nil || !instantHash.MatchString(info.SHA1) || info.Size <= 0 || strings.TrimSpace(info.Name) == "" || len([]rune(info.Name)) > 255 || strings.ContainsAny(info.Name, "/\\\r\n\x00") {
 		return fmt.Errorf("源文件缺少有效的完整 SHA1、文件名或大小，无法秒传")
 	}
-	if !AllowedMediaURL(info.URL) && info.loadPlaybackURL == nil {
+	if !AllowedMediaURL(info.URL) && info.loadPlaybackURL == nil && info.ResolveRangeSHA1 == nil {
 		return fmt.Errorf("源文件直链无效")
 	}
 	return nil
@@ -196,20 +197,21 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 				return nil, instantFailure(stage, "115 返回 status=7，但校验范围格式错误、越界或超过 8 MB", err)
 			}
 			report("range", end-start+1)
-			link := info.URL
-			if info.loadPlaybackURL != nil {
-				link, err = info.loadPlaybackURL(ctx)
-				if err != nil {
-					return nil, instantFailure("二次校验源直链", SharePlaybackFailureReason(err), err)
-				}
+			var hash string
+			if info.ResolveRangeSHA1 != nil {
+				hash, err = info.ResolveRangeSHA1(ctx, start, end)
+			} else {
+				hash, err = c.PlaybackRangeSHA1(ctx, info, start, end)
 			}
-			hash, err := c.instantRangeHash(ctx, link, start, end, info.Size)
 			if err != nil {
 				return nil, instantFailure("二次校验片段读取", SharePlaybackFailureReason(err), err)
 			}
+			if !instantHash.MatchString(hash) {
+				return nil, instantFailure("二次校验片段读取", "校验片段 SHA1 无效", nil)
+			}
 			report("range_done", end-start+1)
 			form.Set("sign_key", response.SignKey)
-			form.Set("sign_val", hash)
+			form.Set("sign_val", strings.ToUpper(hash))
 			challenged = true
 		default:
 			return nil, instantFailure(stage, "115 未返回秒传成功状态（"+instantResponseCodes(decoded)+"）", nil)

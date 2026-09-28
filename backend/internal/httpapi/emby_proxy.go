@@ -483,7 +483,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	// Capture credentials once, before any I/O; configuration changes cannot switch this request's account.
-	sourceAccount, _ := h.accounts.Primary("")
+	sourceAccount, _ := h.accounts.Get(h.accounts.PrimaryID())
 	cookie := sourceAccount.Cookie
 	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
 	var cacheSnapshot service.PlaybackCacheSnapshot
@@ -596,7 +596,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			return
 		}
 	}
-	if cookie == "" && (cacheSelection == nil || claim.PickCode != "") {
+	if cookie == "" && cacheSelection == nil {
 		fail("302 使用的 115 账号未选择、已删除或未登录，请管理员重新配置", 503)
 		return
 	}
