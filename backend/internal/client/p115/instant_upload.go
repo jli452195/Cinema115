@@ -147,6 +147,11 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 		if err != nil {
 			return nil, err
 		}
+		if attempt == 0 && info.PrefetchRangeSource != nil {
+			if stop := info.PrefetchRangeSource(ctx); stop != nil {
+				defer stop()
+			}
+		}
 		report("init", 0)
 		raw, err = c.instantRequest(ctx, http.MethodPost, "https://uplb.115.com/4.0/initupload.php?k_ec="+url.QueryEscape(token), cookie, body)
 		if err != nil {
@@ -254,6 +259,11 @@ func instantPayload(input url.Values, timestamp int64) ([]byte, string, error) {
 }
 
 func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cookie string, body []byte) ([]byte, error) {
+	if method == http.MethodPost {
+		var finish func()
+		ctx, finish = tracePlaybackHTTP(ctx, "秒传提交 HTTP")
+		defer finish()
+	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("创建秒传接口请求失败")
@@ -302,6 +312,8 @@ func (c *ShareClient) instantRangeHash(ctx context.Context, link string, start, 
 	if !AllowedMediaURL(link) {
 		return "", fmt.Errorf("校验直链域名无效")
 	}
+	ctx, finish := tracePlaybackHTTP(ctx, "校验片段 CDN")
+	defer finish()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
 		return "", fmt.Errorf("创建片段校验请求失败")
@@ -331,7 +343,11 @@ func (c *ShareClient) instantRangeHash(ctx context.Context, link string, start, 
 		return "", fmt.Errorf("校验片段范围或编码不匹配")
 	}
 	hash := sha1.New()
-	n, err := io.Copy(hash, io.LimitReader(resp.Body, end-start+2))
+	writer := &playbackHashWriter{writer: hash}
+	readStarted := time.Now()
+	n, err := io.Copy(writer, io.LimitReader(resp.Body, end-start+2))
+	emitPlaybackTiming(ctx, PlaybackTiming{Stage: "片段读取及哈希", Duration: time.Since(readStarted), Bytes: n})
+	emitPlaybackTiming(ctx, PlaybackTiming{Stage: "片段 SHA1 计算（包含在读取耗时内）", Duration: writer.duration, Bytes: n})
 	if err != nil || n != end-start+1 {
 		return "", fmt.Errorf("校验片段长度不匹配或读取失败")
 	}

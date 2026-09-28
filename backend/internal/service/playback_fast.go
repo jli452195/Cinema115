@@ -54,6 +54,29 @@ func (s *PlaybackCache) ForgetDirectory(ctx context.Context, key string) error {
 // All mutations and lookups share a gate so concurrent requests cannot upload
 // the same content twice. Unknown writes are recoverable by a positive SHA1 hit.
 func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, sourceCookie, ua string, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (string, error) {
+	ctx = p115.WithPlaybackTiming(ctx, func(t p115.PlaybackTiming) {
+		message := fmt.Sprintf("秒传分段计时：%s=%.2f ms", t.Stage, float64(t.Duration)/float64(time.Millisecond))
+		if t.Canceled {
+			message += "｜状态=已取消"
+		} else if t.Failed {
+			message += "｜状态=失败"
+		}
+		if t.HTTP {
+			connection := "未取得连接"
+			if t.Connected {
+				if t.Reused {
+					connection = "复用"
+				} else {
+					connection = "新建"
+				}
+			}
+			message += fmt.Sprintf("｜DNS=%.2f ms｜TCP=%.2f ms｜TLS=%.2f ms｜请求开始至首字节=%.2f ms｜连接=%s", float64(t.DNS)/float64(time.Millisecond), float64(t.TCP)/float64(time.Millisecond), float64(t.TLS)/float64(time.Millisecond), float64(t.FirstByte)/float64(time.Millisecond), connection)
+		}
+		if t.Bytes > 0 {
+			message += fmt.Sprintf("｜字节数=%d", t.Bytes)
+		}
+		s.logs.Add(ctx, "INFO", message)
+	})
 	started, stageStarted := time.Now(), time.Now()
 	stage := "配置检查"
 	stages := make([]string, 0, 12)

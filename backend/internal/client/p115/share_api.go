@@ -231,6 +231,9 @@ type DownloadInfo struct {
 	loadPlaybackURL func(context.Context) (string, error)
 	// Request-local resolver. Credentials, URLs and callbacks never serialize.
 	ResolveRangeSHA1 func(context.Context, int64, int64) (string, error) `json:"-"`
+	// Invoked once immediately before the first upload POST. Cleanup cancels
+	// and joins any request-owned speculative source lookup on every exit.
+	PrefetchRangeSource func(context.Context) func() `json:"-"`
 }
 
 func (c *ShareClient) DownloadURLWithUA(ctx context.Context, share *ShareInfo, fileID, cookie, userAgent string) (string, error) {

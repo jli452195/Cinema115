@@ -201,6 +201,15 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 	}
 	copies := s.entriesByHash(material.SHA1)
 	info := &p115.DownloadInfo{Name: material.Name, Size: material.Size, SHA1: material.SHA1}
+	// Restrict speculation to a fresh source already resolved by this request.
+	// Verified ranges/known file copies retain the existing lazy source policy.
+	if original != nil && len(material.Ranges) == 0 && len(copies) == 0 {
+		info.PrefetchRangeSource = func(prefetchCtx context.Context) func() {
+			var stop func()
+			original, stop = p115.StartPlaybackSourcePrefetch(prefetchCtx, original)
+			return stop
+		}
+	}
 	pending := make([]PlaybackRange, 0, 1)
 	info.ResolveRangeSHA1 = func(readCtx context.Context, start, end int64) (string, error) {
 		if err := readCtx.Err(); err != nil {
@@ -225,6 +234,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 				original, err = loadSource()
 			}
 			if original != nil {
+				s.logs.Add(readCtx, "INFO", "二次校验来源：本次请求固定的源文件")
 				report.UsedSource = true
 				if original.Size != material.Size || !strings.EqualFold(original.SHA1, material.SHA1) {
 					return "", fmt.Errorf("源文件身份与秒传资料不一致，请核查资料")
