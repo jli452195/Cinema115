@@ -36,8 +36,7 @@ func parsePickCodeSTRM(raw string) (string, bool) {
 	if len(parts) > 3 || !pickCodePattern.MatchString(parts[0]) {
 		return "", false
 	}
-	// Some generators include a SHA1 before the optional filename. It is a
-	// format hint only; source metadata is still read with the configured account.
+	// Some generators include a SHA1 before the optional filename.
 	if len(parts) == 3 && !pickCodePathSHA1Pattern.MatchString(parts[1]) {
 		return "", false
 	}
@@ -48,4 +47,21 @@ func parsePickCodeSTRM(raw string) (string, bool) {
 		}
 	}
 	return parts[0], true
+}
+
+func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
+	pc, ok := parsePickCodeSTRM(raw)
+	if !ok {
+		return nil, false
+	}
+	u, err := url.Parse(strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff")))
+	if err != nil {
+		return nil, false
+	}
+	parts := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/api/redirect115/"), "/")
+	claim := &sharePlaybackParams{PickCode: pc}
+	if len(parts) >= 2 && pickCodePathSHA1Pattern.MatchString(parts[1]) {
+		claim.SHA1 = strings.ToUpper(parts[1])
+	}
+	return claim, true
 }

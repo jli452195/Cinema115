@@ -601,7 +601,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	if claim.PickCode != "" {
-		h.logs.Add(ctx, "INFO", "redirect115 pickcode 解析成功，直接使用配置源账号获取文件信息；pickcode="+proxyLogID(claim.PickCode))
+		h.logs.Add(ctx, "INFO", "redirect115 链接解析成功，优先匹配已有文件资料；pickcode="+proxyLogID(claim.PickCode))
 	} else {
 		h.logs.Add(ctx, "INFO", "STRM 解析成功，文件编号="+proxyLogID(claim.FileID))
 	}
@@ -613,13 +613,13 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		}
 	}
 	// Include effective credentials only in a digest; neither keys nor views expose secrets.
-	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
+	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, claim.SHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
 		h.logs.Add(fetchCtx, "INFO", "直链缓存未命中或已关闭，开始向 115 获取直链")
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}
 		var fetchErr error
 		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
-			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(fetchCtx, cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
+			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(fetchCtx, claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		} else if claim.PickCode != "" {
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"
@@ -713,8 +713,8 @@ func (h *embyProxyHandler) playbackClaim(source map[string]json.RawMessage) (*sh
 	if err != nil {
 		return nil, err
 	}
-	if pickCode, ok := parsePickCodeSTRM(raw); ok {
-		return &sharePlaybackParams{PickCode: pickCode}, nil
+	if claim, ok := parsePickCodeSTRMClaim(raw); ok {
+		return claim, nil
 	}
 	return h.share.parseSTRMURL(raw)
 }

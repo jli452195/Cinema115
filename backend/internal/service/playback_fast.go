@@ -78,7 +78,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	failedMapping := ""
 	// Rebuild a verified mapping after restart without querying the source.
 	if sourceKey != "" && s.sourceMappings[sourceKey] == "" {
-		for _, entry := range s.Status().Entries {
+		for _, entry := range s.entriesBySource(sourceKey) {
 			if entry.SourceKey == sourceKey && entry.Status == "ready" {
 				s.rememberSource(sourceKey, entry.Key)
 				break
@@ -86,22 +86,22 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		}
 	}
 	if key := s.sourceMappings[sourceKey]; sourceKey != "" && key != "" {
-		for _, e := range s.Status().Entries {
+		if e, ok := s.entryByKey(key); ok {
 			if e.Key != key || e.AccountID != selected.binding.AccountID || e.UID != selected.uid || e.TargetScope != targetScope || e.ParentCID != selected.binding.ParentCID || e.Status != "ready" {
-				continue
+				delete(s.sourceMappings, sourceKey)
+			} else {
+				next("朋友账号取链")
+				link, err := s.reuseFastEntry(ctx, e, selected, ua, report)
+				if err == nil {
+					s.logs.Add(ctx, "INFO", "pickcode 文件映射命中，直接使用朋友账号取链")
+					return link, nil
+				}
+				// A failed URL request does not prove deletion; search before any new write.
+				if ctx.Err() != nil {
+					return "", ctx.Err()
+				}
+				failedMapping = e.Key
 			}
-			next("朋友账号取链")
-			link, err := s.reuseFastEntry(ctx, e, selected, ua, report)
-			if err == nil {
-				s.logs.Add(ctx, "INFO", "pickcode 文件映射命中，直接使用朋友账号取链")
-				return link, nil
-			}
-			// A failed URL request does not prove deletion; search before any new write.
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			failedMapping = e.Key
-			break
 		}
 		delete(s.sourceMappings, sourceKey)
 	}
@@ -119,7 +119,8 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", err
 	}
 	key := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.binding.ParentCID, strings.ToUpper(info.SHA1))
-	for _, entry := range s.Status().Entries {
+	copies := s.entriesByHash(info.SHA1)
+	for _, entry := range copies {
 		if entry.Key != failedMapping && entry.AccountID == selected.binding.AccountID && entry.UID == selected.uid && entry.TargetScope == targetScope && entry.Status == "ready" && cacheMatches(entry.File, info) {
 			next("朋友账号文件映射取链")
 			entry.SourceKey = sourceKey
@@ -163,7 +164,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	var previous *PlaybackCacheEntry
 	var retryAt time.Time
 	count := 0
-	for _, old := range s.Status().Entries {
+	for _, old := range copies {
 		if old.AccountID == selected.binding.AccountID && old.UID == selected.uid && strings.EqualFold(old.File.SHA1, info.SHA1) && old.Status != "ready" {
 			count++
 			if previous == nil || old.CreatedAt.After(previous.CreatedAt) {

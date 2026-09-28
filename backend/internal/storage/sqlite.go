@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 21
+const schemaVersion = 22
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -396,6 +396,25 @@ PRAGMA user_version=19;`); err != nil {
 		if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS p115_single_primary ON p115_accounts(is_primary) WHERE is_primary=1; PRAGMA user_version=21;`); err != nil {
 			return fmt.Errorf("保存主账号结构: %w", err)
 		}
+	}
+	if version < 22 {
+		if _, err := tx.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS playback_materials (id TEXT PRIMARY KEY, sha1 TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>0), record TEXT NOT NULL, UNIQUE(sha1,size));
+CREATE INDEX IF NOT EXISTS playback_material_sha1 ON playback_materials(sha1);
+CREATE TABLE IF NOT EXISTS playback_origins (origin TEXT NOT NULL, material_id TEXT NOT NULL REFERENCES playback_materials(id) ON DELETE CASCADE, PRIMARY KEY(origin,material_id));
+CREATE TABLE IF NOT EXISTS playback_ranges (material_id TEXT NOT NULL REFERENCES playback_materials(id) ON DELETE CASCADE, start INTEGER NOT NULL, end INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY(material_id,start,end));
+CREATE TABLE IF NOT EXISTS playback_copies (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, sha1 TEXT NOT NULL, source_key TEXT NOT NULL, record TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS playback_copy_account_hash ON playback_copies(account_id,sha1);
+CREATE INDEX IF NOT EXISTS playback_copy_hash ON playback_copies(sha1);
+CREATE INDEX IF NOT EXISTS playback_copy_source ON playback_copies(source_key);
+CREATE TABLE IF NOT EXISTS playback_settings (id INTEGER PRIMARY KEY CHECK(id=1), record TEXT NOT NULL);
+PRAGMA user_version=22;`); err != nil {
+			return fmt.Errorf("创建播放秒传资料库: %w", err)
+		}
+	}
+	// Also repair the lookup index for databases created by an earlier v22 build.
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {
+		return fmt.Errorf("创建播放来源反向索引: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交数据库结构迁移: %w", err)

@@ -19,7 +19,7 @@
 
 ## 网盘 pickcode STRM
 
-支持其他工具生成的 `http://NAS:端口/api/redirect115/{pickcode}`，也支持 `{pickcode}/{文件名}`、`{pickcode}/{SHA1}` 和 `{pickcode}/{SHA1}/{文件名}`；文件名可省略或 URL 编码。三段路径中的 SHA1 必须是 40 位十六进制（不区分大小写），只用于识别格式，秒传所用 SHA1 仍从配置的源账号查询。主机、端口和协议只用于识别数据，不会被反代访问，因此 Docker 内部地址、NAS 地址和其他工具地址都可以直接使用。pickcode 必须是 6～64 位字母数字，查询参数、片段、非法文件名和上述格式之外的额外路径会被拒绝。
+支持其他工具生成的 `http://NAS:端口/api/redirect115/{pickcode}`，也支持 `{pickcode}/{文件名}`、`{pickcode}/{SHA1}` 和 `{pickcode}/{SHA1}/{文件名}`；文件名可省略或 URL 编码。路径中的 SHA1 必须是 40 位十六进制（不区分大小写）。已绑定用户优先用该 SHA1 匹配本地唯一且已验证的文件资料，命中后使用资料中的真实大小、文件名和校验片段，跳过主账号元数据查询；不把外部文件名作为可信元数据。未命中、同 SHA1 对应多个大小、或与已有来源关联冲突时回到主账号查询核验。外部 SHA1 本身不会建立可信的 PickCode→文件来源关联。主机、端口和协议只用于识别数据，不会被反代访问。pickcode 必须是 6～64 位字母数字，查询参数、片段、非法文件名和上述格式之外的额外路径会被拒绝。
 
 已绑定用户由主账号读取 pickcode 文件 SHA1，在绑定的小号网盘中查找相同 SHA1；命中则直接取链，否则秒传到小号卡片配置的目录后取链。未绑定用户直接使用主账号取链。不会访问 STRM 中的原地址，已绑定用户秒传失败不会回退到主账号直链。
 
@@ -136,7 +136,9 @@ Emby 4.10 不支持 `/Users/Me`，可能将 `Me` 当作用户 GUID 并返回 HTT
 
 网盘文件完全由用户手动删除；程序没有定时清理任务，也不提供删除网盘文件的清理入口。历史缓存子目录保留。直链缓存清空和文件记录移除都不会删除云端内容；手动删除后的旧直链可能在本地缓存过期前仍被返回，可在缓存页面移除直链后重试。
 
-配置、最多 2,000 条账号副本记录和 2,000 条文件资料保存在 playback-cache.enc，不保存 Cookie、分享提取码、STRM 地址或签名直链。管理接口包括 GET /api/admin/emby/playback-cache、GET /users、GET /users/{userID}/avatar、POST /bindings/{userID}、POST /bindings、POST /forget、POST /forget-material（提交 id）；旧 POST /policy 和 POST /cleanup 返回 410。移除资料不会删除副本记录，移除副本记录不会删除资料，均不会删除云端文件。账号保存目录使用 PUT /api/admin/p115/accounts/{accountID}/playback-directory，包含 revision 和 parentCid。以上接口均须管理员认证。
+播放配置、最多 100,000 条账号副本记录和 100,000 条文件资料保存在 cinema115.db 的独立 SQLite 表中。文件资料、来源索引、校验片段和账号副本分别存储，沿用 WAL 和同步事务；不保存 Cookie、分享提取码、STRM 地址或签名直链。启动时建立内存 Map，按资料编号、来源哈希、SHA1、副本编号和来源映射定位，无需在播放路径复制或扫描整库。播放只更新变动的资料/副本行，上传意图、成功结果立即提交；仅最后使用时间变化时，每条副本最多每 30 秒持久化一次，异常退出可能丢失这段时间内的使用时间，不丢失已提交的文件状态。首次启用数据库存储会在单个事务内导入原 playback-cache.enc，原文件保留为备份，后续不再读取其记录或向其中写入。
+
+管理接口包括 GET /api/admin/emby/playback-cache、GET /users、GET /users/{userID}/avatar、POST /bindings/{userID}、POST /bindings、POST /forget、POST /forget-material（提交 id）；旧 POST /policy 和 POST /cleanup 返回 410。移除资料不会删除副本记录，移除副本记录不会删除资料，均不会删除云端文件。账号保存目录使用 PUT /api/admin/p115/accounts/{accountID}/playback-directory，包含 revision 和 parentCid。以上接口均须管理员认证。
 
 
 真实样本的朋友缓存首次秒传加取链约 2.65 秒，真实二次校验读取 107,849 字节；第二次缓存复用加取链约 0.49 秒。两次目标账号直链均在不携带 Cookie 的情况下成功返回 Range 206。完整 302 路由的权限、GET/HEAD、缓存复用与失效账号行为通过模拟 Emby/115 测试；实际播放器开播与拖动仍需在对应用户客户端确认。

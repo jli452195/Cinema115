@@ -22,6 +22,8 @@ Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、�
 
 版本 6 移除 `p115_account_state.active_id`，该表仅保留账号集合版本。旧全局选择通过 `p115_feature_migration` 暂存用于升级，分享设置成功固化为具体 `accountId` 后删除候选；该表不是运行时默认账号来源。版本 21 增加 p115_accounts.is_primary 和 uid，普通功能统一使用明确创建的主账号，小号仅供用户播放和秒传。新安装不自动提升普通账号。
 
+版本 22 增加播放秒传资料表：`playback_materials`（SHA1+大小唯一）、`playback_origins`（来源哈希映射）、`playback_ranges`（已验证的范围及片段 SHA1）、`playback_copies`（账号文件副本，按账号/SHA1及来源索引）、`playback_settings`（用户绑定与播放配置）。这些表不包含账号 Cookie、临时 URL 或上传签名，账号凭据继续由原加密存储管理。播放状态按单条记录事务提交，查询使用启动时构建且随提交更新的内存索引；同一进程内的播放写入继续串行化。数据库首次使用时原 `playback-cache.enc` 中的数据原子导入，之后以 SQLite 为准，移除资料不会被旧文件恢复。
+
 管理员账号密码仍从根目录 `.env` 读取；多 Bot 配置库加密保存在 `telegram-bots.enc`，旧 `telegram-config.enc` 只用于一次性导入。`automation.json` 保存分享使用的 `accountId`、`botId` 和审核重试设置，不含 Cookie 或 Bot Token；Telegram 接收队列仍使用独立状态文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。恢复配置时需一并保留原 `JWT_SECRET`。
 
 服务重启后，审核等待任务按保存的时间继续执行；上次处于执行中的任务标记为中断，禁止自动重放执行状态不确定的云端操作。新任务日志从升级后开始记录，不将旧转存检查点当作新任务重新执行。

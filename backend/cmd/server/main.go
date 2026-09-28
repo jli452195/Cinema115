@@ -248,7 +248,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	playbackCache, err := service.NewPlaybackCache(ctx, playbackStore, accounts, shareAPI.Client, embyProxyLogs)
+	playbackCache, err := service.NewSQLitePlaybackCache(ctx, database, playbackStore, accounts, shareAPI.Client, embyProxyLogs)
 	if err != nil {
 		log.Fatal(err)
 	}

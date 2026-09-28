@@ -68,12 +68,16 @@ type PlaybackCache struct {
 	client            playbackCacheClient
 	logs              *EmbyProxyLogs
 	doc               PlaybackCacheStatus
+	index             playbackIndex
 }
 
 func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
+	return newPlaybackCache(ctx, store, accounts, client, logs)
+}
+func newPlaybackCache(ctx context.Context, store accountSecretStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
 	s := &PlaybackCache{store: store, accounts: accounts, client: client, logs: logs, gate: make(chan struct{}, 1), doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{RetentionHours: 72, Bindings: []PlaybackBinding{}}, Entries: []PlaybackCacheEntry{}}}
 	if raw := store.Value(); raw != "" {
-		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > 2000 || len(s.doc.Directories) > 1000 || len(s.doc.Materials) > maxPlaybackMaterials {
+		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > maxPlaybackCopies || len(s.doc.Directories) > 1000 || len(s.doc.Materials) > maxPlaybackMaterials {
 			return nil, fmt.Errorf("播放缓存配置或记录损坏")
 		}
 		if err := validatePlaybackMaterials(s.doc.Materials); err != nil {
@@ -101,6 +105,7 @@ func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Ac
 			return nil, err
 		}
 	}
+	s.rebuildPlaybackIndexLocked()
 	return s, nil
 }
 func (s *PlaybackCache) Close() {}
@@ -123,6 +128,7 @@ func (s *PlaybackCache) saveLocked(doc PlaybackCacheStatus) error {
 		return fmt.Errorf("播放缓存记录保存失败，已停止云端操作")
 	}
 	s.doc = doc
+	s.rebuildPlaybackIndexLocked()
 	return nil
 }
 func (s *PlaybackCache) Apply(c PlaybackCacheConfig) error {
@@ -249,7 +255,7 @@ type PlaybackCacheSnapshot struct {
 }
 
 func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
-	c := s.Status().Config
+	c := s.bindingConfig()
 	// Freeze all eligible source credentials before the request starts network I/O.
 	s.accounts.mu.RLock()
 	donors := make([]P115Account, 0, len(s.accounts.value.Accounts))
@@ -320,6 +326,36 @@ func (s *PlaybackCache) enter(ctx context.Context) error {
 func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if store, ok := s.store.(interface {
+		PutEntry(PlaybackCacheEntry) error
+	}); ok {
+		i, exists := s.index.copies[e.Key]
+		if !exists && len(s.doc.Entries) >= maxPlaybackCopies {
+			return fmt.Errorf("账号副本记录达到上限")
+		}
+		if exists {
+			old := s.doc.Entries[i]
+			withoutTouch := e
+			withoutTouch.LastUsed = old.LastUsed
+			if old == withoutTouch && e.LastUsed.Sub(s.index.lastWritten[e.Key]) < 30*time.Second {
+				s.doc.Entries[i] = e
+				return nil
+			}
+		}
+		if err := store.PutEntry(e); err != nil {
+			return err
+		}
+		if exists {
+			s.unindexEntryLocked(s.doc.Entries[i])
+			s.doc.Entries[i] = e
+		} else {
+			i = len(s.doc.Entries)
+			s.doc.Entries = append(s.doc.Entries, e)
+		}
+		s.indexEntryLocked(e, i)
+		s.index.lastWritten[e.Key] = e.LastUsed
+		return nil
+	}
 	doc := s.doc
 	doc.Entries = append([]PlaybackCacheEntry{}, doc.Entries...)
 	for i := range doc.Entries {
@@ -328,7 +364,7 @@ func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 			return s.saveLocked(doc)
 		}
 	}
-	if len(doc.Entries) >= 2000 {
+	if len(doc.Entries) >= maxPlaybackCopies {
 		return fmt.Errorf("文件记录达到上限，请在缓存管理移除不再需要的本地记录后重试")
 	}
 	doc.Entries = append(doc.Entries, e)
@@ -358,20 +394,22 @@ func (s *PlaybackCacheSelection) UsesSourceAccount(accountID string) bool {
 	return s != nil && s.binding.AccountID == accountID
 }
 
-// Pickcodes are owned by the configured source. Never probe the friend's drive
-// or a share endpoint using the source pickcode.
+// An external SHA1 may resolve verified local material without using pickcode.
+// Otherwise query pickcode only with the configured primary, never a friend's
+// credentials or a share endpoint.
 func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection *PlaybackCacheSelection, pickCode, sourceCookie, ua string, sourceAccountIDs ...string) (string, PlaybackResolution, error) {
 	var report PlaybackResolution
 	if selection == nil || selection.cookie == "" || selection.err != nil {
 		return "", report, fmt.Errorf("未选择有效的朋友账号")
 	}
 	report.AccountLabel = PlaybackAccountLabel(selection.accountName, selection.uid, selection.binding.AccountID)
-	s.logs.Add(ctx, "INFO", "pickcode 属于配置的源账号，直接进入朋友账号秒传缓存流程；目标账号="+report.AccountLabel)
+	s.logs.Add(ctx, "INFO", "进入播放秒传资料查询流程，未命中时由主账号查询 pickcode；目标账号="+report.AccountLabel)
 	var sourceID string
 	if len(sourceAccountIDs) > 0 {
 		sourceID = sourceAccountIDs[0]
 	}
-	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope()))
+	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
+	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope(), hint))
 	origin := DirectLinkKey("pickcode-material", sourceID, pickCode)
 	if sourceID == "" {
 		origin = DirectLinkKey("pickcode-material", sourceCookie, pickCode)
@@ -401,8 +439,8 @@ func (s *PlaybackCache) TouchDirectLink(ctx context.Context, key, fileID string)
 		return err
 	}
 	defer func() { <-s.gate }()
-	for _, e := range s.Status().Entries {
-		if e.Key == key && e.Status == "ready" && e.File.ID == fileID {
+	if e, ok := s.entryByKey(key); ok {
+		if e.Status == "ready" && e.File.ID == fileID {
 			e.LastUsed = time.Now().UTC()
 			return s.put(e)
 		}

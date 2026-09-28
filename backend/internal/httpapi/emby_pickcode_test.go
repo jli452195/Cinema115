@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"strm115/backend/internal/service"
@@ -35,6 +36,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if err := accounts.UpdatePlaybackDirectory(targetID, 2, "0"); err != nil {
 		t.Fatal(err)
 	}
+	pickCode := "abc123"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/emby/Users/AuthenticateByName":
@@ -46,7 +48,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 		case "/emby/Items/movie/PlaybackInfo":
 			// The path SHA1 deliberately differs from the source account metadata.
 			// It must not replace the trusted source SHA1 or trigger a host request.
-			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115/api/redirect115/abc123%s"}]}`, suffix)
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115/api/redirect115/%s%s"}]}`, pickCode, suffix)
 		default:
 			w.WriteHeader(403)
 		}
@@ -113,13 +115,24 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 		t.Fatal("file cache not reused")
 	}
 	empty := ""
+	if err := accounts.Update(sourceID, 2, "主账号", &empty); err != nil {
+		t.Fatal(err)
+	}
+	pickCode, suffix = "otherpc", "/"+strings.Repeat("a", 40)+"/other-name.mkv"
+	h.ClearDirectLinks("")
+	if w := call("GET", path); w.Code != 302 {
+		t.Fatal("external SHA1 failed without primary credentials", w.Code, w.Body.String())
+	}
+	if fake.pickReads != 1 || fake.uploads != 1 || fake.links != 3 {
+		t.Fatal("external SHA1 did not skip primary metadata")
+	}
 	if err := accounts.Update(targetID, 3, "friend", &empty); err != nil {
 		t.Fatal(err)
 	}
 	if w := call("GET", path); w.Code != 503 {
 		t.Fatal("cached link bypassed deleted credentials", w.Code)
 	}
-	if fake.links != 2 {
+	if fake.links != 3 {
 		t.Fatal("unexpected fallback")
 	}
 }

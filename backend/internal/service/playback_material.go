@@ -10,9 +10,19 @@ import (
 	"strm115/backend/internal/client/p115"
 )
 
-const maxPlaybackMaterials = 2000
+const maxPlaybackMaterials = 100000
 
 type playbackMaterialOrigin struct{}
+type playbackSHA1Hint struct{}
+
+// A hint from Emby-authorized STRM metadata may locate already verified file
+// data, but cannot create a trusted origin association on its own.
+func WithPlaybackSHA1Hint(ctx context.Context, hash string) context.Context {
+	if !validMaterialHash(hash) {
+		return ctx
+	}
+	return context.WithValue(ctx, playbackSHA1Hint{}, strings.ToUpper(hash))
+}
 
 // File data is independent of the account that owns a cloud copy. Origin keys
 // are one-way hashes, never raw share passwords, URLs or credentials.
@@ -83,6 +93,25 @@ func (s *PlaybackCache) putMaterial(m PlaybackMaterial) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if store, ok := s.store.(interface{ PutMaterial(PlaybackMaterial) error }); ok {
+		i, exists := s.index.materials[m.ID]
+		if !exists && len(s.doc.Materials) >= maxPlaybackMaterials {
+			return fmt.Errorf("文件资料达到上限")
+		}
+		if err := store.PutMaterial(m); err != nil {
+			return err
+		}
+		m = clonePlaybackMaterials([]PlaybackMaterial{m})[0]
+		if exists {
+			s.unindexMaterialLocked(s.doc.Materials[i])
+			s.doc.Materials[i] = m
+		} else {
+			i = len(s.doc.Materials)
+			s.doc.Materials = append(s.doc.Materials, m)
+		}
+		s.indexMaterialLocked(m, i)
+		return nil
+	}
 	doc := s.doc
 	doc.Materials = clonePlaybackMaterials(doc.Materials)
 	for i, old := range doc.Materials {
@@ -127,19 +156,8 @@ type playbackRangeClient interface {
 // only a missing range triggers reads of verified copies, then the primary.
 func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *PlaybackCacheSelection, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (*p115.DownloadInfo, string, func() error, error) {
 	origin, _ := ctx.Value(playbackMaterialOrigin{}).(string)
-	status := s.Status()
-	var material PlaybackMaterial
-	for _, m := range status.Materials {
-		for _, key := range m.Origins {
-			if origin != "" && key == origin {
-				material = m
-				break
-			}
-		}
-		if material.ID != "" {
-			break
-		}
-	}
+	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
+	material, byHash := s.lookupMaterial(origin, hint)
 	var original *p115.DownloadInfo
 	if material.ID == "" {
 		var err error
@@ -152,25 +170,36 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		}
 		report.UsedSource = true
 		material = PlaybackMaterial{ID: playbackMaterialID(original.SHA1, original.Size), Name: original.Name, Size: original.Size, SHA1: strings.ToUpper(original.SHA1), CreatedAt: time.Now().UTC()}
-		for _, old := range status.Materials {
-			if old.ID == material.ID {
-				material = old
-				break
-			}
+		if old, ok := s.materialByID(material.ID); ok {
+			material = old
 		}
 		if origin != "" {
-			if len(material.Origins) == 64 {
-				material.Origins = material.Origins[1:]
+			found := false
+			for _, old := range material.Origins {
+				if old == origin {
+					found = true
+					break
+				}
 			}
-			material.Origins = append(material.Origins, origin)
+			if !found {
+				if len(material.Origins) == 64 {
+					material.Origins = material.Origins[1:]
+				}
+				material.Origins = append(material.Origins, origin)
+			}
 		}
 		material.VerifiedAt = time.Now().UTC()
 		if err := s.putMaterial(material); err != nil {
 			return nil, "", nil, err
 		}
 	} else {
-		s.logs.Add(ctx, "INFO", "秒传文件资料命中，跳过源文件元数据查询")
+		if byHash {
+			s.logs.Add(ctx, "INFO", "外部链接 SHA1 命中已验证资料，跳过主账号元数据查询")
+		} else {
+			s.logs.Add(ctx, "INFO", "秒传文件资料命中，跳过源文件元数据查询")
+		}
 	}
+	copies := s.entriesByHash(material.SHA1)
 	info := &p115.DownloadInfo{Name: material.Name, Size: material.Size, SHA1: material.SHA1}
 	pending := make([]PlaybackRange, 0, 1)
 	info.ResolveRangeSHA1 = func(readCtx context.Context, start, end int64) (string, error) {
@@ -190,7 +219,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if !ok {
 			return "", fmt.Errorf("播放客户端不支持校验片段读取")
 		}
-		hash, err := s.readPlaybackMaterialRange(readCtx, reader, selected, status.Entries, material, start, end)
+		hash, err := s.readPlaybackMaterialRange(readCtx, reader, selected, copies, material, start, end)
 		if err != nil && readCtx.Err() == nil {
 			if original == nil {
 				original, err = loadSource()
