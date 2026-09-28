@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import PlaybackDiagnostics from './PlaybackDiagnostics.vue'
 const props = defineProps<{ token: string; minutes: number }>()
 interface Entry { id: string; user: string; mediaSource: string; account: string; mode: string; cdn: string; expiresAt: string; hits: number; url?: string; createdAt?: string; traceId?: string; requestHeaders?: string; lookupHeaders?: string }
@@ -7,6 +7,7 @@ const entries = ref<Entry[]>([])
 const hits = ref(0), misses = ref(0), now = ref(Date.now())
 const search = ref(''), category = ref('all'), error = ref('')
 const busy = ref(false)
+const page = ref(1), pageSize = 8
 const lifecycle = new AbortController()
 let timer: ReturnType<typeof setInterval> | undefined
 const remaining = (e: Entry) => Math.max(0, Math.ceil((Date.parse(e.expiresAt) - now.value) / 1000))
@@ -16,6 +17,10 @@ const drive = computed(() => active.value.filter(e => e.mode === '源账号网�
 const visible = computed(() => active.value.filter(e =>
   (category.value === 'all' || category.value === 'drive' && e.mode === '源账号网盘直取' || category.value === 'instant' && e.mode.includes('秒传') || category.value === 'direct' && !e.mode.includes('秒传') && e.mode !== '源账号网盘直取') &&
   [e.user, e.mediaSource, e.account, e.mode, e.cdn, e.url, e.traceId, e.requestHeaders].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
+const pages = computed(() => Math.max(1, Math.ceil(visible.value.length / pageSize)))
+const pagedEntries = computed(() => visible.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+watch([search, category], () => { page.value = 1 })
+watch(pages, count => { page.value = Math.min(page.value, count) })
 async function request(method = 'GET', id = '') {
   if (busy.value) return
   busy.value = true; error.value = ''
@@ -50,7 +55,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearInterval(timer) })
     <p class="mt-3 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">命中 {{ hits }} 次 · 发起取链 {{ misses }} 次（本次缓存实例统计）</p>
     <input v-model="search" aria-label="搜索直链缓存" placeholder="搜索用户、媒体源、账号、播放方式或 CDN 域名" class="mt-4 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 text-sm" />
     <p v-if="error" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p>
-    <div v-for="entry in visible" :key="entry.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-sm">
+    <div v-for="entry in pagedEntries" :key="entry.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-sm">
       <div class="flex flex-wrap items-center justify-between gap-2"><div class="flex flex-wrap gap-2"><span class="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">剩余 {{ remaining(entry) }} 秒</span><span class="rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-700">{{ entry.mode }}</span><span class="py-1 text-xs text-slate-400 dark:text-slate-500">命中 {{ entry.hits }} 次</span></div><button :disabled="busy" class="text-red-600 disabled:opacity-40" @click="request('DELETE', entry.id)">移除</button></div>
       <p class="mt-3 break-all text-slate-700 dark:text-slate-300">Emby 用户：{{ entry.user }}</p>
       <p class="mt-1 break-all text-slate-600 dark:text-slate-400 dark:text-slate-500">媒体源：{{ entry.mediaSource }}</p>
@@ -63,5 +68,9 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearInterval(timer) })
       </details>
     </div>
     <p v-if="!visible.length" class="py-6 text-center text-sm text-slate-400 dark:text-slate-500">{{ active.length ? '没有匹配的缓存' : '暂无有效直链缓存，播放后会自动建立' }}</p>
+    <div v-if="visible.length" class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+      <span>共 {{ visible.length }} 条 · 每页 {{ pageSize }} 条</span>
+      <div class="flex items-center gap-3"><button type="button" :disabled="page === 1" class="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40 dark:border-slate-700" @click="page--">上一页</button><span class="tabular-nums">{{ page }} / {{ pages }}</span><button type="button" :disabled="page === pages" class="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40 dark:border-slate-700" @click="page++">下一页</button></div>
+    </div>
   </section>
 </template>

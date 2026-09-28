@@ -1,34 +1,64 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { embyRequest } from '../types/emby'
 import type { P115Account } from '../types/p115Accounts'
 const props = defineProps<{ token: string; accounts: P115Account[] }>()
 interface Entry { key: string; accountId: string; uid: string; directoryId: string; directoryName: string; status: string; message: string; lastUsed: string; file: { name: string; size: number; id: string; sha1: string } }
 interface Material { id: string; name: string; size: number; sha1: string; verifiedAt: string; ranges: { start: number; end: number; sha1: string }[] }
-const entries = ref<Entry[]>([])
-const materials = ref<Material[]>([])
-const forgetMaterial = ref('')
-const busy = ref(false)
-const forgetKey = ref('')
-const error = ref('')
-const notice = ref('')
+const entries = ref<Entry[]>([]), materials = ref<Material[]>([])
+const tab = ref<'copies' | 'materials'>('copies')
+const search = ref(''), status = ref('all'), account = ref('all')
+const page = ref(1), pageSize = 8
+const expanded = ref(''), forgetKey = ref(''), forgetMaterial = ref('')
+const busy = ref(false), loaded = ref(false), error = ref(''), notice = ref('')
 const lifecycle = new AbortController()
-function accept(data: { entries: Entry[]; materials?: Material[] }) { entries.value = data.entries; materials.value = data.materials || [] }
-function sizeLabel(size: number) { return `${(size / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} MB` }
-function copyCount(m: Material) { return entries.value.filter(e => e.status === 'ready' && e.file.sha1.toUpperCase() === m.sha1.toUpperCase() && e.file.size === m.size).length }
+const accountNames = computed(() => new Map(props.accounts.map(a => [a.id, a.name])))
+function accountName(id: string) { return accountNames.value.get(id) || '原账号已删除' }
+const accountOptions = computed(() => [...new Set(entries.value.map(e => e.accountId))].map(id => ({ id, name: accountNames.value.get(id) || `已删除账号 · ${id.slice(-6)}` })))
+const query = computed(() => search.value.trim().toLowerCase())
+const filteredEntries = computed(() => entries.value.filter(e =>
+  (account.value === 'all' || e.accountId === account.value) &&
+  (status.value === 'all' || (status.value === 'attention' ? e.status !== 'ready' : e.status === status.value)) &&
+  [e.file.name, e.file.sha1, e.file.id, accountName(e.accountId)].join(' ').toLowerCase().includes(query.value))
+  .sort((a, b) => Date.parse(b.lastUsed) - Date.parse(a.lastUsed)))
+const filteredMaterials = computed(() => materials.value.filter(m => [m.name, m.sha1].join(' ').toLowerCase().includes(query.value))
+  .sort((a, b) => Date.parse(b.verifiedAt) - Date.parse(a.verifiedAt)))
+const total = computed(() => tab.value === 'copies' ? filteredEntries.value.length : filteredMaterials.value.length)
+const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const pagedEntries = computed(() => filteredEntries.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const pagedMaterials = computed(() => filteredMaterials.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const copyCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const entry of entries.value) {
+    if (entry.status !== 'ready') continue
+    const key = `${entry.file.sha1.toUpperCase()}:${entry.file.size}`
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return counts
+})
+function copyCount(m: Material) { return copyCounts.value.get(`${m.sha1.toUpperCase()}:${m.size}`) || 0 }
+function resetDetails() { expanded.value = ''; forgetKey.value = ''; forgetMaterial.value = '' }
+watch([tab, search, status, account], () => { page.value = 1; resetDetails() })
+watch(page, resetDetails)
+watch(pages, count => { page.value = Math.min(page.value, count) })
+function toggleDetails(id: string) { expanded.value = expanded.value === id ? '' : id; forgetKey.value = ''; forgetMaterial.value = '' }
+function accept(data: { entries: Entry[]; materials?: Material[] }) { entries.value = data.entries || []; materials.value = data.materials || []; loaded.value = true }
+function sizeLabel(size: number) { const gb = size >= 1024 ** 3; return `${(size / (gb ? 1024 ** 3 : 1024 ** 2)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${gb ? 'GB' : 'MB'}` }
+function dateLabel(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '暂无记录' : date.toLocaleString() }
 async function load() {
+  if (busy.value) return
   busy.value = true; error.value = ''
   try { accept(await embyRequest(props.token, 'playback-cache', lifecycle.signal)) }
-  catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取缓存配置失败' }
+  catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取缓存记录失败' }
   finally { busy.value = false }
 }
 async function action(path: string, body: object) {
+  if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
     accept(await embyRequest(props.token, `playback-cache${path}`, lifecycle.signal, body))
     notice.value = path === '/forget-material' ? '已移除文件资料及校验片段哈希，账号副本记录和云端文件保留。' : '已移除本地副本记录，文件资料和云端文件保留。'
-    forgetKey.value = ''
-    forgetMaterial.value = ''
+    resetDetails()
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '操作失败' }
   finally { busy.value = false }
 }
@@ -38,36 +68,70 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7">
-    <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘文件复用记录</h2><button :disabled="busy" type="button" class="text-sm text-blue-600 disabled:opacity-40" @click="load">刷新配置与记录</button></div>
-    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">优先复用绑定账号中的文件；需要秒传时使用文件资料，缺少校验片段时依次尝试已有小号副本和主账号。资料不保存 Cookie，播放目标始终是用户绑定账号。移除本地资料或记录不会删除网盘文件。</p>
-    <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
-    <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-700">{{ notice }}</p>
-    <div class="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
-      <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">文件秒传资料（{{ materials.length }}）</h3>
-      <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">资料跨账号复用。校验范围相同时可直接使用已验证的片段哈希；115 要求新的范围时，仍需有可读取的文件来源。</p>
-      <p v-if="!materials.length" class="mt-3 text-sm text-slate-400 dark:text-slate-500">进入秒传流程后自动积累文件资料。</p>
-      <article v-for="material in materials" :key="material.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-sm">
-        <p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
-        <p class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 已记录副本 {{ copyCount(material) }} · 已验证校验片段 {{ material.ranges.length }}</p>
-        <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">SHA1：{{ material.sha1 }}</p>
-        <details v-if="material.ranges.length" class="mt-2 text-xs text-slate-500 dark:text-slate-400"><summary class="cursor-pointer">查看校验片段</summary><p v-for="range in material.ranges" :key="range.start + ':' + range.end" class="mt-2 break-all">字节 {{ range.start }}–{{ range.end }} · {{ range.sha1 }}</p></details>
-        <button v-if="forgetMaterial !== material.id" type="button" :disabled="busy" class="mt-3 text-xs text-slate-500 dark:text-slate-400 underline" @click="forgetMaterial = material.id">移除文件资料</button>
-        <div v-else class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><p>移除后，再次秒传可能需要重新读取主账号文件。账号副本记录和云端文件保留。</p><button type="button" :disabled="busy" class="mt-2 font-medium underline" @click="action('/forget-material', { id: material.id })">确认移除资料</button><button type="button" class="ml-4" @click="forgetMaterial = ''">取消</button></div>
+  <section aria-label="网盘文件复用记录" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 md:p-7">
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘文件复用记录</h2>
+      <button :disabled="busy" type="button" class="shrink-0 text-sm text-blue-600 disabled:opacity-40 dark:text-blue-400" @click="load">{{ busy ? '加载中…' : '刷新记录' }}</button>
+    </div>
+    <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">管理已复用的文件和秒传资料，移除本地记录不会删除网盘文件。</p>
+    <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
+    <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{{ notice }}</p>
+    <div class="mt-5 flex gap-5 border-b border-slate-200 dark:border-slate-700" aria-label="记录分类">
+      <button v-for="item in [{ key: 'copies', label: '账号文件副本', count: entries.length }, { key: 'materials', label: '文件秒传资料', count: materials.length }] as const" :key="item.key" type="button" :aria-pressed="tab === item.key" class="border-b-2 pb-3 text-sm font-medium" :class="tab === item.key ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'" @click="tab = item.key">
+        {{ item.label }} <span class="ml-1 text-xs tabular-nums opacity-75">{{ item.count }}</span>
+      </button>
+    </div>
+    <div class="mt-4 flex flex-wrap gap-2 text-slate-700 dark:text-slate-200">
+      <input v-model="search" type="search" aria-label="搜索复用记录" :placeholder="tab === 'copies' ? '搜索文件名、SHA1 或账号' : '搜索文件名或 SHA1'" class="min-w-0 flex-[1_1_220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" />
+      <template v-if="tab === 'copies'">
+        <select v-model="account" aria-label="筛选文件账号" class="min-w-0 max-w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部账号</option><option v-for="a in accountOptions" :key="a.id" :value="a.id">{{ a.name }}</option></select>
+        <select v-model="status" aria-label="筛选记录状态" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部状态</option><option value="ready">可复用</option><option value="attention">需关注</option></select>
+      </template>
+    </div>
+    <p class="my-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ tab === 'copies' ? '按最近取链排序 · 展开查看文件标识与处理记录' : '按最近验证排序 · 相同校验范围可直接复用片段哈希，新范围仍需读取文件来源' }}</p>
+    <div v-if="tab === 'copies'" class="divide-y divide-slate-100 dark:divide-slate-800">
+      <article v-for="entry in pagedEntries" :key="entry.key" class="py-3">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <p :title="entry.file.name" class="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ entry.file.name || '文件信息待确认' }}</p>
+            <p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"><span class="block truncate sm:inline">{{ accountName(entry.accountId) }} · {{ sizeLabel(entry.file.size) }}</span><span class="hidden sm:inline"> · </span><span>{{ dateLabel(entry.lastUsed) }}</span></p>
+          </div>
+          <span class="shrink-0 rounded-md px-2 py-1 text-xs" :class="entry.status === 'ready' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'">{{ stateLabel(entry.status) }}</span>
+          <button type="button" :aria-expanded="expanded === entry.key" :aria-label="'查看文件详情：' + entry.file.name" class="shrink-0 py-1 text-xs text-blue-600 dark:text-blue-400" @click="toggleDetails(entry.key)">{{ expanded === entry.key ? '收起' : '详情' }}</button>
+        </div>
+        <div v-if="expanded === entry.key" class="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:bg-slate-950 dark:text-slate-400">
+          <p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ entry.file.name }}</p>
+          <p class="break-all">SHA1：{{ entry.file.sha1 || '待确认' }}</p>
+          <p class="break-all">文件 ID：{{ entry.file.id || '待确认' }} · 目录：{{ entry.directoryId || '待确认' }}</p>
+          <p v-if="entry.message" class="break-words">{{ entry.message }}</p>
+          <button v-if="forgetKey !== entry.key" type="button" :disabled="busy" class="text-red-600 underline disabled:opacity-40 dark:text-red-400" @click="forgetKey = entry.key">移除本地记录</button>
+          <div v-else class="rounded-lg bg-amber-50 p-3 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><p>仅移除本地记录，不删除云端文件。下次播放先按 SHA1 查找；存在未确认上传时，请先核查网盘。</p><button type="button" :disabled="busy" class="mt-2 font-medium underline disabled:opacity-40" @click="action('/forget', { key: entry.key })">确认仅移除记录</button><button type="button" class="ml-4" @click="forgetKey = ''">取消</button></div>
+        </div>
       </article>
     </div>
-    <div class="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
-      <div class="flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">账号文件副本（{{ entries.length }}）</h3></div>
-      <p v-if="!entries.length" class="mt-3 text-sm text-slate-400 dark:text-slate-500">复用网盘文件或秒传后会显示记录；分享直取不会建立此类记录。</p>
-      <article v-for="entry in entries" :key="entry.key" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-sm">
-        <p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ entry.file.name }} <span class="text-xs" :class="entry.status === 'ready' ? 'text-emerald-600' : 'text-amber-700'">{{ stateLabel(entry.status) }}</span></p>
-        <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(a => a.id === entry.accountId)?.name || '原账号已删除' }} · 目录 {{ entry.directoryId || '待确认' }}</p>
-        <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">SHA1：{{ entry.file.sha1 }}</p>
-        <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">最后取链：{{ new Date(entry.lastUsed).toLocaleString() }}</p>
-        <p v-if="entry.message" class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ entry.message }}</p>
-        <button v-if="forgetKey !== entry.key" type="button" :disabled="busy" class="mt-3 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 underline" @click="forgetKey = entry.key">核查后移除本地记录</button>
-        <div v-else class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800"><p>仅移除本地记录，不删除云端文件。下次播放先按 SHA1 查找；存在未确认上传时，请先核查网盘。</p><button type="button" :disabled="busy" class="mt-2 font-medium underline" @click="action('/forget', { key: entry.key })">确认仅移除记录</button><button type="button" class="ml-4" @click="forgetKey = ''">取消</button></div>
+    <div v-else class="divide-y divide-slate-100 dark:divide-slate-800">
+      <article v-for="material in pagedMaterials" :key="material.id" class="py-3">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <p :title="material.name" class="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 副本 {{ copyCount(material) }} · 校验片段 {{ material.ranges.length }}</p>
+          </div>
+          <button type="button" :aria-expanded="expanded === material.id" :aria-label="'查看资料详情：' + material.name" class="shrink-0 py-1 text-xs text-blue-600 dark:text-blue-400" @click="toggleDetails(material.id)">{{ expanded === material.id ? '收起' : '详情' }}</button>
+        </div>
+        <div v-if="expanded === material.id" class="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:bg-slate-950 dark:text-slate-400">
+          <p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
+          <p class="break-all">SHA1：{{ material.sha1 }}</p>
+          <p>验证时间：{{ dateLabel(material.verifiedAt) }}</p>
+          <details v-if="material.ranges.length"><summary class="cursor-pointer">查看校验片段（{{ material.ranges.length }}）</summary><div class="mt-2 max-h-48 space-y-2 overflow-y-auto"><p v-for="range in material.ranges" :key="range.start + ':' + range.end" class="break-all">字节 {{ range.start }}–{{ range.end }} · {{ range.sha1 }}</p></div></details>
+          <button v-if="forgetMaterial !== material.id" type="button" :disabled="busy" class="text-red-600 underline disabled:opacity-40 dark:text-red-400" @click="forgetMaterial = material.id">移除文件资料</button>
+          <div v-else class="rounded-lg bg-amber-50 p-3 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><p>移除后，再次秒传可能需要重新读取源文件。账号副本记录和云端文件保留。</p><button type="button" :disabled="busy" class="mt-2 font-medium underline disabled:opacity-40" @click="action('/forget-material', { id: material.id })">确认移除资料</button><button type="button" class="ml-4" @click="forgetMaterial = ''">取消</button></div>
+        </div>
       </article>
+    </div>
+    <p v-if="!total" role="status" class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">{{ !loaded && busy ? '正在加载记录…' : error && !loaded ? '记录加载失败，请重试。' : (tab === 'copies' ? entries.length : materials.length) ? '没有匹配的记录，试试调整搜索或筛选条件。' : tab === 'copies' ? '暂无文件副本，复用文件或秒传后会自动记录。' : '暂无秒传资料，进入秒传流程后会自动积累。' }}</p>
+    <div v-if="total" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+      <span>共 {{ total }} 条 · 每页 {{ pageSize }} 条</span>
+      <div class="flex items-center gap-3"><button type="button" :disabled="page === 1" class="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40 dark:border-slate-700" @click="page--">上一页</button><span class="tabular-nums">{{ page }} / {{ pages }}</span><button type="button" :disabled="page === pages" class="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40 dark:border-slate-700" @click="page++">下一页</button></div>
     </div>
   </section>
 </template>
