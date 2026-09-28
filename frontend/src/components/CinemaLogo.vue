@@ -19,7 +19,7 @@
 
     <span class="flex flex-col justify-center max-[520px]:hidden">
       <span class="brand-spectrum whitespace-nowrap font-mono text-[15px] font-black uppercase leading-[1]">Cinema115</span>
-      <span class="mt-1 whitespace-nowrap text-[9px] font-semibold leading-[1] text-slate-500">
+      <span class="mt-1 whitespace-nowrap text-[9px] font-semibold leading-[1] text-slate-500 dark:text-slate-400 dark:text-slate-500">
         影视资源与媒体自动化
       </span>
     </span>

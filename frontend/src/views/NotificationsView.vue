@@ -41,16 +41,16 @@ onBeforeUnmount(() => controller.abort())
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50">
+  <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
     <main class="mx-auto max-w-3xl space-y-5 px-4 py-10 sm:px-8">
-      <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="text-2xl font-bold text-slate-900">站内通知</h1><p class="mt-2 text-sm text-slate-500">追更入库、追平及后续变化会保存在这里。</p></div><div class="flex gap-4 text-sm"><button :disabled="loading || busy" class="text-blue-600 disabled:opacity-40" @click="load()">刷新</button><button :disabled="busy || loading || !websiteUnread || !items.length" class="text-slate-600 disabled:opacity-40" @click="read(items[0]!.id, true)">全部已读</button></div></div>
+      <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">站内通知</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">追更入库、追平及后续变化会保存在这里。</p></div><div class="flex gap-4 text-sm"><button :disabled="loading || busy" class="text-blue-600 disabled:opacity-40" @click="load()">刷新</button><button :disabled="busy || loading || !websiteUnread || !items.length" class="text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="read(items[0]!.id, true)">全部已读</button></div></div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-      <p v-if="!items.length" class="py-12 text-center text-sm text-slate-400">{{ loading ? '正在加载通知…' : error ? '请刷新重试' : '暂无通知' }}</p>
-      <article v-for="item in items" :key="item.id" class="rounded-xl border bg-white p-5" :class="item.readAt ? 'border-slate-200' : 'border-amber-200'">
-        <div class="flex items-start gap-3"><span v-if="!item.readAt" aria-label="未读" class="mt-2 h-2 w-2 shrink-0 rounded-full bg-amber-500"></span><div class="min-w-0 flex-1"><RouterLink :to="`/${item.kind}/${item.tmdbId}`" class="break-words font-semibold text-slate-900 hover:text-amber-700" @click.prevent="open(item)">{{ item.title }}</RouterLink><p class="mt-2 text-sm leading-6 text-slate-600">{{ item.message }}</p><div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400"><time>{{ new Date(item.createdAt * 1000).toLocaleString() }}</time><button v-if="!item.readAt" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="read(item.id)">标为已读</button><span v-else>已读</span></div></div></div>
+      <p v-if="!items.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ loading ? '正在加载通知…' : error ? '请刷新重试' : '暂无通知' }}</p>
+      <article v-for="item in items" :key="item.id" class="rounded-xl border bg-white dark:bg-slate-900 p-5" :class="item.readAt ? 'border-slate-200 dark:border-slate-700' : 'border-amber-200'">
+        <div class="flex items-start gap-3"><span v-if="!item.readAt" aria-label="未读" class="mt-2 h-2 w-2 shrink-0 rounded-full bg-amber-500"></span><div class="min-w-0 flex-1"><RouterLink :to="`/${item.kind}/${item.tmdbId}`" class="break-words font-semibold text-slate-900 dark:text-slate-100 hover:text-amber-700" @click.prevent="open(item)">{{ item.title }}</RouterLink><p class="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ item.message }}</p><div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 dark:text-slate-500"><time>{{ new Date(item.createdAt * 1000).toLocaleString() }}</time><button v-if="!item.readAt" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="read(item.id)">标为已读</button><span v-else>已读</span></div></div></div>
       </article>
-      <button v-if="hasMore" :disabled="loading" class="w-full rounded-xl border border-slate-200 bg-white py-3 text-sm text-slate-600 disabled:opacity-40" @click="load(true)">{{ loading ? '加载中…' : '加载更多' }}</button>
+      <button v-if="hasMore" :disabled="loading" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-3 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="load(true)">{{ loading ? '加载中…' : '加载更多' }}</button>
     </main>
   </div>
 </template>

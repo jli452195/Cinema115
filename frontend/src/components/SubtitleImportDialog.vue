@@ -156,19 +156,19 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" aria-labelledby="subtitle-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 text-slate-700 shadow-2xl backdrop:bg-slate-950/50" @cancel.prevent="!busy && emit('close')">
-      <header class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="subtitle-title" class="font-semibold text-slate-900">补充字幕 · {{ job.title }}</h2><p class="mt-2 break-all text-xs text-slate-500">账号：{{ accountName }} · {{ job.config.targetPath }}</p></div><button :disabled="!!busy" aria-label="关闭字幕导入" class="shrink-0 rounded-lg px-3 py-1 text-xl disabled:opacity-40" @click="emit('close')">×</button></header>
+    <dialog ref="dialog" aria-labelledby="subtitle-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 p-5 text-slate-700 dark:text-slate-300 shadow-2xl backdrop:bg-slate-950/50" @cancel.prevent="!busy && emit('close')">
+      <header class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="subtitle-title" class="font-semibold text-slate-900 dark:text-slate-100">补充字幕 · {{ job.title }}</h2><p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountName }} · {{ job.config.targetPath }}</p></div><button :disabled="!!busy" aria-label="关闭字幕导入" class="shrink-0 rounded-lg px-3 py-1 text-xl disabled:opacity-40" @click="emit('close')">×</button></header>
       <p v-if="busy" role="status" class="mt-3 text-sm text-blue-700">{{ busy }}…</p>
       <p v-if="error" role="alert" class="mt-3 break-all rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
       <button v-if="!videos.length && !busy" class="secondary mt-3" @click="work('读取视频', loadVideos)">重新读取视频</button>
       <fieldset :disabled="!!busy || !videos.length" class="mt-4 min-w-0 space-y-4 disabled:opacity-60">
         <div class="rounded-xl border-2 border-dashed border-blue-200 bg-blue-50 p-5 text-center" @dragover.prevent @drop.prevent="dropFiles">
           <p class="text-sm">拖入本地字幕 ZIP，或直接选择多个字幕文件</p>
-          <p class="mt-2 text-xs leading-5 text-slate-500">ZIP 在本机解压，确认后才上传字幕。支持 SRT / ASS / SSA / VTT / IDX / SUB；RAR、7z 请先解压。单个字幕 16 MiB，合计 64 MiB，最多 100 个。</p>
+          <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">ZIP 在本机解压，确认后才上传字幕。支持 SRT / ASS / SSA / VTT / IDX / SUB；RAR、7z 请先解压。单个字幕 16 MiB，合计 64 MiB，最多 100 个。</p>
           <input ref="picker" type="file" multiple accept=".zip,.srt,.ass,.ssa,.vtt,.idx,.sub" aria-label="选择本地字幕或 ZIP" class="sr-only" @change="chooseFiles" />
           <button class="secondary mt-3" @click="picker?.click()">{{ rows.length ? '重新选择文件' : '选择字幕文件 / ZIP' }}</button>
         </div>
-        <p v-if="notice" role="status" class="text-xs leading-5 text-slate-500">{{ notice }}</p>
+        <p v-if="notice" role="status" class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ notice }}</p>
         <template v-if="rows.length">
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <button class="secondary" @click="rows.forEach(row => row.selected = true)">全选字幕</button><button class="secondary" @click="rows.forEach(row => row.selected = false)">全不选字幕</button>
@@ -177,15 +177,15 @@ onBeforeUnmount(() => {
             <label>起始集 <input v-model.number="firstEpisode" aria-label="字幕起始集" type="number" min="1" max="10000" class="input w-20" /></label><button class="secondary" :disabled="firstEpisode < 1" @click="matchInOrder">按当前顺序匹配</button>
             <select v-model="language" aria-label="批量字幕语言" class="input"><option v-for="lang in languages" :key="lang.value" :value="lang.value">{{ lang.label }}</option></select><button class="secondary" @click="selected.forEach(row => { row.language = language; syncPair(row) })">应用到勾选字幕</button>
           </div>
-          <p role="status" class="text-xs text-slate-600">已勾选 {{ selected.length }} · 自动匹配 {{ high }} · 人工确认 {{ selected.filter(row => row.manual && row.videoId).length }} · 待确认 {{ review }} · 未匹配 {{ unmatched }} · 同名或配对冲突 {{ conflicts.size }}</p>
+          <p role="status" class="text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500">已勾选 {{ selected.length }} · 自动匹配 {{ high }} · 人工确认 {{ selected.filter(row => row.manual && row.videoId).length }} · 待确认 {{ review }} · 未匹配 {{ unmatched }} · 同名或配对冲突 {{ conflicts.size }}</p>
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <label>显示 <select v-model="filter" aria-label="字幕匹配筛选" class="input"><option value="all">全部字幕</option><option value="unmatched">只看未匹配</option><option value="review">只看待确认</option><option value="conflict">只看冲突项</option></select></label>
             <button v-if="selected.some(row => row.pending && row.videoId)" class="secondary" @click="confirmOrder">确认已勾选的顺序建议</button>
-            <span class="text-slate-500">筛选不改变勾选。置信度只表示文件对应关系，不代表时间轴匹配。</span>
+            <span class="text-slate-500 dark:text-slate-400 dark:text-slate-500">筛选不改变勾选。置信度只表示文件对应关系，不代表时间轴匹配。</span>
           </div>
           <div class="max-h-80 space-y-3 overflow-y-auto">
-            <div v-for="row in displayed" :key="row.id" class="rounded-xl border border-slate-200 p-3">
-              <label class="flex items-start gap-2 text-sm"><input v-model="row.selected" type="checkbox" :aria-label="`导入 ${row.name}`" class="mt-1" @change="syncPair(row)" /><span class="min-w-0 break-all">{{ row.name }} <span class="text-xs text-slate-400">{{ (row.data.length / 1024).toFixed(1) }} KiB</span></span></label>
+            <div v-for="row in displayed" :key="row.id" class="rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+              <label class="flex items-start gap-2 text-sm"><input v-model="row.selected" type="checkbox" :aria-label="`导入 ${row.name}`" class="mt-1" @change="syncPair(row)" /><span class="min-w-0 break-all">{{ row.name }} <span class="text-xs text-slate-400 dark:text-slate-500">{{ (row.data.length / 1024).toFixed(1) }} KiB</span></span></label>
               <p class="mt-2 break-all text-xs" :class="row.videoId && !row.pending ? 'text-emerald-700' : 'text-amber-700'">{{ row.manual ? '人工指定' : confidenceLabel[row.match.confidence] }} · {{ row.match.reason }} <button v-if="row.manual" class="ml-2 text-blue-600 underline" :aria-label="`${row.name} 重新自动匹配`" @click="resetMatch(row)">重新自动匹配</button></p>
               <p v-if="conflicts.has(row.id)" class="mt-2 text-xs text-red-700">{{ conflicts.get(row.id) }}</p>
               <div v-if="!row.videoId && row.match.candidates.length" class="mt-2 space-y-1">
@@ -197,25 +197,25 @@ onBeforeUnmount(() => {
                 <input v-model="row.version" :aria-label="`${row.name} 版本`" class="input min-w-0" maxlength="30" placeholder="版本，如 字幕组" @input="syncPair(row)" />
               </div>
             </div>
-            <p v-if="!displayed.length" class="p-4 text-center text-xs text-slate-500">没有符合当前筛选的字幕。</p>
+            <p v-if="!displayed.length" class="p-4 text-center text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">没有符合当前筛选的字幕。</p>
           </div>
           <div class="flex justify-end"><button class="primary" :disabled="!selected.length || !!unmatched || !!review || !!conflicts.size" @click="work('生成字幕预览', previewImport)">预览字幕导入</button></div>
         </template>
         <section v-if="plan" class="rounded-xl border border-blue-200 p-4">
           <h3 class="text-sm font-semibold">确认字幕导入</h3>
-          <p class="mt-2 text-xs text-slate-500">上传到对应视频目录，已有同名文件会跳过。字幕时间轴是否适配片源，请导入后播放检查。</p>
-          <ul class="my-3 max-h-60 space-y-2 overflow-y-auto text-xs"><li v-for="item in plan.items" :key="item.localId" class="break-all"><p class="text-slate-500">{{ item.originalName }}</p><p>→ {{ item.targetPath }}</p><p v-if="item.message" class="text-amber-700">{{ item.message }}</p></li></ul>
+          <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">上传到对应视频目录，已有同名文件会跳过。字幕时间轴是否适配片源，请导入后播放检查。</p>
+          <ul class="my-3 max-h-60 space-y-2 overflow-y-auto text-xs"><li v-for="item in plan.items" :key="item.localId" class="break-all"><p class="text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.originalName }}</p><p>→ {{ item.targetPath }}</p><p v-if="item.message" class="text-amber-700">{{ item.message }}</p></li></ul>
           <button class="primary" :disabled="!plan.items.some(item => item.status === 'pending')" @click="work('上传字幕并核实结果，请保持页面打开', upload)">确认上传 {{ plan.items.filter(item => item.status === 'pending').length }} 个字幕</button>
         </section>
       </fieldset>
-      <section v-if="result" class="mt-4 rounded-xl bg-slate-50 p-4"><h3 class="text-sm font-semibold">{{ result.message }} · 已上传 {{ result.items.filter(item => item.status === 'done').length }}/{{ result.items.length }}</h3><ul class="mt-3 max-h-60 space-y-2 overflow-y-auto text-xs"><li v-for="item in result.items" :key="item.localId" class="break-all">{{ item.name }}：{{ item.message || '未处理' }}</li></ul></section>
+      <section v-if="result" class="mt-4 rounded-xl bg-slate-50 dark:bg-slate-950 p-4"><h3 class="text-sm font-semibold">{{ result.message }} · 已上传 {{ result.items.filter(item => item.status === 'done').length }}/{{ result.items.length }}</h3><ul class="mt-3 max-h-60 space-y-2 overflow-y-auto text-xs"><li v-for="item in result.items" :key="item.localId" class="break-all">{{ item.name }}：{{ item.message || '未处理' }}</li></ul></section>
       <footer class="mt-5 flex justify-end"><button class="secondary" :disabled="!!busy" @click="emit('close')">关闭</button></footer>
     </dialog>
   </Teleport>
 </template>
 
 <style scoped>
-.input { @apply rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700; }
+.input { @apply rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-2 text-xs text-slate-700 dark:text-slate-300; }
 .primary { @apply rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40; }
-.secondary { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40; }
+.secondary { @apply rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 disabled:opacity-40; }
 </style>

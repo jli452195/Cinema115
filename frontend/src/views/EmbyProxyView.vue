@@ -55,46 +55,46 @@ onBeforeUnmount(() => lifecycle.abort())
 <template>
   <ManagementLayout title="Emby 302 反代" description="通过 Emby 登录与播放权限校验，将分享 STRM 的直放请求跳转到 115。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
     <template #actions>
-      <RouterLink to="/emby/cache" class="shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">缓存管理</RouterLink>
-      <RouterLink :to="{ path: '/logs', query: { module: 'Emby 302', level: 'ALL' } }" class="shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">查看日志</RouterLink>
+      <RouterLink to="/emby/cache" class="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950">缓存管理</RouterLink>
+      <RouterLink :to="{ path: '/logs', query: { module: 'Emby 302', level: 'ALL' } }" class="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950">查看日志</RouterLink>
       <button :disabled="busy || !loaded" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="save">{{ busy ? '正在处理…' : '保存配置' }}</button>
     </template>
     <div class="space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <button v-if="!loaded && !busy" class="rounded-lg border px-4 py-2 text-sm" @click="load">重新加载</button>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">{{ notice }}</p>
-      <form class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7" @submit.prevent="save">
+      <form class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7" @submit.prevent="save">
         <fieldset :disabled="busy || !loaded" class="space-y-6 disabled:opacity-50">
           <SettingSwitch v-model="config.enabled" label="启用 Emby 302 反代" description="保存后立即生效。播放器连接下面的反代端口，原有 STRM 无需重新生成。" />
           <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。每次请求合并为一条日志，展开查看完整 CDN 直链、请求与响应头、解析步骤。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
           <SettingSwitch v-model="config.prewarm" label="播放预热" description="默认关闭，保存后生效。收到播放信息时后台取链，必要时提前秒传；仅预热唯一或明确选中的媒体源。打开详情但未播放也可能产生网盘文件，需手动删除。相同 UA 复用有效直链，不同 UA 重新取链；能否提前触发取决于播放器。" />
           <div class="grid gap-5 sm:grid-cols-2">
-            <label class="text-sm text-slate-700">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
-            <label class="text-sm text-slate-700">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
-            <label class="text-sm text-slate-700">反代监听端口<input v-model.number="config.port" type="number" min="1024" max="65535" required class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">建议 8097。不能与管理服务或其他程序使用相同端口；更换端口后需更新播放器连接地址。</span></label>
-            <div><P115AccountSelect id="emby-proxy-account" v-model="config.accountId" :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400">本功能独立选择取直链账号，账号失效时停止解析。<RouterLink to="/helper115" class="text-blue-600">管理账号</RouterLink></p></div>
-            <label class="text-sm text-slate-700 sm:col-span-2">Emby 中对应 STRM 根目录的路径（按需填写）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media，对应 Cinema115 容器内的 /strm" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400">Emby 返回本地 .strm 路径时使用。该路径下的相对目录必须与 Cinema115 的 STRM 根目录一致；如果返回的是 STRM 内的 HTTP 链接，可留空。</span></label>
+            <label class="text-sm text-slate-700 dark:text-slate-300">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
+            <label class="text-sm text-slate-700 dark:text-slate-300">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
+            <label class="text-sm text-slate-700 dark:text-slate-300">反代监听端口<input v-model.number="config.port" type="number" min="1024" max="65535" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">建议 8097。不能与管理服务或其他程序使用相同端口；更换端口后需更新播放器连接地址。</span></label>
+            <div><P115AccountSelect id="emby-proxy-account" v-model="config.accountId" :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">本功能独立选择取直链账号，账号失效时停止解析。<RouterLink to="/helper115" class="text-blue-600">管理账号</RouterLink></p></div>
+            <label class="text-sm text-slate-700 dark:text-slate-300 sm:col-span-2">Emby 中对应 STRM 根目录的路径（按需填写）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media，对应 Cinema115 容器内的 /strm" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">Emby 返回本地 .strm 路径时使用。该路径下的相对目录必须与 Cinema115 的 STRM 根目录一致；如果返回的是 STRM 内的 HTTP 链接，可留空。</span></label>
           </div>
-          <div class="space-y-3 border-t border-slate-100 pt-5">
-            <h2 class="font-semibold text-slate-900">网盘 pickcode STRM</h2>
-            <p class="text-xs leading-6 text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由上方明确选择的源账号读取文件；不会访问原工具地址。</p>
-            <p class="text-xs leading-6 text-slate-500">Emby 用户绑定其他 115 账号后，直接秒传到绑定账号的播放缓存目录，再用该账号取链。已缓存的文件会复用；未绑定或绑定源账号时直接读取源文件。分享 STRM 仍优先尝试朋友账号读取分享。</p>
+          <div class="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-5">
+            <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘 pickcode STRM</h2>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由上方明确选择的源账号读取文件；不会访问原工具地址。</p>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">Emby 用户绑定其他 115 账号后，直接秒传到绑定账号的播放缓存目录，再用该账号取链。已缓存的文件会复用；未绑定或绑定源账号时直接读取源文件。分享 STRM 仍优先尝试朋友账号读取分享。</p>
           </div>
         </fieldset>
       </form>
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
-        <div class="flex items-center justify-between"><h2 class="font-semibold text-slate-900">运行状态</h2><span class="rounded-full px-3 py-1 text-xs" :class="status?.listening ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ status?.listening ? '正在监听' : '未监听' }}</span></div>
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7">
+        <div class="flex items-center justify-between"><h2 class="font-semibold text-slate-900 dark:text-slate-100">运行状态</h2><span class="rounded-full px-3 py-1 text-xs" :class="status?.listening ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 dark:text-slate-500'">{{ status?.listening ? '正在监听' : '未监听' }}</span></div>
         <p v-if="status?.error" role="alert" class="mt-3 text-sm text-red-600">{{ status.error }}</p>
-        <p class="mt-4 break-all text-sm text-slate-700">Emby 客户端入口示例：<code>{{ entry }}</code></p>
-        <p class="mt-2 text-xs leading-6 text-slate-500">使用原 Emby 用户登录。若有独立域名、HTTPS 网关或不同的宿主机端口，请使用实际对外地址。监听成功只表示服务已启动，仍需实际验证客户端播放与拖动。</p>
+        <p class="mt-4 break-all text-sm text-slate-700 dark:text-slate-300">Emby 客户端入口示例：<code>{{ entry }}</code></p>
+        <p class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">使用原 Emby 用户登录。若有独立域名、HTTPS 网关或不同的宿主机端口，请使用实际对外地址。监听成功只表示服务已启动，仍需实际验证客户端播放与拖动。</p>
 		<p class="mt-2 text-sm leading-6 text-amber-700">首次使用或升级后，请在播放器中通过反代地址退出并重新登录一次，以识别播放用户。正常重启无需重复登录；提示“尚未记录此 Emby 登录身份”时需重新登录。</p>
       </section>
       <div class="flex flex-wrap gap-4 text-sm"><RouterLink to="/emby/users" class="text-blue-600">Emby 用户与 115 账号绑定</RouterLink><RouterLink to="/emby/cache" class="text-blue-600">直链与秒传文件缓存管理</RouterLink></div>
       <InstantUploadPanel :token="token" :accounts="accounts" :source="status?.config" />
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
-        <h2 class="font-semibold text-slate-900">NAS / Docker 端口</h2>
-        <p class="mt-3 text-sm leading-7 text-slate-600">桥接网络需要在容器设置中添加 TCP 端口映射 <code class="rounded bg-slate-100 px-2 py-1">{{ mapping }}</code>（宿主机端口 : 容器端口）。项目 compose 使用 host 网络，无需映射；仅切换为桥接网络时需要配置映射。网页保存不会自动修改 Docker。</p>
-        <p class="mt-3 text-xs leading-6 text-slate-500">使用 host 网络时通常无需映射，但端口不能与 NAS 上的其他服务冲突。直放成功时视频流量由客户端直接访问 115；转码与封装转换已关闭，不兼容原文件格式时请更换播放器；字幕、海报和播放进度继续由 Emby 处理。</p>
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7">
+        <h2 class="font-semibold text-slate-900 dark:text-slate-100">NAS / Docker 端口</h2>
+        <p class="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-400 dark:text-slate-500">桥接网络需要在容器设置中添加 TCP 端口映射 <code class="rounded bg-slate-100 dark:bg-slate-800 px-2 py-1">{{ mapping }}</code>（宿主机端口 : 容器端口）。项目 compose 使用 host 网络，无需映射；仅切换为桥接网络时需要配置映射。网页保存不会自动修改 Docker。</p>
+        <p class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">使用 host 网络时通常无需映射，但端口不能与 NAS 上的其他服务冲突。直放成功时视频流量由客户端直接访问 115；转码与封装转换已关闭，不兼容原文件格式时请更换播放器；字幕、海报和播放进度继续由 Emby 处理。</p>
       </section>
     </div>
   </ManagementLayout>

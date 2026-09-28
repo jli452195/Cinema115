@@ -35,7 +35,7 @@ const capacity = ref(2000)
 const lifecycle = new AbortController()
 let timer: number | undefined
 let mounted = true
-const colors: Record<Level, string> = { ALL: 'bg-slate-800 text-white', INFO: 'bg-emerald-500 text-white', DEBUG: 'bg-sky-500 text-white', ERROR: 'bg-red-500 text-white', WARNING: 'bg-amber-400 text-slate-900' }
+const colors: Record<Level, string> = { ALL: 'bg-slate-800 text-white', INFO: 'bg-emerald-500 text-white', DEBUG: 'bg-sky-500 text-white', ERROR: 'bg-red-500 text-white', WARNING: 'bg-amber-400 text-slate-900 dark:text-slate-100' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
   return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source} ${entry.details ? JSON.stringify(entry.details) : ''}`.toLowerCase().includes(query)))
@@ -82,44 +82,44 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 
 <template>
   <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、观影、Emby、Emby 302 与蜜柑日志；详细过程可切换 DEBUG，排查问题请选择全部等级。" @logout="emit('logout')">
-      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div class="space-y-4 border-b border-slate-100 p-4 md:p-6">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
+        <div class="space-y-4 border-b border-slate-100 dark:border-slate-800 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">
-            <div class="flex max-w-full overflow-x-auto rounded-lg border border-slate-200 p-1" role="group" aria-label="日志等级">
-              <button v-for="item in levels" :key="item" class="shrink-0 rounded-md px-3 py-2 text-xs font-medium transition" :class="level === item ? colors[item] : 'text-slate-500 hover:bg-slate-100'" :aria-pressed="level === item" @click="level = item">{{ item }}</button>
+            <div class="flex max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 p-1" role="group" aria-label="日志等级">
+              <button v-for="item in levels" :key="item" class="shrink-0 rounded-md px-3 py-2 text-xs font-medium transition" :class="level === item ? colors[item] : 'text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'" :aria-pressed="level === item" @click="level = item">{{ item }}</button>
             </div>
-            <select v-model="module" aria-label="日志模块" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700"><option v-for="item in modules" :key="item" :value="item">{{ item === 'ALL' ? '全部' : item }}</option></select>
+            <select v-model="module" aria-label="日志模块" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-2 text-sm text-slate-700 dark:text-slate-300"><option v-for="item in modules" :key="item" :value="item">{{ item === 'ALL' ? '全部' : item }}</option></select>
             <div class="flex gap-2 md:ml-auto">
-              <button class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50" :aria-pressed="automatic" @click="toggleAutomatic">{{ automatic ? '暂停更新' : '继续更新' }}</button>
+              <button class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950" :aria-pressed="automatic" @click="toggleAutomatic">{{ automatic ? '暂停更新' : '继续更新' }}</button>
               <button class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50" :disabled="loading" @click="refresh">{{ loading ? '读取中…' : '刷新' }}</button>
             </div>
           </div>
-          <input v-model="search" aria-label="搜索日志" placeholder="搜索日志内容、任务编号或来源" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-blue-500" />
+          <input v-model="search" aria-label="搜索日志" placeholder="搜索日志内容、任务编号或来源" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-blue-500" />
           <div v-if="taskID" class="flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
             <span class="break-all">仅查看任务：{{ taskID }}</span>
             <button class="ml-auto shrink-0 rounded px-2 py-1 hover:bg-blue-100" @click="clearTaskFilter">取消任务筛选</button>
           </div>
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-slate-400"><span>{{ automatic ? '每 2 秒自动更新' : '已暂停自动更新' }}<span v-if="updated"> · 更新于 {{ updated }}</span></span><span>匹配 {{ filtered.length }} 条 / 已缓存 {{ entries.length }} 条</span></div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-slate-400 dark:text-slate-500"><span>{{ automatic ? '每 2 秒自动更新' : '已暂停自动更新' }}<span v-if="updated"> · 更新于 {{ updated }}</span></span><span>匹配 {{ filtered.length }} 条 / 已缓存 {{ entries.length }} 条</span></div>
           <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}。{{ entries.length ? '当前保留上次读取的日志。' : '' }}</p>
         </div>
-        <div v-if="!filtered.length" class="px-6 py-20 text-center text-sm text-slate-500">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? '暂时无法读取日志，请稍后刷新。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行 STRM、Telegram、订阅、观影或 Emby 操作后会显示在这里。' }}</div>
-        <ol v-else class="divide-y divide-slate-100">
-          <li v-for="entry in filtered.slice(0, visibleCount)" :key="entry.id" class="px-4 py-4 hover:bg-slate-50/70 md:px-6">
+        <div v-if="!filtered.length" class="px-6 py-20 text-center text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? '暂时无法读取日志，请稍后刷新。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行 STRM、Telegram、订阅、观影或 Emby 操作后会显示在这里。' }}</div>
+        <ol v-else class="divide-y divide-slate-100 dark:divide-slate-800">
+          <li v-for="entry in filtered.slice(0, visibleCount)" :key="entry.id" class="px-4 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950/70 md:px-6">
             <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
               <span class="min-w-16 rounded-full px-2.5 py-1 text-center font-medium" :class="colors[entry.level]">{{ entry.level }}</span>
-              <time :datetime="entry.time" class="tabular-nums text-slate-500">{{ timestamp(entry.time) }}</time>
-              <span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{{ entry.module }}</span>
-              <span class="text-slate-400">{{ entry.source }} · {{ entry.taskID }}</span>
+              <time :datetime="entry.time" class="tabular-nums text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ timestamp(entry.time) }}</time>
+              <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ entry.module }}</span>
+              <span class="text-slate-400 dark:text-slate-500">{{ entry.source }} · {{ entry.taskID }}</span>
             </div>
-            <p class="whitespace-pre-wrap break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{{ entry.message }}</p>
+            <p class="whitespace-pre-wrap break-words text-sm leading-6 text-slate-700 dark:text-slate-300 [overflow-wrap:anywhere]">{{ entry.message }}</p>
             <details v-if="entry.details && Object.values(entry.details).some(Boolean)" class="mt-2 min-w-0">
               <summary class="cursor-pointer text-xs text-blue-600">请求详情与解析步骤</summary>
               <PlaybackDiagnostics v-bind="entry.details" />
             </details>
           </li>
         </ol>
-        <div v-if="filtered.length > visibleCount" class="border-t border-slate-100 p-4 text-center"><button class="text-sm text-blue-600" @click="visibleCount += 100">加载更多（还剩 {{ filtered.length - visibleCount }} 条）</button></div>
+        <div v-if="filtered.length > visibleCount" class="border-t border-slate-100 dark:border-slate-800 p-4 text-center"><button class="text-sm text-blue-600" @click="visibleCount += 100">加载更多（还剩 {{ filtered.length - visibleCount }} 条）</button></div>
       </section>
-      <p class="mt-4 text-xs leading-6 text-slate-400">全部模块合计保留本次后端运行期间最近 {{ capacity.toLocaleString() }} 条日志，重启后清空。分享任务记录独立保留；此页仅显示新产生的日志。</p>
+      <p class="mt-4 text-xs leading-6 text-slate-400 dark:text-slate-500">全部模块合计保留本次后端运行期间最近 {{ capacity.toLocaleString() }} 条日志，重启后清空。分享任务记录独立保留；此页仅显示新产生的日志。</p>
   </ManagementLayout>
 </template>

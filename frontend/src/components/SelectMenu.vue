@@ -66,7 +66,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
       :aria-expanded="open"
       :aria-controls="listboxID"
       :aria-activedescendant="open ? `${listboxID}-${activeIndex}` : undefined"
-      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition hover:border-slate-300 hover:bg-slate-50 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-700 dark:text-slate-300 outline-none transition hover:border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:ring-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
       @click="toggle"
       @keydown="keydown"
     >
@@ -78,19 +78,19 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
       :id="listboxID"
       role="listbox"
       :aria-label="label"
-      class="absolute left-0 z-50 mt-1.5 max-h-64 min-w-full max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg shadow-slate-900/10"
+      class="absolute left-0 z-50 mt-1.5 max-h-64 min-w-full max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 shadow-lg shadow-slate-900/10"
     >
       <li v-for="(option, index) in options" :id="`${listboxID}-${index}`" :key="option.value" role="option" :aria-selected="option.value === modelValue">
         <button
           type="button"
           tabindex="-1"
           class="flex w-full items-center justify-between gap-6 rounded-md px-3 py-2 text-left text-sm transition"
-          :class="option.value === modelValue ? 'bg-slate-900 text-white' : index === activeIndex ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50'"
+          :class="option.value === modelValue ? 'bg-slate-900 text-white' : index === activeIndex ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950'"
           @pointerenter="activeIndex = index"
           @click="choose(index)"
         >
           <span class="whitespace-nowrap">{{ option.label }}</span>
-          <span v-if="option.value === modelValue" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white" aria-hidden="true" />
+          <span v-if="option.value === modelValue" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white dark:bg-slate-900" aria-hidden="true" />
         </button>
       </li>
     </ul>

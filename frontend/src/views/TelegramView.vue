@@ -56,15 +56,15 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
 
 <template>
   <ManagementLayout title="Bot 配置" description="管理 Telegram Bot 凭据；具体功能分别选择要使用的 Bot。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="emit('logout')">
-    <div class="mb-6 flex flex-wrap items-center gap-3 border-b border-slate-200 pb-6">
+    <div class="mb-6 flex flex-wrap items-center gap-3 border-b border-slate-200 dark:border-slate-700 pb-6">
       <button type="button" :disabled="loading || adding || bots.length >= 20" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="add">{{ adding ? '添加中…' : '＋ 添加配置' }}</button>
-      <button type="button" :disabled="loading" class="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 disabled:opacity-40" @click="refresh">刷新配置</button>
-      <span class="text-xs text-slate-500">{{ bots.length }} 个 Bot 配置</span>
-      <p class="w-full text-xs leading-6 text-slate-400">功能保存明确的 Bot 配置编号。修改、停用或删除配置不会让功能改用其他 Bot；同一个 Bot 只有一个消息接收器。</p>
+      <button type="button" :disabled="loading" class="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2.5 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="refresh">刷新配置</button>
+      <span class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ bots.length }} 个 Bot 配置</span>
+      <p class="w-full text-xs leading-6 text-slate-400 dark:text-slate-500">功能保存明确的 Bot 配置编号。修改、停用或删除配置不会让功能改用其他 Bot；同一个 Bot 只有一个消息接收器。</p>
     </div>
     <p v-if="error" role="alert" class="mb-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-    <p v-if="loading" role="status" class="py-10 text-sm text-slate-500">正在读取 Bot 配置…</p>
-    <p v-else-if="!bots.length && !error" class="py-10 text-sm text-slate-500">暂无 Bot，请添加配置，再到具体功能中选择使用。</p>
+    <p v-if="loading" role="status" class="py-10 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">正在读取 Bot 配置…</p>
+    <p v-else-if="!bots.length && !error" class="py-10 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无 Bot，请添加配置，再到具体功能中选择使用。</p>
     <div class="grid items-start gap-5 xl:grid-cols-2"><TelegramBotEditor v-for="bot in bots" :key="`${bot.id}:${bot.revision}`" :bot="bot" :token="token" :accounts="accounts" @changed="refresh" /></div>
   </ManagementLayout>
 </template>

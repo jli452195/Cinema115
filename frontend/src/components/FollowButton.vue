@@ -46,10 +46,10 @@ onBeforeUnmount(() => controller?.abort())
   <div class="space-y-2">
     <div class="flex flex-wrap items-center gap-3">
       <button type="button" :disabled="loading || busy || !state || available || state.subscribed" class="rounded-lg border px-4 py-2 text-xs font-medium disabled:cursor-default" :class="state?.subscribed || available ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50'" @click="change()">{{ label }}</button>
-      <button v-if="state?.subscribed" type="button" :disabled="busy" class="text-xs text-slate-500 hover:text-red-600 disabled:opacity-50" @click="change(true)">取消追更</button>
+      <button v-if="state?.subscribed" type="button" :disabled="busy" class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-50" @click="change(true)">取消追更</button>
       <RouterLink v-if="state?.subscribed" to="/follows" class="text-xs text-blue-600">我的追更</RouterLink>
     </div>
-    <p v-if="state?.subscribed && state.request" class="max-w-xl whitespace-pre-wrap break-words text-xs text-slate-500">{{ followLabel(state.request) }}<span v-if="state.request.note"> · {{ state.request.note }}</span></p>
+    <p v-if="state?.subscribed && state.request" class="max-w-xl whitespace-pre-wrap break-words text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ followLabel(state.request) }}<span v-if="state.request.note"> · {{ state.request.note }}</span></p>
     <p v-if="notice" role="status" class="text-xs text-emerald-700">{{ notice }}</p>
     <p v-if="error" role="alert" class="text-xs text-red-600">{{ error }}<button v-if="!state" :disabled="loading" class="ml-2 underline" @click="load">重试</button></p>
   </div>

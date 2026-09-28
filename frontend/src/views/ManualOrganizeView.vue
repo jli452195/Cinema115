@@ -243,13 +243,13 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 <template>
   <ManagementLayout title="手动整理" description="选择网盘文件，指定 TMDB 作品，核对命名后移动到目标目录。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <div class="space-y-6">
-      <section class="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 class="mb-3 font-semibold text-slate-900">整理后的目录分享</h2>
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+        <h2 class="mb-3 font-semibold text-slate-900 dark:text-slate-100">整理后的目录分享</h2>
         <DirectoryShareButton :token="token" :disabled="!historyReady || active || !!busy || !!historyError" :disabled-reason="historyError ? '整理状态读取失败，请等待刷新后再分享' : '请等待当前整理操作完成后再分享'" />
       </section>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-blue-50 p-4 text-sm text-blue-700">{{ notice }}</p>
-      <p v-if="busy" role="status" class="text-sm text-slate-500">{{ busy }}…</p>
+      <p v-if="busy" role="status" class="text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ busy }}…</p>
       <fieldset :disabled="!!busy" class="min-w-0 space-y-6 disabled:opacity-70">
         <section class="panel">
           <h2 class="heading">整理位置</h2>
@@ -258,33 +258,33 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
             <div><label class="label">来源目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'source'">{{ config.sourcePath || '选择待整理目录' }}</button></div>
             <div><label class="label">目标目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'target'">{{ config.targetPath || '选择整理后的目录' }}</button></div>
           </div>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs leading-5 text-slate-500">同一账号内移动。目标下按作品建目录，剧集按季建目录。</p><button class="secondary" :disabled="!configured" @click="work('保存配置', save)">保存配置</button></div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">同一账号内移动。目标下按作品建目录，剧集按季建目录。</p><button class="secondary" :disabled="!configured" @click="work('保存配置', save)">保存配置</button></div>
         </section>
 
         <div class="grid items-start gap-6 xl:grid-cols-2">
           <section ref="sourcePanel" class="panel scroll-mt-6">
             <div class="flex items-center justify-between gap-3"><h2 class="heading">1. 选择文件或文件夹</h2><button class="secondary" :disabled="!config.sourceCID || !accountReady" @click="work('读取文件', () => browse())">刷新</button></div>
-            <div class="my-4 flex items-center gap-3"><button v-if="breadcrumbs.length" class="text-sm text-blue-600" @click="work('读取文件', goBack)">返回上级</button><p class="min-w-0 break-all text-xs text-slate-500">{{ config.sourcePath || '先选择来源目录' }}</p></div>
+            <div class="my-4 flex items-center gap-3"><button v-if="breadcrumbs.length" class="text-sm text-blue-600" @click="work('读取文件', goBack)">返回上级</button><p class="min-w-0 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ config.sourcePath || '先选择来源目录' }}</p></div>
             <div class="mb-3 flex flex-wrap items-center gap-3">
-              <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" :checked="allPageSelected" :disabled="cleanupBlocked || !files.length" @change="togglePageSelection" />全选当前页</label>
+              <label class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500"><input type="checkbox" :checked="allPageSelected" :disabled="cleanupBlocked || !files.length" @change="togglePageSelection" />全选当前页</label>
               <button class="danger" :disabled="cleanupBlocked || !deleteIDs.length" @click="work('生成删除预览', () => previewCleanup('selected'))">删除所选（{{ deleteIDs.length }}）</button>
               <button class="secondary" :disabled="cleanupBlocked" @click="work('扫描空目录', () => previewCleanup('empty'))">清理空目录</button>
             </div>
-            <p class="mb-2 text-xs leading-5 text-slate-500">勾选用于删除；点击目录名进入查看。删除移入 115 回收站，清理前会显示确认列表。</p>
-            <div class="max-h-[420px] overflow-y-auto divide-y divide-slate-100">
+            <p class="mb-2 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">勾选用于删除；点击目录名进入查看。删除移入 115 回收站，清理前会显示确认列表。</p>
+            <div class="max-h-[420px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               <div v-for="file in files" :key="file.id" class="flex flex-wrap items-center gap-2 py-3">
                 <input v-model="deleteIDs" :value="file.id" type="checkbox" :aria-label="`勾选删除 ${file.name}`" :disabled="cleanupBlocked" class="shrink-0" />
-                <span class="shrink-0 text-xs" :class="file.directory ? 'text-amber-600' : 'text-slate-400'">{{ file.directory ? '目录' : '文件' }}</span>
+                <span class="shrink-0 text-xs" :class="file.directory ? 'text-amber-600' : 'text-slate-400 dark:text-slate-500'">{{ file.directory ? '目录' : '文件' }}</span>
                 <button v-if="file.directory" class="min-w-0 flex-1 break-all text-left text-sm text-blue-700 hover:underline" @click="work('读取文件', () => enter(file))">{{ file.name }}</button>
-                <span v-else class="min-w-0 flex-1 break-all text-sm text-slate-700">{{ file.name }}</span>
+                <span v-else class="min-w-0 flex-1 break-all text-sm text-slate-700 dark:text-slate-300">{{ file.name }}</span>
                 <div class="ml-auto flex w-full shrink-0 justify-end gap-2 sm:w-auto">
                   <button class="secondary" :disabled="!configured || active" @click="work('展开所选条目', () => scan(file))">选择整理</button>
                   <button class="danger" :aria-label="`删除 ${file.name}`" :disabled="cleanupBlocked" @click="work('生成删除预览', () => previewCleanup('selected', [file.id]))">删除</button>
                 </div>
               </div>
-              <p v-if="!files.length" class="py-12 text-center text-sm text-slate-400">{{ config.sourceCID ? '当前目录没有文件' : '选择目录后显示网盘内容' }}</p>
+              <p v-if="!files.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ config.sourceCID ? '当前目录没有文件' : '选择目录后显示网盘内容' }}</p>
             </div>
-            <div v-if="count > 100" class="mt-4 flex items-center justify-between text-xs text-slate-500"><button class="secondary" :disabled="offset === 0" @click="work('读取文件', () => browse(Math.max(0, offset - 100)))">上一页</button><span>{{ offset + 1 }}–{{ offset + files.length }} / {{ count }}</span><button class="secondary" :disabled="offset + files.length >= count" @click="work('读取文件', () => browse(offset + files.length))">下一页</button></div>
+            <div v-if="count > 100" class="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><button class="secondary" :disabled="offset === 0" @click="work('读取文件', () => browse(Math.max(0, offset - 100)))">上一页</button><span>{{ offset + 1 }}–{{ offset + files.length }} / {{ count }}</span><button class="secondary" :disabled="offset + files.length >= count" @click="work('读取文件', () => browse(offset + files.length))">下一页</button></div>
           </section>
 
           <section class="panel">
@@ -296,11 +296,11 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
             </form>
             <div v-if="media" class="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-3"><p class="text-sm font-semibold text-blue-800">已选：{{ media.title }} {{ media.date?.slice(0, 4) }} · {{ media.kind === 'tv' ? '剧集' : '电影' }}</p><p class="mt-1 text-xs text-blue-600">TMDB {{ media.id }}</p></div>
             <div class="mt-4 max-h-[360px] space-y-2 overflow-y-auto">
-              <button v-for="item in results" :key="`${item.kind}:${item.id}`" class="flex w-full gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-blue-400" @click="work('读取作品信息', () => choose(item))">
+              <button v-for="item in results" :key="`${item.kind}:${item.id}`" class="flex w-full gap-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3 text-left hover:border-blue-400" @click="work('读取作品信息', () => choose(item))">
                 <img v-if="item.posterUrl" :src="tmdbImageURL(item.posterUrl)" alt="" class="h-24 w-16 shrink-0 rounded-md object-cover" loading="lazy" />
-                <div class="min-w-0"><p class="text-sm font-medium text-slate-800">{{ item.title }} <span class="text-slate-400">{{ item.date?.slice(0, 4) }} · {{ item.kind === 'tv' ? '剧集' : '电影' }}</span></p><p class="mt-1 text-xs text-slate-400">{{ item.originalTitle }} · TMDB {{ item.id }}</p><p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ item.overview || '暂无简介' }}</p></div>
+                <div class="min-w-0"><p class="text-sm font-medium text-slate-800 dark:text-slate-200">{{ item.title }} <span class="text-slate-400 dark:text-slate-500">{{ item.date?.slice(0, 4) }} · {{ item.kind === 'tv' ? '剧集' : '电影' }}</span></p><p class="mt-1 text-xs text-slate-400 dark:text-slate-500">{{ item.originalTitle }} · TMDB {{ item.id }}</p><p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.overview || '暂无简介' }}</p></div>
               </button>
-              <p v-if="!results.length && !media" class="py-12 text-center text-sm text-slate-400">搜索后选择正确的作品</p>
+              <p v-if="!results.length && !media" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">搜索后选择正确的作品</p>
             </div>
             <div v-if="searchTotalPages > 1" class="mt-3 flex items-center justify-between text-xs"><button class="secondary" :disabled="searchPage <= 1" @click="work('搜索 TMDB', () => search(searchPage - 1))">上一页</button><span>{{ searchPage }} / {{ searchTotalPages }}</span><button class="secondary" :disabled="searchPage >= searchTotalPages" @click="work('搜索 TMDB', () => search(searchPage + 1))">下一页</button></div>
           </section>
@@ -308,49 +308,49 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 
         <section v-if="scanId" class="panel">
           <h2 class="heading">3. 校正文件与命名</h2>
-          <p class="mt-2 break-all text-sm text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
+          <p class="mt-2 break-all text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
           <div class="my-4 flex flex-wrap items-center gap-3 text-sm">
             <label class="flex items-center gap-2"><input v-model="subtitles" type="checkbox" />同时整理匹配的外挂字幕</label>
           </div>
-          <div class="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm">
+          <div class="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 dark:bg-slate-950 p-3 text-sm">
             <div class="flex items-center gap-2"><span>季</span><SelectMenu v-model="seasonValue" :options="seasonOptions" label="整理季" :disabled="!!busy || active || media?.kind !== 'tv' || !seasonOptions.length" class="w-48" /></div>
             <label>起始集 <input v-model.number="startEpisode" aria-label="起始集" :disabled="media?.kind !== 'tv' || active" type="number" min="1" max="10000" class="input ml-1 w-20" /></label>
             <button class="secondary" :disabled="media?.kind !== 'tv' || !seasonOptions.length || active || !selectedRows.length || startEpisode < 1" @click="numberEpisodes">按当前顺序连续编号</button>
-            <p class="w-full text-xs text-slate-500">{{ !media ? '请先在第 2 步选择 TMDB 剧集作品，再设置季集。' : media.kind === 'movie' ? '已选择电影，无需设置季集。' : `将为全部已选 ${selectedRows.length} 个视频编号，包含搜索隐藏或折叠的已选文件。按目录分组及文件名自然排序。` }}</p>
+            <p class="w-full text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ !media ? '请先在第 2 步选择 TMDB 剧集作品，再设置季集。' : media.kind === 'movie' ? '已选择电影，无需设置季集。' : `将为全部已选 ${selectedRows.length} 个视频编号，包含搜索隐藏或折叠的已选文件。按目录分组及文件名自然排序。` }}</p>
           </div>
           <OrganizeFileSelection :key="scanId" :rows="rows" :root-path="selectionRoot" :tv="media?.kind !== 'movie'" :episode-editable="media?.kind === 'tv'" :disabled="!!busy || active" />
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-500">字幕按同目录、原视频文件名匹配，保留语言后缀。未勾选内容保留原位。</p><button class="primary" :disabled="!media || !selectedRows.length || !configured || active" @click="work('生成整理预览', makePreview)">预览整理结果</button></div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">字幕按同目录、原视频文件名匹配，保留语言后缀。未勾选内容保留原位。</p><button class="primary" :disabled="!media || !selectedRows.length || !configured || active" @click="work('生成整理预览', makePreview)">预览整理结果</button></div>
         </section>
 
         <section v-if="preview" class="panel">
           <h2 class="heading">4. 确认整理预览</h2>
-          <p class="mt-2 text-sm text-slate-500">{{ preview.title }} · {{ preview.items.length }} 个文件（含字幕）<span v-if="conflicts" class="text-red-600"> · {{ conflicts }} 项冲突</span></p>
-          <div class="mt-4 max-h-[480px] space-y-3 overflow-y-auto"><div v-for="item in preview.items" :key="item.file.id" class="rounded-xl border p-3 text-xs leading-6" :class="item.conflict ? 'border-red-200 bg-red-50' : 'border-slate-200'"><p class="break-all text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all text-slate-800">→ {{ item.targetPath }}</p><p v-if="item.conflict" class="text-red-600">{{ item.conflict }}</p></div></div>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-500">将修改 115 中的文件名和位置。同名冲突需处理后重新预览。</p><button class="primary" :disabled="!!conflicts || active" @click="work('提交整理任务', execute)">确认并开始整理</button></div>
+          <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ preview.title }} · {{ preview.items.length }} 个文件（含字幕）<span v-if="conflicts" class="text-red-600"> · {{ conflicts }} 项冲突</span></p>
+          <div class="mt-4 max-h-[480px] space-y-3 overflow-y-auto"><div v-for="item in preview.items" :key="item.file.id" class="rounded-xl border p-3 text-xs leading-6" :class="item.conflict ? 'border-red-200 bg-red-50' : 'border-slate-200 dark:border-slate-700'"><p class="break-all text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all text-slate-800 dark:text-slate-200">→ {{ item.targetPath }}</p><p v-if="item.conflict" class="text-red-600">{{ item.conflict }}</p></div></div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">将修改 115 中的文件名和位置。同名冲突需处理后重新预览。</p><button class="primary" :disabled="!!conflicts || active" @click="work('提交整理任务', execute)">确认并开始整理</button></div>
         </section>
       </fieldset>
 
       <section v-if="cleanupJobs.length" class="panel">
         <h2 class="heading">清理记录</h2>
-        <details v-for="job in cleanupJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 p-3" :open="job.status !== 'completed'">
-          <summary class="cursor-pointer text-sm">{{ job.mode === 'empty' ? '清理空目录' : '删除所选条目' }} · {{ job.status === 'running' ? '清理中' : job.status === 'partial' ? '部分未删除' : statuses[job.status] || job.status }} · {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} <span class="text-xs text-slate-400">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-2 break-all text-xs text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.parentPath }}</p>
-          <p class="mt-2 text-sm text-slate-600">{{ job.message }}</p>
-          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.id" class="break-all rounded-lg bg-slate-50 p-2"><p>{{ item.path }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || (item.status === 'skipped' ? '已跳过' : statuses[item.status] || item.status) }}</p></li></ul>
+        <details v-for="job in cleanupJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
+          <summary class="cursor-pointer text-sm">{{ job.mode === 'empty' ? '清理空目录' : '删除所选条目' }} · {{ job.status === 'running' ? '清理中' : job.status === 'partial' ? '部分未删除' : statuses[job.status] || job.status }} · {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} <span class="text-xs text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
+          <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.parentPath }}</p>
+          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ job.message }}</p>
+          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.id" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.path }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || (item.status === 'skipped' ? '已跳过' : statuses[item.status] || item.status) }}</p></li></ul>
         </details>
       </section>
 
       <section class="panel">
         <div class="flex items-center justify-between"><h2 class="heading">整理记录</h2><button class="secondary" @click="refreshHistory">刷新</button></div>
         <p v-if="historyError" role="alert" class="mt-3 text-sm text-red-600">{{ historyError }}</p>
-        <p v-if="!jobs.length" class="py-10 text-center text-sm text-slate-400">暂无整理记录</p>
-        <details v-for="job in jobs" :key="job.id" class="mt-4 rounded-xl border border-slate-200 p-4" :open="job.status === 'running' || job.status === 'queued'">
-          <summary class="cursor-pointer text-sm font-medium text-slate-800">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-3 break-all text-xs text-slate-500">账号：{{ accounts.find(a => a.id === job.config.accountId)?.name || job.config.accountId }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
+        <p v-if="!jobs.length" class="py-10 text-center text-sm text-slate-400 dark:text-slate-500">暂无整理记录</p>
+        <details v-for="job in jobs" :key="job.id" class="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 p-4" :open="job.status === 'running' || job.status === 'queued'">
+          <summary class="cursor-pointer text-sm font-medium text-slate-800 dark:text-slate-200">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
+          <p class="mt-3 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(a => a.id === job.config.accountId)?.name || job.config.accountId }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
           <button v-if="job.status !== 'running' && job.status !== 'queued'" class="secondary mt-3" :disabled="!!busy || active" @click="work('查看源目录剩余内容', () => showSource(job))">查看源目录剩余内容</button>
           <button v-if="job.status !== 'running' && job.status !== 'queued' && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')" class="secondary ml-2 mt-3" :disabled="!!busy || active || !historyReady || !!historyError || !accounts.some(account => account.id === job.config.accountId && account.configured)" @click="subtitleJob = job">补充字幕</button>
           <p v-if="job.message" class="mt-2 text-sm" :class="job.status === 'completed' ? 'text-emerald-700' : 'text-amber-700'">{{ job.message }}</p>
-          <div v-if="job.stats?.batchSize" class="mt-3 text-xs leading-6 text-slate-500">
+          <div v-if="job.stats?.batchSize" class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">
             <p>已完成 {{ job.stats.batchesCompleted }}/{{ job.stats.batchesTotal }} 批 · 每批最多 {{ job.stats.batchSize }} 个文件 · 累计用时 {{ duration(job.stats.elapsedMs) }}</p>
             <details class="mt-1">
               <summary class="cursor-pointer text-blue-600">查看耗时详情</summary>
@@ -360,15 +360,15 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
               <p>记录保存 {{ job.stats.checkpoints }} 次 · {{ duration(job.stats.saveMs) }}；统计在执行阶段结束后更新。</p>
             </details>
           </div>
-          <div class="mt-3 max-h-96 space-y-2 overflow-y-auto"><div v-for="item in job.items" :key="item.file.id" class="rounded-lg bg-slate-50 p-3 text-xs leading-5"><p class="break-all text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all">→ {{ item.targetPath }}</p><p class="mt-1 font-medium" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ statuses[item.status] || item.status }}{{ item.message ? `：${item.message}` : '' }}</p></div></div>
+          <div class="mt-3 max-h-96 space-y-2 overflow-y-auto"><div v-for="item in job.items" :key="item.file.id" class="rounded-lg bg-slate-50 dark:bg-slate-950 p-3 text-xs leading-5"><p class="break-all text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all">→ {{ item.targetPath }}</p><p class="mt-1 font-medium" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ statuses[item.status] || item.status }}{{ item.message ? `：${item.message}` : '' }}</p></div></div>
         </details>
       </section>
       <section v-if="subtitleJobs.length" class="panel">
         <h2 class="heading">字幕导入记录</h2>
-        <details v-for="job in subtitleJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 p-3" :open="job.status !== 'completed'">
+        <details v-for="job in subtitleJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
           <summary class="cursor-pointer text-sm">{{ job.status === 'running' ? '字幕上传中' : statuses[job.status] || job.status }} · 已上传 {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} · {{ new Date(job.createdAt).toLocaleString() }}</summary>
-          <p class="mt-2 text-xs text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.message }}</p>
-          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.localId" class="break-all rounded-lg bg-slate-50 p-2"><p>{{ item.originalName }} → {{ item.targetPath }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || statuses[item.status] || item.status }}</p></li></ul>
+          <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.message }}</p>
+          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.localId" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.originalName }} → {{ item.targetPath }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || statuses[item.status] || item.status }}</p></li></ul>
         </details>
       </section>
     </div>
@@ -379,13 +379,13 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 </template>
 
 <style scoped>
-.panel { @apply min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm; }
-.heading { @apply text-base font-semibold text-slate-900; }
-.label { @apply text-sm font-medium text-slate-700; }
-.directory { @apply mt-2 w-full break-all rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-sm text-blue-700 disabled:opacity-40; }
-.input { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500; }
+.panel { @apply min-w-0 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm; }
+.heading { @apply text-base font-semibold text-slate-900 dark:text-slate-100; }
+.label { @apply text-sm font-medium text-slate-700 dark:text-slate-300; }
+.directory { @apply mt-2 w-full break-all rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 text-left text-sm text-blue-700 disabled:opacity-40; }
+.input { @apply rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 outline-none focus:border-blue-500; }
 .primary { @apply rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40; }
-.secondary { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40; }
-.danger { @apply rounded-lg border border-red-200 bg-white px-3 py-2 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40; }
+.secondary { @apply rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 disabled:opacity-40; }
+.danger { @apply rounded-lg border border-red-200 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40; }
 button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
 </style>

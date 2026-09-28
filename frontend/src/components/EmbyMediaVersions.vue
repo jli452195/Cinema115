@@ -50,11 +50,11 @@ onBeforeUnmount(() => { controller?.abort(); observer?.disconnect() })
 
 <template>
   <section ref="root" aria-label="Emby 媒体信息" class="min-w-0" :class="{ 'mt-5': showTitle !== false }">
-    <h3 v-if="showTitle !== false" class="mb-3 font-semibold text-slate-700" :class="kind === 'movie' ? 'text-base' : 'text-xs'">Emby 媒体信息</h3>
-    <div v-if="!loaded && !error" class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-400" role="status">{{ loading ? '正在读取媒体版本…' : '滚动至此处加载媒体版本' }}</div>
+    <h3 v-if="showTitle !== false" class="mb-3 font-semibold text-slate-700 dark:text-slate-300" :class="kind === 'movie' ? 'text-base' : 'text-xs'">Emby 媒体信息</h3>
+    <div v-if="!loaded && !error" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4 text-xs text-slate-400 dark:text-slate-500" role="status">{{ loading ? '正在读取媒体版本…' : '滚动至此处加载媒体版本' }}</div>
     <div class="space-y-3"><EmbyVersionAccordion v-for="(row, index) in rows" :key="row.key" :version="row.version" :source="row.source" :number="index + 1" :panel-id="`${idPrefix}-${index}`" :expanded="openKey === row.key" @toggle="openKey = openKey === row.key ? '' : row.key" /></div>
-    <p v-if="loaded && !versions.length" class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-500">Emby 暂未返回可用媒体版本，可刷新入库状态后重试。</p>
+    <p v-if="loaded && !versions.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">Emby 暂未返回可用媒体版本，可刷新入库状态后重试。</p>
     <p v-if="error" role="alert" class="mt-3 text-xs leading-6 text-red-600">{{ error }}<button class="ml-3 font-medium underline" @click="load(loaded)">重新加载</button></p>
-    <button v-if="hasMore && !error" :disabled="loading" class="mt-3 rounded-lg border border-slate-200 px-4 py-2 text-xs text-blue-600 disabled:opacity-40" @click="load(true)">{{ loading ? '正在读取…' : '加载更多版本' }}</button>
+    <button v-if="hasMore && !error" :disabled="loading" class="mt-3 rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-blue-600 disabled:opacity-40" @click="load(true)">{{ loading ? '正在读取…' : '加载更多版本' }}</button>
   </section>
 </template>

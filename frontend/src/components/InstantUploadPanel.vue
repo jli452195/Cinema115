@@ -67,43 +67,43 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
+  <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7">
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="font-semibold text-slate-900">单文件秒传验证</h2>
+      <h2 class="font-semibold text-slate-900 dark:text-slate-100">单文件秒传验证</h2>
       <button type="button" :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40" @click="load()">刷新记录</button>
     </div>
-    <p class="mt-2 text-sm leading-6 text-slate-500">将一个分享 STRM 对应的视频秒传到指定账号。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
+    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">将一个分享 STRM 对应的视频秒传到指定账号。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
     <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
     <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{{ notice }}</p>
     <form class="mt-5" @submit.prevent="save">
       <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
         <div class="grid gap-5 sm:grid-cols-2">
-          <div><p class="mb-2 text-sm font-semibold text-slate-800">源文件取链账号</p><P115AccountSelect id="instant-source-account" v-model="config.sourceAccountId" :accounts="accounts" /></div>
-          <div><p class="mb-2 text-sm font-semibold text-slate-800">目标账号（朋友账号）</p><P115AccountSelect id="instant-target-account" :model-value="config.accountId" :accounts="accounts" @update:model-value="targetChanged" /></div>
-          <label class="text-sm text-slate-700">目标缓存目录 ID<input v-model.trim="config.targetCid" required inputmode="numeric" pattern="[0-9]+" placeholder="手动填写，根目录为 0" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3" @input="config.targetPath = ''" /><span v-if="config.targetPath" class="mt-2 block break-all text-xs text-slate-500">{{ config.targetPath }}</span></label>
+          <div><p class="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">源文件取链账号</p><P115AccountSelect id="instant-source-account" v-model="config.sourceAccountId" :accounts="accounts" /></div>
+          <div><p class="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">目标账号（朋友账号）</p><P115AccountSelect id="instant-target-account" :model-value="config.accountId" :accounts="accounts" @update:model-value="targetChanged" /></div>
+          <label class="text-sm text-slate-700 dark:text-slate-300">目标缓存目录 ID<input v-model.trim="config.targetCid" required inputmode="numeric" pattern="[0-9]+" placeholder="手动填写，根目录为 0" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @input="config.targetPath = ''" /><span v-if="config.targetPath" class="mt-2 block break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ config.targetPath }}</span></label>
         </div>
         <div class="flex flex-wrap gap-3">
-          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600" @click="config.sourceAccountId = source.accountId">填入已保存的 302 源账号</button>
-          <button type="button" :disabled="!selectedReady(config.accountId)" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40" @click="directoryOpen = true">选择目标目录</button>
+          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500" @click="config.sourceAccountId = source.accountId">填入已保存的 302 源账号</button>
+          <button type="button" :disabled="!selectedReady(config.accountId)" class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="directoryOpen = true">选择目标目录</button>
           <button type="submit" :disabled="!ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">保存秒传配置</button>
         </div>
       </fieldset>
     </form>
-    <div class="mt-6 border-t border-slate-100 pt-5">
-      <label for="instant-strm" class="text-sm text-slate-700">单个 STRM 文件中的播放地址</label>
-      <textarea id="instant-strm" v-model="strm" :disabled="blocked" rows="3" spellcheck="false" autocomplete="off" placeholder="打开一个 .strm 文件，粘贴其中的完整地址" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm disabled:opacity-50" />
-      <p class="mt-2 text-xs leading-6 text-slate-500">验证只尝试秒传；如 115 要求普通上传，会停止。校验最多读取 8 MB 片段。这里生成的验证文件会保留，不纳入上方播放缓存的定期清理。</p>
+    <div class="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
+      <label for="instant-strm" class="text-sm text-slate-700 dark:text-slate-300">单个 STRM 文件中的播放地址</label>
+      <textarea id="instant-strm" v-model="strm" :disabled="blocked" rows="3" spellcheck="false" autocomplete="off" placeholder="打开一个 .strm 文件，粘贴其中的完整地址" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 text-sm disabled:opacity-50" />
+      <p class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">验证只尝试秒传；如 115 要求普通上传，会停止。校验最多读取 8 MB 片段。这里生成的验证文件会保留，不纳入上方播放缓存的定期清理。</p>
       <p v-if="dirty && loaded" class="mt-2 text-xs text-amber-700">请先保存上面的账号与目录配置。</p>
       <button type="button" :disabled="blocked || dirty || !ready || !strm.trim()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40" @click="run">{{ busy || running ? '正在处理…' : '开始单文件秒传' }}</button>
     </div>
     <div v-if="records.length" class="mt-6 space-y-3" aria-live="polite">
-      <h3 class="text-sm font-semibold text-slate-800">最近验证记录</h3>
-      <article v-for="record in records" :key="record.id" class="rounded-xl border border-slate-200 p-4 text-sm">
-        <div class="flex flex-wrap items-center justify-between gap-2"><span class="font-medium" :class="record.status === 'success' ? 'text-emerald-700' : record.status === 'failed' ? 'text-red-600' : 'text-amber-700'">{{ statusLabel(record.status) }}</span><time class="text-xs text-slate-400">{{ new Date(record.startedAt).toLocaleString() }}</time></div>
-        <p v-if="record.name" class="mt-2 break-all text-slate-800">{{ record.name }}</p>
-        <p class="mt-2 text-slate-600">{{ record.message }}</p>
-        <p class="mt-2 text-xs text-slate-500">目标：{{ accountName(record.accountId) }} · 目录 {{ record.targetCid }} · 耗时 {{ (record.durationMs / 1000).toFixed(2) }} 秒<span v-if="record.challenged"> · 已完成片段校验</span></p>
-        <p v-if="record.fileId || record.pickCode" class="mt-2 break-all text-xs text-slate-500"><span v-if="record.fileId">目标文件 ID：{{ record.fileId }} </span><span v-if="record.pickCode">PickCode：{{ record.pickCode }}</span></p>
+      <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">最近验证记录</h3>
+      <article v-for="record in records" :key="record.id" class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2"><span class="font-medium" :class="record.status === 'success' ? 'text-emerald-700' : record.status === 'failed' ? 'text-red-600' : 'text-amber-700'">{{ statusLabel(record.status) }}</span><time class="text-xs text-slate-400 dark:text-slate-500">{{ new Date(record.startedAt).toLocaleString() }}</time></div>
+        <p v-if="record.name" class="mt-2 break-all text-slate-800 dark:text-slate-200">{{ record.name }}</p>
+        <p class="mt-2 text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ record.message }}</p>
+        <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">目标：{{ accountName(record.accountId) }} · 目录 {{ record.targetCid }} · 耗时 {{ (record.durationMs / 1000).toFixed(2) }} 秒<span v-if="record.challenged"> · 已完成片段校验</span></p>
+        <p v-if="record.fileId || record.pickCode" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="record.fileId">目标文件 ID：{{ record.fileId }} </span><span v-if="record.pickCode">PickCode：{{ record.pickCode }}</span></p>
       </article>
     </div>
     <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="config.accountId" title="选择目标缓存目录" @close="directoryOpen = false" @select="chooseDirectory" />

@@ -104,12 +104,12 @@ onBeforeUnmount(() => { lifecycle.abort() })
 <template>
   <ManagementLayout title="磁力转存" description="将磁力链接转存到指定的 115 账号和目录。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <div class="max-w-3xl">
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <h2 class="text-base font-semibold text-slate-900">磁力转存</h2>
-        <p class="mt-1 text-sm leading-6 text-slate-500">提交磁力或 ED2K 到指定目录。相同的已结束任务会自动删除记录后重新提交，网盘文件保留；运行中的任务不会删除。</p>
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm sm:p-6">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">磁力转存</h2>
+        <p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">提交磁力或 ED2K 到指定目录。相同的已结束任务会自动删除记录后重新提交，网盘文件保留；运行中的任务不会删除。</p>
         <div class="mt-5"><P115AccountSelect id="cloud-download-account" v-model="accountId" :accounts="accounts" /></div>
-        <label class="mt-5 block text-sm font-medium text-slate-700">磁力或 ED2K 链接<textarea v-model="url" rows="4" maxlength="8192" placeholder="magnet:?xt=urn:btih:… 或 ed2k://|file|…" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
-        <div class="mt-5 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4"><div class="min-w-0"><p class="text-sm font-medium text-slate-700">下载目录</p><p class="mt-1 truncate text-xs text-slate-500">{{ currentName }}（{{ targetCID }}）</p></div><button type="button" :disabled="!accountId || applyingConfig" class="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 disabled:opacity-40" @click="openDirectoryDialog">选择目录</button></div>
+        <label class="mt-5 block text-sm font-medium text-slate-700 dark:text-slate-300">磁力或 ED2K 链接<textarea v-model="url" rows="4" maxlength="8192" placeholder="magnet:?xt=urn:btih:… 或 ed2k://|file|…" class="mt-2 block w-full resize-y rounded-xl border border-slate-200 dark:border-slate-700 p-3 text-sm text-slate-700 dark:text-slate-300 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+        <div class="mt-5 flex items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4"><div class="min-w-0"><p class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</p><p class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ currentName }}（{{ targetCID }}）</p></div><button type="button" :disabled="!accountId || applyingConfig" class="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 disabled:opacity-40" @click="openDirectoryDialog">选择目录</button></div>
         <p v-if="error" role="alert" class="mt-4 rounded-xl bg-red-50 p-3 text-sm leading-6 text-red-700">{{ error }}</p>
         <p v-if="notice" role="status" class="mt-4 rounded-xl bg-emerald-50 p-3 text-sm leading-6 text-emerald-700">{{ notice }}</p>
         <button type="button" :disabled="!canSubmit" class="mt-5 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="submit">{{ submitting ? '正在转存…' : '开始磁力转存' }}</button>

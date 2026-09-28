@@ -101,19 +101,19 @@ onBeforeUnmount(() => {
 <template>
   <div ref="root" class="min-w-0" @keydown="keydown" @focusout="focusout">
     <button ref="button" type="button" role="combobox" :aria-label="props.label" aria-haspopup="listbox" :aria-expanded="open" :aria-controls="open ? listID : undefined" :aria-activedescendant="activeID" :disabled="disabled" :title="label"
-      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition hover:border-orange-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:opacity-50" @click="open ? close() : show()">
+      class="flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-700 dark:text-slate-300 outline-none transition hover:border-orange-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:opacity-50" @click="open ? close() : show()">
       <span class="truncate">{{ label }}</span>
       <span aria-hidden="true" class="h-2 w-2 shrink-0 rotate-45 border-b-2 border-r-2 border-slate-400 transition-transform" :class="open ? 'rotate-[225deg] translate-y-0.5' : '-translate-y-0.5'" />
     </button>
-    <div v-if="open" ref="popup" popover="manual" :style="popupStyle" class="mikan-filter-popup fixed inset-auto m-0 flex-col overflow-hidden rounded-xl border border-orange-100 bg-white p-1 text-slate-700 shadow-lg shadow-slate-900/10">
+    <div v-if="open" ref="popup" popover="manual" :style="popupStyle" class="mikan-filter-popup fixed inset-auto m-0 flex-col overflow-hidden rounded-xl border border-orange-100 bg-white dark:bg-slate-900 p-1 text-slate-700 dark:text-slate-300 shadow-lg shadow-slate-900/10">
       <ul :id="listID" role="listbox" :aria-label="props.label" class="min-h-0 overflow-y-auto overscroll-contain p-0.5">
         <li v-for="(item, index) in options" :id="`${listID}-${index}`" :key="item.value" role="option" :aria-selected="item.value === modelValue" :title="item.label"
           class="flex min-h-9 cursor-pointer items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-sm transition"
-          :class="item.value === modelValue || index === active ? 'bg-orange-50 text-orange-700' : 'text-slate-700 hover:bg-orange-50'" @pointerenter="active = index" @pointerdown.prevent @click="choose(index)">
+          :class="item.value === modelValue || index === active ? 'bg-orange-50 text-orange-700' : 'text-slate-700 dark:text-slate-300 hover:bg-orange-50'" @pointerenter="active = index" @pointerdown.prevent @click="choose(index)">
           <span class="min-w-0 break-words">{{ item.label }}</span><span class="w-4 shrink-0 text-center" aria-hidden="true">{{ item.value === modelValue ? '✓' : '' }}</span>
         </li>
       </ul>
-      <p v-if="!options.length" role="status" class="px-3 py-4 text-center text-xs text-slate-400">暂无选项</p>
+      <p v-if="!options.length" role="status" class="px-3 py-4 text-center text-xs text-slate-400 dark:text-slate-500">暂无选项</p>
     </div>
   </div>
 </template>

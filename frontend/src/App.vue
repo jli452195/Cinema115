@@ -37,7 +37,7 @@ onBeforeUnmount(() => window.clearInterval(authTimer))
 
 <template>
   <LoginView v-if="!token" @logged-in="handleLoggedIn" />
-  <main v-else-if="!websiteUser || websiteAuthError || !canViewRoute" class="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-sm text-slate-600">
+  <main v-else-if="!websiteUser || websiteAuthError || !canViewRoute" class="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
     <p>{{ websiteAuthError || '正在验证登录状态…' }}</p>
     <button v-if="websiteAuthError" class="text-blue-600" @click="ensureWebsiteSession(true)">重新验证</button>
     <button v-if="websiteAuthError" class="text-slate-500" @click="logout">返回登录</button>

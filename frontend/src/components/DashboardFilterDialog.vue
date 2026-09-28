@@ -30,7 +30,7 @@ const previousFocus = document.activeElement instanceof HTMLElement ? document.a
 const previousOverflow = document.body.style.overflow
 
 function chip(active: boolean) {
-  return active ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+  return active ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 hover:text-slate-900 dark:hover:text-slate-100 dark:text-slate-100'
 }
 function close() { emit('close') }
 function reset() {
@@ -65,34 +65,34 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" aria-labelledby="dashboard-filter-title" class="fixed inset-x-0 bottom-0 top-auto m-0 max-h-[92dvh] w-full max-w-none overflow-hidden rounded-t-lg border border-slate-200 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-950/40 sm:inset-0 sm:m-auto sm:max-w-xl sm:rounded-lg" @cancel.prevent="close" @click="event => { if (event.target === dialog) close() }">
+    <dialog ref="dialog" aria-labelledby="dashboard-filter-title" class="fixed inset-x-0 bottom-0 top-auto m-0 max-h-[92dvh] w-full max-w-none overflow-hidden rounded-t-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-0 text-slate-700 dark:text-slate-300 shadow-2xl backdrop:bg-slate-950/40 sm:inset-0 sm:m-auto sm:max-w-xl sm:rounded-lg" @cancel.prevent="close" @click="event => { if (event.target === dialog) close() }">
       <form method="dialog" class="flex max-h-[92dvh] flex-col" @submit.prevent="apply">
-        <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
-          <h2 id="dashboard-filter-title" class="font-semibold text-slate-900">筛选</h2>
-          <div class="flex items-center gap-2"><button type="button" class="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-100" @click="reset">重置</button><button type="button" autofocus aria-label="关闭筛选" class="flex h-8 w-8 items-center justify-center rounded-md text-xl text-slate-400 hover:bg-slate-100" @click="close">×</button></div>
+        <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+          <h2 id="dashboard-filter-title" class="font-semibold text-slate-900 dark:text-slate-100">筛选</h2>
+          <div class="flex items-center gap-2"><button type="button" class="rounded-md px-2 py-1.5 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-800" @click="reset">重置</button><button type="button" autofocus aria-label="关闭筛选" class="flex h-8 w-8 items-center justify-center rounded-md text-xl text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-800" @click="close">×</button></div>
         </header>
 
         <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5">
-          <fieldset class="min-w-0 border-b border-slate-100 py-5">
-            <legend class="mb-3 text-sm font-semibold text-slate-900">类型</legend>
+          <fieldset class="min-w-0 border-b border-slate-100 dark:border-slate-800 py-5">
+            <legend class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">类型</legend>
             <div class="flex flex-wrap gap-2"><button type="button" :aria-pressed="draftGenre === ''" class="min-h-10 rounded-md border px-3 py-2 text-sm" :class="chip(draftGenre === '')" @click="draftGenre = ''">全部</button><button v-for="item in genres" :key="item.id" type="button" :aria-pressed="draftGenre === String(item.id)" class="min-h-10 rounded-md border px-3 py-2 text-sm" :class="chip(draftGenre === String(item.id))" @click="draftGenre = String(item.id)">{{ item.name }}</button></div>
           </fieldset>
 
-          <fieldset class="min-w-0 border-b border-slate-100 py-5">
-            <legend class="mb-3 text-sm font-semibold text-slate-900">地区</legend>
+          <fieldset class="min-w-0 border-b border-slate-100 dark:border-slate-800 py-5">
+            <legend class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">地区</legend>
             <div class="grid grid-cols-4 gap-2"><button v-for="item in regions" :key="item.id" type="button" :aria-pressed="draftRegion === item.id" class="h-10 rounded-md border px-2 text-sm" :class="chip(draftRegion === item.id)" @click="draftRegion = item.id">{{ item.name }}</button></div>
           </fieldset>
 
-          <fieldset class="min-w-0 border-b border-slate-100 py-5">
-            <legend class="mb-3 text-sm font-semibold text-slate-900">排序</legend>
+          <fieldset class="min-w-0 border-b border-slate-100 dark:border-slate-800 py-5">
+            <legend class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">排序</legend>
             <div class="grid grid-cols-3 gap-2"><button v-for="item in sorts" :key="item.id" type="button" :aria-pressed="draftSort === item.id" class="h-10 rounded-md border px-2 text-sm" :class="chip(draftSort === item.id)" @click="draftSort = item.id">{{ item.name }}</button></div>
           </fieldset>
 
           <fieldset class="min-w-0 py-5">
-            <legend class="mb-3 text-sm font-semibold text-slate-900">年份</legend>
+            <legend class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">年份</legend>
             <div class="mb-3 flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1">
               <button type="button" :aria-pressed="draftYear === ''" class="h-9 shrink-0 rounded-md border px-3 text-sm" :class="chip(draftYear === '')" @click="draftYear = ''; yearGrid?.scrollTo({ top: 0, behavior: 'smooth' })">全部</button>
-              <button v-for="decade in decades" :key="decade" type="button" class="h-9 shrink-0 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-500 hover:bg-slate-50" @click="scrollToYear(String(Math.min(currentYear, decade + 9)))">{{ decade }}年代</button>
+              <button v-for="decade in decades" :key="decade" type="button" class="h-9 shrink-0 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950" @click="scrollToYear(String(Math.min(currentYear, decade + 9)))">{{ decade }}年代</button>
             </div>
             <div ref="yearGrid" class="year-grid relative grid w-full min-w-0 max-w-full grid-cols-4 gap-2 overflow-y-auto pr-1">
               <button v-for="item in allYears" :key="item" type="button" :data-year="item" :aria-pressed="draftYear === item" class="h-10 rounded-md border text-sm tabular-nums" :class="chip(draftYear === item)" @click="draftYear = item">{{ item }}</button>
@@ -100,8 +100,8 @@ onBeforeUnmount(() => {
           </fieldset>
         </div>
 
-        <footer class="flex shrink-0 gap-3 border-t border-slate-200 bg-white px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <button type="button" class="h-11 flex-1 rounded-md border border-slate-200 text-sm text-slate-600 hover:bg-slate-50" @click="close">取消</button>
+        <footer class="flex shrink-0 gap-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button type="button" class="h-11 flex-1 rounded-md border border-slate-200 dark:border-slate-800 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950" @click="close">取消</button>
           <button type="submit" class="h-11 flex-[2] rounded-md bg-slate-900 text-sm font-medium text-white hover:bg-slate-800">{{ changed ? '应用筛选' : '完成' }}</button>
         </footer>
       </form>

@@ -33,8 +33,8 @@ const current = computed(() => categories[props.category])
 <template>
   <ManagementLayout :title="current.title" :description="current.description" @logout="emit('logout')">
     <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-      <RouterLink v-for="feature in current.features" :key="feature.to" :to="feature.to" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-slate-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400">
-        <span class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl" :class="feature.icon === 'emby' ? 'bg-emerald-50' : 'bg-blue-50 text-blue-600'">
+      <RouterLink v-for="feature in current.features" :key="feature.to" :to="feature.to" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm transition hover:border-slate-300 dark:border-slate-600 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400">
+        <span class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl" :class="feature.icon === 'emby' ? 'bg-emerald-50 dark:bg-emerald-900/30' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600'">
           <img v-if="feature.icon === 'emby'" :src="embyIcon" alt="" class="h-7 w-7" />
           <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
             <path v-if="feature.icon === 'cloud'" d="M6 19a5 5 0 0 1-1-9.9A7 7 0 0 1 18.7 8a5.5 5.5 0 0 1-.2 11H6Z" />
@@ -44,9 +44,9 @@ const current = computed(() => categories[props.category])
             <path v-else d="m21 3-5 18-5-7-8-3L21 3Zm-10 11 5-6" />
           </svg>
         </span>
-        <h2 class="text-base font-semibold text-slate-900">{{ feature.title }}</h2>
-        <p class="mb-6 mt-2 flex-1 text-sm leading-6 text-slate-500">{{ feature.description }}</p>
-        <span class="flex items-center justify-between border-t border-slate-100 pt-4 text-xs font-medium text-slate-500 group-hover:text-blue-600">进入功能<span aria-hidden="true">→</span></span>
+        <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ feature.title }}</h2>
+        <p class="mb-6 mt-2 flex-1 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ feature.description }}</p>
+        <span class="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4 text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500 group-hover:text-blue-600">进入功能<span aria-hidden="true">→</span></span>
       </RouterLink>
     </div>
   </ManagementLayout>

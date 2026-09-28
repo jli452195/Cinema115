@@ -15,15 +15,15 @@ async function copy(value: string, label: string) {
 }
 </script>
 <template>
-  <div class="mt-3 min-w-0 space-y-3 rounded-xl bg-slate-50 p-3 text-xs">
-    <p v-if="method || status" class="break-all text-slate-500">{{ method }} {{ path }} · HTTP {{ status }} · {{ durationMs }} ms</p>
+  <div class="mt-3 min-w-0 space-y-3 rounded-xl bg-slate-50 dark:bg-slate-950 p-3 text-xs">
+    <p v-if="method || status" class="break-all text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ method }} {{ path }} · HTTP {{ status }} · {{ durationMs }} ms</p>
     <div v-for="part in [{ label: '完整 CDN 直链', value: url }, { label: '播放器 → 反代请求头', value: requestHeaders }, { label: '上游取链请求头', value: lookupHeaders }, { label: '反代 → 播放器响应头', value: responseHeaders }, { label: '解析步骤', value: steps }]" :key="part.label">
       <template v-if="part.value">
-        <div class="flex items-center justify-between gap-2"><strong class="text-slate-600">{{ part.label }}</strong><button class="shrink-0 text-blue-600" @click="copy(part.value, part.label)">复制{{ part.label }}</button></div>
-        <pre class="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-200 bg-white p-2 leading-5 [overflow-wrap:anywhere]">{{ part.value }}</pre>
+        <div class="flex items-center justify-between gap-2"><strong class="text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ part.label }}</strong><button class="shrink-0 text-blue-600" @click="copy(part.value, part.label)">复制{{ part.label }}</button></div>
+        <pre class="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 leading-5 [overflow-wrap:anywhere]">{{ part.value }}</pre>
       </template>
     </div>
-    <p v-if="lookup" class="text-slate-500">{{ lookup }}</p>
+    <p v-if="lookup" class="text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ lookup }}</p>
     <p role="status" class="text-blue-600">{{ copied }}</p>
   </div>
 </template>

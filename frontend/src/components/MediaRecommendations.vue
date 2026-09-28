@@ -73,17 +73,17 @@ onBeforeUnmount(() => { controller?.abort(); controller = undefined; observer?.d
 <template>
   <section class="mt-12 min-w-0" aria-label="相似影视推荐" :aria-busy="loading">
     <div class="mb-5 flex items-center justify-between gap-4">
-      <h2 class="text-lg font-bold text-slate-900">相似影视推荐</h2>
+      <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">相似影视推荐</h2>
       <div v-if="items.length" class="flex gap-2">
-        <button type="button" aria-label="上一组推荐" :disabled="!canPrevious" class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-amber-400 hover:text-amber-600 disabled:cursor-default disabled:opacity-30" @click="scroll(-1)"><span aria-hidden="true">←</span></button>
-        <button type="button" aria-label="下一组推荐" :disabled="!canNext" class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-amber-400 hover:text-amber-600 disabled:cursor-default disabled:opacity-30" @click="scroll(1)"><span aria-hidden="true">→</span></button>
+        <button type="button" aria-label="上一组推荐" :disabled="!canPrevious" class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 dark:text-slate-500 transition hover:border-amber-400 hover:text-amber-600 disabled:cursor-default disabled:opacity-30" @click="scroll(-1)"><span aria-hidden="true">←</span></button>
+        <button type="button" aria-label="下一组推荐" :disabled="!canNext" class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 dark:text-slate-500 transition hover:border-amber-400 hover:text-amber-600 disabled:cursor-default disabled:opacity-30" @click="scroll(1)"><span aria-hidden="true">→</span></button>
       </div>
     </div>
     <div v-if="loading" role="status" aria-label="正在加载推荐" class="flex gap-5 overflow-hidden pb-4 motion-safe:animate-pulse">
-      <div v-for="i in 6" :key="i" class="w-[136px] shrink-0 sm:w-[170px]"><div class="aspect-[2/3] rounded-xl bg-slate-200"></div><div class="mt-3 h-4 w-3/4 rounded bg-slate-200"></div><div class="mt-2 h-3 w-10 rounded bg-slate-200"></div></div>
+      <div v-for="i in 6" :key="i" class="w-[136px] shrink-0 sm:w-[170px]"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-3 h-4 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-2 h-3 w-10 rounded bg-slate-200 dark:bg-slate-700"></div></div>
     </div>
-    <div v-else-if="error" role="status" class="rounded-xl border border-slate-200 bg-white/70 p-5 text-sm text-slate-500">{{ error }}<button type="button" class="ml-3 font-medium text-amber-600 hover:underline" @click="load">重新加载推荐</button></div>
-    <p v-else-if="!items.length" class="py-4 text-sm text-slate-400">暂时没有相似影视推荐。</p>
+    <div v-else-if="error" role="status" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/70 p-5 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ error }}<button type="button" class="ml-3 font-medium text-amber-600 hover:underline" @click="load">重新加载推荐</button></div>
+    <p v-else-if="!items.length" class="py-4 text-sm text-slate-400 dark:text-slate-500">暂时没有相似影视推荐。</p>
     <ul v-show="!loading && !error && items.length" ref="rail" tabindex="0" aria-label="推荐影视列表" class="recommendation-rail flex snap-x snap-proximity gap-5 overflow-x-auto overscroll-x-contain px-1 pb-5 pt-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400" @scroll.passive="updateEdges" @keydown.left.prevent="scroll(-1)" @keydown.right.prevent="scroll(1)">
       <li v-for="item in items" :key="`${item.kind}-${item.id}`" class="w-[136px] shrink-0 snap-start sm:w-[170px]"><MediaCard :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" /></li>
     </ul>

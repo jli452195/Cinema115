@@ -26,9 +26,9 @@ onBeforeUnmount(() => { observer?.disconnect(); observer = undefined })
 </script>
 
 <template>
-  <div ref="anchor" class="py-5 text-center text-xs text-slate-400" data-infinite-load-more>
+  <div ref="anchor" class="py-5 text-center text-xs text-slate-400 dark:text-slate-500" data-infinite-load-more>
     <p v-if="count < total">已显示 {{ count }} / {{ total }} 集<span v-if="supported"> · 下滑继续加载</span></p>
     <p v-else>已显示全部 {{ total }} 集</p>
-    <button v-if="!supported && count < total" type="button" class="mt-3 rounded-lg border border-slate-200 px-5 py-2 text-blue-600" @click="emit('load')">加载更多</button>
+    <button v-if="!supported && count < total" type="button" class="mt-3 rounded-lg border border-slate-200 dark:border-slate-700 px-5 py-2 text-blue-600" @click="emit('load')">加载更多</button>
   </div>
 </template>
