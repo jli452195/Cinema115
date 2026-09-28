@@ -76,7 +76,7 @@ const activeMobileFilters = computed(() => {
 let controller: AbortController | undefined
 const genreControllers: Partial<Record<DashboardKind, AbortController>> = {}
 let mounted = true
-function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/30 text-amber-600' : 'border-transparent text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 dark:text-slate-200' }
+function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 text-amber-600 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-400' : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-slate-200' }
 async function request(path: string, signal: AbortSignal) {
   const response = await fetch(catalogAPI(`tmdb/${path}`), { signal, headers: { Authorization: `Bearer ${props.token}` } })
   const data = await response.json().catch(() => null)

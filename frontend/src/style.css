@@ -10,3 +10,22 @@
     @apply bg-slate-950 text-slate-200;
   }
 }
+
+/* Global Scrollbar Dark Mode Support */
+::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #334155;
+}
+.dark * {
+  scrollbar-color: #334155 transparent;
+}

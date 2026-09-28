@@ -92,4 +92,5 @@ onBeforeUnmount(() => { controller?.abort(); controller = undefined; observer?.d
 
 <style scoped>
 .recommendation-rail { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+:global(.dark) .recommendation-rail { scrollbar-color: #334155 transparent; }
 </style>

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import LoginView from './views/LoginView.vue'
+import ReloadPrompt from './components/ReloadPrompt.vue'
 import { websiteToken as token, websiteUser, websiteAuthError, websiteBrowseRoutes, ensureWebsiteSession, setWebsiteToken, clearWebsiteSession } from './composables/useWebsiteAuth'
 
 const route = useRoute()
@@ -45,4 +46,5 @@ onBeforeUnmount(() => window.clearInterval(authTimer))
   <RouterView v-else v-slot="{ Component }">
     <component :is="Component" v-bind="viewProps" @home="router.push('/')" @back="back" @category="openCategory" @open-dashboard="router.push('/')" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
   </RouterView>
+  <ReloadPrompt />
 </template>
