@@ -17,6 +17,7 @@ type PlaybackTiming struct {
 	Bytes                              int64
 	HTTP, Connected, Reused            bool
 	Failed, Canceled                   bool
+	TLSResumed                         bool
 }
 type playbackTimingKey struct{}
 
@@ -57,8 +58,9 @@ func tracePlaybackHTTP(ctx context.Context, stage string) (context.Context, func
 			mu.Unlock()
 		},
 		TLSHandshakeStart: func() { mu.Lock(); tlsStart = time.Now(); mu.Unlock() },
-		TLSHandshakeDone: func(tls.ConnectionState, error) {
+		TLSHandshakeDone: func(state tls.ConnectionState, _ error) {
 			mu.Lock()
+			value.TLSResumed = state.DidResume
 			if !tlsStart.IsZero() {
 				value.TLS += time.Since(tlsStart)
 				tlsStart = time.Time{}

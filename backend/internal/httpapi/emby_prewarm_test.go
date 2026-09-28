@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -246,5 +247,158 @@ func TestPrewarmPOSTSelectedVersion(t *testing.T) {
 	awaitPrewarm(t, h)
 	if selected.Load() != "xyz123" {
 		t.Fatal("wrong selected version", selected.Load())
+	}
+}
+
+func TestPrewarmUsesPlaybackInfoSnapshotWithoutDuplicateQuery(t *testing.T) {
+	var denied atomic.Bool
+	h := prewarmFixture(t, true, false, &denied)
+	h.config.Debug = true
+	transport := h.http.Transport
+	var playbackQueries, userChecks, itemChecks, downloads atomic.Int32
+	wrapped := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/emby/Items/movie/PlaybackInfo":
+			if playbackQueries.Add(1) > 1 {
+				return nil, errors.New("duplicate PlaybackInfo would block media probing")
+			}
+		case "/emby/Users/" + prewarmTestUser:
+			userChecks.Add(1)
+		case "/emby/Users/" + prewarmTestUser + "/Items/movie":
+			itemChecks.Add(1)
+		}
+		return transport.RoundTrip(r)
+	})
+	h.http.Transport, h.proxy.Transport = wrapped, wrapped
+	h.pickDownload = func(context.Context, string, string, string) (string, error) {
+		downloads.Add(1)
+		return "https://cdn.115.com/file", nil
+	}
+	if w := prewarmCall(h, "/emby/Items/movie/PlaybackInfo?api_key=token", "player"); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	awaitPrewarm(t, h)
+	if playbackQueries.Load() != 1 || userChecks.Load() != 1 || itemChecks.Load() != 1 || downloads.Load() != 1 {
+		t.Fatal("duplicate media query or skipped authorization", playbackQueries.Load(), userChecks.Load(), itemChecks.Load(), downloads.Load())
+	}
+	steps := ""
+	for _, entry := range h.logs.Snapshot() {
+		if entry.Details != nil {
+			steps += entry.Details.Steps
+		}
+	}
+	for _, want := range []string{"[+", "预热关联请求=302-", "从触发 PlaybackInfo 请求进入反代至预热结束=", "跳过重复播放信息查询", "Emby 请求计时：用户权限查询", "播放入口分段耗时：", "播放请求处理结束"} {
+		if !strings.Contains(steps, want) {
+			t.Fatal("missing timing", want)
+		}
+	}
+	if strings.Contains(steps, "api_key=token") {
+		t.Fatal("token leaked into timing")
+	}
+}
+
+func TestPlaybackAndPrewarmTimingFollowDebugSwitch(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		t.Run(fmt.Sprint(debug), func(t *testing.T) {
+			var denied atomic.Bool
+			h := prewarmFixture(t, true, false, &denied)
+			h.config.Debug = debug
+			h.pickDownload = func(context.Context, string, string, string) (string, error) { return "https://cdn.115.com/file", nil }
+			prewarmCall(h, "/emby/Items/movie/PlaybackInfo?api_key=token", "player")
+			awaitPrewarm(t, h)
+			play := "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=token"
+			if w := prewarmCall(h, play, "player"); w.Code != 302 {
+				t.Fatal(w.Code)
+			}
+			var warm, foreground string
+			for _, row := range h.logs.Snapshot() {
+				if row.Details == nil {
+					continue
+				}
+				steps := row.Details.Steps
+				if strings.Contains(steps, "播放预热开始") {
+					warm = steps
+				}
+				if strings.Contains(steps, "开始直链播放解析") {
+					foreground = steps
+				}
+			}
+			for _, steps := range []string{warm, foreground} {
+				if steps == "" || !strings.Contains(steps, "解析结束：") || !strings.Contains(steps, "耗时") {
+					t.Fatal("missing normal summary", steps)
+				}
+				for _, marker := range []string{"[+", "Emby 请求计时：", "播放入口分段耗时："} {
+					if strings.Contains(steps, marker) != debug {
+						t.Fatal("wrong debug timing", marker, steps)
+					}
+				}
+			}
+			if strings.Contains(warm, "调度等待=") != debug {
+				t.Fatal("prewarm debug switch ignored")
+			}
+			denied.Store(true)
+			if w := prewarmCall(h, play, "player"); w.Code != 403 {
+				t.Fatal("authorization bypassed")
+			}
+			rows := h.logs.Snapshot()
+			if rows[0].Level != "ERROR" || !strings.Contains(rows[0].Details.Steps, "HTTP 403") {
+				t.Fatal("error hidden by debug switch")
+			}
+		})
+	}
+}
+
+func TestPlaybackTimingIncludesSlowEmbyPhase(t *testing.T) {
+	var denied atomic.Bool
+	h := prewarmFixture(t, false, false, &denied)
+	h.config.Debug = true
+	transport := h.http.Transport
+	entered, release := make(chan struct{}), make(chan struct{})
+	h.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/PlaybackInfo") {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		}
+		return transport.RoundTrip(r)
+	})
+	h.pickDownload = func(context.Context, string, string, string) (string, error) {
+		return "https://cdn.115.com/file", nil
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- prewarmCall(h, "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=token", "player")
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("media query not reached")
+	}
+	// Simulate a slow upstream separately from the fast 115 callback.
+	time.Sleep(30 * time.Millisecond)
+	close(release)
+	select {
+	case w := <-done:
+		if w.Code != 302 {
+			t.Fatal(w.Code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("playback stuck")
+	}
+	steps := h.logs.Snapshot()[0].Details.Steps
+	pos := strings.Index(steps, "Emby 媒体源确定=")
+	var duration int64
+	if pos < 0 {
+		t.Fatal("missing media timing", steps)
+	}
+	if _, err := fmt.Sscanf(steps[pos:], "Emby 媒体源确定=%d ms", &duration); err != nil || duration < 30 {
+		t.Fatal("upstream wait was not measured", duration, err)
+	}
+	if !strings.Contains(steps, "直链缓存等待及 115 取链=") || !strings.Contains(steps, "首字节=") {
+		t.Fatal("incomplete timing")
 	}
 }

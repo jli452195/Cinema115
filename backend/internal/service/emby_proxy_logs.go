@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode"
 )
 
@@ -77,7 +78,7 @@ func (s *EmbyProxyLogs) AddDetails(ctx context.Context, level, message string, d
 		defer group.mu.Unlock()
 		group.details = details
 		if group.bytes+len(message) <= 16384 && len(group.lines) < 64 {
-			group.lines = append(group.lines, level+" · "+message)
+			group.lines = append(group.lines, group.step(level, message))
 			group.bytes += len(message)
 		}
 		if group.level == "DEBUG" && level != "DEBUG" || level == "ERROR" || level == "WARNING" && group.level != "ERROR" {
@@ -94,15 +95,30 @@ func (s *EmbyProxyLogs) AddDetails(ctx context.Context, level, message string, d
 type proxyGroupKey struct{}
 type proxyLogGroup struct {
 	mu             sync.Mutex
+	started        time.Time
+	debug          bool
 	lines          []string
 	bytes          int
 	level, summary string
 	details        ProxyLogDetails
 }
 
+func (g *proxyLogGroup) step(level, message string) string {
+	if !g.debug {
+		return level + " · " + message
+	}
+	return fmt.Sprintf("%s · [+%d ms] %s", level, time.Since(g.started).Milliseconds(), message)
+}
+
+// The immutable request setting is also inherited by request-owned workers.
+func ProxyDebugEnabled(ctx context.Context) bool {
+	g, ok := ctx.Value(proxyGroupKey{}).(*proxyLogGroup)
+	return ok && g.debug
+}
+
 // Group one HTTP request into one row; steps remain available on expansion.
 func (s *EmbyProxyLogs) BeginRequest(ctx context.Context, debug bool) (context.Context, func()) {
-	g := &proxyLogGroup{level: "DEBUG"}
+	g := &proxyLogGroup{level: "DEBUG", started: time.Now(), debug: debug}
 	ctx = context.WithValue(ctx, proxyGroupKey{}, g)
 	return ctx, func() {
 		if s == nil {
@@ -141,7 +157,7 @@ func (s *EmbyProxyLogs) Add(ctx context.Context, level, message string) {
 			group.level = "INFO"
 		}
 		if group.bytes+len(message) <= 16384 && len(group.lines) < 64 {
-			group.lines = append(group.lines, level+" · "+message)
+			group.lines = append(group.lines, group.step(level, message))
 			group.bytes += len(message)
 		}
 		if level == "ERROR" || level == "WARNING" && group.level != "ERROR" {

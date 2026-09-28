@@ -280,11 +280,18 @@ func staticStreamItem(r *http.Request) string {
 }
 
 func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	r = r.WithContext(h.logs.Trace(r.Context()))
 	ctx, finish := h.logs.BeginRequest(r.Context(), h.config.Debug)
 	defer finish()
 	r = r.WithContext(ctx)
-	r = r.WithContext(context.WithValue(r.Context(), proxyRequestStartedKey{}, time.Now()))
+	r = r.WithContext(context.WithValue(r.Context(), proxyRequestStartedKey{}, started))
+	if h.config.Debug && (playbackItem(r.URL.Path) != "" || proxyTransferKind(r) == "下载" || staticStreamItem(r) != "" || originalStreamItem(r) != "" || r.URL.Path == "/cinema115/play" || r.URL.Path == "/emby/cinema115/play") {
+		h.logs.Add(r.Context(), "INFO", "播放请求进入反代，关联编号="+service.ProxyTraceID(r.Context())+"，"+proxyRequestDescription(r))
+		defer func() {
+			h.logs.Add(r.Context(), "INFO", fmt.Sprintf("播放请求处理结束，从进入反代起耗时 %d ms", time.Since(started).Milliseconds()))
+		}()
+	}
 	if h.config.Debug {
 		h.serveDebug(w, r)
 		return
@@ -332,6 +339,9 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if item := playbackItem(r.URL.Path); item != "" {
+		ctx, finish := h.traceEmbyRequest(r.Context(), "客户端 PlaybackInfo 转发（含响应改写与返回）")
+		r = r.WithContext(ctx)
+		defer finish()
 		h.logs.Add(r.Context(), "INFO", "读取 Emby 播放信息，条目="+item)
 		if err := disablePlaybackTranscoding(r); err != nil {
 			h.logs.Add(r.Context(), "ERROR", "播放协商参数无效或超出大小限制，HTTP 400")
@@ -426,6 +436,8 @@ func proxyLogID(id string) string {
 }
 
 func (h *embyProxyHandler) embyJSON(ctx context.Context, token, stage, path string, query url.Values, out any) (int, error) {
+	ctx, finish := h.traceEmbyRequest(ctx, stage)
+	defer finish()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.config.URL+"/emby"+path+"?"+query.Encode(), nil)
 	if err != nil {
 		return 502, fmt.Errorf("Emby %s：创建请求失败", stage)
@@ -452,6 +464,8 @@ func (h *embyProxyHandler) embyJSON(ctx context.Context, token, stage, path stri
 
 // No administrative API key is used: every redirect is authorized as the requesting Emby user.
 func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item string, fallback bool) {
+	timing := h.newPlaybackTimeline(r.Context())
+	defer timing.finish()
 	warm, warming := r.Context().Value(prewarmContextKey{}).(*prewarmSnapshot)
 	if !warming {
 		finish := h.foregroundPlayback()
@@ -483,18 +497,18 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	// Capture credentials once, before any I/O; configuration changes cannot switch this request's account.
-	sourceAccount, _ := h.accounts.Get(h.accounts.PrimaryID())
-	cookie := sourceAccount.Cookie
-	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
+	var sourceAccount service.P115Account
 	var cacheSnapshot service.PlaybackCacheSnapshot
-	if h.cache != nil {
-		cacheSnapshot = h.cache.Snapshot()
-	}
 	if warming {
 		sourceAccount, cacheSnapshot = warm.source, warm.bindings
-		cookie = sourceAccount.Cookie
-		sourceAccountLabel = service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
+	} else {
+		sourceAccount, _ = h.accounts.Get(h.accounts.PrimaryID())
+		if h.cache != nil {
+			cacheSnapshot = h.cache.Snapshot()
+		}
 	}
+	cookie := sourceAccount.Cookie
+	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
 	var user struct {
 		ID     string `json:"Id"`
 		Name   string
@@ -504,6 +518,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			EnableContentDownloading *bool
 		}
 	}
+	timing.next("Emby 用户权限查询")
 	h.logs.Add(ctx, "DEBUG", "开始校验 Emby 用户身份与"+kind+"权限")
 	userID := h.identities.UserID(h.config.URL, token)
 	if !embyProxyID.MatchString(userID) {
@@ -529,6 +544,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		CanDownload *bool
 		IsFolder    bool
 	}
+	timing.next("Emby 条目权限查询")
 	status, err = h.embyJSON(ctx, token, "条目权限查询 GET /Users/{Id}/Items/{Id}", "/Users/"+user.ID+"/Items/"+item, nil, &allowed)
 	if err != nil {
 		fail(err.Error(), status)
@@ -552,10 +568,16 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		MediaSources []map[string]json.RawMessage
 		ErrorCode    string
 	}
-	status, err = h.embyJSON(ctx, token, "播放信息查询 GET /Items/{Id}/PlaybackInfo", "/Items/"+item+"/PlaybackInfo", query, &info)
-	if err != nil {
-		fail(err.Error(), status)
-		return
+	timing.next("Emby 媒体源确定")
+	if warming && warm.media != nil && jsonString(warm.media["Id"]) == sourceID {
+		info.MediaSources = []map[string]json.RawMessage{warm.media}
+		h.logs.Add(ctx, "INFO", "预热复用本次 PlaybackInfo 已确认的媒体源，跳过重复播放信息查询")
+	} else {
+		status, err = h.embyJSON(ctx, token, "播放信息查询 GET /Items/{Id}/PlaybackInfo", "/Items/"+item+"/PlaybackInfo", query, &info)
+		if err != nil {
+			fail(err.Error(), status)
+			return
+		}
 	}
 	if info.ErrorCode != "" {
 		fail("Emby 拒绝播放此媒体", 403)
@@ -575,6 +597,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		fail("无法确定播放版本，请重新选择媒体源", 409)
 		return
 	}
+	timing.next("STRM 读取解析")
 	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始读取并解析 STRM，媒体源="+proxyLogID(jsonString(source["Id"])))
 	claim, err := h.playbackClaim(source)
 	if errors.Is(err, errNotShareSTRM) && fallback {
@@ -588,6 +611,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		fail("无法解析分享 STRM，请检查链接格式、必要分享参数及本地媒体路径映射", 422)
 		return
 	}
+	timing.next("播放账号绑定检查")
 	var cacheSelection *service.PlaybackCacheSelection
 	if h.cache != nil {
 		cacheSelection, err = cacheSnapshot.Select(h.config.URL, user.ID)
@@ -606,6 +630,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		h.logs.Add(ctx, "INFO", "STRM 解析成功，文件编号="+proxyLogID(claim.FileID))
 	}
 	downloadStarted := time.Now()
+	timing.next("等待同源预热")
 	if !warming {
 		if err := h.waitPrewarm(ctx, h.prewarmKey(token, item, jsonString(source["Id"]), sourceAccount, cacheSelection)); err != nil {
 			fail("等待播放预热已取消或超时", 504)
@@ -637,7 +662,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return value, nil
 	}
 	view := service.DirectLinkCacheEntry{User: service.PlaybackLogName(user.Name) + "（" + user.ID + "）", MediaSource: proxyLogID(jsonString(source["Id"])), TraceID: service.ProxyTraceID(ctx), RequestHeaders: proxyDiagnosticHeaders(r.Header, r.Host), LookupHeaders: proxyLookupHeaders(r.UserAgent())}
+	timing.next("直链缓存等待及 115 取链")
 	value, hit, expires, err := h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
+	timing.next("缓存记录核验及响应")
 	if err == nil && hit && value.Report.FileCacheKey != "" {
 		if touchErr := h.cache.TouchDirectLink(ctx, value.Report.FileCacheKey, value.Report.FileCacheID); touchErr != nil {
 			h.directLinks.Remove(key)
@@ -799,7 +826,7 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 	}
 	// Transcoding is disabled for every media source, including non-share files.
 	rewritten, playable := 0, false
-	prewarmSources := make([]string, 0, len(sources))
+	prewarmSources := make([]map[string]json.RawMessage, 0, len(sources))
 	h.logs.Add(ctx, "DEBUG", fmt.Sprintf("开始检查 %d 个媒体源", len(sources)))
 	for _, source := range sources {
 		sourceLabel := "媒体源=" + proxyLogID(jsonString(source["Id"]))
@@ -834,7 +861,7 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 		source["SupportsDirectPlay"] = json.RawMessage("false")
 		source["SupportsDirectStream"] = json.RawMessage("true")
 		rewritten++
-		prewarmSources = append(prewarmSources, id)
+		prewarmSources = append(prewarmSources, source)
 		if claim.PickCode != "" {
 			h.logs.Add(ctx, "INFO", sourceLabel+"：网盘 pickcode STRM 识别成功，播放入口已改写为 302 解析入口；来源为配置的源账号")
 		} else {

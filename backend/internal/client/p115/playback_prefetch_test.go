@@ -95,7 +95,7 @@ func TestPlaybackSourcePrefetchOverlapsSubmitAndWaitsForRange(t *testing.T) {
 			t.Fatal("connection reuse not traced")
 		}
 	}
-	for _, stage := range []string{"校验源直链预取（与首次提交重叠）", "获取校验源直链（预取时为剩余等待）", "校验片段 CDN", "片段读取及哈希", "片段 SHA1 计算（包含在读取耗时内）", "秒传提交 HTTP"} {
+	for _, stage := range []string{"校验源直链预取（与目标查找及首次提交重叠）", "获取校验源直链（预取时为剩余等待）", "校验片段 CDN", "片段读取及哈希", "片段 SHA1 计算（包含在读取耗时内）", "秒传提交 HTTP"} {
 		if !stages[stage] {
 			t.Fatal("missing timing", stage)
 		}

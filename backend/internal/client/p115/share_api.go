@@ -40,7 +40,7 @@ type ShareClient struct {
 }
 
 func NewShareClient() *ShareClient {
-	return &ShareClient{HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, WebURL: "https://webapi.115.com", AppURL: "https://proapi.115.com", RequestInterval: defaultShareRequestInterval, ReadRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second}, requestGate: make(chan struct{}, 1)}
+	return &ShareClient{HTTP: &http.Client{Transport: sharedPlaybackTransport, Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, WebURL: "https://webapi.115.com", AppURL: "https://proapi.115.com", RequestInterval: defaultShareRequestInterval, ReadRetryDelays: []time.Duration{5 * time.Second, 15 * time.Second}, requestGate: make(chan struct{}, 1)}
 }
 
 type ShareFile struct {
@@ -231,8 +231,8 @@ type DownloadInfo struct {
 	loadPlaybackURL func(context.Context) (string, error)
 	// Request-local resolver. Credentials, URLs and callbacks never serialize.
 	ResolveRangeSHA1 func(context.Context, int64, int64) (string, error) `json:"-"`
-	// Invoked once immediately before the first upload POST. Cleanup cancels
-	// and joins any request-owned speculative source lookup on every exit.
+	// Started before the target search for fresh playback material, or before
+	// the first upload POST by standalone callers. Never reuse across requests.
 	PrefetchRangeSource func(context.Context) func() `json:"-"`
 }
 

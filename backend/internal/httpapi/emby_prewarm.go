@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,6 +30,7 @@ type proxyPrewarmer struct {
 type prewarmSnapshot struct {
 	source   service.P115Account
 	bindings service.PlaybackCacheSnapshot
+	media    map[string]json.RawMessage
 }
 type prewarmContextKey struct{}
 type playbackSelectedSourceKey struct{}
@@ -77,7 +79,7 @@ func (h *embyProxyHandler) waitPrewarm(ctx context.Context, key string) error {
 	}
 }
 
-func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candidates []string) {
+func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candidates []map[string]json.RawMessage) {
 	if !h.config.Prewarm || len(candidates) == 0 {
 		return
 	}
@@ -86,15 +88,20 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		sourceID, _ = r.Context().Value(playbackSelectedSourceKey{}).(string)
 	}
 	if sourceID == "" && len(candidates) == 1 {
-		sourceID = candidates[0]
+		sourceID = jsonString(candidates[0]["Id"])
 	}
-	found := false
-	for _, id := range candidates {
-		if id == sourceID {
-			found = true
+	var media map[string]json.RawMessage
+	for _, candidate := range candidates {
+		if jsonString(candidate["Id"]) == sourceID {
+			// Copy only the validated source fields needed by the STRM resolver.
+			media = make(map[string]json.RawMessage, 2)
+			for _, field := range []string{"Id", "Path"} {
+				media[field] = append(json.RawMessage(nil), candidate[field]...)
+			}
+			break
 		}
 	}
-	if !found {
+	if media == nil {
 		return
 	}
 	token := embyToken(r)
@@ -102,7 +109,7 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 	if !embyProxyID.MatchString(userID) {
 		return
 	}
-	snapshot := &prewarmSnapshot{}
+	snapshot := &prewarmSnapshot{media: media}
 	snapshot.source, _ = h.accounts.Get(h.accounts.PrimaryID())
 	if h.cache != nil {
 		snapshot.bindings = h.cache.Snapshot()
@@ -144,6 +151,9 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 	request, _ := http.NewRequest(http.MethodGet, "/cinema115/play?"+q.Encode(), nil)
 	request.Header.Set("User-Agent", r.UserAgent())
 	request.Host = r.Host
+	parentTrace := service.ProxyTraceID(r.Context())
+	parentStarted, _ := r.Context().Value(proxyRequestStartedKey{}).(time.Time)
+	scheduled := time.Now()
 	p.mu.Unlock()
 	go func() {
 		defer p.wg.Done()
@@ -151,9 +161,15 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		defer cancel()
 		ctx = context.WithValue(ctx, prewarmContextKey{}, snapshot)
 		ctx = service.PlaybackPrewarmContext(ctx)
-		ctx, finish := h.logs.BeginRequest(h.logs.Trace(ctx), true)
+		ctx, finish := h.logs.BeginRequest(h.logs.Trace(ctx), h.config.Debug)
 		defer finish()
 		h.logs.Add(ctx, "INFO", "播放预热开始，条目="+proxyLogID(item)+"，媒体源="+proxyLogID(sourceID))
+		if h.config.Debug {
+			h.logs.Add(ctx, "INFO", fmt.Sprintf("预热关联请求=%s｜调度等待=%d ms", parentTrace, time.Since(scheduled).Milliseconds()))
+			if !parentStarted.IsZero() {
+				h.logs.Add(ctx, "INFO", fmt.Sprintf("距触发 PlaybackInfo 请求进入反代=%d ms", time.Since(parentStarted).Milliseconds()))
+			}
+		}
 		writer := &prewarmResponse{header: make(http.Header)}
 		h.redirect(writer, request.WithContext(ctx), item, false)
 		level, message := "INFO", "播放预热完成；同 UA 可复用有效直链，不同 UA 复用已准备文件后取链"
@@ -161,6 +177,9 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 			level, message = "WARNING", fmt.Sprintf("播放预热未完成，HTTP %d；正式播放仍按正常流程处理", writer.status)
 		}
 		h.logs.Add(ctx, level, message)
+		if h.config.Debug && !parentStarted.IsZero() {
+			h.logs.Add(ctx, "INFO", fmt.Sprintf("从触发 PlaybackInfo 请求进入反代至预热结束=%d ms", time.Since(parentStarted).Milliseconds()))
+		}
 		p.mu.Lock()
 		p.recent[recentKey] = time.Now().Add(30 * time.Second)
 		p.key, p.done = "", nil

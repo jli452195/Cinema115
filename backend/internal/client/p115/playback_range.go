@@ -27,7 +27,21 @@ func (c *ShareClient) PlaybackRangeSHA1(ctx context.Context, info *DownloadInfo,
 	return c.instantRangeHash(ctx, link, start, end, info.Size)
 }
 
-// Only fetch the URL speculatively, never file bytes. The upload request owns
+// StartRangeSourcePrefetch consumes a request-local hook once. Callers must
+// defer the returned cleanup so early hits/errors also cancel and join it.
+func (info *DownloadInfo) StartRangeSourcePrefetch(ctx context.Context) func() {
+	if info == nil || info.PrefetchRangeSource == nil {
+		return func() {}
+	}
+	start := info.PrefetchRangeSource
+	info.PrefetchRangeSource = nil
+	if stop := start(ctx); stop != nil {
+		return stop
+	}
+	return func() {}
+}
+
+// Only fetch the URL speculatively, never file bytes. The playback request owns
 // cancellation and joins the worker even if no challenge is returned.
 func StartPlaybackSourcePrefetch(ctx context.Context, source *DownloadInfo) (*DownloadInfo, func()) {
 	if source == nil || source.loadPlaybackURL == nil {
@@ -46,7 +60,7 @@ func StartPlaybackSourcePrefetch(ctx context.Context, source *DownloadInfo) (*Do
 		defer close(done)
 		started := time.Now()
 		link, err = load(workCtx)
-		emitPlaybackTiming(workCtx, PlaybackTiming{Stage: "校验源直链预取（与首次提交重叠）", Duration: time.Since(started), Failed: err != nil, Canceled: errors.Is(err, context.Canceled)})
+		emitPlaybackTiming(workCtx, PlaybackTiming{Stage: "校验源直链预取（与目标查找及首次提交重叠）", Duration: time.Since(started), Failed: err != nil, Canceled: errors.Is(err, context.Canceled)})
 	}()
 	copy.loadPlaybackURL = func(readCtx context.Context) (string, error) {
 		select {

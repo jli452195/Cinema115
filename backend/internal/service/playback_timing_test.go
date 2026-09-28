@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,36 @@ import (
 
 type timingCacheClient struct {
 	*cacheDriveFake
+}
+
+func TestPlaybackTimingFollowsRequestDebugSetting(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		t.Run(fmt.Sprint(debug), func(t *testing.T) {
+			s, _, selected := setupFastCache(t)
+			ctx, finish := s.logs.BeginRequest(context.Background(), debug)
+			if ProxyDebugEnabled(context.Background()) || ProxyDebugEnabled(ctx) != debug {
+				t.Fatal("debug setting did not stay request-local")
+			}
+			_, _, err := s.ResolvePickCodeWithReport(ctx, selected, "pickaaa", "src", "player")
+			finish()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows := s.logs.Snapshot()
+			if len(rows) != 1 || rows[0].Details == nil {
+				t.Fatal("missing playback log")
+			}
+			steps := rows[0].Details.Steps
+			for _, marker := range []string{"秒传链路耗时：", "等待缓存操作=", "[+"} {
+				if strings.Contains(steps, marker) != debug {
+					t.Fatal("wrong debug output", marker, steps)
+				}
+			}
+			if !strings.Contains(steps, "115 已返回秒传成功") {
+				t.Fatal("normal result was suppressed")
+			}
+		})
+	}
 }
 
 func (f *timingCacheClient) InstantUploadToEmptyDirectory(ctx context.Context, info *p115.DownloadInfo, cid, cookie string, progress func(p115.InstantProgress)) (*p115.InstantUploadResult, error) {

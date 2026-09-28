@@ -66,7 +66,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <form class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm md:p-7" @submit.prevent="save">
         <fieldset :disabled="busy || !loaded" class="space-y-6 disabled:opacity-50">
           <SettingSwitch v-model="config.enabled" label="启用 Emby 302 反代" description="保存后立即生效。播放器连接下面的反代端口，原有 STRM 无需重新生成。" />
-          <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。每次请求合并为一条日志，展开查看完整 CDN 直链、请求与响应头、解析步骤。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
+          <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。开启后记录播放及预热的步骤时间轴、Emby 查询、等待预热、秒传分段耗时和 HTTP 连接计时，并可展开查看完整 CDN 直链与请求响应头。关闭后保留常规播放结果、错误和总耗时。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
           <SettingSwitch v-model="config.prewarm" label="播放预热" description="默认关闭，保存后生效。收到播放信息时后台取链，必要时提前秒传；仅预热唯一或明确选中的媒体源。打开详情但未播放也可能产生网盘文件，需手动删除。相同 UA 复用有效直链，不同 UA 重新取链；能否提前触发取决于播放器。" />
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="text-sm text-slate-700 dark:text-slate-300">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>

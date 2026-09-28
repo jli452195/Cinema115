@@ -21,7 +21,7 @@ type playbackSourceCache struct {
 }
 
 // Cache metadata only. Every request gets its own closure with fixed credentials;
-// source URLs are fetched only if 115 actually requests a byte-range challenge.
+// the caller may prefetch its URL or wait until 115 requests a range challenge.
 func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc, cookie string) (*DownloadInfo, error) {
 	if accountID == "" || CookieUserID(cookie) == "" || !instantPickCode.MatchString(pc) {
 		return nil, fmt.Errorf("源账号或 pickcode 配置无效")

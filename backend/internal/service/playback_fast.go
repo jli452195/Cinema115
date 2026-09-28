@@ -54,37 +54,49 @@ func (s *PlaybackCache) ForgetDirectory(ctx context.Context, key string) error {
 // All mutations and lookups share a gate so concurrent requests cannot upload
 // the same content twice. Unknown writes are recoverable by a positive SHA1 hit.
 func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, sourceCookie, ua string, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (string, error) {
-	ctx = p115.WithPlaybackTiming(ctx, func(t p115.PlaybackTiming) {
-		message := fmt.Sprintf("秒传分段计时：%s=%.2f ms", t.Stage, float64(t.Duration)/float64(time.Millisecond))
-		if t.Canceled {
-			message += "｜状态=已取消"
-		} else if t.Failed {
-			message += "｜状态=失败"
-		}
-		if t.HTTP {
-			connection := "未取得连接"
-			if t.Connected {
-				if t.Reused {
-					connection = "复用"
-				} else {
-					connection = "新建"
-				}
+	debug := ProxyDebugEnabled(ctx)
+	if debug {
+		ctx = p115.WithPlaybackTiming(ctx, func(t p115.PlaybackTiming) {
+			message := fmt.Sprintf("秒传分段计时：%s=%.2f ms", t.Stage, float64(t.Duration)/float64(time.Millisecond))
+			if t.Canceled {
+				message += "｜状态=已取消"
+			} else if t.Failed {
+				message += "｜状态=失败"
 			}
-			message += fmt.Sprintf("｜DNS=%.2f ms｜TCP=%.2f ms｜TLS=%.2f ms｜请求开始至首字节=%.2f ms｜连接=%s", float64(t.DNS)/float64(time.Millisecond), float64(t.TCP)/float64(time.Millisecond), float64(t.TLS)/float64(time.Millisecond), float64(t.FirstByte)/float64(time.Millisecond), connection)
-		}
-		if t.Bytes > 0 {
-			message += fmt.Sprintf("｜字节数=%d", t.Bytes)
-		}
-		s.logs.Add(ctx, "INFO", message)
-	})
+			if t.HTTP {
+				connection := "未取得连接"
+				if t.Connected {
+					if t.Reused {
+						connection = "复用"
+					} else {
+						connection = "新建"
+					}
+				}
+				message += fmt.Sprintf("｜DNS=%.2f ms｜TCP=%.2f ms｜TLS=%.2f ms｜请求开始至首字节=%.2f ms｜连接=%s", float64(t.DNS)/float64(time.Millisecond), float64(t.TCP)/float64(time.Millisecond), float64(t.TLS)/float64(time.Millisecond), float64(t.FirstByte)/float64(time.Millisecond), connection)
+			}
+			if t.TLSResumed {
+				message += "｜TLS会话=恢复"
+			}
+			if t.Bytes > 0 {
+				message += fmt.Sprintf("｜字节数=%d", t.Bytes)
+			}
+			s.logs.Add(ctx, "INFO", message)
+		})
+	}
 	started, stageStarted := time.Now(), time.Now()
 	stage := "配置检查"
 	stages := make([]string, 0, 12)
 	next := func(name string) {
+		if !debug {
+			return
+		}
 		stages = append(stages, fmt.Sprintf("%s=%d ms", stage, time.Since(stageStarted).Milliseconds()))
 		stage, stageStarted = name, time.Now()
 	}
 	defer func() {
+		if !debug {
+			return
+		}
 		next("结束")
 		s.logs.Add(ctx, "INFO", fmt.Sprintf("秒传链路耗时：%s｜合计=%d ms", strings.Join(stages, "｜"), time.Since(started).Milliseconds()))
 	}()
@@ -159,6 +171,11 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			break
 		}
 	}
+	// Only fresh material without ranges/copies arms this hook. Speculate on
+	// the read-only source URL while searching the destination; never upload
+	// until the search and all destination preflight checks have succeeded.
+	stopPrefetch := info.StartRangeSourcePrefetch(ctx)
+	defer stopPrefetch()
 	next("目标账号 SHA1 查找")
 	f, err := fast.FindPlaybackFileBySHA1(ctx, info.SHA1, selected.cookie)
 	if err != nil {

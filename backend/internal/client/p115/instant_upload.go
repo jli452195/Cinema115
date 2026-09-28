@@ -147,10 +147,9 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 		if err != nil {
 			return nil, err
 		}
-		if attempt == 0 && info.PrefetchRangeSource != nil {
-			if stop := info.PrefetchRangeSource(ctx); stop != nil {
-				defer stop()
-			}
+		if attempt == 0 {
+			stop := info.StartRangeSourcePrefetch(ctx)
+			defer stop()
 		}
 		report("init", 0)
 		raw, err = c.instantRequest(ctx, http.MethodPost, "https://uplb.115.com/4.0/initupload.php?k_ec="+url.QueryEscape(token), cookie, body)
