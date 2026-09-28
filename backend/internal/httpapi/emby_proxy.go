@@ -483,9 +483,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	// Capture credentials once, before any I/O; configuration changes cannot switch this request's account.
-	sourceAccount, _ := h.accounts.Get(h.config.AccountID)
+	sourceAccount, _ := h.accounts.Primary("")
 	cookie := sourceAccount.Cookie
-	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), h.config.AccountID)
+	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
 	var cacheSnapshot service.PlaybackCacheSnapshot
 	if h.cache != nil {
 		cacheSnapshot = h.cache.Snapshot()
@@ -493,7 +493,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	if warming {
 		sourceAccount, cacheSnapshot = warm.source, warm.bindings
 		cookie = sourceAccount.Cookie
-		sourceAccountLabel = service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), h.config.AccountID)
+		sourceAccountLabel = service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
 	}
 	var user struct {
 		ID     string `json:"Id"`
@@ -576,11 +576,6 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始读取并解析 STRM，媒体源="+proxyLogID(jsonString(source["Id"])))
-	cacheSelection, err := cacheSnapshot.Select(h.config.URL, user.ID)
-	if err != nil {
-		fail(err.Error(), 503)
-		return
-	}
 	claim, err := h.playbackClaim(source)
 	if errors.Is(err, errNotShareSTRM) && fallback {
 		outcome = "转交 Emby"
@@ -592,6 +587,14 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		h.logs.Add(ctx, "ERROR", "STRM 读取解析失败："+err.Error())
 		fail("无法解析分享 STRM，请检查链接格式、必要分享参数及本地媒体路径映射", 422)
 		return
+	}
+	var cacheSelection *service.PlaybackCacheSelection
+	if h.cache != nil {
+		cacheSelection, err = cacheSnapshot.Select(h.config.URL, user.ID)
+		if err != nil {
+			fail(err.Error(), 503)
+			return
+		}
 	}
 	if cookie == "" && (cacheSelection == nil || claim.PickCode != "") {
 		fail("302 使用的 115 账号未选择、已删除或未登录，请管理员重新配置", 503)
@@ -610,13 +613,13 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		}
 	}
 	// Include effective credentials only in a digest; neither keys nor views expose secrets.
-	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, h.config.AccountID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
+	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
 		h.logs.Add(fetchCtx, "INFO", "直链缓存未命中或已关闭，开始向 115 获取直链")
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}
 		var fetchErr error
-		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(h.config.AccountID) {
-			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(fetchCtx, cacheSelection, claim.PickCode, cookie, r.UserAgent(), h.config.AccountID)
+		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
+			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(fetchCtx, cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		} else if claim.PickCode != "" {
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"

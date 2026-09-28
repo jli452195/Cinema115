@@ -148,7 +148,7 @@ func TestPlaybackCacheConcurrentReusePinnedAccountAndFreshUA(t *testing.T) {
 	wg.Add(2)
 	go func() { defer wg.Done(); _, err := resolveTestCache(s, selection); errs <- err }()
 	<-started
-	replacement := "UID=33_A; SEID=replacement"
+	replacement := "UID=22_A; SEID=replacement"
 	if err := s.accounts.Update(selection.binding.AccountID, 3, "朋友", &replacement); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +187,41 @@ func TestPlaybackCacheSelectionNeverFallsBack(t *testing.T) {
 	}
 	if got, err := s.Snapshot().Select("http://emby:8096", cacheTestUser); err == nil || got != nil {
 		t.Fatal("删除账号后回退")
+	}
+}
+func TestPlaybackBindingRecoversWithoutRebinding(t *testing.T) {
+	s, _, original := setupPlaybackCache(t)
+	id := original.binding.AccountID
+	empty := ""
+	if err := s.accounts.Update(id, 3, "朋友", &empty); err != nil {
+		t.Fatal(err)
+	}
+	locked := s.Snapshot()
+	if got, err := locked.Select("http://emby:8096", cacheTestUser); err == nil || got != nil {
+		t.Fatal("cleared credentials did not pause playback")
+	}
+	if bindings := s.Status().Config.Bindings; len(bindings) != 1 || bindings[0].AccountID != id {
+		t.Fatal("unavailable account lost its binding")
+	}
+	cookie := "UID=22_A; SEID=recovered"
+	if err := s.accounts.Update(id, 4, "朋友", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Snapshot().Select("http://emby:8096", cacheTestUser)
+	if err != nil || got == nil || got.binding.AccountID != id || got.cookie != cookie {
+		t.Fatal("fresh request did not recover the bound account", err)
+	}
+	if got, err := locked.Select("http://emby:8096", cacheTestUser); err == nil || got != nil {
+		t.Fatal("in-flight snapshot changed after credential recovery")
+	}
+	if original.cookie != "UID=22_A; SEID=private" {
+		t.Fatal("original request credentials changed")
+	}
+	if err := s.UpdateBinding("http://emby:8096", PlaybackBinding{UserID: cacheTestUser}, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Snapshot().Select("http://emby:8096", cacheTestUser); err != nil || got != nil {
+		t.Fatal("explicit unbind did not restore primary playback", err)
 	}
 }
 func TestPlaybackCacheUncertainDoesNotRepeatWrite(t *testing.T) {

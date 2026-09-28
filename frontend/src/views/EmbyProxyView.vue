@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
-import P115AccountSelect from '../components/P115AccountSelect.vue'
+import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import InstantUploadPanel from '../components/InstantUploadPanel.vue'
 import type { P115Account } from '../types/p115Accounts'
@@ -72,13 +72,13 @@ onBeforeUnmount(() => lifecycle.abort())
             <label class="text-sm text-slate-700 dark:text-slate-300">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
             <label class="text-sm text-slate-700 dark:text-slate-300">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
             <label class="text-sm text-slate-700 dark:text-slate-300">反代监听端口<input v-model.number="config.port" type="number" min="1024" max="65535" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">建议 8097。不能与管理服务或其他程序使用相同端口；更换端口后需更新播放器连接地址。</span></label>
-            <div><P115AccountSelect id="emby-proxy-account" v-model="config.accountId" :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">本功能独立选择取直链账号，账号失效时停止解析。<RouterLink to="/helper115" class="text-blue-600">管理账号</RouterLink></p></div>
+            <div><P115PrimaryStatus :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">源文件统一由主账号读取，主账号失效时暂停解析。<RouterLink to="/helper115" class="text-blue-600">管理账号</RouterLink></p></div>
             <label class="text-sm text-slate-700 dark:text-slate-300 sm:col-span-2">Emby 中对应 STRM 根目录的路径（按需填写）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media，对应 Cinema115 容器内的 /strm" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">Emby 返回本地 .strm 路径时使用。该路径下的相对目录必须与 Cinema115 的 STRM 根目录一致；如果返回的是 STRM 内的 HTTP 链接，可留空。</span></label>
           </div>
           <div class="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘 pickcode STRM</h2>
-            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由上方明确选择的源账号读取文件；不会访问原工具地址。</p>
-            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">Emby 用户绑定其他 115 账号后，直接秒传到绑定账号的播放缓存目录，再用该账号取链。已缓存的文件会复用；未绑定或绑定源账号时直接读取源文件。分享 STRM 仍优先尝试朋友账号读取分享。</p>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由主账号读取文件；不会访问原工具地址。</p>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">Emby 用户绑定小号后，秒传到绑定账号的播放缓存目录并用该账号取链，已缓存的文件会复用；分享 STRM 优先尝试小号直接读取分享。未绑定用户默认使用主账号，绑定账号失效时暂停播放并保留绑定，恢复后新播放请求自动生效。</p>
           </div>
         </fieldset>
       </form>

@@ -13,10 +13,11 @@ interface User { Id: string; Name: string; PrimaryImageTag?: string; Policy?: { 
 interface Draft { accountId: string; original: string; busy: boolean; error: string; notice: string }
 const config = ref({ embyUrl: '', bindings: [] as Binding[] })
 const users = ref<User[]>([]), accounts = ref<P115Account[]>([]), drafts = ref<Record<string, Draft>>({})
-const busy = ref(false), loaded = ref(false), usersLoaded = ref(false), error = ref(''), sourceAccountId = ref(''), proxyURL = ref('')
+const busy = ref(false), loaded = ref(false), usersLoaded = ref(false), error = ref(''), proxyURL = ref('')
 const query = ref(''), filter = ref('all'), confirmRefresh = ref(false), copied = ref('')
 const lifecycle = new AbortController()
-const sourceName = computed(() => accounts.value.find(a => a.id === sourceAccountId.value)?.name || '未配置或已删除')
+const sourceName = computed(() => accounts.value.find(a => a.primary)?.name || '未配置或已删除')
+const secondary = computed(() => accounts.value.filter(a => !a.primary))
 const serverChanged = computed(() => !!config.value.bindings.length && config.value.embyUrl !== proxyURL.value)
 const cards = computed(() => {
   const list = users.value.map(user => ({ ...user, missing: false }))
@@ -34,6 +35,7 @@ const unsaved = computed(() => Object.values(drafts.value).some(dirty))
 function savedAccount(id: string) { return config.value.bindings.find(b => b.userId === id)?.accountId || '' }
 function accountName(id: string) { return id ? accounts.value.find(a => a.id === id)?.name || '原账号已删除' : sourceName.value }
 function accountIssue(id: string) { const a = accounts.value.find(a => a.id === id); return !a ? '账号已删除，请重新选择' : !a.configured ? '账号未登录，请在 115 助手更新凭据' : '' }
+function bindingUnavailable(userID: string) { const id = savedAccount(userID); return !!id && !!accountIssue(id) }
 function directoryCID(id: string) { return accounts.value.find(a => a.id === id)?.playbackParentCid || '' }
 function directory(id: string) { const cid = directoryCID(id); return cid === '0' ? '根目录（0）' : cid || '未设置（分享直取不受影响）' }
 function dirty(d: Draft) { return d.accountId !== d.original }
@@ -50,7 +52,7 @@ async function refresh(discard = false) {
       embyRequest(props.token, 'proxy', lifecycle.signal),
     ])
     config.value = { embyUrl: status.config.embyUrl, bindings: status.config.bindings }
-    accounts.value = accountList.accounts; sourceAccountId.value = proxy.config.accountId; proxyURL.value = proxy.config.url
+    accounts.value = accountList.accounts; proxyURL.value = proxy.config.url
     loaded.value = true
     try {
       const data = await embyRequest(props.token, 'playback-cache/users', lifecycle.signal)
@@ -72,7 +74,7 @@ async function save(user: User) {
   try {
     const data = await embyRequest(props.token, `playback-cache/bindings/${encodeURIComponent(user.Id)}`, lifecycle.signal, {
       embyUrl: !d.accountId && config.value.bindings.length ? config.value.embyUrl : proxyURL.value,
-      mode: d.accountId ? 'personal' : 'source', accountId: d.accountId, expectedAccountId: d.original,
+      mode: d.accountId ? 'personal' : 'unbound', accountId: d.accountId, expectedAccountId: d.original,
     })
     // Apply only this card; concurrent responses must not reset other cards or their drafts.
     const binding = (data.config.bindings as Binding[]).find(b => b.userId === user.Id)
@@ -101,13 +103,13 @@ onBeforeUnmount(() => lifecycle.abort())
     <template #actions><RouterLink to="/helper115" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300">115 账号与缓存目录</RouterLink></template>
     <section class="mb-6 space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 class="font-semibold text-slate-900 dark:text-slate-100">Emby 用户 <span class="ml-1 text-slate-400 dark:text-slate-500">{{ cards.length }}</span></h2><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">302 源账号：<span class="font-medium text-slate-700 dark:text-slate-300">{{ sourceName }}</span> <RouterLink to="/emby/proxy" class="ml-2 text-blue-600">前往设置</RouterLink></p></div>
+        <div><h2 class="font-semibold text-slate-900 dark:text-slate-100">Emby 用户 <span class="ml-1 text-slate-400 dark:text-slate-500">{{ cards.length }}</span></h2><p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">主账号：<span class="font-medium text-slate-700 dark:text-slate-300">{{ sourceName }}</span> <RouterLink to="/helper115" class="ml-2 text-blue-600">管理主账号</RouterLink></p></div>
         <button :disabled="busy || saving" class="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="refresh()">{{ busy ? '读取中…' : '刷新 Emby 用户' }}</button>
       </div>
-      <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">个人账号优先读取分享，分享受限时由 302 源账号辅助秒传。未绑定用户使用 302 源账号；已绑定账号失效时停止播放。</p>
+      <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">未绑定用户默认使用主账号；已绑定用户使用绑定的小号。小号失效时暂停播放并保留绑定，不自动切回主账号；账号恢复后新播放请求自动生效，也可由管理员更换绑定。</p>
       <div class="flex flex-wrap gap-3">
         <input v-model="query" aria-label="搜索 Emby 用户" placeholder="搜索用户名、用户 ID 或播放账号" class="min-w-0 flex-1 basis-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-2.5 text-sm" />
-        <select v-model="filter" aria-label="筛选 Emby 用户" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"><option value="all">全部用户</option><option value="bound">已绑定个人账号</option><option value="source">使用 302 源账号</option><option value="disabled">Emby 已停用</option></select>
+        <select v-model="filter" aria-label="筛选 Emby 用户" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"><option value="all">全部用户</option><option value="bound">已绑定小号</option><option value="source">使用主账号</option><option value="disabled">Emby 已停用</option></select>
       </div>
       <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
       <div v-if="confirmRefresh" class="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800"><span>有未保存的修改，刷新将丢弃这些修改。</span><button class="font-medium underline" @click="refresh(true)">丢弃修改并刷新</button><button @click="confirmRefresh = false">继续编辑</button></div>
@@ -119,18 +121,19 @@ onBeforeUnmount(() => lifecycle.abort())
             <EmbyUserAvatar :token="token" :user-id="user.Id" :name="user.Name" :image-tag="serverChanged ? undefined : user.PrimaryImageTag" />
             <div class="min-w-0"><h3 class="break-all font-semibold text-slate-900 dark:text-slate-100">{{ user.Name }}</h3><div class="mt-2 flex flex-wrap gap-1.5 text-xs"><span class="rounded-md px-2 py-1" :class="user.Policy?.IsAdministrator ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 dark:text-slate-500'">{{ user.Policy ? user.Policy.IsAdministrator ? '管理员' : '普通用户' : '权限待读取' }}</span><span v-if="user.Policy?.IsDisabled || user.missing || serverChanged" class="rounded-md bg-red-50 px-2 py-1 text-red-600">{{ serverChanged ? '原服务绑定' : user.missing ? '用户不存在' : 'Emby 已停用' }}</span></div></div>
           </div>
-          <div class="max-w-full rounded-lg px-2.5 py-1.5 text-xs" :class="savedAccount(user.Id) ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 dark:text-slate-500'"><p>{{ savedAccount(user.Id) ? '已绑定个人账号' : '使用 302 源账号' }}</p><p class="mt-1 break-all font-semibold">{{ accountName(savedAccount(user.Id)) }}</p></div>
+          <div class="max-w-full rounded-lg px-2.5 py-1.5 text-xs" :class="bindingUnavailable(user.Id) ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300' : savedAccount(user.Id) ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300' : 'bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400'"><p>{{ bindingUnavailable(user.Id) ? '播放已暂停 · 保留绑定' : savedAccount(user.Id) ? '已绑定小号' : '使用主账号' }}</p><p class="mt-1 break-all font-semibold">{{ accountName(savedAccount(user.Id)) }}</p></div>
         </header>
         <form v-if="drafts[user.Id]" class="flex flex-1 flex-col" @submit.prevent="save(user)">
           <fieldset :disabled="busy || drafts[user.Id].busy" class="flex flex-1 flex-col p-4 disabled:opacity-60">
-            <P115AccountSelect :id="'account-' + user.Id" v-model="drafts[user.Id].accountId" :accounts="accounts" :disable-accounts="user.missing || user.Policy?.IsDisabled || serverChanged || !usersLoaded" allow-source compact label="115 账号" :source-label="'使用 302 源账号 · ' + sourceName" />
+            <P115AccountSelect :id="'account-' + user.Id" v-model="drafts[user.Id].accountId" :accounts="secondary" :disable-accounts="user.missing || user.Policy?.IsDisabled || serverChanged || !usersLoaded" allow-source compact label="播放账号" source-label="使用主账号（不绑定小号）" />
+            <p v-if="bindingUnavailable(user.Id)" class="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">当前绑定已锁定，不会自动切回主账号。恢复原账号后即可重新播放，或选择其他账号并保存。</p>
             <p v-if="drafts[user.Id].accountId && accountIssue(drafts[user.Id].accountId)" class="mt-2 text-xs text-red-600">{{ accountIssue(drafts[user.Id].accountId) }}</p>
             <div v-if="drafts[user.Id].accountId" class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">
               <p class="break-all">缓存目录：{{ directory(drafts[user.Id].accountId) }}</p>
               <div class="mt-1 flex flex-wrap gap-3"><RouterLink to="/helper115" class="text-blue-600">设置目录</RouterLink><button v-if="directoryCID(drafts[user.Id].accountId)" type="button" class="text-blue-600" @click="copy(directoryCID(drafts[user.Id].accountId))">{{ copied === directoryCID(drafts[user.Id].accountId) ? '已复制' : '复制目录 ID' }}</button></div>
             </div>
-            <p v-else-if="accountIssue(sourceAccountId)" class="mt-3 text-xs text-red-600">请在 302 设置中检查源账号配置</p>
-            <p v-if="user.missing || serverChanged" class="mt-2 text-xs leading-5 text-amber-700">选择源账号并保存，可移除原绑定。</p>
+            <p v-else class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ drafts[user.Id].original ? '保存后解除小号绑定，新播放请求将使用主账号。' : '未绑定小号，新播放请求默认使用主账号。' }}</p>
+            <p v-if="user.missing || serverChanged" class="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">选择“使用主账号”并保存，可移除原绑定；播放仍须通过 Emby 权限校验。</p>
             <p v-if="drafts[user.Id].error" role="alert" class="mt-2 text-xs text-red-600">{{ drafts[user.Id].error }}</p>
             <div class="mt-auto flex items-center justify-between gap-2 pt-3"><span class="text-xs" :class="dirty(drafts[user.Id]) ? 'text-amber-600' : drafts[user.Id].notice ? 'text-emerald-600' : 'text-slate-400 dark:text-slate-500'" role="status">{{ dirty(drafts[user.Id]) ? '未保存' : drafts[user.Id].notice ? '保存成功' : '已保存' }}</span><button type="submit" :disabled="!dirty(drafts[user.Id]) || !!drafts[user.Id].accountId && (!usersLoaded || user.missing || user.Policy?.IsDisabled || serverChanged)" class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">{{ drafts[user.Id].busy ? '保存中…' : '保存' }}</button></div>
           </fieldset>

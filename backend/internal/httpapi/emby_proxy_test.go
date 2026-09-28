@@ -31,7 +31,7 @@ func proxyTestAccounts(t *testing.T) (*service.P115Accounts, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := a.Add("播放账号")
+	id, err := a.AddPrimary("播放账号")
 	if err != nil {
 		t.Fatal(err)
 	}

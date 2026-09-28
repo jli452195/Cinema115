@@ -41,7 +41,7 @@ func cloudWorkflowAccounts(t *testing.T) (*P115Accounts, CloudDownloadConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := accounts.Add("明确绑定账号")
+	id, err := accounts.AddPrimary("明确绑定账号")
 	if err != nil {
 		t.Fatal(err)
 	}

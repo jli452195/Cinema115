@@ -174,8 +174,8 @@ async function submit(item: Item) {
     const config = await p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', {
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
-    if (!config.accountId) throw new Error('请先在“115 云下载”选择账号并保存配置')
-    const receipt = await submitCloudDownload(props.token, config.accountId, item.magnet, config.targetCID || '0', lifecycle.signal)
+    if (!config.accountId || !config.targetCID) throw new Error('请先配置主账号，并在“115 云下载”保存下载目录')
+    const receipt = await submitCloudDownload(props.token, config.accountId, item.magnet, config.targetCID, lifecycle.signal)
     submissions.value[item.id] = { success: true, message: cloudDownloadNotice(receipt, config.targetPath) }
   } catch (e) {
     if (lifecycle.signal.aborted) return

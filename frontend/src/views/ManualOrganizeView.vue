@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import DirectoryShareButton from '../components/DirectoryShareButton.vue'
-import P115AccountSelect from '../components/P115AccountSelect.vue'
+import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import OrganizeCleanupDialog from '../components/OrganizeCleanupDialog.vue'
 import SubtitleImportDialog from '../components/SubtitleImportDialog.vue'
@@ -254,7 +254,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <section class="panel">
           <h2 class="heading">整理位置</h2>
           <div class="mt-4 grid gap-4 lg:grid-cols-3">
-            <div><P115AccountSelect id="organize-account" v-model="config.accountId" :accounts="accounts" /></div>
+            <div><P115PrimaryStatus :accounts="accounts" /></div>
             <div><label class="label">来源目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'source'">{{ config.sourcePath || '选择待整理目录' }}</button></div>
             <div><label class="label">目标目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'target'">{{ config.targetPath || '选择整理后的目录' }}</button></div>
           </div>

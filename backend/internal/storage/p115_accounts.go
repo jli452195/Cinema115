@@ -11,6 +11,8 @@ var ErrAccountRevision = errors.New("115 账号存储版本已变化")
 
 // 存储层只接触密文，不持有加密密钥或 Cookie 明文。
 type P115AccountRow struct {
+	Primary           bool
+	UID               string
 	PlaybackParentCID string
 	ID, Name          string
 	Cookie            []byte
@@ -37,7 +39,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	if err != nil {
 		return state, fmt.Errorf("读取 115 账号存储版本: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid FROM p115_accounts ORDER BY position,id")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid,is_primary,uid FROM p115_accounts ORDER BY position,id")
 	if err != nil {
 		return state, err
 	}
@@ -45,7 +47,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	state.Accounts = make([]P115AccountRow, 0, 20)
 	for rows.Next() {
 		var row P115AccountRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID); err != nil {
+		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID, &row.Primary, &row.UID); err != nil {
 			return state, err
 		}
 		state.Accounts = append(state.Accounts, row)
@@ -80,9 +82,9 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState) er
 			return errors.New("115 账号编号无效")
 		}
 		ids[row.ID] = true
-		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid) VALUES(?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid
-WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid,is_primary,uid) VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid,is_primary=excluded.is_primary,uid=excluded.uid
+WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid OR is_primary<>excluded.is_primary OR uid<>excluded.uid`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID, row.Primary, row.UID)
 		if err != nil {
 			return fmt.Errorf("保存 115 账号: %w", err)
 		}

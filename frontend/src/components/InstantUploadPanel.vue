@@ -1,21 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import P115AccountSelect from './P115AccountSelect.vue'
-import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import type { P115Account } from '../types/p115Accounts'
 import { embyRequest } from '../types/emby'
 
 const props = defineProps<{ token: string; accounts: P115Account[]; source?: { accountId: string } }>()
-interface Config { sourceAccountId: string; accountId: string; targetCid: string; targetPath: string }
+interface Config { userId: string; sourceAccountId: string; accountId: string; targetCid: string; targetPath: string }
+interface Binding { userId: string; userName: string; accountId: string }
+const bindings = ref<Binding[]>([])
 interface Record { id: string; sourceAccountId: string; accountId: string; targetCid: string; status: string; message: string; name: string; size: number; sha1: string; fileId?: string; pickCode?: string; challenged: boolean; startedAt: string; durationMs: number }
 interface Status { config: Config; records: Record[]; running: boolean }
-const config = ref<Config>({ sourceAccountId: '', accountId: '', targetCid: '', targetPath: '' })
+const config = ref<Config>({ userId: '', sourceAccountId: '', accountId: '', targetCid: '', targetPath: '' })
 const saved = ref<Config>()
 const records = ref<Record[]>([])
 const running = ref(false)
 const busy = ref(false)
 const loaded = ref(false)
-const directoryOpen = ref(false)
 const strm = ref('')
 const error = ref('')
 const notice = ref('')
@@ -23,11 +22,9 @@ const requestId = ref('')
 const lifecycle = new AbortController()
 const dirty = computed(() => JSON.stringify(config.value) !== JSON.stringify(saved.value))
 const blocked = computed(() => busy.value || running.value || !loaded.value)
-const selectedReady = (id: string) => props.accounts.some(account => account.id === id && account.configured)
-const ready = computed(() => selectedReady(config.value.sourceAccountId) && selectedReady(config.value.accountId) && /^\d+$/.test(config.value.targetCid))
+const target = computed(() => props.accounts.find(a => !a.primary && a.id === bindings.value.find(b => b.userId === config.value.userId)?.accountId))
+const ready = computed(() => !!props.accounts.find(a => a.primary && a.configured) && !!target.value?.configured && /^\d+$/.test(target.value.playbackParentCid || ''))
 watch(strm, () => { requestId.value = '' })
-function targetChanged(id: string) { config.value.accountId = id; config.value.targetCid = ''; config.value.targetPath = ''; requestId.value = '' }
-function chooseDirectory(value: { id: string; path: string }) { config.value.targetCid = value.id; config.value.targetPath = value.path; directoryOpen.value = false }
 function acceptStatus(data: Status, replaceConfig: boolean) {
   records.value = data.records; running.value = data.running; saved.value = { ...data.config }
   if (replaceConfig) config.value = { ...data.config }
@@ -35,14 +32,22 @@ function acceptStatus(data: Status, replaceConfig: boolean) {
 }
 async function load(replaceConfig = false) {
   busy.value = true; error.value = ''
-  try { acceptStatus(await embyRequest(props.token, 'instant-upload', lifecycle.signal), replaceConfig || !loaded.value) }
+  try {
+    const [status, playback, users]: [Status, { config: { embyUrl: string; bindings: Binding[] } }, { embyUrl: string; users: { Id: string; Policy?: { IsDisabled?: boolean } }[] }] = await Promise.all([
+      embyRequest(props.token, 'instant-upload', lifecycle.signal),
+      embyRequest(props.token, 'playback-cache', lifecycle.signal),
+      embyRequest(props.token, 'playback-cache/users', lifecycle.signal),
+    ])
+    bindings.value = playback.config.embyUrl === users.embyUrl ? playback.config.bindings.filter(b => users.users.some(u => u.Id === b.userId && !u.Policy?.IsDisabled)) : []
+    acceptStatus(status, replaceConfig || !loaded.value)
+  }
   catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取秒传配置失败' }
   finally { busy.value = false }
 }
 async function save() {
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    acceptStatus(await embyRequest(props.token, 'instant-upload', lifecycle.signal, { ...config.value }), true)
+    acceptStatus(await embyRequest(props.token, 'instant-upload', lifecycle.signal, { userId: config.value.userId }), true)
     requestId.value = ''; notice.value = '秒传配置已保存。'
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存失败' }
   finally { busy.value = false }
@@ -78,13 +83,11 @@ onBeforeUnmount(() => lifecycle.abort())
     <form class="mt-5" @submit.prevent="save">
       <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
         <div class="grid gap-5 sm:grid-cols-2">
-          <div><p class="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">源文件取链账号</p><P115AccountSelect id="instant-source-account" v-model="config.sourceAccountId" :accounts="accounts" /></div>
-          <div><p class="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-200">目标账号（朋友账号）</p><P115AccountSelect id="instant-target-account" :model-value="config.accountId" :accounts="accounts" @update:model-value="targetChanged" /></div>
-          <label class="text-sm text-slate-700 dark:text-slate-300">目标缓存目录 ID<input v-model.trim="config.targetCid" required inputmode="numeric" pattern="[0-9]+" placeholder="手动填写，根目录为 0" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @input="config.targetPath = ''" /><span v-if="config.targetPath" class="mt-2 block break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ config.targetPath }}</span></label>
+          <label class="text-sm text-slate-700 dark:text-slate-300">目标用户<select v-model="config.userId" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @change="requestId = ''"><option value="" disabled>请选择已绑定小号的用户</option><option v-for="binding in bindings" :key="binding.userId" :value="binding.userId">{{ binding.userName }} · {{ accountName(binding.accountId) }}</option></select></label>
+          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">源文件由主账号读取。<br />目标小号：{{ target?.name || '请选择用户' }}<br />秒传目录：{{ target?.playbackParentCid || '请在 115 助手中设置' }}</p>
         </div>
         <div class="flex flex-wrap gap-3">
-          <button v-if="source?.accountId" type="button" class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500" @click="config.sourceAccountId = source.accountId">填入已保存的 302 源账号</button>
-          <button type="button" :disabled="!selectedReady(config.accountId)" class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="directoryOpen = true">选择目标目录</button>
+          <a href="/emby/users" class="text-sm text-blue-600">管理用户绑定</a>
           <button type="submit" :disabled="!ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">保存秒传配置</button>
         </div>
       </fieldset>
@@ -106,6 +109,5 @@ onBeforeUnmount(() => lifecycle.abort())
         <p v-if="record.fileId || record.pickCode" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="record.fileId">目标文件 ID：{{ record.fileId }} </span><span v-if="record.pickCode">PickCode：{{ record.pickCode }}</span></p>
       </article>
     </div>
-    <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="config.accountId" title="选择目标缓存目录" @close="directoryOpen = false" @select="chooseDirectory" />
   </section>
 </template>

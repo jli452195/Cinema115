@@ -29,7 +29,7 @@ func (s *FolderMonitorService) pinSettings(value *model.FolderMonitor) error {
 	if err := s.validate(*value); err != nil {
 		return err
 	}
-	account, err := s.Accounts.Get(value.AccountID)
+	account, err := s.Accounts.Primary(value.AccountID)
 	if err != nil {
 		return err
 	}

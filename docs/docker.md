@@ -68,7 +68,7 @@ Go 构建使用默认并发与垃圾回收参数，不再固定为低内存编�
 
 更新代码后重新执行构建启动命令。修改 Compose 环境变量或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
 
-首次部署后在「115 助手」页面添加账号并扫码登录，再到具体功能中选择账号。多账号配置保存于 `/data/cinema115.db`，Cookie 字段使用 AES-GCM 加密，没有全局当前账号。从 Windows 迁移到 NAS 时保留完整 `data/`、原 `JWT_SECRET` 并保证文件权限正确；运行中备份数据库应使用 `dbtool -action backup`。旧 `p115-accounts.enc` 或 `p115-session.enc` 首次启动时自动导入，成功后仅使用数据库，保留旧文件作为备份。根目录密钥和登录凭证不会打包到镜像中。
+首次部署后在「115 助手」配置主账号并扫码登录，普通功能统一使用主账号；小号仅用于用户播放绑定和秒传。多账号配置保存于 `/data/cinema115.db`，Cookie 字段使用 AES-GCM 加密，主账号角色单独保存。从 Windows 迁移到 NAS 时保留完整 `data/`、原 `JWT_SECRET` 并保证文件权限正确；运行中备份数据库应使用 `dbtool -action backup`。旧 `p115-accounts.enc` 或 `p115-session.enc` 首次启动时自动导入，成功后仅使用数据库，保留旧文件作为备份。根目录密钥和登录凭证不会打包到镜像中。
 
 升级到 SQLite 版本前停止旧服务并备份 `data/` 和 `.env`。新版首次启动自动导入旧转存任务 JSON，原文件保留，新任务写入 `/data/cinema115.db`。无需增加端口或挂载。运行中通过 `docker compose exec cinema115 /app/dbtool -action status` 检查数据库；一致性备份和恢复方法见 [数据库说明](database.md)，不要只复制运行中的主 `.db` 文件。
 

@@ -14,7 +14,7 @@ import (
 )
 
 // RegisterCloudDownload exposes the administrator-only cloud-download card.
-// Every request carries accountId; there is deliberately no fallback account.
+// Task endpoints use the primary account; secondary directory browsing is isolated.
 func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Accounts, settings *service.CloudDownloadSettings, downloads *service.CloudDownloadService, cloud *p115.CloudClient, drive *p115.ShareClient) {
 	group := admin.Group("/p115/cloud-download")
 	group.Use(func(c *gin.Context) {
@@ -23,18 +23,9 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		c.Next()
 	})
 	account := func(c *gin.Context) (service.P115Account, bool) {
-		id := strings.TrimSpace(c.Query("accountId"))
-		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先选择云下载使用的 115 账号配置"})
-			return service.P115Account{}, false
-		}
-		value, err := accounts.Get(id)
+		value, err := accounts.Primary(strings.TrimSpace(c.Query("accountId")))
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "所选 115 账号配置不存在，请重新选择"})
-			return service.P115Account{}, false
-		}
-		if value.Cookie == "" {
-			c.JSON(http.StatusConflict, gin.H{"error": "所选 115 账号尚未登录，请先在 115 助手中配置凭据"})
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return service.P115Account{}, false
 		}
 		return value, true
@@ -81,8 +72,24 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		c.JSON(http.StatusOK, value)
 	})
 
-	group.GET("/paths", func(c *gin.Context) {
-		value, ok := account(c)
+	paths := func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		var value service.P115Account
+		var ok bool
+		if id := c.Param("accountID"); id != "" {
+			if err := accounts.ValidateSecondary(id); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			var err error
+			value, err = accounts.Get(id)
+			ok = err == nil && value.Cookie != ""
+			if !ok {
+				c.JSON(409, gin.H{"error": "小号已删除或未登录"})
+			}
+		} else {
+			value, ok = account(c)
+		}
 		if !ok {
 			return
 		}
@@ -106,7 +113,9 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			}
 		}
 		c.JSON(http.StatusOK, gin.H{"cid": cid, "directories": directories, "count": page.Count, "offset": page.Offset, "hasMore": offset+len(page.Files) < page.Count})
-	})
+	}
+	group.GET("/paths", paths)
+	admin.GET("/p115/accounts/:accountID/paths", paths)
 
 	group.POST("/tasks", func(c *gin.Context) {
 		value, ok := account(c)
@@ -134,7 +143,8 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			}
 		}
 		if targetCID == "" {
-			targetCID = "0"
+			c.JSON(400, gin.H{"error": "请先选择主账号的下载目录"})
+			return
 		}
 		receipt, err := downloads.Submit(ctx, service.CloudDownloadConfig{AccountID: value.ID, TargetCID: targetCID, TargetPath: targetPath}, input.URL)
 		if err != nil {

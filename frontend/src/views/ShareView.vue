@@ -6,7 +6,7 @@ import SettingSwitch from '../components/SettingSwitch.vue'
 import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
 import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
-import P115AccountSelect from '../components/P115AccountSelect.vue'
+import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
 import TelegramBotSelect from '../components/TelegramBotSelect.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig } from '../types/telegramBots'
@@ -92,7 +92,7 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
-    if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先选择已登录的 115 账号配置')
+    if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先在 115 助手中登录主账号')
     if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
     if (!Number.isInteger(maxParallelBatches.value) || maxParallelBatches.value < 0 || maxParallelBatches.value > 20) throw new Error('最大并行批次应为 0～20 的整数')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
@@ -287,8 +287,8 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           <div>
             <div class="grid gap-x-6 gap-y-5 md:grid-cols-2">
               <div>
-                <P115AccountSelect id="share-account" v-model="accountId" :accounts="accounts" />
-                <p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">选择后点击右上角保存，分享生成、Telegram 与 STRM 播放共用此配置。<RouterLink to="/helper115" class="text-blue-600 hover:underline">管理账号</RouterLink></p>
+                <P115PrimaryStatus :accounts="accounts" />
+                <p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">分享生成、Telegram 和源文件读取统一使用主账号。<RouterLink to="/helper115" class="text-blue-600 hover:underline">管理账号</RouterLink></p>
               </div>
               <div>
                 <TelegramBotSelect id="share-bot" v-model="botId" :bots="bots" :required="telegramEnabled" />

@@ -51,12 +51,12 @@ func TestAccountPlaybackDirectoryPersistsAndIsolates(t *testing.T) {
 		t.Fatal("directory persistence or isolation failed")
 	}
 	replacement := "UID=33_A"
-	if err = reopened.Update(id, a.Revision, "friend", &replacement); err != nil {
-		t.Fatal(err)
+	if err = reopened.Update(id, a.Revision, "friend", &replacement); err == nil {
+		t.Fatal("changed the identity of an existing account")
 	}
 	a, _ = reopened.Get(id)
-	if a.PlaybackParentCID != "" {
-		t.Fatal("directory leaked across UID change")
+	if a.PlaybackParentCID != "123" {
+		t.Fatal("rejected UID change altered the directory")
 	}
 	if err = reopened.UpdatePlaybackDirectory(id, a.Revision, "0"); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestPlaybackCardsUpdateIndependentlyAndRejectStaleWrites(t *testing.T) {
 		}
 	}
 	if selected, err := s.Snapshot().Select("http://new-emby:8096", cacheTestUser); err != nil || selected != nil {
-		t.Fatal("empty bindings should allow source playback", err)
+		t.Fatal("empty bindings must use primary playback", err)
 	}
 }
 

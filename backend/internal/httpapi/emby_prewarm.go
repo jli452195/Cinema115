@@ -54,7 +54,7 @@ func (h *embyProxyHandler) foregroundPlayback() func() {
 }
 
 func (h *embyProxyHandler) prewarmKey(token, item, sourceID string, source service.P115Account, selected *service.PlaybackCacheSelection) string {
-	return service.DirectLinkKey(h.config.URL, token, item, sourceID, h.config.AccountID, source.Cookie, strconv.FormatUint(source.Revision, 10), selected.DirectLinkScope())
+	return service.DirectLinkKey(h.config.URL, token, item, sourceID, source.ID, source.Cookie, strconv.FormatUint(source.Revision, 10), selected.DirectLinkScope())
 }
 
 func (h *embyProxyHandler) waitPrewarm(ctx context.Context, key string) error {
@@ -103,13 +103,17 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		return
 	}
 	snapshot := &prewarmSnapshot{}
-	snapshot.source, _ = h.accounts.Get(h.config.AccountID)
+	snapshot.source, _ = h.accounts.Primary("")
 	if h.cache != nil {
 		snapshot.bindings = h.cache.Snapshot()
 	}
-	selected, err := snapshot.bindings.Select(h.config.URL, userID)
-	if err != nil {
-		return
+	var selected *service.PlaybackCacheSelection
+	if h.cache != nil {
+		var err error
+		selected, err = snapshot.bindings.Select(h.config.URL, userID)
+		if err != nil {
+			return
+		}
 	}
 	key := h.prewarmKey(token, item, sourceID, snapshot.source, selected)
 	recentKey := service.DirectLinkKey(key, r.UserAgent())

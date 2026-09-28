@@ -101,7 +101,9 @@ func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accoun
 func (s *EmbyProxy) Status() EmbyProxyStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return EmbyProxyStatus{Config: s.config, Listening: s.server != nil, Error: s.lastError}
+	c := s.config
+	c.AccountID = s.accounts.PrimaryID()
+	return EmbyProxyStatus{Config: c, Listening: s.server != nil, Error: s.lastError}
 }
 
 func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
@@ -144,10 +146,11 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	}
 	// Disabling must work even after the configured account has been deleted.
 	if c.Enabled {
-		if err := s.accounts.ValidateSelection(c.AccountID); err != nil {
+		if err := s.accounts.ValidatePrimary(c.AccountID); err != nil {
 			return err
 		}
 	}
+	c.AccountID = s.accounts.PrimaryID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.ctx.Err() != nil {

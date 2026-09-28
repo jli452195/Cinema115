@@ -142,6 +142,11 @@ func (h *Hub) Update(ctx context.Context, input BotProfile, revision uint64) err
 		if err := h.CloudDownloads.ValidateConfig(input.CloudDownload.ServiceConfig()); err != nil {
 			return fmt.Errorf("%w：%s", ErrConfig, err.Error())
 		}
+		account, err := h.CloudDownloads.Accounts.Primary(input.CloudDownload.AccountID)
+		if err != nil {
+			return err
+		}
+		input.CloudDownload.AccountID = account.ID
 	}
 	input.Identity = current.Identity
 	for _, other := range h.profiles.List() {

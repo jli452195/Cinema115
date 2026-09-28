@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 20
+const schemaVersion = 21
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -376,6 +376,25 @@ PRAGMA user_version=19;`); err != nil {
 		}
 		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=20;`); err != nil {
 			return fmt.Errorf("迁移账号播放目录: %w", err)
+		}
+	}
+	if version < 21 {
+		for _, column := range []struct{ name, definition string }{
+			{"is_primary", "INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0,1))"},
+			{"uid", "TEXT NOT NULL DEFAULT ''"},
+		} {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('p115_accounts') WHERE name=?`, column.name).Scan(&exists); err != nil {
+				return fmt.Errorf("检查账号角色字段: %w", err)
+			}
+			if exists == 0 {
+				if _, err := tx.ExecContext(ctx, "ALTER TABLE p115_accounts ADD COLUMN "+column.name+" "+column.definition); err != nil {
+					return fmt.Errorf("创建账号角色字段: %w", err)
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS p115_single_primary ON p115_accounts(is_primary) WHERE is_primary=1; PRAGMA user_version=21;`); err != nil {
+			return fmt.Errorf("保存主账号结构: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

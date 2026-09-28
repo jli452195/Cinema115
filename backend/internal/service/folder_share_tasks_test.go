@@ -121,7 +121,7 @@ func TestDirectorySharePinsBindingAndRejectsCredentialChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := "UID=43_A"
+	cookie := "UID=42_A; SEID=refreshed"
 	if err := svc.Accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}

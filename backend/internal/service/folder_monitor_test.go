@@ -71,7 +71,7 @@ func TestFolderMonitorLegacyMoveFreezesRemainingSourceIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID, err := accounts.Add("monitor")
+	accountID, err := accounts.AddPrimary("monitor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestFolderMonitorSharesTemporaryDirectoryChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID, err := accounts.Add("monitor")
+	accountID, err := accounts.AddPrimary("monitor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestFolderMonitorDeletesOnlyFrozenRootsAndLeavesNewArrival(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID, _ := accounts.Add("监控账号")
+	accountID, _ := accounts.AddPrimary("监控账号")
 	account, _ := accounts.Get(accountID)
 	cookie := "UID=42_A"
 	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {
@@ -349,7 +349,7 @@ func TestFolderMonitorAcceptsShareAggregateDirectorySize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID, _ := accounts.Add("监控账号")
+	accountID, _ := accounts.AddPrimary("监控账号")
 	account, _ := accounts.Get(accountID)
 	cookie := "UID=42_A"
 	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {

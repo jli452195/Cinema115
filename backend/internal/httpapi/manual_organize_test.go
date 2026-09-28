@@ -123,7 +123,7 @@ func TestManualOrganizeAPIRequiresExplicitAccount(t *testing.T) {
 		{"POST", "/cleanup/preview", `{`, http.StatusBadRequest},
 		{"POST", "/cleanup", `{`, http.StatusBadRequest},
 		{"GET", "/files?cid=0", "", http.StatusBadRequest},
-		{"PUT", "/config", `{"sourceCID":"0","targetCID":"0","sourcePath":"/","targetPath":"/"}`, http.StatusBadRequest},
+		{"PUT", "/config", `{"sourceCID":"0","targetCID":"0","sourcePath":"/","targetPath":"/"}`, http.StatusOK},
 		{"POST", "/scan", `{"parentId":"0","entryId":"123"}`, http.StatusBadRequest},
 		{"POST", "/jobs", `{"previewId":"forged"}`, http.StatusBadRequest},
 		{"POST", "/preview", `{"files":[]}`, http.StatusBadRequest},

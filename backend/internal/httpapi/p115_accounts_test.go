@@ -58,7 +58,7 @@ func setupAccountsAPI(t *testing.T, checker CookieChecker, qr accountQRClient) (
 	if err := s.Update("default", 1, "默认账号", &first); err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.Add("第二账号")
+	id, err := s.AddPrimary("第二账号")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,13 +88,14 @@ func accountRequest(t *testing.T, r *gin.Engine, method, path, body string, code
 
 func TestAccountPlaybackDirectoryAPI(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
-	path := "/accounts/" + id + "/playback-directory"
+	accountRequest(t, r, "PUT", "/accounts/"+id+"/playback-directory", `{"parentCid":"0","revision":2}`, 400)
+	path := "/accounts/default/playback-directory"
 	w := accountRequest(t, r, "PUT", path, `{"parentCid":"0","revision":2}`, 200)
 	if strings.Contains(w.Body.String(), "SEID") || strings.Contains(w.Body.String(), "cookie") {
 		t.Fatal("directory response exposed credentials")
 	}
-	a, _ := accounts.Get(id)
-	b, _ := accounts.Get("default")
+	a, _ := accounts.Get("default")
+	b, _ := accounts.Get(id)
 	if a.PlaybackParentCID != "0" || b.PlaybackParentCID != "" {
 		t.Fatal("directory update crossed accounts")
 	}
@@ -102,6 +103,34 @@ func TestAccountPlaybackDirectoryAPI(t *testing.T) {
 	accountRequest(t, r, "PUT", path, `{"parentCid":"-1","revision":3}`, 400)
 	accountRequest(t, r, "PUT", "/accounts/missing/playback-directory", `{"parentCid":"0","revision":3}`, 404)
 	accountRequest(t, r, "PUT", path, `{"parentCid":"","revision":3}`, 200)
+}
+
+func TestCreatePrimaryAccountAPI(t *testing.T) {
+	r, accounts, primary := setupAccountsAPI(t, nil, nil)
+	accountRequest(t, r, "POST", "/accounts", `{"name":"duplicate","primary":true}`, 400)
+	if err := accounts.Delete(primary, 2); err != nil {
+		t.Fatal(err)
+	}
+	if accounts.PrimaryID() != "" {
+		t.Fatal("automatically promoted secondary")
+	}
+	response := accountRequest(t, r, "POST", "/accounts", `{"name":"main","primary":true}`, 200)
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID == "" || accounts.PrimaryID() != body.ID {
+		t.Fatal("did not create the primary role")
+	}
+	accountRequest(t, r, "POST", "/accounts", `{"name":"small","primary":false}`, 200)
+	if accounts.PrimaryID() != body.ID {
+		t.Fatal("creating secondary changed primary")
+	}
+	if _, err := accounts.Primary(""); err == nil {
+		t.Fatal("new primary should require login")
+	}
 }
 
 func TestMultiAccountSaveSwitchAndClear(t *testing.T) {

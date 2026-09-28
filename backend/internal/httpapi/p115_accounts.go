@@ -43,13 +43,18 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 	group.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": store.List()}) })
 	group.POST("/accounts", func(c *gin.Context) {
 		var in struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Primary bool   `json:"primary"`
 		}
 		if c.ShouldBindJSON(&in) != nil {
 			a.fail(c, service.ErrAccountInput)
 			return
 		}
-		id, err := store.Add(in.Name)
+		add := store.Add
+		if in.Primary {
+			add = store.AddPrimary
+		}
+		id, err := add(in.Name)
 		if err != nil {
 			a.fail(c, err)
 			return

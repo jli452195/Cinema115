@@ -90,10 +90,10 @@ async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
     const config = await p115Request<CloudDownloadConfig>(props.token, 'cloud-download/config', {
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
-    if (!config.accountId) {
-      throw Object.assign(new Error('请先在“115 云下载”页面选择账号并保存配置'), { needsConfig: true })
+    if (!config.accountId || !config.targetCID) {
+      throw Object.assign(new Error('请先配置主账号，并在“115 云下载”保存下载目录'), { needsConfig: true })
     }
-    const receipt = await submitCloudDownload(props.token, config.accountId, link.url, config.targetCID || '0', lifecycle.signal)
+    const receipt = await submitCloudDownload(props.token, config.accountId, link.url, config.targetCID, lifecycle.signal)
     cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: true, message: cloudDownloadNotice(receipt, config.targetPath) } }
   } catch (reason) {
     if (!lifecycle.signal.aborted) {

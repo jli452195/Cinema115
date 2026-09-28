@@ -172,7 +172,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cloudDownloadSettings.ValidateAccount = accounts.ValidateSelection
+	cloudDownloadSettings.ValidateAccount = accounts.ValidatePrimary
+	cloudDownloadSettings.PrimaryID = accounts.PrimaryID
 	cloudClient := p115.NewCloudClient()
 	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient}
 	httpapi.RegisterCloudDownload(admin, accounts, cloudDownloadSettings, cloudDownloads, cloudClient, p115.NewShareClient())
@@ -207,13 +208,8 @@ func main() {
 		log.Fatal(err)
 	}
 	shareAPI.BaseURL = func() string { return automation.Value().Generation.BaseURL }
-	accountMigrationCtx, accountMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err = service.MigrateP115ShareSelection(accountMigrationCtx, database, automation)
-	accountMigrationCancel()
-	if err != nil {
-		log.Fatal(err)
-	}
-	automation.ValidateAccount = accounts.ValidateSelection
+	automation.PrimaryID = accounts.PrimaryID
+	automation.ValidateAccount = accounts.ValidatePrimary
 	shareCookie := func() string { return accounts.CookieFor(automation.Value().AccountID) }
 	shareAPI.Cookie = shareCookie
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
@@ -282,7 +278,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpapi.RegisterInstantUploads(admin, instantUploads, shareAPI)
+	instantUploads.Playback = playbackCache
+	httpapi.RegisterInstantUploads(admin, instantUploads, shareAPI, httpapi.InstantPlaybackUserValidator(embyService, embyProxy, playbackCache))
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	shareTasks.RetryWake = make(chan struct{}, 1)
 	httpapi.RegisterShareTasks(admin, database, shareTasks)

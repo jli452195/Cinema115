@@ -61,11 +61,11 @@ func TestCloudDownloadPOSTDefaultsToSafeResubmit(t *testing.T) {
 		{name: "删除后超时", found: true, display: "finished", addErr: context.DeadlineExceeded, status: 504, removed: true, uncertain: true, steps: 3, errorText: "重新提交结果尚未确认"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, accounts, _ := setupAccountsAPI(t, nil, nil)
+			r, accounts, id := setupAccountsAPI(t, nil, nil)
 			settings := testCloudDownloadSettings(t, accounts)
 			client := &cloudSubmitAPIFake{task: p115.CloudTask{InfoHash: hash, DisplayStatus: tc.display}, found: tc.found, removeErr: tc.removeErr, addErr: tc.addErr}
 			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client}, p115.NewCloudClient(), p115.NewShareClient())
-			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId=default", strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
+			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId="+id, strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
 			response := httptest.NewRecorder()
 			r.ServeHTTP(response, request)
 			var body struct {
@@ -96,8 +96,11 @@ func TestCloudDownloadPOSTDefaultsToSafeResubmit(t *testing.T) {
 	}
 }
 
-func TestCloudDownloadRequiresExplicitAccount(t *testing.T) {
-	r, accounts, _ := setupAccountsAPI(t, nil, nil)
+func TestCloudDownloadRequiresConfiguredPrimary(t *testing.T) {
+	r, accounts, id := setupAccountsAPI(t, nil, nil)
+	if err := accounts.Delete(id, 2); err != nil {
+		t.Fatal(err)
+	}
 	settings := testCloudDownloadSettings(t, accounts)
 	cloud := p115.NewCloudClient()
 	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud}, cloud, p115.NewShareClient())
@@ -112,16 +115,16 @@ func TestCloudDownloadRequiresExplicitAccount(t *testing.T) {
 	} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
-		if w.Code != http.StatusBadRequest {
+		if w.Code != http.StatusConflict {
 			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, w.Code, w.Body.String())
 		}
 	}
 }
 
 func TestCloudDownloadDirectoryAndTaskUseSelectedAccount(t *testing.T) {
-	r, accounts, _ := setupAccountsAPI(t, nil, nil)
+	r, accounts, id := setupAccountsAPI(t, nil, nil)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if !strings.Contains(request.Header.Get("Cookie"), "UID=111_A") {
+		if !strings.Contains(request.Header.Get("Cookie"), "UID=222_B") {
 			t.Fatalf("request did not use selected account cookie")
 		}
 		switch request.URL.Path {
@@ -145,8 +148,8 @@ func TestCloudDownloadDirectoryAndTaskUseSelectedAccount(t *testing.T) {
 	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud}, cloud, drive)
 
 	for _, path := range []string{
-		"/api/admin/p115/cloud-download/paths?accountId=default&cid=0",
-		"/api/admin/p115/cloud-download/tasks?accountId=default",
+		"/api/admin/p115/cloud-download/paths?accountId=" + id + "&cid=0",
+		"/api/admin/p115/cloud-download/tasks?accountId=" + id,
 	} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
@@ -166,6 +169,7 @@ func testCloudDownloadSettings(t *testing.T, accounts *service.P115Accounts) *se
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings.ValidateAccount = accounts.ValidateSelection
+	settings.ValidateAccount = accounts.ValidatePrimary
+	settings.PrimaryID = accounts.PrimaryID
 	return settings
 }

@@ -15,6 +15,7 @@ import (
 )
 
 type InstantUploadConfig struct {
+	UserID          string `json:"userId"`
 	SourceAccountID string `json:"sourceAccountId"`
 	AccountID       string `json:"accountId"`
 	TargetCID       string `json:"targetCid"`
@@ -55,6 +56,7 @@ type instantUploadClient interface {
 // InstantUploads owns only explicit configuration and a bounded diagnostic history.
 // Cookies, STRM URLs, share passwords and signed download URLs never enter its document.
 type InstantUploads struct {
+	Playback *PlaybackCache
 	mu       sync.Mutex
 	store    accountSecretStore
 	accounts *P115Accounts
@@ -110,12 +112,11 @@ func (s *InstantUploads) saveLocked(doc instantUploadDocument) error {
 }
 
 func (s *InstantUploads) Apply(config InstantUploadConfig) error {
-	if err := s.accounts.ValidateSelection(config.SourceAccountID); err != nil {
-		return fmt.Errorf("%w：源账号：%v", ErrInstantConfig, err)
+	resolved, err := s.resolveUser(config.UserID)
+	if err != nil {
+		return err
 	}
-	if err := s.accounts.ValidateSelection(config.AccountID); err != nil {
-		return fmt.Errorf("%w：目标账号：%v", ErrInstantConfig, err)
-	}
+	config = resolved
 	if _, err := strconv.ParseUint(config.TargetCID, 10, 64); err != nil || config.TargetCID == "" {
 		return fmt.Errorf("%w：请明确选择目标目录，根目录填写 0", ErrInstantConfig)
 	}
@@ -148,8 +149,13 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 		s.mu.Unlock()
 		return record, fmt.Errorf("%w：配置已改变，请刷新后重新验证", ErrInstantConfig)
 	}
+	resolved, err := s.resolveUser(expected.UserID)
+	if err != nil || resolved != expected {
+		s.mu.Unlock()
+		return record, fmt.Errorf("%w：用户绑定或目录已变化，请重新保存秒传配置", ErrInstantConfig)
+	}
 	// Resolve each explicit account exactly once, then pin credentials for the whole operation.
-	source, err := s.accounts.Get(expected.SourceAccountID)
+	source, err := s.accounts.Primary(expected.SourceAccountID)
 	if err != nil || source.Cookie == "" {
 		s.mu.Unlock()
 		return record, fmt.Errorf("%w：源账号已删除或未登录", ErrInstantConfig)
@@ -250,4 +256,28 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 	record.Status, record.Message = "success", "115 已确认秒传成功，文件已存入目标目录"
 	record.FileID, record.PickCode, record.Challenged = result.FileID, result.PickCode, result.Challenged
 	return record, nil
+}
+
+func (s *InstantUploads) resolveUser(userID string) (InstantUploadConfig, error) {
+	if s.Playback == nil || !instantRunID.MatchString(userID) {
+		return InstantUploadConfig{}, fmt.Errorf("%w：请选择已绑定小号的目标用户", ErrInstantConfig)
+	}
+	source, err := s.accounts.Primary("")
+	if err != nil {
+		return InstantUploadConfig{}, fmt.Errorf("%w：%v", ErrInstantConfig, err)
+	}
+	for _, b := range s.Playback.Status().Config.Bindings {
+		if b.UserID != userID {
+			continue
+		}
+		if err := s.accounts.ValidateSecondary(b.AccountID); err != nil {
+			return InstantUploadConfig{}, fmt.Errorf("%w：%v", ErrInstantConfig, err)
+		}
+		target, err := s.accounts.Get(b.AccountID)
+		if err != nil || target.Cookie == "" || target.PlaybackParentCID == "" {
+			return InstantUploadConfig{}, fmt.Errorf("%w：请先配置用户小号的登录和秒传目录", ErrInstantConfig)
+		}
+		return InstantUploadConfig{UserID: userID, SourceAccountID: source.ID, AccountID: target.ID, TargetCID: target.PlaybackParentCID, TargetPath: target.PlaybackParentCID}, nil
+	}
+	return InstantUploadConfig{}, fmt.Errorf("%w：目标用户尚未绑定小号", ErrInstantConfig)
 }

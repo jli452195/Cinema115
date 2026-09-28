@@ -47,7 +47,7 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 			fail(c, err)
 			return
 		}
-		c.JSON(200, input)
+		c.JSON(200, organizer.Config())
 	})
 	group.GET("/files", func(c *gin.Context) {
 		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))

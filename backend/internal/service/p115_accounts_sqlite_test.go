@@ -166,7 +166,7 @@ func TestShareAccountSelectionAndSnapshot(t *testing.T) {
 	}
 	value.AccountID = "missing"
 	if err := s.Settings.Save(value); err == nil || s.Settings.Value().AccountID != id {
-		 t.Fatal("无效选择不能覆盖原配置")
+		t.Fatal("无效选择不能覆盖原配置")
 	}
 	if err := accounts.Delete(id, 2); err != nil {
 		t.Fatal(err)

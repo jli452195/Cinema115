@@ -29,6 +29,7 @@ type AutomationSettings struct {
 }
 
 type AutomationStore struct {
+	PrimaryID func() string
 	// 启动时装配，保存时校验账号配置，不在读取旧设置时阻止服务启动。
 	ValidateAccount func(string) error
 	ValidateBot     func(string, bool) error
@@ -61,10 +62,17 @@ func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
 func (s *AutomationStore) Value() AutomationSettings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.value
+	value := s.value
+	if s.PrimaryID != nil {
+		if id := s.PrimaryID(); value.AccountID != id {
+			value.AccountID = id
+			value.ParentCID = ""
+		}
+	}
+	return value
 }
 
-// ValidateCurrentAccount 校验分享功能明确保存的账号，不选择默认账号或其他可用账号。
+// ValidateCurrentAccount 校验当前主账号，不回退到小号。
 func (s *AutomationStore) ValidateCurrentAccount() error {
 	value := s.Value()
 	if s.ValidateAccount == nil {
@@ -166,6 +174,13 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 }
 
 func (s *AutomationStore) Save(value AutomationSettings) error {
+	if s.PrimaryID != nil {
+		id := s.PrimaryID()
+		if value.AccountID != "" && value.AccountID != id {
+			return generationInputError("主账号已变化，请重新选择转存目录")
+		}
+		value.AccountID = id
+	}
 	// 兼容未传新字段的旧客户端，零值采用默认配置。
 	if value.ReviewRetryMinutes == 0 {
 		value.ReviewRetryMinutes = 30

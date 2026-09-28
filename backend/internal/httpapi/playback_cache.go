@@ -60,7 +60,7 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			AccountID         string  `json:"accountId"`
 			ExpectedAccountID *string `json:"expectedAccountId"`
 		}
-		if c.ShouldBindJSON(&in) != nil || in.ExpectedAccountID == nil || (in.Mode != "source" && in.Mode != "personal") || (in.Mode == "source" && in.AccountID != "") {
+		if c.ShouldBindJSON(&in) != nil || in.ExpectedAccountID == nil || (in.Mode != "unbound" && in.Mode != "personal") || (in.Mode == "unbound" && in.AccountID != "") {
 			c.JSON(400, gin.H{"error": "用户播放配置无效"})
 			return
 		}
@@ -90,7 +90,7 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 				return
 			}
 		}
-		if err := s.UpdateBinding(in.EmbyURL, binding, *in.ExpectedAccountID, in.Mode == "source"); err != nil {
+		if err := s.UpdateBinding(in.EmbyURL, binding, *in.ExpectedAccountID, in.Mode == "unbound"); err != nil {
 			code := 400
 			if errors.Is(err, service.ErrPlaybackBindingChanged) {
 				code = 409

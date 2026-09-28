@@ -50,7 +50,7 @@ func OpenP115AccountsSQLite(ctx context.Context, db *storage.Store, dir, secret 
 			if err != nil {
 				return nil, errors.New("115 账号无法解密，请检查原 JWT_SECRET；数据库未修改")
 			}
-			doc.Accounts = append(doc.Accounts, P115Account{ID: row.ID, Name: row.Name, Cookie: string(cookie), Revision: row.Revision, PlaybackParentCID: row.PlaybackParentCID})
+			doc.Accounts = append(doc.Accounts, P115Account{Primary: row.Primary, UID: row.UID, ID: row.ID, Name: row.Name, Cookie: string(cookie), Revision: row.Revision, PlaybackParentCID: row.PlaybackParentCID})
 		}
 		raw, err := json.Marshal(doc)
 		if err != nil {
@@ -117,7 +117,7 @@ func (s *sqliteAccountStore) save(ctx context.Context, value string) error {
 		}
 		// 将密文绑定配置编号，防止两行密文被交换后仍能解密。
 		sealed := s.aead.Seal(nonce, nonce, []byte(account.Cookie), []byte(account.ID))
-		state.Accounts = append(state.Accounts, storage.P115AccountRow{ID: account.ID, Name: account.Name, Cookie: sealed, Revision: account.Revision, PlaybackParentCID: account.PlaybackParentCID})
+		state.Accounts = append(state.Accounts, storage.P115AccountRow{Primary: account.Primary, UID: account.UID, ID: account.ID, Name: account.Name, Cookie: sealed, Revision: account.Revision, PlaybackParentCID: account.PlaybackParentCID})
 	}
 	doc.LegacyActiveID = ""
 	raw, err := json.Marshal(doc)

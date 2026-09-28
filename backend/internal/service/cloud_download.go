@@ -55,7 +55,7 @@ func (s *CloudDownloadService) ValidateConfig(config CloudDownloadConfig) error 
 	config.AccountID = strings.TrimSpace(config.AccountID)
 	config.TargetCID = strings.TrimSpace(config.TargetCID)
 	config.TargetPath = strings.TrimSpace(config.TargetPath)
-	if err := s.Accounts.ValidateSelection(config.AccountID); err != nil {
+	if err := s.Accounts.ValidatePrimary(config.AccountID); err != nil {
 		return err
 	}
 	if err := validateCloudDownloadTarget(config.TargetCID, config.TargetPath); err != nil {
@@ -141,7 +141,7 @@ func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account
 	if err := s.ValidateConfig(config); err != nil {
 		return P115Account{}, err
 	}
-	account, err := s.Accounts.Get(strings.TrimSpace(config.AccountID))
+	account, err := s.Accounts.Primary(strings.TrimSpace(config.AccountID))
 	if err != nil {
 		return P115Account{}, generationInputError("所选 115 配置已删除，请重新选择")
 	}

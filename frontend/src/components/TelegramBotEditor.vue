@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import SettingSwitch from './SettingSwitch.vue'
-import P115AccountSelect from './P115AccountSelect.vue'
+import P115PrimaryStatus from './P115PrimaryStatus.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig, TelegramBotIdentity } from '../types/telegramBots'
@@ -15,9 +15,9 @@ const allowedChatIDs = ref(props.bot.allowedChatIDs)
 const notificationChatID = ref(props.bot.notificationChatID)
 const enabled = ref(props.bot.enabled)
 const cloudDownloadEnabled = ref(props.bot.cloudDownload?.enabled ?? false)
-const cloudAccountId = ref(props.bot.cloudDownload?.accountId ?? '')
-const cloudTargetCID = ref(props.bot.cloudDownload?.targetCID ?? '0')
-const cloudTargetPath = ref(props.bot.cloudDownload?.targetPath ?? '/')
+const cloudAccountId = computed(() => props.accounts.find(account => account.primary)?.id || '')
+const cloudTargetCID = ref(props.bot.cloudDownload?.accountId === cloudAccountId.value ? props.bot.cloudDownload?.targetCID ?? '' : '')
+const cloudTargetPath = ref(props.bot.cloudDownload?.accountId === cloudAccountId.value ? props.bot.cloudDownload?.targetPath ?? '' : '')
 const directoryDialogOpen = ref(false)
 const showToken = ref(false)
 const busy = ref('')
@@ -48,14 +48,14 @@ async function save() {
 
 function openDirectory() {
   error.value = ''
-  if (!props.accounts.some(account => account.id === cloudAccountId.value && account.configured)) { error.value = '请先选择已登录的 115 账号'; return }
+  if (!props.accounts.some(account => account.id === cloudAccountId.value && account.configured)) { error.value = '请先在 115 助手中登录主账号'; return }
   directoryDialogOpen.value = true
 }
 
 watch(cloudAccountId, (value, previous) => {
   if (value === previous) return
-  cloudTargetCID.value = '0'
-  cloudTargetPath.value = '/'
+  cloudTargetCID.value = ''
+  cloudTargetPath.value = ''
 })
 
 function selectDirectory(value: { id: string; path: string }) {
@@ -97,7 +97,7 @@ async function remove() {
         <section class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950/70 p-4">
           <SettingSwitch v-model="cloudDownloadEnabled" label="启用磁力转存" description="允许白名单用户在私聊中发送 magnet 或 ED2K，并提交到此 Bot 明确绑定的 115 账号和目录。" />
           <div v-if="cloudDownloadEnabled" class="mt-4 space-y-4 border-t border-slate-200 dark:border-slate-700 pt-4">
-            <div><P115AccountSelect :id="`bot-cloud-account-${bot.id}`" v-model="cloudAccountId" :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">账号被删除或清空凭据后，Bot 会停止提交，不会切换到其他账号。</p></div>
+            <div><P115PrimaryStatus :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">Bot 统一使用主账号；更换主账号后需要重新选择下载目录。</p></div>
             <div><label class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</label><div class="mt-2 flex min-w-0 items-center gap-3"><div class="min-w-0 flex-1 truncate rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-700 dark:text-slate-300">{{ cloudTargetPath || '尚未选择' }}</div><button type="button" class="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-sm text-blue-600" @click="openDirectory">选择目录</button></div></div>
             <p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">直接发送 magnet / ED2K 或使用 <code>/cloud &lt;链接&gt;</code> 即可。Bot 会自动移除完全匹配且已经结束的旧任务记录后重新提交，始终保留网盘文件；运行中或状态不明的任务不会删除。Bot 只回复提交结果，不跟踪下载进度。</p>
           </div>

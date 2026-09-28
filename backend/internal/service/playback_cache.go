@@ -155,7 +155,7 @@ func (s *PlaybackCache) UpdateBinding(embyURL string, binding PlaybackBinding, e
 		return fmt.Errorf("Emby 用户信息无效")
 	}
 	if !remove {
-		if err := s.accounts.ValidateSelection(binding.AccountID); err != nil {
+		if err := s.accounts.ValidateSecondary(binding.AccountID); err != nil {
 			return err
 		}
 	}
@@ -210,7 +210,7 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 			return fmt.Errorf("Emby 用户 ID 无效或重复")
 		}
 		seen[b.UserID] = true
-		if err := s.accounts.ValidateSelection(b.AccountID); err != nil {
+		if err := s.accounts.ValidateSecondary(b.AccountID); err != nil {
 			return err
 		}
 	}
@@ -256,7 +256,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 }
 func (snap PlaybackCacheSnapshot) Select(embyURL, userID string) (*PlaybackCacheSelection, error) {
 	if len(snap.selections) == 0 {
-		return nil, nil
+		return nil, nil // Unbound users use the primary account captured by the caller.
 	}
 	if snap.embyURL != embyURL {
 		return nil, fmt.Errorf("绑定的 Emby 服务已变化，请重新保存用户绑定")
@@ -266,7 +266,7 @@ func (snap PlaybackCacheSnapshot) Select(embyURL, userID string) (*PlaybackCache
 		return nil, nil
 	}
 	if selected.err != nil || selected.cookie == "" {
-		return nil, fmt.Errorf("朋友账号已删除或登录失效，请检查绑定")
+		return nil, fmt.Errorf("绑定账号不可用，播放已暂停且保留绑定；请恢复账号或由管理员更换绑定，不会自动切回主账号")
 	}
 	return &selected, nil
 }

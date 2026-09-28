@@ -32,5 +32,5 @@ onBeforeUnmount(() => lifecycle.abort())
     <div class="flex flex-wrap gap-3"><button type="button" :disabled="busy || !account.configured" class="text-sm text-blue-600 disabled:opacity-40" @click="selecting = true">选择此账号的父目录</button><button type="submit" :disabled="busy" class="rounded-lg border border-blue-200 px-3 py-2 text-sm text-blue-600 disabled:opacity-40">{{ busy ? '保存中…' : '保存缓存目录' }}</button></div>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p><p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
   </form>
-  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :title="'选择 ' + account.name + ' 的秒传保存目录'" @close="selecting = false" @select="cid = $event.id; selecting = false; notice = '已选择，点击保存缓存目录后生效。'" />
+  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :endpoint="`accounts/${account.id}/paths`" :title="'选择 ' + account.name + ' 的秒传保存目录'" @close="selecting = false" @select="cid = $event.id; selecting = false; notice = '已选择，点击保存缓存目录后生效。'" />
 </template>

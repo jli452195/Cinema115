@@ -20,7 +20,7 @@ Cinema115 使用 `database/sql + modernc.org/sqlite v1.34.5`，不需要 CGO、�
 
 数据库结构版本 5 新增 `p115_accounts` 和 `p115_account_state`：保存账号编号、名称、AES-GCM 加密 Cookie、修改版本、卡片顺序与当前账号。密文绑定账号编号，密钥由 `JWT_SECRET` 派生；名称不加密。首次导入旧加密文件和 `p115_accounts_v1` 迁移标记在同一事务提交；损坏文件停止导入，旧文件保持不变。后续读写仅使用数据库，清空 Cookie 不会重新导入旧凭据。读取账号使用内存快照，播放不需要逐次查询数据库。
 
-版本 6 移除 `p115_account_state.active_id`，该表仅保留账号集合版本。旧全局选择通过 `p115_feature_migration` 暂存用于升级，分享设置成功固化为具体 `accountId` 后删除候选；该表不是运行时默认账号来源。各个 115 功能必须独立选择账号，没有全局回退。新安装的账号列表为空，删除所有账号后也不会重新创建默认卡片。
+版本 6 移除 `p115_account_state.active_id`，该表仅保留账号集合版本。旧全局选择通过 `p115_feature_migration` 暂存用于升级，分享设置成功固化为具体 `accountId` 后删除候选；该表不是运行时默认账号来源。版本 21 增加 p115_accounts.is_primary 和 uid，普通功能统一使用明确创建的主账号，小号仅供用户播放和秒传。新安装不自动提升普通账号。
 
 管理员账号密码仍从根目录 `.env` 读取；多 Bot 配置库加密保存在 `telegram-bots.enc`，旧 `telegram-config.enc` 只用于一次性导入。`automation.json` 保存分享使用的 `accountId`、`botId` 和审核重试设置，不含 Cookie 或 Bot Token；Telegram 接收队列仍使用独立状态文件。「115分享STRM → 日志」可以按状态、模式和链接筛选，或清理已结束的展示记录；不会删除 STRM、网盘文件、待重试任务或 `reshare_jobs` 检查点。恢复配置时需一并保留原 `JWT_SECRET`。
 

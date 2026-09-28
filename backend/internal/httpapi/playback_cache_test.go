@@ -209,6 +209,37 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 	if resultCounts["朋友分享直取"] != 2 || resultCounts["新建秒传文件"] != 1 || resultCounts["复用同 SHA1 文件"] != 1 {
 		t.Fatal("成功分支或失败请求的结果日志错误", resultCounts)
 	}
+	// The next request recovers using the same binding, without an unlock action.
+	if err := accounts.Update(target, 4, "朋友", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	fake.directURL = "https://cdn.115.com/recovered"
+	if w := call("GET", "movie", "viewer"); w.Code != 302 || w.Header().Get("Location") != fake.directURL {
+		t.Fatal("restored account did not recover playback", w.Code)
+	}
+	if err := accounts.Delete(target, 5); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("GET", "movie", "viewer"); w.Code != 503 {
+		t.Fatal("deleted bound account did not block playback", w.Code)
+	}
+	if err := cache.UpdateBinding(upstream.URL, service.PlaybackBinding{UserID: uid}, target, true); err != nil {
+		t.Fatal(err)
+	}
+	primaryReads := 0
+	h.download = func(_ context.Context, _ *p115.ShareInfo, _, selectedCookie, ua string) (string, error) {
+		if selectedCookie != sourceCookie || ua != "player-UA" {
+			t.Fatal("unbound playback used the wrong primary credentials")
+		}
+		primaryReads++
+		return "https://cdn.115.com/primary", nil
+	}
+	if w := call("GET", "movie", "viewer"); w.Code != 302 || w.Header().Get("Location") != "https://cdn.115.com/primary" {
+		t.Fatal("explicitly unbound user did not use primary", w.Code)
+	}
+	if primaryReads != 1 {
+		t.Fatal("primary playback was not invoked")
+	}
 }
 
 func (f *proxyCacheFake) DownloadInstantInfoWithUA(ctx context.Context, share *p115.ShareInfo, id, cookie, ua string) (*p115.DownloadInfo, error) {

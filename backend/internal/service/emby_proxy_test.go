@@ -29,7 +29,7 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := accounts.Add("独立账号")
+	id, err := accounts.AddPrimary("独立账号")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +51,8 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	}
 	defer s.Close()
 	c := EmbyProxyConfig{Enabled: true, Port: proxyFreePort(t), URL: "http://127.0.0.1:8096"}
-	if err := s.Apply(context.Background(), c); err == nil {
-		t.Fatal("自动使用了唯一账号")
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatal("没有使用主账号", err)
 	}
 	c.AccountID = id
 	if err := s.Apply(context.Background(), c); err != nil {

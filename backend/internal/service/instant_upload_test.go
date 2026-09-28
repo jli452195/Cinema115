@@ -43,7 +43,7 @@ func setupInstantService(t *testing.T) (*InstantUploads, *instantClientFake, Ins
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, _ := accounts.Add("源账号")
+	source, _ := accounts.AddPrimary("源账号")
 	target, _ := accounts.Add("目标账号")
 	srcCookie, dstCookie := "UID=11_A; SEID=source-private", "UID=22_A; SEID=target-private"
 	if err := accounts.Update(source, 1, "源账号", &srcCookie); err != nil {
@@ -61,7 +61,11 @@ func setupInstantService(t *testing.T) (*InstantUploads, *instantClientFake, Ins
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := InstantUploadConfig{SourceAccountID: source, AccountID: target, TargetCID: "0"}
+	if err := accounts.UpdatePlaybackDirectory(target, 2, "0"); err != nil {
+		t.Fatal(err)
+	}
+	s.Playback = &PlaybackCache{doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{Bindings: []PlaybackBinding{{UserID: "user-000000000001", AccountID: target}}}}}
+	config := InstantUploadConfig{UserID: "user-000000000001", SourceAccountID: source, AccountID: target, TargetCID: "0", TargetPath: "0"}
 	if err := s.Apply(config); err != nil {
 		t.Fatal(err)
 	}
@@ -78,12 +82,15 @@ func TestInstantTaskPinsAccountsConfigAndDeduplicatesRequest(t *testing.T) {
 		if !errors.Is(err, ErrInstantBusy) {
 			t.Fatal("并发重复写入未被阻止")
 		}
-		newCookie := "UID=33_A; SEID=replacement-private"
-		if err := s.accounts.Update(config.AccountID, 2, "目标账号", &newCookie); err != nil {
+		newCookie := "UID=22_A; SEID=replacement-private"
+		if err := s.accounts.Update(config.AccountID, 3, "目标账号", &newCookie); err != nil {
 			t.Fatal(err)
 		}
 		changed := config
 		changed.TargetCID = "9"
+		if err := s.accounts.UpdatePlaybackDirectory(config.AccountID, 4, "9"); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.Apply(changed); err != nil {
 			t.Fatal(err)
 		}
@@ -119,25 +126,29 @@ func TestInstantTaskPinsAccountsConfigAndDeduplicatesRequest(t *testing.T) {
 	}
 }
 
-func TestInstantRequiresBothExplicitAccountsAndDirectory(t *testing.T) {
+func TestInstantRequiresPrimaryBoundSecondaryAndDirectory(t *testing.T) {
 	for _, field := range []string{"source", "target", "directory", "deleted", "cleared"} {
 		t.Run(field, func(t *testing.T) {
 			s, fake, config, _ := setupInstantService(t)
 			bad := config
 			switch field {
 			case "source":
-				bad.SourceAccountID = ""
+				if err := s.accounts.Delete(config.SourceAccountID, 2); err != nil {
+					t.Fatal(err)
+				}
 			case "target":
-				bad.AccountID = ""
+				bad.UserID = ""
 			case "directory":
-				bad.TargetCID = ""
+				if err := s.accounts.UpdatePlaybackDirectory(config.AccountID, 3, ""); err != nil {
+					t.Fatal(err)
+				}
 			case "deleted":
-				if err := s.accounts.Delete(config.AccountID, 2); err != nil {
+				if err := s.accounts.Delete(config.AccountID, 3); err != nil {
 					t.Fatal(err)
 				}
 			case "cleared":
 				empty := ""
-				if err := s.accounts.Update(config.AccountID, 2, "目标账号", &empty); err != nil {
+				if err := s.accounts.Update(config.AccountID, 3, "目标账号", &empty); err != nil {
 					t.Fatal(err)
 				}
 			}

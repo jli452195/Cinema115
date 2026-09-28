@@ -29,7 +29,7 @@ func newMonitorScheduleTest(t *testing.T) (*FolderMonitorService, *folderMonitor
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := accounts.Add("monitor")
+	id, err := accounts.AddPrimary("monitor")
 	if err != nil {
 		t.Fatal(err)
 	}

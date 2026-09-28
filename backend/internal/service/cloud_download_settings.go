@@ -20,6 +20,7 @@ type cloudDownloadDocument struct {
 }
 
 type CloudDownloadSettings struct {
+	PrimaryID       func() string
 	mu              sync.RWMutex
 	store           *SessionStore
 	value           cloudDownloadDocument
@@ -43,10 +44,24 @@ func NewCloudDownloadSettings(store *SessionStore) (*CloudDownloadSettings, erro
 func (s *CloudDownloadSettings) View() CloudDownloadConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.value.CloudDownloadConfig
+	value := s.value.CloudDownloadConfig
+	if s.PrimaryID != nil {
+		if id := s.PrimaryID(); value.AccountID != id {
+			value.AccountID = id
+			value.TargetCID, value.TargetPath = "", ""
+		}
+	}
+	return value
 }
 
 func (s *CloudDownloadSettings) Save(input CloudDownloadConfig) (CloudDownloadConfig, error) {
+	if s.PrimaryID != nil {
+		id := s.PrimaryID()
+		if input.AccountID != "" && input.AccountID != id {
+			return CloudDownloadConfig{}, generationInputError("主账号已变化，请重新选择下载目录")
+		}
+		input.AccountID = id
+	}
 	input.AccountID = strings.TrimSpace(input.AccountID)
 	input.TargetCID = strings.TrimSpace(input.TargetCID)
 	input.TargetPath = strings.TrimSpace(input.TargetPath)

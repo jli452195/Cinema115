@@ -51,6 +51,7 @@ func TestLegacyStrictOriginSettingsAreIgnored(t *testing.T) {
 	if restored.Status().Config != config {
 		t.Fatal("legacy migration changed account selections")
 	}
+	restored.Playback = s.Playback
 	if err := restored.Apply(restored.Status().Config); err != nil {
 		t.Fatal(err)
 	}

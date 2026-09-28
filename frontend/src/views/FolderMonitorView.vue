@@ -44,7 +44,7 @@ async function openSource() {
   error.value = ''
   try {
     await refreshSettings()
-    if (!accountId.value) throw new Error('请先在 115 分享 STRM 中选择已登录账号')
+    if (!accountId.value) throw new Error('请先在 115 助手中配置并登录主账号')
     sourceDialog.value = true
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '读取分享设置失败' }
 }

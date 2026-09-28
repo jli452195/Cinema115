@@ -96,7 +96,7 @@ func (s *FolderMonitorService) validate(value model.FolderMonitor) error {
 	if strings.TrimSpace(value.Name) == "" || len([]rune(value.Name)) > 80 || strings.ContainsAny(value.Name, "\r\n\x00") {
 		return generationInputError("监控名称应为 1 到 80 个字符")
 	}
-	if err := s.Accounts.ValidateSelection(strings.TrimSpace(value.AccountID)); err != nil {
+	if err := s.Accounts.ValidatePrimary(strings.TrimSpace(value.AccountID)); err != nil {
 		return err
 	}
 	if value.SourceCID == "" || value.SourceCID == "0" {
@@ -113,7 +113,11 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value.Name = strings.TrimSpace(value.Name)
-	value.AccountID = strings.TrimSpace(value.AccountID)
+	account, err := s.Accounts.Primary(strings.TrimSpace(value.AccountID))
+	if err != nil {
+		return model.FolderMonitor{}, err
+	}
+	value.AccountID = account.ID
 	value.SourceCID = strings.TrimSpace(value.SourceCID)
 	value.SourcePath = strings.TrimSpace(value.SourcePath)
 	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
@@ -426,7 +430,7 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 	if value.Stage == "checking_share" || (value.Stage == "cleaning" && value.CleanupIndex >= 1) {
 		return s.completeCleanedBatch(root, &value)
 	}
-	account, err := s.Accounts.Get(value.AccountID)
+	account, err := s.Accounts.Primary(value.AccountID)
 	if err != nil || account.Cookie == "" {
 		return s.fail(root, &value, "所选 115 账号已删除或未登录")
 	}

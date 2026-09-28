@@ -179,13 +179,19 @@ func (s *ManualOrganize) saveLocked(doc organizeDocument) error {
 func (s *ManualOrganize) Config() OrganizeConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.doc.Config
+	c := s.doc.Config
+	if id := s.accounts.PrimaryID(); c.AccountID != id {
+		c = OrganizeConfig{AccountID: id}
+	}
+	return c
 }
 
 func (s *ManualOrganize) SaveConfig(c OrganizeConfig) error {
-	if err := s.accounts.ValidateSelection(c.AccountID); err != nil {
+	account, err := s.accounts.Primary(c.AccountID)
+	if err != nil {
 		return err
 	}
+	c.AccountID = account.ID
 	if !organizeID(c.SourceCID) || !organizeID(c.TargetCID) || !organizePath(c.SourcePath) || !organizePath(c.TargetPath) {
 		return fmt.Errorf("%w：请选择来源和目标目录", ErrOrganizeInput)
 	}
@@ -215,7 +221,7 @@ func (s *ManualOrganize) account(id string) (P115Account, error) {
 	if id == "" {
 		return P115Account{}, fmt.Errorf("%w：请先选择手动整理使用的 115 账号", ErrOrganizeInput)
 	}
-	a, err := s.accounts.Get(id)
+	a, err := s.accounts.Primary(id)
 	if err != nil {
 		return a, err
 	}

@@ -145,7 +145,7 @@ func newOrganizeTest(t *testing.T) (*ManualOrganize, *organizeFakeDrive, string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := accounts.Add("整理账号")
+	id, err := accounts.AddPrimary("整理账号")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestManualOrganizeExplicitAccountAndSnapshot(t *testing.T) {
 		t.Fatal("空账号不能回退唯一账号")
 	}
 	config := s.Config()
-	config.AccountID = ""
+	config.AccountID = "secondary"
 	if s.SaveConfig(config) == nil {
 		t.Fatal("保存必须校验账号")
 	}
@@ -247,7 +247,7 @@ func TestManualOrganizeExplicitAccountAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := s.pending.cookie
-	newCookie := "UID=987_other; SEID=other-secret"
+	newCookie := "UID=123_other; SEID=other-secret"
 	if err := s.accounts.Update(id, 2, "修改账号", &newCookie); err != nil {
 		t.Fatal(err)
 	}

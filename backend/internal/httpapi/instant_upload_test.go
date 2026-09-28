@@ -35,9 +35,31 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	target, err := accounts.Add("target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=456_A; SEID=target"
+	if err := accounts.Update(target, 1, "target", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if err := accounts.UpdatePlaybackDirectory(target, 2, "0"); err != nil {
+		t.Fatal(err)
+	}
+	playbackStore, err := service.NewSessionStore(filepath.Join(t.TempDir(), "playback.enc"), "test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Playback, err = service.NewPlaybackCache(context.Background(), playbackStore, accounts, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Playback.ApplyBindings("http://emby:8096", []service.PlaybackBinding{{UserID: "user-000000000001", AccountID: target}}); err != nil {
+		t.Fatal(err)
+	}
 	r := gin.New()
 	share := NewShareAPI(func() string { return "forbidden-fallback" })
-	RegisterInstantUploads(r.Group("/api/admin"), s, share)
+	RegisterInstantUploads(r.Group("/api/admin"), s, share, func(context.Context, string) error { return nil })
 	call := func(path string, payload any) *httptest.ResponseRecorder {
 		t.Helper()
 		raw, _ := json.Marshal(payload)
@@ -47,9 +69,9 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 		r.ServeHTTP(w, req)
 		return w
 	}
-	config := service.InstantUploadConfig{SourceAccountID: id, AccountID: id, TargetCID: "0"}
+	config := service.InstantUploadConfig{UserID: "user-000000000001", SourceAccountID: id, AccountID: target, TargetCID: "0"}
 	bad := config
-	bad.AccountID = ""
+	bad.UserID = ""
 	if w := call("", bad); w.Code != 400 {
 		t.Fatalf("空账号未被拒绝: %d", w.Code)
 	}

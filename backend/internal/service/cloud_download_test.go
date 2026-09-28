@@ -35,7 +35,7 @@ func (s *cloudAdderStub) AddURL(_ context.Context, cookie, rawURL, targetCID str
 	return json.RawMessage(`{"state":1,"info_hash":"abc","name":"测试任务"}`), nil
 }
 
-func TestCloudDownloadServiceUsesOnlyExplicitAccount(t *testing.T) {
+func TestCloudDownloadServiceUsesOnlyPrimary(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestCloudDownloadServiceUsesOnlyExplicitAccount(t *testing.T) {
 	if err := accounts.Update(firstID, first.Revision, first.Name, &firstCookie); err != nil {
 		t.Fatal(err)
 	}
-	secondID, _ := accounts.Add("账号二")
+	secondID, _ := accounts.AddPrimary("账号二")
 	second, _ := accounts.Get(secondID)
 	secondCookie := "UID=222_B; CID=second"
 	if err := accounts.Update(secondID, second.Revision, second.Name, &secondCookie); err != nil {
@@ -66,7 +66,7 @@ func TestCloudDownloadServiceUsesOnlyExplicitAccount(t *testing.T) {
 	if client.cookie != secondCookie || client.cid != "88" || client.url != link || receipt.AccountName != "账号二" || receipt.TargetPath != "/电影" {
 		t.Fatalf("云下载没有固定使用明确账号和目录：%+v %#v", receipt, client)
 	}
-	if _, err := downloads.Submit(context.Background(), CloudDownloadConfig{TargetCID: "0", TargetPath: "/"}, link); err == nil || client.cookie != secondCookie {
+	if _, err := downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: firstID, TargetCID: "0", TargetPath: "/"}, link); err == nil || client.cookie != secondCookie {
 		t.Fatal("空账号错误回退，或在校验失败后调用了上游")
 	}
 }
@@ -80,7 +80,7 @@ func TestCloudDownloadRedoDeletesOnlyVerifiedTerminalTaskAndKeepsFiles(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _ := accounts.Add("账号")
+	id, _ := accounts.AddPrimary("账号")
 	account, _ := accounts.Get(id)
 	cookie := "UID=333_C"
 	if err := accounts.Update(id, account.Revision, account.Name, &cookie); err != nil {
@@ -107,6 +107,7 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accounts.value.Accounts[0].Primary = true
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	for _, tc := range []struct {
 		name string
