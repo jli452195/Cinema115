@@ -37,10 +37,14 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 	group := admin.Group("/p115")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
+		if store.IsPersonal(c.Param("accountID")) {
+			c.AbortWithStatusJSON(403, gin.H{"error": "个人网盘由个人播放管理维护"})
+			return
+		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 		c.Next()
 	})
-	group.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": store.List()}) })
+	group.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": store.ManagedList()}) })
 	group.POST("/accounts", func(c *gin.Context) {
 		var in struct {
 			Name    string `json:"name"`
@@ -59,7 +63,7 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 			a.fail(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"id": id, "accounts": store.List()})
+		c.JSON(200, gin.H{"id": id, "accounts": store.ManagedList()})
 	})
 	group.PUT("/accounts/:accountID", a.save)
 	group.PUT("/accounts/:accountID/playback-directory", func(c *gin.Context) {
@@ -75,7 +79,7 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 			a.fail(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"accounts": store.List()})
+		c.JSON(200, gin.H{"accounts": store.ManagedList()})
 	})
 	group.DELETE("/accounts/:accountID", a.remove)
 	for _, prefix := range []string{"/accounts/:accountID"} {
@@ -101,6 +105,10 @@ func (a *p115AccountsAPI) fail(c *gin.Context, err error) {
 	c.JSON(code, gin.H{"error": message})
 }
 func (a *p115AccountsAPI) target(c *gin.Context) (service.P115Account, bool) {
+	if a.store.IsPersonal(c.Param("accountID")) {
+		c.JSON(403, gin.H{"error": "个人网盘请通过个人播放管理操作，不能读取凭据或更换归属"})
+		return service.P115Account{}, false
+	}
 	v, err := a.store.Get(c.Param("accountID"))
 	if err != nil {
 		a.fail(c, err)
@@ -216,7 +224,7 @@ func (a *p115AccountsAPI) save(c *gin.Context) {
 		a.fail(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"accounts": a.store.List(), "message": "账号配置已保存", "configured": cookie != "" || v.Cookie != "", "connected": replacement != nil})
+	c.JSON(200, gin.H{"accounts": a.store.ManagedList(), "message": "账号配置已保存", "configured": cookie != "" || v.Cookie != "", "connected": replacement != nil})
 }
 func (a *p115AccountsAPI) mutation(c *gin.Context) (service.P115Account, bool) {
 	v, ok := a.target(c)
@@ -245,7 +253,7 @@ func (a *p115AccountsAPI) remove(c *gin.Context) {
 		a.fail(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"accounts": a.store.List()})
+	c.JSON(200, gin.H{"accounts": a.store.ManagedList()})
 }
 func (a *p115AccountsAPI) clear(c *gin.Context) {
 	v, ok := a.mutation(c)

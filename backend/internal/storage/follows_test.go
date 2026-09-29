@@ -76,6 +76,11 @@ func TestFollowMigrationDeduplicationIsolationAndPagination(t *testing.T) {
 		if err := s.Subscribe(ctx, "reader", model.Follow{Kind: "movie", TMDBID: id, Title: fmt.Sprint(id)}); err != nil {
 			t.Fatal(err)
 		}
+		// Pagination needs distinct chronological fixtures; rapid writes can
+		// share a wall-clock timestamp and legitimately use the ID tie-breaker.
+		if _, err := s.db.ExecContext(ctx, `UPDATE user_follows SET subscribed_at=? WHERE user_id='reader' AND kind='movie' AND tmdb_id=?`, fmt.Sprintf("2026-01-01T00:00:%02dZ", id-101), id); err != nil {
+			t.Fatal(err)
+		}
 	}
 	first, err := s.Follows(ctx, "reader", "movie", "ongoing", 0)
 	if err != nil || len(first) != 25 {

@@ -31,7 +31,14 @@ func inviteHash(code string) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
-func (a *WebsiteAuth) GenerateInvites(ctx context.Context, creator, note string, count, days int) ([]GeneratedWebsiteInvite, error) {
+func (a *WebsiteAuth) GenerateInvites(ctx context.Context, creator, note string, count, days int, sources ...string) ([]GeneratedWebsiteInvite, error) {
+	source := "personal"
+	if len(sources) > 0 && sources[0] != "" {
+		source = sources[0]
+	}
+	if source != "personal" && source != "primary" {
+		return nil, fmt.Errorf("%w：邀请播放方式无效", ErrUserInput)
+	}
 	note = strings.TrimSpace(note)
 	if count < 1 || count > 20 || (days != 1 && days != 7 && days != 30) || len([]rune(note)) > 200 {
 		return nil, fmt.Errorf("%w：数量为 1–20，有效期为 1、7 或 30 天，备注不超过 200 字", ErrUserInput)
@@ -52,6 +59,8 @@ func (a *WebsiteAuth) GenerateInvites(ctx context.Context, creator, note string,
 			}
 			invite := model.WebsiteInvite{ID: hex.EncodeToString(random[16:]), CodeHash: hash, CreatedBy: creator, Note: note, CreatedAt: now.Unix(), ExpiresAt: now.Add(time.Duration(days) * 24 * time.Hour).Unix()}
 			records = append(records, invite)
+			records[len(records)-1].PlaybackSource = source
+			invite.PlaybackSource = source
 			result = append(result, GeneratedWebsiteInvite{WebsiteInvite: invite, Code: code[:8] + "-" + code[8:16] + "-" + code[16:24] + "-" + code[24:]})
 		}
 		err := a.DB.CreateWebsiteInvites(ctx, records)
@@ -74,6 +83,14 @@ func (a *WebsiteAuth) CheckInvite(ctx context.Context, code string) error {
 	return a.DB.CheckWebsiteInvite(ctx, hash)
 }
 
+func (a *WebsiteAuth) InviteSource(ctx context.Context, code string) (string, error) {
+	hash, err := inviteHash(code)
+	if err != nil {
+		return "", err
+	}
+	return a.DB.WebsiteInviteSource(ctx, hash)
+}
+
 func (a *WebsiteAuth) Register(ctx context.Context, name, password, code string) (model.WebsiteUser, error) {
 	hash, err := inviteHash(code)
 	if err != nil {
@@ -87,6 +104,19 @@ func (a *WebsiteAuth) Register(ctx context.Context, name, password, code string)
 	u, err := a.prepareUser(ctx, name, password)
 	if err != nil {
 		return model.WebsiteUser{}, err
+	}
+	target, err := a.DB.WebsiteInviteTarget(ctx, hash)
+	if err != nil {
+		return model.WebsiteUser{}, err
+	}
+	if target != "" {
+		if a.Members == nil {
+			return model.WebsiteUser{}, ErrUserInput
+		}
+		if err := a.Members.registerAdopted(ctx, hash, u, target); err != nil {
+			return model.WebsiteUser{}, err
+		}
+		return u, nil
 	}
 	if err := a.DB.RegisterWebsiteUser(ctx, hash, u); err != nil {
 		return model.WebsiteUser{}, err

@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import WebsiteInvitesPanel from '../components/WebsiteInvitesPanel.vue'
+import MemberPlaybackAdmin from '../components/MemberPlaybackAdmin.vue'
 import type { WebsiteUser } from '../composables/useWebsiteAuth'
+import { memberRequest, type MemberPlayback } from '../types/memberPlayback'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 const users = ref<WebsiteUser[]>([])
-const tab = ref<'users' | 'invites'>('users')
+const playbackMembers = ref<Record<string, MemberPlayback>>({})
+const tab = ref<'users' | 'invites' | 'playback'>(useRoute().query.tab === 'playback' ? 'playback' : 'users')
 const username = ref('')
 const password = ref('')
 const resetUser = ref<WebsiteUser>()
@@ -45,16 +49,22 @@ async function mutate(path: string, body: object, message: string) {
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '用户操作失败' }
   finally { busy.value = false }
 }
-onMounted(() => { void load() })
+onMounted(() => {
+  void load()
+  void memberRequest(props.token, lifecycle.signal, '/users').then(data => {
+    playbackMembers.value = Object.fromEntries((data.members as MemberPlayback[]).map(m => [m.userId, m]))
+  }).catch(() => { /* Website account management remains available independently. */ })
+})
 onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
   <ManagementLayout title="用户管理" description="创建独立网站账号，让用户浏览电影、剧集与入库状态。" @logout="emit('logout')">
     <div role="group" aria-label="用户管理分类" class="mb-5 flex gap-2">
-      <button v-for="entry in [{ id: 'users' as const, label: '网站用户' }, { id: 'invites' as const, label: '注册邀请' }]" :key="entry.id" :aria-pressed="tab === entry.id" class="rounded-lg px-4 py-2 text-sm" :class="tab === entry.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-400/10 dark:text-blue-300' : 'text-slate-500 dark:text-slate-400'" @click="tab = entry.id">{{ entry.label }}</button>
+      <button v-for="entry in [{ id: 'users' as const, label: '网站用户' }, { id: 'invites' as const, label: '注册邀请' }, { id: 'playback' as const, label: '自助注册设置' }]" :key="entry.id" :aria-pressed="tab === entry.id" class="rounded-lg px-4 py-2 text-sm" :class="tab === entry.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-400/10 dark:text-blue-300' : 'text-slate-500 dark:text-slate-400'" @click="tab = entry.id">{{ entry.label }}</button>
     </div>
     <WebsiteInvitesPanel v-if="tab === 'invites'" :token="token" />
+    <MemberPlaybackAdmin v-else-if="tab === 'playback'" :token="token" />
     <div v-else class="space-y-6">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
@@ -73,7 +83,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <p v-else-if="!users.length" class="py-6 text-sm text-slate-400 dark:text-slate-500">暂无用户，可以在上方创建。</p>
         <div v-for="user in users" :key="user.id" class="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 dark:border-slate-800 py-4">
           <div class="min-w-0"><p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ user.username }} <span class="ml-2 text-xs" :class="user.disabled ? 'text-slate-400 dark:text-slate-500' : 'text-emerald-600'">{{ user.disabled ? '已停用' : '已启用' }}</span></p><p class="mt-1 text-xs text-slate-400 dark:text-slate-500">创建于 {{ new Date(user.createdAt).toLocaleString() }}</p></div>
-          <div class="flex gap-4 text-sm"><button :disabled="busy" class="text-blue-600 disabled:opacity-50" @click="resetUser = user; resetPassword = ''">重置密码</button><button :disabled="busy" :class="user.disabled ? 'text-emerald-600' : 'text-red-600'" @click="mutate(`/${user.id}`, { disabled: !user.disabled }, user.disabled ? '用户已启用，请重新登录。' : '用户已停用，原登录凭证已失效。')">{{ user.disabled ? '启用' : '停用' }}</button></div>
+          <div class="flex flex-wrap gap-4 text-sm"><RouterLink :to="{ path: '/emby/users', query: { websiteUser: user.id } }" class="text-blue-600 dark:text-blue-300">{{ playbackMembers[user.id]?.embyId ? 'Emby：' + playbackMembers[user.id].embyName : '查看播放授权' }}</RouterLink><button :disabled="busy" class="text-blue-600 disabled:opacity-50" @click="resetUser = user; resetPassword = ''">重置密码</button><button :disabled="busy" :class="user.disabled ? 'text-emerald-600' : 'text-red-600'" @click="mutate(`/${user.id}`, { disabled: !user.disabled }, user.disabled ? '用户已启用，请重新登录。' : '用户已停用，原登录凭证已失效。')">{{ user.disabled ? '启用' : '停用' }}</button></div>
         </div>
         <div v-if="offset || hasMore" class="mt-4 flex justify-end gap-4 text-sm"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="load(offset - 50)">上一页</button><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="load(offset + 50)">下一页</button></div>
       </section>

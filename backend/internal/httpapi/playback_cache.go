@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"time"
 )
@@ -65,7 +66,15 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"users": users, "embyUrl": proxyURL})
+		members := make([]model.MemberPlayback, 0)
+		if s.Members != nil {
+			for _, member := range s.Members.Records() {
+				if member.EmbyURL == proxyURL {
+					members = append(members, member)
+				}
+			}
+		}
+		c.JSON(200, gin.H{"users": users, "embyUrl": proxyURL, "members": members})
 	})
 	group.POST("/bindings/:userID", func(c *gin.Context) {
 		var in struct {

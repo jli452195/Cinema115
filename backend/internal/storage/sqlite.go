@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 23
+const schemaVersion = 27
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -420,6 +420,59 @@ PRAGMA user_version=22;`); err != nil {
 ); CREATE INDEX IF NOT EXISTS website_invites_created ON website_invites(created_at DESC,id);
 PRAGMA user_version=23;`); err != nil {
 			return fmt.Errorf("创建注册邀请表: %w", err)
+		}
+	}
+	if version < 24 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES website_users(id), record TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
+PRAGMA user_version=24;`); err != nil {
+			return fmt.Errorf("创建个人播放配置: %w", err)
+		}
+	}
+	if version < 25 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('website_invites') WHERE name='playback_source'`).Scan(&exists); err != nil {
+			return fmt.Errorf("检查邀请播放待遇字段: %w", err)
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE website_invites ADD COLUMN playback_source TEXT NOT NULL DEFAULT 'personal'`); err != nil {
+				return fmt.Errorf("添加邀请播放待遇: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=25;`); err != nil {
+			return fmt.Errorf("保存邀请播放待遇结构: %w", err)
+		}
+	}
+	if version < 26 {
+		for _, column := range []struct{ name, definition string }{{"ownership", "TEXT NOT NULL DEFAULT 'admin'"}, {"owner_user_id", "TEXT NOT NULL DEFAULT ''"}} {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('p115_accounts') WHERE name=?`, column.name).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				if _, err := tx.ExecContext(ctx, "ALTER TABLE p115_accounts ADD COLUMN "+column.name+" "+column.definition); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=26;`); err != nil {
+			return err
+		}
+	}
+	if version < 27 {
+		for _, name := range []string{"emby_target", "emby_name"} {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('website_invites') WHERE name=?`, name).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				if _, err := tx.ExecContext(ctx, "ALTER TABLE website_invites ADD COLUMN "+name+" TEXT NOT NULL DEFAULT ''"); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId')) WHERE json_extract(record,'$.embyId')<>''; PRAGMA user_version=27;`); err != nil {
+			return err
 		}
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.

@@ -25,7 +25,8 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 	if !embyLoginRequest(resp.Request) || resp.StatusCode != http.StatusOK {
 		return h.rewritePlayback(resp)
 	}
-	// Preserve the upstream login response exactly. Never read/log the password.
+	// Never read/log the password. Only forward sessions whose personal
+	// provisioning and current permissions have been confirmed.
 	body := resp.Body
 	data, err := io.ReadAll(io.LimitReader(body, (1<<20)+1))
 	resp.Body = &embyReplayBody{Reader: io.MultiReader(bytes.NewReader(data), body), closer: body}
@@ -35,7 +36,8 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 	var login struct {
 		AccessToken string
 		User        struct {
-			ID string `json:"Id"`
+			ID   string `json:"Id"`
+			Name string `json:"Name"`
 		}
 		SessionInfo struct {
 			UserID string `json:"UserId"`
@@ -44,6 +46,22 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 	if len(data) > 1<<20 || json.Unmarshal(data, &login) != nil || !embyProxyID.MatchString(login.User.ID) || login.AccessToken == "" || len(login.AccessToken) > 2048 || login.SessionInfo.UserID != "" && login.SessionInfo.UserID != login.User.ID {
 		h.logs.Add(resp.Request.Context(), "WARNING", "Emby 登录响应缺少有效身份，未记录 302 播放身份")
 		return nil
+	}
+	if h.cache != nil && h.cache.Members != nil {
+		if err := h.cache.Members.AuthorizeLogin(resp.Request.Context(), h.config.URL, login.User.ID, login.User.Name); err != nil {
+			_ = resp.Body.Close()
+			message := []byte(`{"error":"个人播放尚未就绪，请在网站个人中心完成开通或等待权限同步"}`)
+			resp.StatusCode = http.StatusForbidden
+			resp.Status = "403 Forbidden"
+			resp.Body = io.NopCloser(bytes.NewReader(message))
+			resp.ContentLength = int64(len(message))
+			resp.Header.Del("Content-Length")
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Set-Cookie")
+			resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+			resp.Header.Set("Cache-Control", "no-store")
+			return nil
+		}
 	}
 	if err := h.identities.Remember(h.config.URL, login.AccessToken, login.User.ID); err != nil {
 		h.logs.Add(resp.Request.Context(), "ERROR", "Emby 播放身份保存失败，请检查数据目录后通过反代重新登录")

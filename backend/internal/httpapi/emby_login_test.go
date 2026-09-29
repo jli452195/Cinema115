@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +12,21 @@ import (
 
 	"strm115/backend/internal/service"
 )
+
+func TestMemberReservedLoginDoesNotExposeSession(t *testing.T) {
+	accounts, account := proxyTestAccounts(t)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: "http://emby", AccountID: account}, accounts, NewShareAPI(func() string { return "" }), nil, service.NewEmbyProxyLogs(&service.GenerationLogs{})).(*embyProxyHandler)
+	h.cache = &service.PlaybackCache{Members: &service.MemberPlaybackService{}}
+	body := `{"AccessToken":"private-session","User":{"Id":"reserved","Name":"c115_pending"}}`
+	resp := &http.Response{StatusCode: 200, Header: http.Header{"Set-Cookie": {"private-cookie"}}, Body: io.NopCloser(strings.NewReader(body)), Request: httptest.NewRequest("POST", "http://emby/emby/Users/AuthenticateByName", nil).WithContext(context.Background())}
+	if err := h.modifyResponse(resp); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 403 || strings.Contains(string(data), "private-session") || resp.Header.Get("Set-Cookie") != "" || !json.Valid(data) {
+		t.Fatal(resp.StatusCode, string(data), err)
+	}
+}
 
 func TestEmbyLoginIdentityAndPerRequestRevalidation(t *testing.T) {
 	accounts, account := proxyTestAccounts(t)

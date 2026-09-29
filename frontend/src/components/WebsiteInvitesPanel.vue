@@ -2,10 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps<{ token: string }>()
-interface Invite { id: string; note: string; createdBy: string; createdAt: number; expiresAt: number; revokedAt: number; usedAt: number; usedBy: string; username: string }
+interface Invite { embyName?: string; id: string; note: string; createdBy: string; createdAt: number; expiresAt: number; revokedAt: number; usedAt: number; usedBy: string; username: string; playbackSource: string }
 interface Generated extends Invite { code: string }
 const invites = ref<Invite[]>([]), generated = ref<Generated[]>([])
 const count = ref(1), days = ref(7), note = ref('')
+const playbackSource = ref('personal')
 const baseURL = ref(localStorage.getItem('invite_site_url') || location.origin)
 const offset = ref(0), hasMore = ref(false), busy = ref(false), loading = ref(false)
 const error = ref(''), notice = ref('')
@@ -37,7 +38,7 @@ async function generate() {
   if (busy.value || !origin.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    const data = await request('', { count: count.value, days: days.value, note: note.value })
+    const data = await request('', { count: count.value, days: days.value, note: note.value, playbackSource: playbackSource.value })
     generated.value = [...data.invites, ...generated.value]
     localStorage.setItem('invite_site_url', origin.value)
     await load(0)
@@ -71,6 +72,8 @@ onBeforeUnmount(() => lifecycle.abort())
     <form class="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900" @submit.prevent="generate">
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">生成注册邀请</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400">每个邀请码限注册一个普通网站账号。完整码和链接仅本次生成后显示，请及时复制。</p>
+      <label class="block text-sm text-slate-600 dark:text-slate-300">播放开通方式<select v-model="playbackSource" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option value="personal">自行绑定 115（默认）</option><option value="primary">朋友邀请：允许使用主账号</option></select></label>
+      <p class="text-sm text-slate-500 dark:text-slate-400">{{ playbackSource === 'primary' ? '受邀人注册 Emby 后可使用主账号播放，无需扫码。请仅发给信任的朋友。' : '受邀人可先注册 Emby 并浏览媒体库，绑定自己的 115 后才能播放。' }}</p>
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="text-sm text-slate-600 dark:text-slate-300">数量<input v-model.number="count" type="number" required min="1" max="20" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" /></label>
         <label class="text-sm text-slate-600 dark:text-slate-300">有效期<select v-model.number="days" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option :value="1">1 天</option><option :value="7">7 天</option><option :value="30">30 天</option></select></label>
@@ -84,6 +87,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <div class="flex flex-wrap justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">请保存新生成的邀请</h2><button class="text-sm text-slate-500 dark:text-slate-400" @click="generated = []">隐藏完整邀请码</button></div>
       <div v-for="invite in generated" :key="invite.id" class="space-y-2 border-t border-blue-200/50 pt-3 dark:border-blue-400/20">
         <p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.note || '注册邀请' }} · {{ date(invite.expiresAt) }} 到期</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.embyName ? 'Emby 关联：' + invite.embyName : invite.playbackSource === 'primary' ? '允许使用主账号播放' : '需绑定自己的 115 才能播放' }}</p>
         <div class="flex flex-wrap items-center gap-2"><code class="break-all text-sm text-slate-800 dark:text-slate-200">{{ invite.code }}</code><button type="button" class="text-xs text-blue-600 dark:text-blue-300" @click="copy(invite.code)">复制邀请码</button></div>
         <textarea :value="link(invite.code)" readonly aria-label="邀请链接" rows="2" class="w-full resize-none rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
         <button type="button" :disabled="!origin" class="text-sm text-blue-600 disabled:opacity-50 dark:text-blue-300" @click="copy(link(invite.code))">复制邀请链接</button>
@@ -95,6 +99,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <p v-else-if="!invites.length" class="py-4 text-sm text-slate-500 dark:text-slate-400">暂无邀请记录。</p>
       <div v-for="invite in invites" :key="invite.id" class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 py-4 dark:border-slate-800">
         <div class="min-w-0 space-y-1"><p class="break-words text-sm font-medium text-slate-800 dark:text-slate-200">{{ invite.note || '注册邀请' }} <span class="ml-2 text-xs text-slate-500 dark:text-slate-400">{{ status(invite) }}</span></p><p class="text-xs text-slate-500 dark:text-slate-400">编号 {{ invite.id.slice(0, 8) }} · {{ date(invite.createdAt) }} 创建 · {{ invite.createdBy }}</p><p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.usedAt ? `${invite.username} 于 ${date(invite.usedAt)} 注册` : `${date(invite.expiresAt)} 到期` }}</p></div>
+        <span class="text-xs text-slate-500 dark:text-slate-400">{{ invite.embyName ? 'Emby 关联：' + invite.embyName : invite.playbackSource === 'primary' ? '主账号播放' : '自带 115' }}</span>
         <button v-if="status(invite) === '未使用'" :disabled="busy" class="text-sm text-red-600 disabled:opacity-50 dark:text-red-300" @click="revoke(invite)">撤销</button>
       </div>
       <div v-if="offset || hasMore" class="mt-4 flex justify-end gap-4 text-sm text-slate-600 dark:text-slate-300"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="load(offset - 50)">上一页</button><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="load(offset + 50)">下一页</button></div>

@@ -253,6 +253,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer playbackCache.Close()
+	memberPlayback, err := service.NewMemberPlayback(ctx, database, accounts, embyService, shareAPI.Client, p115.NewAccountClient(), p115.NewClient())
+	if err != nil {
+		log.Fatal(err)
+	}
+	playbackCache.Members = memberPlayback
+	memberPlayback.Cache = playbackCache
+	auth.Members = memberPlayback
+	auth.SyncPlayback = memberPlayback.SyncUser
 	identityStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-playback-identities.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -268,6 +276,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer embyProxy.Close()
+	memberPlayback.ProxyStatus = embyProxy.Status
+	httpapi.RegisterMemberPlayback(member, admin, memberPlayback)
 	httpapi.RegisterEmbyProxy(admin, embyProxy)
 	httpapi.RegisterPlaybackCache(admin, playbackCache, embyProxy, embyService)
 	instantStore, err := service.NewSessionStore(filepath.Join(dataDir, "instant-upload.enc"), secret)
@@ -331,6 +341,8 @@ func main() {
 	}
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); memberPlayback.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()
 	workers.Add(1)

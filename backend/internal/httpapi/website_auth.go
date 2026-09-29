@@ -22,6 +22,8 @@ func websiteAuthError(c *gin.Context, err error) {
 		status, message = 429, err.Error()
 	case errors.Is(err, service.ErrUserInput):
 		status, message = 400, err.Error()
+	case errors.Is(err, service.ErrMemberPlayback):
+		status, message = 400, err.Error()
 	case errors.Is(err, storage.ErrWebsiteUserExists):
 		status, message = 409, err.Error()
 	case errors.Is(err, storage.ErrWebsiteInviteInvalid):

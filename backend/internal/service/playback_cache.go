@@ -59,6 +59,7 @@ type playbackCacheClient interface {
 	DriveDownloadURLWithUA(context.Context, string, string, string, string) (string, error)
 }
 type PlaybackCache struct {
+	Members           *MemberPlaybackService // wired before listeners start
 	foregroundWaiting atomic.Int64
 	sourceMappings    map[string]string // bounded, memory-only; guarded by gate
 	mu                sync.Mutex
@@ -159,6 +160,16 @@ var ErrPlaybackBindingChanged = errors.New("该用户绑定已变化，请刷新
 
 // Update only this user's binding under lock; other cards remain intact.
 func (s *PlaybackCache) UpdateBinding(embyURL string, binding PlaybackBinding, expectedAccountID string, remove bool) error {
+	if s.accounts.IsPersonal(binding.AccountID) {
+		return fmt.Errorf("个人网盘不能分配给其他 Emby 用户，请使用个人播放管理")
+	}
+	if s.Members != nil {
+		for _, r := range s.Members.Records() {
+			if r.EmbyID == binding.UserID {
+				return fmt.Errorf("该用户的播放来源由个人播放管理统一授权，请前往个人播放管理修改")
+			}
+		}
+	}
 	normalized, err := emby.NormalizeURL(embyURL)
 	if err != nil {
 		return err
@@ -173,6 +184,13 @@ func (s *PlaybackCache) UpdateBinding(embyURL string, binding PlaybackBinding, e
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.Members != nil {
+		for _, r := range s.Members.Records() {
+			if r.EmbyID == binding.UserID {
+				return ErrPlaybackBindingChanged
+			}
+		}
+	}
 	doc := s.doc
 	if len(doc.Config.Bindings) > 0 && doc.Config.EmbyURL != normalized {
 		return fmt.Errorf("Emby 服务已变化，请先移除原服务的用户绑定")
@@ -218,6 +236,16 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 	}
 	seen := make(map[string]bool, len(c.Bindings))
 	for _, b := range c.Bindings {
+		if s.Members != nil {
+			for _, member := range s.Members.Records() {
+				if member.EmbyID == b.UserID {
+					return fmt.Errorf("该用户的播放来源由个人播放管理统一授权")
+				}
+			}
+		}
+		if s.accounts.IsPersonal(b.AccountID) {
+			return fmt.Errorf("个人网盘绑定由个人播放管理维护")
+		}
 		if !instantRunID.MatchString(b.UserID) || seen[b.UserID] || len([]rune(b.UserName)) > 100 || strings.ContainsAny(b.UserName, "\r\n\x00") {
 			return fmt.Errorf("Emby 用户 ID 无效或重复")
 		}
@@ -229,6 +257,15 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 	c.Bindings = append([]PlaybackBinding{}, c.Bindings...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.Members != nil {
+		for _, r := range s.Members.Records() {
+			for _, b := range c.Bindings {
+				if r.EmbyID == b.UserID {
+					return ErrPlaybackBindingChanged
+				}
+			}
+		}
+	}
 	doc := s.doc
 	if bindingsOnly {
 		c.CleanupEnabled = doc.Config.CleanupEnabled
@@ -256,11 +293,14 @@ type PlaybackCacheSnapshot struct {
 
 func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	c := s.bindingConfig()
+	if s.Members != nil {
+		c = s.Members.Bindings(c)
+	}
 	// Freeze all eligible source credentials before the request starts network I/O.
 	s.accounts.mu.RLock()
 	donors := make([]P115Account, 0, len(s.accounts.value.Accounts))
 	for _, a := range s.accounts.value.Accounts {
-		if !a.Primary && a.Cookie != "" && p115.CookieUserID(a.Cookie) == a.UID {
+		if !a.Primary && a.OwnerUserID == "" && a.Ownership != "member" && !IsMemberAccount(a.ID) && a.Cookie != "" && p115.CookieUserID(a.Cookie) == a.UID {
 			donors = append(donors, a)
 		}
 	}

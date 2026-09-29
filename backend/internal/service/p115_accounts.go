@@ -16,6 +16,8 @@ var ErrAccountChanged = errors.New("账号配置已发生变化，请刷新后�
 var ErrAccountInput = errors.New("账号配置无效")
 
 type P115Account struct {
+	OwnerUserID       string `json:"ownerUserId"`
+	Ownership         string `json:"ownership"`
 	Primary           bool   `json:"primary"`
 	UID               string `json:"uid"`
 	PlaybackParentCID string `json:"playbackParentCid"`
@@ -25,6 +27,8 @@ type P115Account struct {
 	Revision          uint64 `json:"revision"`
 }
 type P115AccountView struct {
+	OwnerUserID       string `json:"ownerUserId"`
+	Ownership         string `json:"ownership"`
 	Primary           bool   `json:"primary"`
 	PlaybackParentCID string `json:"playbackParentCid"`
 	ID                string `json:"id"`
@@ -55,16 +59,26 @@ func newP115Accounts(store accountSecretStore, legacy string) (*P115Accounts, er
 		if json.Unmarshal([]byte(store.Value()), &s.value) != nil {
 			return nil, fmt.Errorf("115 多账号配置无法解析")
 		}
-		if s.value.Version != 1 || len(s.value.Accounts) > 20 {
+		if s.value.Version != 1 || len(s.value.Accounts) > 120 {
 			return nil, fmt.Errorf("115 多账号配置版本或数量无效")
 		}
 		seen := make(map[string]bool, len(s.value.Accounts))
+		owners := make(map[string]bool, len(s.value.Accounts))
 		primaryCount := 0
 		for i, a := range s.value.Accounts {
 			if a.ID == "" || seen[a.ID] || a.Revision == 0 || !validAccountName(a.Name) {
 				return nil, fmt.Errorf("115 多账号配置损坏")
 			}
 			seen[a.ID] = true
+			if a.Ownership != "" && a.Ownership != "admin" && a.Ownership != "member" {
+				return nil, fmt.Errorf("115 账号归属无效")
+			}
+			if a.Ownership == "member" || a.OwnerUserID != "" {
+				if a.Ownership != "member" || len(a.OwnerUserID) != 32 || strings.Trim(a.OwnerUserID, "0123456789abcdef") != "" || owners[a.OwnerUserID] || a.Primary {
+					return nil, fmt.Errorf("115 个人网盘归属损坏")
+				}
+				owners[a.OwnerUserID] = true
+			}
 			if a.Primary {
 				primaryCount++
 			}
@@ -126,7 +140,7 @@ func (s *P115Accounts) List() []P115AccountView {
 	defer s.mu.RUnlock()
 	result := make([]P115AccountView, 0, len(s.value.Accounts))
 	for _, a := range s.value.Accounts {
-		result = append(result, P115AccountView{Primary: a.Primary, ID: a.ID, Name: a.Name, UID: a.UID, Configured: a.Cookie != "", Revision: a.Revision, PlaybackParentCID: a.PlaybackParentCID})
+		result = append(result, P115AccountView{OwnerUserID: a.OwnerUserID, Ownership: a.Ownership, Primary: a.Primary, ID: a.ID, Name: a.Name, UID: a.UID, Configured: a.Cookie != "", Revision: a.Revision, PlaybackParentCID: a.PlaybackParentCID})
 	}
 	return result
 }
@@ -184,11 +198,17 @@ func (s *P115Accounts) add(name string, primary bool) (string, error) {
 			}
 		}
 	}
-	if len(s.value.Accounts) >= 20 {
+	managedCount := 0
+	for _, account := range s.value.Accounts {
+		if account.OwnerUserID == "" && account.Ownership != "member" && !IsMemberAccount(account.ID) {
+			managedCount++
+		}
+	}
+	if managedCount >= 20 || len(s.value.Accounts) >= 120 {
 		return "", fmt.Errorf("%w：最多保存 20 个账号配置", ErrAccountInput)
 	}
 	value := s.copy()
-	value.Accounts = append(value.Accounts, P115Account{ID: id, Name: name, Primary: primary, Revision: 1})
+	value.Accounts = append(value.Accounts, P115Account{Ownership: "admin", ID: id, Name: name, Primary: primary, Revision: 1})
 	if err := s.commit(value); err != nil {
 		return "", err
 	}
@@ -215,6 +235,11 @@ func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *s
 		a.Revision++
 		if cookie != nil {
 			if uid := accountUID(*cookie); uid != "" {
+				for _, other := range value.Accounts {
+					if other.ID != id && other.UID == uid && (a.OwnerUserID != "" || other.OwnerUserID != "" || IsMemberAccount(id) || IsMemberAccount(other.ID)) {
+						return fmt.Errorf("%w：该 115 用户已属于其他配置，不能重复绑定", ErrAccountInput)
+					}
+				}
 				if a.UID != "" && a.UID != uid {
 					return fmt.Errorf("%w：该配置已绑定其他 115 用户，更换账号请删除配置后重新创建", ErrAccountInput)
 				}

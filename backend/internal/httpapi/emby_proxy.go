@@ -300,6 +300,28 @@ func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) {
+	if h.cache != nil && h.cache.Members != nil {
+		userID := h.identities.UserID(h.config.URL, embyToken(r))
+		managed, err := h.cache.Members.Authorize(r.Context(), h.config.URL, userID)
+		path := strings.ToLower(r.URL.Path)
+		media := playbackItem(r.URL.Path) != "" || strings.Contains(path, "/videos/") || strings.Contains(path, "/audio/") || downloadItem(r.URL.Path) != "" || strings.Contains(path, "/cinema115/play") || strings.Contains(path, "/livetv/")
+		if media && userID == "" && len(h.cache.Members.Records()) > 0 {
+			http.Error(w, "请通过反代退出并重新登录，以确认播放身份", http.StatusUnauthorized)
+			return
+		}
+		if managed && media && err != nil {
+			http.Error(w, "个人播放已暂停，请在网站个人中心检查绑定", http.StatusForbidden)
+			return
+		}
+		if managed && downloadItem(r.URL.Path) != "" && !h.cache.Members.Settings().AllowDownload {
+			http.Error(w, "管理员尚未允许个人用户下载", http.StatusForbidden)
+			return
+		}
+		if managed && media && playbackItem(r.URL.Path) == "" && staticStreamItem(r) == "" && originalStreamItem(r) == "" && downloadItem(r.URL.Path) == "" && !strings.Contains(path, "/cinema115/play") && !strings.Contains(path, "/subtitles/") {
+			http.Error(w, "个人播放仅支持原文件直链，不支持转码或直播", http.StatusForbidden)
+			return
+		}
+	}
 	if r.Header.Get("X-Cinema115-Emby-Proxy") != "" {
 		h.logs.Add(r.Context(), "ERROR", "检测到反代循环，已拒绝请求")
 		http.Error(w, "Emby 上游指向了反代自身，请修正服务器地址", http.StatusLoopDetected)
@@ -534,6 +556,20 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		fail("Emby 用户没有播放权限", 403)
 		return
 	}
+	if h.cache != nil && h.cache.Members != nil {
+		managed, err := h.cache.Members.Authorize(ctx, h.config.URL, userID)
+		if err != nil {
+			fail("个人播放已暂停，请到网站个人中心检查绑定", 403)
+			return
+		}
+		if managed {
+			fallback = false
+			if isDownload && !h.cache.Members.Settings().AllowDownload {
+				fail("管理员尚未允许个人用户下载", 403)
+				return
+			}
+		}
+	}
 	if isDownload && (user.Policy.EnableContentDownloading == nil || !*user.Policy.EnableContentDownloading) {
 		fail("Emby 用户未获准下载，请在 Emby 用户权限中开启内容下载", http.StatusForbidden)
 		return
@@ -618,6 +654,13 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		if err != nil {
 			fail(err.Error(), 503)
 			return
+		}
+		if h.cache.Members != nil {
+			managed, denied := h.cache.Members.Authorize(ctx, h.config.URL, user.ID)
+			if denied != nil || managed && !h.cache.Members.SelectionMatches(user.ID, cacheSelection) {
+				fail("个人播放绑定不可用，已停止取链", 403)
+				return
+			}
 		}
 	}
 	if cookie == "" && cacheSelection == nil {

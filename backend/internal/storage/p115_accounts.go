@@ -3,20 +3,23 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strm115/backend/internal/model"
 )
 
 var ErrAccountRevision = errors.New("115 账号存储版本已变化")
 
 // 存储层只接触密文，不持有加密密钥或 Cookie 明文。
 type P115AccountRow struct {
-	Primary           bool
-	UID               string
-	PlaybackParentCID string
-	ID, Name          string
-	Cookie            []byte
-	Revision          uint64
+	Ownership, OwnerUserID string
+	Primary                bool
+	UID                    string
+	PlaybackParentCID      string
+	ID, Name               string
+	Cookie                 []byte
+	Revision               uint64
 }
 type P115AccountState struct {
 	// 仅供旧加密文件首次导入时保留分享使用账号，运行时不作回退。
@@ -39,7 +42,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	if err != nil {
 		return state, fmt.Errorf("读取 115 账号存储版本: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid,is_primary,uid FROM p115_accounts ORDER BY position,id")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid,is_primary,uid,ownership,owner_user_id FROM p115_accounts ORDER BY position,id")
 	if err != nil {
 		return state, err
 	}
@@ -47,7 +50,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	state.Accounts = make([]P115AccountRow, 0, 20)
 	for rows.Next() {
 		var row P115AccountRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID, &row.Primary, &row.UID); err != nil {
+		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID, &row.Primary, &row.UID, &row.Ownership, &row.OwnerUserID); err != nil {
 			return state, err
 		}
 		state.Accounts = append(state.Accounts, row)
@@ -59,7 +62,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 }
 
 // 账号变更与首次导入标记在同一事务中提交；失败不会留下半份配置。
-func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState) error {
+func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState, member ...model.MemberPlayback) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -73,7 +76,7 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState) er
 	if revision != state.Revision {
 		return ErrAccountRevision
 	}
-	if len(state.Accounts) > 20 {
+	if len(state.Accounts) > 120 {
 		return errors.New("115 账号数量超出限制")
 	}
 	ids := make(map[string]bool, len(state.Accounts))
@@ -82,9 +85,12 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState) er
 			return errors.New("115 账号编号无效")
 		}
 		ids[row.ID] = true
-		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid,is_primary,uid) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid,is_primary=excluded.is_primary,uid=excluded.uid
-WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid OR is_primary<>excluded.is_primary OR uid<>excluded.uid`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID, row.Primary, row.UID)
+		if row.Ownership == "" {
+			row.Ownership = "admin"
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid,is_primary,uid,ownership,owner_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid,is_primary=excluded.is_primary,uid=excluded.uid,ownership=excluded.ownership,owner_user_id=excluded.owner_user_id
+WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid OR is_primary<>excluded.is_primary OR uid<>excluded.uid OR ownership<>excluded.ownership OR owner_user_id<>excluded.owner_user_id`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID, row.Primary, row.UID, row.Ownership, row.OwnerUserID)
 		if err != nil {
 			return fmt.Errorf("保存 115 账号: %w", err)
 		}
@@ -128,6 +134,15 @@ WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.p
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO data_migrations(name,imported_count,completed_at) VALUES('p115_accounts_v1',?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))", len(state.Accounts)); err != nil {
 			return err
+		}
+	}
+	if len(member) > 0 {
+		raw, err := json.Marshal(member[0])
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO member_playback(user_id,record) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET record=excluded.record`, member[0].UserID, string(raw)); err != nil {
+			return fmt.Errorf("保存个人网盘关联: %w", err)
 		}
 	}
 	return tx.Commit()

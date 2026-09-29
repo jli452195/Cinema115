@@ -9,7 +9,7 @@ const username = ref(''), password = ref(''), confirmation = ref('')
 const message = ref(''), notice = ref(''), busy = ref(false)
 const lifecycle = new AbortController()
 async function request(path: string, input: object) {
-  const response = await fetch(`/api/auth/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+  const response = await fetch(`/api/auth/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(95000)]) })
   const data = await response.json().catch(() => null)
   if (!response.ok) throw new Error(data?.error || '注册服务暂时不可用')
   return data
@@ -17,7 +17,7 @@ async function request(path: string, input: object) {
 async function check() {
   if (busy.value || !code.value.trim()) return
   busy.value = true; message.value = ''; notice.value = ''
-  try { await request('invite/check', { code: code.value }); notice.value = '邀请码有效，完成注册后使用。' }
+  try { const data = await request('invite/check', { code: code.value }); notice.value = data.playbackSource === 'existing' ? '专属邀请有效：注册后关联原 Emby 账号，保留原播放来源，可准备本人网盘后主动切换。' : data.playbackSource === 'primary' ? '朋友邀请有效：注册后可创建 Emby 账号，使用管理员主账号播放，无需扫码。' : '邀请码有效：可先注册 Emby 并浏览媒体库，绑定自己的 115 后开通播放。' }
   catch (error) { if (!lifecycle.signal.aborted) message.value = error instanceof Error ? error.message : '邀请码检查失败' }
   finally { busy.value = false }
 }

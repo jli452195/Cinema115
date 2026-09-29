@@ -86,6 +86,52 @@ func accountRequest(t *testing.T, r *gin.Engine, method, path, body string, code
 	return w
 }
 
+func TestPersonalOwnershipGuardsGenericAccountAPI(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := storage.Open(ctx, filepath.Join(dir, "ownership.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	accounts, err := service.OpenP115AccountsSQLite(ctx, db, dir, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := accounts.Add("personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An ordinary ID must also be protected by explicit ownership.
+	state, err := db.LoadP115Accounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Accounts[0].Ownership = "member"
+	state.Accounts[0].OwnerUserID = strings.Repeat("a", 32)
+	state.Accounts[0].Revision++
+	if err := db.SaveP115Accounts(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err = service.OpenP115AccountsSQLite(ctx, db, dir, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	RegisterP115Accounts(r.Group("/api/admin"), accounts, nil, nil)
+	list := accountRequest(t, r, "GET", "/accounts", "", 200)
+	if strings.Contains(list.Body.String(), id) {
+		t.Fatal("personal account listed in assistant")
+	}
+	for _, tc := range []struct{ method, suffix string }{
+		{"GET", "/cookie"}, {"GET", "/status"}, {"PUT", ""}, {"DELETE", ""},
+		{"POST", "/login"}, {"DELETE", "/login"}, {"POST", "/qrcode"},
+		{"GET", "/qrcode/status"}, {"PUT", "/playback-directory"}, {"POST", "/cookie/test"},
+	} {
+		accountRequest(t, r, tc.method, "/accounts/"+id+tc.suffix, `{}`, 403)
+	}
+}
+
 func TestAccountPlaybackDirectoryAPI(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
 	accountRequest(t, r, "PUT", "/accounts/"+id+"/playback-directory", `{"parentCid":"0","revision":2}`, 400)

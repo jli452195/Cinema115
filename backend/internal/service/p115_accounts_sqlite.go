@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
 
@@ -50,7 +51,7 @@ func OpenP115AccountsSQLite(ctx context.Context, db *storage.Store, dir, secret 
 			if err != nil {
 				return nil, errors.New("115 账号无法解密，请检查原 JWT_SECRET；数据库未修改")
 			}
-			doc.Accounts = append(doc.Accounts, P115Account{Primary: row.Primary, UID: row.UID, ID: row.ID, Name: row.Name, Cookie: string(cookie), Revision: row.Revision, PlaybackParentCID: row.PlaybackParentCID})
+			doc.Accounts = append(doc.Accounts, P115Account{Ownership: row.Ownership, OwnerUserID: row.OwnerUserID, Primary: row.Primary, UID: row.UID, ID: row.ID, Name: row.Name, Cookie: string(cookie), Revision: row.Revision, PlaybackParentCID: row.PlaybackParentCID})
 		}
 		raw, err := json.Marshal(doc)
 		if err != nil {
@@ -100,7 +101,11 @@ func (s *sqliteAccountStore) Save(value string) error {
 	defer cancel()
 	return s.save(ctx, value)
 }
-func (s *sqliteAccountStore) save(ctx context.Context, value string) error {
+func (s *sqliteAccountStore) SaveMember(ctx context.Context, value string, member model.MemberPlayback) error {
+	return s.save(ctx, value, member)
+}
+
+func (s *sqliteAccountStore) save(ctx context.Context, value string, member ...model.MemberPlayback) error {
 	var doc accountDocument
 	if err := json.Unmarshal([]byte(value), &doc); err != nil {
 		return fmt.Errorf("编码账号数据: %w", err)
@@ -117,14 +122,14 @@ func (s *sqliteAccountStore) save(ctx context.Context, value string) error {
 		}
 		// 将密文绑定配置编号，防止两行密文被交换后仍能解密。
 		sealed := s.aead.Seal(nonce, nonce, []byte(account.Cookie), []byte(account.ID))
-		state.Accounts = append(state.Accounts, storage.P115AccountRow{Primary: account.Primary, UID: account.UID, ID: account.ID, Name: account.Name, Cookie: sealed, Revision: account.Revision, PlaybackParentCID: account.PlaybackParentCID})
+		state.Accounts = append(state.Accounts, storage.P115AccountRow{Ownership: account.Ownership, OwnerUserID: account.OwnerUserID, Primary: account.Primary, UID: account.UID, ID: account.ID, Name: account.Name, Cookie: sealed, Revision: account.Revision, PlaybackParentCID: account.PlaybackParentCID})
 	}
 	doc.LegacyActiveID = ""
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	if err := s.db.SaveP115Accounts(ctx, state); err != nil {
+	if err := s.db.SaveP115Accounts(ctx, state, member...); err != nil {
 		if errors.Is(err, storage.ErrAccountRevision) {
 			return fmt.Errorf("%w，请重启后端重新载入数据库", ErrAccountChanged)
 		}

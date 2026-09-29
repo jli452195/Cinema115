@@ -25,6 +25,7 @@ type Server struct {
 }
 type Library struct {
 	ID   string `json:"ItemId"`
+	GUID string `json:"Guid"`
 	Name string `json:"Name"`
 	Type string `json:"CollectionType"`
 }

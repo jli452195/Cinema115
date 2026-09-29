@@ -24,6 +24,8 @@ var ErrAuthBusy = errors.New("登录或密码操作繁忙，请稍后重试")
 var ErrUserInput = errors.New("用户配置无效")
 
 type WebsiteAuth struct {
+	Members                          *MemberPlaybackService              // wired before serving
+	SyncPlayback                     func(context.Context, string) error // wired once before serving
 	DB                               *storage.Store
 	adminName, adminPassword, secret string
 	passwordSlots                    chan struct{}
@@ -203,5 +205,11 @@ func (a *WebsiteAuth) Update(ctx context.Context, id, password string, disabled 
 			return err
 		}
 	}
-	return a.DB.UpdateWebsiteUser(ctx, id, hash, disabled)
+	if err := a.DB.UpdateWebsiteUser(ctx, id, hash, disabled); err != nil {
+		return err
+	}
+	if disabled != nil && a.SyncPlayback != nil {
+		return a.SyncPlayback(ctx, id)
+	}
+	return nil
 }

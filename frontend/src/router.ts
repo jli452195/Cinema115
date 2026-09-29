@@ -19,6 +19,7 @@ import EmbyCacheView from './views/EmbyCacheView.vue'
 import EmbyUsersView from './views/EmbyUsersView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
 import RegisterView from './views/RegisterView.vue'
+import PersonalPlaybackView from './views/PersonalPlaybackView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
@@ -31,6 +32,7 @@ import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebs
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/account/playback', name: 'personal-playback', component: PersonalPlaybackView },
     { path: '/register', name: 'register', component: RegisterView },
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/updates', name: 'updates', component: UpdatesView },

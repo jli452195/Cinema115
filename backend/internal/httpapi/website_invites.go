@@ -31,7 +31,7 @@ func registerWebsiteRegistration(r *gin.Engine, auth *service.WebsiteAuth) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
@@ -44,11 +44,12 @@ func registerWebsiteRegistration(r *gin.Engine, auth *service.WebsiteAuth) {
 			c.JSON(400, gin.H{"error": "请输入邀请码"})
 			return
 		}
-		if err := auth.CheckInvite(c.Request.Context(), input.Code); err != nil {
+		source, err := auth.InviteSource(c.Request.Context(), input.Code)
+		if err != nil {
 			websiteAuthError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"valid": true})
+		c.JSON(200, gin.H{"valid": true, "playbackSource": source})
 	})
 	r.POST("/api/auth/register", guard, func(c *gin.Context) {
 		var input struct {
@@ -95,15 +96,16 @@ func registerWebsiteInvites(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
 	})
 	group.POST("", func(c *gin.Context) {
 		input := struct {
-			Count int    `json:"count"`
-			Days  int    `json:"days"`
-			Note  string `json:"note"`
+			Count          int    `json:"count"`
+			Days           int    `json:"days"`
+			Note           string `json:"note"`
+			PlaybackSource string `json:"playbackSource"`
 		}{Count: 1, Days: 7}
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "邀请配置格式无效"})
 			return
 		}
-		invites, err := auth.GenerateInvites(c.Request.Context(), c.GetString("admin_username"), input.Note, input.Count, input.Days)
+		invites, err := auth.GenerateInvites(c.Request.Context(), c.GetString("admin_username"), input.Note, input.Count, input.Days, input.PlaybackSource)
 		if err != nil {
 			websiteAuthError(c, err)
 			return

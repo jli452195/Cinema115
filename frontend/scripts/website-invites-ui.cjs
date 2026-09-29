@@ -14,16 +14,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       if (url.pathname === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin', disabled: false } }
       else if (url.pathname === '/api/admin/users') data = { users: [], hasMore: false }
       else if (url.pathname === '/api/admin/invites') {
-        if (req.method() === 'POST') { generated = true; assert.equal(req.postDataJSON().days, 7); data = { invites: [{ ...invite, code }] } }
+        if (req.method() === 'POST') { generated = true; assert.equal(req.postDataJSON().days, 7); assert.equal(req.postDataJSON().playbackSource, 'primary'); data = { invites: [{ ...invite, playbackSource: 'primary', code }] } }
         else data = { invites: generated ? [invite] : [], hasMore: false }
       } else if (url.pathname.endsWith('/revoke')) { invite.revokedAt = Date.now()/1000; data = { message: '邀请已撤销' } }
-      else if (url.pathname === '/api/auth/invite/check') { checks.push(req.postDataJSON()); data = { valid: true } }
+      else if (url.pathname === '/api/auth/invite/check') { checks.push(req.postDataJSON()); data = { valid: true, playbackSource: 'primary' } }
       else if (url.pathname === '/api/auth/register') { registrations.push(req.postDataJSON()); data = { user: { username: 'newreader', role: 'user' } } }
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
     })
     const base = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.goto(base + '/register#invite=' + code)
-    await page.getByText('邀请码有效，完成注册后使用。', { exact: true }).waitFor()
+    await page.getByText('朋友邀请有效：注册后可创建 Emby 账号，使用管理员主账号播放，无需扫码。', { exact: true }).waitFor()
     assert.equal(new URL(page.url()).hash, '')
     assert.equal(await page.getByLabel('邀请码', { exact: true }).inputValue(), code)
     assert.equal(checks.length, 1)
@@ -45,6 +45,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goto(base + '/users')
     await page.getByRole('button', { name: '注册邀请', exact: true }).click()
     await page.getByLabel('备注', { exact: true }).fill('朋友')
+    assert.equal(await page.getByLabel('播放开通方式').inputValue(), 'personal')
+    await page.getByLabel('播放开通方式').selectOption('primary')
     await page.getByRole('button', { name: '生成邀请', exact: true }).click()
     const link = page.getByLabel('邀请链接', { exact: true })
     await link.waitFor()
