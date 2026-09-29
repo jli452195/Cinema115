@@ -53,6 +53,55 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await link.inputValue(), base + '/register#invite=' + code)
     await page.getByLabel('邀请链接的站点地址', { exact: false }).fill('https://cinema.example.com')
     assert.equal(await link.inputValue(), 'https://cinema.example.com/register#invite=' + code)
+    // LAN HTTP has no Clipboard API. Exercise the real legacy selection/copy
+    // event, intercepting clipboard output so no real invitation is copied.
+    await page.evaluate(() => {
+      window.copyValues = []
+      window.savedExecCommand = document.execCommand.bind(document)
+      Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+      document.addEventListener('copy', event => {
+        const el = document.activeElement
+        const text = el instanceof HTMLTextAreaElement ? el.value.slice(el.selectionStart, el.selectionEnd) : ''
+        window.copyValues.push(text)
+        event.clipboardData.setData('text/plain', text)
+        event.preventDefault()
+      })
+    })
+    const generatedSection = page.getByRole('region', { name: '新生成的邀请' })
+    await generatedSection.getByRole('button', { name: '复制邀请码', exact: true }).click()
+    await generatedSection.getByText('邀请码已复制', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => window.copyValues.at(-1)), code)
+    await generatedSection.getByRole('button', { name: '复制邀请链接', exact: true }).click()
+    await generatedSection.getByText('邀请链接已复制', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => window.copyValues.at(-1)), 'https://cinema.example.com/register#invite=' + code)
+    assert.equal(await page.locator('body > textarea').count(), 0)
+    // Secure pages with a rejected Clipboard API also fall back.
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('denied') } } })
+    })
+    await generatedSection.getByRole('button', { name: '复制邀请码', exact: true }).click()
+    await generatedSection.getByText('邀请码已复制', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => window.copyValues.length), 3)
+    // Total failure must offer visible, selected text and never claim success.
+    await page.evaluate(() => { document.execCommand = () => false })
+    await generatedSection.getByRole('button', { name: '复制邀请码', exact: true }).click()
+    await generatedSection.getByText('自动复制失败，已选中下方内容，请按 Ctrl+C 或长按复制。', { exact: true }).waitFor()
+    const manual = generatedSection.getByLabel('手动复制内容', { exact: true })
+    assert.equal(await manual.inputValue(), code)
+    assert.equal(await manual.evaluate(el => document.activeElement === el && el.selectionEnd - el.selectionStart === el.value.length), true)
+    assert.equal(await generatedSection.getByText('邀请码已复制', { exact: true }).count(), 0)
+    await generatedSection.getByRole('button', { name: '复制邀请链接', exact: true }).click()
+    assert.equal(await manual.inputValue(), 'https://cinema.example.com/register#invite=' + code)
+    // Successful modern clipboard path avoids a legacy copy event.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.modernCopy = text } } })
+    })
+    await generatedSection.getByRole('button', { name: '复制邀请码', exact: true }).click()
+    await generatedSection.getByText('邀请码已复制', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => window.modernCopy), code)
+    assert.equal(await manual.count(), 0)
     await page.evaluate(() => document.documentElement.classList.add('dark'))
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
@@ -60,6 +109,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByText('邀请已撤销', { exact: true }).waitFor()
     assert.equal(await link.count(), 0)
     assert.deepEqual(errors, [])
-    console.log('Invitation UI passed: hash import/removal, password confirmation, registration/login handoff, generation, custom link address, revocation, dark mobile layout')
+    console.log('Invitation UI passed: registration, generation, HTTP/denied/modern clipboard, selected manual fallback, revocation, dark mobile layout')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

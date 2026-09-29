@@ -23,6 +23,28 @@ type playbackSourceCache struct {
 // Cache metadata only. Every request gets its own closure with fixed credentials;
 // the caller may prefetch its URL or wait until 115 requests a range challenge.
 func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc, cookie string) (*DownloadInfo, error) {
+	f, err := c.playbackPickCodeMetadata(ctx, accountID, pc, cookie)
+	if err != nil {
+		return nil, err
+	}
+	info := &DownloadInfo{Name: f.Name, Size: f.Size, SHA1: f.SHA1}
+	info.loadPlaybackURL = func(readCtx context.Context) (string, error) {
+		got, id, err := c.pickCodeInfo(readCtx, pc, cookie, PlaybackUserAgent)
+		if err != nil {
+			return "", err
+		}
+		if got == nil || id != f.ID || got.Size != f.Size || (got.SHA1 != "" && !strings.EqualFold(got.SHA1, f.SHA1)) {
+			return "", fmt.Errorf("源直链文件身份或 SHA1 已变化")
+		}
+		return got.URL, nil
+	}
+	if err := ValidateInstantSource(info); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (c *ShareClient) playbackPickCodeMetadata(ctx context.Context, accountID, pc, cookie string) (*DrivePlaybackFile, error) {
 	if accountID == "" || CookieUserID(cookie) == "" || !instantPickCode.MatchString(pc) {
 		return nil, fmt.Errorf("源账号或 pickcode 配置无效")
 	}
@@ -64,19 +86,5 @@ func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc,
 		c.playbackSources.entries[key] = playbackSourceMetadata{File: f, Expires: time.Now().Add(10 * time.Minute)}
 		c.playbackSources.mu.Unlock()
 	}
-	info := &DownloadInfo{Name: f.Name, Size: f.Size, SHA1: f.SHA1}
-	info.loadPlaybackURL = func(readCtx context.Context) (string, error) {
-		got, id, err := c.pickCodeInfo(readCtx, pc, cookie, PlaybackUserAgent)
-		if err != nil {
-			return "", err
-		}
-		if got == nil || id != f.ID || got.Size != f.Size || (got.SHA1 != "" && !strings.EqualFold(got.SHA1, f.SHA1)) {
-			return "", fmt.Errorf("源直链文件身份或 SHA1 已变化")
-		}
-		return got.URL, nil
-	}
-	if err := ValidateInstantSource(info); err != nil {
-		return nil, err
-	}
-	return info, nil
+	return &f, nil
 }

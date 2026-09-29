@@ -268,3 +268,7 @@ func (f *proxyCacheFake) CompletePlaybackUpload(ctx context.Context, info *p115.
 	link, err := f.DriveDownloadURLWithUA(ctx, file.ID, file.PickCode, cookie, ua)
 	return file, link, err
 }
+
+func (f *proxyCacheFake) CompletePlaybackFile(context.Context, *p115.DownloadInfo, string, *p115.InstantUploadResult, string) (p115.DrivePlaybackFile, error) {
+	return f.files[0], nil
+}

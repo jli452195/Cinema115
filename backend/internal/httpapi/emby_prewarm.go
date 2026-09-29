@@ -28,9 +28,10 @@ type proxyPrewarmer struct {
 }
 
 type prewarmSnapshot struct {
-	source   service.P115Account
-	bindings service.PlaybackCacheSnapshot
-	media    map[string]json.RawMessage
+	prepareOnly bool
+	source      service.P115Account
+	bindings    service.PlaybackCacheSnapshot
+	media       map[string]json.RawMessage
 }
 type prewarmContextKey struct{}
 type playbackSelectedSourceKey struct{}
@@ -80,7 +81,7 @@ func (h *embyProxyHandler) waitPrewarm(ctx context.Context, key string) error {
 }
 
 func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candidates []map[string]json.RawMessage) {
-	if !h.config.Prewarm || len(candidates) == 0 {
+	if (!h.config.Prewarm && !h.config.PrepareFiles) || len(candidates) == 0 {
 		return
 	}
 	sourceID := proxyQuery(r.URL.Query(), "MediaSourceId")
@@ -109,7 +110,7 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 	if !embyProxyID.MatchString(userID) {
 		return
 	}
-	snapshot := &prewarmSnapshot{media: media}
+	snapshot := &prewarmSnapshot{media: media, prepareOnly: !h.config.Prewarm}
 	snapshot.source, _ = h.accounts.Get(h.accounts.PrimaryID())
 	if h.cache != nil {
 		snapshot.bindings = h.cache.Snapshot()
@@ -123,7 +124,13 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		}
 	}
 	key := h.prewarmKey(token, item, sourceID, snapshot.source, selected)
+	if snapshot.prepareOnly && (selected == nil || selected.UsesSourceAccount(snapshot.source.ID)) {
+		return
+	}
 	recentKey := service.DirectLinkKey(key, r.UserAgent())
+	if snapshot.prepareOnly {
+		recentKey = key
+	}
 	p := &h.prewarm
 	p.mu.Lock()
 	if p.closed || p.foreground > 0 || p.done != nil || time.Now().Before(p.recent[recentKey]) {
@@ -161,9 +168,16 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		defer cancel()
 		ctx = context.WithValue(ctx, prewarmContextKey{}, snapshot)
 		ctx = service.PlaybackPrewarmContext(ctx)
+		if snapshot.prepareOnly {
+			ctx = service.PreparePlaybackFileContext(ctx)
+		}
 		ctx, finish := h.logs.BeginRequest(h.logs.Trace(ctx), h.config.Debug)
 		defer finish()
-		h.logs.Add(ctx, "INFO", "播放预热开始，条目="+proxyLogID(item)+"，媒体源="+proxyLogID(sourceID))
+		label := "播放预热"
+		if snapshot.prepareOnly {
+			label = "提前准备秒传文件"
+		}
+		h.logs.Add(ctx, "INFO", label+"开始，条目="+proxyLogID(item)+"，媒体源="+proxyLogID(sourceID))
 		if h.config.Debug {
 			h.logs.Add(ctx, "INFO", fmt.Sprintf("预热关联请求=%s｜调度等待=%d ms", parentTrace, time.Since(scheduled).Milliseconds()))
 			if !parentStarted.IsZero() {
@@ -173,7 +187,13 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 		writer := &prewarmResponse{header: make(http.Header)}
 		h.redirect(writer, request.WithContext(ctx), item, false)
 		level, message := "INFO", "播放预热完成；同 UA 可复用有效直链，不同 UA 复用已准备文件后取链"
-		if writer.status != http.StatusFound {
+		if snapshot.prepareOnly {
+			message = "秒传文件准备完成；正式播放时按播放器 UA 获取直链"
+		}
+		if snapshot.prepareOnly && writer.status == http.StatusOK {
+			message = "当前来源跳过文件准备；正式播放时按原流程处理"
+		}
+		if writer.status != http.StatusFound && writer.status != http.StatusNoContent && !(snapshot.prepareOnly && writer.status == http.StatusOK) {
 			level, message = "WARNING", fmt.Sprintf("播放预热未完成，HTTP %d；正式播放仍按正常流程处理", writer.status)
 		}
 		h.logs.Add(ctx, level, message)

@@ -128,7 +128,7 @@ func TestFastSHA1ReuseAndCredentialIsolation(t *testing.T) {
 }
 func TestFastSHA1OnlyHitSkipsUploadPreparation(t *testing.T) {
 	s, f, selected := setupFastCache(t)
-	f.files = []p115.DrivePlaybackFile{{ID: "123", CID: "77", Name: "renamed", Size: 999, SHA1: strings.Repeat("a", 40), PickCode: "pick123"}}
+	f.files = []p115.DrivePlaybackFile{{ID: "123", CID: "77", Name: "renamed", Size: 100, SHA1: strings.Repeat("a", 40), PickCode: "pick123"}}
 	_, r, err := s.ResolvePickCodeWithReport(context.Background(), selected, "pickaaa", "src", "player")
 	if err != nil || f.uploads != 0 || f.prepares != 0 || f.creates != 0 || r.FileCacheID != "123" {
 		t.Fatal("SHA1-only reuse failed", err)

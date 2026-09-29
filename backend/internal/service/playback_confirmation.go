@@ -42,9 +42,13 @@ func (s *PlaybackCache) confirmUncertainUpload(ctx context.Context, fast fastPla
 		}
 		file, err := fast.FindPlaybackFileBySHA1(probeCtx, info.SHA1, selected.cookie)
 		if err != nil {
+			if ctx.Err() == nil {
+				s.backoffPlaybackSearch(e.Key, e.TargetScope, time.Now().Add(5*time.Second), err)
+			}
 			return "", false, err
 		}
 		if file == nil {
+			s.backoffPlaybackSearch(e.Key, e.TargetScope, minTime(time.Now().Add(3*time.Second), e.RetryNotBefore), nil)
 			continue
 		}
 		if !cacheMatches(*file, info) || file.ID == "" || file.PickCode == "" {

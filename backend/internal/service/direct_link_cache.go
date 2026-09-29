@@ -99,13 +99,9 @@ func (c *DirectLinkCache) Get(ctx context.Context, key string, ttl time.Duration
 	if err := ctx.Err(); err != nil {
 		return DirectLinkValue{}, false, time.Time{}, err
 	}
-	if ttl <= 0 {
-		v, err := fetch(ctx)
-		return v, false, time.Time{}, err
-	}
 	c.mu.Lock()
 	c.prune(time.Now())
-	if entry, ok := c.entries[key]; ok {
+	if entry, ok := c.entries[key]; ok && ttl > 0 {
 		entry.view.Hits++
 		c.hits++
 		c.entries[key] = entry
@@ -147,8 +143,11 @@ func (c *DirectLinkCache) Get(ctx context.Context, key string, ttl time.Duration
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	expires := time.Now().Add(ttl)
-	if err == nil && generation == c.generation {
+	var expires time.Time
+	if ttl > 0 {
+		expires = time.Now().Add(ttl)
+	}
+	if err == nil && ttl > 0 && generation == c.generation {
 		if c.entries == nil {
 			c.entries = make(map[string]directLinkEntry)
 		}

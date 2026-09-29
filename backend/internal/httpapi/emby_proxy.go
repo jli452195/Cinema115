@@ -705,6 +705,25 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return value, nil
 	}
 	view := service.DirectLinkCacheEntry{User: service.PlaybackLogName(user.Name) + "（" + user.ID + "）", MediaSource: proxyLogID(jsonString(source["Id"])), TraceID: service.ProxyTraceID(ctx), RequestHeaders: proxyDiagnosticHeaders(r.Header, r.Host), LookupHeaders: proxyLookupHeaders(r.UserAgent())}
+	if warming && warm.prepareOnly {
+		// Share URLs may be directly readable by the target. Do not turn a
+		// read-only share playback into an unsolicited upload or extra URL lookup.
+		if claim.PickCode == "" || cacheSelection == nil || cacheSelection.UsesSourceAccount(sourceAccount.ID) {
+			outcome = "无需提前准备"
+			h.logs.Add(ctx, "INFO", "此来源无需提前秒传，正式播放时按原流程解析")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, report, err := h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(ctx, claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
+		if err != nil {
+			fail(err.Error(), 502)
+			return
+		}
+		outcome = "文件已准备"
+		h.logs.Add(ctx, "INFO", "文件准备成功｜取链账号="+report.AccountLabel+"｜方式="+report.Mode+"；未预取播放直链")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	timing.next("直链缓存等待及 115 取链")
 	value, hit, expires, err := h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
 	timing.next("缓存记录核验及响应")
@@ -744,7 +763,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		w.WriteHeader(http.StatusFound)
 		return
 	}
-	if hit {
+	if hit && expires.IsZero() {
+		h.logs.Add(ctx, "INFO", "复用同一时刻的取链请求；直链缓存关闭，未保存直链")
+	} else if hit {
 		h.logs.Add(ctx, "INFO", fmt.Sprintf("直链缓存命中｜取链账号=%s｜剩余 %d 秒（有效期不顺延）", report.AccountLabel, max(0, int(time.Until(expires).Seconds()))))
 	}
 	h.logs.Add(ctx, "INFO", fmt.Sprintf("115 直链获取成功，CDN=%s，耗时 %d ms", cdn.Hostname(), time.Since(downloadStarted).Milliseconds()))

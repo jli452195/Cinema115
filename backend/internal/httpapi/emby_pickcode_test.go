@@ -22,7 +22,12 @@ func TestPickCodeFriendPrewarm(t *testing.T) {
 	testPickCodeFriendPlaybackDownloadAndCache(t, "", true)
 }
 
-func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, prewarm bool) {
+func TestPickCodeFilePreparationIndependentOfLinkPrewarm(t *testing.T) {
+	testPickCodeFriendPlaybackDownloadAndCache(t, "", false, true)
+}
+
+func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, prewarm bool, prepare ...bool) {
+	prepareFiles := len(prepare) > 0 && prepare[0]
 	const userID = "8be403a10974486c94a987b8036c8484"
 	accounts, sourceID := proxyTestAccounts(t)
 	targetID, err := accounts.Add("friend")
@@ -68,7 +73,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if err := cache.ApplyBindings(upstream.URL, []service.PlaybackBinding{{UserID: userID, AccountID: targetID}}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm, PrepareFiles: prepareFiles}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
 	defer h.Close()
 	h.pickDownload = func(context.Context, string, string, string) (string, error) {
 		t.Fatal("source direct link returned to friend")
@@ -89,13 +94,25 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if fake.pickReads != 0 || fake.uploads != 0 {
 		t.Fatal("cloud access before authorization")
 	}
-	if prewarm {
+	if prewarm || prepareFiles {
 		if w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer"); w.Code != 200 {
 			t.Fatal(w.Code)
 		}
 		awaitPrewarm(t, h)
 		if fake.uploads != 1 {
 			t.Fatal("friend file not prepared")
+		}
+		if prepareFiles {
+			if fake.links != 0 || len(h.directLinks.Status().Entries) != 0 {
+				t.Fatal("file preparation fetched/cached a playback URL")
+			}
+			req := httptest.NewRequest("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer", nil)
+			req.Header.Set("User-Agent", "other-detail-UA")
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			awaitPrewarm(t, h)
+			if fake.links != 0 || fake.uploads != 1 || fake.pickReads != 1 {
+				t.Fatal("UA change repeated preparation")
+			}
 		}
 	}
 	for _, p := range []string{path, "/Items/movie/Download?api_key=viewer", path} {

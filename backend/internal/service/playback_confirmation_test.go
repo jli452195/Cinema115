@@ -32,7 +32,7 @@ func (f *confirmationFake) FindPlaybackFileBySHA1(ctx context.Context, hash, coo
 	if f.visibleAt == 0 || f.queries < f.visibleAt {
 		return nil, nil
 	}
-	file := p115.DrivePlaybackFile{ID: "123", PickCode: "pick123", CID: "0", SHA1: hash}
+	file := p115.DrivePlaybackFile{ID: "123", PickCode: "pick123", CID: "0", SHA1: hash, Size: 100}
 	if f.wrongHash {
 		file.SHA1 = strings.Repeat("B", 40)
 	}

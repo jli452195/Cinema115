@@ -61,7 +61,8 @@ type playbackCacheClient interface {
 type PlaybackCache struct {
 	Members           *MemberPlaybackService // wired before listeners start
 	foregroundWaiting atomic.Int64
-	sourceMappings    map[string]string // bounded, memory-only; guarded by gate
+	sourceMappings    map[string]string                // bounded, memory-only; guarded by gate
+	searchBackoff     map[string]playbackSearchBackoff // guarded by gate
 	mu                sync.Mutex
 	gate              chan struct{}
 	store             accountSecretStore
@@ -411,7 +412,17 @@ func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 	return s.saveLocked(doc)
 }
 func cacheMatches(f p115.DrivePlaybackFile, info *p115.DownloadInfo) bool {
-	return info != nil && len(info.SHA1) == 40 && strings.EqualFold(f.SHA1, info.SHA1)
+	return info != nil && info.Size > 0 && f.Size == info.Size && len(info.SHA1) == 40 && strings.EqualFold(f.SHA1, info.SHA1)
+}
+
+type preparePlaybackFileKey struct{}
+
+func PreparePlaybackFileContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, preparePlaybackFileKey{}, true)
+}
+func preparingPlaybackFile(ctx context.Context) bool {
+	v, _ := ctx.Value(preparePlaybackFileKey{}).(bool)
+	return v
 }
 
 // PlaybackResolution contains display metadata only; it never contains credentials or URLs.

@@ -174,11 +174,15 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	// Only fresh material without ranges/copies arms this hook. Speculate on
 	// the read-only source URL while searching the destination; never upload
 	// until the search and all destination preflight checks have succeeded.
+	if err := s.waitPlaybackSearch(ctx, key, targetScope); err != nil {
+		return "", err
+	}
 	stopPrefetch := info.StartRangeSourcePrefetch(ctx)
 	defer stopPrefetch()
 	next("目标账号 SHA1 查找")
 	f, err := fast.FindPlaybackFileBySHA1(ctx, info.SHA1, selected.cookie)
 	if err != nil {
+		s.backoffPlaybackSearch(key, targetScope, time.Now().Add(5*time.Second), err)
 		return "", fmt.Errorf("朋友账号 SHA1 查找失败，未执行秒传：%s", p115.SharePlaybackFailureReason(err))
 	}
 	e := PlaybackCacheEntry{Key: key, AccountID: selected.binding.AccountID, UID: selected.uid, ParentCID: selected.binding.ParentCID, DirectoryID: selected.binding.ParentCID, File: p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}, Status: "uploading", CreatedAt: time.Now().UTC(), LastUsed: time.Now().UTC()}
@@ -220,6 +224,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		s.logs.Add(ctx, "INFO", fmt.Sprintf("SHA1 搜索完成，未命中；SHA1=%s｜历史记录数=%d｜最近记录=%s｜状态=%s｜原因=%s", strings.ToUpper(info.SHA1), count, previous.Key, previous.Status, previous.Message))
 	}
 	if remaining := time.Until(retryAt); remaining > 0 {
+		s.backoffPlaybackSearch(key, targetScope, minTime(time.Now().Add(3*time.Second), retryAt), nil)
 		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
 	next("账号上传预检")
@@ -279,8 +284,20 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	next("目标 SHA1 校验与取链")
 	s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
-	file, link, err := fast.CompletePlaybackUpload(ctx, info, selected.binding.ParentCID, result, selected.cookie, ua)
-	if err != nil || !cacheMatches(file, info) || file.ID == "" || file.PickCode == "" || !p115.AllowedDirectPlaybackURL(link) {
+	var file p115.DrivePlaybackFile
+	var link string
+	if preparingPlaybackFile(ctx) {
+		if preparer, ok := fast.(interface {
+			CompletePlaybackFile(context.Context, *p115.DownloadInfo, string, *p115.InstantUploadResult, string) (p115.DrivePlaybackFile, error)
+		}); ok {
+			file, err = preparer.CompletePlaybackFile(ctx, info, selected.binding.ParentCID, result, selected.cookie)
+		} else {
+			err = fmt.Errorf("播放客户端不支持独立文件核验")
+		}
+	} else {
+		file, link, err = fast.CompletePlaybackUpload(ctx, info, selected.binding.ParentCID, result, selected.cookie, ua)
+	}
+	if err != nil || !cacheMatches(file, info) || file.ID == "" || file.PickCode == "" || !preparingPlaybackFile(ctx) && !p115.AllowedDirectPlaybackURL(link) {
 		reason := "目标 SHA1、文件标识或直链未通过核验"
 		var detailed *p115.PlaybackCompletionError
 		if errors.As(err, &detailed) {
@@ -316,9 +333,13 @@ func (s *PlaybackCache) rememberSource(source, key string) {
 	s.sourceMappings[source] = key
 }
 func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry, selected *PlaybackCacheSelection, ua string, report *PlaybackResolution) (string, error) {
-	link, err := s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
-	if err != nil || !p115.AllowedDirectPlaybackURL(link) {
-		return "", fmt.Errorf("朋友文件取链失败，请检查文件及账号")
+	var link string
+	if !preparingPlaybackFile(ctx) {
+		var err error
+		link, err = s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
+		if err != nil || !p115.AllowedDirectPlaybackURL(link) {
+			return "", fmt.Errorf("朋友文件取链失败，请检查文件及账号")
+		}
 	}
 	e.LastUsed = time.Now().UTC()
 	if err := s.put(e); err != nil {

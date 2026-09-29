@@ -13,6 +13,65 @@ import (
 	"time"
 )
 
+type joiningCacheContext struct {
+	context.Context
+	joined chan struct{}
+	once   sync.Once
+}
+
+func (c *joiningCacheContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.joined) })
+	return c.Context.Done()
+}
+func TestDisabledDirectCacheStillMergesFlights(t *testing.T) {
+	var c DirectLinkCache
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	fetch := func(context.Context) (DirectLinkValue, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return DirectLinkValue{URL: "https://cdn.115.com/v"}, nil
+	}
+	go func() {
+		defer close(done)
+		_, _, _, err := c.Get(ctx, "key", 0, DirectLinkCacheEntry{}, fetch)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+	<-started
+	waiter := &joiningCacheContext{Context: ctx, joined: make(chan struct{})}
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		_, hit, expires, err := c.Get(waiter, "key", 0, DirectLinkCacheEntry{}, fetch)
+		if err != nil || !hit || !expires.IsZero() {
+			t.Error("flight not shared", err)
+		}
+	}()
+	select {
+	case <-waiter.joined:
+	case <-ctx.Done():
+		t.Fatal("waiter did not join")
+	}
+	close(release)
+	<-done
+	<-waitDone
+	if calls.Load() != 1 || len(c.Status().Entries) != 0 {
+		t.Fatal("cache disabled flight behavior incorrect")
+	}
+	_, hit, expires, err := c.Get(ctx, "key", 0, DirectLinkCacheEntry{}, func(context.Context) (DirectLinkValue, error) {
+		calls.Add(1)
+		return DirectLinkValue{URL: "https://cdn.115.com/new"}, nil
+	})
+	if err != nil || hit || !expires.IsZero() || calls.Load() != 2 {
+		t.Fatal("completed flight persisted")
+	}
+}
+
 func TestDirectLinkCacheDefaultMigrationAndValidation(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
@@ -37,6 +96,26 @@ func TestDirectLinkCacheDefaultMigrationAndValidation(t *testing.T) {
 		if proxy.Status().Config.DirectLinkCacheMinutes != tc.want {
 			t.Fatal("migration changed explicit setting")
 		}
+		if !proxy.Status().Config.PrepareFiles || proxy.Status().Config.Prewarm {
+			t.Fatal("incorrect preparation defaults")
+		}
+		config := proxy.Status().Config
+		config.PrepareFiles = false
+		raw, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Save(string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		reopened, err := NewEmbyProxy(context.Background(), store, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reopened.Status().Config.PrepareFiles {
+			t.Fatal("explicit disable lost after restart")
+		}
+		reopened.Close()
 		proxy.Close()
 	}
 	for _, n := range []int{-1, 31} {
