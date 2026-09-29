@@ -1,4 +1,4 @@
-import { catalogAPI } from './useWebsiteAuth'
+import { catalogAPI } from './usePortalAuth'
 import { onBeforeUnmount, ref } from 'vue'
 import type { ScheduledEpisode } from '../types/seasonLibrary'
 import { createRequestQueue } from './requestQueue'

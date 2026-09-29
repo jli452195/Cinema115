@@ -44,7 +44,7 @@ func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
 	admin = admin.Group("")
 	// 手动刷新与后台重新验证走同一路由，只跳过 TMDB 缓存，不暴露密钥。
 	admin.Use(func(c *gin.Context) {
-		if c.Query("refresh") == "1" && c.GetString("website_role") != "user" {
+		if c.Query("refresh") == "1" && c.GetString("portal_role") != "user" {
 			c.Request = c.Request.WithContext(tmdb.WithFresh(c.Request.Context()))
 		}
 		c.Next()

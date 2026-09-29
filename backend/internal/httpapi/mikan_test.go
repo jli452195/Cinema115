@@ -36,20 +36,18 @@ func TestMikanAdminSearchAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	auth := service.NewWebsiteAuth(db, "admin", "admin-password", "test-secret")
-	adminToken, _, err := auth.Login(ctx, "admin", "admin-password")
+	auth := portalTestAuth(t, db, "admin", "admin-password", "test-secret")
+	adminToken, _, err := auth.LoginAdmin(ctx, "admin", "admin-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = auth.Create(ctx, "reader", "reader-password"); err != nil {
-		t.Fatal(err)
-	}
+	portalTestUser(t, auth, "reader", "reader-password")
 	userToken, _, err := auth.Login(ctx, "reader", "reader-password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	admin := r.Group("/api/admin", WebsiteAuthenticated(auth), WebsiteAdminOnly())
+	admin := r.Group("/api/admin", PortalAuthenticated(auth), PortalAdminOnly())
 	reader := &mikanTestReader{}
 	logs := &service.GenerationLogs{}
 	RegisterMikan(admin, service.NewMikanService(reader, logs))

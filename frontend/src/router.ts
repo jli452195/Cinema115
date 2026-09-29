@@ -17,7 +17,7 @@ import EmbyView from './views/EmbyView.vue'
 import EmbyProxyView from './views/EmbyProxyView.vue'
 import EmbyCacheView from './views/EmbyCacheView.vue'
 import EmbyUsersView from './views/EmbyUsersView.vue'
-import WebsiteUsersView from './views/WebsiteUsersView.vue'
+import PortalSettingsView from './views/PortalSettingsView.vue'
 import RegisterView from './views/RegisterView.vue'
 import PersonalPlaybackView from './views/PersonalPlaybackView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
@@ -26,7 +26,7 @@ import FollowManagementView from './views/FollowManagementView.vue'
 import UpdatesView from './views/UpdatesView.vue'
 import GyingView from './views/GyingView.vue'
 import NanShareView from './views/NanShareView.vue'
-import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebsiteAuth'
+import { ensurePortalSession, portalBrowseRoutes } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
 export const router = createRouter({
@@ -38,7 +38,7 @@ export const router = createRouter({
     { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
     { path: '/follows', name: 'my-follows', component: MyFollowsView },
-    { path: '/users', name: 'users', component: WebsiteUsersView },
+    { path: '/users', name: 'users', component: PortalSettingsView },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },
     { path: '/movie', name: 'movie', component: DashboardView, props: { kind: 'movie' } },
@@ -73,8 +73,8 @@ export const router = createRouter({
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
 router.beforeEach(async to => {
   if (to.name === 'register') return
-  const user = await ensureWebsiteSession()
-  const browsing = websiteBrowseRoutes.has(String(to.name))
+  const user = await ensurePortalSession()
+  const browsing = portalBrowseRoutes.has(String(to.name))
   if (user && user.role !== 'admin' && !browsing) return { path: '/', replace: true }
   if (['/', '/movie', '/tv'].includes(to.path) && typeof to.query.q === 'string' && to.query.q.trim()) {
     return { path: '/search', query: { q: to.query.q.trim(), scope: to.path === '/movie' ? 'movie' : 'tv' }, replace: true }

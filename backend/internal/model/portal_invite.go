@@ -1,8 +1,6 @@
 package model
 
-type WebsiteInvite struct {
-	EmbyTarget     string `json:"-"`
-	EmbyName       string `json:"embyName,omitempty"`
+type PortalInvite struct {
 	ID             string `json:"id"`
 	PlaybackSource string `json:"playbackSource"`
 	CodeHash       string `json:"-"`

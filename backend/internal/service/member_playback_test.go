@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"strm115/backend/internal/client/emby"
@@ -62,7 +63,10 @@ func (f *memberTestRemote) ValidateCacheParent(_ context.Context, cid, cookie st
 func (f *memberTestRemote) Users(context.Context) ([]emby.User, error) {
 	out := []emby.User{}
 	for _, u := range f.users {
-		out = append(out, emby.User{ID: u.ID, Name: u.Name})
+		user := emby.User{ID: u.ID, Name: u.Name}
+		user.Policy.IsAdministrator = u.Policy["IsAdministrator"] == true
+		user.Policy.IsDisabled = u.Policy["IsDisabled"] == true
+		out = append(out, user)
 	}
 	return out, nil
 }
@@ -75,7 +79,7 @@ func (f *memberTestRemote) ManagedUser(_ context.Context, id string) (emby.Manag
 }
 func (f *memberTestRemote) CreateManagedUser(_ context.Context, name string) (emby.ManagedUser, error) {
 	f.created++
-	u := emby.ManagedUser{ID: strings.Repeat("e", 32), Name: name, Policy: map[string]any{}}
+	u := emby.ManagedUser{ID: fmt.Sprintf("%032x", f.created+100), Name: name, Policy: map[string]any{}}
 	f.users[u.ID] = u
 	if f.failCreate {
 		return emby.ManagedUser{}, errors.New("response lost")
@@ -118,10 +122,7 @@ func memberFixture(t *testing.T) (*MemberPlaybackService, *memberTestRemote, str
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	id := strings.Repeat("a", 32)
-	if err := db.CreateWebsiteUser(ctx, model.WebsiteUser{ID: id, Username: "reader", PasswordHash: "hash", CreatedAt: "now"}); err != nil {
-		t.Fatal(err)
-	}
+	id := embyProfileID("server", strings.Repeat("a", 32))
 	accounts, err := OpenP115AccountsSQLite(ctx, db, t.TempDir(), "test-secret")
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +140,14 @@ func memberFixture(t *testing.T) (*MemberPlaybackService, *memberTestRemote, str
 	if err := s.SetSettings(ctx, model.MemberPlaybackSettings{Enabled: true, LibraryIDs: []string{"library"}, PublicURL: "https://play.example.com"}); err != nil {
 		t.Fatal(err)
 	}
+	remote := emby.ManagedUser{ID: strings.Repeat("a", 32), Name: "reader", Policy: map[string]any{"IsDisabled": false, "IsAdministrator": false}}
+	f.users[remote.ID] = remote
+	if _, err := s.ObserveUser(ctx, embyService.snapshot(), remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSource(ctx, id, "personal", ""); err != nil {
+		t.Fatal(err)
+	}
 	return s, f, id
 }
 func memberScan(t *testing.T, s *MemberPlaybackService, id string) {
@@ -152,348 +161,350 @@ func memberScan(t *testing.T, s *MemberPlaybackService, id string) {
 		t.Fatal(status, err)
 	}
 }
-func TestMemberPlaybackLifecycleAndNoFallback(t *testing.T) {
+
+func (f *memberTestRemote) AuthenticateUser(_ context.Context, name, password string) (emby.ManagedUser, string, error) {
+	for _, u := range f.users {
+		if u.Name == name && password == "password123" {
+			return u, "server", nil
+		}
+	}
+	return emby.ManagedUser{}, "", ErrLogin
+}
+func TestEmbyPortalIdentityAndRevocation(t *testing.T) {
 	s, f, id := memberFixture(t)
 	ctx := context.Background()
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	auth := NewPortalAuth(s.db, "admin", "password123", "secret")
+	auth.Members = s
+	token, u, err := auth.Login(ctx, "reader", "password123")
+	if err != nil || u.ID != id {
+		t.Fatal(u, err)
+	}
+	if _, _, err := auth.Login(ctx, "admin", "password123"); err == nil {
+		t.Fatal("admin credentials accepted as member")
+	}
+	if _, _, err := auth.LoginAdmin(ctx, "admin", "password123"); err != nil {
 		t.Fatal(err)
 	}
-	pending := s.record(id)
-	if pending.Stage != "pending" || !pending.Provisioned || f.dirs != 0 || len(s.accounts.List()) != 0 {
-		t.Fatal("registration requires drive", pending)
-	}
-	if err := s.AuthorizeLogin(ctx, "http://emby", pending.EmbyID, pending.EmbyName); err != nil {
-		t.Fatal("browse login denied", err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", pending.EmbyID); err == nil {
-		t.Fatal("pending user fell back to primary")
-	}
-	memberScan(t, s, id)
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	if _, err := auth.Authenticate(ctx, token); err != nil {
 		t.Fatal(err)
 	}
-	r := s.record(id)
-	if r.Stage != "ready" || !r.Provisioned || f.created != 1 || f.dirs != 1 {
-		t.Fatal(r, f.created, f.dirs)
+	remote := f.users[u.EmbyID]
+	remote.Name = "renamed"
+	f.users[u.EmbyID] = remote
+	if got, err := auth.Authenticate(ctx, token); err != nil || got.ID != id || got.Username != "renamed" {
+		t.Fatal(got, err)
 	}
-	if managed, err := s.Authorize(ctx, "http://emby", r.EmbyID); !managed || err != nil {
-		t.Fatal(managed, err)
+	remote.Policy["IsDisabled"] = true
+	f.users[u.EmbyID] = remote
+	if _, err := auth.Authenticate(ctx, token); err == nil {
+		t.Fatal("disabled identity accepted")
 	}
-	u := f.users[r.EmbyID]
-	if u.Policy["EnableContentDownloading"] != false || u.Policy["EnableContentDeletion"] != false || u.Policy["IsAdministrator"] != false || u.Policy["EnableAllFolders"] != false {
-		t.Fatal("unsafe policy", u.Policy)
+	delete(f.users, u.EmbyID)
+	if _, err := auth.Authenticate(ctx, token); err == nil {
+		t.Fatal("deleted identity accepted")
 	}
-	bindings := s.Bindings(PlaybackCacheConfig{EmbyURL: "http://emby", Bindings: []PlaybackBinding{{UserID: r.EmbyID, AccountID: "primary"}}})
-	if len(bindings.Bindings) != 1 || bindings.Bindings[0].AccountID != r.AccountID {
-		t.Fatal("mandatory binding replaced", bindings)
+	f.users[strings.Repeat("d", 32)] = emby.ManagedUser{ID: strings.Repeat("d", 32), Name: "renamed", Policy: map[string]any{}}
+	_, replacement, err := auth.Login(ctx, "renamed", "password123")
+	if err != nil || replacement.ID == id {
+		t.Fatal("same-name identity inherited", replacement, err)
 	}
-	f.valid = false
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
+	if _, err := s.Authorize(ctx, "http://emby", replacement.EmbyID); err == nil {
+		t.Fatal("uninvited login granted playback")
 	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("invalid cookie allowed")
-	}
-	f.valid = true
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if s.View(id).Stage != "ready" {
-		t.Fatal("valid cookie did not recover")
-	}
-	disabled := true
-	if err := s.db.UpdateWebsiteUser(ctx, id, "", &disabled); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("disabled website user allowed before sync")
-	}
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if f.users[r.EmbyID].Policy["IsDisabled"] != true {
-		t.Fatal("Emby not disabled")
-	}
-	disabled = false
-	_ = s.db.UpdateWebsiteUser(ctx, id, "", &disabled)
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Suspend(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("unbound fell back")
-	}
-	memberScan(t, s, id)
-	if s.View(id).Stage != "ready" {
-		t.Fatal("same UID did not restore", s.View(id))
-	}
-	// A direct Emby administrator disable must remain blocked after QR refresh.
-	u = f.users[r.EmbyID]
-	u.Policy = memberPolicy(u.Policy, false, s.Settings())
-	f.users[r.EmbyID] = u
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	memberScan(t, s, id)
-	if !s.record(id).AdminBlocked || s.record(id).Stage == "ready" {
-		t.Fatal("scan cleared admin block")
-	}
-	no := false
-	if err := s.AdminUpdate(ctx, id, &no, "", false); err != nil {
-		t.Fatal(err)
-	}
-	if s.record(id).Stage != "ready" {
-		t.Fatal("explicit admin unblock failed")
-	}
-	if err := s.accounts.Delete(r.AccountID, s.accounts.List()[0].Revision); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("deleted target fell back")
-	}
-	if len(s.Bindings(PlaybackCacheConfig{}).Bindings) != 1 {
-		t.Fatal("deleted target binding lost")
+	s.emby.config.ServerID = "changed"
+	if _, err := auth.Authenticate(ctx, token); err == nil {
+		t.Fatal("server identity changed")
 	}
 }
-func TestMemberProvisionRecoveryAndIdentity(t *testing.T) {
+func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 	s, f, id := memberFixture(t)
 	ctx := context.Background()
+	if _, err := s.Authorize(ctx, "http://emby", s.record(id).EmbyID); err == nil {
+		t.Fatal("unbound played")
+	}
 	memberScan(t, s, id)
-	f.failCreate = true
-	if err := s.Provision(ctx, id, "password123"); err == nil {
-		t.Fatal("lost response accepted")
+	old := s.record(id)
+	if old.Stage != "ready" || old.AccountID == "" {
+		t.Fatal(old)
 	}
-	if s.record(id).Stage != "creating" {
-		t.Fatal("reservation not saved")
-	}
-	f.failCreate = false
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err != nil {
 		t.Fatal(err)
 	}
-	if f.created != 1 || f.dirs != 1 {
-		t.Fatal("created twice")
-	}
-	// UID uniqueness applies to either direction of administrator/member edits.
-	other, err := s.accounts.Add("other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.accounts.Update(other, 1, "other", &f.cookie); err == nil {
-		t.Fatal("UID shared with administrator config")
-	}
-	f.cookie = "UID=999_A; SEID=another"
+	f.cookie = "UID=999_A; SEID=new"
 	qr, err := s.CreateQR(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PollQR(ctx, strings.Repeat("c", 32), qr.ID); err == nil {
-		t.Fatal("another user consumed QR")
-	}
 	if _, err := s.PollQR(ctx, id, qr.ID); err == nil {
-		t.Fatal("UID silently changed")
+		t.Fatal("implicit replacement allowed")
 	}
-}
-func TestMemberUncertainDirectoryAndEnableStayLocked(t *testing.T) {
-	s, f, id := memberFixture(t)
-	ctx := context.Background()
-	memberScan(t, s, id)
+	delete(s.sessions, id)
 	f.failDirectory = true
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	qr, err = s.CreateQR(ctx, id, true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Authorize(ctx, "http://emby", s.record(id).EmbyID); err == nil {
-		t.Fatal("uncertain directory enabled playback")
+	if _, err := s.PollQR(ctx, id, qr.ID); err == nil {
+		t.Fatal("uncertain directory accepted")
 	}
-	if err := s.Provision(ctx, id, "password123"); err != nil || f.dirs != 1 {
-		t.Fatal("directory creation replayed")
+	pending := s.record(id)
+	if pending.AccountID != old.AccountID || pending.PendingAccountID == "" {
+		t.Fatal("old binding changed", pending)
+	}
+	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err != nil {
+		t.Fatal("failed replacement stopped old playback", err)
 	}
 	f.failDirectory = false
+	if err := s.FinishDriveChange(ctx, id, false); err == nil {
+		t.Fatal("uncertain create retried")
+	}
 	if err := s.AdminUpdate(ctx, id, nil, "123", false); err != nil {
 		t.Fatal(err)
 	}
-	f.failEnable = true
-	if err := s.Provision(ctx, id, "password123"); err == nil {
-		t.Fatal("unknown policy accepted")
-	}
-	r := s.record(id)
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("uncertain enable allowed playback")
-	}
-	f.failEnable = false
-	if err := s.SyncUser(ctx, id); err != nil {
+	if err := s.FinishDriveChange(ctx, id, false); err != nil {
 		t.Fatal(err)
 	}
-	if s.record(id).Stage != "ready" {
-		t.Fatal("recovery failed")
+	reopened, err := newP115Accounts(s.accounts.store, "")
+	if err != nil {
+		t.Fatal("replacement did not survive restart", err)
+	}
+	s.accounts = reopened
+	current := s.record(id)
+	if current.AccountID == old.AccountID || current.PendingAccountID != "" {
+		t.Fatal(current)
+	}
+	a, _ := s.accounts.Get(old.AccountID)
+	if a.Cookie != "" || a.UID != "123" {
+		t.Fatal("old identity mutated or credentials retained")
+	}
+	if err := s.Suspend(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err == nil {
+		t.Fatal("suspended drive fell back")
+	}
+	memberScan(t, s, id)
+	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSource(ctx, id, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err == nil {
+		t.Fatal("revocation allowed playback")
+	}
+	if f.users[old.EmbyID].Policy["EnableMediaPlayback"] != false {
+		t.Fatal("upstream playback not denied")
+	}
+}
+func TestInvitationsPoolAndRetry(t *testing.T) {
+	s, f, _ := memberFixture(t)
+	ctx := context.Background()
+	auth := NewPortalAuth(s.db, "admin", "password123", "secret")
+	auth.Members = s
+	invites, err := auth.GenerateInvites(ctx, "admin", "", 2, 7, "assigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := auth.Register(ctx, "newreader", "password123", invites[0].Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.record(first.ID).Source != "assigned" || s.record(first.ID).Stage != "pending" {
+		t.Fatal(s.record(first.ID))
+	}
+	if _, err := auth.Register(ctx, "newreader", "password123", invites[0].Code); err == nil {
+		t.Fatal("invite used twice")
+	}
+	pool, err := s.accounts.Add("pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=777_A; SEID=pool"
+	if err := s.accounts.Update(pool, 1, "pool", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.accounts.UpdatePlaybackDirectory(pool, 2, "123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncUser(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s.record(first.ID).AssignedAccountID != pool || s.record(first.ID).Stage != "ready" {
+		t.Fatal(s.record(first.ID))
+	}
+	f.failCreate = true
+	if _, err := auth.Register(ctx, "secondreader", "password123", invites[1].Code); err == nil {
+		t.Fatal("lost response accepted")
+	}
+	count := f.created
+	f.failCreate = false
+	second, err := auth.Register(ctx, "secondreader", "password123", invites[1].Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.created != count || s.record(second.ID).AssignedAccountID != "" {
+		t.Fatal("duplicate creation or assignment")
+	}
+	if err := s.SetSource(ctx, second.ID, "assigned", pool); err == nil {
+		t.Fatal("shared pool allowed")
+	}
+	if err := s.SetSource(ctx, first.ID, "primary", ""); err == nil {
+		t.Fatal("primary source allowed")
+	}
+	a, _ := s.accounts.Get(pool)
+	if err := s.accounts.Delete(pool, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncUser(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s.record(first.ID).AssignedAccountID != pool {
+		t.Fatal("lost unavailable binding")
+	}
+}
+func TestPortalPoliciesAndUIDConflict(t *testing.T) {
+	s, f, id := memberFixture(t)
+	ctx := context.Background()
+	admin, err := s.accounts.Add("admin-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.accounts.Update(admin, 1, "admin-owned", &f.cookie); err != nil {
+		t.Fatal(err)
+	}
+	qr, err := s.CreateQR(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PollQR(ctx, id, qr.ID); err == nil {
+		t.Fatal("administrator UID taken")
+	}
+	a, _ := s.accounts.Get(admin)
+	if err := s.accounts.Delete(admin, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	delete(s.sessions, id)
+	memberScan(t, s, id)
+	policy := f.users[s.record(id).EmbyID].Policy
+	for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableContentDeletion", "EnableContentDownloading"} {
+		if policy[key] != false {
+			t.Fatal(key)
+		}
+	}
+	if memberPolicyMatches(map[string]any{}, true, s.Settings(), true) {
+		t.Fatal("missing policy accepted")
+	}
+	if _, err := s.Authorize(ctx, "http://emby", "unknown"); err == nil {
+		t.Fatal("unknown user fell back")
+	}
+	if _, err := s.Authorize(ctx, "http://emby", ""); err == nil {
+		t.Fatal("anonymous playback")
 	}
 }
 
-func TestMemberLibrarySettingsRevisionAndRetry(t *testing.T) {
+func TestSyncNeverDowngradesEmbyAdministrator(t *testing.T) {
+	s, f, id := memberFixture(t)
+	ctx := context.Background()
+	r := s.record(id)
+	remote := f.users[r.EmbyID]
+	remote.Policy["IsAdministrator"] = true
+	f.users[r.EmbyID] = remote
+	if err := s.SyncUser(ctx, id); err == nil {
+		t.Fatal("admin accepted")
+	}
+	if f.users[r.EmbyID].Policy["IsAdministrator"] != true {
+		t.Fatal("administrator downgraded")
+	}
+}
+func TestBindTransactionFailureKeepsActiveAssociation(t *testing.T) {
 	s, f, id := memberFixture(t)
 	ctx := context.Background()
 	memberScan(t, s, id)
-	if err := s.Provision(ctx, id, "password123"); err != nil {
-		t.Fatal(err)
-	}
 	r := s.record(id)
-	settings := s.Settings()
-	settings.LibraryIDs = []string{"missing"}
-	if err := s.SetSettings(ctx, settings); err == nil {
-		t.Fatal("unknown library accepted")
-	}
-	settings.LibraryIDs = nil
-	if err := s.SetSettings(ctx, settings); err == nil {
-		t.Fatal("empty enabled libraries accepted")
-	}
-	settings.LibraryIDs = []string{"library2", "library2"}
-	settings.AllowDownload = true
-	settings.Revision = 999 // only the server allocates revisions
-	if err := s.SetSettings(ctx, settings); err != nil {
+	a, _ := s.accounts.Get(r.AccountID)
+	if err := s.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	settings = s.Settings()
-	if settings.Revision != 2 || len(settings.LibraryIDs) != 1 {
-		t.Fatal(settings)
+	_, err := s.accounts.BindMember(ctx, r, "reader", "UID=999_A; SEID=new", a.Revision, true)
+	if err == nil {
+		t.Fatal("write failure hidden")
 	}
-	settings.LibraryIDs[0] = "external mutation"
-	if s.Settings().LibraryIDs[0] != "library2" {
-		t.Fatal("settings slice escaped")
+	if len(s.accounts.List()) != 1 || s.record(id).AccountID != r.AccountID {
+		t.Fatal("memory changed before commit")
 	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("old library permissions used")
+	if a2, _ := s.accounts.Get(r.AccountID); a2.Cookie != a.Cookie {
+		t.Fatal("active credentials overwritten")
 	}
-	f.failEnable = true
-	if err := s.SyncUser(ctx, id); err == nil {
-		t.Fatal("sync uncertainty ignored")
-	}
-	if s.record(id).SyncError == "" || !s.View(id).SyncPending {
-		t.Fatal("sync failure not displayed")
-	}
-	f.failEnable = false
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err != nil {
-		t.Fatal(err)
-	}
-	p := f.users[r.EmbyID].Policy
-	if p["EnableContentDownloading"] != true || p["EnableAllFolders"] != false {
-		t.Fatal("download/library policy incorrect", p)
-	}
-	if folders := p["EnabledFolders"].([]string); len(folders) != 1 || folders[0] != "guid-tv" {
-		t.Fatal("unselected library allowed", folders)
-	}
-	for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableContentDeletion", "IsAdministrator"} {
-		if p[key] != false {
-			t.Fatal("unsafe policy", key)
-		}
-	}
-	settings = s.Settings()
-	settings.AllowDownload = false
-	if err := s.SetSettings(ctx, settings); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("revoked download still authorized")
-	}
-	f.ignoreFolders = true
-	if err := s.SyncUser(ctx, id); err == nil {
-		t.Fatal("ignored library restriction accepted")
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("bad remote policy unlocked playback")
-	}
-	f.ignoreFolders = false
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	persisted, err := s.db.MemberPlaybackSettings(ctx)
-	if err != nil || persisted.Revision != s.Settings().Revision || persisted.LibraryIDs[0] != "library2" {
-		t.Fatal(persisted, err)
-	}
-	// An offline Emby server must never prevent turning self-service off.
-	f.failLibraries = true
-	settings = s.Settings()
-	settings.Enabled = false
-	if err := s.SetSettings(ctx, settings); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-		t.Fatal("disabled service authorized playback")
-	}
+	_ = f
 }
 
-func TestMemberDenyPolicyMustBeVerifiedBeforeProvisioning(t *testing.T) {
-	s, f, id := memberFixture(t)
-	memberScan(t, s, id)
-	f.ignoreFolders = true
-	if err := s.Provision(context.Background(), id, "password123"); err == nil {
-		t.Fatal("unsafe creation policy accepted")
-	}
-	if s.record(id).Provisioned {
-		t.Fatal("unsafe creation marked provisioned")
-	}
-}
-
-func TestMemberBrowsePolicyUsesLibraryGUIDWithoutGrantingPlayback(t *testing.T) {
+func TestCancelUncertainDriveRevokesCredentialsWithoutRetryingCreate(t *testing.T) {
 	s, f, id := memberFixture(t)
 	ctx := context.Background()
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	memberScan(t, s, id)
+	f.cookie = "UID=999_A; SEID=new"
+	f.failDirectory = true
+	qr, err := s.CreateQR(ctx, id, true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	r := s.record(id)
-	p := f.users[r.EmbyID].Policy
-	folders := p["EnabledFolders"].([]string)
-	if len(folders) != 1 || folders[0] != "guid-movies" || s.Settings().LibraryIDs[0] != "library" {
-		t.Fatal("item ID used for policy", folders)
+	if _, err = s.PollQR(ctx, id, qr.ID); err == nil {
+		t.Fatal("uncertain directory accepted")
 	}
-	if p["IsDisabled"] != false || p["EnableMediaPlayback"] != false || p["EnableAllFolders"] != false {
-		t.Fatal("browse-only policy changed", p)
+	pending := s.record(id).PendingAccountID
+	if err := s.FinishDriveChange(ctx, id, true); err != nil {
+		t.Fatal(err)
 	}
-	for _, key := range []string{"EnableAudioPlaybackTranscoding", "EnableVideoPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableSyncTranscoding", "EnableMediaConversion"} {
-		if p[key] != false {
-			t.Fatal("transcoding allowed", key)
-		}
+	a, _ := s.accounts.Get(pending)
+	if a.Cookie != "" {
+		t.Fatal("cancel retained credentials")
 	}
-	settings := s.Settings()
-	settings.LibraryIDs = []string{"deleted"}
-	if _, err := memberPolicySettings(ctx, f, settings); err == nil {
-		t.Fatal("deleted library accepted")
+	f.failDirectory = false
+	count := f.dirs
+	qr, err = s.CreateQR(ctx, id, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	f.failLibraries = true
-	if err := s.SyncUser(ctx, id); err == nil {
-		t.Fatal("sync succeeded without library mapping")
+	if _, err = s.PollQR(ctx, id, qr.ID); err == nil {
+		t.Fatal("forgot uncertain create")
 	}
-	if s.record(id).SyncError == "" {
-		t.Fatal("failed mapping marked synced")
+	if f.dirs != count {
+		t.Fatal("repeated uncertain directory creation")
 	}
 }
 
-func TestMemberLoginRejectsUnfinishedReservations(t *testing.T) {
+func TestPoolRejectsDuplicate115Identity(t *testing.T) {
+	s, _, _ := memberFixture(t)
+	one, err := s.accounts.Add("one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := s.accounts.Add("two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=777_A; SEID=pool"
+	if err := s.accounts.Update(one, 1, "one", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.accounts.Update(two, 1, "two", &cookie); err == nil {
+		t.Fatal("same UID created twice in pool")
+	}
+}
+
+func TestPlaybackRevocationPreservesEmbyBrowsing(t *testing.T) {
 	s, _, id := memberFixture(t)
 	ctx := context.Background()
-	if err := s.AuthorizeLogin(ctx, "http://emby", strings.Repeat("e", 32), "c115_"+id); err == nil {
-		t.Fatal("reserved user received login before ID persistence")
-	}
-	if err := s.AuthorizeLogin(ctx, "http://emby", "ordinary", "existing-user"); err != nil {
-		t.Fatal(err)
-	}
-	memberScan(t, s, id)
-	if err := s.Provision(ctx, id, "password123"); err != nil {
+	blocked := true
+	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
 		t.Fatal(err)
 	}
 	r := s.record(id)
+	if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
+		t.Fatal("blocked playback")
+	}
 	if err := s.AuthorizeLogin(ctx, "http://emby", r.EmbyID, r.EmbyName); err != nil {
-		t.Fatal(err)
-	}
-	settings := s.Settings()
-	settings.LibraryIDs = []string{"library2"}
-	if err := s.SetSettings(ctx, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AuthorizeLogin(ctx, "http://emby", r.EmbyID, r.EmbyName); err == nil {
-		t.Fatal("pending policy received login")
+		t.Fatal("playback revocation blocked login", err)
 	}
 }

@@ -2,14 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 const props = defineProps<{ token: string }>()
 interface Settings { enabled: boolean; libraryIds: string[]; allowDownload: boolean; publicUrl: string; revision: number }
-interface Member { userId: string; embyName: string; embyId: string; stage: string; message: string; adminBlocked: boolean; directoryStarted: boolean; directoryId: string; appliedRevision: number; syncError: string; source: string; assignedAccountId: string; personalDrive?: { uid: string; connected: boolean; directoryId: string } }
+interface Member { administrator?: boolean; skipLibrarySync?: boolean; userId: string; embyName: string; embyId: string; stage: string; message: string; adminBlocked: boolean; directoryStarted: boolean; directoryId: string; appliedRevision: number; syncError: string; source: string; assignedAccountId: string; personalDrive?: { uid: string; connected: boolean; directoryId: string } }
 const settings = ref<Settings>({ enabled: false, libraryIds: [], allowDownload: false, publicUrl: '', revision: 0 }), members = ref<Member[]>([])
 const libraries = ref<{ ItemId: string; Name: string; CollectionType: string }[]>([])
 const libraryLoading = ref(false), libraryLoaded = ref(false), savedRevision = ref(0), loaded = ref(false)
 const missingLibraries = computed(() => libraryLoaded.value ? settings.value.libraryIds.filter(id => !libraries.value.some(library => library.ItemId === id)) : [])
 const counts = computed(() => {
-  const provisioned = members.value.filter(member => member.embyId)
-  return { failed: provisioned.filter(member => member.syncError).length, pending: provisioned.filter(member => !member.syncError && member.appliedRevision !== savedRevision.value).length, synced: provisioned.filter(member => !member.syncError && member.appliedRevision === savedRevision.value).length }
+  const provisioned = members.value.filter(member => member.embyId && !member.administrator && !member.skipLibrarySync)
+  return { excluded: members.value.filter(member => member.administrator || member.skipLibrarySync).length, failed: provisioned.filter(member => member.syncError).length, pending: provisioned.filter(member => !member.syncError && member.appliedRevision !== savedRevision.value).length, synced: provisioned.filter(member => !member.syncError && member.appliedRevision === savedRevision.value).length }
 })
 const error = ref(''), notice = ref(''), busy = ref(false)
 const lifecycle = new AbortController()
@@ -22,7 +22,7 @@ async function request(path: string, body?: object) {
 let statusTimer: ReturnType<typeof setTimeout> | undefined
 async function load(initial = false) {
   try {
-    const data = await request('member-playback')
+    const data = await request('member-playback/users')
     if (initial) { settings.value = data.settings; loaded.value = true }
     members.value = data.members; savedRevision.value = data.settings.revision
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取失败' }
@@ -46,7 +46,8 @@ async function mutate(id = '', body: object = settings.value) {
     const data = await request('member-playback' + (id ? `/${id}` : ''), body)
     if (!id) settings.value = data.settings
     members.value = data.members; savedRevision.value = data.settings.revision
-    notice.value = id === 'sync' ? '已安排重新同步，可在下方查看结果' : id ? '操作已保存' : '设置已保存，正在同步已有个人用户；同步完成前暂停播放'
+    await load()
+    notice.value = id === 'sync' ? '已安排重新同步，可在下方查看结果' : id ? '操作已保存' : '设置已保存，正在同步播放权限（不同步组保留原媒体库选择）；同步完成前暂停播放'
   }
   catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '操作失败' }
   finally { busy.value = false }
@@ -60,8 +61,8 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(statusTimer) })
     <p v-if="notice" role="status" class="text-sm text-emerald-700 dark:text-emerald-300">{{ notice }}</p>
     <form class="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900" @submit.prevent="mutate()">
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">自助注册与播放设置</h2>
-      <p class="text-sm leading-6 text-slate-500 dark:text-slate-400">直接选择个人用户可访问的 Emby 媒体库，设置同时用于新用户和已有个人用户。仅支持原文件直链播放，音视频转码、重新封装、删除及管理权限始终禁用。</p>
-      <label class="flex gap-2 text-sm text-slate-700 dark:text-slate-300"><input v-model="settings.enabled" type="checkbox" />允许普通网站用户自助开通播放</label>
+      <p class="text-sm leading-6 text-slate-500 dark:text-slate-400">直接选择个人用户可访问的 Emby 媒体库，设置用于默认组用户；不同步组的媒体库权限在 Emby 中单独设置。仅支持原文件直链播放，音视频转码、重新封装、删除及管理权限始终禁用。</p>
+      <label class="flex gap-2 text-sm text-slate-700 dark:text-slate-300"><input v-model="settings.enabled" type="checkbox" />开放邀请注册与个人播放</label>
       <fieldset class="space-y-3" :disabled="busy || !loaded">
         <legend class="text-sm text-slate-700 dark:text-slate-300">允许访问的媒体库</legend>
         <div class="flex flex-wrap gap-4 text-sm">
@@ -83,8 +84,8 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(statusTimer) })
       <button :disabled="busy || !loaded || (settings.enabled && (!settings.libraryIds.length || !!missingLibraries.length))" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40">保存设置</button>
     </form>
     <section class="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-      <div class="flex flex-wrap justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">全局权限同步</h2><div class="flex gap-4"><button class="text-sm text-blue-600 dark:text-blue-300" :disabled="busy" @click="load()">刷新状态</button><button class="text-sm text-blue-600 dark:text-blue-300" :disabled="busy || !loaded" @click="mutate('sync', {})">重试同步</button></div></div>
-      <p class="mt-3 text-xs text-slate-500 dark:text-slate-400" role="status">权限同步：已同步 {{ counts.synced }} · 待同步 {{ counts.pending }} · 失败 {{ counts.failed }}</p>
+      <div class="flex flex-wrap justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">媒体库权限同步</h2><div class="flex gap-4"><button class="text-sm text-blue-600 dark:text-blue-300" :disabled="busy" @click="load()">刷新状态</button><button class="text-sm text-blue-600 dark:text-blue-300" :disabled="busy || !loaded" @click="mutate('sync', {})">重试同步</button></div></div>
+      <p class="mt-3 text-xs text-slate-500 dark:text-slate-400" role="status">权限同步：已同步 {{ counts.synced }} · 待同步 {{ counts.pending }} · 失败 {{ counts.failed }} · 不同步 {{ counts.excluded }}</p>
       <RouterLink to="/emby/users" class="mt-4 inline-block text-sm text-blue-600 dark:text-blue-300">管理 Emby 用户与播放授权</RouterLink>
     </section>
   </div>

@@ -108,7 +108,7 @@ func TestPersonalOwnershipGuardsGenericAccountAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Accounts[0].Ownership = "member"
-	state.Accounts[0].OwnerUserID = strings.Repeat("a", 32)
+	state.Accounts[0].OwnerUserID = strings.Repeat("a", 64)
 	state.Accounts[0].Revision++
 	if err := db.SaveP115Accounts(ctx, state); err != nil {
 		t.Fatal(err)

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
-import { isWebsiteAdmin, websiteUser } from '../composables/useWebsiteAuth'
+import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
 import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
@@ -37,9 +37,9 @@ const headerStyle = computed(() => {
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const updatesActive = computed(() => route.path === '/updates')
-const managementLinks = computed(() => isWebsiteAdmin.value ? [
+const managementLinks = computed(() => isPortalAdmin.value ? [
   { label: '追更管理', to: '/follows/manage' },
-  { label: '用户管理', to: '/users' },
+  { label: '邀请与设置', to: '/users' },
   { label: '115 网盘', to: '/115' },
   { label: 'Telegram 配置', to: '/telegram' },
   { label: '观影搜索', to: '/gying' },
@@ -96,8 +96,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         </button>
       </div>
       <nav v-if="accountOpen" id="header-management" aria-label="管理功能" class="absolute right-4 top-full mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 dark:border-slate-700/70 dark:bg-slate-900 dark:shadow-black/25 sm:right-8">
-        <p class="px-3 py-2 text-xs text-slate-400 dark:text-slate-400">{{ websiteUser?.username }} · {{ isWebsiteAdmin ? '管理员' : '普通用户' }}</p>
-        <RouterLink v-if="!isWebsiteAdmin" to="/account/playback" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels">我的播放</RouterLink>
+        <p class="px-3 py-2 text-xs text-slate-400 dark:text-slate-400">{{ portalUser?.username }} · {{ isPortalAdmin ? '管理员' : '普通用户' }}</p>
+        <RouterLink v-if="!isPortalAdmin" to="/account/playback" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels">我的播放</RouterLink>
         <RouterLink to="/follows" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.name === 'my-follows' ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" :aria-current="route.name === 'my-follows' ? 'page' : undefined" @click="closePanels">我的追更</RouterLink>
         <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="route.path.startsWith(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.path.startsWith(link.to) ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" @click="closePanels">{{ link.label }}</RouterLink>
         <div class="my-1 border-t border-slate-100 dark:border-slate-700/60"></div>

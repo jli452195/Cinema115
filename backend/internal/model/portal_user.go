@@ -1,13 +1,13 @@
 package model
 
-// WebsiteUser 不向浏览器返回密码哈希或凭证版本。
-type WebsiteUser struct {
+// PortalUser is an Emby identity projection, never a separate password account.
+type PortalUser struct {
 	ID           string `json:"id"`
+	ServerID     string `json:"-"`
+	EmbyID       string `json:"embyId,omitempty"`
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	Disabled     bool   `json:"disabled"`
-	CleanupState string `json:"cleanupState,omitempty"`
 	CreatedAt    string `json:"createdAt"`
-	PasswordHash string `json:"-"`
 	TokenVersion int64  `json:"-"`
 }

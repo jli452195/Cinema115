@@ -1,4 +1,4 @@
-import { catalogAPI } from '../composables/useWebsiteAuth'
+import { catalogAPI } from '../composables/usePortalAuth'
 export interface EmbyItem { id: string; type: string; name: string; libraryId: string; season: number; episode: number; endEpisode: number }
 export interface EmbyMatch { kind: 'tv' | 'movie'; tmdbId: string; state: 'present' | 'absent' | 'unknown' | 'stale'; items: EmbyItem[]; episodeCount: number }
 export interface EmbyConfig { url: string; configured: boolean; libraryIds: string[]; serverId: string; serverName: string; webhookPath: string; webhookBaseUrl: string }

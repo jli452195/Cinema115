@@ -13,7 +13,7 @@ func TestCompactMediaMigrationPreservesVersionsAndScopes(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	// 构造升级前的真实表形状，包含同集多版本、特别篇和连续多集文件。
-	_, err := s.db.ExecContext(ctx, `DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; DROP TABLE tmdb_cache; DROP TABLE emby_items; DROP TABLE emby_snapshots;
+	_, err := s.db.ExecContext(ctx, `DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests;  DROP TABLE telegram_notifications; DROP TABLE p115_feature_migration; DROP TABLE p115_account_state; DROP TABLE p115_accounts; DROP TABLE tmdb_cache; DROP TABLE emby_items; DROP TABLE emby_snapshots;
  CREATE TABLE emby_items(scope TEXT NOT NULL,generation TEXT NOT NULL,id TEXT NOT NULL,library_id TEXT NOT NULL,type TEXT NOT NULL,tmdb TEXT NOT NULL,series_id TEXT NOT NULL,parent_id TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(scope,generation,id)); PRAGMA user_version=3;`)
 	if err != nil {
 		t.Fatal(err)

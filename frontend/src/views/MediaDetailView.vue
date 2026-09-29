@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { catalogAPI, isWebsiteAdmin } from '../composables/useWebsiteAuth'
+import { catalogAPI, isPortalAdmin } from '../composables/usePortalAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
@@ -31,7 +31,7 @@ const gyingSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
 const searchConfigured = ref({ re0: false, bot: false, gying: false })
-watch(() => [props.token, isWebsiteAdmin.value] as const, ([token, admin], _, onCleanup) => {
+watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
   searchConfigured.value = { re0: false, bot: false, gying: false }
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
   if (!admin || !token) return
@@ -64,7 +64,7 @@ interface Detail extends CacheInfo {
 }
 const detail = ref<Detail | null>(null)
 // 动画类型包含日漫、国漫及动画电影，不按国家限制入口。
-const canSearchMikan = computed(() => isWebsiteAdmin.value && !!detail.value?.genres?.some(genre => genre.id === 16))
+const canSearchMikan = computed(() => isPortalAdmin.value && !!detail.value?.genres?.some(genre => genre.id === 16))
 watch(canSearchMikan, allowed => { if (!allowed) mikanSearchOpen.value = false })
 const loading = ref(true)
 const error = ref('')
@@ -198,8 +198,8 @@ watch(() => [detail.value?.id, hasIndexedEpisodes.value], () => {
 })
 onBeforeUnmount(() => { cancelRequests(); window.clearInterval(dateTimer); window.clearInterval(scheduleTimer); window.clearTimeout(namingNoticeTimer); document.title = previousTitle })
 // 管理员从追更管理点搜索后打开已有资源浮窗，只消费一次跳转参数。
-watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin.value], () => {
-  if (isWebsiteAdmin.value && detail.value?.id === Number(props.tmdbId) && detail.value?.kind === props.kind && route.query.botSearch === '1') {
+watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.value], () => {
+  if (isPortalAdmin.value && detail.value?.id === Number(props.tmdbId) && detail.value?.kind === props.kind && route.query.botSearch === '1') {
     botSearchOpen.value = true
     const query = { ...route.query }; delete query.botSearch
     void router.replace({ path: route.path, query })
@@ -209,9 +209,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <BotSearchDialog v-if="isWebsiteAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="botSearchOpen = false" />
-    <RE0SearchDialog v-if="isWebsiteAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
-    <GyingSearchDialog v-if="isWebsiteAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
+    <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="botSearchOpen = false" />
+    <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
+    <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
     <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" @close="mikanSearchOpen = false" />
     <WorkbenchHeader :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
@@ -244,7 +244,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500">▱</span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 →</span></RouterLink>
-              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isWebsiteAdmin && searchConfigured.re0" type="button" class="rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isWebsiteAdmin && searchConfigured.bot" type="button" class="rounded-lg border border-blue-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isWebsiteAdmin && searchConfigured.gying" type="button" class="rounded-lg border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
+              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isPortalAdmin && searchConfigured.re0" type="button" class="rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isPortalAdmin && searchConfigured.bot" type="button" class="rounded-lg border border-blue-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isPortalAdmin && searchConfigured.gying" type="button" class="rounded-lg border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
               <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
                 <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">/10</span></span></a>
                 <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.votes.toLocaleString() }} 人评价</span>
@@ -256,9 +256,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
           </section>
 
           <p v-if="embyError" role="status" class="mt-6 text-xs text-amber-700">{{ embyError }}；{{ embyMedia ? '当前显示上次入库查询结果。' : '暂时无法确认入库状态。' }}</p>
-          <EmbyMediaInfo v-if="isWebsiteAdmin && kind === 'movie'" :token="token" :tmdb-id="tmdbId" :media="embyMedia" />
+          <EmbyMediaInfo v-if="isPortalAdmin && kind === 'movie'" :token="token" :tmdb-id="tmdbId" :media="embyMedia" />
           <section v-if="kind === 'tv'" class="mt-12" aria-label="剧集季列表">
-            <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isWebsiteAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
+            <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isPortalAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
             <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无季信息</p>
             <div class="space-y-3">
@@ -284,7 +284,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isWebsiteAdmin
                         <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold text-slate-800 dark:text-slate-200 dark:text-slate-200"><span class="mr-2 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600 dark:bg-amber-500/10 dark:text-amber-500">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true">✓</span></div>
                         <p class="mt-2 flex flex-wrap gap-3 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600">★ {{ episode.rating.toFixed(1) }}</span></p>
                         <p class="mt-3 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.overview || '暂无分集简介。' }}</p>
-                        <EmbyMediaVersions v-if="isWebsiteAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
+                        <EmbyMediaVersions v-if="isPortalAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
                         <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800"><img :src="tmdbImageURL(episode.stillUrl)" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
                       </article>
                     </div>

@@ -9,29 +9,6 @@ import (
 	"strm115/backend/internal/model"
 )
 
-type MemberPlaybackOwner struct {
-	UserID   string
-	Username string
-	Disabled bool
-}
-
-func (s *Store) MemberPlaybackOwners(ctx context.Context) ([]MemberPlaybackOwner, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.username,u.disabled FROM website_users u JOIN member_playback m ON m.user_id=u.id ORDER BY u.id`)
-	if err != nil {
-		return nil, fmt.Errorf("读取播放用户归属: %w", err)
-	}
-	defer rows.Close()
-	out := make([]MemberPlaybackOwner, 0)
-	for rows.Next() {
-		var owner MemberPlaybackOwner
-		if err := rows.Scan(&owner.UserID, &owner.Username, &owner.Disabled); err != nil {
-			return nil, err
-		}
-		out = append(out, owner)
-	}
-	return out, rows.Err()
-}
-
 func (s *Store) MemberPlaybackRecords(ctx context.Context) ([]model.MemberPlayback, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT record FROM member_playback`)
 	if err != nil {

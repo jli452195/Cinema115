@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { catalogAPI } from '../composables/useWebsiteAuth'
+import { catalogAPI } from '../composables/usePortalAuth'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MediaCard from './MediaCard.vue'
 import type { MediaCardItem } from '../types/media'

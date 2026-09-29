@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { catalogAPI } from '../composables/useWebsiteAuth'
+import { catalogAPI } from '../composables/usePortalAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'

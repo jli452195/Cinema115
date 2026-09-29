@@ -12,15 +12,13 @@ import (
 func TestFollowMigrationDeduplicationIsolationAndPagination(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO website_users(id,username,password_hash,created_at) VALUES('reader','reader','hash','date'); DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; PRAGMA user_version=8;`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; PRAGMA user_version=8;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if u, err := s.WebsiteUser(ctx, "reader"); err != nil || u.Username != "reader" {
-		t.Fatal("升级丢失原有用户", err)
-	}
+
 	f := model.Follow{Kind: "tv", TMDBID: 100, Title: "测试剧集", Date: "2026-01-01"}
 	// 同一个用户并发重复提交，以及不同用户提交同一影视，都只创建一份影视申请。
 	var wg sync.WaitGroup

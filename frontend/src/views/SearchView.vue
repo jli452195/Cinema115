@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { catalogAPI } from '../composables/useWebsiteAuth'
+import { catalogAPI } from '../composables/usePortalAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'

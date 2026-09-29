@@ -6,6 +6,7 @@ const props = defineProps<{ registeredUsername?: string }>()
 const emit = defineEmits<{ loggedIn: [token: string] }>()
 const username = ref(props.registeredUsername || '')
 const password = ref('')
+const admin = ref(false)
 const message = ref('')
 const loading = ref(false)
 
@@ -13,7 +14,7 @@ async function login() {
   loading.value = true
   message.value = ''
   try {
-    const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.value, password: password.value }) })
+    const response = await fetch(admin.value ? '/api/auth/admin/login' : '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.value, password: password.value }) })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error ?? '登录失败')
     emit('loggedIn', data.token)
@@ -33,14 +34,15 @@ async function login() {
       <form class="space-y-5 rounded-2xl bg-white dark:bg-slate-900 p-8 shadow-2xl" @submit.prevent="login">
         <div>
           <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-100">账号登录</h2>
-          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">使用你的网站账号登录</p>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{{ admin ? '使用独立管理账号登录' : '使用 Emby 账号和密码登录个人中心' }}</p>
         </div>
         <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">账号<input v-model="username" required autocomplete="username" maxlength="64" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="输入账号" /></label>
         <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">密码<input v-model="password" required type="password" autocomplete="current-password" maxlength="128" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="输入密码" /></label>
         <button class="w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" :disabled="loading">{{ loading ? '登录中…' : '登录' }}</button>
         <p v-if="message" class="rounded-lg bg-red-50 p-3 text-sm text-red-600">{{ message }}</p>
         <p v-if="registeredUsername" role="status" class="text-sm text-emerald-700 dark:text-emerald-300">注册成功，请使用刚设置的密码登录。</p>
-        <RouterLink to="/register" class="block text-center text-sm text-blue-600 dark:text-blue-300">有邀请码？注册账号</RouterLink>
+        <button type="button" class="block w-full text-center text-sm text-slate-500" @click="admin = !admin; message = ''">{{ admin ? '返回 Emby 用户登录' : '管理员登录' }}</button>
+        <RouterLink v-if="!admin" to="/register" class="block text-center text-sm text-blue-600 dark:text-blue-300">有邀请码？注册账号</RouterLink>
       </form>
     </div>
   </main>

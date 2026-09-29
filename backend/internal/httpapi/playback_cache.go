@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strm115/backend/internal/model"
@@ -75,91 +74,6 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			}
 		}
 		c.JSON(200, gin.H{"users": users, "embyUrl": proxyURL, "members": members})
-	})
-	group.POST("/bindings/:userID", func(c *gin.Context) {
-		var in struct {
-			EmbyURL           string  `json:"embyUrl"`
-			Mode              string  `json:"mode"`
-			AccountID         string  `json:"accountId"`
-			ExpectedAccountID *string `json:"expectedAccountId"`
-		}
-		if c.ShouldBindJSON(&in) != nil || in.ExpectedAccountID == nil || (in.Mode != "unbound" && in.Mode != "personal") || (in.Mode == "unbound" && in.AccountID != "") {
-			c.JSON(400, gin.H{"error": "用户播放配置无效"})
-			return
-		}
-		binding := service.PlaybackBinding{UserID: c.Param("userID"), AccountID: in.AccountID}
-		if in.Mode == "personal" {
-			proxyURL := proxy.Status().Config.URL
-			if in.EmbyURL != proxyURL {
-				c.JSON(400, gin.H{"error": "Emby 服务已变化，请刷新用户列表"})
-				return
-			}
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
-			defer cancel()
-			users, err := emby.PlaybackUsers(ctx, proxyURL)
-			if err != nil {
-				c.JSON(400, gin.H{"error": err.Error()})
-				return
-			}
-			found := false
-			for _, user := range users {
-				if user.ID == binding.UserID && !user.Policy.IsDisabled {
-					binding.UserName, found = user.Name, true
-					break
-				}
-			}
-			if !found {
-				c.JSON(400, gin.H{"error": "绑定的 Emby 用户不存在或已停用"})
-				return
-			}
-		}
-		if err := s.UpdateBinding(in.EmbyURL, binding, *in.ExpectedAccountID, in.Mode == "unbound"); err != nil {
-			code := 400
-			if errors.Is(err, service.ErrPlaybackBindingChanged) {
-				code = 409
-			}
-			c.JSON(code, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, s.Status())
-	})
-	group.POST("/bindings", func(c *gin.Context) {
-		var config service.PlaybackCacheConfig
-		if c.ShouldBindJSON(&config) != nil {
-			c.JSON(400, gin.H{"error": "播放缓存配置无效"})
-			return
-		}
-		if len(config.Bindings) > 0 {
-			proxyURL := proxy.Status().Config.URL
-			if config.EmbyURL != proxyURL {
-				c.JSON(400, gin.H{"error": "Emby 服务已变化，请刷新用户列表"})
-				return
-			}
-			users, err := emby.PlaybackUsers(c.Request.Context(), proxyURL)
-			if err != nil {
-				c.JSON(400, gin.H{"error": err.Error()})
-				return
-			}
-			for i, b := range config.Bindings {
-				found := false
-				for _, u := range users {
-					if u.ID == b.UserID && !u.Policy.IsDisabled {
-						found = true
-						config.Bindings[i].UserName = u.Name
-						break
-					}
-				}
-				if !found {
-					c.JSON(400, gin.H{"error": "绑定的 Emby 用户不存在或已停用"})
-					return
-				}
-			}
-		}
-		if err := s.ApplyBindings(config.EmbyURL, config.Bindings); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, s.Status())
 	})
 	// Retired endpoints cannot re-enable cloud deletion, even for older clients.
 	group.POST("/policy", func(c *gin.Context) {

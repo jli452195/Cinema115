@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func registerWebsiteRegistration(r *gin.Engine, auth *service.WebsiteAuth) {
+func registerEmbyRegistration(r *gin.Engine, auth *service.PortalAuth) {
 	var mu sync.Mutex
 	var window time.Time
 	count := 0
@@ -46,7 +46,7 @@ func registerWebsiteRegistration(r *gin.Engine, auth *service.WebsiteAuth) {
 		}
 		source, err := auth.InviteSource(c.Request.Context(), input.Code)
 		if err != nil {
-			websiteAuthError(c, err)
+			portalAuthError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"valid": true, "playbackSource": source})
@@ -63,14 +63,14 @@ func registerWebsiteRegistration(r *gin.Engine, auth *service.WebsiteAuth) {
 		}
 		u, err := auth.Register(c.Request.Context(), input.Username, input.Password, input.Code)
 		if err != nil {
-			websiteAuthError(c, err)
+			portalAuthError(c, err)
 			return
 		}
 		c.JSON(201, gin.H{"user": u})
 	})
 }
 
-func registerWebsiteInvites(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
+func registerPortalInvites(admin *gin.RouterGroup, auth *service.PortalAuth) {
 	group := admin.Group("/invites")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -83,9 +83,9 @@ func registerWebsiteInvites(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
 			c.JSON(400, gin.H{"error": "分页参数无效"})
 			return
 		}
-		invites, err := auth.DB.WebsiteInvites(c.Request.Context(), offset)
+		invites, err := auth.DB.PortalInvites(c.Request.Context(), offset)
 		if err != nil {
-			websiteAuthError(c, err)
+			portalAuthError(c, err)
 			return
 		}
 		hasMore := len(invites) > 50
@@ -107,14 +107,14 @@ func registerWebsiteInvites(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
 		}
 		invites, err := auth.GenerateInvites(c.Request.Context(), c.GetString("admin_username"), input.Note, input.Count, input.Days, input.PlaybackSource)
 		if err != nil {
-			websiteAuthError(c, err)
+			portalAuthError(c, err)
 			return
 		}
 		c.JSON(201, gin.H{"invites": invites})
 	})
 	group.POST("/:id/revoke", func(c *gin.Context) {
-		if err := auth.DB.RevokeWebsiteInvite(c.Request.Context(), c.Param("id")); err != nil {
-			websiteAuthError(c, err)
+		if err := auth.DB.RevokePortalInvite(c.Request.Context(), c.Param("id")); err != nil {
+			portalAuthError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"message": "邀请已撤销"})

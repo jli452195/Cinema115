@@ -62,11 +62,9 @@ func TestFollowRoutesIdentityPersistenceAndAvailability(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	auth := service.NewWebsiteAuth(db, "admin", "admin-password", "secret")
+	auth := portalTestAuth(t, db, "admin", "admin-password", "secret")
 	for _, name := range []string{"alice", "bob"} {
-		if _, err := auth.Create(ctx, name, "test-password"); err != nil {
-			t.Fatal(err)
-		}
+		portalTestUser(t, auth, name, "test-password")
 	}
 	alice, _, err := auth.Login(ctx, "alice", "test-password")
 	if err != nil {
@@ -79,7 +77,7 @@ func TestFollowRoutesIdentityPersistenceAndAvailability(t *testing.T) {
 	source := &followTMDBFixture{}
 	library := &followLibraryFixture{}
 	r := gin.New()
-	member := r.Group("/api/me", WebsiteAuthenticated(auth))
+	member := r.Group("/api/me", PortalAuthenticated(auth))
 	s := &service.FollowService{Store: db, TMDB: source, Library: library}
 	RegisterFollows(member, s)
 	call := func(method, path, token, body string, want int) map[string]any {
@@ -152,7 +150,8 @@ func TestFollowRoutesIdentityPersistenceAndAvailability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := db.WebsiteUserByName(ctx, "alice")
+	auth = portalTestAuth(t, db, "admin", "admin-password", "secret")
+	u, err := db.PortalUser(ctx, portalTestUser(t, auth, "alice", "test-password").ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 func TestNotificationMigrationRetryAndRetention(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx, "DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests; DROP TABLE website_users; DROP TABLE telegram_notifications; PRAGMA user_version=6;"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "DROP TABLE follow_bot_jobs; DROP TABLE website_notifications; DROP TABLE follow_checks; DROP TABLE follow_settings; DROP TABLE user_follows; DROP TABLE follow_requests;  DROP TABLE telegram_notifications; PRAGMA user_version=6;"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initialize(ctx); err != nil {

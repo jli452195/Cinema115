@@ -17,7 +17,7 @@ async function request(path: string, input: object) {
 async function check() {
   if (busy.value || !code.value.trim()) return
   busy.value = true; message.value = ''; notice.value = ''
-  try { const data = await request('invite/check', { code: code.value }); notice.value = data.playbackSource === 'existing' ? '专属邀请有效：注册后关联原 Emby 账号，保留原播放来源，可准备本人网盘后主动切换。' : data.playbackSource === 'primary' ? '朋友邀请有效：注册后可创建 Emby 账号，使用管理员主账号播放，无需扫码。' : '邀请码有效：可先注册 Emby 并浏览媒体库，绑定自己的 115 后开通播放。' }
+  try { const data = await request('invite/check', { code: code.value }); notice.value = data.playbackSource === 'assigned' ? '邀请码有效：注册 Emby 后分配管理员小号，无可用账号时等待分配。' : '邀请码有效：注册 Emby 后可登录浏览，绑定自己的 115 后开通播放。' }
   catch (error) { if (!lifecycle.signal.aborted) message.value = error instanceof Error ? error.message : '邀请码检查失败' }
   finally { busy.value = false }
 }
@@ -44,10 +44,10 @@ onBeforeUnmount(() => lifecycle.abort())
 <template>
   <main class="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10">
     <form class="w-full max-w-md space-y-5 rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 sm:p-8" @submit.prevent="register">
-      <div><h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">邀请码注册</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400">使用管理员发给你的邀请码创建 Cinema115 网站账号。</p></div>
+      <div><h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">邀请码注册</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400">使用管理员发给你的邀请码创建 Emby 账号，同一账号用于登录个人中心和 Emby 客户端。</p></div>
       <label class="block text-sm text-slate-700 dark:text-slate-300">邀请码<input v-model="code" required maxlength="64" autocomplete="off" spellcheck="false" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-sm dark:border-slate-700 dark:bg-slate-950" @input="notice = ''; message = ''" /></label>
       <button type="button" :disabled="busy || !code.trim()" class="text-sm text-blue-600 disabled:opacity-50 dark:text-blue-300" @click="check">检查邀请码</button>
-      <label class="block text-sm text-slate-700 dark:text-slate-300">用户名<input v-model="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,31}" autocomplete="username" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" placeholder="3–32 位字母、数字、下划线、点或短横线" /></label>
+      <label class="block text-sm text-slate-700 dark:text-slate-300">用户名<input v-model="username" required minlength="3" maxlength="32" autocomplete="username" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" placeholder="3–32 位字母、汉字、数字、下划线、点或短横线" /></label>
       <label class="block text-sm text-slate-700 dark:text-slate-300">密码<input v-model="password" required minlength="8" maxlength="128" type="password" autocomplete="new-password" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" placeholder="至少 8 位" /></label>
       <label class="block text-sm text-slate-700 dark:text-slate-300">确认密码<input v-model="confirmation" required minlength="8" maxlength="128" type="password" autocomplete="new-password" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" /></label>
       <p v-if="message" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-300">{{ message }}</p>

@@ -63,7 +63,6 @@ func newP115Accounts(store accountSecretStore, legacy string) (*P115Accounts, er
 			return nil, fmt.Errorf("115 多账号配置版本或数量无效")
 		}
 		seen := make(map[string]bool, len(s.value.Accounts))
-		owners := make(map[string]bool, len(s.value.Accounts))
 		primaryCount := 0
 		for i, a := range s.value.Accounts {
 			if a.ID == "" || seen[a.ID] || a.Revision == 0 || !validAccountName(a.Name) {
@@ -74,10 +73,9 @@ func newP115Accounts(store accountSecretStore, legacy string) (*P115Accounts, er
 				return nil, fmt.Errorf("115 账号归属无效")
 			}
 			if a.Ownership == "member" || a.OwnerUserID != "" {
-				if a.Ownership != "member" || len(a.OwnerUserID) != 32 || strings.Trim(a.OwnerUserID, "0123456789abcdef") != "" || owners[a.OwnerUserID] || a.Primary {
+				if a.Ownership != "member" || len(a.OwnerUserID) != 64 || strings.Trim(a.OwnerUserID, "0123456789abcdef") != "" || a.Primary {
 					return nil, fmt.Errorf("115 个人网盘归属损坏")
 				}
-				owners[a.OwnerUserID] = true
 			}
 			if a.Primary {
 				primaryCount++
@@ -236,7 +234,7 @@ func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *s
 		if cookie != nil {
 			if uid := accountUID(*cookie); uid != "" {
 				for _, other := range value.Accounts {
-					if other.ID != id && other.UID == uid && (a.OwnerUserID != "" || other.OwnerUserID != "" || IsMemberAccount(id) || IsMemberAccount(other.ID)) {
+					if other.ID != id && other.UID == uid {
 						return fmt.Errorf("%w：该 115 用户已属于其他配置，不能重复绑定", ErrAccountInput)
 					}
 				}

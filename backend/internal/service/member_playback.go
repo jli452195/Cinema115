@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -40,10 +38,12 @@ type memberEmbyClient interface {
 	RenameManagedUser(context.Context, string, string) error
 }
 type memberQRSession struct {
-	source   string
-	qr       *p115.QRCode
-	revision uint64
-	lastPoll time.Time
+	replace   bool
+	accountID string
+	source    string
+	qr        *p115.QRCode
+	revision  uint64
+	lastPoll  time.Time
 }
 type MemberPlaybackService struct {
 	Cache            *PlaybackCache // wired before serving
@@ -69,26 +69,14 @@ func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Acc
 	if err != nil {
 		return nil, err
 	}
-	archived, err := db.WebsiteCleanupRecords(ctx)
-	if err != nil {
-		return nil, err
-	}
-	records = append(records, archived...)
 	settings, err := db.MemberPlaybackSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	s := &MemberPlaybackService{db: db, accounts: accounts, emby: server, drive: drive, checker: checker, qr: qr, gate: make(chan struct{}, 1), records: make(map[string]model.MemberPlayback, len(records)), settings: settings, sessions: make(map[string]memberQRSession), NewEmby: func(base, key string) memberEmbyClient { return emby.New(base, key) }}
 	for _, r := range records {
-		if r.AccountID != "" && r.CleanupState == "" {
-			used, err := db.MemberAccountReferenced(ctx, r.UserID, r.AccountID)
-			if err != nil {
-				return nil, err
-			}
-			r, err = accounts.RepairMember(ctx, r, !used)
-			if err != nil {
-				return nil, fmt.Errorf("整理个人网盘归属: %w", err)
-			}
+		if _, err := db.PortalUser(ctx, r.UserID); err != nil {
+			return nil, fmt.Errorf("个人中心数据结构已重建，请停服并使用 dbtool -action reset-portal -output 备份路径 重置测试用户: %w", err)
 		}
 		s.records[r.UserID] = r
 	}
@@ -198,9 +186,6 @@ func (s *MemberPlaybackService) SetSettings(ctx context.Context, settings model.
 		ids = append(ids, settings.LibraryIDs...)
 	}
 	for _, r := range s.Records() {
-		if r.CleanupState == "deleted" {
-			continue
-		}
 		if settings.Enabled && (r.EmbyURL != c.URL || r.ServerID != c.ServerID) {
 			return memberError("已有个人账号属于另一 Emby 服务，不能直接更换服务")
 		}
@@ -265,40 +250,34 @@ func (s *MemberPlaybackService) RequestSync() {
 	default:
 	}
 }
-func (s *MemberPlaybackService) websiteUser(ctx context.Context, id string) (model.WebsiteUser, error) {
-	u, err := s.db.WebsiteUser(ctx, id)
-	if err != nil || u.Disabled || u.Role != "user" || u.CleanupState != "" {
-		return u, memberError("网站账号不可用")
+func (s *MemberPlaybackService) portalUser(ctx context.Context, id string) (model.PortalUser, error) {
+	u, err := s.db.PortalUser(ctx, id)
+	if err != nil {
+		return u, ErrLogin
 	}
+	c := s.emby.snapshot()
+	if u.ServerID != c.ServerID || c.APIKey == "" {
+		return u, ErrLogin
+	}
+	remote, err := s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, u.EmbyID)
+	if err != nil || remote.Policy["IsDisabled"] == true || remote.Policy["IsAdministrator"] == true {
+		return u, ErrLogin
+	}
+	u.Username = remote.Name
 	return u, nil
 }
 func (s *MemberPlaybackService) ensure(ctx context.Context, id string) (model.MemberPlayback, error) {
-	_, err := s.websiteUser(ctx, id)
-	if err != nil {
-		return model.MemberPlayback{}, err
-	}
 	r := s.record(id)
-	if r.UserID != "" {
-		return r, nil
-	}
-	if !s.Settings().Enabled {
-		return r, memberError("管理员尚未开放自助播放")
-	}
-	source, err := s.db.WebsitePlaybackSource(ctx, id)
-	if err != nil {
+	if _, err := s.portalUser(ctx, id); err != nil {
 		return r, err
 	}
-	c := s.emby.snapshot()
-	var reservation [16]byte
-	if _, err := rand.Read(reservation[:]); err != nil {
-		return r, fmt.Errorf("生成 Emby 注册预约: %w", err)
+	if r.UserID == "" {
+		return r, memberError("播放尚未授权，请联系管理员")
 	}
-	r = model.MemberPlayback{UserID: id, Source: source, EmbyURL: c.URL, ServerID: c.ServerID, EmbyName: "c115_" + hex.EncodeToString(reservation[:]), Stage: "unbound"}
-	return r, s.save(ctx, r)
+	return r, nil
 }
 
 type MemberPlaybackView struct {
-	Adopted            bool   `json:"adopted"`
 	CanPreparePersonal bool   `json:"canPreparePersonal"`
 	Enabled            bool   `json:"enabled"`
 	Stage              string `json:"stage"`
@@ -314,10 +293,7 @@ type MemberPlaybackView struct {
 	SyncPending        bool   `json:"syncPending"`
 	Source             string `json:"source"`
 	Provisioned        bool   `json:"provisioned"`
-	AccountRevision    uint64 `json:"accountRevision"`
-	AccountMessage     string `json:"accountMessage"`
-	SuggestedName      string `json:"suggestedName"`
-	PendingName        string `json:"pendingName"`
+	PendingDrive       bool   `json:"pendingDrive"`
 }
 
 func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
@@ -326,16 +302,12 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	drive := s.personalDrive(r)
 	v := MemberPlaybackView{Enabled: settings.Enabled, Stage: r.Stage, Message: r.Message, UID: drive.UID, Connected: drive.Connected, DirectoryID: drive.DirectoryID, EmbyName: r.EmbyName, EmbyURL: settings.PublicURL, Suspended: r.Suspended, Blocked: r.AdminBlocked}
 	v.AllowDownload = settings.AllowDownload
-	v.Adopted = r.Adopted
 	v.CanPreparePersonal = r.Source == "personal" || r.AllowPersonalSwitch
 	v.Source = r.Source
 	v.Provisioned = r.Provisioned
-	v.AccountRevision, v.AccountMessage, v.PendingName = r.AccountRevision, r.AccountMessage, r.PendingName
-	v.SuggestedName = r.RegistrationName
-	if v.Source == "" {
-		v.Source = "personal"
-	}
-	v.SyncPending = r.EmbyID != "" && (r.AppliedRevision != settings.Revision || r.SyncError != "")
+	v.PendingDrive = r.PendingAccountID != ""
+
+	v.SyncPending = r.Source != "" && r.EmbyID != "" && (r.AppliedRevision != settings.Revision || r.SyncError != "")
 	if v.SyncPending {
 		v.Message = "权限正在同步，完成后自动恢复；失败时请联系管理员"
 	}
@@ -347,7 +319,7 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	}
 	return v
 }
-func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string) (*p115.QRCode, error) {
+func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string, replace ...bool) (*p115.QRCode, error) {
 	if err := s.lock(ctx); err != nil {
 		return nil, err
 	}
@@ -358,6 +330,9 @@ func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string) (*p115.
 	r, err := s.ensure(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if r.AdminBlocked {
+		return nil, memberError("播放已被管理员停用")
 	}
 	if r.Source != "personal" && !r.AllowPersonalSwitch {
 		return nil, memberError("当前由管理员提供播放账号，无需扫码")
@@ -385,7 +360,7 @@ func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string) (*p115.
 	if err != nil {
 		return nil, memberError("获取二维码失败")
 	}
-	s.sessions[id] = memberQRSession{qr: qr, revision: revision, source: r.Source}
+	s.sessions[id] = memberQRSession{qr: qr, revision: revision, source: r.Source, accountID: r.AccountID, replace: len(replace) > 0 && replace[0]}
 	return qr, nil
 }
 func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (string, error) {
@@ -396,7 +371,7 @@ func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (st
 	if !s.Settings().Enabled {
 		return "", memberError("自助播放已关闭")
 	}
-	if _, err := s.websiteUser(ctx, id); err != nil {
+	if _, err := s.portalUser(ctx, id); err != nil {
 		return "", err
 	}
 	p, ok := s.sessions[id]
@@ -413,7 +388,7 @@ func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (st
 	if r.AccountID != "" {
 		account, _ = s.accounts.Get(r.AccountID)
 	}
-	if r.Source != p.source || (r.Source != "personal" && !r.AllowPersonalSwitch) || account.Revision != p.revision || r.AccountID != "" && (account.OwnerUserID != id || account.Ownership != "member") {
+	if r.AdminBlocked || r.AccountID != p.accountID || r.Source != p.source || (r.Source != "personal" && !r.AllowPersonalSwitch) || account.Revision != p.revision || r.AccountID != "" && (account.OwnerUserID != id || account.Ownership != "member") {
 		return "", ErrAccountChanged
 	}
 	state, err := s.qr.CheckQRCode(ctx, p.qr.ID)
@@ -434,49 +409,37 @@ func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (st
 	if err != nil || !valid || accountUID(cookie) == "" {
 		return "", memberError("无法确认 115 登录状态，请重新扫码")
 	}
-	if _, err := s.websiteUser(ctx, id); err != nil {
+	if _, err := s.portalUser(ctx, id); err != nil {
 		return "", err
 	}
-	u, err := s.websiteUser(ctx, id)
+	u, err := s.portalUser(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	r, err = s.accounts.BindMember(ctx, r, u.Username, cookie, p.revision)
+	r, err = s.accounts.BindMember(ctx, r, u.Username, cookie, p.revision, p.replace)
 	if err != nil {
-		return "", memberError("网盘 UID 冲突或配置已变化，请使用原账号重新扫码")
+		if errors.Is(err, ErrMemberPlayback) {
+			return "", err
+		}
+		if errors.Is(err, ErrAccountChanged) {
+			return "", memberError("配置已变化，请刷新二维码")
+		}
+		return "", fmt.Errorf("保存个人网盘: %w", err)
 	}
 	s.mu.Lock()
 	s.records[id] = r
 	s.mu.Unlock()
 	delete(s.sessions, id)
-	if r.Source != "personal" {
-		_, err := s.prepareDirectory(ctx, r)
+	if r.PendingAccountID != "" {
+		r, err = s.preparePendingDrive(ctx, r)
 		if err != nil {
 			return "", err
 		}
-		return "success", nil
 	}
-	if r.DirectoryID != "" {
-		updated, err := s.accounts.Get(r.AccountID)
-		if err != nil {
+	if r.Source == "personal" {
+		if err := s.reconcile(ctx, r); err != nil {
 			return "", err
 		}
-		if s.drive.ValidateCacheParent(ctx, r.DirectoryID, updated.Cookie) == nil && updated.PlaybackParentCID != r.DirectoryID {
-			if err := s.accounts.UpdatePlaybackDirectory(updated.ID, updated.Revision, r.DirectoryID); err != nil {
-				return "", err
-			}
-		}
-	}
-	r.Suspended = false
-	if r.EmbyID == "" {
-		r.Stage = "bound"
-	}
-	r.Message = "115 已绑定，请设置 Emby 密码完成开通"
-	if err := s.save(ctx, r); err != nil {
-		return "", err
-	}
-	if r.EmbyID != "" && r.Stage != "creating" && r.Stage != "provisioning" {
-		_ = s.reconcile(ctx, r)
 	}
 	return "success", nil
 }
@@ -498,7 +461,7 @@ func (s *MemberPlaybackService) Bindings(c PlaybackCacheConfig) PlaybackCacheCon
 		}
 	}
 	for _, r := range records {
-		if r.EmbyID != "" && r.Source != "primary" {
+		if r.EmbyID != "" && r.Source != "" {
 			target := r.AccountID
 			if r.Source == "assigned" {
 				target = r.AssignedAccountID
@@ -514,24 +477,21 @@ func (s *MemberPlaybackService) Bindings(c PlaybackCacheConfig) PlaybackCacheCon
 }
 func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string) (bool, error) {
 	if id == "" {
-		return false, nil
+		return true, memberError("无法确认播放用户")
 	}
 	for _, r := range s.Records() {
 		if r.EmbyID != id {
 			continue
 		}
-		if r.CleanupState != "" {
-			return true, memberError("网站用户正在删除或已删除，原 Emby 身份保持锁定")
-		}
 		c := s.emby.snapshot()
 		settings := s.Settings()
-		if r.AppliedRevision != settings.Revision || r.SyncError != "" || len(settings.LibraryIDs) == 0 {
+		if r.AppliedRevision != settings.Revision || r.SyncError != "" || (!r.SkipLibrarySync && len(settings.LibraryIDs) == 0) {
 			return true, memberError("个人播放权限尚未同步，请稍后重试")
 		}
 		if r.EmbyURL != server || c.URL != r.EmbyURL || c.ServerID != r.ServerID || r.Stage != "ready" || !r.Provisioned || !r.PolicyEnabled || r.Suspended || r.AdminBlocked || !s.Settings().Enabled {
 			return true, memberError("个人播放尚未开通或已暂停，请到个人中心检查绑定")
 		}
-		if _, err := s.websiteUser(ctx, r.UserID); err != nil {
+		if _, err := s.portalUser(ctx, r.UserID); err != nil {
 			return true, err
 		}
 		if _, err := s.playbackAccount(r); err != nil {
@@ -539,29 +499,25 @@ func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string
 		}
 		return true, nil
 	}
-	return false, nil
+	return true, memberError("播放尚未授权，请联系管理员")
 }
 
 // New users can briefly exist upstream before their deny policy is applied.
 // Do not expose a session for a reserved name until provisioning is complete.
 func (s *MemberPlaybackService) AuthorizeLogin(ctx context.Context, server, id, name string) error {
+	if strings.HasPrefix(strings.ToLower(name), "c115_") {
+		return memberError("Emby 账号尚未完成注册")
+	}
 	for _, r := range s.Records() {
 		if r.EmbyID != id || id == "" {
 			continue
 		}
-		if r.CleanupState != "" {
-			return memberError("网站用户正在删除或已删除，原 Emby 身份保持锁定")
-		}
 		c := s.emby.snapshot()
-		settings := s.Settings()
-		if r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !settings.Enabled || !r.Provisioned || !r.LoginEnabled || r.AdminBlocked || r.SyncError != "" || r.AppliedRevision != settings.Revision {
-			return memberError("Emby 账号尚未就绪或已被停用")
+		if r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !r.Provisioned {
+			return memberError("Emby 身份尚未就绪")
 		}
-		_, err := s.websiteUser(ctx, r.UserID)
+		_, err := s.portalUser(ctx, r.UserID)
 		return err
-	}
-	if strings.HasPrefix(strings.ToLower(name), "c115_") {
-		return memberError("个人 Emby 账号尚未完成开通")
 	}
 	return nil
 }
@@ -592,7 +548,21 @@ func memberPolicy(source map[string]any, enabled bool, settings model.MemberPlay
 }
 
 func memberPolicyMatches(policy map[string]any, enabled bool, settings model.MemberPlaybackSettings, login ...bool) bool {
-	expected := memberPolicy(nil, enabled, settings, login...)
+	return memberPolicyMatchesExpected(policy, memberPolicy(nil, enabled, settings, login...))
+}
+
+// Keep the library selection owned by Emby, including an absent field.
+func preserveMemberLibraries(policy, source map[string]any) {
+	for _, key := range []string{"EnableAllFolders", "EnabledFolders"} {
+		if value, ok := source[key]; ok {
+			policy[key] = value
+		} else {
+			delete(policy, key)
+		}
+	}
+}
+
+func memberPolicyMatchesExpected(policy, expected map[string]any) bool {
 	for key, value := range expected {
 		if flag, ok := value.(bool); ok && policy[key] != flag {
 			return false
@@ -601,6 +571,8 @@ func memberPolicyMatches(policy map[string]any, enabled bool, settings model.Mem
 	// Emby decodes arrays as []any; test implementations may use []string.
 	stringsOf := func(value any) ([]string, bool) {
 		switch list := value.(type) {
+		case nil:
+			return nil, true
 		case []string:
 			return list, true
 		case []any:
@@ -618,11 +590,18 @@ func memberPolicyMatches(policy map[string]any, enabled bool, settings model.Mem
 		}
 	}
 	for _, key := range []string{"EnabledFolders", "EnableContentDeletionFromFolders"} {
+		value, exists := expected[key]
+		if !exists {
+			continue
+		}
 		actual, ok := stringsOf(policy[key])
 		if !ok {
 			return false
 		}
-		want := expected[key].([]string)
+		want, ok := stringsOf(value)
+		if !ok {
+			return false
+		}
 		if len(actual) != len(want) {
 			return false
 		}
@@ -639,127 +618,7 @@ func memberPolicyMatches(policy map[string]any, enabled bool, settings model.Mem
 	}
 	return true
 }
-func (s *MemberPlaybackService) provision(ctx context.Context, id, password string) error {
-	if s.record(id).Adopted {
-		return memberError("已有 Emby 账号仅开放网盘管理，不能重置账号")
-	}
-	if len(password) < 8 || len(password) > 128 {
-		return memberError("Emby 密码需要 8–128 字节")
-	}
-	if !s.Settings().Enabled {
-		return memberError("自助播放未开放")
-	}
-	r, err := s.ensure(ctx, id)
-	if err != nil {
-		return err
-	}
-	if r.AdminBlocked {
-		return memberError("播放已被管理员停用")
-	}
-	c, client, err := s.config()
-	if err != nil {
-		return err
-	}
-	if r.EmbyURL != c.URL || r.ServerID != c.ServerID {
-		return memberError("原 Emby 服务已变化，请联系管理员")
-	}
-	if r.EmbyID != "" && r.LoginEnabled {
-		u, err := client.ManagedUser(ctx, r.EmbyID)
-		if err != nil {
-			return memberError("无法检查现有 Emby 权限")
-		}
-		if u.Policy["IsDisabled"] == true || (r.PolicyEnabled && u.Policy["EnableMediaPlayback"] == false) {
-			r.AdminBlocked = true
-			r.Stage = "paused"
-			if err := s.save(ctx, r); err != nil {
-				return err
-			}
-			return memberError("Emby 账号已被停用，请联系管理员")
-		}
-	}
-	if r.EmbyID == "" {
-		users, err := client.Users(ctx)
-		if err != nil {
-			return memberError("无法检查 Emby 用户")
-		}
-		for _, u := range users {
-			if strings.EqualFold(u.Name, r.EmbyName) {
-				if r.Stage != "creating" {
-					return memberError("Emby 用户名冲突，请联系管理员")
-				}
-				r.EmbyID = u.ID
-			}
-		}
-		if r.EmbyID == "" {
-			if r.Stage == "creating" {
-				return memberError("Emby 创建结果待确认，请管理员核查后重试")
-			}
-			r.Stage = "creating"
-			if err := s.save(ctx, r); err != nil {
-				return err
-			}
-			// Emby's /Users/New contract creates a user by name. Keep it disabled,
-			// verify the deny policy, and only then set the user's chosen password.
-			u, err := client.CreateManagedUser(ctx, r.EmbyName)
-			if err != nil {
-				return memberError("Emby 创建结果未确认，可稍后继续开通；不要手动创建同名用户")
-			}
-			r.EmbyID = u.ID
-		}
-		r.Stage = "provisioning"
-		if err := s.save(ctx, r); err != nil {
-			return err
-		}
-	}
-	policySettings, err := memberPolicySettings(ctx, client, s.Settings())
-	if err != nil {
-		return err
-	}
-	if err := client.SetManagedPolicy(ctx, r.EmbyID, memberPolicy(nil, false, policySettings)); err != nil {
-		return memberError("Emby 禁播策略保存失败，请稍后继续开通")
-	}
-	denied, err := client.ManagedUser(ctx, r.EmbyID)
-	if err != nil || !memberPolicyMatches(denied.Policy, false, policySettings) {
-		return memberError("Emby 禁播策略尚未确认，暂不设置登录密码")
-	}
-	r.PolicyEnabled = false
-	r.LoginEnabled = false
-	r.Stage = "provisioning"
-	if err := s.save(ctx, r); err != nil {
-		return err
-	}
-	if err := client.SetManagedPassword(ctx, r.EmbyID, password); err != nil {
-		return memberError("Emby 密码设置结果未确认，请重新提交")
-	}
-	if r.RegistrationName != "" && r.EmbyName != r.RegistrationName {
-		if err := s.renameAccount(ctx, client, &r, r.RegistrationName); err != nil {
-			return err
-		}
-	}
-	r.Provisioned = true
-	if _, err := s.websiteUser(ctx, id); err != nil {
-		return err
-	}
-	r.Suspended = false
-	r.Stage = "paused"
-	r.Message = "正在检查播放条件"
-	if err := s.save(ctx, r); err != nil {
-		return err
-	}
-	return s.reconcile(ctx, r)
-}
-func (s *MemberPlaybackService) Provision(ctx context.Context, id, password string) error {
-	if err := s.lock(ctx); err != nil {
-		return err
-	}
-	defer s.unlock()
-	return s.provision(ctx, id, password)
-}
-
 func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPlayback) (result error) {
-	if r.CleanupState != "" {
-		return nil
-	}
 	if r.EmbyID == "" {
 		return nil
 	}
@@ -792,20 +651,21 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 	if err != nil {
 		return memberError("Emby 用户状态不可用")
 	}
-	if r.EmbyName != u.Name || r.PendingName != "" {
-		r.EmbyName = u.Name
-		r.PendingName = ""
-		r.AccountRevision++
-		r.AccountMessage = "已按原 Emby ID 确认当前用户名"
+	if u.Policy["IsAdministrator"] == true {
+		return memberError("Emby 管理员不能作为普通播放用户管理")
 	}
-	if r.LoginEnabled && (u.Policy["IsDisabled"] == true || (r.PolicyEnabled && u.Policy["EnableMediaPlayback"] == false)) {
+	if u.Policy["IsDisabled"] != true && !r.AdminBlocked && s.Settings().Enabled {
+		if err := s.assignPool(ctx, &r); err != nil {
+			return err
+		}
+	}
+	r.EmbyName = u.Name
+	if r.PolicyEnabled && u.Policy["EnableMediaPlayback"] == false {
 		r.AdminBlocked = true
 	}
-	login := settings.Enabled && len(settings.LibraryIDs) > 0 && r.Provisioned && !r.AdminBlocked && r.Stage != "creating" && r.Stage != "provisioning"
-	if _, err := s.websiteUser(ctx, r.UserID); err != nil {
-		login = false
-	}
-	enabled := login && !r.Suspended
+	login := r.Provisioned && (u.Policy["IsDisabled"] != true || r.Stage == "provisioning")
+
+	enabled := login && settings.Enabled && (r.SkipLibrarySync || len(settings.LibraryIDs) > 0) && !r.AdminBlocked && !r.Suspended && r.Source != ""
 	if enabled && r.Source == "personal" && r.AccountID != "" {
 		a, e := s.accounts.Get(r.AccountID)
 		if e == nil && a.Cookie != "" && r.DirectoryID == "" && !r.DirectoryStarted {
@@ -824,13 +684,13 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 		if err != nil || !valid {
 			enabled = false
 		}
-		if enabled && r.Source != "primary" && s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie) != nil {
+		if enabled && r.Source != "" && s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie) != nil {
 			enabled = false
 		}
 	}
 	// Persist the deny state before network I/O. An uncertain enabling write never
 	// makes the proxy ready; the next reconciliation re-applies policy.
-	if !enabled && r.Stage != "provisioning" && r.Stage != "creating" {
+	if !enabled && r.Stage != "creating" {
 		r.Stage = "paused"
 		r.Message = "播放已暂停，请检查网盘登录、目录或联系管理员"
 	}
@@ -839,16 +699,27 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 	if err := s.save(ctx, r); err != nil {
 		return err
 	}
-	policySettings, err := memberPolicySettings(ctx, client, settings)
-	if err != nil {
-		return err
+	policySettings := settings
+	if !r.SkipLibrarySync {
+		policySettings, err = memberPolicySettings(ctx, client, settings)
+		if err != nil {
+			return err
+		}
 	}
-	if err := client.SetManagedPolicy(ctx, r.EmbyID, memberPolicy(u.Policy, enabled, policySettings, login)); err != nil {
+	policy := memberPolicy(u.Policy, enabled, policySettings, login)
+	expected := memberPolicy(nil, enabled, policySettings, login)
+	denied := memberPolicy(u.Policy, false, policySettings)
+	if r.SkipLibrarySync {
+		preserveMemberLibraries(policy, u.Policy)
+		preserveMemberLibraries(expected, u.Policy)
+		preserveMemberLibraries(denied, u.Policy)
+	}
+	if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
 		return memberError("Emby 权限同步失败，稍后自动重试")
 	}
 	verified, err := client.ManagedUser(ctx, r.EmbyID)
-	if err != nil || !memberPolicyMatches(verified.Policy, enabled, policySettings, login) {
-		_ = client.SetManagedPolicy(ctx, r.EmbyID, memberPolicy(u.Policy, false, policySettings))
+	if err != nil || !memberPolicyMatchesExpected(verified.Policy, expected) {
+		_ = client.SetManagedPolicy(ctx, r.EmbyID, denied)
 		return memberError("Emby 未确认预期权限，个人播放保持锁定")
 	}
 	if enabled {
@@ -859,8 +730,11 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 	r.LoginEnabled = login
 	if login && !enabled {
 		r.Stage = "pending"
-		r.Message = "Emby 已注册，可登录浏览；播放待授权或绑定自己的 115"
-		if r.Source != "personal" {
+		r.Message = "Emby 可登录浏览；播放待授权或绑定自己的 115"
+		if r.Source == "assigned" && r.AssignedAccountID == "" {
+			r.Message = "Emby 可登录浏览，等待分配空闲小号"
+		}
+		if r.Source == "assigned" && r.AssignedAccountID != "" {
 			r.Message = "Emby 可登录浏览；管理员提供的播放账号暂不可用，请联系管理员"
 		}
 		if r.Source == "personal" && r.DirectoryStarted && r.DirectoryID == "" {
@@ -881,9 +755,6 @@ func (s *MemberPlaybackService) Suspend(ctx context.Context, id string) error {
 	}
 	defer s.unlock()
 	r := s.record(id)
-	if r.CleanupState != "" {
-		return memberError("用户正在清理或已删除")
-	}
 	if r.UserID == "" {
 		return nil
 	}
@@ -900,8 +771,11 @@ func (s *MemberPlaybackService) Suspend(ctx context.Context, id string) error {
 	if err := s.save(ctx, r); err != nil {
 		return err
 	}
-	if err := s.accounts.ClearMemberCookie(id, a.Revision); err != nil {
+	if err := s.accounts.ClearMemberCookie(id, a.ID, a.Revision); err != nil {
 		return err
+	}
+	if s.ClearDirectLinks != nil {
+		s.ClearDirectLinks()
 	}
 	if r.Source != "personal" {
 		return nil
@@ -917,20 +791,21 @@ func (s *MemberPlaybackService) AdminUpdate(ctx context.Context, id string, bloc
 	if r.UserID == "" {
 		return memberError("个人播放配置不存在")
 	}
-	if r.CleanupState != "" {
-		return memberError("用户正在清理或已删除，不能修改播放授权")
-	}
 	if blocked != nil {
 		r.AdminBlocked = *blocked
 		r.PolicyEnabled = false
 		r.LoginEnabled = false
 	}
 	if directory != "" {
-		a, err := s.accounts.Get(r.AccountID)
+		target := r.AccountID
+		if r.PendingAccountID != "" {
+			target = r.PendingAccountID
+		}
+		a, err := s.accounts.Get(target)
 		if err != nil {
 			return err
 		}
-		if (r.Source != "personal" && !r.AllowPersonalSwitch) || r.DirectoryID != "" || a.OwnerUserID != r.UserID || a.Ownership != "member" {
+		if (r.Source != "personal" && !r.AllowPersonalSwitch) || r.PendingAccountID == "" && r.DirectoryID != "" || a.OwnerUserID != r.UserID || a.Ownership != "member" {
 			return memberError("只能确认尚未完成开通的目录")
 		}
 		if directory == "0" || s.drive.ValidateCacheParent(ctx, directory, a.Cookie) != nil {
@@ -939,23 +814,9 @@ func (s *MemberPlaybackService) AdminUpdate(ctx context.Context, id string, bloc
 		if err := s.accounts.UpdatePlaybackDirectory(a.ID, a.Revision, directory); err != nil {
 			return err
 		}
-		r.DirectoryID = directory
-	}
-	if retry && r.Stage == "creating" && r.EmbyID == "" {
-		_, client, err := s.config()
-		if err != nil {
-			return err
+		if r.PendingAccountID == "" {
+			r.DirectoryID = directory
 		}
-		users, err := client.Users(ctx)
-		if err != nil {
-			return err
-		}
-		for _, u := range users {
-			if strings.EqualFold(u.Name, r.EmbyName) {
-				return memberError("Emby 已存在该用户，请让用户继续开通以恢复关联")
-			}
-		}
-		r.Stage = "bound"
 	}
 	if r.AdminBlocked {
 		r.Stage = "paused"

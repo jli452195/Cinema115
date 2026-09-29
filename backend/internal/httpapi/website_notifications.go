@@ -13,8 +13,8 @@ import (
 func RegisterWebsiteNotifications(group *gin.RouterGroup, store *storage.Store) {
 	g := group.Group("/notifications")
 	g.Use(func(c *gin.Context) {
-		value, _ := c.Get("website_user")
-		user, ok := value.(model.WebsiteUser)
+		value, _ := c.Get("portal_user")
+		user, ok := value.(model.PortalUser)
 		if !ok || user.ID == "" {
 			c.AbortWithStatusJSON(401, gin.H{"error": "请先登录"})
 			return

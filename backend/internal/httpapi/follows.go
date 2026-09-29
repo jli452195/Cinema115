@@ -35,8 +35,8 @@ func followError(c *gin.Context, err error) {
 func RegisterFollows(group *gin.RouterGroup, s *service.FollowService) {
 	group = group.Group("/follows")
 	group.Use(func(c *gin.Context) {
-		value, ok := c.Get("website_user")
-		user, valid := value.(model.WebsiteUser)
+		value, ok := c.Get("portal_user")
+		user, valid := value.(model.PortalUser)
 		if !ok || !valid || user.ID == "" {
 			c.AbortWithStatusJSON(401, gin.H{"error": "请先登录"})
 			return

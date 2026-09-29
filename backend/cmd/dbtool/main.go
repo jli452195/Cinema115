@@ -26,13 +26,13 @@ func run() (err error) {
 		defaultDir = "../data"
 	}
 	directory := flag.String("data-dir", defaultDir, "数据目录")
-	action := flag.String("action", "status", "操作：status、migrate、backup")
+	action := flag.String("action", "status", "操作：status、migrate、backup、reset-portal（停服后清空个人中心测试数据）")
 	output := flag.String("output", "", "备份文件路径，必须尚不存在")
 	flag.Parse()
-	if *action != "status" && *action != "migrate" && *action != "backup" {
-		return fmt.Errorf("操作应为 status、migrate 或 backup")
+	if *action != "status" && *action != "migrate" && *action != "backup" && *action != "reset-portal" {
+		return fmt.Errorf("操作应为 status、migrate、backup 或 reset-portal")
 	}
-	if *action == "backup" && *output == "" {
+	if (*action == "backup" || *action == "reset-portal") && *output == "" {
 		return fmt.Errorf("备份必须指定 -output")
 	}
 	path := filepath.Join(*directory, "cinema115.db")
@@ -49,6 +49,16 @@ func run() (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()
+	if *action == "reset-portal" {
+		if err := db.Backup(ctx, *output); err != nil {
+			return err
+		}
+		if err := db.ResetPortal(ctx); err != nil {
+			return err
+		}
+		fmt.Println("已备份并重置个人中心测试数据，管理员网盘与媒体资料保留；原 Emby 账号未删除")
+		return nil
+	}
 	if *action == "migrate" {
 		result, err := db.ImportLegacyJobs(ctx, filepath.Join(*directory, "reshare-jobs"))
 		if err != nil {

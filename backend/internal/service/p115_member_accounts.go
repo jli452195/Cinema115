@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,12 +28,12 @@ func (s *P115Accounts) IsPersonal(id string) bool {
 	return IsMemberAccount(id) || err == nil && (a.OwnerUserID != "" || a.Ownership == "member")
 }
 
-func (s *P115Accounts) ClearMemberCookie(userID string, revision uint64) error {
+func (s *P115Accounts) ClearMemberCookie(userID, accountID string, revision uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value := s.copy()
 	for i, a := range value.Accounts {
-		if a.OwnerUserID != userID || a.Ownership != "member" {
+		if a.ID != accountID || a.OwnerUserID != userID || a.Ownership != "member" {
 			continue
 		}
 		if a.Revision != revision {
@@ -43,33 +45,6 @@ func (s *P115Accounts) ClearMemberCookie(userID string, revision uint64) error {
 		return s.commit(value)
 	}
 	return ErrAccountMissing
-}
-
-// Cleanup never mutates an administrator account, including an assigned target.
-func (s *P115Accounts) clearMemberCredentials(userID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value := s.copy()
-	changed := false
-	for i, a := range value.Accounts {
-		if a.OwnerUserID != userID || a.Ownership != "member" {
-			continue
-		}
-		if a.Primary {
-			return ErrAccountInput
-		}
-		if a.Cookie == "" {
-			continue
-		}
-		a.Cookie = ""
-		a.Revision++
-		value.Accounts[i] = a
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return s.commit(value)
 }
 
 func (s *P115Accounts) commitMember(ctx context.Context, value accountDocument, r model.MemberPlayback) error {
@@ -90,89 +65,126 @@ func (s *P115Accounts) commitMember(ctx context.Context, value accountDocument, 
 	return nil
 }
 
-// The cookie and owner association become visible only after one transaction.
-func (s *P115Accounts) BindMember(ctx context.Context, r model.MemberPlayback, name, cookie string, expected uint64) (model.MemberPlayback, error) {
+// A new UID receives a new configuration. Its directory is prepared before the
+// active association changes. The current account is never mutated into another identity.
+func (s *P115Accounts) BindMember(ctx context.Context, r model.MemberPlayback, name, cookie string, expected uint64, replace ...bool) (model.MemberPlayback, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	uid := accountUID(cookie)
 	if uid == "" || r.Source != "personal" && !r.AllowPersonalSwitch {
 		return r, ErrAccountInput
 	}
-	id := "member_" + r.UserID
-	if len(r.UserID) != 32 || strings.Trim(r.UserID, "0123456789abcdef") != "" || r.AccountID != "" && r.AccountID != id {
-		return r, ErrAccountInput
-	}
 	value := s.copy()
-	index := -1
-	count := 0
+	active := -1
+	target := -1
 	for i, a := range value.Accounts {
-		if a.OwnerUserID != "" || a.Ownership == "member" || IsMemberAccount(a.ID) {
-			count++
+		if a.ID == r.AccountID {
+			active = i
 		}
-		if a.ID == id {
-			index = i
-		} else if a.UID == uid {
-			return r, fmt.Errorf("%w：该 UID 已属于其他账号配置", ErrAccountInput)
+		if a.UID == uid {
+			if a.Ownership != "member" || a.OwnerUserID != r.UserID {
+				return r, memberError("该 115 账号已属于其他配置，请先处理原归属")
+			}
+			target = i
 		}
 	}
-	a := P115Account{ID: id, Name: "个人网盘 " + name, Ownership: "member", OwnerUserID: r.UserID}
-	if index >= 0 {
-		a = value.Accounts[index]
-		if a.Primary || a.OwnerUserID != r.UserID || a.Ownership != "member" || a.Revision != expected || a.UID != "" && a.UID != uid {
-			return r, ErrAccountChanged
-		}
-	} else if expected != 0 || r.AccountID != "" {
+	if r.AccountID != "" && (active < 0 || value.Accounts[active].Revision != expected) {
 		return r, ErrAccountChanged
-	} else if count >= 100 || len(value.Accounts) >= 120 {
-		return r, fmt.Errorf("个人网盘数量达到上限")
 	}
+	if active >= 0 && target != active && (len(replace) == 0 || !replace[0]) {
+		return r, memberError("扫码账号与原账号不同，请使用更换 115 账号入口")
+	}
+	if target < 0 {
+		if len(value.Accounts) >= 120 {
+			return r, memberError("网盘配置数量达到上限")
+		}
+		var random [16]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return r, err
+		}
+		value.Accounts = append(value.Accounts, P115Account{ID: "member_" + hex.EncodeToString(random[:]), Name: "个人网盘 " + name, Ownership: "member", OwnerUserID: r.UserID, UID: uid})
+		target = len(value.Accounts) - 1
+	}
+	a := value.Accounts[target]
 	a.Cookie = cookie
-	a.UID = uid
 	a.Revision++
-	if index >= 0 {
-		value.Accounts[index] = a
-	} else {
-		value.Accounts = append(value.Accounts, a)
-	}
-	r.AccountID = id
-	if r.Source == "personal" {
+	value.Accounts[target] = a
+	if target == active {
 		r.Suspended = false
+	} else {
+		if r.PendingAccountID != "" && r.PendingAccountID != a.ID {
+			return r, memberError("已有待完成的换号，请先完成或取消")
+		}
+		if r.PendingAccountID == "" {
+			r.PendingDirectoryStarted = false
+			for _, id := range r.UncertainDirectories {
+				if id == a.ID {
+					r.PendingDirectoryStarted = true
+				}
+			}
+		}
+		r.PendingAccountID = a.ID
 	}
-	if r.EmbyID == "" {
-		r.Stage = "bound"
-	}
-	if err := s.commitMember(ctx, value, r); err != nil {
-		return r, err
-	}
-	return r, nil
+	return r, s.commitMember(ctx, value, r)
 }
-
-// Repair only a record explicitly owned by this website user. No UID or cloud
-// data is discarded. Reference checks are performed by the playback service.
-func (s *P115Accounts) RepairMember(ctx context.Context, r model.MemberPlayback, removeEmpty bool) (model.MemberPlayback, error) {
+func (s *P115Accounts) ActivateMember(ctx context.Context, r model.MemberPlayback) (model.MemberPlayback, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.copy()
+	var pending P115Account
+	for _, a := range value.Accounts {
+		if a.ID == r.PendingAccountID {
+			pending = a
+		}
+	}
+	if pending.ID == "" || pending.OwnerUserID != r.UserID || pending.Ownership != "member" || pending.Cookie == "" || pending.PlaybackParentCID == "" {
+		return r, ErrAccountChanged
+	}
+	for i, a := range value.Accounts {
+		if a.ID == r.AccountID && a.ID != pending.ID {
+			a.Cookie = ""
+			a.Revision++
+			value.Accounts[i] = a
+		}
+	}
+	uncertain := make([]string, 0, len(r.UncertainDirectories))
+	for _, id := range r.UncertainDirectories {
+		if id != pending.ID {
+			uncertain = append(uncertain, id)
+		}
+	}
+	r.UncertainDirectories = uncertain
+	r.AccountID = pending.ID
+	r.DirectoryID = pending.PlaybackParentCID
+	r.DirectoryStarted = true
+	r.PendingAccountID = ""
+	r.PendingDirectoryStarted = false
+	r.Suspended = false
+	return r, s.commitMember(ctx, value, r)
+}
+func (s *P115Accounts) CancelPendingMember(ctx context.Context, r model.MemberPlayback) (model.MemberPlayback, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value := s.copy()
 	for i, a := range value.Accounts {
-		if a.ID != r.AccountID {
-			continue
-		}
-		if a.ID != "member_"+r.UserID || a.Primary || a.OwnerUserID != "" && a.OwnerUserID != r.UserID {
-			return r, ErrAccountInput
-		}
-		if removeEmpty && a.UID == "" && a.Cookie == "" && a.PlaybackParentCID == "" && r.DirectoryID == "" && !r.DirectoryStarted {
-			value.Accounts = append(value.Accounts[:i], value.Accounts[i+1:]...)
-			r.AccountID = ""
-		} else {
-			if a.OwnerUserID == r.UserID && a.Ownership == "member" {
-				return r, nil
-			}
-			a.OwnerUserID = r.UserID
-			a.Ownership = "member"
+		if a.ID == r.PendingAccountID && a.OwnerUserID == r.UserID && a.Ownership == "member" {
+			a.Cookie = ""
 			a.Revision++
 			value.Accounts[i] = a
 		}
-		return r, s.commitMember(ctx, value, r)
 	}
-	return r, nil
+	if r.PendingDirectoryStarted {
+		found := false
+		for _, id := range r.UncertainDirectories {
+			if id == r.PendingAccountID {
+				found = true
+			}
+		}
+		if !found {
+			r.UncertainDirectories = append(append([]string{}, r.UncertainDirectories...), r.PendingAccountID)
+		}
+	}
+	r.PendingAccountID = ""
+	r.PendingDirectoryStarted = false
+	return r, s.commitMember(ctx, value, r)
 }

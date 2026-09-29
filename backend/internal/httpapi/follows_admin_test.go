@@ -98,16 +98,13 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	auth := service.NewWebsiteAuth(db, "admin", "admin-password", "secret")
-	u, err := auth.Create(ctx, "alice", "test-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	auth := portalTestAuth(t, db, "admin", "admin-password", "secret")
+	u := portalTestUser(t, auth, "alice", "test-password")
 	userToken, _, err := auth.Login(ctx, "alice", "test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminToken, _, err := auth.Login(ctx, "admin", "admin-password")
+	adminToken, _, err := auth.LoginAdmin(ctx, "admin", "admin-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +118,8 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	RegisterFollowAdmin(r.Group("/api/admin", WebsiteAuthenticated(auth), WebsiteAdminOnly()), s)
-	RegisterFollows(r.Group("/api/me", WebsiteAuthenticated(auth)), s)
+	RegisterFollowAdmin(r.Group("/api/admin", PortalAuthenticated(auth), PortalAdminOnly()), s)
+	RegisterFollows(r.Group("/api/me", PortalAuthenticated(auth)), s)
 	call := func(method, path, token string, body any, want int) map[string]any {
 		t.Helper()
 		raw, _ := json.Marshal(body)

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import UpdateCard from '../components/UpdateCard.vue'
-import { catalogAPI } from '../composables/useWebsiteAuth'
+import { catalogAPI } from '../composables/usePortalAuth'
 import type { RecentUpdateItem, RecentUpdatesPage } from '../types/updates'
 
 const props = defineProps<{ token: string }>()

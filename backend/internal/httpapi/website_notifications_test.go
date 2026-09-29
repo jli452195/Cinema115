@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"strm115/backend/internal/model"
-	"strm115/backend/internal/service"
+
 	"strm115/backend/internal/storage"
 	"testing"
 	"time"
@@ -22,19 +22,16 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	auth := service.NewWebsiteAuth(s, "admin", "admin-password", "secret")
+	auth := portalTestAuth(t, s, "admin", "admin-password", "secret")
 	tokens := make(map[string]string)
 	for _, name := range []string{"alice", "bob"} {
-		user, err := auth.Create(ctx, name, "test-password")
-		if err != nil {
-			t.Fatal(err)
-		}
+		user := portalTestUser(t, auth, name, "test-password")
 		token, _, err := auth.Login(ctx, name, "test-password")
 		if err != nil {
 			t.Fatal(err)
 		}
 		tokens[name] = token
-		if err := s.Subscribe(ctx, user.ID, model.Follow{Kind: "movie", TMDBID: 10, Title: "电影"}); err != nil {
+		if err := s.Subscribe(ctx, user.ID, model.Follow{Kind: "movie", TMDBID: 10, Title: "鐢靛奖"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +43,7 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	RegisterWebsiteNotifications(r.Group("/api/me", WebsiteAuthenticated(auth)), s)
+	RegisterWebsiteNotifications(r.Group("/api/me", PortalAuthenticated(auth)), s)
 	call := func(method, path, token, body string, want int) map[string]any {
 		t.Helper()
 		req := httptest.NewRequest(method, "/api/me/notifications"+path, strings.NewReader(body))
@@ -73,7 +70,7 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 	}
 	call("POST", "/read", tokens["bob"], `{"id":`+strconv.FormatInt(id, 10)+`,"userId":"alice"}`, 200)
 	if data := call("GET", "/unread", tokens["alice"], "", 200); data["unread"] != float64(1) {
-		t.Fatal("他人标记了通知", data)
+		t.Fatal("浠栦汉鏍囪浜嗛€氱煡", data)
 	}
 	call("POST", "/read", tokens["alice"], `{"id":`+strconv.FormatInt(id, 10)+`,"all":true}`, 200)
 	if data := call("GET", "/unread", tokens["alice"], "", 200); data["unread"] != float64(0) {

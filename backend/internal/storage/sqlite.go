@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 28
+const schemaVersion = 29
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -167,18 +167,6 @@ CREATE TABLE telegram_notifications (
 CREATE INDEX telegram_notifications_due ON telegram_notifications(status,bot_id,chat_id,due);
 PRAGMA user_version=7;`); err != nil {
 			return fmt.Errorf("迁移 Telegram 生成通知表: %w", err)
-		}
-	}
-	if version < 8 {
-		if _, err := tx.ExecContext(ctx, `
-CREATE TABLE website_users (
- id TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
- password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user' CHECK(role='user'),
- disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
- token_version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
-);
-PRAGMA user_version=8;`); err != nil {
-			return fmt.Errorf("迁移网站用户表: %w", err)
 		}
 	}
 	if version < 9 {
@@ -412,37 +400,6 @@ PRAGMA user_version=22;`); err != nil {
 			return fmt.Errorf("创建播放秒传资料库: %w", err)
 		}
 	}
-	if version < 23 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS website_invites (
- id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, note TEXT NOT NULL,
- created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL DEFAULT 0,
- used_at INTEGER NOT NULL DEFAULT 0, used_by TEXT NOT NULL DEFAULT ''
-); CREATE INDEX IF NOT EXISTS website_invites_created ON website_invites(created_at DESC,id);
-PRAGMA user_version=23;`); err != nil {
-			return fmt.Errorf("创建注册邀请表: %w", err)
-		}
-	}
-	if version < 24 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES website_users(id), record TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
-PRAGMA user_version=24;`); err != nil {
-			return fmt.Errorf("创建个人播放配置: %w", err)
-		}
-	}
-	if version < 25 {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('website_invites') WHERE name='playback_source'`).Scan(&exists); err != nil {
-			return fmt.Errorf("检查邀请播放待遇字段: %w", err)
-		}
-		if exists == 0 {
-			if _, err := tx.ExecContext(ctx, `ALTER TABLE website_invites ADD COLUMN playback_source TEXT NOT NULL DEFAULT 'personal'`); err != nil {
-				return fmt.Errorf("添加邀请播放待遇: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=25;`); err != nil {
-			return fmt.Errorf("保存邀请播放待遇结构: %w", err)
-		}
-	}
 	if version < 26 {
 		for _, column := range []struct{ name, definition string }{{"ownership", "TEXT NOT NULL DEFAULT 'admin'"}, {"owner_user_id", "TEXT NOT NULL DEFAULT ''"}} {
 			var exists int
@@ -459,26 +416,17 @@ PRAGMA user_version=24;`); err != nil {
 			return err
 		}
 	}
-	if version < 27 {
-		for _, name := range []string{"emby_target", "emby_name"} {
-			var exists int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('website_invites') WHERE name=?`, name).Scan(&exists); err != nil {
-				return err
-			}
-			if exists == 0 {
-				if _, err := tx.ExecContext(ctx, "ALTER TABLE website_invites ADD COLUMN "+name+" TEXT NOT NULL DEFAULT ''"); err != nil {
-					return err
-				}
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId')) WHERE json_extract(record,'$.embyId')<>''; PRAGMA user_version=27;`); err != nil {
-			return err
-		}
-	}
-	if version < 28 {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS website_user_cleanup(user_id TEXT PRIMARY KEY, record TEXT NOT NULL); PRAGMA user_version=28;`); err != nil {
-			return fmt.Errorf("创建用户清理记录: %w", err)
-		}
+	// User identity schema is fresh: no website-account migration or linking.
+	if _, err := tx.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS emby_profiles(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,emby_id TEXT NOT NULL,username TEXT NOT NULL,token_version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,UNIQUE(server_id,emby_id));
+CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES emby_profiles(id),record TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId'));
+CREATE UNIQUE INDEX IF NOT EXISTS member_pool_assignment ON member_playback(json_extract(record,'$.assignedAccountId')) WHERE json_extract(record,'$.assignedAccountId')<>'';
+CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS portal_invites(id TEXT PRIMARY KEY,code_hash TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,note TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,revoked_at INTEGER NOT NULL DEFAULT 0,used_at INTEGER NOT NULL DEFAULT 0,used_by TEXT NOT NULL DEFAULT '',playback_source TEXT NOT NULL CHECK(playback_source IN ('personal','assigned')),registration TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS portal_invites_created ON portal_invites(created_at DESC,id);
+PRAGMA user_version=29;`); err != nil {
+		return fmt.Errorf("创建 Emby 个人中心配置: %w", err)
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {

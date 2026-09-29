@@ -86,14 +86,14 @@ func main() {
 	})
 	r.Use(corsMiddleware())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "strm115"}) })
-	auth := service.NewWebsiteAuth(database, user, pass, secret)
-	httpapi.RegisterWebsiteAuth(r, auth)
+	auth := service.NewPortalAuth(database, user, pass, secret)
+	httpapi.RegisterPortalAuth(r, auth)
 	admin := r.Group("/api/admin")
-	admin.Use(httpapi.WebsiteAuthenticated(auth), httpapi.WebsiteAdminOnly())
+	admin.Use(httpapi.PortalAuthenticated(auth), httpapi.PortalAdminOnly())
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
-	httpapi.RegisterWebsiteUsers(admin, auth)
+	httpapi.RegisterPortalInvites(admin, auth)
 	catalog := r.Group("/api/catalog")
-	catalog.Use(httpapi.WebsiteAuthenticated(auth))
+	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
@@ -158,7 +158,7 @@ func main() {
 	resourceMatcher := service.NewResourceMatchService(tmdbService, embyService)
 	httpapi.RegisterResourceMatch(admin, resourceMatcher)
 	httpapi.RegisterResourceMatch(catalog, resourceMatcher)
-	member := r.Group("/api/me", httpapi.WebsiteAuthenticated(auth))
+	member := r.Group("/api/me", httpapi.PortalAuthenticated(auth))
 	follows := &service.FollowService{Store: database, TMDB: tmdbService, Library: embyService, ResourceMatcher: resourceMatcher}
 	httpapi.RegisterFollows(member, follows)
 	httpapi.RegisterWebsiteNotifications(member, database)
@@ -260,7 +260,6 @@ func main() {
 	playbackCache.Members = memberPlayback
 	memberPlayback.Cache = playbackCache
 	auth.Members = memberPlayback
-	auth.SyncPlayback = memberPlayback.SyncUser
 	identityStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-playback-identities.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
