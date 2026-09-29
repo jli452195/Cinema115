@@ -2,6 +2,9 @@ package model
 
 // Contains lifecycle metadata only; no passwords, tokens, cookies or links.
 type MemberPlayback struct {
+	CleanupState        string `json:"cleanupState,omitempty"`
+	CleanupMode         string `json:"cleanupMode,omitempty"`
+	CleanupName         string `json:"cleanupName,omitempty"`
 	Adopted             bool   `json:"adopted"`
 	AllowPersonalSwitch bool   `json:"allowPersonalSwitch"`
 	Provisioned         bool   `json:"provisioned"`

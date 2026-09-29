@@ -107,6 +107,7 @@ func RegisterWebsiteAuth(r *gin.Engine, auth *service.WebsiteAuth) {
 func RegisterWebsiteUsers(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
 	registerWebsiteInvites(admin, auth)
 	group := admin.Group("/users")
+	registerWebsiteCleanup(group, auth)
 	group.Use(func(c *gin.Context) { c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096); c.Next() })
 	group.GET("", func(c *gin.Context) {
 		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))

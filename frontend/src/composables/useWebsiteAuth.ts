@@ -1,6 +1,6 @@
 import { computed, readonly, ref } from 'vue'
 
-export interface WebsiteUser { id: string; username: string; role: 'admin' | 'user'; disabled: boolean; createdAt: string }
+export interface WebsiteUser { id: string; username: string; role: 'admin' | 'user'; disabled: boolean; createdAt: string; cleanupState?: string }
 const token = ref(localStorage.getItem('admin_token') || '')
 const user = ref<WebsiteUser>()
 const error = ref('')

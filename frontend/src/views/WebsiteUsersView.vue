@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import WebsiteInvitesPanel from '../components/WebsiteInvitesPanel.vue'
 import MemberPlaybackAdmin from '../components/MemberPlaybackAdmin.vue'
+import WebsiteUserCleanup from '../components/WebsiteUserCleanup.vue'
 import type { WebsiteUser } from '../composables/useWebsiteAuth'
 import { memberRequest, type MemberPlayback } from '../types/memberPlayback'
 
@@ -19,6 +20,7 @@ const resetPassword = ref('')
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
+const cleanup = ref<InstanceType<typeof WebsiteUserCleanup>>()
 const loading = ref(false)
 const offset = ref(0)
 const hasMore = ref(false)
@@ -81,12 +83,13 @@ onBeforeUnmount(() => lifecycle.abort())
         <p class="mb-4 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">普通用户无法访问管理功能。重置密码或修改启用状态后，该用户需要重新登录。</p>
         <p v-if="loading" role="status" class="py-4 text-sm text-slate-400 dark:text-slate-500">正在加载…</p>
         <p v-else-if="!users.length" class="py-6 text-sm text-slate-400 dark:text-slate-500">暂无用户，可以在上方创建。</p>
-        <div v-for="user in users" :key="user.id" class="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 dark:border-slate-800 py-4">
-          <div class="min-w-0"><p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ user.username }} <span class="ml-2 text-xs" :class="user.disabled ? 'text-slate-400 dark:text-slate-500' : 'text-emerald-600'">{{ user.disabled ? '已停用' : '已启用' }}</span></p><p class="mt-1 text-xs text-slate-400 dark:text-slate-500">创建于 {{ new Date(user.createdAt).toLocaleString() }}</p></div>
-          <div class="flex flex-wrap gap-4 text-sm"><RouterLink :to="{ path: '/emby/users', query: { websiteUser: user.id } }" class="text-blue-600 dark:text-blue-300">{{ playbackMembers[user.id]?.embyId ? 'Emby：' + playbackMembers[user.id].embyName : '查看播放授权' }}</RouterLink><button :disabled="busy" class="text-blue-600 disabled:opacity-50" @click="resetUser = user; resetPassword = ''">重置密码</button><button :disabled="busy" :class="user.disabled ? 'text-emerald-600' : 'text-red-600'" @click="mutate(`/${user.id}`, { disabled: !user.disabled }, user.disabled ? '用户已启用，请重新登录。' : '用户已停用，原登录凭证已失效。')">{{ user.disabled ? '启用' : '停用' }}</button></div>
+        <div v-for="user in users" :key="user.id" role="group" :aria-label="user.username + ' 的网站账号'" class="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 dark:border-slate-800 py-4">
+          <div class="min-w-0"><p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ user.username }} <span class="ml-2 text-xs" :class="user.disabled ? 'text-slate-400 dark:text-slate-500' : 'text-emerald-600'">{{ user.cleanupState ? '删除待完成' : user.disabled ? '已停用' : '已启用' }}</span></p><p class="mt-1 text-xs text-slate-400 dark:text-slate-500">创建于 {{ new Date(user.createdAt).toLocaleString() }}</p></div>
+          <div class="flex flex-wrap gap-4 text-sm"><RouterLink :to="{ path: '/emby/users', query: { websiteUser: user.id } }" class="text-blue-600 dark:text-blue-300">{{ playbackMembers[user.id]?.embyId ? 'Emby：' + playbackMembers[user.id].embyName : '查看播放授权' }}</RouterLink><template v-if="!user.cleanupState"><button :disabled="busy" class="text-blue-600 disabled:opacity-50" @click="resetUser = user; resetPassword = ''">重置密码</button><button :disabled="busy" :class="user.disabled ? 'text-emerald-600' : 'text-red-600'" @click="mutate(`/${user.id}`, { disabled: !user.disabled }, user.disabled ? '用户已启用，请重新登录。' : '用户已停用，原登录凭证已失效。')">{{ user.disabled ? '启用' : '停用' }}</button></template><button :disabled="busy" class="text-red-600 disabled:opacity-40 dark:text-red-300" @click="resetUser = undefined; cleanup?.open(user.id)">{{ user.cleanupState ? '重试删除' : '删除用户' }}</button></div>
         </div>
         <div v-if="offset || hasMore" class="mt-4 flex justify-end gap-4 text-sm"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="load(offset - 50)">上一页</button><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="load(offset + 50)">下一页</button></div>
       </section>
+      <WebsiteUserCleanup ref="cleanup" :token="token" @busy="busy = $event" @changed="load()" />
       <form v-if="resetUser" class="space-y-4 rounded-2xl border border-blue-200 bg-white dark:bg-slate-900 p-6" @submit.prevent="mutate(`/${resetUser.id}`, { password: resetPassword }, '密码已重置，原登录凭证已失效。')">
         <h2 class="font-semibold">重置 {{ resetUser.username }} 的密码</h2>
         <label class="block text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">新密码<input v-model="resetPassword" required minlength="8" maxlength="128" type="password" autocomplete="new-password" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3" /></label>

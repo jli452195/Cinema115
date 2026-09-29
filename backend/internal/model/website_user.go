@@ -6,6 +6,7 @@ type WebsiteUser struct {
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	Disabled     bool   `json:"disabled"`
+	CleanupState string `json:"cleanupState,omitempty"`
 	CreatedAt    string `json:"createdAt"`
 	PasswordHash string `json:"-"`
 	TokenVersion int64  `json:"-"`

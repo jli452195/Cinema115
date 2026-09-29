@@ -141,6 +141,9 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 	if err := c.get(ctx, "/Users", nil, &users); err != nil {
 		return nil, err
 	}
+	if users == nil {
+		return nil, fmt.Errorf("Emby 用户列表响应无效")
+	}
 	return users, nil
 }
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {

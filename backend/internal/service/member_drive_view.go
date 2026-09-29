@@ -49,7 +49,10 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 	records := s.Records()
 	out := make([]MemberPlaybackAdminView, 0, len(records))
 	for _, r := range records {
-		out = append(out, MemberPlaybackAdminView{MemberPlayback: r, PersonalDrive: s.personalDrive(r)})
+		if r.CleanupState == "deleted" && (r.EmbyID == "" || r.CleanupMode != "keep") {
+			continue
+		}
+		out = append(out, MemberPlaybackAdminView{MemberPlayback: r, PersonalDrive: s.personalDrive(r), WebsiteName: r.CleanupName, WebsiteDisabled: r.CleanupState != ""})
 	}
 	return out
 }

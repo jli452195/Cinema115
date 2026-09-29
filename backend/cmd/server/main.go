@@ -277,6 +277,7 @@ func main() {
 	}
 	defer embyProxy.Close()
 	memberPlayback.ProxyStatus = embyProxy.Status
+	memberPlayback.ClearDirectLinks = func() { embyProxy.ClearDirectLinks("") }
 	httpapi.RegisterMemberPlayback(member, admin, memberPlayback)
 	httpapi.RegisterEmbyProxy(admin, embyProxy)
 	httpapi.RegisterPlaybackCache(admin, playbackCache, embyProxy, embyService)

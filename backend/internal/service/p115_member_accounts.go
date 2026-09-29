@@ -45,6 +45,33 @@ func (s *P115Accounts) ClearMemberCookie(userID string, revision uint64) error {
 	return ErrAccountMissing
 }
 
+// Cleanup never mutates an administrator account, including an assigned target.
+func (s *P115Accounts) clearMemberCredentials(userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.copy()
+	changed := false
+	for i, a := range value.Accounts {
+		if a.OwnerUserID != userID || a.Ownership != "member" {
+			continue
+		}
+		if a.Primary {
+			return ErrAccountInput
+		}
+		if a.Cookie == "" {
+			continue
+		}
+		a.Cookie = ""
+		a.Revision++
+		value.Accounts[i] = a
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.commit(value)
+}
+
 func (s *P115Accounts) commitMember(ctx context.Context, value accountDocument, r model.MemberPlayback) error {
 	store, ok := s.store.(interface {
 		SaveMember(context.Context, string, model.MemberPlayback) error

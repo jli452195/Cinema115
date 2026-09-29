@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func TestDeleteManagedUserAndInvalidUserList(t *testing.T) {
+	id := strings.Repeat("a", 32)
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/emby/Users" {
+			_, _ = w.Write([]byte(`null`))
+			return
+		}
+		if r.Method != http.MethodDelete || r.URL.Path != "/emby/Users/"+id || r.Header.Get("X-Emby-Token") != "key" || r.URL.RawQuery != "" {
+			t.Error("wrong delete request")
+		}
+		deleted = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	c := New(server.URL, "key")
+	if err := c.DeleteManagedUser(context.Background(), "../admin"); err == nil || deleted {
+		t.Fatal("invalid identity accepted")
+	}
+	if err := c.DeleteManagedUser(context.Background(), id); err != nil || !deleted {
+		t.Fatal(err)
+	}
+	if _, err := c.Users(context.Background()); err == nil {
+		t.Fatal("null list accepted as deletion proof")
+	}
+}
+
 func TestLibraryItemIDAndPolicyGUIDAreDistinct(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/emby/Library/VirtualFolders" {

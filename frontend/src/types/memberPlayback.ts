@@ -1,4 +1,5 @@
 export interface MemberPlayback {
+	cleanupState?: string; cleanupMode?: string; cleanupName?: string
 	adopted?: boolean; allowPersonalSwitch?: boolean
   userId: string; websiteName: string; websiteDisabled: boolean; embyId: string; embyName: string; embyUrl: string
   source: string; accountId: string; assignedAccountId: string; policyEnabled: boolean; stage: string; message: string
@@ -13,6 +14,8 @@ export async function memberRequest(token: string, signal: AbortSignal, path = '
   return data
 }
 export function memberStage(member: MemberPlayback, settings: MemberSettings) {
+  if (member.cleanupState === 'deleted') return '网站用户已删除 · Emby 保持停用'
+  if (member.cleanupState === 'deleting') return '删除待完成 · 请在网站用户管理重试'
   if (member.websiteDisabled) return '网站账号已停用'
   if (member.adminBlocked) return '播放已停用'
   if (!settings.enabled) return '自助播放已关闭'

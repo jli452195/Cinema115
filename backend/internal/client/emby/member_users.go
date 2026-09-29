@@ -92,3 +92,24 @@ func (c *Client) RenameManagedUser(ctx context.Context, id, name string) error {
 	}
 	return c.userWrite(ctx, "/Users/"+id, map[string]any{"Id": id, "Name": name}, nil)
 }
+
+func (c *Client) DeleteManagedUser(ctx context.Context, id string) error {
+	if !validUserID(id) {
+		return fmt.Errorf("Emby 用户编号无效")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/emby/Users/"+id, nil)
+	if err != nil {
+		return fmt.Errorf("创建 Emby 删除请求: %w", err)
+	}
+	req.Header.Set("X-Emby-Token", c.Key)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("Emby 删除响应未确认")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Emby 删除返回 HTTP %d", resp.StatusCode)
+	}
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 65536))
+	return err
+}

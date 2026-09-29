@@ -14,7 +14,7 @@ var ErrWebsiteUserNotFound = errors.New("用户不存在")
 
 func scanWebsiteUser(row interface{ Scan(...any) error }) (model.WebsiteUser, error) {
 	var u model.WebsiteUser
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Disabled, &u.TokenVersion, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Disabled, &u.TokenVersion, &u.CreatedAt, &u.CleanupState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrWebsiteUserNotFound
 	}
@@ -24,7 +24,7 @@ func scanWebsiteUser(row interface{ Scan(...any) error }) (model.WebsiteUser, er
 	return u, nil
 }
 
-const websiteUserColumns = "id,username,password_hash,role,disabled,token_version,created_at"
+const websiteUserColumns = "id,username,password_hash,role,disabled,token_version,created_at,COALESCE((SELECT json_extract(record,'$.cleanupState') FROM member_playback WHERE user_id=website_users.id),'')"
 
 func (s *Store) WebsiteUserByName(ctx context.Context, name string) (model.WebsiteUser, error) {
 	return scanWebsiteUser(s.db.QueryRowContext(ctx, "SELECT "+websiteUserColumns+" FROM website_users WHERE username=?", name))
@@ -72,7 +72,7 @@ func (s *Store) UpdateWebsiteUser(ctx context.Context, id, passwordHash string, 
 	if disabled != nil {
 		value = *disabled
 	}
-	r, err := s.db.ExecContext(ctx, `UPDATE website_users SET password_hash=CASE WHEN ?='' THEN password_hash ELSE ? END, disabled=COALESCE(?,disabled),token_version=token_version+1 WHERE id=?`, passwordHash, passwordHash, value, id)
+	r, err := s.db.ExecContext(ctx, `UPDATE website_users SET password_hash=CASE WHEN ?='' THEN password_hash ELSE ? END, disabled=COALESCE(?,disabled),token_version=token_version+1 WHERE id=? AND NOT EXISTS(SELECT 1 FROM member_playback WHERE user_id=? AND COALESCE(json_extract(record,'$.cleanupState'),'')<>'')`, passwordHash, passwordHash, value, id, id)
 	if err != nil {
 		return fmt.Errorf("更新网站用户: %w", err)
 	}

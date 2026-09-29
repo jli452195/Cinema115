@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 27
+const schemaVersion = 28
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -473,6 +473,11 @@ PRAGMA user_version=24;`); err != nil {
 		}
 		if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId')) WHERE json_extract(record,'$.embyId')<>''; PRAGMA user_version=27;`); err != nil {
 			return err
+		}
+	}
+	if version < 28 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS website_user_cleanup(user_id TEXT PRIMARY KEY, record TEXT NOT NULL); PRAGMA user_version=28;`); err != nil {
+			return fmt.Errorf("创建用户清理记录: %w", err)
 		}
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.

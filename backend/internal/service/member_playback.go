@@ -46,21 +46,22 @@ type memberQRSession struct {
 	lastPoll time.Time
 }
 type MemberPlaybackService struct {
-	Cache       *PlaybackCache // wired before serving
-	db          *storage.Store
-	accounts    *P115Accounts
-	emby        *EmbyService
-	drive       memberDriveClient
-	checker     memberCookieChecker
-	qr          memberQRClient
-	gate        chan struct{}
-	wake        chan struct{}
-	mu          sync.RWMutex
-	records     map[string]model.MemberPlayback
-	settings    model.MemberPlaybackSettings
-	sessions    map[string]memberQRSession // guarded by gate, bounded and expires
-	NewEmby     func(string, string) memberEmbyClient
-	ProxyStatus func() EmbyProxyStatus // wired once before HTTP starts
+	Cache            *PlaybackCache // wired before serving
+	db               *storage.Store
+	accounts         *P115Accounts
+	emby             *EmbyService
+	drive            memberDriveClient
+	checker          memberCookieChecker
+	qr               memberQRClient
+	gate             chan struct{}
+	wake             chan struct{}
+	mu               sync.RWMutex
+	records          map[string]model.MemberPlayback
+	settings         model.MemberPlaybackSettings
+	sessions         map[string]memberQRSession // guarded by gate, bounded and expires
+	NewEmby          func(string, string) memberEmbyClient
+	ProxyStatus      func() EmbyProxyStatus // wired once before HTTP starts
+	ClearDirectLinks func()                 // wired once before HTTP starts
 }
 
 func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Accounts, server *EmbyService, drive memberDriveClient, checker memberCookieChecker, qr memberQRClient) (*MemberPlaybackService, error) {
@@ -68,13 +69,18 @@ func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Acc
 	if err != nil {
 		return nil, err
 	}
+	archived, err := db.WebsiteCleanupRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, archived...)
 	settings, err := db.MemberPlaybackSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	s := &MemberPlaybackService{db: db, accounts: accounts, emby: server, drive: drive, checker: checker, qr: qr, gate: make(chan struct{}, 1), records: make(map[string]model.MemberPlayback, len(records)), settings: settings, sessions: make(map[string]memberQRSession), NewEmby: func(base, key string) memberEmbyClient { return emby.New(base, key) }}
 	for _, r := range records {
-		if r.AccountID != "" {
+		if r.AccountID != "" && r.CleanupState == "" {
 			used, err := db.MemberAccountReferenced(ctx, r.UserID, r.AccountID)
 			if err != nil {
 				return nil, err
@@ -192,6 +198,9 @@ func (s *MemberPlaybackService) SetSettings(ctx context.Context, settings model.
 		ids = append(ids, settings.LibraryIDs...)
 	}
 	for _, r := range s.Records() {
+		if r.CleanupState == "deleted" {
+			continue
+		}
 		if settings.Enabled && (r.EmbyURL != c.URL || r.ServerID != c.ServerID) {
 			return memberError("已有个人账号属于另一 Emby 服务，不能直接更换服务")
 		}
@@ -258,7 +267,7 @@ func (s *MemberPlaybackService) RequestSync() {
 }
 func (s *MemberPlaybackService) websiteUser(ctx context.Context, id string) (model.WebsiteUser, error) {
 	u, err := s.db.WebsiteUser(ctx, id)
-	if err != nil || u.Disabled || u.Role != "user" {
+	if err != nil || u.Disabled || u.Role != "user" || u.CleanupState != "" {
 		return u, memberError("网站账号不可用")
 	}
 	return u, nil
@@ -511,6 +520,9 @@ func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string
 		if r.EmbyID != id {
 			continue
 		}
+		if r.CleanupState != "" {
+			return true, memberError("网站用户正在删除或已删除，原 Emby 身份保持锁定")
+		}
 		c := s.emby.snapshot()
 		settings := s.Settings()
 		if r.AppliedRevision != settings.Revision || r.SyncError != "" || len(settings.LibraryIDs) == 0 {
@@ -536,6 +548,9 @@ func (s *MemberPlaybackService) AuthorizeLogin(ctx context.Context, server, id, 
 	for _, r := range s.Records() {
 		if r.EmbyID != id || id == "" {
 			continue
+		}
+		if r.CleanupState != "" {
+			return memberError("网站用户正在删除或已删除，原 Emby 身份保持锁定")
 		}
 		c := s.emby.snapshot()
 		settings := s.Settings()
@@ -742,6 +757,9 @@ func (s *MemberPlaybackService) Provision(ctx context.Context, id, password stri
 }
 
 func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPlayback) (result error) {
+	if r.CleanupState != "" {
+		return nil
+	}
 	if r.EmbyID == "" {
 		return nil
 	}
@@ -863,6 +881,9 @@ func (s *MemberPlaybackService) Suspend(ctx context.Context, id string) error {
 	}
 	defer s.unlock()
 	r := s.record(id)
+	if r.CleanupState != "" {
+		return memberError("用户正在清理或已删除")
+	}
 	if r.UserID == "" {
 		return nil
 	}
@@ -895,6 +916,9 @@ func (s *MemberPlaybackService) AdminUpdate(ctx context.Context, id string, bloc
 	r := s.record(id)
 	if r.UserID == "" {
 		return memberError("个人播放配置不存在")
+	}
+	if r.CleanupState != "" {
+		return memberError("用户正在清理或已删除，不能修改播放授权")
 	}
 	if blocked != nil {
 		r.AdminBlocked = *blocked
