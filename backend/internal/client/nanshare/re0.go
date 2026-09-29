@@ -79,6 +79,134 @@ type ShareOptions struct {
 	Folders   []Folder `json:"folders"`
 }
 
+type TransferFolder struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type TransferOptions struct {
+	AccountID string           `json:"accountId"`
+	Folders   []TransferFolder `json:"folders"`
+}
+
+type TransferResult struct {
+	Code    string `json:"code"`
+	Count   int    `json:"count"`
+	Message string `json:"message"`
+	OK      bool   `json:"ok"`
+	Success bool   `json:"success"`
+}
+
+func (c *Client) TransferOptions(ctx context.Context) (TransferOptions, error) {
+	var response struct {
+		Data struct {
+			AccountID string `json:"use_pan115_config"`
+			Folders   []struct {
+				ID   json.RawMessage `json:"id"`
+				CID  json.RawMessage `json:"cid"`
+				Name string          `json:"name"`
+				Path string          `json:"path"`
+			} `json:"transfer_folders"`
+		} `json:"data"`
+	}
+	if err := c.request(ctx, http.MethodGet, "/transfer/115/config", nil, &response); err != nil {
+		return TransferOptions{}, err
+	}
+	result := TransferOptions{AccountID: strings.TrimSpace(response.Data.AccountID), Folders: make([]TransferFolder, 0, len(response.Data.Folders))}
+	for _, folder := range response.Data.Folders {
+		id := transferFolderID(folder.CID)
+		if id == "" {
+			id = transferFolderID(folder.ID)
+		}
+		if id == "" {
+			continue
+		}
+		result.Folders = append(result.Folders, TransferFolder{ID: id, Name: strings.TrimSpace(folder.Name), Path: strings.TrimSpace(folder.Path)})
+	}
+	if result.AccountID == "" || len(result.Folders) == 0 {
+		return TransferOptions{}, fmt.Errorf("%w：请先配置 115 转存助手账号和目录", ErrInput)
+	}
+	return result, nil
+}
+
+func transferFolderID(raw json.RawMessage) string {
+	var id string
+	if json.Unmarshal(raw, &id) != nil {
+		id = string(raw)
+	}
+	if id == "" || len(id) > 32 || strings.Trim(id, "0123456789") != "" {
+		return ""
+	}
+	return id
+}
+
+func decodeTransferResult(data []byte, result *TransferResult) error {
+	var response struct {
+		envelope
+		Count   int    `json:"count"`
+		Message string `json:"message"`
+		Results []struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		} `json:"results"`
+	}
+	if json.Unmarshal(data, &response) != nil || response.OK == nil || response.Success == nil {
+		return ErrFormat
+	}
+	if *response.OK != *response.Success || response.Count < 0 {
+		return ErrFormat
+	}
+	result.Count = response.Count
+	if *response.OK && *response.Success {
+		if response.Count == 0 || response.Count != len(response.Results) {
+			return ErrFormat
+		}
+		for _, item := range response.Results {
+			if !item.Success {
+				return ErrFormat
+			}
+		}
+		result.OK, result.Success, result.Code, result.Message = true, true, "ok", fmt.Sprintf("转存成功，共 %d 个；文件已保存到所选目录", response.Count)
+		return nil
+	}
+	result.Code, result.Message = "failed", "转存失败，请在 NanShare 查看详细结果"
+	if strings.Contains(response.Message, "无法确认资源积分") {
+		result.Code, result.Message = "points_unknown", "无法确认资源积分，已按 NanShare 积分限制策略跳过"
+		return nil
+	}
+	if strings.Contains(response.Message, "积分") {
+		result.Code, result.Message = "points_limit", "资源积分不满足 NanShare 当前策略，请检查积分余额与限制设置"
+		return nil
+	}
+	for _, item := range response.Results {
+		if strings.Contains(item.Message, "已经转存过该文件") {
+			result.Code, result.Message = "already_saved", "该文件已转存过，请在网盘核查；未重复转存"
+		} else if !item.Success {
+			result.Code, result.Message = "failed", "转存失败，请在 NanShare 查看详细结果"
+			break
+		}
+	}
+	if response.Count > 0 {
+		result.Code, result.Message = "partial", fmt.Sprintf("已成功转存 %d 个，其余未完成，请在 NanShare 核查，勿重复提交", response.Count)
+	}
+	return nil
+}
+
+func (c *Client) TransferResource(ctx context.Context, source, panType, folderID string, links []string, slug string) (TransferResult, error) {
+	if source != "hdhive" || panType != "115" || strings.TrimSpace(folderID) == "" || strings.TrimSpace(slug) == "" || len(slug) > 256 || len(links) > 256 {
+		return TransferResult{}, ErrInput
+	}
+	var result TransferResult
+	if err := c.request(ctx, http.MethodPost, "/discover/resource/transfer", map[string]any{"source": source, "pan_type": panType, "folder_id": folderID, "links": links, "slug": slug}, &result); err != nil {
+		return TransferResult{}, err
+	}
+	if result.Message == "" {
+		return TransferResult{}, ErrFormat
+	}
+	return result, nil
+}
+
 // ShareOptions reads the feature's explicitly persisted remote account binding.
 // No local 115 account or credential is used or forwarded to NanShare.
 func (c *Client) ShareOptions(ctx context.Context, searchAccount string) (ShareOptions, error) {

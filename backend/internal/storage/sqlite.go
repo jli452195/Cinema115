@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 22
+const schemaVersion = 23
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -410,6 +410,16 @@ CREATE INDEX IF NOT EXISTS playback_copy_source ON playback_copies(source_key);
 CREATE TABLE IF NOT EXISTS playback_settings (id INTEGER PRIMARY KEY CHECK(id=1), record TEXT NOT NULL);
 PRAGMA user_version=22;`); err != nil {
 			return fmt.Errorf("创建播放秒传资料库: %w", err)
+		}
+	}
+	if version < 23 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS website_invites (
+ id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, note TEXT NOT NULL,
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL DEFAULT 0,
+ used_at INTEGER NOT NULL DEFAULT 0, used_by TEXT NOT NULL DEFAULT ''
+); CREATE INDEX IF NOT EXISTS website_invites_created ON website_invites(created_at DESC,id);
+PRAGMA user_version=23;`); err != nil {
+			return fmt.Errorf("创建注册邀请表: %w", err)
 		}
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.

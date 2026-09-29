@@ -18,6 +18,7 @@ import EmbyProxyView from './views/EmbyProxyView.vue'
 import EmbyCacheView from './views/EmbyCacheView.vue'
 import EmbyUsersView from './views/EmbyUsersView.vue'
 import WebsiteUsersView from './views/WebsiteUsersView.vue'
+import RegisterView from './views/RegisterView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
@@ -30,6 +31,7 @@ import { ensureWebsiteSession, websiteBrowseRoutes } from './composables/useWebs
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/register', name: 'register', component: RegisterView },
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
@@ -68,6 +70,7 @@ export const router = createRouter({
 
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
 router.beforeEach(async to => {
+  if (to.name === 'register') return
   const user = await ensureWebsiteSession()
   const browsing = websiteBrowseRoutes.has(String(to.name))
   if (user && user.role !== 'admin' && !browsing) return { path: '/', replace: true }

@@ -4,24 +4,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' })
     await context.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
     const page = await context.newPage(), errors = [], searches = [], submissions = []
     page.on('pageerror', error => errors.push(error.message))
     let role = 'admin', configured = true, empty = false, changed = false, multiple = false, missingAccount = false, unlockOnRefresh = false, refreshFails = false, unknownNext = false, dropNext = false, failRecovery = false
     const receipts = {}
+    const transfers = {}, transferCalls = []
+    let transferState = 'accepted', transferMultiple = false, transferDrop = false
     const resources = [{ slug: 'one', key: 'one', name: '1-192 周更', remark: '', title: '凡人修仙传', pan_type: '115', video_resolution: ['4K'], resource_sources: [], share_size: '402.32GB', publisher: '发布者', publish_time: '2026-09-24', subtitle_language: ['简中'], subtitle_type: ['内封'], unlock_points: 10, is_unlocked: false, unlocked_users_count: 2, is_official: false, validate_status: 'invalid' }, { slug: 'two', key: 'two', name: '高清合集', pan_type: '115', unlock_points: 0, video_resolution: null, subtitle_language: null, subtitle_type: null, is_unlocked: true }]
     await page.route('**/api/**', async route => {
       const req = route.request(), u = new URL(req.url()); let data = {}, status = 200
       if (u.pathname === '/api/auth/me') data = { user: { id: 'mock', username: 'mock', role, disabled: false } }
+      else if (u.pathname.endsWith('/nanshare/config')) data = { configured }
       else if (u.pathname.includes('/tmdb/detail/')) data = { id: 106449, kind: u.pathname.includes('/movie/') ? 'movie' : 'tv', title: '凡人修仙传', originalTitle: '', overview: '', posterUrl: '', backdropUrl: '', date: '2020', rating: 8, votes: 1, tagline: '', status: 'Returning Series', runtime: 24, episodeCount: 192, genres: [], countries: [], cast: [], seasons: [], collection: null, imdbId: '', imdbUrl: '', tmdbUrl: '' }
       else if (u.pathname.endsWith('/nanshare/search')) {
         if (failRecovery) return route.abort('failed')
         searches.push(req.postDataJSON())
         if (req.postDataJSON().refresh && refreshFails) { status = 502; data = { error: '刷新暂不可用' } }
         else if (!configured) { status = 400; data = { error: '请先登录 NanShare' } }
-        else data = { id: 'search-one', items: empty ? [] : resources, submissions: receipts, expiresAt: new Date(Date.now()+900000).toISOString() }
+        else data = { id: 'search-one', items: empty ? [] : resources, submissions: receipts, transfers, expiresAt: new Date(Date.now()+900000).toISOString() }
         if (req.postDataJSON().refresh && unlockOnRefresh) resources[0].is_unlocked = true
+      } else if (u.pathname.includes('/nanshare/transfer-options/')) data = { accountId: 'remote-primary', folders: transferMultiple ? [{ id: '3486868885414610176', name: '电影' }, { id: '3486868885414610177', name: '剧集' }] : [{ id: '3486868885414610176', name: '转存目录' }] }
+      else if (u.pathname.endsWith('/nanshare/transfer')) {
+        const input = req.postDataJSON(); transferCalls.push(input)
+        if (transferDrop) { transferDrop = false; return route.abort('failed') }
+        data = transfers[input.slug] = { requestId: input.requestId, state: transferState, message: ({ accepted: '转存成功，共 1 个', points_unknown: '无法确认资源积分，已按积分限制策略跳过', already_saved: '该文件已转存过，请在网盘核查' })[transferState] }
       } else if (u.pathname.includes('/nanshare/share-options/')) data = { version: 'snapshot', accountId: missingAccount ? '' : 'remote-115', modes: multiple ? ['normal', 'reshare'] : ['reshare'], folders: multiple ? [{ index: 0, name: 'strm', path: '/strm/待整理' }, { index: 3, name: 'movie', path: '/strm/电影' }] : [{ index: 0, name: 'strm', path: '/strm/待整理' }] }
       else if (u.pathname.endsWith('/nanshare/submit')) {
         const input = req.postDataJSON(); submissions.push(input)
@@ -47,14 +55,31 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await rows.count(), 2)
     assert.deepEqual(searches[0], { kind: 'tv', tmdbId: 106449, refresh: false })
     assert.equal(submissions.length, 0)
-    assert.equal(await modal.getByRole('button', { name: '一键转存' }).count(), 0)
+    assert.equal(await modal.getByRole('button', { name: '一键转存', exact: true }).count(), 2)
+    await rows.first().getByRole('button', { name: '一键转存', exact: true }).click()
+    await rows.first().getByText('转存成功，共 1 个', { exact: true }).waitFor()
+    assert.equal(await rows.first().getByRole('button', { name: '已转存', exact: true }).isDisabled(), true)
+    assert.equal(transferCalls[0].folderId, '3486868885414610176')
+    assert.equal(transferCalls[0].accountId, 'remote-primary')
+    assert.equal(submissions.length, 0, 'transfer must not create STRM')
+    transferMultiple = true; transferState = 'points_unknown'
+    await rows.nth(1).getByRole('button', { name: '一键转存', exact: true }).click()
+    await modal.getByLabel('转存目录', { exact: true }).selectOption('3486868885414610177')
+    await modal.getByRole('button', { name: '开始转存', exact: true }).click()
+    await rows.nth(1).getByText('无法确认资源积分，已按积分限制策略跳过', { exact: true }).waitFor()
+    assert.equal(transferCalls[1].folderId, '3486868885414610177')
+    transferMultiple = false; transferState = 'already_saved'; transferDrop = true
+    await rows.nth(1).getByRole('button', { name: '一键转存', exact: true }).click()
+    await rows.nth(1).getByRole('button', { name: '获取转存结果', exact: true }).click()
+    await rows.nth(1).getByText('该文件已转存过，请在网盘核查', { exact: true }).waitFor()
+    assert.equal(transferCalls[2].requestId, transferCalls[3].requestId, 'lost response must reuse request ID')
     await modal.getByLabel('筛选当前结果').fill('高清')
     assert.equal(await rows.count(), 1)
     await modal.getByLabel('筛选当前结果').fill('')
     assert.equal(await rows.first().locator('[data-unlock-status]').textContent(), '10 积分')
     await rows.first().getByRole('button', { name: '分享 STRM', exact: true }).click()
     await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).waitFor()
-    await page.waitForFunction(() => !document.querySelector('[aria-label="RE0 资源列表"] button').disabled)
+    await page.waitForFunction(() => [...document.querySelectorAll('[aria-label="RE0 资源列表"] button')].some(button => button.textContent.trim() === '再次生成 STRM' && !button.disabled))
     assert.equal(await modal.locator('[aria-label="分享 STRM 配置"]').count(), 0)
     assert.equal(await modal.getByLabel('NanShare 已绑定的 115 账号').count(), 0)
     assert.equal(submissions.length, 1)
@@ -141,6 +166,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.locator('h1').filter({ hasText: '凡人修仙传' }).waitFor()
     assert.equal(await page.getByRole('button', { name: 'RE0 搜索', exact: true }).count(), 0)
     assert.deepEqual(errors, [])
-    console.log('RE0 UI passed: repeat generation, unique request IDs, same-ID network retry, unknown-result confirmation, authoritative unlock refresh, free/paid/unlocked badges, mobile and access control')
+    console.log('RE0 UI passed: one-click transfer, folder selection, points policy, duplicate receipts, same-ID transfer recovery, STRM repeat generation and recovery, unlock refresh, mobile and access control')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

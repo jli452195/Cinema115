@@ -165,6 +165,17 @@ func (a *WebsiteAuth) Authenticate(ctx context.Context, value string) (model.Web
 var websiteNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$`)
 
 func (a *WebsiteAuth) Create(ctx context.Context, name, password string) (model.WebsiteUser, error) {
+	u, err := a.prepareUser(ctx, name, password)
+	if err != nil {
+		return model.WebsiteUser{}, err
+	}
+	if err := a.DB.CreateWebsiteUser(ctx, u); err != nil {
+		return model.WebsiteUser{}, err
+	}
+	return u, nil
+}
+
+func (a *WebsiteAuth) prepareUser(ctx context.Context, name, password string) (model.WebsiteUser, error) {
 	name = strings.TrimSpace(name)
 	if !websiteNamePattern.MatchString(name) || strings.EqualFold(name, a.adminName) {
 		return model.WebsiteUser{}, fmt.Errorf("%w：用户名需为 3–32 位字母、数字、下划线、点或短横线，且不能与管理员重名", ErrUserInput)
@@ -178,9 +189,6 @@ func (a *WebsiteAuth) Create(ctx context.Context, name, password string) (model.
 		return model.WebsiteUser{}, fmt.Errorf("生成用户编号: %w", err)
 	}
 	u := model.WebsiteUser{ID: hex.EncodeToString(id[:]), Username: name, Role: "user", PasswordHash: hash, TokenVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := a.DB.CreateWebsiteUser(ctx, u); err != nil {
-		return model.WebsiteUser{}, err
-	}
 	return u, nil
 }
 func (a *WebsiteAuth) Update(ctx context.Context, id, password string, disabled *bool) error {

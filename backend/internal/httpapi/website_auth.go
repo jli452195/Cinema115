@@ -24,6 +24,8 @@ func websiteAuthError(c *gin.Context, err error) {
 		status, message = 400, err.Error()
 	case errors.Is(err, storage.ErrWebsiteUserExists):
 		status, message = 409, err.Error()
+	case errors.Is(err, storage.ErrWebsiteInviteInvalid):
+		status, message = 400, err.Error()
 	case errors.Is(err, storage.ErrWebsiteUserNotFound):
 		status, message = 404, err.Error()
 	}
@@ -60,6 +62,7 @@ func WebsiteAdminOnly() gin.HandlerFunc {
 	}
 }
 func RegisterWebsiteAuth(r *gin.Engine, auth *service.WebsiteAuth) {
+	registerWebsiteRegistration(r, auth)
 	// 单实例固定窗口限制匿名登录次数，不按任意用户名创建无限增长的记录。
 	var mu sync.Mutex
 	var window time.Time
@@ -100,6 +103,7 @@ func RegisterWebsiteAuth(r *gin.Engine, auth *service.WebsiteAuth) {
 	r.GET("/api/auth/me", WebsiteAuthenticated(auth), func(c *gin.Context) { u, _ := c.Get("website_user"); c.JSON(200, gin.H{"user": u}) })
 }
 func RegisterWebsiteUsers(admin *gin.RouterGroup, auth *service.WebsiteAuth) {
+	registerWebsiteInvites(admin, auth)
 	group := admin.Group("/users")
 	group.Use(func(c *gin.Context) { c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096); c.Next() })
 	group.GET("", func(c *gin.Context) {

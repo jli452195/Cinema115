@@ -22,6 +22,7 @@ type NanShareSearchView struct {
 	ID          string                        `json:"id"`
 	Items       []nanshare.Resource           `json:"items"`
 	Submissions map[string]NanShareSubmission `json:"submissions"`
+	Transfers   map[string]NanShareSubmission `json:"transfers"`
 	ExpiresAt   string                        `json:"expiresAt"`
 }
 
@@ -32,6 +33,7 @@ type nanShareSearch struct {
 	account     string
 	items       []nanshare.Resource
 	submissions map[string]NanShareSubmission
+	transfers   map[string]NanShareSubmission
 	attempts    map[string]nanShareAttempt
 	expires     time.Time
 }
@@ -47,7 +49,11 @@ func searchView(s *nanShareSearch) NanShareSearchView {
 	for key, state := range s.submissions {
 		states[key] = state
 	}
-	return NanShareSearchView{ID: s.id, Items: s.items, Submissions: states, ExpiresAt: s.expires.UTC().Format(time.RFC3339)}
+	transfers := make(map[string]NanShareSubmission, len(s.transfers))
+	for key, state := range s.transfers {
+		transfers[key] = state
+	}
+	return NanShareSearchView{ID: s.id, Items: s.items, Submissions: states, Transfers: transfers, ExpiresAt: s.expires.UTC().Format(time.RFC3339)}
 }
 
 func (s *NanShareService) Search(ctx context.Context, kind string, id int64, refresh bool) (NanShareSearchView, error) {
@@ -102,7 +108,7 @@ func (s *NanShareService) Search(ctx context.Context, kind string, id int64, ref
 	if !unchanged {
 		return NanShareSearchView{}, nanshare.ErrChanged
 	}
-	cached := &nanShareSearch{id: hex.EncodeToString(random[:]), key: key, doc: doc, account: account, items: items, submissions: make(map[string]NanShareSubmission), attempts: make(map[string]nanShareAttempt), expires: time.Now().Add(15 * time.Minute)}
+	cached := &nanShareSearch{id: hex.EncodeToString(random[:]), key: key, doc: doc, account: account, items: items, submissions: make(map[string]NanShareSubmission), transfers: make(map[string]NanShareSubmission), attempts: make(map[string]nanShareAttempt), expires: time.Now().Add(15 * time.Minute)}
 	s.searchMu.Lock()
 	defer s.searchMu.Unlock()
 	// Preserve receipts across refreshes and concurrent searches for this media.
@@ -114,6 +120,11 @@ func (s *NanShareService) Search(ctx context.Context, kind string, id int64, ref
 			for _, state := range old.submissions {
 				if state.State == "submitting" {
 					return NanShareSearchView{}, fmt.Errorf("%w：请等待当前资源提交完成", nanshare.ErrInput)
+				}
+			}
+			for _, state := range old.transfers {
+				if state.State == "submitting" {
+					return NanShareSearchView{}, fmt.Errorf("%w：请等待当前转存完成", nanshare.ErrInput)
 				}
 			}
 			// Keep the session and attempt receipts so a lost response can still

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import WebsiteInvitesPanel from '../components/WebsiteInvitesPanel.vue'
 import type { WebsiteUser } from '../composables/useWebsiteAuth'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 const users = ref<WebsiteUser[]>([])
+const tab = ref<'users' | 'invites'>('users')
 const username = ref('')
 const password = ref('')
 const resetUser = ref<WebsiteUser>()
@@ -49,7 +51,11 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <template>
   <ManagementLayout title="用户管理" description="创建独立网站账号，让用户浏览电影、剧集与入库状态。" @logout="emit('logout')">
-    <div class="space-y-6">
+    <div role="group" aria-label="用户管理分类" class="mb-5 flex gap-2">
+      <button v-for="entry in [{ id: 'users' as const, label: '网站用户' }, { id: 'invites' as const, label: '注册邀请' }]" :key="entry.id" :aria-pressed="tab === entry.id" class="rounded-lg px-4 py-2 text-sm" :class="tab === entry.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-400/10 dark:text-blue-300' : 'text-slate-500 dark:text-slate-400'" @click="tab = entry.id">{{ entry.label }}</button>
+    </div>
+    <WebsiteInvitesPanel v-if="tab === 'invites'" :token="token" />
+    <div v-else class="space-y-6">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
       <form class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6" @submit.prevent="mutate('', { username, password }, '账号已创建，请将账号和密码交给用户。')">

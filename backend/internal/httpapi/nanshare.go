@@ -18,7 +18,9 @@ type NanShareConfigurer interface {
 	SearchTest(context.Context, string, int64) (nanshare.SearchResult, error)
 	Search(context.Context, string, int64, bool) (service.NanShareSearchView, error)
 	ShareOptions(context.Context, string) (nanshare.ShareOptions, error)
+	TransferOptions(context.Context, string) (nanshare.TransferOptions, error)
 	Submit(context.Context, service.NanShareSubmitInput) (service.NanShareSubmission, error)
+	Transfer(context.Context, service.NanShareTransferInput) (service.NanShareSubmission, error)
 	Clear() error
 }
 
@@ -79,6 +81,16 @@ func RegisterNanShare(admin *gin.RouterGroup, configurer NanShareConfigurer) {
 		}
 		c.JSON(http.StatusOK, view)
 	})
+	group.GET("/transfer-options/:searchId", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		view, err := configurer.TransferOptions(ctx, c.Param("searchId"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	})
 	group.POST("/submit", func(c *gin.Context) {
 		var input service.NanShareSubmitInput
 		if c.ShouldBindJSON(&input) != nil {
@@ -88,6 +100,21 @@ func RegisterNanShare(admin *gin.RouterGroup, configurer NanShareConfigurer) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 100*time.Second)
 		defer cancel()
 		view, err := configurer.Submit(ctx, input)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	})
+	group.POST("/transfer", func(c *gin.Context) {
+		var input service.NanShareTransferInput
+		if c.ShouldBindJSON(&input) != nil {
+			fail(c, nanshare.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 65*time.Second)
+		defer cancel()
+		view, err := configurer.Transfer(ctx, input)
 		if err != nil {
 			fail(c, err)
 			return

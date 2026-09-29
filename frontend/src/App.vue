@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import LoginView from './views/LoginView.vue'
+import RegisterView from './views/RegisterView.vue'
 import ReloadPrompt from './components/ReloadPrompt.vue'
 import { websiteToken as token, websiteUser, websiteAuthError, websiteBrowseRoutes, ensureWebsiteSession, setWebsiteToken, clearWebsiteSession } from './composables/useWebsiteAuth'
 
 const route = useRoute()
 const router = useRouter()
+const registeredUsername = ref('')
+function handleRegistered(name: string) {
+  registeredUsername.value = name
+  void router.replace('/')
+}
 const username = computed(() => websiteUser.value?.username || '')
 // 登录完成到路由重定向之间也不挂载普通用户无权访问的管理页面。
 const canViewRoute = computed(() => websiteUser.value?.role === 'admin' || websiteBrowseRoutes.has(String(route.name)))
@@ -37,7 +43,8 @@ onBeforeUnmount(() => window.clearInterval(authTimer))
 </script>
 
 <template>
-  <LoginView v-if="!token" @logged-in="handleLoggedIn" />
+  <RegisterView v-if="route.name === 'register'" @registered="handleRegistered" />
+  <LoginView v-else-if="!token" :registered-username="registeredUsername" @logged-in="handleLoggedIn" />
   <main v-else-if="!websiteUser || websiteAuthError || !canViewRoute" class="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
     <p>{{ websiteAuthError || '正在验证登录状态…' }}</p>
     <button v-if="websiteAuthError" class="text-blue-600" @click="ensureWebsiteSession(true)">重新验证</button>

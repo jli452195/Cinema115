@@ -31,5 +31,7 @@ export interface RE0Resource {
   is_official: boolean; validate_status: string
 }
 export interface RE0Submission { requestId: string; state: 'submitting' | 'accepted' | 'unknown' | 'failed'; message: string }
-export interface RE0SearchResult { id: string; items: RE0Resource[]; submissions: Record<string, RE0Submission>; expiresAt: string }
+export interface RE0Transfer { requestId: string; state: 'submitting' | 'accepted' | 'unknown' | 'failed' | 'already_saved' | 'points_unknown' | 'points_limit' | 'partial'; message: string }
+export interface RE0TransferOptions { accountId: string; folders: { id: string; name: string; path: string }[] }
+export interface RE0SearchResult { id: string; items: RE0Resource[]; submissions: Record<string, RE0Submission>; transfers?: Record<string, RE0Transfer>; expiresAt: string }
 export interface RE0ShareOptions { version: string; accountId: string; modes: ('normal' | 'reshare')[]; folders: { index: number; name: string; path: string }[] }

@@ -112,7 +112,8 @@ func (c *Client) requestOnce(ctx context.Context, method, path string, input, ou
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return ErrAuth
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	transferRejection := path == "/discover/resource/transfer" && (resp.StatusCode == 400 || resp.StatusCode == 409 || resp.StatusCode == 422)
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && !transferRejection {
 		return fmt.Errorf("NanShare 接口 %s 返回 HTTP %d", path, resp.StatusCode)
 	}
 	const limit = 4 << 20
@@ -132,6 +133,18 @@ func (c *Client) requestOnce(ctx context.Context, method, path string, input, ou
 	}
 	if state.Code == "auth_required" || state.Code == "NANSHARE_AUTH_REQUIRED" {
 		return ErrAuth
+	}
+	// Transfer business failures are receipts too. Parse only locally mapped
+	// diagnostics; never forward upstream URLs, credentials or arbitrary text.
+	if path == "/discover/resource/transfer" {
+		if transferRejection && (state.Success == nil || *state.Success) {
+			return ErrFormat
+		}
+		result, ok := output.(*TransferResult)
+		if !ok {
+			return ErrFormat
+		}
+		return decodeTransferResult(data, result)
 	}
 	if (state.OK != nil && !*state.OK) || (state.Success != nil && !*state.Success) {
 		if path == "/session/login" {
