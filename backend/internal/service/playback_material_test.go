@@ -211,3 +211,34 @@ func TestPlaybackMaterialRangeMustMatchExactlyAndCanBeForgottenIndependently(t *
 		t.Fatal("forget material removed copy/cloud file")
 	}
 }
+
+func TestPlaybackMaterialReusesRangeCommittedWhileTargetSearches(t *testing.T) {
+	s, base, selected := setupFastCache(t)
+	f := &materialFake{fastCacheFake: base}
+	s.client = f
+	ctx := context.WithValue(context.Background(), playbackMaterialOrigin{}, DirectLinkKey("origin"))
+	load := func() (*p115.DownloadInfo, error) {
+		return &p115.DownloadInfo{Name: "v.mkv", Size: 100, SHA1: strings.Repeat("A", 40), URL: "https://cdn.115.com/source"}, nil
+	}
+	first, _, commit, err := s.preparePlaybackMaterial(ctx, selected, &PlaybackResolution{}, load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, _, err := s.preparePlaybackMaterial(ctx, selected, &PlaybackResolution{}, func() (*p115.DownloadInfo, error) { t.Fatal("unnecessary source lookup"); return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ResolveRangeSHA1(ctx, 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate 115 accepting the first upload while the second searches its target.
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := second.ResolveRangeSHA1(ctx, 1, 3); err != nil || hash != strings.Repeat("C", 40) {
+		t.Fatal("newly accepted range not reused", err)
+	}
+	if f.rangeReads != 1 || s.stats.rangeHits.Load() != 1 {
+		t.Fatal("read source again despite accepted range")
+	}
+}

@@ -86,9 +86,30 @@ func (f *cacheDriveFake) DriveDownloadURLWithUA(_ context.Context, id, pc, cooki
 		}
 	}
 	if !found {
-		return "", errors.New("missing file")
+		return "", p115.ErrDriveRejected
 	}
 	return "https://cdn.115.com/fresh?private", nil
+}
+
+func (f *cacheDriveFake) VerifyPlaybackFile(_ context.Context, file p115.DrivePlaybackFile, _ string) error {
+	for _, v := range f.files {
+		if v.ID == file.ID {
+			return nil
+		}
+	}
+	return p115.ErrDriveFileMissing
+}
+func (f *cacheDriveFake) FindPlaybackFileBySHA1Excluding(_ context.Context, hash, _ string, missing map[string]bool) (*p115.DrivePlaybackFile, error) {
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	for _, v := range f.files {
+		if !missing[v.ID] && strings.EqualFold(v.SHA1, hash) {
+			copy := v
+			return &copy, nil
+		}
+	}
+	return nil, nil
 }
 func (f *cacheDriveFake) DeleteEntries(_ context.Context, ids []string, cookie string) error {
 	f.deletes++

@@ -3,20 +3,16 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import DirectLinkCachePanel from '../components/DirectLinkCachePanel.vue'
 import PlaybackCachePanel from '../components/PlaybackCachePanel.vue'
-import { p115Request } from '../lib/p115-api'
-import type { P115Account } from '../types/p115Accounts'
 import { embyRequest } from '../types/emby'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const minutes = ref(9), loaded = ref(false), error = ref('')
 const activePanel = ref<'links' | 'files'>('links')
-const accounts = ref<P115Account[]>([])
 const lifecycle = new AbortController()
 async function load() {
   error.value = ''
   try {
-    const [data, accountList] = await Promise.all([embyRequest(props.token, 'proxy', lifecycle.signal), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: lifecycle.signal })])
-    accounts.value = accountList.accounts
+    const data = await embyRequest(props.token, 'proxy', lifecycle.signal)
     minutes.value = data.config.directLinkCacheMinutes ?? 9
     loaded.value = true
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取缓存设置失败' }
@@ -35,7 +31,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <button type="button" :aria-pressed="activePanel === 'files'" class="rounded-lg px-4 py-2 text-sm font-medium transition-colors" :class="activePanel === 'files' ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'" @click="activePanel = 'files'">网盘文件复用</button>
       </div>
       <DirectLinkCachePanel v-show="activePanel === 'links'" :token="token" :minutes="minutes" />
-      <PlaybackCachePanel v-show="activePanel === 'files'" :token="token" :accounts="accounts" />
+      <PlaybackCachePanel v-show="activePanel === 'files'" :token="token" />
     </template>
     <p v-else-if="!error" class="p-6 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">正在加载缓存设置…</p>
   </ManagementLayout>

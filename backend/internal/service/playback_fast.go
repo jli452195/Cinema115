@@ -81,6 +81,9 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			if t.Bytes > 0 {
 				message += fmt.Sprintf("｜字节数=%d", t.Bytes)
 			}
+			if t.SearchSummary {
+				message += fmt.Sprintf("｜请求=%d｜分页=%d｜重试=%d｜排队及限速=%d ms｜HTTP合计=%d ms", t.Requests, t.Pages, t.Retries, t.Wait.Milliseconds(), t.RequestHTTP.Milliseconds())
+			}
 			s.logs.Add(ctx, "INFO", message)
 		})
 	}
@@ -112,7 +115,17 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	defer release()
 	sourceKey, _ := ctx.Value(playbackSourceKey{}).(string)
 	targetScope := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
-	failedMapping := ""
+	recovery := newPlaybackRecovery()
+	defer recovery.close()
+	defer func() {
+		// Back off unresolved rejected files, not confirmed deleted copies or
+		// successfully replaced source mappings. Never persist an error as a miss.
+		for id := range recovery.failed {
+			if !recovery.missing[id] {
+				s.backoffPlaybackSearch(DirectLinkKey("target-link", selected.uid, id, ua), targetScope, time.Now().Add(5*time.Second), p115.ErrDriveRejected)
+			}
+		}
+	}()
 	// Rebuild a verified mapping after restart without querying the source.
 	if sourceKey != "" && s.mappedSource(sourceKey) == "" {
 		for _, entry := range s.entriesBySource(sourceKey) {
@@ -124,24 +137,24 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	if key := s.mappedSource(sourceKey); sourceKey != "" && key != "" {
 		if e, ok := s.entryByKey(key); ok {
-			if e.Key != key || e.AccountID != selected.binding.AccountID || e.UID != selected.uid || e.TargetScope != targetScope || e.ParentCID != selected.binding.ParentCID || e.Status != "ready" {
+			if e.Key != key || e.UID != selected.uid || e.Status != "ready" {
 				s.forgetSource(sourceKey)
 			} else {
 				next("朋友账号取链")
-				link, err := s.reuseFastEntry(ctx, e, selected, ua, report)
+				link, err := recovery.reuse(ctx, s, e, selected, ua, report)
 				if err == nil {
 					s.logs.Add(ctx, "INFO", "pickcode 文件映射命中，直接使用朋友账号取链")
 					return link, nil
 				}
-				// A failed URL request does not prove deletion; search before any new write.
-				if ctx.Err() != nil {
-					return "", ctx.Err()
+				if !errors.Is(err, p115.ErrDriveFileMissing) && !errors.Is(err, errPlaybackNeedsSearch) {
+					return "", err
 				}
-				failedMapping = e.Key
 			}
 		}
 		s.forgetSource(sourceKey)
 	}
+	prefetch := s.startPlaybackSearch(ctx, fast, selected, targetScope)
+	defer prefetch.stop()
 	next("文件秒传资料")
 	info, materialID, commitRanges, err := s.preparePlaybackMaterial(ctx, selected, report, func() (*p115.DownloadInfo, error) {
 		if sourceCookie == "" {
@@ -156,19 +169,26 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", err
 	}
 	key := DirectLinkKey("pending-copy", selected.uid, materialID)
-	copies := s.entriesByHash(info.SHA1)
+	copies := s.entriesByTarget(selected.uid, info.SHA1)
+	_, canRevalidate := s.client.(playbackRangeClient)
+	_, canVerifyLink := s.client.(interface {
+		VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
+	})
 	for _, entry := range copies {
-		if entry.Key != failedMapping && entry.UID == selected.uid && entry.Status == "ready" && cacheMatches(entry.File, info) {
+		if len(recovery.tried) > 0 {
+			break
+		}
+		if entry.UID == selected.uid && (entry.TargetScope == targetScope || canRevalidate || canVerifyLink) && entry.Status == "ready" && cacheMatches(entry.File, info) {
 			next("朋友账号文件映射取链")
 			entry.SourceKey = sourceKey
 			entry.MaterialID = materialID
-			link, err := s.reuseFastEntry(ctx, entry, selected, ua, report)
+			link, err := recovery.reuse(ctx, s, entry, selected, ua, report)
 			if err == nil {
 				s.rememberSource(sourceKey, report.FileCacheKey)
 				return link, nil
 			}
-			if ctx.Err() != nil {
-				return "", ctx.Err()
+			if !errors.Is(err, p115.ErrDriveFileMissing) && !errors.Is(err, errPlaybackNeedsSearch) {
+				return "", err
 			}
 			break
 		}
@@ -179,32 +199,66 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	if err := s.waitPlaybackSearch(ctx, key, targetScope); err != nil {
 		return "", err
 	}
+	quickKey := DirectLinkKey("quick-search", selected.uid, strings.ToUpper(info.SHA1))
+	if err := s.waitPlaybackSearch(ctx, quickKey, targetScope); err != nil {
+		return "", err
+	}
 	stopPrefetch := info.StartRangeSourcePrefetch(ctx)
 	defer stopPrefetch()
 	next("目标账号 SHA1 查找")
-	f, err := fast.FindPlaybackFileBySHA1(ctx, info.SHA1, selected.cookie)
+	var f *p115.DrivePlaybackFile
+	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
+		prefetch.stop()
+		f, err = recovery.search(ctx, fast, selected, info.SHA1)
+	} else {
+		f, err = s.searchPlaybackTarget(ctx, fast, selected, info, copies, prefetch)
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err != nil && f != nil && errors.Is(err, p115.ErrDriveRejected) && cacheMatches(*f, info) {
+		candidate := PlaybackCacheEntry{UID: selected.uid, File: *f}
+		err = recovery.confirmMissing(ctx, s, candidate, selected, err)
+		if errors.Is(err, p115.ErrDriveFileMissing) {
+			prefetch.stop()
+			f, err = recovery.search(ctx, fast, selected, info.SHA1)
+		}
+	}
 	if err != nil {
 		s.backoffPlaybackSearch(key, targetScope, time.Now().Add(5*time.Second), err)
-		return "", fmt.Errorf("朋友账号 SHA1 查找失败，未执行秒传：%s", p115.SharePlaybackFailureReason(err))
+		s.backoffPlaybackSearch(quickKey, targetScope, time.Now().Add(5*time.Second), err)
+		return "", &playbackTargetError{stage: "朋友账号 SHA1 查找失败，未执行秒传", err: err}
 	}
 	e := PlaybackCacheEntry{Key: key, AccountID: selected.binding.AccountID, UID: selected.uid, ParentCID: selected.binding.ParentCID, DirectoryID: selected.binding.ParentCID, File: p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}, Status: "uploading", CreatedAt: time.Now().UTC(), LastUsed: time.Now().UTC()}
 	e.SourceKey, e.TargetScope = sourceKey, targetScope
 	e.MaterialID = materialID
-	if f != nil {
+	for f != nil {
 		if !cacheMatches(*f, info) || f.ID == "" || f.PickCode == "" {
 			return "", fmt.Errorf("目标搜索结果 SHA1 或文件标识无效")
 		}
 		e.File, e.DirectoryID, e.Status, e.Message = *f, f.CID, "ready", "目标账号已有同 SHA1 文件，直接复用"
 		next("朋友账号取链")
-		link, err := s.reuseFastEntry(ctx, e, selected, ua, report)
+		link, err := recovery.reuse(ctx, s, e, selected, ua, report)
 		if err != nil {
-			return "", err
+			if !errors.Is(err, p115.ErrDriveFileMissing) && !errors.Is(err, errPlaybackNeedsSearch) {
+				return "", err
+			}
+			prefetch.stop()
+			next("失效副本恢复查询")
+			f, err = recovery.search(ctx, fast, selected, info.SHA1)
+			if err != nil {
+				return "", &playbackTargetError{stage: "失效副本恢复查询失败，未执行秒传", err: err}
+			}
+			continue
 		}
 		report.Mode = "复用同 SHA1 文件"
 		s.rememberSource(sourceKey, report.FileCacheKey)
 		s.logs.Add(ctx, "INFO", "朋友账号 SHA1 命中，直接取链；无需秒传")
 		return link, nil
 	}
+	// Search candidates must not turn the new write intent into a ready record.
+	e.File = p115.DrivePlaybackFile{Name: info.Name, Size: info.Size, SHA1: info.SHA1}
+	e.DirectoryID, e.Status, e.Message = selected.binding.ParentCID, "uploading", ""
 	// Old uncertain records are diagnostic only. Newly interrupted writes get a
 	// bounded cooldown; a positive SHA1 hit above always bypasses it.
 	var previous *PlaybackCacheEntry
@@ -230,6 +284,16 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
 	next("账号上传预检")
+	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
+		if directory, ok := fast.(interface {
+			RefreshPlaybackDirectory(context.Context, string, string, string) error
+		}); ok {
+			if err := directory.RefreshPlaybackDirectory(recovery.budget(ctx), selected.binding.AccountID, selected.binding.ParentCID, selected.cookie); err != nil {
+				return "", &playbackTargetError{stage: "恢复秒传前保存目录核验失败，请检查原目录配置", err: err}
+			}
+		}
+		s.logs.Add(ctx, "INFO", "目标 UID 完整搜索未找到可用替代文件，向原目录重新秒传；本次最多重建一次")
+	}
 	ticket, err := fast.PreparePlaybackAccount(ctx, selected.binding.AccountID, selected.cookie)
 	if err != nil {
 		return "", fmt.Errorf("朋友账号秒传预检失败：%s", p115.SharePlaybackFailureReason(err))
@@ -338,17 +402,43 @@ func (s *PlaybackCache) rememberSource(source, key string) {
 	s.sourceMappings[source] = key
 }
 func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry, selected *PlaybackCacheSelection, ua string, report *PlaybackResolution) (string, error) {
-	if err := s.verifyReusableCopy(ctx, e, selected); err != nil {
-		return "", err
+	verified, canVerify := s.client.(interface {
+		VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
+	})
+	if e.UID != selected.uid || p115.CookieUserID(selected.cookie) != selected.uid {
+		return "", fmt.Errorf("目标凭据与副本 UID 不一致")
+	}
+	if preparingPlaybackFile(ctx) || !canVerify {
+		if err := s.verifyReusableCopy(ctx, e, selected); err != nil {
+			return "", err
+		}
 	}
 	e.AccountID, e.ParentCID = selected.binding.AccountID, selected.binding.ParentCID
 	e.TargetScope = DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
 	var link string
 	if !preparingPlaybackFile(ctx) {
 		var err error
-		link, err = s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
-		if err != nil || !p115.AllowedDirectPlaybackURL(link) {
-			return "", fmt.Errorf("朋友文件取链失败，请检查文件及账号")
+		cooldownKey := DirectLinkKey("target-link", selected.uid, e.File.ID, ua)
+		if err := s.waitPlaybackSearch(ctx, cooldownKey, e.TargetScope); err != nil {
+			return "", err
+		}
+		if canVerify {
+			link, err = verified.VerifiedPlaybackURL(ctx, e.File, selected.cookie, ua)
+		} else {
+			link, err = s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
+		}
+		if err == nil && !p115.AllowedDirectPlaybackURL(link) {
+			err = p115.ErrDriveLinkRestricted
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			failure := &playbackTargetError{stage: "目标文件取链失败", err: err}
+			if !errors.Is(err, p115.ErrDriveRejected) && !errors.Is(err, p115.ErrDriveFileMissing) {
+				s.backoffPlaybackSearch(cooldownKey, e.TargetScope, time.Now().Add(5*time.Second), failure)
+			}
+			return "", failure
 		}
 	}
 	e.LastUsed = time.Now().UTC()

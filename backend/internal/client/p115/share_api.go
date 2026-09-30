@@ -127,6 +127,13 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 		return nil, fmt.Errorf("115 返回了无法解析的分享数据")
 	}
 	if !upstreamOK(envelope.State) {
+		if req.URL.Path == "/files/shasearch" && playbackSHAMiss(raw) {
+			return raw, nil
+		}
+		switch req.URL.Path {
+		case "/app/chrome/downurl", "/files/get_info", "/files/supervision", "/files/shasearch", "/files/search":
+			return nil, driveAPIError(req.URL.Path, raw, envelope)
+		}
 		if req.URL.Path == sharePlaybackPath {
 			return nil, shareDownloadError(envelope)
 		}

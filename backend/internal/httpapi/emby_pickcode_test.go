@@ -78,7 +78,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if err := cache.ApplyBindings(upstream.URL, []service.PlaybackBinding{{UserID: userID, AccountID: targetID}}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm, PrepareFiles: prepareFiles}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm, PrepareFiles: prepareFiles, Debug: prepareFiles}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
 	defer h.Close()
 	h.pickDownload = func(context.Context, string, string, string) (string, error) {
 		t.Fatal("source direct link returned to friend")
@@ -108,6 +108,20 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 			t.Fatal("friend file not prepared")
 		}
 		if prepareFiles {
+			foundTimeline := false
+			for _, entry := range logs.Snapshot() {
+				if entry.Details == nil || !strings.Contains(entry.Details.Steps, "提前准备秒传文件开始") {
+					continue
+				}
+				steps := entry.Details.Steps
+				if !strings.Contains(steps, "预热文件准备=") || strings.Contains(steps, "等待同源预热=") {
+					t.Fatal("preparation mislabeled as waiting", steps)
+				}
+				foundTimeline = true
+			}
+			if !foundTimeline {
+				t.Fatal("missing preparation timeline")
+			}
 			if fake.links != 0 || len(h.directLinks.Status().Entries) != 0 {
 				t.Fatal("file preparation fetched/cached a playback URL")
 			}
@@ -148,13 +162,28 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if fake.pickReads != 1 || fake.uploads != 1 || fake.links != 3 {
 		t.Fatal("external SHA1 did not skip primary metadata")
 	}
+	// A cached CDN URL may outlive a removed local copy. The same request must
+	// refetch and recreate the mapping instead of emitting an avoidable 502.
+	entries := cache.Status().Entries
+	if len(entries) != 1 {
+		t.Fatal("expected one target copy")
+	}
+	if err := cache.Forget(context.Background(), entries[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("GET", path); w.Code != 302 {
+		t.Fatal("stale direct link did not recover", w.Code, w.Body.String())
+	}
+	if fake.uploads != 1 || fake.links != 4 {
+		t.Fatal("stale link recovery uploaded or failed to refresh")
+	}
 	if err := accounts.Update(targetID, 3, "friend", &empty); err != nil {
 		t.Fatal(err)
 	}
 	if w := call("GET", path); w.Code != 503 {
 		t.Fatal("cached link bypassed deleted credentials", w.Code)
 	}
-	if fake.links != 3 {
+	if fake.links != 4 {
 		t.Fatal("unexpected fallback")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
 
 // Memory-only, credential-scoped cooldowns. Errors are never treated as misses.
@@ -50,7 +52,8 @@ func (s *PlaybackCache) waitPlaybackSearch(ctx context.Context, key, scope strin
 		return nil
 	}
 	if v.err != nil {
-		return fmt.Errorf("目标文件查询暂不可用，请稍后重试；未执行秒传")
+		// A cached rejection is not fresh evidence for a recovery query.
+		return fmt.Errorf("目标文件查询暂不可用，请稍后重试；未执行秒传：%s", p115.SharePlaybackFailureReason(v.err))
 	}
 	// If an administrator cleared the pending record, do not retain its miss.
 	if e, ok := s.entryByKey(key); !ok || !time.Now().Before(e.RetryNotBefore) {

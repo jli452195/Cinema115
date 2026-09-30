@@ -119,6 +119,8 @@ func (c *ShareClient) DriveDownloadURLWithUA(ctx context.Context, fileID, pickCo
 	if !validDriveID(fileID, false) || !instantPickCode.MatchString(pickCode) || CookieUserID(cookie) == "" {
 		return "", fmt.Errorf("目标文件或账号无效")
 	}
+	ctx, finish := tracePlaybackHTTP(ctx, "目标账号取链 HTTP")
+	defer finish()
 	decoded, err := c.driveDownloadResponse(ctx, pickCode, cookie, ua)
 	if err != nil {
 		return "", err
@@ -143,11 +145,11 @@ func (c *ShareClient) driveDownloadResponse(ctx context.Context, pickCode, cooki
 	}
 	var envelope struct{ Data string }
 	if json.Unmarshal(raw, &envelope) != nil {
-		return nil, fmt.Errorf("网盘直链响应无效")
+		return nil, ErrDriveInvalidResponse
 	}
 	decoded, err := RSADecrypt(envelope.Data)
 	if err != nil {
-		return nil, fmt.Errorf("网盘直链解密失败")
+		return nil, ErrDriveInvalidResponse
 	}
 	return decoded, nil
 }
@@ -161,15 +163,15 @@ func parseDrivePlaybackURL(raw []byte, fileID, pickCode string) (string, error) 
 		} `json:"url"`
 	}
 	if json.Unmarshal(raw, &files) != nil || len(files) != 1 {
-		return "", fmt.Errorf("目标直链文件数量无效")
+		return "", ErrDriveInvalidResponse
 	}
 	file, ok := files[fileID]
 	if !ok || (file.ID != "" && file.ID.String() != fileID) || (file.PC != "" && file.PC != pickCode) || !AllowedMediaURL(file.URL.URL) {
-		return "", fmt.Errorf("目标直链文件校验失败")
+		return "", ErrDriveInvalidResponse
 	}
 	u, _ := url.Parse(file.URL.URL)
 	if flag := u.Query().Get("f"); flag != "" && flag != "0" && flag != "1" {
-		return "", fmt.Errorf("目标直链要求额外凭据，无法直接 302 播放")
+		return "", ErrDriveLinkRestricted
 	}
 	return file.URL.URL, nil
 }

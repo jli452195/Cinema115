@@ -230,6 +230,11 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if start < 0 || end < start || end >= material.Size || end-start+1 > p115.MaxInstantRangeBytes {
 			return "", fmt.Errorf("秒传校验范围无效")
 		}
+		// Another target may have completed its upload while this request was
+		// searching 115. Reuse only ranges it has already committed as accepted.
+		if latest, ok := s.materialByID(material.ID); ok {
+			material.Ranges = latest.Ranges
+		}
 		for _, r := range material.Ranges {
 			if r.Start == start && r.End == end {
 				s.stats.rangeHits.Add(1)

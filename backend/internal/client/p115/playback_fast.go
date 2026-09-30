@@ -117,6 +117,13 @@ func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid,
 	return nil
 }
 
+func (c *ShareClient) RefreshPlaybackDirectory(ctx context.Context, scope, cid, cookie string) error {
+	c.playbackPreparation.mu.Lock()
+	delete(c.playbackPreparation.directories, playbackPreparationKey(scope+"\x00"+cid, cookie))
+	c.playbackPreparation.mu.Unlock()
+	return c.ValidatePlaybackDirectory(ctx, scope, cid, cookie)
+}
+
 func (c *ShareClient) UploadPlayback(ctx context.Context, info *DownloadInfo, scope, cid, cookie string, ticket *PlaybackUploadTicket, progress func(InstantProgress)) (*InstantUploadResult, error) {
 	if !validDriveID(cid, true) || ticket == nil || ticket.scope != scope {
 		return nil, &PlaybackPreflightError{Stage: "配置检查", Err: fmt.Errorf("秒传缓存目录或预检凭据无效")}

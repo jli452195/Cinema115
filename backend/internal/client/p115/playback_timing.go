@@ -15,6 +15,9 @@ type PlaybackTiming struct {
 	Stage                              string
 	Duration, DNS, TCP, TLS, FirstByte time.Duration
 	Bytes                              int64
+	SearchSummary                      bool
+	Requests, Pages, Retries           int
+	Wait, RequestHTTP                  time.Duration
 	HTTP, Connected, Reused            bool
 	Failed, Canceled                   bool
 	TLSResumed                         bool

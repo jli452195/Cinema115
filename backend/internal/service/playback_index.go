@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -12,6 +13,7 @@ const maxPlaybackCopies = 100000
 type playbackIndex struct {
 	materials, copies                    map[string]int
 	origins, hashes, copyHashes, sources map[string]map[string]struct{}
+	targetCopies                         map[string]map[string]struct{}
 	lastWritten                          map[string]time.Time
 }
 
@@ -32,6 +34,7 @@ func indexRemove(index map[string]map[string]struct{}, key, id string) {
 }
 func (s *PlaybackCache) rebuildPlaybackIndexLocked() {
 	s.index = playbackIndex{materials: make(map[string]int, len(s.doc.Materials)), copies: make(map[string]int, len(s.doc.Entries)), origins: make(map[string]map[string]struct{}), hashes: make(map[string]map[string]struct{}), copyHashes: make(map[string]map[string]struct{}), sources: make(map[string]map[string]struct{}), lastWritten: make(map[string]time.Time)}
+	s.index.targetCopies = make(map[string]map[string]struct{})
 	for i, m := range s.doc.Materials {
 		s.indexMaterialLocked(m, i)
 	}
@@ -56,10 +59,12 @@ func (s *PlaybackCache) unindexMaterialLocked(m PlaybackMaterial) {
 func (s *PlaybackCache) indexEntryLocked(e PlaybackCacheEntry, i int) {
 	s.index.copies[e.Key] = i
 	indexAdd(s.index.copyHashes, strings.ToUpper(e.File.SHA1), e.Key)
+	indexAdd(s.index.targetCopies, e.UID+":"+strings.ToUpper(e.File.SHA1), e.Key)
 	indexAdd(s.index.sources, e.SourceKey, e.Key)
 }
 func (s *PlaybackCache) unindexEntryLocked(e PlaybackCacheEntry) {
 	indexRemove(s.index.copyHashes, strings.ToUpper(e.File.SHA1), e.Key)
+	indexRemove(s.index.targetCopies, e.UID+":"+strings.ToUpper(e.File.SHA1), e.Key)
 	indexRemove(s.index.sources, e.SourceKey, e.Key)
 }
 func (s *PlaybackCache) materialByID(id string) (PlaybackMaterial, bool) {
@@ -121,6 +126,7 @@ func (s *PlaybackCache) entriesByHash(hash string) []PlaybackCacheEntry {
 	for id := range ids {
 		out = append(out, s.doc.Entries[s.index.copies[id]])
 	}
+	sortPlaybackCopies(out)
 	return out
 }
 func (s *PlaybackCache) entriesBySource(source string) []PlaybackCacheEntry {
@@ -131,7 +137,30 @@ func (s *PlaybackCache) entriesBySource(source string) []PlaybackCacheEntry {
 	for id := range ids {
 		out = append(out, s.doc.Entries[s.index.copies[id]])
 	}
+	sortPlaybackCopies(out)
 	return out
+}
+
+// Target ownership is UID, independent of configuration handles or directory.
+func (s *PlaybackCache) entriesByTarget(uid, hash string) []PlaybackCacheEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := s.index.targetCopies[uid+":"+strings.ToUpper(hash)]
+	out := make([]PlaybackCacheEntry, 0, len(ids))
+	for key := range ids {
+		out = append(out, s.doc.Entries[s.index.copies[key]])
+	}
+	sortPlaybackCopies(out)
+	return out
+}
+
+func sortPlaybackCopies(out []PlaybackCacheEntry) {
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].LastUsed.Equal(out[j].LastUsed) {
+			return out[i].LastUsed.After(out[j].LastUsed)
+		}
+		return out[i].Key < out[j].Key
+	})
 }
 func (s *PlaybackCache) bindingConfig() PlaybackCacheConfig {
 	s.mu.Lock()

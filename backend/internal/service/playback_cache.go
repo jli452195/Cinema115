@@ -477,6 +477,8 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 
 // A cached target link must not outlive a removed/uncertain file-cache record.
 // Refresh last use on link reuse, serialized with local record mutations.
+var ErrPlaybackCopyChanged = errors.New("秒传缓存记录已变化，需重新解析直链")
+
 func (s *PlaybackCache) TouchDirectLink(ctx context.Context, key, fileID string) error {
 	if key == "" {
 		return nil
@@ -492,7 +494,7 @@ func (s *PlaybackCache) TouchDirectLink(ctx context.Context, key, fileID string)
 			return s.put(e)
 		}
 	}
-	return fmt.Errorf("秒传缓存记录已变化，需重新解析直链")
+	return ErrPlaybackCopyChanged
 }
 
 func (s *PlaybackCache) Resolve(ctx context.Context, selection *PlaybackCacheSelection, share *p115.ShareInfo, fileID, sourceCookie, ua string) (string, error) {

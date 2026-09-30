@@ -35,6 +35,7 @@ func (s *PlaybackCache) AdminStatus() PlaybackAdminStatus {
 			continue
 		}
 		e.SourceKey, e.TargetScope = "", ""
+		e.AccountID, e.ParentCID = "", ""
 		entries = append(entries, e)
 	}
 	out.Entries = entries

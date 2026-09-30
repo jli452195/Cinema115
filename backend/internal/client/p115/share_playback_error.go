@@ -45,10 +45,18 @@ func shareDownloadError(response shareResponse) error {
 
 // SharePlaybackFailureReason is safe for logs: no upstream response text or URLs.
 func SharePlaybackFailureReason(err error) string {
+	var completion *PlaybackCompletionError
+	if errors.As(err, &completion) {
+		return completion.Reason
+	}
+	var drive *DriveAPIError
+	if errors.As(err, &drive) {
+		return drive.Error()
+	}
 	if errors.Is(err, ErrPlaybackRangeUnavailable) {
 		return ErrPlaybackRangeUnavailable.Error()
 	}
-	for _, known := range []error{ErrShareNotReadable, ErrShareLoginRequired, ErrShareThrottled, ErrSharePassword, ErrShareDownloadRejected, ErrShareUnderReview} {
+	for _, known := range []error{ErrDriveFileMissing, ErrDriveRejected, ErrDriveInvalidResponse, ErrDriveLinkRestricted, ErrShareNotReadable, ErrShareLoginRequired, ErrShareThrottled, ErrSharePassword, ErrShareDownloadRejected, ErrShareUnderReview} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}

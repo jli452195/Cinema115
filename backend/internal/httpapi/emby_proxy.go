@@ -689,7 +689,11 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		h.logs.Add(ctx, "INFO", "STRM 解析成功，文件编号="+proxyLogID(claim.FileID))
 	}
 	downloadStarted := time.Now()
-	timing.next("等待同源预热")
+	if warming {
+		timing.next("预热文件准备")
+	} else {
+		timing.next("等待同源预热")
+	}
 	if !warming {
 		if err := h.waitPrewarm(ctx, h.prewarmKey(token, item, jsonString(source["Id"]), sourceAccount, cacheSelection)); err != nil {
 			fail("等待播放预热已取消或超时", 504)
@@ -745,9 +749,13 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	timing.next("缓存记录核验及响应")
 	if err == nil && hit && value.Report.FileCacheKey != "" {
 		if touchErr := h.cache.TouchDirectLink(ctx, value.Report.FileCacheKey, value.Report.FileCacheID); touchErr != nil {
+			if !errors.Is(touchErr, service.ErrPlaybackCopyChanged) {
+				fail(touchErr.Error(), 502)
+				return
+			}
 			h.directLinks.Remove(key)
-			fail(touchErr.Error(), 502)
-			return
+			h.logs.Add(ctx, "INFO", "直链缓存对应副本已失效，清除旧链接并在本次请求重新解析")
+			value, hit, expires, err = h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
 		}
 	}
 	link, report := value.URL, value.Report

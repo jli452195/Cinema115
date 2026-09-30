@@ -62,7 +62,7 @@ func (f *fastCacheFake) CompletePlaybackUpload(_ context.Context, _ *p115.Downlo
 }
 func (f *fastCacheFake) DriveDownloadURLWithUA(ctx context.Context, id, pc, cookie, ua string) (string, error) {
 	if f.linkErr {
-		return "", errors.New("gone")
+		return "", p115.ErrDriveRejected
 	}
 	return f.cacheDriveFake.DriveDownloadURLWithUA(ctx, id, pc, cookie, ua)
 }
