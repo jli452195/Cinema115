@@ -258,7 +258,7 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 	if err := s.FinishDriveChange(ctx, id, false); err == nil {
 		t.Fatal("uncertain create retried")
 	}
-	if err := s.AdminUpdate(ctx, id, nil, "123", false); err != nil {
+	if err := s.ConfirmPersonalDirectory(ctx, id, "123"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishDriveChange(ctx, id, false); err != nil {
@@ -287,7 +287,8 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSource(ctx, id, "", ""); err != nil {
+	blocked := true
+	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err == nil {
@@ -310,7 +311,7 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.record(first.ID).Source != "assigned" || s.record(first.ID).Stage != "pending" {
+	if s.record(first.ID).Source != "primary" || s.record(first.ID).Stage != "pending" {
 		t.Fatal(s.record(first.ID))
 	}
 	if _, err := auth.Register(ctx, "newreader", "password123", invites[0].Code); err == nil {
@@ -330,6 +331,12 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err := s.SyncUser(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
+	if s.record(first.ID).Source != "primary" || s.record(first.ID).AssignedAccountID != "" {
+		t.Fatal("primary user silently reassigned", s.record(first.ID))
+	}
+	if err := s.SetSource(ctx, first.ID, "assigned", pool); err != nil {
+		t.Fatal(err)
+	}
 	if s.record(first.ID).AssignedAccountID != pool || s.record(first.ID).Stage != "ready" {
 		t.Fatal(s.record(first.ID))
 	}
@@ -343,15 +350,13 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.created != count || s.record(second.ID).AssignedAccountID != "" {
+	if f.created != count || s.record(second.ID).AssignedAccountID != pool {
 		t.Fatal("duplicate creation or assignment")
 	}
-	if err := s.SetSource(ctx, second.ID, "assigned", pool); err == nil {
-		t.Fatal("shared pool allowed")
+	if err := s.SetSource(ctx, second.ID, "assigned", pool); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.SetSource(ctx, first.ID, "primary", ""); err == nil {
-		t.Fatal("primary source allowed")
-	}
+
 	a, _ := s.accounts.Get(pool)
 	if err := s.accounts.Delete(pool, a.Revision); err != nil {
 		t.Fatal(err)
@@ -363,7 +368,7 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 		t.Fatal("lost unavailable binding")
 	}
 }
-func TestPortalPoliciesAndUIDConflict(t *testing.T) {
+func TestPortalPoliciesAndIndependentSameUIDCredentials(t *testing.T) {
 	s, f, id := memberFixture(t)
 	ctx := context.Background()
 	admin, err := s.accounts.Add("admin-owned")
@@ -377,8 +382,8 @@ func TestPortalPoliciesAndUIDConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PollQR(ctx, id, qr.ID); err == nil {
-		t.Fatal("administrator UID taken")
+	if _, err := s.PollQR(ctx, id, qr.ID); err != nil {
+		t.Fatal(err)
 	}
 	a, _ := s.accounts.Get(admin)
 	if err := s.accounts.Delete(admin, a.Revision); err != nil {
@@ -410,8 +415,8 @@ func TestSyncNeverDowngradesEmbyAdministrator(t *testing.T) {
 	remote := f.users[r.EmbyID]
 	remote.Policy["IsAdministrator"] = true
 	f.users[r.EmbyID] = remote
-	if err := s.SyncUser(ctx, id); err == nil {
-		t.Fatal("admin accepted")
+	if err := s.SyncUser(ctx, id); err != nil {
+		t.Fatal(err)
 	}
 	if f.users[r.EmbyID].Policy["IsAdministrator"] != true {
 		t.Fatal("administrator downgraded")
@@ -474,7 +479,7 @@ func TestCancelUncertainDriveRevokesCredentialsWithoutRetryingCreate(t *testing.
 	}
 }
 
-func TestPoolRejectsDuplicate115Identity(t *testing.T) {
+func TestPoolAllowsIndependent115Identity(t *testing.T) {
 	s, _, _ := memberFixture(t)
 	one, err := s.accounts.Add("one")
 	if err != nil {
@@ -488,8 +493,8 @@ func TestPoolRejectsDuplicate115Identity(t *testing.T) {
 	if err := s.accounts.Update(one, 1, "one", &cookie); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.accounts.Update(two, 1, "two", &cookie); err == nil {
-		t.Fatal("same UID created twice in pool")
+	if err := s.accounts.Update(two, 1, "two", &cookie); err != nil {
+		t.Fatal(err)
 	}
 }
 

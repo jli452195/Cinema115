@@ -8,7 +8,7 @@ import (
 	"strm115/backend/internal/client/emby"
 )
 
-func TestDirectoryDisplaysAdministratorsWithoutCreatingPlaybackRecords(t *testing.T) {
+func TestDirectoryEnrollsAdministratorsWithoutDuplicatePlaybackRecords(t *testing.T) {
 	s, remote, owner := memberFixture(t)
 	id := strings.Repeat("f", 32)
 	remote.users[id] = emby.ManagedUser{ID: id, Name: "administrator", Policy: map[string]any{"IsAdministrator": true, "IsDisabled": true}}
@@ -38,10 +38,10 @@ func TestDirectoryDisplaysAdministratorsWithoutCreatingPlaybackRecords(t *testin
 			t.Fatal("missing or duplicate administrators", counts)
 		}
 	}
-	if s.record(embyProfileID("server", id)).UserID != "" {
-		t.Fatal("administrator enrolled in playback")
+	if s.record(embyProfileID("server", id)).Source != "primary" {
+		t.Fatal("administrator default source missing")
 	}
-	if _, err := s.db.PortalUser(context.Background(), embyProfileID("server", id)); err == nil {
-		t.Fatal("administrator profile persisted")
+	if _, err := s.db.PortalUser(context.Background(), embyProfileID("server", id)); err != nil {
+		t.Fatal("administrator playback profile missing")
 	}
 }

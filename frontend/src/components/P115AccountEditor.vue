@@ -15,6 +15,7 @@ type Status = 'checking' | 'empty' | 'valid' | 'invalid' | 'unknown'
 const mode = ref<Mode>('cookie')
 const clientType = ref('alipay-miniapp')
 const cookie = ref('')
+const replacementDirectory = ref('')
 const visible = ref(false)
 const configured = ref(false)
 const status = ref<Status>('checking')
@@ -108,9 +109,9 @@ async function saveCookie() {
   if (!name.value.trim()) { notify('请填写账号名称', 'error'); return }
   const id = begin('save')
   try {
-    const data = await request('', 'PUT', { name: name.value, cookie: cookie.value.trim(), revision: props.account.revision })
+    const data = await request('', 'PUT', { name: name.value, cookie: cookie.value.trim(), revision: props.account.revision, directoryId: replacementDirectory.value.trim() })
     if (id !== generation) return
-    cookie.value = ''; visible.value = false
+    cookie.value = ''; visible.value = false; replacementDirectory.value = ''
     knownRevision = props.account.revision + 1
     configured.value = data.configured; status.value = data.connected ? 'valid' : configured.value ? 'unknown' : 'empty'
     emit('changed')
@@ -148,7 +149,7 @@ async function createQRCode() {
   const id = begin('qrcode')
   qrImage.value = ''; qrStatus.value = '正在获取二维码…'
   try {
-    const data = await request('qrcode', 'POST', { clientType: clientType.value })
+    const data = await request('qrcode', 'POST', { clientType: clientType.value, directoryId: replacementDirectory.value.trim() })
     const image = await QRCode.toDataURL(data.qrcode, { width: 256, margin: 2 })
     if (id !== generation) return
     qrImage.value = image; qrStatus.value = '等待扫码'
@@ -169,7 +170,7 @@ async function poll(qrId: string, expires: number, id: number) {
       knownRevision = props.account.revision + 1
       emit('changed')
       configured.value = true; status.value = 'valid'; cookie.value = ''; visible.value = false; qrImage.value = ''
-      qrStatus.value = '扫码登录成功'; notify('登录信息已加密保存，重启后自动恢复。', 'success')
+      replacementDirectory.value = ''; qrStatus.value = '扫码登录成功'; notify('登录信息已加密保存，重启后自动恢复。', 'success')
       return
     }
     if (data.status === 'expired' || data.status === 'cancelled') {
@@ -217,6 +218,8 @@ onBeforeUnmount(() => { cancel(); cookie.value = ''; visible.value = false })
           <button type="button" :disabled="!!busy" class="rounded-lg border border-blue-100 px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-40" @click="testCookie">{{ busy === 'test' ? '测试中…' : '测试 Cookie' }}</button>
           <button type="button" :disabled="!!busy" class="ml-auto rounded-lg px-2 py-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 disabled:opacity-40" @click="loadStatus">刷新状态</button>
         </template>
+        <p class="text-xs leading-6 text-slate-500">{{ account.primary ? '更换主账号后，需要重新配置各功能目录。' : '换号会同时影响此小号的 ' + (account.userCount || 0) + ' 位用户；验证失败保留原账号。' }}</p>
+        <label v-if="!account.primary && account.uid" class="block text-sm text-slate-600 dark:text-slate-300">换号时的新网盘目录编号<input v-model="replacementDirectory" :disabled="!!busy || !!qrImage" inputmode="numeric" placeholder="同账号重新登录无需填写" class="mt-2 block w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 dark:border-slate-700" /></label>
         <form v-if="mode === 'cookie'" class="space-y-5" @submit.prevent="saveCookie">
           <div><h3 class="text-xs font-medium text-slate-400 dark:text-slate-500">基础配置</h3><p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ account.uid ? '115 用户 ID：' + account.uid : '尚未保存登录凭证' }}</p></div>
           <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">名称<input v-model="name" maxlength="50" :disabled="!!busy" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm outline-none focus:border-blue-500" /></label>
@@ -226,7 +229,7 @@ onBeforeUnmount(() => { cancel(); cookie.value = ''; visible.value = false })
               <input :id="'p115-cookie-' + account.id" v-model="cookie" :type="visible ? 'text' : 'password'" autocomplete="off" spellcheck="false" :disabled="!!busy" class="min-w-0 flex-1 bg-transparent px-4 py-3.5 font-mono text-sm outline-none" :placeholder="configured ? '已保存 Cookie；填写新值以替换' : '粘贴 UID=…; CID=…; SEID=…'" :aria-describedby="'cookie-help-' + account.id" @input="message = ''" />
               <button type="button" class="shrink-0 px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600" :aria-label="visible ? '隐藏 Cookie' : '显示 Cookie'" :aria-pressed="visible" @click="visible = !visible">{{ visible ? '隐藏' : '显示' }}</button>
             </div>
-            <p :id="'cookie-help-' + account.id" class="mt-2 text-xs leading-6 text-slate-400 dark:text-slate-500">Cookie 留空保留原凭证，新 Cookie 验证通过后加密保存。{{ account.primary ? '各项资源管理功能统一使用此主账号。' : '此小号仅用于用户播放和秒传。' }}更换 115 用户请删除配置后重新创建。</p>
+            <p :id="'cookie-help-' + account.id" class="mt-2 text-xs leading-6 text-slate-400 dark:text-slate-500">Cookie 留空保留原凭证，新 Cookie 验证通过后加密保存。{{ account.primary ? '各项资源管理功能统一使用此主账号。' : '此小号仅用于用户播放和秒传。' }}可直接保存其他账号的凭据完成换号。</p>
           </div>
           <button type="submit" class="sr-only" tabindex="-1" :disabled="!!busy || !name.trim()">保存账号配置</button>
         </form>
@@ -241,7 +244,7 @@ onBeforeUnmount(() => { cancel(); cookie.value = ''; visible.value = false })
         <p v-if="message" :role="tone === 'error' ? 'alert' : 'status'" class="rounded-lg px-4 py-3 text-sm leading-6" :class="tone === 'error' ? 'bg-red-50 text-red-700' : tone === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'">{{ message }}</p>
         <template #footer>
           <div v-if="confirmDelete" class="mb-3 flex flex-wrap items-center gap-3 text-sm"><span>{{ account.primary ? '删除主账号后资源管理功能将暂停，需要重新创建主账号并配置目录。' : '删除小号后，绑定的用户需要重新绑定。' }}不会删除网盘文件。</span><button class="text-slate-500 dark:text-slate-400 dark:text-slate-500" @click="confirmDelete = false">取消删除</button><button :disabled="!!busy" class="rounded-lg bg-red-600 px-3 py-2 text-white disabled:opacity-40" @click="remove">确认删除</button></div>
-          <div v-if="confirmDisconnect" class="flex flex-wrap items-center gap-3 text-sm"><span class="w-full text-slate-600 dark:text-slate-400 dark:text-slate-500">清除这张卡片的登录凭据？使用它的功能需要重新登录同一账号后才能恢复。</span><button class="text-slate-500 dark:text-slate-400 dark:text-slate-500" @click="confirmDisconnect = false">取消</button><button :disabled="!!busy" class="rounded-lg bg-red-600 px-3 py-2 text-white disabled:opacity-40" @click="disconnect">确认清除</button></div>
+          <div v-if="confirmDisconnect" class="flex flex-wrap items-center gap-3 text-sm"><span class="w-full text-slate-600 dark:text-slate-400 dark:text-slate-500">清除这张卡片的登录凭据？使用它的功能需要重新登录后恢复，也可更换为其他账号。</span><button class="text-slate-500 dark:text-slate-400 dark:text-slate-500" @click="confirmDisconnect = false">取消</button><button :disabled="!!busy" class="rounded-lg bg-red-600 px-3 py-2 text-white disabled:opacity-40" @click="disconnect">确认清除</button></div>
           <div v-else class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-slate-400 dark:text-slate-500">{{ configured ? '已保存凭证 · 重启后自动恢复' : '扫码或保存有效 Cookie 后即可使用' }}</p><button class="text-xs text-red-500 hover:text-red-700 disabled:opacity-40" :disabled="!!busy || status === 'empty'" @click="confirmDisconnect = true">{{ busy === 'disconnect' ? '清除中…' : '清除登录信息' }}</button></div>
           <button type="button" :disabled="!!busy" class="mt-3 text-xs text-red-500 disabled:opacity-40" @click="confirmDelete = true">删除配置</button>
         </template>

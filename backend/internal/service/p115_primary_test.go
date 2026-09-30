@@ -75,10 +75,13 @@ func TestPrimaryRolePersistsAndNeverFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := "UID=99_A; SEID=other"
-	if err := reopened.Update(primary, 3, "main", &other); err == nil {
-		t.Fatal("clearing credentials lost the bound UID")
+	if err := reopened.Update(primary, 3, "main", &other); err != nil {
+		t.Fatal(err)
 	}
-	if err := reopened.Delete(primary, 3); err != nil {
+	if reopened.PrimaryID() == primary {
+		t.Fatal("replacement kept old feature directory identity")
+	}
+	if err := reopened.Delete(reopened.PrimaryID(), 4); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reopened.Primary(""); err == nil {

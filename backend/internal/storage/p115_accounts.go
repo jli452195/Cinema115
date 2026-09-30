@@ -79,6 +79,20 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState, me
 	if len(state.Accounts) > 120 {
 		return errors.New("115 账号数量超出限制")
 	}
+	// A primary identity replacement inserts a new ID. Release the old unique
+	// primary role inside this same transaction before inserting its replacement.
+	primaryID := ""
+	for _, row := range state.Accounts {
+		if row.Primary {
+			if primaryID != "" {
+				return errors.New("115 主账号配置重复")
+			}
+			primaryID = row.ID
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE p115_accounts SET is_primary=0 WHERE is_primary=1 AND id<>?", primaryID); err != nil {
+		return fmt.Errorf("更新主账号身份: %w", err)
+	}
 	ids := make(map[string]bool, len(state.Accounts))
 	for position, row := range state.Accounts {
 		if row.ID == "" || ids[row.ID] {

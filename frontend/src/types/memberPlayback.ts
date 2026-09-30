@@ -1,4 +1,5 @@
 export interface MemberPlayback {
+ imageTag?: string
  pendingAccountId?: string; pendingDirectoryStarted?: boolean
 	allowPersonalSwitch?: boolean
   userId: string; username: string; disabled: boolean; administrator?: boolean; embyId: string; embyName: string; embyUrl: string
@@ -14,7 +15,6 @@ export async function memberRequest(token: string, signal: AbortSignal, path = '
   return data
 }
 export function memberStage(member: MemberPlayback, settings: MemberSettings) {
-  if (member.administrator) return member.disabled ? 'Emby 已停用' : 'Emby 管理员'
   if (!member.source) return '等待播放授权'
   if (member.disabled) return 'Emby 已停用'
   if (member.adminBlocked) return '播放已停用'

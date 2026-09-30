@@ -16,7 +16,7 @@ func (s *MemberPlaybackService) preparePendingDrive(ctx context.Context, r model
 	}
 	if a.PlaybackParentCID == "" {
 		if r.PendingDirectoryStarted {
-			return r, memberError("新网盘目录创建结果待核查，请管理员确认目录；原绑定保留")
+			return r, memberError("新网盘目录创建结果待核查，请在个人中心确认目录；原绑定保留")
 		}
 		r.PendingDirectoryStarted = true
 		if err := s.save(ctx, r); err != nil {
@@ -24,7 +24,7 @@ func (s *MemberPlaybackService) preparePendingDrive(ctx context.Context, r model
 		}
 		cid, err := s.drive.CreateDirectory(ctx, "0", "Cinema115_"+a.ID, a.Cookie)
 		if err != nil {
-			return r, memberError("新网盘目录创建结果未确认，原绑定保留，请管理员核查目录")
+			return r, memberError("新网盘目录创建结果未确认，原绑定保留，请在个人网盘核查目录")
 		}
 		if err := s.accounts.UpdatePlaybackDirectory(a.ID, a.Revision, cid); err != nil {
 			return r, err

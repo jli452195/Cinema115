@@ -19,21 +19,24 @@ type accountQRClient interface {
 	CompleteQRCodeLogin(context.Context, string) (string, error)
 }
 type accountQR struct {
-	id       string
-	revision uint64
-	expires  time.Time
-	busy     bool
+	id        string
+	directory string
+	revision  uint64
+	expires   time.Time
+	busy      bool
 }
 type p115AccountsAPI struct {
 	store    *service.P115Accounts
 	checker  CookieChecker
 	qr       accountQRClient
+	drive    service.AccountDirectoryChecker
 	mu       sync.Mutex
 	sessions map[string]*accountQR
 }
 
-func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, checker CookieChecker, qr accountQRClient) {
+func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, checker CookieChecker, qr accountQRClient, drive service.AccountDirectoryChecker) {
 	a := &p115AccountsAPI{store: store, checker: checker, qr: qr, sessions: make(map[string]*accountQR)}
+	a.drive = drive
 	group := admin.Group("/p115")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -95,6 +98,10 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 func (a *p115AccountsAPI) fail(c *gin.Context, err error) {
 	code, message := 500, "账号操作失败，请检查存储权限后重试"
 	switch {
+	case errors.Is(err, service.ErrAccountInvalidCookie):
+		code, message = 422, err.Error()
+	case errors.Is(err, service.ErrAccountVerification):
+		code, message = 502, err.Error()
 	case errors.Is(err, service.ErrAccountMissing):
 		code, message = 404, err.Error()
 	case errors.Is(err, service.ErrAccountChanged):
@@ -115,20 +122,6 @@ func (a *p115AccountsAPI) target(c *gin.Context) (service.P115Account, bool) {
 		return v, false
 	}
 	return v, true
-}
-func (a *p115AccountsAPI) validate(c *gin.Context, cookie string) bool {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-	defer cancel()
-	valid, err := a.checker.CheckCookie(ctx, cookie)
-	if err != nil {
-		c.JSON(502, gin.H{"error": "暂时无法验证 Cookie，原配置未修改"})
-		return false
-	}
-	if !valid {
-		c.JSON(422, gin.H{"error": "Cookie 无效或已过期，原配置未修改"})
-		return false
-	}
-	return true
 }
 func (a *p115AccountsAPI) status(c *gin.Context) {
 	v, ok := a.target(c)
@@ -189,9 +182,10 @@ func (a *p115AccountsAPI) save(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Name     *string `json:"name"`
-		Cookie   string  `json:"cookie"`
-		Revision uint64  `json:"revision"`
+		Name      *string `json:"name"`
+		Cookie    string  `json:"cookie"`
+		Revision  uint64  `json:"revision"`
+		Directory string  `json:"directoryId"`
 	}
 	if c.ShouldBindJSON(&in) != nil {
 		a.fail(c, service.ErrAccountInput)
@@ -212,15 +206,20 @@ func (a *p115AccountsAPI) save(c *gin.Context) {
 	cookie := strings.TrimSpace(in.Cookie)
 	var replacement *string
 	if cookie != "" {
-		if !a.validate(c, cookie) {
-			return
-		}
 		replacement = &cookie
 	} else if c.Request.Method == "POST" {
 		c.JSON(400, gin.H{"error": "请填写新的 Cookie，空值不会覆盖现有配置"})
 		return
 	}
-	if err := a.store.Update(v.ID, v.Revision, name, replacement); err != nil {
+	var err error
+	if replacement != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
+		defer cancel()
+		err = a.store.LoginManaged(ctx, v.ID, v.Revision, name, *replacement, in.Directory, a.checker, a.drive)
+	} else {
+		err = a.store.Update(v.ID, v.Revision, name, nil)
+	}
+	if err != nil {
 		a.fail(c, err)
 		return
 	}
@@ -275,6 +274,7 @@ func (a *p115AccountsAPI) createQR(c *gin.Context) {
 	}
 	var in struct {
 		ClientType string `json:"clientType"`
+		Directory  string `json:"directoryId"`
 	}
 	if c.ShouldBindJSON(&in) != nil {
 		a.fail(c, service.ErrAccountInput)
@@ -285,7 +285,7 @@ func (a *p115AccountsAPI) createQR(c *gin.Context) {
 		a.fail(c, service.ErrAccountInput)
 		return
 	}
-	pending := &accountQR{revision: v.Revision, expires: time.Now().Add(3 * time.Minute)}
+	pending := &accountQR{directory: in.Directory, revision: v.Revision, expires: time.Now().Add(3 * time.Minute)}
 	a.mu.Lock()
 	for id, s := range a.sessions {
 		if time.Now().After(s.expires) {
@@ -351,7 +351,7 @@ func (a *p115AccountsAPI) pollQR(c *gin.Context) {
 			a.fail(c, service.ErrAccountChanged)
 			return
 		}
-		if err := a.store.Update(v.ID, pending.revision, v.Name, &status.Cookie); err != nil {
+		if err := a.store.LoginManaged(ctx, v.ID, pending.revision, v.Name, status.Cookie, pending.directory, a.checker, a.drive); err != nil {
 			a.fail(c, err)
 			return
 		}

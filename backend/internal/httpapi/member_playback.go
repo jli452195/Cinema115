@@ -96,6 +96,20 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		}
 		c.JSON(200, s.View(userID(c)))
 	})
+	group.POST("/directory", func(c *gin.Context) {
+		var input struct {
+			DirectoryID string `json:"directoryId"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "目录参数无效"})
+			return
+		}
+		if err := s.ConfirmPersonalDirectory(c.Request.Context(), userID(c), input.DirectoryID); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, s.View(userID(c)))
+	})
 	group.POST("/use-personal", func(c *gin.Context) {
 		if err := s.UsePersonalDrive(c.Request.Context(), userID(c)); err != nil {
 			fail(c, err)

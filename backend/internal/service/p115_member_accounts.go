@@ -28,25 +28,6 @@ func (s *P115Accounts) IsPersonal(id string) bool {
 	return IsMemberAccount(id) || err == nil && (a.OwnerUserID != "" || a.Ownership == "member")
 }
 
-func (s *P115Accounts) ClearMemberCookie(userID, accountID string, revision uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value := s.copy()
-	for i, a := range value.Accounts {
-		if a.ID != accountID || a.OwnerUserID != userID || a.Ownership != "member" {
-			continue
-		}
-		if a.Revision != revision {
-			return ErrAccountChanged
-		}
-		a.Cookie = ""
-		a.Revision++
-		value.Accounts[i] = a
-		return s.commit(value)
-	}
-	return ErrAccountMissing
-}
-
 func (s *P115Accounts) commitMember(ctx context.Context, value accountDocument, r model.MemberPlayback) error {
 	store, ok := s.store.(interface {
 		SaveMember(context.Context, string, model.MemberPlayback) error
@@ -81,10 +62,7 @@ func (s *P115Accounts) BindMember(ctx context.Context, r model.MemberPlayback, n
 		if a.ID == r.AccountID {
 			active = i
 		}
-		if a.UID == uid {
-			if a.Ownership != "member" || a.OwnerUserID != r.UserID {
-				return r, memberError("该 115 账号已属于其他配置，请先处理原归属")
-			}
+		if a.UID == uid && a.Ownership == "member" && a.OwnerUserID == r.UserID {
 			target = i
 		}
 	}
@@ -186,5 +164,29 @@ func (s *P115Accounts) CancelPendingMember(ctx context.Context, r model.MemberPl
 	}
 	r.PendingAccountID = ""
 	r.PendingDirectoryStarted = false
+	return r, s.commitMember(ctx, value, r)
+}
+
+// UnbindMember atomically removes only this owner's configurations and associations.
+// Cloud files and playback copy history are deliberately left untouched.
+func (s *P115Accounts) UnbindMember(ctx context.Context, r model.MemberPlayback) (model.MemberPlayback, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.copy()
+	kept := make([]P115Account, 0, len(value.Accounts))
+	for _, a := range value.Accounts {
+		if a.Ownership != "member" || a.OwnerUserID != r.UserID {
+			kept = append(kept, a)
+		}
+	}
+	value.Accounts = kept
+	r.AccountID, r.DirectoryID, r.PendingAccountID = "", "", ""
+	r.DirectoryStarted, r.PendingDirectoryStarted = false, false
+	r.UncertainDirectories = nil
+	if r.Source == "personal" {
+		r.Suspended = true
+		r.PolicyEnabled = false
+		r.Stage, r.Message = "paused", "个人网盘已解绑，重新扫码后恢复播放"
+	}
 	return r, s.commitMember(ctx, value, r)
 }

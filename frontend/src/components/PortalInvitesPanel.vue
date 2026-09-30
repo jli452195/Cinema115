@@ -103,8 +103,8 @@ onBeforeUnmount(() => lifecycle.abort())
     <form class="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900" @submit.prevent="generate">
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">生成注册邀请</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400">每个邀请码限注册一个Emby 账号。完整码和链接仅本次生成后显示，请及时复制。</p>
-      <label class="block text-sm text-slate-600 dark:text-slate-300">播放开通方式<select v-model="playbackSource" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option value="personal">自行绑定 115（默认）</option><option value="assigned">管理员小号池</option></select></label>
-      <p class="text-sm text-slate-500 dark:text-slate-400">{{ playbackSource === 'assigned' ? '注册后分配空闲小号，无需扫码；无可用账号时可登录浏览，等待分配。' : '受邀人可先注册 Emby 并浏览媒体库，绑定自己的 115 后才能播放。' }}</p>
+      <label class="block text-sm text-slate-600 dark:text-slate-300">播放开通方式<select v-model="playbackSource" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option value="personal">自行绑定 115（默认）</option><option value="assigned">管理员共享小号池</option></select></label>
+      <p class="text-sm text-slate-500 dark:text-slate-400">{{ playbackSource === 'assigned' ? '注册后分配共享小号，无需扫码；首次无可用小号时使用主网盘，已有绑定失效不会自动回退。' : '受邀人可先注册 Emby 并浏览媒体库，绑定自己的 115 后才能播放。' }}</p>
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="text-sm text-slate-600 dark:text-slate-300">数量<input v-model.number="count" type="number" required min="1" max="20" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" /></label>
         <label class="text-sm text-slate-600 dark:text-slate-300">有效期<select v-model.number="days" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option :value="1">1 天</option><option :value="7">7 天</option><option :value="30">30 天</option></select></label>
@@ -118,7 +118,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <div class="flex flex-wrap justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">请保存新生成的邀请</h2><button class="text-sm text-slate-500 dark:text-slate-400" @click="generated = []">隐藏完整邀请码</button></div>
       <div v-for="invite in generated" :key="invite.id" class="space-y-2 border-t border-blue-200/50 pt-3 dark:border-blue-400/20">
         <p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.note || '注册邀请' }} · {{ date(invite.expiresAt) }} 到期</p>
-        <p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.playbackSource === 'assigned' ? '管理员小号池' : '需绑定自己的 115 才能播放' }}</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">{{ invite.playbackSource === 'assigned' ? '管理员共享小号池' : '需绑定自己的 115 才能播放' }}</p>
         <div class="flex flex-wrap items-center gap-2"><code class="break-all text-sm text-slate-800 dark:text-slate-200">{{ invite.code }}</code><button type="button" :disabled="copying" class="text-xs text-blue-600 disabled:opacity-50 dark:text-blue-300" @click="copy(invite.code, invite.id, 'code')">复制邀请码</button></div>
         <textarea :value="link(invite.code)" readonly aria-label="邀请链接" rows="2" class="w-full resize-none rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
         <button type="button" :disabled="!origin || copying" class="text-sm text-blue-600 disabled:opacity-50 dark:text-blue-300" @click="copy(link(invite.code), invite.id, 'link')">复制邀请链接</button>

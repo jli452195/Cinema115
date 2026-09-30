@@ -15,11 +15,11 @@ type PersonalDriveView struct {
 }
 
 type MemberPlaybackAdminView struct {
+	ImageTag string `json:"imageTag,omitempty"`
 	model.MemberPlayback
 	PersonalDrive PersonalDriveView `json:"personalDrive"`
 	Username      string            `json:"username"`
 	Disabled      bool              `json:"disabled"`
-	Administrator bool              `json:"administrator"`
 }
 
 func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]MemberPlaybackAdminView, error) {
@@ -36,35 +36,25 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 		return nil, err
 	}
 	for _, u := range users {
-		if u.Policy.IsAdministrator || strings.HasPrefix(strings.ToLower(u.Name), "c115_") {
+		if strings.HasPrefix(strings.ToLower(u.Name), "c115_") {
 			continue
 		}
-		if _, err := s.observeUser(ctx, c, emby.ManagedUser{ID: u.ID, Name: u.Name}); err != nil {
+		if _, err := s.observeUser(ctx, c, emby.ManagedUser{ID: u.ID, Name: u.Name, Policy: map[string]any{"IsAdministrator": u.Policy.IsAdministrator}}); err != nil {
 			return nil, err
 		}
 	}
 	out := s.AdminMembers()
-	seen := make(map[string]bool, len(out))
 	for i := range out {
 		out[i].Disabled = true
 		for _, u := range users {
 			if u.ID == out[i].EmbyID && out[i].ServerID == c.ServerID {
-				seen[u.ID] = true
 				out[i].Administrator = u.Policy.IsAdministrator
 				out[i].SkipLibrarySync = out[i].SkipLibrarySync || u.Policy.IsAdministrator
 				out[i].Disabled = u.Policy.IsDisabled
 				out[i].EmbyName = u.Name
+				out[i].ImageTag = u.PrimaryImageTag
 			}
 		}
-	}
-	for _, u := range users {
-		if !u.Policy.IsAdministrator || seen[u.ID] {
-			continue
-		}
-		out = append(out, MemberPlaybackAdminView{
-			MemberPlayback: model.MemberPlayback{UserID: "admin:" + u.ID, EmbyID: u.ID, EmbyURL: c.URL, ServerID: c.ServerID, EmbyName: u.Name, Stage: "administrator", SkipLibrarySync: true},
-			Username:       u.Name, Disabled: u.Policy.IsDisabled, Administrator: true,
-		})
 	}
 	return out, nil
 }
@@ -81,7 +71,18 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 	records := s.Records()
 	out := make([]MemberPlaybackAdminView, 0, len(records))
 	for _, r := range records {
-		out = append(out, MemberPlaybackAdminView{MemberPlayback: r, PersonalDrive: s.personalDrive(r), Username: r.EmbyName})
+		out = append(out, MemberPlaybackAdminView{MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
 	}
 	return out
+}
+
+// Administrative views expose personal-drive status, never identifiers or credentials.
+func adminPlaybackRecord(r model.MemberPlayback) model.MemberPlayback {
+	r.AccountID = ""
+	r.PendingAccountID = ""
+	r.DirectoryID = ""
+	r.DirectoryStarted = false
+	r.PendingDirectoryStarted = false
+	r.UncertainDirectories = nil
+	return r
 }

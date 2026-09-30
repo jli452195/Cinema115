@@ -215,6 +215,10 @@ func (s *P115Accounts) add(name string, primary bool) (string, error) {
 
 // 版本校验避免迟到的 Cookie 验证和扫码响应覆盖后来保存的凭据。
 func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *string) error {
+	return s.update(id, revision, name, cookie, "")
+}
+
+func (s *P115Accounts) update(id string, revision uint64, name string, cookie *string, preparedCID string) error {
 	name = strings.TrimSpace(name)
 	if !validAccountName(name) {
 		return fmt.Errorf("%w：名称应为 1～50 字", ErrAccountInput)
@@ -232,19 +236,28 @@ func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *s
 		a.Name = name
 		a.Revision++
 		if cookie != nil {
-			if uid := accountUID(*cookie); uid != "" {
-				for _, other := range value.Accounts {
-					if other.ID != id && other.UID == uid {
-						return fmt.Errorf("%w：该 115 用户已属于其他配置，不能重复绑定", ErrAccountInput)
-					}
-				}
-				if a.UID != "" && a.UID != uid {
-					return fmt.Errorf("%w：该配置已绑定其他 115 用户，更换账号请删除配置后重新创建", ErrAccountInput)
-				}
-				a.UID = uid
+			uid := accountUID(*cookie)
+			changed := a.UID != "" && uid != "" && a.UID != uid
+			if changed && !a.Primary && preparedCID == "" {
+				return fmt.Errorf("%w：更换小号请填写并验证新网盘的播放目录", ErrAccountInput)
 			}
-			if oldUID, newUID := accountUID(a.Cookie), accountUID(*cookie); *cookie == "" || oldUID != newUID {
+			if changed && a.Primary {
+				// Feature directories are scoped to this ID. Rotate it so old settings
+				// and persisted tasks cannot address the new identity.
+				var nonce [12]byte
+				if _, err := rand.Read(nonce[:]); err != nil {
+					return err
+				}
+				a.ID = hex.EncodeToString(nonce[:])
+			}
+			if *cookie == "" || changed {
 				a.PlaybackParentCID = ""
+			}
+			if changed && !a.Primary {
+				a.PlaybackParentCID = preparedCID
+			}
+			if uid != "" {
+				a.UID = uid
 			}
 			a.Cookie = *cookie
 		}

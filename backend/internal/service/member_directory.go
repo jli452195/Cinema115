@@ -20,7 +20,7 @@ func (s *MemberPlaybackService) prepareDirectory(ctx context.Context, r model.Me
 	}
 	if r.DirectoryID == "" {
 		if r.DirectoryStarted {
-			return r, memberError("目录创建结果待核查，请管理员在个人播放管理中确认目录编号")
+			return r, memberError("目录创建结果待核查，请在个人中心确认目录编号")
 		}
 		r.DirectoryStarted = true
 		if err := s.save(ctx, r); err != nil {
@@ -28,7 +28,7 @@ func (s *MemberPlaybackService) prepareDirectory(ctx context.Context, r model.Me
 		}
 		cid, err := s.drive.CreateDirectory(ctx, "0", "Cinema115_"+id, a.Cookie)
 		if err != nil {
-			return r, memberError("播放目录创建结果未确认，请联系管理员核查，避免重复创建")
+			return r, memberError("播放目录创建结果未确认，请在个人网盘核查并确认目录")
 		}
 		r.DirectoryID = cid
 		if err := s.save(ctx, r); err != nil {

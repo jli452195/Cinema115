@@ -18,7 +18,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'
   else if(p==='/api/me/playback/qrcode'){writes.push(req.postDataJSON());data={qrId:'qr',qrcode:'test',expiresAt:new Date(Date.now()+180000).toISOString()}}
   else if(p==='/api/me/playback/qrcode/status'){Object.assign(state,{uid:'123',connected:true,directoryId:'456'});data={status:'success',playback:state}}
   else if(p==='/api/me/playback/use-personal'){state.source='personal';state.stage='ready';data=state}
-  else if(p==='/api/me/playback/disconnect'){state.connected=false;data=state}
+  else if(p==='/api/me/playback/disconnect'){Object.assign(state,{connected:false,uid:'',directoryId:'',pendingDrive:false,stage:'paused'});data=state}
   else if(p==='/api/admin/invites'){if(req.method()==='POST'){writes.push(req.postDataJSON());data={invites:[{id:'i',code:'abcdef',playbackSource:'assigned',createdAt:1,expiresAt:9999999999}]}}else data={invites:[],hasMore:false}}
   await route.fulfill({contentType:'application/json',body:JSON.stringify(data)})
  })
@@ -36,13 +36,17 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'
  await page.getByRole('button',{name:'扫码绑定 115',exact:true}).click();await page.getByText('115 绑定成功',{exact:true}).waitFor()
  assert.equal(state.source,'assigned')
  await page.getByRole('button',{name:'切换到我的网盘播放'}).click();await page.getByText('播放方式：绑定自己的 115 网盘',{exact:true}).waitFor()
- await page.getByRole('checkbox',{name:'更换为另一个 115 账号，新账号校验完成后切换，旧网盘文件保留。'}).check()
- await page.getByRole('button',{name:'更换 115 账号',exact:true}).click()
+ await page.getByRole('button',{name:'扫码登录或换号',exact:true}).click()
  assert.deepEqual(writes.at(-1),{replace:true})
+ await page.getByRole('button',{name:'关闭二维码'}).click()
+ await page.getByRole('checkbox',{name:/解除个人网盘绑定并暂停播放/}).check()
+ await page.getByRole('button',{name:'解绑个人网盘',exact:true}).click()
+ await page.getByRole('button',{name:'扫码绑定 115',exact:true}).waitFor()
+ assert.equal(state.uid,'');assert.equal(state.source,'personal')
  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>document.documentElement.classList.add('dark'))
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
  await page.goto(base+'/register#invite=abcdef')
- await page.getByText('邀请码有效：注册 Emby 后分配管理员小号，无可用账号时等待分配。').waitFor()
+ await page.getByText('邀请码有效：注册 Emby 后分配管理员共享小号，无可用小号时使用主网盘。').waitFor()
  assert.equal(new URL(page.url()).hash,'')
  await page.getByLabel('用户名',{exact:true}).fill('newreader');await page.getByLabel('密码',{exact:true}).fill('password123');await page.getByLabel('确认密码',{exact:true}).fill('password123');await page.getByRole('button',{name:'注册账号',exact:true}).click()
  role='admin';await page.evaluate(()=>localStorage.setItem('admin_token','mock'));await page.goto(base+'/users')

@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 29
+const schemaVersion = 30
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -421,11 +421,11 @@ PRAGMA user_version=22;`); err != nil {
 CREATE TABLE IF NOT EXISTS emby_profiles(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,emby_id TEXT NOT NULL,username TEXT NOT NULL,token_version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,UNIQUE(server_id,emby_id));
 CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES emby_profiles(id),record TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId'));
-CREATE UNIQUE INDEX IF NOT EXISTS member_pool_assignment ON member_playback(json_extract(record,'$.assignedAccountId')) WHERE json_extract(record,'$.assignedAccountId')<>'';
+DROP INDEX IF EXISTS member_pool_assignment;
 CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS portal_invites(id TEXT PRIMARY KEY,code_hash TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,note TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,revoked_at INTEGER NOT NULL DEFAULT 0,used_at INTEGER NOT NULL DEFAULT 0,used_by TEXT NOT NULL DEFAULT '',playback_source TEXT NOT NULL CHECK(playback_source IN ('personal','assigned')),registration TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS portal_invites_created ON portal_invites(created_at DESC,id);
-PRAGMA user_version=29;`); err != nil {
+PRAGMA user_version=30;`); err != nil {
 		return fmt.Errorf("创建 Emby 个人中心配置: %w", err)
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.

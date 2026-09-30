@@ -9,6 +9,12 @@ func (s *MemberPlaybackService) playbackAccount(r model.MemberPlayback) (P115Acc
 	var a P115Account
 	var err error
 	switch r.Source {
+	case "primary":
+		a, err = s.accounts.Primary("")
+		if err != nil || a.UID == "" || accountUID(a.Cookie) != a.UID {
+			return a, memberError("主网盘未配置或凭据不可用，请管理员检查")
+		}
+		return a, nil
 	case "assigned":
 		a, err = s.accounts.Get(r.AssignedAccountID)
 		if a.Primary || s.accounts.IsPersonal(a.ID) {
@@ -33,6 +39,9 @@ func (s *MemberPlaybackService) SelectionMatches(embyID string, selected *Playba
 		if r.EmbyID != embyID || embyID == "" {
 			continue
 		}
+		if r.Source == "primary" {
+			return selected == nil
+		}
 		target := r.AccountID
 		if r.Source == "assigned" {
 			target = r.AssignedAccountID
@@ -49,12 +58,18 @@ func (s *MemberPlaybackService) CurrentView(ctx context.Context, id string) (Mem
 	return s.View(id), nil
 }
 
-func (s *MemberPlaybackService) AccountOptions() []P115AccountView {
+func (s *MemberPlaybackService) AccountOptions() []PoolAccountView {
 	accounts := s.accounts.List()
-	out := make([]P115AccountView, 0, len(accounts))
+	out := make([]PoolAccountView, 0, len(accounts))
 	for _, a := range accounts {
 		if !a.Primary && a.OwnerUserID == "" && a.Ownership != "member" && !IsMemberAccount(a.ID) {
-			out = append(out, a)
+			users := make([]string, 0)
+			for _, r := range s.Records() {
+				if r.Source == "assigned" && r.AssignedAccountID == a.ID {
+					users = append(users, r.EmbyName)
+				}
+			}
+			out = append(out, PoolAccountView{P115AccountView: a, UserCount: len(users), Users: users})
 		}
 	}
 	return out
@@ -65,19 +80,19 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 		return err
 	}
 	defer s.unlock()
-	if source != "personal" && source != "assigned" && source != "" {
+	if source != "personal" && source != "assigned" && source != "primary" {
 		return memberError("播放方式无效")
 	}
-	r, err := s.ensure(ctx, id)
+	r := s.record(id)
+	remote, err := s.playbackUser(ctx, r)
 	if err != nil {
 		return err
 	}
+	r.Administrator = remote.Policy["IsAdministrator"] == true
+	if r.Administrator && source == "personal" {
+		return memberError("管理员请使用主网盘或管理员小号池")
+	}
 	if source == "assigned" && accountID != "" {
-		for _, other := range s.Records() {
-			if other.UserID != id && other.AssignedAccountID == accountID {
-				return memberError("此小号已分配给其他用户")
-			}
-		}
 		a, err := s.accounts.Get(accountID)
 		if err != nil || a.Primary || s.accounts.IsPersonal(a.ID) || a.PlaybackParentCID == "" {
 			return memberError("请选择已配置播放目录的管理员小号")
@@ -86,7 +101,7 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 		accountID = ""
 	}
 	r.Source, r.AssignedAccountID = source, accountID
-	r.AllowPersonalSwitch = source != ""
+	r.AllowPersonalSwitch = !r.Administrator
 	r.PolicyEnabled = false
 	r.AppliedRevision = 0
 	r.Suspended = false
@@ -135,4 +150,10 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 		s.ClearDirectLinks()
 	}
 	return s.reconcile(ctx, prepared)
+}
+
+type PoolAccountView struct {
+	P115AccountView
+	UserCount int      `json:"userCount"`
+	Users     []string `json:"users"`
 }

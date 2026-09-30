@@ -18,6 +18,7 @@ import (
 type accountQRFake struct {
 	count          int
 	beforeComplete func()
+	cookie         string
 }
 
 func (f *accountQRFake) CreateQRCode(_ context.Context, app string) (*p115.QRCode, error) {
@@ -31,7 +32,49 @@ func (f *accountQRFake) CompleteQRCodeLogin(_ context.Context, id string) (strin
 	if f.beforeComplete != nil {
 		f.beforeComplete()
 	}
-	return "UID=" + id + "; SEID=qr-private", nil
+	if f.cookie != "" {
+		return f.cookie, nil
+	}
+	if id == "115ios" {
+		return "UID=111_A; SEID=qr-private", nil
+	}
+	return "UID=222_A; SEID=qr-private", nil
+}
+
+type accountDirectoryCheckFunc func(context.Context, string, string) error
+
+func (f accountDirectoryCheckFunc) ValidateCacheParent(ctx context.Context, cid, cookie string) error {
+	return f(ctx, cid, cookie)
+}
+
+func TestPoolCookieAndQRReplacementValidateNewDirectory(t *testing.T) {
+	for _, method := range []string{"cookie", "qr"} {
+		t.Run(method, func(t *testing.T) {
+			qr := &accountQRFake{cookie: "UID=999_A; SEID=replacement"}
+			_, accounts, _ := setupAccountsAPI(t, nil, qr)
+			calls := 0
+			drive := accountDirectoryCheckFunc(func(_ context.Context, cid, cookie string) error {
+				calls++
+				if cid != "789" || cookie != qr.cookie {
+					t.Fatal("directory checked with wrong credential snapshot")
+				}
+				return nil
+			})
+			r := gin.New()
+			RegisterP115Accounts(r.Group("/api/admin"), accounts, cookieCheckFunc(func(context.Context, string) (bool, error) { return true, nil }), qr, drive)
+			if method == "cookie" {
+				accountRequest(t, r, "PUT", "/accounts/default", `{"revision":2,"cookie":"UID=999_A; SEID=replacement"}`, 400)
+				accountRequest(t, r, "PUT", "/accounts/default", `{"revision":2,"cookie":"UID=999_A; SEID=replacement","directoryId":"789"}`, 200)
+			} else {
+				accountRequest(t, r, "POST", "/accounts/default/qrcode", `{"clientType":"115-ios","directoryId":"789"}`, 200)
+				accountRequest(t, r, "GET", "/accounts/default/qrcode/status?qrId=115ios", "", 200)
+			}
+			a, err := accounts.Get("default")
+			if err != nil || a.UID != "999" || a.PlaybackParentCID != "789" || calls != 1 {
+				t.Fatal("replacement was not committed in original slot")
+			}
+		})
+	}
 }
 
 func setupAccountsAPI(t *testing.T, checker CookieChecker, qr accountQRClient) (*gin.Engine, *service.P115Accounts, string) {
@@ -70,7 +113,7 @@ func setupAccountsAPI(t *testing.T, checker CookieChecker, qr accountQRClient) (
 		checker = cookieCheckFunc(func(_ context.Context, cookie string) (bool, error) { return cookie != "bad" && cookie != "", nil })
 	}
 	r := gin.New()
-	RegisterP115Accounts(r.Group("/api/admin"), s, checker, qr)
+	RegisterP115Accounts(r.Group("/api/admin"), s, checker, qr, nil)
 	return r, s, id
 }
 func accountRequest(t *testing.T, r *gin.Engine, method, path, body string, code int) *httptest.ResponseRecorder {
@@ -118,7 +161,7 @@ func TestPersonalOwnershipGuardsGenericAccountAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	RegisterP115Accounts(r.Group("/api/admin"), accounts, nil, nil)
+	RegisterP115Accounts(r.Group("/api/admin"), accounts, nil, nil, nil)
 	list := accountRequest(t, r, "GET", "/accounts", "", 200)
 	if strings.Contains(list.Body.String(), id) {
 		t.Fatal("personal account listed in assistant")
@@ -284,7 +327,7 @@ func TestQRAccountBindingAndStaleCompletion(t *testing.T) {
 				t.Fatal("扫码结果写入了其他卡片")
 			}
 			second, err := s.Get(id)
-			if change == "正常确认" && (err != nil || second.Cookie != "UID=115android; SEID=qr-private") {
+			if change == "正常确认" && (err != nil || second.Cookie != "UID=222_A; SEID=qr-private") {
 				t.Fatal("二维码未写回发起账号")
 			}
 			if change != "正常确认" && err == nil && strings.Contains(second.Cookie, "qr-private") {

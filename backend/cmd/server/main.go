@@ -163,7 +163,7 @@ func main() {
 	httpapi.RegisterFollows(member, follows)
 	httpapi.RegisterWebsiteNotifications(member, database)
 	httpapi.RegisterFollowAdmin(admin, follows)
-	httpapi.RegisterP115Accounts(admin, accounts, p115.NewAccountClient(), p115.NewClient())
+	httpapi.RegisterP115Accounts(admin, accounts, p115.NewAccountClient(), p115.NewClient(), p115.NewShareClient())
 	cloudDownloadStore, err := service.NewSessionStore(filepath.Join(dataDir, "cloud-download-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)

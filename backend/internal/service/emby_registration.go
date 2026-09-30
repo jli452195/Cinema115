@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"regexp"
+	"sort"
 	"strings"
 	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/model"
@@ -26,12 +27,30 @@ func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, r
 	if err := s.db.SaveEmbyProfile(ctx, u); err != nil {
 		return u, err
 	}
-	if s.record(u.ID).UserID == "" {
-		r := model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyID: u.EmbyID, EmbyName: u.Username, EmbyURL: c.URL, Provisioned: true, LoginEnabled: true, Stage: "pending", Message: "播放尚未授权，请联系管理员"}
+	r := s.record(u.ID)
+	changed := r.UserID == "" || r.Source == "" || r.Administrator != (remote.Policy["IsAdministrator"] == true) || r.EmbyName != remote.Name
+	if r.UserID == "" {
+		r = model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyID: u.EmbyID, EmbyName: u.Username, EmbyURL: c.URL, Provisioned: true, LoginEnabled: true, Stage: "pending"}
+	}
+	if r.Source == "" {
+		r.Source = "primary"
+		r.AllowPersonalSwitch = true
+	}
+	r.Administrator = remote.Policy["IsAdministrator"] == true
+	r.EmbyName = remote.Name
+	if r.Administrator {
+		r.SkipLibrarySync = true
+		r.AllowPersonalSwitch = false
+	}
+	if changed {
+		r.PolicyEnabled = false
+		r.AppliedRevision = 0
 		if err := s.save(ctx, r); err != nil {
 			return u, err
 		}
+		s.RequestSync()
 	}
+
 	return s.db.PortalUser(ctx, u.ID)
 }
 
@@ -149,20 +168,27 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 	return u, nil
 }
 
-// The service gate serializes reservations; the SQL unique index additionally
-// prevents assigning one pool account to two users in the same database.
+// Assign once, sharing the least-used available administrator account. Existing
+// assignments are never rotated or replaced merely because credentials fail.
 func (s *MemberPlaybackService) assignPool(ctx context.Context, r *model.MemberPlayback) error {
 	if r.Source != "assigned" || r.AssignedAccountID != "" {
 		return nil
 	}
-	used := make(map[string]bool)
+	used := make(map[string]int)
 	for _, other := range s.Records() {
-		if other.AssignedAccountID != "" {
-			used[other.AssignedAccountID] = true
+		if other.Source == "assigned" {
+			used[other.AssignedAccountID]++
 		}
 	}
-	for _, a := range s.AccountOptions() {
-		if used[a.ID] || !a.Configured || a.PlaybackParentCID == "" {
+	options := s.AccountOptions()
+	sort.Slice(options, func(i, j int) bool {
+		if used[options[i].ID] == used[options[j].ID] {
+			return options[i].ID < options[j].ID
+		}
+		return used[options[i].ID] < used[options[j].ID]
+	})
+	for _, a := range options {
+		if !a.Configured || a.PlaybackParentCID == "" {
 			continue
 		}
 		account, err := s.accounts.Get(a.ID)
@@ -179,5 +205,7 @@ func (s *MemberPlaybackService) assignPool(ctx context.Context, r *model.MemberP
 		r.AssignedAccountID = a.ID
 		return s.save(ctx, *r)
 	}
-	return nil
+	r.Source = "primary"
+	r.AssignedAccountID = ""
+	return s.save(ctx, *r)
 }

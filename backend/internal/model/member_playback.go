@@ -2,6 +2,7 @@ package model
 
 // Contains lifecycle metadata only; no passwords, tokens, cookies or links.
 type MemberPlayback struct {
+	Administrator           bool     `json:"administrator"`
 	UncertainDirectories    []string `json:"uncertainDirectories,omitempty"`
 	PendingAccountID        string   `json:"pendingAccountId,omitempty"`
 	PendingDirectoryStarted bool     `json:"pendingDirectoryStarted,omitempty"`

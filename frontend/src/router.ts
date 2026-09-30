@@ -6,6 +6,7 @@ import PersonView from './views/PersonView.vue'
 import MediaDetailView from './views/MediaDetailView.vue'
 import HomeView from './views/HomeView.vue'
 import P115View from './views/P115View.vue'
+import P115PoolView from './views/P115PoolView.vue'
 import ShareView from './views/ShareView.vue'
 import CloudDownloadView from './views/CloudDownloadView.vue'
 import FolderMonitorView from './views/FolderMonitorView.vue'
@@ -48,6 +49,7 @@ export const router = createRouter({
     { path: '/tv/:tmdbId', name: 'tv-detail', component: MediaDetailView, props: route => ({ kind: 'tv', tmdbId: String(route.params.tmdbId) }) },
     { path: '/movie/:tmdbId', name: 'movie-detail', component: MediaDetailView, props: route => ({ kind: 'movie', tmdbId: String(route.params.tmdbId) }) },
     { path: '/115', name: 'p115-category', component: HomeView, props: { category: 'p115' }, meta: { categoryPage: true } },
+    { path: '/115/pool', name: 'p115-pool', component: P115PoolView },
     { path: '/helper115', name: 'helper115', component: P115View },
     { path: '/115/login', redirect: '/helper115' },
     { path: '/115/share', name: 'share', component: ShareView },
