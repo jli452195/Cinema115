@@ -310,7 +310,13 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if managed && media && err != nil {
-			http.Error(w, "个人播放已暂停，请在网站个人中心检查绑定", http.StatusForbidden)
+			message, status := playbackAuthorizationFailure(r.Context(), err)
+			level := "WARNING"
+			if status == 499 {
+				level = "DEBUG"
+			}
+			h.logs.Add(r.Context(), level, message)
+			http.Error(w, message, status)
 			return
 		}
 		if managed && downloadItem(r.URL.Path) != "" && !h.cache.Members.Settings().AllowDownload {
@@ -505,7 +511,11 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	}()
 	fail := func(message string, status int) {
 		outcome = fmt.Sprintf("HTTP %d", status)
-		h.logs.Add(r.Context(), "ERROR", outcome+"："+message)
+		level := "ERROR"
+		if status == 499 {
+			level = "DEBUG"
+		}
+		h.logs.Add(r.Context(), level, outcome+"："+message)
 		http.Error(w, message, status)
 	}
 	h.logs.Add(r.Context(), "INFO", "开始直链"+kind+"解析，方法="+r.Method+"，条目="+proxyLogID(item)+"，媒体源="+proxyLogID(proxyQuery(r.URL.Query(), "MediaSourceId"))+"，账号配置="+proxyLogID(h.config.AccountID))
@@ -559,7 +569,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	if h.cache != nil && h.cache.Members != nil {
 		managed, err := h.cache.Members.Authorize(ctx, h.config.URL, userID)
 		if err != nil {
-			fail("个人播放已暂停，请到网站个人中心检查绑定", 403)
+			fail(playbackAuthorizationFailure(ctx, err))
 			return
 		}
 		if managed {
@@ -659,8 +669,12 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		}
 		if h.cache.Members != nil {
 			managed, denied := h.cache.Members.Authorize(ctx, h.config.URL, user.ID)
-			if denied != nil || managed && !h.cache.Members.SelectionMatches(user.ID, cacheSelection) {
-				fail("个人播放绑定不可用，已停止取链", 403)
+			if denied != nil {
+				fail(playbackAuthorizationFailure(ctx, denied))
+				return
+			}
+			if managed && !h.cache.Members.SelectionMatches(user.ID, cacheSelection) {
+				fail("播放来源绑定已变化，请重新发起播放", http.StatusForbidden)
 				return
 			}
 		}

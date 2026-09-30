@@ -3,6 +3,7 @@ package emby
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -157,6 +158,9 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("Emby 请求取消: %w", ctx.Err())
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("Emby 请求超时: %w", context.DeadlineExceeded)
 		}
 		return fmt.Errorf("无法连接 Emby，请检查地址和网络")
 	}

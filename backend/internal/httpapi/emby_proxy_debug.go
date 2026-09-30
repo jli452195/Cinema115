@@ -190,7 +190,9 @@ func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		level := "DEBUG"
-		if status >= 500 {
+		if status == 499 && r.Context().Err() != nil {
+			level = "DEBUG"
+		} else if status >= 500 {
 			level = "ERROR"
 		} else if status >= 400 {
 			level = "WARNING"

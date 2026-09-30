@@ -16,6 +16,9 @@ import (
 
 var ErrMemberPlayback = errors.New("个人播放操作未完成")
 
+// A failed upstream identity lookup is not proof that a user or binding is invalid.
+var ErrPlaybackIdentityUnavailable = errors.New("Emby 播放身份查询暂不可用")
+
 type memberQRClient interface {
 	CreateQRCode(context.Context, string) (*p115.QRCode, error)
 	CheckQRCode(context.Context, string) (*p115.QRCodeStatus, error)
@@ -478,6 +481,9 @@ func (s *MemberPlaybackService) Bindings(c PlaybackCacheConfig) PlaybackCacheCon
 	return c
 }
 func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
 	if id == "" {
 		return true, memberError("无法确认播放用户")
 	}
@@ -893,7 +899,16 @@ func (s *MemberPlaybackService) playbackUser(ctx context.Context, r model.Member
 		return emby.ManagedUser{}, ErrLogin
 	}
 	u, err := s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, r.EmbyID)
-	if err != nil || u.ID != r.EmbyID || u.Policy["IsDisabled"] == true {
+	if ctx.Err() != nil {
+		return u, ctx.Err()
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return u, err
+		}
+		return u, ErrPlaybackIdentityUnavailable
+	}
+	if u.ID != r.EmbyID || u.Policy["IsDisabled"] == true {
 		return u, ErrLogin
 	}
 	return u, nil
