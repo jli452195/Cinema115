@@ -26,6 +26,9 @@ type playbackPreparationCache struct {
 	directories map[string]time.Time
 }
 
+const playbackDirectoryTTL = 10 * time.Minute
+const playbackRecoveryDirectoryFreshness = 30 * time.Second
+
 // Only returned when no initupload request has been attempted. Callers may
 // discard their pending file record; unknown upload outcomes must stay blocked.
 type PlaybackPreflightError struct {
@@ -87,7 +90,33 @@ func (c *ShareClient) PreparePlaybackAccount(ctx context.Context, scope, cookie 
 }
 
 func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid, cookie string) error {
-	if scope == "" || CookieUserID(cookie) == "" {
+	return c.validatePlaybackDirectory(ctx, scope, cid, cookie, playbackDirectoryTTL)
+}
+
+// Recovery accepts only a recent real directory check. Cache hits do not
+// extend freshness; credential, scope and directory changes isolate entries.
+func (c *ShareClient) ValidatePlaybackRecoveryDirectory(ctx context.Context, scope, cid, cookie string) (resultErr error) {
+	started := time.Now()
+	var total RequestTiming
+	readCtx := WithRequestTiming(ctx, func(v RequestTiming) {
+		reportRequestTiming(ctx, v)
+		total.Requests += v.Requests
+		total.Wait += v.Wait
+		total.HTTP += v.HTTP
+		total.Retries += v.Retries
+	})
+	defer func() {
+		stage := "恢复目录核验汇总"
+		if resultErr == nil && total.Requests == 0 {
+			stage = "恢复目录核验复用（30秒内，无115请求）"
+		}
+		emitPlaybackTiming(ctx, PlaybackTiming{Stage: stage, Duration: time.Since(started), SearchSummary: true, Requests: total.Requests, Retries: total.Retries, Wait: total.Wait, RequestHTTP: total.HTTP, Failed: resultErr != nil})
+	}()
+	return c.validatePlaybackDirectory(readCtx, scope, cid, cookie, playbackRecoveryDirectoryFreshness)
+}
+
+func (c *ShareClient) validatePlaybackDirectory(ctx context.Context, scope, cid, cookie string, maxAge time.Duration) error {
+	if scope == "" || CookieUserID(cookie) == "" || !validDriveID(cid, true) {
 		return fmt.Errorf("目录校验账号配置无效")
 	}
 	if err := ctx.Err(); err != nil {
@@ -102,9 +131,14 @@ func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid,
 	}
 	expires := c.playbackPreparation.directories[key]
 	c.playbackPreparation.mu.Unlock()
-	if time.Now().Before(expires) {
+	if maxAge > 0 && time.Now().Before(expires.Add(maxAge-playbackDirectoryTTL)) {
 		return nil
 	}
+	// Discard a stale success before revalidation, so a failed recovery check
+	// cannot leave a longer-lived ordinary-upload cache entry behind.
+	c.playbackPreparation.mu.Lock()
+	delete(c.playbackPreparation.directories, key)
+	c.playbackPreparation.mu.Unlock()
 	if err := c.playbackReader(cookie).ValidateCacheParent(ctx, cid, cookie); err != nil {
 		return err
 	}
@@ -112,7 +146,7 @@ func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid,
 	if c.playbackPreparation.directories == nil || len(c.playbackPreparation.directories) >= 256 {
 		c.playbackPreparation.directories = make(map[string]time.Time)
 	}
-	c.playbackPreparation.directories[key] = time.Now().Add(10 * time.Minute)
+	c.playbackPreparation.directories[key] = time.Now().Add(playbackDirectoryTTL)
 	c.playbackPreparation.mu.Unlock()
 	return nil
 }

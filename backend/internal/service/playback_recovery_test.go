@@ -43,7 +43,7 @@ func (f *recoveryFake) VerifyPlaybackFile(ctx context.Context, file p115.DrivePl
 	}
 	return f.verifyErr
 }
-func (f *recoveryFake) RefreshPlaybackDirectory(_ context.Context, scope, cid, cookie string) error {
+func (f *recoveryFake) ValidatePlaybackRecoveryDirectory(_ context.Context, scope, cid, cookie string) error {
 	f.refreshes++
 	if cid != "0" || cookie != "UID=22_A; SEID=private" {
 		return errors.New("destination changed")

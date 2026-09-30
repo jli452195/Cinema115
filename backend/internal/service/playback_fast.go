@@ -286,9 +286,9 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	next("恢复保存目录核验")
 	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
 		if directory, ok := fast.(interface {
-			RefreshPlaybackDirectory(context.Context, string, string, string) error
+			ValidatePlaybackRecoveryDirectory(context.Context, string, string, string) error
 		}); ok {
-			if err := directory.RefreshPlaybackDirectory(recovery.budget(ctx), selected.binding.AccountID, selected.binding.ParentCID, selected.cookie); err != nil {
+			if err := directory.ValidatePlaybackRecoveryDirectory(recovery.budget(ctx), selected.binding.AccountID, selected.binding.ParentCID, selected.cookie); err != nil {
 				return "", &playbackTargetError{stage: "恢复秒传前保存目录核验失败，请检查原目录配置", err: err}
 			}
 		}

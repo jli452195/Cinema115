@@ -115,7 +115,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <p :title="material.name" class="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
-            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 可见副本 {{ copyCount(material) }} · 校验片段 {{ material.ranges.length }}</p>
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 可见副本 {{ copyCount(material) }} · 已保存 {{ material.ranges.length }} 个校验片段</p>
           </div>
           <button type="button" :aria-expanded="expanded === material.id" :aria-label="'查看资料详情：' + material.name" class="shrink-0 py-1 text-xs text-blue-600 dark:text-blue-400" @click="toggleDetails(material.id)">{{ expanded === material.id ? '收起' : '详情' }}</button>
         </div>
@@ -123,7 +123,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <p class="break-all font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
           <p class="break-all">SHA1：{{ material.sha1 }}</p>
           <p>验证时间：{{ dateLabel(material.verifiedAt) }}</p>
-          <details v-if="material.ranges.length"><summary class="cursor-pointer">查看校验片段（{{ material.ranges.length }}）</summary><div class="mt-2 max-h-48 space-y-2 overflow-y-auto"><p v-for="range in material.ranges" :key="range.start + ':' + range.end" class="break-all">字节 {{ range.start }}–{{ range.end }} · {{ range.sha1 }}</p></div></details>
+          <p v-if="material.ranges.length">匹配已保存的校验片段时，可减少源文件读取。</p>
           <button v-if="forgetMaterial !== material.id" type="button" :disabled="busy" class="text-red-600 underline disabled:opacity-40 dark:text-red-400" @click="forgetMaterial = material.id">移除文件资料</button>
           <div v-else class="rounded-lg bg-amber-50 p-3 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><p>移除后，再次秒传可能需要重新读取源文件。账号副本记录和云端文件保留。</p><button type="button" :disabled="busy" class="mt-2 font-medium underline disabled:opacity-40" @click="action('/forget-material', { id: material.id })">确认移除资料</button><button type="button" class="ml-4" @click="forgetMaterial = ''">取消</button></div>
         </div>
