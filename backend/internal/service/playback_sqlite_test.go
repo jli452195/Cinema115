@@ -131,6 +131,38 @@ func TestPlaybackSQLiteImportIncrementalWritesAndRestart(t *testing.T) {
 	}
 }
 
+func TestPlaybackSHA1HintSharesMaterialAcrossTargets(t *testing.T) {
+	ctx := context.Background()
+	s, f, first := setupFastCache(t)
+	if _, _, err := s.ResolvePickCodeWithReport(ctx, first, "pickaaa", "source", "player", "primary"); err != nil {
+		t.Fatal(err)
+	}
+	second := *first
+	second.binding.AccountID = "second-account"
+	second.binding.ParentCID = "456"
+	second.cookie, second.uid = "UID=789_A; SEID=second", "789"
+	// The second account has no files, although the first account has its copy.
+	f.files = nil
+	if _, report, err := s.ResolvePickCodeWithReport(WithPlaybackSHA1Hint(ctx, strings.Repeat("a", 40)), &second, "differentpc", "", "player", "primary"); err != nil || report.UsedSource {
+		t.Fatal("second target did not reuse verified material", err)
+	}
+	if f.reads != 1 || f.uploads != 2 || len(s.Status().Materials) != 1 {
+		t.Fatal("material was reloaded or target copy skipped")
+	}
+	entries := s.Status().Entries
+	if len(entries) != 2 {
+		t.Fatal("target copies were not isolated")
+	}
+	for _, e := range entries {
+		if e.AccountID == second.binding.AccountID && (e.UID != second.uid || e.ParentCID != "456") {
+			t.Fatal("second target inherited first target identity or directory")
+		}
+	}
+	if m, _ := s.lookupMaterial(DirectLinkKey("pickcode-material", "primary", "differentpc"), ""); m.ID != "" {
+		t.Fatal("external hash created unverified source association")
+	}
+}
+
 func TestPlaybackSHA1HintUsesOnlyUniqueVerifiedMaterial(t *testing.T) {
 	ctx := context.Background()
 	s, f, selected := setupFastCache(t)

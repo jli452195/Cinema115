@@ -160,6 +160,9 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 	material, byHash := s.lookupMaterial(origin, hint)
 	var original *p115.DownloadInfo
 	if material.ID == "" {
+		if hint != "" {
+			s.logs.Add(ctx, "INFO", "外部 SHA1 未命中唯一可信资料或与来源冲突，重新核验源文件；不采用外部文件名及哈希建立关联")
+		}
 		var err error
 		original, err = loadSource()
 		if err != nil {

@@ -113,7 +113,7 @@ func NewEmbyProxyHandler(c service.EmbyProxyConfig, accounts *service.P115Accoun
 	h.http = &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	upstream, _ := url.Parse(c.URL)
 	h.proxy = &httputil.ReverseProxy{
-		Transport: transport,
+		Transport: &strmNegotiationTransport{handler: h, next: transport},
 		Rewrite: func(p *httputil.ProxyRequest) {
 			p.SetURL(upstream)
 			p.SetXForwarded()
@@ -597,6 +597,8 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	h.logs.Add(ctx, "INFO", "Emby 用户与条目"+kind+"权限校验通过，用户="+service.PlaybackLogName(user.Name)+"（ID="+user.ID+"）")
 	sourceID := proxyQuery(r.URL.Query(), "MediaSourceId")
 	query := url.Values{"UserId": {user.ID}}
+	// Resolving a 115 source never requires Emby to open the old STRM host.
+	metadataOnlyQuery(query)
 	if sourceID != "" {
 		query.Set("MediaSourceId", sourceID)
 	}

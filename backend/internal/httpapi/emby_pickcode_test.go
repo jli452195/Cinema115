@@ -51,6 +51,11 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 		case "/emby/Users/" + userID + "/Items/movie":
 			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true}`)
 		case "/emby/Items/movie/PlaybackInfo":
+			if r.URL.Query().Get("IsPlayback") != "false" || r.URL.Query().Get("AutoOpenLiveStream") != "false" {
+				t.Error("pickcode source lookup must not open the retired STRM tool")
+				w.WriteHeader(500)
+				return
+			}
 			// The path SHA1 deliberately differs from the source account metadata.
 			// It must not replace the trusted source SHA1 or trigger a host request.
 			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115/api/redirect115/%s%s"}]}`, pickCode, suffix)
