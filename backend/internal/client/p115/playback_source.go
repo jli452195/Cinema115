@@ -21,6 +21,18 @@ type playbackSourceCache struct {
 	entries map[string]playbackSourceMetadata
 }
 
+// Only use this when a range is actually needed. downurl normally supplies
+// SHA1, size and the file ID together with the URL, saving a supervision call.
+// The URL remains request-local and is never put in the metadata cache.
+func (c *ShareClient) PlaybackPickCodeRangeSource(ctx context.Context, accountID, pc, cookie string) (*DownloadInfo, error) {
+	if accountID == "" || CookieUserID(cookie) == "" || !instantPickCode.MatchString(pc) {
+		return nil, fmt.Errorf("源账号或 pickcode 配置无效")
+	}
+	readCtx, finish := tracePlaybackHTTP(ctx, "校验源取链与元数据核验 HTTP")
+	defer finish()
+	return c.PickCodeInstantInfo(readCtx, pc, cookie)
+}
+
 // Cache metadata only. Every request gets its own closure with fixed credentials;
 // the caller may prefetch its URL or wait until 115 requests a range challenge.
 func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc, cookie string) (*DownloadInfo, error) {

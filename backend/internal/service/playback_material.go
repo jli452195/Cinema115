@@ -159,6 +159,10 @@ type playbackRangeClient interface {
 	PlaybackRangeSHA1(context.Context, *p115.DownloadInfo, int64, int64) (string, error)
 }
 
+type playbackRangeSourceClient interface {
+	PlaybackPickCodeRangeSource(context.Context, string, string, string) (*p115.DownloadInfo, error)
+}
+
 // Called with the gate held. Resolving a known file requires no source I/O;
 // only a missing range triggers reads of verified copies, then the primary.
 func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *PlaybackCacheSelection, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (*p115.DownloadInfo, string, func() error, error) {
@@ -238,10 +242,11 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		for _, r := range material.Ranges {
 			if r.Start == start && r.End == end {
 				s.stats.rangeHits.Add(1)
-				s.logs.Add(readCtx, "INFO", "秒传校验片段资料命中，无需读取源文件")
+				s.logs.Add(readCtx, "INFO", fmt.Sprintf("秒传校验片段资料命中，无需读取源文件；区间=%d-%d", start, end))
 				return r.SHA1, nil
 			}
 		}
+		s.logs.Add(readCtx, "INFO", fmt.Sprintf("秒传校验片段未命中；区间=%d-%d｜已保存区间=%d，按需读取并在秒传成功后保存", start, end, len(material.Ranges)))
 		reader, ok := s.client.(playbackRangeClient)
 		if !ok {
 			return "", fmt.Errorf("播放客户端不支持校验片段读取")

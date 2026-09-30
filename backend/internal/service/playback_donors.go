@@ -132,7 +132,13 @@ func (s *PlaybackCache) readPlaybackMaterialRange(ctx context.Context, reader pl
 		attempts++
 		a, e := candidate.account, candidate.entry
 		s.stats.donorReads.Add(1)
-		info, err := reader.PlaybackPickCodeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+		var info *p115.DownloadInfo
+		var err error
+		if fused, ok := reader.(playbackRangeSourceClient); ok {
+			info, err = fused.PlaybackPickCodeRangeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+		} else {
+			info, err = reader.PlaybackPickCodeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+		}
 		var hash string
 		if err == nil {
 			if info == nil || info.FileID != e.File.ID || info.Size != m.Size || !strings.EqualFold(info.SHA1, m.SHA1) {

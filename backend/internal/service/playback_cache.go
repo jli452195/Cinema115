@@ -462,6 +462,19 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 	}
 	ctx = context.WithValue(ctx, playbackMaterialOrigin{}, origin)
 	link, err := s.resolveInstant(ctx, selection, sourceCookie, ua, &report, func() (*p115.DownloadInfo, error) {
+		// With trusted material, this loader is reached only after a range
+		// cache miss. Fetch source identity and URL together, without eager
+		// download requests on the metadata-only or target-hit paths.
+		if material, _ := s.lookupMaterial(origin, hint); material.ID != "" {
+			if fused, ok := s.client.(playbackRangeSourceClient); ok {
+				started := time.Now()
+				info, err := fused.PlaybackPickCodeRangeSource(ctx, sourceID, pickCode, sourceCookie)
+				if ProxyDebugEnabled(ctx) {
+					s.logs.Add(ctx, "INFO", fmt.Sprintf("校验源取链与元数据合并查询=%d ms｜成功=%t", time.Since(started).Milliseconds(), err == nil))
+				}
+				return info, err
+			}
+		}
 		if lazy, ok := s.client.(interface {
 			PlaybackPickCodeSource(context.Context, string, string, string) (*p115.DownloadInfo, error)
 		}); ok {

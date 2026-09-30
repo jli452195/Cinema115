@@ -283,7 +283,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		s.backoffPlaybackSearch(key, targetScope, minTime(time.Now().Add(3*time.Second), retryAt), nil)
 		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
-	next("账号上传预检")
+	next("恢复保存目录核验")
 	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
 		if directory, ok := fast.(interface {
 			RefreshPlaybackDirectory(context.Context, string, string, string) error
@@ -294,6 +294,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		}
 		s.logs.Add(ctx, "INFO", "目标 UID 完整搜索未找到可用替代文件，向原目录重新秒传；本次最多重建一次")
 	}
+	next("账号上传预检")
 	ticket, err := fast.PreparePlaybackAccount(ctx, selected.binding.AccountID, selected.cookie)
 	if err != nil {
 		return "", fmt.Errorf("朋友账号秒传预检失败：%s", p115.SharePlaybackFailureReason(err))
@@ -311,7 +312,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			next("秒传提交")
 		case "range":
 			next("二次校验片段读取")
-			s.logs.Add(ctx, "INFO", fmt.Sprintf("秒传二次校验，读取片段字节数=%d", p.Bytes))
+			s.logs.Add(ctx, "INFO", fmt.Sprintf("秒传二次校验，所需片段字节数=%d，优先复用已验证哈希", p.Bytes))
 		case "range_done":
 			next("校验结果准备")
 		}
