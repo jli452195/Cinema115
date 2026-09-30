@@ -3,6 +3,7 @@ package p115
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,7 +28,7 @@ func (c *ShareClient) PlaybackPickCodeSource(ctx context.Context, accountID, pc,
 	if err != nil {
 		return nil, err
 	}
-	info := &DownloadInfo{Name: f.Name, Size: f.Size, SHA1: f.SHA1}
+	info := &DownloadInfo{FileID: f.ID, Name: f.Name, Size: f.Size, SHA1: f.SHA1}
 	info.loadPlaybackURL = func(readCtx context.Context) (string, error) {
 		got, id, err := c.pickCodeInfo(readCtx, pc, cookie, PlaybackUserAgent)
 		if err != nil {
@@ -59,6 +60,13 @@ func (c *ShareClient) playbackPickCodeMetadata(ctx context.Context, accountID, p
 	if !ok || time.Now().After(cached.Expires) {
 		raw, err := c.playbackReader(cookie).requestEnvelope(ctx, http.MethodPost, c.WebURL+"/files/supervision", cookie, url.Values{"pickcode": {pc}, "preview_type": {"file"}, "module": {"10"}})
 		if err != nil {
+			var failure *HTTPError
+			if errors.As(err, &failure) {
+				return nil, fmt.Errorf("源元数据查询失败: %w", failure)
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, fmt.Errorf("源 pickcode 元数据查询失败：%s", SharePlaybackFailureReason(err))
 		}
 		var resp struct {

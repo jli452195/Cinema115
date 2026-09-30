@@ -12,14 +12,19 @@ const page = ref(1), pageSize = 8
 const expanded = ref(''), forgetKey = ref(''), forgetMaterial = ref('')
 const busy = ref(false), loaded = ref(false), error = ref(''), notice = ref('')
 const lifecycle = new AbortController()
-const accountNames = computed(() => new Map(props.accounts.map(a => [a.id, a.name])))
-function accountName(id: string) { return accountNames.value.get(id) || '原账号已删除' }
-const accountOptions = computed(() => [...new Set(entries.value.map(e => e.accountId))].map(id => ({ id, name: accountNames.value.get(id) || `已删除账号 · ${id.slice(-6)}` })))
+const privateCopies = ref(0)
+const stats = ref({ targetHits: 0, materialHits: 0, rangeHits: 0, donorReads: 0, primaryReads: 0 })
+function accountKey(e: Entry) { return e.uid || e.accountId }
+function accountName(e: Entry) {
+  const names = [...new Set(props.accounts.filter(a => a.uid === e.uid && e.uid).map(a => a.name))]
+  return names.length ? `${names.join(' / ')} · UID ${e.uid}` : e.uid ? `历史 UID ${e.uid}` : '历史账号'
+}
+const accountOptions = computed(() => [...new Map(entries.value.map(e => [accountKey(e), { id: accountKey(e), name: accountName(e) }])).values()])
 const query = computed(() => search.value.trim().toLowerCase())
 const filteredEntries = computed(() => entries.value.filter(e =>
-  (account.value === 'all' || e.accountId === account.value) &&
+  (account.value === 'all' || accountKey(e) === account.value) &&
   (status.value === 'all' || (status.value === 'attention' ? e.status !== 'ready' : e.status === status.value)) &&
-  [e.file.name, e.file.sha1, e.file.id, accountName(e.accountId)].join(' ').toLowerCase().includes(query.value))
+  [e.file.name, e.file.sha1, e.file.id, accountName(e)].join(' ').toLowerCase().includes(query.value))
   .sort((a, b) => Date.parse(b.lastUsed) - Date.parse(a.lastUsed)))
 const filteredMaterials = computed(() => materials.value.filter(m => [m.name, m.sha1].join(' ').toLowerCase().includes(query.value))
   .sort((a, b) => Date.parse(b.verifiedAt) - Date.parse(a.verifiedAt)))
@@ -42,7 +47,7 @@ watch([tab, search, status, account], () => { page.value = 1; resetDetails() })
 watch(page, resetDetails)
 watch(pages, count => { page.value = Math.min(page.value, count) })
 function toggleDetails(id: string) { expanded.value = expanded.value === id ? '' : id; forgetKey.value = ''; forgetMaterial.value = '' }
-function accept(data: { entries: Entry[]; materials?: Material[] }) { entries.value = data.entries || []; materials.value = data.materials || []; loaded.value = true }
+function accept(data: { entries: Entry[]; materials?: Material[]; privateCopies?: number; stats?: typeof stats.value }) { entries.value = data.entries || []; materials.value = data.materials || []; privateCopies.value = data.privateCopies || 0; if (data.stats) stats.value = data.stats; loaded.value = true }
 function sizeLabel(size: number) { const gb = size >= 1024 ** 3; return `${(size / (gb ? 1024 ** 3 : 1024 ** 2)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${gb ? 'GB' : 'MB'}` }
 function dateLabel(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '暂无记录' : date.toLocaleString() }
 async function load() {
@@ -62,7 +67,7 @@ async function action(path: string, body: object) {
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '操作失败' }
   finally { busy.value = false }
 }
-function stateLabel(s: string) { return ({ ready: '可复用', uncertain: '需核查', creating: '创建目录中', uploading: '秒传中', deleting: '清理中' } as Record<string, string>)[s] || s }
+function stateLabel(s: string) { return ({ ready: '已验证记录', uncertain: '需核查', creating: '创建目录中', uploading: '秒传中', deleting: '清理中' } as Record<string, string>)[s] || s }
 onMounted(load)
 onBeforeUnmount(() => lifecycle.abort())
 </script>
@@ -73,7 +78,9 @@ onBeforeUnmount(() => lifecycle.abort())
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘文件复用记录</h2>
       <button :disabled="busy" type="button" class="shrink-0 text-sm text-blue-600 disabled:opacity-40 dark:text-blue-400" @click="load">{{ busy ? '加载中…' : '刷新记录' }}</button>
     </div>
-    <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">管理已复用的文件和秒传资料，移除本地记录不会删除网盘文件。</p>
+    <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">按 115 UID 查看文件副本，移除本地记录不会删除网盘文件。历史验证不代表当前可访问。</p>
+    <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">本次启动：目标复用 {{ stats.targetHits }} · 资料命中 {{ stats.materialHits }} · 片段命中 {{ stats.rangeHits }} · 副本校验 {{ stats.donorReads }} · 主盘读取 {{ stats.primaryReads }}</p>
+    <p v-if="privateCopies" class="mt-1 text-xs text-slate-500 dark:text-slate-400">另有 {{ privateCopies }} 条个人或已移除账号的副本记录，仅展示汇总。</p>
     <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
     <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{{ notice }}</p>
     <div class="mt-5 flex gap-5 border-b border-slate-200 dark:border-slate-700" aria-label="记录分类">
@@ -85,7 +92,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <input v-model="search" type="search" aria-label="搜索复用记录" :placeholder="tab === 'copies' ? '搜索文件名、SHA1 或账号' : '搜索文件名或 SHA1'" class="min-w-0 flex-[1_1_220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" />
       <template v-if="tab === 'copies'">
         <select v-model="account" aria-label="筛选文件账号" class="min-w-0 max-w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部账号</option><option v-for="a in accountOptions" :key="a.id" :value="a.id">{{ a.name }}</option></select>
-        <select v-model="status" aria-label="筛选记录状态" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部状态</option><option value="ready">可复用</option><option value="attention">需关注</option></select>
+        <select v-model="status" aria-label="筛选记录状态" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部状态</option><option value="ready">已验证记录</option><option value="attention">需关注</option></select>
       </template>
     </div>
     <p class="my-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ tab === 'copies' ? '按最近取链排序 · 展开查看文件标识与处理记录' : '按最近验证排序 · 相同校验范围可直接复用片段哈希，新范围仍需读取文件来源' }}</p>
@@ -94,7 +101,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <p :title="entry.file.name" class="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ entry.file.name || '文件信息待确认' }}</p>
-            <p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"><span class="block truncate sm:inline">{{ accountName(entry.accountId) }} · {{ sizeLabel(entry.file.size) }}</span><span class="hidden sm:inline"> · </span><span>{{ dateLabel(entry.lastUsed) }}</span></p>
+            <p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"><span class="block truncate sm:inline">{{ accountName(entry) }} · {{ sizeLabel(entry.file.size) }}</span><span class="hidden sm:inline"> · </span><span>{{ dateLabel(entry.lastUsed) }}</span></p>
           </div>
           <span class="shrink-0 rounded-md px-2 py-1 text-xs" :class="entry.status === 'ready' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'">{{ stateLabel(entry.status) }}</span>
           <button type="button" :aria-expanded="expanded === entry.key" :aria-label="'查看文件详情：' + entry.file.name" class="shrink-0 py-1 text-xs text-blue-600 dark:text-blue-400" @click="toggleDetails(entry.key)">{{ expanded === entry.key ? '收起' : '详情' }}</button>
@@ -114,7 +121,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <p :title="material.name" class="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ material.name }}</p>
-            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 副本 {{ copyCount(material) }} · 校验片段 {{ material.ranges.length }}</p>
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ sizeLabel(material.size) }} · 管理账号副本 {{ copyCount(material) }} · 校验片段 {{ material.ranges.length }}</p>
           </div>
           <button type="button" :aria-expanded="expanded === material.id" :aria-label="'查看资料详情：' + material.name" class="shrink-0 py-1 text-xs text-blue-600 dark:text-blue-400" @click="toggleDetails(material.id)">{{ expanded === material.id ? '收起' : '详情' }}</button>
         </div>

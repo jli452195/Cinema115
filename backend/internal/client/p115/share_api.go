@@ -224,6 +224,7 @@ func (c *ShareClient) DownloadURL(ctx context.Context, share *ShareInfo, fileID,
 // DownloadURLWithUA binds link acquisition to the actual player, without changing shared client state.
 // DownloadInfo preserves source metadata for instant upload. Signed URLs never serialize.
 type DownloadInfo struct {
+	FileID          string `json:"-"` // Verified source identity; never a destination ID.
 	Name            string `json:"name"`
 	Size            int64  `json:"size"`
 	SHA1            string `json:"sha1"`

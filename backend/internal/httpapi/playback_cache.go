@@ -16,7 +16,7 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 		c.Next()
 	})
-	group.GET("", func(c *gin.Context) { c.JSON(200, s.Status()) })
+	group.GET("", func(c *gin.Context) { c.JSON(200, s.AdminStatus()) })
 	group.POST("/forget-material", func(c *gin.Context) {
 		var input struct {
 			ID string `json:"id"`
@@ -29,7 +29,7 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, s.Status())
+		c.JSON(200, s.AdminStatus())
 	})
 	group.POST("/forget-directory", func(c *gin.Context) {
 		var input struct {
@@ -43,7 +43,7 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, s.Status())
+		c.JSON(200, s.AdminStatus())
 	})
 	group.GET("/users/:userID/avatar", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -67,9 +67,9 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 		}
 		members := make([]model.MemberPlayback, 0)
 		if s.Members != nil {
-			for _, member := range s.Members.Records() {
+			for _, member := range s.Members.AdminMembers() {
 				if member.EmbyURL == proxyURL {
-					members = append(members, member)
+					members = append(members, member.MemberPlayback)
 				}
 			}
 		}
@@ -94,6 +94,6 @@ func RegisterPlaybackCache(admin *gin.RouterGroup, s *service.PlaybackCache, pro
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, s.Status())
+		c.JSON(200, s.AdminStatus())
 	})
 }

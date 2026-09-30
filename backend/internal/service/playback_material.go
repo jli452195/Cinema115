@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -93,6 +92,13 @@ func (s *PlaybackCache) putMaterial(m PlaybackMaterial) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if i, ok := s.index.materials[m.ID]; ok {
+		var err error
+		m, err = mergePlaybackMaterial(s.doc.Materials[i], m)
+		if err != nil {
+			return err
+		}
+	}
 	if store, ok := s.store.(interface{ PutMaterial(PlaybackMaterial) error }); ok {
 		i, exists := s.index.materials[m.ID]
 		if !exists && len(s.doc.Materials) >= maxPlaybackMaterials {
@@ -131,10 +137,11 @@ func (s *PlaybackCache) ForgetMaterial(ctx context.Context, id string) error {
 	if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
 		return fmt.Errorf("秒传资料编号无效")
 	}
-	if err := s.enter(ctx); err != nil {
+	release, err := s.acquirePlayback(ctx, "")
+	if err != nil {
 		return err
 	}
-	defer func() { <-s.gate }()
+	defer release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc
@@ -164,6 +171,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 			s.logs.Add(ctx, "INFO", "外部 SHA1 未命中唯一可信资料或与来源冲突，重新核验源文件；不采用外部文件名及哈希建立关联")
 		}
 		var err error
+		s.stats.primaryReads.Add(1)
 		original, err = loadSource()
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("源文件解析失败：%s", p115.SharePlaybackFailureReason(err))
@@ -196,6 +204,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 			return nil, "", nil, err
 		}
 	} else {
+		s.stats.materialHits.Add(1)
 		if byHash {
 			s.logs.Add(ctx, "INFO", "外部链接 SHA1 命中已验证资料，跳过主账号元数据查询")
 		} else {
@@ -223,6 +232,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		}
 		for _, r := range material.Ranges {
 			if r.Start == start && r.End == end {
+				s.stats.rangeHits.Add(1)
 				s.logs.Add(readCtx, "INFO", "秒传校验片段资料命中，无需读取源文件")
 				return r.SHA1, nil
 			}
@@ -234,6 +244,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		hash, err := s.readPlaybackMaterialRange(readCtx, reader, selected, copies, material, start, end)
 		if err != nil && readCtx.Err() == nil {
 			if original == nil {
+				s.stats.primaryReads.Add(1)
 				original, err = loadSource()
 			}
 			if original != nil {
@@ -242,6 +253,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 				if original.Size != material.Size || !strings.EqualFold(original.SHA1, material.SHA1) {
 					return "", fmt.Errorf("源文件身份与秒传资料不一致，请核查资料")
 				}
+				s.stats.primaryReads.Add(1)
 				hash, err = reader.PlaybackRangeSHA1(readCtx, original, start, end)
 			}
 		}
@@ -271,41 +283,4 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		return s.putMaterial(material)
 	}
 	return info, material.ID, commit, nil
-}
-
-// At most three recent, known copies are probed. Deleted/unconfigured accounts
-// and a UID mismatch cannot become donors. Destination credentials never change.
-func (s *PlaybackCache) readPlaybackMaterialRange(ctx context.Context, reader playbackRangeClient, selected *PlaybackCacheSelection, entries []PlaybackCacheEntry, m PlaybackMaterial, start, end int64) (string, error) {
-	sort.Slice(entries, func(i, j int) bool { return entries[i].LastUsed.After(entries[j].LastUsed) })
-	attempts := 0
-	for _, e := range entries {
-		if e.Status != "ready" || e.AccountID == selected.binding.AccountID || e.File.ID == "" || e.File.PickCode == "" || e.File.Size != m.Size || !strings.EqualFold(e.File.SHA1, m.SHA1) {
-			continue
-		}
-		for _, account := range selected.donors {
-			if account.ID != e.AccountID || account.UID != e.UID {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			attempts++
-			readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-			info, err := reader.PlaybackPickCodeSource(readCtx, account.ID, e.File.PickCode, account.Cookie)
-			var hash string
-			if err == nil && info != nil && info.Size == m.Size && strings.EqualFold(info.SHA1, m.SHA1) {
-				hash, err = reader.PlaybackRangeSHA1(readCtx, info, start, end)
-			}
-			cancel()
-			if err == nil && validMaterialHash(hash) {
-				s.logs.Add(ctx, "INFO", "秒传校验片段由已有小号副本提供，账号="+PlaybackAccountLabel(account.Name, account.UID, account.ID))
-				return hash, nil
-			}
-			if attempts >= 3 {
-				return "", fmt.Errorf("已知小号副本暂不可读")
-			}
-			break
-		}
-	}
-	return "", fmt.Errorf("没有可用的小号文件副本")
 }

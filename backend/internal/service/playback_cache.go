@@ -61,10 +61,15 @@ type playbackCacheClient interface {
 type PlaybackCache struct {
 	Members           *MemberPlaybackService // wired before listeners start
 	foregroundWaiting atomic.Int64
-	sourceMappings    map[string]string                // bounded, memory-only; guarded by gate
-	searchBackoff     map[string]playbackSearchBackoff // guarded by gate
+	sourceMappings    map[string]string                // bounded, memory-only; guarded by runtimeMu
+	searchBackoff     map[string]playbackSearchBackoff // guarded by runtimeMu
 	mu                sync.Mutex
-	gate              chan struct{}
+	scheduler         playbackScheduler
+	runtimeMu         sync.Mutex
+	donorMu           sync.Mutex
+	donorStates       map[string]playbackDonorState
+	donorFiles        map[string]time.Time
+	stats             playbackStats
 	store             accountSecretStore
 	accounts          *P115Accounts
 	client            playbackCacheClient
@@ -77,7 +82,7 @@ func NewPlaybackCache(ctx context.Context, store *SessionStore, accounts *P115Ac
 	return newPlaybackCache(ctx, store, accounts, client, logs)
 }
 func newPlaybackCache(ctx context.Context, store accountSecretStore, accounts *P115Accounts, client playbackCacheClient, logs *EmbyProxyLogs) (*PlaybackCache, error) {
-	s := &PlaybackCache{store: store, accounts: accounts, client: client, logs: logs, gate: make(chan struct{}, 1), doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{RetentionHours: 72, Bindings: []PlaybackBinding{}}, Entries: []PlaybackCacheEntry{}}}
+	s := &PlaybackCache{store: store, accounts: accounts, client: client, logs: logs, doc: PlaybackCacheStatus{Config: PlaybackCacheConfig{RetentionHours: 72, Bindings: []PlaybackBinding{}}, Entries: []PlaybackCacheEntry{}}}
 	if raw := store.Value(); raw != "" {
 		if json.Unmarshal([]byte(raw), &s.doc) != nil || len(s.doc.Entries) > maxPlaybackCopies || len(s.doc.Directories) > 1000 || len(s.doc.Materials) > maxPlaybackMaterials {
 			return nil, fmt.Errorf("播放缓存配置或记录损坏")
@@ -297,11 +302,25 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	if s.Members != nil {
 		c = s.Members.Bindings(c)
 	}
-	// Freeze all eligible source credentials before the request starts network I/O.
+	// Personal ownership remains independent of the selected playback source.
+	personal := make(map[string]string)
+	personalDirectories := make(map[string]string)
+	if s.Members != nil {
+		settings := s.Members.Settings()
+		for _, r := range s.Members.Records() {
+			if settings.Enabled && r.ServerID == settings.ServerID && r.EmbyURL == settings.EmbyURL && r.Provisioned && r.Stage == "ready" && r.PolicyEnabled && !r.Suspended && !r.AdminBlocked && r.DirectoryID != "" && r.AccountID != "" {
+				personal[r.AccountID] = r.UserID
+				personalDirectories[r.AccountID] = r.DirectoryID
+			}
+		}
+	}
+	// Freeze eligible source credentials before any network I/O.
 	s.accounts.mu.RLock()
 	donors := make([]P115Account, 0, len(s.accounts.value.Accounts))
 	for _, a := range s.accounts.value.Accounts {
-		if !a.Primary && a.OwnerUserID == "" && a.Ownership != "member" && !IsMemberAccount(a.ID) && a.Cookie != "" && p115.CookieUserID(a.Cookie) == a.UID {
+		isPersonal := a.OwnerUserID != "" || a.Ownership == "member" || IsMemberAccount(a.ID)
+		eligible := !isPersonal || a.OwnerUserID != "" && personal[a.ID] == a.OwnerUserID && a.Ownership == "member" && a.PlaybackParentCID != "" && a.PlaybackParentCID == personalDirectories[a.ID]
+		if !a.Primary && eligible && a.Cookie != "" && a.UID != "" && p115.CookieUserID(a.Cookie) == a.UID {
 			donors = append(donors, a)
 		}
 	}
@@ -310,7 +329,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	for _, b := range c.Bindings {
 		a, err := s.accounts.Get(b.AccountID)
 		b.ParentCID = a.PlaybackParentCID
-		if err == nil && (a.Cookie == "" || p115.CookieUserID(a.Cookie) == "") {
+		if err == nil && (a.Cookie == "" || a.UID == "" || p115.CookieUserID(a.Cookie) != a.UID) {
 			err = fmt.Errorf("绑定的朋友账号未登录")
 		}
 		snap.selections[b.UserID] = PlaybackCacheSelection{donors: donors, binding: b, accountName: a.Name, accountRevision: a.Revision, cookie: a.Cookie, uid: p115.CookieUserID(a.Cookie), err: err}
@@ -340,30 +359,6 @@ func PlaybackPrewarmContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, playbackPrewarmKey{}, true)
 }
 
-func (s *PlaybackCache) enter(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if warm, _ := ctx.Value(playbackPrewarmKey{}).(bool); warm {
-		if s.foregroundWaiting.Load() > 0 {
-			return fmt.Errorf("正式播放正在等待，跳过本次预热")
-		}
-		select {
-		case s.gate <- struct{}{}:
-			return nil
-		default:
-			return fmt.Errorf("播放缓存正在使用，跳过本次预热")
-		}
-	}
-	s.foregroundWaiting.Add(1)
-	defer s.foregroundWaiting.Add(-1)
-	select {
-	case s.gate <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
 func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -486,10 +481,11 @@ func (s *PlaybackCache) TouchDirectLink(ctx context.Context, key, fileID string)
 	if key == "" {
 		return nil
 	}
-	if err := s.enter(ctx); err != nil {
+	release, err := s.acquirePlayback(ctx, "")
+	if err != nil {
 		return err
 	}
-	defer func() { <-s.gate }()
+	defer release()
 	if e, ok := s.entryByKey(key); ok {
 		if e.Status == "ready" && e.File.ID == fileID {
 			e.LastUsed = time.Now().UTC()
@@ -571,9 +567,10 @@ func (s *PlaybackCache) Forget(ctx context.Context, key string) error {
 	if len(key) != 64 {
 		return fmt.Errorf("缓存编号无效")
 	}
-	if err := s.enter(ctx); err != nil {
+	release, err := s.acquirePlayback(ctx, "")
+	if err != nil {
 		return err
 	}
-	defer func() { <-s.gate }()
+	defer release()
 	return s.ForgetLocked(key)
 }

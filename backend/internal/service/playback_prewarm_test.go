@@ -6,22 +6,24 @@ import (
 )
 
 func TestPrewarmDoesNotQueueForPlaybackGate(t *testing.T) {
-	s := &PlaybackCache{gate: make(chan struct{}, 1)}
+	s := &PlaybackCache{}
 	ctx := PlaybackPrewarmContext(context.Background())
-	if err := s.enter(context.Background()); err != nil {
+	release, err := s.acquirePlayback(context.Background(), "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.enter(ctx); err == nil {
+	if _, err := s.acquirePlayback(ctx, ""); err == nil {
 		t.Fatal("prewarm entered busy gate")
 	}
-	<-s.gate
+	release()
 	s.foregroundWaiting.Add(1)
-	if err := s.enter(ctx); err == nil {
+	if _, err := s.acquirePlayback(ctx, ""); err == nil {
 		t.Fatal("prewarm passed foreground waiter")
 	}
 	s.foregroundWaiting.Add(-1)
-	if err := s.enter(ctx); err != nil {
+	release, err = s.acquirePlayback(ctx, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	<-s.gate
+	release()
 }

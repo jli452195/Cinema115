@@ -208,6 +208,9 @@ func TestPlaybackSHA1HintUsesOnlyUniqueVerifiedMaterial(t *testing.T) {
 		t.Fatal("delete did not update hash index")
 	}
 	unverified := s.Status().Materials[0]
+	if err := s.ForgetMaterial(ctx, unverified.ID); err != nil {
+		t.Fatal(err)
+	}
 	unverified.VerifiedAt = time.Time{}
 	if err := s.putMaterial(unverified); err != nil {
 		t.Fatal(err)

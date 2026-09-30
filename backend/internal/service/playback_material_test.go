@@ -18,7 +18,7 @@ type materialFake struct {
 	afterDonorRead                      func()
 }
 
-func (f *materialFake) PlaybackPickCodeSource(_ context.Context, _ string, _ string, cookie string) (*p115.DownloadInfo, error) {
+func (f *materialFake) PlaybackPickCodeSource(_ context.Context, _ string, pc string, cookie string) (*p115.DownloadInfo, error) {
 	f.donorReads++
 	f.donorCookie = cookie
 	if f.afterDonorRead != nil {
@@ -28,7 +28,14 @@ func (f *materialFake) PlaybackPickCodeSource(_ context.Context, _ string, _ str
 	if f.wrongIdentity {
 		hash = strings.Repeat("B", 40)
 	}
-	return &p115.DownloadInfo{Name: "v.mkv", Size: 100, SHA1: hash, URL: "https://cdn.115.com/copy"}, nil
+	id := ""
+	for _, file := range f.files {
+		if file.PickCode == pc {
+			id = file.ID
+			break
+		}
+	}
+	return &p115.DownloadInfo{FileID: id, Name: "v.mkv", Size: 100, SHA1: hash, URL: "https://cdn.115.com/copy"}, nil
 }
 func (f *materialFake) PlaybackRangeSHA1(context.Context, *p115.DownloadInfo, int64, int64) (string, error) {
 	f.rangeReads++

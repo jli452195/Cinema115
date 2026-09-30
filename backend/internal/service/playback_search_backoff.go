@@ -19,6 +19,8 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 func (s *PlaybackCache) backoffPlaybackSearch(key, scope string, until time.Time, err error) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
 	if s.searchBackoff == nil {
 		s.searchBackoff = make(map[string]playbackSearchBackoff)
 	}
@@ -33,6 +35,8 @@ func (s *PlaybackCache) backoffPlaybackSearch(key, scope string, until time.Time
 	s.searchBackoff[DirectLinkKey(key, scope)] = playbackSearchBackoff{until: until, err: err}
 }
 func (s *PlaybackCache) waitPlaybackSearch(ctx context.Context, key, scope string) error {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

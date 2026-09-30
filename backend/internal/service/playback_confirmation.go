@@ -61,7 +61,7 @@ func (s *PlaybackCache) confirmUncertainUpload(ctx context.Context, fast fastPla
 		if err != nil {
 			return "", false, err
 		}
-		s.rememberSource(e.SourceKey, e.Key)
+		s.rememberSource(e.SourceKey, report.FileCacheKey)
 		s.logs.Add(ctx, "INFO", "秒传响应异常后 SHA1 确认命中，已恢复取链；未重复提交秒传")
 		return link, true, nil
 	}

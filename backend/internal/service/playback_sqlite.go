@@ -118,6 +118,23 @@ func materialRow(m PlaybackMaterial) (storage.PlaybackMaterialRow, error) {
 func copyRow(e PlaybackCacheEntry, raw string) storage.PlaybackCopyRow {
 	return storage.PlaybackCopyRow{ID: e.Key, AccountID: e.AccountID, SHA1: e.File.SHA1, SourceKey: e.SourceKey, Record: raw}
 }
+
+func (s *playbackSQLiteStore) ReplaceEntry(oldKey string, e PlaybackCacheEntry) error {
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	batch := storage.PlaybackBatch{Copies: []storage.PlaybackCopyRow{copyRow(e, string(raw))}}
+	if oldKey != e.Key {
+		batch.DeleteCopies = []string{oldKey}
+	}
+	if err := s.write(batch); err != nil {
+		return err
+	}
+	delete(s.copies, oldKey)
+	s.copies[e.Key] = string(raw)
+	return nil
+}
 func (s *playbackSQLiteStore) write(batch storage.PlaybackBatch) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()

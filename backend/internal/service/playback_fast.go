@@ -35,10 +35,11 @@ func (s *PlaybackCache) ForgetDirectory(ctx context.Context, key string) error {
 	if len(key) != 64 || strings.Trim(key, "0123456789abcdef") != "" {
 		return fmt.Errorf("目录记录编号无效")
 	}
-	if err := s.enter(ctx); err != nil {
+	release, err := s.acquirePlayback(ctx, "")
+	if err != nil {
 		return err
 	}
-	defer func() { <-s.gate }()
+	defer release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc
@@ -51,8 +52,8 @@ func (s *PlaybackCache) ForgetDirectory(ctx context.Context, key string) error {
 	return s.saveLocked(doc)
 }
 
-// All mutations and lookups share a gate so concurrent requests cannot upload
-// the same content twice. Unknown writes are recoverable by a positive SHA1 hit.
+// Serialize writes by target UID while unrelated accounts make bounded progress.
+// Unknown writes are recoverable by a positive SHA1 hit.
 func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, sourceCookie, ua string, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (string, error) {
 	debug := ProxyDebugEnabled(ctx)
 	if debug {
@@ -104,15 +105,16 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", fmt.Errorf("请配置绑定账号的秒传保存目录")
 	}
 	next("等待缓存操作")
-	if err := s.enter(ctx); err != nil {
+	release, err := s.acquirePlayback(ctx, selected.uid)
+	if err != nil {
 		return "", err
 	}
-	defer func() { <-s.gate }()
+	defer release()
 	sourceKey, _ := ctx.Value(playbackSourceKey{}).(string)
 	targetScope := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
 	failedMapping := ""
 	// Rebuild a verified mapping after restart without querying the source.
-	if sourceKey != "" && s.sourceMappings[sourceKey] == "" {
+	if sourceKey != "" && s.mappedSource(sourceKey) == "" {
 		for _, entry := range s.entriesBySource(sourceKey) {
 			if entry.SourceKey == sourceKey && entry.Status == "ready" {
 				s.rememberSource(sourceKey, entry.Key)
@@ -120,10 +122,10 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			}
 		}
 	}
-	if key := s.sourceMappings[sourceKey]; sourceKey != "" && key != "" {
+	if key := s.mappedSource(sourceKey); sourceKey != "" && key != "" {
 		if e, ok := s.entryByKey(key); ok {
 			if e.Key != key || e.AccountID != selected.binding.AccountID || e.UID != selected.uid || e.TargetScope != targetScope || e.ParentCID != selected.binding.ParentCID || e.Status != "ready" {
-				delete(s.sourceMappings, sourceKey)
+				s.forgetSource(sourceKey)
 			} else {
 				next("朋友账号取链")
 				link, err := s.reuseFastEntry(ctx, e, selected, ua, report)
@@ -138,7 +140,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 				failedMapping = e.Key
 			}
 		}
-		delete(s.sourceMappings, sourceKey)
+		s.forgetSource(sourceKey)
 	}
 	next("文件秒传资料")
 	info, materialID, commitRanges, err := s.preparePlaybackMaterial(ctx, selected, report, func() (*p115.DownloadInfo, error) {
@@ -153,16 +155,16 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	if err := p115.ValidateInstantSource(info); err != nil {
 		return "", err
 	}
-	key := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.binding.ParentCID, strings.ToUpper(info.SHA1))
+	key := DirectLinkKey("pending-copy", selected.uid, materialID)
 	copies := s.entriesByHash(info.SHA1)
 	for _, entry := range copies {
-		if entry.Key != failedMapping && entry.AccountID == selected.binding.AccountID && entry.UID == selected.uid && entry.TargetScope == targetScope && entry.Status == "ready" && cacheMatches(entry.File, info) {
+		if entry.Key != failedMapping && entry.UID == selected.uid && entry.Status == "ready" && cacheMatches(entry.File, info) {
 			next("朋友账号文件映射取链")
 			entry.SourceKey = sourceKey
 			entry.MaterialID = materialID
 			link, err := s.reuseFastEntry(ctx, entry, selected, ua, report)
 			if err == nil {
-				s.rememberSource(sourceKey, entry.Key)
+				s.rememberSource(sourceKey, report.FileCacheKey)
 				return link, nil
 			}
 			if ctx.Err() != nil {
@@ -199,7 +201,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			return "", err
 		}
 		report.Mode = "复用同 SHA1 文件"
-		s.rememberSource(sourceKey, key)
+		s.rememberSource(sourceKey, report.FileCacheKey)
 		s.logs.Add(ctx, "INFO", "朋友账号 SHA1 命中，直接取链；无需秒传")
 		return link, nil
 	}
@@ -209,13 +211,13 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	var retryAt time.Time
 	count := 0
 	for _, old := range copies {
-		if old.AccountID == selected.binding.AccountID && old.UID == selected.uid && strings.EqualFold(old.File.SHA1, info.SHA1) && old.Status != "ready" {
+		if old.UID == selected.uid && strings.EqualFold(old.File.SHA1, info.SHA1) && old.Status != "ready" {
 			count++
 			if previous == nil || old.CreatedAt.After(previous.CreatedAt) {
 				copy := old
 				previous = &copy
 			}
-			if old.RetryNotBefore.After(retryAt) {
+			if cacheMatches(old.File, info) && old.RetryNotBefore.After(retryAt) {
 				retryAt = old.RetryNotBefore
 			}
 		}
@@ -315,15 +317,18 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	e.File, e.DirectoryID, e.Status, e.Message = file, file.CID, "ready", "秒传完成，SHA1 核对通过；云端文件由用户手动管理"
 	e.RetryNotBefore = time.Time{}
 	next("保存文件记录")
-	if err := s.put(e); err != nil {
+	e, err = s.storeReadyCopy(e)
+	if err != nil {
 		return "", err
 	}
-	report.Mode, report.FileCacheKey, report.FileCacheID = "新建秒传文件", key, file.ID
-	s.rememberSource(sourceKey, key)
+	report.Mode, report.FileCacheKey, report.FileCacheID = "新建秒传文件", e.Key, file.ID
+	s.rememberSource(sourceKey, report.FileCacheKey)
 	return link, nil
 }
 
 func (s *PlaybackCache) rememberSource(source, key string) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
 	if source == "" {
 		return
 	}
@@ -333,6 +338,11 @@ func (s *PlaybackCache) rememberSource(source, key string) {
 	s.sourceMappings[source] = key
 }
 func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry, selected *PlaybackCacheSelection, ua string, report *PlaybackResolution) (string, error) {
+	if err := s.verifyReusableCopy(ctx, e, selected); err != nil {
+		return "", err
+	}
+	e.AccountID, e.ParentCID = selected.binding.AccountID, selected.binding.ParentCID
+	e.TargetScope = DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
 	var link string
 	if !preparingPlaybackFile(ctx) {
 		var err error
@@ -342,9 +352,11 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 		}
 	}
 	e.LastUsed = time.Now().UTC()
-	if err := s.put(e); err != nil {
+	e, err := s.storeReadyCopy(e)
+	if err != nil {
 		return "", err
 	}
+	s.stats.targetHits.Add(1)
 	report.Mode, report.FileCacheKey, report.FileCacheID = "复用同 SHA1 文件", e.Key, e.File.ID
 	return link, nil
 }
