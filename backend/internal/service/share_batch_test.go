@@ -69,6 +69,9 @@ func (f *batchTransferFake) List(ctx context.Context, share *p115.ShareInfo, cid
 }
 
 func (f *batchTransferFake) CreateDirectory(_ context.Context, parent, name, cookie string) (string, error) {
+	if strings.HasPrefix(name, "Cinema115-临时-") && parent != "0" {
+		return "", errors.New("批次分享转存未使用根目录")
+	}
 	if cookie != "UID=42_A; SEID=private-cookie" {
 		return "", errors.New("创建目录账号错误")
 	}

@@ -51,7 +51,7 @@ func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie fu
 }
 
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
-	settings := w.Settings.Value()
+	settings := w.Settings.ShareValue()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
 	}
@@ -130,6 +130,9 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 
 // 单链接和合并批次共用媒体数量确认、长期分享、生成及清理流程。
 func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings AutomationSettings, input GenerateInput, cookie, sharePassword string, source []string, sourceFiles []p115.ShareFile, selectShare func(context.Context, []p115.ShareFile) ([]p115.ShareFile, []string, error), receive func(context.Context, string) error, generate func(context.Context, *p115.ShareInfo, generationSnapshot) (*GenerationResult, error)) (result *GenerationResult, err error) {
+	// Both single-link and batch transfers always stage under this account's
+	// root, including calls carrying a previously captured settings snapshot.
+	settings.ParentCID = "0"
 	var nonce [12]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("创建任务编号: %w", err)

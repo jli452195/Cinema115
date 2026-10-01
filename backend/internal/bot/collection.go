@@ -15,7 +15,7 @@ func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, m
 
 // 每次新增资源重置等待时间；不同聊天和话题各自收集，不设最长收集时间。
 func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
-	settings := b.Settings.Value()
+	settings := b.Settings.ShareValue()
 	for _, update := range updates {
 		if update.ID < state.Offset {
 			continue

@@ -11,7 +11,7 @@ import (
 
 func (b *Telegram) processMergedBatch(ctx context.Context, state *telegramState, generator service.BatchGenerator) error {
 	batch := state.Batch
-	settings := b.Settings.Value()
+	settings := b.Settings.ShareValue()
 	inputs := make([]service.GenerateInput, len(batch.Items))
 	for i, item := range batch.Items {
 		inputs[i] = settings.Generation

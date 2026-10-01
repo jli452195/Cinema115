@@ -56,6 +56,8 @@ export const router = createRouter({
     { path: '/helper115', name: 'helper115', component: P115View },
     { path: '/115/login', redirect: '/helper115' },
     { path: '/115/share', name: 'share', component: ShareView },
+    { path: '/115/share/generate', name: 'share-generate', component: ShareView, props: { tab: 'generate' } },
+    { path: '/115/share/logs', name: 'share-logs', component: ShareView, props: { tab: 'logs' } },
     { path: '/115/cloud-download', name: 'cloud-download', component: CloudDownloadView },
     { path: '/115/folder-monitor', name: 'folder-monitor', component: FolderMonitorView },
     { path: '/115/manual-organize', name: 'manual-organize', component: ManualOrganizeView },

@@ -84,7 +84,7 @@ test('share settings save and reload explicit root; removing choices never selec
     await tick()
     const s = mounted.state
     assert.equal(s.initializing, false)
-    s.activeTab = 'basic'
+    assert.equal(s.activeTab, 'basic')
     s.sharePath = '/电影/2026'
     s.addDirectory('.')
     assert.equal(s.outputDir, '.')
@@ -223,7 +223,7 @@ test('manual generation parses pasted text, uses saved rules and ignores unsaved
     if (url.endsWith('/generation-runs/run')) return Response.json({ id: 'run', status: 'success', items: [{ result: { count: 1 } }] })
     throw new Error(`Unexpected request ${url}`)
   })
-  const { app, state: s } = mount('views/ShareView.vue', { token: 'test' })
+  const { app, state: s } = mount('views/ShareView.vue', { token: 'test', tab: 'generate' })
   try {
     await tick()
     assert.equal(s.activeTab, 'generate')

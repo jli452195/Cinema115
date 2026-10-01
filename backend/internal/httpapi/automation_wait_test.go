@@ -88,3 +88,50 @@ func TestAutomationIgnoresRemovedParallelLimit(t *testing.T) {
 		t.Fatal("removed limit persisted")
 	}
 }
+
+func TestShareAutomationRootIgnoresDirectoryInputAndPreservesMonitor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	store, err := service.NewAutomationStore(filepath.Join(dir, "automation.json"), dir, "http://nas:8115")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := "main"
+	store.PrimaryID = func() string { return primary }
+	settings := store.Value()
+	settings.ParentCID, settings.ParentPath = "123", "/monitor"
+	if err := store.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	RegisterAutomation(r.Group("/api/admin"), store, func() bool { return false })
+	for _, id := range []string{"main", "replacement"} {
+		primary = id
+		for _, body := range []string{"", `{"fixedSharePassword":"abcd","parentCID":"999","parentPath":"/ignored"}`} {
+			method := "GET"
+			if body != "" {
+				method = "POST"
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(method, "/api/admin/p115/share/automation-config", strings.NewReader(body)))
+			var response struct {
+				Settings service.AutomationSettings `json:"settings"`
+			}
+			if w.Code != 200 {
+				t.Fatalf("%s after %s: %d %s", method, id, w.Code, w.Body.String())
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Settings.AccountID != id || response.Settings.ParentCID != "0" || response.Settings.ParentPath != "/" {
+				t.Fatalf("share not fixed to current root: %+v", response.Settings)
+			}
+		}
+		if id == "main" && store.Value().ParentCID != "123" {
+			t.Fatal("changed monitor directory")
+		}
+		if id == "replacement" && store.Value().ParentCID != "" {
+			t.Fatal("monitor inherited old account directory")
+		}
+	}
+}

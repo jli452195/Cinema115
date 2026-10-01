@@ -42,7 +42,7 @@ func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) e
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("记录 Telegram 链接任务: %w", err)
 	}
-	settings := b.Settings.Value()
+	settings := b.Settings.ShareValue()
 	input := settings.Generation
 	input.URL = item.URL
 	input.Password = item.Password

@@ -158,7 +158,7 @@ onBeforeUnmount(() => lifecycle.abort())
         <div v-if="monitor.hasBatch || monitor.shareUrl" class="hint mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
           <span v-if="monitor.hasBatch">已搬入 {{ monitor.batchMoved || 0 }} / {{ monitor.batchCount || 0 }} 项</span>
           <a v-if="monitor.shareUrl" :href="monitor.shareUrl" target="_blank" rel="noopener noreferrer" class="link">查看本次分享 ↗</a>
-          <RouterLink v-if="monitor.generationTaskId" to="/115/share" class="link">查看 STRM 生成任务 →</RouterLink>
+          <RouterLink v-if="monitor.generationTaskId" to="/115/share/logs" class="link">查看 STRM 生成任务</RouterLink>
         </div>
         <details v-if="monitor.batchDirectoryName || monitor.endedBatches?.length" class="hint mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
           <summary class="cursor-pointer">临时目录与保留文件</summary>

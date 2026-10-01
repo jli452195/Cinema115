@@ -12,18 +12,18 @@ import (
 func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, botConfigured func() bool, onSaved ...func()) {
 	admin.GET("/p115/share/automation-config", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured()})
+		c.JSON(200, gin.H{"settings": store.ShareValue(), "botConfigured": botConfigured()})
 	})
 	admin.POST("/p115/share/automation-config", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 		// 旧客户端未传新字段时保留已保存的配置，显式传 0 则关闭等待。
-		settings := store.Value()
+		settings := store.ShareValue()
 		if c.ShouldBindJSON(&settings) != nil {
 			c.JSON(400, gin.H{"error": "自动化配置格式错误"})
 			return
 		}
-		if err := store.Save(settings); err != nil {
+		if err := store.SaveShare(settings); err != nil {
 			if errors.Is(err, service.ErrGenerationInput) {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -34,6 +34,6 @@ func RegisterAutomation(admin *gin.RouterGroup, store *service.AutomationStore, 
 		for _, notify := range onSaved {
 			notify()
 		}
-		c.JSON(200, gin.H{"settings": store.Value(), "botConfigured": botConfigured()})
+		c.JSON(200, gin.H{"settings": store.ShareValue(), "botConfigured": botConfigured()})
 	})
 }

@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
             <svg class="h-5 w-5 text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.75A2.75 2.75 0 0 1 5.75 3h3.69c.73 0 1.43.29 1.95.8l1.06 1.07c.14.14.33.22.53.22h5.27A2.75 2.75 0 0 1 21 7.84v.41H3v-2.5Zm0 4h18l-1.2 8.41A2.75 2.75 0 0 1 17.08 20H5.92a2.75 2.75 0 0 1-2.72-2.36L2 9.75h1Z"/></svg>
             添加 STRM 目录
           </h2>
-          <button type="button" aria-label="关闭目录选择器" class="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300" @click="close">×</button>
+          <button type="button" aria-label="关闭目录选择器" class="rounded-lg p-2 text-slate-400 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300" @click="close"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
 
         <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-5 py-3">
@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 
         <footer class="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
           <button type="button" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" @click="close">取消</button>
-          <button type="button" :disabled="loading || !!error" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="select">✓ {{ currentPath ? '选择此目录' : '选择 STRM 根目录' }}</button>
+          <button type="button" :disabled="loading || !!error" class="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="select"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>{{ currentPath ? '选择此目录' : '选择 STRM 根目录' }}</button>
         </footer>
       </section>
     </dialog>

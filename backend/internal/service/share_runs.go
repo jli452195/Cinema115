@@ -171,7 +171,7 @@ func shareRunFingerprint(settings AutomationSettings, credentialHash string, inp
 		}
 		parentCID, fixedPassword := "", ""
 		if mode == "reshare" {
-			parentCID, fixedPassword = settings.ParentCID, settings.FixedSharePassword
+			parentCID, fixedPassword = "0", settings.FixedSharePassword
 		}
 		items[i] = shareRunFingerprintInput{
 			SharePath: input.SharePath,

@@ -77,7 +77,7 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 }
 
 func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput, id, status string) (*model.ShareTask, shareTaskRequest, error) {
-	settings := s.Settings.Value()
+	settings := s.Settings.ShareValue()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
 	}
@@ -122,7 +122,7 @@ func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput,
 func (s *ShareTasks) pinAccount(ctx context.Context) context.Context {
 	settings, ok := ctx.Value(automationContextKey{}).(AutomationSettings)
 	if !ok {
-		settings = s.Settings.Value()
+		settings = s.Settings.ShareValue()
 	}
 	current := s.Cookie
 	if s.AccountCookie != nil {

@@ -48,7 +48,7 @@ func (w *ShareWorkflow) receiveRoots(ctx context.Context, share *p115.ShareInfo,
 // GenerateBatch 先逐条只读筛选，再把可转存的来源合并为一个长期分享。
 func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
 	outcomes := make([]BatchOutcome, len(inputs))
-	settings := w.Settings.Value()
+	settings := w.Settings.ShareValue()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
 	}

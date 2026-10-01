@@ -3,6 +3,15 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    /* Reserve scrollbar space so long/short routes keep the same layout width. */
+    scrollbar-gutter: stable;
+  }
+  @supports not (scrollbar-gutter: stable) {
+    html {
+      overflow-y: scroll;
+    }
+  }
   :root {
     /* Keep the existing light palette; dark mode swaps these shared tokens. */
     --color-slate-50: 248 250 252;

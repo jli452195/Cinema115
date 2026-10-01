@@ -20,7 +20,7 @@ type AutomationSettings struct {
 	ReshareEnabled     bool          `json:"reshareEnabled"`
 	TGBatchWaitSeconds int           `json:"tgBatchWaitSeconds"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
-	ParentCID          string        `json:"parentCID"`
+	ParentCID          string        `json:"parentCID"`            // Directory-monitor staging; share transfers always use root.
 	ParentPath         string        `json:"parentPath,omitempty"` // Display hint only; directory operations use ParentCID.
 	ReviewRetryEnabled bool          `json:"reviewRetryEnabled"`
 	ReviewRetryMinutes int           `json:"reviewRetryMinutes"`
@@ -70,6 +70,14 @@ func (s *AutomationStore) Value() AutomationSettings {
 			value.ParentPath = ""
 		}
 	}
+	return value
+}
+
+// ShareValue fixes share-transfer staging to the current account's root.
+// Value retains directory ownership checks for directory-monitor consumers.
+func (s *AutomationStore) ShareValue() AutomationSettings {
+	value := s.Value()
+	value.ParentCID, value.ParentPath = "0", "/"
 	return value
 }
 
@@ -178,9 +186,23 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 }
 
 func (s *AutomationStore) Save(value AutomationSettings) error {
+	return s.save(value, false)
+}
+
+// SaveShare updates sharing options without changing another feature's
+// directory or its owning account. The share API cannot set that directory.
+func (s *AutomationStore) SaveShare(value AutomationSettings) error {
+	value.ParentCID, value.ParentPath = "0", "/"
+	return s.save(value, true)
+}
+
+func (s *AutomationStore) save(value AutomationSettings, shareOnly bool) error {
 	if s.PrimaryID != nil {
 		id := s.PrimaryID()
 		if value.AccountID != "" && value.AccountID != id {
+			if shareOnly {
+				return generationInputError("主账号已变化，请刷新页面后重试")
+			}
 			return generationInputError("主账号已变化，请重新选择转存目录")
 		}
 		value.AccountID = id
@@ -219,6 +241,10 @@ func (s *AutomationStore) Save(value AutomationSettings) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if shareOnly {
+		value.AccountID = s.value.AccountID
+		value.ParentCID, value.ParentPath = s.value.ParentCID, s.value.ParentPath
+	}
 	if err := writeAutomationJSON(s.path, value); err != nil {
 		return err
 	}

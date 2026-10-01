@@ -83,6 +83,9 @@ func (f *transferFake) List(_ context.Context, share *p115.ShareInfo, cid string
 }
 func (f *transferFake) CreateDirectory(_ context.Context, parent, name, _ string) (string, error) {
 	f.calls = append(f.calls, "create")
+	if parent != "0" {
+		return "", errors.New("分享转存未使用根目录")
+	}
 	return "999", nil
 }
 func (f *transferFake) ReceiveShare(_ context.Context, _ *p115.ShareInfo, ids []string, cid, _ string) error {
@@ -203,7 +206,9 @@ func setupWorkflow(t *testing.T, fake *transferFake) (*ShareWorkflow, GenerateIn
 func TestShareWorkflowWaitsForSnapshotAndCleansOnlyOwnedDirectory(t *testing.T) {
 	fake := &transferFake{}
 	w, in := setupWorkflow(t, fake)
-	result, err := w.Generate(context.Background(), in)
+	// An injected snapshot must not restore the removed parent selection.
+	ctx := context.WithValue(context.Background(), automationContextKey{}, w.Settings.Value())
+	result, err := w.Generate(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
