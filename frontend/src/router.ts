@@ -20,6 +20,8 @@ import EmbyCacheView from './views/EmbyCacheView.vue'
 import EmbyUsersView from './views/EmbyUsersView.vue'
 import PortalSettingsView from './views/PortalSettingsView.vue'
 import RegisterView from './views/RegisterView.vue'
+import LoginView from './views/LoginView.vue'
+import AdminLoginView from './views/AdminLoginView.vue'
 import PersonalPlaybackView from './views/PersonalPlaybackView.vue'
 import MyFollowsView from './views/MyFollowsView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -27,14 +29,16 @@ import FollowManagementView from './views/FollowManagementView.vue'
 import UpdatesView from './views/UpdatesView.vue'
 import GyingView from './views/GyingView.vue'
 import NanShareView from './views/NanShareView.vue'
-import { ensurePortalSession, portalBrowseRoutes } from './composables/usePortalAuth'
+import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
+    { path: '/admin/login', name: 'admin-login', component: AdminLoginView, meta: { public: true } },
     { path: '/account/playback', name: 'personal-playback', component: PersonalPlaybackView },
-    { path: '/register', name: 'register', component: RegisterView },
+    { path: '/register', name: 'register', component: RegisterView, meta: { public: true } },
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
@@ -74,11 +78,20 @@ export const router = createRouter({
 
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
 router.beforeEach(async to => {
-  if (to.name === 'register') return
+  if (to.meta.public) return
   const user = await ensurePortalSession()
   const browsing = portalBrowseRoutes.has(String(to.name))
+  if (!portalToken.value) return { path: browsing ? '/login' : '/admin/login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath }, replace: true }
   if (user && user.role !== 'admin' && !browsing) return { path: '/', replace: true }
   if (['/', '/movie', '/tv'].includes(to.path) && typeof to.query.q === 'string' && to.query.q.trim()) {
     return { path: '/search', query: { q: to.query.q.trim(), scope: to.path === '/movie' ? 'movie' : 'tv' }, replace: true }
   }
 })
+
+// 只允许返回已知的站内业务页面，登录、注册及外部地址不能作为跳转目标。
+export function loginReturnPath(value: unknown) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/'
+  const target = router.resolve(value)
+  if (!target.name || target.meta.public || target.matched.some(record => record.redirect)) return '/'
+  return target.fullPath
+}

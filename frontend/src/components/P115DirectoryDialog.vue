@@ -3,9 +3,10 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 
 interface Directory { id: string; name: string }
+interface DirectoryPage { directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean; nextOffset?: number }
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; endpoint?: string }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths' })
-const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }] }>()
+const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; endpoint?: string; allowRoot?: boolean; allowCreate?: boolean; loadPage?: (cid: string, offset: number, signal: AbortSignal) => Promise<DirectoryPage> }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths', allowRoot: true, allowCreate: false })
+const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }]; create: [value: { id: string; path: string; name: string }] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentCID = ref('0')
 const currentPath = ref<{ id: string; name: string }[]>([])
@@ -24,12 +25,15 @@ async function loadCID(cid: string) {
     const found: Directory[] = []
     for (let offset = 0; ;) {
       const query = `?accountId=${encodeURIComponent(props.accountId)}&cid=${encodeURIComponent(cid)}&offset=${offset}`
-      const data = await p115Request<{ directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean }>(props.token, `${props.endpoint}${query}`, { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(45000)]) })
+      const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(45000)])
+      const data = props.loadPage ? await props.loadPage(cid, offset, signal) : await p115Request<DirectoryPage>(props.token, `${props.endpoint}${query}`, { signal })
       found.push(...(data.directories ?? data.files?.filter(file => file.directory) ?? []))
       const length = data.files?.length ?? 100
       if (data.files ? offset + length >= (data.count ?? 0) : !data.hasMore) break
       if (!length || offset >= 20000) throw new Error('目录分页不完整，请刷新重试')
-      offset += length
+      const next = data.nextOffset ?? offset + length
+      if (next <= offset) throw new Error('目录分页无进展，请刷新重试')
+      offset = next
     }
     if (!lifecycle.signal.aborted) directories.value = found
   } catch (reason) {
@@ -53,9 +57,11 @@ function goUp() {
 }
 
 function close() { emit('close') }
-function select() {
+function select(create = false) {
   const current = currentPath.value[currentPath.value.length - 1]
-  emit('select', { id: currentCID.value, path: currentPath.value.length ? '/' + currentPath.value.map(item => item.name).join('/') : '/', name: current?.name || '115 根目录' })
+  const value = { id: currentCID.value, path: currentPath.value.length ? '/' + currentPath.value.map(item => item.name).join('/') : '/', name: current?.name || '115 根目录' }
+  if (create) emit('create', value)
+  else emit('select', value)
 }
 
 onMounted(() => {
@@ -93,9 +99,10 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        <footer class="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
+        <footer class="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
           <button type="button" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800" @click="close">取消</button>
-          <button type="button" :disabled="loading" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select">选择此目录</button>
+          <button v-if="allowCreate" type="button" :disabled="loading || !!error" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" @click="select(true)">在此新建 Cinema115 并使用</button>
+          <button type="button" :disabled="loading || !!error || (!allowRoot && currentCID === '0')" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select(false)">选择此目录</button>
         </footer>
       </section>
     </dialog>

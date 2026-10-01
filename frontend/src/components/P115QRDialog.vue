@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
+import { p115LoginClients } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
 
 const props = defineProps<{ token: string; accountId: string }>()
@@ -106,10 +107,7 @@ onBeforeUnmount(() => {
       <header><div><h2 id="qr-title">扫码获取 Cookie</h2><p>选择登录设备，在手机确认后自动保存</p></div><button type="button" class="close" aria-label="关闭扫码弹窗" @click="close">×</button></header>
       <label for="qr-client">客户端类型</label>
       <select id="qr-client" v-model="clientType" @change="reset">
-        <option value="alipay-miniapp">支付宝小程序</option><option value="wechat-miniapp">微信小程序</option>
-        <option value="115-life-android">115生活 Android</option><option value="115-android">115 Android</option>
-        <option value="115-life-ios">115生活 iOS</option><option value="115-ios">115 iOS</option>
-        <option value="115-ipad">115 iPad</option><option value="115-tv">TV</option>
+        <option v-for="client in p115LoginClients" :key="client.value" :value="client.value">{{ client.label }}</option>
       </select>
       <div class="qr-area" :aria-busy="loading"><img v-if="qrImage" :src="qrImage" alt="115 登录二维码" :class="{ faded: failed }" /><span v-else>{{ loading ? '正在生成二维码…' : '点击下方按钮获取二维码' }}</span></div>
       <p class="qr-message" :class="{ error: failed }" role="status">{{ message }}</p>

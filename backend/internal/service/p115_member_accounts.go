@@ -109,6 +109,14 @@ func (s *P115Accounts) ActivateMember(ctx context.Context, r model.MemberPlaybac
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value := s.copy()
+	updated, err := activateMemberDocument(&value, r)
+	if err != nil {
+		return r, err
+	}
+	return updated, s.commitMember(ctx, value, updated)
+}
+
+func activateMemberDocument(value *accountDocument, r model.MemberPlayback) (model.MemberPlayback, error) {
 	var pending P115Account
 	for _, a := range value.Accounts {
 		if a.ID == r.PendingAccountID {
@@ -138,6 +146,53 @@ func (s *P115Accounts) ActivateMember(ctx context.Context, r model.MemberPlaybac
 	r.PendingAccountID = ""
 	r.PendingDirectoryStarted = false
 	r.Suspended = false
+	return r, nil
+}
+
+// SetMemberDirectory commits the directory and binding together, then publishes memory.
+func (s *P115Accounts) SetMemberDirectory(ctx context.Context, r model.MemberPlayback, id string, revision uint64, cid string) (model.MemberPlayback, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.copy()
+	target := r.AccountID
+	if r.PendingAccountID != "" {
+		target = r.PendingAccountID
+	}
+	if id == "" || id != target || !memberDirectoryID(cid, false) {
+		return r, ErrAccountChanged
+	}
+	found := false
+	for i, a := range value.Accounts {
+		if a.ID != id {
+			continue
+		}
+		if a.Primary || a.Ownership != "member" || a.OwnerUserID != r.UserID || a.Revision != revision || a.Cookie == "" || a.UID == "" || accountUID(a.Cookie) != a.UID {
+			return r, ErrAccountChanged
+		}
+		a.PlaybackParentCID = cid
+		a.Revision++
+		value.Accounts[i] = a
+		found = true
+	}
+	if !found {
+		return r, ErrAccountChanged
+	}
+	if r.PendingAccountID != "" {
+		var err error
+		r, err = activateMemberDocument(&value, r)
+		if err != nil {
+			return r, err
+		}
+	} else {
+		r.DirectoryID, r.DirectoryStarted = cid, true
+	}
+	uncertain := make([]string, 0, len(r.UncertainDirectories))
+	for _, account := range r.UncertainDirectories {
+		if account != id {
+			uncertain = append(uncertain, account)
+		}
+	}
+	r.UncertainDirectories = uncertain
 	return r, s.commitMember(ctx, value, r)
 }
 func (s *P115Accounts) CancelPendingMember(ctx context.Context, r model.MemberPlayback) (model.MemberPlayback, error) {

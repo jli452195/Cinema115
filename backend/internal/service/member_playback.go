@@ -27,6 +27,7 @@ type memberQRClient interface {
 type memberDriveClient interface {
 	CreateDirectory(context.Context, string, string, string) (string, error)
 	ValidateCacheParent(context.Context, string, string) error
+	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
 }
 type memberCookieChecker interface {
 	CheckCookie(context.Context, string) (bool, error)
@@ -41,6 +42,7 @@ type memberEmbyClient interface {
 	RenameManagedUser(context.Context, string, string) error
 }
 type memberQRSession struct {
+	app       string
 	replace   bool
 	accountID string
 	source    string
@@ -281,23 +283,26 @@ func (s *MemberPlaybackService) ensure(ctx context.Context, id string) (model.Me
 }
 
 type MemberPlaybackView struct {
-	NeedsDirectoryConfirmation bool   `json:"needsDirectoryConfirmation"`
-	CanPreparePersonal         bool   `json:"canPreparePersonal"`
-	Enabled                    bool   `json:"enabled"`
-	Stage                      string `json:"stage"`
-	Message                    string `json:"message"`
-	UID                        string `json:"uid"`
-	Connected                  bool   `json:"connected"`
-	DirectoryID                string `json:"directoryId"`
-	EmbyName                   string `json:"embyName"`
-	EmbyURL                    string `json:"embyUrl"`
-	Suspended                  bool   `json:"suspended"`
-	Blocked                    bool   `json:"blocked"`
-	AllowDownload              bool   `json:"allowDownload"`
-	SyncPending                bool   `json:"syncPending"`
-	Source                     string `json:"source"`
-	Provisioned                bool   `json:"provisioned"`
-	PendingDrive               bool   `json:"pendingDrive"`
+	AccountID                  string                  `json:"accountId"`
+	Revision                   uint64                  `json:"revision"`
+	DirectoryAccount           *MemberDirectoryAccount `json:"directoryAccount,omitempty"`
+	NeedsDirectoryConfirmation bool                    `json:"needsDirectoryConfirmation"`
+	CanPreparePersonal         bool                    `json:"canPreparePersonal"`
+	Enabled                    bool                    `json:"enabled"`
+	Stage                      string                  `json:"stage"`
+	Message                    string                  `json:"message"`
+	UID                        string                  `json:"uid"`
+	Connected                  bool                    `json:"connected"`
+	DirectoryID                string                  `json:"directoryId"`
+	EmbyName                   string                  `json:"embyName"`
+	EmbyURL                    string                  `json:"embyUrl"`
+	Suspended                  bool                    `json:"suspended"`
+	Blocked                    bool                    `json:"blocked"`
+	AllowDownload              bool                    `json:"allowDownload"`
+	SyncPending                bool                    `json:"syncPending"`
+	Source                     string                  `json:"source"`
+	Provisioned                bool                    `json:"provisioned"`
+	PendingDrive               bool                    `json:"pendingDrive"`
 }
 
 func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
@@ -310,6 +315,10 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	v.Source = r.Source
 	v.Provisioned = r.Provisioned
 	v.PendingDrive = r.PendingAccountID != ""
+	if a, err := s.accounts.Get(r.AccountID); err == nil && a.Ownership == "member" && a.OwnerUserID == id {
+		v.AccountID, v.Revision = a.ID, a.Revision
+	}
+	v.DirectoryAccount = s.directoryAccountView(r)
 	v.NeedsDirectoryConfirmation = r.PendingAccountID != "" && r.PendingDirectoryStarted || r.DirectoryStarted && r.DirectoryID == ""
 
 	v.SyncPending = r.Source != "" && r.EmbyID != "" && (r.AppliedRevision != settings.Revision || r.SyncError != "")
@@ -324,7 +333,19 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	}
 	return v
 }
-func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string, replace ...bool) (*p115.QRCode, error) {
+
+type MemberQRInput struct {
+	AccountID  string `json:"accountId"`
+	Revision   uint64 `json:"revision"`
+	ClientType string `json:"clientType"`
+	Replace    bool   `json:"replace"`
+}
+
+func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string, input MemberQRInput) (*p115.QRCode, error) {
+	app, ok := p115.LoginApp(input.ClientType)
+	if !ok {
+		return nil, memberError("登录客户端无效")
+	}
 	if err := s.lock(ctx); err != nil {
 		return nil, err
 	}
@@ -350,24 +371,31 @@ func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string, replace
 		}
 		revision = a.Revision
 	}
+	if input.AccountID != r.AccountID || input.Revision != revision {
+		return nil, ErrAccountChanged
+	}
+	if r.PendingAccountID != "" {
+		return nil, memberError("请先完成或取消待绑定网盘")
+	}
 	for key, session := range s.sessions {
 		if time.Now().After(session.qr.ExpiresAt) {
 			delete(s.sessions, key)
 		}
 	}
-	if old, ok := s.sessions[id]; ok && time.Until(old.qr.ExpiresAt) > 150*time.Second {
+	if old, ok := s.sessions[id]; ok && old.app == app && time.Until(old.qr.ExpiresAt) > 150*time.Second {
 		return nil, memberError("请稍后再刷新二维码")
 	}
-	if len(s.sessions) >= 100 {
+	if _, replacing := s.sessions[id]; !replacing && len(s.sessions) >= 100 {
 		return nil, memberError("扫码人数过多，请稍后重试")
 	}
-	qr, err := s.qr.CreateQRCode(ctx, "alipaymini")
+	qr, err := s.qr.CreateQRCode(ctx, app)
 	if err != nil {
 		return nil, memberError("获取二维码失败")
 	}
-	s.sessions[id] = memberQRSession{qr: qr, revision: revision, source: r.Source, accountID: r.AccountID, replace: len(replace) > 0 && replace[0]}
+	s.sessions[id] = memberQRSession{app: app, qr: qr, revision: revision, source: r.Source, accountID: r.AccountID, replace: input.Replace}
 	return qr, nil
 }
+
 func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (string, error) {
 	if err := s.lock(ctx); err != nil {
 		return "", err
@@ -435,12 +463,7 @@ func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (st
 	s.records[id] = r
 	s.mu.Unlock()
 	delete(s.sessions, id)
-	if r.PendingAccountID != "" {
-		r, err = s.preparePendingDrive(ctx, r)
-		if err != nil {
-			return "", err
-		}
-	}
+	// A new drive remains pending until its owner explicitly chooses a directory.
 	if r.Source == "personal" {
 		if err := s.reconcile(ctx, r); err != nil {
 			return "", err
@@ -688,15 +711,6 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 	login := r.Provisioned && (u.Policy["IsDisabled"] != true || r.Stage == "provisioning")
 
 	enabled := login && settings.Enabled && (r.SkipLibrarySync || len(settings.LibraryIDs) > 0) && !r.AdminBlocked && !r.Suspended && r.Source != ""
-	if enabled && r.Source == "personal" && r.AccountID != "" {
-		a, e := s.accounts.Get(r.AccountID)
-		if e == nil && a.Cookie != "" && r.DirectoryID == "" && !r.DirectoryStarted {
-			r, e = s.prepareDirectory(ctx, r)
-			if e != nil {
-				enabled = false
-			}
-		}
-	}
 	a, err := s.playbackAccount(r)
 	if err != nil {
 		enabled = false
@@ -808,18 +822,9 @@ func (s *MemberPlaybackService) AdminUpdate(ctx context.Context, id string, bloc
 	if directory != "" {
 		return memberError("个人网盘目录只能由用户本人确认")
 	}
-	return s.updatePlayback(ctx, id, blocked, "")
+	return s.updatePlayback(ctx, id, blocked)
 }
-func (s *MemberPlaybackService) ConfirmPersonalDirectory(ctx context.Context, id, directory string) error {
-	if _, err := s.portalUser(ctx, id); err != nil {
-		return err
-	}
-	if directory == "" {
-		return memberError("请填写目录编号")
-	}
-	return s.updatePlayback(ctx, id, nil, directory)
-}
-func (s *MemberPlaybackService) updatePlayback(ctx context.Context, id string, blocked *bool, directory string) error {
+func (s *MemberPlaybackService) updatePlayback(ctx context.Context, id string, blocked *bool) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -832,28 +837,6 @@ func (s *MemberPlaybackService) updatePlayback(ctx context.Context, id string, b
 		r.AdminBlocked = *blocked
 		r.PolicyEnabled = false
 		r.LoginEnabled = false
-	}
-	if directory != "" {
-		target := r.AccountID
-		if r.PendingAccountID != "" {
-			target = r.PendingAccountID
-		}
-		a, err := s.accounts.Get(target)
-		if err != nil {
-			return err
-		}
-		if (r.Source != "personal" && !r.AllowPersonalSwitch) || r.PendingAccountID == "" && r.DirectoryID != "" || a.OwnerUserID != r.UserID || a.Ownership != "member" {
-			return memberError("只能确认尚未完成开通的目录")
-		}
-		if directory == "0" || s.drive.ValidateCacheParent(ctx, directory, a.Cookie) != nil {
-			return memberError("目录校验失败")
-		}
-		if err := s.accounts.UpdatePlaybackDirectory(a.ID, a.Revision, directory); err != nil {
-			return err
-		}
-		if r.PendingAccountID == "" {
-			r.DirectoryID = directory
-		}
 	}
 	if r.AdminBlocked {
 		r.Stage = "paused"

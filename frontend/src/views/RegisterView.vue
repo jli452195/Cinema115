@@ -53,7 +53,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <p v-if="message" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-300">{{ message }}</p>
       <p v-if="notice" role="status" class="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ notice }}</p>
       <button :disabled="busy" class="w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 disabled:opacity-50">{{ busy ? '处理中…' : '注册账号' }}</button>
-      <RouterLink to="/" class="block text-center text-sm text-slate-500 dark:text-slate-400">返回登录</RouterLink>
+      <RouterLink to="/login" class="block text-center text-sm text-slate-500 dark:text-slate-400">返回 Emby 用户登录</RouterLink>
     </form>
   </main>
 </template>

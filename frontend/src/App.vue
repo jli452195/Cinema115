@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import LoginView from './views/LoginView.vue'
-import RegisterView from './views/RegisterView.vue'
+import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
@@ -11,7 +10,7 @@ const router = useRouter()
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
   registeredUsername.value = name
-  void router.replace('/')
+  void router.replace('/login')
 }
 const username = computed(() => portalUser.value?.username || '')
 // 登录完成到路由重定向之间也不挂载普通用户无权访问的管理页面。
@@ -27,25 +26,37 @@ function openTelegram() { void router.push(route.name === 'telegram-category' ? 
 function back() { openCategory(route.name === 'telegram' ? 'telegram' : 'p115') }
 
 async function handleLoggedIn(value: string) {
-  const target = route.fullPath
+  const target = loginReturnPath(route.query.redirect)
   setPortalToken(value)
   await ensurePortalSession(true)
-  await router.replace(portalUser.value?.role !== 'admin' && !portalBrowseRoutes.has(String(route.name)) ? '/' : target)
+  registeredUsername.value = ''
+  await router.replace(target)
 }
 
-function logout() {
+let loggingOut = false
+async function logout() {
+  const destination = portalUser.value?.role === 'admin' ? '/admin/login' : '/login'
+  loggingOut = true
   clearPortalSession()
-  void router.replace('/')
+  try { await router.replace(destination) }
+  finally { loggingOut = false }
 }
+watch([token, portalUser], ([value], [previousToken, previousUser]) => {
+  if (!value && previousToken && !loggingOut && !route.meta.public) {
+    const admin = previousUser?.role === 'admin' || !portalBrowseRoutes.has(String(route.name))
+    void router.replace({ path: admin ? '/admin/login' : '/login', query: { redirect: route.fullPath } })
+  }
+})
 onMounted(() => { void ensurePortalSession() })
 const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true) }, 60000)
 onBeforeUnmount(() => window.clearInterval(authTimer))
 </script>
 
 <template>
-  <RegisterView v-if="route.name === 'register'" @registered="handleRegistered" />
-  <LoginView v-else-if="!token" :registered-username="registeredUsername" @logged-in="handleLoggedIn" />
-  <main v-else-if="!portalUser || portalAuthError || !canViewRoute" class="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+  <RouterView v-if="route.meta.public" v-slot="{ Component }">
+    <component :is="Component" :registered-username="route.name === 'login' ? registeredUsername : undefined" @registered="handleRegistered" @logged-in="handleLoggedIn" />
+  </RouterView>
+  <main v-else-if="!token || !portalUser || portalAuthError || !canViewRoute" class="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
     <p>{{ portalAuthError || '正在验证登录状态…' }}</p>
     <button v-if="portalAuthError" class="text-blue-600" @click="ensurePortalSession(true)">重新验证</button>
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"strconv"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"time"
@@ -17,6 +18,9 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		if errors.Is(err, service.ErrMemberPlayback) {
 			message = err.Error()
 			code = 400
+		}
+		if errors.Is(err, service.ErrAccountChanged) {
+			message, code = err.Error(), 409
 		}
 		c.JSON(code, gin.H{"error": message})
 	}
@@ -54,13 +58,16 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 	})
 	group.POST("/qrcode", func(c *gin.Context) {
 		var input struct {
-			Replace bool `json:"replace"`
+			Replace    bool   `json:"replace"`
+			AccountID  string `json:"accountId"`
+			Revision   uint64 `json:"revision"`
+			ClientType string `json:"clientType"`
 		}
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "扫码参数无效"})
 			return
 		}
-		qr, err := s.CreateQR(c.Request.Context(), userID(c), input.Replace)
+		qr, err := s.CreateQR(c.Request.Context(), userID(c), service.MemberQRInput{Replace: input.Replace, AccountID: input.AccountID, Revision: input.Revision, ClientType: input.ClientType})
 		if err != nil {
 			fail(c, err)
 			return
@@ -68,6 +75,15 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, gin.H{"qrId": qr.ID, "qrcode": qr.ImageURL, "expiresAt": qr.ExpiresAt})
 	})
 	group.GET("/qrcode/status", func(c *gin.Context) {
+		accountID, present := c.GetQuery("accountId")
+		// Empty is the explicit initial-login account reference.
+		if !present {
+			_, present = c.Request.URL.Query()["accountId"]
+		}
+		if !present || accountID != s.View(userID(c)).AccountID {
+			fail(c, service.ErrAccountChanged)
+			return
+		}
 		status, err := s.PollQR(c.Request.Context(), userID(c), c.Query("qrId"))
 		if err != nil {
 			fail(c, err)
@@ -97,18 +113,30 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	group.POST("/directory", func(c *gin.Context) {
-		var input struct {
-			DirectoryID string `json:"directoryId"`
-		}
+		var input service.MemberDirectoryInput
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "目录参数无效"})
 			return
 		}
-		if err := s.ConfirmPersonalDirectory(c.Request.Context(), userID(c), input.DirectoryID); err != nil {
+		if err := s.SetPersonalDirectory(c.Request.Context(), userID(c), input); err != nil {
 			fail(c, err)
 			return
 		}
 		c.JSON(200, s.View(userID(c)))
+	})
+	group.GET("/directories", func(c *gin.Context) {
+		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+		revision, revisionErr := strconv.ParseUint(c.Query("revision"), 10, 64)
+		if err != nil || revisionErr != nil {
+			c.JSON(400, gin.H{"error": "目录参数无效"})
+			return
+		}
+		page, err := s.PersonalDirectories(c.Request.Context(), userID(c), service.MemberDirectoryInput{AccountID: c.Query("accountId"), Revision: revision, DirectoryID: c.DefaultQuery("cid", "0")}, offset)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, page)
 	})
 	group.POST("/use-personal", func(c *gin.Context) {
 		if err := s.UsePersonalDrive(c.Request.Context(), userID(c)); err != nil {

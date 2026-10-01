@@ -16,6 +16,8 @@ import (
 
 type memberTestRemote struct {
 	qrStatus                              string
+	qrApp                                 string
+	directoryCookie                       string
 	cookie                                string
 	valid                                 bool
 	users                                 map[string]emby.ManagedUser
@@ -34,8 +36,9 @@ func (f *memberTestRemote) Libraries(context.Context) ([]emby.Library, error) {
 	return []emby.Library{{ID: "library", GUID: "guid-movies", Name: "Movies"}, {ID: "library2", GUID: "guid-tv", Name: "TV"}}, nil
 }
 
-func (f *memberTestRemote) CreateQRCode(context.Context, string) (*p115.QRCode, error) {
-	return &p115.QRCode{ID: "qr", ImageURL: "qr-text", ExpiresAt: time.Now().Add(3 * time.Minute)}, nil
+func (f *memberTestRemote) CreateQRCode(_ context.Context, app string) (*p115.QRCode, error) {
+	f.qrApp = app
+	return &p115.QRCode{ID: "qr-" + app, ImageURL: "qr-text", ExpiresAt: time.Now().Add(3 * time.Minute)}, nil
 }
 func (f *memberTestRemote) CheckQRCode(context.Context, string) (*p115.QRCodeStatus, error) {
 	if f.qrStatus != "" {
@@ -55,7 +58,8 @@ func (f *memberTestRemote) CreateDirectory(context.Context, string, string, stri
 	return "123", nil
 }
 func (f *memberTestRemote) ValidateCacheParent(_ context.Context, cid, cookie string) error {
-	if cid != "123" || !f.valid || cookie == "" {
+	f.directoryCookie = cookie
+	if (cid != "123" && cid != "456" && cid != "0") || !f.valid || cookie == "" {
 		return errors.New("invalid")
 	}
 	return nil
@@ -150,16 +154,34 @@ func memberFixture(t *testing.T) (*MemberPlaybackService, *memberTestRemote, str
 	}
 	return s, f, id
 }
+func (f *memberTestRemote) DriveFiles(_ context.Context, cid string, offset int, cookie string) (*p115.SharePage, error) {
+	f.directoryCookie = cookie
+	return &p115.SharePage{Files: []p115.ShareFile{{ID: "123", Name: "Folder", Directory: true}, {ID: "999", Name: "file.mkv"}}, Count: 2, Offset: offset}, nil
+}
+func memberQRInput(s *MemberPlaybackService, id string, replace bool) MemberQRInput {
+	v := s.View(id)
+	return MemberQRInput{AccountID: v.AccountID, Revision: v.Revision, Replace: replace}
+}
+func memberDirectoryInput(s *MemberPlaybackService, id, cid string, create bool) MemberDirectoryInput {
+	a := s.View(id).DirectoryAccount
+	return MemberDirectoryInput{AccountID: a.AccountID, Revision: a.Revision, DirectoryID: cid, Create: create}
+}
 func memberScan(t *testing.T, s *MemberPlaybackService, id string) {
 	t.Helper()
 	ctx := context.Background()
-	qr, err := s.CreateQR(ctx, id)
+	qr, err := s.CreateQR(ctx, id, memberQRInput(s, id, false))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status, err := s.PollQR(ctx, id, qr.ID); err != nil || status != "success" {
 		t.Fatal(status, err)
 	}
+	if s.record(id).PendingAccountID != "" {
+		if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "123", false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 }
 
 func (f *memberTestRemote) AuthenticateUser(_ context.Context, name, password string) (emby.ManagedUser, string, error) {
@@ -231,7 +253,7 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.cookie = "UID=999_A; SEID=new"
-	qr, err := s.CreateQR(ctx, id)
+	qr, err := s.CreateQR(ctx, id, memberQRInput(s, id, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,11 +262,14 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 	}
 	delete(s.sessions, id)
 	f.failDirectory = true
-	qr, err = s.CreateQR(ctx, id, true)
+	qr, err = s.CreateQR(ctx, id, memberQRInput(s, id, true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PollQR(ctx, id, qr.ID); err == nil {
+	if _, err := s.PollQR(ctx, id, qr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "0", true)); err == nil {
 		t.Fatal("uncertain directory accepted")
 	}
 	pending := s.record(id)
@@ -258,7 +283,7 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 	if err := s.FinishDriveChange(ctx, id, false); err == nil {
 		t.Fatal("uncertain create retried")
 	}
-	if err := s.ConfirmPersonalDirectory(ctx, id, "123"); err != nil {
+	if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "123", false)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishDriveChange(ctx, id, false); err != nil {
@@ -378,11 +403,14 @@ func TestPortalPoliciesAndIndependentSameUIDCredentials(t *testing.T) {
 	if err := s.accounts.Update(admin, 1, "admin-owned", &f.cookie); err != nil {
 		t.Fatal(err)
 	}
-	qr, err := s.CreateQR(ctx, id)
+	qr, err := s.CreateQR(ctx, id, memberQRInput(s, id, false))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.PollQR(ctx, id, qr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "123", false)); err != nil {
 		t.Fatal(err)
 	}
 	a, _ := s.accounts.Get(admin)
@@ -450,11 +478,14 @@ func TestCancelUncertainDriveRevokesCredentialsWithoutRetryingCreate(t *testing.
 	memberScan(t, s, id)
 	f.cookie = "UID=999_A; SEID=new"
 	f.failDirectory = true
-	qr, err := s.CreateQR(ctx, id, true)
+	qr, err := s.CreateQR(ctx, id, memberQRInput(s, id, true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PollQR(ctx, id, qr.ID); err == nil {
+	if _, err = s.PollQR(ctx, id, qr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "0", true)); err == nil {
 		t.Fatal("uncertain directory accepted")
 	}
 	pending := s.record(id).PendingAccountID
@@ -467,11 +498,14 @@ func TestCancelUncertainDriveRevokesCredentialsWithoutRetryingCreate(t *testing.
 	}
 	f.failDirectory = false
 	count := f.dirs
-	qr, err = s.CreateQR(ctx, id, true)
+	qr, err = s.CreateQR(ctx, id, memberQRInput(s, id, true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PollQR(ctx, id, qr.ID); err == nil {
+	if _, err = s.PollQR(ctx, id, qr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPersonalDirectory(ctx, id, memberDirectoryInput(s, id, "0", true)); err == nil {
 		t.Fatal("forgot uncertain create")
 	}
 	if f.dirs != count {
