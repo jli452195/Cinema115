@@ -111,6 +111,9 @@ func (s *ManualOrganize) Run(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			if pending.job.Status == "completed" && s.OnCompleted != nil {
+				s.OnCompleted(ctx, pending.job.Config)
+			}
 		}
 	}
 }

@@ -39,6 +39,9 @@ func virtualOutputPath(relative string) string {
 func (a *ShareAPI) outputDirectories(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	raw := strings.TrimSpace(c.Query("path"))
+	if raw == "." {
+		raw = ""
+	} // Explicit output-root selection uses the root browser view.
 	if len(raw) > 1024 || strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, `\:`) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "媒体库目录路径无效"})
 		return

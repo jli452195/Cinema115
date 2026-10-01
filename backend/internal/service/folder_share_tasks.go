@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
@@ -179,24 +178,4 @@ func (s *FolderMonitorService) Trigger(ctx context.Context, id string) (model.Fo
 	}
 	value, readErr := s.Store.GetFolderMonitor(ctx, id)
 	return value, err == nil, readErr
-}
-
-// DisableLegacySchedules runs at startup; submitted work and retained batches
-// remain recoverable, while old timers can no longer discover new content.
-func (s *FolderMonitorService) DisableLegacySchedules(ctx context.Context) error {
-	values, err := s.Store.ListFolderMonitors(ctx)
-	if err != nil {
-		return err
-	}
-	for _, value := range values {
-		if !value.Enabled && value.IntervalSeconds == 0 && value.NextScanAt.IsZero() {
-			continue
-		}
-		value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
-		value.UpdatedAt = time.Now().UTC()
-		if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
-			return err
-		}
-	}
-	return nil
 }

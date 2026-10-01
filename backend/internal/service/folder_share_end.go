@@ -36,6 +36,8 @@ func (s *FolderMonitorService) EndBatch(ctx context.Context, id, expectedTaskID 
 		return value, err
 	}
 	archiveFolderBatch(&value)
+	value.ScheduleVersion++
+	recordFolderRun(&value)
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
 		return value, err
 	}
@@ -89,7 +91,7 @@ func archiveFolderBatch(value *model.FolderMonitor) {
 		ShareURL: value.ShareURL, Stage: value.Stage, LastError: value.LastError,
 		Cleaned: value.CleanupIndex > 0, EndedAt: time.Now().UTC(),
 	})
-	value.Stage, value.LastError, value.TaskPending, value.TaskTrigger = "ended", "", false, ""
+	value.Stage, value.LastError, value.TaskPending = "ended", "", false
 	value.GenerationTaskID, value.GenerationSettings = "", nil
 	value.BatchIDs, value.BatchFingerprint = nil, ""
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchParentCID = "", "", ""
@@ -98,5 +100,6 @@ func archiveFolderBatch(value *model.FolderMonitor) {
 	value.BatchCredentialHash, value.StableFingerprint, value.StableScans = "", "", 0
 	value.ShareURL, value.SharePassword, value.ShareReviewing = "", "", false
 	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
+	value.SchedulePaused, value.ScheduleMessage = "", ""
 	value.UpdatedAt = time.Now().UTC()
 }

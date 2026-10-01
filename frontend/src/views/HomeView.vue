@@ -15,7 +15,7 @@ const categories = {
       { title: '115分享STRM', description: '从分享链接生成 STRM，管理转存再分享、审核重试与任务记录。', to: '/115/share', icon: 'play' },
       { title: '115 云下载', description: '提交磁力或 ED2K 到指定网盘目录。', to: '/115/cloud-download', icon: 'download' },
       { title: '手动整理', description: '选择文件或文件夹，手动匹配 TMDB，校正季集与命名后移动到目标目录。', to: '/115/manual-organize', icon: 'monitor' },
-      { title: '115 目录分享', description: '手动分享配置目录，复用分享 STRM 设置生成文件，完成后清理临时目录。', to: '/115/folder-monitor', icon: 'monitor' },
+      { title: '115 目录分享', description: '手动或定时分享目录并生成 STRM，完成后回收临时目录。', to: '/115/folder-monitor', icon: 'monitor' },
     ],
   },
   telegram: {

@@ -60,6 +60,10 @@ func TestOutputDirectoryBrowserUsesVirtualSTRMRoot(t *testing.T) {
 	if body.Directories[0].Name != "已整理" || body.Directories[0].Path != "已整理" || body.Directories[0].DisplayPath != "/strm/已整理" {
 		t.Fatal("没有返回统一的 /strm 虚拟路径", body.Directories)
 	}
+	code, body = call("/api/admin/p115/share/output-directories?path=.")
+	if code != http.StatusOK || body.Path != "" || body.DisplayPath != "/strm" {
+		t.Fatalf("explicit root=%+v code=%d", body, code)
+	}
 	code, body = call("/api/admin/p115/share/output-directories?path=" + url.QueryEscape("待整理"))
 	if code != http.StatusOK || body.Path != "待整理" || body.DisplayPath != "/strm/待整理" || len(body.Directories) != 1 || body.Directories[0].Path != "待整理/电影" {
 		t.Fatalf("子目录浏览错误：code=%d body=%+v", code, body)

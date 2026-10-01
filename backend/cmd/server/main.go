@@ -220,10 +220,13 @@ func main() {
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
 	folderMonitors.SetSharedSettings(automation.Value)
 	folderMonitors.Tasks = shareTasks
-	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
-	if err := folderMonitors.DisableLegacySchedules(context.Background()); err != nil {
-		log.Fatal(err)
+	folderMonitors.ReserveWork = manualOrganize.ReserveDirectoryWork
+	manualOrganize.OnCompleted = func(ctx context.Context, config service.OrganizeConfig) {
+		if err := folderMonitors.NotifyOrganized(ctx, config.AccountID); err != nil && ctx.Err() == nil {
+			generationLogs.Append("STRM", "目录监控", "目录监控", "ERROR", "整理完成后安排目录检查失败："+err.Error())
+		}
 	}
+	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)

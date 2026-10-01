@@ -11,6 +11,7 @@ import TelegramBotSelect from '../components/TelegramBotSelect.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig } from '../types/telegramBots'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
+import { validSTRMDirectory as validDirectory, strmDirectoryPath as resolvedDirectory, strmDirectoryName as directoryName } from '../utils/strmDirectory'
 
 const props = defineProps<{ token: string }>()
 const activeTab = ref<'basic' | 'normal' | 'reshare' | 'logs'>('basic')
@@ -92,6 +93,7 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
+    if (!validDirectory(outputDir.value)) throw new Error('请选择 STRM 生成目录')
     if (!accounts.value.some(account => account.primary && account.id === accountId.value && account.configured)) throw new Error('请先在 115 助手中登录主账号')
     if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
     if (!Number.isInteger(maxParallelBatches.value) || maxParallelBatches.value < 0 || maxParallelBatches.value > 20) throw new Error('最大并行批次应为 0～20 的整数')
@@ -114,18 +116,6 @@ async function saveAutomation() {
   } finally { automationSaving.value = false }
 }
 
-function resolvedDirectory(value: string) {
-  return value ? `/strm/${value}` : '/strm'
-}
-
-function validDirectory(value: unknown): value is string {
-  return typeof value === 'string' && !/[<>:"\\|?*\x00-\x1f]/.test(value) && value.split('/').every(part => part.trim() === part && part !== '' && part !== '.' && part !== '..')
-}
-
-function directoryName(value: string) {
-  return value.split('/').filter(Boolean).at(-1) ?? value
-}
-
 function addDirectory(value: string) {
   if (!validDirectory(value)) return
   if (!outputDirectories.value.includes(value)) outputDirectories.value.push(value)
@@ -141,6 +131,7 @@ function removeDirectory(value: string) {
 
 async function generate() {
   if (busy.value || initializing.value || automationSaving.value) return
+  if (!validDirectory(outputDir.value)) { error.value = '请选择 STRM 生成目录'; return }
   controller = new AbortController()
   busy.value = true; generating.value = true; error.value = ''; notice.value = ''; playURL.value = ''
   generated.value = undefined; partialShareURL.value = ''; activeRunID.value = ''; stoppingRun.value = false

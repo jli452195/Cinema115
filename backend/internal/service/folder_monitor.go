@@ -65,6 +65,7 @@ type FolderMonitorService struct {
 	// directory and optional fixed share password. It is read when a batch
 	// starts; an in-flight batch keeps its persisted account and password.
 	SharedSettings func() AutomationSettings
+	ReserveWork    func() (func(), error)
 	wake           chan struct{}
 	mu             sync.Mutex
 	running        map[string]bool
@@ -148,6 +149,9 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 		}
 		copyMonitorRuntime(&value, existing)
 		value.Enabled, value.NextScanAt = false, time.Time{}
+		value.ScheduleVersion = existing.ScheduleVersion + 1
+		value.SchedulePaused, value.ScheduleMessage, value.StableFingerprint = "", "", ""
+		value.StableScans = 0
 	}
 	value.UpdatedAt = now
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
@@ -195,6 +199,7 @@ func monitorEditable(stage string) bool {
 }
 
 func copyMonitorRuntime(dst *model.FolderMonitor, src model.FolderMonitor) {
+	dst.RecentRuns = append([]model.FolderRun(nil), src.RecentRuns...)
 	dst.LogTaskID, dst.LogAttempt = src.LogTaskID, src.LogAttempt
 	dst.EndedBatches = append([]model.EndedFolderBatch(nil), src.EndedBatches...)
 	dst.GenerationTaskID, dst.GenerationSettings = src.GenerationTaskID, append(json.RawMessage(nil), src.GenerationSettings...)
@@ -215,7 +220,6 @@ func (s *FolderMonitorService) List(ctx context.Context) ([]model.FolderMonitor,
 	values, err := s.Store.ListFolderMonitors(ctx)
 	for i := range values {
 		values[i].Running = s.running[values[i].ID]
-		values[i].Enabled, values[i].IntervalSeconds, values[i].NextScanAt = false, 0, time.Time{}
 	}
 	return values, err
 }
@@ -235,8 +239,12 @@ func (s *FolderMonitorService) Delete(ctx context.Context, id string) error {
 
 var ErrFolderMonitorBusy = errors.New("当前任务已排队或正在处理")
 
-// SetSchedule only accepts disabling legacy schedules; submitted work is preserved.
+// SetSchedule retains the default interval for internal callers.
 func (s *FolderMonitorService) SetSchedule(ctx context.Context, id string, enabled bool) (model.FolderMonitor, error) {
+	return s.UpdateSchedule(ctx, id, enabled, 600)
+}
+
+func (s *FolderMonitorService) UpdateSchedule(ctx context.Context, id string, enabled bool, interval int) (model.FolderMonitor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, err := s.Store.GetFolderMonitor(ctx, id)
@@ -244,9 +252,31 @@ func (s *FolderMonitorService) SetSchedule(ctx context.Context, id string, enabl
 		return model.FolderMonitor{}, err
 	}
 	if enabled {
-		return model.FolderMonitor{}, generationInputError("目录分享已改为手动触发，不再支持定时扫描")
+		if interval != 300 && interval != 600 && interval != 1800 && interval != 3600 {
+			return value, generationInputError("请选择 5、10、30 或 60 分钟检查间隔")
+		}
+		if s.running[id] || value.TaskPending || value.BatchCreationPending || value.BatchDirectoryID != "" || !monitorIdleStage(value.Stage) {
+			return value, generationInputError("请先完成或结束当前批次，再开启自动执行")
+		}
+		if s.Accounts == nil {
+			return value, generationInputError("账号服务尚未初始化")
+		}
+		if err := s.pinSettings(&value); err != nil {
+			return value, err
+		}
+		account, err := s.Accounts.Primary(value.AccountID)
+		if err != nil || account.Cookie == "" {
+			return value, generationInputError("请先登录主账号")
+		}
 	}
 	value.NextScanAt, value.IntervalSeconds = time.Time{}, 0
+	value.ScheduleVersion++
+	value.SchedulePaused, value.ScheduleMessage = "", ""
+	if enabled {
+		value.StableFingerprint, value.StableScans = "", 0
+		value.IntervalSeconds, value.NextScanAt = interval, time.Now().UTC().Add(time.Duration(interval)*time.Second)
+		value.Stage, value.LastError = "waiting", ""
+	}
 	value.Enabled, value.UpdatedAt = enabled, time.Now().UTC()
 	if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
 		return model.FolderMonitor{}, err
@@ -279,6 +309,7 @@ func (s *FolderMonitorService) ScanNow(ctx context.Context, id string) error {
 			return err
 		}
 		value.GenerationTaskID = ""
+		value.ShareURL, value.SharePassword, value.ShareReviewing = "", "", false
 		var nonce [12]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return fmt.Errorf("创建目录任务编号: %w", err)
@@ -304,7 +335,7 @@ func (s *FolderMonitorService) ScanNow(ctx context.Context, id string) error {
 			}
 		}
 	}
-	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
+	value.NextScanAt = time.Time{}
 	value.LogAttempt++
 	value.TaskPending, value.TaskTrigger, value.LastError = true, "manual", ""
 	value.UpdatedAt = time.Now().UTC()
@@ -323,22 +354,34 @@ func (s *FolderMonitorService) Wake() {
 }
 
 func (s *FolderMonitorService) Run(ctx context.Context) error {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(15 * time.Second)
+	timer.Stop()
+	defer timer.Stop()
 	for {
 		if err := s.runDue(ctx); err != nil && ctx.Err() == nil && s.Logs != nil {
 			s.Logs.Append("STRM", "目录监控", "目录监控", "ERROR", err.Error())
 		}
+		values, _ := s.Store.ListFolderMonitors(ctx) // A failed read falls back to the normal cadence.
+		timer.Reset(folderWakeDelay(values, time.Now().UTC()))
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-timer.C:
 		case <-s.wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		}
 	}
 }
 
 func (s *FolderMonitorService) runDue(ctx context.Context) error {
+	if err := s.checkScheduled(ctx); err != nil {
+		return err
+	}
 	values, err := s.Store.ListFolderMonitors(ctx)
 	if err != nil {
 		return err
@@ -378,6 +421,9 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 			// second failure for a nonempty or temporarily unreadable directory.
 			_, _ = s.Recover(ctx, value.ID, value.LogTaskID)
 		} else if latest, err := s.Store.GetFolderMonitor(ctx, value.ID); err == nil && latest.LogTaskID != "" {
+			if latest.TaskPending && !latest.NextScanAt.IsZero() {
+				continue // Waiting for the writer is not a completed execution.
+			}
 			level, message := "INFO", "本次执行结束"
 			if latest.Stage == "completed" {
 				message = "整批处理完成：STRM 已生成，临时目录已清理"
@@ -390,11 +436,14 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 	return nil
 }
 
-func monitorDue(value model.FolderMonitor, _ time.Time) bool {
+func monitorDue(value model.FolderMonitor, now time.Time) bool {
+	if value.TaskPending && !value.NextScanAt.IsZero() && now.Before(value.NextScanAt) {
+		return false
+	}
 	if value.Stage == "blocked" {
 		return false
 	}
-	// Resume submitted work only. Legacy timer fields never discover new batches.
+	// Submitted batches advance independently of the discovery schedule switch.
 	return value.Stage == "checking_share" || (value.Stage == "cleaning" && value.CleanupIndex >= 1) || value.TaskPending || (value.BatchDirectoryID != "" && value.LastError == "") || (value.Stage == "generating" && value.GenerationTaskID != "")
 }
 
@@ -431,6 +480,16 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 	s.running[id] = true
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.running, id); s.mu.Unlock() }()
+	if s.ReserveWork != nil {
+		release, err := s.ReserveWork()
+		if err != nil {
+			value.NextScanAt = time.Now().UTC().Add(folderBusyRetryDelay)
+			value.ScheduleMessage = "整理、清理或字幕导入正在执行，5 秒后重试"
+			return s.checkpoint(root, &value)
+		} // Keep the submitted task queued until the writer finishes.
+		defer release()
+	}
+	value.NextScanAt = time.Time{}
 	root = context.WithValue(root, generationLogKey{}, generationLogger{store: s.Logs, task: value.LogTaskID, source: "目录监控", redact: func(message string) string {
 		return generationErrorDetail(errors.New(message), GenerateInput{})
 	}})
@@ -538,6 +597,13 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 	}
 	if len(foundIDs) != len(ids) {
 		return s.fail(ctx, value, "读取期间来源条目发生变化，请重新提交；源文件未移动")
+	}
+	if value.TaskTrigger == "scheduled" && value.StableFingerprint != manifestFingerprint(manifest) {
+		value.TaskPending, value.Stage = false, "waiting"
+		value.StableFingerprint, value.StableScans = manifestFingerprint(manifest), 1
+		value.ScheduleMessage = "目录内容发生变化，5 秒后重新核对"
+		value.NextScanAt = time.Now().UTC().Add(folderStabilityDelay)
+		return s.checkpoint(ctx, value)
 	}
 	media := 0
 	for _, entry := range manifest {
@@ -920,7 +986,8 @@ func (s *FolderMonitorService) completeCleanedBatch(ctx context.Context, value *
 	value.BatchCreationPending = false
 	value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
 	value.ShareReviewing = false
-	value.NextScanAt = time.Time{}
+	value.ScheduleMessage = "本批处理完成，立即检查下一批"
+	value.NextScanAt = time.Now().UTC()
 	return s.checkpoint(ctx, value)
 }
 
@@ -969,11 +1036,23 @@ func (s *FolderMonitorService) driveRootContains(ctx context.Context, cid, targe
 func (s *FolderMonitorService) checkpoint(ctx context.Context, value *model.FolderMonitor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.Store.GetFolderMonitor(ctx, value.ID)
+	current, err := s.Store.GetFolderMonitor(ctx, value.ID)
 	if err != nil {
 		return err
 	}
-	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
+	if value.ScheduleVersion != current.ScheduleVersion {
+		value.Enabled, value.IntervalSeconds, value.NextScanAt = current.Enabled, current.IntervalSeconds, current.NextScanAt
+		value.ScheduleVersion = current.ScheduleVersion
+		value.SchedulePaused, value.ScheduleMessage = current.SchedulePaused, current.ScheduleMessage
+		value.StableFingerprint, value.StableScans = current.StableFingerprint, current.StableScans
+	}
+	if (!value.Enabled || value.SchedulePaused != "") && !value.TaskPending {
+		value.NextScanAt = time.Time{}
+	}
+	if value.Enabled && value.SchedulePaused == "" && value.NextScanAt.IsZero() && !value.TaskPending && value.BatchDirectoryID == "" && monitorIdleStage(value.Stage) {
+		value.NextScanAt = time.Now().UTC().Add(time.Duration(value.IntervalSeconds) * time.Second)
+	}
+	recordFolderRun(value)
 	value.UpdatedAt = time.Now().UTC()
 	return s.Store.SaveFolderMonitor(ctx, *value)
 }
@@ -990,6 +1069,9 @@ func (s *FolderMonitorService) failAt(ctx context.Context, value *model.FolderMo
 	message = monitorLogDetail(message, cookie)
 	value.TaskPending = false
 	value.Stage, value.LastError = stage, message
+	if value.Enabled {
+		value.SchedulePaused = "上次任务未完成，请核对后重新开启自动执行"
+	}
 	value.NextScanAt = time.Time{}
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()

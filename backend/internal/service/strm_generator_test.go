@@ -204,7 +204,7 @@ func TestGenerationCanExcludeSubdirectories(t *testing.T) {
 
 func TestRelativeOutputDirectoryResolution(t *testing.T) {
 	root := t.TempDir()
-	for _, raw := range []string{"strm", "strm2", "strm/电影"} {
+	for _, raw := range []string{".", "strm", "strm2", "strm/电影"} {
 		resolved, err := ResolveOutputDirectory(root, raw)
 		if err != nil {
 			t.Fatal(err)
@@ -214,10 +214,43 @@ func TestRelativeOutputDirectoryResolution(t *testing.T) {
 			t.Fatalf("实际目录不正确：%s", resolved)
 		}
 	}
-	for _, raw := range []string{"", "/strm", "../escape", "strm/../other", "strm/./other", "strm//other", "//server/share", "/", `D:/strm`, `strm\other`, "strm:other", "CON"} {
+	for _, raw := range []string{"", "..", "./", "./movie", "/strm", "../escape", "strm/../other", "strm/./other", "strm//other", "//server/share", "/", `D:/strm`, `strm\other`, "strm:other", "CON"} {
 		if _, err := ResolveOutputDirectory(root, raw); err == nil {
 			t.Fatalf("接受了无效目录：%s", raw)
 		}
+	}
+}
+
+func TestGenerateToExplicitSTRMRoot(t *testing.T) {
+	root := t.TempDir()
+	input := generationOptions(t)
+	input.OutputDir = "."
+	if err := ValidateGenerationOptions(root, input); err != nil {
+		t.Fatal(err)
+	}
+	g := &STRMGenerator{Root: root, Cookie: func() string { return "cookie" }, Client: shareListFunc(func(_ context.Context, _ *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
+		if cid == "0" {
+			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "dir", Name: "电影", Directory: true}, {ID: "1", Name: "top.mkv", Size: 2 << 20}}}, nil
+		}
+		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "2", Name: "movie.mkv", Size: 2 << 20}}}, nil
+	})}
+	if err := os.WriteFile(filepath.Join(root, "top.strm"), []byte("existing content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := g.Generate(context.Background(), input)
+	if err != nil || result.Directory != root || result.Written != 2 || result.ConflictRenamed != 1 {
+		t.Fatalf("root generation=%+v err=%v", result, err)
+	}
+	for _, name := range []string{"top (2).strm", "电影/movie.strm"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "top.strm")); err != nil || string(data) != "existing content" {
+		t.Fatal("existing file was overwritten")
+	}
+	if _, err := os.Stat(filepath.Join(root, "strm")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unexpected extra output directory")
 	}
 }
 

@@ -53,7 +53,7 @@ func (s *ManualOrganize) reserveCleanup() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending != nil || s.cleaning {
-		return fmt.Errorf("%w：已有整理、清理或字幕导入执行中，请等待完成", ErrOrganizeConflict)
+		return fmt.Errorf("%w：已有整理、目录分享、清理或字幕导入执行中，请等待完成", ErrOrganizeConflict)
 	}
 	s.cleaning = true
 	return nil

@@ -43,6 +43,13 @@ func (s *FolderMonitorService) Recover(ctx context.Context, id, expectedTaskID s
 	defer func() { s.mu.Lock(); delete(s.running, id); s.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if s.ReserveWork != nil {
+		release, err := s.ReserveWork()
+		if err != nil {
+			return value, generationInputError("整理或字幕导入正在执行，请稍后核对残留")
+		}
+		defer release()
+	}
 	if s.Accounts == nil || s.Client == nil {
 		return value, generationInputError("残留核对服务尚未初始化")
 	}

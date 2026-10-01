@@ -110,8 +110,8 @@ func TestFolderMonitorDisabledManualTaskSurvivesRestart(t *testing.T) {
 func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
 	svc, _, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
-	if _, err := svc.SetSchedule(ctx, value.ID, true); err == nil {
-		t.Fatal("legacy schedule should be rejected")
+	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
+		t.Fatal(err)
 	}
 	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestFolderMonitorInterruptedBatchResumesWithScheduleOff(t *testing.T) {
 	}
 }
 
-func TestFolderMonitorLegacyTimerNeverScans(t *testing.T) {
+func TestFolderMonitorInvalidScheduleNeverScans(t *testing.T) {
 	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	value.Enabled, value.IntervalSeconds, value.NextScanAt = true, 30, time.Now().Add(-time.Hour)
@@ -227,15 +227,15 @@ func TestFolderMonitorLegacyTimerNeverScans(t *testing.T) {
 	if len(client.createdNames) != 0 {
 		t.Fatal("legacy timer started a new batch")
 	}
-	if err := svc.DisableLegacySchedules(ctx); err != nil {
+	if _, err := svc.SetSchedule(ctx, value.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
 	if value.Enabled || value.IntervalSeconds != 0 || !value.NextScanAt.IsZero() {
 		t.Fatal("legacy timer was not cleared")
 	}
-	if _, err := svc.SetSchedule(ctx, value.ID, true); err == nil {
-		t.Fatal("schedule re-enabled")
+	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
+		t.Fatal(err)
 	}
 	client.drive["100"] = nil
 	if err := svc.ScanNow(ctx, value.ID); err != nil {

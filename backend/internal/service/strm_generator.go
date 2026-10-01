@@ -456,13 +456,17 @@ func writeSTRM(ctx context.Context, destination, content string) error {
 	return os.Rename(stream.Name(), destination)
 }
 
-// ResolveOutputDirectory 将相对目录限制在媒体库根目录内，禁止绝对路径和目录穿越。
+// ResolveOutputDirectory accepts "." as an explicit selection of the configured
+// media root. Empty/missing selections, absolute paths and traversal stay invalid.
 func ResolveOutputDirectory(root, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.ContainsAny(raw, `\:`) || strings.HasPrefix(raw, "/") {
 		return "", generationInputError("请填写媒体库内的相对目录，例如 strm、strm2 或 strm/电影")
 	}
 	for _, segment := range strings.Split(raw, "/") {
+		if raw == "." {
+			break
+		}
 		if segment == "" || safeSTRMName(segment) != segment {
 			return "", generationInputError("目录名称无效，不能包含 ..、空目录段或特殊字符")
 		}
@@ -476,7 +480,7 @@ func ResolveOutputDirectory(root, raw string) (string, error) {
 	}
 	directory := filepath.Join(base, filepath.FromSlash(raw))
 	relative, err := filepath.Rel(base, directory)
-	if err != nil || !filepath.IsLocal(relative) || relative == "." {
+	if err != nil || !filepath.IsLocal(relative) || (relative == "." && raw != ".") {
 		return "", generationInputError("生成目录必须位于媒体库根目录内")
 	}
 	return directory, nil

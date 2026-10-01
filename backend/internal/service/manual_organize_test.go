@@ -193,6 +193,36 @@ func organizeTestRun(t *testing.T, s *ManualOrganize, account string, plan Organ
 	return s.History()[0]
 }
 
+func TestManualOrganizeCompletionNotifiesAfterReleasingWriter(t *testing.T) {
+	s, _, id, _ := newOrganizeTest(t)
+	plan := organizeTestPreview(t, s, id, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	called := false
+	s.OnCompleted = func(_ context.Context, config OrganizeConfig) {
+		called = true
+		if config.AccountID != id || s.History()[0].Status != "completed" {
+			t.Error("notification preceded committed success")
+		}
+		release, err := s.ReserveDirectoryWork()
+		if err != nil {
+			t.Error("writer was not released", err)
+		} else {
+			release()
+		}
+		cancel()
+	}
+	if _, err := s.Start(id, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("completion was not notified")
+	}
+}
+
 func TestManualOrganizeMovieTVAndSubtitles(t *testing.T) {
 	s, drive, id, store := newOrganizeTest(t)
 	drive.pageSize = 1 // Includes all pages when scanning and checking collisions.

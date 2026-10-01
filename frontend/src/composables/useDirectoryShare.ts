@@ -7,8 +7,15 @@ export interface DirectoryShareConfig {
   stage: string; running: boolean; queued: boolean; hasBatch: boolean
   lastError: string; logTaskID?: string; logAttempt?: number; generationTaskId?: string
   recoveryMessage?: string
+  enabled?: boolean; intervalSeconds?: number; schedulePaused?: string; scheduleMessage?: string
+  lastScanAt?: string; nextScanAt?: string; trigger?: string; batchCount?: number
+  recentRuns?: { taskId: string; trigger: string; status: string; message: string; shareUrl?: string; time: string }[]
   shareUrl?: string; batchDirectoryName?: string; batchMoved?: number; cleanupIndex?: number
   endedBatches?: { logTaskId: string; directoryId?: string; directoryName?: string; shareUrl?: string; accountId: string; cleaned: boolean; endedAt: string }[]
+}
+
+export interface DirectoryGenerationSettings {
+  outputDir: string; baseUrl: string; videoExtensions: string; metadataExtensions: string; minSizeMB: number; recursive: boolean
 }
 
 export const directoryShareActive = (value?: DirectoryShareConfig | null) => !!value && (value.running || value.queued || (value.hasBatch && !value.lastError && !['blocked', 'sharing_legacy'].includes(value.stage)))
@@ -18,6 +25,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
   const monitor = ref<DirectoryShareConfig>()
   const accountId = ref('')
   const accountReady = ref(false)
+  const generation = ref<DirectoryGenerationSettings>()
   const loading = ref(true)
   const submitting = ref(false)
   const error = ref('')
@@ -31,17 +39,20 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     if (loading.value || submitting.value) return '正在读取或提交任务'
     if (error.value) return '请先刷新配置和任务状态'
     if (!monitor.value) return '请先配置分享目录'
-    if (['blocked', 'sharing_legacy'].includes(monitor.value.stage)) return '当前批次需要人工核对，请查看目录分享'
+    if (['blocked', 'recovering', 'creating', 'sharing_legacy'].includes(monitor.value.stage) || (monitor.value.stage === 'error' && monitor.value.hasBatch)) return '当前批次需要核对，请先核对残留或结束任务'
     if (bindingChanged.value) return '主账号已变化，请重新选择目录'
     if (!accountReady.value) return '请在 115 助手中配置并登录主账号'
     if (active.value) return '当前任务已提交，正在后台处理'
     return ''
   })
-  const label = computed(() => submitting.value ? '提交中…' : active.value ? '目录任务处理中' : monitor.value?.hasBatch ? '继续本次目录分享' : '分享配置目录')
+  const label = computed(() => submitting.value ? '提交中…' : active.value ? '任务处理中' : monitor.value?.hasBatch ? '重试本次任务' : '立即分享并生成 STRM')
   const stageText = computed(() => {
     const value = monitor.value
     if (!value) return '尚未配置分享目录'
     if (value.lastError) return value.lastError
+    if (value.stage === 'creating') return '正在创建临时目录'
+    if (value.stage === 'recovering') return '正在核对残留目录'
+    if (!value.queued && value.stage === 'waiting' && value.enabled) return value.scheduleMessage || '等待定时检查'
     if (value.stage === 'ended') return value.recoveryMessage || '上次任务已结束，可修改目录或重新发起分享'
     if (value.queued && ['waiting', 'empty', 'completed'].includes(value.stage)) return '已排队，等待后台处理'
     const stages: Record<string, string> = { waiting: '等待手动分享', empty: '目录为空', moving: '正在搬入临时目录', sharing: '正在创建分享', configuring: '正在配置分享', verifying: '正在等待并校验分享', generating: '公共 STRM 任务处理中，审核等待及重试见分享日志', cleaning: '正在清理临时目录', checking_share: '正在结束已清理的旧任务', completed: '分享及 STRM 生成完成', blocked: '需要人工核对', error: '任务未完成' }
@@ -54,25 +65,29 @@ export function useDirectoryShare(token: string, configurationId: () => string |
       const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
       const [data, settings, accounts] = await Promise.all([
         p115Request<{ monitors: DirectoryShareConfig[] }>(token, 'folder-monitors', { signal }),
-        p115Request<{ settings: { accountId: string } }>(token, 'share/automation-config', { signal }),
+        p115Request<{ settings: { accountId: string; generation: DirectoryGenerationSettings } }>(token, 'share/automation-config', { signal }),
         p115Request<{ accounts: P115Account[] }>(token, 'accounts', { signal }),
       ])
       if (lifecycle.signal.aborted || version !== revision) return
       const id = configurationId()
       monitor.value = id ? data.monitors.find(value => value.id === id) : data.monitors.length === 1 ? data.monitors[0] : undefined
       accountId.value = settings.settings.accountId || ''
+      generation.value = settings.settings.generation
       const bound = monitor.value?.hasBatch ? monitor.value.accountId : accountId.value
       const account = accounts.accounts.find(value => value.id === bound)
       accountReady.value = !!account?.primary && !!account.configured
       error.value = ''
     } catch (reason) {
       if (!lifecycle.signal.aborted && version === revision) error.value = reason instanceof Error ? reason.message : '读取目录分享失败'
-    } finally { if (!lifecycle.signal.aborted) loading.value = false }
+    } finally { if (!lifecycle.signal.aborted && version === revision) loading.value = false }
   }
+
+  function invalidate() { revision++ }
 
   async function submit() {
     if (unavailable.value || !monitor.value) return
     submitting.value = true; notice.value = ''; error.value = ''
+    invalidate()
     try {
       const result = await p115Request<{ accepted: boolean; taskId: string }>(token, `folder-monitors/${monitor.value.id}/share`, {
         method: 'POST', body: '{}', signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
@@ -88,6 +103,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     if (!canEnd.value || !monitor.value) return
     if (!window.confirm('结束本次目录任务并解除配置占用？不会删除或移回网盘文件，不会取消分享或删除已生成的 STRM。剩余临时文件需自行整理，原位置保存在历史记录中。')) return
     submitting.value = true; error.value = ''; notice.value = ''
+    invalidate()
     try {
       await p115Request(token, `folder-monitors/${monitor.value.id}/end`, {
         method: 'POST', body: JSON.stringify({ taskId: monitor.value.logTaskID || '' }),
@@ -105,5 +121,5 @@ export function useDirectoryShare(token: string, configurationId: () => string |
   }
   onMounted(() => { void poll() })
   onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(timer) })
-  return { monitor, accountId, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, submit, canEnd, endBatch }
+  return { monitor, accountId, accountReady, generation, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, invalidate, submit, canEnd, endBatch }
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
+import { STRM_ROOT } from '../utils/strmDirectory'
 
 interface DirectoryEntry {
   name: string
@@ -21,7 +22,7 @@ const dialog = ref<HTMLDialogElement>()
 const currentPath = ref('')
 const displayPath = ref('/strm')
 const directories = ref<DirectoryEntry[]>([])
-const loading = ref(false)
+const loading = ref(true)
 const error = ref('')
 const truncated = ref(false)
 let controller: AbortController | undefined
@@ -63,7 +64,7 @@ function close() {
 }
 
 function select() {
-  if (currentPath.value) emit('select', currentPath.value)
+  if (!loading.value && !error.value) emit('select', currentPath.value || STRM_ROOT)
 }
 
 onMounted(() => {
@@ -123,7 +124,7 @@ onBeforeUnmount(() => {
 
         <footer class="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
           <button type="button" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800" @click="close">取消</button>
-          <button type="button" :disabled="!currentPath || loading || !!error" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="select">✓ 选择此目录</button>
+          <button type="button" :disabled="loading || !!error" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="select">✓ {{ currentPath ? '选择此目录' : '选择 STRM 根目录' }}</button>
         </footer>
       </section>
     </dialog>

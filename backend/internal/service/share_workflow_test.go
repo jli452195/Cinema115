@@ -403,3 +403,28 @@ func TestAutomationSettingsPersistWithoutShareCredentials(t *testing.T) {
 		t.Fatalf("持久化错误: %+v", got)
 	}
 }
+
+func TestAutomationSettingsPersistExplicitRoot(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "root-settings.json")
+	store, err := NewAutomationStore(file, dir, "http://nas:8115")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := store.Value()
+	value.Generation.OutputDir = "."
+	if err := store.Save(value); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewAutomationStore(file, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Value().Generation.OutputDir != "." {
+		t.Fatal("lost root selection")
+	}
+	value.Generation.OutputDir = ""
+	if err := reopened.Save(value); err == nil {
+		t.Fatal("missing selection became root")
+	}
+}

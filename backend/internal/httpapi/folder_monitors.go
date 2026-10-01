@@ -48,6 +48,7 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"videoExtensions": value.VideoExtensions, "metadataExtensions": value.MetadataExtensions,
 		"minSizeMB": value.MinSizeMB, "recursive": value.Recursive,
 		"enabled": value.Enabled, "intervalSeconds": value.IntervalSeconds,
+		"schedulePaused": value.SchedulePaused, "scheduleMessage": value.ScheduleMessage, "recentRuns": value.RecentRuns,
 		"running": value.Running, "queued": value.TaskPending && !value.Running, "trigger": value.TaskTrigger,
 		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt, "generationTaskId": value.GenerationTaskID,
 		"hasBatch":        value.BatchDirectoryID != "" || value.BatchCreationPending,
@@ -125,13 +126,17 @@ func RegisterFolderMonitors(admin *gin.RouterGroup, monitors *service.FolderMoni
 	})
 	group.PUT("/:id/schedule", func(c *gin.Context) {
 		var input struct {
-			Enabled *bool `json:"enabled"`
+			Enabled         *bool `json:"enabled"`
+			IntervalSeconds int   `json:"intervalSeconds"`
 		}
 		if c.ShouldBindJSON(&input) != nil || input.Enabled == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请指定定时检查开关状态"})
 			return
 		}
-		value, err := monitors.SetSchedule(c.Request.Context(), c.Param("id"), *input.Enabled)
+		if input.IntervalSeconds == 0 {
+			input.IntervalSeconds = 600
+		}
+		value, err := monitors.UpdateSchedule(c.Request.Context(), c.Param("id"), *input.Enabled, input.IntervalSeconds)
 		if err != nil {
 			fail(c, err)
 			return

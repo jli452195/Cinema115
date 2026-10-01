@@ -27,6 +27,7 @@ type folderMonitorClientFake struct {
 	onShare            func()
 	onMove             func()
 	listHook           func(context.Context, string, int, string) error
+	driveHook          func(context.Context, string, int, string) error
 }
 
 func (f *folderMonitorClientFake) CreateDirectory(_ context.Context, parent, name, _ string) (string, error) {
@@ -193,7 +194,12 @@ func pageOf(files []p115.ShareFile, offset int) *p115.SharePage {
 	return &p115.SharePage{Count: len(files), Offset: offset, Files: append([]p115.ShareFile(nil), files[offset:]...)}
 }
 
-func (f *folderMonitorClientFake) DriveFiles(_ context.Context, cid string, offset int, _ string) (*p115.SharePage, error) {
+func (f *folderMonitorClientFake) DriveFiles(ctx context.Context, cid string, offset int, cookie string) (*p115.SharePage, error) {
+	if f.driveHook != nil {
+		if err := f.driveHook(ctx, cid, offset, cookie); err != nil {
+			return nil, err
+		}
+	}
 	return pageOf(f.drive[cid], offset), nil
 }
 

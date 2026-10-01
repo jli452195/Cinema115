@@ -21,6 +21,10 @@ type FolderMonitor struct {
 	MinSizeMB            int64              `json:"minSizeMB"`
 	Recursive            bool               `json:"recursive"`
 	Enabled              bool               `json:"enabled"`
+	ScheduleVersion      uint64             `json:"scheduleVersion,omitempty"`
+	SchedulePaused       string             `json:"schedulePaused,omitempty"`
+	ScheduleMessage      string             `json:"scheduleMessage,omitempty"`
+	RecentRuns           []FolderRun        `json:"recentRuns,omitempty"`
 	TaskPending          bool               `json:"taskPending,omitempty"`
 	TaskTrigger          string             `json:"taskTrigger,omitempty"`
 	LogTaskID            string             `json:"logTaskID,omitempty"`
@@ -51,6 +55,15 @@ type FolderMonitor struct {
 	NextScanAt           time.Time          `json:"nextScanAt,omitempty"`
 	LastError            string             `json:"lastError,omitempty"`
 	UpdatedAt            time.Time          `json:"updatedAt"`
+}
+
+type FolderRun struct {
+	TaskID   string    `json:"taskId"`
+	Trigger  string    `json:"trigger"`
+	Status   string    `json:"status"`
+	Message  string    `json:"message"`
+	ShareURL string    `json:"shareUrl,omitempty"`
+	Time     time.Time `json:"time"`
 }
 
 // EndedFolderBatch retains recovery locations when the user releases a batch.

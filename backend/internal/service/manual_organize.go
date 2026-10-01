@@ -118,6 +118,8 @@ type organizePending struct {
 // Only the live worker keeps a credential snapshot. Neither plans nor history
 // contain credentials. A restart interrupts work instead of rebinding accounts.
 type ManualOrganize struct {
+	// Set at startup; called after successful persistence and releasing the writer.
+	OnCompleted   func(context.Context, OrganizeConfig)
 	mu            sync.Mutex
 	store         accountSecretStore
 	doc           organizeDocument
@@ -131,6 +133,15 @@ type ManualOrganize struct {
 	cleanupPlans  map[string]OrganizeCleanup
 	cleaning      bool
 	subtitlePlans map[string]SubtitleImport
+}
+
+// ReserveDirectoryWork shares the same reservation as organize/cleanup/upload.
+// The caller must release it when its bounded directory operation finishes.
+func (s *ManualOrganize) ReserveDirectoryWork() (func(), error) {
+	if err := s.reserveCleanup(); err != nil {
+		return nil, err
+	}
+	return s.releaseCleanup, nil
 }
 
 func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*ManualOrganize, error) {
