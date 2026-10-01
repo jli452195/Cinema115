@@ -50,8 +50,9 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"enabled": value.Enabled, "intervalSeconds": value.IntervalSeconds,
 		"running": value.Running, "queued": value.TaskPending && !value.Running, "trigger": value.TaskTrigger,
 		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt, "generationTaskId": value.GenerationTaskID,
-		"hasBatch": value.BatchDirectoryID != "",
-		"stage":    value.Stage, "shareUrl": value.ShareURL, "shareReviewing": value.ShareReviewing, "stableScans": value.StableScans,
+		"hasBatch":        value.BatchDirectoryID != "" || value.BatchCreationPending,
+		"recoveryMessage": value.RecoveryMessage,
+		"stage":           value.Stage, "shareUrl": value.ShareURL, "shareReviewing": value.ShareReviewing, "stableScans": value.StableScans,
 		"batchCount": batchCount, "batchMoved": value.BatchMoveIndex, "cleanupIndex": value.CleanupIndex,
 		"batchDirectoryName": value.BatchDirectoryName, "batchMoveIndex": value.BatchMoveIndex,
 		"lastScanAt": value.LastScanAt, "nextScanAt": value.NextScanAt,
@@ -150,6 +151,21 @@ func RegisterFolderMonitors(admin *gin.RouterGroup, monitors *service.FolderMoni
 		c.JSON(status, gin.H{"accepted": accepted, "taskId": value.LogTaskID, "monitorId": value.ID, "generationTaskId": value.GenerationTaskID})
 	}
 	group.POST("/:id/share", trigger)
+	group.POST("/:id/recover", func(c *gin.Context) {
+		var input struct {
+			TaskID string `json:"taskId"`
+		}
+		if c.ShouldBindJSON(&input) != nil || strings.TrimSpace(input.TaskID) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请提供当前任务编号"})
+			return
+		}
+		value, err := monitors.Recover(c.Request.Context(), c.Param("id"), input.TaskID)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, folderMonitorView(value))
+	})
 	group.POST("/:id/end", func(c *gin.Context) {
 		var input struct {
 			TaskID string `json:"taskId"`

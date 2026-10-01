@@ -204,6 +204,7 @@ func TestFolderMonitorInterruptedBatchResumesWithScheduleOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.drive["900"] = nil
+	client.drive["0"] = []p115.ShareFile{{ID: "900", Name: "Cinema115-临时-test", Directory: true}}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}

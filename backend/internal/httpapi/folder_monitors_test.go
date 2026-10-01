@@ -78,6 +78,9 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	request(http.MethodPost, "/test/scan", `{}`, http.StatusBadRequest)
+	request(http.MethodPost, "/test/recover", `{}`, http.StatusBadRequest)
+	request(http.MethodPost, "/test/recover", `{"taskId":"stale"}`, http.StatusBadRequest)
+	request(http.MethodPost, "/missing/recover", `{"taskId":"existing-task"}`, http.StatusNotFound)
 	request(http.MethodPost, "/missing/scan", `{}`, http.StatusNotFound)
 	request(http.MethodPost, "/test/end", `{"taskId":"stale"}`, http.StatusBadRequest)
 	ended := request(http.MethodPost, "/test/end", `{"taskId":"existing-task"}`, http.StatusOK)
@@ -88,4 +91,12 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 		t.Fatal("lost retained directory history")
 	}
 	request(http.MethodPost, "/test/end", `{"taskId":"existing-task"}`, http.StatusOK)
+	request(http.MethodPost, "/test/recover", `{"taskId":"existing-task"}`, http.StatusOK)
+}
+
+func TestFolderCreationIntentIsVisibleAsRetainedBatch(t *testing.T) {
+	view := folderMonitorView(model.FolderMonitor{BatchCreationPending: true, Stage: "blocked", RecoveryMessage: "result"})
+	if view["hasBatch"] != true || view["recoveryMessage"] != "result" {
+		t.Fatal("lost recovery state", view)
+	}
 }

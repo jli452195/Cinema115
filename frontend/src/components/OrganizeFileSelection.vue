@@ -10,6 +10,7 @@ const excluded = ref<string[]>([])
 const collapsed = ref<string[]>([])
 const anchor = ref('')
 const expandedPaths = ref<string[]>([])
+const bulkOpen = ref(false)
 const groups = computed(() => directoryGroups(props.rows, props.rootPath))
 const available = computed(() => props.rows.filter(row => !rowExcluded(row, excluded.value)))
 const selected = computed(() => available.value.filter(row => row.selected))
@@ -65,7 +66,7 @@ watch([search, onlySelected], () => { anchor.value = '' })
 
 <template>
   <div class="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700">
-    <div class="max-h-[70vh] overflow-y-auto overscroll-contain">
+    <div class="max-h-[60vh] overflow-y-auto overscroll-contain">
       <div class="sticky top-0 z-10 space-y-2 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-2">
         <p role="status" class="text-xs font-medium text-slate-700 dark:text-slate-300">已选 {{ selected.length }} / 可选 {{ available.length }} · 已排除 {{ rows.length - available.length }} · 筛选结果 {{ filtered.length }}</p>
@@ -74,6 +75,9 @@ watch([search, onlySelected], () => { anchor.value = '' })
         <div class="flex flex-wrap items-center gap-2">
           <input v-model="search" aria-label="筛选整理文件名" type="search" placeholder="搜索文件名" class="input min-w-0 w-40 flex-1 lg:max-w-xs" />
           <label class="flex items-center gap-2 text-xs"><input v-model="onlySelected" type="checkbox" />只看已选</label>
+          <button class="secondary" :aria-expanded="bulkOpen" @click="bulkOpen = !bulkOpen">批量选择 {{ bulkOpen ? '▴' : '▾' }}</button>
+        </div>
+        <div v-if="bulkOpen" class="flex flex-wrap gap-2 rounded-lg bg-slate-50 p-2 dark:bg-slate-950">
           <button class="secondary" :disabled="disabled" @click="selectCurrent">只选当前层</button>
           <button class="secondary" :disabled="disabled || !filtered.length" @click="bulk('all')">全选筛选结果</button>
           <button class="secondary" :disabled="disabled || !filtered.length" @click="bulk('none')">取消筛选结果</button>
@@ -94,7 +98,7 @@ watch([search, onlySelected], () => { anchor.value = '' })
         </div>
         <p v-if="group.path === rootPath" class="break-all px-3 py-2 text-xs text-slate-400 dark:text-slate-500">{{ rootPath }}</p>
         <div v-if="!collapsed.includes(group.path)" class="divide-y divide-slate-100 dark:divide-slate-800">
-          <div v-for="row in group.rows.filter(matches)" :key="row.id" :data-organize-file="row.id" class="file-columns cursor-pointer gap-x-3 gap-y-2 px-3 py-2 hover:bg-blue-50/60 lg:grid lg:items-center" :class="[row.selected ? 'bg-blue-50/40' : 'bg-white dark:bg-slate-900', tv ? 'tv-columns' : 'movie-columns']" @click="clickRow(row, $event)" @mousedown="event => { if (event.shiftKey && !(event.target as HTMLElement).closest('input')) event.preventDefault() }">
+          <div v-for="row in group.rows.filter(matches)" :key="row.id" :data-organize-file="row.id" class="file-columns cursor-pointer gap-x-3 gap-y-2 px-3 py-2 hover:bg-blue-50/60 dark:hover:bg-blue-950/40 lg:grid lg:items-center" :class="[row.selected ? 'bg-blue-50/40 dark:bg-blue-950/20' : 'bg-white dark:bg-slate-900', tv ? 'tv-columns' : 'movie-columns']" @click="clickRow(row, $event)" @mousedown="event => { if (event.shiftKey && !(event.target as HTMLElement).closest('input')) event.preventDefault() }">
             <div class="flex min-w-0 items-start gap-3">
               <input type="checkbox" :checked="row.selected" :aria-label="`选择 ${row.name}`" :disabled="disabled" class="mt-1 h-4 w-4 shrink-0" @click.stop="toggleRow(row, $event)" />
               <button class="min-w-0 flex-1 break-all text-left text-sm leading-5 text-slate-800 dark:text-slate-200 lg:text-xs" :disabled="disabled" :aria-pressed="row.selected" @click.stop="toggleRow(row, $event)">{{ row.name }}</button>

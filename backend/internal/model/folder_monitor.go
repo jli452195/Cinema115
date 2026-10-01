@@ -38,6 +38,8 @@ type FolderMonitor struct {
 	BatchFingerprint     string             `json:"batchFingerprint,omitempty"`
 	BatchDirectoryID     string             `json:"batchDirectoryID,omitempty"`
 	BatchDirectoryName   string             `json:"batchDirectoryName,omitempty"`
+	BatchCreationPending bool               `json:"batchCreationPending,omitempty"`
+	RecoveryMessage      string             `json:"recoveryMessage,omitempty"`
 	BatchMoveIndex       int                `json:"batchMoveIndex,omitempty"`
 	BatchParentCID       string             `json:"batchParentCID,omitempty"`
 	BatchAccountRevision uint64             `json:"batchAccountRevision,omitempty"`

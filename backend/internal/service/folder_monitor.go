@@ -143,7 +143,7 @@ func (s *FolderMonitorService) Save(ctx context.Context, value model.FolderMonit
 		if err != nil {
 			return model.FolderMonitor{}, err
 		}
-		if s.running[value.ID] || existing.TaskPending || existing.BatchDirectoryID != "" || !monitorEditable(existing.Stage) {
+		if s.running[value.ID] || existing.TaskPending || existing.BatchCreationPending || existing.BatchDirectoryID != "" || !monitorEditable(existing.Stage) {
 			return model.FolderMonitor{}, generationInputError("当前批次正在处理，不能修改监控配置")
 		}
 		copyMonitorRuntime(&value, existing)
@@ -202,6 +202,7 @@ func copyMonitorRuntime(dst *model.FolderMonitor, src model.FolderMonitor) {
 	dst.Stage, dst.ShareURL, dst.SharePassword, dst.ShareReviewing = src.Stage, src.ShareURL, src.SharePassword, src.ShareReviewing
 	dst.BatchIDs, dst.BatchFingerprint = append([]string(nil), src.BatchIDs...), src.BatchFingerprint
 	dst.BatchDirectoryID, dst.BatchDirectoryName, dst.BatchMoveIndex = src.BatchDirectoryID, src.BatchDirectoryName, src.BatchMoveIndex
+	dst.BatchCreationPending, dst.RecoveryMessage = src.BatchCreationPending, src.RecoveryMessage
 	dst.BatchParentCID = src.BatchParentCID
 	dst.BatchAccountRevision, dst.BatchCredentialHash, dst.CleanupIndex = src.BatchAccountRevision, src.BatchCredentialHash, src.CleanupIndex
 	dst.StableFingerprint, dst.StableScans = src.StableFingerprint, src.StableScans
@@ -226,7 +227,7 @@ func (s *FolderMonitorService) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if s.running[id] || value.TaskPending || value.BatchDirectoryID != "" || !monitorEditable(value.Stage) {
+	if s.running[id] || value.TaskPending || value.BatchCreationPending || value.BatchDirectoryID != "" || !monitorEditable(value.Stage) {
 		return generationInputError("当前批次正在处理，不能删除监控配置")
 	}
 	return s.Store.DeleteFolderMonitor(ctx, id)
@@ -265,10 +266,14 @@ func (s *FolderMonitorService) ScanNow(ctx context.Context, id string) error {
 	if s.running[id] || value.TaskPending {
 		return ErrFolderMonitorBusy
 	}
-	if value.Stage == "blocked" || value.Stage == "sharing_legacy" || (value.Stage == "error" && value.BatchDirectoryID != "") {
+	if value.BatchCreationPending {
+		return generationInputError("临时目录创建结果待核对，请先核对残留")
+	}
+	if value.Stage == "blocked" || value.Stage == "recovering" || value.Stage == "sharing_legacy" || (value.Stage == "error" && value.BatchDirectoryID != "") {
 		return generationInputError("当前批次需要人工核对，不能直接重试")
 	}
 	if value.BatchDirectoryID == "" && monitorIdleStage(value.Stage) {
+		value.RecoveryMessage = ""
 		value.Stage, value.LastError = "waiting", ""
 		if err := s.pinSettings(&value); err != nil {
 			return err
@@ -367,6 +372,11 @@ func (s *FolderMonitorService) runDue(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// A failed batch may only release verified empty or missing staging
+			// directories. Recover never deletes ungenerated source files.
+			// Failure leaves the original error/checkpoint intact; do not log a
+			// second failure for a nonempty or temporarily unreadable directory.
+			_, _ = s.Recover(ctx, value.ID, value.LogTaskID)
 		} else if latest, err := s.Store.GetFolderMonitor(ctx, value.ID); err == nil && latest.LogTaskID != "" {
 			level, message := "INFO", "本次执行结束"
 			if latest.Stage == "completed" {
@@ -446,6 +456,8 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 		return s.failAt(ctx, &value, "blocked", "本批次启动后账号凭据已经变化，已停止；请人工核对")
 	}
 	switch value.Stage {
+	case "creating":
+		return s.failAt(ctx, &value, "blocked", "临时目录创建结果尚未确认，正在核对残留；不会重复创建")
 	case "waiting", "empty", "completed", "error", "ended":
 		if value.BatchDirectoryID != "" {
 			return s.failAt(ctx, &value, "blocked", "旧批次保留了临时目录但缺少恢复阶段，请人工核对；不会创建新批次")
@@ -548,10 +560,30 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 		return s.fail(ctx, value, "转存父目录 ID 无效："+err.Error())
 	}
 	name := batchDirectoryName()
+	// Persist the exact creation intent before the non-idempotent remote call.
+	// A restart reconciles this name under this parent and never creates again.
+	parents, err := s.listRootEntries(ctx, parent, account.Cookie)
+	if err != nil {
+		return s.fail(ctx, value, "核对临时目录父目录失败："+err.Error())
+	}
+	for _, entry := range parents {
+		if entry.Name == name {
+			return s.fail(ctx, value, "临时目录名称已存在，请重新提交")
+		}
+	}
+	value.BatchIDs, value.BatchFingerprint = ids, manifestFingerprint(manifest)
+	value.BatchDirectoryName, value.BatchParentCID = name, parent
+	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
+	value.BatchCreationPending, value.Stage = true, "creating"
+	value.SharePassword = password
+	value.ShareURL, value.CleanupIndex, value.BatchMoveIndex = "", 0, 0
+	if err := s.checkpoint(ctx, value); err != nil {
+		return err
+	}
 	logGeneration(ctx, "INFO", fmt.Sprintf("发现 %d 个顶层条目，开始创建临时目录：%s，父目录=%s", len(roots), name, parent))
 	directoryID, err := s.Client.CreateDirectory(ctx, parent, name, account.Cookie)
 	if err != nil {
-		return s.fail(ctx, value, "创建监控批次目录失败："+err.Error())
+		return s.failAt(ctx, value, "blocked", "创建临时目录结果待核对："+err.Error())
 	}
 	if directoryID == "" || directoryID == "0" || directoryID == value.SourceCID || directoryID == parent {
 		return s.fail(ctx, value, "115 返回了无效的临时目录编号，已停止")
@@ -559,6 +591,7 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 	// Persist a fixed range: later arrivals must never join this batch.
 	value.BatchIDs, value.BatchFingerprint = ids, manifestFingerprint(manifest)
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex = directoryID, name, 0
+	value.BatchCreationPending = false
 	value.BatchParentCID = parent
 	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
 	value.CleanupIndex, value.ShareURL, value.SharePassword, value.LastError = 0, "", password, ""
@@ -830,19 +863,38 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 		logGeneration(ctx, "INFO", "开始清理临时目录（移入 115 回收站）")
 		for value.CleanupIndex < 1 {
 			id := value.BatchDirectoryID
+			if id == "" || id == "0" || id == value.SourceCID || id == s.sharedParentCID(value) {
+				return s.failAt(ctx, value, "blocked", "清理目录归属无效，已停止")
+			}
 			exists, err := s.driveRootContains(ctx, s.sharedParentCID(value), id, account.Cookie)
 			if err != nil {
 				return s.failAt(ctx, value, "cleaning", "核对待清理条目失败："+err.Error())
 			}
 			if !exists {
+				missing, missingErr := s.directoryMissing(ctx, id, account.Cookie)
+				if missingErr != nil || !missing {
+					return s.failAt(ctx, value, "cleaning", "临时目录不在原位置，无法确认已删除；已保留批次，请核对残留")
+				}
 				value.CleanupIndex++
 				if err := s.checkpoint(ctx, value); err != nil {
 					return err
 				}
 				continue
 			}
+			// This check also runs after restart or retry of the cleaning stage.
+			manifest, _, verifyErr := s.scanDrive(ctx, id, nil, account.Cookie)
+			if verifyErr != nil {
+				return s.failAt(ctx, value, "cleaning", "清理前核对临时目录失败："+verifyErr.Error())
+			}
+			if value.BatchFingerprint == "" || !manifestMatchesFingerprint(manifest, value.BatchFingerprint) {
+				return s.failAt(ctx, value, "cleaning", "临时目录内容已变化，已停止清理，请核对残留")
+			}
 			if err := s.Client.DeleteEntries(ctx, []string{id}, account.Cookie); err != nil {
 				return s.failAt(ctx, value, "cleaning", "STRM 已生成，但部分源文件移入回收站失败："+err.Error())
+			}
+			stillPresent, verifyErr := s.driveRootContains(ctx, s.sharedParentCID(value), id, account.Cookie)
+			if verifyErr != nil || stillPresent {
+				return s.failAt(ctx, value, "cleaning", "清理响应已收到，但目录移除结果尚未确认，请核对残留")
 			}
 			value.CleanupIndex = 1
 			if err := s.checkpoint(ctx, value); err != nil {
@@ -865,6 +917,7 @@ func (s *FolderMonitorService) completeCleanedBatch(ctx context.Context, value *
 	value.StableFingerprint, value.StableScans = "", 0
 	value.BatchIDs, value.BatchFingerprint = nil, ""
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex, value.BatchParentCID = "", "", 0, ""
+	value.BatchCreationPending = false
 	value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
 	value.ShareReviewing = false
 	value.NextScanAt = time.Time{}

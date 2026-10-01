@@ -68,8 +68,8 @@ func TestDirectoryDeletedFilesStopRetryAndEndUnlocksConfiguration(t *testing.T) 
 			if ended.EndedBatches[0].DirectoryID != batch.BatchDirectoryID || ended.EndedBatches[0].ShareURL != batch.ShareURL {
 				t.Fatal("lost original recovery location")
 			}
-			if len(client.deleted) != 0 {
-				t.Fatal("ending removed cloud files")
+			if len(client.deleted) != 1 || client.deleted[0] != batch.BatchDirectoryID {
+				t.Fatal("automatic recovery must remove only the verified empty staging directory")
 			}
 			results, err := tasks.RetryTasks(ctx, []string{task.ID})
 			if err != nil || len(results) != 1 || results[0].Accepted {

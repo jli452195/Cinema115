@@ -6,6 +6,7 @@ export interface DirectoryShareConfig {
   id: string; accountId: string; sourceCID: string; sourcePath: string
   stage: string; running: boolean; queued: boolean; hasBatch: boolean
   lastError: string; logTaskID?: string; logAttempt?: number; generationTaskId?: string
+  recoveryMessage?: string
   shareUrl?: string; batchDirectoryName?: string; batchMoved?: number; cleanupIndex?: number
   endedBatches?: { logTaskId: string; directoryId?: string; directoryName?: string; shareUrl?: string; accountId: string; cleaned: boolean; endedAt: string }[]
 }
@@ -41,7 +42,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     const value = monitor.value
     if (!value) return '尚未配置分享目录'
     if (value.lastError) return value.lastError
-    if (value.stage === 'ended') return '上次任务已结束，可修改目录或重新发起分享'
+    if (value.stage === 'ended') return value.recoveryMessage || '上次任务已结束，可修改目录或重新发起分享'
     if (value.queued && ['waiting', 'empty', 'completed'].includes(value.stage)) return '已排队，等待后台处理'
     const stages: Record<string, string> = { waiting: '等待手动分享', empty: '目录为空', moving: '正在搬入临时目录', sharing: '正在创建分享', configuring: '正在配置分享', verifying: '正在等待并校验分享', generating: '公共 STRM 任务处理中，审核等待及重试见分享日志', cleaning: '正在清理临时目录', checking_share: '正在结束已清理的旧任务', completed: '分享及 STRM 生成完成', blocked: '需要人工核对', error: '任务未完成' }
     return stages[value.stage] || '任务处理中'

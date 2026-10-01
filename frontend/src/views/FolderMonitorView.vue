@@ -75,6 +75,19 @@ async function remove() {
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '操作失败' }
   finally { saving.value = false }
 }
+async function recover() {
+  if (!monitor.value?.logTaskID || saving.value) return
+  saving.value = true; error.value = ''; notice.value = ''
+  try {
+    const value = await p115Request<DirectoryShareConfig>(props.token, `folder-monitors/${monitor.value.id}/recover`, {
+      method: 'POST', body: JSON.stringify({ taskId: monitor.value.logTaskID }),
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(40000)]),
+    })
+    setMonitor(value); buttonRevision.value++
+    notice.value = value.recoveryMessage || '核对完成，当前批次已保留。'
+  } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '核对失败' }
+  finally { saving.value = false }
+}
 onMounted(async () => {
   document.title = '115 目录分享 · Cinema115'
   try {
@@ -109,6 +122,10 @@ onBeforeUnmount(() => lifecycle.abort())
       </div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
       <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{{ notice }}</p>
+      <div v-if="monitor?.hasBatch && monitor.lastError" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/20">
+        <p class="text-amber-800 dark:text-amber-300">本批次未完成。核对残留只会回收确认安全的空临时目录；仍有文件或状态不明时保留。</p>
+        <button type="button" :disabled="saving || monitor.running || monitor.queued" class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-xs text-amber-800 disabled:opacity-40 dark:text-amber-300" @click="recover">{{ saving ? '正在核对…' : '核对残留' }}</button>
+      </div>
       <div class="border-t border-slate-100 dark:border-slate-800 pt-5">
         <DirectoryShareButton v-if="!loading" :key="buttonRevision" :token="token" :configuration-id="monitor?.id" :disabled="dirty || saving" disabled-reason="请先保存目录设置" @updated="updateStatus" />
       </div>
