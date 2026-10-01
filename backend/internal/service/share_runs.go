@@ -99,6 +99,7 @@ func NewShareRuns(root context.Context, tasks *ShareTasks) *ShareRuns {
 }
 
 type shareRunFingerprintInput struct {
+	SharePath          string `json:"sharePath,omitempty"`
 	AccountID          string `json:"accountId"`
 	CredentialHash     string `json:"credentialHash"`
 	ShareURL           string `json:"shareUrl"`
@@ -173,6 +174,7 @@ func shareRunFingerprint(settings AutomationSettings, credentialHash string, inp
 			parentCID, fixedPassword = settings.ParentCID, settings.FixedSharePassword
 		}
 		items[i] = shareRunFingerprintInput{
+			SharePath: input.SharePath,
 			AccountID: settings.AccountID, CredentialHash: credentialHash, ShareURL: canonical.String(), CID: cid,
 			Mode: mode, OutputDir: strings.TrimSpace(input.OutputDir), BaseURL: strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
 			VideoExtensions: normalizedExtensionList(input.VideoExtensions, DefaultVideoExtensions), MetadataExtensions: normalizedExtensionList(input.MetadataExtensions, ""),
@@ -633,19 +635,16 @@ func (s *ShareRuns) Run() {
 		}
 		s.mu.Lock()
 		var run *shareRun
-		limit := s.tasks.Settings.Value().MaxParallelBatches
-		if limit == 0 || active < limit {
-			for i, id := range s.queue {
-				candidate := s.runs[id]
-				if candidate.ctx.Err() != nil || !time.Now().Before(candidate.readyAt) {
-					run = candidate
-					s.queue = append(s.queue[:i], s.queue[i+1:]...)
-					// 出队即冻结批次，后续提交不能再修改工作器读取的切片。
-					if run.ctx.Err() == nil {
-						run.view.Status = "running"
-					}
-					break
+		for i, id := range s.queue {
+			candidate := s.runs[id]
+			if candidate.ctx.Err() != nil || !time.Now().Before(candidate.readyAt) {
+				run = candidate
+				s.queue = append(s.queue[:i], s.queue[i+1:]...)
+				// 出队即冻结批次，后续提交不能再修改工作器读取的切片。
+				if run.ctx.Err() == nil {
+					run.view.Status = "running"
 				}
+				break
 			}
 		}
 		if len(s.queue) == 0 && active == 0 && run == nil && s.root.Err() != nil {

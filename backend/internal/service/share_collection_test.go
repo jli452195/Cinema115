@@ -211,7 +211,7 @@ func TestCollectingBatchDoesNotBlockReadyBatchAndCancellation(t *testing.T) {
 	defer cancel()
 	tasks, _, input := setupShareTasks(t, &collectedGenerator{})
 	settings := tasks.Settings.Value()
-	settings.ReshareEnabled, settings.TGBatchWaitSeconds, settings.MaxParallelBatches = true, 300, 1
+	settings.ReshareEnabled, settings.TGBatchWaitSeconds = true, 300
 	if err := tasks.Settings.Save(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestCollectingBatchDoesNotBlockReadyBatchAndCancellation(t *testing.T) {
 	}
 }
 
-func TestShareRunConfiguredConcurrencyAndLateBatch(t *testing.T) {
+func TestShareRunLateBatchStartsAlongsideRunningBatch(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	started := make(chan struct{})
@@ -260,7 +260,7 @@ func TestShareRunConfiguredConcurrencyAndLateBatch(t *testing.T) {
 		}
 	}))
 	settings := tasks.Settings.Value()
-	settings.MaxParallelBatches, settings.ReshareEnabled, settings.TGBatchWaitSeconds = 1, true, 5
+	settings.ReshareEnabled, settings.TGBatchWaitSeconds = true, 5
 	if err := tasks.Settings.Save(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -290,17 +290,8 @@ func TestShareRunConfiguredConcurrencyAndLateBatch(t *testing.T) {
 	runs.mu.Unlock()
 	select {
 	case <-started:
-		t.Fatal("超过配置的并行数")
-	case <-time.After(150 * time.Millisecond):
-	}
-	settings.MaxParallelBatches = 0
-	if err := tasks.Settings.Save(settings); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("放开并行后仍被第一批阻塞")
+		t.Fatal("下一批仍被执行中的第一批阻塞")
 	}
 	if _, err := runs.Cancel(first.ID); err != nil {
 		t.Fatal(err)

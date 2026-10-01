@@ -1,5 +1,5 @@
 export interface STRMResult { cached?: boolean; count: number; metadataCount?: number; metadataFailed?: number; conflictRenamed?: number; directory: string; reshareUrl?: string; cleaned?: boolean }
-export interface STRMSettings { outputDir: string; baseUrl: string; videoExtensions: string; metadataExtensions: string; minSizeMB: number; recursive: boolean }
+export interface STRMSettings { outputDir: string; baseUrl: string; videoExtensions: string; metadataExtensions: string; minSizeMB: number; recursive: boolean; sharePath?: string }
 
 export async function savedSTRMSettings(token: string, signal: AbortSignal): Promise<STRMSettings> {
   const response = await fetch('/api/admin/p115/share/automation-config', { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })

@@ -44,6 +44,7 @@ type GenerateInput struct {
 	URL                string `json:"url"`
 	Password           string `json:"password"`
 	CID                string `json:"cid"`
+	SharePath          string `json:"sharePath,omitempty"`
 	OutputDir          string `json:"outputDir"`
 	BaseURL            string `json:"baseUrl"`
 	VideoExtensions    string `json:"videoExtensions"`
@@ -186,6 +187,15 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	}
 	if cookie == "" {
 		return nil, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
+	}
+	input, err = resolveSharePath(ctx, input, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		return g.Client.List(ctx, share, cid, offset, cookie)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if input.CID != "" {
+		cid = input.CID
 	}
 	result := &GenerationResult{Files: make([]GeneratedSTRM, 0)}
 	started := time.Now()

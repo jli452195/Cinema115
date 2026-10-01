@@ -83,6 +83,15 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if cookie == "" {
 		return nil, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
+	input, err = resolveSharePath(ctx, input, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
+	})
+	if err != nil {
+		if errors.Is(err, p115.ErrShareUnderReview) {
+			err = errors.Join(err, errSourceShareReview)
+		}
+		return nil, err
+	}
 	first, own, err := w.inspectSource(ctx, share, input.CID, cookie)
 	if err != nil {
 		return nil, err

@@ -192,6 +192,7 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 			if result != nil && result.ReshareURL != "" && (!req.Merged || req.OwnShareCID != "" || len(req.OwnRootIDs) > 0) {
 				// 新分享已经存在时复用该链接，不再转存或创建分享，也不自动删除临时目录。
 				req.Input.URL, req.Input.Password, req.Input.CID, req.Input.Mode = result.ReshareURL, "", "0", "direct"
+				req.Input.SharePath = ""
 				if req.OwnShareCID != "" {
 					req.Input.CID = req.OwnShareCID
 				}

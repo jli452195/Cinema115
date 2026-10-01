@@ -83,6 +83,16 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 			outcomes[i].Err = generationInputError("分享模式无效")
 			continue
 		}
+		input, err = resolveSharePath(ctx, input, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+			return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
+		})
+		if err != nil {
+			if errors.Is(err, p115.ErrShareUnderReview) {
+				err = errors.Join(err, errSourceShareReview)
+			}
+			outcomes[i].Err = err
+			continue
+		}
 		first, own, err := w.inspectSource(ctx, share, input.CID, cookie)
 		if err != nil {
 			if errors.Is(err, p115.ErrShareUnderReview) {

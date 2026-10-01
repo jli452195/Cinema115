@@ -26,7 +26,7 @@ function environment(t, fetch) {
   globalThis.fetch = fetch
   globalThis.HTMLElement = class {}
   globalThis.document = { body: { style: { overflow: '' } }, activeElement: null }
-  globalThis.window = { location: { origin: 'http://test' } }
+  globalThis.window = { location: { origin: 'http://test' }, setTimeout, clearTimeout, setInterval, clearInterval }
   const storage = new Map()
   globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }
   t.after(() => { for (const [key, value] of originals) globalThis[key] = value })
@@ -84,6 +84,8 @@ test('share settings save and reload explicit root; removing choices never selec
     await tick()
     const s = mounted.state
     assert.equal(s.initializing, false)
+    s.activeTab = 'basic'
+    s.sharePath = '/电影/2026'
     s.addDirectory('.')
     assert.equal(s.outputDir, '.')
     assert.equal(s.resolvedDirectory('.'), '/strm')
@@ -91,11 +93,14 @@ test('share settings save and reload explicit root; removing choices never selec
     await s.saveAutomation()
     assert.equal(writes.length, 1)
     assert.equal(writes[0].generation.outputDir, '.')
+    assert.equal(writes[0].generation.sharePath, '/电影/2026')
+    assert.equal(writes[0].generation.recursive, true)
     mounted.app.unmount()
     mounted = mount('views/ShareView.vue', { token: 'test' })
     await tick()
     const reloaded = mounted.state
     assert.equal(reloaded.outputDir, '.')
+    assert.equal(reloaded.sharePath, '/电影/2026')
     assert.equal(reloaded.outputDirectories.includes('.'), true)
     assert.equal(reloaded.settings().outputDir, '.')
     for (const directory of [...reloaded.outputDirectories]) reloaded.removeDirectory(directory)
@@ -118,7 +123,7 @@ test('root representation is distinct from missing selection and unsafe paths', 
   assert.equal(display(''), '未选择')
 })
 
-test('115 parent selection remains a draft until saved and rejects stale account selection', async t => {
+test('115 parent selection saves independently, preserves errors in dialog and rejects stale accounts', async t => {
   let primary = 'main', failSave = false, writes = 0
   let saved = { accountId: primary, parentCID: '0', parentPath: '/', generation: { outputDir: 'strm', baseUrl: 'http://test', videoExtensions: 'mkv' } }
   environment(t, async (url, init = {}) => {
@@ -128,7 +133,7 @@ test('115 parent selection remains a draft until saved and rejects stale account
     if (url.endsWith('/automation-config')) {
       if (init.method === 'POST') {
         if (failSave) return Response.json({ error: '保存失败' }, { status: 500 })
-        saved = JSON.parse(init.body); writes++
+        saved = { ...saved, ...JSON.parse(init.body) }; writes++
       }
       return Response.json({ settings: saved })
     }
@@ -138,43 +143,43 @@ test('115 parent selection remains a draft until saved and rejects stale account
   try {
     await tick()
     const s = mounted.state
-    assert.equal(s.transferDirty, false)
+    assert.equal(s.settingsDirty, false)
     await s.openParentDirectory()
     assert.equal(s.parentAccountId, 'main')
     s.parentDialogOpen = false // Cancel without selecting.
     assert.equal(s.parentCID, '0')
-    assert.equal(s.transferDirty, false)
+    assert.equal(s.settingsDirty, false)
     await s.openParentDirectory()
-    s.selectParentDirectory({ id: '12', path: '/资源/电影' })
-    assert.equal(writes, 0)
-    assert.equal(s.parentLabel, '/资源/电影')
-    assert.equal(s.transferDirty, true)
-    s.activeTab = 'reshare'
-    await s.generate()
-    assert.match(s.error, /请先保存转存设置/)
+    s.tgBatchWaitSeconds = 20
+    assert.equal(s.settingsDirty, true)
     failSave = true
-    await s.saveAutomation()
-    assert.equal(s.parentCID, '12')
-    assert.equal(s.transferDirty, true)
+    await s.selectParentDirectory({ id: '12', path: '/资源/电影' })
+    assert.equal(s.parentCID, '0')
+    assert.equal(s.parentDialogOpen, true)
+    assert.match(s.parentError, /保存失败/)
+    assert.equal(writes, 0)
     failSave = false
-    await s.saveAutomation()
-    assert.equal(s.transferDirty, false)
+    await s.selectParentDirectory({ id: '12', path: '/资源/电影' })
+    assert.equal(s.parentDialogOpen, false)
+    assert.equal(s.parentLabel, '/资源/电影')
+    assert.equal(s.settingsDirty, true)
+    assert.equal(saved.tgBatchWaitSeconds, undefined)
     assert.equal(saved.parentPath, '/资源/电影')
     mounted.app.unmount()
     mounted = mount('views/ShareView.vue', { token: 'test' })
     await tick()
     const reloaded = mounted.state
     assert.equal(reloaded.parentLabel, '/资源/电影')
-    assert.equal(reloaded.transferDirty, false)
+    assert.equal(reloaded.settingsDirty, false)
     primary = 'replacement'
     await reloaded.openParentDirectory()
     assert.equal(reloaded.parentCID, '')
     assert.equal(reloaded.parentPath, '')
     assert.equal(reloaded.parentAccountId, primary)
     reloaded.accountId = 'changed-again'
-    reloaded.selectParentDirectory({ id: '12', path: '/旧目录' })
+    await reloaded.selectParentDirectory({ id: '12', path: '/旧目录' })
     assert.equal(reloaded.parentCID, '')
-    assert.match(reloaded.error, /主账号已变化/)
+    assert.match(reloaded.parentError, /主账号已变化/)
   } finally { mounted.app.unmount() }
 })
 
@@ -201,5 +206,56 @@ test('115 picker selects root and child paths, blocks loading and failed listing
     await s.openDirectory({ id: '13', name: '无法读取' })
     s.select()
     assert.equal(selected.length, 2)
+  } finally { app.unmount() }
+})
+
+test('manual generation parses pasted text, uses saved rules and ignores unsaved collection settings', async t => {
+  const submitted = []
+  environment(t, async (url, init = {}) => {
+    if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: 'main', primary: true, configured: true }] })
+    if (url.endsWith('/bots')) return Response.json({ bots: [] })
+    if (url.endsWith('/generation-config')) return Response.json({ baseUrl: 'http://test', videoExtensions: 'mkv' })
+    if (url.endsWith('/automation-config')) return Response.json({ settings: { accountId: 'main', parentCID: '0', reshareEnabled: true, generation: { outputDir: 'strm', baseUrl: 'http://test', videoExtensions: 'mkv', recursive: true } } })
+    if (url.endsWith('/generation-runs')) {
+      submitted.push(JSON.parse(init.body))
+      return Response.json({ id: 'run', status: 'queued', items: [] })
+    }
+    if (url.endsWith('/generation-runs/run')) return Response.json({ id: 'run', status: 'success', items: [{ result: { count: 1 } }] })
+    throw new Error(`Unexpected request ${url}`)
+  })
+  const { app, state: s } = mount('views/ShareView.vue', { token: 'test' })
+  try {
+    await tick()
+    assert.equal(s.activeTab, 'generate')
+    assert.equal(s.generationMode, 'reshare')
+    s.tgBatchWaitSeconds = 30
+    s.videoExtensions = 'mp4'
+    s.sharePath = '/未保存路径'
+    s.addDirectory('.')
+    assert.equal(s.outputDir, 'strm')
+    assert.equal(s.taskOutputDir, '.')
+    s.shareURL = '分享给你 https://115cdn.com/s/example 提取码：aB12'
+    s.parseShareText()
+    assert.equal(s.shareURL, 'https://115cdn.com/s/example')
+    assert.equal(s.password, 'aB12')
+    s.password = 'new1'
+    await s.generate()
+    assert.equal(submitted.length, 1)
+    assert.equal(submitted[0].collectionScope, undefined)
+    assert.equal(submitted[0].inputs[0].mode, 'reshare')
+    assert.equal(submitted[0].inputs[0].videoExtensions, 'mkv')
+    assert.equal(submitted[0].inputs[0].sharePath, '/')
+    assert.equal(submitted[0].inputs[0].outputDir, '.')
+    assert.equal(submitted[0].inputs[0].password, 'new1')
+    assert.equal(s.settingsDirty, true)
+    s.shareURL = 'https://115cdn.com/s/next'
+    s.parseShareText()
+    assert.equal(s.password, '')
+    s.shareURL = 'https://115cdn.com/s/next?password=zX90'
+    s.parseShareText()
+    assert.equal(s.password, 'zX90')
+    s.shareURL = 'https://115cdn.com/s/one https://115cdn.com/s/two'
+    await s.generate()
+    assert.equal(submitted.length, 1)
   } finally { app.unmount() }
 })

@@ -5,7 +5,7 @@ import { p115Request } from '../lib/p115-api'
 interface Directory { id: string; name: string }
 interface DirectoryPage { directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean; nextOffset?: number }
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; description?: string; endpoint?: string; allowRoot?: boolean; allowCreate?: boolean; loadPage?: (cid: string, offset: number, signal: AbortSignal) => Promise<DirectoryPage> }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths', allowRoot: true, allowCreate: false })
+const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; description?: string; endpoint?: string; allowRoot?: boolean; allowCreate?: boolean; saving?: boolean; saveError?: string; confirmLabel?: string; loadPage?: (cid: string, offset: number, signal: AbortSignal) => Promise<DirectoryPage> }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths', allowRoot: true, allowCreate: false, confirmLabel: '选择此目录' })
 const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }]; create: [value: { id: string; path: string; name: string }] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentCID = ref('0')
@@ -44,6 +44,7 @@ async function loadCID(cid: string) {
 }
 
 async function openDirectory(directory?: Directory) {
+  if (props.saving) return
   const cid = directory?.id || '0'
   if (directory) currentPath.value = [...currentPath.value, { id: directory.id, name: directory.name }]
   else if (cid === '0') currentPath.value = []
@@ -51,14 +52,15 @@ async function openDirectory(directory?: Directory) {
 }
 
 function goUp() {
+  if (props.saving) return
   if (!currentPath.value.length) return
   currentPath.value = currentPath.value.slice(0, -1)
   void loadCID(currentPath.value.length ? currentPath.value[currentPath.value.length - 1].id : '0')
 }
 
-function close() { emit('close') }
+function close() { if (!props.saving) emit('close') }
 function select(create = false) {
-  if (loading.value || error.value || (!create && !props.allowRoot && currentCID.value === '0')) return
+  if (props.saving || loading.value || error.value || (!create && !props.allowRoot && currentCID.value === '0')) return
   const current = currentPath.value[currentPath.value.length - 1]
   const value = { id: currentCID.value, path: currentPath.value.length ? '/' + currentPath.value.map(item => item.name).join('/') : '/', name: current?.name || '115 根目录' }
   if (create) emit('create', value)
@@ -101,10 +103,11 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <p v-if="saveError" role="alert" class="shrink-0 px-5 pb-3 text-sm text-red-600 dark:text-red-400">{{ saveError }}</p>
         <footer class="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
           <button type="button" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" @click="close">取消</button>
           <button v-if="allowCreate" type="button" :disabled="loading || !!error" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" @click="select(true)">在此新建 Cinema115 并使用</button>
-          <button type="button" :disabled="loading || !!error || (!allowRoot && currentCID === '0')" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select(false)">选择此目录</button>
+          <button type="button" :disabled="saving || loading || !!error || (!allowRoot && currentCID === '0')" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select(false)">{{ saving ? '保存中…' : confirmLabel }}</button>
         </footer>
       </section>
     </dialog>
