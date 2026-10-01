@@ -5,7 +5,7 @@ import { useDirectoryShare, type DirectoryShareConfig } from '../composables/use
 
 const props = defineProps<{ token: string; configurationId?: string; disabled?: boolean; disabledReason?: string }>()
 const emit = defineEmits<{ updated: [value: DirectoryShareConfig | undefined] }>()
-const { monitor, accountName, loading, error, notice, unavailable, label, stageText, refresh, submit, canEnd, endBatch } = useDirectoryShare(props.token, () => props.configurationId)
+const { monitor, accountId, loading, error, notice, unavailable, label, stageText, refresh, submit, canEnd, endBatch } = useDirectoryShare(props.token, () => props.configurationId)
 watch(monitor, value => emit('updated', value))
 </script>
 
@@ -17,7 +17,8 @@ watch(monitor, value => emit('updated', value))
       <button v-if="canEnd" type="button" class="rounded-lg border border-red-200 px-3 py-2 text-xs text-red-600 hover:bg-red-50" @click="endBatch">结束本次任务</button>
       <RouterLink v-if="monitor?.logTaskID" :to="{ path: '/logs', query: { module: 'STRM', level: 'ALL', taskID: monitor.logTaskID } }" class="text-xs text-blue-600 hover:underline">本次日志</RouterLink>
     </div>
-    <p v-if="monitor" class="break-all text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">目标：{{ monitor.sourcePath || monitor.sourceCID }} · 账号：{{ accountName }}。处理该目录当前整批内容。</p>
+    <p v-if="monitor" class="break-all text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">目标：{{ monitor.sourcePath || monitor.sourceCID }}。处理该目录当前整批内容。</p>
+    <p v-if="monitor?.hasBatch && monitor.accountId !== accountId" class="break-all text-xs text-amber-700">本批次属于更换前的账号（{{ monitor.accountId }}），请核对原文件位置。</p>
     <p v-if="disabled && disabledReason" class="text-xs text-amber-700">{{ disabledReason }}</p>
     <p v-else-if="!loading && unavailable" class="text-xs text-amber-700">{{ unavailable }}</p>
     <p v-if="monitor" role="status" class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ stageText }}</p>

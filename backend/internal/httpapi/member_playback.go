@@ -41,6 +41,48 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.Next()
 	})
 	userID := func(c *gin.Context) string { value, _ := c.Get("portal_user"); return value.(model.PortalUser).ID }
+	group.GET("/children", func(c *gin.Context) {
+		v, err := s.Children(c.Request.Context(), userID(c))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
+	group.POST("/children", func(c *gin.Context) {
+		var input service.ChildCreateInput
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "子账号参数无效"})
+			return
+		}
+		if err := s.CreateChild(c.Request.Context(), userID(c), input); err != nil {
+			fail(c, err)
+			return
+		}
+		v, err := s.Children(c.Request.Context(), userID(c))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
+	group.POST("/children/:childID", func(c *gin.Context) {
+		var input service.ChildActionInput
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "子账号操作无效"})
+			return
+		}
+		if err := s.ChildAction(c.Request.Context(), userID(c), c.Param("childID"), input); err != nil {
+			fail(c, err)
+			return
+		}
+		v, err := s.Children(c.Request.Context(), userID(c))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
 	group.GET("", func(c *gin.Context) {
 		view, err := s.CurrentView(c.Request.Context(), userID(c))
 		if err != nil {
@@ -146,6 +188,32 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	manage := admin.Group("/member-playback", guard)
+	manage.POST("/:id/settings", func(c *gin.Context) {
+		var in service.MemberEditInput
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(400, gin.H{"error": "用户设置无效"})
+			return
+		}
+		if err := s.EditMember(c.Request.Context(), c.Param("id"), in); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
+	})
+	manage.POST("/:id/child-limit", func(c *gin.Context) {
+		var input struct {
+			Limit *int `json:"limit"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.Limit == nil {
+			c.JSON(400, gin.H{"error": "请填写子账号配额"})
+			return
+		}
+		if err := s.SetChildLimit(c.Request.Context(), c.Param("id"), *input.Limit); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
+	})
 	manage.GET("/users", func(c *gin.Context) {
 		members, err := s.AdminMemberDirectory(c.Request.Context())
 		if err != nil {

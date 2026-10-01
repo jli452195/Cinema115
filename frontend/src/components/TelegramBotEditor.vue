@@ -95,9 +95,10 @@ async function remove() {
         <label class="block text-sm text-slate-700 dark:text-slate-300">独立通知聊天 ID<input v-model="notificationChatID" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" placeholder="单个数字 Chat ID" /></label>
         <SettingSwitch v-model="enabled" label="启用 Bot 配置" description="启用后，绑定此配置的功能可以接收消息和发送通知。" />
         <section class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950/70 p-4">
-          <SettingSwitch v-model="cloudDownloadEnabled" label="启用磁力转存" description="允许白名单用户在私聊中发送 magnet 或 ED2K，并提交到此 Bot 明确绑定的 115 账号和目录。" />
+          <SettingSwitch v-model="cloudDownloadEnabled" label="启用磁力转存" description="允许白名单用户在私聊中发送 magnet 或 ED2K，并转存到下方设置的下载目录。" />
           <div v-if="cloudDownloadEnabled" class="mt-4 space-y-4 border-t border-slate-200 dark:border-slate-700 pt-4">
-            <div><P115PrimaryStatus :accounts="accounts" /><p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">Bot 统一使用主账号；更换主账号后需要重新选择下载目录。</p></div>
+            <P115PrimaryStatus :accounts="accounts" />
+            <p v-if="bot.cloudDownload?.accountId && bot.cloudDownload.accountId !== cloudAccountId && !cloudTargetCID" class="text-xs leading-5 text-amber-700 dark:text-amber-300">主账号已变化，请重新选择下载目录。</p>
             <div><label class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</label><div class="mt-2 flex min-w-0 items-center gap-3"><div class="min-w-0 flex-1 truncate rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-700 dark:text-slate-300">{{ cloudTargetPath || '尚未选择' }}</div><button type="button" class="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-sm text-blue-600" @click="openDirectory">选择目录</button></div></div>
             <p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">直接发送 magnet / ED2K 或使用 <code>/cloud &lt;链接&gt;</code> 即可。Bot 会自动移除完全匹配且已经结束的旧任务记录后重新提交，始终保留网盘文件；运行中或状态不明的任务不会删除。Bot 只回复提交结果，不跟踪下载进度。</p>
           </div>

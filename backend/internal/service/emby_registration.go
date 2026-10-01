@@ -33,8 +33,15 @@ func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, r
 		r = model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyID: u.EmbyID, EmbyName: u.Username, EmbyURL: c.URL, Provisioned: true, LoginEnabled: true, Stage: "pending"}
 	}
 	if r.Source == "" {
-		r.Source = "primary"
-		r.AllowPersonalSwitch = true
+		if r.PlaybackOnly {
+			r.Source = "personal_shared"
+		} else {
+			r.Source = "primary"
+			r.AllowPersonalSwitch = true
+		}
+	}
+	if r.PlaybackOnly {
+		r.AllowPersonalSwitch = false
 	}
 	r.Administrator = remote.Policy["IsAdministrator"] == true
 	r.EmbyName = remote.Name
@@ -174,6 +181,14 @@ func (s *MemberPlaybackService) assignPool(ctx context.Context, r *model.MemberP
 	if r.Source != "assigned" || r.AssignedAccountID != "" {
 		return nil
 	}
+	if err := s.resolvePool(ctx, r); err != nil {
+		return err
+	}
+	return s.save(ctx, *r)
+}
+
+// Resolve without publishing so a combined settings edit can commit once.
+func (s *MemberPlaybackService) resolvePool(ctx context.Context, r *model.MemberPlayback) error {
 	used := make(map[string]int)
 	for _, other := range s.Records() {
 		if other.Source == "assigned" {
@@ -203,9 +218,9 @@ func (s *MemberPlaybackService) assignPool(ctx context.Context, r *model.MemberP
 			continue
 		}
 		r.AssignedAccountID = a.ID
-		return s.save(ctx, *r)
+		return nil
 	}
 	r.Source = "primary"
 	r.AssignedAccountID = ""
-	return s.save(ctx, *r)
+	return nil
 }

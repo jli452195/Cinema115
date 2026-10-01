@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </div>
-        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800 p-5"><p class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">115 分享资源可复用“115分享STRM”的账号；磁力可直接提交到“115 云下载”配置的账号和目录。</p><button v-if="config?.configured" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="search(true)">{{ phase === 'search' ? `搜索中（${elapsedSeconds} 秒）` : '重新搜索' }}</button><button v-else-if="!config && error" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="initialize">{{ phase === 'config' ? '读取中…' : '重试' }}</button></footer>
+        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800 p-5"><p class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">115 分享资源可生成 STRM；磁力可转存到“115 云下载”设置的下载目录。</p><button v-if="config?.configured" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="search(true)">{{ phase === 'search' ? `搜索中（${elapsedSeconds} 秒）` : '重新搜索' }}</button><button v-else-if="!config && error" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="initialize">{{ phase === 'config' ? '读取中…' : '重试' }}</button></footer>
       </div>
     </dialog>
   </Teleport>

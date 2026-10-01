@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 30
+const schemaVersion = 32
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -423,10 +423,37 @@ CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES e
 CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId'));
 DROP INDEX IF EXISTS member_pool_assignment;
 CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS playback_child_creations(id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES emby_profiles(id), record TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS playback_child_owner ON playback_child_creations(owner_id);
 CREATE TABLE IF NOT EXISTS portal_invites(id TEXT PRIMARY KEY,code_hash TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,note TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,revoked_at INTEGER NOT NULL DEFAULT 0,used_at INTEGER NOT NULL DEFAULT 0,used_by TEXT NOT NULL DEFAULT '',playback_source TEXT NOT NULL CHECK(playback_source IN ('personal','assigned')),registration TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS portal_invites_created ON portal_invites(created_at DESC,id);
 PRAGMA user_version=30;`); err != nil {
 		return fmt.Errorf("创建 Emby 个人中心配置: %w", err)
+	}
+	if version < 31 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('p115_accounts') WHERE name='login_client'`).Scan(&exists); err != nil {
+			return fmt.Errorf("检查登录客户端字段: %w", err)
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE p115_accounts ADD COLUMN login_client TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("创建登录客户端字段: %w", err)
+			}
+		}
+	}
+	if version < 32 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('p115_accounts') WHERE name='summary'`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE p115_accounts ADD COLUMN summary TEXT NOT NULL DEFAULT '{}'`); err != nil {
+				return fmt.Errorf("创建账号资料字段: %w", err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version=32`); err != nil {
+		return err
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {

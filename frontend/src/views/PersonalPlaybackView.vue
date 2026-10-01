@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import PlaybackChildren from '../components/PlaybackChildren.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import { p115LoginClients } from '../lib/p115-login-clients'
 
@@ -144,6 +145,7 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
         <label class="flex items-start gap-2 text-sm text-slate-500 dark:text-slate-400"><input v-model="disconnectConfirm" type="checkbox" class="mt-1" />{{ state.source === 'personal' ? '解除个人网盘绑定并暂停播放，清除保存的凭据；网盘文件保留，可重新绑定任意账号。' : '解除个人网盘绑定并清除凭据，网盘文件保留，不影响当前管理员提供的播放账号。' }}</label>
         <button :disabled="busy || !disconnectConfirm" class="mt-3 text-sm text-red-600 disabled:opacity-40 dark:text-red-300" @click="mutate('/disconnect', {})">解绑个人网盘</button>
       </section>
+      <PlaybackChildren :token="token" />
     </div>
     <P115DirectoryDialog v-if="selecting && directorySnapshot" :token="token" :account-id="directorySnapshot.accountId" :title="'选择秒传目录 · UID ' + directorySnapshot.uid" :load-page="loadDirectories" :allow-root="false" :allow-create="!directorySnapshot.creationUncertain" @close="selecting = false" @select="selectDirectory" @create="saveDirectory(true, $event)" />
   </ManagementLayout>

@@ -24,7 +24,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const url = new URL(route.request().url())
       let data = {}, status = 200
       if (url.pathname === '/api/auth/me') data = { user: { id: 'mock', role: 'admin', username: 'mock', disabled: false } }
-      else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '指定账号', configured: true, revision: 1 }] }
+      else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '主账号', primary: true, configured: true, revision: 1 }] }
       else if (url.pathname.endsWith('/cloud-download/config')) data = { accountId, targetCID: '987', targetPath: '/测试目标' }
       else if (url.pathname.endsWith('/cloud-download/tasks')) {
         calls.push({ accountId: url.searchParams.get('accountId'), ...route.request().postDataJSON() })

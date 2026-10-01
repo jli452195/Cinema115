@@ -4,7 +4,7 @@ interface CloudDownloadReceipt { accepted: boolean; removedOldTask?: boolean }
 
 // 网页、观影和蜜柑共用提交预算及提示；旧任务处理由后端统一决定。
 export async function submitCloudDownload(token: string, accountId: string, url: string, targetCID: string, signal: AbortSignal): Promise<CloudDownloadReceipt> {
-  if (!accountId) throw new Error('请先配置云下载使用的 115 账号')
+  if (!accountId) throw new Error('请先在 115 助手中配置并登录主账号')
   try {
     const receipt = await p115Request<CloudDownloadReceipt>(token, `cloud-download/tasks?accountId=${encodeURIComponent(accountId)}`, {
       method: 'POST', body: JSON.stringify({ url, targetCID }),

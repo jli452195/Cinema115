@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"strm115/backend/internal/model"
 	"sync"
 )
 
@@ -16,26 +17,30 @@ var ErrAccountChanged = errors.New("账号配置已发生变化，请刷新后�
 var ErrAccountInput = errors.New("账号配置无效")
 
 type P115Account struct {
-	OwnerUserID       string `json:"ownerUserId"`
-	Ownership         string `json:"ownership"`
-	Primary           bool   `json:"primary"`
-	UID               string `json:"uid"`
-	PlaybackParentCID string `json:"playbackParentCid"`
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Cookie            string `json:"cookie"`
-	Revision          uint64 `json:"revision"`
+	Summary           model.P115Summary `json:"summary"`
+	LoginClient       string            `json:"loginClient,omitempty"`
+	OwnerUserID       string            `json:"ownerUserId"`
+	Ownership         string            `json:"ownership"`
+	Primary           bool              `json:"primary"`
+	UID               string            `json:"uid"`
+	PlaybackParentCID string            `json:"playbackParentCid"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Cookie            string            `json:"cookie"`
+	Revision          uint64            `json:"revision"`
 }
 type P115AccountView struct {
-	OwnerUserID       string `json:"ownerUserId"`
-	Ownership         string `json:"ownership"`
-	Primary           bool   `json:"primary"`
-	PlaybackParentCID string `json:"playbackParentCid"`
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	UID               string `json:"uid"`
-	Configured        bool   `json:"configured"`
-	Revision          uint64 `json:"revision"`
+	Summary           model.P115Summary `json:"summary"`
+	LoginClient       string            `json:"loginClient,omitempty"`
+	OwnerUserID       string            `json:"ownerUserId"`
+	Ownership         string            `json:"ownership"`
+	Primary           bool              `json:"primary"`
+	PlaybackParentCID string            `json:"playbackParentCid"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	UID               string            `json:"uid"`
+	Configured        bool              `json:"configured"`
+	Revision          uint64            `json:"revision"`
 }
 type accountDocument struct {
 	Version int `json:"version"`
@@ -138,7 +143,7 @@ func (s *P115Accounts) List() []P115AccountView {
 	defer s.mu.RUnlock()
 	result := make([]P115AccountView, 0, len(s.value.Accounts))
 	for _, a := range s.value.Accounts {
-		result = append(result, P115AccountView{OwnerUserID: a.OwnerUserID, Ownership: a.Ownership, Primary: a.Primary, ID: a.ID, Name: a.Name, UID: a.UID, Configured: a.Cookie != "", Revision: a.Revision, PlaybackParentCID: a.PlaybackParentCID})
+		result = append(result, P115AccountView{Summary: a.Summary, LoginClient: a.LoginClient, OwnerUserID: a.OwnerUserID, Ownership: a.Ownership, Primary: a.Primary, ID: a.ID, Name: a.Name, UID: a.UID, Configured: a.Cookie != "", Revision: a.Revision, PlaybackParentCID: a.PlaybackParentCID})
 	}
 	return result
 }
@@ -218,7 +223,11 @@ func (s *P115Accounts) Update(id string, revision uint64, name string, cookie *s
 	return s.update(id, revision, name, cookie, "")
 }
 
-func (s *P115Accounts) update(id string, revision uint64, name string, cookie *string, preparedCID string) error {
+func (s *P115Accounts) update(id string, revision uint64, name string, cookie *string, preparedCID string, loginClient ...string) error {
+	return s.updateWithSummary(id, revision, name, cookie, preparedCID, nil, loginClient...)
+}
+
+func (s *P115Accounts) updateWithSummary(id string, revision uint64, name string, cookie *string, preparedCID string, summary *model.P115Summary, loginClient ...string) error {
 	name = strings.TrimSpace(name)
 	if !validAccountName(name) {
 		return fmt.Errorf("%w：名称应为 1～50 字", ErrAccountInput)
@@ -236,6 +245,10 @@ func (s *P115Accounts) update(id string, revision uint64, name string, cookie *s
 		a.Name = name
 		a.Revision++
 		if cookie != nil {
+			a.Summary = model.P115Summary{}
+			if summary != nil && *cookie != "" {
+				a.Summary = *summary
+			}
 			uid := accountUID(*cookie)
 			changed := a.UID != "" && uid != "" && a.UID != uid
 			if changed && !a.Primary && preparedCID == "" {
@@ -260,6 +273,10 @@ func (s *P115Accounts) update(id string, revision uint64, name string, cookie *s
 				a.UID = uid
 			}
 			a.Cookie = *cookie
+			a.LoginClient = ""
+			if *cookie != "" && len(loginClient) > 0 {
+				a.LoginClient = loginClient[0]
+			}
 		}
 		value.Accounts[i] = a
 		return s.commit(value)

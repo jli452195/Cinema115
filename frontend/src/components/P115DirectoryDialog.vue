@@ -5,7 +5,7 @@ import { p115Request } from '../lib/p115-api'
 interface Directory { id: string; name: string }
 interface DirectoryPage { directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean; nextOffset?: number }
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; endpoint?: string; allowRoot?: boolean; allowCreate?: boolean; loadPage?: (cid: string, offset: number, signal: AbortSignal) => Promise<DirectoryPage> }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths', allowRoot: true, allowCreate: false })
+const props = withDefaults(defineProps<{ token: string; accountId: string; title?: string; description?: string; endpoint?: string; allowRoot?: boolean; allowCreate?: boolean; loadPage?: (cid: string, offset: number, signal: AbortSignal) => Promise<DirectoryPage> }>(), { title: '选择下载目录', endpoint: 'cloud-download/paths', allowRoot: true, allowCreate: false })
 const emit = defineEmits<{ close: []; select: [value: { id: string; path: string; name: string }]; create: [value: { id: string; path: string; name: string }] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentCID = ref('0')
@@ -85,6 +85,7 @@ onBeforeUnmount(() => {
           <h2 id="p115-directory-title" class="font-semibold text-slate-900 dark:text-slate-100">{{ title }}</h2>
           <button type="button" aria-label="关闭目录选择器" class="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300 dark:text-slate-300" @click="close">×</button>
         </header>
+        <p v-if="description" class="shrink-0 px-5 py-3 text-xs leading-5 text-slate-500">{{ description }}</p>
         <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-5 py-3">
           <p class="min-w-0 truncate text-sm font-medium text-slate-700 dark:text-slate-300">根目录<span v-if="currentPath.length"> / {{ currentPath.map(item => item.name).join(' / ') }}</span></p>
           <button type="button" :disabled="!currentPath.length || loading" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="goUp">返回上级</button>

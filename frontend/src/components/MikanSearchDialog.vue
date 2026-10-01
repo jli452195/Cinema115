@@ -279,7 +279,7 @@ onBeforeUnmount(() => {
             </section>
           </template>
         </div>
-        <footer class="shrink-0 border-t border-slate-100 dark:border-slate-800 px-5 py-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">115 转存使用「115 云下载」配置的账号和目录；提交后可在云下载页面查看任务。<RouterLink :to="{ path: '/logs', query: { module: '蜜柑', level: 'ALL' } }" class="ml-2 text-blue-600" @click="emit('close')">查看日志</RouterLink></footer>
+        <footer class="shrink-0 border-t border-slate-100 dark:border-slate-800 px-5 py-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">115 转存使用「115 云下载」设置的下载目录。<RouterLink :to="{ path: '/logs', query: { module: '蜜柑', level: 'ALL' } }" class="ml-2 text-blue-600" @click="emit('close')">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>

@@ -21,6 +21,7 @@ func (s *Store) ResetPortal(ctx context.Context) error {
 		`DELETE FROM user_follows`,
 		`DELETE FROM website_notifications`,
 		`DROP TABLE IF EXISTS member_playback`,
+		`DROP TABLE IF EXISTS playback_child_creations`,
 		`DROP TABLE IF EXISTS website_user_cleanup`,
 		`DROP TABLE IF EXISTS website_invites`,
 		`DROP TABLE IF EXISTS website_users`,

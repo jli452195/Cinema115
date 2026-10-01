@@ -20,6 +20,7 @@ const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const lifecycle = new AbortController()
 const accounts = ref<P115Account[]>([])
+const accountsLoaded = ref(false)
 const config = ref<OrganizeConfig>({ accountId: '', sourceCID: '', sourcePath: '', targetCID: '', targetPath: '' })
 const busy = ref('')
 const error = ref('')
@@ -60,7 +61,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let applying = false
 let historyRevision = 0
 
-const accountReady = computed(() => accounts.value.some(a => a.id === config.value.accountId && a.configured))
+const accountReady = computed(() => accounts.value.some(a => a.primary && a.id === config.value.accountId && a.configured))
 const configured = computed(() => accountReady.value && !!config.value.sourceCID && !!config.value.targetCID)
 const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running') || cleanupJobs.value.some(j => j.status === 'running') || subtitleJobs.value.some(j => j.status === 'running'))
 const cleanupBlocked = computed(() => !historyReady.value || !!historyError.value || active.value || !accountReady.value || !config.value.sourceCID)
@@ -73,6 +74,10 @@ function request<T>(path: string, init: RequestInit = {}, timeout = 45000) {
   return p115Request<T>(props.token, `manual-organize/${path}`, { ...init, signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(timeout)]) })
 }
 function message(reason: unknown) { return reason instanceof Error ? reason.message : '操作失败，请重试' }
+function accountLabel(id: string) {
+  const account = accounts.value.find(value => value.id === id)
+  return account?.primary ? '主账号' : account?.name || id
+}
 function duration(ms: number) {
   if (ms < 60000) return `${(ms / 1000).toFixed(1)} 秒`
   return `${Math.floor(ms / 60000)} 分 ${Math.round((ms % 60000) / 1000)} 秒`
@@ -87,7 +92,7 @@ function clearSelection(resetMedia = true) {
   scanId.value = ''; rows.value = []; preview.value = undefined; selectedName.value = ''; selectionRoot.value = ''
   if (resetMedia) { media.value = undefined; results.value = []; searchTotalPages.value = 0; scannedEntryKey = '' }
 }
-async function save() { await request('config', { method: 'PUT', body: JSON.stringify(config.value) }); notice.value = '账号、来源目录和目标目录已保存。' }
+async function save() { await request('config', { method: 'PUT', body: JSON.stringify(config.value) }); notice.value = '来源目录和目标目录已保存。' }
 async function browse(nextOffset = 0) {
   deleteIDs.value = []; cleanupPlan.value = undefined
   const data = await request<{ files: DriveFile[]; count: number }>(`files?accountId=${encodeURIComponent(config.value.accountId)}&cid=${config.value.sourceCID}&offset=${nextOffset}`)
@@ -232,7 +237,7 @@ watch(kind, () => { results.value = []; searchTotalPages.value = 0 })
 onMounted(() => {
   void work('加载配置', async () => {
     const [a, c] = await Promise.all([p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: lifecycle.signal }), request<OrganizeConfig>('config')])
-    accounts.value = a.accounts; applying = true; config.value = c; applying = false
+    accounts.value = a.accounts; accountsLoaded.value = true; applying = true; config.value = c; applying = false
     if (accountReady.value && c.sourceCID) await browse()
   })
   void poll()
@@ -253,12 +258,12 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
       <fieldset :disabled="!!busy" class="min-w-0 space-y-6 disabled:opacity-70">
         <section class="panel">
           <h2 class="heading">整理位置</h2>
-          <div class="mt-4 grid gap-4 lg:grid-cols-3">
-            <div><P115PrimaryStatus :accounts="accounts" /></div>
+          <P115PrimaryStatus v-if="accountsLoaded" :accounts="accounts" class="mt-4" />
+          <div class="mt-4 grid gap-4 lg:grid-cols-2">
             <div><label class="label">来源目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'source'">{{ config.sourcePath || '选择待整理目录' }}</button></div>
             <div><label class="label">目标目录</label><button type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'target'">{{ config.targetPath || '选择整理后的目录' }}</button></div>
           </div>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">同一账号内移动。目标下按作品建目录，剧集按季建目录。</p><button class="secondary" :disabled="!configured" @click="work('保存配置', save)">保存配置</button></div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3"><p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">目标下按作品建目录，剧集按季建目录。</p><button class="secondary" :disabled="!configured" @click="work('保存配置', save)">保存配置</button></div>
         </section>
 
         <div class="grid items-start gap-6 xl:grid-cols-2">
@@ -334,7 +339,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <h2 class="heading">清理记录</h2>
         <details v-for="job in cleanupJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
           <summary class="cursor-pointer text-sm">{{ job.mode === 'empty' ? '清理空目录' : '删除所选条目' }} · {{ job.status === 'running' ? '清理中' : job.status === 'partial' ? '部分未删除' : statuses[job.status] || job.status }} · {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} <span class="text-xs text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.parentPath }}</p>
+          <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.accountId) }} · {{ job.parentPath }}</p>
           <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ job.message }}</p>
           <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.id" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.path }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || (item.status === 'skipped' ? '已跳过' : statuses[item.status] || item.status) }}</p></li></ul>
         </details>
@@ -346,7 +351,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <p v-if="!jobs.length" class="py-10 text-center text-sm text-slate-400 dark:text-slate-500">暂无整理记录</p>
         <details v-for="job in jobs" :key="job.id" class="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 p-4" :open="job.status === 'running' || job.status === 'queued'">
           <summary class="cursor-pointer text-sm font-medium text-slate-800 dark:text-slate-200">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-3 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(a => a.id === job.config.accountId)?.name || job.config.accountId }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
+          <p class="mt-3 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.config.accountId) }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
           <button v-if="job.status !== 'running' && job.status !== 'queued'" class="secondary mt-3" :disabled="!!busy || active" @click="work('查看源目录剩余内容', () => showSource(job))">查看源目录剩余内容</button>
           <button v-if="job.status !== 'running' && job.status !== 'queued' && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')" class="secondary ml-2 mt-3" :disabled="!!busy || active || !historyReady || !!historyError || !accounts.some(account => account.id === job.config.accountId && account.configured)" @click="subtitleJob = job">补充字幕</button>
           <p v-if="job.message" class="mt-2 text-sm" :class="job.status === 'completed' ? 'text-emerald-700' : 'text-amber-700'">{{ job.message }}</p>
@@ -367,14 +372,14 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <h2 class="heading">字幕导入记录</h2>
         <details v-for="job in subtitleJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
           <summary class="cursor-pointer text-sm">{{ job.status === 'running' ? '字幕上传中' : statuses[job.status] || job.status }} · 已上传 {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} · {{ new Date(job.createdAt).toLocaleString() }}</summary>
-          <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accounts.find(account => account.id === job.accountId)?.name || job.accountId }} · {{ job.message }}</p>
+          <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.accountId) }} · {{ job.message }}</p>
           <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.localId" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.originalName }} → {{ item.targetPath }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || statuses[item.status] || item.status }}</p></li></ul>
         </details>
       </section>
     </div>
     <P115DirectoryDialog v-if="directoryDialog" :token="token" :account-id="config.accountId" :title="directoryDialog === 'source' ? '选择来源目录' : '选择目标目录'" endpoint="manual-organize/files" @close="directoryDialog = ''" @select="selectDirectory" />
-    <OrganizeCleanupDialog v-if="cleanupPlan" :plan="cleanupPlan" :account-name="accounts.find(account => account.id === cleanupPlan?.accountId)?.name || cleanupPlan.accountId" :busy="busy === '执行清理'" :blocked="cleanupBlocked" :error="error" @close="cleanupPlan = undefined" @confirm="work('执行清理', executeCleanup)" />
-    <SubtitleImportDialog v-if="subtitleJob" :token="token" :job="subtitleJob" :account-name="accounts.find(account => account.id === subtitleJob?.config.accountId)?.name || subtitleJob.config.accountId" @close="subtitleJob = undefined" @changed="refreshHistory" />
+    <OrganizeCleanupDialog v-if="cleanupPlan" :plan="cleanupPlan" :account-name="accountLabel(cleanupPlan.accountId)" :busy="busy === '执行清理'" :blocked="cleanupBlocked" :error="error" @close="cleanupPlan = undefined" @confirm="work('执行清理', executeCleanup)" />
+    <SubtitleImportDialog v-if="subtitleJob" :token="token" :job="subtitleJob" :account-name="accountLabel(subtitleJob.config.accountId)" @close="subtitleJob = undefined" @changed="refreshHistory" />
   </ManagementLayout>
 </template>
 

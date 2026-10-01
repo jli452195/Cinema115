@@ -6,6 +6,16 @@ import (
 )
 
 func (s *MemberPlaybackService) playbackAccount(r model.MemberPlayback) (P115Account, error) {
+	if r.PlaybackOnly {
+		if r.Source != "personal_shared" || r.ChildRevoked || r.ChildPaused || r.ChildDisabled || r.AdminBlocked || !r.Provisioned {
+			return P115Account{}, memberError("播放子账号已暂停或撤销")
+		}
+		owner := s.record(r.OwnerUserID)
+		if owner.ServerID != r.ServerID || owner.EmbyURL != r.EmbyURL {
+			return P115Account{}, memberError("共享服务不一致")
+		}
+		return s.sharedPersonalAccount(owner)
+	}
 	var a P115Account
 	var err error
 	switch r.Source {
@@ -43,6 +53,13 @@ func (s *MemberPlaybackService) SelectionMatches(embyID string, selected *Playba
 			return selected == nil
 		}
 		target := r.AccountID
+		if r.PlaybackOnly {
+			a, err := s.playbackAccount(r)
+			if err != nil {
+				return false
+			}
+			target = a.ID
+		}
 		if r.Source == "assigned" {
 			target = r.AssignedAccountID
 		}
@@ -84,6 +101,9 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 		return memberError("播放方式无效")
 	}
 	r := s.record(id)
+	if r.PlaybackOnly {
+		return memberError("播放子账号不能更换来源或转为普通用户")
+	}
 	remote, err := s.playbackUser(ctx, r)
 	if err != nil {
 		return err

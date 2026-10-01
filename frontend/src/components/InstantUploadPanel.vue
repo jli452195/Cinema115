@@ -77,14 +77,14 @@ onBeforeUnmount(() => lifecycle.abort())
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">单文件秒传验证</h2>
       <button type="button" :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40" @click="load()">刷新记录</button>
     </div>
-    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">将一个分享 STRM 对应的视频秒传到指定账号。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
+    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">将一个分享 STRM 对应的视频秒传到目标用户绑定的网盘。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
     <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
     <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{{ notice }}</p>
     <form class="mt-5" @submit.prevent="save">
       <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
         <div class="grid gap-5 sm:grid-cols-2">
           <label class="text-sm text-slate-700 dark:text-slate-300">目标用户<select v-model="config.userId" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @change="requestId = ''"><option value="" disabled>请选择已绑定小号的用户</option><option v-for="binding in bindings" :key="binding.userId" :value="binding.userId">{{ binding.userName }} · {{ accountName(binding.accountId) }}</option></select></label>
-          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">源文件由主账号读取。<br />目标小号：{{ target?.name || '请选择用户' }}<br />秒传目录：{{ target?.playbackParentCid || '请在 115 助手中设置' }}</p>
+          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">目标小号：{{ target?.name || '请选择用户' }}<br />秒传目录：{{ target?.playbackParentCid || '请在共享小号池中设置' }}</p>
         </div>
         <div class="flex flex-wrap gap-3">
           <a href="/emby/users" class="text-sm text-blue-600">管理用户绑定</a>

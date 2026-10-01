@@ -15,57 +15,66 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const request = route.request(), p = new URL(request.url()).pathname
       let data = {}
       if (p === '/api/auth/me') data = { user: { id: role, username: role, role, disabled: false } }
-      else if (p.endsWith('/source')) {
+      else if (p.endsWith('/settings') && request.method() === 'POST') {
         const member = members.find(m => p.includes('/' + m.userId + '/'))
         const body = request.postDataJSON(); writes.push(body); member.source = body.source; member.assignedAccountId = body.accountId; data = { settings, members }
       } else if (p === '/api/admin/member-playback/accounts') data = { accounts: pool }
       else if (p.startsWith('/api/admin/member-playback')) data = { settings, members }
       else if (p === '/api/admin/p115/accounts/pool' && request.method() === 'PUT') {
-        writes.push(request.postDataJSON());pool[0].revision++;pool[0].uid='502';pool[0].playbackParentCid='456';data={accounts:pool,configured:true,connected:true,message:'账号配置已保存'}
-      } else if (p === '/api/admin/p115/accounts/pool/qrcode') {
-        writes.push(request.postDataJSON());data={qrId:'pool-qr',qrcode:'mock-qr',expiresAt:new Date(Date.now()+180000).toISOString()}
+        const body = request.postDataJSON(); writes.push(body); pool[0].revision++; pool[0].name=body.name; data={accounts:pool}
+      } else if (p === '/api/admin/p115/accounts/pool/qrcode' && request.method() === 'POST') {
+        writes.push(request.postDataJSON());data={qrId:'pool-qr',sessionId:'pool-session',qrcode:'mock-qr',expiresAt:new Date(Date.now()+180000).toISOString()}
       } else if (p === '/api/admin/p115/accounts/pool/qrcode/status') {
-        pool[0].revision++;data={status:'success',connected:true}
+        pool[0].revision++;pool[0].loginClient='115ipad';data={status:'success',connected:true,loginClient:'115ipad'}
       } else if (p === '/api/admin/p115/accounts') data = { accounts: [{ id: 'main', name: '主网盘', configured: true, primary: true, revision: 1 }, ...pool] }
-      else if (p === '/api/me/playback') data = { source: 'primary', enabled: true, stage: 'ready', canPreparePersonal: true, embyName: 'reader', connected: false, needsDirectoryConfirmation: true }
-      else if (p === '/api/me/playback/directory') { writes.push(request.postDataJSON()); data = { source: 'primary', enabled: true, stage: 'ready', canPreparePersonal: true, embyName: 'reader', connected: true, directoryId: '123' } }
+      else if (p === '/api/me/playback') data = { source: 'primary', enabled: true, stage: 'ready', canPreparePersonal: true, embyName: 'reader', connected: false, directoryAccount: { accountId: 'personal', revision: 1, uid: '700', directoryId: '', creationUncertain: false } }
+      else if (p === '/api/me/playback/directories') data = { directories: [{ id: '123', name: '个人目录' }], hasMore: false }
+      else if (p === '/api/me/playback/children') data = { limit: 0, used: 0, items: [] }
+      else if (p === '/api/me/playback/directory') { writes.push(request.postDataJSON()); data = { source: 'primary', enabled: true, stage: 'ready', canPreparePersonal: true, embyName: 'reader', connected: true, directoryId: '123', directoryAccount: { accountId: 'personal', revision: 1, uid: '700', directoryId: '123', creationUncertain: false } } }
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
     })
     const base = 'http://127.0.0.1:5173'
     await page.goto(base + '/emby/users')
     for (const name of ['reader', 'owner']) {
       const card = page.locator('article').filter({ has: page.getByRole('heading', { name, exact: true }) })
-      await card.getByLabel('播放账号', {exact: true}).selectOption('pool:pool')
-      await card.getByRole('button', { name: '保存', exact: true }).click()
-      await card.locator('header strong').filter({hasText:'共享小号'}).waitFor()
+      await card.getByRole('button', {name:'管理用户'}).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByLabel('播放来源', {exact: true}).selectOption('pool:pool')
+      if (name === 'owner') assert.equal(await dialog.getByLabel('播放来源',{exact:true}).locator('option[value="personal"]').count(), 0)
+      await dialog.getByRole('button', { name: '保存更改', exact: true }).click()
+      await dialog.getByText('设置已保存。', {exact:true}).waitFor()
+      await dialog.getByRole('button', {name:'关闭',exact:true}).click()
       assert.equal(await page.getByLabel('确认播放目录编号').count(), 0)
     }
-    assert.deepEqual(writes.slice(0, 2), [{ source: 'assigned', accountId: 'pool' }, { source: 'assigned', accountId: 'pool' }])
-    assert.equal(await page.locator('article').filter({has:page.getByRole('heading',{name:'owner',exact:true})}).getByLabel('播放账号',{exact:true}).locator('option[value="personal"]').count(), 0)
+    assert.deepEqual(writes.slice(0, 2).map(({source,accountId})=>({source,accountId})), [{ source: 'assigned', accountId: 'pool' }, { source: 'assigned', accountId: 'pool' }])
     await page.goto(base + '/115/pool')
     await page.getByText('2 人使用', { exact: false }).waitFor()
-    assert.equal(await page.getByRole('heading', { name: '主网盘', exact: true }).count(), 0)
-    await page.getByLabel('换号时的新网盘目录编号').fill('456')
-    await page.getByLabel('Cookie', {exact:true}).fill('UID=502_A; SEID=mock')
-    await page.getByRole('button', {name:'保存配置',exact:true}).click()
-    await page.getByText('账号配置已保存',{exact:true}).waitFor()
-    assert.equal(writes.at(-1).directoryId,'456')
-    await page.getByRole('button', {name:'扫码登录',exact:true}).click()
-    await page.getByLabel('换号时的新网盘目录编号').fill('789')
-    await page.getByRole('button',{name:'获取二维码',exact:true}).click()
+    assert.equal(new URL(page.url()).hash, '#pool')
+    assert.equal(await page.getByLabel('换号时的新网盘目录编号').count(), 0)
+    await page.locator('#pool').getByRole('button', {name:'更多操作',exact:true}).click()
+    await page.getByRole('button', {name:'修改名称',exact:true}).click()
+    await page.getByRole('textbox', {name:'名称',exact:true}).fill('共享小号 A')
+    await page.getByRole('button', {name:'保存名称',exact:true}).click()
+    await page.getByRole('heading', {name:'共享小号 A',exact:true}).waitFor()
+    assert.deepEqual(writes.at(-1), {name:'共享小号 A',revision:1})
+    await page.locator('#pool').getByRole('button', {name:'扫码登录',exact:true}).click()
+    await page.getByLabel('登录设备', {exact:true}).selectOption('115-ipad')
     await page.getByText('等待扫码',{exact:true}).waitFor()
-    assert.equal(writes.at(-1).directoryId,'789')
-    await page.getByText('扫码登录成功',{exact:true}).waitFor()
+    assert.deepEqual(writes.at(-1), {clientType:'115-ipad'})
+    await page.getByText('登录信息已保存',{exact:true}).waitFor()
+    assert.equal(pool[0].playbackParentCid, '123')
     await page.goto(base + '/helper115')
-    await page.getByRole('link', { name: '管理共享小号池', exact: true }).waitFor()
-    assert.equal(await page.getByRole('heading', { name: '共享小号', exact: true }).count(), 0)
+    await page.getByRole('heading', { name: '主账号', exact: true }).waitFor()
+    await page.getByRole('heading', { name: '共享小号 A', exact: true }).waitFor()
     role = 'user'
     await page.goto(base + '/account/playback')
     await page.getByText('播放方式：主网盘，无需扫码', { exact: true }).waitFor()
-    await page.getByLabel('确认个人播放目录编号').fill('123')
-    await page.getByRole('button', { name: '确认目录', exact: true }).click()
+    await page.getByRole('button', { name: '选择秒传目录', exact: true }).click()
+    await page.getByRole('button', { name: /个人目录/ }).click()
+    await page.getByRole('button', { name: '选择此目录', exact: true }).click()
+    await page.getByRole('button', { name: '保存秒传目录', exact: true }).click()
     await page.getByText('状态已更新', { exact: true }).waitFor()
-    assert.deepEqual(writes.at(-1), { directoryId: '123' })
+    assert.deepEqual(writes.at(-1), { accountId: 'personal', revision: 1, directoryId: '123', create: false })
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
     assert.deepEqual(errors, [])

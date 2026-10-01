@@ -2,6 +2,14 @@ package model
 
 // Contains lifecycle metadata only; no passwords, tokens, cookies or links.
 type MemberPlayback struct {
+	PlaybackOnly            bool     `json:"playbackOnly"`
+	OwnerUserID             string   `json:"ownerUserId,omitempty"`
+	ChildLimit              int      `json:"childLimit"`
+	ChildPaused             bool     `json:"childPaused"`
+	ChildDisabled           bool     `json:"childDisabled"`
+	ChildRevoked            bool     `json:"childRevoked"`
+	ChildManagedDisabled    bool     `json:"childManagedDisabled"`
+	ChildRevision           uint64   `json:"childRevision"`
 	Administrator           bool     `json:"administrator"`
 	UncertainDirectories    []string `json:"uncertainDirectories,omitempty"`
 	PendingAccountID        string   `json:"pendingAccountId,omitempty"`
@@ -14,7 +22,7 @@ type MemberPlayback struct {
 	EmbyID                  string   `json:"embyId"`
 	EmbyName                string   `json:"embyName"`
 	AccountID               string   `json:"accountId"`
-	Source                  string   `json:"source"` // personal, primary, assigned
+	Source                  string   `json:"source"` // personal, primary, assigned, personal_shared
 	AssignedAccountID       string   `json:"assignedAccountId"`
 	LoginEnabled            bool     `json:"loginEnabled"`
 	Stage                   string   `json:"stage"`

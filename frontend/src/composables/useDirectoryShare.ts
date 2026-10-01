@@ -16,7 +16,6 @@ export function useDirectoryShare(token: string, configurationId: () => string |
   const lifecycle = new AbortController()
   const monitor = ref<DirectoryShareConfig>()
   const accountId = ref('')
-  const accountName = ref('')
   const accountReady = ref(false)
   const loading = ref(true)
   const submitting = ref(false)
@@ -32,8 +31,8 @@ export function useDirectoryShare(token: string, configurationId: () => string |
     if (error.value) return '请先刷新配置和任务状态'
     if (!monitor.value) return '请先配置分享目录'
     if (['blocked', 'sharing_legacy'].includes(monitor.value.stage)) return '当前批次需要人工核对，请查看目录分享'
-    if (bindingChanged.value) return '分享 STRM 账号已变化，请重新选择目录'
-    if (!accountReady.value) return '请在 115 分享 STRM 中配置已登录账号'
+    if (bindingChanged.value) return '主账号已变化，请重新选择目录'
+    if (!accountReady.value) return '请在 115 助手中配置并登录主账号'
     if (active.value) return '当前任务已提交，正在后台处理'
     return ''
   })
@@ -63,8 +62,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
       accountId.value = settings.settings.accountId || ''
       const bound = monitor.value?.hasBatch ? monitor.value.accountId : accountId.value
       const account = accounts.accounts.find(value => value.id === bound)
-      accountName.value = account?.name || '未配置'
-      accountReady.value = !!account?.configured
+      accountReady.value = !!account?.primary && !!account.configured
       error.value = ''
     } catch (reason) {
       if (!lifecycle.signal.aborted && version === revision) error.value = reason instanceof Error ? reason.message : '读取目录分享失败'
@@ -106,5 +104,5 @@ export function useDirectoryShare(token: string, configurationId: () => string |
   }
   onMounted(() => { void poll() })
   onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(timer) })
-  return { monitor, accountId, accountName, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, submit, canEnd, endBatch }
+  return { monitor, accountId, loading, submitting, error, notice, active, bindingChanged, unavailable, label, stageText, refresh, submit, canEnd, endBatch }
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 )
 
@@ -19,11 +20,16 @@ type accountQRClient interface {
 	CompleteQRCodeLogin(context.Context, string) (string, error)
 }
 type accountQR struct {
-	id        string
-	directory string
-	revision  uint64
-	expires   time.Time
-	busy      bool
+	client   string
+	cookie   string // Pending replacement credential; never serialized.
+	uid      string
+	token    string
+	name     string
+	timer    *time.Timer
+	id       string
+	revision uint64
+	expires  time.Time
+	busy     bool
 }
 type p115AccountsAPI struct {
 	store    *service.P115Accounts
@@ -78,13 +84,19 @@ func RegisterP115Accounts(admin *gin.RouterGroup, store *service.P115Accounts, c
 			a.fail(c, service.ErrAccountInput)
 			return
 		}
-		if err := store.UpdatePlaybackDirectory(c.Param("accountID"), in.Revision, in.ParentCID); err != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+		defer cancel()
+		if err := store.SaveManagedDirectory(ctx, c.Param("accountID"), in.Revision, in.ParentCID, a.drive); err != nil {
 			a.fail(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"accounts": store.ManagedList()})
 	})
 	group.DELETE("/accounts/:accountID", a.remove)
+	group.GET("/accounts/:accountID/replacement/paths", a.replacementPaths)
+	group.POST("/accounts/:accountID/replacement/confirm", a.confirmReplacement)
+	group.DELETE("/accounts/:accountID/replacement", a.cancelReplacement)
+	group.DELETE("/accounts/:accountID/qrcode", a.cancelQR)
 	for _, prefix := range []string{"/accounts/:accountID"} {
 		group.GET(prefix+"/status", a.status)
 		group.GET(prefix+"/cookie", a.cookie)
@@ -134,12 +146,71 @@ func (a *p115AccountsAPI) status(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
-	valid, err := a.checker.CheckCookie(ctx, v.Cookie)
+	var valid bool
+	var err error
+	summary := v.Summary
+	if reader, ok := a.checker.(interface {
+		QuerySummary(context.Context, string, string) (model.P115Summary, bool, error)
+	}); ok {
+		summary, valid, err = reader.QuerySummary(ctx, v.ID, v.Cookie)
+		if err == nil {
+			if saveErr := a.store.SaveSummary(v, summary); saveErr != nil {
+				a.fail(c, saveErr)
+				return
+			}
+		}
+	} else {
+		valid, err = a.checker.CheckCookie(ctx, v.Cookie)
+	}
 	if err != nil {
 		c.JSON(502, gin.H{"configured": true, "error": "暂时无法验证已保存的 Cookie，请重试"})
 		return
 	}
-	c.JSON(200, gin.H{"configured": true, "connected": valid})
+	client, note, err := a.loginClient(ctx, v, valid)
+	if err != nil {
+		a.fail(c, err)
+		return
+	}
+	if valid && summary.CheckedAt != "" && (summary.VIP == "" || !summary.SpaceKnown) {
+		if note != "" {
+			note += "；"
+		}
+		note += "会员或空间信息暂未获取，请稍后重试"
+	}
+	c.JSON(200, gin.H{"configured": true, "connected": valid, "loginClient": client, "clientMessage": note, "summary": summary})
+}
+
+func (a *p115AccountsAPI) loginClient(ctx context.Context, snapshot service.P115Account, valid bool) (string, string, error) {
+	client, note := snapshot.LoginClient, ""
+	if valid && client == "" {
+		if reader, ok := a.checker.(interface {
+			CurrentLoginClient(context.Context, string) (string, error)
+		}); ok {
+			lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
+			detected, err := reader.CurrentLoginClient(lookup, snapshot.Cookie)
+			cancel()
+			if err == nil && detected != "" {
+				if err = a.store.SupplementLoginClient(snapshot, detected); err == nil {
+					client = detected
+				} else if errors.Is(err, service.ErrAccountChanged) || errors.Is(err, service.ErrAccountMissing) {
+					return "", "", err
+				} else {
+					note = "登录客户端信息保存失败，请稍后重试"
+				}
+			}
+		}
+		if client == "" && note == "" {
+			note = "Cookie 有效，暂未识别登录客户端"
+		}
+	}
+	current, err := a.store.Get(snapshot.ID)
+	if err != nil {
+		return "", "", err
+	}
+	if current.Revision != snapshot.Revision || current.Cookie != snapshot.Cookie {
+		return "", "", service.ErrAccountChanged
+	}
+	return client, note, nil
 }
 func (a *p115AccountsAPI) cookie(c *gin.Context) {
 	v, ok := a.target(c)
@@ -174,6 +245,15 @@ func (a *p115AccountsAPI) test(c *gin.Context) {
 		c.JSON(502, gin.H{"error": "暂时无法验证 Cookie，请稍后重试"})
 		return
 	}
+	if strings.TrimSpace(in.Cookie) == "" {
+		client, note, err := a.loginClient(ctx, v, valid)
+		if err != nil {
+			a.fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"valid": valid, "loginClient": client, "clientMessage": note})
+		return
+	}
 	c.JSON(200, gin.H{"valid": valid})
 }
 func (a *p115AccountsAPI) save(c *gin.Context) {
@@ -182,10 +262,9 @@ func (a *p115AccountsAPI) save(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Name      *string `json:"name"`
-		Cookie    string  `json:"cookie"`
-		Revision  uint64  `json:"revision"`
-		Directory string  `json:"directoryId"`
+		Name     *string `json:"name"`
+		Cookie   string  `json:"cookie"`
+		Revision uint64  `json:"revision"`
 	}
 	if c.ShouldBindJSON(&in) != nil {
 		a.fail(c, service.ErrAccountInput)
@@ -215,7 +294,13 @@ func (a *p115AccountsAPI) save(c *gin.Context) {
 	if replacement != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
 		defer cancel()
-		err = a.store.LoginManaged(ctx, v.ID, v.Revision, name, *replacement, in.Directory, a.checker, a.drive)
+		pending := &accountQR{revision: v.Revision, name: name, expires: time.Now().Add(5 * time.Minute)}
+		if err = a.startSession(v.ID, pending); err != nil {
+			a.fail(c, err)
+			return
+		}
+		a.acceptLogin(c, ctx, v, pending, *replacement)
+		return
 	} else {
 		err = a.store.Update(v.ID, v.Revision, name, nil)
 	}
@@ -248,10 +333,13 @@ func (a *p115AccountsAPI) remove(c *gin.Context) {
 	if !ok {
 		return
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.store.Delete(v.ID, v.Revision); err != nil {
 		a.fail(c, err)
 		return
 	}
+	a.dropSession(v.ID)
 	c.JSON(200, gin.H{"accounts": a.store.ManagedList()})
 }
 func (a *p115AccountsAPI) clear(c *gin.Context) {
@@ -259,11 +347,14 @@ func (a *p115AccountsAPI) clear(c *gin.Context) {
 	if !ok {
 		return
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	empty := ""
 	if err := a.store.Update(v.ID, v.Revision, v.Name, &empty); err != nil {
 		a.fail(c, err)
 		return
 	}
+	a.dropSession(v.ID)
 	c.Status(204)
 }
 
@@ -274,7 +365,6 @@ func (a *p115AccountsAPI) createQR(c *gin.Context) {
 	}
 	var in struct {
 		ClientType string `json:"clientType"`
-		Directory  string `json:"directoryId"`
 	}
 	if c.ShouldBindJSON(&in) != nil {
 		a.fail(c, service.ErrAccountInput)
@@ -285,30 +375,32 @@ func (a *p115AccountsAPI) createQR(c *gin.Context) {
 		a.fail(c, service.ErrAccountInput)
 		return
 	}
-	pending := &accountQR{directory: in.Directory, revision: v.Revision, expires: time.Now().Add(3 * time.Minute)}
-	a.mu.Lock()
-	for id, s := range a.sessions {
-		if time.Now().After(s.expires) {
-			delete(a.sessions, id)
-		}
+	pending := &accountQR{client: app, name: v.Name, revision: v.Revision, expires: time.Now().Add(3 * time.Minute)}
+	if err := a.startSession(v.ID, pending); err != nil {
+		a.fail(c, err)
+		return
 	}
-	a.sessions[v.ID] = pending
-	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 	qr, err := a.qr.CreateQRCode(ctx, app)
 	if err != nil {
+		a.mu.Lock()
+		if a.sessions[v.ID] == pending {
+			a.dropSession(v.ID)
+		}
+		a.mu.Unlock()
 		c.JSON(502, gin.H{"error": "获取二维码失败，请稍后重试"})
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.sessions[v.ID] != pending {
-		a.fail(c, service.ErrAccountChanged)
+	if err := a.activeSession(v, pending); err != nil {
+		a.fail(c, err)
 		return
 	}
 	pending.id, pending.expires = qr.ID, qr.ExpiresAt
-	c.JSON(200, gin.H{"qrId": qr.ID, "qrcode": qr.ImageURL, "expiresAt": qr.ExpiresAt})
+	a.armSession(v.ID, pending)
+	c.JSON(200, gin.H{"qrId": qr.ID, "sessionId": pending.token, "qrcode": qr.ImageURL, "expiresAt": qr.ExpiresAt})
 }
 func (a *p115AccountsAPI) pollQR(c *gin.Context) {
 	v, ok := a.target(c)
@@ -325,6 +417,11 @@ func (a *p115AccountsAPI) pollQR(c *gin.Context) {
 	if pending.busy {
 		a.mu.Unlock()
 		c.JSON(409, gin.H{"error": "二维码正在验证，请稍后重试"})
+		return
+	}
+	if pending.cookie != "" {
+		a.replacementResponse(c, v, pending)
+		a.mu.Unlock()
 		return
 	}
 	pending.busy = true
@@ -345,17 +442,8 @@ func (a *p115AccountsAPI) pollQR(c *gin.Context) {
 		}
 	}
 	if status.Cookie != "" {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if a.sessions[v.ID] != pending {
-			a.fail(c, service.ErrAccountChanged)
-			return
-		}
-		if err := a.store.LoginManaged(ctx, v.ID, pending.revision, v.Name, status.Cookie, pending.directory, a.checker, a.drive); err != nil {
-			a.fail(c, err)
-			return
-		}
-		delete(a.sessions, v.ID)
+		a.acceptLogin(c, ctx, v, pending, status.Cookie)
+		return
 	}
-	c.JSON(200, gin.H{"status": status.Status, "connected": status.Cookie != ""})
+	c.JSON(200, gin.H{"status": status.Status, "connected": status.Cookie != "", "loginClient": pending.client})
 }

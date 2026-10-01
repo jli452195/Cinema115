@@ -1,4 +1,6 @@
 export interface MemberPlayback {
+	childUsed?: number
+ playbackOnly?: boolean; ownerUserId?: string; ownerName?: string; childLimit?: number; childPaused?: boolean; childDisabled?: boolean; childRevoked?: boolean
  imageTag?: string
  pendingAccountId?: string; pendingDirectoryStarted?: boolean
 	allowPersonalSwitch?: boolean

@@ -13,6 +13,8 @@ var ErrAccountRevision = errors.New("115 账号存储版本已变化")
 
 // 存储层只接触密文，不持有加密密钥或 Cookie 明文。
 type P115AccountRow struct {
+	Summary                string
+	LoginClient            string
 	Ownership, OwnerUserID string
 	Primary                bool
 	UID                    string
@@ -42,7 +44,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	if err != nil {
 		return state, fmt.Errorf("读取 115 账号存储版本: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid,is_primary,uid,ownership,owner_user_id FROM p115_accounts ORDER BY position,id")
+	rows, err := tx.QueryContext(ctx, "SELECT id,name,cookie_enc,revision,playback_parent_cid,is_primary,uid,ownership,owner_user_id,login_client,summary FROM p115_accounts ORDER BY position,id")
 	if err != nil {
 		return state, err
 	}
@@ -50,7 +52,7 @@ func (s *Store) LoadP115Accounts(ctx context.Context) (P115AccountState, error) 
 	state.Accounts = make([]P115AccountRow, 0, 20)
 	for rows.Next() {
 		var row P115AccountRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID, &row.Primary, &row.UID, &row.Ownership, &row.OwnerUserID); err != nil {
+		if err := rows.Scan(&row.ID, &row.Name, &row.Cookie, &row.Revision, &row.PlaybackParentCID, &row.Primary, &row.UID, &row.Ownership, &row.OwnerUserID, &row.LoginClient, &row.Summary); err != nil {
 			return state, err
 		}
 		state.Accounts = append(state.Accounts, row)
@@ -99,12 +101,15 @@ func (s *Store) SaveP115Accounts(ctx context.Context, state P115AccountState, me
 			return errors.New("115 账号编号无效")
 		}
 		ids[row.ID] = true
+		if row.Summary == "" {
+			row.Summary = "{}"
+		}
 		if row.Ownership == "" {
 			row.Ownership = "admin"
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid,is_primary,uid,ownership,owner_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid,is_primary=excluded.is_primary,uid=excluded.uid,ownership=excluded.ownership,owner_user_id=excluded.owner_user_id
-WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid OR is_primary<>excluded.is_primary OR uid<>excluded.uid OR ownership<>excluded.ownership OR owner_user_id<>excluded.owner_user_id`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID, row.Primary, row.UID, row.Ownership, row.OwnerUserID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO p115_accounts(id,name,cookie_enc,revision,position,playback_parent_cid,is_primary,uid,ownership,owner_user_id,login_client,summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,cookie_enc=excluded.cookie_enc,revision=excluded.revision,position=excluded.position,playback_parent_cid=excluded.playback_parent_cid,is_primary=excluded.is_primary,uid=excluded.uid,ownership=excluded.ownership,owner_user_id=excluded.owner_user_id,login_client=excluded.login_client,summary=excluded.summary
+WHERE name<>excluded.name OR revision<>excluded.revision OR position<>excluded.position OR playback_parent_cid<>excluded.playback_parent_cid OR is_primary<>excluded.is_primary OR uid<>excluded.uid OR ownership<>excluded.ownership OR owner_user_id<>excluded.owner_user_id OR login_client<>excluded.login_client OR summary<>excluded.summary`, row.ID, row.Name, row.Cookie, row.Revision, position, row.PlaybackParentCID, row.Primary, row.UID, row.Ownership, row.OwnerUserID, row.LoginClient, row.Summary)
 		if err != nil {
 			return fmt.Errorf("保存 115 账号: %w", err)
 		}

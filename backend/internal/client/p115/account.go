@@ -7,19 +7,28 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 // AccountClient 查询 Cookie 对应的真实登录状态。
 type AccountClient struct {
-	HTTP      *http.Client
-	StatusURL string
+	HTTP       *http.Client
+	StatusURL  string
+	DevicesURL string
+	InfoURL    string
+	SpaceURL   string
+	summaryMu  sync.Mutex
+	summaries  map[[32]byte]*summaryEntry
 }
 
 func NewAccountClient() *AccountClient {
 	return &AccountClient{
-		HTTP:      &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		StatusURL: "https://my.115.com/?ct=guide&ac=status",
+		HTTP:       &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		StatusURL:  "https://my.115.com/?ct=guide&ac=status",
+		DevicesURL: "https://qrcodeapi.115.com/app/1.0/web/1.0/login_log/login_devices",
+		InfoURL:    "https://my.115.com/?ct=ajax&ac=nav",
+		SpaceURL:   "https://webapi.115.com/files/index_info?count_space_nums=1",
 	}
 }
 

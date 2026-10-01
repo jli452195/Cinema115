@@ -15,7 +15,9 @@ type PersonalDriveView struct {
 }
 
 type MemberPlaybackAdminView struct {
-	ImageTag string `json:"imageTag,omitempty"`
+	ChildUsed *int   `json:"childUsed,omitempty"`
+	OwnerName string `json:"ownerName,omitempty"`
+	ImageTag  string `json:"imageTag,omitempty"`
 	model.MemberPlayback
 	PersonalDrive PersonalDriveView `json:"personalDrive"`
 	Username      string            `json:"username"`
@@ -44,7 +46,13 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 		}
 	}
 	out := s.AdminMembers()
+	counts, err := s.db.ChildUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
+		count := counts[out[i].UserID]
+		out[i].ChildUsed = &count
 		out[i].Disabled = true
 		for _, u := range users {
 			if u.ID == out[i].EmbyID && out[i].ServerID == c.ServerID {
@@ -71,7 +79,11 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 	records := s.Records()
 	out := make([]MemberPlaybackAdminView, 0, len(records))
 	for _, r := range records {
-		out = append(out, MemberPlaybackAdminView{MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
+		ownerName := ""
+		if r.PlaybackOnly {
+			ownerName = s.record(r.OwnerUserID).EmbyName
+		}
+		out = append(out, MemberPlaybackAdminView{OwnerName: ownerName, MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
 	}
 	return out
 }

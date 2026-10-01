@@ -15,6 +15,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       if (p.startsWith('/api/admin/')) throw new Error('Personal flow called admin API')
       if (p === '/api/auth/me') data = { user: { id: 'reader', username: 'reader', role: 'user' } }
       else if (p === '/api/me/playback') data = state
+      else if (p === '/api/me/playback/children') data = { limit: 0, used: 0, items: [] }
       else if (p.endsWith('/qrcode')) { writes.push(request.postDataJSON()); data = { qrId: 'qr-' + ++qr, qrcode: 'mock-' + qr, expiresAt: new Date(Date.now() + 180000).toISOString() } }
       else if (p.endsWith('/qrcode/status')) {
         assert.ok(url.searchParams.has('accountId'))

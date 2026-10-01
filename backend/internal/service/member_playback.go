@@ -256,6 +256,9 @@ func (s *MemberPlaybackService) RequestSync() {
 	}
 }
 func (s *MemberPlaybackService) portalUser(ctx context.Context, id string) (model.PortalUser, error) {
+	if s.record(id).PlaybackOnly {
+		return model.PortalUser{}, ErrLogin
+	}
 	u, err := s.db.PortalUser(ctx, id)
 	if err != nil {
 		return u, ErrLogin
@@ -491,6 +494,12 @@ func (s *MemberPlaybackService) Bindings(c PlaybackCacheConfig) PlaybackCacheCon
 	for _, r := range records {
 		if r.EmbyID != "" && r.Source != "" && r.Source != "primary" {
 			target := r.AccountID
+			if r.PlaybackOnly {
+				target = ""
+				if a, err := s.playbackAccount(r); err == nil {
+					target = a.ID
+				}
+			}
 			if r.Source == "assigned" {
 				target = r.AssignedAccountID
 			}
@@ -525,6 +534,11 @@ func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string
 		if _, err := s.playbackUser(ctx, r); err != nil {
 			return true, err
 		}
+		if r.PlaybackOnly {
+			if err := s.authorizeChildOwner(ctx, r); err != nil {
+				return true, err
+			}
+		}
 		if _, err := s.playbackAccount(r); err != nil {
 			return true, memberError("个人网盘不可用，已暂停播放")
 		}
@@ -546,6 +560,9 @@ func (s *MemberPlaybackService) AuthorizeLogin(ctx context.Context, server, id, 
 		c := s.emby.snapshot()
 		if r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !r.Provisioned {
 			return memberError("Emby 身份尚未就绪")
+		}
+		if r.PlaybackOnly && (r.ChildDisabled || r.ChildRevoked || r.AdminBlocked) {
+			return memberError("播放子账号已停用")
 		}
 		_, err := s.playbackUser(ctx, r)
 		return err
@@ -695,6 +712,9 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 		return memberError("Emby 用户状态不可用")
 	}
 	r.Administrator = u.Policy["IsAdministrator"] == true
+	if r.PlaybackOnly && r.Administrator {
+		return memberError("子账号已变为管理员，停止托管，请联系管理员")
+	}
 	if r.Administrator {
 		r.SkipLibrarySync = true
 		r.AllowPersonalSwitch = false
@@ -709,11 +729,21 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 		r.AdminBlocked = true
 	}
 	login := r.Provisioned && (u.Policy["IsDisabled"] != true || r.Stage == "provisioning")
+	if r.PlaybackOnly {
+		// A managed disable can be reversed by its owner; unrelated upstream disables stay in force.
+		login = r.Provisioned && !r.ChildDisabled && !r.ChildRevoked && !r.AdminBlocked && (u.Policy["IsDisabled"] != true || r.ChildManagedDisabled)
+		r.ChildManagedDisabled = r.Provisioned && (r.ChildDisabled || r.ChildRevoked || r.AdminBlocked || r.ChildManagedDisabled) && !login
+	}
 
 	enabled := login && settings.Enabled && (r.SkipLibrarySync || len(settings.LibraryIDs) > 0) && !r.AdminBlocked && !r.Suspended && r.Source != ""
 	a, err := s.playbackAccount(r)
 	if err != nil {
 		enabled = false
+	}
+	if enabled && r.PlaybackOnly {
+		if err := s.authorizeChildOwner(ctx, r); err != nil {
+			enabled = false
+		}
 	}
 	if enabled {
 		valid, err := s.checker.CheckCookie(ctx, a.Cookie)
@@ -784,6 +814,16 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 		if r.Suspended {
 			r.Stage = "paused"
 			r.Message = "Emby 可登录浏览，播放已暂停；绑定 115 账号后可恢复"
+		}
+	}
+	if r.PlaybackOnly && !enabled {
+		r.Message = "共享播放暂不可用，请联系账号所有者"
+		if r.ChildRevoked {
+			r.Message = "子账号共享已撤销"
+		} else if r.ChildDisabled {
+			r.Message = "子账号已停用"
+		} else if r.ChildPaused {
+			r.Message = "子账号播放已暂停"
 		}
 	}
 	r.AppliedRevision = settings.Revision
@@ -892,6 +932,9 @@ func (s *MemberPlaybackService) playbackUser(ctx context.Context, r model.Member
 		return u, ErrPlaybackIdentityUnavailable
 	}
 	if u.ID != r.EmbyID || u.Policy["IsDisabled"] == true {
+		return u, ErrLogin
+	}
+	if r.PlaybackOnly && (u.Policy["IsAdministrator"] == true || r.ChildDisabled || r.ChildRevoked || r.AdminBlocked) {
 		return u, ErrLogin
 	}
 	return u, nil

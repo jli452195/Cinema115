@@ -92,7 +92,7 @@ async function saveAutomation() {
   if (automationSaving.value || busy.value || !automationReady.value) return
   automationSaving.value = true; automationNotice.value = ''; error.value = ''
   try {
-    if (!accounts.value.some(account => account.id === accountId.value && account.configured)) throw new Error('请先在 115 助手中登录主账号')
+    if (!accounts.value.some(account => account.primary && account.id === accountId.value && account.configured)) throw new Error('请先在 115 助手中登录主账号')
     if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
     if (!Number.isInteger(maxParallelBatches.value) || maxParallelBatches.value < 0 || maxParallelBatches.value > 20) throw new Error('最大并行批次应为 0～20 的整数')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
@@ -284,12 +284,9 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
           <fieldset :disabled="busy || initializing || automationSaving || !automationReady" class="min-w-0 space-y-6 disabled:opacity-70">
             <template v-if="activeTab === 'basic'">
               <div><h2 class="font-semibold text-slate-800 dark:text-slate-200">基础设置</h2><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">普通分享、转存再分享与 Telegram 共用以下生成选项，修改后点击右上角保存。</p></div>
+              <P115PrimaryStatus v-if="automationReady" :accounts="accounts" />
           <div>
             <div class="grid gap-x-6 gap-y-5 md:grid-cols-2">
-              <div>
-                <P115PrimaryStatus :accounts="accounts" />
-                <p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">分享生成、Telegram 和源文件读取统一使用主账号。<RouterLink to="/helper115" class="text-blue-600 hover:underline">管理账号</RouterLink></p>
-              </div>
               <div>
                 <TelegramBotSelect id="share-bot" v-model="botId" :bots="bots" :required="telegramEnabled" />
                 <p class="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">生成成功通知和消息接收固定使用此配置。<RouterLink to="/telegram/bot" class="text-blue-600 hover:underline">管理 Bot</RouterLink></p>

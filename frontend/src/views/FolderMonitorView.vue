@@ -91,7 +91,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <section class="space-y-6 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm sm:p-6" :aria-busy="loading">
       <div>
         <h2 class="font-semibold text-slate-900 dark:text-slate-100">分享目录</h2>
-        <p class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">账号、输出目录和生成规则使用「115 分享 STRM」已保存的设置。每次提交时固定设置，已有任务继续使用原账号。</p>
+        <p class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">输出目录和生成规则使用「115 分享 STRM」已保存的设置。</p>
         <RouterLink to="/115/share" class="text-xs text-blue-600 hover:underline">查看分享 STRM 设置 ↗</RouterLink>
       </div>
       <div>
@@ -100,7 +100,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <p class="min-w-0 flex-1 break-all text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ sourcePath || '请选择需要分享的目录' }}</p>
           <button type="button" :disabled="loading || saving || !editable" class="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-40" @click="openSource">选择目录</button>
         </div>
-        <p v-if="bindingChanged && !monitor?.hasBatch" class="mt-2 text-xs text-amber-700">分享账号已变化，请重新选择目录并保存。</p>
+        <p v-if="bindingChanged && !monitor?.hasBatch" class="mt-2 text-xs text-amber-700">主账号已变化，请重新选择目录并保存。</p>
         <p v-if="!editable" class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">本批次尚未结束。可以继续处理，或点击“结束本次任务”解除目录占用。</p>
       </div>
       <div class="flex gap-3">

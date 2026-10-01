@@ -62,13 +62,27 @@ func TestPoolCookieAndQRReplacementValidateNewDirectory(t *testing.T) {
 			})
 			r := gin.New()
 			RegisterP115Accounts(r.Group("/api/admin"), accounts, cookieCheckFunc(func(context.Context, string) (bool, error) { return true, nil }), qr, drive)
+			var response *httptest.ResponseRecorder
 			if method == "cookie" {
-				accountRequest(t, r, "PUT", "/accounts/default", `{"revision":2,"cookie":"UID=999_A; SEID=replacement"}`, 400)
-				accountRequest(t, r, "PUT", "/accounts/default", `{"revision":2,"cookie":"UID=999_A; SEID=replacement","directoryId":"789"}`, 200)
+				response = accountRequest(t, r, "PUT", "/accounts/default", `{"revision":2,"cookie":"UID=999_A; SEID=replacement"}`, 200)
 			} else {
-				accountRequest(t, r, "POST", "/accounts/default/qrcode", `{"clientType":"115-ios","directoryId":"789"}`, 200)
-				accountRequest(t, r, "GET", "/accounts/default/qrcode/status?qrId=115ios", "", 200)
+				accountRequest(t, r, "POST", "/accounts/default/qrcode", `{"clientType":"115-ios"}`, 200)
+				response = accountRequest(t, r, "GET", "/accounts/default/qrcode/status?qrId=115ios", "", 200)
 			}
+			var pending struct {
+				Replacement struct {
+					SessionID string `json:"sessionId"`
+				} `json:"replacement"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &pending); err != nil || pending.Replacement.SessionID == "" {
+				t.Fatal("missing replacement session")
+			}
+			before, _ := accounts.Get("default")
+			if before.UID != "111" || calls != 0 {
+				t.Fatal("replacement committed before directory confirmation")
+			}
+			accountRequest(t, r, "POST", "/accounts/default/replacement/confirm", `{"sessionId":"`+pending.Replacement.SessionID+`","directoryId":"789"}`, 200)
+
 			a, err := accounts.Get("default")
 			if err != nil || a.UID != "999" || a.PlaybackParentCID != "789" || calls != 1 {
 				t.Fatal("replacement was not committed in original slot")
@@ -113,7 +127,7 @@ func setupAccountsAPI(t *testing.T, checker CookieChecker, qr accountQRClient) (
 		checker = cookieCheckFunc(func(_ context.Context, cookie string) (bool, error) { return cookie != "bad" && cookie != "", nil })
 	}
 	r := gin.New()
-	RegisterP115Accounts(r.Group("/api/admin"), s, checker, qr, nil)
+	RegisterP115Accounts(r.Group("/api/admin"), s, checker, qr, accountDirectoryCheckFunc(func(context.Context, string, string) error { return nil }))
 	return r, s, id
 }
 func accountRequest(t *testing.T, r *gin.Engine, method, path, body string, code int) *httptest.ResponseRecorder {

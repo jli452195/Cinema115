@@ -22,6 +22,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'
   else if(p==='/api/auth/invite/check')data={valid:true,playbackSource:'assigned'}
   else if(p==='/api/auth/register'){writes.push(req.postDataJSON());data={user:{username:'newreader'}}}
   else if(p==='/api/me/playback')data=state
+  else if(p==='/api/me/playback/children')data={limit:0,used:0,items:[]}
   else if(p==='/api/me/playback/qrcode'){writes.push(req.postDataJSON());data={qrId:'qr',qrcode:'test',expiresAt:new Date(Date.now()+180000).toISOString()}}
   else if(p==='/api/me/playback/qrcode/status'){Object.assign(state,{uid:'123',connected:true,directoryId:'456'});data={status:'success',playback:state}}
   else if(p==='/api/me/playback/use-personal'){state.source='personal';state.stage='ready';data=state}

@@ -1,5 +1,13 @@
 package p115
 
+func KnownLoginApp(app string) bool {
+	switch app {
+	case "web", "android", "ios", "115android", "115ios", "115ipad", "tv", "alipaymini", "wechatmini":
+		return true
+	}
+	return false
+}
+
 // LoginApp is shared by the managed and personal login entry points.
 func LoginApp(clientType string) (string, bool) {
 	app, ok := map[string]string{

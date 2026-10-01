@@ -302,6 +302,10 @@ func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) {
 	if h.cache != nil && h.cache.Members != nil {
 		userID := h.identities.UserID(h.config.URL, embyToken(r))
+		if h.cache.Members.ChildSessionDenied(h.config.URL, userID) {
+			http.Error(w, "播放子账号已停用，请联系账号所有者", http.StatusForbidden)
+			return
+		}
 		managed, err := h.cache.Members.Authorize(r.Context(), h.config.URL, userID)
 		path := strings.ToLower(r.URL.Path)
 		media := playbackItem(r.URL.Path) != "" || strings.Contains(path, "/videos/") || strings.Contains(path, "/audio/") || downloadItem(r.URL.Path) != "" || strings.Contains(path, "/cinema115/play") || strings.Contains(path, "/livetv/")
