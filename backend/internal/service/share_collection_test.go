@@ -47,27 +47,36 @@ func TestWebCollectionMergesAndPreservesRequestIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Simulate arrival near the deadline without slowing the test down.
+	runs.mu.Lock()
+	runs.runs[first.ID].readyAt = time.Now().Add(time.Second)
+	runs.runs[first.ID].view.ReadyAt = runs.runs[first.ID].readyAt
+	first.ReadyAt = runs.runs[first.ID].readyAt
+	runs.mu.Unlock()
 	secondInput := input
 	secondInput.URL = "https://115cdn.com/s/episode2"
 	second, err := runs.Submit(ctx, secondID, []GenerateInput{secondInput})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != first.ID || len(second.Items) != 2 || len(second.SelectedTaskIDs) != 1 || !first.ReadyAt.Equal(second.ReadyAt) {
+	if second.ID != first.ID || len(second.Items) != 2 || len(second.SelectedTaskIDs) != 1 || !second.ReadyAt.After(first.ReadyAt) {
 		t.Fatalf("未按窗口合并: %+v", second)
+	}
+	if delay := time.Until(second.ReadyAt); delay < 4*time.Second || delay > 5*time.Second {
+		t.Fatalf("new input did not reset a full wait: %v", delay)
 	}
 	if first.SelectedTaskIDs[0] == second.SelectedTaskIDs[0] {
 		t.Fatal("资源任务编号串联")
 	}
 	repeated, err := runs.Submit(ctx, secondID, []GenerateInput{secondInput})
-	if err != nil || repeated.SelectedTaskIDs[0] != second.SelectedTaskIDs[0] || len(repeated.Items) != 2 {
+	if err != nil || repeated.SelectedTaskIDs[0] != second.SelectedTaskIDs[0] || len(repeated.Items) != 2 || !repeated.ReadyAt.Equal(second.ReadyAt) {
 		t.Fatal("重试重复加入批次", err)
 	}
 	if _, err := runs.Submit(ctx, secondID, []GenerateInput{input}); err == nil {
 		t.Fatal("复用请求编号未拒绝内容变化")
 	}
 	duplicate, err := runs.Submit(ctx, strings.Repeat("c", 32), []GenerateInput{secondInput})
-	if err != nil || duplicate.SelectedTaskIDs[0] != second.SelectedTaskIDs[0] {
+	if err != nil || duplicate.SelectedTaskIDs[0] != second.SelectedTaskIDs[0] || !duplicate.ReadyAt.Equal(second.ReadyAt) {
 		t.Fatal("重复资源未正确去重", err)
 	}
 	lookup, err := runs.Get(secondID)
@@ -332,6 +341,12 @@ func TestWebCollectionDeduplicatesOverlappingLinks(t *testing.T) {
 	}
 	if two.SelectedTaskIDs[0] != one.SelectedTaskIDs[0] {
 		t.Fatal("复用的来源对应关系错误")
+	}
+	// A different request containing only already collected inputs also takes
+	// the append path, but must not extend the quiet period.
+	duplicate, err := runs.Submit(ctx, strings.Repeat("c", 32), []GenerateInput{other, input})
+	if err != nil || !duplicate.ReadyAt.Equal(two.ReadyAt) || len(duplicate.Items) != 2 {
+		t.Fatalf("duplicate-only append changed deadline: %+v %v", duplicate, err)
 	}
 	cancel()
 	runShareWorker(t, runs, cancel)

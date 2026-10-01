@@ -117,3 +117,89 @@ test('root representation is distinct from missing selection and unsafe paths', 
   assert.equal(display('.'), '/strm')
   assert.equal(display(''), '未选择')
 })
+
+test('115 parent selection remains a draft until saved and rejects stale account selection', async t => {
+  let primary = 'main', failSave = false, writes = 0
+  let saved = { accountId: primary, parentCID: '0', parentPath: '/', generation: { outputDir: 'strm', baseUrl: 'http://test', videoExtensions: 'mkv' } }
+  environment(t, async (url, init = {}) => {
+    if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: primary, primary: true, configured: true }] })
+    if (url.endsWith('/bots')) return Response.json({ bots: [] })
+    if (url.endsWith('/generation-config')) return Response.json({ baseUrl: 'http://test', videoExtensions: 'mkv' })
+    if (url.endsWith('/automation-config')) {
+      if (init.method === 'POST') {
+        if (failSave) return Response.json({ error: '保存失败' }, { status: 500 })
+        saved = JSON.parse(init.body); writes++
+      }
+      return Response.json({ settings: saved })
+    }
+    throw new Error(`Unexpected request ${url}`)
+  })
+  let mounted = mount('views/ShareView.vue', { token: 'test' })
+  try {
+    await tick()
+    const s = mounted.state
+    assert.equal(s.transferDirty, false)
+    await s.openParentDirectory()
+    assert.equal(s.parentAccountId, 'main')
+    s.parentDialogOpen = false // Cancel without selecting.
+    assert.equal(s.parentCID, '0')
+    assert.equal(s.transferDirty, false)
+    await s.openParentDirectory()
+    s.selectParentDirectory({ id: '12', path: '/资源/电影' })
+    assert.equal(writes, 0)
+    assert.equal(s.parentLabel, '/资源/电影')
+    assert.equal(s.transferDirty, true)
+    s.activeTab = 'reshare'
+    await s.generate()
+    assert.match(s.error, /请先保存转存设置/)
+    failSave = true
+    await s.saveAutomation()
+    assert.equal(s.parentCID, '12')
+    assert.equal(s.transferDirty, true)
+    failSave = false
+    await s.saveAutomation()
+    assert.equal(s.transferDirty, false)
+    assert.equal(saved.parentPath, '/资源/电影')
+    mounted.app.unmount()
+    mounted = mount('views/ShareView.vue', { token: 'test' })
+    await tick()
+    const reloaded = mounted.state
+    assert.equal(reloaded.parentLabel, '/资源/电影')
+    assert.equal(reloaded.transferDirty, false)
+    primary = 'replacement'
+    await reloaded.openParentDirectory()
+    assert.equal(reloaded.parentCID, '')
+    assert.equal(reloaded.parentPath, '')
+    assert.equal(reloaded.parentAccountId, primary)
+    reloaded.accountId = 'changed-again'
+    reloaded.selectParentDirectory({ id: '12', path: '/旧目录' })
+    assert.equal(reloaded.parentCID, '')
+    assert.match(reloaded.error, /主账号已变化/)
+  } finally { mounted.app.unmount() }
+})
+
+test('115 picker selects root and child paths, blocks loading and failed listing', async t => {
+  let fail = false
+  environment(t, async url => {
+    assert.equal(new URL(url, 'http://test').searchParams.get('accountId'), 'main')
+    return fail ? Response.json({ error: '目录读取失败' }, { status: 500 }) : Response.json({ directories: [], hasMore: false })
+  })
+  const selected = []
+  const { app, state: s } = mount('components/P115DirectoryDialog.vue', { token: 'test', accountId: 'main', allowRoot: true, onSelect: value => selected.push(value) })
+  try {
+    s.select()
+    assert.equal(selected.length, 0)
+    await tick()
+    s.select()
+    assert.equal(selected[0].id, '0')
+    assert.equal(selected[0].path, '/')
+    await s.openDirectory({ id: '12', name: '电影' })
+    s.select()
+    assert.equal(selected[1].id, '12')
+    assert.equal(selected[1].path, '/电影')
+    fail = true
+    await s.openDirectory({ id: '13', name: '无法读取' })
+    s.select()
+    assert.equal(selected.length, 2)
+  } finally { app.unmount() }
+})

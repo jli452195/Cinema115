@@ -13,7 +13,7 @@ func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, m
 	state.Replies = append(state.Replies, &pendingReply{UpdateID: update.ID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID, Text: text})
 }
 
-// 等待窗口从首条消息开始计算，持续发送不会无限延后；不同聊天和话题各自收集。
+// 每次新增资源重置等待时间；不同聊天和话题各自收集，不设最长收集时间。
 func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
 	settings := b.Settings.Value()
 	for _, update := range updates {
@@ -78,6 +78,18 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 			if target == nil {
 				target = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: mode, ReadyAt: now.Add(wait)}
 				state.Queue = append(state.Queue, target)
+			}
+			if wait > 0 {
+				duplicate := false
+				for _, existing := range target.Items {
+					if existing == item {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
+					target.ReadyAt = now.Add(wait)
+				}
 			}
 			target.Items = append(target.Items, item)
 			target.SourceMessageIDs = append(target.SourceMessageIDs, m.ID)

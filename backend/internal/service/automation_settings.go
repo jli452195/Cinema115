@@ -22,6 +22,7 @@ type AutomationSettings struct {
 	MaxParallelBatches int           `json:"maxParallelBatches"`
 	FixedSharePassword string        `json:"fixedSharePassword"`
 	ParentCID          string        `json:"parentCID"`
+	ParentPath         string        `json:"parentPath,omitempty"` // Display hint only; directory operations use ParentCID.
 	ReviewRetryEnabled bool          `json:"reviewRetryEnabled"`
 	ReviewRetryMinutes int           `json:"reviewRetryMinutes"`
 	ReviewRetryMax     int           `json:"reviewRetryMax"`
@@ -67,6 +68,7 @@ func (s *AutomationStore) Value() AutomationSettings {
 		if id := s.PrimaryID(); value.AccountID != id {
 			value.AccountID = id
 			value.ParentCID = ""
+			value.ParentPath = ""
 		}
 	}
 	return value
@@ -170,6 +172,9 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 	if _, err := strconv.ParseUint(value.ParentCID, 10, 64); err != nil {
 		return generationInputError("转存父目录 ID 应为数字，根目录使用 0")
 	}
+	if len(value.ParentPath) > 4096 || strings.ContainsAny(value.ParentPath, "\r\n\x00") {
+		return generationInputError("转存目录显示路径无效")
+	}
 	return ValidateGenerationOptions(s.root, value.Generation)
 }
 
@@ -189,6 +194,9 @@ func (s *AutomationStore) Save(value AutomationSettings) error {
 		value.ReviewRetryMax = 6
 	}
 	value.FixedSharePassword = strings.TrimSpace(value.FixedSharePassword)
+	if value.ParentCID == "0" {
+		value.ParentPath = "/"
+	}
 	// 配置仅保存生成选项，不保存上一次收到的分享链接及提取码。
 	value.Generation.URL = ""
 	value.Generation.Password = ""

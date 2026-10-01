@@ -507,7 +507,7 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	s.queue = append(s.queue, id)
 	view := s.rememberSubmission(id, digest, fingerprint, run, run.view.Items)
 	if collectionKey != "" {
-		s.tasks.Logs.Append("STRM", id, "网页", "INFO", fmt.Sprintf("开始收集网页资源：%d 个链接，等待 %d 秒，后续提交不延长窗口", len(inputs), settings.TGBatchWaitSeconds))
+		s.tasks.Logs.Append("STRM", id, "网页", "INFO", fmt.Sprintf("开始收集网页资源：%d 个链接，最后一次新增资源后等待 %d 秒", len(inputs), settings.TGBatchWaitSeconds))
 	}
 	select {
 	case s.wake <- struct{}{}:

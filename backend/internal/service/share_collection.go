@@ -80,6 +80,7 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 	if err := ctx.Err(); err != nil {
 		return ShareRunView{}, err
 	}
+	receivedAt := time.Now()
 	combined := make([]GenerateInput, 0, len(run.requests)+len(inputs))
 	settings := run.ctx.Value(automationContextKey{}).(AutomationSettings)
 	known := make(map[string]ShareRunItem, len(run.requests)+len(inputs))
@@ -128,6 +129,12 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 	run.requests = append(run.requests, requests...)
 	run.view.Items = append(run.view.Items, items...)
 	run.cacheKey = cacheKey
+	// Only newly accepted resources reset the quiet period. Retries and
+	// duplicate-only submissions retain the original deadline.
+	if len(items) > 0 {
+		run.readyAt = receivedAt.Add(time.Duration(settings.TGBatchWaitSeconds) * time.Second)
+		run.view.ReadyAt = run.readyAt
+	}
 	s.activeByFingerprint[fingerprint] = run.view.ID
 	s.tasks.Logs.Append("STRM", run.view.ID, "网页", "INFO", fmt.Sprintf("加入收集批次：新增 %d 个链接，批次累计 %d 个链接", len(items), len(run.tasks)))
 	return s.rememberSubmission(id, digest, fingerprint, run, selected), nil

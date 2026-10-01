@@ -40,8 +40,8 @@ func TestCollectionWindowIsolationAndDirectBypass(t *testing.T) {
 		collectionUpdate(5, 42, 7, "https://115.com/s/e?password=abcd"),
 		collectionUpdate(6, 99, 7, "https://115.com/s/denied"),
 	}, now.Add(4*time.Second))
-	if state.Offset != 7 || len(state.Queue) != 3 || len(state.Queue[0].Items) != 3 || !state.Queue[0].ReadyAt.Equal(now.Add(5*time.Second)) {
-		t.Fatal("窗口被延后、聊天混合或丢失消息", state)
+	if state.Offset != 7 || len(state.Queue) != 3 || len(state.Queue[0].Items) != 3 || !state.Queue[0].ReadyAt.Equal(now.Add(9*time.Second)) {
+		t.Fatal("窗口未顺延、聊天混合或丢失消息", state)
 	}
 	if state.Queue[0].SourceMessageIDs[1] != 104 {
 		t.Fatal("合并丢失原消息引用")
@@ -58,7 +58,10 @@ func TestCollectionWindowIsolationAndDirectBypass(t *testing.T) {
 	if b.startReadyBatch(&state, now.Add(4*time.Second)) {
 		t.Fatal("窗口结束前开始了转存")
 	}
-	if !b.startReadyBatch(&state, now.Add(5*time.Second)) || len(state.Batch.Items) != 3 {
+	if b.startReadyBatch(&state, now.Add(5*time.Second)) {
+		t.Fatal("仍按首条消息截止时间执行")
+	}
+	if !b.startReadyBatch(&state, now.Add(9*time.Second)) || len(state.Batch.Items) != 3 {
 		t.Fatal("窗口结束未统一处理")
 	}
 }
@@ -80,6 +83,51 @@ func TestCollectionZeroWaitAndNormalMode(t *testing.T) {
 		if !b.startReadyBatch(&state, now) {
 			t.Fatal("普通模式或零等待没有立即执行")
 		}
+	}
+}
+
+func TestCollectionSlidingWindowHasNoMaximumAndDuplicatesDoNotDelay(t *testing.T) {
+	b := newBatchTestBot(t, nil)
+	settings := b.Settings.Value()
+	settings.ReshareEnabled, settings.TGBatchWaitSeconds = true, 5
+	if err := b.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	state := telegramState{}
+	for i := int64(0); i < 12; i++ {
+		at := now.Add(time.Duration(i) * 4 * time.Second)
+		b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(i+1, 42, 7, fmt.Sprintf("https://115.com/s/item%d", i))}, at)
+		if len(state.Queue) != 1 || !state.Queue[0].ReadyAt.Equal(at.Add(5*time.Second)) {
+			t.Fatal("new resources did not extend same batch beyond 30 seconds")
+		}
+	}
+	deadline := state.Queue[0].ReadyAt // 49 seconds after first input.
+	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Second))
+	if !state.Queue[0].ReadyAt.Equal(deadline) {
+		t.Fatal("duplicate link extended deadline")
+	}
+	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Millisecond))
+	if len(state.Queue[0].Items) != 13 {
+		t.Fatal("update retry duplicated resources")
+	}
+	if err := b.save(state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(b.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored telegramState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.Queue[0].ReadyAt.Equal(deadline) {
+		t.Fatal("extended deadline did not persist")
+	}
+	b.enqueueUpdates(&restored, []telegramUpdate{collectionUpdate(14, 42, 7, "https://115.com/s/next")}, deadline)
+	if len(restored.Queue) != 2 || !restored.Queue[1].ReadyAt.Equal(deadline.Add(5*time.Second)) {
+		t.Fatal("expired window accepted new resource")
 	}
 }
 
