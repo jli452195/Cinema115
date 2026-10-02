@@ -5,7 +5,7 @@ export interface MemberPlayback {
  pendingAccountId?: string; pendingDirectoryStarted?: boolean
 	allowPersonalSwitch?: boolean
   userId: string; username: string; disabled: boolean; administrator?: boolean; embyId: string; embyName: string; embyUrl: string
-  source: string; accountId: string; assignedAccountId: string; playbackAllowed?: boolean; downloadAllowed?: boolean; stage: string; message: string
+  source: string; accountId: string; playbackAllowed?: boolean; downloadAllowed?: boolean; stage: string; message: string
   driveStatus?: { state: string; message: string; checkedAt?: string }
   createdByCinema?: boolean; directoryStarted: boolean; directoryId: string; suspended?: boolean; checkedAt?: string; checkError?: string
   personalDrive?: { uid: string; connected: boolean; directoryId: string }

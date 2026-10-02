@@ -26,10 +26,7 @@ func (s *MemberPlaybackService) playbackAccount(r model.MemberPlayback) (P115Acc
 		}
 		return a, nil
 	case "assigned":
-		a, err = s.accounts.Get(r.AssignedAccountID)
-		if a.Primary || s.accounts.IsPersonal(a.ID) {
-			return a, memberError("分配的小号不可用")
-		}
+		return a, ErrPoolUnavailable
 	case "personal":
 		a, err = s.accounts.Get(r.AccountID)
 		if a.Primary || a.OwnerUserID != r.UserID || a.Ownership != "member" || r.DirectoryID == "" || a.PlaybackParentCID != r.DirectoryID {
@@ -61,7 +58,8 @@ func (s *MemberPlaybackService) SelectionMatches(embyID string, selected *Playba
 			target = a.ID
 		}
 		if r.Source == "assigned" {
-			target = r.AssignedAccountID
+			// Dynamic selections require a request-scoped MediaAuthorization.
+			return false
 		}
 		return selected != nil && target != "" && selected.binding.AccountID == target
 	}
@@ -80,13 +78,12 @@ func (s *MemberPlaybackService) AccountOptions() []PoolAccountView {
 	out := make([]PoolAccountView, 0, len(accounts))
 	for _, a := range accounts {
 		if !a.Primary && a.OwnerUserID == "" && a.Ownership != "member" && !IsMemberAccount(a.ID) {
-			users := make([]string, 0)
-			for _, r := range s.Records() {
-				if r.Source == "assigned" && r.AssignedAccountID == a.ID {
-					users = append(users, r.EmbyName)
-				}
+			account, _ := s.accounts.Get(a.ID)
+			status := PoolAccountStatus{}
+			if s.Pool != nil {
+				status = s.Pool.AccountStatus(account)
 			}
-			out = append(out, PoolAccountView{P115AccountView: a, UserCount: len(users), Users: users})
+			out = append(out, PoolAccountView{P115AccountView: a, Pool: status})
 		}
 	}
 	return out
@@ -112,15 +109,10 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 	if r.Administrator && source == "personal" {
 		return memberError("管理员请使用主网盘或管理员小号池")
 	}
-	if source == "assigned" && accountID != "" {
-		a, err := s.accounts.Get(accountID)
-		if err != nil || a.Primary || s.accounts.IsPersonal(a.ID) || a.PlaybackParentCID == "" {
-			return memberError("请选择已配置播放目录的管理员小号")
-		}
-	} else {
-		accountID = ""
+	if accountID != "" {
+		return memberError("共享池自动调度，不接受指定小号")
 	}
-	r.Source, r.AssignedAccountID = source, accountID
+	r.Source = source
 	r.AllowPersonalSwitch = !r.Administrator
 	r.Suspended = false
 	delete(s.sessions, id)
@@ -128,9 +120,6 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 		s.ClearDirectLinks()
 	}
 	if err := s.save(ctx, r); err != nil {
-		return err
-	}
-	if err := s.assignPool(ctx, &r); err != nil {
 		return err
 	}
 	return s.reconcile(ctx, r)
@@ -153,7 +142,6 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 		return err
 	}
 	prepared.Source = "personal"
-	prepared.AssignedAccountID = ""
 	prepared.Suspended = false
 	if _, err := s.playbackAccount(prepared); err != nil {
 		return err
@@ -169,7 +157,6 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 }
 
 type PoolAccountView struct {
+	Pool PoolAccountStatus `json:"pool"`
 	P115AccountView
-	UserCount int      `json:"userCount"`
-	Users     []string `json:"users"`
 }

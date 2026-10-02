@@ -89,6 +89,9 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 }
 
 func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoint, cookie string, form url.Values, userAgent string) (json.RawMessage, error) {
+	if err := WaitRequestBudget(ctx, cookie); err != nil {
+		return nil, err
+	}
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -109,10 +112,11 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("请求 115 分享接口失败")
+		return nil, &playbackTransportError{cause: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		ObserveRequestBudget(ctx, resp.StatusCode, retryAfter(resp.Header.Get("Retry-After")))
 		return nil, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	var envelope shareResponse
@@ -131,7 +135,7 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 			return raw, nil
 		}
 		switch req.URL.Path {
-		case "/app/chrome/downurl", "/files/get_info", "/files/supervision", "/files/shasearch", "/files/search":
+		case "/app/chrome/downurl", "/files/get_info", "/files/supervision", "/files/shasearch", "/files/search", "/files":
 			return nil, driveAPIError(req.URL.Path, raw, envelope)
 		}
 		if req.URL.Path == sharePlaybackPath {

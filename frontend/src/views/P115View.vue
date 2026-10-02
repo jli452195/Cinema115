@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import P115ManagedAccountCard from '../components/P115ManagedAccountCard.vue'
+import DynamicPoolSettings from '../components/DynamicPoolSettings.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { p115Request } from '../lib/p115-api'
 import { memberRequest } from '../types/memberPlayback'
@@ -68,10 +69,11 @@ onBeforeUnmount(() => lifecycle.abort())
         <button :disabled="adding" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="add(true)">配置主账号</button>
       </div>
     </section>
+    <DynamicPoolSettings :token="token" :pool="pool" @changed="refresh" />
     <section id="pool" aria-label="共享小号池" class="scroll-mt-6">
       <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">共享小号池<span v-if="!loading && !poolError" class="ml-2 text-sm font-normal text-slate-500">{{ pool.length }} 个</span></h2>
-        <div class="flex flex-wrap items-center gap-4 text-sm"><button class="text-slate-500 hover:text-blue-600" @click="rules = true">分配说明</button><RouterLink to="/emby/users" class="text-blue-600">分配 Emby 用户</RouterLink><button :disabled="adding || loading || !!poolError" class="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-40" @click="add(false)">添加共享小号</button></div>
+        <div class="flex flex-wrap items-center gap-4 text-sm"><button class="text-slate-500 hover:text-blue-600" @click="rules = true">分配说明</button><RouterLink to="/emby/users" class="text-blue-600">管理 Emby 用户</RouterLink><button :disabled="adding || loading || !!poolError" class="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-40" @click="add(false)">添加共享小号</button></div>
       </header>
       <p class="mb-5 text-sm text-slate-500">一个小号可供多位用户共享，个人网盘由用户在个人中心独立管理。</p>
       <p v-if="poolError" role="alert" class="mb-4 text-sm text-red-600">{{ poolError }}</p>
@@ -83,9 +85,9 @@ onBeforeUnmount(() => lifecycle.abort())
     </section>
   </ManagementLayout>
   <P115ActionDialog v-if="rules" title="共享小号分配说明" @close="rules = false">
-    <p>先登录小号并设置秒传目录，再到 Emby 用户管理中分配。一个小号可以供多位用户使用。</p>
-    <p>注册选择小号池时，自动分配优先使用人数较少的可用小号；首次分配没有可用小号时，使用主网盘。</p>
-    <p>已分配的小号失效时保留关联并暂停播放，不自动回退或轮换；恢复后继续使用原账号。</p>
+    <p>登录小号并设置秒传目录后，自动参与共享池调度。用户只需选择共享池来源。</p>
+    <p>播放会话优先选择低负载账号，同一会话保持稳定；容量按实际 UID 汇总。</p>
+    <p>账号故障时会在请求预算内尝试其他小号；全池繁忙或不可用时停止新取链，不回退主网盘。</p>
     <p class="text-slate-500">用户自行绑定的个人网盘不进入管理员共享小号池。</p>
     <template #footer><button class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white" @click="rules = false">知道了</button></template>
   </P115ActionDialog>

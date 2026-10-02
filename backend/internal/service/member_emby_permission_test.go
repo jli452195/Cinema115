@@ -139,6 +139,7 @@ func TestRevokedChildCannotBeEnabledEvenWhenEmbyWasChanged(t *testing.T) {
 
 func TestRegisteredUserPlaybackSwitchRemainsOwnedByEmby(t *testing.T) {
 	s, remote, _ := memberFixture(t)
+	memberTestPool(t, s)
 	ctx := context.Background()
 	memberTestPrimary(t, s)
 	auth := NewPortalAuth(s.db, "admin", "password123", "secret")

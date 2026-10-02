@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import MemberPlaybackEditor from '../components/MemberPlaybackEditor.vue'
+import UserPlaybackSessions from '../components/UserPlaybackSessions.vue'
 import { memberRequest, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
 import type { P115Account } from '../types/p115Accounts'
 const props = defineProps<{ token: string }>()
@@ -23,8 +24,7 @@ function showChildren(owner: string) { childOwner.value = owner; filter.value = 
 const busy = computed(() => loading.value || busyUsers.value.size > 0)
 const lifecycle = new AbortController()
 const visible = computed(() => new Set(members.value.filter(m => {
- const account = accounts.value.find(a => a.id === m.assignedAccountId)?.name || ''
- const matches = `${m.embyName} ${m.embyId} ${account} ${m.ownerName || ''}`.toLowerCase().includes(query.value.trim().toLowerCase())
+ const matches = `${m.embyName} ${m.embyId} ${m.ownerName || ''}`.toLowerCase().includes(query.value.trim().toLowerCase())
  const state = filter.value === 'all' || m.source === filter.value || filter.value === 'pending' && ((m.driveStatus ? m.driveStatus.state !== 'ready' : m.stage !== 'ready') || m.disabled || m.childPaused || m.childDisabled || m.childRevoked)
  return matches && state && (!childOwner.value || m.ownerUserId === childOwner.value)
 }).map(m => m.userId)))
@@ -49,7 +49,6 @@ function updated(member: MemberPlayback, next: MemberSettings) {
 	statusGeneration++
  members.value = members.value.map(m => m.userId === member.userId ? member : m)
  settings.value = next
- accounts.value = accounts.value.map(a => ({ ...a, userCount: members.value.filter(m => m.source === 'assigned' && m.assignedAccountId === a.id).length }))
  scheduleStatusPoll()
 }
 function applyDriveStatuses(items: Array<{ userId: string; driveStatus?: MemberPlayback['driveStatus'] }>) {
@@ -94,6 +93,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
   <p v-if="childOwner" class="mb-4 flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">正在查看 {{ members.find(m => m.userId === childOwner)?.embyName }} 的子账号<button class="text-blue-600" @click="childOwner = ''; filter = 'all'">显示全部用户</button></p>
   <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
   <div v-if="confirmDiscard" class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">刷新会丢弃未保存的修改。<button class="underline" :disabled="busy" @click="load(true)">放弃修改并刷新</button><button @click="confirmDiscard = false">继续编辑</button></div>
+  <UserPlaybackSessions :token="token" :members="members" />
   <div class="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
    <div v-for="m in members" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
     <MemberPlaybackEditor :token="token" :member="m" :settings="settings" :accounts="accounts" :disabled="busy" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />

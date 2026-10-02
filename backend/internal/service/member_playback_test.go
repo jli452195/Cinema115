@@ -357,7 +357,7 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.record(first.ID).Source != "primary" || s.record(first.ID).Stage != "pending" {
+	if s.record(first.ID).Source != "assigned" {
 		t.Fatal(s.record(first.ID))
 	}
 	if _, err := auth.Register(ctx, "newreader", "password123", invites[0].Code); err == nil {
@@ -377,13 +377,13 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err := s.SyncUser(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if s.record(first.ID).Source != "primary" || s.record(first.ID).AssignedAccountID != "" {
+	if s.record(first.ID).Source != "assigned" {
 		t.Fatal("primary user silently reassigned", s.record(first.ID))
 	}
-	if err := s.SetSource(ctx, first.ID, "assigned", pool); err != nil {
+	if err := s.SetSource(ctx, first.ID, "assigned", ""); err != nil {
 		t.Fatal(err)
 	}
-	if s.record(first.ID).AssignedAccountID != pool || s.record(first.ID).Stage != "ready" {
+	if s.record(first.ID).Source != "assigned" || s.record(first.ID).Stage != "ready" {
 		t.Fatal(s.record(first.ID))
 	}
 	f.failCreate = true
@@ -396,10 +396,10 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.created != count || s.record(second.ID).AssignedAccountID != pool {
+	if f.created != count || s.record(second.ID).Source != "assigned" {
 		t.Fatal("duplicate creation or assignment")
 	}
-	if err := s.SetSource(ctx, second.ID, "assigned", pool); err != nil {
+	if err := s.SetSource(ctx, second.ID, "assigned", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -410,7 +410,7 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 	if err := s.SyncUser(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if s.record(first.ID).AssignedAccountID != pool {
+	if s.record(first.ID).Source != "assigned" {
 		t.Fatal("lost unavailable binding")
 	}
 }

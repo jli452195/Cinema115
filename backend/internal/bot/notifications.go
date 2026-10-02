@@ -48,7 +48,8 @@ func (m *Manager) enqueueShareNotification(ctx context.Context, taskID, text, pr
 	if err := m.Notifications.EnqueueTelegramNotification(ctx, n); err != nil {
 		return err
 	}
-	m.Logs.Append("Telegram", taskID, "生成通知", "DEBUG", "STRM 成功通知已入队")
+	kind, _ := notificationLabels(taskID)
+	m.Logs.Append("Telegram", taskID, kind, "DEBUG", "通知已入队")
 	return nil
 }
 

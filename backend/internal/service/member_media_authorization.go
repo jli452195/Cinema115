@@ -15,6 +15,8 @@ import (
 // MediaAuthorization belongs to one HTTP request. Never cache it across requests
 // or use it in a background prewarm spawned by another request.
 type MediaAuthorization struct {
+	userLease *UserPlaybackLease
+	poolLease *PoolLease
 	service   *MemberPlaybackService
 	record    model.MemberPlayback
 	account   P115Account
@@ -40,6 +42,17 @@ func (s *MemberPlaybackService) playbackRecord(serverID, embyID string) model.Me
 // verified must come from an authenticated Emby response for this exact user,
 // never from client request fields. Nil asks the service to fetch it itself.
 func (s *MemberPlaybackService) BeginMediaAuthorization(ctx context.Context, server, id string, download bool, verified *emby.ManagedUser) (*MediaAuthorization, error) {
+	return s.beginMediaAuthorization(ctx, server, id, download, verified, true)
+}
+
+// Negotiation validates identity and Emby permissions without reserving pool
+// capacity or probing 115. The original-file redirect performs target checks.
+func (s *MemberPlaybackService) AuthorizeNegotiation(ctx context.Context, server, id string) error {
+	_, err := s.beginMediaAuthorization(ctx, server, id, false, nil, false)
+	return err
+}
+
+func (s *MemberPlaybackService) beginMediaAuthorization(ctx context.Context, server, id string, download bool, verified *emby.ManagedUser, selectAccount bool) (*MediaAuthorization, error) {
 	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -102,16 +115,49 @@ func (s *MemberPlaybackService) BeginMediaAuthorization(ctx context.Context, ser
 			return nil, err
 		}
 	}
-	a, err := s.playbackAccount(r)
+	var a P115Account
+	if !selectAccount {
+		return nil, nil
+	}
+	var userLease *UserPlaybackLease
+	if holder, _ := ctx.Value(userPlaybackRequestKey{}).(*UserPlaybackRequest); holder != nil && !download {
+		req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
+		if !req.Task {
+			if s.UserPlayback == nil {
+				return nil, ErrUserPlaybackBusy
+			}
+			if holder.lease == nil {
+				var err error
+				holder.lease, err = s.UserPlayback.Acquire(ctx, r, req)
+				if err != nil {
+					return nil, err
+				}
+			}
+			userLease = holder.lease
+			if userLease.Record.Key != DirectLinkKey("user-playback", r.ServerID, r.EmbyID) || !userLease.Current() {
+				return nil, ErrUserPlaybackStopped
+			}
+		}
+	}
+	var lease *PoolLease
+	var err error
+	if r.Source == "assigned" {
+		lease, err = s.poolAuthorization(ctx, r)
+		if err == nil {
+			a = lease.Account
+		}
+	} else {
+		a, err = s.playbackAccount(r)
+		if err == nil {
+			err = s.checkMediaDrive(ctx, a)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkMediaDrive(ctx, a); err != nil {
-		return nil, err
-	}
-	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started}
+	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started, poolLease: lease, userLease: userLease}
 	if err := grant.CheckCurrent(ctx); err != nil {
-		return nil, err
+		return nil, errors.Join(err, grant.Close())
 	}
 	return grant, nil
 }
@@ -170,7 +216,7 @@ func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Accou
 				return ctx.Err()
 			}
 			if err != nil {
-				return memberError("网盘登录或目录不可用，请检查账号及目录")
+				return fmt.Errorf("网盘登录或目录不可用: %w", err)
 			}
 			return nil
 		}
@@ -186,10 +232,10 @@ func (s *MemberPlaybackService) probeMediaDriveSeparate(ctx context.Context, a P
 		return ctx.Err()
 	}
 	if err != nil {
-		return memberError("暂时无法检查网盘登录，请稍后重试")
+		return fmt.Errorf("暂时无法检查网盘登录: %w", err)
 	}
 	if !valid {
-		return memberError("网盘登录已失效，请重新登录")
+		return fmt.Errorf("%w: %w", ErrMemberPlayback, p115.ErrShareLoginRequired)
 	}
 	if !a.Primary {
 		err := s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie)
@@ -197,7 +243,7 @@ func (s *MemberPlaybackService) probeMediaDriveSeparate(ctx context.Context, a P
 			return ctx.Err()
 		}
 		if err != nil {
-			return memberError("网盘目录不可用，请检查目录及账号")
+			return fmt.Errorf("网盘目录不可用: %w", err)
 		}
 	}
 	return nil
@@ -253,6 +299,9 @@ func (a *MediaAuthorization) CheckCurrent(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if a.userLease != nil && !a.userLease.Current() {
+		return ErrUserPlaybackStopped
+	}
 	s := a.service
 	r := s.record(a.record.UserID)
 	if err := s.checkMediaLocal(r, a.record.EmbyURL, a.download); err != nil {
@@ -261,7 +310,19 @@ func (a *MediaAuthorization) CheckCurrent(ctx context.Context) error {
 	if r.EmbyID != a.record.EmbyID || r.Source != a.record.Source || r.PlaybackOnly != a.record.PlaybackOnly || r.OwnerUserID != a.record.OwnerUserID {
 		return ErrAccountChanged
 	}
-	current, err := s.playbackAccount(r)
+	var current P115Account
+	var err error
+	if a.poolLease != nil {
+		if !a.poolLease.Current() {
+			return ErrAccountChanged
+		}
+		current, err = s.accounts.Get(a.account.ID)
+		if err == nil && !eligiblePoolAccount(current) {
+			return ErrAccountChanged
+		}
+	} else {
+		current, err = s.playbackAccount(r)
+	}
 	if err != nil {
 		return err
 	}

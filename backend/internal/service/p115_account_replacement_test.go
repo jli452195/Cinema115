@@ -23,7 +23,7 @@ func TestManagedReplacementValidatesBeforeCommit(t *testing.T) {
 	if err := s.accounts.UpdatePlaybackDirectory(id, 2, "123"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSource(ctx, owner, "assigned", id); err != nil {
+	if err := s.SetSource(ctx, owner, "assigned", ""); err != nil {
 		t.Fatal(err)
 	}
 	old, _ := s.accounts.Get(id)
@@ -40,7 +40,7 @@ func TestManagedReplacementValidatesBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, _ := s.accounts.Get(id)
-	if current.UID != "502" || current.Cookie != newCookie || current.PlaybackParentCID != "123" || s.record(owner).AssignedAccountID != id {
+	if current.UID != "502" || current.Cookie != newCookie || current.PlaybackParentCID != "123" || s.record(owner).Source != "assigned" {
 		t.Fatal("slot or binding changed incorrectly")
 	}
 	if old.Cookie != oldCookie || old.UID != "501" {

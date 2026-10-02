@@ -28,11 +28,14 @@ func RegisterInstantUploads(admin *gin.RouterGroup, s *service.InstantUploads, s
 		if errors.Is(err, service.ErrInstantBusy) {
 			status = 409
 		}
+		if errors.Is(err, service.ErrPoolBusy) || errors.Is(err, service.ErrPoolUnavailable) {
+			status = 503
+		}
 		c.JSON(status, gin.H{"error": err.Error()})
 	}
 	checkUser := func(c *gin.Context, id string) bool {
 		if id == "" || validateUser == nil {
-			c.JSON(400, gin.H{"error": "请选择已绑定小号的目标用户"})
+			c.JSON(400, gin.H{"error": "请选择动态共享池用户"})
 			return false
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
@@ -90,7 +93,11 @@ func RegisterInstantUploads(admin *gin.RouterGroup, s *service.InstantUploads, s
 func InstantPlaybackUserValidator(emby *service.EmbyService, proxy *service.EmbyProxy, cache *service.PlaybackCache) func(context.Context, string) error {
 	return func(ctx context.Context, id string) error {
 		url := proxy.Status().Config.URL
-		if cache.Status().Config.EmbyURL != url {
+		cacheURL := cache.Status().Config.EmbyURL
+		if cache.Members != nil {
+			cacheURL = cache.Members.Settings().EmbyURL
+		}
+		if cacheURL != url {
 			return fmt.Errorf("Emby 服务已变化，请重新配置用户绑定")
 		}
 		users, err := emby.PlaybackUsers(ctx, url)

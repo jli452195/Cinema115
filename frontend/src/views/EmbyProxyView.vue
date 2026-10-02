@@ -76,6 +76,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <SettingSwitch v-model="config.debug" label="反代调试日志" description="保存后生效。开启后记录播放及预热的步骤时间轴、Emby 查询、等待预热、秒传分段耗时和 HTTP 连接计时，并可展开查看完整 CDN 直链与请求响应头。关闭后保留常规播放结果、错误和总耗时。图片、进度和普通透传每 30 秒汇总，异常单独记录。Cookie、登录令牌及未知请求头的值隐藏，不记录请求正文。" />
           <SettingSwitch v-model="config.prepareFiles" label="提前准备秒传文件" description="默认开启，保存后生效。收到播放信息后，为唯一或明确选中的 redirect115 媒体源准备绑定账号的文件，已有记录直接复用；正式播放时按播放器 UA 取链。主账号直取和分享直取不提前创建文件。打开详情但未播放也可能产生网盘文件，需手动删除；能否提前触发取决于播放器。关闭后，真正播放时仍会按需秒传。" />
           <SettingSwitch v-model="config.prewarm" label="提前获取播放直链" description="默认关闭，独立于文件准备设置。开启后提前执行完整取链流程，必要时也会秒传。相同 UA 可复用有效直链，不同 UA 需重新取链；为减少 115 请求，通常保持关闭即可。" />
+          <p class="text-xs text-slate-500">用户单路播放限制启用时，所有来源跳过提前准备与直链预热，正式播放通过会话准入后才准备文件。</p>
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="text-sm text-slate-700 dark:text-slate-300">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">默认 9 分钟，0 为关闭。命中不延长到期时间；修改后保存生效。缓存不能延长 115 直链本身的有效期。</span></label>
             <label class="text-sm text-slate-700 dark:text-slate-300">Emby 原服务器地址<input v-model.trim="config.url" type="url" :required="config.enabled" placeholder="http://192.168.0.3:8096" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 outline-none focus:border-blue-500" /><span class="mt-2 block text-xs leading-5 text-slate-400 dark:text-slate-500">填写实际 Emby 地址，不能填写本反代入口。Docker 中 localhost 指向 Cinema115 容器。</span></label>
@@ -85,7 +86,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <div class="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘 pickcode STRM</h2>
             <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode} 和 /play115/{pickcode}/{文件ID}/{SHA1}/{大小}/{文件名}。已有可信资料可复用，未知文件由主账号核验；不会访问原工具地址。</p>
-            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">Emby 用户绑定小号后，秒传到绑定账号的播放缓存目录并用该账号取链，已缓存的文件会复用；分享 STRM 优先尝试小号直接读取分享。未绑定用户默认使用主账号，绑定账号失效时暂停播放并保留绑定，恢复后新播放请求自动生效。</p>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">共享池用户按会话自动选择小号，故障时有界切换，空池或繁忙不回退主网盘；个人网盘保持独立。已缓存文件可复用，分享 STRM 优先尝试所选小号直接读取分享。未指定来源的已有用户默认使用主网盘。</p>
           </div>
         </fieldset>
       </form>

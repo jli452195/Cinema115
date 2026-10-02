@@ -5,7 +5,7 @@ import { embyRequest } from '../types/emby'
 
 const props = defineProps<{ token: string; accounts: P115Account[]; source?: { accountId: string } }>()
 interface Config { userId: string; sourceAccountId: string; accountId: string; targetCid: string; targetPath: string }
-interface Binding { userId: string; userName: string; accountId: string }
+interface Binding { userId: string; userName: string; accountId: string; source?: string }
 const bindings = ref<Binding[]>([])
 interface Record { id: string; sourceAccountId: string; accountId: string; targetCid: string; status: string; message: string; name: string; size: number; sha1: string; fileId?: string; pickCode?: string; challenged: boolean; startedAt: string; durationMs: number }
 interface Status { config: Config; records: Record[]; running: boolean }
@@ -23,7 +23,8 @@ const lifecycle = new AbortController()
 const dirty = computed(() => JSON.stringify(config.value) !== JSON.stringify(saved.value))
 const blocked = computed(() => busy.value || running.value || !loaded.value)
 const target = computed(() => props.accounts.find(a => !a.primary && a.id === bindings.value.find(b => b.userId === config.value.userId)?.accountId))
-const ready = computed(() => !!props.accounts.find(a => a.primary && a.configured) && !!target.value?.configured && /^\d+$/.test(target.value.playbackParentCid || ''))
+const dynamic = computed(() => bindings.value.some(b => b.userId === config.value.userId && b.source === 'assigned'))
+const ready = computed(() => !!props.accounts.find(a => a.primary && a.configured) && bindings.value.some(b => b.userId === config.value.userId))
 watch(strm, () => { requestId.value = '' })
 function acceptStatus(data: Status, replaceConfig: boolean) {
   records.value = data.records; running.value = data.running; saved.value = { ...data.config }
@@ -33,12 +34,11 @@ function acceptStatus(data: Status, replaceConfig: boolean) {
 async function load(replaceConfig = false) {
   busy.value = true; error.value = ''
   try {
-    const [status, playback, users]: [Status, { config: { embyUrl: string; bindings: Binding[] } }, { embyUrl: string; users: { Id: string; Policy?: { IsDisabled?: boolean } }[] }] = await Promise.all([
+    const [status, users]: [Status, { embyUrl: string; users: { Id: string; Policy?: { IsDisabled?: boolean } }[]; members: { embyId: string; embyName: string; source: string; accountId: string; playbackOnly?: boolean; suspended?: boolean; personalDrive?: { connected: boolean } }[] }] = await Promise.all([
       embyRequest(props.token, 'instant-upload', lifecycle.signal),
-      embyRequest(props.token, 'playback-cache', lifecycle.signal),
       embyRequest(props.token, 'playback-cache/users', lifecycle.signal),
     ])
-    bindings.value = playback.config.embyUrl === users.embyUrl ? playback.config.bindings.filter(b => users.users.some(u => u.Id === b.userId && !u.Policy?.IsDisabled)) : []
+    bindings.value = (users.members || []).filter(m => m.source === 'assigned' && !m.playbackOnly && !m.suspended && users.users.some(u => u.Id === m.embyId && !u.Policy?.IsDisabled)).map(m => ({ userId: m.embyId, userName: m.embyName, source: m.source, accountId: '' }))
     acceptStatus(status, replaceConfig || !loaded.value)
   }
   catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取秒传配置失败' }
@@ -66,7 +66,7 @@ async function run() {
   } finally { busy.value = false }
 }
 function statusLabel(value: string) { return ({ success: '秒传成功', unsupported: '需要普通上传', uncertain: '结果待确认', failed: '验证失败', running: '验证中' } as { [key: string]: string })[value] || value }
-function accountName(id: string) { return props.accounts.find(account => account.id === id)?.name || '账号已删除' }
+function accountName(id: string) { return props.accounts.find(account => account.id === id)?.name || (id ? '个人网盘或账号已删除' : '网盘尚未就绪') }
 onMounted(() => load(true))
 onBeforeUnmount(() => lifecycle.abort())
 </script>
@@ -77,17 +77,17 @@ onBeforeUnmount(() => lifecycle.abort())
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">单文件秒传验证</h2>
       <button type="button" :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40" @click="load()">刷新记录</button>
     </div>
-    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">将一个分享 STRM 对应的视频秒传到目标用户绑定的网盘。点击开始后会向目标目录写入文件，结果保留供你检查。</p>
+    <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">将分享 STRM 对应的视频秒传到目标用户的播放网盘。池用户在任务启动时选择小号并固定目录，写入开始后不自动换号。结果保留供你检查。</p>
     <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
     <p v-if="notice" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{{ notice }}</p>
     <form class="mt-5" @submit.prevent="save">
       <fieldset :disabled="blocked" class="space-y-5 disabled:opacity-50">
         <div class="grid gap-5 sm:grid-cols-2">
-          <label class="text-sm text-slate-700 dark:text-slate-300">目标用户<select v-model="config.userId" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @change="requestId = ''"><option value="" disabled>请选择已绑定小号的用户</option><option v-for="binding in bindings" :key="binding.userId" :value="binding.userId">{{ binding.userName }} · {{ accountName(binding.accountId) }}</option></select></label>
-          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">目标小号：{{ target?.name || '请选择用户' }}<br />秒传目录：{{ target?.playbackParentCid || '请在共享小号池中设置' }}</p>
+          <label class="text-sm text-slate-700 dark:text-slate-300">目标用户<select v-model="config.userId" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" @change="requestId = ''"><option value="" disabled>请选择目标用户</option><option v-for="binding in bindings" :key="binding.userId" :value="binding.userId">{{ binding.userName }} · {{ binding.source === 'assigned' ? '动态小号池' : accountName(binding.accountId) }}</option></select></label>
+          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">目标网盘：{{ dynamic ? '启动时自动选择' : target?.name || '请选择用户' }}<br />秒传目录：{{ dynamic ? '使用所选小号的已验证目录' : target?.playbackParentCid || '请先配置播放目录' }}</p>
         </div>
         <div class="flex flex-wrap gap-3">
-          <a href="/emby/users" class="text-sm text-blue-600">管理用户绑定</a>
+          <a href="/emby/users" class="text-sm text-blue-600">管理用户来源</a>
           <button type="submit" :disabled="!ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">保存秒传配置</button>
         </div>
       </fieldset>

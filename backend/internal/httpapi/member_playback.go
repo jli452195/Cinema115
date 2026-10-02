@@ -237,6 +237,72 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, gin.H{"settings": s.Settings(), "members": members})
 	})
 	manage.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": s.AccountOptions()}) })
+	manage.GET("/playback-sessions", func(c *gin.Context) { c.JSON(200, gin.H{"sessions": s.UserPlayback.List()}) })
+	manage.POST("/playback-sessions/:key/release", func(c *gin.Context) {
+		var input struct {
+			Generation uint64 `json:"generation"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.Generation == 0 {
+			c.JSON(400, gin.H{"error": "播放会话版本无效"})
+			return
+		}
+		if err := s.UserPlayback.Release(c.Request.Context(), c.Param("key"), input.Generation); err != nil {
+			if errors.Is(err, service.ErrAccountChanged) {
+				c.JSON(409, gin.H{"error": "播放会话已变化，请刷新后重试"})
+			} else {
+				c.JSON(500, gin.H{"error": "播放占用释放未确认，请刷新检查后重试"})
+			}
+			return
+		}
+		c.JSON(200, gin.H{"sessions": s.UserPlayback.List()})
+	})
+	manage.GET("/pool", func(c *gin.Context) {
+		c.JSON(200, gin.H{"settings": s.Pool.Settings(), "accounts": s.AccountOptions(), "metrics": s.Pool.Metrics(), "api": s.PoolRequests.Stats(), "events": s.Pool.Events()})
+	})
+	manage.POST("/pool", func(c *gin.Context) {
+		var input model.PlaybackPoolSettings
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "池设置无效"})
+			return
+		}
+		if err := s.ConfigurePool(c.Request.Context(), input); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"settings": s.Pool.Settings()})
+	})
+	manage.POST("/pool/:accountID", func(c *gin.Context) {
+		var input struct {
+			Mode string `json:"mode"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "池状态无效"})
+			return
+		}
+		found := false
+		for _, a := range s.AccountOptions() {
+			if a.ID == c.Param("accountID") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.JSON(404, gin.H{"error": "池账号不存在"})
+			return
+		}
+		if err := s.Pool.SetMode(c.Request.Context(), c.Param("accountID"), input.Mode); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"accounts": s.AccountOptions()})
+	})
+	manage.POST("/pool/:accountID/check", func(c *gin.Context) {
+		if err := s.CheckPoolAccount(c.Request.Context(), c.Param("accountID")); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"accounts": s.AccountOptions()})
+	})
 	manage.POST("/:id/sync", func(c *gin.Context) {
 		if err := s.CheckUserPlayback(c.Request.Context(), c.Param("id")); err != nil {
 			fail(c, err)

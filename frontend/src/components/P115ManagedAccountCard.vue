@@ -11,6 +11,7 @@ import P115ActionDialog from './P115ActionDialog.vue'
 const props = defineProps<{ account: P115Account; token: string; startLogin?: boolean }>()
 const emit = defineEmits<{ changed: []; loginStarted: [] }>()
 const accountName = computed(() => props.account.primary ? '主账号' : props.account.name)
+const poolState = computed(() => ({ ready: '最近检查通过', pending: '等待复查', unknown: '尚未检查', unconfigured: '未完成配置', invalid_credentials: '登录失效', invalid_directory: '目录失效', cooldown: '故障冷却', throttled: '限流冷却' }[props.account.pool?.state || 'unknown'] || '等待复查'))
 const needsDirectory = computed(() => !props.account.primary && !props.account.playbackParentCid)
 const statusLabel = computed(() => !props.account.configured ? '未登录' : checked.value && !connected.value ? '已失效' : needsDirectory.value ? '待设置目录' : checked.value ? '已连接' : '待验证')
 const summaryTitle = computed(() => props.account.summary?.checkedAt ? '更新于 ' + new Date(props.account.summary.checkedAt).toLocaleString() + '；检测可用性可更新' : '登录或检测可用性后更新')
@@ -22,7 +23,7 @@ function remainingSpace(bytes: number) {
 }
 const confirmation = ref<'' | 'clear' | 'delete'>('')
 const mutationSnapshot = ref<{ id: string; revision: number }>()
-const more = ref(false), details = ref<'' | 'users' | 'rename'>('')
+const more = ref(false), details = ref<'' | 'rename'>('')
 const menu = ref<HTMLElement>(), menuTrigger = ref<HTMLButtonElement>(), menuContainer = ref<HTMLElement>()
 const menuID = useId(), copied = ref(false)
 const login = ref<'' | 'qr' | 'cookie'>(''), selecting = ref(false), busy = ref(false)
@@ -69,7 +70,7 @@ async function toggleMenu() {
 }
 function outside(event: Event) { if (event.target instanceof Node && !menuContainer.value?.contains(event.target)) closeMenu() }
 function escapeMenu(event: KeyboardEvent) { if (event.key === 'Escape' && more.value) { event.preventDefault(); closeMenu(); menuTrigger.value?.focus() } }
-function openDetails(mode: 'users' | 'rename') { closeMenu(); if (mode === 'rename') menuTrigger.value?.focus(); error.value = ''; details.value = mode }
+function openDetails(mode: 'rename') { closeMenu(); menuTrigger.value?.focus(); error.value = ''; details.value = mode }
 async function copyID() {
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(props.account.id)
@@ -155,13 +156,14 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(noticeTimer); clearTimeo
     <p class="mt-2 flex items-center gap-2 text-xs text-slate-500" :title="summaryTitle"><span :class="account.configured && account.summary?.vip === 'vip' ? 'text-amber-700 dark:text-amber-400' : ''">{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</span><span aria-hidden="true">·</span><span>{{ account.configured && account.summary?.spaceKnown ? '剩余 ' + remainingSpace(account.summary.remainingBytes) : '剩余空间未知' }}</span></p>
     <p v-if="account.primary" class="mt-3 text-sm text-slate-500">用于资源管理与默认播放</p>
     <template v-else>
-      <button class="mt-2 inline-flex items-center gap-1 self-start text-sm text-blue-600" aria-haspopup="dialog" @click="openDetails('users')">{{ account.userCount || 0 }} 人使用<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>
+      <p class="mt-2 text-sm text-slate-500">当前 UID 占用 {{ account.pool?.sessions || 0 }}，准备中 {{ account.pool?.preparing || 0 }}，残余占用 {{ account.pool?.residual || 0 }} · {{ poolState }}</p>
+      <p v-if="account.pool?.retryAt" class="mt-1 text-xs text-slate-500">最早复查：{{ new Date(account.pool.retryAt).toLocaleString() }}</p>
       <div class="mt-3 text-sm" :class="needsDirectory ? 'rounded-xl border border-red-100 bg-red-50/70 p-3 dark:border-red-900/50 dark:bg-red-950/20' : ''">
         <div class="flex flex-wrap items-center gap-2">
           <p class="min-w-0 flex-1 text-slate-600 dark:text-slate-300" :class="needsDirectory ? '' : 'truncate'" :title="account.playbackParentCid">秒传目录：<span :class="needsDirectory ? 'font-semibold text-red-600 dark:text-red-400' : ''">{{ account.playbackParentCid || '未设置（必填）' }}</span></p>
           <button :disabled="busy || !account.configured" class="shrink-0 rounded-lg disabled:opacity-40" :class="needsDirectory ? 'bg-blue-600 px-3 py-2 text-white hover:bg-blue-700' : 'text-blue-600 dark:text-blue-400'" @click="selectDirectory">{{ needsDirectory ? '设置目录' : '修改' }}</button>
         </div>
-        <p v-if="needsDirectory" class="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">{{ account.configured ? '设置后才能分配用户，用于保存播放秒传文件。' : '请先登录，再设置秒传目录，完成后才能分配用户。' }}</p>
+        <p v-if="needsDirectory" class="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">{{ account.configured ? '设置后才能参与调度，用于保存播放秒传文件。' : '请先登录，再设置秒传目录，完成后才能参与调度。' }}</p>
       </div>
     </template>
     <div class="mt-4 flex flex-wrap gap-3"><button :disabled="busy" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="openLogin('qr')">扫码登录</button><button :disabled="busy || !account.configured" class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-blue-600 disabled:opacity-40 dark:border-slate-700" @click="check">{{ busy ? '处理中…' : '检测可用性' }}</button></div>
@@ -174,15 +176,15 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(noticeTimer); clearTimeo
     <p v-if="error && !confirmation && !details && !selecting" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p>
   </article>
   <P115PoolDetailsDialog v-if="details" :account="account" :mode="details" :busy="busy" :error="error" @close="details = ''" @save="saveName" />
-  <P115QRDialog v-if="login" :token="token" :account-id="account.id" :account-name="accountName" :primary="account.primary" :needs-directory="needsDirectory" :revision="account.revision" :user-count="account.userCount || 0" :mode="login" @connected="loggedIn" @close="login = ''; emit('changed')" @changed="emit('changed')" />
+  <P115QRDialog v-if="login" :token="token" :account-id="account.id" :account-name="accountName" :primary="account.primary" :needs-directory="needsDirectory" :revision="account.revision" :mode="login" @connected="loggedIn" @close="login = ''; emit('changed')" @changed="emit('changed')" />
   <P115ActionDialog v-if="confirmation" :title="confirmation === 'clear' ? '清除登录信息' : '删除账号配置'" :busy="busy" @close="confirmation = ''">
     <p v-if="account.primary">{{ confirmation === 'clear' ? '清除主账号凭据后，资源管理与使用主网盘的新播放请求将暂停，重新登录后恢复。' : '删除主账号后，资源管理与使用主网盘的新播放请求将暂停；需要重新创建主账号并配置各功能目录。' }}</p>
-    <p v-else>{{ confirmation === 'clear' ? '清除“' + account.name + '”的登录凭据后，绑定用户的新播放请求将暂停。' : '删除“' + account.name + '”配置后，绑定用户需要重新分配账号。' }}</p>
+    <p v-else>{{ confirmation === 'clear' ? '清除“' + account.name + '”的登录凭据后，新取链将尝试池内其他可用账号。' : '删除“' + account.name + '”配置后，新取链将尝试池内其他可用账号。' }}</p>
     <p class="text-slate-500">不会删除网盘文件。</p>
     <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
     <template #footer><button :disabled="busy" class="px-4 py-2 text-sm" @click="confirmation = ''">取消</button><button :disabled="busy" class="rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="applyMutation">{{ busy ? '处理中…' : confirmation === 'clear' ? '确认清除' : '确认删除' }}</button></template>
   </P115ActionDialog>
-  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :endpoint="'accounts/' + account.id + '/paths'" :title="(needsDirectory ? '设置 ' : '修改 ') + account.name + ' 的秒传目录'" :description="(needsDirectory ? '设置秒传目录后才能分配用户。' : '') + '秒传文件直接保存到所选目录，不创建子目录，文件由你手动清理。可明确选择根目录。'" :saving="busy" :save-error="error" :confirm-label="needsDirectory ? '保存目录并完成配置' : '保存目录'" @close="selecting = false" @select="saveDirectory" />
+  <P115DirectoryDialog v-if="selecting" :token="token" :account-id="account.id" :endpoint="'accounts/' + account.id + '/paths'" :title="(needsDirectory ? '设置 ' : '修改 ') + account.name + ' 的秒传目录'" :description="(needsDirectory ? '设置秒传目录后才能参与调度。' : '') + '秒传文件直接保存到所选目录，不创建子目录，文件由你手动清理。可明确选择根目录。'" :saving="busy" :save-error="error" :confirm-label="needsDirectory ? '保存目录并完成配置' : '保存目录'" @close="selecting = false" @select="saveDirectory" />
 </template>
 
 <style scoped>

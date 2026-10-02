@@ -16,6 +16,7 @@ import (
 )
 
 type PlaybackBinding struct {
+	Source    string `json:"source,omitempty"`
 	UserID    string `json:"userId"`
 	UserName  string `json:"userName"`
 	AccountID string `json:"accountId"`
@@ -283,6 +284,7 @@ func (s *PlaybackCache) applyConfig(c PlaybackCacheConfig, bindingsOnly bool) er
 }
 
 type PlaybackCacheSelection struct {
+	poolGeneration  uint64
 	donors          []P115Account // Request snapshot only; never persisted or returned by Status.
 	binding         PlaybackBinding
 	accountName     string
@@ -293,6 +295,7 @@ type PlaybackCacheSelection struct {
 
 // Selection is captured with proxy settings at request start, before network I/O.
 type PlaybackCacheSnapshot struct {
+	donors     []P115Account
 	embyURL    string
 	selections map[string]PlaybackCacheSelection
 }
@@ -326,6 +329,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	}
 	s.accounts.mu.RUnlock()
 	snap := PlaybackCacheSnapshot{embyURL: c.EmbyURL, selections: make(map[string]PlaybackCacheSelection, len(c.Bindings))}
+	snap.donors = donors
 	for _, b := range c.Bindings {
 		a, err := s.accounts.Get(b.AccountID)
 		b.ParentCID = a.PlaybackParentCID
@@ -433,7 +437,7 @@ func (s *PlaybackCacheSelection) DirectLinkScope() string {
 	if s == nil {
 		return "unbound"
 	}
-	return DirectLinkKey(s.binding.UserID, s.binding.AccountID, s.binding.ParentCID, s.cookie, strconv.FormatUint(s.accountRevision, 10))
+	return DirectLinkKey(s.binding.UserID, s.binding.AccountID, s.binding.ParentCID, s.cookie, strconv.FormatUint(s.accountRevision, 10), strconv.FormatUint(s.poolGeneration, 10))
 }
 
 func (s *PlaybackCacheSelection) UsesSourceAccount(accountID string) bool {
@@ -540,10 +544,10 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return direct.URL, nil
 	}
 	if ctx.Err() != nil {
-		return "", fmt.Errorf("朋友分享取链失败：%s", p115.SharePlaybackFailureReason(ctx.Err()))
+		return "", ctx.Err()
 	}
 	if !errors.Is(err, p115.ErrShareNotReadable) {
-		return "", fmt.Errorf("朋友分享取链失败：%s；未尝试源账号秒传", p115.SharePlaybackFailureReason(err))
+		return "", &playbackTargetError{stage: "目标账号分享取链失败，未尝试源账号秒传", err: err}
 	}
 	s.logs.Add(ctx, "INFO", "朋友账号无法读取此分享文件，尝试配置的源账号辅助秒传（不返回源账号直链）")
 	if share != nil {

@@ -3,6 +3,7 @@ package p115
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,14 +20,16 @@ type DrivePlaybackFile struct {
 	PickCode string `json:"pickCode"`
 }
 
+var ErrPlaybackDirectory = errors.New("播放目录失效，请重新配置目录")
+
 func (c *ShareClient) ValidateCacheParent(ctx context.Context, cid, cookie string) error {
 	if !validDriveID(cid, true) {
-		return fmt.Errorf("缓存父目录无效")
+		return ErrPlaybackDirectory
 	}
 	q := url.Values{"cid": {cid}, "offset": {"0"}, "limit": {"1"}, "show_dir": {"1"}}
 	raw, err := c.requestEnvelope(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
 	if err != nil {
-		return fmt.Errorf("无法核查缓存目录：%s", SharePlaybackFailureReason(err))
+		return fmt.Errorf("无法核查缓存目录: %w", err)
 	}
 	var response struct {
 		CID  json.Number
@@ -36,7 +39,7 @@ func (c *ShareClient) ValidateCacheParent(ctx context.Context, cid, cookie strin
 		return fmt.Errorf("缓存目录响应格式无效，无法核对目录身份")
 	}
 	if (response.CID.String() != cid && len(response.Path) == 0) || (response.CID != "" && response.CID.String() != cid) || (len(response.Path) > 0 && response.Path[len(response.Path)-1].CID.String() != cid) {
-		return fmt.Errorf("115 返回的目录身份与请求目录 %s 不一致或缺失，目录可能已删除或不可访问", cid)
+		return ErrPlaybackDirectory
 	}
 	return nil
 }

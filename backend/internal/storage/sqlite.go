@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 32
+const schemaVersion = 34
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -423,6 +423,7 @@ CREATE TABLE IF NOT EXISTS member_playback(user_id TEXT PRIMARY KEY REFERENCES e
 CREATE UNIQUE INDEX IF NOT EXISTS member_emby_identity ON member_playback(json_extract(record,'$.serverId'),json_extract(record,'$.embyId'));
 DROP INDEX IF EXISTS member_pool_assignment;
 CREATE TABLE IF NOT EXISTS member_playback_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS playback_pool(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS playback_child_creations(id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES emby_profiles(id), record TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS playback_child_owner ON playback_child_creations(owner_id);
 CREATE TABLE IF NOT EXISTS portal_invites(id TEXT PRIMARY KEY,code_hash TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,note TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,revoked_at INTEGER NOT NULL DEFAULT 0,used_at INTEGER NOT NULL DEFAULT 0,used_by TEXT NOT NULL DEFAULT '',playback_source TEXT NOT NULL CHECK(playback_source IN ('personal','assigned')),registration TEXT NOT NULL DEFAULT '');
@@ -452,7 +453,7 @@ PRAGMA user_version=30;`); err != nil {
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version=32`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS user_playback_leases(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL); PRAGMA user_version=34;`); err != nil {
 		return err
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.

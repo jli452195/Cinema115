@@ -8,6 +8,31 @@ import (
 	"time"
 )
 
+func TestPoolDirectoryFailureKeepsClassification(t *testing.T) {
+	for _, tc := range []struct {
+		body   string
+		status int
+		target error
+	}{
+		{`{"state":false,"errno":990001}`, 200, ErrShareLoginRequired},
+		{`{"state":true,"cid":"0"}`, 200, ErrPlaybackDirectory},
+		{`{}`, 429, nil},
+	} {
+		c := newTestShareClient()
+		c.HTTP.Transport = metadataTransport(func(r *http.Request) (*http.Response, error) { return instantResponse(tc.status, []byte(tc.body)), nil })
+		err := c.ValidateCacheParent(context.Background(), "9", "UID=22_A")
+		if tc.target != nil && !errors.Is(err, tc.target) {
+			t.Fatalf("lost structured error: %v", err)
+		}
+		if tc.status == 429 {
+			var httpErr *HTTPError
+			if !errors.As(err, &httpErr) || httpErr.Status != 429 {
+				t.Fatalf("lost 429: %v", err)
+			}
+		}
+	}
+}
+
 func TestMediaDirectoryFreshAuthorizationSeedsPreflightOnly(t *testing.T) {
 	c := newTestShareClient()
 	calls := 0

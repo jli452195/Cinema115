@@ -5,7 +5,7 @@ import { p115LoginClients } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; accountName: string; primary?: boolean; needsDirectory?: boolean; clientType?: string; revision?: number; userCount?: number; mode?: 'qr' | 'cookie' }>(), { clientType: 'alipay-miniapp', userCount: 0, mode: 'qr' })
+const props = withDefaults(defineProps<{ token: string; accountId: string; accountName: string; primary?: boolean; needsDirectory?: boolean; clientType?: string; revision?: number; mode?: 'qr' | 'cookie' }>(), { clientType: 'alipay-miniapp', mode: 'qr' })
 const emit = defineEmits<{ close: []; connected: [client: string]; changed: [] }>()
 const snapshot = { ...props }
 interface Replacement { sessionId: string; oldUid: string; newUid: string; expiresAt: string }
@@ -145,7 +145,7 @@ onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previou
         <p v-if="needsDirectory && !replacement && phase !== 'success'" class="rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">先登录，再设置秒传目录。完成目录设置后，才能分配用户使用。</p>
         <template v-if="replacement">
           <p class="text-sm">原 UID：{{ replacement.oldUid }} → 新 UID：{{ replacement.newUid }}</p>
-          <p class="text-sm text-slate-500">确认后将影响绑定的 {{ userCount }} 位用户，原网盘文件不会迁移。</p>
+          <p class="text-sm text-slate-500">确认后旧账号的新取链需要重新选择并核验目标，原网盘文件不会迁移。</p>
           <button type="button" :disabled="phase === 'saving'" class="w-full break-all rounded-xl border border-slate-200 px-4 py-3 text-left text-sm text-blue-600 dark:border-slate-700" @click="selecting = true">{{ directory ? directory.path + '（' + directory.id + '）' : '选择新网盘中的秒传目录' }}</button>
           <div class="flex justify-end gap-3"><button type="button" class="px-4 py-2 text-sm" @click="close">取消</button><button type="button" :disabled="!directory || phase === 'saving'" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="confirm">{{ phase === 'saving' ? '验证并保存中…' : '确认更换' }}</button></div>
         </template>

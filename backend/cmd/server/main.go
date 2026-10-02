@@ -52,6 +52,11 @@ func main() {
 	if dataDir == "" {
 		dataDir = "../data"
 	}
+	instanceLock, err := storage.LockInstance(dataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer instanceLock.Close()
 	initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	database, err := storage.Open(initCtx, filepath.Join(dataDir, "cinema115.db"))
 	if err != nil {
@@ -316,6 +321,8 @@ func main() {
 	}, telegram.Refresh)
 	telegram.Logs = generationLogs
 	telegram.Notifications = database
+	memberPlayback.PoolNotifier = telegram
+	memberPlayback.ValidatePoolNotifier = func(id string) error { return telegram.ValidateSelection(id, true) }
 	follows.Notifications = telegram
 	shareTasks.Notifier, shareTasks.Logs = telegram, generationLogs
 	httpapi.RegisterTelegramHub(admin, telegram, generationLogs)

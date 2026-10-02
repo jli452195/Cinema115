@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"regexp"
-	"sort"
 	"strings"
 	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/model"
@@ -174,63 +173,8 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 	if err != nil || !memberPolicyMatches(verified.Policy, true, settings, true) {
 		return u, memberError("账号已创建，Emby 权限结果待确认，请管理员检查，勿重复注册")
 	}
-	if m.Source == "assigned" {
-		if err := s.assignPool(ctx, &m); err != nil {
-			return u, err
-		}
-	}
 	if err := s.reconcile(ctx, m); err != nil {
 		return u, memberError("账号已创建，权限待管理员同步，请勿重复注册")
 	}
 	return u, nil
-}
-
-// Assign once, sharing the least-used available administrator account. Existing
-// assignments are never rotated or replaced merely because credentials fail.
-func (s *MemberPlaybackService) assignPool(ctx context.Context, r *model.MemberPlayback) error {
-	if r.Source != "assigned" || r.AssignedAccountID != "" {
-		return nil
-	}
-	if err := s.resolvePool(ctx, r); err != nil {
-		return err
-	}
-	return s.save(ctx, *r)
-}
-
-// Resolve without publishing so a combined settings edit can commit once.
-func (s *MemberPlaybackService) resolvePool(ctx context.Context, r *model.MemberPlayback) error {
-	used := make(map[string]int)
-	for _, other := range s.Records() {
-		if other.Source == "assigned" {
-			used[other.AssignedAccountID]++
-		}
-	}
-	options := s.AccountOptions()
-	sort.Slice(options, func(i, j int) bool {
-		if used[options[i].ID] == used[options[j].ID] {
-			return options[i].ID < options[j].ID
-		}
-		return used[options[i].ID] < used[options[j].ID]
-	})
-	for _, a := range options {
-		if !a.Configured || a.PlaybackParentCID == "" {
-			continue
-		}
-		account, err := s.accounts.Get(a.ID)
-		if err != nil {
-			continue
-		}
-		valid, err := s.checker.CheckCookie(ctx, account.Cookie)
-		if err != nil || !valid {
-			continue
-		}
-		if s.drive.ValidateCacheParent(ctx, account.PlaybackParentCID, account.Cookie) != nil {
-			continue
-		}
-		r.AssignedAccountID = a.ID
-		return nil
-	}
-	r.Source = "primary"
-	r.AssignedAccountID = ""
-	return nil
 }

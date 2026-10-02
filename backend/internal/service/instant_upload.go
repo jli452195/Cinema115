@@ -117,7 +117,7 @@ func (s *InstantUploads) Apply(config InstantUploadConfig) error {
 		return err
 	}
 	config = resolved
-	if _, err := strconv.ParseUint(config.TargetCID, 10, 64); err != nil || config.TargetCID == "" {
+	if _, err := strconv.ParseUint(config.TargetCID, 10, 64); config.AccountID != "" && (err != nil || config.TargetCID == "") {
 		return fmt.Errorf("%w：请明确选择目标目录，根目录填写 0", ErrInstantConfig)
 	}
 	if len(config.TargetPath) > 2048 || strings.ContainsAny(config.TargetPath, "\r\n\x00") {
@@ -133,6 +133,46 @@ func (s *InstantUploads) Apply(config InstantUploadConfig) error {
 func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, id string, share *p115.ShareInfo, fileID string) (record InstantUploadRecord, resultErr error) {
 	if !instantRunID.MatchString(id) || share == nil || fileID == "" {
 		return record, ErrInstantConfig
+	}
+	// Dynamic tasks select once before acquiring the diagnostic-history mutex.
+	// Recheck configuration and idempotency after selection before any write.
+	var poolGrant *MediaAuthorization
+	if s.Playback != nil && s.Playback.Members != nil {
+		members := s.Playback.Members
+		if members.IsPoolUser(members.Settings().EmbyURL, expected.UserID) {
+			status := s.Status()
+			for _, old := range status.Records {
+				if old.ID == id {
+					return old, nil
+				}
+			}
+			if status.Running {
+				return record, ErrInstantBusy
+			}
+			if status.Config != expected {
+				return record, ErrInstantConfig
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 80*time.Second)
+			defer cancel()
+			ctx = p115.WithRequestBudget(ctx, &members.PoolRequests)
+			defer func() {
+				if err := members.PersistPoolCooling(); err != nil {
+					resultErr = errors.Join(resultErr, err)
+				}
+			}()
+			ctx = WithPoolRequest(ctx, PoolRequest{Session: DirectLinkKey("manual", id), Item: fileID, Task: true})
+			var err error
+			poolGrant, err = members.BeginMediaAuthorization(ctx, members.Settings().EmbyURL, expected.UserID, false, nil)
+			if err != nil {
+				return record, err
+			}
+			defer func() {
+				if err := poolGrant.Close(); resultErr == nil {
+					resultErr = err
+				}
+			}()
+		}
 	}
 	s.mu.Lock()
 	if s.running {
@@ -161,7 +201,10 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 		return record, fmt.Errorf("%w：源账号已删除或未登录", ErrInstantConfig)
 	}
 	target := source
-	if expected.AccountID != expected.SourceAccountID {
+	if poolGrant != nil {
+		target = poolGrant.account
+		expected.AccountID, expected.TargetCID = target.ID, target.PlaybackParentCID
+	} else if expected.AccountID != expected.SourceAccountID {
 		target, err = s.accounts.Get(expected.AccountID)
 	}
 	if err != nil || target.Cookie == "" {
@@ -180,6 +223,7 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 	}
 	s.running = true
 	s.mu.Unlock()
+
 	ctx = s.logs.Trace(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
@@ -209,6 +253,16 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 			s.logs.Add(ctx, "ERROR", "秒传验证结果未能保存，请先核查目标目录")
 		}
 	}()
+	if s.Playback != nil {
+		release, err := s.Playback.acquirePlayback(ctx, target.UID)
+		if err != nil {
+			record.Status = "failed"
+			record.Message = "等待目标写入已取消或超时"
+			return record, err
+		}
+		defer release()
+	}
+
 	s.logs.Add(ctx, "INFO", "单文件秒传开始；源账号="+source.ID+"；目标账号="+target.ID+"；目录="+expected.TargetCID)
 	info, err := s.client.DownloadInstantInfoWithUA(ctx, share, fileID, source.Cookie, p115.PlaybackUserAgent)
 	if err != nil {
@@ -223,6 +277,13 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 	}
 	record.Name, record.Size, record.SHA1 = info.Name, info.Size, info.SHA1
 	s.logs.Add(ctx, "INFO", "源文件信息已取得，完整 SHA1 可用；大小="+strconv.FormatInt(info.Size, 10)+" 字节")
+	if poolGrant != nil {
+		if err := poolGrant.Revalidate(ctx); err != nil {
+			record.Status = "failed"
+			record.Message = "播放来源或目标账号已变化"
+			return record, err
+		}
+	}
 	result, err := s.client.InstantUpload(ctx, info, expected.TargetCID, target.Cookie, func(progress p115.InstantProgress) {
 		switch progress.Stage {
 		case "target":
@@ -260,13 +321,20 @@ func (s *InstantUploads) Run(ctx context.Context, expected InstantUploadConfig, 
 
 func (s *InstantUploads) resolveUser(userID string) (InstantUploadConfig, error) {
 	if s.Playback == nil || !instantRunID.MatchString(userID) {
-		return InstantUploadConfig{}, fmt.Errorf("%w：请选择已绑定小号的目标用户", ErrInstantConfig)
+		return InstantUploadConfig{}, fmt.Errorf("%w：请选择动态共享池用户", ErrInstantConfig)
 	}
 	source, err := s.accounts.Primary("")
 	if err != nil {
 		return InstantUploadConfig{}, fmt.Errorf("%w：%v", ErrInstantConfig, err)
 	}
-	for _, b := range s.Playback.Status().Config.Bindings {
+	if s.Playback.Members != nil {
+		if s.Playback.Members.IsPoolUser(s.Playback.Members.Settings().EmbyURL, userID) {
+			return InstantUploadConfig{UserID: userID, SourceAccountID: source.ID}, nil
+		}
+		return InstantUploadConfig{}, fmt.Errorf("%w：管理端秒传仅支持动态共享池用户，个人网盘由本人管理", ErrInstantConfig)
+	}
+	bindings := s.Playback.Status().Config
+	for _, b := range bindings.Bindings {
 		if b.UserID != userID {
 			continue
 		}

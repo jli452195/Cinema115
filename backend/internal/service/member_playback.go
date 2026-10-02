@@ -52,29 +52,34 @@ type memberQRSession struct {
 	lastPoll  time.Time
 }
 type MemberPlaybackService struct {
-	Cache            *PlaybackCache // wired before serving
-	db               *storage.Store
-	accounts         *P115Accounts
-	emby             *EmbyService
-	drive            memberDriveClient
-	checker          memberCookieChecker
-	qr               memberQRClient
-	gate             chan struct{}
-	wake             chan struct{}
-	healthWake       chan struct{}
-	mu               sync.RWMutex
-	records          map[string]model.MemberPlayback
-	settings         model.MemberPlaybackSettings
-	sessions         map[string]memberQRSession // guarded by gate, bounded and expires
-	NewEmby          func(string, string) memberEmbyClient
-	ProxyStatus      func() EmbyProxyStatus // wired once before HTTP starts
-	ClearDirectLinks func()                 // wired once before HTTP starts
-	driveHealthMu    sync.Mutex
-	driveHealth      map[string]driveHealthEntry
-	driveHealthGate  chan struct{}
-	driveHealthEpoch uint64
-	driveProbeMu     sync.Mutex
-	driveProbes      map[[32]byte]*mediaDriveProbe
+	Pool                 *DynamicPool
+	UserPlayback         *UserPlayback
+	PoolNotifier         PoolNotifier // wired before workers start
+	ValidatePoolNotifier func(string) error
+	PoolRequests         p115.RequestBudget
+	Cache                *PlaybackCache // wired before serving
+	db                   *storage.Store
+	accounts             *P115Accounts
+	emby                 *EmbyService
+	drive                memberDriveClient
+	checker              memberCookieChecker
+	qr                   memberQRClient
+	gate                 chan struct{}
+	wake                 chan struct{}
+	healthWake           chan struct{}
+	mu                   sync.RWMutex
+	records              map[string]model.MemberPlayback
+	settings             model.MemberPlaybackSettings
+	sessions             map[string]memberQRSession // guarded by gate, bounded and expires
+	NewEmby              func(string, string) memberEmbyClient
+	ProxyStatus          func() EmbyProxyStatus // wired once before HTTP starts
+	ClearDirectLinks     func()                 // wired once before HTTP starts
+	driveHealthMu        sync.Mutex
+	driveHealth          map[string]driveHealthEntry
+	driveHealthGate      chan struct{}
+	driveHealthEpoch     uint64
+	driveProbeMu         sync.Mutex
+	driveProbes          map[[32]byte]*mediaDriveProbe
 }
 
 func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Accounts, server *EmbyService, drive memberDriveClient, checker memberCookieChecker, qr memberQRClient) (*MemberPlaybackService, error) {
@@ -86,7 +91,17 @@ func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Acc
 	if err != nil {
 		return nil, err
 	}
+	pool, err := NewDynamicPool(ctx, db)
+	if err != nil {
+		return nil, err
+	}
 	s := &MemberPlaybackService{db: db, accounts: accounts, emby: server, drive: drive, checker: checker, qr: qr, gate: make(chan struct{}, 1), records: make(map[string]model.MemberPlayback, len(records)), settings: settings, sessions: make(map[string]memberQRSession), NewEmby: func(base, key string) memberEmbyClient { return emby.New(base, key) }}
+	s.Pool = pool
+	s.UserPlayback, err = NewUserPlayback(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	s.configurePoolRequests()
 	for _, r := range records {
 		if _, err := db.PortalUser(ctx, r.UserID); err != nil {
 			return nil, fmt.Errorf("个人中心数据结构已重建，请停服并使用 dbtool -action reset-portal -output 备份路径 重置测试用户: %w", err)
@@ -575,9 +590,9 @@ func (s *MemberPlaybackService) Bindings(c PlaybackCacheConfig) PlaybackCacheCon
 				}
 			}
 			if r.Source == "assigned" {
-				target = r.AssignedAccountID
+				target = "" // Pool users must never fall through to primary in static snapshots.
 			}
-			bindings = append(bindings, PlaybackBinding{UserID: r.EmbyID, UserName: r.EmbyName, AccountID: target})
+			bindings = append(bindings, PlaybackBinding{UserID: r.EmbyID, UserName: r.EmbyName, AccountID: target, Source: r.Source})
 		}
 	}
 	if c.EmbyURL == "" {
@@ -592,7 +607,13 @@ func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string
 
 // AuthorizeMedia shares identity, source and library checks, with independent action gates.
 func (s *MemberPlaybackService) AuthorizeMedia(ctx context.Context, server, id string, download bool) (bool, error) {
-	_, err := s.BeginMediaAuthorization(ctx, server, id, download, nil)
+	ctx = WithPoolRequest(ctx, PoolRequest{Session: DirectLinkKey("authorization-check", id), Download: download})
+	a, err := s.BeginMediaAuthorization(ctx, server, id, download, nil)
+	if a != nil {
+		if closeErr := a.Close(); err == nil {
+			err = closeErr
+		}
+	}
 	return true, err
 }
 
@@ -724,6 +745,9 @@ func memberPolicyMatchesExpected(policy, expected map[string]any) bool {
 
 // Check results describe drive health only and never grant playback permission.
 func (s *MemberPlaybackService) checkDrive(ctx context.Context, r model.MemberPlayback) error {
+	if r.Source == "assigned" && !r.Suspended {
+		return nil
+	}
 	if r.Suspended {
 		return memberError("个人网盘已解绑，播放暂停")
 	}
@@ -756,6 +780,9 @@ func (s *MemberPlaybackService) recordDriveCheck(ctx context.Context, r model.Me
 	r.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 	r.CheckError = ""
 	r.Stage, r.Message = "ready", "网盘最近检查通过"
+	if r.Source == "assigned" {
+		r.Message = "共享池自动调度，播放时实时检查"
+	}
 	if err != nil {
 		r.Stage, r.Message = "pending", "网盘检查失败，请稍后重试"
 		if errors.Is(err, ErrMemberPlayback) {
@@ -792,11 +819,6 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 	}
 	if r.Administrator {
 		r.AllowPersonalSwitch = false
-	}
-	if u.Policy["IsDisabled"] != true {
-		if err := s.assignPool(ctx, &r); err != nil {
-			return err
-		}
 	}
 	r.EmbyName = u.Name
 	policy := playbackRestrictions(u.Policy)

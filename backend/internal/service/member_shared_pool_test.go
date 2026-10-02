@@ -81,70 +81,40 @@ func TestDefaultPrimaryAndAdminPlaybackPreserveLibraries(t *testing.T) {
 	}
 }
 
-func TestSharedPoolLeastUsedAndFailureNeverFallsBack(t *testing.T) {
+func TestSharedPoolDynamicSelectionAndNoPrimaryFallback(t *testing.T) {
 	ctx := context.Background()
-	s, remote, owner := memberFixture(t)
+	s, _, owner := memberFixture(t)
 	memberTestPrimary(t, s)
-	pool := make([]string, 0, 2)
-	for _, cookie := range []string{"UID=501_A; SEID=pool-one", "UID=502_A; SEID=pool-two"} {
-		id, err := s.accounts.Add("pool")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.accounts.Update(id, 1, "pool", &cookie); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.accounts.UpdatePlaybackDirectory(id, 2, "123"); err != nil {
-			t.Fatal(err)
-		}
-		pool = append(pool, id)
+	pool := memberTestPool(t, s)
+	if err := s.SetSource(ctx, owner, "assigned", pool); err == nil {
+		t.Fatal("manual pool binding accepted")
 	}
-	if err := s.SetSource(ctx, owner, "assigned", pool[0]); err != nil {
+	if err := s.SetSource(ctx, owner, "assigned", ""); err != nil {
 		t.Fatal(err)
 	}
-	newID := strings.Repeat("f", 32)
-	u := emby.ManagedUser{ID: newID, Name: "second", Policy: map[string]any{"IsDisabled": false}}
-	remote.users[newID] = u
-	second, err := s.ObserveUser(ctx, s.emby.snapshot(), u)
+	request := WithPoolRequest(ctx, PoolRequest{Session: "authenticated-client", Item: "movie"})
+	grant, err := s.BeginMediaAuthorization(request, "http://emby", s.record(owner).EmbyID, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSource(ctx, second.ID, "assigned", ""); err != nil {
+	if grant.account.ID != pool {
+		t.Fatal("wrong pool target")
+	}
+	if err := grant.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if s.record(second.ID).AssignedAccountID != pool[1] {
-		t.Fatal("least-used selection failed")
-	}
-	if err := s.SetSource(ctx, second.ID, "assigned", pool[0]); err != nil {
+	if err := grant.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, option := range s.AccountOptions() {
-		if option.ID == pool[0] && option.UserCount != 2 {
-			t.Fatal("shared usage count wrong", option.UserCount)
-		}
-	}
-	a, _ := s.accounts.Get(pool[0])
-	empty := ""
-	if err := s.accounts.Update(a.ID, a.Revision, a.Name, &empty); err != nil {
+	a, _ := s.accounts.Get(pool)
+	if err := s.accounts.Delete(pool, a.Revision); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{owner, second.ID} {
-		if err := s.SyncUser(ctx, id); err != nil {
-			t.Fatal(err)
-		}
-		r := s.record(id)
-		if r.Source != "assigned" || r.AssignedAccountID != pool[0] {
-			t.Fatal("failed binding changed")
-		}
-		if _, err := s.Authorize(ctx, "http://emby", r.EmbyID); err == nil {
-			t.Fatal("failed shared account fell back")
-		}
+	if _, err := s.Authorize(ctx, "http://emby", s.record(owner).EmbyID); err == nil {
+		t.Fatal("empty pool fell back to primary")
 	}
-	if err := s.SetSource(ctx, owner, "primary", ""); err != nil {
-		t.Fatal(err)
-	}
-	if s.record(second.ID).AssignedAccountID != pool[0] {
-		t.Fatal("other user's association removed")
+	if s.record(owner).Source != "assigned" {
+		t.Fatal("source mutated")
 	}
 }
 

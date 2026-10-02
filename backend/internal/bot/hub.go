@@ -297,6 +297,20 @@ func (h *Hub) NotifyShareSuccess(ctx context.Context, botConfigID, taskID string
 	return m.NotifyShareSuccess(ctx, taskID, input, result, generationErr)
 }
 
+func (h *Hub) NotifyPoolHealth(ctx context.Context, botConfigID, eventID, text string) error {
+	if err := h.ValidateSelection(botConfigID, true); err != nil {
+		return err
+	}
+	profile, err := h.profiles.Get(botConfigID)
+	if err != nil {
+		return err
+	}
+	if profile.NotificationChatID == "" {
+		return fmt.Errorf("请先配置通知聊天")
+	}
+	return h.newManager(profile, false).enqueueShareNotification(ctx, eventID, text, "")
+}
+
 func (h *Hub) NotifyShareBatchSuccess(ctx context.Context, botConfigID, taskID string, inputs []service.GenerateInput, outcomes []service.BatchOutcome) error {
 	if botConfigID == "" {
 		return nil

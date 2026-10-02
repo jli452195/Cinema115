@@ -12,6 +12,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const req = route.request(), url = new URL(req.url()); let data = {}
       if (url.pathname === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
       else if (url.pathname === '/api/admin/p115/accounts') data = { accounts: [] }
+      else if (url.pathname === '/api/admin/member-playback/settings' || url.pathname === '/api/admin/member-playback') data = { settings: {enabled:false,libraryIds:[],allowDownload:false,publicUrl:''}, proxy:{listening:false} }
+      else if (url.pathname === '/api/admin/emby/playback-cache/users') data = {users:[],members:[],embyUrl:''}
+      else if (url.pathname === '/api/admin/emby/instant-upload') data = {config:{userId:'',sourceAccountId:'',accountId:'',targetCid:'',targetPath:''},records:[],running:false}
       else if (url.pathname === '/api/admin/emby/proxy') {
         if (req.method() === 'POST') { config = req.postDataJSON(); writes.push(config) }
         data = { config, listening: false, error: '' }
@@ -26,7 +29,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await prepare.isChecked(), true)
     assert.equal(await links.isChecked(), false)
     await page.getByRole('button', { name: '保存配置', exact: true }).click()
-    await page.getByText('配置已保存，反代已停用。', { exact: true }).waitFor()
+    await page.getByText('302 已关闭，停止接管新请求；现有 Emby 权限保留。', { exact: true }).waitFor()
     assert.equal(writes.at(-1).prepareFiles, true)
     assert.equal(writes.at(-1).prewarm, false)
     await prepare.uncheck({ force: true })

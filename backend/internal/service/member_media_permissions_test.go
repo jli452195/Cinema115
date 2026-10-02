@@ -181,8 +181,8 @@ func TestInvitedUsersAutomaticallyPlayWhenSourceReady(t *testing.T) {
 		r := s.record(u.ID)
 		_, err = s.Authorize(ctx, r.EmbyURL, r.EmbyID)
 		if source == "assigned" {
-			if r.Source != "primary" || err != nil {
-				t.Fatal("main source not automatically enabled", r.Stage, err)
+			if r.Source != "assigned" || err == nil {
+				t.Fatal("empty pool changed source or granted playback", r.Stage, err)
 			}
 		} else {
 			if err == nil {

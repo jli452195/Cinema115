@@ -31,6 +31,21 @@ func TestPlaybackAuthorizationFailureClassification(t *testing.T) {
 	}
 }
 
+func TestPoolAdmissionResponseOmitsAdminDiagnostics(t *testing.T) {
+	for _, reason := range []service.PoolAdmissionReason{service.PoolCapacityFull, service.PoolRecoveryBusy, service.PoolDraining, service.PoolMixedBlocked, service.PoolWaiterLimit, service.PoolRequestLimit, service.PoolLeaseLimit} {
+		err := &service.PoolAdmissionError{Reason: reason, Diagnostic: "UID=private; 占用=3/3; secret-cookie"}
+		message, status := playbackAuthorizationFailure(context.Background(), fmt.Errorf("wrapped: %w", err))
+		if status != 503 || message != err.Error() || strings.Contains(message, "private") || strings.Contains(message, "secret-cookie") {
+			t.Fatal(status, message)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, status := playbackAuthorizationFailure(ctx, err); status != 499 {
+			t.Fatal("busy masked cancellation", status)
+		}
+	}
+}
+
 // Exercise every membership check, especially cancellation after media lookup:
 // this previously turned a canceled request into a false binding-denial 403.
 func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {

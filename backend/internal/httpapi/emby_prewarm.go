@@ -81,6 +81,11 @@ func (h *embyProxyHandler) waitPrewarm(ctx context.Context, key string) error {
 }
 
 func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candidates []map[string]json.RawMessage) {
+	// Speculative preparation must not bypass the per-user playback admission.
+	// Without a reliable actual-play intent, leave all work to the redirect.
+	if h.cache != nil && h.cache.Members != nil && h.cache.Members.UserPlayback != nil {
+		return
+	}
 	if (!h.config.Prewarm && !h.config.PrepareFiles) || len(candidates) == 0 {
 		return
 	}
@@ -108,6 +113,11 @@ func (h *embyProxyHandler) schedulePrewarm(r *http.Request, item string, candida
 	token := embyToken(r)
 	userID := h.identities.UserID(h.config.URL, token)
 	if !embyProxyID.MatchString(userID) {
+		return
+	}
+	// PlaybackInfo prewarm lacks a reliably authenticated session association.
+	// Pool users prepare on foreground demand instead of reserving extra slots.
+	if h.cache != nil && h.cache.Members != nil && h.cache.Members.IsPoolUser(h.config.URL, userID) {
 		return
 	}
 	snapshot := &prewarmSnapshot{media: media, prepareOnly: !h.config.Prewarm}

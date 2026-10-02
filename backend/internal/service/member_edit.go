@@ -16,11 +16,14 @@ type MemberEditInput struct {
 }
 
 func memberEditValues(r model.MemberPlayback) MemberEditValues {
-	return MemberEditValues{Source: r.Source, AccountID: r.AssignedAccountID, ChildLimit: r.ChildLimit}
+	return MemberEditValues{Source: r.Source, ChildLimit: r.ChildLimit}
 }
 
 // Save the complete form once; Emby synchronization is explicitly asynchronous.
 func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in MemberEditInput) error {
+	if in.AccountID != "" || in.Expected.AccountID != "" {
+		return memberError("共享池自动调度，不接受指定小号")
+	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -48,7 +51,7 @@ func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in Me
 		return memberError("用户身份已变化，请刷新")
 	}
 	if r.PlaybackOnly {
-		if admin || in.Source != r.Source || in.AccountID != r.AssignedAccountID || in.ChildLimit != r.ChildLimit {
+		if admin || in.Source != r.Source || in.AccountID != "" || in.ChildLimit != r.ChildLimit {
 			return memberError("子账号不能修改播放来源和配额")
 		}
 	} else {
@@ -59,28 +62,14 @@ func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in Me
 			return memberError("管理员不支持个人网盘及子账号配额")
 		}
 	}
-	sourceChanged := in.Source != r.Source || in.AccountID != r.AssignedAccountID
+	sourceChanged := in.Source != r.Source
 	if sourceChanged {
 		if u.Policy["IsDisabled"] == true {
 			return memberError("Emby 用户已停用，不能修改播放来源")
 		}
-		if in.Source != "assigned" && in.AccountID != "" {
-			return memberError("播放来源参数无效")
-		}
-		if in.Source == "assigned" && in.AccountID != "" {
-			a, err := s.accounts.Get(in.AccountID)
-			if err != nil || a.Primary || s.accounts.IsPersonal(a.ID) || a.PlaybackParentCID == "" {
-				return memberError("请选择已配置目录的共享小号")
-			}
-		}
-		r.Source, r.AssignedAccountID = in.Source, in.AccountID
+		r.Source = in.Source
 		r.AllowPersonalSwitch = !admin
 		r.Suspended = false
-		if r.Source == "assigned" && r.AssignedAccountID == "" {
-			if err := s.resolvePool(ctx, &r); err != nil {
-				return err
-			}
-		}
 	}
 	policyChanged := sourceChanged
 	r.ChildLimit = in.ChildLimit

@@ -140,6 +140,7 @@ func TestDirectoryDiscoveryDoesNotActivatePolicyManagement(t *testing.T) {
 func TestRegistrationTemplateAppliedOnlyAtCreation(t *testing.T) {
 	ctx := context.Background()
 	s, remote, _ := memberFixture(t)
+	memberTestPool(t, s)
 	memberTestPrimary(t, s)
 	auth := NewPortalAuth(s.db, "admin", "password123", "secret")
 	auth.Members = s

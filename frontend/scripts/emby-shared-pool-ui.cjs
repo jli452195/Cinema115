@@ -9,16 +9,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     page.on('pageerror', e => errors.push(e.message))
     let role = 'admin'
     const settings = { enabled: true, revision: 1, libraryIds: ['movies'], allowDownload: false }
-    const members = ['reader', 'owner'].map((name, i) => ({ userId: name, embyId: name, embyName: name, username: name, source: 'primary', assignedAccountId: '', administrator: !!i, playbackAllowed: true, personalDrive: { connected: true }, stage: 'ready' }))
-    const pool = [{ id: 'pool', uid: '501', name: '共享小号', configured: true, primary: false, revision: 1, playbackParentCid: '123', users: ['reader', 'owner'], userCount: 2 }]
+    const members = ['reader', 'owner'].map((name, i) => ({ userId: name, embyId: name, embyName: name, username: name, source: 'primary', administrator: !!i, playbackAllowed: true, personalDrive: { connected: true }, stage: 'ready' }))
+    const pool = [{ id: 'pool', uid: '501', name: '共享小号', configured: true, primary: false, revision: 1, playbackParentCid: '123', pool: { state:'ready',mode:'enabled',sessions:2,preparing:0,residual:0,retryAt:0 } }]
     await page.route('**/api/**', async route => {
       const request = route.request(), p = new URL(request.url()).pathname
       let data = {}
       if (p === '/api/auth/me') data = { user: { id: role, username: role, role, disabled: false } }
       else if (p.endsWith('/settings') && request.method() === 'POST') {
         const member = members.find(m => p.includes('/' + m.userId + '/'))
-        const body = request.postDataJSON(); writes.push(body); member.source = body.source; member.assignedAccountId = body.accountId; data = { settings, members }
+        const body = request.postDataJSON(); writes.push(body); member.source = body.source; data = { settings, members }
       } else if (p === '/api/admin/member-playback/accounts') data = { accounts: pool }
+      else if (p === '/api/admin/member-playback/pool') data = { settings:{maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:240,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50}, accounts:pool }
       else if (p.startsWith('/api/admin/member-playback')) data = { settings, members }
       else if (p === '/api/admin/p115/accounts/pool' && request.method() === 'PUT') {
         const body = request.postDataJSON(); writes.push(body); pool[0].revision++; pool[0].name=body.name; data={accounts:pool}
@@ -39,16 +40,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const card = page.locator('article').filter({ has: page.getByRole('heading', { name, exact: true }) })
       await card.getByRole('button', {name:'管理用户'}).click()
       const dialog = page.getByRole('dialog')
-      await dialog.getByLabel('播放来源', {exact: true}).selectOption('pool:pool')
+      await dialog.getByLabel('播放来源', {exact: true}).selectOption('assigned')
       if (name === 'owner') assert.equal(await dialog.getByLabel('播放来源',{exact:true}).locator('option[value="personal"]').count(), 0)
       await dialog.getByRole('button', { name: '保存更改', exact: true }).click()
       await dialog.getByText('设置已保存。', {exact:true}).waitFor()
       await dialog.getByRole('button', {name:'关闭',exact:true}).click()
       assert.equal(await page.getByLabel('确认播放目录编号').count(), 0)
     }
-    assert.deepEqual(writes.slice(0, 2).map(({source,accountId})=>({source,accountId})), [{ source: 'assigned', accountId: 'pool' }, { source: 'assigned', accountId: 'pool' }])
+    assert.deepEqual(writes.slice(0, 2).map(({source,accountId})=>({source,accountId})), [{ source: 'assigned', accountId: '' }, { source: 'assigned', accountId: '' }])
     await page.goto(base + '/115/pool')
-    await page.getByText('2 人使用', { exact: false }).waitFor()
+    await page.getByText('当前 UID 占用 2', { exact: false }).waitFor()
     assert.equal(new URL(page.url()).hash, '#pool')
     assert.equal(await page.getByLabel('换号时的新网盘目录编号').count(), 0)
     await page.locator('#pool').getByRole('button', {name:'更多操作',exact:true}).click()
@@ -78,6 +79,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
     assert.deepEqual(errors, [])
-    console.log('Shared pool UI passed: shared assignment, administrator playback, separated pool, personal directory self-service, mobile layout')
+    console.log('Shared pool UI passed: dynamic source, administrator playback, separated pool, personal directory self-service, mobile layout')
   } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exit(1) })

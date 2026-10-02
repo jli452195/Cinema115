@@ -258,6 +258,9 @@ func instantPayload(input url.Values, timestamp int64) ([]byte, string, error) {
 }
 
 func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cookie string, body []byte) ([]byte, error) {
+	if err := WaitRequestBudget(ctx, cookie); err != nil {
+		return nil, err
+	}
 	if method == http.MethodPost {
 		var finish func()
 		ctx, finish = tracePlaybackHTTP(ctx, "秒传提交 HTTP")
@@ -282,6 +285,7 @@ func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cook
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		ObserveRequestBudget(ctx, resp.StatusCode, retryAfter(resp.Header.Get("Retry-After")))
 		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))

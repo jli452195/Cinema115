@@ -104,7 +104,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">生成注册邀请</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400">每个邀请码限注册一个Emby 账号。完整码和链接仅本次生成后显示，请及时复制。</p>
       <label class="block text-sm text-slate-600 dark:text-slate-300">播放开通方式<select v-model="playbackSource" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option value="personal">自行绑定 115（默认）</option><option value="assigned">管理员共享小号池</option></select></label>
-      <p class="text-sm text-slate-500 dark:text-slate-400">{{ playbackSource === 'assigned' ? '注册后分配共享小号，无需扫码；首次无可用小号时使用主网盘，已有绑定失效不会自动回退。' : '受邀人可先注册 Emby 并浏览媒体库，绑定自己的 115 后才能播放。' }}</p>
+      <p class="text-sm text-slate-500 dark:text-slate-400">{{ playbackSource === 'assigned' ? '注册后自动使用共享池，无需扫码或绑定小号；池暂不可用时停止新取链，不回退主网盘。' : '受邀人可先注册 Emby 并浏览媒体库，绑定自己的 115 后才能播放。' }}</p>
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="text-sm text-slate-600 dark:text-slate-300">数量<input v-model.number="count" type="number" required min="1" max="20" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" /></label>
         <label class="text-sm text-slate-600 dark:text-slate-300">有效期<select v-model.number="days" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><option :value="1">1 天</option><option :value="7">7 天</option><option :value="30">30 天</option></select></label>

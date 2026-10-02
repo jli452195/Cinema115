@@ -39,6 +39,14 @@ func (s *MemberPlaybackService) healthAccount(r model.MemberPlayback) (P115Accou
 }
 
 func (s *MemberPlaybackService) DriveHealth(r model.MemberPlayback) DriveHealthView {
+	if r.Source == "assigned" && !r.Suspended {
+		for _, a := range s.AccountOptions() {
+			if a.Configured && a.PlaybackParentCID != "" && a.Pool.Mode == "enabled" && a.Pool.State != "invalid_credentials" && a.Pool.State != "invalid_directory" && a.Pool.RetryAt <= time.Now().UnixMilli() && (s.Pool == nil || a.Pool.Sessions < s.Pool.Settings().MaxSessions) {
+				return DriveHealthView{State: "ready", Message: "共享池自动调度，播放时实时核验"}
+			}
+		}
+		return DriveHealthView{State: "unavailable", Message: "共享池暂无可用小号"}
+	}
 	a, err := s.healthAccount(r)
 	if err != nil {
 		return DriveHealthView{State: "unavailable", Message: err.Error()}
@@ -74,6 +82,8 @@ func (s *MemberPlaybackService) runDriveHealth(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		s.refreshMissingDriveHealth(ctx)
+		s.refreshPoolHealth(ctx)
+		s.reconcilePoolSessions(ctx)
 		select {
 		case <-ctx.Done():
 			return

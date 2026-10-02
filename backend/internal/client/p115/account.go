@@ -33,6 +33,9 @@ func NewAccountClient() *AccountClient {
 }
 
 func (a *AccountClient) CheckCookie(ctx context.Context, cookie string) (bool, error) {
+	if err := WaitRequestBudget(ctx, cookie); err != nil {
+		return false, err
+	}
 	// 避免空值和粘贴的多行请求头被当成有效凭证提交。
 	if strings.TrimSpace(cookie) == "" || strings.ContainsAny(cookie, "\r\n") {
 		return false, nil
@@ -49,7 +52,8 @@ func (a *AccountClient) CheckCookie(ctx context.Context, cookie string) (bool, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("登录状态接口返回 HTTP %d", resp.StatusCode)
+		ObserveRequestBudget(ctx, resp.StatusCode, retryAfter(resp.Header.Get("Retry-After")))
+		return false, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	var result struct {
 		State json.RawMessage `json:"state"`

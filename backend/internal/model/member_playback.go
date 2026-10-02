@@ -25,7 +25,6 @@ type MemberPlayback struct {
 	EmbyName                string   `json:"embyName"`
 	AccountID               string   `json:"accountId"`
 	Source                  string   `json:"source"` // personal, primary, assigned, personal_shared
-	AssignedAccountID       string   `json:"assignedAccountId"`
 	Stage                   string   `json:"stage"`
 	Message                 string   `json:"message"`
 	Suspended               bool     `json:"suspended"`

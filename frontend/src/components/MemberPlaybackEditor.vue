@@ -6,7 +6,7 @@ import type { P115Account } from '../types/p115Accounts'
 const props = defineProps<{ token: string; member: MemberPlayback; settings: MemberSettings; accounts: P115Account[]; disabled: boolean }>()
 const emit = defineEmits<{ updated: [member: MemberPlayback, settings: MemberSettings]; busy: [value: boolean]; dirty: [value: boolean]; children: [owner: string] }>()
 interface Values { source: string; accountId: string; childLimit: number }
-function values(m: MemberPlayback): Values { return { source: m.source || 'primary', accountId: m.assignedAccountId || '', childLimit: m.childLimit || 0 } }
+function values(m: MemberPlayback): Values { return { source: m.source || 'primary', accountId: '', childLimit: m.childLimit || 0 } }
 const initial = ref(values(props.member)), source = ref(''), childLimit = ref(3), allowChildren = ref(false)
 const open = ref(false), busy = ref(false), error = ref(''), notice = ref(''), discard = ref(false)
 const dialog = ref<HTMLDialogElement>(), trigger = ref<HTMLButtonElement>()
@@ -14,7 +14,7 @@ const titleID = useId(), formID = useId()
 const lifecycle = new AbortController()
 let previousOverflow = ''
 const locked = computed(() => busy.value || props.disabled)
-const draft = computed<Values>(() => ({ source: source.value.startsWith('pool:') ? 'assigned' : source.value, accountId: source.value.startsWith('pool:') ? source.value.slice(5) : '', childLimit: allowChildren.value ? Number(childLimit.value) : 0 }))
+const draft = computed<Values>(() => ({ source: source.value, accountId: '', childLimit: allowChildren.value ? Number(childLimit.value) : 0 }))
 const changed = computed(() => open.value && JSON.stringify(draft.value) !== JSON.stringify(initial.value))
 const state = computed(() => props.member.childRevoked ? '共享已撤销' : props.member.childDisabled ? '所有者已停用登录' : props.member.childPaused ? '所有者已暂停播放' : props.member.driveStatus?.message || memberStage(props.member))
 const checkedTime = computed(() => {
@@ -23,13 +23,12 @@ const checkedTime = computed(() => {
  const date = new Date(value)
  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 })
-const sourceLabel = computed(() => props.member.playbackOnly ? '所有者个人网盘' : props.member.source === 'assigned' ? props.accounts.find(a => a.id === props.member.assignedAccountId)?.name || '共享小号不可用' : props.member.source === 'personal' ? '个人网盘' : '主网盘')
+const sourceLabel = computed(() => props.member.playbackOnly ? '所有者个人网盘' : props.member.source === 'assigned' ? '动态共享池' : props.member.source === 'personal' ? '个人网盘' : '主网盘')
 const identity = computed(() => props.member.playbackOnly ? '播放子账号' : props.member.administrator ? '管理员' : props.member.createdByCinema ? '邀请注册用户' : '已有 Emby 用户')
 const usage = computed(() => props.member.childUsed === undefined ? '—' : String(props.member.childUsed))
-const missingPool = computed(() => source.value.startsWith('pool:') && source.value !== 'pool:' && !props.accounts.some(a => `pool:${a.id}` === source.value))
 watch(changed, value => { emit('dirty', value); discard.value = false })
 function reset(m: MemberPlayback) {
- initial.value = values(m); source.value = m.source === 'assigned' ? `pool:${m.assignedAccountId || ''}` : m.source || 'primary'
+ initial.value = values(m); source.value = m.source || 'primary'
  allowChildren.value = (m.childLimit || 0) > 0; childLimit.value = m.childLimit || 3
 }
 async function show() {
@@ -82,7 +81,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (open.value) { dialog.value?.close
     <form :id="formID" class="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5" @submit.prevent="save">
      <p class="rounded-lg bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800">{{ state }}</p>
      <p v-if="!member.driveStatus && (member.checkError || member.message)" class="text-sm text-amber-700 dark:text-amber-300">{{ member.checkError || member.message }}</p>
-     <section v-if="!member.playbackOnly"><label class="block text-sm font-medium">播放来源<select aria-label="播放来源" v-model="source" :disabled="locked || member.disabled" class="field mt-2"><option value="primary">主网盘</option><optgroup label="共享小号"><option value="pool:">自动分配共享小号</option><option v-if="missingPool" :value="source" disabled>原小号不可用</option><option v-for="a in accounts" :key="a.id" :value="`pool:${a.id}`" :disabled="!a.playbackParentCid">{{ a.name }} · {{ a.userCount || 0 }} 人{{ !a.playbackParentCid ? '（未设目录）' : !a.configured ? '（未登录）' : '' }}</option></optgroup><option v-if="!member.administrator" value="personal">个人网盘（本人扫码）</option></select></label><p v-if="source === 'pool:'" class="hint">没有可用小号时使用主网盘。</p><p v-if="source === 'personal'" class="hint">{{ member.personalDrive?.connected ? '个人网盘已连接，由本人管理。' : '待用户在个人中心扫码并选择目录。' }}</p><p v-if="member.disabled" class="hint">Emby 已停用，恢复后可修改播放来源。</p></section>
+     <section v-if="!member.playbackOnly"><label class="block text-sm font-medium">播放来源<select aria-label="播放来源" v-model="source" :disabled="locked || member.disabled" class="field mt-2"><option value="primary">主网盘</option><option value="assigned">动态共享小号池</option><option v-if="!member.administrator" value="personal">个人网盘（本人扫码）</option></select></label><p v-if="source === 'assigned'" class="hint">播放时自动选择可用小号，失效时尝试其他小号；全池不可用时暂停新取链。</p><p v-if="source === 'personal'" class="hint">{{ member.personalDrive?.connected ? '个人网盘已连接，由本人管理。' : '待用户在个人中心扫码并选择目录。' }}</p><p v-if="member.disabled" class="hint">Emby 已停用，恢复后可修改播放来源。</p></section>
      <section v-else class="space-y-2 text-sm"><p>播放来源：所有者个人网盘</p><p>所有者：{{ member.ownerName || member.ownerUserId }}</p><p class="hint">仅允许 Emby 播放，不允许网站登录。</p></section>
      <section v-if="!member.playbackOnly && !member.administrator" class="border-t border-slate-100 pt-5 dark:border-slate-800"><div class="flex items-center justify-between gap-4"><div><h3 class="text-sm font-medium">播放子账号</h3><p class="hint">已使用 {{ usage }} 个名额，不包含本人</p></div><button type="button" role="switch" aria-label="允许创建子账号" :aria-checked="allowChildren" :disabled="locked" class="relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40" :class="allowChildren ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-600'" @click="allowChildren = !allowChildren"><span class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all" :class="allowChildren ? 'left-[22px]' : 'left-0.5'"></span></button></div><label v-if="allowChildren" class="mt-4 block text-sm">子账号名额<div class="mt-2 flex w-40 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"><button type="button" aria-label="减少子账号名额" :disabled="locked || childLimit <= 1" class="w-10 bg-slate-50 text-lg disabled:opacity-40 dark:bg-slate-800" @click="childLimit--"><svg aria-hidden="true" class="mx-auto h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14" /></svg></button><input v-model.number="childLimit" aria-label="子账号名额" type="number" required min="1" max="20" :disabled="locked" class="min-w-0 flex-1 bg-transparent py-2 text-center outline-none" /><button type="button" aria-label="增加子账号名额" :disabled="locked || childLimit >= 20" class="w-10 bg-slate-50 text-lg disabled:opacity-40 dark:bg-slate-800" @click="childLimit++"><svg aria-hidden="true" class="mx-auto h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7v14" /></svg></button></div></label><p v-if="!allowChildren" class="hint">关闭后禁止继续新建，现有子账号保留。</p><p v-else-if="member.childUsed && childLimit < member.childUsed" class="mt-2 text-xs text-amber-700 dark:text-amber-300">名额少于已使用数量。现有账号保留，暂时不能新建。</p><button v-if="member.childUsed" type="button" :disabled="locked || changed" class="mt-3 text-sm text-blue-600 disabled:opacity-40 dark:text-blue-400" @click="viewChildren">查看子账号</button></section>
      <section class="border-t border-slate-100 pt-5 dark:border-slate-800"><h3 class="text-sm font-medium">媒体库与常规权限</h3><p class="hint">在 Emby 中管理。Cinema115 不会覆盖媒体库、分级、设备和下载权限。播放子账号的登录及播放状态由 Cinema115 管理；所有用户仅允许原文件播放。</p></section>

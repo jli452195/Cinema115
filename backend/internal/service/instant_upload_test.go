@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 )
@@ -16,6 +17,81 @@ type instantClientFake struct {
 	upload func(string, string)
 	err    error
 	calls  int
+}
+
+func TestInstantCancelledWriteQueuePersistsFailure(t *testing.T) {
+	s, fake, config, _ := setupInstantService(t)
+	release, err := s.Playback.acquirePlayback(context.Background(), "22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	r, err := s.Run(ctx, config, "cancelled-request-0001", &p115.ShareInfo{Code: "abc"}, "1")
+	if !errors.Is(err, context.DeadlineExceeded) || r.Status != "failed" || s.Status().Running || fake.calls != 0 {
+		t.Fatal("cancel left running task", r, err)
+	}
+	if s.Status().Records[0].Status != "failed" {
+		t.Fatal("failed result not persisted")
+	}
+}
+
+func TestInstantDynamicPoolPinsTargetAndReleasesReservation(t *testing.T) {
+	ctx := context.Background()
+	members, _, owner := memberFixture(t)
+	memberTestPrimary(t, members)
+	id := memberTestPool(t, members)
+	if err := members.SetSource(ctx, owner, "assigned", ""); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewSessionStore(filepath.Join(t.TempDir(), "instant.enc"), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &instantClientFake{}
+	s, err := NewInstantUploads(store, members.accounts, fake, NewEmbyProxyLogs(&GenerationLogs{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Playback = &PlaybackCache{Members: members}
+	if err = s.Apply(InstantUploadConfig{UserID: members.record(owner).EmbyID}); err != nil {
+		t.Fatal(err)
+	}
+	config := s.Status().Config
+	if config.AccountID != "" || config.TargetCID != "" {
+		t.Fatal("pool target bound before task")
+	}
+	target, _ := members.accounts.Get(id)
+	fake.upload = func(cid, cookie string) {
+		if cid != target.PlaybackParentCID || cookie != target.Cookie {
+			t.Fatal("task target drift")
+		}
+		if err := members.Pool.SetMode(ctx, id, "disabled"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := s.Run(ctx, config, "dynamic-request-0001", &p115.ShareInfo{Code: "abc"}, "1")
+	if err != nil || r.Status != "success" || r.AccountID != id || fake.calls != 1 {
+		t.Fatal(r, err)
+	}
+	if members.Pool.AccountStatus(target).Sessions != 0 {
+		t.Fatal("manual task retained playback occupancy")
+	}
+	r, err = s.Run(ctx, config, "dynamic-request-0001", &p115.ShareInfo{Code: "abc"}, "1")
+	if err != nil || r.Status != "success" || fake.calls != 1 {
+		t.Fatal("task repeated write", err)
+	}
+}
+
+func TestInstantAdminCannotTargetPersonalDrive(t *testing.T) {
+	members, _, owner := memberFixture(t)
+	memberTestPrimary(t, members)
+	memberScan(t, members, owner)
+	s := &InstantUploads{accounts: members.accounts, Playback: &PlaybackCache{Members: members}}
+	if _, err := s.resolveUser(members.record(owner).EmbyID); !errors.Is(err, ErrInstantConfig) {
+		t.Fatal("administrator task accessed personal credentials", err)
+	}
 }
 
 func (f *instantClientFake) DownloadInstantInfoWithUA(_ context.Context, _ *p115.ShareInfo, _ string, cookie, _ string) (*p115.DownloadInfo, error) {

@@ -22,6 +22,7 @@ func embyLoginRequest(r *http.Request) bool {
 }
 
 func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
+	h.observePoolSession(resp)
 	if !embyLoginRequest(resp.Request) || resp.StatusCode != http.StatusOK {
 		return h.rewritePlayback(resp)
 	}
