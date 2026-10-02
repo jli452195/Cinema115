@@ -37,10 +37,25 @@ func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
 		return nil, false
 	}
 	u, err := url.Parse(strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff")))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery {
 		return nil, false
 	}
 	path := u.EscapedPath()
+	if strings.Contains(raw, "#") {
+		// Some STRM generators leave filename '#' characters unescaped. Only
+		// recover them in the final filename slot; never change source identity
+		// fields or fetch this external URL. Normal field validation still applies.
+		parts := strings.Split(path, "/")
+		filenameSlot := strings.HasPrefix(path, "/play115/") && len(parts) == 7
+		if strings.HasPrefix(path, "/api/redirect115/") {
+			filenameSlot = len(parts) == 6 && pickCodePathSHA1Pattern.MatchString(parts[4]) ||
+				len(parts) == 5 && !pickCodePathSHA1Pattern.MatchString(parts[4])
+		}
+		if !filenameSlot || strings.Contains(u.Fragment, "?") {
+			return nil, false
+		}
+		path += "%23" + url.PathEscape(u.Fragment)
+	}
 	if strings.HasPrefix(path, "/play115/") {
 		return parsePlay115Path(strings.TrimPrefix(path, "/play115/"))
 	}

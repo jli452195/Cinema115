@@ -62,7 +62,7 @@ func TestPlay115RejectsMalformedFields(t *testing.T) {
 		strings.Replace(valid, "589916580", "9223372036854775808", 1),
 		strings.Replace(valid, "589916580", "%35", 1),
 		strings.TrimSuffix(valid, "/movie.mkv"),
-		valid + "/extra", valid + "?token=x", valid + "?", valid + "#fragment",
+		valid + "/extra", valid + "?token=x", valid + "?",
 		strings.Replace(valid, "http://nas", "http://user:password@nas", 1),
 		strings.Replace(valid, "http://nas", "file://nas", 1),
 	} {
@@ -73,6 +73,47 @@ func TestPlay115RejectsMalformedFields(t *testing.T) {
 	for _, name := range []string{"", "%20", ".", "%2e%2e", "a%2fb", "a%5cb", "a%00b", "a%0ab", "a%09b", "a%7fb", "%ff", "%zz"} {
 		if _, ok := parsePickCodeSTRMClaim("http://nas" + play115TestPath + name); ok {
 			t.Errorf("invalid filename accepted: %s", name)
+		}
+	}
+}
+
+func TestPickCodeFilenameLiteralHash(t *testing.T) {
+	const hash = "84a23f57f6540139a0fab14eaa73c3cfb86a21e3"
+	const name = "[ばにぃうぉ~か~] OVA催眠性指導 #1 小幡優衣の場合 [GLOD-0097].mp4"
+	for _, prefix := range []string{
+		"http://nas/api/redirect115/abc123/",
+		"http://nas/api/redirect115/abc123/" + hash + "/",
+		"http://nas" + play115TestPath,
+	} {
+		baseline, ok := parsePickCodeSTRMClaim(prefix + "movie.mp4")
+		if !ok {
+			t.Fatal("invalid baseline")
+		}
+		for _, filename := range []string{name, url.PathEscape(name), "#1.mp4", "a#b#c.mp4", "movie.mkv#fragment", "a#%2523.mp4"} {
+			claim, ok := parsePickCodeSTRMClaim(prefix + filename)
+			want, err := url.PathUnescape(filename)
+			if !ok || err != nil || claim.Name != want {
+				t.Fatalf("filename rejected or changed: %q, %+v", filename, claim)
+			}
+			claim.Name = baseline.Name
+			if *claim != *baseline {
+				t.Fatalf("filename changed source identity: %+v", claim)
+			}
+		}
+		for _, filename := range []string{"a#b/c.mp4", "a#b%2fc.mp4", "a#b%5cc.mp4", "a#%00.mp4", "a#%0a.mp4", "a#%ff.mp4", "a#%zz.mp4", "a?token=x#1.mp4", "a#1.mp4?token=x"} {
+			if _, ok := parsePickCodeSTRMClaim(prefix + filename); ok {
+				t.Errorf("invalid filename accepted: %q", filename)
+			}
+		}
+	}
+	for _, raw := range []string{
+		"http://nas/api/redirect115/abc123#filename.mp4",
+		"http://nas/api/redirect115/abc123/" + hash + "#filename.mp4",
+		"http://nas/api/redirect115/abc123/invalid/a#1.mp4",
+		"http://nas" + strings.TrimSuffix(play115TestPath, "/") + "#filename.mp4",
+	} {
+		if _, ok := parsePickCodeSTRMClaim(raw); ok {
+			t.Errorf("hash in source identity accepted: %q", raw)
 		}
 	}
 }

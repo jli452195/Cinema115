@@ -17,6 +17,8 @@ func TestSTRMNegotiationPreservesClientPlaybackIntent(t *testing.T) {
 	for _, source := range []string{
 		"http://retired.invalid:8115/api/redirect115/abc123/" + strings.Repeat("a", 40) + "/movie.mkv",
 		"http://retired.invalid:12366" + play115TestPath + "movie.mkv",
+		"http://retired.invalid:8115/api/redirect115/d6ch24icg2307x29g/84a23f57f6540139a0fab14eaa73c3cfb86a21e3/[ばにぃうぉ~か~] OVA催眠性指導 #1 小幡優衣の場合 [GLOD-0097].mp4",
+		"http://retired.invalid:12366" + play115TestPath + "episode #1.mkv",
 		"http://retired.invalid/s/share_code_123.mkv",
 	} {
 		t.Run(source, func(t *testing.T) {
