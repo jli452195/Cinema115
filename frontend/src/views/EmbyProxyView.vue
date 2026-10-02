@@ -84,7 +84,7 @@ onBeforeUnmount(() => lifecycle.abort())
           </div>
           <div class="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h2 class="font-semibold text-slate-900 dark:text-slate-100">网盘 pickcode STRM</h2>
-            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode}，后面的文件名可省略。不限制来源主机，仅提取 pickcode，由主账号读取文件；不会访问原工具地址。</p>
+            <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">支持 /api/redirect115/{pickcode} 和 /play115/{pickcode}/{文件ID}/{SHA1}/{大小}/{文件名}。已有可信资料可复用，未知文件由主账号核验；不会访问原工具地址。</p>
             <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">Emby 用户绑定小号后，秒传到绑定账号的播放缓存目录并用该账号取链，已缓存的文件会复用；分享 STRM 优先尝试小号直接读取分享。未绑定用户默认使用主账号，绑定账号失效时暂停播放并保留绑定，恢复后新播放请求自动生效。</p>
           </div>
         </fieldset>

@@ -283,7 +283,13 @@ func (s *MemberPlaybackService) ChildSessionDenied(server, id string) bool {
 	if id == "" {
 		return false
 	}
-	for _, r := range s.Records() {
+	serverID := s.emby.snapshot().ServerID
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if r, ok := s.records[embyProfileID(serverID, id)]; ok {
+		return r.PlaybackOnly && (r.EmbyURL != server || !r.Provisioned || r.ChildDisabled || r.ChildRevoked || r.Administrator)
+	}
+	for _, r := range s.records {
 		if r.EmbyID == id && r.PlaybackOnly {
 			return r.EmbyURL != server || !r.Provisioned || r.ChildDisabled || r.ChildRevoked || r.Administrator
 		}

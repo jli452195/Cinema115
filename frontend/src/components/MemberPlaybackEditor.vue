@@ -55,35 +55,6 @@ async function mutate(suffix: string, body: object, save = false) {
  } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '保存失败，请重试' }
  finally { busy.value = false; emit('busy', false) }
 }
-const permissionUnknown = ref(false)
-const toggleLocked = computed(() => locked.value || changed.value || permissionUnknown.value || memberPermissionUnknown() || !!props.member.childRevoked || !!props.member.childDisabled || !!props.member.disabled || !!props.member.childPaused)
-function memberPermissionUnknown() { return typeof props.member.playbackAllowed !== 'boolean' }
-async function refreshPermissions() {
- if (locked.value) return
- busy.value = true; emit('busy', true); error.value = ''
- try {
-  const data = await memberRequest(props.token, lifecycle.signal, '/' + encodeURIComponent(props.member.userId) + '/permissions')
-  const updated = data.members.find((m: MemberPlayback) => m.userId === props.member.userId)
-  if (!updated) throw new Error('未返回 Emby 权限，请重试')
-  emit('updated', { ...props.member, ...updated, playbackAllowed: updated.playbackAllowed, imageTag: props.member.imageTag }, data.settings)
-  permissionUnknown.value = false
- } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取失败' }
- finally { busy.value = false; emit('busy', false) }
-}
-async function togglePlayback() {
- if (toggleLocked.value) return
- busy.value = true; emit('busy', true); error.value = ''; notice.value = ''
- try {
-  const data = await memberRequest(props.token, lifecycle.signal, '/' + encodeURIComponent(props.member.userId) + '/playback', { allowed: !props.member.playbackAllowed, expected: props.member.playbackAllowed })
-  const updated = data.members.find((m: MemberPlayback) => m.userId === props.member.userId)
-  if (!updated || typeof updated.playbackAllowed !== 'boolean') throw new Error('Emby 修改结果未确认，请刷新查看')
-  emit('updated', { ...props.member, ...updated, imageTag: props.member.imageTag }, data.settings)
-  notice.value = 'Emby 播放权限已更新。'
- } catch (e) {
-  permissionUnknown.value = true
-  if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : 'Emby 修改结果未确认，请刷新查看；不会自动重试'
- } finally { busy.value = false; emit('busy', false) }
-}
 function save() { if (changed.value) void mutate('/settings', { ...draft.value, expected: initial.value }, true) }
 function viewChildren() { if (changed.value) return; close(); emit('children', props.member.userId) }
 onBeforeUnmount(() => { lifecycle.abort(); if (open.value) { dialog.value?.close(); document.body.style.overflow = previousOverflow }; emit('dirty', false); emit('busy', false) })
@@ -92,10 +63,6 @@ onBeforeUnmount(() => { lifecycle.abort(); if (open.value) { dialog.value?.close
 <template>
  <article class="user-card flex h-full min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
   <header class="flex items-center gap-3"><EmbyUserAvatar :token="token" :user-id="member.embyId" :name="member.embyName" :image-tag="member.imageTag" /><div class="min-w-0 flex-1"><h2 class="truncate font-semibold text-slate-900 dark:text-slate-100" :title="member.embyName">{{ member.embyName }}</h2><p class="mt-1 text-xs text-slate-500">{{ identity }}</p></div></header>
-  <div class="mt-5 flex items-center justify-between gap-3 text-sm"><span class="text-slate-500">Emby 播放权限</span><div class="flex items-center gap-2"><span>{{ permissionUnknown || memberPermissionUnknown() ? '待确认' : member.playbackAllowed ? '允许' : '禁止' }}</span><button type="button" role="switch" aria-label="允许 Emby 播放" :aria-checked="member.playbackAllowed === true" :disabled="toggleLocked" class="relative h-6 w-11 shrink-0 rounded-full disabled:opacity-40" :class="member.playbackAllowed ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-600'" @click="togglePlayback"><span class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow" :class="member.playbackAllowed ? 'left-[22px]' : 'left-0.5'"></span></button></div></div>
-  <p class="mt-2 text-xs leading-5 text-slate-500">直接修改 Emby 权限，影响所有客户端；不改变登录及下载权限。</p>
-  <p v-if="member.disabled" class="mt-2 text-xs text-amber-700">{{ member.childRevoked ? '子账号共享已永久撤销，不能恢复。' : member.childDisabled ? '所有者已停用子账号登录。' : 'Emby 账号已停用，请先在 Emby 中恢复。' }}</p>
-  <button v-if="permissionUnknown || memberPermissionUnknown()" type="button" :disabled="locked" class="mt-2 text-left text-sm text-blue-600" @click="refreshPermissions">刷新 Emby 权限</button>
   <p v-if="error && !open" role="alert" class="mt-2 text-sm text-red-600">{{ error }}</p>
   <p v-if="notice && !open" role="status" class="mt-2 text-xs text-emerald-700">{{ notice }}</p>
   <dl class="mb-5 mt-5 space-y-3 text-sm"><div class="flex justify-between gap-4"><dt class="shrink-0 text-slate-500">播放来源</dt><dd class="truncate text-slate-800 dark:text-slate-200" :title="sourceLabel">{{ sourceLabel }}</dd></div><div class="flex justify-between gap-4"><dt class="shrink-0 text-slate-500">网盘状态</dt><dd class="truncate" :title="state" :class="props.member.driveStatus?.state === 'ready' ? 'text-emerald-600 dark:text-emerald-400' : props.member.driveStatus?.state === 'pending' ? 'text-slate-500' : 'text-amber-700 dark:text-amber-300'"> {{ state }}</dd></div><div class="flex justify-between gap-4"><dt class="shrink-0 text-slate-500">{{ member.playbackOnly ? '所有者' : '子账号' }}</dt><dd class="truncate text-slate-600 dark:text-slate-300">{{ member.playbackOnly ? member.ownerName || '所有者不可用' : member.administrator ? '不适用' : member.childLimit ? `${usage} / ${member.childLimit} 个` : member.childUsed ? `${usage} 个 · 已停止新建` : '未开放' }}</dd></div></dl>

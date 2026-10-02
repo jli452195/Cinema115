@@ -14,6 +14,12 @@ import (
 )
 
 func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
+	for _, path := range []string{"/api/redirect115/abc123/%E7%94%B5%E5%BD%B1.mkv", "/play115/abc123/3432417343848548293/" + strings.Repeat("a", 40) + "/589916580/%E7%94%B5%E5%BD%B1.mkv"} {
+		t.Run(path, func(t *testing.T) { testThirdPartyPlaybackAuthorizationUAAndCache(t, path) })
+	}
+}
+
+func testThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T, sourcePath string) {
 	accounts, id := proxyTestAccounts(t)
 	calls := 0
 	fail := false
@@ -22,7 +28,7 @@ func TestThirdPartyPlaybackAuthorizationUAAndCache(t *testing.T) {
 		w.WriteHeader(500)
 	}))
 	defer third.Close()
-	source := third.URL + "/api/redirect115/abc123/%E7%94%B5%E5%BD%B1.mkv"
+	source := third.URL + sourcePath
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/emby/Users/AuthenticateByName":

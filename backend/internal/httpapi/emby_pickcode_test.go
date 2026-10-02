@@ -14,19 +14,28 @@ import (
 
 func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
 	for _, suffix := range []string{"", "/movie.mkv", "/e63d59350688066658c5d8cf2748b97abb684251", "/e63d59350688066658c5d8cf2748b97abb684251/[标题] 日本語.mkv"} {
-		t.Run("abc123"+suffix, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, suffix, false) })
+		t.Run("abc123"+suffix, func(t *testing.T) {
+			testPickCodeFriendPlaybackDownloadAndCache(t, "/api/redirect115/abc123"+suffix, false)
+		})
 	}
+	t.Run("play115", func(t *testing.T) {
+		testPickCodeFriendPlaybackDownloadAndCache(t, "/play115/abc123/3432417343848548293/e63d59350688066658c5d8cf2748b97abb684251/589916580/external-name.mkv", false)
+	})
 }
 
 func TestPickCodeFriendPrewarm(t *testing.T) {
-	testPickCodeFriendPlaybackDownloadAndCache(t, "", true)
+	for _, path := range []string{"/api/redirect115/abc123", "/play115/abc123/123/" + strings.Repeat("b", 40) + "/589916580/external-name.mkv"} {
+		t.Run(path, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, path, true) })
+	}
 }
 
 func TestPickCodeFilePreparationIndependentOfLinkPrewarm(t *testing.T) {
-	testPickCodeFriendPlaybackDownloadAndCache(t, "", false, true)
+	for _, path := range []string{"/api/redirect115/abc123", "/play115/abc123/123/" + strings.Repeat("b", 40) + "/589916580/external-name.mkv"} {
+		t.Run(path, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, path, false, true) })
+	}
 }
 
-func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, prewarm bool, prepare ...bool) {
+func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string, prewarm bool, prepare ...bool) {
 	prepareFiles := len(prepare) > 0 && prepare[0]
 	const userID = "8be403a10974486c94a987b8036c8484"
 	accounts, sourceID := proxyTestAccounts(t)
@@ -41,7 +50,6 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if err := accounts.UpdatePlaybackDirectory(targetID, 2, "0"); err != nil {
 		t.Fatal(err)
 	}
-	pickCode := "abc123"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/emby/Users/AuthenticateByName":
@@ -49,7 +57,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 		case "/emby/Users/" + userID:
 			fmt.Fprintf(w, `{"Id":"%s","Policy":{"EnableMediaPlayback":true,"EnableContentDownloading":true}}`, userID)
 		case "/emby/Users/" + userID + "/Items/movie":
-			fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true,"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115/api/redirect115/%s%s"}]}`, pickCode, suffix)
+			fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true,"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115%s"}]}`, sourcePath)
 		case "/emby/Items/movie/PlaybackInfo":
 			if r.URL.Query().Get("IsPlayback") != "false" || r.URL.Query().Get("AutoOpenLiveStream") != "false" {
 				t.Error("pickcode source lookup must not open the retired STRM tool")
@@ -58,7 +66,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 			}
 			// The path SHA1 deliberately differs from the source account metadata.
 			// It must not replace the trusted source SHA1 or trigger a host request.
-			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115/api/redirect115/%s%s"}]}`, pickCode, suffix)
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115%s"}]}`, sourcePath)
 		default:
 			w.WriteHeader(403)
 		}
@@ -143,6 +151,9 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if fake.shareReads != 0 || fake.pickReads != 1 || fake.uploads != 1 || fake.links != 1 {
 		t.Fatal("wrong lookup/cache flow", fake)
 	}
+	if len(fake.files) != 1 || fake.files[0].Name != "movie" || fake.files[0].Size != 100 || fake.files[0].SHA1 != strings.Repeat("A", 40) {
+		t.Fatal("external STRM hints replaced verified upload metadata", fake.files)
+	}
 	h.ClearDirectLinks("")
 	if w := call("HEAD", path); w.Code != 302 {
 		t.Fatal(w.Code, w.Body.String())
@@ -154,7 +165,11 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 	if err := accounts.Update(sourceID, 2, "主账号", &empty); err != nil {
 		t.Fatal(err)
 	}
-	pickCode, suffix = "otherpc", "/"+strings.Repeat("a", 40)+"/other-name.mkv"
+	if strings.HasPrefix(sourcePath, "/play115/") {
+		sourcePath = "/play115/otherpc/999/" + strings.Repeat("a", 40) + "/589916580/other-name.mkv"
+	} else {
+		sourcePath = "/api/redirect115/otherpc/" + strings.Repeat("a", 40) + "/other-name.mkv"
+	}
 	h.ClearDirectLinks("")
 	if w := call("GET", path); w.Code != 302 {
 		t.Fatal("external SHA1 failed without primary credentials", w.Code, w.Body.String())

@@ -8,16 +8,32 @@ import (
 	"strm115/backend/internal/client/emby"
 )
 
+// Simulate an administrator changing the policy directly in Emby.
 func setPlaybackForTest(ctx context.Context, s *MemberPlaybackService, id string, allowed bool) error {
-	u, err := s.MemberPermissions(ctx, id)
+	c := s.emby.snapshot()
+	client := s.NewEmby(c.URL, c.APIKey)
+	user, err := client.ManagedUser(ctx, s.record(id).EmbyID)
 	if err != nil {
 		return err
 	}
-	if u.PlaybackAllowed == nil {
-		return memberError("missing playback permission")
+	policy := make(map[string]any, len(user.Policy))
+	for key, value := range user.Policy {
+		policy[key] = value
 	}
-	_, err = s.SetEmbyPlayback(ctx, id, allowed, *u.PlaybackAllowed)
-	return err
+	policy["EnableMediaPlayback"] = allowed
+	return client.SetManagedPolicy(ctx, user.ID, policy)
+}
+func permissionForTest(ctx context.Context, s *MemberPlaybackService, id string) (MemberPlaybackAdminView, error) {
+	views, err := s.AdminMemberDirectory(ctx)
+	if err != nil {
+		return MemberPlaybackAdminView{}, err
+	}
+	for _, v := range views {
+		if v.UserID == id {
+			return v, nil
+		}
+	}
+	return MemberPlaybackAdminView{}, ErrLogin
 }
 
 func TestExistingUserPermissionsRemainOwnedByEmby(t *testing.T) {

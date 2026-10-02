@@ -73,6 +73,8 @@ type MemberPlaybackService struct {
 	driveHealth      map[string]driveHealthEntry
 	driveHealthGate  chan struct{}
 	driveHealthEpoch uint64
+	driveProbeMu     sync.Mutex
+	driveProbes      map[[32]byte]*mediaDriveProbe
 }
 
 func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Accounts, server *EmbyService, drive memberDriveClient, checker memberCookieChecker, qr memberQRClient) (*MemberPlaybackService, error) {
@@ -590,54 +592,8 @@ func (s *MemberPlaybackService) Authorize(ctx context.Context, server, id string
 
 // AuthorizeMedia shares identity, source and library checks, with independent action gates.
 func (s *MemberPlaybackService) AuthorizeMedia(ctx context.Context, server, id string, download bool) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return true, err
-	}
-	if id == "" {
-		return true, memberError("无法确认播放用户")
-	}
-	for _, r := range s.Records() {
-		if r.EmbyID != id {
-			continue
-		}
-		c := s.emby.snapshot()
-		settings := s.Settings()
-		if !settings.Enabled {
-			return true, memberError("302 反代未运行，媒体访问未接管")
-		}
-		if download && !settings.AllowDownload {
-			return true, memberError("原文件下载已关闭，请联系管理员")
-		}
-		if r.EmbyURL != server || c.URL != r.EmbyURL || c.ServerID != r.ServerID || !r.Provisioned || r.Suspended {
-			return true, memberError("媒体访问尚未开通或已暂停，请检查账号授权与网盘绑定")
-		}
-		remote, err := s.playbackUser(ctx, r)
-		if err != nil {
-			return true, err
-		}
-		if (!download && remote.Policy["EnableMediaPlayback"] != true) || (download && remote.Policy["EnableContentDownloading"] != true) {
-			return true, memberError("Emby 未允许此用户播放或下载，请在 Emby 中检查用户权限")
-		}
-		if err := s.ensureOriginalPlayback(ctx, r, remote); err != nil {
-			return true, err
-		}
-		return true, s.checkDrive(ctx, r)
-	}
-	c := s.emby.snapshot()
-	if c.URL != server || c.ServerID == "" || c.APIKey == "" {
-		return true, ErrLogin
-	}
-	remote, err := s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, id)
-	if err != nil {
-		return true, ErrPlaybackIdentityUnavailable
-	}
-	if remote.ID != id || remote.Policy["IsDisabled"] == true || strings.HasPrefix(strings.ToLower(remote.Name), "c115_") {
-		return true, ErrLogin
-	}
-	if _, err = s.ObserveUser(ctx, c, remote); err != nil {
-		return true, err
-	}
-	return s.AuthorizeMedia(ctx, server, id, download)
+	_, err := s.BeginMediaAuthorization(ctx, server, id, download, nil)
+	return true, err
 }
 
 // New users can briefly exist upstream before their deny policy is applied.

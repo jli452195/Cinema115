@@ -41,30 +41,36 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				var calls atomic.Int32
+				var userReads, cookieReads atomic.Int32
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/emby/Users/"+userID {
+						userReads.Add(1)
+					}
+					target := []string{"/emby/Users/" + userID, "/emby/Users/" + userID + "/Items/movie", "/emby/Items/movie/PlaybackInfo"}[stage-1]
+					if r.URL.Path == target && calls.Add(1) == 1 {
+						switch mode {
+						case "cancel":
+							cancel()
+							<-r.Context().Done()
+							return
+						case "unavailable":
+							http.Error(w, "private upstream details", 503)
+							return
+						case "disabled":
+							http.Error(w, "denied", 403)
+							return
+						}
+					}
 					switch r.URL.Path {
 					case "/emby/Users/" + userID:
-						if r.Header.Get("X-Emby-Token") == "admin-secret" && calls.Add(1) == stage {
-							switch mode {
-							case "cancel":
-								cancel()
-								<-r.Context().Done()
-								return
-							case "unavailable":
-								http.Error(w, "private upstream details", 503)
-								return
-							case "disabled":
-								fmt.Fprintf(w, `{"Id":%q,"Policy":{"IsDisabled":true}}`, userID)
-								return
-							}
-						}
+
 						fmt.Fprintf(w, `{"Id":%q,"Policy":{"EnableMediaPlayback":true,"IsDisabled":false,"EnableVideoPlaybackTranscoding":false,"EnableAudioPlaybackTranscoding":false,"EnablePlaybackRemuxing":false,"EnableSyncTranscoding":false,"EnableMediaConversion":false}}`, userID)
 					case "/emby/Users/" + userID + "/Items/movie":
 						fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full"}`)
 					case "/emby/Items/movie/PlaybackInfo":
 						fmt.Fprint(w, `{"MediaSources":[{"Id":"src","Path":"http://old.invalid/api/redirect115/abc123","SupportsDirectPlay":true}]}`)
 					default:
-						w.WriteHeader(404)
+						w.WriteHeader(204)
 					}
 				}))
 				defer upstream.Close()
@@ -99,7 +105,7 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				members, err := service.NewMemberPlayback(background, db, accounts, embyService, nil, playbackIdentityChecker{}, nil)
+				members, err := service.NewMemberPlayback(background, db, accounts, embyService, nil, countingPlaybackChecker{&cookieReads}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -131,6 +137,11 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 					h.ServeHTTP(w, httptest.NewRequest("GET", "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=viewer-token", nil).WithContext(ctx))
 					return w
 				}
+				browse := httptest.NewRecorder()
+				h.ServeHTTP(browse, httptest.NewRequest("GET", "/System/Info?api_key=viewer-token", nil))
+				if browse.Code != 204 || userReads.Load() != 0 || cookieReads.Load() != 0 {
+					t.Fatal("browsing triggered playback probes")
+				}
 				w := request(ctx)
 				want := 403
 				if mode == "cancel" {
@@ -151,8 +162,27 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 						t.Fatal("cancellation misreported", entry.Level)
 					}
 				}
+				beforeUser, beforeCookie := userReads.Load(), cookieReads.Load()
 				if next := request(background); next.Code != 302 || links != 1 {
 					t.Fatal("healthy follow-up failed", next.Code, next.Body.String())
+				}
+				if userReads.Load()-beforeUser != 1 || cookieReads.Load()-beforeCookie != 1 {
+					t.Fatal("duplicate request checks", userReads.Load()-beforeUser, cookieReads.Load()-beforeCookie)
+				}
+				// A source credential change during the cloud call must prevent the 302.
+				h.pickDownload = func(context.Context, string, string, string) (string, error) {
+					a, err := accounts.Get(primary)
+					if err != nil {
+						return "", err
+					}
+					empty := ""
+					if err := accounts.Update(primary, a.Revision, a.Name, &empty); err != nil {
+						return "", err
+					}
+					return "https://cdn.115.com/test", nil
+				}
+				if changed := request(background); changed.Code != 403 || changed.Header().Get("Location") != "" {
+					t.Fatal("configuration change leaked a link", changed.Code)
 				}
 			})
 		}
@@ -162,3 +192,10 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 type playbackIdentityChecker struct{}
 
 func (playbackIdentityChecker) CheckCookie(context.Context, string) (bool, error) { return true, nil }
+
+type countingPlaybackChecker struct{ calls *atomic.Int32 }
+
+func (c countingPlaybackChecker) CheckCookie(context.Context, string) (bool, error) {
+	c.calls.Add(1)
+	return true, nil
+}

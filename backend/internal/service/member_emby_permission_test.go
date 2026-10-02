@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestEmbyToggleWorksBeforeProxySetupAndFirstPlaybackNeedsNoEnrollment(t *testing.T) {
+func TestExternalEmbyPermissionBeforeProxySetupAndFirstPlaybackNeedsNoEnrollment(t *testing.T) {
 	s, remote, _ := memberFixture(t)
 	ctx := context.Background()
 	memberTestPrimary(t, s)
@@ -20,7 +20,7 @@ func TestEmbyToggleWorksBeforeProxySetupAndFirstPlaybackNeedsNoEnrollment(t *tes
 	s.settings.EmbyURL = ""
 	s.settings.ServerID = ""
 	s.ProxyStatus = nil
-	if _, err := s.SetEmbyPlayback(ctx, id, false, true); err != nil {
+	if err := setPlaybackForTest(ctx, s, id, false); err != nil {
 		t.Fatal("Emby edit depended on proxy setup", err)
 	}
 	views, err := s.AdminMemberDirectory(ctx)
@@ -63,7 +63,7 @@ func TestDisabledPersonalOwnerCannotSupplyVerificationCopies(t *testing.T) {
 	}
 }
 
-func TestEmbyPlaybackTogglePreservesOtherPermissionsAndHasNoLocalGate(t *testing.T) {
+func TestExternalEmbyPlaybackPreservesOtherPermissionsAndHasNoLocalGate(t *testing.T) {
 	s, remote, id := memberFixture(t)
 	ctx := context.Background()
 	memberScan(t, s, id)
@@ -74,7 +74,10 @@ func TestEmbyPlaybackTogglePreservesOtherPermissionsAndHasNoLocalGate(t *testing
 	remote.users[r.EmbyID].Policy["MaxParentalRating"] = float64(13)
 	before := playbackRestrictions(remote.users[r.EmbyID].Policy)
 	before["EnableMediaPlayback"] = false
-	view, err := s.SetEmbyPlayback(ctx, id, false, true)
+	if err := setPlaybackForTest(ctx, s, id, false); err != nil {
+		t.Fatal(err)
+	}
+	view, err := permissionForTest(ctx, s, id)
 	if err != nil || view.PlaybackAllowed == nil || *view.PlaybackAllowed {
 		t.Fatal(view, err)
 	}
@@ -114,45 +117,6 @@ func TestEmbyPlaybackTogglePreservesOtherPermissionsAndHasNoLocalGate(t *testing
 	}
 }
 
-func TestEmbyPlaybackToggleStaleAndUncertainResultsNeverRetryDesiredState(t *testing.T) {
-	s, remote, id := memberFixture(t)
-	ctx := context.Background()
-	memberScan(t, s, id)
-	r := s.record(id)
-	writes := remote.policyWrites
-	if _, err := s.SetEmbyPlayback(ctx, id, true, false); err == nil {
-		t.Fatal("stale edit accepted")
-	}
-	if writes != remote.policyWrites {
-		t.Fatal("stale edit wrote policy")
-	}
-	remote.policyResponseLost = true
-	if _, err := s.SetEmbyPlayback(ctx, id, false, true); err == nil {
-		t.Fatal("uncertain result reported success")
-	}
-	remote.policyResponseLost = false
-	if remote.users[r.EmbyID].Policy["EnableMediaPlayback"] != false {
-		t.Fatal("test did not simulate applied write")
-	}
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if remote.policyWrites != writes+1 {
-		t.Fatal("check repeated uncertain edit")
-	}
-	view, err := s.MemberPermissions(ctx, id)
-	if err != nil || view.PlaybackAllowed == nil || *view.PlaybackAllowed {
-		t.Fatal("refresh did not read actual result", err)
-	}
-	remote.users[r.EmbyID].Policy["EnableMediaPlayback"] = true
-	if err := s.SyncUser(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if remote.users[r.EmbyID].Policy["EnableMediaPlayback"] != true {
-		t.Fatal("check restored stale desired state")
-	}
-}
-
 func TestRevokedChildCannotBeEnabledEvenWhenEmbyWasChanged(t *testing.T) {
 	s, remote, owner, r := childFixture(t)
 	ctx := context.Background()
@@ -161,9 +125,7 @@ func TestRevokedChildCannotBeEnabledEvenWhenEmbyWasChanged(t *testing.T) {
 	}
 	remote.users[r.EmbyID].Policy["IsDisabled"] = false
 	remote.users[r.EmbyID].Policy["EnableMediaPlayback"] = true
-	if _, err := s.SetEmbyPlayback(ctx, r.UserID, true, true); err == nil {
-		t.Fatal("revoked child enabled")
-	}
+
 	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err == nil {
 		t.Fatal("revoked child played")
 	}

@@ -16,6 +16,7 @@ import (
 func TestSTRMNegotiationNeverOpensRetiredTool(t *testing.T) {
 	for _, source := range []string{
 		"http://retired.invalid:8115/api/redirect115/abc123/" + strings.Repeat("a", 40) + "/movie.mkv",
+		"http://retired.invalid:12366" + play115TestPath + "movie.mkv",
 		"http://retired.invalid/s/share_code_123.mkv",
 	} {
 		t.Run(source, func(t *testing.T) {

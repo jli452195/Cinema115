@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
@@ -302,46 +303,45 @@ func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) {
+	if blockedEmbyTranscode(r) {
+		h.logs.Add(r.Context(), "WARNING", "已禁止转码/封装转换请求，HTTP 403；请使用支持原文件格式的客户端")
+		http.Error(w, "反代已关闭转码，请使用支持原文件格式的客户端", http.StatusForbidden)
+		return
+	}
 	if h.cache != nil && h.cache.Members != nil {
 		userID := h.identities.UserID(h.config.URL, embyToken(r))
 		if h.cache.Members.ChildSessionDenied(h.config.URL, userID) {
 			http.Error(w, "播放子账号已停用，请联系账号所有者", http.StatusForbidden)
 			return
 		}
-		managed, err := h.cache.Members.AuthorizeMedia(r.Context(), h.config.URL, userID, downloadItem(r.URL.Path) != "")
 		path := strings.ToLower(r.URL.Path)
 		media := playbackItem(r.URL.Path) != "" || strings.Contains(path, "/videos/") || strings.Contains(path, "/audio/") || downloadItem(r.URL.Path) != "" || strings.Contains(path, "/cinema115/play") || strings.Contains(path, "/livetv/")
-		if media && userID == "" && len(h.cache.Members.Records()) > 0 {
+		direct := downloadItem(r.URL.Path) != "" || staticStreamItem(r) != "" || originalStreamItem(r) != "" || r.URL.Path == "/cinema115/play" || r.URL.Path == "/emby/cinema115/play"
+		if media && userID == "" {
 			http.Error(w, "请通过反代退出并重新登录，以确认播放身份", http.StatusUnauthorized)
 			return
 		}
-		if managed && media && err != nil {
-			message, status := playbackAuthorizationFailure(r.Context(), err)
-			level := "WARNING"
-			if status == 499 {
-				level = "DEBUG"
-			}
-			h.logs.Add(r.Context(), level, message)
-			http.Error(w, message, status)
-			return
-		}
-		if managed && downloadItem(r.URL.Path) != "" && !h.cache.Members.Settings().AllowDownload {
-			http.Error(w, "管理员尚未允许个人用户下载", http.StatusForbidden)
-			return
-		}
-		if managed && media && playbackItem(r.URL.Path) == "" && staticStreamItem(r) == "" && originalStreamItem(r) == "" && downloadItem(r.URL.Path) == "" && !strings.Contains(path, "/cinema115/play") && !strings.Contains(path, "/subtitles/") {
+		if media && !direct && playbackItem(r.URL.Path) == "" && !strings.Contains(path, "/subtitles/") {
 			http.Error(w, "个人播放仅支持原文件直链，不支持转码或直播", http.StatusForbidden)
 			return
+		}
+		// Direct-link handlers authenticate once below. Browsing requests never probe 115.
+		if media && !direct {
+			if _, err := h.cache.Members.AuthorizeMedia(r.Context(), h.config.URL, userID, false); err != nil {
+				message, status := playbackAuthorizationFailure(r.Context(), err)
+				level := "WARNING"
+				if status == 499 {
+					level = "DEBUG"
+				}
+				h.logs.Add(r.Context(), level, message)
+				http.Error(w, message, status)
+				return
+			}
 		}
 	}
 	if r.Header.Get("X-Cinema115-Emby-Proxy") != "" {
 		h.logs.Add(r.Context(), "ERROR", "检测到反代循环，已拒绝请求")
 		http.Error(w, "Emby 上游指向了反代自身，请修正服务器地址", http.StatusLoopDetected)
-		return
-	}
-	if blockedEmbyTranscode(r) {
-		h.logs.Add(r.Context(), "WARNING", "已禁止转码/封装转换请求，HTTP 403；请使用支持原文件格式的客户端")
-		http.Error(w, "反代已关闭转码，请使用支持原文件格式的客户端", http.StatusForbidden)
 		return
 	}
 	if item := downloadItem(r.URL.Path); item != "" {
@@ -480,6 +480,10 @@ func (h *embyProxyHandler) embyJSON(ctx context.Context, token, stage, path stri
 	req.Header.Set("Accept", "application/json")
 	resp, err := h.http.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			message, status := playbackAuthorizationFailure(ctx, ctx.Err())
+			return status, errors.New(message)
+		}
 		return 502, fmt.Errorf("Emby %s：%s", stage, proxyFailureReason(err))
 	}
 	defer resp.Body.Close()
@@ -547,15 +551,8 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	}
 	cookie := sourceAccount.Cookie
 	sourceAccountLabel := service.PlaybackAccountLabel(sourceAccount.Name, p115.CookieUserID(cookie), sourceAccount.ID)
-	var user struct {
-		ID     string `json:"Id"`
-		Name   string
-		Policy struct {
-			IsDisabled               bool
-			EnableMediaPlayback      *bool
-			EnableContentDownloading *bool
-		}
-	}
+	var user emby.ManagedUser
+	var authorization *service.MediaAuthorization
 	timing.next("Emby 用户权限查询")
 	h.logs.Add(ctx, "DEBUG", "开始校验 Emby 用户身份与"+kind+"权限")
 	userID := h.identities.UserID(h.config.URL, token)
@@ -568,21 +565,22 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		fail(err.Error(), status)
 		return
 	}
-	if user.ID != userID || user.Policy.IsDisabled {
+	if user.ID != userID || user.Policy["IsDisabled"] == true {
 		fail("Emby 用户不可用", 403)
 		return
 	}
-	if !isDownload && (user.Policy.EnableMediaPlayback == nil || !*user.Policy.EnableMediaPlayback) {
+	if !isDownload && user.Policy["EnableMediaPlayback"] != true {
 		fail("Emby 用户没有播放权限", 403)
 		return
 	}
 	if h.cache != nil && h.cache.Members != nil {
-		managed, err := h.cache.Members.AuthorizeMedia(ctx, h.config.URL, userID, isDownload)
+		authorized, err := h.cache.Members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
 		if err != nil {
 			fail(playbackAuthorizationFailure(ctx, err))
 			return
 		}
-		if managed {
+		authorization = authorized
+		if authorized != nil {
 			fallback = false
 			if isDownload && !h.cache.Members.Settings().AllowDownload {
 				fail("管理员尚未允许个人用户下载", 403)
@@ -590,7 +588,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			}
 		}
 	}
-	if isDownload && (user.Policy.EnableContentDownloading == nil || !*user.Policy.EnableContentDownloading) {
+	if isDownload && user.Policy["EnableContentDownloading"] != true {
 		fail("Emby 用户未获准下载，请在 Emby 用户权限中开启内容下载", http.StatusForbidden)
 		return
 	}
@@ -686,13 +684,12 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			fail(err.Error(), 503)
 			return
 		}
-		if h.cache.Members != nil {
-			managed, denied := h.cache.Members.AuthorizeMedia(ctx, h.config.URL, user.ID, isDownload)
-			if denied != nil {
-				fail(playbackAuthorizationFailure(ctx, denied))
+		if authorization != nil {
+			if err := authorization.CheckCurrent(ctx); err != nil {
+				fail(playbackAuthorizationFailure(ctx, err))
 				return
 			}
-			if managed && !h.cache.Members.SelectionMatches(user.ID, cacheSelection) {
+			if !authorization.MatchesSelection(sourceAccount, cacheSelection) {
 				fail("播放来源绑定已变化，请重新发起播放", http.StatusForbidden)
 				return
 			}
@@ -703,7 +700,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	if claim.PickCode != "" {
-		h.logs.Add(ctx, "INFO", "redirect115 链接解析成功，优先匹配已有文件资料；pickcode="+proxyLogID(claim.PickCode))
+		h.logs.Add(ctx, "INFO", "网盘 PickCode STRM 解析成功，优先匹配已有文件资料；pickcode="+proxyLogID(claim.PickCode))
 	} else {
 		h.logs.Add(ctx, "INFO", "STRM 解析成功，文件编号="+proxyLogID(claim.FileID))
 	}
@@ -797,6 +794,12 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		h.logs.Add(ctx, "ERROR", fmt.Sprintf("115 直链获取失败，耗时 %d ms：%s", time.Since(downloadStarted).Milliseconds(), proxyFailureReason(err)))
 		fail("115 直链获取失败，请检查所选账号、分享状态及播放客户端", 502)
 		return
+	}
+	if authorization != nil {
+		if err := authorization.Revalidate(ctx); err != nil {
+			fail(playbackAuthorizationFailure(ctx, err))
+			return
+		}
 	}
 	// Empty body prevents accidentally embedding signed CDN URLs into rendered HTML or logs.
 	cdn, _ := url.Parse(link)

@@ -1,0 +1,257 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"strm115/backend/internal/client/emby"
+	"strm115/backend/internal/model"
+)
+
+// MediaAuthorization belongs to one HTTP request. Never cache it across requests
+// or use it in a background prewarm spawned by another request.
+type MediaAuthorization struct {
+	service   *MemberPlaybackService
+	record    model.MemberPlayback
+	account   P115Account
+	download  bool
+	checkedAt time.Time
+}
+
+func (s *MemberPlaybackService) playbackRecord(serverID, embyID string) model.MemberPlayback {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if r, ok := s.records[embyProfileID(serverID, embyID)]; ok {
+		return r
+	}
+	// Records created by internal callers can use an explicit profile key.
+	for _, r := range s.records {
+		if r.ServerID == serverID && r.EmbyID == embyID {
+			return r
+		}
+	}
+	return model.MemberPlayback{}
+}
+
+// verified must come from an authenticated Emby response for this exact user,
+// never from client request fields. Nil asks the service to fetch it itself.
+func (s *MemberPlaybackService) BeginMediaAuthorization(ctx context.Context, server, id string, download bool, verified *emby.ManagedUser) (*MediaAuthorization, error) {
+	started := time.Now()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c := s.emby.snapshot()
+	if id == "" || c.URL != server || c.ServerID == "" || c.APIKey == "" {
+		return nil, ErrLogin
+	}
+	r := s.playbackRecord(c.ServerID, id)
+	if r.UserID != "" {
+		if err := s.checkMediaLocal(r, server, download); err != nil {
+			return nil, err
+		}
+	}
+	var remote emby.ManagedUser
+	if verified != nil {
+		remote = *verified
+	} else if r.UserID != "" {
+		var err error
+		remote, err = s.playbackUser(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		remote, err = s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, id)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
+			return nil, ErrPlaybackIdentityUnavailable
+		}
+	}
+	if remote.ID != id || remote.Policy["IsDisabled"] == true || strings.HasPrefix(strings.ToLower(remote.Name), "c115_") {
+		return nil, ErrLogin
+	}
+	if r.UserID == "" {
+		profile, err := s.ObserveUser(ctx, c, remote)
+		if err != nil {
+			return nil, err
+		}
+		r = s.record(profile.ID)
+	}
+	if err := s.checkMediaLocal(r, server, download); err != nil {
+		return nil, err
+	}
+	if r.PlaybackOnly && remote.Policy["IsAdministrator"] == true {
+		return nil, ErrLogin
+	}
+	if err := mediaPermission(remote, download); err != nil {
+		return nil, err
+	}
+	if err := s.ensureOriginalPlayback(ctx, r, remote); err != nil {
+		return nil, err
+	}
+	if r.PlaybackOnly {
+		if err := s.authorizeChildOwner(ctx, r); err != nil {
+			return nil, err
+		}
+	}
+	a, err := s.playbackAccount(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkMediaDrive(ctx, a); err != nil {
+		return nil, err
+	}
+	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started}
+	if err := grant.CheckCurrent(ctx); err != nil {
+		return nil, err
+	}
+	return grant, nil
+}
+
+type mediaDriveProbe struct {
+	done chan struct{}
+	err  error
+}
+
+// Only overlapping probes share work. Completed results are immediately removed;
+// there is no TTL authorization cache and no detached goroutine.
+func (s *MemberPlaybackService) checkMediaDrive(ctx context.Context, a P115Account) error {
+	key := driveHealthFingerprint(a)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.driveProbeMu.Lock()
+		if probe := s.driveProbes[key]; probe != nil {
+			s.driveProbeMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-probe.done:
+			}
+			// The leading request may have been canceled independently of this one.
+			if errors.Is(probe.err, context.Canceled) || errors.Is(probe.err, context.DeadlineExceeded) {
+				continue
+			}
+			return probe.err
+		}
+		if s.driveProbes == nil {
+			s.driveProbes = make(map[[32]byte]*mediaDriveProbe)
+		}
+		probe := &mediaDriveProbe{done: make(chan struct{})}
+		s.driveProbes[key] = probe
+		s.driveProbeMu.Unlock()
+		probe.err = s.probeMediaDrive(ctx, a)
+		s.driveProbeMu.Lock()
+		delete(s.driveProbes, key)
+		close(probe.done)
+		s.driveProbeMu.Unlock()
+		return probe.err
+	}
+}
+
+func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Account) error {
+	valid, err := s.checker.CheckCookie(ctx, a.Cookie)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return memberError("暂时无法检查网盘登录，请稍后重试")
+	}
+	if !valid {
+		return memberError("网盘登录已失效，请重新登录")
+	}
+	if !a.Primary {
+		err := s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return memberError("网盘目录不可用，请检查目录及账号")
+		}
+	}
+	return nil
+}
+
+func mediaPermission(u emby.ManagedUser, download bool) error {
+	if (!download && u.Policy["EnableMediaPlayback"] != true) || (download && u.Policy["EnableContentDownloading"] != true) {
+		return memberError("Emby 未允许此用户播放或下载，请在 Emby 中检查用户权限")
+	}
+	return nil
+}
+
+func (s *MemberPlaybackService) checkMediaLocal(r model.MemberPlayback, server string, download bool) error {
+	c, settings := s.emby.snapshot(), s.Settings()
+	if !settings.Enabled {
+		return memberError("302 反代未运行，媒体访问未接管")
+	}
+	if download && !settings.AllowDownload {
+		return memberError("原文件下载已关闭，请联系管理员")
+	}
+	if r.UserID == "" || r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !r.Provisioned || r.Suspended {
+		return memberError("媒体访问尚未开通或已暂停，请检查账号与网盘绑定")
+	}
+	if r.PlaybackOnly && (r.ChildRevoked || r.ChildDisabled || r.ChildPaused || r.Administrator) {
+		return memberError("播放子账号已暂停或撤销")
+	}
+	return nil
+}
+
+// Cheap late check: a source change or revocation cannot reuse an earlier grant.
+func (a *MediaAuthorization) CheckCurrent(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s := a.service
+	r := s.record(a.record.UserID)
+	if err := s.checkMediaLocal(r, a.record.EmbyURL, a.download); err != nil {
+		return err
+	}
+	if r.EmbyID != a.record.EmbyID || r.Source != a.record.Source || r.PlaybackOnly != a.record.PlaybackOnly || r.OwnerUserID != a.record.OwnerUserID {
+		return ErrAccountChanged
+	}
+	current, err := s.playbackAccount(r)
+	if err != nil {
+		return err
+	}
+	if current.ID != a.account.ID || current.Revision != a.account.Revision || driveHealthFingerprint(current) != driveHealthFingerprint(a.account) {
+		return ErrAccountChanged
+	}
+	return nil
+}
+
+func (a *MediaAuthorization) MatchesSelection(primary P115Account, selected *PlaybackCacheSelection) bool {
+	if a.record.Source == "primary" {
+		return selected == nil && primary.ID == a.account.ID && primary.Revision == a.account.Revision
+	}
+	return selected != nil && selected.binding.AccountID == a.account.ID && selected.accountRevision == a.account.Revision && selected.cookie == a.account.Cookie && selected.binding.ParentCID == a.account.PlaybackParentCID
+}
+
+// Slow file preparation must re-read Emby before issuing a new CDN URL.
+func (a *MediaAuthorization) Revalidate(ctx context.Context) error {
+	if err := a.CheckCurrent(ctx); err != nil {
+		return err
+	}
+	if time.Since(a.checkedAt) >= 5*time.Second {
+		u, err := a.service.playbackUser(ctx, a.service.record(a.record.UserID))
+		if err != nil {
+			return err
+		}
+		if err := mediaPermission(u, a.download); err != nil {
+			return err
+		}
+		if err := a.service.ensureOriginalPlayback(ctx, a.record, u); err != nil {
+			return err
+		}
+		if a.record.PlaybackOnly {
+			if err := a.service.authorizeChildOwner(ctx, a.record); err != nil {
+				return err
+			}
+		}
+	}
+	return a.CheckCurrent(ctx)
+}

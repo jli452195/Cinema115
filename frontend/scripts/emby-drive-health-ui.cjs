@@ -34,7 +34,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.getByRole('button', { name: '刷新状态', exact: true }).click()
   await page.getByRole('button', { name: '正在检查网盘…', exact: true }).waitFor()
   assert.equal(await page.getByRole('button', { name: '正在检查网盘…', exact: true }).isDisabled(), true)
-  assert.equal(await card.getByRole('switch').getAttribute('aria-checked'), 'false')
+  assert.equal(await card.getByRole('switch').count(), 0)
+  assert.equal(await card.getByText('Emby 播放权限', { exact: true }).count(), 0)
   finishChecks = true
   await card.getByText('最近检查通过', { exact: true }).waitFor()
   assert.equal(await page.locator('article time').count(), 2)

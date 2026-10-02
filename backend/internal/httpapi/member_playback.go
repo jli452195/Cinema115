@@ -294,29 +294,5 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		}
 		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
 	})
-	manage.GET("/:id/permissions", func(c *gin.Context) {
-		member, err := s.MemberPermissions(c.Request.Context(), c.Param("id"))
-		if err != nil {
-			fail(c, err)
-			return
-		}
-		c.JSON(200, gin.H{"settings": s.Settings(), "members": []service.MemberPlaybackAdminView{member}})
-	})
-	manage.POST("/:id/playback", func(c *gin.Context) {
-		var input struct {
-			Allowed  *bool `json:"allowed"`
-			Expected *bool `json:"expected"`
-		}
-		if c.ShouldBindJSON(&input) != nil || input.Allowed == nil || input.Expected == nil {
-			c.JSON(400, gin.H{"error": "播放权限参数无效"})
-			return
-		}
-		member, err := s.SetEmbyPlayback(c.Request.Context(), c.Param("id"), *input.Allowed, *input.Expected)
-		if err != nil {
-			fail(c, err)
-			return
-		}
-		c.JSON(200, gin.H{"settings": s.Settings(), "members": []service.MemberPlaybackAdminView{member}})
-	})
 
 }
