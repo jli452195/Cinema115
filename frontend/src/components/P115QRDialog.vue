@@ -5,7 +5,7 @@ import { p115LoginClients } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 
-const props = withDefaults(defineProps<{ token: string; accountId: string; accountName: string; primary?: boolean; clientType?: string; revision?: number; userCount?: number; mode?: 'qr' | 'cookie' }>(), { clientType: 'alipay-miniapp', userCount: 0, mode: 'qr' })
+const props = withDefaults(defineProps<{ token: string; accountId: string; accountName: string; primary?: boolean; needsDirectory?: boolean; clientType?: string; revision?: number; userCount?: number; mode?: 'qr' | 'cookie' }>(), { clientType: 'alipay-miniapp', userCount: 0, mode: 'qr' })
 const emit = defineEmits<{ close: []; connected: [client: string]; changed: [] }>()
 const snapshot = { ...props }
 interface Replacement { sessionId: string; oldUid: string; newUid: string; expiresAt: string }
@@ -62,8 +62,9 @@ function accept(data: Result, current: number) {
     return true
   }
   if (data.status === 'success' && data.connected) {
+    const needsDirectory = snapshot.needsDirectory && !replacement.value
     sessionID.value = ''; stop(); replacement.value = undefined; cookie.value = ''; qrImage.value = ''
-    phase.value = 'success'; error.value = ''; message.value = '登录成功，配置已保存'
+    phase.value = 'success'; error.value = ''; message.value = needsDirectory ? '登录成功，接下来设置秒传目录' : '登录成功，配置已保存'
     timer = window.setTimeout(() => emit('connected', data.loginClient || ''), 500)
     return true
   }
@@ -137,17 +138,18 @@ onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previou
       <header class="relative border-b border-slate-100 px-12 py-4 text-center dark:border-slate-800">
         <h2 id="p115-qr-title" class="text-lg font-semibold text-slate-900 dark:text-slate-100">{{ replacement ? '选择新网盘目录' : mode === 'cookie' ? '手动登录' : '115 扫码登录' }}</h2>
         <p class="mt-1 text-xs text-slate-500">{{ accountName }}</p>
-        <button type="button" aria-label="关闭登录弹窗" class="absolute right-3 top-3 rounded-lg px-3 py-2 text-xl text-slate-500" @click="close">×</button>
+        <button type="button" aria-label="关闭登录弹窗" class="absolute right-3 top-3 rounded-lg p-3 text-slate-500" @click="close"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
       </header>
       <div class="space-y-4 p-5">
         <p v-if="primary && phase !== 'success'" class="rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:bg-slate-800">重新登录同一 UID 保留各功能目录；更换为其他 UID 后，需要重新配置各功能目录。</p>
+        <p v-if="needsDirectory && !replacement && phase !== 'success'" class="rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">先登录，再设置秒传目录。完成目录设置后，才能分配用户使用。</p>
         <template v-if="replacement">
           <p class="text-sm">原 UID：{{ replacement.oldUid }} → 新 UID：{{ replacement.newUid }}</p>
           <p class="text-sm text-slate-500">确认后将影响绑定的 {{ userCount }} 位用户，原网盘文件不会迁移。</p>
           <button type="button" :disabled="phase === 'saving'" class="w-full break-all rounded-xl border border-slate-200 px-4 py-3 text-left text-sm text-blue-600 dark:border-slate-700" @click="selecting = true">{{ directory ? directory.path + '（' + directory.id + '）' : '选择新网盘中的秒传目录' }}</button>
           <div class="flex justify-end gap-3"><button type="button" class="px-4 py-2 text-sm" @click="close">取消</button><button type="button" :disabled="!directory || phase === 'saving'" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="confirm">{{ phase === 'saving' ? '验证并保存中…' : '确认更换' }}</button></div>
         </template>
-        <p v-else-if="phase === 'success'" role="status" class="py-8 text-center text-emerald-600">✓ {{ message }}</p>
+        <p v-else-if="phase === 'success'" role="status" class="flex items-center justify-center gap-2 py-8 text-emerald-600"><svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>{{ message }}</p>
         <form v-else-if="mode === 'cookie'" class="space-y-4" @submit.prevent="saveCookie">
           <label class="block text-sm">Cookie<input v-model="cookie" type="password" autocomplete="off" :disabled="phase === 'saving'" class="mt-2 block w-full rounded-xl border border-slate-200 bg-transparent px-3 py-3 dark:border-slate-700" placeholder="UID=…; CID=…; SEID=…" /></label>
           <p class="text-xs text-slate-500">{{ primary ? '新 Cookie 验证通过后保存，失败保留原配置。' : '验证后保存；换成其他账号时，需要先选择新网盘目录。' }}</p>

@@ -86,12 +86,12 @@ onBeforeUnmount(() => {
       <section class="flex h-full min-h-0 flex-col">
         <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
           <h2 id="p115-directory-title" class="font-semibold text-slate-900 dark:text-slate-100">{{ title }}</h2>
-          <button type="button" aria-label="关闭目录选择器" class="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300" @click="close">×</button>
+          <button type="button" :disabled="saving" aria-label="关闭目录选择器" class="rounded-lg p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40" @click="close"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
         </header>
         <p v-if="description" class="shrink-0 px-5 py-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ description }}</p>
         <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-5 py-3">
           <p class="min-w-0 truncate text-sm font-medium text-slate-700 dark:text-slate-300">根目录<span v-if="currentPath.length"> / {{ currentPath.map(item => item.name).join(' / ') }}</span></p>
-          <button type="button" :disabled="!currentPath.length || loading" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 disabled:opacity-40" @click="goUp">返回上级</button>
+          <button type="button" :disabled="!currentPath.length || loading || saving" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 disabled:opacity-40" @click="goUp">返回上级</button>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-4" :aria-busy="loading">
           <div v-if="loading" class="grid min-h-40 place-items-center text-sm text-slate-400 dark:text-slate-400">正在读取 115 目录…</div>
@@ -99,13 +99,13 @@ onBeforeUnmount(() => {
           <div v-else-if="!directories.length" class="grid min-h-40 place-items-center text-center text-sm text-slate-400 dark:text-slate-400">当前目录没有子文件夹</div>
           <div v-else class="space-y-2">
             <button v-for="directory in directories" :key="directory.id" type="button" class="flex w-full items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/50 dark:hover:bg-slate-800" @click="openDirectory(directory)">
-              <span class="text-amber-500">📁</span><span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ directory.name }}</span><span class="text-slate-400 dark:text-slate-400">›</span>
+              <svg class="h-5 w-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" /></svg><span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-200">{{ directory.name }}</span><svg class="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
             </button>
           </div>
         </div>
         <p v-if="saveError" role="alert" class="shrink-0 px-5 pb-3 text-sm text-red-600 dark:text-red-400">{{ saveError }}</p>
         <footer class="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
-          <button type="button" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" @click="close">取消</button>
+          <button type="button" :disabled="saving" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40" @click="close">取消</button>
           <button v-if="allowCreate" type="button" :disabled="loading || !!error" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" @click="select(true)">在此新建 Cinema115 并使用</button>
           <button type="button" :disabled="saving || loading || !!error || (!allowRoot && currentCID === '0')" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select(false)">{{ saving ? '保存中…' : confirmLabel }}</button>
         </footer>

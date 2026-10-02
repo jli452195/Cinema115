@@ -14,6 +14,7 @@ const route = useRoute()
 const primary = ref<P115Account>(), pool = ref<P115Account[]>([])
 const loading = ref(true), refreshing = ref(false), adding = ref(false), rules = ref(false)
 const primaryError = ref(''), poolError = ref(''), actionError = ref('')
+const loginAccountID = ref('')
 const lifecycle = new AbortController()
 let sequence = 0
 async function locatePool() {
@@ -42,7 +43,8 @@ async function add(isPrimary: boolean) {
   if (adding.value) return
   adding.value = true; actionError.value = ''
   try {
-    await p115Request(props.token, 'accounts', { method: 'POST', body: JSON.stringify({ name: isPrimary ? '主账号' : `共享小号 ${pool.value.length + 1}`, primary: isPrimary }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+    const created = await p115Request<{ id: string }>(props.token, 'accounts', { method: 'POST', body: JSON.stringify({ name: isPrimary ? '主账号' : `共享小号 ${pool.value.length + 1}`, primary: isPrimary }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+    if (!isPrimary) loginAccountID.value = created.id
     await refresh()
   } catch (e) { if (!lifecycle.signal.aborted) actionError.value = e instanceof Error ? e.message : '添加失败' }
   finally { adding.value = false }
@@ -75,7 +77,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <p v-if="poolError" role="alert" class="mb-4 text-sm text-red-600">{{ poolError }}</p>
       <p v-if="loading" role="status" class="py-8 text-sm text-slate-500">正在读取小号池…</p>
       <template v-else>
-        <div class="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3"><P115ManagedAccountCard v-for="account in pool" :key="account.id" :account="account" :token="token" @changed="refresh" /></div>
+        <div class="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3"><P115ManagedAccountCard v-for="account in pool" :key="account.id" :account="account" :token="token" :start-login="loginAccountID === account.id" @login-started="loginAccountID = ''" @changed="refresh" /></div>
         <p v-if="!pool.length && !poolError" class="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">尚未添加共享小号。可先添加小号，再扫码登录并设置秒传目录。</p>
       </template>
     </section>
