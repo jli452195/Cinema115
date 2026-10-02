@@ -601,10 +601,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		MediaSources []map[string]json.RawMessage
 	}
 	timing.next("Emby 条目权限查询")
-	itemQuery := url.Values{}
-	if isDownload {
-		itemQuery.Set("Fields", "MediaSources")
-	}
+	// Fetch source identity with the per-request item permission check. This
+	// does not replace the complete PlaybackInfo sent to the player earlier.
+	itemQuery := url.Values{"Fields": {"MediaSources"}}
 	status, err = h.embyJSON(ctx, token, "条目权限查询 GET /Users/{Id}/Items/{Id}", "/Users/"+user.ID+"/Items/"+item, itemQuery, &allowed)
 	if err != nil {
 		fail(err.Error(), status)
@@ -630,6 +629,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		MediaSources []map[string]json.RawMessage
 		ErrorCode    string
 	}
+	var claim *sharePlaybackParams
 	timing.next("Emby 媒体源确定")
 	if isDownload {
 		// Download-only users cannot negotiate PlaybackInfo. Resolve the original
@@ -638,6 +638,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	} else if warming && warm.media != nil && jsonString(warm.media["Id"]) == sourceID {
 		info.MediaSources = []map[string]json.RawMessage{warm.media}
 		h.logs.Add(ctx, "INFO", "预热复用本次 PlaybackInfo 已确认的媒体源，跳过重复播放信息查询")
+	} else if source, parsed := h.itemPlaybackSource(allowed.MediaSources, sourceID); parsed != nil {
+		info.MediaSources, claim = []map[string]json.RawMessage{source}, parsed
+		h.logs.Add(ctx, "INFO", "复用本次条目权限查询返回的 STRM 媒体源，跳过重复 PlaybackInfo 查询；首次完整播放协商保持不变")
 	} else {
 		status, err = h.embyJSON(ctx, token, "播放信息查询 GET /Items/{Id}/PlaybackInfo", "/Items/"+item+"/PlaybackInfo", query, &info)
 		if err != nil {
@@ -665,7 +668,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 	}
 	timing.next("STRM 读取解析")
 	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始读取并解析 STRM，媒体源="+proxyLogID(jsonString(source["Id"])))
-	claim, err := h.playbackClaim(source)
+	if claim == nil {
+		claim, err = h.playbackClaim(source)
+	}
 	if errors.Is(err, errNotShareSTRM) && fallback {
 		outcome = "转交 Emby"
 		h.logs.Add(ctx, "WARNING", "媒体源不符合支持的分享链接格式或本地路径映射，转交 Emby 原"+kind+"链路")
