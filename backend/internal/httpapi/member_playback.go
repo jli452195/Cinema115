@@ -188,6 +188,13 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	manage := admin.Group("/member-playback", guard)
+	manage.GET("/settings", func(c *gin.Context) {
+		var proxy service.EmbyProxyStatus
+		if s.ProxyStatus != nil {
+			proxy = s.ProxyStatus()
+		}
+		c.JSON(200, gin.H{"settings": s.Settings(), "proxy": proxy})
+	})
 	manage.POST("/:id/settings", func(c *gin.Context) {
 		var in service.MemberEditInput
 		if c.ShouldBindJSON(&in) != nil {

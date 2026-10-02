@@ -139,7 +139,7 @@ func memberFixture(t *testing.T) (*MemberPlaybackService, *memberTestRemote, str
 	}
 	s.NewEmby = func(string, string) memberEmbyClient { return f }
 	s.ProxyStatus = func() EmbyProxyStatus {
-		return EmbyProxyStatus{Listening: true, Config: EmbyProxyConfig{URL: "http://emby"}}
+		return EmbyProxyStatus{Listening: true, Config: EmbyProxyConfig{Enabled: true, URL: "http://emby"}}
 	}
 	if err := s.SetSettings(ctx, model.MemberPlaybackSettings{Enabled: true, LibraryIDs: []string{"library"}, PublicURL: "https://play.example.com"}); err != nil {
 		t.Fatal(err)

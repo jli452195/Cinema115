@@ -31,6 +31,7 @@ type MemberPlayback struct {
 	AdminBlocked            bool     `json:"adminBlocked"`
 	SkipLibrarySync         bool     `json:"skipLibrarySync"`
 	PolicyEnabled           bool     `json:"policyEnabled"`
+	DownloadEnabled         bool     `json:"downloadEnabled"`
 	AppliedRevision         uint64   `json:"appliedRevision"`
 	SyncError               string   `json:"syncError"`
 	DirectoryID             string   `json:"directoryId"`

@@ -34,6 +34,7 @@ func (s *MemberPlaybackService) SetLibrarySyncGroup(ctx context.Context, id stri
 	if !skip {
 		// Do not serve playback with the old manual selection while rejoining.
 		r.PolicyEnabled = false
+		r.DownloadEnabled = false
 		r.AppliedRevision = 0
 	}
 	if err := s.save(ctx, r); err != nil {

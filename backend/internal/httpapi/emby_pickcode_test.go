@@ -49,7 +49,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, suffix string, pre
 		case "/emby/Users/" + userID:
 			fmt.Fprintf(w, `{"Id":"%s","Policy":{"EnableMediaPlayback":true,"EnableContentDownloading":true}}`, userID)
 		case "/emby/Users/" + userID + "/Items/movie":
-			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true}`)
+			fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true,"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115/api/redirect115/%s%s"}]}`, pickCode, suffix)
 		case "/emby/Items/movie/PlaybackInfo":
 			if r.URL.Query().Get("IsPlayback") != "false" || r.URL.Query().Get("AutoOpenLiveStream") != "false" {
 				t.Error("pickcode source lookup must not open the retired STRM tool")

@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import PortalInvitesPanel from '../components/PortalInvitesPanel.vue'
-import MemberPlaybackAdmin from '../components/MemberPlaybackAdmin.vue'
-defineProps<{token:string}>()
-defineEmits<{logout:[]}>()
-const tab=ref('invites')
+defineProps<{ token: string }>()
+defineEmits<{ logout: [] }>()
 </script>
+
 <template>
- <ManagementLayout title="邀请与播放设置" description="使用 Emby 账号登录个人中心，通过邀请选择播放开通方式。" @logout="$emit('logout')">
- <div class="mb-6 flex gap-4 text-sm"><button @click="tab='invites'" :class="tab==='invites'?'text-blue-600':'text-slate-500'">注册邀请</button><button @click="tab='playback'" :class="tab==='playback'?'text-blue-600':'text-slate-500'">播放设置</button><RouterLink to="/emby/users" class="text-blue-600">Emby 用户管理</RouterLink></div>
- <PortalInvitesPanel v-if="tab==='invites'" :token="token"/><MemberPlaybackAdmin v-else :token="token"/>
+ <ManagementLayout title="注册邀请" description="生成邀请并分享给朋友，凭有效邀请创建 Emby 账号。每个邀请仅可使用一次，可随时撤销未使用的邀请。" @logout="$emit('logout')">
+  <template #actions><RouterLink to="/emby/proxy" class="text-sm text-blue-600">播放与下载设置</RouterLink><RouterLink to="/emby/users" class="text-sm text-blue-600">Emby 用户管理</RouterLink></template>
+  <PortalInvitesPanel :token="token" />
  </ManagementLayout>
 </template>

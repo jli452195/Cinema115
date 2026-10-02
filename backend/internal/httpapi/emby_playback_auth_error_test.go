@@ -103,6 +103,9 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				members.ProxyStatus = func() service.EmbyProxyStatus {
+					return service.EmbyProxyStatus{Listening: true, Config: service.EmbyProxyConfig{Enabled: true, URL: upstream.URL}}
+				}
 				cacheStore, err := service.NewSessionStore(filepath.Join(t.TempDir(), "cache.enc"), "secret")
 				if err != nil {
 					t.Fatal(err)

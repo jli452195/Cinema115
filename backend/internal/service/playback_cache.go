@@ -308,7 +308,7 @@ func (s *PlaybackCache) Snapshot() PlaybackCacheSnapshot {
 	if s.Members != nil {
 		settings := s.Members.Settings()
 		for _, r := range s.Members.Records() {
-			if settings.Enabled && r.ServerID == settings.ServerID && r.EmbyURL == settings.EmbyURL && r.Provisioned && r.Stage == "ready" && r.PolicyEnabled && !r.Suspended && !r.AdminBlocked && r.DirectoryID != "" && r.AccountID != "" {
+			if settings.Enabled && r.ServerID == settings.ServerID && r.EmbyURL == settings.EmbyURL && r.Provisioned && r.Stage == "ready" && (r.PolicyEnabled || r.DownloadEnabled) && !r.Suspended && !r.AdminBlocked && r.DirectoryID != "" && r.AccountID != "" {
 				personal[r.AccountID] = r.UserID
 				personalDirectories[r.AccountID] = r.DirectoryID
 			}

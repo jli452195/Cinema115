@@ -153,7 +153,15 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	}
 	c.AccountID = s.accounts.PrimaryID()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var previousHandler http.Handler
+	defer func() {
+		s.mu.Unlock()
+		// A prewarm worker may read proxy status while it shuts down.
+		// Never wait for that worker while holding the status mutex.
+		if closer, ok := previousHandler.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}()
 	if s.closed || s.ctx.Err() != nil {
 		return fmt.Errorf("反代服务正在退出")
 	}
@@ -179,11 +187,8 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	}
 	old, oldCancel := s.server, s.serverCancel
 	s.config, s.lastError = c, ""
-	previousHandler := s.handler
+	previousHandler = s.handler
 	s.handler = s.factory(c)
-	if closer, ok := previousHandler.(interface{ Close() }); ok {
-		closer.Close()
-	}
 	if !c.Enabled {
 		s.server = nil
 		s.serverCancel = nil

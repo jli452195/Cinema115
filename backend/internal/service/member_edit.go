@@ -87,6 +87,7 @@ func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in Me
 	r.ChildLimit, r.SkipLibrarySync = in.ChildLimit, in.SkipLibrarySync
 	if policyChanged {
 		r.PolicyEnabled = false
+		r.DownloadEnabled = false
 		r.AppliedRevision = 0
 	}
 	if err := s.save(ctx, r); err != nil {

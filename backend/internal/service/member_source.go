@@ -123,6 +123,7 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 	r.Source, r.AssignedAccountID = source, accountID
 	r.AllowPersonalSwitch = !r.Administrator
 	r.PolicyEnabled = false
+	r.DownloadEnabled = false
 	r.AppliedRevision = 0
 	r.Suspended = false
 	delete(s.sessions, id)
@@ -147,7 +148,7 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 		return err
 	}
 	r := s.record(id)
-	if !r.AllowPersonalSwitch || r.AdminBlocked || !s.Settings().Enabled {
+	if !r.AllowPersonalSwitch || r.AdminBlocked {
 		return memberError("尚未授权切换到个人网盘")
 	}
 	prepared, err := s.prepareDirectory(ctx, r)
@@ -161,6 +162,7 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 		return err
 	}
 	prepared.PolicyEnabled = false
+	prepared.DownloadEnabled = false
 	prepared.AppliedRevision = 0
 	if err := s.save(ctx, prepared); err != nil {
 		return err

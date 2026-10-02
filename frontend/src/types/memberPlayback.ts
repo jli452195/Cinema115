@@ -5,7 +5,7 @@ export interface MemberPlayback {
  pendingAccountId?: string; pendingDirectoryStarted?: boolean
 	allowPersonalSwitch?: boolean
   userId: string; username: string; disabled: boolean; administrator?: boolean; embyId: string; embyName: string; embyUrl: string
-  source: string; accountId: string; assignedAccountId: string; policyEnabled: boolean; stage: string; message: string
+  source: string; accountId: string; assignedAccountId: string; policyEnabled: boolean; downloadEnabled: boolean; stage: string; message: string
   adminBlocked: boolean; skipLibrarySync?: boolean; directoryStarted: boolean; directoryId: string; appliedRevision: number; syncError: string
   personalDrive?: { uid: string; connected: boolean; directoryId: string }
 }
@@ -19,10 +19,11 @@ export async function memberRequest(token: string, signal: AbortSignal, path = '
 export function memberStage(member: MemberPlayback, settings: MemberSettings) {
   if (!member.source) return '等待播放授权'
   if (member.disabled) return 'Emby 已停用'
-  if (member.adminBlocked) return '播放已停用'
-  if (!settings.enabled) return '自助播放已关闭'
+  if (member.adminBlocked) return '媒体访问已停用'
+  if (!settings.enabled) return '302 未接管'
   if (member.syncError) return '权限同步失败'
   if (member.embyId && member.appliedRevision !== settings.revision) return '权限待同步'
-  if (member.stage === 'ready' && !member.policyEnabled) return '播放待开通'
-  return ({ ready: '播放已开通', pending: '播放待开通', unbound: '待注册 Emby', bound: '待注册 Emby', creating: '注册待确认', provisioning: '正在配置', paused: '播放已暂停' } as Record<string, string>)[member.stage] || '状态待确认'
+  if (member.stage === 'ready' && !member.policyEnabled) return '权限待同步'
+  if (member.stage === 'pending' && member.source === 'personal' && !member.personalDrive?.connected) return '等待绑定个人网盘'
+  return ({ ready: '可播放', pending: '播放账号待就绪', unbound: '待注册 Emby', bound: '待注册 Emby', creating: '注册待确认', provisioning: '正在配置', paused: '播放已暂停' } as Record<string, string>)[member.stage] || '状态待确认'
 }

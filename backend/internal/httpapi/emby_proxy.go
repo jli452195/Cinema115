@@ -56,7 +56,7 @@ func NewEmbyCachedProxyHandler(c service.EmbyProxyConfig, accounts *service.P115
 	return h
 }
 
-func RegisterEmbyProxy(admin *gin.RouterGroup, s *service.EmbyProxy) {
+func RegisterEmbyProxy(admin *gin.RouterGroup, s *service.EmbyProxy, members *service.MemberPlaybackService) {
 	admin.GET("/emby/proxy/direct-links", func(c *gin.Context) { c.Header("Cache-Control", "no-store"); c.JSON(200, s.DirectLinkStatus()) })
 	admin.DELETE("/emby/proxy/direct-links", func(c *gin.Context) {
 		s.ClearDirectLinks("")
@@ -82,7 +82,9 @@ func RegisterEmbyProxy(admin *gin.RouterGroup, s *service.EmbyProxy) {
 			c.JSON(400, gin.H{"error": "反代配置格式无效"})
 			return
 		}
-		if err := s.Apply(c.Request.Context(), input); err != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+		defer cancel()
+		if err := members.ApplyProxy(ctx, s, input); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -306,7 +308,7 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "播放子账号已停用，请联系账号所有者", http.StatusForbidden)
 			return
 		}
-		managed, err := h.cache.Members.Authorize(r.Context(), h.config.URL, userID)
+		managed, err := h.cache.Members.AuthorizeMedia(r.Context(), h.config.URL, userID, downloadItem(r.URL.Path) != "")
 		path := strings.ToLower(r.URL.Path)
 		media := playbackItem(r.URL.Path) != "" || strings.Contains(path, "/videos/") || strings.Contains(path, "/audio/") || downloadItem(r.URL.Path) != "" || strings.Contains(path, "/cinema115/play") || strings.Contains(path, "/livetv/")
 		if media && userID == "" && len(h.cache.Members.Records()) > 0 {
@@ -566,12 +568,16 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		fail(err.Error(), status)
 		return
 	}
-	if user.ID != userID || user.Policy.IsDisabled || user.Policy.EnableMediaPlayback == nil || !*user.Policy.EnableMediaPlayback {
+	if user.ID != userID || user.Policy.IsDisabled {
+		fail("Emby 用户不可用", 403)
+		return
+	}
+	if !isDownload && (user.Policy.EnableMediaPlayback == nil || !*user.Policy.EnableMediaPlayback) {
 		fail("Emby 用户没有播放权限", 403)
 		return
 	}
 	if h.cache != nil && h.cache.Members != nil {
-		managed, err := h.cache.Members.Authorize(ctx, h.config.URL, userID)
+		managed, err := h.cache.Members.AuthorizeMedia(ctx, h.config.URL, userID, isDownload)
 		if err != nil {
 			fail(playbackAuthorizationFailure(ctx, err))
 			return
@@ -589,22 +595,27 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	var allowed struct {
-		ID          string `json:"Id"`
-		PlayAccess  string
-		CanDownload *bool
-		IsFolder    bool
+		ID           string `json:"Id"`
+		PlayAccess   string
+		CanDownload  *bool
+		IsFolder     bool
+		MediaSources []map[string]json.RawMessage
 	}
 	timing.next("Emby 条目权限查询")
-	status, err = h.embyJSON(ctx, token, "条目权限查询 GET /Users/{Id}/Items/{Id}", "/Users/"+user.ID+"/Items/"+item, nil, &allowed)
+	itemQuery := url.Values{}
+	if isDownload {
+		itemQuery.Set("Fields", "MediaSources")
+	}
+	status, err = h.embyJSON(ctx, token, "条目权限查询 GET /Users/{Id}/Items/{Id}", "/Users/"+user.ID+"/Items/"+item, itemQuery, &allowed)
 	if err != nil {
 		fail(err.Error(), status)
 		return
 	}
-	if allowed.ID != item || allowed.PlayAccess != "" && !strings.EqualFold(allowed.PlayAccess, "Full") {
+	if allowed.ID != item || !isDownload && allowed.PlayAccess != "" && !strings.EqualFold(allowed.PlayAccess, "Full") {
 		fail("Emby 用户无权播放此条目", http.StatusForbidden)
 		return
 	}
-	if isDownload && (allowed.IsFolder || allowed.CanDownload != nil && !*allowed.CanDownload) {
+	if isDownload && (allowed.IsFolder || allowed.CanDownload == nil || !*allowed.CanDownload) {
 		fail("此条目不允许下载", http.StatusForbidden)
 		return
 	}
@@ -621,7 +632,11 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		ErrorCode    string
 	}
 	timing.next("Emby 媒体源确定")
-	if warming && warm.media != nil && jsonString(warm.media["Id"]) == sourceID {
+	if isDownload {
+		// Download-only users cannot negotiate PlaybackInfo. Resolve the original
+		// source from the item returned under their own token and download permission.
+		info.MediaSources = allowed.MediaSources
+	} else if warming && warm.media != nil && jsonString(warm.media["Id"]) == sourceID {
 		info.MediaSources = []map[string]json.RawMessage{warm.media}
 		h.logs.Add(ctx, "INFO", "预热复用本次 PlaybackInfo 已确认的媒体源，跳过重复播放信息查询")
 	} else {
@@ -672,7 +687,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			return
 		}
 		if h.cache.Members != nil {
-			managed, denied := h.cache.Members.Authorize(ctx, h.config.URL, user.ID)
+			managed, denied := h.cache.Members.AuthorizeMedia(ctx, h.config.URL, user.ID, isDownload)
 			if denied != nil {
 				fail(playbackAuthorizationFailure(ctx, denied))
 				return

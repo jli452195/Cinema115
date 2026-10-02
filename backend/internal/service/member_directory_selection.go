@@ -67,7 +67,7 @@ func (s *MemberPlaybackService) directoryTarget(ctx context.Context, id string, 
 	if _, err := s.portalUser(ctx, id); err != nil {
 		return r, P115Account{}, err
 	}
-	if !s.Settings().Enabled || r.AdminBlocked || r.Source != "personal" && !r.AllowPersonalSwitch {
+	if r.AdminBlocked || r.Source != "personal" && !r.AllowPersonalSwitch {
 		return r, P115Account{}, memberError("当前不能管理个人网盘目录")
 	}
 	if input.AccountID == "" || input.AccountID != personalDirectoryTarget(r) {

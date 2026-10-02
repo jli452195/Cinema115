@@ -281,7 +281,7 @@ func main() {
 	memberPlayback.ProxyStatus = embyProxy.Status
 	memberPlayback.ClearDirectLinks = func() { embyProxy.ClearDirectLinks("") }
 	httpapi.RegisterMemberPlayback(member, admin, memberPlayback)
-	httpapi.RegisterEmbyProxy(admin, embyProxy)
+	httpapi.RegisterEmbyProxy(admin, embyProxy, memberPlayback)
 	httpapi.RegisterPlaybackCache(admin, playbackCache, embyProxy, embyService)
 	instantStore, err := service.NewSessionStore(filepath.Join(dataDir, "instant-upload.enc"), secret)
 	if err != nil {

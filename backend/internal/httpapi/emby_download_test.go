@@ -34,6 +34,7 @@ func TestDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T) {
 			const uid = "8be403a10974486c94a987b8036c8484"
 			const targetURL = "https://cdn.115cdn.net/file?sign=test"
 			downloadAllowed := true
+			playbackAllowed := true
 			missingPolicy := false
 			itemAllowed := true
 			multi := false
@@ -61,14 +62,27 @@ func TestDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T) {
 					fmt.Fprintf(w, `{"AccessToken":"viewer","User":{"Id":"%s"},"SessionInfo":{"UserId":"%s"}}`, uid, uid)
 				case "/emby/Users/" + uid:
 					userChecks++
-					policy := map[string]any{"EnableMediaPlayback": true}
+					policy := map[string]any{"EnableMediaPlayback": playbackAllowed}
 					if !missingPolicy {
 						policy["EnableContentDownloading"] = downloadAllowed
 					}
 					json.NewEncoder(w).Encode(map[string]any{"Id": uid, "Name": "viewer", "Policy": policy})
 				case "/emby/Users/" + uid + "/Items/movie":
-					json.NewEncoder(w).Encode(map[string]any{"Id": "movie", "PlayAccess": "Full", "CanDownload": itemAllowed})
+					sources := []any{map[string]any{"Id": "src", "Path": source, "SupportsDirectPlay": true}}
+					if multi {
+						sources = append(sources, map[string]any{"Id": "other", "Path": source})
+					}
+					playAccess := "Full"
+					if !playbackAllowed {
+						playAccess = "None"
+					}
+					json.NewEncoder(w).Encode(map[string]any{"Id": "movie", "PlayAccess": playAccess, "CanDownload": itemAllowed, "MediaSources": sources})
 				case "/emby/Items/movie/PlaybackInfo":
+					if !playbackAllowed {
+						t.Error("download called playback negotiation")
+						w.WriteHeader(403)
+						return
+					}
 					sources := []any{map[string]any{"Id": "src", "Path": source, "SupportsDirectPlay": true}}
 					if multi {
 						sources = append(sources, map[string]any{"Id": "other", "Path": source})
@@ -159,6 +173,10 @@ func TestDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T) {
 				t.Fatal("item prohibition ignored")
 			}
 			itemAllowed = true
+			playbackAllowed = false
+			if w := call("GET", "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=viewer", "player-UA"); w.Code != 403 {
+				t.Fatal("playback permission bypassed by cached download", w.Code)
+			}
 			for _, method := range []string{"GET", "HEAD"} {
 				w := call(method, path, "player-UA")
 				if w.Code != 302 || w.Header().Get("Location") != targetURL || w.Body.Len() != 0 || w.Header().Get("Cache-Control") != "no-store" {

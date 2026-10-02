@@ -39,7 +39,7 @@ const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv
 const updatesActive = computed(() => route.path === '/updates')
 const managementLinks = computed(() => isPortalAdmin.value ? [
   { label: '追更管理', to: '/follows/manage' },
-  { label: '邀请与设置', to: '/users' },
+  { label: '注册邀请', to: '/users' },
   { label: '115 网盘', to: '/115' },
   { label: 'Telegram 配置', to: '/telegram' },
   { label: '观影搜索', to: '/gying' },

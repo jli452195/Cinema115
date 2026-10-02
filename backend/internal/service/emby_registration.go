@@ -51,6 +51,7 @@ func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, r
 	}
 	if changed {
 		r.PolicyEnabled = false
+		r.DownloadEnabled = false
 		r.AppliedRevision = 0
 		if err := s.save(ctx, r); err != nil {
 			return u, err
@@ -70,13 +71,15 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 		return empty, err
 	}
 	defer s.unlock()
-	if !s.Settings().Enabled {
-		return empty, memberError("邀请注册暂未开放")
+	c := s.emby.snapshot()
+	if c.URL == "" || c.APIKey == "" || c.ServerID == "" {
+		return empty, memberError("请先配置并验证 Emby 服务")
 	}
-	c, client, err := s.config()
-	if err != nil {
-		return empty, err
+	current := s.Settings()
+	if current.ServerID != "" && (current.ServerID != c.ServerID || current.EmbyURL != c.URL) {
+		return empty, memberError("Emby 服务配置已变化，请管理员重新检查")
 	}
+	client := s.NewEmby(c.URL, c.APIKey)
 	r, err := s.db.Registration(ctx, hash)
 	if err != nil {
 		return empty, err

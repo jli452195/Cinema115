@@ -47,7 +47,7 @@ func (s *MemberPlaybackService) childOwner(ctx context.Context, id string) (mode
 	if err != nil {
 		return r, err
 	}
-	if r.PlaybackOnly || r.Administrator || r.AdminBlocked || !s.Settings().Enabled {
+	if r.PlaybackOnly || r.Administrator || r.AdminBlocked {
 		return r, memberError("当前不能管理播放子账号")
 	}
 	return r, nil
@@ -340,6 +340,7 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 	}
 	r.ChildRevision++
 	r.PolicyEnabled = false
+	r.DownloadEnabled = false
 	r.LoginEnabled = false
 	if err := s.save(ctx, r); err != nil {
 		return err

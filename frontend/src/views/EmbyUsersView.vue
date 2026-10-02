@@ -9,6 +9,7 @@ const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const members = ref<MemberPlayback[]>([]), accounts = ref<P115Account[]>([])
 const settings = ref<MemberSettings>({ enabled: false, revision: 0, libraryIds: [], allowDownload: false })
+const proxyListening = ref(false), statusLoaded = ref(false)
 const error = ref(''), query = ref(''), filter = ref('all'), group = ref('all'), loading = ref(false)
 const dirtyUsers = ref(new Set<string>()), busyUsers = ref(new Set<string>())
 const generation = ref(0), confirmDiscard = ref(false)
@@ -29,9 +30,9 @@ async function load(discard = false) {
  if (dirtyUsers.value.size && !discard) { confirmDiscard.value = true; return }
  loading.value = true; error.value = ''
  try {
-  const [data, pool] = await Promise.all([memberRequest(props.token, lifecycle.signal, '/users'), memberRequest(props.token, lifecycle.signal, '/accounts')])
+  const [data, pool, serviceStatus] = await Promise.all([memberRequest(props.token, lifecycle.signal, '/users'), memberRequest(props.token, lifecycle.signal, '/accounts'), memberRequest(props.token, lifecycle.signal, '/settings')])
   members.value = [...data.members].sort((a: MemberPlayback, b: MemberPlayback) => a.embyName.localeCompare(b.embyName, 'zh-CN', { numeric: true }) || a.userId.localeCompare(b.userId))
-  settings.value = data.settings; accounts.value = pool.accounts
+  settings.value = data.settings; accounts.value = pool.accounts; proxyListening.value = serviceStatus.proxy.listening; statusLoaded.value = true
   dirtyUsers.value.clear(); generation.value++; confirmDiscard.value = false
  } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取失败' }
  finally { loading.value = false }
@@ -47,7 +48,8 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 <template>
  <ManagementLayout title="Emby 用户管理" description="查看用户播放账号，管理播放权限。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
-  <template #actions><div class="flex flex-wrap justify-end gap-2"><RouterLink to="/helper115#pool" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">共享小号池</RouterLink><RouterLink to="/users" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">邀请与设置</RouterLink></div></template>
+  <template #actions><div class="flex flex-wrap justify-end gap-2"><RouterLink to="/helper115#pool" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">共享小号池</RouterLink><RouterLink to="/users" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">注册邀请</RouterLink></div></template>
+  <section v-if="statusLoaded" class="mb-5 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300" aria-label="全局媒体访问状态"><span>反代：{{ proxyListening ? '运行中' : '未运行，播放和下载入口不可用' }}</span><span v-if="proxyListening">有效账号自动开通播放</span><span>原文件下载：{{ settings.allowDownload ? (proxyListening ? '已开放' : '已允许，待 302 启动') : '已关闭' }}</span><RouterLink to="/emby/proxy" class="text-blue-600 dark:text-blue-300">管理播放与下载</RouterLink></section>
   <section class="mb-6 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-label="用户筛选">
    <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">Emby 用户 <span class="ml-2 font-normal text-slate-400">{{ members.length }}</span></h2><button :disabled="busy" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300" @click="load()">{{ loading ? '正在刷新…' : '刷新 Emby 用户' }}</button></div>
    <div class="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]"><input v-model="query" aria-label="搜索 Emby 用户" placeholder="搜索用户名、用户 ID 或播放账号" class="col-span-2 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 md:col-span-1 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" /><select v-model="filter" aria-label="筛选用户" class="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><option value="all">全部用户</option><option value="primary">主网盘</option><option value="assigned">共享小号</option><option value="personal">个人网盘</option><option value="personal_shared">播放子账号</option><option value="pending">待开通 / 已暂停</option></select><select v-model="group" aria-label="媒体库同步分组" class="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><option value="all">全部分组</option><option value="default">默认组</option><option value="excluded">不同步组</option></select></div>

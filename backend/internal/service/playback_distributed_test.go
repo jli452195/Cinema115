@@ -29,6 +29,9 @@ func TestDistributedPersonalSnapshotAndAdminPrivacy(t *testing.T) {
 	s.accounts.mu.Unlock()
 	r := model.MemberPlayback{UserID: "owner", EmbyID: cacheTestUser, ServerID: "server", EmbyURL: "http://emby", AccountID: id, DirectoryID: "0", Source: "personal", Stage: "ready", Provisioned: true, PolicyEnabled: true}
 	s.Members = &MemberPlaybackService{settings: model.MemberPlaybackSettings{Enabled: true, ServerID: "server", EmbyURL: "http://emby"}, records: map[string]model.MemberPlayback{"owner": r}}
+	s.Members.ProxyStatus = func() EmbyProxyStatus {
+		return EmbyProxyStatus{Listening: true, Config: EmbyProxyConfig{Enabled: true}}
+	}
 	for _, source := range []string{"personal", "primary", "assigned"} {
 		r.Source = source
 		s.Members.records["owner"] = r
