@@ -116,7 +116,7 @@ func NewEmbyProxyHandler(c service.EmbyProxyConfig, accounts *service.P115Accoun
 	h.http = &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	upstream, _ := url.Parse(c.URL)
 	h.proxy = &httputil.ReverseProxy{
-		Transport: &strmNegotiationTransport{handler: h, next: transport},
+		Transport: transport,
 		Rewrite: func(p *httputil.ProxyRequest) {
 			p.SetURL(upstream)
 			p.SetXForwarded()

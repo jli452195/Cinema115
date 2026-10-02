@@ -59,8 +59,12 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 		case "/emby/Users/" + userID + "/Items/movie":
 			fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","CanDownload":true,"MediaSources":[{"Id":"src","Path":"http://unreachable.invalid:8115%s"}]}`, sourcePath)
 		case "/emby/Items/movie/PlaybackInfo":
-			if r.URL.Query().Get("IsPlayback") != "false" || r.URL.Query().Get("AutoOpenLiveStream") != "false" {
-				t.Error("pickcode source lookup must not open the retired STRM tool")
+			wantFlag := "false" // Internal fallback queries remain metadata-only.
+			if r.Header.Get("X-Cinema115-Emby-Proxy") == "1" {
+				wantFlag = "" // Preserve omitted flags on the client negotiation.
+			}
+			if r.URL.Query().Get("IsPlayback") != wantFlag || r.URL.Query().Get("AutoOpenLiveStream") != wantFlag {
+				t.Error("client negotiation or internal lookup flags changed")
 				w.WriteHeader(500)
 				return
 			}
