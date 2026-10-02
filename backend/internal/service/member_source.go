@@ -7,7 +7,7 @@ import (
 
 func (s *MemberPlaybackService) playbackAccount(r model.MemberPlayback) (P115Account, error) {
 	if r.PlaybackOnly {
-		if r.Source != "personal_shared" || r.ChildRevoked || r.ChildPaused || r.ChildDisabled || r.AdminBlocked || !r.Provisioned {
+		if r.Source != "personal_shared" || r.ChildRevoked || r.ChildPaused || r.ChildDisabled || !r.Provisioned {
 			return P115Account{}, memberError("播放子账号已暂停或撤销")
 		}
 		owner := s.record(r.OwnerUserID)
@@ -122,9 +122,6 @@ func (s *MemberPlaybackService) SetSource(ctx context.Context, id, source, accou
 	}
 	r.Source, r.AssignedAccountID = source, accountID
 	r.AllowPersonalSwitch = !r.Administrator
-	r.PolicyEnabled = false
-	r.DownloadEnabled = false
-	r.AppliedRevision = 0
 	r.Suspended = false
 	delete(s.sessions, id)
 	if s.ClearDirectLinks != nil {
@@ -148,7 +145,7 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 		return err
 	}
 	r := s.record(id)
-	if !r.AllowPersonalSwitch || r.AdminBlocked {
+	if !r.AllowPersonalSwitch {
 		return memberError("尚未授权切换到个人网盘")
 	}
 	prepared, err := s.prepareDirectory(ctx, r)
@@ -161,9 +158,6 @@ func (s *MemberPlaybackService) UsePersonalDrive(ctx context.Context, id string)
 	if _, err := s.playbackAccount(prepared); err != nil {
 		return err
 	}
-	prepared.PolicyEnabled = false
-	prepared.DownloadEnabled = false
-	prepared.AppliedRevision = 0
 	if err := s.save(ctx, prepared); err != nil {
 		return err
 	}

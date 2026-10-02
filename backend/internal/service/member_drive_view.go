@@ -15,13 +15,16 @@ type PersonalDriveView struct {
 }
 
 type MemberPlaybackAdminView struct {
-	ChildUsed *int   `json:"childUsed,omitempty"`
-	OwnerName string `json:"ownerName,omitempty"`
-	ImageTag  string `json:"imageTag,omitempty"`
+	DriveStatus DriveHealthView `json:"driveStatus"`
+	ChildUsed   *int            `json:"childUsed,omitempty"`
+	OwnerName   string          `json:"ownerName,omitempty"`
+	ImageTag    string          `json:"imageTag,omitempty"`
 	model.MemberPlayback
-	PersonalDrive PersonalDriveView `json:"personalDrive"`
-	Username      string            `json:"username"`
-	Disabled      bool              `json:"disabled"`
+	PersonalDrive   PersonalDriveView `json:"personalDrive"`
+	Username        string            `json:"username"`
+	Disabled        bool              `json:"disabled"`
+	PlaybackAllowed *bool             `json:"playbackAllowed,omitempty"`
+	DownloadAllowed *bool             `json:"downloadAllowed,omitempty"`
 }
 
 func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]MemberPlaybackAdminView, error) {
@@ -57,8 +60,9 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 		for _, u := range users {
 			if u.ID == out[i].EmbyID && out[i].ServerID == c.ServerID {
 				out[i].Administrator = u.Policy.IsAdministrator
-				out[i].SkipLibrarySync = out[i].SkipLibrarySync || u.Policy.IsAdministrator
 				out[i].Disabled = u.Policy.IsDisabled
+				out[i].PlaybackAllowed = u.Policy.EnableMediaPlayback
+				out[i].DownloadAllowed = u.Policy.EnableContentDownloading
 				out[i].EmbyName = u.Name
 				out[i].ImageTag = u.PrimaryImageTag
 			}
@@ -83,7 +87,7 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 		if r.PlaybackOnly {
 			ownerName = s.record(r.OwnerUserID).EmbyName
 		}
-		out = append(out, MemberPlaybackAdminView{OwnerName: ownerName, MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
+		out = append(out, MemberPlaybackAdminView{DriveStatus: s.DriveHealth(r), OwnerName: ownerName, MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
 	}
 	return out
 }

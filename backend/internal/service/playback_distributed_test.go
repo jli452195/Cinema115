@@ -27,7 +27,7 @@ func TestDistributedPersonalSnapshotAndAdminPrivacy(t *testing.T) {
 		}
 	}
 	s.accounts.mu.Unlock()
-	r := model.MemberPlayback{UserID: "owner", EmbyID: cacheTestUser, ServerID: "server", EmbyURL: "http://emby", AccountID: id, DirectoryID: "0", Source: "personal", Stage: "ready", Provisioned: true, PolicyEnabled: true}
+	r := model.MemberPlayback{UserID: "owner", EmbyID: cacheTestUser, ServerID: "server", EmbyURL: "http://emby", AccountID: id, DirectoryID: "0", Source: "personal", Stage: "ready", Provisioned: true}
 	s.Members = &MemberPlaybackService{settings: model.MemberPlaybackSettings{Enabled: true, ServerID: "server", EmbyURL: "http://emby"}, records: map[string]model.MemberPlayback{"owner": r}}
 	s.Members.ProxyStatus = func() EmbyProxyStatus {
 		return EmbyProxyStatus{Listening: true, Config: EmbyProxyConfig{Enabled: true}}
@@ -43,13 +43,11 @@ func TestDistributedPersonalSnapshotAndAdminPrivacy(t *testing.T) {
 			t.Fatalf("source %s excluded valid personal donor", source)
 		}
 	}
-	for _, mode := range []string{"suspended", "blocked", "pending", "unbound"} {
+	for _, mode := range []string{"suspended", "pending", "unbound"} {
 		v := r
 		switch mode {
 		case "suspended":
 			v.Suspended = true
-		case "blocked":
-			v.AdminBlocked = true
 		case "pending":
 			v.Stage = "preparing"
 		case "unbound":

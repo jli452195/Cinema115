@@ -47,7 +47,7 @@ func (s *MemberPlaybackService) childOwner(ctx context.Context, id string) (mode
 	if err != nil {
 		return r, err
 	}
-	if r.PlaybackOnly || r.Administrator || r.AdminBlocked {
+	if r.PlaybackOnly || r.Administrator {
 		return r, memberError("当前不能管理播放子账号")
 	}
 	return r, nil
@@ -71,12 +71,12 @@ func (s *MemberPlaybackService) Children(ctx context.Context, owner string) (Chi
 			v.Paused = child.ChildPaused
 			v.Disabled = child.ChildDisabled
 			v.Revoked = child.ChildRevoked
-			v.Blocked = child.AdminBlocked || child.Administrator
+			v.Blocked = child.Administrator
 			v.Revision = child.ChildRevision
 			v.Stage = child.Stage
 			v.Message = child.Message
-			if child.SyncError != "" {
-				v.Message = child.SyncError
+			if child.CheckError != "" {
+				v.Message = child.CheckError
 			}
 		}
 		if !v.Revoked {
@@ -130,6 +130,13 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	c, client, err := s.config()
 	if err != nil {
 		return err
+	}
+	settings, err := memberPolicySettings(ctx, client, s.Settings())
+	if err != nil {
+		return err
+	}
+	if len(settings.LibraryIDs) == 0 {
+		return memberError("尚未配置新账号默认媒体库，请联系管理员")
 	}
 	jobs, err := s.db.ChildCreations(ctx, owner)
 	if err != nil {
@@ -195,21 +202,17 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	}
 	profile := model.PortalUser{ID: embyProfileID(c.ServerID, job.EmbyID), ServerID: c.ServerID, EmbyID: job.EmbyID, Username: name, Role: "user", TokenVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	r := s.record(profile.ID)
-	if r.UserID != "" && (!r.PlaybackOnly || r.OwnerUserID != owner || r.ChildRevoked || r.AdminBlocked) {
+	if r.UserID != "" && (!r.PlaybackOnly || r.OwnerUserID != owner || r.ChildRevoked) {
 		return memberError("子账号归属或状态已变化")
 	}
 	if r.UserID == "" {
-		r = model.MemberPlayback{UserID: profile.ID, ServerID: c.ServerID, EmbyURL: c.URL, EmbyID: job.EmbyID, EmbyName: name, PlaybackOnly: true, OwnerUserID: owner, Source: "personal_shared", ChildRevision: 1, Stage: "creating"}
+		r = model.MemberPlayback{UserID: profile.ID, ServerID: c.ServerID, EmbyURL: c.URL, EmbyID: job.EmbyID, EmbyName: name, CreatedByCinema: true, PlaybackOnly: true, OwnerUserID: owner, Source: "personal_shared", ChildRevision: 1, Stage: "creating"}
 	}
 	// Install the permanent playback-only identity before the reserved name is removed.
 	if err := s.db.CommitChild(ctx, job, profile, r); err != nil {
 		return err
 	}
 	s.publishChild(r)
-	settings, err := memberPolicySettings(ctx, client, s.Settings())
-	if err != nil {
-		return err
-	}
 	policy := memberPolicy(nil, false, settings, false)
 	// Copy only the owner's rating restrictions at creation. Later edits belong to administrators.
 	ownerRemote, err := client.ManagedUser(ctx, parent.EmbyID)
@@ -244,6 +247,16 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 		return err
 	}
 	s.publishChild(r)
+	policy = playbackRestrictions(policy)
+	policy["EnableMediaPlayback"] = true
+	policy["IsDisabled"] = false
+	if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
+		return memberError("子账号已创建，Emby 权限结果待确认，请管理员检查")
+	}
+	verified, err = client.ManagedUser(ctx, r.EmbyID)
+	if err != nil || verified.ID != r.EmbyID || !memberPolicyMatchesExpected(verified.Policy, policy) {
+		return memberError("子账号已创建，Emby 权限结果待确认，请管理员检查")
+	}
 	return s.reconcile(ctx, r)
 }
 
@@ -272,7 +285,7 @@ func (s *MemberPlaybackService) ChildSessionDenied(server, id string) bool {
 	}
 	for _, r := range s.Records() {
 		if r.EmbyID == id && r.PlaybackOnly {
-			return r.EmbyURL != server || !r.Provisioned || r.ChildDisabled || r.ChildRevoked || r.AdminBlocked || r.Administrator
+			return r.EmbyURL != server || !r.Provisioned || r.ChildDisabled || r.ChildRevoked || r.Administrator
 		}
 	}
 	return false
@@ -314,22 +327,16 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 	case "pause":
 		r.ChildPaused = true
 	case "resume":
-		if r.AdminBlocked {
-			return memberError("管理员已停用，不能恢复")
-		}
 		r.ChildPaused = false
 	case "disable":
 		r.ChildDisabled = true
 	case "enable":
-		if r.AdminBlocked {
-			return memberError("管理员已停用，不能恢复")
-		}
 		r.ChildDisabled = false
 	case "revoke":
 		r.ChildRevoked = true
 		r.ChildDisabled = true
 	case "password":
-		if r.AdminBlocked || len(input.Password) < 8 || len(input.Password) > 128 {
+		if len(input.Password) < 8 || len(input.Password) > 128 {
 			return memberError("密码需 8–128 字节，且账号不能被管理员停用")
 		}
 		if err := client.SetManagedPassword(ctx, r.EmbyID, input.Password); err != nil {
@@ -339,9 +346,6 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 		return memberError("子账号操作无效")
 	}
 	r.ChildRevision++
-	r.PolicyEnabled = false
-	r.DownloadEnabled = false
-	r.LoginEnabled = false
 	if err := s.save(ctx, r); err != nil {
 		return err
 	}
@@ -353,7 +357,7 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 }
 
 func (s *MemberPlaybackService) sharedPersonalAccount(owner model.MemberPlayback) (P115Account, error) {
-	if owner.UserID == "" || owner.PlaybackOnly || owner.Administrator || owner.AdminBlocked || owner.Suspended || !owner.Provisioned || owner.ServerID != s.Settings().ServerID || owner.EmbyURL != s.Settings().EmbyURL {
+	if owner.UserID == "" || owner.PlaybackOnly || owner.Administrator || owner.Suspended || !owner.Provisioned || owner.ServerID != s.Settings().ServerID || owner.EmbyURL != s.Settings().EmbyURL {
 		return P115Account{}, memberError("所有者共享已暂停")
 	}
 	a, err := s.accounts.Get(owner.AccountID)

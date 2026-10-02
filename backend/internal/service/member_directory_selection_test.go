@@ -106,10 +106,7 @@ func TestPersonalDirectoryOwnershipAndValidation(t *testing.T) {
 	}
 	remote.valid = true
 	r := s.record(id)
-	r.AdminBlocked = true
-	if err := s.save(ctx, r); err != nil {
-		t.Fatal(err)
-	}
+	remote.users[r.EmbyID].Policy["IsDisabled"] = true
 	if _, err := s.PersonalDirectories(ctx, id, input, 0); err == nil {
 		t.Fatal("blocked user browsed")
 	}

@@ -2,6 +2,8 @@ package model
 
 // Contains lifecycle metadata only; no passwords, tokens, cookies or links.
 type MemberPlayback struct {
+	CheckedAt               string   `json:"checkedAt"`
+	CheckError              string   `json:"checkError"`
 	PlaybackOnly            bool     `json:"playbackOnly"`
 	OwnerUserID             string   `json:"ownerUserId,omitempty"`
 	ChildLimit              int      `json:"childLimit"`
@@ -24,16 +26,10 @@ type MemberPlayback struct {
 	AccountID               string   `json:"accountId"`
 	Source                  string   `json:"source"` // personal, primary, assigned, personal_shared
 	AssignedAccountID       string   `json:"assignedAccountId"`
-	LoginEnabled            bool     `json:"loginEnabled"`
 	Stage                   string   `json:"stage"`
 	Message                 string   `json:"message"`
 	Suspended               bool     `json:"suspended"`
-	AdminBlocked            bool     `json:"adminBlocked"`
-	SkipLibrarySync         bool     `json:"skipLibrarySync"`
-	PolicyEnabled           bool     `json:"policyEnabled"`
-	DownloadEnabled         bool     `json:"downloadEnabled"`
-	AppliedRevision         uint64   `json:"appliedRevision"`
-	SyncError               string   `json:"syncError"`
+	CreatedByCinema         bool     `json:"createdByCinema"`
 	DirectoryID             string   `json:"directoryId"`
 	DirectoryStarted        bool     `json:"directoryStarted"`
 }
@@ -42,7 +38,6 @@ type MemberPlaybackSettings struct {
 	Enabled       bool     `json:"enabled"`
 	LibraryIDs    []string `json:"libraryIds"`
 	AllowDownload bool     `json:"allowDownload"`
-	Revision      uint64   `json:"revision"`
 	PublicURL     string   `json:"publicUrl"`
 	EmbyURL       string   `json:"embyUrl"`
 	ServerID      string   `json:"serverId"`

@@ -134,10 +134,19 @@ func (s *PlaybackCache) readPlaybackMaterialRange(ctx context.Context, reader pl
 		s.stats.donorReads.Add(1)
 		var info *p115.DownloadInfo
 		var err error
-		if fused, ok := reader.(playbackRangeSourceClient); ok {
-			info, err = fused.PlaybackPickCodeRangeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
-		} else {
-			info, err = reader.PlaybackPickCodeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+		if a.Ownership == "member" || a.OwnerUserID != "" {
+			if s.Members == nil {
+				err = fmt.Errorf("个人来源不可用")
+			} else {
+				err = s.Members.authorizePersonalDonor(probeCtx, a)
+			}
+		}
+		if err == nil {
+			if fused, ok := reader.(playbackRangeSourceClient); ok {
+				info, err = fused.PlaybackPickCodeRangeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+			} else {
+				info, err = reader.PlaybackPickCodeSource(probeCtx, a.ID, e.File.PickCode, a.Cookie)
+			}
 		}
 		var hash string
 		if err == nil {

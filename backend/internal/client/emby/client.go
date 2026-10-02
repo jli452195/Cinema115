@@ -99,8 +99,10 @@ type User struct {
 	Name            string `json:"Name"`
 	PrimaryImageTag string `json:"PrimaryImageTag,omitempty"`
 	Policy          struct {
-		IsDisabled      bool `json:"IsDisabled"`
-		IsAdministrator bool `json:"IsAdministrator"`
+		EnableMediaPlayback      *bool `json:"EnableMediaPlayback"`
+		EnableContentDownloading *bool `json:"EnableContentDownloading"`
+		IsDisabled               bool  `json:"IsDisabled"`
+		IsAdministrator          bool  `json:"IsAdministrator"`
 	} `json:"Policy"`
 }
 

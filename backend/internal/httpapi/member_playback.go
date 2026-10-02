@@ -188,6 +188,13 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	manage := admin.Group("/member-playback", guard)
+	manage.POST("/refresh", func(c *gin.Context) {
+		s.RequestDriveRefresh()
+		c.JSON(202, gin.H{"members": s.DriveStatuses()})
+	})
+	manage.GET("/drive-status", func(c *gin.Context) {
+		c.JSON(200, gin.H{"members": s.DriveStatuses()})
+	})
 	manage.GET("/settings", func(c *gin.Context) {
 		var proxy service.EmbyProxyStatus
 		if s.ProxyStatus != nil {
@@ -230,22 +237,8 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, gin.H{"settings": s.Settings(), "members": members})
 	})
 	manage.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": s.AccountOptions()}) })
-	manage.POST("/:id/library-group", func(c *gin.Context) {
-		var input struct {
-			SkipLibrarySync *bool `json:"skipLibrarySync"`
-		}
-		if c.ShouldBindJSON(&input) != nil || input.SkipLibrarySync == nil {
-			c.JSON(400, gin.H{"error": "请选择媒体库同步分组"})
-			return
-		}
-		if err := s.SetLibrarySyncGroup(c.Request.Context(), c.Param("id"), *input.SkipLibrarySync); err != nil {
-			fail(c, err)
-			return
-		}
-		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
-	})
 	manage.POST("/:id/sync", func(c *gin.Context) {
-		if err := s.SyncUser(c.Request.Context(), c.Param("id")); err != nil {
+		if err := s.CheckUserPlayback(c.Request.Context(), c.Param("id")); err != nil {
 			fail(c, err)
 			return
 		}
@@ -275,9 +268,19 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		}
 		c.JSON(200, gin.H{"libraries": libraries})
 	})
-	manage.POST("/sync", func(c *gin.Context) {
-		s.RequestSync()
-		c.JSON(202, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
+	manage.POST("/registration-settings", func(c *gin.Context) {
+		var input struct {
+			LibraryIDs []string `json:"libraryIds"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "注册媒体库设置无效"})
+			return
+		}
+		if err := s.SetRegistrationLibraries(c.Request.Context(), input.LibraryIDs); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"settings": s.Settings()})
 	})
 	manage.POST("", func(c *gin.Context) {
 		var settings model.MemberPlaybackSettings
@@ -285,26 +288,35 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 			c.JSON(400, gin.H{"error": "配置格式无效"})
 			return
 		}
-		if err := s.SetSettings(c.Request.Context(), settings); err != nil {
+		if err := s.SetPlaybackSettings(c.Request.Context(), settings.AllowDownload, settings.PublicURL); err != nil {
 			fail(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
 	})
-	manage.POST("/:id", func(c *gin.Context) {
+	manage.GET("/:id/permissions", func(c *gin.Context) {
+		member, err := s.MemberPermissions(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"settings": s.Settings(), "members": []service.MemberPlaybackAdminView{member}})
+	})
+	manage.POST("/:id/playback", func(c *gin.Context) {
 		var input struct {
-			Blocked     *bool  `json:"blocked"`
-			DirectoryID string `json:"directoryId"`
-			Retry       bool   `json:"retry"`
+			Allowed  *bool `json:"allowed"`
+			Expected *bool `json:"expected"`
 		}
-		if c.ShouldBindJSON(&input) != nil {
-			c.JSON(400, gin.H{"error": "操作格式无效"})
+		if c.ShouldBindJSON(&input) != nil || input.Allowed == nil || input.Expected == nil {
+			c.JSON(400, gin.H{"error": "播放权限参数无效"})
 			return
 		}
-		if err := s.AdminUpdate(c.Request.Context(), c.Param("id"), input.Blocked, input.DirectoryID, input.Retry); err != nil {
+		member, err := s.SetEmbyPlayback(c.Request.Context(), c.Param("id"), *input.Allowed, *input.Expected)
+		if err != nil {
 			fail(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"settings": s.Settings(), "members": s.AdminMembers()})
+		c.JSON(200, gin.H{"settings": s.Settings(), "members": []service.MemberPlaybackAdminView{member}})
 	})
+
 }

@@ -43,6 +43,7 @@ func (s *P115Accounts) commitMember(ctx context.Context, value accountDocument, 
 		return err
 	}
 	s.value = value
+	s.notifyPlayback()
 	return nil
 }
 
@@ -240,8 +241,6 @@ func (s *P115Accounts) UnbindMember(ctx context.Context, r model.MemberPlayback)
 	r.UncertainDirectories = nil
 	if r.Source == "personal" {
 		r.Suspended = true
-		r.PolicyEnabled = false
-		r.DownloadEnabled = false
 		r.Stage, r.Message = "paused", "个人网盘已解绑，重新扫码后恢复播放"
 	}
 	return r, s.commitMember(ctx, value, r)

@@ -58,7 +58,7 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 								return
 							}
 						}
-						fmt.Fprintf(w, `{"Id":%q,"Policy":{"EnableMediaPlayback":true,"IsDisabled":false}}`, userID)
+						fmt.Fprintf(w, `{"Id":%q,"Policy":{"EnableMediaPlayback":true,"IsDisabled":false,"EnableVideoPlaybackTranscoding":false,"EnableAudioPlaybackTranscoding":false,"EnablePlaybackRemuxing":false,"EnableSyncTranscoding":false,"EnableMediaConversion":false}}`, userID)
 					case "/emby/Users/" + userID + "/Items/movie":
 						fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full"}`)
 					case "/emby/Items/movie/PlaybackInfo":
@@ -78,10 +78,10 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 				if err := db.SaveEmbyProfile(background, model.PortalUser{ID: "owner", ServerID: "server", EmbyID: userID, Username: "viewer"}); err != nil {
 					t.Fatal(err)
 				}
-				if err := db.SaveMemberPlayback(background, model.MemberPlayback{UserID: "owner", ServerID: "server", EmbyURL: upstream.URL, EmbyID: userID, Source: "primary", Stage: "ready", Provisioned: true, PolicyEnabled: true, SkipLibrarySync: true, AppliedRevision: 1}); err != nil {
+				if err := db.SaveMemberPlayback(background, model.MemberPlayback{UserID: "owner", ServerID: "server", EmbyURL: upstream.URL, EmbyID: userID, Source: "primary", Stage: "ready", Provisioned: true}); err != nil {
 					t.Fatal(err)
 				}
-				if err := db.SaveMemberPlaybackSettings(background, model.MemberPlaybackSettings{Enabled: true, ServerID: "server", EmbyURL: upstream.URL, Revision: 1}); err != nil {
+				if err := db.SaveMemberPlaybackSettings(background, model.MemberPlaybackSettings{Enabled: true, ServerID: "server", EmbyURL: upstream.URL}); err != nil {
 					t.Fatal(err)
 				}
 				secret, err := service.NewSessionStore(filepath.Join(t.TempDir(), "emby.enc"), "secret")
@@ -99,7 +99,7 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				members, err := service.NewMemberPlayback(background, db, accounts, embyService, nil, nil, nil)
+				members, err := service.NewMemberPlayback(background, db, accounts, embyService, nil, playbackIdentityChecker{}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -158,3 +158,7 @@ func TestPlaybackMembershipLookupFailureAndRecovery(t *testing.T) {
 		}
 	}
 }
+
+type playbackIdentityChecker struct{}
+
+func (playbackIdentityChecker) CheckCookie(context.Context, string) (bool, error) { return true, nil }

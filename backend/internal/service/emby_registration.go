@@ -19,7 +19,12 @@ func (s *MemberPlaybackService) ObserveUser(ctx context.Context, c EmbyConfig, u
 		return model.PortalUser{}, err
 	}
 	defer s.unlock()
-	return s.observeUser(ctx, c, u)
+	profile, err := s.observeUser(ctx, c, u)
+	if err != nil {
+		return profile, err
+	}
+	s.RequestSync()
+	return profile, nil
 }
 
 func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, remote emby.ManagedUser) (model.PortalUser, error) {
@@ -30,7 +35,7 @@ func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, r
 	r := s.record(u.ID)
 	changed := r.UserID == "" || r.Source == "" || r.Administrator != (remote.Policy["IsAdministrator"] == true) || r.EmbyName != remote.Name
 	if r.UserID == "" {
-		r = model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyID: u.EmbyID, EmbyName: u.Username, EmbyURL: c.URL, Provisioned: true, LoginEnabled: true, Stage: "pending"}
+		r = model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyID: u.EmbyID, EmbyName: u.Username, EmbyURL: c.URL, Provisioned: true, Stage: "pending"}
 	}
 	if r.Source == "" {
 		if r.PlaybackOnly {
@@ -46,17 +51,12 @@ func (s *MemberPlaybackService) observeUser(ctx context.Context, c EmbyConfig, r
 	r.Administrator = remote.Policy["IsAdministrator"] == true
 	r.EmbyName = remote.Name
 	if r.Administrator {
-		r.SkipLibrarySync = true
 		r.AllowPersonalSwitch = false
 	}
 	if changed {
-		r.PolicyEnabled = false
-		r.DownloadEnabled = false
-		r.AppliedRevision = 0
 		if err := s.save(ctx, r); err != nil {
 			return u, err
 		}
-		s.RequestSync()
 	}
 
 	return s.db.PortalUser(ctx, u.ID)
@@ -80,6 +80,13 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 		return empty, memberError("Emby 服务配置已变化，请管理员重新检查")
 	}
 	client := s.NewEmby(c.URL, c.APIKey)
+	if len(current.LibraryIDs) == 0 {
+		return empty, memberError("尚未配置新注册用户的默认媒体库，请联系管理员")
+	}
+	settings, err := memberPolicySettings(ctx, client, current)
+	if err != nil {
+		return empty, err
+	}
 	r, err := s.db.Registration(ctx, hash)
 	if err != nil {
 		return empty, err
@@ -135,10 +142,6 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 	if err != nil || remote.Policy["IsAdministrator"] == true || (remote.Name != r.ReservedName && remote.Name != name) {
 		return empty, memberError("注册中的 Emby 身份已变化，请联系管理员")
 	}
-	settings, err := memberPolicySettings(ctx, client, s.Settings())
-	if err != nil {
-		return empty, err
-	}
 	if err := client.SetManagedPolicy(ctx, r.EmbyID, memberPolicy(nil, false, settings)); err != nil {
 		return empty, memberError("Emby 禁播策略保存失败，请重试")
 	}
@@ -155,7 +158,7 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 		}
 	}
 	u := model.PortalUser{ID: embyProfileID(c.ServerID, r.EmbyID), ServerID: c.ServerID, EmbyID: r.EmbyID, Username: name, Role: "user", TokenVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-	m := model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyURL: c.URL, EmbyID: r.EmbyID, EmbyName: name, Source: r.Source, AllowPersonalSwitch: true, Provisioned: true, Stage: "provisioning", Message: "Emby 已注册，播放待开通"}
+	m := model.MemberPlayback{UserID: u.ID, ServerID: c.ServerID, EmbyURL: c.URL, EmbyID: r.EmbyID, EmbyName: name, Source: r.Source, CreatedByCinema: true, AllowPersonalSwitch: true, Provisioned: true, Stage: "provisioning", Message: "Emby 已注册，播放待开通"}
 	if err := s.db.CompleteRegistration(ctx, hash, u, m); err != nil {
 		return empty, err
 	}
@@ -164,8 +167,12 @@ func (s *MemberPlaybackService) RegisterInvited(ctx context.Context, hash, name,
 	s.mu.Unlock()
 	// A committed identity can always retry policy synchronization from the
 	// administrator view. Never consume an invitation twice after a lost reply.
-	if err := client.SetManagedPolicy(ctx, m.EmbyID, memberPolicy(nil, false, settings, true)); err != nil {
+	if err := client.SetManagedPolicy(ctx, m.EmbyID, memberPolicy(nil, true, settings, true)); err != nil {
 		return u, memberError("账号已创建，登录权限待管理员同步，请勿重复注册")
+	}
+	verified, err := client.ManagedUser(ctx, m.EmbyID)
+	if err != nil || !memberPolicyMatches(verified.Policy, true, settings, true) {
+		return u, memberError("账号已创建，Emby 权限结果待确认，请管理员检查，勿重复注册")
 	}
 	if m.Source == "assigned" {
 		if err := s.assignPool(ctx, &m); err != nil {

@@ -27,7 +27,7 @@ func TestDirectoryEnrollsAdministratorsWithoutDuplicatePlaybackRecords(t *testin
 				continue
 			}
 			counts[view.EmbyID]++
-			if !view.Administrator || !view.SkipLibrarySync {
+			if !view.Administrator {
 				t.Fatal("administrator classification lost")
 			}
 			if view.EmbyID == id && (!view.Disabled || view.EmbyName != "administrator") {

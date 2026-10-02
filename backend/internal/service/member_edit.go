@@ -6,10 +6,9 @@ import (
 )
 
 type MemberEditValues struct {
-	Source          string `json:"source"`
-	AccountID       string `json:"accountId"`
-	ChildLimit      int    `json:"childLimit"`
-	SkipLibrarySync bool   `json:"skipLibrarySync"`
+	Source     string `json:"source"`
+	AccountID  string `json:"accountId"`
+	ChildLimit int    `json:"childLimit"`
 }
 type MemberEditInput struct {
 	MemberEditValues
@@ -17,7 +16,7 @@ type MemberEditInput struct {
 }
 
 func memberEditValues(r model.MemberPlayback) MemberEditValues {
-	return MemberEditValues{Source: r.Source, AccountID: r.AssignedAccountID, ChildLimit: r.ChildLimit, SkipLibrarySync: r.SkipLibrarySync}
+	return MemberEditValues{Source: r.Source, AccountID: r.AssignedAccountID, ChildLimit: r.ChildLimit}
 }
 
 // Save the complete form once; Emby synchronization is explicitly asynchronous.
@@ -56,8 +55,8 @@ func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in Me
 		if in.Source != "primary" && in.Source != "assigned" && in.Source != "personal" {
 			return memberError("播放来源无效")
 		}
-		if admin && (in.Source == "personal" || !in.SkipLibrarySync || in.ChildLimit != r.ChildLimit) {
-			return memberError("管理员固定属于不同步组，不支持个人网盘及子账号配额")
+		if admin && (in.Source == "personal" || in.ChildLimit != r.ChildLimit) {
+			return memberError("管理员不支持个人网盘及子账号配额")
 		}
 	}
 	sourceChanged := in.Source != r.Source || in.AccountID != r.AssignedAccountID
@@ -83,12 +82,13 @@ func (s *MemberPlaybackService) EditMember(ctx context.Context, id string, in Me
 			}
 		}
 	}
-	policyChanged := sourceChanged || r.SkipLibrarySync != in.SkipLibrarySync
-	r.ChildLimit, r.SkipLibrarySync = in.ChildLimit, in.SkipLibrarySync
-	if policyChanged {
-		r.PolicyEnabled = false
-		r.DownloadEnabled = false
-		r.AppliedRevision = 0
+	policyChanged := sourceChanged
+	r.ChildLimit = in.ChildLimit
+	if sourceChanged {
+		r.CheckedAt = ""
+		r.CheckError = ""
+		r.Stage = "pending"
+		r.Message = "网盘尚未检查"
 	}
 	if err := s.save(ctx, r); err != nil {
 		return err

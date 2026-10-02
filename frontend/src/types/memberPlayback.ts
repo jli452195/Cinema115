@@ -5,25 +5,25 @@ export interface MemberPlayback {
  pendingAccountId?: string; pendingDirectoryStarted?: boolean
 	allowPersonalSwitch?: boolean
   userId: string; username: string; disabled: boolean; administrator?: boolean; embyId: string; embyName: string; embyUrl: string
-  source: string; accountId: string; assignedAccountId: string; policyEnabled: boolean; downloadEnabled: boolean; stage: string; message: string
-  adminBlocked: boolean; skipLibrarySync?: boolean; directoryStarted: boolean; directoryId: string; appliedRevision: number; syncError: string
+  source: string; accountId: string; assignedAccountId: string; playbackAllowed?: boolean; downloadAllowed?: boolean; stage: string; message: string
+  driveStatus?: { state: string; message: string; checkedAt?: string }
+  createdByCinema?: boolean; directoryStarted: boolean; directoryId: string; suspended?: boolean; checkedAt?: string; checkError?: string
   personalDrive?: { uid: string; connected: boolean; directoryId: string }
 }
-export interface MemberSettings { enabled: boolean; revision: number; libraryIds: string[]; allowDownload: boolean }
+export interface MemberSettings { enabled: boolean; libraryIds: string[]; allowDownload: boolean }
 export async function memberRequest(token: string, signal: AbortSignal, path = '', body?: object) {
   const response = await fetch(`/api/admin/member-playback${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(95000)]), body: body ? JSON.stringify(body) : undefined })
   const data = await response.json().catch(() => null)
   if (!response.ok || !data) throw new Error(data?.error || '播放管理操作失败')
   return data
 }
-export function memberStage(member: MemberPlayback, settings: MemberSettings) {
-  if (!member.source) return '等待播放授权'
-  if (member.disabled) return 'Emby 已停用'
-  if (member.adminBlocked) return '媒体访问已停用'
-  if (!settings.enabled) return '302 未接管'
-  if (member.syncError) return '权限同步失败'
-  if (member.embyId && member.appliedRevision !== settings.revision) return '权限待同步'
-  if (member.stage === 'ready' && !member.policyEnabled) return '权限待同步'
-  if (member.stage === 'pending' && member.source === 'personal' && !member.personalDrive?.connected) return '等待绑定个人网盘'
-  return ({ ready: '可播放', pending: '播放账号待就绪', unbound: '待注册 Emby', bound: '待注册 Emby', creating: '注册待确认', provisioning: '正在配置', paused: '播放已暂停' } as Record<string, string>)[member.stage] || '状态待确认'
+export function memberStage(member: MemberPlayback) {
+ if (member.childRevoked) return '共享已撤销'
+ if (member.childDisabled) return '子账号已停用'
+ if (member.childPaused) return '共享已暂停'
+ if (member.suspended) return '个人网盘已解绑'
+ if (member.source === 'personal' && !member.personalDrive?.connected) return '个人网盘未绑定'
+ if (member.checkError) return '检查未通过'
+ if (!member.checkedAt) return '尚未检查'
+ return member.stage === 'ready' ? '最近检查通过' : '网盘待就绪'
 }

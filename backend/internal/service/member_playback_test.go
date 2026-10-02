@@ -22,6 +22,9 @@ type memberTestRemote struct {
 	valid                                 bool
 	users                                 map[string]emby.ManagedUser
 	created, dirs                         int
+	policyWrites                          int
+	ignoreRestrictions                    bool
+	policyResponseLost                    bool
 	failCreate, failDirectory, failEnable bool
 	ignoreFolders                         bool
 	failLibraries                         bool
@@ -70,6 +73,12 @@ func (f *memberTestRemote) Users(context.Context) ([]emby.User, error) {
 		user := emby.User{ID: u.ID, Name: u.Name}
 		user.Policy.IsAdministrator = u.Policy["IsAdministrator"] == true
 		user.Policy.IsDisabled = u.Policy["IsDisabled"] == true
+		if allowed, ok := u.Policy["EnableMediaPlayback"].(bool); ok {
+			user.Policy.EnableMediaPlayback = &allowed
+		}
+		if allowed, ok := u.Policy["EnableContentDownloading"].(bool); ok {
+			user.Policy.EnableContentDownloading = &allowed
+		}
 		out = append(out, user)
 	}
 	return out, nil
@@ -91,6 +100,15 @@ func (f *memberTestRemote) CreateManagedUser(_ context.Context, name string) (em
 	return u, nil
 }
 func (f *memberTestRemote) SetManagedPolicy(_ context.Context, id string, p map[string]any) error {
+	copyPolicy := make(map[string]any, len(p))
+	for k, v := range p {
+		copyPolicy[k] = v
+	}
+	p = copyPolicy
+	f.policyWrites++
+	if f.ignoreRestrictions {
+		p["EnablePlaybackRemuxing"] = true
+	}
 	if f.failEnable && p["EnableMediaPlayback"] == true {
 		return errors.New("unknown")
 	}
@@ -100,6 +118,9 @@ func (f *memberTestRemote) SetManagedPolicy(_ context.Context, id string, p map[
 		u.Policy["EnableAllFolders"] = true
 	}
 	f.users[id] = u
+	if f.policyResponseLost {
+		return errors.New("response lost")
+	}
 	return nil
 }
 func (f *memberTestRemote) SetManagedPassword(_ context.Context, id, _ string) error {
@@ -144,7 +165,7 @@ func memberFixture(t *testing.T) (*MemberPlaybackService, *memberTestRemote, str
 	if err := s.SetSettings(ctx, model.MemberPlaybackSettings{Enabled: true, LibraryIDs: []string{"library"}, PublicURL: "https://play.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	remote := emby.ManagedUser{ID: strings.Repeat("a", 32), Name: "reader", Policy: map[string]any{"IsDisabled": false, "IsAdministrator": false}}
+	remote := emby.ManagedUser{ID: strings.Repeat("a", 32), Name: "reader", Policy: map[string]any{"IsDisabled": false, "IsAdministrator": false, "EnableMediaPlayback": true, "EnableContentDownloading": true}}
 	f.users[remote.ID] = remote
 	if _, err := s.ObserveUser(ctx, embyService.snapshot(), remote); err != nil {
 		t.Fatal(err)
@@ -313,14 +334,14 @@ func TestPersonalDriveReplacementAndNoFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	blocked := true
-	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, id, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Authorize(ctx, "http://emby", old.EmbyID); err == nil {
 		t.Fatal("revocation allowed playback")
 	}
 	if f.users[old.EmbyID].Policy["EnableMediaPlayback"] != false {
-		t.Fatal("upstream playback not denied")
+		t.Fatal("explicit playback edit not applied")
 	}
 }
 func TestInvitationsPoolAndRetry(t *testing.T) {
@@ -420,7 +441,7 @@ func TestPortalPoliciesAndIndependentSameUIDCredentials(t *testing.T) {
 	delete(s.sessions, id)
 	memberScan(t, s, id)
 	policy := f.users[s.record(id).EmbyID].Policy
-	for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableContentDeletion", "EnableContentDownloading"} {
+	for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing"} {
 		if policy[key] != false {
 			t.Fatal(key)
 		}
@@ -536,7 +557,7 @@ func TestPlaybackRevocationPreservesEmbyBrowsing(t *testing.T) {
 	s, _, id := memberFixture(t)
 	ctx := context.Background()
 	blocked := true
-	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, id, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	r := s.record(id)

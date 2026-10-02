@@ -50,7 +50,7 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 	if h.cache != nil && h.cache.Members != nil {
 		if err := h.cache.Members.AuthorizeLogin(resp.Request.Context(), h.config.URL, login.User.ID, login.User.Name); err != nil {
 			_ = resp.Body.Close()
-			message := []byte(`{"error":"个人播放尚未就绪，请在网站个人中心完成开通或等待权限同步"}`)
+			message := []byte(`{"error":"个人播放尚未就绪，请在网站个人中心检查账号状态或等待播放检查"}`)
 			resp.StatusCode = http.StatusForbidden
 			resp.Status = "403 Forbidden"
 			resp.Body = io.NopCloser(bytes.NewReader(message))

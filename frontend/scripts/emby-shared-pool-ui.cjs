@@ -9,7 +9,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     page.on('pageerror', e => errors.push(e.message))
     let role = 'admin'
     const settings = { enabled: true, revision: 1, libraryIds: ['movies'], allowDownload: false }
-    const members = ['reader', 'owner'].map((name, i) => ({ userId: name, embyId: name, embyName: name, username: name, source: 'primary', assignedAccountId: '', administrator: !!i, skipLibrarySync: !!i, personalDrive: { connected: true }, appliedRevision: 1, stage: 'ready', policyEnabled: true }))
+    const members = ['reader', 'owner'].map((name, i) => ({ userId: name, embyId: name, embyName: name, username: name, source: 'primary', assignedAccountId: '', administrator: !!i, playbackAllowed: true, personalDrive: { connected: true }, stage: 'ready' }))
     const pool = [{ id: 'pool', uid: '501', name: '共享小号', configured: true, primary: false, revision: 1, playbackParentCid: '123', users: ['reader', 'owner'], userCount: 2 }]
     await page.route('**/api/**', async route => {
       const request = route.request(), p = new URL(request.url()).pathname

@@ -137,15 +137,18 @@ func TestPlaybackChildLifecycleAndRevocationSurviveDiscovery(t *testing.T) {
 		t.Fatal("wrong password target")
 	}
 	blocked := true
-	if err := s.AdminUpdate(ctx, child.UserID, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, child.UserID, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	r := s.record(child.UserID)
-	if err := s.ChildAction(ctx, owner, r.UserID, ChildActionInput{Action: "enable", Revision: r.ChildRevision}); err == nil {
-		t.Fatal("owner bypassed admin block")
+	if err := s.ChildAction(ctx, owner, r.UserID, ChildActionInput{Action: "enable", Revision: r.ChildRevision}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authorize(ctx, "http://emby", child.EmbyID); err == nil {
+		t.Fatal("owner action bypassed Emby playback denial")
 	}
 	blocked = false
-	if err := s.AdminUpdate(ctx, child.UserID, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, child.UserID, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	action("revoke")

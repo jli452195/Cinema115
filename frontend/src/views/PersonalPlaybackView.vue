@@ -9,7 +9,7 @@ import { p115LoginClients } from '../lib/p115-login-clients'
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 interface DirectoryAccount { accountId: string; revision: number; uid: string; directoryId: string; creationUncertain: boolean }
-interface Playback { accountId: string; revision: number; directoryAccount?: DirectoryAccount; needsDirectoryConfirmation: boolean; canPreparePersonal: boolean; pendingDrive: boolean; enabled: boolean; stage: string; message: string; uid: string; connected: boolean; directoryId: string; embyName: string; embyUrl: string; suspended: boolean; blocked: boolean; allowDownload: boolean; syncPending: boolean; source: string }
+interface Playback { accountId: string; revision: number; directoryAccount?: DirectoryAccount; needsDirectoryConfirmation: boolean; canPreparePersonal: boolean; pendingDrive: boolean; enabled: boolean; stage: string; message: string; uid: string; connected: boolean; directoryId: string; embyName: string; embyUrl: string; suspended: boolean; allowDownload: boolean; source: string }
 const state = ref<Playback>(), error = ref(''), notice = ref(''), busy = ref(false)
 const directoryId = ref(''), directoryPath = ref(''), selecting = ref(false)
 const directorySnapshot = ref<DirectoryAccount>()
@@ -28,7 +28,7 @@ const lifecycle = new AbortController()
 let generation = 0
 let qrController: AbortController | undefined
 let pollTimer: ReturnType<typeof setTimeout> | undefined
-const label = computed(() => state.value?.blocked ? '管理员已停用' : state.value && !state.value.enabled ? '302 暂未接管' : state.value?.syncPending ? '权限同步中' : ({ unbound: '待注册 Emby', bound: '待注册 Emby', pending: '等待可用网盘或权限同步', creating: '注册待确认', provisioning: '正在配置账号', paused: '播放已暂停', ready: '播放已开通' }[state.value?.stage || ''] || '正在加载'))
+const label = computed(() => state.value && !state.value.enabled ? '302 暂未接管' : ({ unbound: '待注册 Emby', bound: '待注册 Emby', pending: '等待网盘就绪或播放检查', creating: '注册待确认', provisioning: '正在配置账号', paused: '播放已暂停', ready: '网盘最近检查通过' }[state.value?.stage || ''] || '正在加载'))
 const safeEmbyURL = computed(() => { try { const url = new URL(state.value?.embyUrl || ''); return ['http:', 'https:'].includes(url.protocol) ? url.href : '' } catch { return '' } })
 async function request(path = '', body?: object, signal?: AbortSignal) {
   const response = await fetch(`/api/me/playback${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(95000), ...(signal ? [signal] : [])]) })
@@ -104,7 +104,7 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
         <div class="flex items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">{{ label }}</h2><button :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40 dark:text-blue-300" @click="mutate('/refresh', {})">检查状态</button></div>
         <p class="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">{{ state?.message || '播放需要管理员授权和可用的网盘账号。' }}</p>
         <p v-if="state?.source" class="mt-2 text-sm text-slate-700 dark:text-slate-300">播放方式：{{ state.source === 'primary' ? '主网盘，无需扫码' : state.source === 'assigned' ? '管理员共享小号，无需扫码' : '绑定自己的 115 网盘' }}</p>
-        <p v-if="state" class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">仅支持原文件直链，禁止转码及重新封装。{{ state.allowDownload ? '管理员已允许下载原文件。' : '管理员未开放下载。' }}</p>
+        <p v-if="state" class="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">仅支持原文件直链，禁止转码及重新封装。{{ state.allowDownload ? '本服务已开放原文件下载，仍需 Emby 下载授权。' : '管理员未开放下载。' }}</p>
         <p v-if="state && !state.enabled" class="mt-3 text-sm text-amber-700 dark:text-amber-300">302 暂未运行，播放和下载入口不可用，仍可管理自己的网盘。</p>
       </section>
       <section v-if="state" class="space-y-3 rounded-2xl border border-slate-200 p-5 dark:border-slate-700"><h2 class="font-semibold">Emby 账号</h2><p class="text-sm">{{ state.embyName }}</p><a v-if="safeEmbyURL" :href="safeEmbyURL" target="_blank" rel="noopener noreferrer" class="break-all text-sm text-blue-600">{{ state.embyUrl }}</a><p class="text-xs text-slate-500">个人中心与 Emby 使用同一账号和密码。</p></section>
@@ -116,7 +116,7 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
         <p v-if="state?.directoryId" class="text-xs text-slate-500 dark:text-slate-400">播放目录编号：{{ state.directoryId }}。文件由你在 115 中管理，系统不自动删除。</p>
         <label class="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300"><input v-model="consent" type="checkbox" class="mt-1" />我同意保存凭据用于本人播放和只读秒传校验，并在专用目录保存播放文件。</label>
         <label class="block text-sm text-slate-700 dark:text-slate-300">登录客户端<select v-model="clientType" :disabled="busy || state.pendingDrive" class="mt-2 block w-full rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900" @change="changeClient"><option v-for="client in p115LoginClients" :key="client.value" :value="client.value">{{ client.label }}</option></select></label>
-        <button :disabled="busy || !consent || state?.blocked || state.pendingDrive" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="createQR()">{{ state?.uid ? '扫码登录或换号' : '扫码绑定 115' }}</button>
+        <button :disabled="busy || !consent || state.pendingDrive" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="createQR()">{{ state?.uid ? '扫码登录或换号' : '扫码绑定 115' }}</button>
         <p class="text-xs text-slate-500">已记录的播放文件可为其他用户提供秒传校验片段，不会扫描其他文件。切换播放来源后仍可参与校验，解绑后停止参与新请求。个人网盘不进入小号池，管理员无法查看或修改个人 Cookie。</p>
         <div v-if="state.pendingDrive" class="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20"><p>115 登录成功，选择秒传目录后完成绑定。原播放来源保留。</p><button :disabled="busy" class="underline" @click="mutate('/drive-change', {cancel:true})">取消本次绑定</button></div>
         <form v-if="state.directoryAccount" class="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700" @submit.prevent="saveDirectory()">
@@ -125,11 +125,11 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
           <p v-if="state.directoryAccount.creationUncertain" role="status" class="text-sm text-amber-700">上次创建结果未确认，请浏览网盘并选择已创建的文件夹。</p>
           <p v-if="directoryPath" class="break-all text-sm">已选择：{{ directoryPath }}</p>
           <label class="block text-sm">秒传保存目录 ID<input v-model="directoryId" :disabled="busy" required pattern="[1-9][0-9]*" inputmode="numeric" placeholder="选择文件夹，也可以填写目录编号" class="mt-2 block w-full rounded-lg border p-2 dark:bg-slate-900" @input="directoryPath = ''" /></label>
-          <div class="flex flex-wrap gap-3"><button type="button" :disabled="busy || state.blocked" class="text-sm text-blue-600 disabled:opacity-40" @click="openDirectories">{{ state.pendingDrive || !state.directoryId ? '选择秒传目录' : '更换秒传目录' }}</button><button :disabled="busy || !directoryId || state.blocked" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">{{ state.pendingDrive ? '确认目录并完成绑定' : '保存秒传目录' }}</button></div>
+          <div class="flex flex-wrap gap-3"><button type="button" :disabled="busy" class="text-sm text-blue-600 disabled:opacity-40" @click="openDirectories">{{ state.pendingDrive || !state.directoryId ? '选择秒传目录' : '更换秒传目录' }}</button><button :disabled="busy || !directoryId" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">{{ state.pendingDrive ? '确认目录并完成绑定' : '保存秒传目录' }}</button></div>
         </form>
         <div v-if="qrImage" class="flex flex-col items-center gap-3"><img :src="qrImage" alt="115 登录二维码" width="224" height="224" class="rounded-xl" /><button class="text-sm text-slate-500 dark:text-slate-400" @click="stopQR">关闭二维码</button></div>
         <p v-if="qrStatus" role="status" class="text-sm text-slate-500 dark:text-slate-400">{{ qrStatus }}</p>
-        <button v-if="state.source !== 'personal'" :disabled="busy || !state.connected || !state.directoryId || state.blocked" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="mutate('/use-personal', {})">切换到我的网盘播放</button>
+        <button v-if="state.source !== 'personal'" :disabled="busy || !state.connected || !state.directoryId" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40" @click="mutate('/use-personal', {})">切换到我的网盘播放</button>
       </section>
 
       <section v-if="state && state.source !== 'personal' && !state.canPreparePersonal" class="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">

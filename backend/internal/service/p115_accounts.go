@@ -53,9 +53,18 @@ type accountSecretStore interface {
 	Save(string) error
 }
 type P115Accounts struct {
-	mu    sync.RWMutex
-	store accountSecretStore
-	value accountDocument
+	mu           sync.RWMutex
+	store        accountSecretStore
+	value        accountDocument
+	playbackWake chan<- struct{}
+}
+
+// Signals only; never call back into member/account code while holding mu.
+func (s *P115Accounts) notifyPlayback() {
+	select {
+	case s.playbackWake <- struct{}{}:
+	default:
+	}
 }
 
 func newP115Accounts(store accountSecretStore, legacy string) (*P115Accounts, error) {
@@ -131,6 +140,7 @@ func (s *P115Accounts) commit(value accountDocument) error {
 		return fmt.Errorf("保存账号配置失败: %w", err)
 	}
 	s.value = value
+	s.notifyPlayback()
 	return nil
 }
 func (s *P115Accounts) copy() accountDocument {

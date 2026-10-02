@@ -10,7 +10,7 @@ func TestMemberEditValidatesWholeFormAndRejectsStale(t *testing.T) {
 	s, _, id := memberFixture(t)
 	ctx := context.Background()
 	before := s.record(id)
-	input := MemberEditInput{Expected: memberEditValues(before), MemberEditValues: MemberEditValues{Source: "assigned", AccountID: "missing", ChildLimit: 3, SkipLibrarySync: true}}
+	input := MemberEditInput{Expected: memberEditValues(before), MemberEditValues: MemberEditValues{Source: "assigned", AccountID: "missing", ChildLimit: 3}}
 	if err := s.EditMember(ctx, id, input); err == nil {
 		t.Fatal("invalid source accepted")
 	}
@@ -23,7 +23,7 @@ func TestMemberEditValidatesWholeFormAndRejectsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.record(id)
-	if got.Source != "primary" || got.ChildLimit != 3 || !got.SkipLibrarySync || got.PolicyEnabled || got.AppliedRevision != 0 {
+	if got.Source != "primary" || got.ChildLimit != 3 {
 		t.Fatal(got)
 	}
 	input.ChildLimit = 4
@@ -62,7 +62,6 @@ func TestMemberEditChildCannotChangeSourceOrQuota(t *testing.T) {
 		t.Fatal("child source changed")
 	}
 	in.Source = child.Source
-	in.SkipLibrarySync = true
 	if err := s.EditMember(ctx, child.UserID, in); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +73,6 @@ func TestMemberEditStorageFailurePreservesState(t *testing.T) {
 	before := s.record(id)
 	in := MemberEditInput{Expected: memberEditValues(before), MemberEditValues: memberEditValues(before)}
 	in.ChildLimit = 3
-	in.SkipLibrarySync = true
 	if err := s.db.Close(); err != nil {
 		t.Fatal(err)
 	}

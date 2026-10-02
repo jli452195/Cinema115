@@ -19,7 +19,7 @@ func TestPortalResetPreservesAdministratorAccountsAndSettings(t *testing.T) {
 	if err := s.SaveP115Accounts(ctx, P115AccountState{Accounts: []P115AccountRow{{ID: "main", Name: "main", Primary: true, Ownership: "admin", Revision: 1, Cookie: []byte{1}}, {ID: "personal", Name: "personal", Ownership: "member", OwnerUserID: u.ID, Revision: 1, Cookie: []byte{1}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveMemberPlaybackSettings(ctx, model.MemberPlaybackSettings{Revision: 4, PublicURL: "https://play.example"}); err != nil {
+	if err := s.SaveMemberPlaybackSettings(ctx, model.MemberPlaybackSettings{PublicURL: "https://play.example"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE website_users(id TEXT); CREATE TABLE website_invites(id TEXT); CREATE TABLE website_user_cleanup(id TEXT);`); err != nil {
@@ -33,7 +33,7 @@ func TestPortalResetPreservesAdministratorAccountsAndSettings(t *testing.T) {
 		t.Fatal(accounts, err)
 	}
 	settings, err := s.MemberPlaybackSettings(ctx)
-	if err != nil || settings.Revision != 4 {
+	if err != nil || settings.PublicURL != "https://play.example" {
 		t.Fatal(settings, err)
 	}
 	var count int

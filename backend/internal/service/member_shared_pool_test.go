@@ -33,7 +33,7 @@ func TestDefaultPrimaryAndAdminPlaybackPreserveLibraries(t *testing.T) {
 			id = strings.Repeat("e", 32)
 		}
 		folders := []any{"private-library"}
-		u := emby.ManagedUser{ID: id, Name: "viewer", Policy: map[string]any{"IsAdministrator": admin, "IsDisabled": false, "EnableAllFolders": false, "EnabledFolders": folders, "MaxParentalRating": float64(13), "EnableContentDeletion": true}}
+		u := emby.ManagedUser{ID: id, Name: "viewer", Policy: map[string]any{"IsAdministrator": admin, "IsDisabled": false, "EnableAllFolders": false, "EnabledFolders": folders, "MaxParentalRating": float64(13), "EnableMediaPlayback": true, "EnableContentDownloading": true, "EnableContentDeletion": true}}
 		remote.users[id] = u
 		if err := s.AuthorizeLogin(ctx, "http://emby", id, u.Name); err != nil {
 			t.Fatal(err)
@@ -66,9 +66,6 @@ func TestDefaultPrimaryAndAdminPlaybackPreserveLibraries(t *testing.T) {
 			}
 			if _, err := s.portalUser(ctx, profile); err == nil {
 				t.Fatal("administrator entered ordinary portal")
-			}
-			if err := s.SetLibrarySyncGroup(ctx, profile, false); err == nil {
-				t.Fatal("administrator library sync enabled")
 			}
 			if err := s.SetSource(ctx, profile, "personal", ""); err == nil {
 				t.Fatal("administrator personal source allowed")
@@ -180,9 +177,6 @@ func TestAdminPersonalDriveStatusOnly(t *testing.T) {
 		if strings.Contains(string(raw), "SEID") || strings.Contains(strings.ToLower(string(raw)), "cookie") {
 			t.Fatal("personal secret exposed")
 		}
-	}
-	if err := s.AdminUpdate(ctx, id, nil, "123", false); err == nil {
-		t.Fatal("administrator changed personal directory")
 	}
 	if err := s.SetSource(ctx, id, "primary", ""); err != nil {
 		t.Fatal(err)

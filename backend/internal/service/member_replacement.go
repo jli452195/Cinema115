@@ -42,9 +42,6 @@ func (s *MemberPlaybackService) FinishDriveChange(ctx context.Context, id string
 	if err != nil {
 		return err
 	}
-	if r.AdminBlocked {
-		return memberError("播放已被管理员停用")
-	}
 	if r.PendingAccountID == "" {
 		return nil
 	}

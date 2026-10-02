@@ -13,10 +13,10 @@ import (
 	"strm115/backend/internal/storage"
 )
 
-func TestInviteAloneAuthorizesRegistrationBeforePlaybackSetup(t *testing.T) {
+func TestRegistrationRequiresTemplateBeforeCreatingEmbyUser(t *testing.T) {
 	s, remote, _ := memberFixture(t)
 	ctx := context.Background()
-	// A verified Emby service suffices; no registration switch or 302 setup is needed.
+	// A missing registration template must fail before any external account creation.
 	s.ProxyStatus = nil
 	s.settings = model.MemberPlaybackSettings{}
 	if err := s.db.SaveMemberPlaybackSettings(ctx, s.settings); err != nil {
@@ -28,11 +28,17 @@ func TestInviteAloneAuthorizesRegistrationBeforePlaybackSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := auth.Register(ctx, "invited-reader", "password123", invites[0].Code); err == nil || remote.created != 0 {
+		t.Fatal("missing template created an account", err)
+	}
+	if err := s.SetRegistrationLibraries(ctx, []string{"library"}); err != nil {
+		t.Fatal(err)
+	}
 	user, err := auth.Register(ctx, "invited-reader", "password123", invites[0].Code)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.record(user.ID).Source != "personal" || remote.users[user.EmbyID].Policy["EnableMediaPlayback"] != false {
+	if s.record(user.ID).Source != "personal" || remote.users[user.EmbyID].Policy["EnableMediaPlayback"] != true {
 		t.Fatal("registration bypassed personal binding")
 	}
 	if err := s.db.RevokePortalInvite(ctx, invites[1].ID); err != nil {
@@ -61,6 +67,12 @@ func Test302TakeoverLifecycle(t *testing.T) {
 	s, remote, id := memberFixture(t)
 	ctx := context.Background()
 	memberScan(t, s, id)
+	settings := s.Settings()
+	settings.PublicURL = ""
+	settings.LibraryIDs = nil
+	if err := s.SetSettings(ctx, settings); err != nil {
+		t.Fatal("optional connection address blocked saving while listening", err)
+	}
 	r := s.record(id)
 	primary, err := s.accounts.AddPrimary("main")
 	if err != nil {
@@ -95,15 +107,14 @@ func Test302TakeoverLifecycle(t *testing.T) {
 		t.Fatal("offline proxy authorized")
 	}
 	config := EmbyProxyConfig{Enabled: true, URL: "http://emby", Port: proxyFreePort(t)}
-	revision := s.Settings().Revision
 	if err := s.ApplyProxy(ctx, proxy, config); err != nil {
 		t.Fatal(err)
 	}
-	if !s.Settings().Enabled || s.Settings().Revision != revision+1 {
+	if !s.Settings().Enabled {
 		t.Fatal("302 did not activate takeover")
 	}
-	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err == nil {
-		t.Fatal("activation reused unchecked permissions")
+	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err != nil {
+		t.Fatal("activation required a local authorization version", err)
 	}
 	if err := s.SyncUser(ctx, id); err != nil {
 		t.Fatal(err)
@@ -123,7 +134,7 @@ func Test302TakeoverLifecycle(t *testing.T) {
 	}
 	// An administrator stop remains effective across reactivation.
 	blocked := true
-	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, id, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	config.Enabled = true
@@ -137,7 +148,7 @@ func Test302TakeoverLifecycle(t *testing.T) {
 		t.Fatal("reactivation removed admin stop")
 	}
 	blocked = false
-	if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
+	if err := setPlaybackForTest(ctx, s, id, !blocked); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err != nil {
@@ -219,7 +230,7 @@ func TestIndependentMediaPermissions(t *testing.T) {
 					t.Fatal(err)
 				}
 				policy := remote.users[r.EmbyID].Policy
-				if policy["EnableMediaPlayback"] != playback || policy["EnableContentDownloading"] != download {
+				if policy["EnableMediaPlayback"] != playback || policy["EnableContentDownloading"] != true {
 					t.Fatalf("admin=%v playback=%v download=%v policy=%v", administrator, playback, download, policy)
 				}
 				for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableSyncTranscoding", "EnableMediaConversion"} {
@@ -240,16 +251,13 @@ func TestIndependentMediaPermissions(t *testing.T) {
 				if err := s.SyncUser(ctx, id); err != nil {
 					t.Fatal(err)
 				}
-				if s.record(id).AdminBlocked {
-					t.Fatal("independent action toggle blocked member")
-				}
 				blocked := true
-				if err := s.AdminUpdate(ctx, id, &blocked, "", false); err != nil {
+				if err := setPlaybackForTest(ctx, s, id, !blocked); err != nil {
 					t.Fatal(err)
 				}
 				for _, action := range []bool{false, true} {
-					if _, err := s.AuthorizeMedia(ctx, r.EmbyURL, r.EmbyID, action); err == nil {
-						t.Fatal("blocked user retained access")
+					if _, err := s.AuthorizeMedia(ctx, r.EmbyURL, r.EmbyID, action); (err == nil) != (action && download) {
+						t.Fatal("playback toggle changed independent download permission", err)
 					}
 				}
 			}
@@ -266,9 +274,6 @@ func TestMediaMetadataDoesNotInvalidatePermissions(t *testing.T) {
 	if err := s.SetSettings(ctx, before); err != nil {
 		t.Fatal(err)
 	}
-	if s.Settings().Revision != before.Revision {
-		t.Fatal("metadata save changed media revision")
-	}
 	r := s.record(id)
 	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err != nil {
 		t.Fatal(err)
@@ -276,6 +281,20 @@ func TestMediaMetadataDoesNotInvalidatePermissions(t *testing.T) {
 	stored, err := s.db.MemberPlaybackSettings(ctx)
 	if err != nil || stored.PublicURL != before.PublicURL {
 		t.Fatal("settings not persisted", err)
+	}
+	before.PublicURL = "   "
+	if err := s.SetSettings(ctx, before); err != nil {
+		t.Fatal(err)
+	}
+	if s.Settings().PublicURL != "" || s.View(id).EmbyURL != "" {
+		t.Fatal("clearing display address changed permissions or retained the link")
+	}
+	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err != nil {
+		t.Fatal("empty display address blocked playback", err)
+	}
+	before.PublicURL = "javascript:alert(1)"
+	if err := s.SetSettings(ctx, before); err == nil {
+		t.Fatal("invalid optional address accepted")
 	}
 }
 

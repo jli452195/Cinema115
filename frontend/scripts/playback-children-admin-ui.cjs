@@ -10,9 +10,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
   const settings = { enabled: true, revision: 1, libraryIds: ['library'], allowDownload: false }
   const members = [
-   { userId: 'owner', embyId: 'a'.repeat(32), embyName: 'jlihome', source: 'personal', assignedAccountId: '', childLimit: 0, childUsed: 1, skipLibrarySync: false, policyEnabled: true, stage: 'ready', appliedRevision: 1 },
-   { userId: 'child', embyId: 'b'.repeat(32), embyName: 'viewer', source: 'personal_shared', ownerUserId: 'owner', ownerName: 'jlihome', playbackOnly: true, policyEnabled: true, stage: 'ready', appliedRevision: 1 },
-   { userId: 'admin', embyId: 'c'.repeat(32), embyName: 'jli452195', administrator: true, skipLibrarySync: true, source: 'primary', policyEnabled: true, stage: 'ready', appliedRevision: 1 },
+   { userId: 'owner', embyId: 'a'.repeat(32), embyName: 'jlihome', source: 'personal', assignedAccountId: '', childLimit: 0, childUsed: 1, playbackAllowed: true, stage: 'ready' },
+   { userId: 'child', embyId: 'b'.repeat(32), embyName: 'viewer', source: 'personal_shared', ownerUserId: 'owner', ownerName: 'jlihome', playbackOnly: true, playbackAllowed: true, stage: 'ready' },
+   { userId: 'admin', embyId: 'c'.repeat(32), embyName: 'jli452195', administrator: true, playbackAllowed: true, source: 'primary', stage: 'ready' },
   ]
   await page.route('**/api/**', async route => {
    const req = route.request(), p = new URL(req.url()).pathname
@@ -24,10 +24,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      const body = req.postDataJSON(); writes.push({ path: p, body })
      if (p.endsWith('/settings')) {
       if (reject) { reject = false; return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: '保存失败，请重试' }) }) }
-      Object.assign(members[0], { childLimit: body.childLimit, source: body.source, assignedAccountId: body.accountId, skipLibrarySync: body.skipLibrarySync, appliedRevision: 0, policyEnabled: false })
-     } else if (p.endsWith('/owner')) members[0].adminBlocked = body.blocked
+      Object.assign(members[0], { childLimit: body.childLimit, source: body.source, assignedAccountId: body.accountId })
+     }
     }
-    data = { members, settings }
+    data = { members, settings, proxy: { listening: true } }
    }
    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
   })
@@ -47,7 +47,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByRole('switch', { name: '允许创建子账号' }).click()
   await dialog.getByLabel('子账号名额', { exact: true }).fill('3')
   await dialog.getByLabel('播放来源', { exact: true }).selectOption('primary')
-  await dialog.getByLabel('媒体库权限', { exact: true }).selectOption({ label: '不同步组' })
   await page.keyboard.press('Escape')
   await dialog.getByText('有未保存的修改，是否放弃？').waitFor()
   await dialog.getByRole('button', { name: '继续编辑' }).click()
@@ -56,9 +55,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.getByLabel('子账号名额', { exact: true }).inputValue(), '3')
   assert.equal(members[0].childLimit, 0)
   await dialog.getByRole('button', { name: '保存更改' }).click()
-  await dialog.getByText('设置已保存，播放权限正在同步。', { exact: true }).waitFor()
+  await dialog.getByText('设置已保存。', { exact: true }).waitFor()
   assert.equal(writes.length, 2)
-  assert.deepEqual(writes[1], { path: '/api/admin/member-playback/owner/settings', body: { source: 'primary', accountId: '', childLimit: 3, skipLibrarySync: true, expected: { source: 'personal', accountId: '', childLimit: 0, skipLibrarySync: false } } })
+  assert.deepEqual(writes[1], { path: '/api/admin/member-playback/owner/settings', body: { source: 'primary', accountId: '', childLimit: 3, expected: { source: 'personal', accountId: '', childLimit: 0 } } })
   await page.screenshot({ path: path.join(os.tmpdir(), 'cinema-user-dialog.png'), fullPage: true })
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   assert.equal(await owner.getByRole('button', { name: '管理用户' }).evaluate(el => el === document.activeElement), true)
@@ -78,7 +77,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByText('仅允许 Emby 播放，不允许网站登录。').waitFor()
   await page.keyboard.press('Escape')
   await admin.getByRole('button', { name: '管理用户' }).click()
-  assert.equal(await dialog.getByLabel('媒体库权限', { exact: true }).isDisabled(), true)
+  assert.equal(await dialog.getByLabel('媒体库权限', { exact: true }).count(), 0)
   assert.equal(await dialog.getByRole('switch').count(), 0)
   await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 390, height: 700 })
@@ -86,11 +85,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const bounds = await dialog.boundingBox(); assert.ok(bounds.height <= 700 && bounds.width <= 390)
   const footer = await dialog.locator('footer').boundingBox(); assert.ok(footer.y + footer.height <= 700)
   await dialog.getByText('更多操作', { exact: true }).click()
-  await dialog.getByRole('button', { name: '停用播放', exact: true }).click()
-  assert.equal(writes.length, 2)
-  await dialog.getByRole('button', { name: '确认停用', exact: true }).click()
+  assert.equal(await dialog.getByRole('button', { name: '停用媒体访问', exact: true }).count(), 0)
+  await dialog.getByRole('button', { name: '检查网盘', exact: true }).click()
   await dialog.getByText('操作已完成。').waitFor()
-  assert.equal(members[0].adminBlocked, true)
   await page.evaluate(() => document.documentElement.classList.add('dark'))
   const palette = await dialog.evaluate(el => {
    const form = el.querySelector('select'), footer = el.querySelector('footer')

@@ -61,6 +61,7 @@ type MemberPlaybackService struct {
 	qr               memberQRClient
 	gate             chan struct{}
 	wake             chan struct{}
+	healthWake       chan struct{}
 	mu               sync.RWMutex
 	records          map[string]model.MemberPlayback
 	settings         model.MemberPlaybackSettings
@@ -68,6 +69,10 @@ type MemberPlaybackService struct {
 	NewEmby          func(string, string) memberEmbyClient
 	ProxyStatus      func() EmbyProxyStatus // wired once before HTTP starts
 	ClearDirectLinks func()                 // wired once before HTTP starts
+	driveHealthMu    sync.Mutex
+	driveHealth      map[string]driveHealthEntry
+	driveHealthGate  chan struct{}
+	driveHealthEpoch uint64
 }
 
 func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Accounts, server *EmbyService, drive memberDriveClient, checker memberCookieChecker, qr memberQRClient) (*MemberPlaybackService, error) {
@@ -87,6 +92,14 @@ func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Acc
 		s.records[r.UserID] = r
 	}
 	s.wake = make(chan struct{}, 1)
+	s.healthWake = make(chan struct{}, 1)
+	s.driveHealth = make(map[string]driveHealthEntry)
+	s.driveHealthGate = make(chan struct{}, 1)
+	if accounts != nil {
+		accounts.mu.Lock()
+		accounts.playbackWake = s.healthWake
+		accounts.mu.Unlock()
+	}
 	return s, nil
 }
 func memberError(message string) error { return fmt.Errorf("%w：%s", ErrMemberPlayback, message) }
@@ -100,7 +113,12 @@ func (s *MemberPlaybackService) lock(ctx context.Context) error {
 		return memberError("操作正在进行，请稍后重试")
 	}
 }
-func (s *MemberPlaybackService) unlock() { <-s.gate }
+func (s *MemberPlaybackService) unlock() {
+	<-s.gate
+	// Account transactions may notify before the member binding is published.
+	// Wake again after the complete operation so new personal bindings are seen.
+	s.requestHealthCheck()
+}
 func (s *MemberPlaybackService) record(id string) model.MemberPlayback {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -150,27 +168,50 @@ func (s *MemberPlaybackService) SetSettings(ctx context.Context, settings model.
 		return err
 	}
 	defer s.unlock()
+	return s.setSettings(ctx, settings)
+}
+
+// Separate forms update only their owned fields under the same lock.
+func (s *MemberPlaybackService) SetRegistrationLibraries(ctx context.Context, ids []string) error {
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
+	settings := s.Settings()
+	settings.LibraryIDs = ids
+	return s.setSettings(ctx, settings)
+}
+
+func (s *MemberPlaybackService) SetPlaybackSettings(ctx context.Context, download bool, publicURL string) error {
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
+	settings := s.Settings()
+	settings.AllowDownload, settings.PublicURL = download, publicURL
+	return s.setSettings(ctx, settings)
+}
+
+func (s *MemberPlaybackService) setSettings(ctx context.Context, settings model.MemberPlaybackSettings) error {
 	c := s.emby.snapshot()
 	previous := s.Settings()
 	settings.Enabled = false // runtime projection only; never accept an independent playback toggle
+	settings.PublicURL = strings.TrimSpace(settings.PublicURL)
 	if settings.PublicURL != "" {
 		u, err := url.Parse(settings.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return memberError("请填写有效的 Emby 对外反代地址")
+			return memberError("请填写有效的 Emby 连接地址，或留空")
 		}
 		if c.APIKey == "" || c.ServerID == "" {
 			return memberError("请先配置并验证 Emby 服务")
 		}
 		settings.PublicURL = strings.TrimRight(settings.PublicURL, "/")
 	}
-	if previous.Enabled && (len(settings.LibraryIDs) == 0 || settings.PublicURL == "") {
-		return memberError("反代运行时需保留对外地址和至少一个默认组媒体库")
-	}
 	if len(settings.LibraryIDs) > 100 {
 		return memberError("媒体库数量超过限制")
 	}
 	ids := make([]string, 0, len(settings.LibraryIDs))
-	if len(settings.LibraryIDs) > 0 {
+	if len(settings.LibraryIDs) > 0 && (!slices.Equal(settings.LibraryIDs, previous.LibraryIDs) || previous.ServerID != c.ServerID || previous.EmbyURL != c.URL) {
 		libraries, err := s.Libraries(ctx)
 		if err != nil {
 			return err
@@ -200,13 +241,7 @@ func (s *MemberPlaybackService) SetSettings(ctx context.Context, settings model.
 	settings.LibraryIDs = ids
 	slices.Sort(settings.LibraryIDs)
 	settings.LibraryIDs = slices.Compact(settings.LibraryIDs)
-	previousIDs := slices.Clone(previous.LibraryIDs)
-	slices.Sort(previousIDs)
-	policyChanged := settings.AllowDownload != previous.AllowDownload || !slices.Equal(settings.LibraryIDs, previousIDs) || previous.EmbyURL != c.URL || previous.ServerID != c.ServerID
-	settings.Revision = previous.Revision
-	if policyChanged {
-		settings.Revision++
-	}
+	policyChanged := settings.AllowDownload != previous.AllowDownload || previous.EmbyURL != c.URL || previous.ServerID != c.ServerID
 	settings.EmbyURL, settings.ServerID = c.URL, c.ServerID
 	if err := s.db.SaveMemberPlaybackSettings(ctx, settings); err != nil {
 		return err
@@ -241,12 +276,8 @@ func (s *MemberPlaybackService) ApplyProxy(ctx context.Context, proxy *EmbyProxy
 		if c.URL != config.URL || settings.EmbyURL != c.URL || settings.ServerID != c.ServerID {
 			return memberError("请先保存同一 Emby 服务的媒体访问设置")
 		}
-		if settings.PublicURL == "" || len(settings.LibraryIDs) == 0 {
-			return memberError("请先保存对外反代地址与默认组媒体库，再开启 302 接管播放")
-		}
 		if !previous.Config.Enabled || !previous.Listening {
 			settings.Enabled = false
-			settings.Revision++
 			if err := s.db.SaveMemberPlaybackSettings(ctx, settings); err != nil {
 				return err
 			}
@@ -278,7 +309,7 @@ func (s *MemberPlaybackService) Libraries(ctx context.Context) ([]emby.Library, 
 }
 
 // Library browsing uses ItemId, but Emby user policies require Guid. Keep the
-// selected ItemIds in settings and resolve them against this server on each sync.
+// selected ItemIds in settings and resolve them when creating a new account.
 func memberPolicySettings(ctx context.Context, client memberEmbyClient, settings model.MemberPlaybackSettings) (model.MemberPlaybackSettings, error) {
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
@@ -302,6 +333,7 @@ func memberPolicySettings(ctx context.Context, client memberEmbyClient, settings
 
 // RequestSync coalesces work into the application-owned worker.
 func (s *MemberPlaybackService) RequestSync() {
+	s.requestHealthCheck()
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -352,9 +384,7 @@ type MemberPlaybackView struct {
 	EmbyName                   string                  `json:"embyName"`
 	EmbyURL                    string                  `json:"embyUrl"`
 	Suspended                  bool                    `json:"suspended"`
-	Blocked                    bool                    `json:"blocked"`
 	AllowDownload              bool                    `json:"allowDownload"`
-	SyncPending                bool                    `json:"syncPending"`
 	Source                     string                  `json:"source"`
 	Provisioned                bool                    `json:"provisioned"`
 	PendingDrive               bool                    `json:"pendingDrive"`
@@ -364,7 +394,7 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	r := s.record(id)
 	settings := s.Settings()
 	drive := s.personalDrive(r)
-	v := MemberPlaybackView{Enabled: settings.Enabled, Stage: r.Stage, Message: r.Message, UID: drive.UID, Connected: drive.Connected, DirectoryID: drive.DirectoryID, EmbyName: r.EmbyName, EmbyURL: settings.PublicURL, Suspended: r.Suspended, Blocked: r.AdminBlocked}
+	v := MemberPlaybackView{Enabled: settings.Enabled, Stage: r.Stage, Message: r.Message, UID: drive.UID, Connected: drive.Connected, DirectoryID: drive.DirectoryID, EmbyName: r.EmbyName, EmbyURL: settings.PublicURL, Suspended: r.Suspended}
 	v.AllowDownload = settings.AllowDownload
 	v.CanPreparePersonal = r.Source == "personal" || r.AllowPersonalSwitch
 	v.Source = r.Source
@@ -376,9 +406,8 @@ func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	v.DirectoryAccount = s.directoryAccountView(r)
 	v.NeedsDirectoryConfirmation = r.PendingAccountID != "" && r.PendingDirectoryStarted || r.DirectoryStarted && r.DirectoryID == ""
 
-	v.SyncPending = r.Source != "" && r.EmbyID != "" && (r.AppliedRevision != settings.Revision || r.SyncError != "")
-	if v.SyncPending {
-		v.Message = "权限正在同步，完成后自动恢复；失败时请联系管理员"
+	if r.CheckError != "" {
+		v.Message = r.CheckError
 	}
 	if r.UserID == "" {
 		v.Stage = "unbound"
@@ -408,9 +437,6 @@ func (s *MemberPlaybackService) CreateQR(ctx context.Context, id string, input M
 	r, err := s.ensure(ctx, id)
 	if err != nil {
 		return nil, err
-	}
-	if r.AdminBlocked {
-		return nil, memberError("播放已被管理员停用")
 	}
 	if r.Source != "personal" && !r.AllowPersonalSwitch {
 		return nil, memberError("当前由管理员提供播放账号，无需扫码")
@@ -470,7 +496,7 @@ func (s *MemberPlaybackService) PollQR(ctx context.Context, id, qrID string) (st
 	if r.AccountID != "" {
 		account, _ = s.accounts.Get(r.AccountID)
 	}
-	if r.AdminBlocked || r.AccountID != p.accountID || r.Source != p.source || (r.Source != "personal" && !r.AllowPersonalSwitch) || account.Revision != p.revision || r.AccountID != "" && (account.OwnerUserID != id || account.Ownership != "member") {
+	if r.AccountID != p.accountID || r.Source != p.source || (r.Source != "personal" && !r.AllowPersonalSwitch) || account.Revision != p.revision || r.AccountID != "" && (account.OwnerUserID != id || account.Ownership != "member") {
 		return "", ErrAccountChanged
 	}
 	state, err := s.qr.CheckQRCode(ctx, p.qr.ID)
@@ -582,30 +608,36 @@ func (s *MemberPlaybackService) AuthorizeMedia(ctx context.Context, server, id s
 		if download && !settings.AllowDownload {
 			return true, memberError("原文件下载已关闭，请联系管理员")
 		}
-		if r.AppliedRevision != settings.Revision || r.SyncError != "" || (!r.SkipLibrarySync && !r.Administrator && len(settings.LibraryIDs) == 0) {
-			return true, memberError("个人播放权限尚未同步，请稍后重试")
-		}
-		policyEnabled := r.PolicyEnabled
-		if download {
-			policyEnabled = r.DownloadEnabled
-		}
-		if r.EmbyURL != server || c.URL != r.EmbyURL || c.ServerID != r.ServerID || r.Stage != "ready" || !r.Provisioned || !policyEnabled || r.Suspended || r.AdminBlocked {
+		if r.EmbyURL != server || c.URL != r.EmbyURL || c.ServerID != r.ServerID || !r.Provisioned || r.Suspended {
 			return true, memberError("媒体访问尚未开通或已暂停，请检查账号授权与网盘绑定")
 		}
-		if _, err := s.playbackUser(ctx, r); err != nil {
+		remote, err := s.playbackUser(ctx, r)
+		if err != nil {
 			return true, err
 		}
-		if r.PlaybackOnly {
-			if err := s.authorizeChildOwner(ctx, r); err != nil {
-				return true, err
-			}
+		if (!download && remote.Policy["EnableMediaPlayback"] != true) || (download && remote.Policy["EnableContentDownloading"] != true) {
+			return true, memberError("Emby 未允许此用户播放或下载，请在 Emby 中检查用户权限")
 		}
-		if _, err := s.playbackAccount(r); err != nil {
-			return true, memberError("个人网盘不可用，已暂停播放")
+		if err := s.ensureOriginalPlayback(ctx, r, remote); err != nil {
+			return true, err
 		}
-		return true, nil
+		return true, s.checkDrive(ctx, r)
 	}
-	return true, memberError("播放尚未授权，请联系管理员")
+	c := s.emby.snapshot()
+	if c.URL != server || c.ServerID == "" || c.APIKey == "" {
+		return true, ErrLogin
+	}
+	remote, err := s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, id)
+	if err != nil {
+		return true, ErrPlaybackIdentityUnavailable
+	}
+	if remote.ID != id || remote.Policy["IsDisabled"] == true || strings.HasPrefix(strings.ToLower(remote.Name), "c115_") {
+		return true, ErrLogin
+	}
+	if _, err = s.ObserveUser(ctx, c, remote); err != nil {
+		return true, err
+	}
+	return s.AuthorizeMedia(ctx, server, id, download)
 }
 
 // New users can briefly exist upstream before their deny policy is applied.
@@ -622,10 +654,14 @@ func (s *MemberPlaybackService) AuthorizeLogin(ctx context.Context, server, id, 
 		if r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !r.Provisioned {
 			return memberError("Emby 身份尚未就绪")
 		}
-		if r.PlaybackOnly && (r.ChildDisabled || r.ChildRevoked || r.AdminBlocked) {
+		if r.PlaybackOnly && (r.ChildDisabled || r.ChildRevoked) {
 			return memberError("播放子账号已停用")
 		}
-		_, err := s.playbackUser(ctx, r)
+		remote, err := s.playbackUser(ctx, r)
+		if err != nil {
+			return err
+		}
+		_, err = s.ObserveUser(ctx, c, remote)
 		return err
 	}
 	c := s.emby.snapshot()
@@ -653,7 +689,7 @@ func memberPolicy(source map[string]any, enabled bool, settings model.MemberPlay
 	if len(login) > 0 {
 		p["IsDisabled"] = !login[0]
 	}
-	p["EnableMediaPlayback"] = enabled && settings.Enabled
+	p["EnableMediaPlayback"] = enabled
 	p["IsHidden"] = true
 	for _, key := range []string{"EnableContentDeletion", "EnableContentDownloading", "EnableSubtitleDownloading", "EnableSubtitleManagement", "EnableLiveTvAccess", "EnableLiveTvManagement", "EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableSyncTranscoding", "EnableMediaConversion", "EnableRemoteControlOfOtherUsers", "EnableSharedDeviceControl", "EnableAllChannels", "EnableAllDevices"} {
 		p[key] = false
@@ -661,7 +697,8 @@ func memberPolicy(source map[string]any, enabled bool, settings model.MemberPlay
 	p["EnableAllDevices"] = true
 	p["EnableAllFolders"] = false
 	p["EnabledFolders"] = append([]string{}, settings.LibraryIDs...)
-	p["EnableContentDownloading"] = enabled && settings.AllowDownload
+	// Emby grants the initial ability; the proxy independently enforces the download switch.
+	p["EnableContentDownloading"] = true
 	p["EnableRemoteAccess"] = true
 	p["EnableContentDeletionFromFolders"] = []string{}
 	p["RemoteClientBitrateLimit"] = 0
@@ -670,17 +707,6 @@ func memberPolicy(source map[string]any, enabled bool, settings model.MemberPlay
 
 func memberPolicyMatches(policy map[string]any, enabled bool, settings model.MemberPlaybackSettings, login ...bool) bool {
 	return memberPolicyMatchesExpected(policy, memberPolicy(nil, enabled, settings, login...))
-}
-
-// Keep the library selection owned by Emby, including an absent field.
-func preserveMemberLibraries(policy, source map[string]any) {
-	for _, key := range []string{"EnableAllFolders", "EnabledFolders"} {
-		if value, ok := source[key]; ok {
-			policy[key] = value
-		} else {
-			delete(policy, key)
-		}
-	}
 }
 
 func memberPolicyMatchesExpected(policy, expected map[string]any) bool {
@@ -739,34 +765,60 @@ func memberPolicyMatchesExpected(policy, expected map[string]any) bool {
 	}
 	return true
 }
-func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPlayback) (result error) {
+
+// Check results describe drive health only and never grant playback permission.
+func (s *MemberPlaybackService) checkDrive(ctx context.Context, r model.MemberPlayback) error {
+	if r.Suspended {
+		return memberError("个人网盘已解绑，播放暂停")
+	}
+	if r.PlaybackOnly {
+		if err := s.authorizeChildOwner(ctx, r); err != nil {
+			return err
+		}
+	}
+	a, err := s.playbackAccount(r)
+	if err != nil {
+		return err
+	}
+	valid, err := s.checker.CheckCookie(ctx, a.Cookie)
+	if err != nil {
+		return memberError("暂时无法检查网盘登录，请稍后重试")
+	}
+	if !valid {
+		return memberError("网盘登录已失效，请重新登录")
+	}
+	if r.Source != "primary" {
+		if err := s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie); err != nil {
+			return memberError("网盘目录不可用，请检查目录及账号")
+		}
+	}
+	return nil
+}
+
+func (s *MemberPlaybackService) recordDriveCheck(ctx context.Context, r model.MemberPlayback) error {
+	err := s.checkDrive(ctx, r)
+	r.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+	r.CheckError = ""
+	r.Stage, r.Message = "ready", "网盘最近检查通过"
+	if err != nil {
+		r.Stage, r.Message = "pending", "网盘检查失败，请稍后重试"
+		if errors.Is(err, ErrMemberPlayback) {
+			r.Message = err.Error()
+		}
+		r.CheckError = r.Message
+	}
+	return s.save(ctx, r)
+}
+
+// Explicit checks enforce only original-file restrictions and child login lifecycle.
+// They never derive an Emby playback switch from drive health.
+func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPlayback) error {
 	if r.EmbyID == "" {
 		return nil
 	}
-	// Offline browsing and profile discovery must not rewrite existing Emby policies.
-	// Explicit revocations still enforce the permanent disabled child identity.
-	if !s.Settings().Enabled && !r.AdminBlocked && !r.ChildDisabled && !r.ChildRevoked {
+	if !s.Settings().Enabled && !(r.PlaybackOnly && (r.ChildDisabled || r.ChildRevoked || r.ChildManagedDisabled)) {
 		return nil
 	}
-	defer func() {
-		if result == nil {
-			return
-		}
-		failed := s.record(r.UserID)
-		failed.PolicyEnabled = false
-		failed.DownloadEnabled = false
-		failed.LoginEnabled = false
-		failed.SyncError = "Emby 权限同步失败，已暂停播放；请检查服务后重试"
-		if errors.Is(result, ErrMemberPlayback) {
-			failed.SyncError = result.Error()
-		}
-		persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		if err := s.save(persist, failed); err != nil {
-			result = errors.Join(result, err)
-		}
-	}()
-	settings := s.Settings()
 	c, client, err := s.config()
 	if err != nil {
 		return err
@@ -775,135 +827,49 @@ func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPla
 		return memberError("Emby 服务不一致")
 	}
 	u, err := client.ManagedUser(ctx, r.EmbyID)
-	if err != nil {
-		return memberError("Emby 用户状态不可用")
+	if err != nil || u.ID != r.EmbyID {
+		return memberError("无法读取 Emby 用户状态，请检查连接及用户是否存在")
 	}
 	r.Administrator = u.Policy["IsAdministrator"] == true
 	if r.PlaybackOnly && r.Administrator {
-		return memberError("子账号已变为管理员，停止托管，请联系管理员")
+		return memberError("子账号已变为管理员，停止托管")
 	}
 	if r.Administrator {
-		r.SkipLibrarySync = true
 		r.AllowPersonalSwitch = false
 	}
-	if u.Policy["IsDisabled"] != true && !r.AdminBlocked {
+	if u.Policy["IsDisabled"] != true {
 		if err := s.assignPool(ctx, &r); err != nil {
 			return err
 		}
 	}
 	r.EmbyName = u.Name
-	if r.PolicyEnabled && u.Policy["EnableMediaPlayback"] == false {
-		r.AdminBlocked = true
-	}
-	login := r.Provisioned && (u.Policy["IsDisabled"] != true || r.Stage == "provisioning")
+	policy := playbackRestrictions(u.Policy)
 	if r.PlaybackOnly {
-		// A managed disable can be reversed by its owner; unrelated upstream disables stay in force.
-		login = r.Provisioned && !r.ChildDisabled && !r.ChildRevoked && !r.AdminBlocked && (u.Policy["IsDisabled"] != true || r.ChildManagedDisabled)
-		r.ChildManagedDisabled = r.Provisioned && (r.ChildDisabled || r.ChildRevoked || r.AdminBlocked || r.ChildManagedDisabled) && !login
-	}
-
-	enabled := login && settings.Enabled && (r.SkipLibrarySync || len(settings.LibraryIDs) > 0) && !r.AdminBlocked && !r.Suspended && r.Source != ""
-	a, err := s.playbackAccount(r)
-	if err != nil {
-		enabled = false
-	}
-	if enabled && r.PlaybackOnly {
-		if err := s.authorizeChildOwner(ctx, r); err != nil {
-			enabled = false
+		if r.ChildDisabled || r.ChildRevoked || !r.Provisioned {
+			policy["IsDisabled"] = true
+			// Record our disable before the network write, allowing safe owner recovery.
+			r.ChildManagedDisabled = true
+			if err := s.save(ctx, r); err != nil {
+				return err
+			}
+		} else if r.ChildManagedDisabled {
+			policy["IsDisabled"] = false
 		}
 	}
-	if enabled {
-		valid, err := s.checker.CheckCookie(ctx, a.Cookie)
-		if err != nil || !valid {
-			enabled = false
+	if !memberPolicyMatchesExpected(u.Policy, policy) {
+		if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
+			return memberError("Emby 播放限制应用结果未确认，请刷新后检查")
 		}
-		if enabled && r.Source != "primary" && s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie) != nil {
-			enabled = false
-		}
-	}
-	// Persist the deny state before network I/O. An uncertain enabling write never
-	// makes the proxy ready; the next reconciliation re-applies policy.
-	if !enabled && r.Stage != "creating" {
-		r.Stage = "paused"
-		r.Message = "播放已暂停，请检查网盘登录、目录或联系管理员"
-	}
-	r.PolicyEnabled = false
-	r.DownloadEnabled = false
-	r.LoginEnabled = false
-	if err := s.save(ctx, r); err != nil {
-		return err
-	}
-	policySettings := settings
-	if !r.SkipLibrarySync {
-		policySettings, err = memberPolicySettings(ctx, client, settings)
-		if err != nil {
-			return err
-		}
-	}
-	policy := memberPolicy(u.Policy, enabled, policySettings, login)
-	expected := memberPolicy(nil, enabled, policySettings, login)
-	denied := memberPolicy(u.Policy, false, policySettings)
-	if r.Administrator {
-		policy = administratorPlaybackPolicy(u.Policy, enabled && settings.Enabled, enabled && settings.AllowDownload)
-		expected = administratorPlaybackPolicy(nil, enabled && settings.Enabled, enabled && settings.AllowDownload)
-		denied = administratorPlaybackPolicy(u.Policy, false, false)
-	}
-	if r.SkipLibrarySync {
-		preserveMemberLibraries(policy, u.Policy)
-		preserveMemberLibraries(expected, u.Policy)
-		preserveMemberLibraries(denied, u.Policy)
-	}
-	if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
-		return memberError("Emby 权限同步失败，稍后自动重试")
 	}
 	verified, err := client.ManagedUser(ctx, r.EmbyID)
-	if err != nil || !memberPolicyMatchesExpected(verified.Policy, expected) {
-		_ = client.SetManagedPolicy(ctx, r.EmbyID, denied)
-		return memberError("Emby 未确认预期权限，个人播放保持锁定")
+	if err != nil || verified.ID != r.EmbyID || !memberPolicyMatchesExpected(verified.Policy, policy) {
+		return memberError("Emby 未确认播放限制，请刷新后检查")
 	}
-	if enabled {
-		r.Stage = "ready"
-		r.Message = "账号已就绪，请通过下方反代地址登录 Emby"
-		r.PolicyEnabled = settings.Enabled
-		r.DownloadEnabled = settings.AllowDownload
+	if r.PlaybackOnly && !r.ChildDisabled && !r.ChildRevoked && r.Provisioned {
+		r.ChildManagedDisabled = false
 	}
-	r.LoginEnabled = login
-	if login && !enabled {
-		r.Stage = "pending"
-		r.Message = "Emby 可登录浏览；网盘账号就绪后自动开通播放"
-		if r.Source == "primary" {
-			r.Message = "主网盘暂不可用，请管理员检查主账号凭据"
-		}
-		if r.Source == "assigned" && r.AssignedAccountID != "" {
-			r.Message = "Emby 可登录浏览；管理员提供的播放账号暂不可用，请联系管理员"
-		}
-		if r.Source == "personal" && r.DirectoryStarted && r.DirectoryID == "" {
-			r.Message = "Emby 可登录浏览；网盘目录创建结果待核查，请在个人中心确认目录编号"
-		}
-		if r.Source == "personal" && r.AccountID == "" {
-			r.Message = "请在个人中心绑定自己的 115 并选择目录，完成后自动开通播放"
-		}
-		if r.AdminBlocked {
-			r.Message = "管理员已停用媒体访问，请联系管理员"
-		}
-		if r.Suspended {
-			r.Stage = "paused"
-			r.Message = "Emby 可登录浏览，播放已暂停；绑定 115 账号后可恢复"
-		}
-	}
-	if r.PlaybackOnly && !enabled {
-		r.Message = "共享播放暂不可用，请联系账号所有者"
-		if r.ChildRevoked {
-			r.Message = "子账号共享已撤销"
-		} else if r.ChildDisabled {
-			r.Message = "子账号已停用"
-		} else if r.ChildPaused {
-			r.Message = "子账号播放已暂停"
-		}
-	}
-	r.AppliedRevision = settings.Revision
-	r.SyncError = ""
-	return s.save(ctx, r)
+	s.requestHealthCheck()
+	return s.recordDriveCheck(ctx, r)
 }
 func (s *MemberPlaybackService) Suspend(ctx context.Context, id string) error {
 	if err := s.lock(ctx); err != nil {
@@ -933,35 +899,6 @@ func (s *MemberPlaybackService) Suspend(ctx context.Context, id string) error {
 	}
 	return s.reconcile(ctx, r)
 }
-func (s *MemberPlaybackService) AdminUpdate(ctx context.Context, id string, blocked *bool, directory string, retry bool) error {
-	if directory != "" {
-		return memberError("个人网盘目录只能由用户本人确认")
-	}
-	return s.updatePlayback(ctx, id, blocked)
-}
-func (s *MemberPlaybackService) updatePlayback(ctx context.Context, id string, blocked *bool) error {
-	if err := s.lock(ctx); err != nil {
-		return err
-	}
-	defer s.unlock()
-	r := s.record(id)
-	if r.UserID == "" {
-		return memberError("个人播放配置不存在")
-	}
-	if blocked != nil {
-		r.AdminBlocked = *blocked
-		r.PolicyEnabled = false
-		r.DownloadEnabled = false
-		r.LoginEnabled = false
-	}
-	if r.AdminBlocked {
-		r.Stage = "paused"
-	}
-	if err := s.save(ctx, r); err != nil {
-		return err
-	}
-	return s.reconcile(ctx, r)
-}
 func (s *MemberPlaybackService) SyncUser(ctx context.Context, id string) error {
 	if err := s.lock(ctx); err != nil {
 		return err
@@ -969,7 +906,23 @@ func (s *MemberPlaybackService) SyncUser(ctx context.Context, id string) error {
 	defer s.unlock()
 	return s.reconcile(ctx, s.record(id))
 }
+
+func (s *MemberPlaybackService) CheckUserPlayback(ctx context.Context, id string) error {
+	r := s.record(id)
+	if r.UserID == "" {
+		return memberError("用户不存在，请刷新")
+	}
+	a, err := s.healthAccount(r)
+	if err != nil {
+		return nil // The response carries the current binding/lifecycle condition.
+	}
+	return s.refreshDriveHealth(ctx, a, true)
+}
 func (s *MemberPlaybackService) Run(ctx context.Context) {
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); s.runDriveHealth(ctx) }()
+	defer workers.Wait()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -978,7 +931,9 @@ func (s *MemberPlaybackService) Run(ctx context.Context) {
 				return
 			}
 			op, cancel := context.WithTimeout(ctx, 40*time.Second)
-			_ = s.SyncUser(op, r.UserID)
+			if r.PlaybackOnly && (r.ChildDisabled || r.ChildRevoked || r.ChildManagedDisabled) {
+				_ = s.SyncUser(op, r.UserID)
+			}
 			cancel()
 		}
 		select {
@@ -1010,19 +965,19 @@ func (s *MemberPlaybackService) playbackUser(ctx context.Context, r model.Member
 	if u.ID != r.EmbyID || u.Policy["IsDisabled"] == true {
 		return u, ErrLogin
 	}
-	if r.PlaybackOnly && (u.Policy["IsAdministrator"] == true || r.ChildDisabled || r.ChildRevoked || r.AdminBlocked) {
+	if r.PlaybackOnly && (u.Policy["IsAdministrator"] == true || r.ChildDisabled || r.ChildRevoked) {
 		return u, ErrLogin
 	}
 	return u, nil
 }
-func administratorPlaybackPolicy(source map[string]any, enabled, download bool) map[string]any {
+
+// Emby owns playback and all ordinary permissions. Only original-file
+// restrictions are continuously enforced by Cinema115.
+func playbackRestrictions(source map[string]any) map[string]any {
 	p := make(map[string]any, len(source)+8)
 	for k, v := range source {
 		p[k] = v
 	}
-	p["IsAdministrator"] = true
-	p["EnableMediaPlayback"] = enabled
-	p["EnableContentDownloading"] = download
 	for _, key := range []string{"EnableVideoPlaybackTranscoding", "EnableAudioPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableSyncTranscoding", "EnableMediaConversion"} {
 		p[key] = false
 	}
