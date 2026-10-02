@@ -15,7 +15,11 @@ type playbackReadPool struct {
 }
 
 func (c *ShareClient) playbackReader(cookie string) *ShareClient {
-	key := playbackCredentialHash(cookie)
+	return c.playbackScopedReader("metadata", cookie)
+}
+
+func (c *ShareClient) playbackScopedReader(scope, cookie string) *ShareClient {
+	key := playbackPreparationKey(scope, cookie)
 	c.playbackReaders.mu.Lock()
 	defer c.playbackReaders.mu.Unlock()
 	if child := c.playbackReaders.clients[key]; child != nil {

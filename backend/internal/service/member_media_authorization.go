@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"strm115/backend/internal/client/emby"
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 )
 
@@ -90,7 +92,9 @@ func (s *MemberPlaybackService) BeginMediaAuthorization(ctx context.Context, ser
 	if err := mediaPermission(remote, download); err != nil {
 		return nil, err
 	}
-	if err := s.ensureOriginalPlayback(ctx, r, remote); err != nil {
+	if err := s.mediaCheckTiming(ctx, "Emby 原文件限制检查", func(ctx context.Context) error {
+		return s.ensureOriginalPlayback(ctx, r, remote)
+	}); err != nil {
 		return nil, err
 	}
 	if r.PlaybackOnly {
@@ -155,6 +159,28 @@ func (s *MemberPlaybackService) checkMediaDrive(ctx context.Context, a P115Accou
 }
 
 func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Account) error {
+	if !a.Primary {
+		if drive, ok := s.drive.(interface {
+			ValidateMediaPlaybackDirectory(context.Context, string, string, string) error
+		}); ok {
+			err := s.mediaCheckTiming(ctx, "115 登录与目录合并核验", func(ctx context.Context) error {
+				return drive.ValidateMediaPlaybackDirectory(ctx, a.ID, a.PlaybackParentCID, a.Cookie)
+			})
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				return memberError("网盘登录或目录不可用，请检查账号及目录")
+			}
+			return nil
+		}
+	}
+	return s.mediaCheckTiming(ctx, "115 登录及目录检查", func(ctx context.Context) error {
+		return s.probeMediaDriveSeparate(ctx, a)
+	})
+}
+
+func (s *MemberPlaybackService) probeMediaDriveSeparate(ctx context.Context, a P115Account) error {
 	valid, err := s.checker.CheckCookie(ctx, a.Cookie)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -175,6 +201,27 @@ func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Accou
 		}
 	}
 	return nil
+}
+
+func (s *MemberPlaybackService) mediaCheckTiming(ctx context.Context, stage string, check func(context.Context) error) error {
+	if !ProxyDebugEnabled(ctx) || s.Cache == nil {
+		return check(ctx)
+	}
+	started := time.Now()
+	var total p115.RequestTiming
+	readCtx := p115.WithRequestTiming(ctx, func(v p115.RequestTiming) {
+		total.Requests += v.Requests
+		total.Retries += v.Retries
+		total.Wait += v.Wait
+		total.HTTP += v.HTTP
+	})
+	err := check(readCtx)
+	message := fmt.Sprintf("媒体授权计时：%s=%d ms｜成功=%t", stage, time.Since(started).Milliseconds(), err == nil)
+	if total.Requests > 0 || total.Wait > 0 {
+		message += fmt.Sprintf("｜115 请求=%d｜重试=%d｜排队及限速=%d ms｜HTTP合计=%d ms", total.Requests, total.Retries, total.Wait.Milliseconds(), total.HTTP.Milliseconds())
+	}
+	s.Cache.logs.Add(ctx, "INFO", message)
+	return err
 }
 
 func mediaPermission(u emby.ManagedUser, download bool) error {

@@ -574,6 +574,7 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 	if h.cache != nil && h.cache.Members != nil {
+		timing.next("业务身份与网盘实时核验")
 		authorized, err := h.cache.Members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
 		if err != nil {
 			fail(playbackAuthorizationFailure(ctx, err))

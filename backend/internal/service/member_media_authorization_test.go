@@ -8,6 +8,55 @@ import (
 	"time"
 )
 
+type mediaDirectoryDrive struct {
+	memberDriveClient
+	check func(context.Context, string, string, string) error
+}
+
+func (d mediaDirectoryDrive) ValidateMediaPlaybackDirectory(ctx context.Context, scope, cid, cookie string) error {
+	return d.check(ctx, scope, cid, cookie)
+}
+
+func TestBoundMediaAuthorizationUsesOneFreshAuthenticatedDirectoryRead(t *testing.T) {
+	s, remote, id := memberFixture(t)
+	memberScan(t, s, id)
+	r := s.record(id)
+	a, err := s.playbackAccount(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := 0
+	var failure error
+	s.drive = mediaDirectoryDrive{memberDriveClient: s.drive, check: func(ctx context.Context, scope, cid, cookie string) error {
+		checks++
+		if scope != a.ID || cid != a.PlaybackParentCID || cookie != a.Cookie {
+			t.Fatal("wrong account snapshot")
+		}
+		return failure
+	}}
+	s.checker = healthCheckerFunc(func(context.Context, string) (bool, error) {
+		t.Fatal("duplicate login request after authenticated directory read")
+		return false, nil
+	})
+	u := remote.users[r.EmbyID]
+	for i := 1; i <= 2; i++ {
+		grant, err := s.BeginMediaAuthorization(context.Background(), r.EmbyURL, r.EmbyID, false, &u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := grant.Revalidate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if checks != i {
+			t.Fatal("fresh request reused authorization or late check repeated HTTP", checks)
+		}
+	}
+	failure = errors.New("credentials expired or directory deleted")
+	if _, err := s.BeginMediaAuthorization(context.Background(), r.EmbyURL, r.EmbyID, false, &u); err == nil || checks != 3 {
+		t.Fatal("failed directory check reused earlier authorization")
+	}
+}
+
 func TestRequestAuthorizationRechecksLocalChangesWithoutProbingDrive(t *testing.T) {
 	s, remote, owner, child := childFixture(t)
 	ctx := context.Background()

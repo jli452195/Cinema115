@@ -349,8 +349,13 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	if err := commitRanges(); err != nil {
 		return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
 	}
-	next("目标 SHA1 校验与取链")
-	s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
+	if preparingPlaybackFile(ctx) {
+		next("目标文件元数据核验")
+		s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执核验目标文件；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
+	} else {
+		next("目标 SHA1 校验与取链")
+		s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
+	}
 	var file p115.DrivePlaybackFile
 	var link string
 	if preparingPlaybackFile(ctx) {

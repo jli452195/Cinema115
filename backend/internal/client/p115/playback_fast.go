@@ -93,6 +93,35 @@ func (c *ShareClient) ValidatePlaybackDirectory(ctx context.Context, scope, cid,
 	return c.validatePlaybackDirectory(ctx, scope, cid, cookie, playbackDirectoryTTL)
 }
 
+// A successful authenticated directory read proves both current credential
+// usability and the exact target directory. Never use cached success to grant
+// a new media request. Keep this lane separate from scans and SHA1 lookups so
+// the authorization read does not add a throttle wait before file resolution.
+func (c *ShareClient) ValidateMediaPlaybackDirectory(ctx context.Context, scope, cid, cookie string) error {
+	if scope == "" || CookieUserID(cookie) == "" || !validDriveID(cid, true) {
+		return fmt.Errorf("目录校验账号配置无效")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key := playbackPreparationKey(scope+"\x00"+cid, cookie)
+	c.playbackPreparation.mu.Lock()
+	delete(c.playbackPreparation.directories, key)
+	c.playbackPreparation.mu.Unlock()
+	if err := c.playbackScopedReader("media-authorization", cookie).ValidateCacheParent(ctx, cid, cookie); err != nil {
+		return err
+	}
+	// Reuse this real check for subsequent upload/recovery preflight. This cache
+	// is never consulted by ValidateMediaPlaybackDirectory itself.
+	c.playbackPreparation.mu.Lock()
+	if c.playbackPreparation.directories == nil || len(c.playbackPreparation.directories) >= 256 {
+		c.playbackPreparation.directories = make(map[string]time.Time)
+	}
+	c.playbackPreparation.directories[key] = time.Now().Add(playbackDirectoryTTL)
+	c.playbackPreparation.mu.Unlock()
+	return nil
+}
+
 // Recovery accepts only a recent real directory check. Cache hits do not
 // extend freshness; credential, scope and directory changes isolate entries.
 func (c *ShareClient) ValidatePlaybackRecoveryDirectory(ctx context.Context, scope, cid, cookie string) (resultErr error) {
