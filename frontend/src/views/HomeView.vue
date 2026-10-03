@@ -33,7 +33,7 @@ const current = computed(() => categories[props.category])
 <template>
   <ManagementLayout :title="current.title" :description="current.description" @logout="emit('logout')">
     <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-      <RouterLink v-for="feature in current.features" :key="feature.to" :to="feature.to" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm transition hover:border-slate-300 dark:border-slate-600 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400">
+      <RouterLink v-for="feature in current.features" :key="feature.to" :to="feature.to" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400">
         <span class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl" :class="feature.icon === 'emby' ? 'bg-emerald-50 dark:bg-emerald-900/30' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600'">
           <img v-if="feature.icon === 'emby'" :src="embyIcon" alt="" class="h-7 w-7" />
           <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
