@@ -81,6 +81,8 @@ func (s *MemberPlaybackService) PersistPoolCooling() error {
 }
 
 type PoolRequest struct {
+	Device         string
+	handoff        *model.UserPlaybackLease
 	Client         string
 	eventFallback  string
 	userGeneration uint64
@@ -91,6 +93,7 @@ type PoolRequest struct {
 	Source         string
 	Download       bool
 	Task           bool
+	slotKey        string
 	lifecycleKey   string
 }
 
@@ -122,12 +125,16 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 	}
 	key := DirectLinkKey(r.ServerID, r.UserID, req.Session, req.Item, req.Source, strconv.FormatBool(req.Download))
 	if !req.Download {
+		if req.Device != "" && !req.Task {
+			req.slotKey = DirectLinkKey("pool-slot", r.ServerID, r.UserID, req.Device)
+		}
 		req.lifecycleKey = DirectLinkKey(r.ServerID, r.UserID, req.Session, req.Item)
 		if req.Client != "" {
 			req.eventFallback = DirectLinkKey("playback-event", r.ServerID, r.UserID, req.Client, req.Item)
 		}
 		if holder, _ := ctx.Value(userPlaybackRequestKey{}).(*UserPlaybackRequest); holder != nil && holder.lease != nil {
 			req.userGeneration = holder.lease.Record.Generation
+			req.handoff = holder.lease.handoff
 		}
 		if req.PlaySession != "" && len(req.PlaySession) <= 256 {
 			req.observationKey = DirectLinkKey("pool-observation", r.ServerID, r.EmbyID, req.PlaySession, req.Item)
@@ -179,6 +186,22 @@ func (a *MediaAuthorization) Close() error {
 func (a *MediaAuthorization) Commit(ctx context.Context) error {
 	if err := a.Revalidate(ctx); err != nil {
 		return err
+	}
+	if a.userLease != nil && a.poolLease != nil && a.poolLease.Record.SlotKey != "" {
+		return a.commitDevicePlayback(ctx)
+	}
+	if a.userLease != nil && a.userLease.handoff != nil {
+		if err := a.commitHandoff(ctx); err != nil {
+			return err
+		}
+		if a.service.Cache != nil && a.service.Cache.logs != nil {
+			if a.userLease.Record.HandoffAt != 0 {
+				a.service.Cache.logs.Add(ctx, "INFO", "新会话播放证据已确认，同设备静默旧会话接替完成")
+			} else {
+				a.service.Cache.logs.Add(ctx, "INFO", "新取链尚未确认播放，保留旧会话；本次按独立名额提交")
+			}
+		}
+		return nil
 	}
 	if a.poolLease != nil {
 		if err := a.poolLease.Commit(ctx); err != nil {

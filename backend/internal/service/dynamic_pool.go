@@ -49,7 +49,7 @@ func NewDynamicPool(ctx context.Context, store poolStore) (*DynamicPool, error) 
 		return nil, err
 	}
 	if d.Settings.MaxSessions == 0 {
-		d.Settings = model.PlaybackPoolSettings{MaxSessions: 3, MaxAttempts: 3, BudgetSeconds: 90, LeaseMinutes: 240, CooldownSeconds: 30, UIDIntervalMS: 250, GlobalIntervalMS: 50}
+		d.Settings = model.PlaybackPoolSettings{MaxSessions: 3, MaxAttempts: 3, BudgetSeconds: 90, LeaseMinutes: 5, CooldownSeconds: 30, UIDIntervalMS: 250, GlobalIntervalMS: 50}
 	}
 	if err := validatePoolSettings(d.Settings); err != nil {
 		return nil, err
@@ -155,18 +155,8 @@ func (p *DynamicPool) AccountStatus(a P115Account) PoolAccountStatus {
 		v.State = "throttled"
 		v.RetryAt = max(v.RetryAt, p.doc.GlobalUntil)
 	}
-	for k, l := range p.doc.Leases {
-		if l.UID == a.UID && l.ExpiresAt > p.now().UnixMilli() {
-			v.Sessions++
-			if k != l.Key || l.Stopped {
-				v.Residual++
-			}
-			if !l.Issued {
-				v.Preparing++
-			}
-		}
-	}
-	v.Active = max(0, v.Sessions-v.Preparing-v.Residual)
+	occupancy := poolUIDOccupancy(p.doc, a.UID, p.now().UnixMilli())
+	v.Sessions, v.Active, v.Preparing, v.Residual = occupancy.total, occupancy.active, occupancy.preparing, occupancy.residual
 	v.Message = poolHealthMessage(v.State)
 	return v
 }
@@ -236,16 +226,48 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		return nil, ErrPoolCooling
 	}
 	counts := make(map[string]int, len(accounts))
+	counted := make(map[string]bool, len(d.Leases))
 	for k, l := range d.Leases {
 		if l.ExpiresAt <= now {
 			delete(d.Leases, k)
 			continue
 		}
-		counts[l.UID]++
+		if !borrowedPoolSlot(d, l, now) {
+			id := DirectLinkKey(l.UID, poolCapacityKey(k, l))
+			if !counted[id] {
+				counts[l.UID]++
+				counted[id] = true
+			}
+		}
+	}
+	req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
+	slotKey := requestPoolSlot(req, user)
+	slotTarget := poolSlotTarget(d, slotKey, user, now)
+	sharesSlot := func(a P115Account) bool { return poolHasSlot(d, slotKey, a.UID, now) }
+	preferredSlot := func(a P115Account) bool {
+		return slotTarget.Key != "" && slotTarget.AccountID == a.ID && slotTarget.UID == a.UID && slotTarget.Revision == a.Revision && slotTarget.DirectoryID == a.PlaybackParentCID
+	}
+	borrow := poolHandoffCandidate(d, req, user, now)
+	if slotKey != "" {
+		borrow = model.PlaybackPoolLease{}
+	}
+	canBorrow := func(a P115Account) bool {
+		return borrow.Key != "" && borrow.AccountID == a.ID && borrow.UID == a.UID && borrow.Revision == a.Revision && borrow.DirectoryID == a.PlaybackParentCID && d.Health[a.ID].State == "ready" && d.Health[a.ID].Revision == a.Revision
 	}
 	previous, exists := d.Leases[key]
 	if exists && previous.UserID != user {
 		return nil, ErrLogin
+	}
+	if slotKey != "" {
+		pending := 0
+		for k, l := range d.Leases {
+			if l.SlotKey == slotKey && k != key && !l.Issued {
+				pending++
+			}
+		}
+		if pending >= 1 && !exists {
+			return nil, ErrPoolBusy
+		}
 	}
 	options := make([]P115Account, 0, len(accounts))
 	seen := make(map[string]bool)
@@ -284,7 +306,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			blockPoolUID(blocked, a.UID, "already_attempted")
 			continue
 		}
-		if exists && previous.AccountID == a.ID && previous.UID == a.UID && previous.Revision == a.Revision && previous.DirectoryID == a.PlaybackParentCID {
+		if exists && previous.AccountID == a.ID && previous.UID == a.UID && previous.Revision == a.Revision && previous.DirectoryID == a.PlaybackParentCID && (slotKey == "" || slotTarget.Key == "" || preferredSlot(a)) {
 			req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
 			if previous.Stopped || req.userGeneration != 0 && previous.UserGeneration != req.userGeneration {
 				d.Generation++
@@ -299,17 +321,30 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			p.metrics.Reused++
 			return &PoolLease{pool: p, Record: previous, Account: a, healthSequence: h.Sequence}, nil
 		}
-		if mode == "draining" {
+		if mode == "draining" && !preferredSlot(a) {
 			blockPoolUID(blocked, a.UID, string(PoolDraining))
 			full = true
 			continue
 		}
-		if counts[a.UID] >= d.Settings.MaxSessions {
+		if counts[a.UID] >= d.Settings.MaxSessions && !canBorrow(a) && !sharesSlot(a) {
 			blockPoolUID(blocked, a.UID, string(PoolCapacityFull))
 			full = true
 			continue
 		}
 		// A recovering UID admits one preparing request, not a probe storm.
+		if slotKey != "" && !sharesSlot(a) {
+			uids := make(map[string]bool)
+			for _, l := range d.Leases {
+				if l.SlotKey == slotKey {
+					uids[l.UID] = true
+				}
+			}
+			if len(uids) >= 3 {
+				full = true
+				blockPoolUID(blocked, a.UID, string(PoolLeaseLimit))
+				continue
+			}
+		}
 		if h.State != "ready" {
 			preparing := false
 			for _, lease := range d.Leases {
@@ -324,7 +359,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 				continue
 			}
 		}
-		if !seen[a.UID] {
+		if !seen[a.UID] || canBorrow(a) || preferredSlot(a) {
 			options = append(options, a)
 			seen[a.UID] = true
 		}
@@ -350,6 +385,12 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	preferred := p.poolPreferences(ctx, user, now)
 	// Capacity ranks first. Local copy and expiring preference only break ties.
 	sort.Slice(options, func(i, j int) bool {
+		if preferredSlot(options[i]) != preferredSlot(options[j]) {
+			return preferredSlot(options[i])
+		}
+		if canBorrow(options[i]) != canBorrow(options[j]) {
+			return canBorrow(options[i])
+		}
 		if counts[options[i].UID] != counts[options[j].UID] {
 			return counts[options[i].UID] < counts[options[j].UID]
 		}
@@ -359,16 +400,23 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		return options[i].ID < options[j].ID
 	})
 	n := 1
-	for n < len(options) && counts[options[n].UID] == counts[options[0].UID] && preferred(options[n].UID) == preferred(options[0].UID) {
+	for n < len(options) && preferredSlot(options[n]) == preferredSlot(options[0]) && canBorrow(options[n]) == canBorrow(options[0]) && counts[options[n].UID] == counts[options[0].UID] && preferred(options[n].UID) == preferred(options[0].UID) {
 		n++
 	}
 	a := options[int(d.Generation%uint64(n))]
+	reusesSlot := sharesSlot(a)
 	if exists && previous.Issued {
 		// A previously issued CDN URL may remain in use even after failover.
+		previous.Stopped = true
+		previous.ExpiresAt = min(previous.ExpiresAt, p.now().Add(2*time.Minute).UnixMilli())
 		d.Leases[fmt.Sprintf("residual:%s:%d", key, previous.Generation)] = previous
 	}
 	d.Generation++
 	l := model.PlaybackPoolLease{Key: key, UserID: user, AccountID: a.ID, UID: a.UID, Revision: a.Revision, DirectoryID: a.PlaybackParentCID, Generation: d.Generation, ExpiresAt: p.now().Add(time.Duration(d.Settings.BudgetSeconds+5) * time.Second).UnixMilli()}
+	l.SlotKey = slotKey
+	if canBorrow(a) {
+		l.BorrowedKey, l.BorrowedGeneration = borrow.Key, borrow.Generation
+	}
 	if req, ok := ctx.Value(poolRequestKey{}).(PoolRequest); ok {
 		l.SessionKey = req.lifecycleKey
 		l.EventFallback = req.eventFallback
@@ -383,7 +431,11 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		return nil, err
 	}
 	p.metrics.Allocations++
-	p.metrics.PeakUIDSessions = max(p.metrics.PeakUIDSessions, counts[a.UID]+1)
+	additional := 1
+	if canBorrow(a) || reusesSlot {
+		additional = 0
+	}
+	p.metrics.PeakUIDSessions = max(p.metrics.PeakUIDSessions, counts[a.UID]+additional)
 	if preferred(a.UID) >= 2 {
 		p.metrics.CopyPreferred++
 	} else if preferred(a.UID) == 1 {
@@ -508,7 +560,7 @@ func (l *PoolLease) Current() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c, ok := p.doc.Leases[l.Record.Key]
-	return ok && c.Generation == l.Record.Generation && c.ExpiresAt > p.now().UnixMilli() && p.doc.Modes[c.AccountID] != "disabled"
+	return ok && !c.Stopped && c.Generation == l.Record.Generation && c.ExpiresAt > p.now().UnixMilli() && p.doc.Modes[c.AccountID] != "disabled"
 }
 
 func (l *PoolLease) Commit(ctx context.Context) error {
@@ -517,6 +569,9 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 	defer p.mu.Unlock()
 	d := p.clone()
 	c, ok := d.Leases[l.Record.Key]
+	if c.BorrowedKey != "" {
+		return ErrAccountChanged
+	} // Requires atomic user + pool handoff.
 	if !ok || c.Generation != l.Record.Generation || c.ExpiresAt <= p.now().UnixMilli() || d.Modes[c.AccountID] == "disabled" {
 		return ErrAccountChanged
 	}
@@ -525,6 +580,7 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 		return ErrAccountChanged
 	}
 	c.Issued = true
+	c.IssuedAt = p.now().UnixMilli()
 	c.Stopped = false
 	c.ExpiresAt = p.now().Add(time.Duration(d.Settings.LeaseMinutes) * time.Minute).UnixMilli()
 	d.Leases[c.Key] = c

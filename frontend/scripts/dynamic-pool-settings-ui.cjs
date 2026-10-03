@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const page = await context.newPage(), errors = [], writes = []
   page.on('pageerror', e => errors.push(e.message))
   const pool = [{id:'pool',name:'小号 A',uid:'501',primary:false,configured:true,revision:1,playbackParentCid:'123',pool:{state:'ready',mode:'enabled',sessions:1,preparing:0,residual:0,retryAt:0}}]
-  let settings={maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:240,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50,notificationBotId:''}
+  let settings={maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:5,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50,notificationBotId:''}
   let reads=0
   let config={userId:'',sourceAccountId:'main',accountId:'',targetCid:'',targetPath:''}
   await page.route('**/api/**', async route => {

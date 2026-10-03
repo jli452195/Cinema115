@@ -10,6 +10,7 @@ import (
 )
 
 type embyPlaybackIdentity struct {
+	Device  string    `json:"device,omitempty"`
 	UserID  string    `json:"userId"`
 	Created time.Time `json:"created"`
 }
@@ -50,6 +51,21 @@ func (s *EmbyPlaybackIdentities) UserID(server, token string) string {
 
 // Remember must only be called with an authenticated upstream login result.
 func (s *EmbyPlaybackIdentities) Remember(server, token, userID string) error {
+	return s.RememberDevice(server, token, userID, "", "")
+}
+
+func (s *EmbyPlaybackIdentities) Device(server, token string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[embyIdentityKey(server, token)]
+	if time.Since(e.Created) > 180*24*time.Hour {
+		return ""
+	}
+	return e.Device
+}
+
+// Device and client must come from the same authenticated login response.
+func (s *EmbyPlaybackIdentities) RememberDevice(server, token, userID, device, client string) error {
 	if server == "" || token == "" || len(token) > 2048 || userID == "" || len(userID) > 128 {
 		return fmt.Errorf("Emby 登录身份无效")
 	}
@@ -74,7 +90,11 @@ func (s *EmbyPlaybackIdentities) Remember(server, token, userID string) error {
 		}
 		delete(entries, oldest)
 	}
-	entries[key] = embyPlaybackIdentity{UserID: userID, Created: time.Now()}
+	fingerprint := ""
+	if device != "" && client != "" && len(device) <= 256 && len(client) <= 128 {
+		fingerprint = DirectLinkKey("playback-device", server, userID, device, client)
+	}
+	entries[key] = embyPlaybackIdentity{UserID: userID, Device: fingerprint, Created: time.Now()}
 	if s.store != nil {
 		data, err := json.Marshal(entries)
 		if err != nil {

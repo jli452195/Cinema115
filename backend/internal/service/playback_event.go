@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"strm115/backend/internal/model"
 )
 
 // Captured before the upstream request. Only these generations may be changed
@@ -68,6 +70,15 @@ func (s *MemberPlaybackService) CapturePlaybackEvent(server, id, session, client
 }
 
 func (s *MemberPlaybackService) ApplyPlaybackEvent(ctx context.Context, e PlaybackEvent, stopped bool) error {
+	if s.UserPlayback != nil && s.Pool != nil && s.db != nil {
+		if err := s.applyPlaybackEventAtomic(ctx, e, stopped); err != nil {
+			return err
+		}
+		if !stopped {
+			return s.confirmPlaybackHandoff(ctx, e)
+		}
+		return nil
+	}
 	var userErr, poolErr error
 	if s.UserPlayback != nil && e.userGeneration != 0 {
 		_, userErr = s.UserPlayback.Event(ctx, e.key, stopped, e.userGeneration)
@@ -76,7 +87,50 @@ func (s *MemberPlaybackService) ApplyPlaybackEvent(ctx context.Context, e Playba
 	if s.Pool != nil {
 		poolErr = s.Pool.applyCapturedEvent(ctx, e, stopped)
 	}
-	return errors.Join(userErr, poolErr)
+	if err := errors.Join(userErr, poolErr); err != nil {
+		return err
+	}
+	if !stopped {
+		return s.confirmPlaybackHandoff(ctx, e)
+	}
+	return nil
+}
+
+func (s *MemberPlaybackService) applyPlaybackEventAtomic(ctx context.Context, e PlaybackEvent, stopped bool) error {
+	u, p := s.UserPlayback, s.Pool
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ud, pd := u.clone(), p.clone()
+	now := u.now()
+	changed := false
+	for key, l := range ud.Leases {
+		if l.EventKey != e.key || l.Generation != e.userGeneration || l.ExpiresAt <= now.UnixMilli() {
+			continue
+		}
+		changed = true
+		if stopped {
+			delete(ud.Leases, key)
+		} else {
+			l.CandidateUntil = 0
+			l.LastPlaybackAt = now.UnixMilli()
+			if l.Issued && (now.UnixMilli()-l.UpdatedAt >= 60000 || l.ExpiresAt < now.Add(userPlaybackIdleTTL-time.Minute).UnixMilli()) {
+				l.UpdatedAt = now.UnixMilli()
+				l.ExpiresAt = now.Add(userPlaybackIdleTTL).UnixMilli()
+			}
+			ud.Leases[key] = l
+		}
+	}
+	changed = applyPoolEvent(&pd, e, stopped, p.now()) || changed
+	if !changed {
+		return nil
+	}
+	if err := s.db.SavePlaybackState(ctx, ud, pd); err != nil {
+		return err
+	}
+	u.doc, p.doc = ud, pd
+	return nil
 }
 
 func (s *MemberPlaybackService) ReleaseUserPlayback(ctx context.Context, key string, generation uint64) error {
@@ -114,7 +168,13 @@ func (p *DynamicPool) applyCapturedEvent(ctx context.Context, e PlaybackEvent, s
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
-	now := p.now()
+	if !applyPoolEvent(&d, e, stopped, p.now()) {
+		return nil
+	}
+	return p.save(ctx, d)
+}
+
+func applyPoolEvent(d *model.PlaybackPoolDocument, e PlaybackEvent, stopped bool, now time.Time) bool {
 	changed := false
 	for key, generation := range e.poolGenerations {
 		l, ok := d.Leases[key]
@@ -145,8 +205,5 @@ func (p *DynamicPool) applyCapturedEvent(ctx context.Context, e PlaybackEvent, s
 		d.Leases[key] = l
 		changed = true
 	}
-	if !changed {
-		return nil
-	}
-	return p.save(ctx, d)
+	return changed
 }

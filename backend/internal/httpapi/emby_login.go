@@ -41,7 +41,9 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 			Name string `json:"Name"`
 		}
 		SessionInfo struct {
-			UserID string `json:"UserId"`
+			UserID   string `json:"UserId"`
+			DeviceID string `json:"DeviceId"`
+			Client   string `json:"Client"`
 		}
 	}
 	if len(data) > 1<<20 || json.Unmarshal(data, &login) != nil || !embyProxyID.MatchString(login.User.ID) || login.AccessToken == "" || len(login.AccessToken) > 2048 || login.SessionInfo.UserID != "" && login.SessionInfo.UserID != login.User.ID {
@@ -64,7 +66,7 @@ func (h *embyProxyHandler) modifyResponse(resp *http.Response) error {
 			return nil
 		}
 	}
-	if err := h.identities.Remember(h.config.URL, login.AccessToken, login.User.ID); err != nil {
+	if err := h.identities.RememberDevice(h.config.URL, login.AccessToken, login.User.ID, login.SessionInfo.DeviceID, login.SessionInfo.Client); err != nil {
 		h.logs.Add(resp.Request.Context(), "ERROR", "Emby 播放身份保存失败，请检查数据目录后通过反代重新登录")
 		return nil
 	}

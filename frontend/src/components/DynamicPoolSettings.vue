@@ -6,7 +6,7 @@ import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig } from '../types/telegramBots'
 const props = defineProps<{ token: string; pool: P115Account[] }>()
 const emit = defineEmits<{ changed: [] }>()
-const settings = ref({ maxSessions: 3, maxAttempts: 3, budgetSeconds: 90, leaseMinutes: 240, cooldownSeconds: 30, uidIntervalMs: 250, globalIntervalMs: 50, notificationBotId: '' })
+const settings = ref({ maxSessions: 3, maxAttempts: 3, budgetSeconds: 90, leaseMinutes: 5, cooldownSeconds: 30, uidIntervalMs: 250, globalIntervalMs: 50, notificationBotId: '' })
 type Metrics = { requests: number; succeeded: number; failed: number; switches: number; p50Ms: number; p95Ms: number; samples: number; peakUidSessions: number; copyPreferred: number; recentPreferred: number; resolved: number; copyResolutions: number; directLinkHits: number }
 type Budget = { requests: number; throttled: number; rejected: number; waitMs: number; waiting: number; peakWaiting: number; sourceRequests: number }
 const metrics = ref<Metrics>(), api = ref<Budget>(), bots = ref<TelegramBotConfig[]>([])

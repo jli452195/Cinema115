@@ -19,7 +19,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         const member = members.find(m => p.includes('/' + m.userId + '/'))
         const body = request.postDataJSON(); writes.push(body); member.source = body.source; data = { settings, members }
       } else if (p === '/api/admin/member-playback/accounts') data = { accounts: pool }
-      else if (p === '/api/admin/member-playback/pool') data = { settings:{maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:240,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50}, accounts:pool }
+      else if (p === '/api/admin/member-playback/pool') data = { settings:{maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:5,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50}, accounts:pool }
       else if (p.startsWith('/api/admin/member-playback')) data = { settings, members }
       else if (p === '/api/admin/p115/accounts/pool' && request.method() === 'PUT') {
         const body = request.postDataJSON(); writes.push(body); pool[0].revision++; pool[0].name=body.name; data={accounts:pool}

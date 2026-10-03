@@ -291,4 +291,74 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	if w.Code != 204 || len(members.UserPlayback.List()) != 1 {
 		t.Fatal("parallel stop affected previous playback", w.Code)
 	}
+	// Simulate forty seconds without playback evidence, then exercise the full
+	// redirect path with an identity learned from an upstream login response.
+	if err := h.identities.RememberDevice(upstream.URL, "token", uid, "phone", "player"); err != nil {
+		t.Fatal(err)
+	}
+	ud, err := db.UserPlayback(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldEvent string
+	for key, l := range ud.Leases {
+		l.Device = h.identities.Device(upstream.URL, "token")
+		l.IssuedAt = time.Now().Add(-40 * time.Second).UnixMilli()
+		l.UpdatedAt, l.LastPlaybackAt = l.IssuedAt, l.IssuedAt
+		ud.Leases[key] = l
+		oldEvent = l.EventKey
+	}
+	if err := db.SaveUserPlayback(ctx, ud); err != nil {
+		t.Fatal(err)
+	}
+	members.UserPlayback, err = service.NewUserPlayback(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.MaxSessions = 10 // Allow unconfirmed next-item prefetch independently.
+	if err := members.ConfigurePool(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	w = call("GET", strings.Replace(path, "PlaySessionId=session", "PlaySessionId=handoff-session", 1), "")
+	if w.Code != 302 || len(members.UserPlayback.List()) != 2 {
+		t.Fatal("prefetch did not preserve current playback", w.Code, w.Body.String())
+	}
+	w = call("POST", "/emby/Sessions/Playing?api_key=token", `{"ItemId":"movie","PlaySessionId":"handoff-session"}`)
+	if w.Code != 204 || len(members.UserPlayback.List()) != 1 {
+		t.Fatal("device handoff failed", w.Code, w.Body.String())
+	}
+	ud, err = db.UserPlayback(ctx)
+	if err != nil || ud.Stopped[oldEvent] == 0 {
+		t.Fatal("handoff did not fence old playback", err)
+	}
+	w = call("POST", "/emby/Sessions/Playing/Stopped?api_key=token", `{"ItemId":"movie","PlaySessionId":"new-session"}`)
+	if w.Code != 204 || len(members.UserPlayback.List()) != 1 {
+		t.Fatal("old stop released successor", w.Code)
+	}
+	// Exercise the real HTTP authorization/commit path with authenticated device
+	// identity. GET/HEAD-only next-item requests must not multiply UID capacity.
+	for i := 0; i < 100; i++ {
+		method := "GET"
+		if i%2 == 0 {
+			method = "HEAD"
+		}
+		nextPath := strings.Replace(path, "PlaySessionId=session", fmt.Sprintf("PlaySessionId=device-next-%d", i), 1)
+		w = call(method, nextPath, "")
+		if w.Code != 302 {
+			t.Fatal("device slot redirect failed", i, w.Code, w.Body.String())
+		}
+		doc, err := db.PlaybackPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deviceUIDs := make(map[string]bool)
+		for _, lease := range doc.Leases {
+			if lease.SlotKey != "" && !lease.Stopped && lease.ExpiresAt > time.Now().UnixMilli() {
+				deviceUIDs[lease.UID] = true
+			}
+		}
+		if len(deviceUIDs) != 1 || len(members.UserPlayback.List()) > 2 {
+			t.Fatal("HTTP device slot drift or unbounded candidate history")
+		}
+	}
 }

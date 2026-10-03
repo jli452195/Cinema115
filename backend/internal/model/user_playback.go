@@ -1,6 +1,12 @@
 package model
 
 type UserPlaybackLease struct {
+	CandidateUntil int64  `json:"candidateUntil,omitempty"`
+	Device         string `json:"device,omitempty"`
+	PlaybackSource string `json:"playbackSource,omitempty"`
+	LastPlaybackAt int64  `json:"lastPlaybackAt,omitempty"`
+	IssuedAt       int64  `json:"issuedAt,omitempty"`
+	HandoffAt      int64  `json:"handoffAt,omitempty"`
 	EventFallback  string `json:"eventFallback,omitempty"`
 	Key            string `json:"key"`
 	UserID         string `json:"userId"`

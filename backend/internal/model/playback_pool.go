@@ -13,20 +13,24 @@ type PlaybackPoolSettings struct {
 }
 
 type PlaybackPoolLease struct {
-	EventFallback  string `json:"eventFallback,omitempty"`
-	UserGeneration uint64 `json:"userGeneration,omitempty"`
-	ObservationKey string `json:"observationKey,omitempty"`
-	Key            string `json:"key"`
-	SessionKey     string `json:"sessionKey,omitempty"`
-	Stopped        bool   `json:"stopped,omitempty"`
-	UserID         string `json:"userId"`
-	AccountID      string `json:"accountId"`
-	UID            string `json:"uid"`
-	Revision       uint64 `json:"revision"`
-	DirectoryID    string `json:"directoryId"`
-	Generation     uint64 `json:"generation"`
-	Issued         bool   `json:"issued"`
-	ExpiresAt      int64  `json:"expiresAt"`
+	SlotKey            string `json:"slotKey,omitempty"`
+	BorrowedKey        string `json:"borrowedKey,omitempty"`
+	BorrowedGeneration uint64 `json:"borrowedGeneration,omitempty"`
+	EventFallback      string `json:"eventFallback,omitempty"`
+	UserGeneration     uint64 `json:"userGeneration,omitempty"`
+	ObservationKey     string `json:"observationKey,omitempty"`
+	Key                string `json:"key"`
+	SessionKey         string `json:"sessionKey,omitempty"`
+	Stopped            bool   `json:"stopped,omitempty"`
+	UserID             string `json:"userId"`
+	AccountID          string `json:"accountId"`
+	UID                string `json:"uid"`
+	Revision           uint64 `json:"revision"`
+	DirectoryID        string `json:"directoryId"`
+	Generation         uint64 `json:"generation"`
+	Issued             bool   `json:"issued"`
+	IssuedAt           int64  `json:"issuedAt,omitempty"`
+	ExpiresAt          int64  `json:"expiresAt"`
 }
 
 type PlaybackPoolHealth struct {

@@ -13,16 +13,21 @@ import (
 var ErrUserPlaybackStopped = errors.New("此播放会话已结束，请重新发起播放")
 var ErrUserPlaybackBusy = errors.New("播放会话管理暂忙，请稍后重试")
 
+const userPlaybackIdleTTL = 5 * time.Minute
+
 type userPlaybackStore interface {
 	UserPlayback(context.Context) (model.UserPlaybackDocument, error)
 	SaveUserPlayback(context.Context, model.UserPlaybackDocument) error
 }
 type UserPlayback struct {
-	mu    sync.Mutex
-	store userPlaybackStore
-	doc   model.UserPlaybackDocument
-	refs  map[uint64]int
-	now   func() time.Time
+	devices       map[string]bool
+	deviceChanged chan struct{}
+	deviceWaiters int
+	mu            sync.Mutex
+	store         userPlaybackStore
+	doc           model.UserPlaybackDocument
+	refs          map[uint64]int
+	now           func() time.Time
 }
 
 func NewUserPlayback(ctx context.Context, store userPlaybackStore) (*UserPlayback, error) {
@@ -36,7 +41,7 @@ func NewUserPlayback(ctx context.Context, store userPlaybackStore) (*UserPlaybac
 	if d.Stopped == nil {
 		d.Stopped = make(map[string]int64)
 	}
-	return &UserPlayback{store: store, doc: d, refs: make(map[uint64]int), now: time.Now}, nil
+	return &UserPlayback{store: store, doc: d, refs: make(map[uint64]int), devices: make(map[string]bool), deviceChanged: make(chan struct{}), now: time.Now}, nil
 }
 func (p *UserPlayback) clone() model.UserPlaybackDocument {
 	d := p.doc
@@ -66,9 +71,11 @@ func (p *UserPlayback) prune(d *model.UserPlaybackDocument) {
 }
 
 type UserPlaybackLease struct {
-	pool   *UserPlayback
-	Record model.UserPlaybackLease
-	closed bool
+	handoff       *model.UserPlaybackLease
+	handoffReason string
+	pool          *UserPlayback
+	Record        model.UserPlaybackLease
+	closed        bool
 }
 
 // A user can own multiple playback sessions. Media-source variants within one
@@ -99,15 +106,43 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 			return nil, ErrUserPlaybackBusy
 		}
 		p.refs[old.Generation]++
-		return &UserPlaybackLease{pool: p, Record: old}, nil
+		return &UserPlaybackLease{pool: p, Record: old, handoffReason: "同会话复用，不新增用户播放记录"}, nil
 	}
 	if len(d.Leases) >= 4096 || len(p.refs) >= 4096 || len(d.Stopped)+len(d.Leases) >= 8192 {
 		return nil, ErrUserPlaybackBusy
 	}
 	d.Generation++
 	l := model.UserPlaybackLease{Key: key, UserID: r.UserID, ServerID: r.ServerID, SessionDigest: session, EventKey: event, Item: req.Item, Generation: d.Generation, UpdatedAt: p.now().UnixMilli(), ExpiresAt: p.now().Add(95 * time.Second).UnixMilli()}
+	l.Device, l.PlaybackSource = req.Device, r.Source
+	var handoff *model.UserPlaybackLease
+	reason := "缺少可信设备信息或播放会话 ID，按独立会话处理"
+	if req.Device != "" && req.PlaySession != "" && !req.Download && !req.Task {
+		// Preparations cannot be predecessors. Multiple issued sessions remain
+		// ambiguous; never guess which one the client intended to replace.
+		var candidate model.UserPlaybackLease
+		matches := 0
+		for _, old := range d.Leases {
+			if old.Issued && old.Device == req.Device && old.ServerID == r.ServerID && old.UserID == r.UserID {
+				candidate = old
+				matches++
+			}
+		}
+		if matches == 1 && candidate.PlaybackSource == r.Source && p.refs[candidate.Generation] == 0 && handoffIdle(candidate, p.now()) {
+			handoff = &candidate
+			reason = "唯一旧会话满足静默条件，准备接替；成功提交前保留旧播放"
+		} else if matches == 0 {
+			reason = "此设备无旧会话，建立独立播放"
+		} else if matches > 1 {
+			reason = "此设备有多个候选，不猜测接替目标"
+		} else {
+			reason = "旧会话仍活跃、准备中或来源不同，按独立会话处理"
+		}
+	}
 	if req.Client != "" {
 		l.EventFallback = DirectLinkKey("playback-event", r.ServerID, r.UserID, req.Client, req.Item)
+		if d.Stopped["fallback:"+l.EventFallback] > p.now().UnixMilli() {
+			l.EventFallback = ""
+		}
 	}
 	if req.PlaySession != "" {
 		l.ObservationKey = DirectLinkKey("pool-observation", r.ServerID, r.EmbyID, req.PlaySession, req.Item)
@@ -117,7 +152,7 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 		return nil, err
 	}
 	p.refs[l.Generation]++
-	return &UserPlaybackLease{pool: p, Record: l}, nil
+	return &UserPlaybackLease{pool: p, Record: l, handoff: handoff, handoffReason: reason}, nil
 }
 func (l *UserPlaybackLease) Current() bool {
 	p := l.pool
@@ -136,8 +171,9 @@ func (l *UserPlaybackLease) Commit(ctx context.Context) error {
 		return ErrUserPlaybackStopped
 	}
 	v.Issued = true
+	v.IssuedAt = p.now().UnixMilli()
 	v.UpdatedAt = p.now().UnixMilli()
-	v.ExpiresAt = p.now().Add(240 * time.Minute).UnixMilli()
+	v.ExpiresAt = p.now().Add(userPlaybackIdleTTL).UnixMilli()
 	d.Leases[v.Key] = v
 	return p.save(ctx, d)
 }
@@ -195,10 +231,14 @@ func (p *UserPlayback) Event(ctx context.Context, event string, stopped bool, ge
 			delete(d.Leases, key)
 			// Normal stops allow immediate replay with the same client session ID.
 			// Removed generations still fence already admitted requests.
-		} else if l.Issued && p.now().UnixMilli()-l.UpdatedAt >= 60000 {
+		} else {
 			changed = true
-			l.UpdatedAt = p.now().UnixMilli()
-			l.ExpiresAt = p.now().Add(240 * time.Minute).UnixMilli()
+			l.CandidateUntil = 0
+			l.LastPlaybackAt = p.now().UnixMilli()
+			if l.Issued && (p.now().UnixMilli()-l.UpdatedAt >= 60000 || l.ExpiresAt < p.now().Add(userPlaybackIdleTTL-time.Minute).UnixMilli()) {
+				l.UpdatedAt = p.now().UnixMilli()
+				l.ExpiresAt = p.now().Add(userPlaybackIdleTTL).UnixMilli()
+			}
 			d.Leases[key] = l
 		}
 	}
@@ -209,19 +249,36 @@ func (p *UserPlayback) Event(ctx context.Context, event string, stopped bool, ge
 }
 
 func (p *UserPlayback) Reconcile(ctx context.Context, keys map[string]bool) error {
+	return p.reconcilePlayback(ctx, keys, nil)
+}
+
+func (p *UserPlayback) reconcilePlayback(ctx context.Context, keys map[string]bool, playback map[string]int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
 	p.prune(&d)
 	changed := len(d.Leases) != len(p.doc.Leases) || len(d.Stopped) != len(p.doc.Stopped)
 	for k, l := range d.Leases {
-		if !l.Issued || l.ObservationKey == "" || !keys[l.ObservationKey] || p.now().UnixMilli()-l.UpdatedAt < 60000 {
+		if !l.Issued || l.ObservationKey == "" || !keys[l.ObservationKey] {
 			continue
 		}
-		l.UpdatedAt = p.now().UnixMilli()
-		l.ExpiresAt = p.now().Add(240 * time.Minute).UnixMilli()
+		// LastActivityDate includes browsing. Only an actual playback check-in
+		// can refresh evidence used by device handoff eligibility.
+		evidence := playback[l.ObservationKey]
+		if evidence < l.IssuedAt || !freshPlaybackEvidence(evidence, p.now()) {
+			continue
+		}
+		if evidence > l.LastPlaybackAt && evidence <= p.now().UnixMilli() {
+			l.CandidateUntil = 0
+			l.LastPlaybackAt = evidence
+			changed = true
+		}
+		if evidence-l.UpdatedAt >= 60000 || l.ExpiresAt < time.UnixMilli(evidence).Add(userPlaybackIdleTTL-time.Minute).UnixMilli() {
+			l.UpdatedAt = evidence
+			l.ExpiresAt = time.UnixMilli(evidence).Add(userPlaybackIdleTTL).UnixMilli()
+			changed = true
+		}
 		d.Leases[k] = l
-		changed = true
 	}
 	if !changed {
 		return nil
@@ -238,6 +295,7 @@ func (p *UserPlayback) List() []model.UserPlaybackLease {
 			l.EventKey = ""
 			l.ObservationKey = ""
 			l.EventFallback = ""
+			l.Device = ""
 			out = append(out, l)
 		}
 	}
@@ -262,10 +320,21 @@ func (p *UserPlayback) Release(ctx context.Context, key string, generation uint6
 
 // One holder covers all sequential target attempts of a single HTTP redirect.
 type userPlaybackRequestKey struct{}
-type UserPlaybackRequest struct{ lease *UserPlaybackLease }
+type UserPlaybackRequest struct {
+	lease      *UserPlaybackLease
+	devicePool *UserPlayback
+	deviceKey  string
+}
 
 func WithUserPlaybackRequest(ctx context.Context) (context.Context, *UserPlaybackRequest) {
 	r := &UserPlaybackRequest{}
 	return context.WithValue(ctx, userPlaybackRequestKey{}, r), r
 }
-func (r *UserPlaybackRequest) Close() error { return r.lease.Close() }
+func (r *UserPlaybackRequest) Close() error {
+	err := r.lease.Close()
+	if r.devicePool != nil {
+		r.devicePool.unlockDevice(r.deviceKey)
+		r.devicePool = nil
+	}
+	return err
+}

@@ -17,11 +17,11 @@ func TestEmbyPlaybackIdentityPersistenceAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Remember("http://emby", "private-player-token", "owner"); err != nil {
+	if err := s.RememberDevice("http://emby", "private-player-token", "owner", "private-device", "player"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(store.Value(), "private-player-token") {
-		t.Fatal("raw token persisted")
+	if strings.Contains(store.Value(), "private-player-token") || strings.Contains(store.Value(), "private-device") {
+		t.Fatal("raw token or device persisted")
 	}
 	if err := s.Remember("http://emby", "private-player-token", "friend"); err == nil {
 		t.Fatal("identity replaced")
@@ -36,6 +36,22 @@ func TestEmbyPlaybackIdentityPersistenceAndIsolation(t *testing.T) {
 	}
 	if reopened.UserID("http://emby", "private-player-token") != "owner" {
 		t.Fatal("restart lost identity")
+	}
+	device := reopened.Device("http://emby", "private-player-token")
+	if device == "" {
+		t.Fatal("device lost on restart")
+	}
+	if err := reopened.RememberDevice("http://emby", "new-token", "owner", "private-device", "player"); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Device("http://emby", "new-token") != device {
+		t.Fatal("relogin changed device")
+	}
+	if err := reopened.RememberDevice("http://emby", "other-player", "owner", "private-device", "other-app"); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Device("http://emby", "other-player") == device || reopened.Device("http://other-server", "new-token") != "" {
+		t.Fatal("device scope collision")
 	}
 	if reopened.UserID("http://other-emby", "private-player-token") != "" || reopened.UserID("http://emby", "other-token") != "" {
 		t.Fatal("server/token isolation failed")

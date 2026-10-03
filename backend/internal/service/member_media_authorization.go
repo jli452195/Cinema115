@@ -132,6 +132,9 @@ func (s *MemberPlaybackService) beginMediaAuthorization(ctx context.Context, ser
 				if err != nil {
 					return nil, err
 				}
+				if s.Cache != nil && s.Cache.logs != nil {
+					s.Cache.logs.Add(ctx, "DEBUG", "设备播放会话："+holder.lease.handoffReason)
+				}
 			}
 			userLease = holder.lease
 			if userLease.Record.Key != userPlaybackKey(r, req) || !userLease.Current() {

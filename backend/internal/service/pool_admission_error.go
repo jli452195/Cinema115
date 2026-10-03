@@ -51,20 +51,39 @@ type poolOccupancy struct {
 
 func poolUIDOccupancy(d model.PlaybackPoolDocument, uid string, now int64) poolOccupancy {
 	v := poolOccupancy{}
+	type slotState struct {
+		state   int
+		expires int64
+	}
+	slots := make(map[string]slotState)
 	for key, l := range d.Leases {
-		if l.UID != uid || l.ExpiresAt <= now {
+		if l.UID != uid || l.ExpiresAt <= now || borrowedPoolSlot(d, l, now) {
 			continue
 		}
-		v.total++
+		id := poolCapacityKey(key, l)
+		s := slots[id]
+		s.expires = max(s.expires, l.ExpiresAt)
 		if key != l.Key || l.Stopped {
-			v.residual++
+			s.state = max(s.state, 1)
 		} else if !l.Issued {
-			v.preparing++
+			s.state = max(s.state, 2)
 		} else {
+			s.state = 3
+		}
+		slots[id] = s
+	}
+	for _, s := range slots {
+		v.total++
+		switch s.state {
+		case 1:
+			v.residual++
+		case 2:
+			v.preparing++
+		case 3:
 			v.active++
 		}
-		if v.next == 0 || l.ExpiresAt < v.next {
-			v.next = l.ExpiresAt
+		if v.next == 0 || s.expires < v.next {
+			v.next = s.expires
 		}
 	}
 	return v

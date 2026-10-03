@@ -29,6 +29,7 @@ onBeforeUnmount(() => { controller.abort(); clearTimeout(timer) })
  <details class="mb-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
   <summary class="cursor-pointer font-medium">用户播放占用（{{ sessions.length }}）</summary>
   <p class="my-3 text-sm text-slate-500">同一 Emby 用户可以同时发起多个播放会话。停止后释放对应会话，小号池仍按实际 UID 限制容量，并可能保留直链残余占用。</p>
+  <p class="mb-3 text-sm text-slate-500">同设备同播放器的新播放可在旧会话静默后接替，优先沿用原小号。缺少设备信息时需通过反代重新登录；多会话无法唯一匹配时独立计数。</p>
   <p v-if="error" role="alert" class="my-2 text-sm text-red-600">{{ error }}</p>
   <p v-if="!sessions.length" class="text-sm text-slate-500">{{ busy ? '读取中' : '暂无播放占用' }}</p>
   <div v-for="s in sessions" :key="s.key" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700">

@@ -728,7 +728,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		// Token identity scopes untrusted session hints. A missing session ID
 		// conservatively groups this authenticated client and media source.
 		session := service.DirectLinkKey(token, proxyQuery(r.URL.Query(), "PlaySessionId"))
-		ctx = service.WithPoolRequest(ctx, service.PoolRequest{Client: service.DirectLinkKey("playback-client", token), Session: session, PlaySession: proxyQuery(r.URL.Query(), "PlaySessionId"), Item: item, Source: jsonString(source["Id"]), Download: isDownload})
+		ctx = service.WithPoolRequest(ctx, service.PoolRequest{Device: h.identities.Device(h.config.URL, token), Client: service.DirectLinkKey("playback-client", token), Session: session, PlaySession: proxyQuery(r.URL.Query(), "PlaySessionId"), Item: item, Source: jsonString(source["Id"]), Download: isDownload})
 		origin := service.DirectLinkKey("share-material", claim.Code, claim.Password, claim.FileID)
 		if claim.PickCode != "" {
 			origin = service.DirectLinkKey("pickcode-material", sourceAccount.ID, claim.PickCode)

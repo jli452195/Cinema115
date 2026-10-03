@@ -67,6 +67,11 @@ func TestInstantDynamicPoolPinsTargetAndReleasesReservation(t *testing.T) {
 		if cid != target.PlaybackParentCID || cookie != target.Cookie {
 			t.Fatal("task target drift")
 		}
+		status := members.Pool.AccountStatus(target)
+		if status.Sessions != 1 || status.Preparing != 1 || status.Active != 0 {
+			t.Fatal("manual task must hold exactly one temporary target reservation")
+		}
+		t.Log("manual instant upload in progress: target slots=1, preparing=1, active playback=0")
 		if err := members.Pool.SetMode(ctx, id, "disabled"); err != nil {
 			t.Fatal(err)
 		}
@@ -78,6 +83,7 @@ func TestInstantDynamicPoolPinsTargetAndReleasesReservation(t *testing.T) {
 	if members.Pool.AccountStatus(target).Sessions != 0 {
 		t.Fatal("manual task retained playback occupancy")
 	}
+	t.Log("manual instant upload complete: target slots=0")
 	r, err = s.Run(ctx, config, "dynamic-request-0001", &p115.ShareInfo{Code: "abc"}, "1")
 	if err != nil || r.Status != "success" || fake.calls != 1 {
 		t.Fatal("task repeated write", err)

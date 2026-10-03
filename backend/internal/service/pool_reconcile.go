@@ -57,6 +57,7 @@ func (s *MemberPlaybackService) reconcilePoolSessions(ctx context.Context) {
 		return
 	}
 	keys := make(map[string]bool, len(sessions))
+	playback := make(map[string]int64, len(sessions))
 	for _, session := range sessions {
 		play := session.PlaySessionID
 		if play == "" {
@@ -65,30 +66,54 @@ func (s *MemberPlaybackService) reconcilePoolSessions(ctx context.Context) {
 		if session.PlaySessionID != "" && session.PlayState.PlaySessionID != "" && session.PlaySessionID != session.PlayState.PlaySessionID {
 			continue
 		}
-		if play == "" || len(play) > 256 || session.UserID == "" || session.NowPlayingItem.ID == "" || session.LastActivityDate.Before(now.Add(-90*time.Second)) || session.LastActivityDate.After(now.Add(time.Minute)) {
+		if play == "" || len(play) > 256 || session.UserID == "" || session.NowPlayingItem.ID == "" || !freshPlaybackEvidence(session.LastPlaybackCheckIn.UnixMilli(), now) {
 			continue
 		}
-		keys[DirectLinkKey("pool-observation", cfg.ServerID, session.UserID, play, session.NowPlayingItem.ID)] = true
+		key := DirectLinkKey("pool-observation", cfg.ServerID, session.UserID, play, session.NowPlayingItem.ID)
+		keys[key] = true
+		playback[key] = session.LastPlaybackCheckIn.UnixMilli()
 	}
-	_ = p.reconcileObserved(ctx, keys)
+	if err := p.reconcileObserved(ctx, playback); err != nil {
+		return
+	}
 	if s.UserPlayback != nil {
-		_ = s.UserPlayback.Reconcile(ctx, keys)
+		if err := s.UserPlayback.reconcilePlayback(ctx, keys, playback); err != nil {
+			return
+		}
+		// List deliberately redacts ObservationKey for the administrator API.
+		// Capture internal event identities under the lock, then confirm outside
+		// it so the normal user -> pool transaction lock order is preserved.
+		u := s.UserPlayback
+		u.mu.Lock()
+		events := make([]PlaybackEvent, 0, len(playback))
+		for _, l := range u.doc.Leases {
+			if at := playback[l.ObservationKey]; freshPlaybackEvidence(at, now) && at >= l.IssuedAt {
+				events = append(events, PlaybackEvent{key: l.EventKey, userGeneration: l.Generation})
+			}
+		}
+		u.mu.Unlock()
+		for _, e := range events {
+			if err := s.confirmPlaybackHandoff(ctx, e); err != nil {
+				return
+			}
+		}
 	}
 }
 
 // Only exact-match evidence renews a current lease. Missing fields or sessions,
 // offline Emby, and stopped/residual/expired leases retain conservative TTL.
-func (p *DynamicPool) reconcileObserved(ctx context.Context, keys map[string]bool) error {
+func (p *DynamicPool) reconcileObserved(ctx context.Context, playback map[string]int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
 	now := p.now()
 	changed := false
 	for k, l := range d.Leases {
-		if k != l.Key || !l.Issued || l.Stopped || l.ExpiresAt <= now.UnixMilli() || l.ObservationKey == "" || !keys[l.ObservationKey] {
+		evidence := playback[l.ObservationKey]
+		if k != l.Key || !l.Issued || l.Stopped || l.ExpiresAt <= now.UnixMilli() || l.ObservationKey == "" || evidence < l.IssuedAt || !freshPlaybackEvidence(evidence, now) {
 			continue
 		}
-		until := now.Add(time.Duration(d.Settings.LeaseMinutes) * time.Minute).UnixMilli()
+		until := time.UnixMilli(evidence).Add(time.Duration(d.Settings.LeaseMinutes) * time.Minute).UnixMilli()
 		if until-l.ExpiresAt < int64(time.Minute/time.Millisecond) {
 			continue
 		}

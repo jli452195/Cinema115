@@ -121,6 +121,7 @@ func TestEmbyIdentityOnlyFromSuccessfulLogin(t *testing.T) {
 		valid                    bool
 	}{
 		{"name login", "POST", "/Users/AuthenticateByName", `{"AccessToken":"token","User":{"Id":"owner"}}`, 200, true},
+		{"device login", "POST", "/Users/AuthenticateByName", `{"AccessToken":"token","User":{"Id":"owner"},"SessionInfo":{"UserId":"owner","DeviceId":"device","Client":"player"}}`, 200, true},
 		{"id login", "POST", "/emby/Users/owner/Authenticate", `{"AccessToken":"token","User":{"Id":"owner"}}`, 200, true},
 		{"get", "GET", "/Users/AuthenticateByName", `{"AccessToken":"token","User":{"Id":"owner"}}`, 200, false},
 		{"failed login", "POST", "/Users/AuthenticateByName", `{"AccessToken":"token","User":{"Id":"owner"}}`, 401, false},
@@ -141,6 +142,9 @@ func TestEmbyIdentityOnlyFromSuccessfulLogin(t *testing.T) {
 			}
 			if got := h.identities.UserID(upstream.URL, "token"); (got == "owner") != tc.valid {
 				t.Fatal("untrusted identity", got)
+			}
+			if got := h.identities.Device(upstream.URL, "token"); (got != "") != (tc.name == "device login") {
+				t.Fatal("untrusted or missing device identity")
 			}
 		})
 	}

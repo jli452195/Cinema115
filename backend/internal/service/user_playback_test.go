@@ -244,7 +244,7 @@ func TestUserPlaybackPersistenceRestartExpiryAndReconcile(t *testing.T) {
 	if restarted.List()[0].ExpiresAt != before {
 		t.Fatal("absent observation changed occupancy")
 	}
-	if err := restarted.Reconcile(ctx, map[string]bool{l.Record.ObservationKey: true}); err != nil {
+	if err := restarted.reconcilePlayback(ctx, map[string]bool{l.Record.ObservationKey: true}, map[string]int64{l.Record.ObservationKey: now.UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 	if restarted.List()[0].ExpiresAt <= before {

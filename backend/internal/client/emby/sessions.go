@@ -8,10 +8,11 @@ import (
 )
 
 type PlaybackSession struct {
-	UserID           string    `json:"UserId"`
-	PlaySessionID    string    `json:"PlaySessionId"`
-	LastActivityDate time.Time `json:"LastActivityDate"`
-	NowPlayingItem   struct {
+	UserID              string    `json:"UserId"`
+	PlaySessionID       string    `json:"PlaySessionId"`
+	LastActivityDate    time.Time `json:"LastActivityDate"`
+	LastPlaybackCheckIn time.Time `json:"LastPlaybackCheckIn"`
+	NowPlayingItem      struct {
 		ID string `json:"Id"`
 	} `json:"NowPlayingItem"`
 	PlayState struct {

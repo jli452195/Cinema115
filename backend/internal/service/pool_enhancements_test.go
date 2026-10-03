@@ -87,13 +87,13 @@ func TestPoolReconcileOnlyRenewsExactActiveMatches(t *testing.T) {
 	restarted.now = p.now
 	original := restarted.doc.Leases["x"].ExpiresAt
 	now = now.Add(2 * time.Minute)
-	if err := restarted.reconcileObserved(ctx, map[string]bool{"other-user-session": true}); err != nil {
+	if err := restarted.reconcileObserved(ctx, map[string]int64{"other-user-session": now.UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 	if restarted.doc.Leases["x"].ExpiresAt != original {
 		t.Fatal("missing session released/renewed occupancy")
 	}
-	if err := restarted.reconcileObserved(ctx, map[string]bool{"verified-observation": true}); err != nil {
+	if err := restarted.reconcileObserved(ctx, map[string]int64{"verified-observation": now.UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 	if restarted.doc.Leases["x"].ExpiresAt <= original {
@@ -104,7 +104,7 @@ func TestPoolReconcileOnlyRenewsExactActiveMatches(t *testing.T) {
 	}
 	stopped := restarted.doc.Leases["x"].ExpiresAt
 	now = now.Add(time.Minute)
-	if err := restarted.reconcileObserved(ctx, map[string]bool{"verified-observation": true}); err != nil {
+	if err := restarted.reconcileObserved(ctx, map[string]int64{"verified-observation": now.UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 	if restarted.doc.Leases["x"].ExpiresAt != stopped {
