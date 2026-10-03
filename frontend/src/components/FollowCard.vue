@@ -41,9 +41,12 @@ const dateLabel = computed(() => {
 
 <template>
   <article class="relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
-    <div v-if="item.posterUrl && !failedImage" class="pointer-events-none absolute inset-x-0 top-0 h-40 overflow-hidden" aria-hidden="true">
-      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full scale-105 object-cover opacity-[0.18]" @error="failedImage = true" />
-      <div class="absolute inset-0 bg-gradient-to-b from-white/45 via-white/80 to-white dark:from-slate-900/45 dark:via-slate-900/80 dark:to-slate-900"></div>
+    <div v-if="item.posterUrl && !failedImage" class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      <!-- 动态环境光背景：利用 CSS 高斯模糊实现纯前端的 MD3 动态取色 -->
+      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute -left-1/4 -top-1/4 h-[150%] w-[150%] object-cover blur-3xl opacity-50 saturate-150 dark:opacity-40 transform-gpu backface-hidden" @error="failedImage = true" />
+      <!-- 混合层与底部渐变，保证按钮和文字的可读性 -->
+      <div class="absolute inset-0 bg-white/40 dark:bg-slate-900/50"></div>
+      <div class="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-white/10 dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900/10"></div>
     </div>
     <div class="relative z-10 flex h-full min-w-0 flex-col">
       <div class="flex min-w-0 items-start gap-3">
@@ -56,7 +59,7 @@ const dateLabel = computed(() => {
         </div>
       </div>
       <p class="mt-3 text-[11px] text-slate-400 dark:text-slate-500">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
-      <button v-if="item.note" type="button" aria-label="查看处理说明" class="mt-3 rounded-lg bg-slate-50 dark:bg-slate-950/90 px-3 py-2 text-left text-xs leading-5 text-slate-600 dark:text-slate-400 dark:text-slate-500 ring-1 ring-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
+      <button v-if="item.note" type="button" aria-label="查看处理说明" class="mt-3 rounded-lg bg-white/60 dark:bg-slate-900/60 backdrop-blur-md px-3 py-2 text-left text-xs leading-5 text-slate-600 dark:text-slate-400 ring-1 ring-slate-200/50 dark:ring-slate-700/50 hover:bg-white/80 dark:hover:bg-slate-800/80" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
       <div class="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
         <template v-if="admin"><button type="button" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="emit('edit')">处理申请</button><RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="text-blue-600">搜索资源</RouterLink></template>
         <RouterLink :to="path" class="text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600">查看详情</RouterLink>
