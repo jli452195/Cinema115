@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import UpdateCard from '../components/UpdateCard.vue'
 import { catalogAPI } from '../composables/usePortalAuth'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import type { RecentUpdateItem, RecentUpdatesPage } from '../types/updates'
 
 const props = defineProps<{ token: string }>()
@@ -18,6 +19,7 @@ const ready = ref(true)
 const timelineStatus = ref<RecentUpdatesPage['status']>('ready')
 const hasMore = ref(false)
 const nextCursor = ref('')
+const scrollContainer = ref<HTMLElement>()
 const dateStrip = ref<HTMLElement>()
 const today = ref(shanghaiDate(new Date()))
 let dayTimer: ReturnType<typeof setInterval> | undefined
@@ -33,6 +35,8 @@ const days = computed(() => Array.from({ length: 7 }, (_, index) => {
 const selectedDay = computed(() => days.value.find(day => day.date === route.query.date) || days.value[0]!)
 const selectedDate = computed(() => selectedDay.value.date)
 
+const { indicatorStyle } = useSlidingIndicator(dateStrip, '[aria-pressed="true"]', [selectedDate])
+
 function shanghaiDate(value: Date) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value)
   const find = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value || ''
@@ -44,13 +48,13 @@ function selectDate(date: string) {
 }
 async function revealSelectedDay() {
   await nextTick()
-  const strip = dateStrip.value
-  const button = strip?.querySelector<HTMLElement>('[aria-pressed="true"]')
-  if (!strip || !button) return
-  const bounds = strip.getBoundingClientRect()
+  const wrapper = scrollContainer.value
+  const button = dateStrip.value?.querySelector<HTMLElement>('[aria-pressed="true"]')
+  if (!wrapper || !button) return
+  const bounds = wrapper.getBoundingClientRect()
   const selected = button.getBoundingClientRect()
   if (selected.left < bounds.left || selected.right > bounds.right) {
-    strip.scrollTo({ left: strip.scrollLeft + selected.left - bounds.left - (strip.clientWidth - selected.width) / 2 })
+    wrapper.scrollTo({ behavior: 'smooth', left: wrapper.scrollLeft + selected.left - bounds.left - (wrapper.clientWidth - selected.width) / 2 })
   }
 }
 async function request(signal: AbortSignal, cursor = '') {
@@ -122,14 +126,19 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
         <h1 class="text-xl font-bold text-slate-900 dark:text-slate-100">每日更新</h1>
         <span class="text-xs text-slate-500 dark:text-slate-400">最近 7 天</span>
       </header>
-      <div ref="dateStrip" role="group" aria-label="选择更新日期" class="flex gap-2 overflow-x-auto pb-2 sm:gap-3">
-        <button v-for="day in days" :key="day.date" type="button" :aria-label="day.date + ' ' + day.label" :aria-pressed="selectedDate === day.date"
-          class="flex min-w-[88px] flex-1 flex-col items-center gap-1.5 rounded-xl border px-4 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset sm:min-w-0"
-          :class="selectedDate === day.date ? 'border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-400/40 dark:bg-amber-400/15 dark:text-amber-200' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800'"
-          @click="selectDate(day.date)">
-          <span class="text-sm font-semibold tabular-nums">{{ day.shortDate }}</span>
-          <span class="text-xs">{{ day.label }}</span>
-        </button>
+      <div ref="scrollContainer" class="flex w-full justify-start overflow-x-auto pb-4 sm:justify-center scroll-smooth">
+        <div ref="dateStrip" role="group" aria-label="选择更新日期" class="relative flex w-max min-w-min gap-1 rounded-2xl bg-slate-100 p-1.5 dark:bg-slate-800/60">
+          <!-- 滑动块：苹果风实体阴影白块（暗黑模式下为深色阴影块） -->
+          <div class="absolute z-0 rounded-[10px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-600 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="indicatorStyle"></div>
+          
+          <button v-for="day in days" :key="day.date" type="button" :aria-label="day.date + ' ' + day.label" :aria-pressed="selectedDate === day.date"
+            class="relative z-10 flex min-w-[72px] shrink-0 flex-col items-center gap-0.5 rounded-[10px] px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset"
+            :class="selectedDate === day.date ? 'text-slate-900 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'"
+            @click="selectDate(day.date)">
+            <span class="text-sm font-semibold tabular-nums">{{ day.shortDate }}</span>
+            <span class="text-[11px] font-medium">{{ day.label }}</span>
+          </button>
+        </div>
       </div>
       <div class="mb-5 mt-5 border-b border-slate-200 pb-4 text-center dark:border-slate-800">
         <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{{ selectedDay.label }}</h2>

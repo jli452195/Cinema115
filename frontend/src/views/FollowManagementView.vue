@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import FollowDialog from '../components/FollowDialog.vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import type { Follow } from '../types/follows'
@@ -31,6 +32,10 @@ const lifecycle = new AbortController()
 let reader: AbortController | undefined
 const labels: Record<string, string> = FOLLOW_STATUS_LABELS
 const statusTabs = ['pending', 'processing', 'caught_up', 'closed', 'completed']
+
+const statusNavRef = ref<HTMLElement>()
+const { indicatorStyle: statusIndicatorStyle } = useSlidingIndicator(statusNavRef, '[aria-pressed="true"]', [status])
+
 const kindOptions = [{ value: '', label: '全部类型' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
 const statusOptions = [{ value: 'pending', label: '待处理' }, { value: 'processing', label: '处理中' }, { value: 'closed', label: '已关闭' }]
 async function request(path: string, body?: object, signal = lifecycle.signal) {
@@ -128,8 +133,11 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
           <label class="block text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">网站访问地址<input v-model="baseUrl" type="url" maxlength="2048" placeholder="例如 http://192.168.0.24:5173" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3" /></label><p class="text-xs text-slate-400 dark:text-slate-500">用于 Telegram 通知中的管理页链接。请填写管理员可访问的网站根地址，留空时只发送片名与编号。</p><div class="flex flex-wrap gap-4"><button type="button" class="text-sm text-blue-600" @click="useCurrentAddress">使用当前访问地址</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">保存追更设置</button></div>
         </form>
       </section>
-      <nav aria-label="处理状态筛选" class="flex flex-wrap gap-2">
-        <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab ? 'bg-slate-900 text-white dark:bg-slate-700' : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'" @click="status = tab; filter()">{{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab] }}</span></button>
+      <nav ref="statusNavRef" aria-label="处理状态筛选" class="relative flex w-max max-w-full overflow-x-auto gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60">
+        <div class="absolute z-0 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="statusIndicatorStyle"></div>
+        <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="relative z-10 flex min-w-[76px] shrink-0 items-center justify-center rounded-[8px] px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset disabled:opacity-50" :class="status === tab ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" @click="status = tab; filter()">
+          {{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-1.5 text-[11px] opacity-60">{{ counts[tab] }}</span>
+        </button>
       </nav>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
         <SelectMenu v-model="kind" :options="kindOptions" label="影视类型" class="w-[7.75rem]" @change="filter()" />

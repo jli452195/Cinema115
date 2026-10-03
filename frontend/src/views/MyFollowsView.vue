@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import FollowCard from '../components/FollowCard.vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { FOLLOW_PAGE_SIZE, followRequest, type Follow } from '../types/follows'
 
 const props = defineProps<{ token: string }>()
@@ -18,6 +19,12 @@ const kind = ref('')
 const status = ref('ongoing')
 const counts = ref<Record<string, number>>({})
 const offset = ref(0)
+
+const statusNavRef = ref<HTMLElement>()
+const kindNavRef = ref<HTMLElement>()
+const { indicatorStyle: statusIndicatorStyle } = useSlidingIndicator(statusNavRef, '[aria-pressed="true"]', [status])
+const { indicatorStyle: kindIndicatorStyle } = useSlidingIndicator(kindNavRef, '[aria-pressed="true"]', [kind])
+
 let controller: AbortController | undefined
 const lifecycle = new AbortController()
 async function load() {
@@ -60,10 +67,21 @@ onBeforeUnmount(() => { controller?.abort(); lifecycle.abort() })
   <ManagementLayout title="我的追更" description="查看你申请的电影和剧集。剧集默认追更所有正片季，不含特别篇。" @logout="emit('logout')">
     <template #actions><button :disabled="loading || !!busy" class="text-sm text-blue-600 disabled:opacity-50" @click="load">刷新</button></template>
     <div class="space-y-6">
-      <nav aria-label="追更状态" class="flex flex-wrap gap-2">
-        <button v-for="tab in [{ value: 'ongoing', label: '追更中' }, { value: 'closed', label: '已关闭' }, { value: 'completed', label: '已完成' }]" :key="tab.value" type="button" :aria-pressed="status === tab.value" :disabled="!!busy" class="rounded-lg px-4 py-2.5 text-sm disabled:opacity-50" :class="status === tab.value ? 'bg-slate-900 text-white dark:bg-slate-700' : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'" @click="navigate(kind, 0, tab.value)">{{ tab.label }} <span v-if="counts[tab.value] !== undefined" class="ml-2 text-xs opacity-70">{{ counts[tab.value] }}</span></button>
-      </nav>
-      <nav aria-label="追更类型" class="flex gap-2"><button v-for="tab in [{ value: '', label: '全部' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]" :key="tab.value" :aria-pressed="kind === tab.value" class="rounded-lg px-4 py-2 text-sm" :class="kind === tab.value ? 'bg-slate-900 text-white dark:bg-slate-700' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'" @click="navigate(tab.value)">{{ tab.label }}</button></nav>
+      <div class="flex flex-wrap gap-4 sm:gap-6">
+        <nav ref="statusNavRef" aria-label="追更状态" class="relative flex w-max max-w-full overflow-x-auto gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60">
+          <div class="absolute z-0 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="statusIndicatorStyle"></div>
+          <button v-for="tab in [{ value: 'ongoing', label: '追更中' }, { value: 'closed', label: '已关闭' }, { value: 'completed', label: '已完成' }]" :key="tab.value" type="button" :aria-pressed="status === tab.value" :disabled="!!busy" class="relative z-10 flex min-w-[76px] shrink-0 items-center justify-center rounded-[8px] px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset disabled:opacity-50" :class="status === tab.value ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" @click="navigate(kind, 0, tab.value)">
+            {{ tab.label }} <span v-if="counts[tab.value] !== undefined" class="ml-1.5 text-[11px] opacity-60">{{ counts[tab.value] }}</span>
+          </button>
+        </nav>
+
+        <nav ref="kindNavRef" aria-label="追更类型" class="relative flex w-max max-w-full overflow-x-auto gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60">
+          <div class="absolute z-0 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="kindIndicatorStyle"></div>
+          <button v-for="tab in [{ value: '', label: '全部' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]" :key="tab.value" type="button" :aria-pressed="kind === tab.value" class="relative z-10 flex min-w-[64px] shrink-0 items-center justify-center rounded-[8px] px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset" :class="kind === tab.value ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" @click="navigate(tab.value)">
+            {{ tab.label }}
+          </button>
+        </nav>
+      </div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button class="ml-3 underline" @click="load">重试</button></p>
       <p v-if="notice" role="status" class="text-sm text-emerald-700">{{ notice }}</p>
       <p v-if="loading" role="status" class="py-10 text-center text-sm text-slate-400 dark:text-slate-500">正在加载追更…</p>

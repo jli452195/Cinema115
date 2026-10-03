@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
 import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
+
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 const props = defineProps<{ overBackdrop?: boolean }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -49,6 +51,14 @@ const managementLinks = computed(() => isPortalAdmin.value ? [
 ] : [])
 const managementActive = computed(() => managementLinks.value.some(link => route.path.startsWith(link.to)))
 
+const navContainerRef = ref<HTMLElement>()
+const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
+  navContainerRef, 
+  '.top-link.selected', 
+  [movieActive, tvActive, updatesActive], 
+  { persistKey: '__nav_indicator_pos' }
+)
+
 function closePanels() { accountOpen.value = false }
 
 function toggleAccount() { accountOpen.value = !accountOpen.value }
@@ -77,10 +87,11 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
       <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
         <CinemaLogo />
       </RouterLink>
-      <nav aria-label="影视导航" class="flex items-center gap-1 sm:gap-2">
-        <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link" :class="{ selected: movieActive }">电影</RouterLink>
-        <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link" :class="{ selected: tvActive }">剧集</RouterLink>
-        <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link" :class="{ selected: updatesActive }">更新</RouterLink>
+      <nav ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2">
+        <div class="nav-indicator absolute inset-y-0 z-0 rounded-[0.6rem] bg-[#f1f5f9] dark:bg-slate-800" :style="navIndicatorStyle"></div>
+        <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: movieActive }">电影</RouterLink>
+        <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: tvActive }">剧集</RouterLink>
+        <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5">
         <RouterLink to="/notifications" class="icon-button relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
@@ -122,9 +133,10 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .top-link { position: relative; border-radius: 0.6rem; padding: 0.6rem 0.65rem; font-size: 0.875rem; font-weight: 600; color: #334155; white-space: nowrap; transition: color 200ms, background-color 200ms; }
 .dark .top-link { color: rgb(var(--color-slate-300)); }
 .top-link:hover { background: #f8fafc; color: #0f172a; }
-.top-link.selected { background: #f1f5f9; color: #0f172a; }
-.dark .top-link:hover, .dark .top-link.selected { color: rgb(var(--color-slate-100)); background: rgb(var(--color-slate-800)); }
-.top-link.selected::after { content: ''; position: absolute; height: 2px; bottom: -1px; left: 25%; right: 25%; background: rgb(var(--color-accent)); border-radius: 2px; }
+.top-link.selected { color: #0f172a; background: transparent; }
+.dark .top-link:hover { color: rgb(var(--color-slate-100)); background: rgb(var(--color-slate-800)); }
+.dark .top-link.selected { color: rgb(var(--color-slate-100)); background: transparent; }
+.nav-indicator::after { content: ''; position: absolute; height: 3px; bottom: -1px; left: 20%; right: 20%; background: rgb(var(--color-accent)); border-radius: 3px; box-shadow: 0 1px 6px rgb(var(--color-accent) / 40%); }
 .icon-button { display: flex; height: 2.25rem; width: 2.25rem; align-items: center; justify-content: center; border-radius: 0.6rem; color: #475569; transition: color 200ms, background-color 200ms; }
 .dark .icon-button { color: rgb(var(--color-slate-400)); }
 .icon-button:hover { background: #f1f5f9; color: #0f172a; }
