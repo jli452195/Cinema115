@@ -13,6 +13,8 @@ type PlaybackPoolSettings struct {
 }
 
 type PlaybackPoolLease struct {
+	EventFallback  string `json:"eventFallback,omitempty"`
+	UserGeneration uint64 `json:"userGeneration,omitempty"`
 	ObservationKey string `json:"observationKey,omitempty"`
 	Key            string `json:"key"`
 	SessionKey     string `json:"sessionKey,omitempty"`

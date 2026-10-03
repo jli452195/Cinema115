@@ -285,6 +285,17 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			continue
 		}
 		if exists && previous.AccountID == a.ID && previous.UID == a.UID && previous.Revision == a.Revision && previous.DirectoryID == a.PlaybackParentCID {
+			req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
+			if previous.Stopped || req.userGeneration != 0 && previous.UserGeneration != req.userGeneration {
+				d.Generation++
+				previous.Generation = d.Generation
+				previous.UserGeneration = req.userGeneration
+				previous.Stopped = false
+				d.Leases[key] = previous
+				if err := p.save(ctx, d); err != nil {
+					return nil, err
+				}
+			}
 			p.metrics.Reused++
 			return &PoolLease{pool: p, Record: previous, Account: a, healthSequence: h.Sequence}, nil
 		}
@@ -360,6 +371,8 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	l := model.PlaybackPoolLease{Key: key, UserID: user, AccountID: a.ID, UID: a.UID, Revision: a.Revision, DirectoryID: a.PlaybackParentCID, Generation: d.Generation, ExpiresAt: p.now().Add(time.Duration(d.Settings.BudgetSeconds+5) * time.Second).UnixMilli()}
 	if req, ok := ctx.Value(poolRequestKey{}).(PoolRequest); ok {
 		l.SessionKey = req.lifecycleKey
+		l.EventFallback = req.eventFallback
+		l.UserGeneration = req.userGeneration
 		l.ObservationKey = req.observationKey
 		if req.Task {
 			l.ExpiresAt = p.now().Add(85 * time.Second).UnixMilli()

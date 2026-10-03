@@ -134,7 +134,7 @@ func (s *MemberPlaybackService) beginMediaAuthorization(ctx context.Context, ser
 				}
 			}
 			userLease = holder.lease
-			if userLease.Record.Key != DirectLinkKey("user-playback", r.ServerID, r.EmbyID) || !userLease.Current() {
+			if userLease.Record.Key != userPlaybackKey(r, req) || !userLease.Current() {
 				return nil, ErrUserPlaybackStopped
 			}
 		}

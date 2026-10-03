@@ -10,7 +10,6 @@ import (
 	"strm115/backend/internal/model"
 )
 
-var ErrUserPlaybackConflict = errors.New("该用户已在别处播放,请先停止当前播放后再重试")
 var ErrUserPlaybackStopped = errors.New("此播放会话已结束，请重新发起播放")
 var ErrUserPlaybackBusy = errors.New("播放会话管理暂忙，请稍后重试")
 
@@ -72,6 +71,12 @@ type UserPlaybackLease struct {
 	closed bool
 }
 
+// A user can own multiple playback sessions. Media-source variants within one
+// client session share its lifecycle; each pool target keeps its own UID lease.
+func userPlaybackKey(r model.MemberPlayback, req PoolRequest) string {
+	return DirectLinkKey("user-playback", r.ServerID, r.EmbyID, req.Session, req.Item)
+}
+
 func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req PoolRequest) (*UserPlaybackLease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -83,16 +88,13 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 	defer p.mu.Unlock()
 	d := p.clone()
 	p.prune(&d)
-	key := DirectLinkKey("user-playback", r.ServerID, r.EmbyID)
-	session := DirectLinkKey(req.Session, req.Item, req.Source)
+	key := userPlaybackKey(r, req)
+	session := DirectLinkKey(req.Session, req.Item)
 	event := DirectLinkKey(r.ServerID, r.UserID, req.Session, req.Item)
 	if d.Stopped[event] > p.now().UnixMilli() {
 		return nil, ErrUserPlaybackStopped
 	}
 	if old, ok := d.Leases[key]; ok {
-		if old.SessionDigest != session {
-			return nil, ErrUserPlaybackConflict
-		}
 		if p.refs[old.Generation] >= 128 {
 			return nil, ErrUserPlaybackBusy
 		}
@@ -104,6 +106,9 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 	}
 	d.Generation++
 	l := model.UserPlaybackLease{Key: key, UserID: r.UserID, ServerID: r.ServerID, SessionDigest: session, EventKey: event, Item: req.Item, Generation: d.Generation, UpdatedAt: p.now().UnixMilli(), ExpiresAt: p.now().Add(95 * time.Second).UnixMilli()}
+	if req.Client != "" {
+		l.EventFallback = DirectLinkKey("playback-event", r.ServerID, r.UserID, req.Client, req.Item)
+	}
 	if req.PlaySession != "" {
 		l.ObservationKey = DirectLinkKey("pool-observation", r.ServerID, r.EmbyID, req.PlaySession, req.Item)
 	}
@@ -232,6 +237,7 @@ func (p *UserPlayback) List() []model.UserPlaybackLease {
 			l.SessionDigest = ""
 			l.EventKey = ""
 			l.ObservationKey = ""
+			l.EventFallback = ""
 			out = append(out, l)
 		}
 	}

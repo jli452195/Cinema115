@@ -1,6 +1,7 @@
 package model
 
 type UserPlaybackLease struct {
+	EventFallback  string `json:"eventFallback,omitempty"`
 	Key            string `json:"key"`
 	UserID         string `json:"userId"`
 	ServerID       string `json:"serverId"`

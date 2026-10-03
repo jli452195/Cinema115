@@ -164,7 +164,7 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	before := len(drive.attempts)
 	beforeChecks := drive.checks
 	w = call("GET", strings.Replace(path, "PlaySessionId=session", "PlaySessionId=capacity-denied", 1), "")
-	if w.Code != 409 || !strings.Contains(w.Body.String(), "USER_PLAYBACK_CONFLICT：该用户已在别处播放,请先停止当前播放后再重试") || strings.Contains(w.Body.String(), "UID=") || len(drive.attempts) != before || drive.checks != beforeChecks || w.Header().Get("Location") != "" {
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "共享小号会话额度已满") || strings.Contains(w.Body.String(), "UID=") || len(drive.attempts) != before || drive.checks != beforeChecks || w.Header().Get("Location") != "" {
 		t.Fatal("busy request reached cloud or leaked diagnostics", w.Code, w.Body.String())
 	}
 	for _, entry := range logs.Snapshot() {
@@ -226,6 +226,23 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	if w.Code != 204 || len(members.UserPlayback.List()) != 0 {
 		t.Fatal("replay stop failed", w.Code)
 	}
+	// Some clients omit PlaySessionId on stop. The authenticated token and item
+	// fallback must still release the current generation.
+	w = call("GET", path, "")
+	if w.Code != 302 || len(members.UserPlayback.List()) != 1 {
+		t.Fatal("fallback replay failed", w.Code)
+	}
+	withoutSession := `{"ItemId":"movie"}`
+	w = call("POST", "/emby/Sessions/Playing/Stopped?api_key=token", withoutSession)
+	if w.Code != 204 || len(members.UserPlayback.List()) != 0 {
+		t.Fatal("stop without PlaySessionId did not release", w.Code)
+	}
+	d, _ = db.PlaybackPool(ctx)
+	for _, l := range d.Leases {
+		if !l.Stopped {
+			t.Fatal("fallback stop did not mark pool residual")
+		}
+	}
 	if err := members.ConfigurePool(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -255,13 +272,23 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 		}
 	}
 	metrics := members.Pool.Metrics()
-	if metrics.Requests != 5 || metrics.Succeeded != 4 || metrics.Failed != 1 || metrics.Switches != 1 || metrics.Samples != 5 {
+	if metrics.Requests != 6 || metrics.Succeeded != 5 || metrics.Failed != 1 || metrics.Switches != 1 || metrics.Samples != 6 {
 		t.Fatal("redirect metrics lost retries or double-counted", metrics)
 	}
 	// Missing token identity still fails before pool admission; no budget change
 	// may turn client-supplied UserId into a recognized identity.
 	w = call("GET", strings.Replace(path, "api_key=token", "api_key=unknown&UserId="+uid, 1), "")
-	if w.Code != 401 || members.Pool.Metrics().Requests != 5 {
+	if w.Code != 401 || members.Pool.Metrics().Requests != 6 {
 		t.Fatal("unrecognized identity reached pool", w.Code)
+	}
+	// A valid second playback by the same user is admitted when UID capacity
+	// allows it; stopping it leaves the previous playback intact.
+	w = call("GET", strings.Replace(path, "PlaySessionId=session", "PlaySessionId=parallel-session", 1), "")
+	if w.Code != 302 || len(members.UserPlayback.List()) != 2 {
+		t.Fatal("same user parallel playback blocked", w.Code, w.Body.String())
+	}
+	w = call("POST", "/emby/Sessions/Playing/Stopped?api_key=token", `{"ItemId":"movie","PlaySessionId":"parallel-session"}`)
+	if w.Code != 204 || len(members.UserPlayback.List()) != 1 {
+		t.Fatal("parallel stop affected previous playback", w.Code)
 	}
 }

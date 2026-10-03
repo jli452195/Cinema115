@@ -81,6 +81,9 @@ func (s *MemberPlaybackService) PersistPoolCooling() error {
 }
 
 type PoolRequest struct {
+	Client         string
+	eventFallback  string
+	userGeneration uint64
 	PlaySession    string
 	observationKey string
 	Session        string
@@ -120,6 +123,12 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 	key := DirectLinkKey(r.ServerID, r.UserID, req.Session, req.Item, req.Source, strconv.FormatBool(req.Download))
 	if !req.Download {
 		req.lifecycleKey = DirectLinkKey(r.ServerID, r.UserID, req.Session, req.Item)
+		if req.Client != "" {
+			req.eventFallback = DirectLinkKey("playback-event", r.ServerID, r.UserID, req.Client, req.Item)
+		}
+		if holder, _ := ctx.Value(userPlaybackRequestKey{}).(*UserPlaybackRequest); holder != nil && holder.lease != nil {
+			req.userGeneration = holder.lease.Record.Generation
+		}
 		if req.PlaySession != "" && len(req.PlaySession) <= 256 {
 			req.observationKey = DirectLinkKey("pool-observation", r.ServerID, r.EmbyID, req.PlaySession, req.Item)
 		}
@@ -152,41 +161,6 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 		}
 	}
 	return lease, err
-}
-
-// Called only after Emby accepts a session event under the authenticated token.
-// Never creates leases and cannot alter another token/user's occupancy.
-func (s *MemberPlaybackService) PlaybackEventGeneration(server, id, session, item string) uint64 {
-	if s.UserPlayback == nil {
-		return 0
-	}
-	c := s.emby.snapshot()
-	r := s.playbackRecord(c.ServerID, id)
-	if server != c.URL || r.UserID == "" {
-		return 0
-	}
-	return s.UserPlayback.EventGeneration(DirectLinkKey(r.ServerID, r.UserID, session, item))
-}
-
-func (s *MemberPlaybackService) PoolSessionEvent(ctx context.Context, server, id, session, item string, stopped bool, generation uint64) error {
-	c := s.emby.snapshot()
-	r := s.playbackRecord(c.ServerID, id)
-	if server != c.URL || r.UserID == "" {
-		return nil
-	}
-	key := DirectLinkKey(r.ServerID, r.UserID, session, item)
-	var userErr error
-	if s.UserPlayback != nil {
-		var matched bool
-		matched, userErr = s.UserPlayback.Event(ctx, key, stopped, generation)
-		if !matched {
-			return userErr
-		}
-	}
-	if s.Pool == nil {
-		return userErr
-	}
-	return errors.Join(userErr, s.Pool.SessionEvent(ctx, key, stopped))
 }
 
 func (a *MediaAuthorization) PoolSelection(snap PlaybackCacheSnapshot) *PlaybackCacheSelection {

@@ -246,7 +246,7 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 			c.JSON(400, gin.H{"error": "播放会话版本无效"})
 			return
 		}
-		if err := s.UserPlayback.Release(c.Request.Context(), c.Param("key"), input.Generation); err != nil {
+		if err := s.ReleaseUserPlayback(c.Request.Context(), c.Param("key"), input.Generation); err != nil {
 			if errors.Is(err, service.ErrAccountChanged) {
 				c.JSON(409, gin.H{"error": "播放会话已变化，请刷新后重试"})
 			} else {

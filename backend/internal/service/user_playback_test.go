@@ -39,7 +39,7 @@ func userPlaybackReq(id string) PoolRequest {
 	return PoolRequest{Session: DirectLinkKey("token", id), PlaySession: id, Item: "movie", Source: "source"}
 }
 
-func TestUserPlaybackAtomicCompetition(t *testing.T) {
+func TestUserPlaybackConcurrentSessions(t *testing.T) {
 	p, _, r := userPlaybackFixture(t)
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -51,7 +51,7 @@ func TestUserPlaybackAtomicCompetition(t *testing.T) {
 			l, err := p.Acquire(ctx, r, userPlaybackReq(fmt.Sprint(i)))
 			if err == nil {
 				wins <- l
-			} else if !errors.Is(err, ErrUserPlaybackConflict) {
+			} else {
 				t.Error(err)
 			}
 		}(i)
@@ -65,9 +65,45 @@ func TestUserPlaybackAtomicCompetition(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if count != 1 || len(p.List()) != 0 {
+	if count != 32 || len(p.List()) != 0 {
 		t.Fatal(count, p.List())
 	}
+}
+
+func TestUserPlaybackStopWithoutSessionFallbackAndGenerationFence(t *testing.T) {
+	p, _, r := userPlaybackFixture(t)
+	ctx, request := WithUserPlaybackRequest(context.Background())
+	first, err := p.Acquire(ctx, r, PoolRequest{Client: "client", Session: "token:session", Item: "movie", Source: "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.lease = first
+	if err := first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if first.Record.EventFallback == "" {
+		t.Fatal("missing fallback event")
+	}
+	event := first.Record.EventKey
+	// A stop captured for the old generation cannot stop a replayed generation.
+	old := first.Record.Generation
+	if matched, err := p.Event(ctx, event, true, old); err != nil || !matched {
+		t.Fatal(matched, err)
+	}
+	replay, err := p.Acquire(ctx, r, PoolRequest{Client: "client", Session: "token:session", Item: "movie", Source: "source"})
+	if err != nil {
+		t.Fatal("replay blocked", err)
+	}
+	if replay.Record.Generation == old {
+		t.Fatal("generation did not advance")
+	}
+	if matched, err := p.Event(ctx, event, true, old); err != nil || matched {
+		t.Fatal("old stop released replay", matched, err)
+	}
+	if !replay.Current() {
+		t.Fatal("replay was fenced")
+	}
+	_ = replay.Close()
 }
 func TestUserPlaybackSameSessionReferencesAndIsolation(t *testing.T) {
 	p, _, r := userPlaybackFixture(t)
@@ -98,14 +134,18 @@ func TestUserPlaybackSameSessionReferencesAndIsolation(t *testing.T) {
 	}
 	changed := req
 	changed.Session = DirectLinkKey("other-token", req.PlaySession)
-	if _, err := p.Acquire(ctx, r, changed); !errors.Is(err, ErrUserPlaybackConflict) {
-		t.Fatal("other token joined", err)
+	separate, err := p.Acquire(ctx, r, changed)
+	if err != nil || separate.Record.Generation == other.Record.Generation {
+		t.Fatal("other token did not get an independent session", err)
 	}
+	defer separate.Close()
 	changed = req
 	changed.Source = "other-version"
-	if _, err := p.Acquire(ctx, r, changed); !errors.Is(err, ErrUserPlaybackConflict) {
-		t.Fatal(err)
+	variant, err := p.Acquire(ctx, r, changed)
+	if err != nil || variant.Record.Generation != other.Record.Generation {
+		t.Fatal("same playback source variant lost lifecycle", err)
 	}
+	defer variant.Close()
 	r.EmbyID = "other-user"
 	second, err := p.Acquire(ctx, r, req)
 	if err != nil {
@@ -137,9 +177,6 @@ func TestUserPlaybackStopGenerationAndAdminRelease(t *testing.T) {
 	}
 	if matched, err := p.Event(ctx, l.Record.EventKey, true, l.Record.Generation); err != nil || matched || !replay.Current() {
 		t.Fatal("delayed accepted stop released replay", err)
-	}
-	if _, err := p.Acquire(ctx, r, userPlaybackReq("two")); !errors.Is(err, ErrUserPlaybackConflict) {
-		t.Fatal("replay did not exclude a second stream", err)
 	}
 	if err := replay.Close(); err != nil {
 		t.Fatal(err)
@@ -192,8 +229,12 @@ func TestUserPlaybackPersistenceRestartExpiryAndReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted.now = p.now
-	if _, err := restarted.Acquire(ctx, r, userPlaybackReq("two")); !errors.Is(err, ErrUserPlaybackConflict) {
-		t.Fatal("restart lost occupancy", err)
+	second, err := restarted.Acquire(ctx, r, userPlaybackReq("two"))
+	if err != nil || !l.Current() || len(restarted.List()) != 2 {
+		t.Fatal("persisted session blocked another playback", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
 	}
 	before := restarted.List()[0].ExpiresAt
 	now = now.Add(time.Minute)
@@ -256,8 +297,7 @@ func TestUserPlaybackAllSourcesAdmissionBeforeCloud(t *testing.T) {
 			ctx := context.Background()
 			memberScan(t, s, id)
 			r := s.record(id)
-			// Reserve directly first; every authenticated source must reject the second
-			// before resolving a target or touching the cloud.
+			// An existing session must not prevent another reaching source checks.
 			r.Source = source
 			r.PlaybackOnly = false
 			if err := s.save(ctx, r); err != nil {
@@ -272,8 +312,8 @@ func TestUserPlaybackAllSourcesAdmissionBeforeCloud(t *testing.T) {
 			defer holder.Close()
 			u := remote.users[r.EmbyID]
 			_, err = s.BeginMediaAuthorization(request, r.EmbyURL, r.EmbyID, false, &u)
-			if !errors.Is(err, ErrUserPlaybackConflict) {
-				t.Fatal(source, err)
+			if holder.lease == nil || holder.lease.Record.Key == first.Record.Key || !first.Current() {
+				t.Fatal("second session was not independently admitted", source, err)
 			}
 		})
 	}
@@ -291,8 +331,8 @@ func TestUserPlaybackChildIndependentAndDownloadUnrestricted(t *testing.T) {
 	defer holder.Close()
 	u := remote.users[child.EmbyID]
 	_, err = s.BeginMediaAuthorization(request, child.EmbyURL, child.EmbyID, false, &u)
-	if !errors.Is(err, ErrUserPlaybackConflict) {
-		t.Fatal("child bypassed slot", err)
+	if holder.lease == nil || holder.lease.Record.Key == first.Record.Key || !first.Current() {
+		t.Fatal("child second session was not independently admitted", err)
 	}
 	ownerRecord := s.record(owner)
 	ownerReq, ownerHolder := WithUserPlaybackRequest(WithPoolRequest(ctx, userPlaybackReq("owner")))

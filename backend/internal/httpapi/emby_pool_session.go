@@ -15,7 +15,8 @@ type poolSessionEventKey struct{}
 type poolSessionEvent struct {
 	user, session, item string
 	stopped             bool
-	generation          uint64
+	captured            service.PlaybackEvent
+	missingSession      bool
 }
 
 // Capture only bounded session-event metadata. The body is replayed unchanged
@@ -43,11 +44,12 @@ func (h *embyProxyHandler) capturePoolSession(r *http.Request) *http.Request {
 		ItemID        string `json:"ItemId"`
 		PlaySessionID string `json:"PlaySessionId"`
 	}
-	if json.Unmarshal(data, &v) != nil || !embyProxyID.MatchString(v.ItemID) || v.PlaySessionID == "" || len(v.PlaySessionID) > 256 {
+	if json.Unmarshal(data, &v) != nil || !embyProxyID.MatchString(v.ItemID) || len(v.PlaySessionID) > 256 {
 		return r
 	}
 	e := poolSessionEvent{user: user, session: service.DirectLinkKey(token, v.PlaySessionID), item: v.ItemID, stopped: path == "sessions/playing/stopped"}
-	e.generation = h.cache.Members.PlaybackEventGeneration(h.config.URL, e.user, e.session, e.item)
+	e.missingSession = v.PlaySessionID == ""
+	e.captured = h.cache.Members.CapturePlaybackEvent(h.config.URL, e.user, e.session, service.DirectLinkKey("playback-client", token), e.item, e.missingSession)
 	return r.WithContext(context.WithValue(r.Context(), poolSessionEventKey{}, e))
 }
 
@@ -56,7 +58,12 @@ func (h *embyProxyHandler) observePoolSession(resp *http.Response) {
 	if !ok || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return
 	}
-	if err := h.cache.Members.PoolSessionEvent(resp.Request.Context(), h.config.URL, e.user, e.session, e.item, e.stopped, e.generation); err != nil {
+	if e.stopped && !e.captured.Matched() {
+		h.logs.Add(resp.Request.Context(), "WARNING", "Emby 已接受停止，但未匹配本地播放租约；请检查播放会话字段、登录凭据是否一致或租约是否已结束")
+	}
+	if err := h.cache.Members.ApplyPlaybackEvent(resp.Request.Context(), e.captured, e.stopped); err != nil {
 		h.logs.Add(resp.Request.Context(), "ERROR", "播放会话状态保存失败，将按原租约期限回收")
+	} else if e.stopped && e.captured.Matched() {
+		h.logs.Add(resp.Request.Context(), "INFO", "Emby 已接受停止：已处理对应代次的播放会话和池租约；池已签发记录最多保留两分钟残余，旧代次或重复事件忽略")
 	}
 }
