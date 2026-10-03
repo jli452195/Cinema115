@@ -15,6 +15,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    const req=route.request(), p=new URL(req.url()).pathname; let data={}
    if (p==='/api/auth/me') data={user:{id:'admin',username:'admin',role:'admin'}}
    else if(p==='/api/admin/p115/accounts') data={accounts:[{id:'main',name:'主账号',primary:true,configured:true,revision:1},...pool]}
+   else if(p.endsWith('/device-policy')) data={mode:'parallel',silenceSeconds:60}
    else if(p==='/api/admin/member-playback/accounts') data={accounts:pool}
    else if(p==='/api/admin/member-playback/pool') {if(req.method()==='POST'){settings=req.postDataJSON();writes.push(settings)}else reads++;data={settings,accounts:pool,metrics:{requests:10,succeeded:8,failed:2,switches:1,p50Ms:100,p95Ms:900,samples:10,peakUidSessions:2,resolved:8,copyResolutions:7,directLinkHits:5},api:{requests:20,throttled:1,rejected:0,waitMs:50,waiting:0,sourceRequests:3},events:[{id:1,accountId:'pool',state:'invalid_directory',at:Date.now()}]}}
    else if(p==='/api/admin/telegram/bots') data={bots:[{id:'bot',name:'测试通知',configured:true,enabled:true,notificationChatID:'42'}]}

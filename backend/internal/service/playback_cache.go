@@ -431,6 +431,7 @@ type PlaybackResolution struct {
 	UsedSource   bool
 	FileCacheKey string
 	FileCacheID  string
+	ReusedCopy   bool
 }
 
 func (s *PlaybackCacheSelection) DirectLinkScope() string {

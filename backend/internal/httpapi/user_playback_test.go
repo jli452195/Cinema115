@@ -72,7 +72,7 @@ func TestUserPlaybackAdminReleaseRoutes(t *testing.T) {
 			t.Fatal("policy write exposed", w.Code)
 		}
 	}
-	for _, body := range []string{`{}`, `{"mode":"bad","silenceSeconds":90}`, `{"mode":"heartbeat_takeover","silenceSeconds":30}`} {
+	for _, body := range []string{`{}`, `{"mode":"bad","silenceSeconds":90}`, `{"mode":"heartbeat_takeover","silenceSeconds":29}`} {
 		if w := call("POST", policyURL, body, "admin"); w.Code != 400 {
 			t.Fatal("invalid policy accepted", w.Code)
 		}

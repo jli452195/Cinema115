@@ -23,13 +23,13 @@ func normalizeDevicePolicy(v model.PlaybackDevicePolicy) (model.PlaybackDevicePo
 		v.Mode = DevicePolicyParallel
 	}
 	if v.SilenceSeconds == 0 {
-		v.SilenceSeconds = 90
+		v.SilenceSeconds = 60
 	}
 	if v.Mode != DevicePolicyParallel && v.Mode != DevicePolicyHeartbeat {
 		return v, memberError("未知的播放设备策略")
 	}
-	if v.SilenceSeconds < 60 || v.SilenceSeconds > 180 {
-		return v, memberError("播放心跳静默时间须为 60 至 180 秒")
+	if v.SilenceSeconds < 30 || v.SilenceSeconds > 180 {
+		return v, memberError("播放心跳静默时间须为 30 至 180 秒")
 	}
 	return v, nil
 }

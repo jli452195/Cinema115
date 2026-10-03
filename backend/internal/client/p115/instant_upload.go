@@ -258,6 +258,7 @@ func instantPayload(input url.Values, timestamp int64) ([]byte, string, error) {
 }
 
 func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cookie string, body []byte) ([]byte, error) {
+	ctx = context.WithValue(ctx, budgetStageKey{}, "instant_upload")
 	if err := WaitRequestBudget(ctx, cookie); err != nil {
 		return nil, err
 	}

@@ -12,6 +12,7 @@ import (
 // Only the request context proves that the client canceled. An unexplained
 // upstream cancellation is an upstream failure, never a binding denial.
 func playbackAuthorizationFailure(ctx context.Context, err error) (string, int) {
+	service.ObservePoolAdmission(ctx, err)
 	var admission *service.PoolAdmissionError
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):

@@ -454,5 +454,6 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 	}
 	s.stats.targetHits.Add(1)
 	report.Mode, report.FileCacheKey, report.FileCacheID = "复用同 SHA1 文件", e.Key, e.File.ID
+	report.ReusedCopy = true
 	return link, nil
 }

@@ -4,12 +4,13 @@ import { memberRequest, type MemberPlayback } from '../types/memberPlayback'
 const props = defineProps<{ token: string; members: MemberPlayback[] }>()
 type Session = { key: string; userId: string; item: string; generation: number; issued: boolean; updatedAt: number; expiresAt: number }
 const sessions = ref<Session[]>([]), error = ref(''), busy = ref(false), selected = ref<Session>()
+const policy = ref<{ mode: string; silenceSeconds: number }>()
 const controller = new AbortController()
 let timer: ReturnType<typeof setTimeout> | undefined
 async function load() {
  if (busy.value) return
  busy.value = true
- try { const data = await memberRequest(props.token, controller.signal, '/playback-sessions'); sessions.value = data.sessions || []; error.value = '' }
+ try { const data = await memberRequest(props.token, controller.signal, '/playback-sessions'); sessions.value = data.sessions || []; policy.value = data.devicePolicy; error.value = '' }
  catch(e) { if (!controller.signal.aborted) error.value = e instanceof Error ? e.message : '读取播放占用失败' }
  finally { busy.value = false }
 }
@@ -28,8 +29,10 @@ onBeforeUnmount(() => { controller.abort(); clearTimeout(timer) })
 <template>
  <details class="mb-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
   <summary class="cursor-pointer font-medium">用户播放占用（{{ sessions.length }}）</summary>
-  <p class="my-3 text-sm text-slate-500">同一 Emby 用户可以同时发起多个播放会话。停止后释放对应会话，小号池仍按实际 UID 限制容量，并可能保留直链残余占用。</p>
-  <p class="mb-3 text-sm text-slate-500">同设备同播放器的新播放可在旧会话静默后接替，优先沿用原小号。缺少设备信息时需通过反代重新登录；多会话无法唯一匹配时独立计数。</p>
+  <p v-if="policy?.mode === 'heartbeat_takeover'" class="my-3 text-sm text-slate-500">当前策略：单设备心跳熔断。原设备静默 {{ policy.silenceSeconds }} 秒后，其他设备可尝试接替；成功后转交原名额，旧播放不再占容量。缺少可信设备信息时需通过反代重新登录。</p>
+  <p v-else-if="policy?.mode === 'parallel'" class="my-3 text-sm text-slate-500">当前策略：多设备并行。同一用户可在多个设备播放，各设备独立计数，停止或换号后可能保留最多两分钟残余占用。</p>
+  <p v-else class="my-3 text-sm text-slate-500">设备策略尚未读取，请刷新后查看；不能据此判断是否允许多设备播放。</p>
+  <p class="mb-3 text-sm text-slate-500">这里列出播放会话，同设备切集与预加载可共享一个 UID 名额。池的占用、活跃、准备与残余是逻辑容量统计，不是用户数或真实视频连接数。</p>
   <p v-if="error" role="alert" class="my-2 text-sm text-red-600">{{ error }}</p>
   <p v-if="!sessions.length" class="text-sm text-slate-500">{{ busy ? '读取中' : '暂无播放占用' }}</p>
   <div v-for="s in sessions" :key="s.key" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700">

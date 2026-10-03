@@ -196,12 +196,12 @@ func TestPoolHealthBackoffProbeDebounceAndStaleSuccess(t *testing.T) {
 	if p.AccountStatus(a).State != "ready" {
 		t.Fatal("recovery did not publish")
 	}
-	if err := p.report(ctx, a, errors.New("temporary")); err != nil {
+	if err := p.report(ctx, a, context.DeadlineExceeded); err != nil {
 		t.Fatal(err)
 	}
 	first := p.doc.Health[a.ID]
 	now = time.UnixMilli(first.Until).Add(time.Second)
-	if err := p.report(ctx, a, errors.New("temporary")); err != nil {
+	if err := p.report(ctx, a, context.DeadlineExceeded); err != nil {
 		t.Fatal(err)
 	}
 	second := p.doc.Health[a.ID]

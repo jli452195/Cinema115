@@ -7,13 +7,14 @@ import type { TelegramBotConfig } from '../types/telegramBots'
 const props = defineProps<{ token: string; pool: P115Account[] }>()
 const emit = defineEmits<{ changed: [] }>()
 const settings = ref({ maxSessions: 3, maxAttempts: 3, budgetSeconds: 90, leaseMinutes: 5, cooldownSeconds: 30, uidIntervalMs: 250, globalIntervalMs: 50, notificationBotId: '' })
-type Metrics = { requests: number; succeeded: number; failed: number; switches: number; p50Ms: number; p95Ms: number; samples: number; peakUidSessions: number; copyPreferred: number; recentPreferred: number; resolved: number; copyResolutions: number; directLinkHits: number }
-type Budget = { requests: number; throttled: number; rejected: number; waitMs: number; waiting: number; peakWaiting: number; sourceRequests: number }
+type Metrics = { switchedRequests?: number; copyReuses?: number; deviceConflicts?: number; capacityDenials?: number; capacityTransfers?: number; requests: number; succeeded: number; failed: number; switches: number; p50Ms: number; p95Ms: number; samples: number; peakUidSessions: number; copyPreferred: number; recentPreferred: number; resolved: number; copyResolutions: number; directLinkHits: number }
+type Budget = { requests: number; throttled: number; rejected: number; waitMs: number; waiting: number; peakWaiting: number; sourceRequests: number; stages?: Record<string, number>; origins?: Record<string, number> }
 const metrics = ref<Metrics>(), api = ref<Budget>(), bots = ref<TelegramBotConfig[]>([])
 const events = ref<{ id: number; accountId: string; state: string; at: number }[]>([])
 const now = ref(Date.now()), refreshing = ref(false)
 const uidCount = computed(() => new Set(accounts.value.filter(a => !a.primary && a.configured && a.uid && a.playbackParentCid && a.pool?.mode !== 'disabled').map(a => a.uid)).size)
 const successRate = computed(() => metrics.value?.requests ? `${(metrics.value.succeeded / metrics.value.requests * 100).toFixed(1)}%` : '暂无请求')
+const ratio = (n: number | undefined, total: number) => total ? `${((n || 0) / total * 100).toFixed(1)}%（${n || 0}/${total}）` : '暂无样本'
 const healthText = (state: string) => ({ ready: '检查通过', pending: '等待复查', unknown: '尚未检查', unconfigured: '未完成配置', invalid_credentials: '登录失效', invalid_directory: '目录失效', cooldown: '故障冷却', throttled: '限流冷却' }[state] || '等待复查')
 const remaining = (until: number) => Math.max(0, Math.ceil((until - now.value) / 1000))
 let refreshTimer: ReturnType<typeof setInterval> | undefined
@@ -67,6 +68,10 @@ onBeforeUnmount(() => { controller.abort(); clearInterval(refreshTimer) })
    <p class="mt-2">最近 {{ metrics.samples }} 次取链耗时：p50 {{ metrics.p50Ms }} ms，p95 {{ metrics.p95Ms }} ms；单 UID 峰值占用 {{ metrics.peakUidSessions }}。</p>
    <p v-if="api" class="mt-2">115 API 放行 {{ api.requests }} 次，收到 429 {{ api.throttled }} 次，队列拒绝 {{ api.rejected }} 次；当前等待 {{ api.waiting }}，累计等待 {{ api.waitMs }} ms。</p>
    <p class="mt-2">成功解析 {{ metrics.resolved || 0 }} 次，其中副本路径 {{ metrics.copyResolutions || 0 }} 次，直链缓存命中 {{ metrics.directLinkHits || 0 }} 次；源盘 API 放行 {{ api?.sourceRequests || 0 }} 次。</p>
+   <p class="mt-2">故障换 UID 请求比例 {{ ratio(metrics.switchedRequests, metrics.requests) }}；已有副本复用率 {{ ratio(metrics.copyReuses, metrics.copyResolutions) }}，分母为成功副本路径，包含直链缓存命中。</p>
+   <p class="mt-2">设备冲突 {{ metrics.deviceConflicts || 0 }} 次，UID 容量拒绝 {{ metrics.capacityDenials || 0 }} 次，成功容量转交 {{ metrics.capacityTransfers || 0 }} 次。失败总数包含业务准入拒绝，不等同于上游故障。</p>
+   <p v-if="api?.stages" class="mt-2">API 阶段：凭据检查 {{ api.stages.credential_check || 0 }}，文件查询 {{ api.stages.file_lookup || 0 }}，取链 {{ api.stages.direct_link || 0 }}，秒传提交 {{ api.stages.instant_upload || 0 }}，目录写入 {{ api.stages.directory_write || 0 }}，其他元数据 {{ (api.stages.metadata || 0) + (api.stages.other || 0) }}。统计为预算放行次数，不含 CDN 读取。</p>
+   <p v-if="api?.origins" class="mt-2">API 来源：源盘 {{ api.origins.source || 0 }}，校验副本 {{ api.origins.donor || 0 }}，目标 {{ api.origins.target || 0 }}，后台探测 {{ api.origins.probe || 0 }}。</p>
    <p class="mt-2 text-xs text-slate-500">指标重启后重新统计；取链耗时含失败和重试，不代表播放器实际起播时间。状态每 10 秒刷新，不触发网盘探测。</p>
   </section>
   <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="save">

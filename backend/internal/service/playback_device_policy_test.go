@@ -156,7 +156,7 @@ func TestDevicePolicyConfigurationRestartAndFailure(t *testing.T) {
 	if _, err := deviceSlotPrepare(t, s, r, accounts, "", "unknown"); !errors.Is(err, ErrPlaybackDeviceIdentity) {
 		t.Fatal(err)
 	}
-	for _, v := range []model.PlaybackDevicePolicy{{Mode: "unknown"}, {Mode: DevicePolicyHeartbeat, SilenceSeconds: 59}, {Mode: DevicePolicyHeartbeat, SilenceSeconds: 181}} {
+	for _, v := range []model.PlaybackDevicePolicy{{Mode: "unknown"}, {Mode: DevicePolicyHeartbeat, SilenceSeconds: 29}, {Mode: DevicePolicyHeartbeat, SilenceSeconds: 181}} {
 		if err := s.UserPlayback.ConfigureDevicePolicy(ctx, v); err == nil {
 			t.Fatal("invalid setting")
 		}

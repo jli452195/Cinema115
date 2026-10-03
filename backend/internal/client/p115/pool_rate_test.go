@@ -7,6 +7,38 @@ import (
 	"time"
 )
 
+func TestPoolBudgetStageOriginAndRequestSnapshots(t *testing.T) {
+	now := time.Unix(1000, 0)
+	b := &RequestBudget{clock: func() time.Time { return now }, wait: func(_ context.Context, at time.Time) error { now = at; return nil }}
+	ctx, trace := WithBudgetTrace(WithRequestBudget(context.Background(), b))
+	for _, c := range []context.Context{
+		budgetEndpointContext(ctx, "https://fake/files/search?cookie=secret"),
+		budgetEndpointContext(WithBudgetSource(ctx, "1"), "https://fake/app/downurl?token=secret"),
+		budgetEndpointContext(WithDonorBudget(ctx), "https://fake/files/get_info?id=secret"),
+		WithBackgroundBudget(context.WithValue(ctx, budgetStageKey{}, "credential_check")),
+	} {
+		if err := WaitRequestBudget(c, "UID=1_A"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := b.Stats()
+	stages, origins := trace.Snapshot()
+	if s.Requests != 4 || stages["file_lookup"] != 2 || stages["direct_link"] != 1 || stages["credential_check"] != 1 {
+		t.Fatal(s, stages)
+	}
+	for _, origin := range []string{"source", "target", "donor", "probe"} {
+		if origins[origin] != 1 || s.Origins[origin] != 1 {
+			t.Fatal(origins, s)
+		}
+	}
+	stages["file_lookup"] = 999
+	s.Stages["file_lookup"] = 999
+	fresh, _ := trace.Snapshot()
+	if fresh["file_lookup"] != 2 || b.Stats().Stages["file_lookup"] != 2 {
+		t.Fatal("mutable stats map")
+	}
+}
+
 func TestPoolBackgroundBudgetYieldsAndCounters(t *testing.T) {
 	b := &RequestBudget{waiting: 1, lastBackground: time.Now()}
 	ctx := WithBackgroundBudget(WithRequestBudget(context.Background(), b))

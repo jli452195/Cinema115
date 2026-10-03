@@ -12,29 +12,37 @@ import (
 // Counters reset on restart; latency keeps the latest 256 completed redirects.
 // No request identity, credential or URL is stored in metrics.
 type PoolMetrics struct {
-	StartedAt       int64  `json:"startedAt"`
-	Requests        uint64 `json:"requests"`
-	Succeeded       uint64 `json:"succeeded"`
-	Failed          uint64 `json:"failed"`
-	Switches        uint64 `json:"switches"`
-	Allocations     uint64 `json:"allocations"`
-	Reused          uint64 `json:"reused"`
-	CopyPreferred   uint64 `json:"copyPreferred"`
-	RecentPreferred uint64 `json:"recentPreferred"`
-	PeakUIDSessions int    `json:"peakUidSessions"`
-	P50MS           int64  `json:"p50Ms"`
-	P95MS           int64  `json:"p95Ms"`
-	Samples         int    `json:"samples"`
-	Waiting         int    `json:"waiting"`
-	CopyResolutions uint64 `json:"copyResolutions"`
-	Resolved        uint64 `json:"resolved"`
-	DirectLinkHits  uint64 `json:"directLinkHits"`
+	StartedAt         int64  `json:"startedAt"`
+	Requests          uint64 `json:"requests"`
+	Succeeded         uint64 `json:"succeeded"`
+	Failed            uint64 `json:"failed"`
+	Switches          uint64 `json:"switches"`
+	SwitchedRequests  uint64 `json:"switchedRequests"`
+	DeviceConflicts   uint64 `json:"deviceConflicts"`
+	CapacityDenials   uint64 `json:"capacityDenials"`
+	CapacityTransfers uint64 `json:"capacityTransfers"`
+	CopyReuses        uint64 `json:"copyReuses"`
+	Allocations       uint64 `json:"allocations"`
+	Reused            uint64 `json:"reused"`
+	CopyPreferred     uint64 `json:"copyPreferred"`
+	RecentPreferred   uint64 `json:"recentPreferred"`
+	PeakUIDSessions   int    `json:"peakUidSessions"`
+	P50MS             int64  `json:"p50Ms"`
+	P95MS             int64  `json:"p95Ms"`
+	Samples           int    `json:"samples"`
+	Waiting           int    `json:"waiting"`
+	CopyResolutions   uint64 `json:"copyResolutions"`
+	Resolved          uint64 `json:"resolved"`
+	DirectLinkHits    uint64 `json:"directLinkHits"`
 }
 
-func (p *DynamicPool) ObserveResolution(copyHit, linkHit bool) {
+func (p *DynamicPool) ObserveResolution(copyHit, linkHit bool, reused ...bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.metrics.Resolved++
+	if copyHit && (linkHit || len(reused) > 0 && reused[0]) {
+		p.metrics.CopyReuses++
+	}
 	if copyHit {
 		p.metrics.CopyResolutions++
 	}
@@ -53,6 +61,9 @@ func (p *DynamicPool) ObserveRedirect(elapsed time.Duration, success bool, switc
 		p.metrics.Failed++
 	}
 	p.metrics.Switches += uint64(max(0, switches))
+	if switches > 0 {
+		p.metrics.SwitchedRequests++
+	}
 	if len(p.latencies) < 256 {
 		p.latencies = append(p.latencies, elapsed.Milliseconds())
 	} else {

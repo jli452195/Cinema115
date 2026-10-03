@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "environment": "win32/x64",
+  "measuredAt": "2026-10-03T11:14:30.275Z",
+  "simulated": true,
+  "clientOperationDelayMs": 2,
+  "note": "Independent cache per worker; fixed one film per worker. Counts are instrumented fake client operations, not physical HTTP requests. Transfer/rollback probes have zero delay. Zero queue/occupancy means that subsystem is outside the scenario. api_queue uses 1 ms intervals. Latency includes local storage and scheduling.",
+  "scenarios": [
+    {
+      "scenario": "cold",
+      "concurrency": 4,
+      "requests": 4,
+      "p50Micros": 16955,
+      "p95Micros": 17455,
+      "mockClientOperations": 16,
+      "mockUploads": 4,
+      "peakApiQueue": 0,
+      "peakLogicalOccupancy": 0,
+      "errors": {}
+    },
+    {
+      "scenario": "cached_copy",
+      "concurrency": 4,
+      "requests": 80,
+      "p50Micros": 4499,
+      "p95Micros": 19878,
+      "mockClientOperations": 80,
+      "mockUploads": 0,
+      "peakApiQueue": 0,
+      "peakLogicalOccupancy": 0,
+      "errors": {}
+    },
+    {
+      "scenario": "same_uid_transfer",
+      "concurrency": 1,
+      "requests": 20,
+      "p50Micros": 2000,
+      "p95Micros": 2041,
+      "mockClientOperations": 20,
+      "mockUploads": 0,
+      "peakApiQueue": 0,
+      "peakLogicalOccupancy": 1,
+      "errors": {}
+    },
+    {
+      "scenario": "cross_uid_rollback",
+      "concurrency": 1,
+      "requests": 20,
+      "p50Micros": 2500,
+      "p95Micros": 3509,
+      "mockClientOperations": 20,
+      "mockUploads": 0,
+      "peakApiQueue": 0,
+      "peakLogicalOccupancy": 2,
+      "errors": {
+        "canceled_commit": 20
+      }
+    },
+    {
+      "scenario": "api_queue",
+      "concurrency": 4,
+      "requests": 4,
+      "p50Micros": 1503,
+      "p95Micros": 3509,
+      "mockClientOperations": 0,
+      "mockUploads": 0,
+      "peakApiQueue": 3,
+      "peakLogicalOccupancy": 0,
+      "errors": {}
+    }
+  ]
+}

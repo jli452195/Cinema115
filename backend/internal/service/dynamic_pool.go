@@ -276,6 +276,23 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	seen := make(map[string]bool)
 	full := false
 	blocked := make(map[string]map[string]bool, len(accounts))
+	defer func() {
+		uids := make([]string, 0, len(blocked))
+		for uid := range blocked {
+			uids = append(uids, uid)
+		}
+		sort.Strings(uids)
+		for _, uid := range uids {
+			reasons := make([]string, 0, len(blocked[uid]))
+			for reason := range blocked[uid] {
+				reasons = append(reasons, reason)
+			}
+			sort.Strings(reasons)
+			for _, reason := range reasons {
+				recordPoolCandidate(ctx, uid, "excluded", reason, 0)
+			}
+		}
+	}()
 	cooling, invalid := false, false
 	for _, a := range accounts {
 		if !eligiblePoolAccount(a) {
@@ -322,6 +339,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 				}
 			}
 			p.metrics.Reused++
+			recordPoolCandidate(ctx, a.UID, "selected", "existing_lease", previous.Generation)
 			return &PoolLease{pool: p, Record: previous, Account: a, healthSequence: h.Sequence}, nil
 		}
 		if mode == "draining" && !preferredSlot(a) {
@@ -407,6 +425,11 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		n++
 	}
 	a := options[int(d.Generation%uint64(n))]
+	for _, option := range options {
+		if option.ID != a.ID {
+			recordPoolCandidate(ctx, option.UID, "eligible", "lower_rank", 0)
+		}
+	}
 	reusesSlot := sharesSlot(a)
 	if exists && previous.Issued {
 		// A previously issued CDN URL may remain in use even after failover.
@@ -434,6 +457,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		return nil, err
 	}
 	p.metrics.Allocations++
+	recordPoolCandidate(ctx, a.UID, "selected", "reserved", l.Generation)
 	additional := 1
 	if canBorrow(a) || reusesSlot {
 		additional = 0
@@ -483,6 +507,7 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 		probeCtx, probeCancel := context.WithTimeout(ctx, 8*time.Second)
 		err = probe(probeCtx, l.Account)
 		probeCancel()
+		recordPoolCandidate(ctx, l.Account.UID, "probe", ClassifyPoolFault(PoolFaultProbe, err).Code, l.Record.Generation)
 		if err == nil {
 			ok = true
 			return l, nil
@@ -494,6 +519,9 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 			return nil, errors.Join(err, l.releaseUnissued())
 		}
 		if errors.Is(err, p115.ErrRateQueueFull) {
+			return nil, errors.Join(err, l.releaseUnissued())
+		}
+		if !ClassifyPoolFault(PoolFaultProbe, err).SwitchUID {
 			return nil, errors.Join(err, l.releaseUnissued())
 		}
 		if saveErr := p.report(ctx, l.Account, err); saveErr != nil {
@@ -511,6 +539,10 @@ func (p *DynamicPool) report(ctx context.Context, a P115Account, err error) erro
 }
 
 func (p *DynamicPool) reportChecked(ctx context.Context, a P115Account, err error, sequence *uint64) error {
+	decision := ClassifyPoolFault(PoolFaultTarget, err)
+	if err != nil && decision.Health == "" {
+		return nil
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
@@ -526,7 +558,7 @@ func (p *DynamicPool) reportChecked(ctx context.Context, a P115Account, err erro
 		if old.Revision == a.Revision {
 			h.Failures = min(old.Failures+1, 8)
 		}
-		h.State = "cooldown"
+		h.State = decision.Health
 		base := time.Duration(d.Settings.CooldownSeconds) * time.Second
 		delay := min(base*time.Duration(1<<min(h.Failures-1, 5)), max(base, 30*time.Minute))
 		h.Until = p.now().Add(delay + poolProbeJitter(a.ID)).UnixMilli()

@@ -89,6 +89,7 @@ func (c *ShareClient) requestEnvelopeOnce(ctx context.Context, method, endpoint,
 }
 
 func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoint, cookie string, form url.Values, userAgent string) (json.RawMessage, error) {
+	ctx = budgetEndpointContext(ctx, endpoint)
 	if err := WaitRequestBudget(ctx, cookie); err != nil {
 		return nil, err
 	}

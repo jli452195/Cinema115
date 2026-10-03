@@ -3,6 +3,9 @@ package p115
 import (
 	"context"
 	"errors"
+	"maps"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,21 +39,25 @@ func (b *RequestBudget) waitUntil(ctx context.Context, at time.Time) error {
 }
 
 type RequestBudgetStats struct {
-	Requests           uint64 `json:"requests"`
-	Throttled          uint64 `json:"throttled"`
-	Rejected           uint64 `json:"rejected"`
-	WaitMS             int64  `json:"waitMs"`
-	Waiting            int    `json:"waiting"`
-	PeakWaiting        int    `json:"peakWaiting"`
-	CoolingUntil       int64  `json:"coolingUntil"`
-	BackgroundDeferred uint64 `json:"backgroundDeferred"`
-	SourceRequests     uint64 `json:"sourceRequests"`
+	Requests           uint64            `json:"requests"`
+	Throttled          uint64            `json:"throttled"`
+	Rejected           uint64            `json:"rejected"`
+	WaitMS             int64             `json:"waitMs"`
+	Waiting            int               `json:"waiting"`
+	PeakWaiting        int               `json:"peakWaiting"`
+	CoolingUntil       int64             `json:"coolingUntil"`
+	BackgroundDeferred uint64            `json:"backgroundDeferred"`
+	SourceRequests     uint64            `json:"sourceRequests"`
+	Stages             map[string]uint64 `json:"stages"`
+	Origins            map[string]uint64 `json:"origins"`
 }
 
 func (b *RequestBudget) Stats() RequestBudgetStats {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	v := b.stats
+	v.Stages = maps.Clone(b.stats.Stages)
+	v.Origins = maps.Clone(b.stats.Origins)
 	v.Waiting = b.waiting
 	if b.cooling.After(b.now()) {
 		v.CoolingUntil = b.cooling.UnixMilli()
@@ -61,6 +68,47 @@ func (b *RequestBudget) Stats() RequestBudgetStats {
 type requestBudgetKey struct{}
 type backgroundBudgetKey struct{}
 type sourceBudgetKey struct{}
+type donorBudgetKey struct{}
+type budgetStageKey struct{}
+type budgetTraceKey struct{}
+type BudgetTrace struct {
+	mu      sync.Mutex
+	stages  map[string]uint64
+	origins map[string]uint64
+}
+
+func WithBudgetTrace(ctx context.Context) (context.Context, *BudgetTrace) {
+	b := &BudgetTrace{stages: make(map[string]uint64), origins: make(map[string]uint64)}
+	return context.WithValue(ctx, budgetTraceKey{}, b), b
+}
+func (b *BudgetTrace) Snapshot() (map[string]uint64, map[string]uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return maps.Clone(b.stages), maps.Clone(b.origins)
+}
+
+func WithDonorBudget(ctx context.Context) context.Context {
+	return context.WithValue(ctx, donorBudgetKey{}, true)
+}
+
+// Fixed categories only: endpoint queries, file IDs and credentials never
+// become metric keys. Counts measure API budget admissions, not CDN requests.
+func budgetEndpointContext(ctx context.Context, endpoint string) context.Context {
+	stage := "metadata"
+	u, err := url.Parse(endpoint)
+	if err == nil {
+		path := strings.ToLower(u.Path)
+		switch {
+		case strings.Contains(path, "downurl"), strings.Contains(path, "download"):
+			stage = "direct_link"
+		case strings.Contains(path, "search"), strings.Contains(path, "get_info"), strings.Contains(path, "sha1"):
+			stage = "file_lookup"
+		case strings.Contains(path, "files/add"), strings.Contains(path, "files/delete"), strings.Contains(path, "rb/delete"):
+			stage = "directory_write"
+		}
+	}
+	return context.WithValue(ctx, budgetStageKey{}, stage)
+}
 
 func WithBudgetSource(ctx context.Context, uid string) context.Context {
 	return context.WithValue(ctx, sourceBudgetKey{}, uid)
@@ -183,8 +231,32 @@ func WaitRequestBudget(ctx context.Context, cookie string) error {
 	cooling := b.cooling.After(b.now())
 	if !cooling && ctx.Err() == nil {
 		b.stats.Requests++
+		stage, _ := ctx.Value(budgetStageKey{}).(string)
+		if stage == "" {
+			stage = "other"
+		}
+		origin := "target"
 		if source, _ := ctx.Value(sourceBudgetKey{}).(string); source == uid {
 			b.stats.SourceRequests++
+			origin = "source"
+		}
+		if donor, _ := ctx.Value(donorBudgetKey{}).(bool); donor {
+			origin = "donor"
+		}
+		if background {
+			origin = "probe"
+		}
+		if b.stats.Stages == nil {
+			b.stats.Stages = make(map[string]uint64)
+			b.stats.Origins = make(map[string]uint64)
+		}
+		b.stats.Stages[stage]++
+		b.stats.Origins[origin]++
+		if trace, _ := ctx.Value(budgetTraceKey{}).(*BudgetTrace); trace != nil {
+			trace.mu.Lock()
+			trace.stages[stage]++
+			trace.origins[origin]++
+			trace.mu.Unlock()
 		}
 	}
 	b.mu.Unlock()

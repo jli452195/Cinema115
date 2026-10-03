@@ -522,6 +522,10 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			defer poolCancel()
 		}
 		ctx = service.WithPoolAttempts(ctx, settings.MaxAttempts)
+		var diagnostic *service.PoolDiagnostic
+		ctx, diagnostic = service.WithPoolDiagnostic(ctx)
+		var apiTrace *p115.BudgetTrace
+		ctx, apiTrace = p115.WithBudgetTrace(ctx)
 		observed := &poolResponseWriter{ResponseWriter: w}
 		w = observed
 		defer func() {
@@ -529,6 +533,15 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 				return
 			}
 			h.cache.Members.Pool.ObserveRedirect(time.Since(started), observed.status == http.StatusFound, max(switches, service.PoolAttemptSwitches(ctx)))
+			snapshot := diagnostic.Snapshot()
+			stages, origins := apiTrace.Snapshot()
+			if detail, err := json.Marshal(struct{ Stages, Origins map[string]uint64 }{stages, origins}); err == nil {
+				h.logs.Add(ctx, "DEBUG", "池请求 API 放行统计："+string(detail))
+			}
+			h.cache.Members.Pool.ObserveAdmissionOutcome(snapshot.Outcome)
+			if detail, err := json.Marshal(snapshot); err == nil {
+				h.logs.Add(ctx, "DEBUG", "池候选诊断："+string(detail))
+			}
 			if err := h.cache.Members.PersistPoolCooling(); err != nil {
 				h.logs.Add(ctx, "ERROR", "共享池全局冷却持久化失败")
 			}
@@ -888,7 +901,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 			return false
 		}
 		if h.cache.Members.IsPoolUser(h.config.URL, userID) {
-			h.cache.Members.Pool.ObserveResolution(report.FileCacheID != "", hit)
+			h.cache.Members.Pool.ObserveResolution(report.FileCacheID != "", hit, report.ReusedCopy)
 		}
 	}
 	// Empty body prevents accidentally embedding signed CDN URLs into rendered HTML or logs.

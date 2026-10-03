@@ -75,6 +75,19 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 	defer p.mu.Unlock()
 	ud, pd := u.clone(), p.clone()
 	now := u.now()
+	// Capacity reductions must not reject an existing issued slot or its
+	// authenticated successor. Expired/missing predecessors confer no credit.
+	reserved := pd.Leases[a.poolLease.Record.Key]
+	retainedCapacity := false
+	for key, old := range pd.Leases {
+		if old.UID != reserved.UID || !old.Issued || old.ExpiresAt <= now.UnixMilli() {
+			continue
+		}
+		if old.SlotKey == reserved.SlotKey && reserved.SlotKey != "" || key == reserved.BorrowedKey && old.Generation == reserved.BorrowedGeneration {
+			retainedCapacity = true
+		}
+	}
+	beforeCapacity := poolUIDOccupancy(pd, reserved.UID, now.UnixMilli()).total
 	current, ok := ud.Leases[a.userLease.Record.Key]
 	if !ok || current.Generation != a.userLease.Record.Generation || current.ExpiresAt <= now.UnixMilli() {
 		return ErrUserPlaybackStopped
@@ -186,7 +199,8 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 		releaseTransferredResiduals(&pd, ud, current.UserID, lease.Key)
 		// A borrowed predecessor may expire or disappear during network work.
 		// Count the final document after retirement, with borrowing cleared.
-		if poolUIDOccupancy(pd, lease.UID, now.UnixMilli()).total > pd.Settings.MaxSessions {
+		finalCapacity := poolUIDOccupancy(pd, lease.UID, now.UnixMilli()).total
+		if finalCapacity > pd.Settings.MaxSessions && !(retainedCapacity && finalCapacity <= beforeCapacity) {
 			return ErrPoolBusy
 		}
 	}
@@ -200,6 +214,9 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 	}
 	a.retiredDevices = retiredDeviceCount(u.doc, ud, current)
 	u.doc, p.doc = ud, pd
+	if transfer && (a.retiredDevices > 0 || reserved.BorrowedKey != "") {
+		p.metrics.CapacityTransfers++
+	}
 	a.userLease.Record, a.poolLease.Record = current, lease
 	a.userLease.handoff = nil
 	p.rememberPoolPreference(lease.UserID, lease.UID)

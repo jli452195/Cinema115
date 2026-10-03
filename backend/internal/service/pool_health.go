@@ -73,6 +73,9 @@ func (s *MemberPlaybackService) executePoolProbe(ctx context.Context, a P115Acco
 	if errors.Is(err, p115.ErrRateQueueFull) || errors.Is(err, context.Canceled) {
 		return err
 	}
+	if err != nil && ClassifyPoolFault(PoolFaultProbe, err).Health == "" {
+		return err // Unclassified failures must not be presented as probe success.
+	}
 	// The safe status is presented in AccountOptions, not raw upstream errors.
 	return s.Pool.reportChecked(ctx, a, err, &sequence)
 }

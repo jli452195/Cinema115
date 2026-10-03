@@ -33,6 +33,7 @@ func NewAccountClient() *AccountClient {
 }
 
 func (a *AccountClient) CheckCookie(ctx context.Context, cookie string) (bool, error) {
+	ctx = context.WithValue(ctx, budgetStageKey{}, "credential_check")
 	if err := WaitRequestBudget(ctx, cookie); err != nil {
 		return false, err
 	}

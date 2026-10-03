@@ -54,4 +54,4 @@ go vet ./internal/service ./internal/httpapi ./internal/storage ./internal/clien
 
 完全早于本地会话建立的播放事件不缓存、不猜测绑定，依赖后续 Progress 或可靠 Emby 轮询；不能据此承诺所有第三方播放器都能满池预加载。缺少 LastPlaybackCheckIn 的客户端必须有匹配的播放事件，否则按失联期限回收；逻辑回收不撤销已签发 CDN 直链。
 
-真实 Yamby 的登录设备字段、预加载事件时序、停止/强退表现仍需实机验证。此次测试不代表已完成真实流量灰度，也不证明真实 CDN 连接并发。
+当前环境不安排真实 Yamby 验收；本记录仅证明模拟协议的登录设备字段、预加载事件时序和停止/强退处理，不代表已完成真实流量灰度，也不证明真实 CDN 连接并发。

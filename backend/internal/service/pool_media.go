@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"strconv"
 	"strm115/backend/internal/client/p115"
 	"time"
@@ -22,9 +21,9 @@ func (a *MediaAuthorization) PoolTargetFailed(ctx context.Context, err error) (b
 	if !errors.As(err, &target) || errors.Is(err, p115.ErrInstantUncertain) {
 		return false, nil
 	}
-	var upstream *p115.HTTPError
-	var network net.Error
-	if !errors.Is(err, p115.ErrShareLoginRequired) && !errors.Is(err, p115.ErrShareThrottled) && !(errors.As(err, &upstream) && (upstream.Status == 429 || upstream.Status >= 500)) && !errors.As(err, &network) {
+	decision := ClassifyPoolFault(PoolFaultTarget, err)
+	recordPoolCandidate(ctx, a.account.UID, "target", decision.Code, a.poolLease.Record.Generation)
+	if !decision.SwitchUID {
 		return false, nil
 	}
 	if err := a.poolLease.pool.report(ctx, a.account, err); err != nil {

@@ -119,7 +119,7 @@ func (s *PlaybackCache) finishDonor(uid, fileKey string, err error) {
 // All probes share one deadline. Busy UIDs are skipped, never waited on while
 // holding a target lease. Donor credentials come only from the request snapshot.
 func (s *PlaybackCache) readPlaybackMaterialRange(ctx context.Context, reader playbackRangeClient, selected *PlaybackCacheSelection, entries []PlaybackCacheEntry, m PlaybackMaterial, start, end int64) (string, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, playbackDonorBudget)
+	probeCtx, cancel := context.WithTimeout(p115.WithDonorBudget(ctx), playbackDonorBudget)
 	defer cancel()
 	attempts := 0
 	for _, candidate := range s.donorCandidates(selected, entries, m) {
