@@ -81,20 +81,21 @@ func (s *MemberPlaybackService) PersistPoolCooling() error {
 }
 
 type PoolRequest struct {
-	Device         string
-	handoff        *model.UserPlaybackLease
-	Client         string
-	eventFallback  string
-	userGeneration uint64
-	PlaySession    string
-	observationKey string
-	Session        string
-	Item           string
-	Source         string
-	Download       bool
-	Task           bool
-	slotKey        string
-	lifecycleKey   string
+	transferCapacity bool // Set only after authenticated user-device admission.
+	Device           string
+	handoff          *model.UserPlaybackLease
+	Client           string
+	eventFallback    string
+	userGeneration   uint64
+	PlaySession      string
+	observationKey   string
+	Session          string
+	Item             string
+	Source           string
+	Download         bool
+	Task             bool
+	slotKey          string
+	lifecycleKey     string
 }
 
 // Session must be scoped by an authenticated token identity by the HTTP caller.
@@ -135,6 +136,7 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 		if holder, _ := ctx.Value(userPlaybackRequestKey{}).(*UserPlaybackRequest); holder != nil && holder.lease != nil {
 			req.userGeneration = holder.lease.Record.Generation
 			req.handoff = holder.lease.handoff
+			req.transferCapacity = holder.lease.policyMode == DevicePolicyHeartbeat
 		}
 		if req.PlaySession != "" && len(req.PlaySession) <= 256 {
 			req.observationKey = DirectLinkKey("pool-observation", r.ServerID, r.EmbyID, req.PlaySession, req.Item)
@@ -184,11 +186,22 @@ func (a *MediaAuthorization) Close() error {
 	return a.poolLease.Close()
 }
 func (a *MediaAuthorization) Commit(ctx context.Context) error {
+	defer func() {
+		if a.retiredDevices > 0 && a.service != nil && a.service.Cache != nil && a.service.Cache.logs != nil {
+			a.service.Cache.logs.Add(ctx, "INFO", fmt.Sprintf("播放设备接替已提交：退休设备=%d；旧会话后续取链已拦截，已签发 CDN 直链不可撤回", a.retiredDevices))
+		}
+	}()
 	if err := a.Revalidate(ctx); err != nil {
 		return err
 	}
 	if a.userLease != nil && a.poolLease != nil && a.poolLease.Record.SlotKey != "" {
 		return a.commitDevicePlayback(ctx)
+	}
+	if a.userLease != nil && a.userLease.policyMode == DevicePolicyHeartbeat {
+		if a.poolLease != nil {
+			return ErrPlaybackDeviceIdentity
+		}
+		return a.commitNonPoolDevicePolicy(ctx)
 	}
 	if a.userLease != nil && a.userLease.handoff != nil {
 		if err := a.commitHandoff(ctx); err != nil {

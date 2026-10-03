@@ -47,6 +47,7 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	ctx := context.Background()
 	const uid = "ff7da35afaaa40cd80e0c6c9a6bce2a6"
 	accepted := true
+	acceptedPing := true
 	bodySeen := ""
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -60,6 +61,12 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 			data, _ := io.ReadAll(r.Body)
 			bodySeen = string(data)
 			if accepted {
+				w.WriteHeader(204)
+			} else {
+				w.WriteHeader(401)
+			}
+		case "/emby/Sessions/Playing/Ping":
+			if acceptedPing {
 				w.WriteHeader(204)
 			} else {
 				w.WriteHeader(401)
@@ -361,4 +368,142 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 			t.Fatal("HTTP device slot drift or unbounded candidate history")
 		}
 	}
+	t.Run("heartbeat-policy-http-gray", func(t *testing.T) {
+		if err := members.UserPlayback.ConfigureDevicePolicy(ctx, model.PlaybackDevicePolicy{Mode: service.DevicePolicyHeartbeat, SilenceSeconds: 90}); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.identities.RememberDevice(upstream.URL, "tv-token", uid, "television", "player"); err != nil {
+			t.Fatal(err)
+		}
+		before := len(drive.attempts)
+		beforeChecks := drive.checks
+		bPath := strings.ReplaceAll(strings.ReplaceAll(path, "api_key=token", "api_key=tv-token"), "PlaySessionId=session", "PlaySessionId=tv-session")
+		for i := 0; i < 20; i++ {
+			method := "GET"
+			if i%2 == 0 {
+				method = "HEAD"
+			}
+			w := call(method, bPath, "")
+			if w.Code != 409 || w.Header().Get("Location") != "" {
+				t.Fatal("second device issued link", w.Code, w.Body.String())
+			}
+		}
+		if len(drive.attempts) != before || drive.checks != beforeChecks {
+			t.Fatal("rejected device reached cloud")
+		}
+		currentPath := strings.Replace(path, "PlaySessionId=session", "PlaySessionId=device-next-99", 1)
+		if w := call("GET", currentPath, ""); w.Code != 302 {
+			t.Fatal("same device cache refresh rejected", w.Code, w.Body.String())
+		}
+		if w := call("POST", "/emby/Sessions/Playing/Ping?api_key=token&PlaySessionId=device-next-99", ""); w.Code != 204 {
+			t.Fatal("ping rejected", w.Code)
+		}
+		ud, err := db.UserPlayback(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matched := false
+		for _, l := range ud.Leases {
+			if l.AuthSession == service.DirectLinkKey("token", "device-next-99") {
+				matched = l.LastPlaybackAt > 0
+			}
+		}
+		if !matched {
+			t.Fatal("accepted ping did not renew exact session")
+		}
+		acceptedPing = false
+		if w := call("POST", "/emby/Sessions/Playing/Ping?api_key=token&PlaySessionId=device-next-99", ""); w.Code != 401 {
+			t.Fatal("rejected ping accepted", w.Code)
+		}
+		acceptedPing = true
+		if w := call("POST", "/emby/Sessions/Playing/Ping?api_key=tv-token&PlaySessionId=device-next-99", ""); w.Code != 204 {
+			t.Fatal(w.Code)
+		}
+		afterPing, err := db.UserPlayback(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, l := range ud.Leases {
+			if afterPing.Leases[key].LastPlaybackAt != l.LastPlaybackAt {
+				t.Fatal("rejected or wrong-token ping renewed playback")
+			}
+		}
+		if err := h.identities.Remember(upstream.URL, "no-device", uid); err != nil {
+			t.Fatal(err)
+		}
+		if w := call("GET", strings.ReplaceAll(bPath, "tv-token", "no-device"), ""); w.Code != 403 || !strings.Contains(w.Body.String(), "PLAYBACK_DEVICE_REQUIRED") {
+			t.Fatal("missing device bypass", w.Code, w.Body.String())
+		}
+		// At capacity=1, cross-device preparation must inherit the old slot.
+		settings := members.Pool.Settings()
+		settings.MaxSessions = 1
+		if err := members.ConfigurePool(ctx, settings); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate a silent interval by aging the persisted evidence and restarting
+		// the user ledger. Keep real HTTP handling and pool transactions intact.
+		for key, l := range afterPing.Leases {
+			l.FirstIssuedAt = time.Now().Add(-100 * time.Second).UnixMilli()
+			l.LastPlaybackAt = time.Now().Add(-91 * time.Second).UnixMilli()
+			afterPing.Leases[key] = l
+		}
+		if err := db.SaveUserPlayback(ctx, afterPing); err != nil {
+			t.Fatal(err)
+		}
+		// Earlier cases intentionally created device-less records. Let those
+		// unrelated residuals expire; the transfer must never guess their owner
+		// device or use them as a substitute for authenticated slot capacity.
+		agedPool, err := db.PlaybackPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, l := range agedPool.Leases {
+			if l.SlotKey == "" {
+				l.ExpiresAt = time.Now().Add(-time.Second).UnixMilli()
+				agedPool.Leases[key] = l
+			}
+		}
+		if err := db.SavePlaybackPool(ctx, agedPool); err != nil {
+			t.Fatal(err)
+		}
+		members.Pool, err = service.NewDynamicPool(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		members.UserPlayback, err = service.NewUserPlayback(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w := call("GET", bPath, ""); w.Code != 302 {
+			t.Fatal("HTTP timed takeover failed", w.Code, w.Body.String())
+		}
+		poolDoc, err := db.PlaybackPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(poolDoc.Leases) != 1 {
+			t.Fatal("HTTP transfer left old pool occupancy", len(poolDoc.Leases))
+		}
+		if w := call("GET", currentPath, ""); w.Code != 409 {
+			t.Fatal("retired URL remained usable", w.Code, w.Body.String())
+		}
+		newAPath := strings.Replace(path, "PlaySessionId=session", "PlaySessionId=return-after-takeover", 1)
+		if w := call("GET", newAPath, ""); w.Code != 409 {
+			t.Fatal("A took back active B", w.Code, w.Body.String())
+		}
+		if err := members.UserPlayback.ConfigureDevicePolicy(ctx, model.PlaybackDevicePolicy{Mode: service.DevicePolicyParallel}); err != nil {
+			t.Fatal(err)
+		}
+		settings.MaxSessions = 10
+		if err := members.ConfigurePool(ctx, settings); err != nil {
+			t.Fatal(err)
+		}
+		if w := call("GET", newAPath, ""); w.Code != 302 {
+			t.Fatal("parallel rollback denied A", w.Code, w.Body.String())
+		}
+		if w := call("GET", bPath, ""); w.Code != 302 {
+			t.Fatal("parallel rollback did not restore B", w.Code, w.Body.String())
+		}
+		t.Log("20 GET/HEAD requests blocked before cloud work; exact Ping only; persisted silent evidence permits HTTP takeover; retired A fenced; parallel rollback restores both devices")
+	})
 }

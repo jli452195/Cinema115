@@ -35,6 +35,10 @@ func NewUserPlayback(ctx context.Context, store userPlaybackStore) (*UserPlaybac
 	if err != nil {
 		return nil, err
 	}
+	d.DevicePolicy, err = normalizeDevicePolicy(d.DevicePolicy)
+	if err != nil {
+		return nil, err
+	}
 	if d.Leases == nil {
 		d.Leases = make(map[string]model.UserPlaybackLease)
 	}
@@ -71,11 +75,13 @@ func (p *UserPlayback) prune(d *model.UserPlaybackDocument) {
 }
 
 type UserPlaybackLease struct {
-	handoff       *model.UserPlaybackLease
-	handoffReason string
-	pool          *UserPlayback
-	Record        model.UserPlaybackLease
-	closed        bool
+	policyRevision uint64
+	policyMode     string
+	handoff        *model.UserPlaybackLease
+	handoffReason  string
+	pool           *UserPlayback
+	Record         model.UserPlaybackLease
+	closed         bool
 }
 
 // A user can own multiple playback sessions. Media-source variants within one
@@ -101,12 +107,18 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 	if d.Stopped[event] > p.now().UnixMilli() {
 		return nil, ErrUserPlaybackStopped
 	}
+	if err := checkDeviceAdmission(d, model.UserPlaybackLease{Key: key, ServerID: r.ServerID, UserID: r.UserID, Device: req.Device}, p.now()); err != nil {
+		return nil, err
+	}
 	if old, ok := d.Leases[key]; ok {
+		if d.DevicePolicy.Mode == DevicePolicyHeartbeat && old.Device != req.Device {
+			return nil, ErrPlaybackDeviceIdentity
+		}
 		if p.refs[old.Generation] >= 128 {
 			return nil, ErrUserPlaybackBusy
 		}
 		p.refs[old.Generation]++
-		return &UserPlaybackLease{pool: p, Record: old, handoffReason: "同会话复用，不新增用户播放记录"}, nil
+		return &UserPlaybackLease{pool: p, Record: old, policyRevision: d.PolicyRevision, policyMode: d.DevicePolicy.Mode, handoffReason: "同会话复用，不新增用户播放记录"}, nil
 	}
 	if len(d.Leases) >= 4096 || len(p.refs) >= 4096 || len(d.Stopped)+len(d.Leases) >= 8192 {
 		return nil, ErrUserPlaybackBusy
@@ -114,6 +126,7 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 	d.Generation++
 	l := model.UserPlaybackLease{Key: key, UserID: r.UserID, ServerID: r.ServerID, SessionDigest: session, EventKey: event, Item: req.Item, Generation: d.Generation, UpdatedAt: p.now().UnixMilli(), ExpiresAt: p.now().Add(95 * time.Second).UnixMilli()}
 	l.Device, l.PlaybackSource = req.Device, r.Source
+	l.AuthSession = req.Session
 	var handoff *model.UserPlaybackLease
 	reason := "缺少可信设备信息或播放会话 ID，按独立会话处理"
 	if req.Device != "" && req.PlaySession != "" && !req.Download && !req.Task {
@@ -152,14 +165,14 @@ func (p *UserPlayback) Acquire(ctx context.Context, r model.MemberPlayback, req 
 		return nil, err
 	}
 	p.refs[l.Generation]++
-	return &UserPlaybackLease{pool: p, Record: l, handoff: handoff, handoffReason: reason}, nil
+	return &UserPlaybackLease{pool: p, Record: l, policyRevision: d.PolicyRevision, policyMode: d.DevicePolicy.Mode, handoff: handoff, handoffReason: reason}, nil
 }
 func (l *UserPlaybackLease) Current() bool {
 	p := l.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	v, ok := p.doc.Leases[l.Record.Key]
-	return ok && v.Generation == l.Record.Generation && v.ExpiresAt > p.now().UnixMilli()
+	return ok && v.Generation == l.Record.Generation && v.ExpiresAt > p.now().UnixMilli() && l.policyRevision == p.doc.PolicyRevision
 }
 func (l *UserPlaybackLease) Commit(ctx context.Context) error {
 	p := l.pool
@@ -169,6 +182,16 @@ func (l *UserPlaybackLease) Commit(ctx context.Context) error {
 	v, ok := d.Leases[l.Record.Key]
 	if !ok || v.Generation != l.Record.Generation || v.ExpiresAt <= p.now().UnixMilli() {
 		return ErrUserPlaybackStopped
+	}
+	// Pool retirements require MediaAuthorization's atomic commit path.
+	if d.DevicePolicy.Mode == DevicePolicyHeartbeat {
+		return ErrUserPlaybackBusy
+	}
+	if l.policyRevision != d.PolicyRevision {
+		return ErrUserPlaybackStopped
+	}
+	if v.FirstIssuedAt == 0 {
+		v.FirstIssuedAt = p.now().UnixMilli()
 	}
 	v.Issued = true
 	v.IssuedAt = p.now().UnixMilli()
@@ -296,6 +319,7 @@ func (p *UserPlayback) List() []model.UserPlaybackLease {
 			l.ObservationKey = ""
 			l.EventFallback = ""
 			l.Device = ""
+			l.AuthSession = ""
 			out = append(out, l)
 		}
 	}

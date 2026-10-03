@@ -1,6 +1,8 @@
 package model
 
 type UserPlaybackLease struct {
+	AuthSession    string `json:"authSession,omitempty"`
+	FirstIssuedAt  int64  `json:"firstIssuedAt,omitempty"`
 	CandidateUntil int64  `json:"candidateUntil,omitempty"`
 	Device         string `json:"device,omitempty"`
 	PlaybackSource string `json:"playbackSource,omitempty"`
@@ -22,7 +24,15 @@ type UserPlaybackLease struct {
 }
 
 type UserPlaybackDocument struct {
-	Leases     map[string]UserPlaybackLease `json:"leases"`
-	Stopped    map[string]int64             `json:"stopped"`
-	Generation uint64                       `json:"generation"`
+	DevicePolicy   PlaybackDevicePolicy         `json:"devicePolicy"`
+	PolicyRevision uint64                       `json:"policyRevision"`
+	Leases         map[string]UserPlaybackLease `json:"leases"`
+	Stopped        map[string]int64             `json:"stopped"`
+	Generation     uint64                       `json:"generation"`
+}
+
+// Modes are extensible strategies, not a boolean playback permission.
+type PlaybackDevicePolicy struct {
+	Mode           string `json:"mode"`
+	SilenceSeconds int    `json:"silenceSeconds"`
 }

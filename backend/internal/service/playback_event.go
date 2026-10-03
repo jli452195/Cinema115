@@ -18,6 +18,40 @@ type PlaybackEvent struct {
 
 func (e PlaybackEvent) Matched() bool { return e.userGeneration != 0 || len(e.poolGenerations) > 0 }
 
+// Ping has no ItemId. Only an unambiguous authenticated session is eligible;
+// never pick one item when a player reuses a session for several children.
+func (s *MemberPlaybackService) CapturePlaybackPing(server, id, session string) PlaybackEvent {
+	c := s.emby.snapshot()
+	r := s.playbackRecord(c.ServerID, id)
+	if c.URL != server || r.UserID == "" || s.UserPlayback == nil || session == "" {
+		return PlaybackEvent{}
+	}
+	u := s.UserPlayback
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	e := PlaybackEvent{poolGenerations: make(map[string]uint64)}
+	for _, l := range u.doc.Leases {
+		if l.ServerID != r.ServerID || l.UserID != r.UserID || l.AuthSession != session || l.ExpiresAt <= u.now().UnixMilli() {
+			continue
+		}
+		if e.userGeneration != 0 {
+			return PlaybackEvent{}
+		}
+		e.key, e.userGeneration = l.EventKey, l.Generation
+	}
+	if e.userGeneration != 0 && s.Pool != nil {
+		p := s.Pool
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for key, l := range p.doc.Leases {
+			if l.UserID == r.UserID && l.SessionKey == e.key && l.UserGeneration == e.userGeneration && l.ExpiresAt > p.now().UnixMilli() {
+				e.poolGenerations[key] = l.Generation
+			}
+		}
+	}
+	return e
+}
+
 func (s *MemberPlaybackService) CapturePlaybackEvent(server, id, session, client, item string, missingSession bool) PlaybackEvent {
 	c := s.emby.snapshot()
 	r := s.playbackRecord(c.ServerID, id)

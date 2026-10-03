@@ -110,6 +110,9 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 	if !ok || current.Generation != a.userLease.Record.Generation || current.ExpiresAt <= now.UnixMilli() {
 		return ErrUserPlaybackStopped
 	}
+	if a.userLease.policyRevision != d.PolicyRevision {
+		return ErrUserPlaybackStopped
+	}
 	previous := a.userLease.handoff
 	alreadyIssued := current.Issued
 	confirmed := freshPlaybackEvidence(current.LastPlaybackAt, now)
@@ -129,6 +132,9 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 		d.Stopped[old.EventKey] = now.Add(24 * time.Hour).UnixMilli()
 	}
 	current.Issued = true
+	if current.FirstIssuedAt == 0 {
+		current.FirstIssuedAt = now.UnixMilli()
+	}
 	// An old stop without a session ID can arrive after the successor starts.
 	// When both have the same fallback identity, never attribute it to the new one.
 	if confirmed && current.EventFallback == old.EventFallback {
@@ -225,6 +231,7 @@ func (s *MemberPlaybackService) confirmPlaybackHandoff(ctx context.Context, e Pl
 	}
 	u := s.UserPlayback
 	u.mu.Lock()
+	policyRevision := u.doc.PolicyRevision
 	var current, previous model.UserPlaybackLease
 	for _, l := range u.doc.Leases {
 		if l.EventKey == e.key && l.Generation == e.userGeneration {
@@ -247,7 +254,7 @@ func (s *MemberPlaybackService) confirmPlaybackHandoff(ctx context.Context, e Pl
 	if !eligible {
 		return nil
 	}
-	a := &MediaAuthorization{service: s, userLease: &UserPlaybackLease{pool: u, Record: current, handoff: &previous}}
+	a := &MediaAuthorization{service: s, userLease: &UserPlaybackLease{pool: u, Record: current, handoff: &previous, policyRevision: policyRevision}}
 	if current.PlaybackSource == "assigned" {
 		if s.Pool == nil {
 			return nil

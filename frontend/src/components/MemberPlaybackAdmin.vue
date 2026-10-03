@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import SettingSwitch from './SettingSwitch.vue'
+import PlaybackDevicePolicy from './PlaybackDevicePolicy.vue'
 import { memberRequest } from '../types/memberPlayback'
 const props = defineProps<{ token: string; listening?: boolean }>()
 const settings = ref({ allowDownload: false, publicUrl: '' }), loaded = ref(false), busy = ref(false)
@@ -32,5 +33,6 @@ onBeforeUnmount(() => lifecycle.abort())
    <button :disabled="busy || !loaded" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40">保存播放设置</button>
    <div class="flex flex-wrap gap-4 text-sm"><RouterLink to="/emby/users" class="text-blue-600">用户播放状态与网盘绑定</RouterLink><RouterLink to="/users" class="text-blue-600">邀请与新用户媒体库模板</RouterLink></div>
   </form>
+  <PlaybackDevicePolicy :token="token" />
  </div>
 </template>

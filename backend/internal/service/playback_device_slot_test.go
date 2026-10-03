@@ -41,6 +41,7 @@ func deviceSlotPrepare(t *testing.T, s *MemberPlaybackService, r model.MemberPla
 		return nil, err
 	}
 	q.userGeneration, q.lifecycleKey, q.observationKey = u.Record.Generation, u.Record.EventKey, u.Record.ObservationKey
+	q.transferCapacity = u.policyMode == DevicePolicyHeartbeat
 	p, err := s.Pool.Acquire(WithPoolRequest(context.Background(), q), "pool-"+id, r.UserID, accounts, poolProbe)
 	if err != nil {
 		_ = u.Close()

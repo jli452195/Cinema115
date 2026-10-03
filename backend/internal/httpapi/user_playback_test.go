@@ -63,4 +63,24 @@ func TestUserPlaybackAdminReleaseRoutes(t *testing.T) {
 	if w := call("POST", release, fmt.Sprintf(`{"generation":%d}`, lease.Record.Generation), "admin"); w.Code != 200 || lease.Current() {
 		t.Fatal("release failed", w.Code)
 	}
+	policyURL := "/api/admin/member-playback/device-policy"
+	for _, role := range []string{"", "user"} {
+		if w := call("GET", policyURL, "", role); w.Code != 403 {
+			t.Fatal("policy read exposed", w.Code)
+		}
+		if w := call("POST", policyURL, `{"mode":"heartbeat_takeover","silenceSeconds":90}`, role); w.Code != 403 {
+			t.Fatal("policy write exposed", w.Code)
+		}
+	}
+	for _, body := range []string{`{}`, `{"mode":"bad","silenceSeconds":90}`, `{"mode":"heartbeat_takeover","silenceSeconds":30}`} {
+		if w := call("POST", policyURL, body, "admin"); w.Code != 400 {
+			t.Fatal("invalid policy accepted", w.Code)
+		}
+	}
+	if w := call("POST", policyURL, `{"mode":"heartbeat_takeover","silenceSeconds":90}`, "admin"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := call("GET", policyURL, "", "admin"); w.Code != 200 || !strings.Contains(w.Body.String(), "heartbeat_takeover") {
+		t.Fatal(w.Code, w.Body.String())
+	}
 }

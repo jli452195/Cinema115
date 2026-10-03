@@ -188,6 +188,21 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	manage := admin.Group("/member-playback", guard)
+	manage.GET("/device-policy", func(c *gin.Context) {
+		c.JSON(200, s.UserPlayback.DevicePolicy())
+	})
+	manage.POST("/device-policy", func(c *gin.Context) {
+		var input model.PlaybackDevicePolicy
+		if c.ShouldBindJSON(&input) != nil || input.Mode == "" || input.SilenceSeconds == 0 {
+			c.JSON(400, gin.H{"error": "播放设备策略参数无效"})
+			return
+		}
+		if err := s.UserPlayback.ConfigureDevicePolicy(c.Request.Context(), input); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, s.UserPlayback.DevicePolicy())
+	})
 	manage.POST("/refresh", func(c *gin.Context) {
 		s.RequestDriveRefresh()
 		c.JSON(202, gin.H{"members": s.DriveStatuses()})

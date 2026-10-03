@@ -22,6 +22,10 @@ func playbackAuthorizationFailure(ctx context.Context, err error) (string, int) 
 		return "共享小号正在冷却，请稍后重试", http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrUserPlaybackStopped):
 		return "USER_PLAYBACK_STOPPED：此播放会话已结束，请重新发起播放", http.StatusConflict
+	case errors.Is(err, service.ErrPlaybackDeviceConflict):
+		return "USER_DEVICE_CONFLICT：" + service.ErrPlaybackDeviceConflict.Error(), http.StatusConflict
+	case errors.Is(err, service.ErrPlaybackDeviceIdentity):
+		return "PLAYBACK_DEVICE_REQUIRED：" + service.ErrPlaybackDeviceIdentity.Error(), http.StatusForbidden
 	case errors.Is(err, service.ErrUserPlaybackBusy):
 		return "播放会话管理暂忙，请稍后重试", http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrPoolInvalid):

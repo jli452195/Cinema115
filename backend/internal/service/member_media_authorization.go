@@ -15,13 +15,14 @@ import (
 // MediaAuthorization belongs to one HTTP request. Never cache it across requests
 // or use it in a background prewarm spawned by another request.
 type MediaAuthorization struct {
-	userLease *UserPlaybackLease
-	poolLease *PoolLease
-	service   *MemberPlaybackService
-	record    model.MemberPlayback
-	account   P115Account
-	download  bool
-	checkedAt time.Time
+	retiredDevices int
+	userLease      *UserPlaybackLease
+	poolLease      *PoolLease
+	service        *MemberPlaybackService
+	record         model.MemberPlayback
+	account        P115Account
+	download       bool
+	checkedAt      time.Time
 }
 
 func (s *MemberPlaybackService) playbackRecord(serverID, embyID string) model.MemberPlayback {

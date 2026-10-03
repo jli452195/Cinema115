@@ -22,16 +22,27 @@ type poolSessionEvent struct {
 // Capture only bounded session-event metadata. The body is replayed unchanged
 // to Emby; only its successful response is allowed to update an existing lease.
 func (h *embyProxyHandler) capturePoolSession(r *http.Request) *http.Request {
-	if r.Method != http.MethodPost || r.Body == nil || h.cache == nil || h.cache.Members == nil {
+	if r.Method != http.MethodPost || h.cache == nil || h.cache.Members == nil {
 		return r
 	}
 	path := strings.TrimPrefix(strings.Trim(strings.ToLower(r.URL.Path), "/"), "emby/")
-	if path != "sessions/playing" && path != "sessions/playing/progress" && path != "sessions/playing/stopped" {
+	if path != "sessions/playing" && path != "sessions/playing/progress" && path != "sessions/playing/stopped" && path != "sessions/playing/ping" {
 		return r
 	}
 	token := embyToken(r)
 	user := h.identities.UserID(h.config.URL, token)
 	if user == "" {
+		return r
+	}
+	if path == "sessions/playing/ping" {
+		session := proxyQuery(r.URL.Query(), "PlaySessionId")
+		if session == "" || len(session) > 256 {
+			return r
+		}
+		e := poolSessionEvent{captured: h.cache.Members.CapturePlaybackPing(h.config.URL, user, service.DirectLinkKey(token, session))}
+		return r.WithContext(context.WithValue(r.Context(), poolSessionEventKey{}, e))
+	}
+	if r.Body == nil {
 		return r
 	}
 	body := r.Body

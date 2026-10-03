@@ -251,6 +251,9 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	if slotKey != "" {
 		borrow = model.PlaybackPoolLease{}
 	}
+	if req.transferCapacity && slotKey != "" && req.userGeneration != 0 && !req.Download && !req.Task {
+		borrow = poolTransferCandidate(d, user, slotKey, accounts, excluded, now)
+	}
 	canBorrow := func(a P115Account) bool {
 		return borrow.Key != "" && borrow.AccountID == a.ID && borrow.UID == a.UID && borrow.Revision == a.Revision && borrow.DirectoryID == a.PlaybackParentCID && d.Health[a.ID].State == "ready" && d.Health[a.ID].Revision == a.Revision
 	}
