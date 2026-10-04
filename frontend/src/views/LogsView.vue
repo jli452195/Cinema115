@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import PlaybackDiagnostics from '../components/PlaybackDiagnostics.vue'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
@@ -35,6 +36,10 @@ const capacity = ref(2000)
 const lifecycle = new AbortController()
 let timer: number | undefined
 let mounted = true
+const levelNavRef = ref<HTMLElement>()
+const { indicatorStyle } = useSlidingIndicator(levelNavRef, '[aria-pressed="true"]', [level])
+const bgColors: Record<Level, string> = { ALL: 'bg-slate-800', INFO: 'bg-emerald-500', DEBUG: 'bg-sky-500', ERROR: 'bg-red-500', WARNING: 'bg-amber-400' }
+const textColors: Record<Level, string> = { ALL: 'text-white', INFO: 'text-white', DEBUG: 'text-white', ERROR: 'text-white', WARNING: 'text-slate-900 dark:text-slate-100' }
 const colors: Record<Level, string> = { ALL: 'bg-slate-800 text-white', INFO: 'bg-emerald-500 text-white', DEBUG: 'bg-sky-500 text-white', ERROR: 'bg-red-500 text-white', WARNING: 'bg-amber-400 text-slate-900 dark:text-slate-100' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
@@ -85,9 +90,10 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
       <section class="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
         <div class="space-y-4 border-b border-slate-100 dark:border-slate-800 p-4 md:p-6">
           <div class="flex flex-wrap items-center gap-3">
-            <div class="flex max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 p-1" role="group" aria-label="日志等级">
-              <button v-for="item in levels" :key="item" class="shrink-0 rounded-md px-3 py-2 text-xs font-medium transition" :class="level === item ? colors[item] : 'text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'" :aria-pressed="level === item" @click="level = item">{{ item }}</button>
-            </div>
+            <nav ref="levelNavRef" class="relative flex max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 p-1" role="group" aria-label="日志等级">
+              <div class="absolute z-0 rounded-md transition-all duration-300 ease-out" :class="bgColors[level]" :style="indicatorStyle"></div>
+              <button v-for="item in levels" :key="item" class="relative z-10 shrink-0 rounded-md px-3 py-2 text-xs font-medium transition-colors" :class="level === item ? textColors[item] : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'" :aria-pressed="level === item" @click="level = item">{{ item }}</button>
+            </nav>
             <select v-model="module" aria-label="日志模块" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-2 text-sm text-slate-700 dark:text-slate-300"><option v-for="item in modules" :key="item" :value="item">{{ item === 'ALL' ? '全部' : item }}</option></select>
             <div class="flex gap-2 md:ml-auto">
               <button class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950" :aria-pressed="automatic" @click="toggleAutomatic">{{ automatic ? '暂停更新' : '继续更新' }}</button>
