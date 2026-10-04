@@ -44,13 +44,15 @@ const managementLinks = computed(() => isPortalAdmin.value ? [
   { label: '追更管理', to: '/follows/manage' },
   { label: '注册邀请', to: '/users' },
   { label: '115 网盘', to: '/115' },
+  { label: '资源配置', to: '/resources' },
   { label: 'Telegram 配置', to: '/telegram' },
-  { label: '观影搜索', to: '/gying' },
-  { label: 'RE0 资源搜索', to: '/nanshare' },
   { label: '查看日志', to: '/logs' },
   { label: 'Emby', to: '/emby' },
 ] : [])
-const managementActive = computed(() => managementLinks.value.some(link => route.path.startsWith(link.to)))
+function isManagementActive(to: string) {
+  return route.meta.managementSection ? route.meta.managementSection === to : route.path.startsWith(to)
+}
+const managementActive = computed(() => managementLinks.value.some(link => isManagementActive(link.to)))
 
 const navContainerRef = ref<HTMLElement>()
 const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
@@ -111,7 +113,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <p class="px-3 py-2 text-xs text-slate-400 dark:text-slate-400">{{ portalUser?.username }} · {{ isPortalAdmin ? '管理员' : '普通用户' }}</p>
         <RouterLink v-if="!isPortalAdmin" to="/account/playback" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels">我的播放</RouterLink>
         <RouterLink to="/follows" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.name === 'my-follows' ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" :aria-current="route.name === 'my-follows' ? 'page' : undefined" @click="closePanels">我的追更</RouterLink>
-        <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="route.path.startsWith(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.path.startsWith(link.to) ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" @click="closePanels">{{ link.label }}</RouterLink>
+        <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="isManagementActive(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="isManagementActive(link.to) ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" @click="closePanels">{{ link.label }}</RouterLink>
         <div class="my-1 border-t border-slate-100 dark:border-slate-700/60"></div>
         <button type="button" class="w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-400/10 dark:hover:text-red-300" @click="closePanels(); emit('logout')">退出登录</button>
       </nav>

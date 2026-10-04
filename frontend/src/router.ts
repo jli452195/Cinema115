@@ -28,6 +28,7 @@ import FollowManagementView from './views/FollowManagementView.vue'
 import UpdatesView from './views/UpdatesView.vue'
 import GyingView from './views/GyingView.vue'
 import NanShareView from './views/NanShareView.vue'
+import ResourceConfigView from './views/ResourceConfigView.vue'
 import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
@@ -63,10 +64,11 @@ export const router = createRouter({
     { path: '/115/manual-organize', name: 'manual-organize', component: ManualOrganizeView },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
-    { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView },
+    { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/resources' } },
+    { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },
     { path: '/logs', name: 'logs', component: LogsView },
-    { path: '/gying', name: 'gying', component: GyingView },
-    { path: '/nanshare', name: 'nanshare', component: NanShareView },
+    { path: '/gying', name: 'gying', component: GyingView, meta: { managementSection: '/resources' } },
+    { path: '/nanshare', name: 'nanshare', component: NanShareView, meta: { managementSection: '/resources' } },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },
     { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView },

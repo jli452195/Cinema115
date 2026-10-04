@@ -60,7 +60,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (open.value) { dialog.value?.close
 </script>
 
 <template>
- <article class="user-card flex h-full min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+ <article class="user-card flex h-full min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600">
   <header class="flex items-center gap-3"><EmbyUserAvatar :token="token" :user-id="member.embyId" :name="member.embyName" :image-tag="member.imageTag" /><div class="min-w-0 flex-1"><h2 class="truncate font-semibold text-slate-900 dark:text-slate-100" :title="member.embyName">{{ member.embyName }}</h2><p class="mt-1 text-xs text-slate-500">{{ identity }}</p></div></header>
   <p v-if="error && !open" role="alert" class="mt-2 text-sm text-red-600">{{ error }}</p>
   <p v-if="notice && !open" role="status" class="mt-2 text-xs text-emerald-700">{{ notice }}</p>

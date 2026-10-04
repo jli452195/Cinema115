@@ -43,7 +43,7 @@ onMounted(load)
 onBeforeUnmount(() => { lifecycle.abort(); apiHash.value = ''; code.value = ''; password.value = ''; phone.value = '' })
 </script>
 <template>
-  <ManagementLayout title="用户账号 / 资源搜索" description="使用 Telegram 用户账号向指定资源 Bot 查询影视资源。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="$emit('logout')">
+  <ManagementLayout title="Telegram 搜索配置" description="使用 Telegram 用户账号向指定资源 Bot 查询影视资源。" :parent="{ label: '资源配置', to: '/resources' }" @logout="$emit('logout')">
     <template #actions><button type="submit" form="telegram-api-form" :disabled="!!busy || !status" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40">{{ busy === 'config' ? '保存中…' : '保存配置' }}</button></template>
     <p v-if="error" role="alert" class="mb-5 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button v-if="!status" class="ml-3 underline" @click="load">重新加载</button></p>
     <p v-if="notice" role="status" class="mb-5 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>

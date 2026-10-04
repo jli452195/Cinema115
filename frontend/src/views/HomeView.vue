@@ -20,7 +20,7 @@ const categories = {
   },
   telegram: {
     title: 'Telegram 配置', description: '连接机器人，管理消息接收与自动处理。',
-    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }, { title: '用户账号 / 资源搜索', description: '登录 Telegram 用户账号，通过指定资源 Bot 搜索影视资源。', to: '/telegram/user', icon: 'telegram' }],
+    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram' }],
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',
@@ -46,7 +46,7 @@ const current = computed(() => categories[props.category])
         </span>
         <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ feature.title }}</h2>
         <p class="mb-6 mt-2 flex-1 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ feature.description }}</p>
-        <span class="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4 text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500 group-hover:text-blue-600">进入功能<span aria-hidden="true">→</span></span>
+        <span class="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4 text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500 group-hover:text-blue-600">进入功能<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span>
       </RouterLink>
     </div>
   </ManagementLayout>

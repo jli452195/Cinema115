@@ -137,7 +137,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(noticeTimer); clearTimeo
 </script>
 
 <template>
-  <article class="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+  <article class="relative flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:z-10 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg focus-within:z-10 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600">
     <header class="flex items-center gap-2">
       <h2 class="min-w-0 flex-1 truncate font-semibold text-slate-900 dark:text-slate-100">{{ accountName }}</h2>
       <span class="shrink-0 rounded-full px-2.5 py-1 text-xs" :class="statusLabel === '待设置目录' || statusLabel === '已失效' ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : statusLabel === '已连接' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'">{{ statusLabel }}</span>

@@ -78,7 +78,7 @@ onBeforeUnmount(() => { lifecycle.abort(); password.value = '' })
 </script>
 
 <template>
-  <ManagementLayout title="RE0 资源搜索" description="登录 NanShare，检查 RE0 搜索与分享 STRM 配置，并测试资源搜索。" @logout="$emit('logout')">
+  <ManagementLayout title="RE0 配置" description="登录 NanShare，检查 RE0 搜索与分享 STRM 配置，并测试资源搜索。" :parent="{ label: '资源配置', to: '/resources' }" @logout="$emit('logout')">
     <template #actions><button type="submit" form="nanshare-config-form" :disabled="!!busy || !config" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40">{{ busy === 'save' ? '登录中…' : '保存并登录' }}</button></template>
     <p v-if="error" role="alert" class="mb-5 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button v-if="!config" class="ml-3 underline" @click="load">重新加载</button></p>
     <p v-if="notice" role="status" class="mb-5 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>

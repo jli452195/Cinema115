@@ -116,7 +116,7 @@ onBeforeUnmount(() => { lifecycle.abort(); password.value = '' })
 </script>
 
 <template>
-  <ManagementLayout title="观影搜索" description="配置观影站账号，用影视原名搜索全部资源；没有有效资源时自动使用 IMDb 编号重试。" @logout="$emit('logout')">
+  <ManagementLayout title="观影配置" description="配置观影站账号，用影视原名搜索全部资源；没有有效资源时自动使用 IMDb 编号重试。" :parent="{ label: '资源配置', to: '/resources' }" @logout="$emit('logout')">
     <template #actions><button type="submit" form="gying-config-form" :disabled="!!busy || !config" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm text-white disabled:opacity-40">{{ busy === 'save' ? '登录中…' : '保存并登录' }}</button></template>
     <p v-if="error" role="alert" class="mb-5 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button v-if="!config" class="ml-3 underline" @click="load">重新加载</button></p>
     <p v-if="notice" role="status" class="mb-5 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
