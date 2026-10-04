@@ -8,6 +8,7 @@ import GyingSearchDialog from '../components/GyingSearchDialog.vue'
 import MikanSearchDialog from '../components/MikanSearchDialog.vue'
 import RE0SearchDialog from '../components/RE0SearchDialog.vue'
 import FollowButton from '../components/FollowButton.vue'
+import SearchPill from '../components/SearchPill.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
@@ -247,39 +248,46 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M7 3h10" /></svg></span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span></RouterLink>
-              <div class="mt-4 flex flex-wrap items-center gap-3">
+              <div class="mt-4 flex flex-wrap items-center gap-4 text-xs">
+                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">/10</span></span></a>
+                <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.votes.toLocaleString() }} 人评价</span>
+                <a v-if="detail.imdbUrl" :href="detail.imdbUrl" target="_blank" rel="noopener noreferrer" aria-label="在 IMDb 查看条目" class="rounded bg-yellow-400 px-1.5 py-0.5 font-black text-black hover:bg-yellow-300">IMDb</a>
+              </div>
+              <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="statusLabel">{{ statusLabel }}</span><span v-if="detail.runtime">{{ kind === 'tv' ? '每集约 ' : '' }}{{ detail.runtime }} 分钟</span><span v-if="kind === 'tv' && detail.episodeCount">共 {{ detail.episodeCount }} 集</span><span v-if="detail.countries.length">{{ detail.countries.join(' / ') }}</span></div>
+              <div class="mt-6">
                 <FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" />
-                <button v-if="isPortalAdmin && searchConfigured.re0" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-500 dark:hover:bg-emerald-900/30 transition-colors" @click="re0SearchOpen = true">
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <SearchPill v-if="isPortalAdmin && searchConfigured.re0" @click="re0SearchOpen = true">
                   <img :src="re0Logo" alt="" class="h-4 w-4 shrink-0 rounded-[4px] object-contain" draggable="false" />
                   <span class="flex items-center gap-0.5">
                     <span class="font-black tracking-wider re0-spectrum">RE0</span>
-                    <span>搜索</span>
+                    <span class="text-slate-500 dark:text-slate-400">搜索</span>
                   </span>
-                </button>
-                <button v-if="isPortalAdmin && searchConfigured.bot" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-[#2AABEE]/30 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-[#2AABEE] hover:bg-[#2AABEE]/10 dark:border-[#2AABEE]/50 dark:hover:bg-[#2AABEE]/20 transition-colors" @click="botSearchOpen = true">
-                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                </SearchPill>
+                <SearchPill v-if="isPortalAdmin && searchConfigured.bot" @click="botSearchOpen = true">
+                  <svg class="h-4 w-4 shrink-0 text-[#2AABEE]" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.32.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.233-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.322.315-.646.88-.97 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                   </svg>
                   <span class="flex items-center gap-0.5">
-                    <span class="font-bold font-sans">Bot</span>
-                    <span>搜索</span>
+                    <span class="font-bold font-sans text-[#2AABEE]">Bot</span>
+                    <span class="text-slate-500 dark:text-slate-400">搜索</span>
                   </span>
-                </button>
-                <button v-if="isPortalAdmin && searchConfigured.gying" type="button" class="rounded-full border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:border-violet-700/50 dark:hover:bg-violet-900/30 transition-colors" @click="gyingSearchOpen = true">观影搜索</button>
-                <button v-if="canSearchMikan" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-700/50 dark:text-amber-500 dark:hover:bg-amber-900/30 transition-colors" @click="mikanSearchOpen = true">
+                </SearchPill>
+                <SearchPill v-if="isPortalAdmin && searchConfigured.gying" @click="gyingSearchOpen = true">
+                  <span class="flex items-center gap-0.5">
+                    <span class="font-bold text-violet-600 dark:text-violet-500">观影</span>
+                    <span class="text-slate-500 dark:text-slate-400">搜索</span>
+                  </span>
+                </SearchPill>
+                <SearchPill v-if="canSearchMikan" @click="mikanSearchOpen = true">
                   <img :src="mikanMascot" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
                   <span class="flex items-center gap-0.5">
                     <img :src="mikanWordmark" alt="Mikan" class="h-2.5 w-auto shrink-0 object-contain" draggable="false" />
-                    <span>搜索</span>
+                    <span class="text-slate-500 dark:text-slate-400">搜索</span>
                   </span>
-                </button>
+                </SearchPill>
               </div>
-              <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
-                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">/10</span></span></a>
-                <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.votes.toLocaleString() }} 人评价</span>
-                <a v-if="detail.imdbUrl" :href="detail.imdbUrl" target="_blank" rel="noopener noreferrer" aria-label="在 IMDb 查看条目" class="rounded bg-yellow-400 px-1.5 py-0.5 font-black text-black hover:bg-yellow-300">IMDb <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></a>
-              </div>
-              <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="statusLabel">{{ statusLabel }}</span><span v-if="detail.runtime">{{ kind === 'tv' ? '每集约 ' : '' }}{{ detail.runtime }} 分钟</span><span v-if="kind === 'tv' && detail.episodeCount">共 {{ detail.episodeCount }} 集</span><span v-if="detail.countries.length">{{ detail.countries.join(' / ') }}</span></div>
               <div class="mt-7"><h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">剧情大纲</h2><p v-if="detail.tagline" class="mt-3 text-sm italic text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.tagline }}</p><p class="mt-3 whitespace-pre-line break-words text-sm leading-7 text-slate-600 dark:text-slate-300">{{ detail.overview || '暂无剧情简介。' }}</p></div>
             </div>
           </section>
