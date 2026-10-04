@@ -91,6 +91,7 @@ const source = await readFile(new URL('../src/components/SeasonLibraryProgress.v
 const { descriptor } = parse(source)
 const compiled = compile(compileScript(descriptor, { id: 'season-progress-test', inlineTemplate: true }).content)
   .replaceAll(/from ["']vue["']/g, `from '${pathToFileURL(require.resolve('vue/dist/vue.runtime.esm-bundler.js')).href}'`)
+  .replaceAll(/from ["']\.\.\/assets\/emby.svg["']/g, `from '${dataModule('export default "/emby.svg"')}'`)
   .replaceAll(/from ["']\.\.\/types\/seasonLibrary["']/g, `from '${libraryURL}'`)
 const { default: SeasonLibraryProgress } = await import(dataModule(compiled))
 

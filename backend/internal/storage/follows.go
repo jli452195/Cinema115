@@ -106,12 +106,14 @@ func (s *Store) subscribe(ctx context.Context, userID string, f model.Follow, no
 			}
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO follow_checks(kind,tmdb_id) VALUES(?,?) ON CONFLICT(kind,tmdb_id) DO UPDATE SET state='unknown',aired=0,owned=0,checked_at=0,due=0,error='',version=version+1`, f.Kind, f.TMDBID); err != nil {
-			return fmt.Errorf("重置追更入库检查: %w", err)
+		// 恢复订阅只安排复核，保留最后一次可靠进度作为通知基线。
+		// 轮次用于隔离旧任务，不能把同一入库结果变成新的通知事件。
+		if _, err := tx.ExecContext(ctx, `INSERT INTO follow_checks(kind,tmdb_id) VALUES(?,?) ON CONFLICT(kind,tmdb_id) DO UPDATE SET due=0,version=version+1`, f.Kind, f.TMDBID); err != nil {
+			return fmt.Errorf("恢复追更入库检查: %w", err)
 		}
 		// 没有有效订阅时开启新一轮申请；后续加入者不重复通知。
 		var cycle int64
-		if err := tx.QueryRowContext(ctx, `UPDATE follow_requests SET status='pending',note='',updated_at=?,revision=revision+1,cycle=cycle+1 WHERE kind=? AND tmdb_id=? RETURNING cycle`, now, f.Kind, f.TMDBID).Scan(&cycle); err != nil {
+		if err := tx.QueryRowContext(ctx, `UPDATE follow_requests SET status=CASE WHEN status='completed' THEN status ELSE 'pending' END,note='',updated_at=?,revision=revision+1,cycle=cycle+1 WHERE kind=? AND tmdb_id=? RETURNING cycle`, now, f.Kind, f.TMDBID).Scan(&cycle); err != nil {
 			return fmt.Errorf("启动追更申请: %w", err)
 		}
 		if notification != nil {

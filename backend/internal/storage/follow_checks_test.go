@@ -37,6 +37,7 @@ func TestFollowCheckMigrationNotificationsAndRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	apply(model.FollowProgress{State: "absent"}) // 首次检查只建立基线。
 	apply(model.FollowProgress{State: "caught_up", Aired: 2, Owned: 2})
 	apply(model.FollowProgress{State: "caught_up", Aired: 2, Owned: 2})
 	// 临时故障恢复不重复通知。

@@ -39,6 +39,13 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 	if err != nil || len(jobs) != 1 {
 		t.Fatal(jobs, err)
 	}
+	if err := s.SaveFollowCheck(ctx, jobs[0], model.FollowProgress{State: "absent", CheckedAt: time.Now().Unix()}, 0); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.DueFollowChecks(ctx, time.Now().Unix())
+	if err != nil || len(jobs) != 1 {
+		t.Fatal(jobs, err)
+	}
 	if err := s.SaveFollowCheck(ctx, jobs[0], model.FollowProgress{State: "completed", CheckedAt: time.Now().Unix()}, time.Now().Add(time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +76,12 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 		t.Fatal(list)
 	}
 	call("POST", "/read", tokens["bob"], `{"id":`+strconv.FormatInt(id, 10)+`,"userId":"alice"}`, 200)
+	call("POST", "/read", tokens["bob"], `{"ids":[`+strconv.FormatInt(id, 10)+`],"userId":"alice"}`, 200)
 	if data := call("GET", "/unread", tokens["alice"], "", 200); data["unread"] != float64(1) {
 		t.Fatal("浠栦汉鏍囪浜嗛€氱煡", data)
+	}
+	if data := call("POST", "/read", tokens["alice"], `{"ids":[`+strconv.FormatInt(id, 10)+`]}`, 200); data["unread"] != float64(0) {
+		t.Fatal("批量已读未返回最新计数", data)
 	}
 	call("POST", "/read", tokens["alice"], `{"id":`+strconv.FormatInt(id, 10)+`,"all":true}`, 200)
 	if data := call("GET", "/unread", tokens["alice"], "", 200); data["unread"] != float64(0) {
@@ -78,4 +89,7 @@ func TestWebsiteNotificationIdentityAndReadBoundary(t *testing.T) {
 	}
 	call("GET", "?before=-1", tokens["alice"], "", 400)
 	call("POST", "/read", tokens["alice"], `{"id":0,"all":true}`, 400)
+	for _, body := range []string{`{"ids":[]}`, `{"ids":[0]}`, `{"ids":[-1]}`, `{"ids":[1],"all":true}`, `{"ids":[1],"id":1}`, `{"ids":[` + strings.Repeat("1,", 100) + `1]}`} {
+		call("POST", "/read", tokens["alice"], body, 400)
+	}
 }

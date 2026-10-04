@@ -2,10 +2,24 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strm115/backend/internal/model"
 	"time"
 )
+
+// 批量已读只更新明确提供的本人通知；重复提交不改写首次阅读时间。
+func (s *Store) ReadWebsiteNotificationIDs(ctx context.Context, userID string, ids []int64) error {
+	data, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("编码已读通知编号: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE website_notifications SET read_at=? WHERE user_id=? AND read_at=0 AND id IN (SELECT value FROM json_each(?))`, time.Now().Unix(), userID, string(data))
+	if err != nil {
+		return fmt.Errorf("批量标记站内通知已读: %w", err)
+	}
+	return nil
+}
 
 func (s *Store) WebsiteUnread(ctx context.Context, userID string) (int, error) {
 	var count int

@@ -228,7 +228,7 @@ func TestAdminCloseFollowStopsSearchAndPreservesLibraryTracking(t *testing.T) {
 		t.Fatalf("reopened search job status=%q err=%v", jobStatus, err)
 	}
 	notifications, err := s.WebsiteNotifications(ctx, "alice", 0)
-	if err != nil || len(notifications) != 4 || notifications[0].Message != "追更已恢复处理：重新查找资源" {
+	if err != nil || len(notifications) != 3 || notifications[0].Message != "追更已恢复处理：重新查找资源" {
 		t.Fatalf("reopen notification: %+v %v", notifications, err)
 	}
 }

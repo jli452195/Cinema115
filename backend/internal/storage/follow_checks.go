@@ -127,7 +127,9 @@ WHERE kind=? AND tmdb_id=? AND status='checking' AND cycle=(SELECT cycle FROM fo
 		case p.State == "tracking" && p.Owned > old.Owned:
 			message = fmt.Sprintf("剧集更新入库：已播 %d 集，已入库 %d 集", p.Aired, p.Owned)
 		}
-		if message != "" {
+		// 首次成功检查只建立基线；之后只有真实进度变化才通知。
+		// 基线与通知在同一事务提交，版本校验阻止重复或旧任务再次通知。
+		if message != "" && old.State != "unknown" {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO website_notifications(user_id,kind,tmdb_id,title,message,created_at) SELECT user_id,kind,tmdb_id,?,?,? FROM user_follows WHERE kind=? AND tmdb_id=? AND active=1`, title, message, p.CheckedAt, job.Kind, job.TMDBID); err != nil {
 				return fmt.Errorf("保存站内追更通知: %w", err)
 			}

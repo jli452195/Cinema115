@@ -4,7 +4,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
-import { websiteUnread, refreshWebsiteUnread } from '../composables/useWebsiteNotifications'
+import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
@@ -13,6 +13,7 @@ const props = defineProps<{ overBackdrop?: boolean }>()
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
 const notificationController = new AbortController()
+useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
 let notificationTimer: ReturnType<typeof setInterval> | undefined
 function onScroll() { scrollY.value = window.scrollY }
 onMounted(() => {

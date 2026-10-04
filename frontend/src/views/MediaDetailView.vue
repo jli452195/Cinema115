@@ -21,6 +21,9 @@ import { copyText } from '../utils/clipboard'
 import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import tmdbLogo from '../assets/tmdb.svg'
+import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
+import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
+import re0Logo from '../assets/re0/logo-re0-square.webp'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
@@ -219,9 +222,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
         <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
       </div>
       <div class="workbench-content relative mx-auto max-w-[1440px] px-5 pb-8 md:px-8 lg:px-10">
-        <nav aria-label="详情导航" class="mb-8 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <nav aria-label="详情导航" class="mb-8 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">
           <HistoryBackButton :fallback="`/${kind}`" />
-          <span class="text-[10px] tracking-[0.2em] text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">CINEMA115 / DETAILS</span>
+          <span class="text-[10px] tracking-[0.2em] text-slate-400 dark:text-slate-500 dark:text-slate-400">CINEMA115 / DETAILS</span>
         </nav>
 
         <div v-if="loading" aria-label="正在加载影视详情" aria-busy="true" class="animate-pulse">
@@ -229,38 +232,64 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
           <div class="mt-12 h-24 rounded-xl bg-slate-200 dark:bg-slate-700/60"></div>
         </div>
         <section v-else-if="error" role="alert" class="rounded-2xl border border-red-100 bg-white dark:bg-slate-900 dark:bg-slate-900/90 px-6 py-12 text-center">
-          <h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100 dark:text-slate-100">暂时无法加载详情</h1><p class="mt-3 text-sm text-red-600">{{ error }}</p>
+          <h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">暂时无法加载详情</h1><p class="mt-3 text-sm text-red-600">{{ error }}</p>
           <button class="mt-6 rounded-lg bg-slate-900 px-5 py-2.5 text-sm text-white" @click="loadDetail">重新加载</button>
         </section>
         <template v-else-if="detail">
           <section aria-label="影视信息" class="grid items-start gap-7 sm:grid-cols-[200px_minmax(0,1fr)] lg:grid-cols-[255px_minmax(0,1fr)] lg:gap-12">
             <div class="mx-auto aspect-[2/3] w-48 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-800 shadow-[0_20px_40px_-15px_rgba(15,23,42,0.4)] sm:w-full">
               <img v-if="hasImage(detail.posterUrl)" :src="tmdbImageURL(detail.posterUrl)" :alt="detail.title" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(detail.posterUrl)" />
-              <div v-else class="flex h-full items-center justify-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无海报</div>
+              <div v-else class="flex h-full items-center justify-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无海报</div>
             </div>
             <div class="min-w-0 py-1">
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-300"><span class="rounded-full bg-amber-400 px-3 py-1 text-[11px] font-bold text-slate-950 dark:text-slate-50">{{ mediaLabel }}</span><span>{{ detail.date || '日期待定' }}</span><span v-if="detail.genres.length" class="border-l border-slate-300 dark:border-slate-600 pl-3 font-semibold text-slate-700 dark:text-slate-300 dark:text-slate-300">{{ detail.genres.map(item => item.name).join(' / ') }}</span></div>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-600 dark:text-slate-300"><span class="rounded-full bg-amber-400 px-3 py-1 text-[11px] font-bold text-slate-950 dark:text-slate-50">{{ mediaLabel }}</span><span>{{ detail.date || '日期待定' }}</span><span v-if="detail.genres.length" class="border-l border-slate-300 dark:border-slate-600 pl-3 font-semibold text-slate-700 dark:text-slate-300">{{ detail.genres.map(item => item.name).join(' / ') }}</span></div>
               <h1 class="mt-4 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 dark:text-slate-50 lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
-              <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.originalTitle }}</p>
-              <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500">▱</span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 →</span></RouterLink>
-              <div class="mt-4 flex flex-wrap items-start gap-3"><FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" /><button v-if="isPortalAdmin && searchConfigured.re0" type="button" class="rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" @click="re0SearchOpen = true">RE0 搜索</button><button v-if="isPortalAdmin && searchConfigured.bot" type="button" class="rounded-lg border border-blue-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30" @click="botSearchOpen = true">Bot 搜索</button><button v-if="isPortalAdmin && searchConfigured.gying" type="button" class="rounded-lg border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30" @click="gyingSearchOpen = true">观影搜索</button><button v-if="canSearchMikan" type="button" class="rounded-lg border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30" @click="mikanSearchOpen = true">蜜柑搜索</button></div>
-              <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
-                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">/10</span></span></a>
-                <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.votes.toLocaleString() }} 人评价</span>
-                <a v-if="detail.imdbUrl" :href="detail.imdbUrl" target="_blank" rel="noopener noreferrer" aria-label="在 IMDb 查看条目" class="rounded bg-yellow-400 px-1.5 py-0.5 font-black text-black hover:bg-yellow-300">IMDb ↗</a>
+              <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.originalTitle }}</p>
+              <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:border-sky-400"><span aria-hidden="true" class="text-sky-500"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M7 3h10" /></svg></span><span>{{ detail.collection.name }}</span><span class="text-sky-600">查看系列 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span></RouterLink>
+              <div class="mt-4 flex flex-wrap items-center gap-3">
+                <FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" />
+                <button v-if="isPortalAdmin && searchConfigured.re0" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-500 dark:hover:bg-emerald-900/30 transition-colors" @click="re0SearchOpen = true">
+                  <img :src="re0Logo" alt="" class="h-4 w-4 shrink-0 rounded-[4px] object-contain" draggable="false" />
+                  <span class="flex items-center gap-0.5">
+                    <span class="font-black tracking-wider re0-spectrum">RE0</span>
+                    <span>搜索</span>
+                  </span>
+                </button>
+                <button v-if="isPortalAdmin && searchConfigured.bot" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-[#2AABEE]/30 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-[#2AABEE] hover:bg-[#2AABEE]/10 dark:border-[#2AABEE]/50 dark:hover:bg-[#2AABEE]/20 transition-colors" @click="botSearchOpen = true">
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.32.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.233-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.322.315-.646.88-.97 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                  </svg>
+                  <span class="flex items-center gap-0.5">
+                    <span class="font-bold font-sans">Bot</span>
+                    <span>搜索</span>
+                  </span>
+                </button>
+                <button v-if="isPortalAdmin && searchConfigured.gying" type="button" class="rounded-full border border-violet-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-violet-600 hover:bg-violet-50 dark:border-violet-700/50 dark:hover:bg-violet-900/30 transition-colors" @click="gyingSearchOpen = true">观影搜索</button>
+                <button v-if="canSearchMikan" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-white dark:bg-slate-900 dark:bg-slate-900/80 px-4 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-700/50 dark:text-amber-500 dark:hover:bg-amber-900/30 transition-colors" @click="mikanSearchOpen = true">
+                  <img :src="mikanMascot" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
+                  <span class="flex items-center gap-0.5">
+                    <img :src="mikanWordmark" alt="Mikan" class="h-2.5 w-auto shrink-0 object-contain" draggable="false" />
+                    <span>搜索</span>
+                  </span>
+                </button>
               </div>
-              <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="statusLabel">{{ statusLabel }}</span><span v-if="detail.runtime">{{ kind === 'tv' ? '每集约 ' : '' }}{{ detail.runtime }} 分钟</span><span v-if="kind === 'tv' && detail.episodeCount">共 {{ detail.episodeCount }} 集</span><span v-if="detail.countries.length">{{ detail.countries.join(' / ') }}</span></div>
-              <div class="mt-7"><h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">剧情大纲</h2><p v-if="detail.tagline" class="mt-3 text-sm italic text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.tagline }}</p><p class="mt-3 whitespace-pre-line break-words text-sm leading-7 text-slate-600 dark:text-slate-300 dark:text-slate-300">{{ detail.overview || '暂无剧情简介。' }}</p></div>
+              <div class="mt-6 flex flex-wrap items-center gap-4 text-xs">
+                <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="flex items-baseline gap-2 text-cyan-600 hover:text-cyan-700"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">/10</span></span></a>
+                <span v-if="detail.votes > 0" class="text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.votes.toLocaleString() }} 人评价</span>
+                <a v-if="detail.imdbUrl" :href="detail.imdbUrl" target="_blank" rel="noopener noreferrer" aria-label="在 IMDb 查看条目" class="rounded bg-yellow-400 px-1.5 py-0.5 font-black text-black hover:bg-yellow-300">IMDb <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></a>
+              </div>
+              <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><span v-if="statusLabel">{{ statusLabel }}</span><span v-if="detail.runtime">{{ kind === 'tv' ? '每集约 ' : '' }}{{ detail.runtime }} 分钟</span><span v-if="kind === 'tv' && detail.episodeCount">共 {{ detail.episodeCount }} 集</span><span v-if="detail.countries.length">{{ detail.countries.join(' / ') }}</span></div>
+              <div class="mt-7"><h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500">剧情大纲</h2><p v-if="detail.tagline" class="mt-3 text-sm italic text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.tagline }}</p><p class="mt-3 whitespace-pre-line break-words text-sm leading-7 text-slate-600 dark:text-slate-300">{{ detail.overview || '暂无剧情简介。' }}</p></div>
             </div>
           </section>
 
           <p v-if="embyError" role="status" class="mt-6 text-xs text-amber-700">{{ embyError }}；{{ embyMedia ? '当前显示上次入库查询结果。' : '暂时无法确认入库状态。' }}</p>
           <EmbyMediaInfo v-if="isPortalAdmin && kind === 'movie'" :token="token" :tmdb-id="tmdbId" :media="embyMedia" />
           <section v-if="kind === 'tv'" class="mt-12" aria-label="剧集季列表">
-            <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isPortalAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
+            <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isPortalAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
-            <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无季信息</p>
+            <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无季信息</p>
             <div class="space-y-3">
               <section v-for="season in detail.seasons" :key="season.number" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
                 <button :id="`season-button-${season.number}`" class="group/season flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/25 focus-visible:outline-blue-500 sm:px-5" :aria-expanded="openSeasons.has(season.number)" :aria-controls="`season-${season.number}`" @click="toggleSeason(season.number)">
@@ -268,22 +297,22 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     <span class="inline-flex shrink-0 items-center gap-3"><span class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ seasonName(season) }}</span><span class="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-600/30 dark:bg-slate-700/40 dark:text-slate-300">{{ season.episodeCount }} 集</span></span>
                     <SeasonLibraryProgress :key="`${tmdbId}-${season.number}`" :state="seasonState(season.number)" :owned-episodes="[...(embyEpisodes[season.number] || [])]" :progress="seasonProgress[season.number]" :loading="!!schedules[season.number]?.loading" :error="schedules[season.number]?.error || ''" :stale="schedules[season.number]?.data?.cacheStale" :has-undated="seasonState(season.number) === 'present' && !!schedules[season.number]?.data?.episodes.some(episode => !episode.date)" @load="loadSeasonSchedule(season.number)" @refresh="loadSeasonSchedule(season.number, true)" />
                   </span>
-                  <svg class="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 transition-transform" :class="{ 'rotate-180': openSeasons.has(season.number) }" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 8 5 5 5-5" /></svg>
+                  <svg class="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500 dark:text-slate-400 transition-transform" :class="{ 'rotate-180': openSeasons.has(season.number) }" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 8 5 5 5-5" /></svg>
                 </button>
                 <div v-if="visitedSeasons.has(season.number)" v-show="openSeasons.has(season.number)" :id="`season-${season.number}`" role="region" :aria-labelledby="`season-button-${season.number}`" class="border-t border-slate-100 dark:border-slate-800 px-4 pb-4 sm:px-5">
-                  <p v-if="seasons[season.number]?.loading && !seasons[season.number]?.data" role="status" class="py-6 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">正在加载分集…</p>
+                  <p v-if="seasons[season.number]?.loading && !seasons[season.number]?.data" role="status" class="py-6 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">正在加载分集…</p>
                   <div v-if="seasons[season.number]?.error" role="alert" class="py-5 text-sm text-amber-600">{{ seasons[season.number]?.error }}<button class="ml-3 underline" @click="loadSeason(season.number, true)">重试</button></div>
                   <template v-if="seasons[season.number]?.data">
                     <p v-if="reliableLibrary && seasonProgress[season.number]?.missing.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 dark:text-slate-300 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true"></span><span class="min-w-0 break-words">缺失集数：{{ seasonProgress[season.number]?.missingLabel }}</span></p>
                     <p v-if="reliableLibrary && seasonProgress[season.number]?.numberingMode && seasonProgress[season.number]?.displayMissing.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 dark:text-slate-300 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true"></span><span class="min-w-0 break-words">中间缺集：{{ seasonProgress[season.number]?.displayMissingLabel }}</span></p>
                     <p v-if="reliableLibrary && seasonProgress[season.number]?.unlistedOwned.length" class="mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 dark:text-slate-300 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-300" aria-hidden="true"></span><span class="min-w-0 break-words">额外入库集数：{{ formatEpisodeRanges(seasonProgress[season.number]?.unlistedOwned || []) }}（TMDB 本季未收录）</span></p>
-                    <p v-if="seasons[season.number]?.data?.overview" class="py-4 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ seasons[season.number]?.data?.overview }}</p>
-                    <p v-if="!seasons[season.number]?.data?.episodes.length" class="py-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无分集信息</p>
+                    <p v-if="seasons[season.number]?.data?.overview" class="py-4 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ seasons[season.number]?.data?.overview }}</p>
+                    <p v-if="!seasons[season.number]?.data?.episodes.length" class="py-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无分集信息</p>
                     <div class="divide-y divide-slate-200 dark:divide-slate-700/80">
                       <article v-for="episode in seasons[season.number]?.data?.episodes.slice(0, episodeLimits[season.number] || 20)" :key="episode.id" class="min-w-0 py-6">
-                        <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold text-slate-800 dark:text-slate-200 dark:text-slate-200"><span class="mr-2 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600 dark:bg-amber-500/10 dark:text-amber-500">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true">✓</span></div>
-                        <p class="mt-2 flex flex-wrap gap-3 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600">★ {{ episode.rating.toFixed(1) }}</span></p>
-                        <p class="mt-3 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.overview || '暂无分集简介。' }}</p>
+                        <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold text-slate-800 dark:text-slate-200"><span class="mr-2 text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600 dark:bg-amber-500/10 dark:text-amber-500">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true"><svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6" /></svg></span></div>
+                        <p class="mt-2 flex flex-wrap gap-3 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600"><svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg> {{ episode.rating.toFixed(1) }}</span></p>
+                        <p class="mt-3 text-sm leading-7 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ episode.overview || '暂无分集简介。' }}</p>
                         <EmbyMediaVersions v-if="isPortalAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
                         <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800"><img :src="tmdbImageURL(episode.stillUrl)" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
                       </article>
@@ -296,16 +325,16 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
           </section>
 
           <section class="mt-12" aria-label="领衔主演">
-            <h2 class="mb-5 text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">领衔主演</h2>
-            <p v-if="!detail.cast.length" class="text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无演员信息</p>
+            <h2 class="mb-5 text-lg font-bold text-slate-900 dark:text-slate-100">领衔主演</h2>
+            <p v-if="!detail.cast.length" class="text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无演员信息</p>
             <div v-else class="flex gap-5 overflow-x-auto pb-5 sm:gap-7">
               <RouterLink v-for="member in detail.cast" :key="member.id" :to="{ name: 'person', params: { tmdbId: member.id } }" class="group w-20 shrink-0 text-center sm:w-24" :title="`${member.name}${member.character ? ' · ' + member.character : ''}`">
-                <div class="mx-auto h-20 w-20 overflow-hidden rounded-full border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition group-hover:ring-2 group-hover:ring-amber-300"><img v-if="hasImage(member.profileUrl)" :src="tmdbImageURL(member.profileUrl)" :alt="member.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-[center_25%]" @error="failedImages.add(member.profileUrl)" /><div v-else class="flex h-full items-center justify-center bg-slate-100 dark:bg-slate-800 text-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ member.name.slice(0, 1) }}</div></div><h3 class="mt-3 truncate text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-amber-600">{{ member.name }}</h3><p class="mt-1 truncate text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ member.character || '角色未提供' }}</p>
+                <div class="mx-auto h-20 w-20 overflow-hidden rounded-full border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition group-hover:ring-2 group-hover:ring-amber-300"><img v-if="hasImage(member.profileUrl)" :src="tmdbImageURL(member.profileUrl)" :alt="member.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-[center_25%]" @error="failedImages.add(member.profileUrl)" /><div v-else class="flex h-full items-center justify-center bg-slate-100 dark:bg-slate-800 text-xl text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ member.name.slice(0, 1) }}</div></div><h3 class="mt-3 truncate text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-amber-600">{{ member.name }}</h3><p class="mt-1 truncate text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ member.character || '角色未提供' }}</p>
               </RouterLink>
             </div>
           </section>
           <MediaRecommendations :token="token" :kind="kind" :tmdb-id="tmdbId" />
-          <footer class="mt-12 border-t border-slate-200 dark:border-slate-700 dark:border-slate-800 pt-5 text-[11px] leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="hover:text-cyan-600">在 TMDB 查看完整资料 ↗</a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
+          <footer class="mt-12 border-t border-slate-200 dark:border-slate-700 dark:border-slate-800 pt-5 text-[11px] leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400"><a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="hover:text-cyan-600">在 TMDB 查看完整资料 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></a><p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
         </template>
       </div>
     </main>
@@ -328,8 +357,23 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 .dark .detail-backdrop::after {
     background: linear-gradient(180deg, transparent 0%, rgb(var(--color-slate-950) / 60%) 50%, rgb(var(--color-slate-950)) 100%);
 }
+.re0-spectrum {
+  background: linear-gradient(100deg, #00A76F, #FFAB00 38%, #00A76F 70%, #FFAB00);
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: re0-brand-spectrum 8s linear infinite;
+}
+
+@keyframes re0-brand-spectrum {
+  from { background-position: 0 center; }
+  to { background-position: -260% center; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse { animation: none; }
-  .transition, .transition-transform { transition: none; }
+  .animate-pulse, .re0-spectrum { animation: none; }
+  .transition, .transition-transform, .transition-colors { transition: none; }
+  .re0-spectrum { background-position: 50% center; }
 }
 </style>

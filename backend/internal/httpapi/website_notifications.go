@@ -20,7 +20,7 @@ func RegisterWebsiteNotifications(group *gin.RouterGroup, store *storage.Store) 
 			return
 		}
 		c.Set("notification_user_id", user.ID)
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
@@ -58,17 +58,36 @@ func RegisterWebsiteNotifications(group *gin.RouterGroup, store *storage.Store) 
 	})
 	g.POST("/read", func(c *gin.Context) {
 		var body struct {
-			ID  int64 `json:"id"`
-			All bool  `json:"all"`
+			ID  int64   `json:"id"`
+			All bool    `json:"all"`
+			IDs []int64 `json:"ids"`
 		}
-		if c.ShouldBindJSON(&body) != nil || body.ID <= 0 {
+		if c.ShouldBindJSON(&body) != nil || (body.IDs == nil && body.ID <= 0) || (body.IDs != nil && (len(body.IDs) == 0 || len(body.IDs) > 100 || body.ID != 0 || body.All)) {
 			c.JSON(400, gin.H{"error": "通知编号无效"})
 			return
 		}
-		if err := store.ReadWebsiteNotifications(c.Request.Context(), c.GetString("notification_user_id"), body.ID, body.All); err != nil {
+		for _, id := range body.IDs {
+			if id <= 0 {
+				c.JSON(400, gin.H{"error": "通知编号无效"})
+				return
+			}
+		}
+		ctx, userID := c.Request.Context(), c.GetString("notification_user_id")
+		var err error
+		if body.IDs != nil {
+			err = store.ReadWebsiteNotificationIDs(ctx, userID, body.IDs)
+		} else {
+			err = store.ReadWebsiteNotifications(ctx, userID, body.ID, body.All)
+		}
+		if err != nil {
 			followError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"ok": true})
+		count, err := store.WebsiteUnread(ctx, userID)
+		if err != nil {
+			followError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "unread": count})
 	})
 }

@@ -88,8 +88,8 @@ func TestFollowWorkerEmbyWebhookAndDuplicateVersionDeletion(t *testing.T) {
 	if err != nil || got.Status != "pending" {
 		t.Fatal(got, err)
 	}
-	if unread, err := f.db.WebsiteUnread(ctx, "alice"); err != nil || unread != 2 {
-		t.Fatal("应只有完成、恢复追踪两条通知", unread, err)
+	if unread, err := f.db.WebsiteUnread(ctx, "alice"); err != nil || unread != 1 {
+		t.Fatal("首次完成只建立基线，应只有恢复追踪通知", unread, err)
 	}
 }
 
