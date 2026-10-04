@@ -9,7 +9,9 @@ defineEmits<{ logout: [] }>()
 <template>
  <ManagementLayout title="注册邀请" description="生成邀请并分享给朋友，凭有效邀请创建 Emby 账号。每个邀请仅可使用一次，可随时撤销未使用的邀请。" @logout="$emit('logout')">
   <template #actions><RouterLink to="/emby/proxy" class="text-sm text-blue-600">播放与下载设置</RouterLink><RouterLink to="/emby/users" class="text-sm text-blue-600">Emby 用户管理</RouterLink></template>
-  <RegistrationLibrarySettings :token="token" />
-  <PortalInvitesPanel :token="token" />
+  <div class="mx-auto w-full max-w-3xl">
+    <RegistrationLibrarySettings :token="token" />
+    <PortalInvitesPanel :token="token" />
+  </div>
  </ManagementLayout>
 </template>

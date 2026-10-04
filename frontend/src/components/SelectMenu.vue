@@ -84,13 +84,18 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
         <button
           type="button"
           tabindex="-1"
-          class="flex w-full items-center justify-between gap-6 rounded-md px-3 py-2 text-left text-sm transition"
-          :class="option.value === modelValue ? 'bg-slate-900 text-white dark:bg-slate-700 dark:text-slate-100' : index === activeIndex ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+          class="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors"
+          :class="[
+            index === activeIndex ? 'bg-slate-100 dark:bg-slate-800/80' : 'bg-transparent',
+            option.value === modelValue ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'
+          ]"
           @pointerenter="activeIndex = index"
           @click="choose(index)"
         >
+          <div class="flex w-3 shrink-0 items-center justify-center">
+            <span v-if="option.value === modelValue" class="h-1.5 w-1.5 rounded-full bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)] dark:bg-amber-400 dark:shadow-[0_0_6px_rgba(251,191,36,0.5)]" aria-hidden="true" />
+          </div>
           <span class="whitespace-nowrap">{{ option.label }}</span>
-          <span v-if="option.value === modelValue" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white dark:bg-amber-500" aria-hidden="true" />
         </button>
       </li>
     </ul>

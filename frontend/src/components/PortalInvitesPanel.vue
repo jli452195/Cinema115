@@ -112,7 +112,9 @@ onBeforeUnmount(() => lifecycle.abort())
         <label class="text-sm text-slate-600 dark:text-slate-300 sm:col-span-2">邀请链接的站点地址<input v-model="baseURL" type="url" required class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" /><span class="mt-2 block text-xs text-slate-500 dark:text-slate-400">默认当前地址；发给外网用户时填写他们能访问的 HTTP(S) 域名和端口，不含路径。</span></label>
       </div>
       <p v-if="!origin" class="text-sm text-red-600 dark:text-red-300">请输入有效的站点地址，例如 https://cinema.example.com</p>
-      <button :disabled="busy || !origin" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm text-white disabled:opacity-50">{{ busy ? '处理中…' : '生成邀请' }}</button>
+      <div class="flex justify-end pt-2">
+        <button :disabled="busy || !origin" class="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50">{{ busy ? '处理中…' : '生成邀请' }}</button>
+      </div>
     </form>
     <section v-if="generated.length" aria-label="新生成的邀请" class="space-y-4 rounded-2xl border border-blue-200 bg-blue-50/50 p-5 dark:border-blue-400/20 dark:bg-blue-400/5">
       <div class="flex flex-wrap justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">请保存新生成的邀请</h2><button class="text-sm text-slate-500 dark:text-slate-400" @click="generated = []">隐藏完整邀请码</button></div>

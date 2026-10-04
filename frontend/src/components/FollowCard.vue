@@ -40,17 +40,17 @@ const dateLabel = computed(() => {
 </script>
 
 <template>
-  <article class="relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition-shadow hover:shadow-md hover:shadow-slate-900/5" data-follow-card>
+  <article class="group relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-amber-300/60 hover:shadow-xl hover:shadow-slate-900/10 dark:hover:border-amber-500/40 dark:hover:shadow-black/40" data-follow-card>
     <div v-if="item.posterUrl && !failedImage" class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
       <!-- 动态环境光背景：利用 CSS 高斯模糊实现纯前端的 MD3 动态取色 -->
-      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute -left-1/4 -top-1/4 h-[150%] w-[150%] object-cover blur-3xl opacity-50 saturate-150 dark:opacity-40 transform-gpu backface-hidden" @error="failedImage = true" />
+      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute -left-1/4 -top-1/4 h-[150%] w-[150%] object-cover blur-3xl opacity-50 saturate-150 transition-opacity duration-500 ease-out group-hover:opacity-70 dark:opacity-40 dark:group-hover:opacity-60 transform-gpu backface-hidden" @error="failedImage = true" />
       <!-- 混合层与底部渐变，保证按钮和文字的可读性 -->
-      <div class="absolute inset-0 bg-white/40 dark:bg-slate-900/50"></div>
+      <div class="absolute inset-0 bg-white/40 transition-colors duration-500 ease-out group-hover:bg-white/20 dark:bg-slate-900/50 dark:group-hover:bg-slate-900/30"></div>
       <div class="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-white/10 dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900/10"></div>
     </div>
     <div class="relative z-10 flex h-full min-w-0 flex-col">
       <div class="flex min-w-0 items-start gap-3">
-        <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 shadow-sm"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400 dark:text-slate-500">暂无海报</span></RouterLink>
+        <RouterLink :to="path" :aria-label="`查看${item.title}`" class="h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 shadow-sm"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400 dark:text-slate-500">暂无海报</span></RouterLink>
         <div class="min-w-0 flex-1 space-y-2">
           <RouterLink :to="path" :title="item.title" class="line-clamp-2 break-words text-sm font-semibold leading-5 text-slate-900 dark:text-slate-100 hover:text-amber-600">{{ item.title }}</RouterLink>
           <p class="text-[11px] leading-4 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>
