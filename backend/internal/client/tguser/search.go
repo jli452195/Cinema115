@@ -16,6 +16,7 @@ import (
 
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/resourcesearch"
 )
@@ -37,6 +38,8 @@ type SearchResult struct {
 	AllLoaded bool       `json:"allLoaded,omitempty"`
 	Cached    bool       `json:"cached"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Partial   bool       `json:"partial,omitempty"`
+	Warning   string     `json:"warning,omitempty"`
 }
 type storedAction struct {
 	expires   time.Time
@@ -255,23 +258,25 @@ func (c *Client) Search(ctx context.Context, title string, refresh bool) (Search
 
 // SearchWithUpdates 在 Bot 返回可识别内容时立即回调，最终返回值仍会收齐连续回复并写入缓存。
 func (c *Client) SearchWithUpdates(ctx context.Context, title string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
+	return c.SearchWithProgress(ctx, title, refresh, onUpdate, nil)
+}
+
+func (c *Client) SearchWithProgress(ctx context.Context, title string, refresh bool, onUpdate func(SearchResult), onProgress func(SearchProgress)) (SearchResult, error) {
 	title = strings.TrimSpace(title)
 	if title == "" || strings.HasPrefix(title, "/") {
 		return SearchResult{}, ErrInput
 	}
 	query := limitBotSearchTitle(title)
 	key := "search:" + query
-	return c.exchange(ctx, storedAction{command: query, kind: "search", searchKey: key}, key, refresh, onUpdate)
+	return c.exchange(ctx, storedAction{command: query, kind: "search", searchKey: key}, key, refresh, onUpdate, onProgress)
 }
 func (c *Client) Select(ctx context.Context, id string) (SearchResult, error) {
-	return c.exchange(ctx, storedAction{}, "select:"+id, false, nil)
+	return c.exchange(ctx, storedAction{kind: "select"}, "select:"+id, false, nil, nil)
 }
-func (c *Client) exchange(ctx context.Context, action storedAction, key string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
+
+// The tracked worker owns the connection gate and the operation deadline.
+func (c *Client) performExchange(ctx context.Context, action storedAction, key string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
 	result := SearchResult{Items: []Action{}, Links: []string{}}
-	if err := c.lock(); err != nil {
-		return result, err
-	}
-	defer c.unlock()
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -303,10 +308,14 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 			return cached, nil
 		}
 	}
-	if time.Now().Before(c.cooldown) {
-		return result, &searchError{"上一项请求超时，请等待一分钟再搜索，避免迟到的回复混入"}
+	c.mu.Lock()
+	cooldownErr := c.cooldownErrorLocked()
+	c.mu.Unlock()
+	if cooldownErr != nil {
+		return result, cooldownErr
 	}
 	dispatched := false
+	received := false
 	err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
@@ -331,20 +340,28 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 				maxID = m.ID
 			}
 		}
-		dispatched = true
+		requestID := 0
 		if action.data != nil {
+			dispatched = true
 			_, err = api.MessagesGetBotCallbackAnswer(ctx, &tg.MessagesGetBotCallbackAnswerRequest{Peer: peer, MsgID: action.message, Data: action.data})
 		} else {
 			id, e := randomID()
 			if e != nil {
 				return e
 			}
-			_, err = api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{Peer: peer, Message: action.command, RandomID: id, NoWebpage: true})
+			dispatched = true
+			var updates tg.UpdatesClass
+			updates, err = api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{Peer: peer, Message: action.command, RandomID: id, NoWebpage: true})
+			requestID = sentMessageID(updates, id)
 		}
 		if err != nil {
+			// A definitive RPC rejection did not start a query. Transport failures are ambiguous.
+			if rpcErr, ok := tgerr.As(err); ok && rpcErr.Code >= 400 && rpcErr.Code < 500 && !tgerr.Is(err, "BOT_RESPONSE_TIMEOUT") {
+				dispatched = false
+			}
 			return err
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		timer := time.NewTimer(c.searchTiming.firstPoll)
 		defer timer.Stop()
 		var lastChange time.Time
 		var recognized bool
@@ -353,7 +370,6 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 		for {
 			select {
 			case <-ctx.Done():
-				c.cooldown = time.Now().Add(time.Minute)
 				return ctx.Err()
 			case <-timer.C:
 			}
@@ -374,6 +390,9 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 				if m.ID <= maxID && (!exists || fp == old) {
 					continue
 				}
+				if !belongsToExchange(m, action, requestID, maxID, replies) {
+					continue
+				}
 				if previous, ok := seenMessages[m.ID]; ok && previous == fp {
 					continue
 				}
@@ -382,6 +401,7 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 					return e
 				}
 				seenMessages[m.ID] = fp
+				received = true
 				if !ok {
 					continue
 				}
@@ -398,31 +418,95 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 			}
 			// 明确的空结果是终态，可以立即返回；资源结果等待短暂静默，
 			// 将 Bot 连续发出的多个分享链接一起收齐。
-			if searchReplyComplete(result, recognized, lastChange, time.Now()) {
+			if searchReplyComplete(result, recognized, lastChange, time.Now(), c.searchTiming.quiet) {
 				return nil
 			}
-			timer.Reset(500 * time.Millisecond)
+			timer.Reset(c.searchTiming.poll)
 		}
 	})
 	if dispatched && err != nil {
-		c.cooldown = time.Now().Add(time.Minute)
+		c.mu.Lock()
+		c.cooldown = time.Now().Add(c.searchTiming.quarantine)
+		until := c.cooldown
+		c.mu.Unlock()
+		code, message := "interrupted", "Bot 操作未完整结束，正在隔离迟到回复"
+		if errors.Is(err, context.DeadlineExceeded) {
+			code, message = "reply_timeout", "等待 Bot 回复超时，正在隔离迟到回复"
+			if received {
+				code, message = "unrecognized_reply", "已收到 Bot 消息，但未能完成资源识别，正在隔离后续回复"
+			}
+		}
+		if len(result.Items) > 0 || len(result.Links) > 0 {
+			result.Partial, result.AllLoaded = true, false
+			result.Warning = "已保留收到的资源，后续回复未收集完整；稍后可刷新补充"
+			code, message = "partial_result", result.Warning
+		}
+		err = &OperationError{Code: code, Message: message, RetryAt: &until}
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		err = &OperationError{Code: "connection_timeout", Message: "连接 Telegram 超时，本次 Bot 查询尚未发送"}
 	}
 	var expected *searchError
 	if errors.As(err, &expected) {
 		return result, err
 	}
-	if err == nil {
+	if err == nil || result.Partial {
 		now := time.Now()
 		switch action.kind {
 		case "search":
 			result = c.appendSearchResult(action.searchKey, result, now)
 		case "page":
 			result = c.appendSearchResult(action.searchKey, result, now)
+			if err == nil {
+				c.cacheResult(key, result, now)
+			}
 		default:
 			result = c.cacheResult(key, result, now)
 		}
 	}
 	return result, publicError(err)
+}
+
+func sentMessageID(updates tg.UpdatesClass, randomID int64) int {
+	if sent, ok := updates.(*tg.UpdateShortSentMessage); ok {
+		return sent.ID
+	}
+	var items []tg.UpdateClass
+	switch value := updates.(type) {
+	case *tg.Updates:
+		items = value.Updates
+	case *tg.UpdatesCombined:
+		items = value.Updates
+	case *tg.UpdateShort:
+		items = []tg.UpdateClass{value.Update}
+	}
+	for _, item := range items {
+		if id, ok := item.(*tg.UpdateMessageID); ok && id.RandomID == randomID {
+			return id.ID
+		}
+	}
+	return 0
+}
+
+func belongsToExchange(m *tg.Message, action storedAction, requestID, maxID int, replies map[int]SearchResult) bool {
+	// Only a callback may edit its selected historical message.
+	if m.ID <= maxID {
+		return action.data != nil && m.ID == action.message
+	}
+	if requestID > 0 && m.ID <= requestID {
+		return false
+	}
+	if reply, ok := m.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToMsgID > 0 {
+		if action.data != nil && reply.ReplyToMsgID == action.message {
+			return true
+		}
+		if requestID > 0 && reply.ReplyToMsgID == requestID {
+			return true
+		}
+		_, linked := replies[reply.ReplyToMsgID]
+		return linked
+	}
+	// Some bots omit reply_to. Keep serial execution and quarantine for this fallback.
+	return true
 }
 
 func hasNextAction(result SearchResult) bool {
@@ -434,14 +518,14 @@ func hasNextAction(result SearchResult) bool {
 	return false
 }
 
-func searchReplyComplete(result SearchResult, recognized bool, lastChange, now time.Time) bool {
+func searchReplyComplete(result SearchResult, recognized bool, lastChange, now time.Time, quiet time.Duration) bool {
 	if !recognized {
 		return false
 	}
 	if result.Empty {
 		return true
 	}
-	return !lastChange.IsZero() && now.Sub(lastChange) >= 2*time.Second
+	return !lastChange.IsZero() && now.Sub(lastChange) >= quiet
 }
 
 // 同一条消息的编辑覆盖旧内容，多条回复则合并，避免丢失后续分享或保留旧链接。

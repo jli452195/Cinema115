@@ -4,17 +4,18 @@ import { onBeforeRouteLeave } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import MemberPlaybackEditor from '../components/MemberPlaybackEditor.vue'
 import UserPlaybackSessions from '../components/UserPlaybackSessions.vue'
+import MemberDeletionPanel from '../components/MemberDeletionPanel.vue'
 import { memberRequest, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
-import type { P115Account } from '../types/p115Accounts'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-const members = ref<MemberPlayback[]>([]), accounts = ref<P115Account[]>([])
+const members = ref<MemberPlayback[]>([])
 const settings = ref<MemberSettings>({ enabled: false, libraryIds: [], allowDownload: false })
 const proxyListening = ref(false), statusLoaded = ref(false)
 const error = ref(''), query = ref(''), filter = ref('all'), loading = ref(false)
 const dirtyUsers = ref(new Set<string>()), busyUsers = ref(new Set<string>())
 const generation = ref(0), confirmDiscard = ref(false)
 const childOwner = ref('')
+const deletionPanel = ref<InstanceType<typeof MemberDeletionPanel>>()
 const statusRefreshing = computed(() => members.value.some(m => m.driveStatus?.state === 'pending'))
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let statusReading = false
@@ -34,9 +35,9 @@ async function load(discard = false, checkDrives = true) {
  if (dirtyUsers.value.size && !discard) { confirmDiscard.value = true; return }
  loading.value = true; error.value = ''; statusGeneration++
  try {
-  const [data, pool, serviceStatus] = await Promise.all([memberRequest(props.token, lifecycle.signal, '/users'), memberRequest(props.token, lifecycle.signal, '/accounts'), memberRequest(props.token, lifecycle.signal, '/settings')])
+  const [data, serviceStatus] = await Promise.all([memberRequest(props.token, lifecycle.signal, '/users'), memberRequest(props.token, lifecycle.signal, '/settings')])
   members.value = [...data.members].sort((a: MemberPlayback, b: MemberPlayback) => a.embyName.localeCompare(b.embyName, 'zh-CN', { numeric: true }) || a.userId.localeCompare(b.userId))
-  settings.value = data.settings; accounts.value = pool.accounts; proxyListening.value = serviceStatus.proxy.listening; statusLoaded.value = true
+  settings.value = data.settings; proxyListening.value = serviceStatus.proxy.listening; statusLoaded.value = true
   dirtyUsers.value.clear(); generation.value++; confirmDiscard.value = false
   if (checkDrives) {
    const result = await memberRequest(props.token, lifecycle.signal, '/refresh', {})
@@ -94,12 +95,14 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
   <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
   <div v-if="confirmDiscard" class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">刷新会丢弃未保存的修改。<button class="underline" :disabled="busy" @click="load(true)">放弃修改并刷新</button><button @click="confirmDiscard = false">继续编辑</button></div>
   <UserPlaybackSessions :token="token" :members="members" />
+  <p class="mb-4 text-xs leading-6 text-slate-500">媒体库、分级、设备及下载权限在 Emby 中管理，Cinema115 不会覆盖这些权限。所有用户仅允许原文件播放。</p>
   <div class="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
    <div v-for="m in members" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
-    <MemberPlaybackEditor :token="token" :member="m" :settings="settings" :accounts="accounts" :disabled="busy" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
+    <MemberPlaybackEditor :token="token" :member="m" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
    </div>
   </div>
   <p v-if="!visible.size" class="py-12 text-center text-sm text-slate-500">{{ loading ? '正在读取用户…' : members.length ? '没有符合筛选条件的用户' : '暂无 Emby 用户' }}</p>
+  <MemberDeletionPanel ref="deletionPanel" :token="token" :members="members" :disabled="loading || dirtyUsers.size > 0 || [...busyUsers].some(id => id !== 'deletion')" @busy="mark(busyUsers, 'deletion', $event)" @changed="load(false, false)" />
  </ManagementLayout>
 </template>
 <style scoped>

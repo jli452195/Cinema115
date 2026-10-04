@@ -193,8 +193,9 @@ func TestChildCreationUncertainRetryQuotaAndNoPasswords(t *testing.T) {
 	}
 	input := ChildCreateInput{RequestID: "request-child-uncertain", Name: "viewer-one", Password: "never-persist-password"}
 	f.failCreate = true
+	f.failEnable = true
 	if err := s.CreateChild(ctx, owner, input); err == nil {
-		t.Fatal("lost response hidden")
+		t.Fatal("unconfirmed activation accepted")
 	}
 	if f.created != 1 {
 		t.Fatal(f.created)
@@ -214,6 +215,7 @@ func TestChildCreationUncertainRetryQuotaAndNoPasswords(t *testing.T) {
 		t.Fatal("password persisted")
 	}
 	f.failCreate = false
+	f.failEnable = false
 	if err := s.CreateChild(ctx, owner, input); err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/client/tmdbimage"
 	"strm115/backend/internal/httpapi"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 	"sync"
@@ -298,6 +300,12 @@ func main() {
 	}
 	instantUploads.Playback = playbackCache
 	httpapi.RegisterInstantUploads(admin, instantUploads, shareAPI, httpapi.InstantPlaybackUserValidator(embyService, embyProxy, playbackCache))
+	memberPlayback.CleanupDeletedUser = func(target model.MemberDeletionTarget) error {
+		if err := instantUploads.ForgetDeletedMember(target); err != nil {
+			return err
+		}
+		return playbackCache.ForgetDeletedMember(target)
+	}
 	shareAPI.Runs = service.NewShareRuns(ctx, shareTasks)
 	shareTasks.RetryWake = make(chan struct{}, 1)
 	httpapi.RegisterShareTasks(admin, database, shareTasks)
@@ -337,6 +345,14 @@ func main() {
 	telegramUser, err := tguser.New(userConfig, userSession)
 	if err != nil {
 		log.Fatal(err)
+	}
+	defer telegramUser.Close()
+	telegramUser.ObserveSearch = func(event tguser.SearchDiagnostic) {
+		level := "INFO"
+		if event.Code != "complete" {
+			level = "WARNING"
+		}
+		generationLogs.Append("Telegram", "", "资源搜索", level, fmt.Sprintf("Bot 操作 %s：%s，资源 %d 项、链接 %d 条，耗时 %.2f 秒", event.Kind, event.Code, event.Items, event.Links, event.Elapsed.Seconds()))
 	}
 	follows.BotSearch = telegramUser
 	follows.ShareRuns = shareAPI.Runs
@@ -428,6 +444,7 @@ func main() {
 		}
 	}
 	cancel()
+	telegramUser.Close()
 	embyProxy.Close()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

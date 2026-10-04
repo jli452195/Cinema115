@@ -6,6 +6,9 @@ import (
 )
 
 func (s *MemberPlaybackService) playbackAccount(r model.MemberPlayback) (P115Account, error) {
+	if s.deletionBlocked(r.UserID) {
+		return P115Account{}, memberError("用户正在删除或已删除")
+	}
 	if r.PlaybackOnly {
 		if r.Source != "personal_shared" || r.ChildRevoked || r.ChildPaused || r.ChildDisabled || !r.Provisioned {
 			return P115Account{}, memberError("播放子账号已暂停或撤销")

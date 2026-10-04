@@ -113,3 +113,28 @@ func (c *Client) DeleteManagedUser(ctx context.Context, id string) error {
 	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 65536))
 	return err
 }
+
+// Only an authenticated lookup of the exact ID returning 404 confirms absence.
+// A partial/filtered user list is not sufficient proof of deletion.
+func (c *Client) ManagedUserAbsent(ctx context.Context, id string) (bool, error) {
+	if !validUserID(id) {
+		return false, fmt.Errorf("Emby 用户编号无效")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/emby/Users/"+id, nil)
+	if err != nil {
+		return false, fmt.Errorf("创建 Emby 用户核查请求: %w", err)
+	}
+	req.Header.Set("X-Emby-Token", c.Key)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("Emby 用户删除状态未确认")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return true, nil
+	}
+	if resp.StatusCode == http.StatusOK {
+		return false, nil
+	}
+	return false, fmt.Errorf("Emby 用户核查返回 HTTP %d", resp.StatusCode)
+}

@@ -134,6 +134,8 @@ func appendSearchResults(previous, next SearchResult) SearchResult {
 		Page:      next.Page,
 		Empty:     next.Empty,
 		AllLoaded: next.AllLoaded,
+		Partial:   next.Partial,
+		Warning:   next.Warning,
 	}
 	for _, item := range previous.Items {
 		if item.Kind == "resource" {

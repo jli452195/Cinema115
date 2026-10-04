@@ -25,6 +25,7 @@ func testClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(c.Close)
 	return c
 }
 func TestAccountConfigAndSession(t *testing.T) {
@@ -169,17 +170,17 @@ func TestParseOnlyExposesNextPage(t *testing.T) {
 
 func TestSearchReplyComplete(t *testing.T) {
 	now := time.Now()
-	if searchReplyComplete(SearchResult{}, false, time.Time{}, now) {
+	if searchReplyComplete(SearchResult{}, false, time.Time{}, now, 2*time.Second) {
 		t.Fatal("未识别的回复不能结束搜索")
 	}
-	if !searchReplyComplete(SearchResult{Empty: true}, true, now, now) {
+	if !searchReplyComplete(SearchResult{Empty: true}, true, now, now, 2*time.Second) {
 		t.Fatal("明确的空结果应立即结束搜索")
 	}
 	result := SearchResult{Links: []string{"https://115.com/s/demo"}}
-	if searchReplyComplete(result, true, now.Add(-time.Second), now) {
+	if searchReplyComplete(result, true, now.Add(-time.Second), now, 2*time.Second) {
 		t.Fatal("资源回复仍应等待连续消息")
 	}
-	if !searchReplyComplete(result, true, now.Add(-2*time.Second), now) {
+	if !searchReplyComplete(result, true, now.Add(-2*time.Second), now, 2*time.Second) {
 		t.Fatal("资源回复静默两秒后应结束搜索")
 	}
 }

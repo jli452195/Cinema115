@@ -36,6 +36,22 @@ func TestDeleteManagedUserAndInvalidUserList(t *testing.T) {
 	}
 }
 
+func TestManagedUserAbsenceRequiresExactLookup(t *testing.T) {
+	for _, status := range []int{200, 401, 403, 404, 500, 502} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" || r.URL.Path != "/emby/Users/"+strings.Repeat("a", 32) || r.Header.Get("X-Emby-Token") != "key" {
+				t.Error("wrong identity lookup")
+			}
+			w.WriteHeader(status)
+		}))
+		absent, err := New(server.URL, "key").ManagedUserAbsent(context.Background(), strings.Repeat("a", 32))
+		server.Close()
+		if absent != (status == 404) || (status != 200 && status != 404 && err == nil) {
+			t.Fatal(status, absent, err)
+		}
+	}
+}
+
 func TestLibraryItemIDAndPolicyGUIDAreDistinct(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/emby/Library/VirtualFolders" {

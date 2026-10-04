@@ -387,11 +387,13 @@ func TestInvitationsPoolAndRetry(t *testing.T) {
 		t.Fatal(s.record(first.ID))
 	}
 	f.failCreate = true
+	f.failEnable = true
 	if _, err := auth.Register(ctx, "secondreader", "password123", invites[1].Code); err == nil {
-		t.Fatal("lost response accepted")
+		t.Fatal("unconfirmed activation accepted")
 	}
 	count := f.created
 	f.failCreate = false
+	f.failEnable = false
 	second, err := auth.Register(ctx, "secondreader", "password123", invites[1].Code)
 	if err != nil {
 		t.Fatal(err)

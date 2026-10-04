@@ -132,8 +132,16 @@ func (s *Store) CommitChild(ctx context.Context, v model.ChildCreation, u model.
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE playback_child_creations SET record=? WHERE id=? AND owner_id=?`, string(raw), v.ID, v.OwnerID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE playback_child_creations SET record=? WHERE id=? AND owner_id=?`, string(raw), v.ID, v.OwnerID)
+	if err != nil {
 		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("子账号创建任务不存在")
 	}
 	return tx.Commit()
 }

@@ -32,6 +32,9 @@ func telegramOperationLogs(logs *service.GenerationLogs, source string, actions 
 			}
 		} else if failed, _ := c.Get("telegramLogFailed"); failed == true {
 			level, message = "ERROR", label+"：未完成，请查看页面错误提示"
+			if summary, ok := c.Get("telegramLogSummary"); ok {
+				message = label + "：" + fmt.Sprint(summary)
+			}
 		} else if summary, ok := c.Get("telegramLogSummary"); ok {
 			message = label + "：" + fmt.Sprint(summary)
 			if cached, _ := c.Get("telegramLogCached"); cached == true {

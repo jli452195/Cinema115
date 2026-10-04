@@ -53,6 +53,17 @@ type Client struct {
 	results                         map[string]storedAction
 	searchCache                     map[string]cachedSearch
 	cooldown                        time.Time
+	searches                        map[string]*searchJob
+	queue                           []*searchJob
+	workerRunning                   bool
+	closed                          bool
+	workerContext                   context.Context
+	stopWorker                      context.CancelFunc
+	workers                         sync.WaitGroup
+	searchTiming                    searchTiming
+	runOperation                    func(context.Context, func(context.Context, *telegram.Client) error) error
+	// ObserveSearch receives summaries only; never credentials or raw Bot messages.
+	ObserveSearch func(SearchDiagnostic)
 }
 type encryptedSession struct{ Store }
 
@@ -74,6 +85,9 @@ func (s encryptedSession) StoreSession(ctx context.Context, data []byte) error {
 }
 func New(configStore, sessionStore Store) (*Client, error) {
 	c := &Client{configStore: configStore, sessionStore: sessionStore, gate: make(chan struct{}, 1), results: make(map[string]storedAction)}
+	c.workerContext, c.stopWorker = context.WithCancel(context.Background())
+	c.searches = make(map[string]*searchJob)
+	c.searchTiming = defaultSearchTiming
 	if value := configStore.Value(); value != "" {
 		if err := json.Unmarshal([]byte(value), &c.config); err != nil {
 			return nil, errors.New("Telegram 用户配置无法读取")
@@ -82,6 +96,11 @@ func New(configStore, sessionStore Store) (*Client, error) {
 	return c, nil
 }
 func (c *Client) lock() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || len(c.searches) > 0 {
+		return ErrBusy
+	}
 	select {
 	case c.gate <- struct{}{}:
 		return nil
@@ -147,6 +166,9 @@ func (c *Client) Save(input Config) error {
 
 // 每项操作持有独占名额，Run 返回前关闭连接并回收内部协程；配置和登录会话分开加密保存。
 func (c *Client) run(ctx context.Context, operation func(context.Context, *telegram.Client) error) error {
+	if c.runOperation != nil {
+		return c.runOperation(ctx, operation)
+	}
 	c.mu.Lock()
 	cfg := c.config
 	c.mu.Unlock()
@@ -293,6 +315,10 @@ func (c *Client) Disconnect(ctx context.Context) error {
 func publicError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var searchErr *OperationError
+	if errors.As(err, &searchErr) {
+		return err
 	}
 	if errors.Is(err, ErrConfig) || errors.Is(err, ErrLogin) || errors.Is(err, ErrInput) || errors.Is(err, ErrBusy) {
 		return err

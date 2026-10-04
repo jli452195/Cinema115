@@ -115,10 +115,13 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	if len(input.RequestID) < 16 || len(input.RequestID) > 64 || strings.Trim(input.RequestID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != "" || !memberUsername.MatchString(name) || strings.HasPrefix(strings.ToLower(name), "c115_") || len(input.Password) < 8 || len(input.Password) > 128 {
 		return memberError("创建参数无效：用户名需 3–32 位，密码需 8–128 字节")
 	}
-	if err := s.lock(ctx); err != nil {
+	if err := s.lockCreation(ctx); err != nil {
 		return err
 	}
 	defer s.unlock()
+	if s.deletionBlocked("child:"+input.RequestID) || s.deletionBlocked(owner) {
+		return memberError("用户或创建任务正在删除或已删除")
+	}
 	parent, err := s.childOwner(ctx, owner)
 	if err != nil {
 		return err
@@ -131,13 +134,6 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	if err != nil {
 		return err
 	}
-	settings, err := memberPolicySettings(ctx, client, s.Settings())
-	if err != nil {
-		return err
-	}
-	if len(settings.LibraryIDs) == 0 {
-		return memberError("尚未配置新账号默认媒体库，请联系管理员")
-	}
 	jobs, err := s.db.ChildCreations(ctx, owner)
 	if err != nil {
 		return err
@@ -146,6 +142,16 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	for _, job := range jobs {
 		if job.ID == input.RequestID {
 			existing = job
+		}
+	}
+	settings := s.Settings()
+	if !existing.Completed && existing.ActivationPolicy == nil {
+		settings, err = memberPolicySettings(ctx, client, settings)
+		if err != nil {
+			return err
+		}
+		if len(settings.LibraryIDs) == 0 {
+			return memberError("尚未配置新账号默认媒体库，请联系管理员")
 		}
 	}
 	users, err := client.Users(ctx)
@@ -172,25 +178,21 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 		return nil
 	}
 	if job.EmbyID == "" {
-		if job.Started {
-			for _, u := range users {
-				if u.Name == job.ReservedName {
-					job.EmbyID = u.ID
-				}
-			}
-			if job.EmbyID == "" {
-				return memberError("Emby 创建结果待确认；名额保留，不会重复创建，请联系管理员核查")
-			}
-		} else {
+		if !job.Started {
 			job.Started = true
 			if err := s.db.SaveChildCreation(ctx, job); err != nil {
 				return err
 			}
 			u, err := client.CreateManagedUser(ctx, job.ReservedName)
-			if err != nil {
-				return memberError("Emby 创建结果未确认，请使用原任务重试")
+			if err == nil {
+				job.EmbyID = u.ID
 			}
-			job.EmbyID = u.ID
+		}
+		if job.EmbyID == "" {
+			job.EmbyID = confirmReservedUser(ctx, client, job.ReservedName)
+		}
+		if job.EmbyID == "" {
+			return memberError("Emby 创建结果待确认；名额保留，不会重复创建，请使用原任务重试或联系管理员核查")
 		}
 		if err := s.db.SaveChildCreation(ctx, job); err != nil {
 			return err
@@ -199,6 +201,13 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 	remote, err := client.ManagedUser(ctx, job.EmbyID)
 	if err != nil || remote.ID != job.EmbyID || remote.Policy["IsAdministrator"] == true || (remote.Name != job.ReservedName && remote.Name != name) {
 		return memberError("创建中的 Emby 身份已变化，请联系管理员")
+	}
+	if job.ActivationPolicy != nil && remote.Name != name {
+		return memberError("创建中的用户名已变化，请联系管理员")
+	}
+	ownerRemote, err := client.ManagedUser(ctx, parent.EmbyID)
+	if err != nil || ownerRemote.ID != parent.EmbyID || ownerRemote.Policy["IsAdministrator"] == true || ownerRemote.Policy["IsDisabled"] == true {
+		return memberError("所有者身份不可用")
 	}
 	profile := model.PortalUser{ID: embyProfileID(c.ServerID, job.EmbyID), ServerID: c.ServerID, EmbyID: job.EmbyID, Username: name, Role: "user", TokenVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	r := s.record(profile.ID)
@@ -213,51 +222,48 @@ func (s *MemberPlaybackService) CreateChild(ctx context.Context, owner string, i
 		return err
 	}
 	s.publishChild(r)
-	policy := memberPolicy(nil, false, settings, false)
-	// Copy only the owner's rating restrictions at creation. Later edits belong to administrators.
-	ownerRemote, err := client.ManagedUser(ctx, parent.EmbyID)
-	if err != nil || ownerRemote.Policy["IsAdministrator"] == true || ownerRemote.Policy["IsDisabled"] == true {
-		return memberError("所有者身份不可用")
-	}
-	for _, key := range []string{"MaxParentalRating", "BlockUnratedItems", "BlockedTags", "AllowedTags"} {
-		if v, ok := ownerRemote.Policy[key]; ok {
-			policy[key] = v
+	if job.ActivationPolicy == nil {
+		policy := memberPolicy(nil, false, settings, false)
+		// Copy only the owner's rating restrictions at creation. Later edits belong to administrators.
+		for _, key := range []string{"MaxParentalRating", "BlockUnratedItems", "BlockedTags", "AllowedTags"} {
+			if v, ok := ownerRemote.Policy[key]; ok {
+				policy[key] = v
+			}
+		}
+		if !saveProvisioningPolicy(ctx, client, r.EmbyID, policy) {
+			return memberError("子账号禁播策略未确认，请重试")
+		}
+		if err := client.SetManagedPassword(ctx, r.EmbyID, input.Password); err != nil {
+			return memberError("密码设置结果未确认，请重新输入并重试")
+		}
+		if remote.Name != name {
+			if !renameProvisionedUser(ctx, client, r.EmbyID, name) {
+				return memberError("用户名设置结果未确认，请使用原任务重试")
+			}
+		}
+		policy = playbackRestrictions(policy)
+		policy["EnableMediaPlayback"] = true
+		policy["IsDisabled"] = false
+		job.ActivationPolicy = policy
+		if err := s.db.SaveChildCreation(ctx, job); err != nil {
+			return err
 		}
 	}
-	if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
-		return memberError("子账号禁播策略未确认，请重试")
-	}
-	verified, err := client.ManagedUser(ctx, r.EmbyID)
-	if err != nil || !memberPolicyMatchesExpected(verified.Policy, policy) || !childRatingMatches(verified.Policy, policy) {
-		return memberError("子账号权限校验失败，请重试")
-	}
-	if err := client.SetManagedPassword(ctx, r.EmbyID, input.Password); err != nil {
-		return memberError("密码设置结果未确认，请重新输入并重试")
-	}
-	if remote.Name != name {
-		if err := client.RenameManagedUser(ctx, r.EmbyID, name); err != nil {
-			return memberError("用户名设置结果未确认，请使用原任务重试")
-		}
+	if !saveProvisioningPolicy(ctx, client, r.EmbyID, job.ActivationPolicy) {
+		return memberError("子账号已创建，登录权限尚未确认，请使用原任务继续创建")
 	}
 	job.Completed = true
+	job.ActivationPolicy = nil
 	r.Provisioned = true
-	r.Stage = "provisioning"
-	r.ChildManagedDisabled = true
+	r.ChildManagedDisabled = false
+	r.Stage, r.Message = "ready", "子账号已创建，播放时实时检查个人网盘"
 	if err := s.db.CommitChild(ctx, job, profile, r); err != nil {
+		disableUncommittedUser(ctx, client, r.EmbyID, remote.Policy)
 		return err
 	}
 	s.publishChild(r)
-	policy = playbackRestrictions(policy)
-	policy["EnableMediaPlayback"] = true
-	policy["IsDisabled"] = false
-	if err := client.SetManagedPolicy(ctx, r.EmbyID, policy); err != nil {
-		return memberError("子账号已创建，Emby 权限结果待确认，请管理员检查")
-	}
-	verified, err = client.ManagedUser(ctx, r.EmbyID)
-	if err != nil || verified.ID != r.EmbyID || !memberPolicyMatchesExpected(verified.Policy, policy) {
-		return memberError("子账号已创建，Emby 权限结果待确认，请管理员检查")
-	}
-	return s.reconcile(ctx, r)
+	s.requestHealthCheck()
+	return nil
 }
 
 func childRatingMatches(actual, expected map[string]any) bool {
@@ -284,6 +290,9 @@ func (s *MemberPlaybackService) ChildSessionDenied(server, id string) bool {
 		return false
 	}
 	serverID := s.emby.snapshot().ServerID
+	if s.deletionBlocked(embyProfileID(serverID, id)) {
+		return true
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if r, ok := s.records[embyProfileID(serverID, id)]; ok {
@@ -312,6 +321,9 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 		return err
 	}
 	r := s.record(id)
+	if s.deletionBlocked(id) {
+		return memberError("用户正在删除或已删除")
+	}
 	if !r.PlaybackOnly || r.OwnerUserID != owner || r.ChildRevision != input.Revision || r.ChildRevoked || !r.Provisioned {
 		return memberError("子账号归属或状态已变化，请刷新")
 	}
@@ -363,6 +375,9 @@ func (s *MemberPlaybackService) ChildAction(ctx context.Context, owner, id strin
 }
 
 func (s *MemberPlaybackService) sharedPersonalAccount(owner model.MemberPlayback) (P115Account, error) {
+	if s.deletionBlocked(owner.UserID) {
+		return P115Account{}, memberError("所有者正在删除或已删除")
+	}
 	if owner.UserID == "" || owner.PlaybackOnly || owner.Administrator || owner.Suspended || !owner.Provisioned || owner.ServerID != s.Settings().ServerID || owner.EmbyURL != s.Settings().EmbyURL {
 		return P115Account{}, memberError("所有者共享已暂停")
 	}

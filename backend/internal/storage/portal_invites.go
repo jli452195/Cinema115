@@ -104,19 +104,20 @@ func (s *Store) RevokePortalInvite(ctx context.Context, id string) error {
 // Reservation is persisted before any upstream write. A retry can only resume
 // the same random reservation on the same Emby service, never a same-name user.
 type EmbyRegistration struct {
-	ServerID     string `json:"serverId"`
-	EmbyURL      string `json:"embyUrl"`
-	Name         string `json:"name"`
-	ReservedName string `json:"reservedName"`
-	EmbyID       string `json:"embyId"`
-	Started      bool   `json:"started"`
-	Source       string `json:"source"`
+	ServerID         string         `json:"serverId"`
+	EmbyURL          string         `json:"embyUrl"`
+	Name             string         `json:"name"`
+	ReservedName     string         `json:"reservedName"`
+	EmbyID           string         `json:"embyId"`
+	Started          bool           `json:"started"`
+	Source           string         `json:"source"`
+	ActivationPolicy map[string]any `json:"activationPolicy,omitempty"`
 }
 
 func (s *Store) Registration(ctx context.Context, hash string) (EmbyRegistration, error) {
 	var r EmbyRegistration
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT registration,playback_source FROM portal_invites WHERE code_hash=? AND used_at=0 AND revoked_at=0 AND expires_at>?`, hash, time.Now().Unix()).Scan(&raw, &r.Source)
+	err := s.db.QueryRowContext(ctx, `SELECT registration,playback_source FROM portal_invites i WHERE code_hash=? AND used_at=0 AND revoked_at=0 AND expires_at>? AND NOT EXISTS(SELECT 1 FROM member_deletions d,json_each(d.record,'$.targets') t WHERE json_extract(t.value,'$.inviteId')=i.id OR (json_extract(t.value,'$.embyId')=json_extract(NULLIF(i.registration,''),'$.embyId') AND json_extract(t.value,'$.serverId')=json_extract(NULLIF(i.registration,''),'$.serverId') AND json_extract(NULLIF(i.registration,''),'$.embyId')<>''))`, hash, time.Now().Unix()).Scan(&raw, &r.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrPortalInviteInvalid
 	}
@@ -147,13 +148,26 @@ func (s *Store) SaveRegistration(ctx context.Context, hash string, r EmbyRegistr
 	return nil
 }
 func (s *Store) CompleteRegistration(ctx context.Context, hash string, u model.PortalUser, m model.MemberPlayback) error {
+	return s.commitRegistration(ctx, hash, u, m, true)
+}
+
+// Install the invitation's identity and source before its reserved name changes.
+func (s *Store) PrepareRegistration(ctx context.Context, hash string, u model.PortalUser, m model.MemberPlayback) error {
+	return s.commitRegistration(ctx, hash, u, m, false)
+}
+
+func (s *Store) commitRegistration(ctx context.Context, hash string, u model.PortalUser, m model.MemberPlayback, complete bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	now := time.Now().Unix()
-	result, err := tx.ExecContext(ctx, `UPDATE portal_invites SET used_at=?,used_by=?,registration='' WHERE code_hash=? AND used_at=0 AND revoked_at=0 AND expires_at>? AND json_extract(registration,'$.embyId')=? AND json_extract(registration,'$.serverId')=?`, now, u.ID, hash, now, u.EmbyID, u.ServerID)
+	usedAt, usedBy := int64(0), ""
+	if complete {
+		usedAt, usedBy = now, u.ID
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE portal_invites SET used_at=?,used_by=?,registration=CASE WHEN ? THEN '' ELSE registration END WHERE code_hash=? AND used_at=0 AND revoked_at=0 AND expires_at>? AND json_extract(registration,'$.embyId')=? AND json_extract(registration,'$.serverId')=?`, usedAt, usedBy, complete, hash, now, u.EmbyID, u.ServerID)
 	if err != nil {
 		return err
 	}

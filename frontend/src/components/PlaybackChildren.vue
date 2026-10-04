@@ -23,7 +23,7 @@ async function create() {
  catch (e) { if (!lifecycle.signal.aborted) { error.value = e instanceof Error ? e.message : '创建结果未确认'; try { data.value = await request(); if (!data.value.items.some(child => child.requestId === requestId.value)) { requestId.value = ''; retryName.value = '' } } catch { /* Preserve the request ID until its result can be read. */ } } }
  finally { password.value = ''; busy.value = false }
 }
-function retry(child: Child) { requestId.value = child.requestId; retryName.value = child.name; name.value = child.name; password.value = ''; notice.value = '请重新输入密码，继续原创建任务。' }
+function retry(child: Child) { requestId.value = child.requestId; retryName.value = child.name; name.value = child.name; password.value = ''; notice.value = '请重新输入首次提交的密码，继续原创建任务；创建完成后可单独重置密码。' }
 async function action(child: Child, action: string) {
  if (busy.value) return
  busy.value = true; error.value = ''; notice.value = ''

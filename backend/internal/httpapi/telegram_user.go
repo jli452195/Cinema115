@@ -29,6 +29,14 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 	})
 	fail := func(c *gin.Context, err error) {
 		status := 502
+		var detail *tguser.OperationError
+		if errors.As(err, &detail) {
+			if detail.RetryAt != nil {
+				c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(*detail.RetryAt).Seconds())+1)))
+			}
+			c.JSON(http.StatusConflict, detail)
+			return
+		}
 		if errors.Is(err, tguser.ErrBusy) {
 			status = 409
 		}
@@ -106,7 +114,7 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			fail(c, tguser.ErrInput)
 			return "", false
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 65*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 		defer cancel()
 		detail, err := tmdb.Details(ctx, input.Kind, id)
 		if err != nil {
@@ -137,7 +145,7 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		if !ok {
 			return
 		}
-		searchCtx, stop := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		searchCtx, stop := context.WithTimeout(c.Request.Context(), 110*time.Second)
 		defer stop()
 		result, err := account.Search(searchCtx, title, input.Refresh)
 		if err != nil {
@@ -168,18 +176,34 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 		flusher.Flush()
-		searchCtx, stop := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		searchCtx, stop := context.WithTimeout(c.Request.Context(), 110*time.Second)
 		defer stop()
 		push := func(result tguser.SearchResult, complete bool) {
 			c.SSEvent("result", gin.H{"complete": complete, "result": result})
 			flusher.Flush()
 		}
-		result, err := account.SearchWithUpdates(searchCtx, title, input.Refresh, func(update tguser.SearchResult) {
+		result, err := account.SearchWithProgress(searchCtx, title, input.Refresh, func(update tguser.SearchResult) {
 			push(update, false)
+		}, func(progress tguser.SearchProgress) {
+			c.SSEvent("status", progress)
+			flusher.Flush()
 		})
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				c.Set("telegramLogSummary", "页面停止等待；已开始的 Bot 查询继续限时收尾，未开始的查询退出排队")
+				return
+			}
 			c.Set("telegramLogFailed", true)
-			c.SSEvent("error", gin.H{"error": err.Error()})
+			if result.Partial {
+				push(result, false)
+			}
+			var detail *tguser.OperationError
+			if errors.As(err, &detail) {
+				c.Set("telegramLogSummary", "未完成（"+detail.Code+"）："+detail.Message)
+				c.SSEvent("error", detail)
+			} else {
+				c.SSEvent("error", gin.H{"error": err.Error()})
+			}
 			flusher.Flush()
 			return
 		}
@@ -194,7 +218,7 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			fail(c, tguser.ErrInput)
 			return
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
 		defer cancel()
 		result, err := account.Select(ctx, input.ID)
 		if err != nil {

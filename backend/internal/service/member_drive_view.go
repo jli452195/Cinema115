@@ -41,6 +41,9 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 		return nil, err
 	}
 	for _, u := range users {
+		if s.deletionBlocked(embyProfileID(c.ServerID, u.ID)) {
+			continue
+		}
 		if strings.HasPrefix(strings.ToLower(u.Name), "c115_") {
 			continue
 		}
@@ -83,6 +86,9 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 	records := s.Records()
 	out := make([]MemberPlaybackAdminView, 0, len(records))
 	for _, r := range records {
+		if s.deletionBlocked(r.UserID) {
+			continue
+		}
 		ownerName := ""
 		if r.PlaybackOnly {
 			ownerName = s.record(r.OwnerUserID).EmbyName

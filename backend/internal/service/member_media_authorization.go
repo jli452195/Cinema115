@@ -15,6 +15,7 @@ import (
 // MediaAuthorization belongs to one HTTP request. Never cache it across requests
 // or use it in a background prewarm spawned by another request.
 type MediaAuthorization struct {
+	releaseMember  func()
 	retiredDevices int
 	userLease      *UserPlaybackLease
 	poolLease      *PoolLease
@@ -54,6 +55,20 @@ func (s *MemberPlaybackService) AuthorizeNegotiation(ctx context.Context, server
 }
 
 func (s *MemberPlaybackService) beginMediaAuthorization(ctx context.Context, server, id string, download bool, verified *emby.ManagedUser, selectAccount bool) (*MediaAuthorization, error) {
+	release, err := s.useMember(embyProfileID(s.emby.snapshot().ServerID, id))
+	if err != nil {
+		return nil, err
+	}
+	grant, err := s.beginMediaAuthorizationTracked(ctx, server, id, download, verified, selectAccount)
+	if err != nil || grant == nil {
+		release()
+	} else {
+		grant.releaseMember = release
+	}
+	return grant, err
+}
+
+func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Context, server, id string, download bool, verified *emby.ManagedUser, selectAccount bool) (*MediaAuthorization, error) {
 	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -282,6 +297,9 @@ func mediaPermission(u emby.ManagedUser, download bool) error {
 }
 
 func (s *MemberPlaybackService) checkMediaLocal(r model.MemberPlayback, server string, download bool) error {
+	if s.deletionBlocked(r.UserID) {
+		return memberError("用户正在删除或已删除")
+	}
 	c, settings := s.emby.snapshot(), s.Settings()
 	if !settings.Enabled {
 		return memberError("302 反代未运行，媒体访问未接管")

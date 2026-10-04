@@ -17,7 +17,7 @@ async function request(path: string, input: object) {
 async function check() {
   if (busy.value || !code.value.trim()) return
   busy.value = true; message.value = ''; notice.value = ''
-  try { const data = await request('invite/check', { code: code.value }); notice.value = data.playbackSource === 'assigned' ? '邀请码有效：注册 Emby 后分配管理员共享小号，无可用小号时使用主网盘。' : '邀请码有效：注册 Emby 后可登录浏览，绑定自己的 115 后开通播放。' }
+  try { const data = await request('invite/check', { code: code.value }); notice.value = data.playbackSource === 'assigned' ? '邀请码有效：注册 Emby 后使用管理员动态小号池，无可用小号时需等待恢复。' : '邀请码有效：注册 Emby 后可登录浏览，绑定自己的 115 后开通播放。' }
   catch (error) { if (!lifecycle.signal.aborted) message.value = error instanceof Error ? error.message : '邀请码检查失败' }
   finally { busy.value = false }
 }
@@ -30,7 +30,7 @@ async function register() {
     const data = await request('register', { username: username.value, password: password.value, code: code.value })
     if (!lifecycle.signal.aborted) emit('registered', data.user.username)
   } catch (error) {
-    if (!lifecycle.signal.aborted) message.value = error instanceof Error && error.name !== 'TimeoutError' && error.name !== 'TypeError' ? error.message : '未确认注册结果；如果已提交过，请先尝试登录。'
+    if (!lifecycle.signal.aborted) message.value = error instanceof Error && error.name !== 'TimeoutError' && error.name !== 'TypeError' ? error.message : '未确认注册结果，请先尝试登录；若无法登录，请使用相同邀请码、用户名和密码继续提交。'
   } finally { busy.value = false }
 }
 onMounted(async () => {

@@ -81,7 +81,7 @@ func (a *PortalAuth) Login(ctx context.Context, name, password string) (string, 
 	if err != nil {
 		return "", model.PortalUser{}, err
 	}
-	if a.Members.record(u.ID).PlaybackOnly {
+	if r := a.Members.record(u.ID); r.PlaybackOnly || !r.Provisioned {
 		return "", model.PortalUser{}, ErrLogin
 	}
 	return a.sign(u)

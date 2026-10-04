@@ -179,6 +179,10 @@ func (a *MediaAuthorization) PoolSelection(snap PlaybackCacheSnapshot) *Playback
 	return &PlaybackCacheSelection{binding: PlaybackBinding{UserID: a.record.EmbyID, AccountID: t.ID, ParentCID: t.PlaybackParentCID}, donors: snap.donors, accountName: t.Name, accountRevision: t.Revision, cookie: t.Cookie, uid: t.UID, poolGeneration: a.poolLease.Record.Generation}
 }
 func (a *MediaAuthorization) Close() error {
+	if a != nil && a.releaseMember != nil {
+		defer a.releaseMember()
+		a.releaseMember = nil
+	}
 	if a == nil || a.poolLease == nil {
 		return nil
 	}
@@ -228,5 +232,8 @@ func (a *MediaAuthorization) Commit(ctx context.Context) error {
 
 func (s *MemberPlaybackService) IsPoolUser(server, id string) bool {
 	c := s.emby.snapshot()
+	if s.deletionBlocked(embyProfileID(c.ServerID, id)) {
+		return false
+	}
 	return c.URL == server && s.playbackRecord(c.ServerID, id).Source == "assigned"
 }

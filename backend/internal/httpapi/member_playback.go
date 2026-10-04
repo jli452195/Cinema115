@@ -188,6 +188,7 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, s.View(userID(c)))
 	})
 	manage := admin.Group("/member-playback", guard)
+	registerMemberDeletion(manage, s, fail)
 	manage.GET("/device-policy", func(c *gin.Context) {
 		c.JSON(200, s.UserPlayback.DevicePolicy())
 	})
@@ -252,7 +253,9 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, gin.H{"settings": s.Settings(), "members": members})
 	})
 	manage.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": s.AccountOptions()}) })
-	manage.GET("/playback-sessions", func(c *gin.Context) { c.JSON(200, gin.H{"sessions": s.UserPlayback.List(), "devicePolicy": s.UserPlayback.DevicePolicy()}) })
+	manage.GET("/playback-sessions", func(c *gin.Context) {
+		c.JSON(200, gin.H{"sessions": s.UserPlayback.List(), "devicePolicy": s.UserPlayback.DevicePolicy()})
+	})
 	manage.POST("/playback-sessions/:key/release", func(c *gin.Context) {
 		var input struct {
 			Generation uint64 `json:"generation"`

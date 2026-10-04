@@ -52,6 +52,9 @@ type memberQRSession struct {
 	lastPoll  time.Time
 }
 type MemberPlaybackService struct {
+	deleting             map[string]bool // guarded by mu; includes completed identity tombstones
+	memberUses           map[string]int  // guarded by mu; active credential users
+	CleanupDeletedUser   func(model.MemberDeletionTarget) error
 	Pool                 *DynamicPool
 	UserPlayback         *UserPlayback
 	PoolNotifier         PoolNotifier // wired before workers start
@@ -108,6 +111,13 @@ func NewMemberPlayback(ctx context.Context, db *storage.Store, accounts *P115Acc
 		}
 		s.records[r.UserID] = r
 	}
+	deletions, err := db.MemberDeletions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range deletions {
+		s.installDeletion(job)
+	}
 	s.wake = make(chan struct{}, 1)
 	s.healthWake = make(chan struct{}, 1)
 	s.driveHealth = make(map[string]driveHealthEntry)
@@ -142,12 +152,15 @@ func (s *MemberPlaybackService) record(id string) model.MemberPlayback {
 	return s.records[id]
 }
 func (s *MemberPlaybackService) save(ctx context.Context, r model.MemberPlayback) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deleting[r.UserID] {
+		return memberError("用户正在删除或已删除")
+	}
 	if err := s.db.SaveMemberPlayback(ctx, r); err != nil {
 		return fmt.Errorf("保存个人播放进度: %w", err)
 	}
-	s.mu.Lock()
 	s.records[r.UserID] = r
-	s.mu.Unlock()
 	return nil
 }
 func (s *MemberPlaybackService) Settings() model.MemberPlaybackSettings {
@@ -357,7 +370,10 @@ func (s *MemberPlaybackService) RequestSync() {
 	}
 }
 func (s *MemberPlaybackService) portalUser(ctx context.Context, id string) (model.PortalUser, error) {
-	if s.record(id).PlaybackOnly {
+	if s.deletionBlocked(id) {
+		return model.PortalUser{}, ErrLogin
+	}
+	if r := s.record(id); r.PlaybackOnly || (r.UserID != "" && !r.Provisioned) {
 		return model.PortalUser{}, ErrLogin
 	}
 	u, err := s.db.PortalUser(ctx, id)
@@ -623,6 +639,9 @@ func (s *MemberPlaybackService) AuthorizeLogin(ctx context.Context, server, id, 
 	if strings.HasPrefix(strings.ToLower(name), "c115_") {
 		return memberError("Emby 账号尚未完成注册")
 	}
+	if s.emby == nil || s.deletionBlocked(embyProfileID(s.emby.snapshot().ServerID, id)) {
+		return ErrLogin
+	}
 	for _, r := range s.Records() {
 		if r.EmbyID != id || id == "" {
 			continue
@@ -796,6 +815,9 @@ func (s *MemberPlaybackService) recordDriveCheck(ctx context.Context, r model.Me
 // Explicit checks enforce only original-file restrictions and child login lifecycle.
 // They never derive an Emby playback switch from drive health.
 func (s *MemberPlaybackService) reconcile(ctx context.Context, r model.MemberPlayback) error {
+	if s.deletionBlocked(r.UserID) {
+		return memberError("用户正在删除或已删除")
+	}
 	if r.EmbyID == "" {
 		return nil
 	}
