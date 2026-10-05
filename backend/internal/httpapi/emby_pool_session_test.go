@@ -22,10 +22,14 @@ type poolProtocolDrive struct {
 	failNext bool
 	attempts []string
 	checks   int
+	checkErr error
 }
 
 func (f *poolProtocolDrive) CheckCookie(context.Context, string) (bool, error) {
 	f.checks++
+	if f.checkErr != nil {
+		return false, f.checkErr
+	}
 	return true, nil
 }
 func (*poolProtocolDrive) DriveFiles(context.Context, string, int, string) (*p115.SharePage, error) {
@@ -162,16 +166,32 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 		t.Fatal("negotiation reserved capacity", err)
 	}
 	path := "/cinema115/play?ItemId=movie&MediaSourceId=src&PlaySessionId=session&api_key=token"
+	checksAtStart := drive.checks
 	for i := 0; i < 2; i++ {
 		w = call("GET", path, "")
 		if w.Code != 302 || w.Header().Get("Location") != "https://cdn.115.com/pool" {
 			t.Fatal(w.Code, w.Body.String())
+		}
+		if drive.checks != checksAtStart+i || len(drive.attempts) != 1 {
+			t.Fatal("cold share must read once without probe; cache hit must freshly probe", drive.checks, len(drive.attempts))
 		}
 	}
 	d, err = db.PlaybackPool(ctx)
 	if err != nil || len(d.Leases) != 1 {
 		t.Fatal("repeat redirect double-counted", err)
 	}
+	t.Run("cached-share-rejects-expired-cookie", func(t *testing.T) {
+		drive.checkErr = p115.ErrShareLoginRequired
+		before := len(drive.attempts)
+		w := call("GET", path, "")
+		if w.Code == 302 || w.Header().Get("Location") != "" || len(drive.attempts) != before {
+			t.Fatal("cached link bypassed current cookie failure", w.Code)
+		}
+		drive.checkErr = nil
+		if err := members.CheckPoolAccount(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+	})
 	settings := members.Pool.Settings()
 	limited := settings
 	limited.MaxSessions = 1
@@ -304,13 +324,13 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 		}
 	}
 	metrics := members.Pool.Metrics()
-	if metrics.Requests != 6 || metrics.Succeeded != 5 || metrics.Failed != 1 || metrics.Switches != 1 || metrics.Samples != 6 {
+	if metrics.Requests != 7 || metrics.Succeeded != 5 || metrics.Failed != 2 || metrics.Switches != 2 || metrics.Samples != 7 {
 		t.Fatal("redirect metrics lost retries or double-counted", metrics)
 	}
 	// Missing token identity still fails before pool admission; no budget change
 	// may turn client-supplied UserId into a recognized identity.
 	w = call("GET", strings.Replace(path, "api_key=token", "api_key=unknown&UserId="+uid, 1), "")
-	if w.Code != 401 || members.Pool.Metrics().Requests != 6 {
+	if w.Code != 401 || members.Pool.Metrics().Requests != 7 {
 		t.Fatal("unrecognized identity reached pool", w.Code)
 	}
 	// A valid second playback by the same user is admitted when UID capacity

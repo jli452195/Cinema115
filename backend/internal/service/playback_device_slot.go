@@ -204,7 +204,7 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 			return ErrPoolBusy
 		}
 	}
-	if h.Sequence == a.poolLease.healthSequence {
+	if h.Sequence == a.poolLease.healthSequence && !a.poolLease.skipHealthRefresh {
 		health := model.PlaybackPoolHealth{Revision: lease.Revision, UID: lease.UID, State: "ready", CheckedAt: now.UnixMilli(), Sequence: h.Sequence + 1, NextProbe: now.Add(5*time.Minute + poolProbeJitter(lease.AccountID)).UnixMilli()}
 		pd.Health[lease.AccountID] = health
 		p.recordHealthEvent(&pd, lease.AccountID, h, health)

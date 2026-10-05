@@ -739,6 +739,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		fail("无法解析分享 STRM，请检查链接格式、必要分享参数及本地媒体路径映射", 422)
 		return false
 	}
+	timing.next("播放授权及账号准备")
 	if h.cache != nil && h.cache.Members != nil {
 		members := h.cache.Members
 		if members.IsPoolUser(h.config.URL, userID) && members.Pool != nil {
@@ -762,6 +763,9 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		}
 		if members.IsPoolUser(h.config.URL, userID) {
 			ctx = h.cache.WithPoolCopyPreference(ctx, origin, claim.SHA1)
+		}
+		if claim.PickCode == "" && !isDownload && !warming {
+			ctx = service.WithPlaybackDirectShare(ctx, true)
 		}
 		authorization, err = members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
 		if err != nil {
@@ -837,7 +841,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"
 		} else if cacheSelection != nil {
-			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(service.WithPlaybackSHA1Hint(fetchCtx, claim.SHA1), cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
+			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(service.WithPlaybackSHA1Hint(authorization.ShareResolutionContext(fetchCtx), claim.SHA1), cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		} else {
 			value.URL, fetchErr = h.download(fetchCtx, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		}
@@ -871,6 +875,9 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 	}
 	timing.next("直链缓存等待及 115 取链")
 	value, hit, expires, err := h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
+	if err == nil && hit {
+		err = authorization.ValidateCachedShare(ctx)
+	}
 	timing.next("缓存记录核验及响应")
 	if err == nil && hit && value.Report.FileCacheKey != "" {
 		if touchErr := h.cache.TouchDirectLink(ctx, value.Report.FileCacheKey, value.Report.FileCacheID); touchErr != nil {

@@ -143,7 +143,17 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 	}
 	ctx = WithPoolRequest(ctx, req)
 	started := time.Now()
-	lease, err := s.Pool.Acquire(ctx, key, r.UserID, s.poolAccounts(), s.checkMediaDrive)
+	probe := s.checkMediaDrive
+	if playbackDirectShare(ctx) && !req.Download && !req.Task {
+		// A direct share read is itself the credential check. Do not spend a
+		// second 115 request on the configured write directory unless the share
+		// read fails and the instant-upload fallback is actually entered.
+		probe = nil
+		if s.Cache != nil && s.Cache.logs != nil {
+			s.Cache.logs.Add(ctx, "DEBUG", "分享直取候选跳过前置目录核验；仅在需要秒传时核验目标目录")
+		}
+	}
+	lease, err := s.Pool.Acquire(ctx, key, r.UserID, s.poolAccounts(), probe)
 	if s.Cache != nil && s.Cache.logs != nil {
 		identity := DirectLinkKey("pool-log", r.ServerID, r.UserID)[:12]
 		if err == nil {
@@ -189,6 +199,9 @@ func (a *MediaAuthorization) Close() error {
 	return a.poolLease.Close()
 }
 func (a *MediaAuthorization) Commit(ctx context.Context) error {
+	if a.deferredShare && !a.shareRead {
+		return ErrAccountChanged
+	}
 	defer func() {
 		if a.retiredDevices > 0 && a.service != nil && a.service.Cache != nil && a.service.Cache.logs != nil {
 			a.service.Cache.logs.Add(ctx, "INFO", fmt.Sprintf("播放设备接替已提交：退休设备=%d；旧会话后续取链已拦截，已签发 CDN 直链不可撤回", a.retiredDevices))

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,4 +78,38 @@ func TestLiveShareCompatibilityCanary(t *testing.T) {
 		}
 	}
 	t.Log("real primary: metadata and new generation verified; new/legacy HEAD and four-byte GET passed")
+}
+
+// A pinned administrator pool credential, read-only: proves that the share
+// endpoint can provide a direct link without a preceding directory/login call.
+func TestLiveShareDirectReadCanary(t *testing.T) {
+	cookie := os.Getenv("CINEMA115_CANARY_TARGET_COOKIE")
+	if cookie == "" {
+		t.Skip("requires opt-in target account")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a := NewShareAPI(func() string { return cookie })
+	var calls atomic.Int32
+	client := *a.Client.HTTP
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if r.URL.Path != "/os_windows/2.0/share/downurl" {
+			t.Error("unexpected preflight endpoint")
+		}
+		return transport.RoundTrip(r)
+	})
+	a.Client.HTTP = &client
+	info, err := a.Client.DownloadInfoWithUA(ctx, &p115.ShareInfo{Code: "sws8jb636j9", Password: "fwgl"}, "3532903049309717944", cookie, p115.PlaybackUserAgent)
+	if err != nil || info == nil || !p115.AllowedDirectPlaybackURL(info.URL) {
+		t.Fatal("target share direct read failed")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("unexpected HTTP count: requests=%d", calls.Load())
+	}
+	t.Log("real target: valid share direct URL obtained with one HTTP request, no preflight, no retry, no cloud writes")
 }

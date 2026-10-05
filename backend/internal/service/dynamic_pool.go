@@ -206,11 +206,12 @@ func (p *DynamicPool) unlockSession(key string) {
 }
 
 type PoolLease struct {
-	pool           *DynamicPool
-	Record         model.PlaybackPoolLease
-	Account        P115Account
-	closed         bool
-	healthSequence uint64
+	pool              *DynamicPool
+	Record            model.PlaybackPoolLease
+	Account           P115Account
+	closed            bool
+	healthSequence    uint64
+	skipHealthRefresh bool // A share read proves no write-directory health.
 }
 
 func eligiblePoolAccount(a P115Account) bool {
@@ -504,6 +505,12 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 		}
 		attempts.remaining--
 		attempts.excluded[l.Account.UID] = true
+		if probe == nil {
+			l.skipHealthRefresh = true
+			recordPoolCandidate(ctx, l.Account.UID, "probe", "deferred_to_share_read", l.Record.Generation)
+			ok = true
+			return l, nil
+		}
 		probeCtx, probeCancel := context.WithTimeout(ctx, 8*time.Second)
 		err = probe(probeCtx, l.Account)
 		probeCancel()
@@ -620,7 +627,7 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 	c.ExpiresAt = p.now().Add(time.Duration(d.Settings.LeaseMinutes) * time.Minute).UnixMilli()
 	d.Leases[c.Key] = c
 	// A late successful request cannot clear a newer observed account failure.
-	if old.Sequence == l.healthSequence {
+	if old.Sequence == l.healthSequence && !l.skipHealthRefresh {
 		h := model.PlaybackPoolHealth{Revision: c.Revision, UID: c.UID, State: "ready", CheckedAt: p.now().UnixMilli(), Sequence: old.Sequence + 1, NextProbe: p.now().Add(5*time.Minute + poolProbeJitter(c.AccountID)).UnixMilli()}
 		d.Health[c.AccountID] = h
 		p.recordHealthEvent(&d, c.AccountID, old, h)

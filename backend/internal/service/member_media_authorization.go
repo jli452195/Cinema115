@@ -24,6 +24,23 @@ type MediaAuthorization struct {
 	account        P115Account
 	download       bool
 	checkedAt      time.Time
+	deferredShare  bool
+	shareRead      bool
+}
+
+type playbackDirectShareKey struct{}
+
+// WithPlaybackDirectShare marks a share STRM request whose target account will
+// first try the read-only share endpoint. The endpoint itself validates the
+// cookie; directory validation remains mandatory if the request falls back to
+// instant upload.
+func WithPlaybackDirectShare(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, playbackDirectShareKey{}, enabled)
+}
+
+func playbackDirectShare(ctx context.Context) bool {
+	v, _ := ctx.Value(playbackDirectShareKey{}).(bool)
+	return v
 }
 
 func (s *MemberPlaybackService) playbackRecord(serverID, embyID string) model.MemberPlayback {
@@ -167,7 +184,7 @@ func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Conte
 		}
 	} else {
 		a, err = s.playbackAccount(r)
-		if err == nil {
+		if err == nil && !(playbackDirectShare(ctx) && !download && !a.Primary) {
 			err = s.checkMediaDrive(ctx, a)
 		}
 	}
@@ -175,6 +192,10 @@ func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Conte
 		return nil, err
 	}
 	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started, poolLease: lease, userLease: userLease}
+	grant.deferredShare = playbackDirectShare(ctx) && !download && !a.Primary
+	if lease != nil && grant.deferredShare {
+		lease.skipHealthRefresh = true
+	}
 	if err := grant.CheckCurrent(ctx); err != nil {
 		return nil, errors.Join(err, grant.Close())
 	}
