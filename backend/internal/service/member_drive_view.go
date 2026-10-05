@@ -5,6 +5,7 @@ import (
 	"strings"
 	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/model"
+	"time"
 )
 
 // PersonalDriveView exposes ownership and credential presence, never credentials.
@@ -15,10 +16,12 @@ type PersonalDriveView struct {
 }
 
 type MemberPlaybackAdminView struct {
-	DriveStatus DriveHealthView `json:"driveStatus"`
-	ChildUsed   *int            `json:"childUsed,omitempty"`
-	OwnerName   string          `json:"ownerName,omitempty"`
-	ImageTag    string          `json:"imageTag,omitempty"`
+	EmbyState     MemberEmbyState `json:"embyState,omitempty"`
+	EmbyCheckedAt string          `json:"embyCheckedAt,omitempty"`
+	DriveStatus   DriveHealthView `json:"driveStatus"`
+	ChildUsed     *int            `json:"childUsed,omitempty"`
+	OwnerName     string          `json:"ownerName,omitempty"`
+	ImageTag      string          `json:"imageTag,omitempty"`
 	model.MemberPlayback
 	PersonalDrive   PersonalDriveView `json:"personalDrive"`
 	Username        string            `json:"username"`
@@ -36,7 +39,8 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 		return nil, err
 	}
 	defer s.unlock()
-	users, err := s.NewEmby(c.URL, c.APIKey).Users(ctx)
+	client := s.NewEmby(c.URL, c.APIKey)
+	users, err := client.Users(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -56,12 +60,22 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 	if err != nil {
 		return nil, err
 	}
+	// Missing IDs share a bounded verification budget; an incomplete check is
+	// never interpreted as deletion. These observations do not mutate identity.
+	verifyCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	byID := make(map[string]emby.User, len(users))
+	for _, u := range users {
+		byID[u.ID] = u
+	}
 	for i := range out {
 		count := counts[out[i].UserID]
 		out[i].ChildUsed = &count
-		out[i].Disabled = true
-		for _, u := range users {
-			if u.ID == out[i].EmbyID && out[i].ServerID == c.ServerID {
+		out[i].EmbyCheckedAt = time.Now().UTC().Format(time.RFC3339)
+		out[i].EmbyState = MemberEmbyOtherServer
+		if out[i].ServerID == c.ServerID && out[i].EmbyURL == c.URL {
+			out[i].EmbyState = missingMemberEmbyState(verifyCtx, client, out[i].EmbyID, byID)
+			if u, ok := byID[out[i].EmbyID]; ok {
 				out[i].Administrator = u.Policy.IsAdministrator
 				out[i].Disabled = u.Policy.IsDisabled
 				out[i].PlaybackAllowed = u.Policy.EnableMediaPlayback

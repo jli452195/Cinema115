@@ -20,6 +20,7 @@ type MemberDeleteInput struct {
 	IncludeChildren bool   `json:"includeChildren"`
 }
 type MemberDeletePreview struct {
+	EmbyStates     map[string]MemberEmbyState   `json:"embyStates"`
 	Key            string                       `json:"key"`
 	Name           string                       `json:"name"`
 	Fingerprint    string                       `json:"fingerprint"`
@@ -206,7 +207,15 @@ func (s *MemberPlaybackService) previewDeletion(ctx context.Context, key string)
 		selected = append(selected[1:], selected[0])
 	}
 	out = MemberDeletePreview{Key: key, Name: selected[len(selected)-1].Name, Targets: selected, Children: len(selected) - 1}
+	verifyCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	byID := make(map[string]emby.User, len(users))
+	for _, u := range users {
+		byID[u.ID] = u
+	}
+	out.EmbyStates = make(map[string]MemberEmbyState, len(selected))
 	for _, v := range selected {
+		out.EmbyStates[v.Key] = missingMemberEmbyState(verifyCtx, client, v.EmbyID, byID)
 		for _, a := range s.accounts.List() {
 			if a.Ownership == "member" && a.OwnerUserID == v.UserID {
 				out.PersonalDrives++

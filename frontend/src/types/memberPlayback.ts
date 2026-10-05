@@ -1,4 +1,12 @@
+export type MemberEmbyState = 'active' | 'disabled' | 'missing' | 'deleted' | 'other_server' | 'unknown'
+export function memberEmbyLabel(state?: MemberEmbyState) {
+ return ({ active: '正常', disabled: 'Emby 已停用', missing: 'Emby 中未找到，待核实', deleted: 'Emby 已删除', other_server: '属于其他 Emby 服务', unknown: 'Emby 状态暂不可用' })[state || 'unknown']
+}
+export function memberNeedsReview(member: MemberPlayback) {
+ return ['missing', 'deleted', 'other_server'].includes(member.embyState || '')
+}
 export interface MemberPlayback {
+ embyState?: MemberEmbyState; embyCheckedAt?: string
 	childUsed?: number
  playbackOnly?: boolean; ownerUserId?: string; ownerName?: string; childLimit?: number; childPaused?: boolean; childDisabled?: boolean; childRevoked?: boolean
  imageTag?: string

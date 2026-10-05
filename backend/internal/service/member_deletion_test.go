@@ -54,6 +54,22 @@ func deletionClient(s *MemberPlaybackService, f *memberTestRemote) *deletionRemo
 	return r
 }
 
+func TestDeletionPreviewDistinguishesAbsentOwnerAndExistingChild(t *testing.T) {
+	s, f, owner, child := childFixture(t)
+	remote := deletionClient(s, f)
+	delete(f.users, s.record(owner).EmbyID)
+	preview, err := s.PreviewMemberDeletion(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.EmbyStates[owner] != MemberEmbyDeleted || preview.EmbyStates[child.UserID] != MemberEmbyActive || preview.Children != 1 {
+		t.Fatalf("incorrect deletion impact: %#v", preview.EmbyStates)
+	}
+	if len(remote.deleted) != 0 || s.record(owner).UserID == "" {
+		t.Fatal("preview performed cleanup")
+	}
+}
+
 func TestMemberDeletionCascadeAndNoRediscovery(t *testing.T) {
 	s, f, owner, child := childFixture(t)
 	remote := deletionClient(s, f)
