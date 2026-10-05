@@ -202,12 +202,11 @@ func (h *embyProxyHandler) proxyError(w http.ResponseWriter, r *http.Request, er
 }
 
 func proxyQuery(q url.Values, name string) string {
-	for key, values := range q {
-		if strings.EqualFold(key, name) && len(values) == 1 {
-			return values[0]
-		}
+	value, _, err := uniqueProxyValue(q, name)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return value
 }
 
 func embyToken(r *http.Request) string {
@@ -303,6 +302,20 @@ func (h *embyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) {
+	if err := normalizePlaybackQuery(r); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := validatePlaybackEventBody(r); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if playbackItem(r.URL.Path) != "" {
+		if err := disablePlaybackTranscoding(r); err != nil {
+			http.Error(w, "播放协商参数无效、冲突或过大", http.StatusBadRequest)
+			return
+		}
+	}
 	r = h.capturePoolSession(r)
 	if blockedEmbyTranscode(r) {
 		h.logs.Add(r.Context(), "WARNING", "已禁止转码/封装转换请求，HTTP 403；请使用支持原文件格式的客户端")
@@ -378,11 +391,6 @@ func (h *embyProxyHandler) serveRequest(w http.ResponseWriter, r *http.Request) 
 		r = r.WithContext(ctx)
 		defer finish()
 		h.logs.Add(r.Context(), "INFO", "读取 Emby 播放信息，条目="+item)
-		if err := disablePlaybackTranscoding(r); err != nil {
-			h.logs.Add(r.Context(), "ERROR", "播放协商参数无效或超出大小限制，HTTP 400")
-			http.Error(w, "播放协商参数无效或过大", 400)
-			return
-		}
 	}
 	h.proxy.ServeHTTP(w, r)
 }
@@ -420,8 +428,11 @@ func disablePlaybackTranscoding(r *http.Request) error {
 		return fmt.Errorf("播放参数读取失败")
 	}
 	var body map[string]json.RawMessage
-	if len(bytes.TrimSpace(data)) > 0 && json.Unmarshal(data, &body) != nil {
-		return fmt.Errorf("播放参数格式无效")
+	if len(bytes.TrimSpace(data)) > 0 {
+		body, err = playbackBody(data, r.URL.Query())
+		if err != nil {
+			return err
+		}
 	}
 	if body == nil {
 		body = make(map[string]json.RawMessage)
@@ -681,7 +692,10 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 	} else if warming && warm.media != nil && jsonString(warm.media["Id"]) == sourceID {
 		info.MediaSources = []map[string]json.RawMessage{warm.media}
 		h.logs.Add(ctx, "INFO", "预热复用本次 PlaybackInfo 已确认的媒体源，跳过重复播放信息查询")
-	} else if source, parsed := h.itemPlaybackSource(allowed.MediaSources, sourceID); parsed != nil {
+	} else if source, parsed, sourceErr := h.itemPlaybackSource(allowed.MediaSources, sourceID); sourceErr != nil {
+		fail("静态 STRM 格式无效，请检查分享参数或重新生成文件", 422)
+		return false
+	} else if parsed != nil {
 		info.MediaSources, claim = []map[string]json.RawMessage{source}, parsed
 		h.logs.Add(ctx, "INFO", "复用本次条目权限查询返回的 STRM 媒体源，跳过重复 PlaybackInfo 查询；首次完整播放协商保持不变")
 	} else {
@@ -823,7 +837,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"
 		} else if cacheSelection != nil {
-			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(fetchCtx, cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
+			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(service.WithPlaybackSHA1Hint(fetchCtx, claim.SHA1), cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		} else {
 			value.URL, fetchErr = h.download(fetchCtx, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		}
@@ -960,6 +974,10 @@ func (h *embyProxyHandler) playbackClaim(source map[string]json.RawMessage) (*sh
 	if err != nil {
 		return nil, err
 	}
+	return h.playbackURLClaim(raw)
+}
+
+func (h *embyProxyHandler) playbackURLClaim(raw string) (*sharePlaybackParams, error) {
 	if claim, ok := parsePickCodeSTRMClaim(raw); ok {
 		return claim, nil
 	}

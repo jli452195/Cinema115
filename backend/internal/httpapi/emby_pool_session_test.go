@@ -197,7 +197,22 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 	if err := members.ConfigurePool(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
-	stop := `{"ItemId":"movie","PlaySessionId":"session","UserId":"forged"}`
+	for _, event := range []string{"Progress", "Stopped"} {
+		w = call("POST", "/emby/Sessions/Playing/"+event+"?api_key=token", `{"ItemId":"movie","PlaySessionId":"session","playsessionid":"other"}`)
+		if w.Code != 400 || len(members.UserPlayback.List()) != 1 {
+			t.Fatal("conflicting event changed user session", w.Code)
+		}
+		d, err = db.PlaybackPool(ctx)
+		if err != nil || len(d.Leases) != 1 {
+			t.Fatal("conflicting event changed pool lease", err)
+		}
+		for _, lease := range d.Leases {
+			if lease.Stopped {
+				t.Fatal("conflicting event stopped pool lease")
+			}
+		}
+	}
+	stop := `{"ItemId":"movie","PlaySessionId":"session","playsessionid":"session","UserId":"forged"}`
 	accepted = false
 	w = call("POST", "/emby/Sessions/Playing/Stopped?api_key=token", stop)
 	if w.Code != 401 || bodySeen != stop {

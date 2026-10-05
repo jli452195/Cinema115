@@ -80,7 +80,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 }
 
 func checkFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testing.T, legacy bool) {
-	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
+	sourcePath := "http://nas/api/share115/abc/" + strings.Repeat("A", 40) + "/pass/123"
 	if legacy {
 		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
 	}

@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
@@ -120,6 +123,88 @@ func TestItemSourceSkipsRepeatedPlaybackInfoAndPreservesNegotiation(t *testing.T
 	}
 }
 
+func TestStaticShareFailureCanaryPreservesFallbackAndVersions(t *testing.T) {
+	const good = "http://nas/api/share115/abc/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/pass/123"
+	const bad = "http://nas/api/share115/abc/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/-/123"
+	for _, tc := range []struct {
+		name, path, extra, selected string
+		status, info                int
+	}{
+		{"valid-equal-duplicates", good, "", "src&mediasourceid=src", 302, 0},
+		{"malformed-static", bad, "", "src", 422, 0},
+		{"malformed-legacy", "http://nas/api/?share_code=abc&id=123&receive_code=", "", "src", 422, 0},
+		{"unknown", "https://other.invalid/movie", "", "src", 302, 1},
+		{"dynamic", bad, `,"RequiresOpening":true`, "src", 302, 1},
+		{"missing-metadata", "", "", "src", 302, 1},
+		{"local-missing", "missing.strm", "", "src", 302, 1},
+		{"local-malformed", "bad.strm", "", "src", 422, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "bad.strm"), []byte(bad), 0600); err != nil {
+				t.Fatal(err)
+			}
+			path := tc.path
+			if strings.HasSuffix(path, ".strm") {
+				path = "/media/" + path
+			}
+			infoCalls, links := 0, 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/Users/AuthenticateByName":
+					fmt.Fprint(w, `{"AccessToken":"viewer","User":{"Id":"user"}}`)
+				case "/emby/Users/user":
+					fmt.Fprint(w, `{"Id":"user","Policy":{"EnableMediaPlayback":true}}`)
+				case "/emby/Users/user/Items/movie":
+					fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","MediaSources":[{"Id":"src","Path":%q%s},{"Id":"other","Path":%q}]}`, path, tc.extra, bad)
+				case "/emby/Items/movie/PlaybackInfo", "/Items/movie/PlaybackInfo":
+					infoCalls++
+					fmt.Fprintf(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"src","Path":%q,"SupportsDirectPlay":true,"MediaStreams":[{"Index":1,"Type":"Audio"}]},{"Id":"other","Path":%q,"SupportsDirectPlay":true,"MediaStreams":[{"Index":2,"Type":"Audio"}]}]}`, good, good)
+				default:
+					w.WriteHeader(404)
+				}
+			}))
+			defer upstream.Close()
+			accounts, id := proxyTestAccounts(t)
+			share := NewShareAPI(func() string { return "" })
+			share.OutputRoot = root
+			h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, EmbyPathPrefix: "/media"}, accounts, share).(*embyProxyHandler)
+			defer h.Close()
+			h.download = func(context.Context, *p115.ShareInfo, string, string, string) (string, error) {
+				links++
+				return "https://cdn.115.com/movie", nil
+			}
+			call := func(method, path string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(method, path, nil)
+				r.Header.Set("X-Emby-Token", "viewer")
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				return w
+			}
+			if w := call("POST", "/Users/AuthenticateByName"); w.Code != 200 {
+				t.Fatal(w.Code)
+			}
+			w := call("GET", "/cinema115/play?ItemId=movie&MediaSourceId="+tc.selected)
+			if w.Code != tc.status || infoCalls != tc.info {
+				t.Fatalf("status=%d info=%d body=%s", w.Code, infoCalls, w.Body.String())
+			}
+			if tc.status == 422 && links != 0 {
+				t.Fatal("malformed source reached cloud")
+			}
+			w = call("GET", "/Items/movie/PlaybackInfo")
+			var info struct{ MediaSources []map[string]json.RawMessage }
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &info) != nil || len(info.MediaSources) != 2 {
+				t.Fatal("media versions hidden")
+			}
+			for i, source := range info.MediaSources {
+				if jsonString(source["DirectStreamUrl"]) == "" || !strings.Contains(string(source["MediaStreams"]), fmt.Sprint(i+1)) {
+					t.Fatal("version lost selection or streams")
+				}
+			}
+		})
+	}
+}
+
 func TestItemPlaybackSourceRequiresUnambiguousStaticSTRM(t *testing.T) {
 	h := &embyProxyHandler{share: NewShareAPI(func() string { return "" })}
 	for _, tc := range []struct {
@@ -140,12 +225,12 @@ func TestItemPlaybackSourceRequiresUnambiguousStaticSTRM(t *testing.T) {
 			if err := json.Unmarshal([]byte(`[{"Id":"src","Path":"http://old/api/redirect115/abc123"`+tc.fields+`}]`), &sources); err != nil {
 				t.Fatal(err)
 			}
-			_, claim := h.itemPlaybackSource(sources, tc.selected)
+			_, claim, _ := h.itemPlaybackSource(sources, tc.selected)
 			if (claim != nil) != tc.ok {
 				t.Fatal("unexpected eligibility")
 			}
 			if tc.ok {
-				if _, claim := h.itemPlaybackSource(append(sources, sources[0]), tc.selected); claim != nil {
+				if _, claim, _ := h.itemPlaybackSource(append(sources, sources[0]), tc.selected); claim != nil {
 					t.Fatal("ambiguous source accepted")
 				}
 			}
