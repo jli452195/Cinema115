@@ -52,6 +52,7 @@ func NewShareWorkflow(client TransferClient, generator MediaGenerator, cookie fu
 }
 
 func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (result *GenerationResult, err error) {
+	ctx = withReshareMetrics(ctx)
 	settings := w.Settings.ShareValue()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		settings = saved
@@ -87,9 +88,9 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	if cookie == "" {
 		return nil, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
-	input, err = resolveSharePath(ctx, input, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+	input, err = resolveSharePath(ctx, input, measuredPages(ctx, "source:"+share.Code, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
 		return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
-	})
+	}))
 	if err != nil {
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			err = errors.Join(err, errSourceShareReview)
@@ -110,10 +111,10 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 		return nil, err
 	}
 	// 每批使用独立临时目录，批次并发由公共任务队列管理，接口请求仍保留限速。
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, ShareGenerationTimeout)
 	defer cancel()
 	reportGeneration(ctx, "scanning", "正在读取原分享的完整目录")
-	source, roots, sourceFiles, err := w.scanDirectory(ctx, input.CID, "正在核对原分享目录及转存审核状态", w.sourcePages(share, input.CID, cookie, first))
+	source, roots, sourceFiles, err := w.scanDirectory(context.WithValue(ctx, reshareScanPhaseKey{}, "source:"+share.Code), input.CID, "正在核对原分享目录及转存审核状态", w.sourcePages(share, input.CID, cookie, first))
 	if err != nil {
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			err = errors.Join(err, errSourceShareReview)
@@ -133,7 +134,7 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 }
 
 // 单链接和合并批次共用媒体数量确认、长期分享、生成及清理流程。
-func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings AutomationSettings, input GenerateInput, cookie, sharePassword string, source []string, sourceFiles []p115.ShareFile, selectShare func(context.Context, []p115.ShareFile) ([]p115.ShareFile, []string, error), receive func(context.Context, string) error, generate func(context.Context, *p115.ShareInfo, generationSnapshot) (*GenerationResult, error)) (result *GenerationResult, err error) {
+func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings AutomationSettings, input GenerateInput, cookie, sharePassword string, source []string, sourceFiles []p115.ShareFile, selectShare func(context.Context, []p115.ShareFile, map[string][]p115.ShareFile) ([]p115.ShareFile, []string, error), receive func(context.Context, string) error, generate func(context.Context, *p115.ShareInfo, generationSnapshot) (*GenerationResult, error)) (result *GenerationResult, err error) {
 	// Both single-link and batch transfers always stage under this account's
 	// root, including calls carrying a previously captured settings snapshot.
 	settings.ParentCID = "0"
@@ -145,9 +146,15 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 		return nil, fmt.Errorf("转存任务存储未初始化")
 	}
 	job := model.ReshareJob{ID: hex.EncodeToString(nonce[:]), Status: "creating", SourceURL: input.URL, SourceCID: input.CID}
+	metrics := reshareMetricsFrom(ctx)
+	if metrics != nil {
+		job.Stats = metrics.stats
+		job.Stats.SourceFiles = len(sourceFiles)
+	}
 	job.DirectoryName = "Cinema115-临时-" + job.ID
 	logGeneration(ctx, "DEBUG", "转存任务记录编号："+job.ID)
 	persist := func(status string) error {
+		metrics.advance(status)
 		reportGeneration(ctx, status, stageMessage(status))
 		job.Status = status
 		job.UpdatedAt = time.Now().UTC()
@@ -158,6 +165,7 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 	}
 	defer func() {
 		if err != nil {
+			metrics.advance("failed")
 			if job.Status != "deleting" && job.Status != "deleted" && job.Status != "completed" {
 				logGeneration(ctx, "WARNING", "转存流程未完成，保留临时目录："+job.DirectoryName)
 			} else {
@@ -179,6 +187,34 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 			result.TempDirectoryID = job.DirectoryID
 			err = fmt.Errorf("%w；任务 %s，临时目录 ID %s（请查看任务记录中的清理状态）", err, job.ID, job.DirectoryID)
 		}
+		if job.Stats != nil {
+			requests, probes, retries := 0, 0, 0
+			for _, d := range job.Stats.Directories {
+				requests += d.Requests
+				probes += d.Probes
+				retries += d.Retries
+			}
+			logGeneration(ctx, "DEBUG", fmt.Sprintf("转存统计：任务 %s，核验轮数 %d，目录请求 %d，轻量探测 %d，局部重试 %d，等待 %.2f 秒；阶段耗时及目录明细已保存到任务记录", job.ID, job.Stats.ScanRounds, requests, probes, retries, float64(job.Stats.WaitMS)/1000))
+			stages := make([]string, 0, len(job.Stats.StageMS))
+			for stage := range job.Stats.StageMS {
+				stages = append(stages, stage)
+			}
+			sort.Strings(stages)
+			for _, stage := range stages {
+				logGeneration(ctx, "DEBUG", fmt.Sprintf("转存阶段耗时：%s，%.2f 秒", stage, float64(job.Stats.StageMS[stage])/1000))
+			}
+			ids := make([]string, 0)
+			for key, d := range job.Stats.Directories {
+				if d.Phase == "transfer" {
+					ids = append(ids, key)
+				}
+			}
+			sort.Strings(ids)
+			for _, key := range ids[:min(50, len(ids))] {
+				d := job.Stats.Directories[key]
+				logGeneration(ctx, "DEBUG", fmt.Sprintf("转存目录统计：CID %s，请求 %d，首页 %d，完整读取 %d，局部重试 %d，探测 %d", d.CID, d.Requests, d.FirstPages, d.FullReads, d.Retries, d.Probes))
+			}
+		}
 	}()
 	job.DirectoryID, err = w.Client.CreateDirectory(ctx, settings.ParentCID, job.DirectoryName, cookie)
 	if err != nil {
@@ -195,13 +231,22 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 		return nil, fmt.Errorf("转存失败，保留临时目录: %w", err)
 	}
 	expectedCounts := countTransferMedia(input, sourceFiles)
+	metrics.advance("verifying_transfer")
 	var transferred []p115.ShareFile
-	err = w.until(ctx, func(waitCtx context.Context) error {
+	var verifiedDirectories map[string][]p115.ShareFile
+	waitBudget := transferWaitBudget(len(sourceFiles))
+	reportGeneration(ctx, "scanning", fmt.Sprintf("开始核验转存结果：原分享 %d 个文件，本阶段最多 %.0f 秒；核验通过即继续", len(sourceFiles), waitBudget.Seconds()))
+	err = w.untilBudget(ctx, waitBudget, func(waitCtx context.Context) error {
+		if metrics != nil {
+			metrics.stats.ScanRounds++
+		}
+		verifiedDirectories = make(map[string][]p115.ShareFile)
 		var readErr error
 		var receivedFiles []p115.ShareFile
-		_, transferred, receivedFiles, readErr = w.scanDirectory(waitCtx, job.DirectoryID, "正在统计网盘中的转存文件", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		list := w.transferPages(measuredPages(waitCtx, "transfer", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
 			return w.Client.DriveFiles(ctx, cid, offset, cookie)
-		})
+		}), verifiedDirectories)
+		_, transferred, receivedFiles, readErr = w.scanDirectory(waitCtx, job.DirectoryID, "正在统计网盘中的转存文件", list)
 		if readErr != nil {
 			return readErr
 		}
@@ -216,7 +261,7 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 	}
 	// 合并批次仅分享来源目录中的原始条目，临时包装目录不进入公开分享。
 	if selectShare != nil {
-		transferred, source, err = selectShare(ctx, transferred)
+		transferred, source, err = selectShare(ctx, transferred, verifiedDirectories)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +295,7 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 		verified = snapshot
 		return nil
 	}
-	if err := w.until(ctx, verify); err != nil {
+	if err := w.untilBudget(ctx, waitBudget, verify); err != nil {
 		return nil, fmt.Errorf("等待新分享快照失败，保留临时目录: %w", err)
 	}
 	if err := persist("generating"); err != nil {
@@ -288,7 +333,11 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 }
 
 func (w *ShareWorkflow) until(ctx context.Context, check func(context.Context) error) error {
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	return w.untilBudget(ctx, 90*time.Second, check)
+}
+
+func (w *ShareWorkflow) untilBudget(ctx context.Context, budget time.Duration, check func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	var lastErr error
 	// 保留最后一次有效校验原因，避免截止时的网络取消覆盖目录差异或重复拼接超时。
@@ -311,11 +360,14 @@ func (w *ShareWorkflow) until(ctx context.Context, check func(context.Context) e
 		if err == nil {
 			return nil
 		}
-		// 审核不是快照生成延迟，立即结束，不进入 90 秒等待和后续清理。
+		// 审核不是快照生成延迟，立即结束，不进入等待和后续清理。
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			return err
 		}
 		if errors.Is(err, errTransferCountExceeded) {
+			return err
+		}
+		if errors.Is(err, errTransferListingInvalid) {
 			return err
 		}
 		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
@@ -324,13 +376,9 @@ func (w *ShareWorkflow) until(ctx context.Context, check func(context.Context) e
 		if ctx.Err() != nil {
 			return stopped()
 		}
-		reportGeneration(ctx, "waiting", "等待 115 完成处理（本阶段最多 90 秒）："+err.Error())
-		timer := time.NewTimer(w.PollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		reportGeneration(ctx, "waiting", fmt.Sprintf("等待 115 完成处理（本阶段最多 %.0f 秒）：%s", budget.Seconds(), err))
+		if waitTransfer(ctx, w.PollInterval) != nil {
 			return stopped()
-		case <-timer.C:
 		}
 	}
 }
@@ -437,8 +485,10 @@ func (w *ShareWorkflow) captureSnapshot(ctx context.Context, share *p115.ShareIn
 		cid = "0"
 	}
 	snapshot := generationSnapshot{ShareCode: share.Code, RootCID: cid, Pages: make(map[generationSnapshotPageKey]*p115.SharePage)}
-	manifest, roots, files, err := w.scanDirectory(ctx, cid, "正在读取分享目录并统计媒体数量", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
-		page, err := w.Client.List(ctx, share, id, offset, cookie)
+	manifest, roots, files, err := w.scanDirectory(context.WithValue(ctx, reshareScanPhaseKey{}, "snapshot"), cid, "正在读取分享目录并统计媒体数量", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
+		page, err := measuredPages(ctx, "snapshot", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
+			return w.Client.List(ctx, share, id, offset, cookie)
+		})(ctx, id, offset)
 		if err != nil || page == nil {
 			return page, err
 		}
@@ -526,6 +576,11 @@ func (w *ShareWorkflow) scanDirectory(ctx context.Context, cid, label string, li
 			offset += len(page.Files)
 			if offset >= page.Count {
 				break
+			}
+		}
+		if phase, ok := ctx.Value(reshareScanPhaseKey{}).(string); ok {
+			if d := directoryMetrics(ctx, phase, id); d != nil {
+				d.FullReads++
 			}
 		}
 		return nil

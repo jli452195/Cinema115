@@ -296,7 +296,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		if !claimed {
 			continue
 		}
-		retryCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		retryCtx, cancel := context.WithTimeout(ctx, ShareGenerationTimeout)
 		_, runErr := s.execute(context.WithValue(retryCtx, generationCookieKey{}, cookie), &task, req)
 		cancel()
 		// 业务失败已保存在任务中；若最终状态仍未落盘，结束工作循环防止丢失检查点。

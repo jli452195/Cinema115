@@ -48,6 +48,36 @@ func TestGenerationLogsBoundedConcurrentAndFiltered(t *testing.T) {
 	}
 }
 
+func TestLargeGenerationPreservesEarlierDiagnostics(t *testing.T) {
+	logs := &GenerationLogs{}
+	logs.Append("STRM", "transfer", "网页", "DEBUG", "扫描阶段保留标记")
+	files := make([]p115.ShareFile, 0, 2220)
+	for i := 0; i < 2220; i++ {
+		ext := ".txt"
+		if i < 120 {
+			ext = ".mkv"
+		}
+		files = append(files, p115.ShareFile{ID: strconv.Itoa(i + 1), Name: fmt.Sprintf("file-%d%s", i, ext), SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20})
+	}
+	client := shareListFunc(func(_ context.Context, _ *p115.ShareInfo, _ string, offset int, _ string) (*p115.SharePage, error) {
+		return &p115.SharePage{Count: len(files), Offset: offset, Files: files[offset:min(offset+100, len(files))]}, nil
+	})
+	g := &LoggedGenerator{Logs: logs, Generator: &STRMGenerator{Client: client, Root: t.TempDir(), Cookie: func() string { return "test-cookie" }}}
+	result, err := g.Generate(context.Background(), generationOptions(t))
+	if err != nil || result.Written != 120 {
+		t.Fatal(result, err)
+	}
+	entries := logs.Snapshot("ALL")
+	if len(entries) > 300 || entries[len(entries)-1].Message != "扫描阶段保留标记" {
+		t.Fatal("large generation evicted scan diagnostics", len(entries))
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Message, "STRM 生成成功：") && strings.Contains(entry.Message, ".strm") {
+			t.Fatal("unbounded file logs", entry)
+		}
+	}
+}
+
 func TestGenerationLogsRepeatedWriteAndSource(t *testing.T) {
 	logs := &GenerationLogs{}
 	client := shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {

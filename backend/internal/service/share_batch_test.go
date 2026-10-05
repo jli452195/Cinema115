@@ -25,6 +25,7 @@ type batchTransferFake struct {
 	shares, deletes, creates int
 	ownListCalls             int
 	password                 string
+	driveReads               map[string]int
 }
 
 func (f *batchTransferFake) ListForTransfer(_ context.Context, share *p115.ShareInfo, _ string, _ int, cookie string) (*p115.SharePage, error) {
@@ -100,6 +101,10 @@ func (f *batchTransferFake) ReceiveShare(_ context.Context, share *p115.ShareInf
 }
 
 func (f *batchTransferFake) DriveFiles(_ context.Context, cid string, _ int, cookie string) (*p115.SharePage, error) {
+	if f.driveReads == nil {
+		f.driveReads = make(map[string]int)
+	}
+	f.driveReads[cid]++
 	if cookie != "UID=42_A; SEID=private-cookie" {
 		return nil, errors.New("网盘读取账号错误")
 	}
@@ -178,6 +183,15 @@ func TestMergedShareExcludesReviewAndRetriesOnlyThatSource(t *testing.T) {
 			}
 			if f.ownListCalls != 1 {
 				t.Fatal("平铺新分享被重复读取", f.ownListCalls)
+			}
+			for cid, count := range f.driveReads {
+				if count != 1 {
+					t.Fatalf("verified directory %s reread %d times", cid, count)
+				}
+			}
+			jobs := workflowJobs(t, w)
+			if len(jobs) != 1 || jobs[0].Stats == nil || jobs[0].Stats.ScanRounds != 1 {
+				t.Fatal("missing persisted scan metrics", jobs)
 			}
 			if out[0].Result.ReshareURL != out[2].Result.ReshareURL || !out[0].Result.Cleaned || out[0].Result.Written != 1 || out[0].RetryRootIDs[0] == out[2].RetryRootIDs[0] {
 				t.Fatal("共用分享、来源目录或计数错误")

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/strm"
@@ -48,6 +47,7 @@ func (w *ShareWorkflow) receiveRoots(ctx context.Context, share *p115.ShareInfo,
 
 // GenerateBatch 先逐条只读筛选，再把可转存的来源合并为一个长期分享。
 func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInput) ([]BatchOutcome, error) {
+	ctx = withReshareMetrics(ctx)
 	outcomes := make([]BatchOutcome, len(inputs))
 	settings := w.Settings.ShareValue()
 	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
@@ -57,7 +57,7 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 	if cookie == "" {
 		return outcomes, generationInputError("请在分享基础设置中选择已登录的 115 账号配置")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, ShareGenerationTimeout)
 	defer cancel()
 	prepared := make([]preparedShare, 0, len(inputs))
 	for i, input := range inputs {
@@ -88,9 +88,9 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 			outcomes[i].Err = generationInputError("分享模式无效")
 			continue
 		}
-		input, err = resolveSharePath(ctx, input, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		input, err = resolveSharePath(ctx, input, measuredPages(ctx, "source:"+share.Code, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
 			return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
-		})
+		}))
 		if err != nil {
 			if errors.Is(err, p115.ErrShareUnderReview) {
 				err = errors.Join(err, errSourceShareReview)
@@ -111,7 +111,7 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie, first)
 			continue
 		}
-		manifest, roots, files, err := w.scanDirectory(ctx, input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), w.sourcePages(share, input.CID, cookie, first))
+		manifest, roots, files, err := w.scanDirectory(context.WithValue(ctx, reshareScanPhaseKey{}, "source:"+share.Code), input.CID, fmt.Sprintf("正在检查批次原分享 %d/%d", i+1, len(inputs)), w.sourcePages(share, input.CID, cookie, first))
 		if err != nil {
 			if errors.Is(err, p115.ErrShareUnderReview) {
 				err = errors.Join(err, errSourceShareReview)
@@ -160,18 +160,17 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 	jobInput.URL = strings.Join(links, "\n")
 	generationFailed := false
 	combined, batchErr := w.resharePrepared(ctx, settings, jobInput, cookie, password, manifest, sourceFiles,
-		func(ctx context.Context, directories []p115.ShareFile) ([]p115.ShareFile, []string, error) {
+		func(ctx context.Context, directories []p115.ShareFile, verified map[string][]p115.ShareFile) ([]p115.ShareFile, []string, error) {
 			files := make([]p115.ShareFile, 0)
 			expected := make([]string, 0)
 			for _, directory := range directories {
-				_, roots, _, err := w.scanDirectory(ctx, directory.ID, "正在整理合并分享的原始条目", func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
-					return w.Client.DriveFiles(ctx, cid, offset, cookie)
-				})
-				if err != nil {
-					return nil, nil, err
+				roots, ok := verified[directory.ID]
+				if !ok {
+					return nil, nil, fmt.Errorf("已核验目录缺少来源 %s，停止分享", directory.ID)
 				}
 				files = append(files, roots...)
 			}
+			reportGeneration(ctx, "sharing", "复用已核验的来源目录条目，不再扫描子目录")
 			if len(files) == 0 || len(files) > 1000 {
 				return nil, nil, generationInputError("合并分享需要 1 至 1000 个顶层条目")
 			}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/p115"
@@ -165,7 +164,7 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 	if input.BaseURL == "" {
 		input.BaseURL = a.generationBaseURL(c)
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), service.ShareGenerationTimeout)
 	defer cancel()
 	respond := func(code int, data gin.H) { c.JSON(code, data) }
 	if streaming {
@@ -179,7 +178,7 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 			}
 			c.Writer.Flush()
 		}
-		emit("progress", service.GenerationProgress{Stage: "starting", Message: "任务已接收，正在准备；单次处理最多 5 分钟"})
+		emit("progress", service.GenerationProgress{Stage: "starting", Message: "任务已接收，正在准备；单次处理最多 20 分钟"})
 		ctx = service.WithGenerationProgress(ctx, func(progress service.GenerationProgress) { emit("progress", progress) })
 		respond = func(code int, data gin.H) {
 			if code >= 400 {
@@ -208,7 +207,7 @@ func (a *ShareAPI) runGenerate(c *gin.Context, streaming bool) {
 			code = http.StatusUnprocessableEntity
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			response := gin.H{"error": "处理超过 5 分钟：" + err.Error()}
+			response := gin.H{"error": "任务处理超时：" + err.Error()}
 			if result != nil {
 				response["reshareUrl"] = result.ReshareURL
 				response["tempDirectoryID"] = result.TempDirectoryID

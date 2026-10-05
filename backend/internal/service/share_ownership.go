@@ -40,7 +40,9 @@ func (w *ShareWorkflow) inspectSource(ctx context.Context, share *p115.ShareInfo
 	if uid == "" {
 		return nil, false, generationInputError("所选 Cookie 缺少有效用户 ID，请重新登录 115")
 	}
-	page, err := w.Client.ListForTransfer(ctx, share, cid, 0, cookie)
+	page, err := measuredPages(ctx, "source:"+share.Code, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+		return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
+	})(ctx, cid, 0)
 	if err != nil {
 		if errors.Is(err, p115.ErrShareUnderReview) {
 			err = errors.Join(err, errSourceShareReview)
@@ -66,7 +68,9 @@ func (w *ShareWorkflow) sourcePages(share *p115.ShareInfo, cid, cookie string, f
 		if directory == cid && offset == 0 {
 			return first, nil
 		}
-		return w.Client.ListForTransfer(ctx, share, directory, offset, cookie)
+		return measuredPages(ctx, "source:"+share.Code, func(ctx context.Context, cid string, offset int) (*p115.SharePage, error) {
+			return w.Client.ListForTransfer(ctx, share, cid, offset, cookie)
+		})(ctx, directory, offset)
 	}
 }
 

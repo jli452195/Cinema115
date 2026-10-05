@@ -3,14 +3,15 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"strm115/backend/internal/model"
 )
 
-const jobColumns = `id, source_url, source_cid, directory_name, directory_id, share_url, status, finished, last_error, updated_at`
-const insertJob = `INSERT INTO reshare_jobs (` + jobColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const jobColumns = `id, source_url, source_cid, directory_name, directory_id, share_url, status, finished, last_error, updated_at, stats`
+const insertJob = `INSERT INTO reshare_jobs (` + jobColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 const databaseTime = "2006-01-02T15:04:05.000000000Z"
 
 func validateJob(job model.ReshareJob) error {
@@ -20,19 +21,27 @@ func validateJob(job model.ReshareJob) error {
 	return nil
 }
 
-func jobValues(job model.ReshareJob) []any {
-	return []any{job.ID, job.SourceURL, job.SourceCID, job.DirectoryName, job.DirectoryID, job.ShareURL, job.Status, job.Finished, job.LastError, job.UpdatedAt.UTC().Format(databaseTime)}
+func jobValues(job model.ReshareJob) ([]any, error) {
+	stats, err := json.Marshal(job.Stats)
+	if err != nil {
+		return nil, fmt.Errorf("编码转存统计: %w", err)
+	}
+	return []any{job.ID, job.SourceURL, job.SourceCID, job.DirectoryName, job.DirectoryID, job.ShareURL, job.Status, job.Finished, job.LastError, job.UpdatedAt.UTC().Format(databaseTime), string(stats)}, nil
 }
 
 func (s *Store) SaveReshareJob(ctx context.Context, job model.ReshareJob) error {
 	if err := validateJob(job); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, insertJob+` ON CONFLICT(id) DO UPDATE SET
+	values, err := jobValues(job)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, insertJob+` ON CONFLICT(id) DO UPDATE SET
 source_url=excluded.source_url, source_cid=excluded.source_cid,
 directory_name=excluded.directory_name, directory_id=excluded.directory_id,
 share_url=excluded.share_url, status=excluded.status, finished=excluded.finished,
-last_error=excluded.last_error, updated_at=excluded.updated_at`, jobValues(job)...)
+last_error=excluded.last_error, updated_at=excluded.updated_at, stats=excluded.stats`, values...)
 	if err != nil {
 		return fmt.Errorf("保存转存任务检查点: %w", err)
 	}
@@ -41,11 +50,14 @@ last_error=excluded.last_error, updated_at=excluded.updated_at`, jobValues(job).
 
 func scanJob(row interface{ Scan(...any) error }) (model.ReshareJob, error) {
 	var job model.ReshareJob
-	var updated string
-	if err := row.Scan(&job.ID, &job.SourceURL, &job.SourceCID, &job.DirectoryName, &job.DirectoryID, &job.ShareURL, &job.Status, &job.Finished, &job.LastError, &updated); err != nil {
+	var updated, stats string
+	if err := row.Scan(&job.ID, &job.SourceURL, &job.SourceCID, &job.DirectoryName, &job.DirectoryID, &job.ShareURL, &job.Status, &job.Finished, &job.LastError, &updated, &stats); err != nil {
 		return job, err
 	}
 	var err error
+	if err := json.Unmarshal([]byte(stats), &job.Stats); err != nil {
+		return job, fmt.Errorf("解析转存统计: %w", err)
+	}
 	job.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
 	return job, err
 }

@@ -47,7 +47,7 @@ func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) e
 	input.URL = item.URL
 	input.Password = item.Password
 	input.Mode = batch.Mode
-	taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	taskCtx, cancel := context.WithTimeout(ctx, service.ShareGenerationTimeout)
 	defer cancel()
 	taskCtx = service.WithGenerationSource(taskCtx, "Telegram")
 	taskCtx = service.WithGenerationBatch(taskCtx, batch.UpdateID, index+1, len(batch.Items))

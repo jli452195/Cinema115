@@ -27,7 +27,7 @@ func reportGeneration(ctx context.Context, stage, message string) {
 func reportGenerationWithLevel(ctx context.Context, level, stage, message string) {
 	logMessage := message
 	if stage == "waiting" {
-		logMessage = "等待 115 完成处理，本阶段最多等待 90 秒"
+		logMessage = "等待 115 完成处理，具体等待上限及原因见任务进度"
 	}
 	logGeneration(ctx, level, logMessage)
 	if report, ok := ctx.Value(progressContextKey{}).(func(GenerationProgress)); ok {

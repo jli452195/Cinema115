@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 35
+const schemaVersion = 36
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -457,6 +457,20 @@ PRAGMA user_version=30;`); err != nil {
 		return err
 	}
 	// Also repair the lookup index for databases created by an earlier v22 build.
+	if version < 36 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('reshare_jobs') WHERE name='stats'`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE reshare_jobs ADD COLUMN stats TEXT NOT NULL DEFAULT 'null'`); err != nil {
+				return fmt.Errorf("创建转存任务统计字段: %w", err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version=36`); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {
 		return fmt.Errorf("创建播放来源反向索引: %w", err)
 	}

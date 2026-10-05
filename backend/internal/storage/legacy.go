@@ -63,7 +63,11 @@ func (s *Store) ImportLegacyJobs(ctx context.Context, directory string) (ImportR
 			return ImportResult{}, fmt.Errorf("旧任务 %s 的编号与文件名不一致，迁移已回滚", entry.Name())
 		}
 		// 数据库中已有的任务具有优先权，旧 JSON 不能覆盖它。
-		res, err := tx.ExecContext(ctx, insertJob+" ON CONFLICT(id) DO NOTHING", jobValues(job)...)
+		values, err := jobValues(job)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		res, err := tx.ExecContext(ctx, insertJob+" ON CONFLICT(id) DO NOTHING", values...)
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("导入旧任务 %s: %w", entry.Name(), err)
 		}

@@ -692,7 +692,7 @@ func (s *ShareRuns) execute(run *shareRun) {
 		run.view.Items[i].Message = "正在后台生成 STRM"
 	}
 	s.mu.Unlock()
-	itemCtx, cancel := context.WithTimeout(run.ctx, 5*time.Minute)
+	itemCtx, cancel := context.WithTimeout(run.ctx, ShareGenerationTimeout)
 	itemCtx = WithGenerationProgress(itemCtx, func(progress GenerationProgress) {
 		s.mu.Lock()
 		for i := range run.view.Items {

@@ -224,6 +224,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 		selectedRoots[id] = false
 	}
 	entries, pages := 0, 0
+	filteredDetails := 0
 	// 使用计数和深度上限防止异常分享目录导致无限分页或无限递归。
 	var walk func(string, string, int) error
 	walk = func(folderID, parent string, depth int) error {
@@ -288,7 +289,10 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 					if selected {
 						result.Skipped++
 					}
-					logGeneration(ctx, "DEBUG", "按后缀或大小过滤："+safeSTRMName(file.Name))
+					filteredDetails++
+					if filteredDetails <= 100 {
+						logGeneration(ctx, "DEBUG", "按后缀或大小过滤："+safeSTRMName(file.Name))
+					}
 					continue
 				}
 				if file.Directory && !input.Recursive {
@@ -344,6 +348,9 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	if err := walk(cid, "", 0); err != nil {
 		return nil, err
 	}
+	if filteredDetails > 100 {
+		logGeneration(ctx, "DEBUG", fmt.Sprintf("按后缀或大小过滤共 %d 项，仅保留前 100 项明细", filteredDetails))
+	}
 	for _, found := range selectedRoots {
 		if !found {
 			return nil, fmt.Errorf("新分享缺少本来源的根条目，已停止生成")
@@ -387,9 +394,13 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 			logGeneration(ctx, "WARNING", fmt.Sprintf("同名目标内容不同，已保留旧文件并改名：%s -> %s", originalPath, actualPath))
 		}
 		result.Written++
-		logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(filepath.Join(directory, filepath.FromSlash(actualPath))))
-		// INFO 每成功写入十个文件更新一次，最后不足十个也报告完整进度。
-		if result.Written%10 == 0 || result.Written == len(result.Files) {
+		// Keep small jobs' file detail; large jobs must not evict scan diagnostics.
+		if len(result.Files) <= 100 {
+			logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(filepath.Join(directory, filepath.FromSlash(actualPath))))
+		}
+		// Small jobs report every ten writes; large jobs keep about 100 milestones.
+		milestone := max(10, (len(result.Files)+99)/100)
+		if result.Written%milestone == 0 || result.Written == len(result.Files) {
 			logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成成功：%d/%d", result.Written, len(result.Files)))
 		}
 	}

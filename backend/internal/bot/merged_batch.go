@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"strm115/backend/internal/service"
 )
@@ -24,7 +23,7 @@ func (b *Telegram) processMergedBatch(ctx context.Context, state *telegramState,
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("记录 Telegram 合并任务: %w", err)
 	}
-	taskCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	taskCtx, cancel := context.WithTimeout(ctx, service.ShareGenerationTimeout)
 	defer cancel()
 	taskCtx = service.WithGenerationBatch(service.WithGenerationSource(taskCtx, "Telegram"), batch.UpdateID, 1, len(inputs))
 	taskCtx = service.WithShareReplyManaged(taskCtx)
