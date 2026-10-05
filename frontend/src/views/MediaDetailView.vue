@@ -25,6 +25,7 @@ import tmdbLogo from '../assets/tmdb.svg'
 import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
 import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 import re0Logo from '../assets/re0/logo-re0-square.webp'
+import gyingLogo from '../assets/gying/logo-gying.png'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
@@ -275,6 +276,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                   </span>
                 </SearchPill>
                 <SearchPill v-if="isPortalAdmin && searchConfigured.gying" @click="gyingSearchOpen = true">
+                  <img :src="gyingLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
                   <span class="flex items-center gap-0.5">
                     <span class="font-bold text-violet-600 dark:text-violet-500">观影</span>
                     <span class="text-slate-500 dark:text-slate-400">搜索</span>
