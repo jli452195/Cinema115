@@ -534,7 +534,7 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return "", fmt.Errorf("未选择有效的朋友账号")
 	}
 	report.AccountLabel = PlaybackAccountLabel(selection.accountName, selection.uid, selection.binding.AccountID)
-	grant, grantErr := shareResolutionAuthorization(ctx, selection)
+	grant, grantErr := resolutionAuthorization(ctx, selection)
 	if grantErr != nil {
 		return "", grantErr
 	}
@@ -547,7 +547,7 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		s.logs.Add(ctx, "INFO", "朋友账号读取分享成功，直接播放；无需秒传或创建缓存")
 		report.Mode = "朋友分享直取"
 		if grant != nil {
-			grant.shareRead = true
+			grant.targetRead = true
 		}
 		return direct.URL, nil
 	}
@@ -558,7 +558,7 @@ func (s *PlaybackCache) resolve(ctx context.Context, selection *PlaybackCacheSel
 		return "", &playbackTargetError{stage: "目标账号分享取链失败，未尝试源账号秒传", err: err}
 	}
 	if grant != nil {
-		if err := grant.ValidateCachedShare(ctx); err != nil {
+		if err := grant.ValidateTargetDirectory(ctx); err != nil {
 			return "", err
 		}
 	}

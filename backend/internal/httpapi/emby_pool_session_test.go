@@ -47,14 +47,33 @@ func (f *poolProtocolDrive) DownloadInfoWithUA(_ context.Context, _ *p115.ShareI
 	return &p115.DownloadInfo{URL: "https://cdn.115.com/pool"}, nil
 }
 
+func (f *poolProtocolDrive) VerifiedPlaybackURL(ctx context.Context, file p115.DrivePlaybackFile, cookie, ua string) (string, error) {
+	if file.ID != "88" || file.Size != 100 || file.SHA1 != strings.Repeat("A", 40) {
+		return "", p115.ErrDriveInvalidResponse
+	}
+	info, err := f.DownloadInfoWithUA(ctx, nil, "", cookie, ua)
+	if err != nil {
+		return "", err
+	}
+	return info.URL, nil
+}
+
+func TestPickCodeReuseCanaryPoolHTTP(t *testing.T) {
+	checkPoolProtocolNegotiationRedirectAndStop(t, false, true)
+}
+
 func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) { checkPoolProtocolNegotiationRedirectAndStop(t, legacy) })
 	}
 }
 
-func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
+func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pickcode ...bool) {
+	fileReuse := len(pickcode) > 0 && pickcode[0]
 	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
+	if fileReuse {
+		sourcePath = "http://nas/api/redirect115/abc123/" + strings.Repeat("A", 40)
+	}
 	if legacy {
 		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
 	}
@@ -141,6 +160,21 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 		t.Fatal(err)
 	}
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
+	if fileReuse {
+		hash := strings.Repeat("A", 40)
+		materialID := service.DirectLinkKey("material-v1", hash, "100")
+		seed := service.PlaybackCacheStatus{
+			Materials: []service.PlaybackMaterial{{ID: materialID, SHA1: hash, Size: 100, Name: "movie.mkv", VerifiedAt: time.Now().UTC()}},
+			Entries:   []service.PlaybackCacheEntry{{Key: service.DirectLinkKey("copy", "456", "88"), UID: "456", AccountID: target, MaterialID: materialID, Status: "ready", File: p115.DrivePlaybackFile{ID: "88", PickCode: "pick123", SHA1: hash, Size: 100, Name: "movie.mkv"}}},
+		}
+		raw, err := json.Marshal(seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cs.Save(string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cache, err := service.NewPlaybackCache(ctx, cs, accounts, drive, logs)
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +190,34 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
 		return w
+	}
+	if fileReuse {
+		// Canary uses a real HTTP ingress and the full pool/user authorization
+		// stack, with isolated upstreams and no possible cloud writes.
+		server := httptest.NewServer(h)
+		defer server.Close()
+		client := server.Client()
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		call = func(method, path, body string) *httptest.ResponseRecorder {
+			req, err := http.NewRequest(method, server.URL+path, strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			w := httptest.NewRecorder()
+			for k, values := range resp.Header {
+				w.Header()[k] = values
+			}
+			w.WriteHeader(resp.StatusCode)
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				t.Fatal(err)
+			}
+			return w
+		}
 	}
 	w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=token", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "PlaySessionId=session") {
@@ -192,6 +254,19 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
 			t.Fatal(err)
 		}
 	})
+	if fileReuse {
+		h.ClearDirectLinks("")
+		beforeChecks := drive.checks
+		beforeReads := len(drive.attempts)
+		if w := call("HEAD", path, ""); w.Code != 302 {
+			t.Fatal("repeat file reuse failed", w.Code, w.Body.String())
+		}
+		if drive.checks != beforeChecks || len(drive.attempts) != beforeReads+1 || drive.pickReads != 0 || drive.uploads != 0 {
+			t.Fatal("reuse performed directory/source/upload work")
+		}
+		t.Log("canary: cold/repeated reuse = 1 target read, 0 source reads, 0 probes, 0 uploads; cached link = 1 fresh probe; expired cookie rejected")
+		return
+	}
 	settings := members.Pool.Settings()
 	limited := settings
 	limited.MaxSessions = 1

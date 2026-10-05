@@ -166,6 +166,7 @@ func setupWorkflow(t *testing.T, fake *transferFake) (*ShareWorkflow, GenerateIn
 		t.Fatal(err)
 	}
 	settings := store.Value()
+	settings.Generation.OutputDir = "strm"
 	settings.ReshareEnabled = true
 	settings.ParentCID = "123"
 	if err := store.Save(settings); err != nil {
@@ -429,7 +430,10 @@ func TestAutomationSettingsPersistExplicitRoot(t *testing.T) {
 		t.Fatal("lost root selection")
 	}
 	value.Generation.OutputDir = ""
-	if err := reopened.Save(value); err == nil {
+	if err := reopened.Save(value); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Value().Generation.OutputDir != "" {
 		t.Fatal("missing selection became root")
 	}
 }

@@ -5,21 +5,22 @@ import (
 	"time"
 )
 
-type shareAuthorizationKey struct{}
+type resolutionAuthorizationKey struct{}
 
-// ShareResolutionContext binds deferred checks to this request's fixed target.
+// ResolutionContext binds deferred checks to this request's fixed target.
 // It is never stored in the direct-link cache or shared with another request.
-func (a *MediaAuthorization) ShareResolutionContext(ctx context.Context) context.Context {
-	if a == nil || !a.deferredShare {
+func (a *MediaAuthorization) ResolutionContext(ctx context.Context) context.Context {
+	if a == nil || !a.deferredRead {
 		return ctx
 	}
-	return context.WithValue(ctx, shareAuthorizationKey{}, a)
+	return context.WithValue(ctx, resolutionAuthorizationKey{}, a)
 }
 
-// ValidateCachedShare retains the fresh credential/directory check when no
-// request to 115 was made by this request (including a coalesced cache flight).
-func (a *MediaAuthorization) ValidateCachedShare(ctx context.Context) error {
-	if a == nil || !a.deferredShare {
+// ValidateTargetDirectory proves current credentials and directory identity
+// before writing, or when reusing a URL without this request reading 115
+// (including a coalesced cache flight).
+func (a *MediaAuthorization) ValidateTargetDirectory(ctx context.Context) error {
+	if a == nil || !a.deferredRead {
 		return nil
 	}
 	if err := a.CheckCurrent(ctx); err != nil {
@@ -37,15 +38,15 @@ func (a *MediaAuthorization) ValidateCachedShare(ctx context.Context) error {
 	if err := a.CheckCurrent(ctx); err != nil {
 		return err
 	}
-	a.deferredShare = false
+	a.deferredRead = false
 	if a.poolLease != nil {
 		a.poolLease.skipHealthRefresh = false
 	}
 	return nil
 }
 
-func shareResolutionAuthorization(ctx context.Context, selected *PlaybackCacheSelection) (*MediaAuthorization, error) {
-	a, _ := ctx.Value(shareAuthorizationKey{}).(*MediaAuthorization)
+func resolutionAuthorization(ctx context.Context, selected *PlaybackCacheSelection) (*MediaAuthorization, error) {
+	a, _ := ctx.Value(resolutionAuthorizationKey{}).(*MediaAuthorization)
 	if a == nil {
 		return nil, nil
 	}

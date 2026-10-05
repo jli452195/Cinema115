@@ -54,10 +54,21 @@ const strmPreview = computed(() => {
  const base = baseURL.value.trim().replace(/\/+$/, '') || 'http://NAS_IP:8115'
  return base + '/api/share115/EXAMPLE123/0123456789ABCDEF0123456789ABCDEF01234567/wxyz/3192802068171587249'
 })
-const outputDir = ref('strm')
-const taskOutputDir = ref('strm')
-const outputDirectories = ref(['strm'])
+const outputDir = ref('')
+const taskOutputDir = ref('')
+const outputDirectories = ref<string[]>([])
 const directoryDialogOpen = ref(false)
+const editingDirectory = ref<string>()
+
+function openDirectoryDialog(directory?: string) {
+  editingDirectory.value = directory
+  directoryDialogOpen.value = true
+}
+
+function closeDirectoryDialog() {
+  directoryDialogOpen.value = false
+  editingDirectory.value = undefined
+}
 const videoExtensions = ref('mp4,mkv,ts,iso,rmvb,avi,mov,mpeg,mpg,wmv,3gp,asf,m4v,m2ts,webm')
 const metadataExtensions = ref('srt,ass,ssa')
 const minSizeMB = ref(0)
@@ -151,9 +162,16 @@ async function saveAutomation() {
 
 function addDirectory(value: string) {
   if (!validDirectory(value)) return
-  if (activeTab.value === 'generate') { taskOutputDir.value = value; directoryDialogOpen.value = false; error.value = ''; return }
-  if (!outputDirectories.value.includes(value)) outputDirectories.value.push(value)
-  outputDir.value = value; directoryDialogOpen.value = false; error.value = ''
+  if (activeTab.value === 'generate') { taskOutputDir.value = value; closeDirectoryDialog(); error.value = ''; return }
+  const previous = editingDirectory.value
+  if (previous !== undefined) {
+    outputDirectories.value = [...new Set(outputDirectories.value.map(directory => directory === previous ? value : directory))]
+    if (outputDir.value === previous) outputDir.value = value
+  } else {
+    if (!outputDirectories.value.includes(value)) outputDirectories.value.push(value)
+    outputDir.value = value
+  }
+  closeDirectoryDialog(); error.value = ''
   saveSettings()
 }
 
@@ -267,10 +285,10 @@ onMounted(async () => {
         // 播放地址以服务器保存值为准，旧浏览器缓存不能覆盖新地址。
         if (Array.isArray(saved.outputDirectories)) {
           const valid = saved.outputDirectories.filter(validDirectory)
-          if (valid.length) outputDirectories.value = [...new Set(valid)] as string[]
+          outputDirectories.value = [...new Set(valid)] as string[]
         }
         if (typeof saved.outputDir === 'string' && outputDirectories.value.includes(saved.outputDir)) outputDir.value = saved.outputDir
-        else outputDir.value = outputDirectories.value[0] ?? 'strm'
+        else outputDir.value = ''
         if (typeof saved.videoExtensions === 'string') videoExtensions.value = saved.videoExtensions
         if (Number.isSafeInteger(saved.minSizeMB) && saved.minSizeMB >= 0) minSizeMB.value = saved.minSizeMB
       }
@@ -286,7 +304,7 @@ onMounted(async () => {
       if (validDirectory(saved.outputDir)) {
         outputDir.value = saved.outputDir
         if (!outputDirectories.value.includes(saved.outputDir)) outputDirectories.value.push(saved.outputDir)
-      }
+      } else outputDir.value = ''
     }
     savedGeneration.value = settings()
     savedSettingsSnapshot.value = settingsSnapshot()
@@ -403,7 +421,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
               <section class="settings-section">
                 <div class="settings-heading">
                   <h2><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7V5h6l2 2h10v13H3z" /></svg>STRM 生成目录<span class="settings-count">{{ outputDirectories.length }}</span></h2>
-                  <button type="button" class="settings-add" @click="directoryDialogOpen = true"><span aria-hidden="true">＋</span> 添加目录</button>
+                  <button type="button" class="settings-add" @click="openDirectoryDialog()"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> 添加目录</button>
                 </div>
                 <div class="directory-grid">
                   <div v-for="directory in outputDirectories" :key="directory" class="directory-card" :class="{ 'directory-selected': outputDir === directory }">
@@ -412,7 +430,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                       <span class="directory-icon peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7V5h6l2 2h10v13H3z" /></svg></span>
                       <span class="min-w-0"><span class="block break-all text-sm font-semibold text-slate-800 dark:text-slate-200">{{ directoryName(directory) }}</span><span class="mt-1 block break-all text-xs text-slate-500 dark:text-slate-400">{{ resolvedDirectory(directory) }}</span></span>
                     </label>
-                    <span v-if="outputDir === directory" class="shrink-0 text-xs text-blue-600 dark:text-blue-400">已选</span>
+                    <button type="button" :aria-label="'修改目录 ' + resolvedDirectory(directory)" title="修改目录" class="directory-edit" @click="openDirectoryDialog(directory)"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15l-1 5Z" /></svg></button>
                     <button type="button" :aria-label="'移除目录 ' + resolvedDirectory(directory)" class="directory-remove" @click="removeDirectory(directory)"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button>
                   </div>
                 </div>
@@ -431,7 +449,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">分享链接<input v-model="shareURL" required type="text" autocomplete="off" class="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950" placeholder="粘贴 115 分享链接或包含提取码的分享文本" @change="parseShareText" /></label>
                 <div class="flex flex-wrap items-center gap-3 text-xs"><span v-if="password && !passwordExpanded" class="text-slate-500 dark:text-slate-400">已填写提取码</span><button type="button" class="text-blue-600 dark:text-blue-400" @click="passwordExpanded = !passwordExpanded">{{ passwordExpanded ? '收起提取码' : password ? '修改提取码' : '补充提取码' }}</button><input v-if="passwordExpanded" v-model="password" aria-label="分享提取码" maxlength="4" class="w-32 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="4 位提取码" /></div>
                 <div class="divide-y divide-slate-100 border-y border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-                  <div class="flex items-center gap-3 py-3"><span class="w-28 shrink-0 text-sm text-slate-500 dark:text-slate-400">STRM 输出目录</span><span class="min-w-0 flex-1 break-all text-sm text-slate-800 dark:text-slate-200">{{ resolvedDirectory(taskOutputDir) }}</span><button type="button" class="shrink-0 text-sm text-blue-600 dark:text-blue-400" @click="directoryDialogOpen = true">更改</button></div>
+                  <div class="flex items-center gap-3 py-3"><span class="w-28 shrink-0 text-sm text-slate-500 dark:text-slate-400">STRM 输出目录</span><span class="min-w-0 flex-1 break-all text-sm text-slate-800 dark:text-slate-200">{{ resolvedDirectory(taskOutputDir) }}</span><button type="button" class="shrink-0 text-sm text-blue-600 dark:text-blue-400" @click="openDirectoryDialog()">更改</button></div>
                 </div>
                 <div class="flex flex-wrap items-center gap-3"><button type="submit" :disabled="!shareURL.trim()" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">{{ generating ? '正在生成…' : '开始生成' }}</button><button type="button" :disabled="!shareURL.trim()" class="rounded-lg px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="browse()">预览文件</button></div>
                 <p v-if="startCID !== '0'" class="text-xs text-slate-500 dark:text-slate-400">仅生成预览中选定的子目录。<button type="button" class="ml-2 text-blue-600 dark:text-blue-400" @click="startCID = '0'">恢复配置的分享路径</button></p>
@@ -460,7 +478,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
       <section v-if="playURL" class="mt-8"><h2 class="mb-3 font-medium">{{ playName }}</h2><video :src="playURL" controls autoplay preload="metadata" class="w-full rounded-xl bg-black" @error="error = '无法解码或读取视频。请检查连接；当前格式也可能不受浏览器支持，可改用 Emby 播放。'"></video></section>
       </section>
       </section>
-      <STRMDirectoryDialog v-if="directoryDialogOpen" :token="token" @close="directoryDialogOpen = false" @select="addDirectory" />
+      <STRMDirectoryDialog v-if="directoryDialogOpen" :token="token" :title="editingDirectory !== undefined ? '修改 STRM 目录' : '添加 STRM 目录'" @close="closeDirectoryDialog" @select="addDirectory" />
   </ManagementLayout>
 </template>
 
@@ -528,6 +546,9 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 }
 .directory-icon {
   @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-600 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-400;
+}
+.directory-edit {
+  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-blue-600 hover:bg-blue-100 focus-visible:outline-blue-500 dark:text-blue-400 dark:hover:bg-blue-900/40;
 }
 .directory-remove {
   @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-blue-500 dark:hover:bg-red-950/30 dark:hover:text-red-400;

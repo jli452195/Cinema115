@@ -767,6 +767,9 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		if claim.PickCode == "" && !isDownload && !warming {
 			ctx = service.WithPlaybackDirectShare(ctx, true)
 		}
+		if claim.PickCode != "" && !isDownload && !warming {
+			ctx = service.WithPlaybackFileReuse(ctx)
+		}
 		authorization, err = members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
 		if err != nil {
 			fail(playbackAuthorizationFailure(ctx, err))
@@ -832,16 +835,16 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 	}
 	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, keySHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
-		h.logs.Add(fetchCtx, "INFO", "直链缓存未命中或已关闭，开始向 115 获取直链")
+		h.logs.Add(fetchCtx, "INFO", fmt.Sprintf("直链缓存未命中，开始向 115 获取直链；缓存时间=%d 分钟（0 为关闭）", h.config.DirectLinkCacheMinutes))
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}
 		var fetchErr error
 		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
-			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(fetchCtx, claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
+			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(authorization.ResolutionContext(fetchCtx), claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		} else if claim.PickCode != "" {
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"
 		} else if cacheSelection != nil {
-			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(service.WithPlaybackSHA1Hint(authorization.ShareResolutionContext(fetchCtx), claim.SHA1), cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
+			value.URL, value.Report, fetchErr = h.cache.ResolveWithReport(service.WithPlaybackSHA1Hint(authorization.ResolutionContext(fetchCtx), claim.SHA1), cacheSelection, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		} else {
 			value.URL, fetchErr = h.download(fetchCtx, &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie, r.UserAgent())
 		}
@@ -876,7 +879,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 	timing.next("直链缓存等待及 115 取链")
 	value, hit, expires, err := h.directLinks.Get(ctx, key, time.Duration(h.config.DirectLinkCacheMinutes)*time.Minute, view, fetch)
 	if err == nil && hit {
-		err = authorization.ValidateCachedShare(ctx)
+		err = authorization.ValidateTargetDirectory(ctx)
 	}
 	timing.next("缓存记录核验及响应")
 	if err == nil && hit && value.Report.FileCacheKey != "" {

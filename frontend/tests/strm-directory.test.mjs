@@ -67,7 +67,7 @@ test('directory dialog selects loaded root and children, blocks errors and loadi
 })
 
 test('share settings save and reload explicit root; removing choices never selects root implicitly', async t => {
-  let saved = { accountId: 'main', parentCID: '0', generation: { outputDir: 'strm', baseUrl: 'http://test', videoExtensions: 'mkv', metadataExtensions: 'srt', minSizeMB: 0, recursive: true } }
+  let saved = { accountId: 'main', parentCID: '0', generation: { outputDir: '', baseUrl: 'http://test', videoExtensions: 'mkv', metadataExtensions: 'srt', minSizeMB: 0, recursive: true } }
   const writes = []
   environment(t, async (url, init = {}) => {
     if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: 'main', primary: true, configured: true }] })
@@ -85,6 +85,70 @@ test('share settings save and reload explicit root; removing choices never selec
     const s = mounted.state
     assert.equal(s.initializing, false)
     assert.equal(s.activeTab, 'basic')
+    assert.equal(s.outputDir, '')
+    assert.equal(s.taskOutputDir, '')
+    assert.deepEqual([...s.outputDirectories], [])
+    s.addDirectory('待整理')
+    s.openDirectoryDialog('待整理')
+    s.closeDirectoryDialog()
+    assert.deepEqual([...s.outputDirectories], ['待整理'])
+    s.openDirectoryDialog('待整理')
+    s.addDirectory('电影')
+    assert.deepEqual([...s.outputDirectories], ['电影'])
+    assert.equal(s.outputDir, '电影')
+    s.addDirectory('剧集')
+    s.openDirectoryDialog('电影')
+    s.addDirectory('剧集')
+    assert.deepEqual([...s.outputDirectories], ['剧集'])
+    assert.equal(s.outputDir, '剧集')
+    s.removeDirectory('剧集')
+    mounted.app.unmount()
+    mounted = mount('views/ShareView.vue', { token: 'test' })
+    await tick()
+    assert.deepEqual([...mounted.state.outputDirectories], [])
+    assert.equal(mounted.state.outputDir, '')
+    const empty = mounted.state
+    empty.sharePath = '/电影/2026'
+    empty.addDirectory('.')
+    await empty.saveAutomation()
+    assert.equal(writes.length, 1)
+    mounted.app.unmount()
+    mounted = mount('views/ShareView.vue', { token: 'test' })
+    await tick()
+    const reloaded = mounted.state
+    assert.equal(reloaded.outputDir, '.')
+    assert.deepEqual([...reloaded.outputDirectories], ['.'])
+    assert.equal(reloaded.sharePath, '/电影/2026')
+    for (const directory of [...reloaded.outputDirectories]) reloaded.removeDirectory(directory)
+    assert.equal(reloaded.outputDir, '')
+    await reloaded.saveAutomation()
+    assert.equal(writes.length, 1)
+    assert.match(reloaded.error, /请选择 STRM/)
+    await reloaded.generate()
+    assert.equal(reloaded.generating, false)
+    reloaded.addDirectory('../outside')
+    assert.equal(reloaded.outputDir, '')
+  } finally { mounted.app.unmount() }
+})
+
+test('share settings preserve explicit root on server reload', async t => {
+  let saved = { accountId: 'main', generation: { outputDir: '待整理', baseUrl: 'http://test', videoExtensions: 'mkv' } }
+  const writes = []
+  environment(t, async (url, init = {}) => {
+    if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: 'main', primary: true, configured: true }] })
+    if (url.endsWith('/bots')) return Response.json({ bots: [] })
+    if (url.endsWith('/generation-config')) return Response.json({ baseUrl: 'http://test', videoExtensions: 'mkv' })
+    if (url.endsWith('/automation-config')) {
+      if (init.method === 'POST') { saved = JSON.parse(init.body); writes.push(saved) }
+      return Response.json({ settings: saved })
+    }
+    throw new Error(`Unexpected request ${url}`)
+  })
+  let mounted = mount('views/ShareView.vue', { token: 'test' })
+  try {
+    await tick()
+    const s = mounted.state
+    assert.deepEqual([...s.outputDirectories], ['待整理'])
     s.sharePath = '/电影/2026'
     s.addDirectory('.')
     assert.equal(s.outputDir, '.')
@@ -123,17 +187,17 @@ test('root representation is distinct from missing selection and unsafe paths', 
   assert.equal(display(''), '未选择')
 })
 
-test('115 parent selection saves independently, preserves errors in dialog and rejects stale accounts', async t => {
-  let primary = 'main', failSave = false, writes = 0
-  let saved = { accountId: primary, parentCID: '0', parentPath: '/', generation: { outputDir: 'strm', baseUrl: 'http://test', videoExtensions: 'mkv' } }
+test('editing a directory keeps failed saves retryable and persists the replacement', async t => {
+  let failSave = true
+  let saved = { accountId: 'main', generation: { outputDir: 'inbox', baseUrl: 'http://test', videoExtensions: 'mkv' } }
   environment(t, async (url, init = {}) => {
-    if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: primary, primary: true, configured: true }] })
+    if (url.endsWith('/accounts')) return Response.json({ accounts: [{ id: 'main', primary: true, configured: true }] })
     if (url.endsWith('/bots')) return Response.json({ bots: [] })
     if (url.endsWith('/generation-config')) return Response.json({ baseUrl: 'http://test', videoExtensions: 'mkv' })
     if (url.endsWith('/automation-config')) {
       if (init.method === 'POST') {
-        if (failSave) return Response.json({ error: '保存失败' }, { status: 500 })
-        saved = { ...saved, ...JSON.parse(init.body) }; writes++
+        if (failSave) return Response.json({ error: 'save failed' }, { status: 500 })
+        saved = JSON.parse(init.body)
       }
       return Response.json({ settings: saved })
     }
@@ -143,46 +207,25 @@ test('115 parent selection saves independently, preserves errors in dialog and r
   try {
     await tick()
     const s = mounted.state
-    assert.equal(s.settingsDirty, false)
-    await s.openParentDirectory()
-    assert.equal(s.parentAccountId, 'main')
-    s.parentDialogOpen = false // Cancel without selecting.
-    assert.equal(s.parentCID, '0')
-    assert.equal(s.settingsDirty, false)
-    await s.openParentDirectory()
-    s.tgBatchWaitSeconds = 20
+    s.openDirectoryDialog('inbox')
+    s.addDirectory('movies')
     assert.equal(s.settingsDirty, true)
-    failSave = true
-    await s.selectParentDirectory({ id: '12', path: '/资源/电影' })
-    assert.equal(s.parentCID, '0')
-    assert.equal(s.parentDialogOpen, true)
-    assert.match(s.parentError, /保存失败/)
-    assert.equal(writes, 0)
+    await s.saveAutomation()
+    assert.match(s.error, /save failed/)
+    assert.equal(saved.generation.outputDir, 'inbox')
+    assert.equal(s.settingsDirty, true)
     failSave = false
-    await s.selectParentDirectory({ id: '12', path: '/资源/电影' })
-    assert.equal(s.parentDialogOpen, false)
-    assert.equal(s.parentLabel, '/资源/电影')
-    assert.equal(s.settingsDirty, true)
-    assert.equal(saved.tgBatchWaitSeconds, undefined)
-    assert.equal(saved.parentPath, '/资源/电影')
+    await s.saveAutomation()
+    assert.equal(saved.generation.outputDir, 'movies')
+    assert.equal(s.taskOutputDir, 'movies')
+    assert.equal(s.settingsDirty, false)
     mounted.app.unmount()
     mounted = mount('views/ShareView.vue', { token: 'test' })
     await tick()
-    const reloaded = mounted.state
-    assert.equal(reloaded.parentLabel, '/资源/电影')
-    assert.equal(reloaded.settingsDirty, false)
-    primary = 'replacement'
-    await reloaded.openParentDirectory()
-    assert.equal(reloaded.parentCID, '')
-    assert.equal(reloaded.parentPath, '')
-    assert.equal(reloaded.parentAccountId, primary)
-    reloaded.accountId = 'changed-again'
-    await reloaded.selectParentDirectory({ id: '12', path: '/旧目录' })
-    assert.equal(reloaded.parentCID, '')
-    assert.match(reloaded.parentError, /主账号已变化/)
+    assert.equal(mounted.state.outputDir, 'movies')
+    assert.deepEqual([...mounted.state.outputDirectories], ['movies'])
   } finally { mounted.app.unmount() }
 })
-
 test('115 picker selects root and child paths, blocks loading and failed listing', async t => {
   let fail = false
   environment(t, async url => {

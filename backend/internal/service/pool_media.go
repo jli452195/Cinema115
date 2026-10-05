@@ -144,13 +144,12 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 	ctx = WithPoolRequest(ctx, req)
 	started := time.Now()
 	probe := s.checkMediaDrive
-	if playbackDirectShare(ctx) && !req.Download && !req.Task {
-		// A direct share read is itself the credential check. Do not spend a
-		// second 115 request on the configured write directory unless the share
-		// read fails and the instant-upload fallback is actually entered.
+	if deferredPlaybackRead(ctx) {
+		// A verified target read proves credential usability, not directory
+		// health. Writes and cached links perform the deferred directory check.
 		probe = nil
 		if s.Cache != nil && s.Cache.logs != nil {
-			s.Cache.logs.Add(ctx, "DEBUG", "分享直取候选跳过前置目录核验；仅在需要秒传时核验目标目录")
+			s.Cache.logs.Add(ctx, "DEBUG", "目标只读取链延后目录核验；直链缓存命中或需要写入时实时核验")
 		}
 	}
 	lease, err := s.Pool.Acquire(ctx, key, r.UserID, s.poolAccounts(), probe)
@@ -199,7 +198,7 @@ func (a *MediaAuthorization) Close() error {
 	return a.poolLease.Close()
 }
 func (a *MediaAuthorization) Commit(ctx context.Context) error {
-	if a.deferredShare && !a.shareRead {
+	if a.deferredRead && !a.targetRead {
 		return ErrAccountChanged
 	}
 	defer func() {

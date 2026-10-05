@@ -16,7 +16,7 @@ interface DirectoryResponse {
   truncated: boolean
 }
 
-const props = defineProps<{ token: string }>()
+const props = withDefaults(defineProps<{ token: string; title?: string }>(), { title: '添加 STRM 目录' })
 const emit = defineEmits<{ close: []; select: [path: string] }>()
 const dialog = ref<HTMLDialogElement>()
 const currentPath = ref('')
@@ -89,7 +89,7 @@ onBeforeUnmount(() => {
         <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
           <h2 id="strm-directory-title" class="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
             <svg class="h-5 w-5 text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.75A2.75 2.75 0 0 1 5.75 3h3.69c.73 0 1.43.29 1.95.8l1.06 1.07c.14.14.33.22.53.22h5.27A2.75 2.75 0 0 1 21 7.84v.41H3v-2.5Zm0 4h18l-1.2 8.41A2.75 2.75 0 0 1 17.08 20H5.92a2.75 2.75 0 0 1-2.72-2.36L2 9.75h1Z"/></svg>
-            添加 STRM 目录
+            {{ title }}
           </h2>
           <button type="button" aria-label="关闭目录选择器" class="rounded-lg p-2 text-slate-400 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300" @click="close"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>

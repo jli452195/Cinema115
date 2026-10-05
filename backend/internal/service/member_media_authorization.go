@@ -24,11 +24,25 @@ type MediaAuthorization struct {
 	account        P115Account
 	download       bool
 	checkedAt      time.Time
-	deferredShare  bool
-	shareRead      bool
+	deferredRead   bool
+	targetRead     bool
 }
 
 type playbackDirectShareKey struct{}
+type playbackFileReuseKey struct{}
+
+// WithPlaybackFileReuse allows a verified target-file read to prove current
+// credentials. Cache hits and writes must still validate the target directory.
+// This marker is set by the authenticated playback ingress, never client input.
+func WithPlaybackFileReuse(ctx context.Context) context.Context {
+	return context.WithValue(ctx, playbackFileReuseKey{}, true)
+}
+
+func deferredPlaybackRead(ctx context.Context) bool {
+	req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
+	file, _ := ctx.Value(playbackFileReuseKey{}).(bool)
+	return (playbackDirectShare(ctx) || file) && !req.Download && !req.Task && !preparingPlaybackFile(ctx)
+}
 
 // WithPlaybackDirectShare marks a share STRM request whose target account will
 // first try the read-only share endpoint. The endpoint itself validates the
@@ -184,7 +198,7 @@ func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Conte
 		}
 	} else {
 		a, err = s.playbackAccount(r)
-		if err == nil && !(playbackDirectShare(ctx) && !download && !a.Primary) {
+		if err == nil && !(deferredPlaybackRead(ctx) && !download && !a.Primary) {
 			err = s.checkMediaDrive(ctx, a)
 		}
 	}
@@ -192,8 +206,8 @@ func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Conte
 		return nil, err
 	}
 	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started, poolLease: lease, userLease: userLease}
-	grant.deferredShare = playbackDirectShare(ctx) && !download && !a.Primary
-	if lease != nil && grant.deferredShare {
+	grant.deferredRead = deferredPlaybackRead(ctx) && !download && !a.Primary
+	if lease != nil && grant.deferredRead {
 		lease.skipHealthRefresh = true
 	}
 	if err := grant.CheckCurrent(ctx); err != nil {

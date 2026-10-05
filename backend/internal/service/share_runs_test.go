@@ -81,6 +81,7 @@ func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 		return nil
 	})
 	settings := s.Settings.Value()
+	settings.Generation.OutputDir = input.OutputDir
 	settings.ReshareEnabled = true
 	settings.AccountID = "original"
 	if err := s.Settings.Save(settings); err != nil {

@@ -211,7 +211,7 @@ type PoolLease struct {
 	Account           P115Account
 	closed            bool
 	healthSequence    uint64
-	skipHealthRefresh bool // A share read proves no write-directory health.
+	skipHealthRefresh bool // A target read proves no write-directory health.
 }
 
 func eligiblePoolAccount(a P115Account) bool {
@@ -507,7 +507,7 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 		attempts.excluded[l.Account.UID] = true
 		if probe == nil {
 			l.skipHealthRefresh = true
-			recordPoolCandidate(ctx, l.Account.UID, "probe", "deferred_to_share_read", l.Record.Generation)
+			recordPoolCandidate(ctx, l.Account.UID, "probe", "deferred_to_target_read", l.Record.Generation)
 			ok = true
 			return l, nil
 		}

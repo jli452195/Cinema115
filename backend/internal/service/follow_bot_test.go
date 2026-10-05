@@ -180,6 +180,7 @@ func TestFollowBotJobGeneratesAndWaitsForLibrary(t *testing.T) {
 	}
 	automation.ValidateAccount = followAccountFake{}.ValidateSelection
 	automationSettings := automation.Value()
+	automationSettings.Generation.OutputDir = "strm"
 	automationSettings.AccountID = "follow-account"
 	automationSettings.TGBatchWaitSeconds = 0
 	if err := automation.Save(automationSettings); err != nil {

@@ -39,7 +39,7 @@ type AutomationStore struct {
 }
 
 func NewAutomationStore(path, root, baseURL string) (*AutomationStore, error) {
-	s := &AutomationStore{path: path, root: root, value: AutomationSettings{ParentCID: "0", Generation: GenerateInput{BaseURL: baseURL, OutputDir: "strm", VideoExtensions: DefaultVideoExtensions, Recursive: true}}}
+	s := &AutomationStore{path: path, root: root, value: AutomationSettings{ParentCID: "0", Generation: GenerateInput{BaseURL: baseURL, VideoExtensions: DefaultVideoExtensions, Recursive: true}}}
 	s.value.ReviewRetryMinutes, s.value.ReviewRetryMax = 30, 6
 	s.value.TGBatchWaitSeconds = 5
 	s.value.Generation.MetadataExtensions = DefaultMetadataExtensions
@@ -182,7 +182,13 @@ func (s *AutomationStore) validate(value AutomationSettings) error {
 	if len(value.ParentPath) > 4096 || strings.ContainsAny(value.ParentPath, "\r\n\x00") {
 		return generationInputError("转存目录显示路径无效")
 	}
-	return ValidateGenerationOptions(s.root, value.Generation)
+	options := value.Generation
+	if options.OutputDir == "" && !value.TelegramEnabled {
+		// An unconfigured destination may be persisted with automation disabled.
+		// Validate the remaining options without choosing a destination for jobs.
+		options.OutputDir = "."
+	}
+	return ValidateGenerationOptions(s.root, options)
 }
 
 func (s *AutomationStore) Save(value AutomationSettings) error {

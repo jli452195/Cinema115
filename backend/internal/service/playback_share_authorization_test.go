@@ -44,7 +44,7 @@ func TestDeferredShareFailureDoesNotProbeOrUpload(t *testing.T) {
 			f := &shareFailureDrive{shareHintFake: &shareHintFake{fastCacheFake: fast}, err: failure}
 			cache.client = f
 			selected := &PlaybackCacheSelection{binding: PlaybackBinding{AccountID: a.ID, ParentCID: a.PlaybackParentCID}, accountRevision: a.Revision, cookie: a.Cookie, uid: a.UID}
-			_, _, err = cache.ResolveWithReport(grant.ShareResolutionContext(ctx), selected, &p115.ShareInfo{Code: "share", Password: "pass"}, "123", "source-private", "player")
+			_, _, err = cache.ResolveWithReport(grant.ResolutionContext(ctx), selected, &p115.ShareInfo{Code: "share", Password: "pass"}, "123", "source-private", "player")
 			if !errors.Is(err, failure) || f.targetReads != 1 || f.sourceReads != 0 || f.uploads != 0 {
 				t.Fatal("failure lost classification or caused fallback", err)
 			}
@@ -120,17 +120,17 @@ func TestDeferredShareAuthorizationDirectoryGate(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer grant.Close()
-			if checks != 0 || !grant.deferredShare {
+			if checks != 0 || !grant.deferredRead {
 				t.Fatal("share performed preflight")
 			}
 			if err := grant.Commit(ctx); err == nil {
 				t.Fatal("unresolved share was committed")
 			}
 			if mode == "cached" {
-				if err := grant.ValidateCachedShare(ctx); err != nil {
+				if err := grant.ValidateTargetDirectory(ctx); err != nil {
 					t.Fatal(err)
 				}
-				if checks != 1 || grant.deferredShare {
+				if checks != 1 || grant.deferredRead {
 					t.Fatal("cache hit missed fresh probe")
 				}
 				if err := grant.Commit(ctx); err != nil {
@@ -145,7 +145,7 @@ func TestDeferredShareAuthorizationDirectoryGate(t *testing.T) {
 			if mode == "credentials-changed" {
 				selected.cookie = "UID=999_A"
 			}
-			_, _, err = cache.ResolveWithReport(grant.ShareResolutionContext(ctx), selected, &p115.ShareInfo{Code: "share", Password: "pass"}, "123", "source-private", "player")
+			_, _, err = cache.ResolveWithReport(grant.ResolutionContext(ctx), selected, &p115.ShareInfo{Code: "share", Password: "pass"}, "123", "source-private", "player")
 			switch mode {
 			case "direct":
 				if err != nil || checks != 0 || fake.targetReads != 1 || fake.sourceReads != 0 || fake.uploads != 0 {

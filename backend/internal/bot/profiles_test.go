@@ -47,6 +47,11 @@ func TestBotProfilesMigrateLegacyOnceAndKeepSecretsEncrypted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	initial := automation.Value()
+	initial.Generation.OutputDir = "strm"
+	if err := automation.Save(initial); err != nil {
+		t.Fatal(err)
+	}
 	if err := MigrateLegacyBindings(context.Background(), profiles, automation, db); err != nil {
 		t.Fatal(err)
 	}

@@ -55,6 +55,10 @@ func (s *PlaybackCache) ForgetDirectory(ctx context.Context, key string) error {
 // Serialize writes by target UID while unrelated accounts make bounded progress.
 // Unknown writes are recoverable by a positive SHA1 hit.
 func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, sourceCookie, ua string, report *PlaybackResolution, loadSource func() (*p115.DownloadInfo, error)) (string, error) {
+	grant, err := resolutionAuthorization(ctx, selected)
+	if err != nil {
+		return "", err
+	}
 	debug := ProxyDebugEnabled(ctx)
 	if debug {
 		ctx = p115.WithPlaybackTiming(ctx, func(t p115.PlaybackTiming) {
@@ -152,6 +156,15 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			}
 		}
 		s.forgetSource(sourceKey)
+	}
+	origin, _ := ctx.Value(playbackMaterialOrigin{}).(string)
+	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
+	if material, _ := s.lookupMaterial(origin, hint); material.ID == "" {
+		// Unknown source identity cannot use the trusted-copy shortcut. Check
+		// the target before starting source I/O or speculative target searches.
+		if err := grant.ValidateTargetDirectory(ctx); err != nil {
+			return "", err
+		}
 	}
 	prefetch := s.startPlaybackSearch(ctx, fast, selected, targetScope)
 	defer prefetch.stop()
@@ -284,6 +297,11 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
 	next("恢复保存目录核验")
+	// A failed/missing read cannot authorize a write. This also checks the
+	// request snapshot again before any upload intent or external write.
+	if err := grant.ValidateTargetDirectory(ctx); err != nil {
+		return "", err
+	}
 	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
 		if directory, ok := fast.(interface {
 			ValidatePlaybackRecoveryDirectory(context.Context, string, string, string) error
@@ -408,6 +426,10 @@ func (s *PlaybackCache) rememberSource(source, key string) {
 	s.sourceMappings[source] = key
 }
 func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry, selected *PlaybackCacheSelection, ua string, report *PlaybackResolution) (string, error) {
+	grant, err := resolutionAuthorization(ctx, selected)
+	if err != nil {
+		return "", err
+	}
 	verified, canVerify := s.client.(interface {
 		VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
 	})
@@ -415,6 +437,9 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 		return "", fmt.Errorf("目标凭据与副本 UID 不一致")
 	}
 	if preparingPlaybackFile(ctx) || !canVerify {
+		if err := grant.ValidateTargetDirectory(ctx); err != nil {
+			return "", err
+		}
 		if err := s.verifyReusableCopy(ctx, e, selected); err != nil {
 			return "", err
 		}
@@ -447,10 +472,21 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 			return "", failure
 		}
 	}
+	if grant != nil {
+		if err := grant.CheckCurrent(ctx); err != nil {
+			return "", err
+		}
+	}
 	e.LastUsed = time.Now().UTC()
-	e, err := s.storeReadyCopy(e)
+	e, err = s.storeReadyCopy(e)
 	if err != nil {
 		return "", err
+	}
+	if grant != nil && canVerify && !preparingPlaybackFile(ctx) {
+		grant.targetRead = true
+		if grant.deferredRead {
+			s.logs.Add(ctx, "DEBUG", "目标副本取链与文件身份核验通过，复用本次实时凭据检查；未请求播放目录")
+		}
 	}
 	s.stats.targetHits.Add(1)
 	report.Mode, report.FileCacheKey, report.FileCacheID = "复用同 SHA1 文件", e.Key, e.File.ID

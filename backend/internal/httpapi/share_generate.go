@@ -18,7 +18,7 @@ import (
 
 func (a *ShareAPI) generationConfig(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, gin.H{"baseUrl": a.configuredBaseURL(), "videoExtensions": service.DefaultVideoExtensions, "metadataExtensions": service.DefaultMetadataExtensions, "outputDir": "strm", "outputRoot": "/strm", "directories": []string{"strm"}})
+	c.JSON(http.StatusOK, gin.H{"baseUrl": a.configuredBaseURL(), "videoExtensions": service.DefaultVideoExtensions, "metadataExtensions": service.DefaultMetadataExtensions, "outputDir": "", "outputRoot": "/strm", "directories": []string{}})
 }
 
 type outputDirectoryEntry struct {
