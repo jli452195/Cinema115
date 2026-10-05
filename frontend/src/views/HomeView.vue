@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import embyIcon from '../assets/emby.svg'
+import telegramIcon from '../assets/telegram/telegram.svg'
 
 const props = defineProps<{ username: string; category: 'p115' | 'telegram' | 'emby' }>()
 const emit = defineEmits<{ openDashboard: []; category: [value: 'p115' | 'telegram']; openP115: []; openShare: []; openTelegram: []; openLogs: []; logout: [] }>()
@@ -36,12 +37,12 @@ const current = computed(() => categories[props.category])
       <RouterLink v-for="feature in current.features" :key="feature.to" :to="feature.to" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400">
         <span class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl" :class="feature.icon === 'emby' ? 'bg-emerald-50 dark:bg-emerald-900/30' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600'">
           <img v-if="feature.icon === 'emby'" :src="embyIcon" alt="" class="h-7 w-7" />
+          <img v-else-if="feature.icon === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
           <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
             <path v-if="feature.icon === 'cloud'" d="M6 19a5 5 0 0 1-1-9.9A7 7 0 0 1 18.7 8a5.5 5.5 0 0 1-.2 11H6Z" />
             <template v-else-if="feature.icon === 'play'"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4V8Z"/></template>
             <template v-else-if="feature.icon === 'download'"><path d="M12 3v11m0 0 4-4m-4 4-4-4"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></template>
             <template v-else-if="feature.icon === 'monitor'"><path d="M4 5h6l2 2h8v12H4z"/><path d="M8 12h8m-4-4v8"/></template>
-            <path v-else d="m21 3-5 18-5-7-8-3L21 3Zm-10 11 5-6" />
           </svg>
         </span>
         <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ feature.title }}</h2>

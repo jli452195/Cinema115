@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
 import { RouterLink } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import telegramIcon from '../assets/telegram/telegram.svg'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
@@ -64,10 +65,10 @@ onBeforeUnmount(() => lifecycle.abort())
       <RouterLink v-for="source in sources" :key="source.id" :to="source.settings" :aria-labelledby="`source-${source.id}`" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600">
         <div class="mb-5 flex items-center justify-between gap-3">
           <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
+            <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <template v-if="source.id === 'gying'"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m10 8 6 4-6 4V8Z" /></template>
               <template v-else-if="source.id === 're0'"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5M8 10.5h5m-2.5-2.5v5" /></template>
-              <path v-else d="m21 3-5 18-5-7-8-3L21 3Zm-10 11 5-6" />
             </svg>
           </span>
           <span role="status" :aria-busy="summaries[source.id].loading" class="rounded-full px-3 py-1 text-xs" :class="toneClasses[summaries[source.id].tone]">{{ summaries[source.id].label }}</span>

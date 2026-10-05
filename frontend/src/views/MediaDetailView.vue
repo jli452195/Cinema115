@@ -26,6 +26,7 @@ import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
 import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 import re0Logo from '../assets/re0/logo-re0-square.webp'
 import gyingLogo from '../assets/gying/logo-gying.png'
+import telegramIcon from '../assets/telegram/telegram.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
@@ -267,9 +268,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                   </span>
                 </SearchPill>
                 <SearchPill v-if="isPortalAdmin && searchConfigured.bot" @click="botSearchOpen = true">
-                  <svg class="h-4 w-4 shrink-0 text-[#2AABEE]" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.32.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.233-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.322.315-.646.88-.97 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
-                  </svg>
+                  <img :src="telegramIcon" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
                   <span class="flex items-center gap-0.5">
                     <span class="font-bold font-sans text-[#2AABEE]">Bot</span>
                     <span class="text-slate-500 dark:text-slate-400">搜索</span>
