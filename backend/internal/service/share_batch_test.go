@@ -38,7 +38,7 @@ func (f *batchTransferFake) ListForTransfer(_ context.Context, share *p115.Share
 	if value, ok := f.owners[share.Code]; ok {
 		owner = value
 	}
-	return &p115.SharePage{OwnerID: owner, Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "同名电影.mkv", Size: 100}}}, nil
+	return &p115.SharePage{OwnerID: owner, Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "同名电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100}}}, nil
 }
 
 func (f *batchTransferFake) List(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
@@ -95,7 +95,7 @@ func (f *batchTransferFake) ReceiveShare(_ context.Context, share *p115.ShareInf
 	if f.failReceive {
 		return p115.ErrShareUnderReview
 	}
-	f.drive[cid] = append(f.drive[cid], p115.ShareFile{ID: strconv.Itoa(1000 + len(f.received)), Name: "同名电影.mkv", Size: 100})
+	f.drive[cid] = append(f.drive[cid], p115.ShareFile{ID: strconv.Itoa(1000 + len(f.received)), Name: "同名电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100})
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (f *batchTransferFake) SendShare(_ context.Context, ids []string, _ string)
 		if name := f.names[id]; name != "" {
 			f.shared = append(f.shared, p115.ShareFile{ID: id, Name: name, Directory: true})
 		} else {
-			f.shared = append(f.shared, p115.ShareFile{ID: id, Name: "同名电影.mkv", Size: 100})
+			f.shared = append(f.shared, p115.ShareFile{ID: id, Name: "同名电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100})
 		}
 	}
 	return &p115.ShareInfo{Code: "own", URL: "https://115.com/s/own"}, nil

@@ -16,7 +16,7 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 	accounts, id := proxyTestAccounts(t)
 	denied := false
 	authorizations, downloads := 0, 0
-	sourcePath := "http://nas/api/?share_code=abc&receive_code=pass&id=1"
+	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/1"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/emby/Users/viewer":
@@ -69,6 +69,10 @@ func TestCached302StillAuthorizesAndInvalidatesChangedCredentials(t *testing.T) 
 	}
 	if h.DirectLinkStatus().Entries[0].URL != "https://cdn.115.com/v" {
 		t.Fatal("admin cache link differs from response")
+	}
+	sourcePath = "http://legacy/api/?id=1&receive_code=pass&share_code=abc&sha1=ignored&filename=movie.mkv"
+	if code := call("player"); code != 302 || downloads != 1 {
+		t.Fatal("legacy query did not share cache", code)
 	}
 	sourcePath = "http://other-tool:9527/s/abc_pass_1.mp4?/movie.mp4"
 	if code := call("player"); code != 302 || downloads != 1 {

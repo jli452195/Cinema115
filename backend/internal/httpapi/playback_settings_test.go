@@ -42,7 +42,7 @@ func TestPlaybackAddressUsesSavedWebConfigAndRequestFallback(t *testing.T) {
 	if got := call("GET", "/api/admin/p115/share/generation-config", "")["baseUrl"]; got != "" {
 		t.Fatal("未保存时不应读取环境变量", got)
 	}
-	input := `{"url":"https://115.com/s/source","fileId":"1","name":"电影.mkv"}`
+	input := `{"url":"https://115.com/s/source?password=pass","sha1":"0123456789ABCDEF0123456789ABCDEF01234567","fileId":"1","name":"电影.mkv"}`
 	if got := call("POST", "/api/admin/p115/share/strm", input)["content"].(string); !strings.HasPrefix(got, "https://nas.example/api/") {
 		t.Fatal("未使用请求地址回退", got)
 	}

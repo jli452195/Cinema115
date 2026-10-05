@@ -51,7 +51,7 @@ func TestGenerationLogsBoundedConcurrentAndFiltered(t *testing.T) {
 func TestGenerationLogsRepeatedWriteAndSource(t *testing.T) {
 	logs := &GenerationLogs{}
 	client := shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
-		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "电影.mkv", Size: 2 << 20}, {ID: "2", Name: "字幕.srt"}}}, nil
+		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "2", Name: "字幕.srt"}}}, nil
 	})
 	g := &LoggedGenerator{Logs: logs, Generator: &STRMGenerator{Client: client, Root: t.TempDir(), Cookie: func() string { return "private-cookie" }}}
 	input := generationOptions(t)
@@ -188,13 +188,13 @@ func TestInfoLogsReportStartPagesAndSuccessfulWriteMilestones(t *testing.T) {
 				if i == tc.failAt {
 					files = append(files, p115.ShareFile{ID: "blocked-directory", Name: "blocked", Directory: true})
 				} else {
-					files = append(files, p115.ShareFile{ID: strconv.Itoa(i), Name: fmt.Sprintf("video-%d.mkv", i), Size: 2 << 20})
+					files = append(files, p115.ShareFile{ID: strconv.Itoa(i), Name: fmt.Sprintf("video-%d.mkv", i), SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20})
 				}
 			}
 			files = append(files, p115.ShareFile{ID: "subtitle", Name: "字幕.srt"})
 			client := shareListFunc(func(_ context.Context, _ *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
 				if cid == "blocked-directory" {
-					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: strconv.Itoa(tc.failAt), Name: fmt.Sprintf("video-%d.mkv", tc.failAt), Size: 2 << 20}}}, nil
+					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: strconv.Itoa(tc.failAt), Name: fmt.Sprintf("video-%d.mkv", tc.failAt), SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 				}
 				return &p115.SharePage{Count: len(files), Files: files}, nil
 			})

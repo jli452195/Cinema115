@@ -61,9 +61,9 @@ func TestSharePathGenerationAndFingerprint(t *testing.T) {
 		}
 		switch cid {
 		case "0":
-			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "10", Name: "电影", Directory: true}, {ID: "11", Name: "outside.mkv", Size: 2 << 20}}}, nil
+			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "10", Name: "电影", Directory: true}, {ID: "11", Name: "outside.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 		case "10":
-			return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "12", Name: "inside.mkv", Size: 2 << 20}}}, nil
+			return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "12", Name: "inside.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 		default:
 			t.Fatalf("unexpected CID %s", cid)
 			return nil, nil

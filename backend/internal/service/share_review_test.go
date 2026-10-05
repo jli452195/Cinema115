@@ -93,7 +93,7 @@ func TestReadableReviewCanGenerateSTRMWithoutPreflight(t *testing.T) {
 		if r.Header.Get("Cookie") != "UID=42_A1_100" {
 			t.Error("本人分享未使用当前 Cookie")
 		}
-		w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"99"},"count":1,"list":[{"fid":"1","n":"video.mp4","s":"2000000"}]}}`))
+		w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"99"},"count":1,"list":[{"fid":"1","sha":"0123456789ABCDEF0123456789ABCDEF01234567","n":"video.mp4","s":"2000000"}]}}`))
 	}))
 	defer server.Close()
 	client := p115.NewShareClient()
@@ -130,13 +130,13 @@ func TestOwnShareCleanupUsesCookieAndReadableSnapshot(t *testing.T) {
 				ownReads++
 				state, id = 0, "21"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "userinfo": map[string]any{"user_id": "99"}, "count": 1, "list": []map[string]any{{"fid": id, "n": "movie.mkv", "s": 2000000}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": true, "data": map[string]any{"share_state": state, "userinfo": map[string]any{"user_id": "99"}, "count": 1, "list": []map[string]any{{"fid": id, "sha": "0123456789ABCDEF0123456789ABCDEF01234567", "n": "movie.mkv", "s": 2000000}}}})
 		case "/files/add":
 			w.Write([]byte(`{"state":true,"cid":"999"}`))
 		case "/share/receive":
 			w.Write([]byte(`{"state":true}`))
 		case "/files":
-			w.Write([]byte(`{"state":true,"count":1,"data":[{"fid":"21","n":"movie.mkv","s":"2000000"}]}`))
+			w.Write([]byte(`{"state":true,"count":1,"data":[{"fid":"21","sha":"0123456789ABCDEF0123456789ABCDEF01234567","n":"movie.mkv","s":"2000000"}]}`))
 		case "/share/send":
 			w.Write([]byte(`{"state":true,"data":{"share_code":"own","receive_code":"test"}}`))
 		case "/share/updateshare":
@@ -204,7 +204,7 @@ func TestReadableForeignReviewStopsBeforeTransferAndSchedulesSafely(t *testing.T
 						w.Write([]byte(`{"state":true,"data":{"share_state":1,"userinfo":{"user_id":"99"},"count":1,"list":[{"cid":"123","n":"目录"}]}}`))
 						return
 					}
-					w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"99"},"shareinfo":{"share_state":0,"forbid_reason":""},"count":1,"list":[{"fid":"1","n":"电影.mkv","s":"100"}]}}`))
+					w.Write([]byte(`{"state":true,"data":{"share_state":0,"userinfo":{"user_id":"99"},"shareinfo":{"share_state":0,"forbid_reason":""},"count":1,"list":[{"fid":"1","sha":"0123456789ABCDEF0123456789ABCDEF01234567","n":"电影.mkv","s":"100"}]}}`))
 				}))
 				defer server.Close()
 				workflow, input := setupWorkflow(t, &transferFake{})

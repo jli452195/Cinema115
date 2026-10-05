@@ -20,7 +20,7 @@ func (f *metadataClientFake) List(_ context.Context, _ *p115.ShareInfo, cid stri
 	if cid == "0" {
 		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "剧集", Directory: true}}}, nil
 	}
-	return &p115.SharePage{Count: 3, Files: []p115.ShareFile{{ID: "1", Name: "第1集.mkv", Size: 2 << 20}, {ID: "2", Name: "第1集.zh.srt", Size: int64(len(f.content))}, {ID: "3", Name: "说明.txt", Size: 10}}}, nil
+	return &p115.SharePage{Count: 3, Files: []p115.ShareFile{{ID: "1", Name: "第1集.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "2", Name: "第1集.zh.srt", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: int64(len(f.content))}, {ID: "3", Name: "说明.txt", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 10}}}, nil
 }
 
 func (f *metadataClientFake) ReadMetadata(_ context.Context, share *p115.ShareInfo, id, cookie string) ([]byte, error) {
@@ -118,7 +118,7 @@ func TestMetadataConflictIsPreservedAndRenamed(t *testing.T) {
 type metadataSequenceFake struct{ reads int }
 
 func (f *metadataSequenceFake) List(_ context.Context, _ *p115.ShareInfo, _ string, _ int, _ string) (*p115.SharePage, error) {
-	return &p115.SharePage{Count: 3, Files: []p115.ShareFile{{ID: "1", Name: "第1集.mkv", Size: 2 << 20}, {ID: "2", Name: "第1集.srt"}, {ID: "3", Name: "第1集.ass"}}}, nil
+	return &p115.SharePage{Count: 3, Files: []p115.ShareFile{{ID: "1", Name: "第1集.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "2", Name: "第1集.srt"}, {ID: "3", Name: "第1集.ass"}}}, nil
 }
 
 func (f *metadataSequenceFake) ReadMetadata(_ context.Context, _ *p115.ShareInfo, id, _ string) ([]byte, error) {

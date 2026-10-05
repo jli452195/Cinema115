@@ -88,7 +88,7 @@ func TestReviewOwnershipThroughHTTPAndSTRMWriter(t *testing.T) {
 				}
 				_ = json.NewEncoder(rw).Encode(map[string]any{"state": true, "data": map[string]any{
 					"share_state": 0, "userinfo": map[string]any{"user_id": owner}, "count": 1,
-					"list": []map[string]any{{"fid": "3516725279353473021", "n": "电影.mkv", "s": 2000000}},
+					"list": []map[string]any{{"fid": "3516725279353473021", "sha": "0123456789ABCDEF0123456789ABCDEF01234567", "n": "电影.mkv", "s": 2000000}},
 				}})
 			}))
 			defer server.Close()
@@ -108,7 +108,7 @@ func TestReviewOwnershipThroughHTTPAndSTRMWriter(t *testing.T) {
 				t.Fatal("本人可读审核分享生成失败", err)
 			}
 			data, err := os.ReadFile(filepath.Join(w.Root, input.OutputDir, "电影.strm"))
-			if err != nil || !strings.Contains(string(data), "share_code=source") || !strings.Contains(string(data), "id=3516725279353473021") || !strings.Contains(string(data), "receive_code=1234") {
+			if err != nil || !strings.Contains(string(data), "/api/share115/source/") || !strings.Contains(string(data), "/3516725279353473021") || !strings.Contains(string(data), "/1234/") {
 				t.Fatal("STRM 未使用原分享和原文件编号", err)
 			}
 			if len(workflowJobs(t, w)) != 0 {

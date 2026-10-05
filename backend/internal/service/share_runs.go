@@ -20,6 +20,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/strm"
 )
 
 var ErrShareRunMissing = errors.New("后台任务不存在或服务已重启，请查看分享任务日志，勿直接重复转存")
@@ -99,6 +100,7 @@ func NewShareRuns(root context.Context, tasks *ShareTasks) *ShareRuns {
 }
 
 type shareRunFingerprintInput struct {
+	Format             string `json:"format"`
 	SharePath          string `json:"sharePath,omitempty"`
 	AccountID          string `json:"accountId"`
 	CredentialHash     string `json:"credentialHash"`
@@ -174,6 +176,7 @@ func shareRunFingerprint(settings AutomationSettings, credentialHash string, inp
 			parentCID, fixedPassword = "0", settings.FixedSharePassword
 		}
 		items[i] = shareRunFingerprintInput{
+			Format:    strm.ShareFormat,
 			SharePath: input.SharePath,
 			AccountID: settings.AccountID, CredentialHash: credentialHash, ShareURL: canonical.String(), CID: cid,
 			Mode: mode, OutputDir: strings.TrimSpace(input.OutputDir), BaseURL: strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/strm"
 )
 
 type ShareAPI struct {
@@ -45,11 +46,14 @@ func (a *ShareAPI) Register(r *gin.Engine, admin *gin.RouterGroup) {
 	admin.GET("/p115/share/output-directories", a.outputDirectories)
 	admin.POST("/p115/share/generate", a.generate)
 	admin.POST("/p115/share/generate-stream", a.generateStream)
+	r.GET("/api/share115/:code/:sha1/:password/:fileID", a.streamShare)
+	r.HEAD("/api/share115/:code/:sha1/:password/:fileID", a.streamShare)
 	r.GET("/api/", a.streamQuery)
 	r.HEAD("/api/", a.streamQuery)
 }
 
 type shareInput struct {
+	SHA1     string `json:"sha1"`
 	URL      string `json:"url" binding:"required"`
 	Password string `json:"password"`
 	CID      string `json:"cid"`
@@ -118,8 +122,12 @@ func (a *ShareAPI) strm(c *gin.Context) {
 		share.Password = input.Password
 	}
 	name := path.Base(strings.ReplaceAll(input.Name, "\\", "/"))
-	claim := sharePlaybackParams{Code: share.Code, Password: share.Password, FileID: input.FileID, Name: name}
-	relative := a.queryURL(claim)
+	claim := sharePlaybackParams{Code: share.Code, Password: share.Password, FileID: input.FileID, Name: name, SHA1: input.SHA1}
+	relative, err := strm.SharePath(strm.Share{Code: claim.Code, SHA1: claim.SHA1, Password: claim.Password, FileID: claim.FileID})
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	base := a.generationBaseURL(c)
 	if input.BaseURL != "" {
 		base, err = service.ValidateBaseURL(input.BaseURL)
@@ -136,42 +144,35 @@ func (a *ShareAPI) strm(c *gin.Context) {
 	c.JSON(200, gin.H{"name": strings.TrimSuffix(name, path.Ext(name)) + ".strm", "content": base + relative + "\n", "playUrl": relative})
 }
 
-// 播放入口使用分享码、文件 ID 和提取码。
-func (a *ShareAPI) queryURL(claim sharePlaybackParams) string {
-	return "/api/?share_code=" + url.QueryEscape(claim.Code) + "&id=" + url.QueryEscape(claim.FileID) + "&receive_code=" + url.QueryEscape(claim.Password)
+// streamShare uses the same strict path parser as Emby and local STRM playback.
+func (a *ShareAPI) streamShare(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	u := c.Request.URL
+	if u.RawPath != "" || u.RawQuery != "" || u.ForceQuery {
+		c.JSON(400, gin.H{"error": "STRM 分享地址不允许编码分隔符或查询参数"})
+		return
+	}
+	value, err := strm.ParseSharePath(u.Path)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	a.play(c, &sharePlaybackParams{Code: value.Code, SHA1: value.SHA1, Password: value.Password, FileID: value.FileID, Name: value.FileID})
 }
 
-func (a *ShareAPI) parseQuery(q url.Values) (*sharePlaybackParams, error) {
-	for _, key := range []string{"share_code", "id", "receive_code"} {
-		if len(q[key]) == 0 {
-			return nil, fmt.Errorf("缺少必要参数 share_code、receive_code 或 id")
-		}
-		if len(q[key]) > 1 {
-			return nil, fmt.Errorf("必要参数 share_code、receive_code 或 id 重复")
-		}
-		if len(q.Get(key)) > 1024 {
-			return nil, fmt.Errorf("分享播放参数过长")
-		}
-	}
-	if q.Get("id") == "" || q.Get("share_code") == "" {
-		return nil, fmt.Errorf("分享码和文件 ID 不能为空")
-	}
-	return &sharePlaybackParams{Code: q.Get("share_code"), Password: q.Get("receive_code"), FileID: q.Get("id"), Name: q.Get("id")}, nil
-}
-
+// streamQuery preserves existing STRM URLs without generating new legacy URLs.
 func (a *ShareAPI) streamQuery(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	q, err := url.ParseQuery(c.Request.URL.RawQuery)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "分享参数编码无效"})
+	if c.Request.URL.RawPath != "" || len(c.Request.URL.RawQuery) > 16384 {
+		c.JSON(400, gin.H{"error": "STRM 分享地址无效"})
 		return
 	}
-	claim, err := a.parseQuery(q)
+	value, err := strm.ParseShareQuery(c.Request.URL.RawQuery)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	a.play(c, claim)
+	a.play(c, &sharePlaybackParams{Code: value.Code, Password: value.Password, FileID: value.FileID, Name: value.FileID})
 }
 
 func (a *ShareAPI) play(c *gin.Context, claim *sharePlaybackParams) {

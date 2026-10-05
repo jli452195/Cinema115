@@ -80,7 +80,7 @@ func TestBatchGenerationHTTP(t *testing.T) {
 			t.Error("生成时不应下载或转存视频")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"state":true,"data":{"count":1,"list":[{"fid":"3515174619050935343","n":"电影.mkv","s":100}]}}`))
+		_, _ = w.Write([]byte(`{"state":true,"data":{"count":1,"list":[{"fid":"3515174619050935343","sha":"0123456789ABCDEF0123456789ABCDEF01234567","n":"电影.mkv","s":100}]}}`))
 	}))
 	defer upstream.Close()
 	api := NewShareAPI(func() string { return "cookie" })
@@ -116,7 +116,7 @@ func TestBatchGenerationHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "http://192.168.0.24:3002/api/?share_code=demo&id=3515174619050935343&receive_code=1234\n" {
+	if string(content) != "http://192.168.0.24:3002/api/share115/demo/0123456789ABCDEF0123456789ABCDEF01234567/1234/3515174619050935343\n" {
 		t.Fatal("未采用配置地址或原始长 ID")
 	}
 	w = httptest.NewRecorder()
@@ -131,7 +131,7 @@ func TestBatchGenerationHTTP(t *testing.T) {
 		body string
 		code int
 	}{
-		{`{`, 400}, {`{"url":"https://115.com/s/demo","outputDir":"../escape"}`, 400}, {`{"url":"https://115.com/s/demo","outputDir":"strm","videoExtensions":"avi"}`, 422},
+		{`{`, 400}, {`{"url":"https://115.com/s/demo","outputDir":"../escape"}`, 400}, {`{"url":"https://115.com/s/demo?password=pass","outputDir":"strm","videoExtensions":"avi"}`, 422},
 	} {
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/generate", strings.NewReader(tc.body)))
@@ -182,7 +182,7 @@ func TestSingleSTRMUsesSelectedBaseURL(t *testing.T) {
 		code int
 	}{{"http://selected-server:3002", 200}, {"http://selected-server:3002?token=secret", 400}} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(`{"url":"https://115.com/s/demo","fileId":"123","name":"movie.mkv","baseUrl":"`+tc.base+`"}`)))
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(`{"url":"https://115.com/s/demo?password=pass","sha1":"0123456789ABCDEF0123456789ABCDEF01234567","fileId":"123","name":"movie.mkv","baseUrl":"`+tc.base+`"}`)))
 		if w.Code != tc.code {
 			t.Fatalf("单文件生成状态错误：%d", w.Code)
 		}

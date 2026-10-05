@@ -44,6 +44,7 @@ func NewShareClient() *ShareClient {
 }
 
 type ShareFile struct {
+	SHA1      string `json:"sha1"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
@@ -195,6 +196,7 @@ func parseSharePage(data json.RawMessage, offset int) (*SharePage, error) {
 	var raw struct {
 		Count *int `json:"count"`
 		List  []struct {
+			SHA1 string      `json:"sha"`
 			FID  json.Number `json:"fid"`
 			CID  json.Number `json:"cid"`
 			Name string      `json:"n"`
@@ -223,7 +225,7 @@ func parseSharePage(data json.RawMessage, offset int) (*SharePage, error) {
 		if err != nil && f.Size.String() != "" {
 			return nil, fmt.Errorf("文件大小无效: %w", err)
 		}
-		page.Files = append(page.Files, ShareFile{ID: id, Name: f.Name, Size: size, Directory: directory})
+		page.Files = append(page.Files, ShareFile{SHA1: strings.ToUpper(f.SHA1), ID: id, Name: f.Name, Size: size, Directory: directory})
 	}
 	return page, nil
 }

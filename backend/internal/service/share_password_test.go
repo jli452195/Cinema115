@@ -16,7 +16,7 @@ func TestFixedSharePasswordOnlyConfiguresNewShare(t *testing.T) {
 		{"手动相同密码仍转存", "ab12", "other", " ab12 "},
 		{"手动密码覆盖链接密码", "ab12", "ab12", "zz99"},
 		{"不同密码转存", "ab12", "zz99", ""},
-		{"没有固定密码随机", "", "", ""},
+		{"没有固定密码随机", "", "pass", ""},
 		{"保留新密码大小写", "Ab12", "ab12", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

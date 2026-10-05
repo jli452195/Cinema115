@@ -9,41 +9,25 @@ import (
 	"testing"
 )
 
-func TestSTRMAnyOriginAndRequiredParameters(t *testing.T) {
+func TestShareSTRMOriginsAndValidation(t *testing.T) {
 	a := NewShareAPI(func() string { return "" })
-	const query = "/api/?share_code=abc123&id=3516737870024934541&receive_code=pass"
-	for _, extra := range []string{"&filename=movie.mkv", "&foo=1&foo=2&token=ignored", "&id2=other&name=%E7%94%B5%E5%BD%B1"} {
-		got, err := a.parseSTRMURL("http://nas" + query + extra)
-		if err != nil || got.Code != "abc123" || got.FileID != "3516737870024934541" || got.Password != "pass" {
-			t.Fatal("额外参数影响必要参数解析", err)
+	const path = "/api/share115/abc123/0123456789abcdef0123456789abcdef01234567/pass/3516737870024934541"
+	for _, origin := range []string{"http://nas:8115", "https://other.example:9098"} {
+		got, err := a.parseSTRMURL(origin + path)
+		if err != nil || got.Code != "abc123" || got.Password != "pass" || got.FileID != "3516737870024934541" || got.SHA1 != "0123456789ABCDEF0123456789ABCDEF01234567" {
+			t.Fatal(got, err)
 		}
-	}
-	for _, origin := range []string{"http://192.168.0.3:8115", "https://other.example:9098", "http://192.168.0.24:3002"} {
-		if _, err := a.parseSTRMURL(origin + query); err != nil {
-			t.Fatal("不同来源未识别", err)
-		}
-
 	}
 	for _, raw := range []string{
-		"ftp://nas" + query, "file:///api/?share_code=abc&id=1&receive_code=pass", "//nas" + query, "http:///api/?share_code=abc&id=1&receive_code=pass",
-		"http://user:pass@nas" + query, "http://nas" + query + "#fragment", "http://nas:99999" + query, "http://nas:" + query,
-		"http://nas/other/?share_code=abc&id=1&receive_code=pass", "http://nas/%61pi/?share_code=abc&id=1&receive_code=pass",
-		"http://nas/api/?share_code=abc&id=1", "http://nas/api/?share_code=abc&id=1&receive_code=pass&id=2",
-		"http://nas/api/?share_code=abc&share_code=def&id=1&receive_code=pass",
-		"http://nas/api/?share_code=abc&id=1&receive_code=pass&receive_code=pass",
-		"http://nas/api/stream/share/obsolete.payload",
-		"http://nas/api/stream/share/obsolete.payload?share_code=abc&id=1&receive_code=pass",
-		"http://nas" + query + "&bad=%ZZ", "http://nas" + query + ";ignored=value",
-		"http://nas/api/?share_code=abc%2Fdef&id=1&receive_code=pass", "http://nas/api/?share_code=abc&id=-1&receive_code=pass",
-		"http://nas/api/?share_code=abc&id=0&receive_code=pass", "http://nas/api/?share_code=abc&id=18446744073709551616&receive_code=pass",
-		"http://nas/api/?share_code=abc&id=1&receive_code=p%0Ass", "http://nas/api/?share_code=abc&id=1&receive_code=" + strings.Repeat("a", 33),
+		"ftp://nas" + path, "//nas" + path, "http://user:pass@nas" + path, "http://nas:99999" + path,
+		"http://nas:" + path, "http://nas" + path + "#fragment", "http://nas" + path + "?", "http://nas" + path + "?id=2",
+		"http://nas" + path + "/extra", "http://nas" + path + "/", "http://nas" + strings.Replace(path, "abc123", "abc%2F123", 1),
+		"http://nas" + strings.Replace(path, "abc123", "%61bc123", 1),
+		"http://nas/api/?share_code=abc&id=1&receive_code=", "http://nas/api/stream/share/obsolete.payload",
 	} {
 		if _, err := a.parseSTRMURL(raw); err == nil {
-			t.Errorf("接受了不支持或异常的 STRM: %s", raw)
+			t.Error("accepted", raw)
 		}
-	}
-	if _, err := a.parseSTRMURL("http://nas/api/?share_code=abc&id=1&receive_code="); err != nil {
-		t.Fatal("应允许显式空提取码", err)
 	}
 }
 
@@ -53,7 +37,7 @@ func TestRelaxedSTRMStillConfinedToLocalRoot(t *testing.T) {
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte("http://192.168.0.3:8115/api/?share_code=abc&id=123&receive_code=pass")
+	data := []byte("http://192.168.0.3:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123")
 	if err := os.WriteFile(filepath.Join(root, "movie.strm"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +57,14 @@ func TestRelaxedSTRMStillConfinedToLocalRoot(t *testing.T) {
 		}
 	}
 	check("/media/movie.strm", true)
+	if err := os.WriteFile(filepath.Join(root, "legacy.strm"), []byte("http://legacy/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mp4"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check("/media/legacy.strm", true)
+	if err := os.WriteFile(filepath.Join(root, "empty.strm"), []byte("http://legacy/api/?share_code=abc&id=123&receive_code="), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check("/media/empty.strm", false)
 	check("/media/../outside.strm", false)
 	check("/media2/movie.strm", false)
 	check("/media/missing.strm", false)
@@ -91,9 +83,12 @@ func TestSharePathSTRMOptionalExtensionAndIgnoredHint(t *testing.T) {
 			t.Fatal("路径参数解析失败", suffix, err)
 		}
 	}
-	claim, err := a.parseSTRMURL("https://other-tool/s/abc__123")
-	if err != nil || claim.Password != "" {
-		t.Fatal("空提取码未支持", err)
+	if _, err := a.parseSTRMURL("https://other-tool/s/abc__123"); err == nil {
+		t.Fatal("接受空提取码")
+	}
+	claim, err := a.parseSTRMURL("https://other-tool/s/abc_pass_123")
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, path := range []string{
 		"/s/abc_pass_0", "/s/abc_pass_0123", "/s/abc_pass_-1", "/s/abc_pass_123abc",
@@ -105,18 +100,18 @@ func TestSharePathSTRMOptionalExtensionAndIgnoredHint(t *testing.T) {
 			t.Fatal("接受异常分享路径", path)
 		}
 	}
-	normal, err := a.parseSTRMURL("http://nas/api/?share_code=abc&receive_code=&id=123")
-	if err != nil || *normal != *claim {
+	normal, err := a.parseSTRMURL("http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123")
+	if err != nil || normal.Code != claim.Code || normal.Password != claim.Password || normal.FileID != claim.FileID {
 		t.Fatal("两种格式没有归一化到相同文件身份", err)
 	}
 	root := t.TempDir()
 	a.OutputRoot = root
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://other-tool/s/abc__123.mp4?/movie.mp4"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://other-tool/s/abc_pass_123.mp4?/movie.mp4"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	h := &embyProxyHandler{share: a, config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}}
 	got, err := h.sourceClaim(map[string]json.RawMessage{"Path": json.RawMessage(`"/media/movie.strm"`)})
-	if err != nil || *got != *normal {
+	if err != nil || *got != *claim {
 		t.Fatal("本地 STRM 路径格式未识别", err)
 	}
 }

@@ -74,6 +74,16 @@ func (f *proxyCacheFake) DeleteEntries(context.Context, []string, string) error 
 	return nil
 }
 func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) { checkFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t, legacy) })
+	}
+}
+
+func checkFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testing.T, legacy bool) {
+	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
+	if legacy {
+		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
+	}
 	const uid = "8be403a10974486c94a987b8036c8484"
 	accounts, source := proxyTestAccounts(t)
 	target, _ := accounts.Add("朋友")
@@ -101,7 +111,7 @@ func TestFriendPlayback302AuthorizesBeforeCloudWritesAndNeverFallsBack(t *testin
 		case "/emby/Users/" + uid + "/Items/movie":
 			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full"}`)
 		case "/emby/Items/movie/PlaybackInfo":
-			fmt.Fprint(w, `{"MediaSources":[{"Id":"src","Path":"https://nas-other:9443/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv&extra=ignored"}]}`)
+			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","Path":"%s"}]}`, sourcePath)
 		default:
 			w.WriteHeader(404)
 		}

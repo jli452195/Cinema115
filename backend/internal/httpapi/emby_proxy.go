@@ -806,7 +806,13 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	// Include effective credentials only in a digest; neither keys nor views expose secrets.
-	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, claim.SHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
+	// Share identity is the share code, password and file ID. An external SHA1
+	// hint must not split its cache from the equivalent /s/ representation.
+	keySHA1 := claim.SHA1
+	if claim.PickCode == "" {
+		keySHA1 = ""
+	}
+	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, keySHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
 		h.logs.Add(fetchCtx, "INFO", "直链缓存未命中或已关闭，开始向 115 获取直链")
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}

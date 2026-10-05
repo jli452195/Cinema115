@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/strm"
 )
 
 // BatchOutcome 与输入一一对应，审核链接和正常链接分别保存结果。
@@ -74,6 +75,10 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 		}
 		if input.Password != "" {
 			share.Password = strings.TrimSpace(input.Password)
+		}
+		if err := strm.ValidatePassword(share.Password); err != nil {
+			outcomes[i].Err = generationInputError(err.Error())
+			continue
 		}
 		if input.Mode == "direct" || input.Mode == "" && !settings.ReshareEnabled {
 			outcomes[i].Result, outcomes[i].Err = w.generateOriginal(ctx, input, cookie, nil)

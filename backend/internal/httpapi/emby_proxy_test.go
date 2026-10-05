@@ -153,7 +153,7 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full"}`)
 		case "/emby/Items/movie/PlaybackInfo", "/Items/movie/PlaybackInfo":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"source1","Path":"http://cinema:8115/api/?share_code=abc&id=123&receive_code=pass","SupportsDirectPlay":true,"SupportsDirectStream":true,"MediaStreams":[{"Type":"Video","Codec":"hevc"}]},{"Id":"source2","Path":"http://cinema:8115/api/?share_code=abc&id=456&receive_code=pass","SupportsDirectPlay":false,"SupportsDirectStream":true,"DirectStreamUrl":"/Videos/movie/master.m3u8"},{"Id":"local","Path":"/media/local.mkv","SupportsDirectPlay":true}]}`)
+			fmt.Fprint(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"source1","Path":"http://cinema:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123","SupportsDirectPlay":true,"SupportsDirectStream":true,"MediaStreams":[{"Type":"Video","Codec":"hevc"}]},{"Id":"source2","Path":"http://cinema:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/456","SupportsDirectPlay":false,"SupportsDirectStream":true,"DirectStreamUrl":"/Videos/movie/master.m3u8"},{"Id":"local","Path":"/media/local.mkv","SupportsDirectPlay":true}]}`)
 		default:
 			if r.Header.Get("X-Cinema115-Emby-Proxy") != "1" {
 				t.Error("普通反代缺少循环检测标志")
@@ -319,7 +319,7 @@ func TestEmbyProxyLogEndpointAndErrorRedaction(t *testing.T) {
 
 func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://cinema:8115/api/?share_code=abc&id=123&receive_code=pass\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://cinema:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	share := NewShareAPI(func() string { return "" })
@@ -332,7 +332,7 @@ func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
 		{"/media/movie.strm", true},
 		{"/media/../outside.strm", false},
 		{"/media2/movie.strm", false},
-		{"http://other-tool/api/?share_code=abc&id=123&receive_code=pass", true},
+		{"http://other-tool/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123", true},
 		{"http://cinema:8115/api/?share_code=abc&id=123&id=456&receive_code=pass", false},
 	} {
 		path, _ := json.Marshal(tc.path)

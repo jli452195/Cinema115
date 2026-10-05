@@ -21,8 +21,8 @@ func TestFlatShareWritesOriginalFilesWithoutOverwritingSameNames(t *testing.T) {
 	input.Password = ""
 	input.Mode = "reshare"
 	inputs := []GenerateInput{input, input}
-	inputs[0].URL = "https://115.com/s/a"
-	inputs[1].URL = "https://115.com/s/b"
+	inputs[0].URL = "https://115.com/s/a?password=pass"
+	inputs[1].URL = "https://115.com/s/b?password=pass"
 	out, err := w.GenerateBatch(context.Background(), inputs)
 	if err != nil || out[0].Err != nil || out[1].Err != nil {
 		t.Fatal("合并生成失败", err, out)
@@ -35,7 +35,7 @@ func TestFlatShareWritesOriginalFilesWithoutOverwritingSameNames(t *testing.T) {
 	}
 	for i, name := range []string{"同名电影.strm", "同名电影 (2).strm"} {
 		data, err := os.ReadFile(filepath.Join(s.Settings.root, input.OutputDir, name))
-		if err != nil || !strings.Contains(string(data), fmt.Sprintf("id=%d", 11001+i)) || !strings.Contains(string(data), "share_code=own") {
+		if err != nil || !strings.Contains(string(data), fmt.Sprintf("/%d", 11001+i)) || !strings.Contains(string(data), "/api/share115/own/") {
 			t.Fatal("同名来源被覆盖或使用了错误文件 ID", name, err)
 		}
 	}
@@ -56,7 +56,7 @@ func (f *folderBatchFake) ListForTransfer(_ context.Context, share *p115.ShareIn
 	if cid == "0" || cid == "" {
 		return &p115.SharePage{OwnerID: "99", Count: 1, Files: []p115.ShareFile{{ID: "10", Name: "剧集", Directory: true}}}, nil
 	}
-	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "11", Name: share.Code + ".mkv", Size: 100}}}, nil
+	return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "11", Name: share.Code + ".mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100}}}, nil
 }
 
 func (f *folderBatchFake) ReceiveShare(_ context.Context, share *p115.ShareInfo, _ []string, cid, _ string) error {
@@ -64,7 +64,7 @@ func (f *folderBatchFake) ReceiveShare(_ context.Context, share *p115.ShareInfo,
 	id := strconv.Itoa(2000 + len(f.received))
 	f.names[id] = "剧集"
 	f.drive[cid] = append(f.drive[cid], p115.ShareFile{ID: id, Name: "剧集", Directory: true})
-	f.drive[id] = []p115.ShareFile{{ID: strconv.Itoa(3000 + len(f.received)), Name: share.Code + ".mkv", Size: 100}}
+	f.drive[id] = []p115.ShareFile{{ID: strconv.Itoa(3000 + len(f.received)), Name: share.Code + ".mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100}}
 	return nil
 }
 
@@ -86,8 +86,8 @@ func TestFlatSharePreservesOriginalFoldersAndMatchesTheirContents(t *testing.T) 
 	input.Password = ""
 	input.Mode = "reshare"
 	inputs := []GenerateInput{input, input}
-	inputs[0].URL = "https://115.com/s/a"
-	inputs[1].URL = "https://115.com/s/b"
+	inputs[0].URL = "https://115.com/s/a?password=pass"
+	inputs[1].URL = "https://115.com/s/b?password=pass"
 	out, err := w.GenerateBatch(context.Background(), inputs)
 	if err != nil || out[0].Err != nil || out[1].Err != nil {
 		t.Fatal("文件夹合并失败", err, out)
@@ -99,7 +99,7 @@ func TestFlatSharePreservesOriginalFoldersAndMatchesTheirContents(t *testing.T) 
 	}
 	for i, relative := range []string{"剧集 (2)/a.strm", "剧集/b.strm"} {
 		data, err := os.ReadFile(filepath.Join(s.Settings.root, input.OutputDir, filepath.FromSlash(relative)))
-		if err != nil || !strings.Contains(string(data), fmt.Sprintf("id=%d", 13001+i)) {
+		if err != nil || !strings.Contains(string(data), fmt.Sprintf("/%d", 13001+i)) {
 			t.Fatal("同名目录混淆了来源或子文件", relative, err)
 		}
 	}

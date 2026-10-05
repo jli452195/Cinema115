@@ -44,6 +44,16 @@ func (f *poolProtocolDrive) DownloadInfoWithUA(_ context.Context, _ *p115.ShareI
 }
 
 func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) { checkPoolProtocolNegotiationRedirectAndStop(t, legacy) })
+	}
+}
+
+func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool) {
+	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
+	if legacy {
+		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
+	}
 	ctx := context.Background()
 	const uid = "ff7da35afaaa40cd80e0c6c9a6bce2a6"
 	accepted := true
@@ -54,9 +64,9 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 		case "/emby/Users/" + uid:
 			fmt.Fprintf(w, `{"Id":%q,"Policy":{"EnableMediaPlayback":true,"EnableVideoPlaybackTranscoding":false,"EnableAudioPlaybackTranscoding":false,"EnablePlaybackRemuxing":false,"EnableSyncTranscoding":false,"EnableMediaConversion":false}}`, uid)
 		case "/emby/Users/" + uid + "/Items/movie":
-			fmt.Fprint(w, `{"Id":"movie","PlayAccess":"Full","MediaSources":[{"Id":"src","Path":"http://nas/api/?share_code=abc&id=123&receive_code=pass","SupportsDirectPlay":true}]}`)
+			fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","MediaSources":[{"Id":"src","Path":"%s","SupportsDirectPlay":true}]}`, sourcePath)
 		case "/emby/Items/movie/PlaybackInfo":
-			fmt.Fprint(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"src","Path":"http://nas/api/?share_code=abc&id=123&receive_code=pass","SupportsDirectPlay":true}]}`)
+			fmt.Fprintf(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"src","Path":"%s","SupportsDirectPlay":true}]}`, sourcePath)
 		case "/emby/Sessions/Playing/Stopped":
 			data, _ := io.ReadAll(r.Body)
 			bodySeen = string(data)

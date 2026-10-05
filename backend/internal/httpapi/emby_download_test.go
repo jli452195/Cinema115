@@ -28,6 +28,16 @@ func TestDownloadRoutes(t *testing.T) {
 }
 
 func TestDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) { checkDownloadsAuthorizeAndReuseCorrectAccount(t, legacy) })
+	}
+}
+
+func checkDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T, legacy bool) {
+	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
+	if legacy {
+		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
+	}
 	for _, mode := range []string{"source", "friend", "third"} {
 		t.Run(mode, func(t *testing.T) {
 			accounts, sourceAccount := proxyTestAccounts(t)
@@ -52,7 +62,7 @@ func TestDownloadsAuthorizeAndReuseCorrectAccount(t *testing.T) {
 				w.WriteHeader(302)
 			}))
 			defer third.Close()
-			source := "http://share/api/?share_code=abc&receive_code=pass&id=123"
+			source := sourcePath
 			if mode == "third" {
 				source = third.URL + "/api/redirect115/abc123/movie.mkv"
 			}

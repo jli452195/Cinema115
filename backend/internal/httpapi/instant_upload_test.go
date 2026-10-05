@@ -88,7 +88,7 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 		t.Fatal("无效输入产生上游请求")
 	}
 	for i := 0; i < 2; i++ {
-		w := call("/run", gin.H{"id": "http-test-request-002", "strm": "http://cinema:8115/api/?share_code=abc&id=123&receive_code=private"})
+		w := call("/run", gin.H{"id": "http-test-request-002", "strm": "http://cinema:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/private/123"})
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"success"`) || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("验证接口失败: %d %s", w.Code, w.Body.String())
 		}
@@ -104,12 +104,16 @@ func TestInstantHTTPRequiresSavedExplicitSelectionAndValidSTRM(t *testing.T) {
 	if w := call("", config); w.Code != 200 {
 		t.Fatalf("宽松模式无需来源地址: %d %s", w.Code, w.Body.String())
 	}
-	w := call("/run", gin.H{"id": "http-test-request-003", "strm": "https://other-nas:9443/api/?share_code=abc&id=123&receive_code=pass"})
+	w := call("/run", gin.H{"id": "http-test-request-003", "strm": "https://other-nas:9443/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"})
 	if w.Code != 200 || fake.writes != 2 {
 		t.Fatal("不同来源未进入秒传验证", w.Code, w.Body.String())
 	}
 	w = call("/run", gin.H{"id": "http-test-request-004", "strm": "http://other-tool:9527/s/abc_pass_123.mp4?/movie.mp4"})
 	if w.Code != 200 || fake.writes != 3 {
 		t.Fatal("路径形式未进入单文件秒传验证", w.Code)
+	}
+	w = call("/run", gin.H{"id": "http-test-request-005", "strm": "http://legacy/api/?share_code=abc&id=123&receive_code=pass&sha1=untrusted"})
+	if w.Code != 200 || fake.writes != 4 {
+		t.Fatal("旧格式未进入单文件秒传验证", w.Code)
 	}
 }

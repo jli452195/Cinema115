@@ -21,7 +21,49 @@ func (f shareListFunc) List(ctx context.Context, share *p115.ShareInfo, cid stri
 
 func generationOptions(t *testing.T) GenerateInput {
 	t.Helper()
-	return GenerateInput{URL: "https://115.com/s/demo?password=old", Password: "a+b&c", BaseURL: "http://192.168.0.24:3002", OutputDir: "strm", MinSizeMB: 1, Recursive: true}
+	return GenerateInput{URL: "https://115.com/s/demo?password=old", Password: "abcd", BaseURL: "http://192.168.0.24:3002", OutputDir: "strm", MinSizeMB: 1, Recursive: true}
+}
+
+func TestEmptyPasswordGenerationRejectedBeforeCloud(t *testing.T) {
+	input := generationOptions(t)
+	input.URL, input.Password = "https://115.com/s/demo", ""
+	g := &STRMGenerator{Root: t.TempDir(), Cookie: func() string { return "cookie" }, Client: shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
+		t.Error("empty password reached cloud")
+		return nil, errors.New("unexpected call")
+	})}
+	if _, err := g.Generate(context.Background(), input); !errors.Is(err, ErrGenerationInput) {
+		t.Fatal(err)
+	}
+	fake := &transferFake{}
+	w, in := setupWorkflow(t, fake)
+	in.URL, in.Password = "https://115.com/s/demo", ""
+	if _, err := w.Generate(context.Background(), in); !errors.Is(err, ErrGenerationInput) {
+		t.Fatal(err)
+	}
+	if len(fake.calls) != 0 || fake.listCalls != 0 {
+		t.Fatal("invalid source started reshare")
+	}
+}
+
+func TestInvalidVideoSHA1PreventsAllOutput(t *testing.T) {
+	for _, hash := range []string{"", "invalid", strings.Repeat("G", 40)} {
+		t.Run(hash, func(t *testing.T) {
+			root := t.TempDir()
+			input := generationOptions(t)
+			g := &STRMGenerator{Root: root, Cookie: func() string { return "cookie" }, Client: shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
+				return &p115.SharePage{Count: 2, Files: []p115.ShareFile{
+					{ID: "1", Name: "valid.mkv", Size: 2 << 20, SHA1: strings.Repeat("a", 40)},
+					{ID: "2", Name: "invalid.mkv", Size: 2 << 20, SHA1: hash},
+				}}, nil
+			})}
+			if _, err := g.Generate(context.Background(), input); err == nil {
+				t.Fatal("invalid SHA1 accepted")
+			}
+			if _, err := os.Stat(filepath.Join(root, input.OutputDir)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("generation wrote output before validating all files", err)
+			}
+		})
+	}
 }
 
 func TestSTRMFailureCountExcludesUnprocessedFiles(t *testing.T) {
@@ -38,7 +80,7 @@ func TestSTRMFailureCountExcludesUnprocessedFiles(t *testing.T) {
 		if cid == "0" {
 			return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "dir", Name: "Series", Directory: true}}}, nil
 		}
-		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", Size: 2 << 20}, {ID: "2", Name: "b.mkv", Size: 2 << 20}}}, nil
+		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "2", Name: "b.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 	})
 	result, err := (&STRMGenerator{Root: root, Client: client, Cookie: func() string { return "test-cookie" }}).Generate(context.Background(), input)
 	if err == nil || result == nil || result.Written != 0 || result.Failed != 1 || len(result.Files) != 2 {
@@ -51,17 +93,17 @@ func TestGenerateRecursivePaginatedDirectory(t *testing.T) {
 	calls := 0
 	client := shareListFunc(func(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
 		calls++
-		if share.Password != "a+b&c" || cookie != "test-cookie" {
+		if share.Password != "abcd" || cookie != "test-cookie" {
 			t.Fatal("未传递独立提取码或当前会话")
 		}
 		if cid == "0" && offset == 0 {
-			return &p115.SharePage{Count: 5, Files: []p115.ShareFile{{ID: "dir", Name: "Series", Directory: true}, {ID: "1", Name: "sample.mkv", Size: 2 << 20}, {ID: "2", Name: "sample.MP4", Size: 2 << 20}}}, nil
+			return &p115.SharePage{Count: 5, Files: []p115.ShareFile{{ID: "dir", Name: "Series", Directory: true}, {ID: "1", Name: "sample.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "2", Name: "sample.MP4", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 		}
 		if cid == "0" && offset == 3 {
-			return &p115.SharePage{Count: 5, Files: []p115.ShareFile{{ID: "3", Name: "字幕.srt", Size: 2 << 20}, {ID: "4", Name: "small.mp4", Size: 100}}}, nil
+			return &p115.SharePage{Count: 5, Files: []p115.ShareFile{{ID: "3", Name: "字幕.srt", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "4", Name: "small.mp4", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100}}}, nil
 		}
 		if cid == "dir" && offset == 0 {
-			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "5", Name: "电影.mkv", Size: 2 << 20}, {ID: "6", Name: `../../CON.mp4`, Size: 2 << 20}}}, nil
+			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "5", Name: "电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "6", Name: `../../CON.mp4`, SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 		}
 		return nil, fmt.Errorf("意外分页 %s/%d", cid, offset)
 	})
@@ -93,7 +135,7 @@ func TestGenerateRecursivePaginatedDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if u.Host != "192.168.0.24:3002" || u.Path != "/api/" || len(u.Query()) != 3 || u.Query().Get("receive_code") != "a+b&c" {
+		if u.Host != "192.168.0.24:3002" || !strings.HasPrefix(u.Path, "/api/share115/demo/0123456789ABCDEF0123456789ABCDEF01234567/abcd/") || u.RawQuery != "" {
 			t.Fatalf("生成了错误的播放地址：%s", u.Redacted())
 		}
 	}
@@ -129,14 +171,14 @@ func TestGenerationFailureDoesNotLeavePartialFiles(t *testing.T) {
 				case "upstream":
 					return nil, upstreamErr
 				case "duplicate":
-					return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", Size: 2 << 20}, {ID: "1", Name: "a.mkv", Size: 2 << 20}}}, nil
+					return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}, {ID: "1", Name: "a.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 				case "incomplete":
 					return &p115.SharePage{Count: 10}, nil
 				case "cycle":
 					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "0", Name: "parent", Directory: true}}}, nil
 				default:
 					cancel()
-					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", Size: 2 << 20}}}, nil
+					return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "1", Name: "a.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 				}
 			})}
 			input := generationOptions(t)
@@ -194,7 +236,7 @@ func TestGenerationCanExcludeSubdirectories(t *testing.T) {
 		if cid != "123" {
 			t.Fatal("不应进入子目录或错误的起始目录")
 		}
-		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "dir", Name: "sub", Directory: true}, {ID: "file", Name: "a.mp4", Size: 1 << 20}}}, nil
+		return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "dir", Name: "sub", Directory: true}, {ID: "7", Name: "a.mp4", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 1 << 20}}}, nil
 	})}
 	result, err := g.Generate(context.Background(), input)
 	if err != nil || len(result.Files) != 1 {
@@ -230,9 +272,9 @@ func TestGenerateToExplicitSTRMRoot(t *testing.T) {
 	}
 	g := &STRMGenerator{Root: root, Cookie: func() string { return "cookie" }, Client: shareListFunc(func(_ context.Context, _ *p115.ShareInfo, cid string, _ int, _ string) (*p115.SharePage, error) {
 		if cid == "0" {
-			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "dir", Name: "电影", Directory: true}, {ID: "1", Name: "top.mkv", Size: 2 << 20}}}, nil
+			return &p115.SharePage{Count: 2, Files: []p115.ShareFile{{ID: "dir", Name: "电影", Directory: true}, {ID: "1", Name: "top.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 		}
-		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "2", Name: "movie.mkv", Size: 2 << 20}}}, nil
+		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "2", Name: "movie.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 	})}
 	if err := os.WriteFile(filepath.Join(root, "top.strm"), []byte("existing content"), 0600); err != nil {
 		t.Fatal(err)
@@ -265,7 +307,7 @@ func TestGenerationPreservesConflictsAndRegeneratesAfterOrganization(t *testing.
 		t.Fatal(err)
 	}
 	g := &STRMGenerator{Root: root, Cookie: func() string { return "cookie" }, Client: shareListFunc(func(context.Context, *p115.ShareInfo, string, int, string) (*p115.SharePage, error) {
-		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "1", Name: "a.mp4", Size: 2 << 20}}}, nil
+		return &p115.SharePage{Count: 1, Files: []p115.ShareFile{{ID: "1", Name: "a.mp4", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 2 << 20}}}, nil
 	})}
 	result, err := g.Generate(context.Background(), input)
 	if err != nil || result.Written != 1 || result.ConflictRenamed != 1 || result.Files[0].Path != "a (2).strm" {
@@ -288,14 +330,14 @@ func TestGenerationPreservesConflictsAndRegeneratesAfterOrganization(t *testing.
 	if err := os.Rename(generated, organized); err != nil {
 		t.Fatal(err)
 	}
-	input.URL = "https://115.com/s/new-share"
-	input.Password = "new-code"
+	input.URL = "https://115.com/s/newshare"
+	input.Password = "newcode"
 	regenerated, err := g.Generate(context.Background(), input)
 	if err != nil || regenerated.Written != 1 {
 		t.Fatal("整理后无法再次生成", err)
 	}
 	current, err := os.ReadFile(filepath.Join(root, input.OutputDir, "a (2).strm"))
-	if err != nil || !strings.Contains(string(current), "share_code=new-share") || !strings.Contains(string(current), "receive_code=new-code") {
+	if err != nil || !strings.Contains(string(current), "/api/share115/newshare/") || !strings.Contains(string(current), "/newcode/") {
 		t.Fatal("新生成文件未使用新分享参数")
 	}
 	preserved, err := os.ReadFile(organized)
@@ -337,7 +379,7 @@ func TestCancelledSTRMWritePreservesPreviousContent(t *testing.T) {
 func TestIdenticalSTRMContentDoesNotRewriteFile(t *testing.T) {
 	dir := t.TempDir()
 	destination := filepath.Join(dir, "电影.strm")
-	content := "http://nas/api/?share_code=snapshot&id=1\n"
+	content := "http://nas/api/share115/snapshot/0123456789ABCDEF0123456789ABCDEF01234567/-/1\n"
 	if err := os.WriteFile(destination, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

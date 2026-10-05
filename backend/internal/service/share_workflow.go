@@ -15,6 +15,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/strm"
 )
 
 type TransferClient interface {
@@ -78,6 +79,9 @@ func (w *ShareWorkflow) Generate(ctx context.Context, input GenerateInput) (resu
 	}
 	if input.Password != "" {
 		share.Password = strings.TrimSpace(input.Password)
+	}
+	if err := strm.ValidatePassword(share.Password); err != nil {
+		return nil, generationInputError(err.Error())
 	}
 	cookie := generationCookie(ctx, w.Cookie)
 	if cookie == "" {

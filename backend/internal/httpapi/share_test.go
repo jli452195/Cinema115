@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -14,99 +13,103 @@ import (
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func TestQueryPlaybackParameters(t *testing.T) {
-	api := NewShareAPI(func() string { return "" })
-	claim := sharePlaybackParams{Code: "share-code", Password: "a+b&c", FileID: "3515174619050935343"}
-	u, err := url.Parse(api.queryURL(claim))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := api.parseQuery(u.Query())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Code != claim.Code || got.Password != claim.Password || got.FileID != claim.FileID {
-		t.Fatal("分享参数未正确往返")
-	}
-	if len(u.Query()) != 3 {
-		t.Fatal("播放链接应只包含三个分享参数")
-	}
-	for _, key := range []string{"share_code", "id", "receive_code"} {
-		q := u.Query()
-		q.Del(key)
-		if _, err := api.parseQuery(q); err == nil {
-			t.Errorf("缺少参数 %s 时未报错", key)
-		}
-		q = u.Query()
-		q.Add(key, "duplicate")
-		if _, err := api.parseQuery(q); err == nil {
-			t.Errorf("接受重复参数 %s", key)
-		}
-	}
-	q := u.Query()
-	q.Set("receive_code", "")
-	if _, err := api.parseQuery(q); err != nil {
-		t.Fatal("应支持空提取码")
-	}
-}
-
-func TestGenerateAndRouteQuerySTRM(t *testing.T) {
+func TestGenerateAndRouteShareSTRM(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cookie := "selected-cookie"
 	api := NewShareAPI(func() string { return cookie })
-	api.BaseURL = func() string { return "http://192.168.0.24:3002" }
+	api.BaseURL = func() string { return "http://nas:8115" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
-	request := httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(`{"url":"https://115.com/s/abc?password=1234","fileId":"123","name":"sample.mkv"}`))
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	r.ServeHTTP(recorder, request)
-	if recorder.Code != 200 {
-		t.Fatalf("生成失败: %s", recorder.Body.String())
+	for _, password := range []string{"pass", "fwgl"} {
+		body := `{"url":"https://115.com/s/abc","password":"` + password + `","sha1":"0123456789abcdef0123456789abcdef01234567","fileId":"123","name":"sample.mkv"}`
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(body)))
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		var result struct{ Content, PlayURL string }
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		segment := password
+		if segment == "" {
+			segment = "-"
+		}
+		want := "/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/" + segment + "/123"
+		if result.PlayURL != want || result.Content != "http://nas:8115"+want+"\n" {
+			t.Fatal(result)
+		}
+		claim, err := api.parseSTRMURL(strings.TrimSpace(result.Content))
+		if err != nil || claim.Password != password || claim.SHA1 != "0123456789ABCDEF0123456789ABCDEF01234567" {
+			t.Fatal(claim, err)
+		}
+		cookie = ""
+		for _, method := range []string{"GET", "HEAD"} {
+			for _, tc := range []struct {
+				path   string
+				status int
+			}{
+				{want, 503}, {want + "?extra=1", 400}, {want + "?", 400},
+				{"/api/share115/abc/bad/pass/123", 400},
+				{"/api/?share_code=abc&id=123&receive_code=pass", 503},
+				{"/api/stream/share/obsolete.payload", 404},
+			} {
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, httptest.NewRequest(method, tc.path, nil))
+				if w.Code != tc.status {
+					t.Fatalf("%s %s: %d", method, tc.path, w.Code)
+				}
+			}
+		}
+		cookie = "selected-cookie"
 	}
-	var generated struct {
-		Content string
-		PlayURL string
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &generated); err != nil {
-		t.Fatal(err)
-	}
-	if generated.Content != "http://192.168.0.24:3002/api/?share_code=abc&id=123&receive_code=1234\n" {
-		t.Fatal("未生成查询参数形式")
+	for _, hash := range []string{"", "bad", strings.Repeat("G", 40)} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(`{"url":"https://115.com/s/abc?password=pass","sha1":"`+hash+`","fileId":"123","name":"sample.mkv"}`)))
+		if w.Code != 400 {
+			t.Fatal("invalid SHA1 accepted", w.Code)
+		}
 	}
 	cookie = ""
 	for _, endpoint := range []string{"strm", "files"} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/"+endpoint, strings.NewReader(`{"url":"https://115.com/s/abc?password=1234","fileId":"123","name":"sample.mkv"}`)))
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/"+endpoint, strings.NewReader(`{"url":"https://115.com/s/abc","fileId":"123","name":"sample.mkv"}`)))
 		if w.Code != 400 {
-			t.Fatal("未选择有效账号必须阻止生成及读取")
+			t.Fatal("missing account accepted", w.Code)
 		}
 	}
-	for _, method := range []string{"GET", "HEAD"} {
-		old := httptest.NewRecorder()
-		r.ServeHTTP(old, httptest.NewRequest(method, "/api/stream/share/obsolete.payload", nil))
-		if old.Code != 404 {
-			t.Fatal("已废除的播放入口仍然存在", old.Code)
+}
+
+func TestEmptySharePasswordRejectedBeforeUpstream(t *testing.T) {
+	a := NewShareAPI(func() string { return "configured" })
+	a.Client.HTTP = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("empty password reached upstream")
+		return nil, io.EOF
+	})}
+	r := gin.New()
+	a.Register(r, r.Group("/api/admin"))
+	for _, password := range []string{"", " ", "-"} {
+		body, err := json.Marshal(map[string]string{"url": "https://115.com/s/abc", "password": password, "sha1": strings.Repeat("A", 40), "fileId": "123", "name": "movie.mp4"})
+		if err != nil {
+			t.Fatal(err)
 		}
-		extra := httptest.NewRecorder()
-		r.ServeHTTP(extra, httptest.NewRequest(method, generated.PlayURL+"&filename=movie.mkv", nil))
-		if extra.Code != 503 {
-			t.Fatal("带额外参数的链接未到达账号检查", extra.Code)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/p115/share/strm", strings.NewReader(string(body))))
+		if w.Code != 400 {
+			t.Fatal("accepted empty/invalid password", w.Code)
 		}
-		bad := httptest.NewRecorder()
-		r.ServeHTTP(bad, httptest.NewRequest(method, generated.PlayURL+"&extra=%ZZ", nil))
-		if bad.Code != 400 {
-			t.Fatal("接受无效参数编码")
-		}
-		recorder = httptest.NewRecorder()
-		r.ServeHTTP(recorder, httptest.NewRequest(method, generated.PlayURL, nil))
-		if recorder.Code != 503 {
-			t.Fatalf("三参数链接应到达 115 登录检查，实际 %d", recorder.Code)
-		}
-		recorder = httptest.NewRecorder()
-		r.ServeHTTP(recorder, httptest.NewRequest(method, "/api/?share_code=abc&receive_code=1234", nil))
-		if recorder.Code != 400 {
-			t.Fatal("缺少文件 ID 的请求未被拒绝")
+	}
+	for _, path := range []string{
+		"/api/?share_code=abc&id=123&receive_code=", "/api/?share_code=abc&id=123",
+		"/api/?share_code=abc&id=123&receive_code=pass&receive_code=pass",
+		"/api/share115/abc/" + strings.Repeat("A", 40) + "/-/123",
+	} {
+		for _, method := range []string{"GET", "HEAD"} {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			if w.Code != 400 {
+				t.Fatal(path, method, w.Code)
+			}
 		}
 	}
 }

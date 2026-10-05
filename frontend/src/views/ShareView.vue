@@ -35,7 +35,7 @@ const reviewRetryEnabled = ref(false)
 const reviewRetryMinutes = ref(30)
 const reviewRetryMax = ref(6)
 defineEmits<{ back: []; openTelegram: []; logout: [] }>()
-interface ShareFile { id: string; name: string; size: number; directory: boolean }
+interface ShareFile { sha1: string; id: string; name: string; size: number; directory: boolean }
 const shareURL = ref('')
 const password = ref('')
 const files = ref<ShareFile[]>([])
@@ -50,6 +50,10 @@ const initializing = ref(true)
 const generating = ref(false)
 const browsed = ref(false)
 const baseURL = ref('')
+const strmPreview = computed(() => {
+ const base = baseURL.value.trim().replace(/\/+$/, '') || 'http://NAS_IP:8115'
+ return base + '/api/share115/EXAMPLE123/0123456789ABCDEF0123456789ABCDEF01234567/wxyz/3192802068171587249'
+})
 const outputDir = ref('strm')
 const taskOutputDir = ref('strm')
 const outputDirectories = ref(['strm'])
@@ -217,7 +221,7 @@ async function select(file: ShareFile, play: boolean) {
   if (busy.value) return
   busy.value = true; error.value = ''; playURL.value = ''
   try {
-    const data = await request('strm', { url: shareURL.value, password: password.value, fileId: file.id, name: file.name, baseUrl: taskSettings().baseUrl })
+    const data = await request('strm', { url: shareURL.value, password: password.value, fileId: file.id, name: file.name, sha1: file.sha1, baseUrl: taskSettings().baseUrl })
     if (play) {
       // 先用 HEAD 验证登录与直链，避免播放器只显示通用的媒体错误。
       const response = await fetch(data.playUrl, { method: 'HEAD', signal: controller?.signal })
@@ -388,6 +392,11 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
                   <label class="outlined-field w-44"><span>最小文件大小（MB）</span><input v-model.number="minSizeMB" type="number" required min="0" max="1073741824" step="1" /></label>
                   <p class="settings-help">0 表示不限制，小于此大小的视频会跳过。</p>
+                </div>
+                <div class="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20" aria-labelledby="strm-preview-title">
+                  <div id="strm-preview-title" class="mb-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><svg class="h-4 w-4 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6" /></svg>STRM 内容实时预览</div>
+                  <code class="block break-all text-xs leading-6 text-slate-800 dark:text-slate-200">{{ strmPreview }}</code>
+                  <p class="settings-help mt-2">示例字段，实际生成时替换为文件信息，提取码不能为空。兼容已有旧格式 STRM。</p>
                 </div>
               </section>
 

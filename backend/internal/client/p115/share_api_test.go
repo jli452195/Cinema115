@@ -15,7 +15,7 @@ func TestShareListing(t *testing.T) {
 			t.Error("分享请求参数不正确")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"state":true,"data":{"count":102,"list":[{"fid":"3516463718579832420","n":"sample.mkv","s":1955026554},{"cid":"123","n":"folder"}]}}`))
+		w.Write([]byte(`{"state":true,"data":{"count":102,"list":[{"fid":"3516463718579832420","sha":"3c57fcfd33b9476b43c6bced7d20b5887efb2a4e","n":"sample.mkv","s":1955026554},{"cid":"123","n":"folder"}]}}`))
 	}))
 	defer upstream.Close()
 	client := newTestShareClient()
@@ -24,7 +24,7 @@ func TestShareListing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Count != 102 || len(page.Files) != 2 || page.Files[0].ID != "3516463718579832420" || !page.Files[1].Directory {
+	if page.Files[0].SHA1 != "3C57FCFD33B9476B43C6BCED7D20B5887EFB2A4E" || page.Files[1].SHA1 != "" || page.Count != 102 || len(page.Files) != 2 || page.Files[0].ID != "3516463718579832420" || !page.Files[1].Directory {
 		t.Fatalf("文件归一化错误: %+v", page)
 	}
 }

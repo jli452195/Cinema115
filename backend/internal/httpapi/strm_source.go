@@ -6,12 +6,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"strm115/backend/internal/strm"
 )
 
 var strmShareCode = regexp.MustCompile(`^[a-zA-Z0-9]{1,128}$`)
-var strmReceiveCode = regexp.MustCompile(`^[a-zA-Z0-9]{0,32}$`)
+var strmReceiveCode = regexp.MustCompile(`^[a-zA-Z0-9]{1,32}$`)
 var strmFileID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
-var strmSharePath = regexp.MustCompile(`^/s/([a-zA-Z0-9]{1,128})_([a-zA-Z0-9]{0,32})_([1-9][0-9]{0,19})(?:\.[a-zA-Z0-9]{1,16})?$`)
+var strmSharePath = regexp.MustCompile(`^/s/([a-zA-Z0-9]{1,128})_([a-zA-Z0-9]{1,32})_([1-9][0-9]{0,19})(?:\.[a-zA-Z0-9]{1,16})?$`)
 
 // parseSTRMURL only extracts a supported share identity. The URL is never fetched.
 // HTTP origins do not affect recognition; only the path and share parameters do.
@@ -35,14 +36,20 @@ func (a *ShareAPI) parseSTRMURL(raw string) (*sharePlaybackParams, error) {
 	var claim *sharePlaybackParams
 	switch {
 	case u.Path == "/api/":
-		q, parseErr := url.ParseQuery(u.RawQuery)
+		value, parseErr := strm.ParseShareQuery(u.RawQuery)
 		if parseErr != nil {
-			return nil, fmt.Errorf("STRM 分享参数编码无效")
+			return nil, parseErr
 		}
-		claim, err = a.parseQuery(q)
-		if err != nil {
-			return nil, err
+		claim = &sharePlaybackParams{Code: value.Code, Password: value.Password, FileID: value.FileID, Name: value.FileID}
+	case strings.HasPrefix(u.Path, strm.SharePrefix):
+		if u.RawQuery != "" || u.ForceQuery {
+			return nil, fmt.Errorf("STRM 分享地址不允许查询参数")
 		}
+		value, parseErr := strm.ParseSharePath(u.Path)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		claim = &sharePlaybackParams{Code: value.Code, SHA1: value.SHA1, Password: value.Password, FileID: value.FileID, Name: value.FileID}
 	case strings.HasPrefix(u.Path, "/s/"):
 		parts := strmSharePath.FindStringSubmatch(u.Path)
 		if parts == nil {

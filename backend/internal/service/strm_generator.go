@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/strm"
 )
 
 const DefaultVideoExtensions = "mp4,mkv,ts,iso,rmvb,avi,mov,mpeg,mpg,wmv,3gp,asf,m4v,m2ts,webm"
@@ -133,6 +134,9 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	}
 	if input.Password != "" {
 		share.Password = strings.TrimSpace(input.Password)
+	}
+	if err := strm.ValidatePassword(share.Password); err != nil {
+		return nil, generationInputError(err.Error())
 	}
 	base, err := ValidateBaseURL(input.BaseURL)
 	if err != nil {
@@ -323,7 +327,11 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 				if len(result.Files) >= 10000 {
 					return fmt.Errorf("单次生成最多支持 10000 个视频，请缩小范围")
 				}
-				content := base + "/api/?share_code=" + url.QueryEscape(share.Code) + "&id=" + url.QueryEscape(file.ID) + "&receive_code=" + url.QueryEscape(share.Password) + "\n"
+				relativeURL, err := strm.SharePath(strm.Share{Code: share.Code, SHA1: file.SHA1, Password: share.Password, FileID: file.ID})
+				if err != nil {
+					return fmt.Errorf("生成 STRM %s: %w", safeSTRMName(file.Name), err)
+				}
+				content := base + relativeURL + "\n"
 				result.Files = append(result.Files, GeneratedSTRM{Path: relative, Content: content})
 			}
 			offset += len(page.Files)

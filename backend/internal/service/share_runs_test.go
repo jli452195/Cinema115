@@ -213,7 +213,7 @@ func TestBackgroundRunDeduplicatesEquivalentActiveSnapshot(t *testing.T) {
 	}
 	equivalent := input
 	equivalent.URL = "https://115cdn.com/s/demo"
-	equivalent.Password = "a+b&c"
+	equivalent.Password = "abcd"
 	equivalent.CID = "0"
 	equivalent.Mode = "direct"
 	equivalent.VideoExtensions = ".MP4，mkv"
@@ -298,7 +298,7 @@ func TestSuccessfulSnapshotCacheSurvivesNewQueueAndInvalidatesWhenMoved(t *testi
 		if err := ensureSTRMDirectory(directory); err != nil {
 			return nil, err
 		}
-		file := GeneratedSTRM{Path: "movie.strm", Content: "http://nas/api/?share_code=demo&id=1\n"}
+		file := GeneratedSTRM{Path: "movie.strm", Content: "http://nas/api/share115/demo/0123456789ABCDEF0123456789ABCDEF01234567/-/1\n"}
 		if err := writeSTRM(ctx, filepath.Join(directory, file.Path), file.Content); err != nil {
 			return nil, err
 		}
