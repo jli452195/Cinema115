@@ -55,6 +55,12 @@ const hint = computed(() => {
   const status = props.progress.missing.length ? `已确认播出的缺失集数：${props.progress.missingLabel}` : '已确认播出的分集均已入库，其他分集日期待定'
   return extraLabel.value ? `${status}；${extraLabel.value}` : status
 })
+const statusClass = computed(() => {
+  if (!reliable.value || !ownedCount.value) return 'season-status-unknown'
+  if (props.progress?.missing.length || props.progress?.displayMissing.length) return 'season-status-missing'
+  if (props.progress?.numberingMode && !props.progress.displayComplete) return 'season-status-unknown'
+  return 'season-status-owned'
+})
 watchEffect(() => {
   if (visible.value && props.state === 'present' && !props.progress && !props.loading && !props.error) emit('load')
   if (visible.value && props.state === 'present' && props.progress && props.stale && !props.loading && !props.error) emit('refresh')
@@ -70,18 +76,36 @@ onBeforeUnmount(() => observer?.disconnect())
 <template>
   <span ref="root" class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
     <slot />
-    <span class="inline-flex min-w-0 items-center gap-1.5 break-words text-[11px] font-semibold" :title="hint" :class="reliable && ownedCount ? ((progress?.missing.length || progress?.displayMissing.length) ? 'text-amber-600 dark:text-amber-300/90' : 'text-emerald-600 dark:text-emerald-300/90') : 'text-slate-400 dark:text-slate-400'">
+    <span class="inline-flex min-w-0 items-center gap-1.5 break-words text-[11px] font-semibold" :title="hint" :class="statusClass">
       <img v-if="reliable && ownedCount" :src="embyIcon" class="h-3.5 w-3.5 shrink-0" alt="" aria-hidden="true" />
       <span v-else-if="state === 'absent' || (reliable && (progress?.aired.length || progress?.displayMissing.length))" class="h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden="true"></span>
       {{ label }}
     </span>
-    <span v-if="state === 'present' && activeTotal && activeCollected" class="media-tonal-inset group/progress relative inline-flex w-full sm:w-44 max-w-full items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2.5 py-2" :title="hint">
-      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-300 dark:bg-slate-600">
-        <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? (segment.state === 'owned' ? 'bg-blue-500 dark:bg-blue-400/70' : segment.state === 'missing' ? 'bg-amber-400 dark:bg-amber-400/60' : 'bg-slate-300 dark:bg-slate-600') : (segment.owned ? 'bg-blue-500 dark:bg-blue-400/70' : 'bg-slate-300 dark:bg-slate-600')"></span>
+    <span v-if="state === 'present' && activeTotal" class="inline-flex w-full min-w-0 sm:w-auto">
+      <span class="season-progress-frame group/progress relative inline-flex w-44 max-w-full items-center rounded-lg border px-2.5 py-2" :title="hint">
+      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="season-progress-track flex h-1.5 w-full overflow-hidden rounded-full">
+        <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? `season-segment-${segment.state}` : (segment.owned ? 'season-segment-owned' : 'season-segment-unknown')"></span>
       </span>
       <span aria-hidden="true" class="media-tonal-panel pointer-events-none absolute left-1/2 top-1/2 z-10 hidden w-max max-w-[min(28rem,70vw)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-center text-[11px] font-medium text-slate-700 dark:text-slate-300 shadow-md group-hover/progress:block group-focus-visible/season:block">{{ hint }}</span>
+      </span>
     </span>
     <span v-if="state === 'present' && !progress && error" class="text-[10px] font-normal text-amber-600">播出信息加载失败</span>
     <span v-if="state === 'present' && progress && (loading || error || stale)" class="text-[10px] font-normal text-slate-400 dark:text-slate-500" :title="error || '当前先显示缓存播出信息'">{{ error ? '缓存 · 刷新失败' : loading ? '更新中…' : '缓存' }}</span>
   </span>
 </template>
+
+<style scoped>
+.season-status-owned { color: #059669; }
+.season-status-missing { color: rgb(var(--color-accent-text)); }
+.season-status-unknown { color: var(--md-sys-color-on-surface-variant, #64748b); }
+.season-progress-frame { background: #f1f5f9; border-color: #e2e8f0; }
+.season-progress-track, .season-segment-unknown { background: #cbd5e1; }
+.season-segment-owned { background: #3b82f6; }
+.season-segment-missing { background: #fbbf24; }
+.dark .season-status-owned { color: rgb(110 231 183 / 90%); }
+.dark .season-status-missing { color: rgb(252 211 77 / 90%); }
+.dark .season-progress-frame { background: rgb(var(--color-slate-800)); border-color: rgb(var(--color-slate-700)); }
+.dark .season-progress-track, .dark .season-segment-unknown { background: rgb(var(--color-slate-600)); }
+.dark .season-segment-owned { background: #6396d4; }
+.dark .season-segment-missing { background: #b89439; }
+</style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { catalogAPI, isPortalAdmin } from '../composables/usePortalAuth'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import BotSearchDialog from '../components/BotSearchDialog.vue'
@@ -185,12 +185,24 @@ function refreshMetadata() {
   }
 }
 function toggleSeason(number: number) {
-  if (openSeasons.value.has(number)) { openSeasons.value.delete(number); return }
-  openSeasons.value.add(number)
+  if (openSeasons.value.has(number)) { void closeSeason(number); return }
+  openSeasons.value = new Set([number])
   visitedSeasons.value.add(number)
   episodeLimits.value[number] ||= 20
   void loadSeason(number)
   loadSeasonSchedule(number)
+}
+async function closeSeason(number: number) {
+  const button = document.getElementById(`season-button-${number}`)
+  const headerBottom = document.querySelector('.workbench-header')?.getBoundingClientRect().bottom || 0
+  const previousTop = button?.getBoundingClientRect().top ?? headerBottom + 24
+  openSeasons.value.clear()
+  await nextTick()
+  if (!button?.isConnected) return
+  button.focus({ preventScroll: true })
+  // Preserve the card position when visible; closing from deep in the list returns to it.
+  const targetTop = Math.max(headerBottom + 24, Math.min(previousTop, window.innerHeight - button.offsetHeight))
+  window.scrollBy({ top: button.getBoundingClientRect().top - targetTop, behavior: 'instant' })
 }
 function hasImage(url: string) { return !!url && !failedImages.value.has(url) }
 function seasonName(season: SeasonSummary) { return season.number === 0 ? '特别篇' : `第 ${season.number} 季` }
@@ -300,15 +312,18 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
             <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isPortalAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
             <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无季信息</p>
-            <div class="space-y-3">
-              <section v-for="season in detail.seasons" :key="season.number" class="detail-season group/season-container overflow-hidden rounded-xl border shadow-sm transition-colors dark:shadow-none">
-                <button :id="`season-button-${season.number}`" class="detail-season-toggle group/season flex w-full items-center gap-3 px-4 py-4 text-left transition sm:px-5" :aria-expanded="openSeasons.has(season.number)" :aria-controls="`season-${season.number}`" @click="toggleSeason(season.number)">
+            <div class="season-list space-y-3">
+              <section v-for="season in detail.seasons" :key="season.number" class="detail-season min-w-0 rounded-xl border" :class="{ 'season-selected': openSeasons.has(season.number) }">
+              <button :id="`season-button-${season.number}`" type="button" class="detail-season-toggle group/season flex min-h-14 w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors sm:px-5" :aria-expanded="openSeasons.has(season.number)" :aria-controls="`season-${season.number}`" @click="toggleSeason(season.number)">
                   <SeasonLibraryProgress :key="`${tmdbId}-${season.number}`" :state="seasonState(season.number)" :owned-episodes="[...(embyEpisodes[season.number] || [])]" :progress="seasonProgress[season.number]" :loading="!!schedules[season.number]?.loading" :error="schedules[season.number]?.error || ''" :stale="schedules[season.number]?.data?.cacheStale" :has-undated="seasonState(season.number) === 'present' && !!schedules[season.number]?.data?.episodes.some(episode => !episode.date)" @load="loadSeasonSchedule(season.number)" @refresh="loadSeasonSchedule(season.number, true)">
-                    <span class="inline-flex shrink-0 items-center gap-3"><span class="detail-on-surface text-sm font-semibold">{{ seasonName(season) }}</span><span class="detail-season-count rounded-full border px-2.5 py-0.5 text-[11px] font-medium">{{ season.episodeCount }} 集</span></span>
+                    <span class="inline-flex shrink-0 items-center gap-3">
+                      <span class="detail-on-surface text-sm font-semibold">{{ seasonName(season) }}</span>
+                      <span class="detail-season-count rounded-full px-2 py-0.5 text-[11px]">{{ season.episodeCount }} 集</span>
+                    </span>
                   </SeasonLibraryProgress>
-                  <svg class="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500 dark:text-slate-400 transition-transform" :class="{ 'rotate-180': openSeasons.has(season.number) }" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 8 5 5 5-5" /></svg>
-                </button>
-                <div v-if="visitedSeasons.has(season.number)" v-show="openSeasons.has(season.number)" :id="`season-${season.number}`" role="region" :aria-labelledby="`season-button-${season.number}`" class="detail-divider border-t px-4 pb-4 sm:px-5">
+                  <svg class="detail-muted h-4 w-4 shrink-0 transition-transform" :class="{ 'rotate-180': openSeasons.has(season.number) }" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 8 5 5 5-5" /></svg>
+              </button>
+            <div v-if="openSeasons.has(season.number)" :id="`season-${season.number}`" role="region" :aria-labelledby="`season-button-${season.number}`" class="detail-divider border-t px-4 pb-4 sm:px-5">
                   <p v-if="seasons[season.number]?.loading && !seasons[season.number]?.data" role="status" class="py-6 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">正在加载分集…</p>
                   <div v-if="seasons[season.number]?.error" role="alert" class="py-5 text-sm text-amber-600">{{ seasons[season.number]?.error }}<button class="ml-3 underline" @click="loadSeason(season.number, true)">重试</button></div>
                   <template v-if="seasons[season.number]?.data">
@@ -328,7 +343,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     </div>
                     <InfiniteLoadMore v-if="seasons[season.number]?.data?.episodes.length" :key="`${tmdbId}-${season.number}`" :active="openSeasons.has(season.number)" :count="Math.min(episodeLimits[season.number] || 20, seasons[season.number]?.data?.episodes.length || 0)" :total="seasons[season.number]?.data?.episodes.length || 0" @load="episodeLimits[season.number] = Math.min((episodeLimits[season.number] || 20) + 20, seasons[season.number]?.data?.episodes.length || 0)" />
                   </template>
-                </div>
+              <div class="detail-divider border-t pt-3 text-right">
+                <button type="button" class="season-close rounded-lg px-3 py-2 text-xs" @click="closeSeason(season.number)">收起列表</button>
+              </div>
+            </div>
               </section>
             </div>
           </section>
@@ -403,20 +421,33 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 .detail-primary { color: var(--md-sys-color-primary); }
 .detail-divider { border-color: var(--md-sys-color-outline-variant); }
 .detail-season {
-  background: var(--md-sys-color-surface-container-high);
-  border-color: var(--md-sys-color-outline-variant);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 65%, var(--md-sys-color-surface-container-high));
+  border-color: color-mix(in srgb, var(--md-sys-color-outline-variant) 45%, var(--md-sys-color-surface));
   color: var(--md-sys-color-on-surface);
 }
-.detail-season-toggle:hover {
+.dark .detail-season {
+  background: color-mix(in srgb, var(--md-sys-color-surface) 40%, var(--md-sys-color-surface-container-high));
+}
+.detail-season.season-selected {
+  border-color: var(--md-sys-color-primary);
+}
+.season-close {
+  color: var(--md-sys-color-primary);
   background: var(--md-sys-color-surface-container-highest);
+}
+.season-close:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+.detail-season-toggle:hover {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-high) 60%, transparent);
 }
 .detail-season-toggle:focus-visible {
   outline: 2px solid var(--md-sys-color-primary);
   outline-offset: -2px;
 }
 .detail-season-count {
-  background: var(--md-sys-color-surface-container-highest);
-  border-color: var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface-variant);
 }
 .media-detail .detail-season-note,
