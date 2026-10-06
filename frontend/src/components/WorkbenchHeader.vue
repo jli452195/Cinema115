@@ -97,20 +97,26 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
       </nav>
       <div class="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5">
-        <RouterLink to="/notifications" class="icon-button relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
+        <RouterLink to="/notifications" class="icon-button desktop-action relative" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
           <span v-if="websiteUnread" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] leading-4 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
         </RouterLink>
         <RouterLink to="/search" class="icon-button" :class="{ selected: route.path === '/search' }" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </RouterLink>
-        <ThemeSwitcher />
-        <button ref="accountButton" type="button" class="icon-button" :class="{ selected: managementActive || accountOpen }" aria-label="管理菜单" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
-          <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
+        <div class="hidden sm:block"><ThemeSwitcher /></div>
+        <button ref="accountButton" type="button" class="icon-button relative" :class="{ selected: managementActive || accountOpen }" :aria-label="websiteUnread ? `更多功能，${websiteUnread} 条未读通知` : '更多功能'" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
+          <svg class="h-5 w-5 sm:hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          <svg class="hidden h-6 w-6 sm:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
+          <span v-if="websiteUnread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 sm:hidden" aria-hidden="true"></span>
         </button>
       </div>
-      <nav v-if="accountOpen" id="header-management" aria-label="管理功能" class="absolute right-4 top-full mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 dark:border-slate-700/70 dark:bg-slate-900 dark:shadow-black/25 sm:right-8">
+      <nav v-if="accountOpen" id="header-management" aria-label="更多功能" class="absolute right-4 top-full mt-2 max-h-[calc(100dvh-var(--workbench-header-height)-1rem)] w-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 dark:border-slate-700/70 dark:bg-slate-900 dark:shadow-black/25 sm:right-8">
         <p class="px-3 py-2 text-xs text-slate-400 dark:text-slate-400">{{ portalUser?.username }} · {{ isPortalAdmin ? '管理员' : '普通用户' }}</p>
+        <div class="mb-1 border-b border-slate-100 pb-1 dark:border-slate-700/60 sm:hidden">
+          <RouterLink to="/notifications" class="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels"><span>站内通知</span><span v-if="websiteUnread" class="rounded-full bg-amber-500 px-2 text-xs leading-5 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span></RouterLink>
+          <ThemeSwitcher show-label />
+        </div>
         <RouterLink v-if="!isPortalAdmin" to="/account/playback" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels">我的播放</RouterLink>
         <RouterLink to="/follows" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.name === 'my-follows' ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" :aria-current="route.name === 'my-follows' ? 'page' : undefined" @click="closePanels">我的追更</RouterLink>
         <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="isManagementActive(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="isManagementActive(link.to) ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" @click="closePanels">{{ link.label }}</RouterLink>
@@ -160,6 +166,9 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .dark .workbench-header.over-backdrop .icon-button.selected { background: rgb(var(--color-slate-950) / 25%); }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
+@media (max-width: 639px) {
+  .desktop-action { display: none; }
+}
 @media (max-width: 420px) {
   .header-inner { gap: 0.25rem; padding-inline: 0.75rem; }
   .top-link { padding-inline: 0.5rem; }

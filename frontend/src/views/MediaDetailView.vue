@@ -226,17 +226,13 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
         <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
       </div>
-      <div class="workbench-content relative mx-auto max-w-[1440px] px-5 pb-8 md:px-8 lg:px-10">
-        <nav aria-label="详情导航" class="mb-8 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">
-          <HistoryBackButton :fallback="`/${kind}`" />
-          <span class="text-[10px] tracking-[0.2em] text-slate-400 dark:text-slate-500 dark:text-slate-400">CINEMA115 / DETAILS</span>
-        </nav>
-
+      <div class="detail-content workbench-content relative mx-auto max-w-[1440px] px-5 pb-8 md:px-8 lg:px-10">
         <div v-if="loading" aria-label="正在加载影视详情" aria-busy="true" class="animate-pulse">
           <div class="grid gap-8 sm:grid-cols-[220px_minmax(0,1fr)]"><div class="mx-auto aspect-[2/3] w-48 rounded-2xl bg-slate-200 dark:bg-slate-700 sm:w-full"></div><div class="space-y-6 py-4"><div class="h-5 w-1/3 rounded bg-slate-200 dark:bg-slate-700"></div><div class="h-12 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="h-5 w-1/2 rounded bg-slate-200 dark:bg-slate-700"></div><div class="h-32 rounded-xl bg-slate-200 dark:bg-slate-700/60"></div></div></div>
           <div class="mt-12 h-24 rounded-xl bg-slate-200 dark:bg-slate-700/60"></div>
         </div>
         <section v-else-if="error" role="alert" class="rounded-2xl border border-red-100 bg-white dark:bg-slate-900 dark:bg-slate-900/90 px-6 py-12 text-center">
+          <HistoryBackButton :fallback="`/${kind}`" class="mb-4" />
           <h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">暂时无法加载详情</h1><p class="mt-3 text-sm text-red-600">{{ error }}</p>
           <button class="mt-6 rounded-lg bg-slate-900 px-5 py-2.5 text-sm text-white" @click="loadDetail">重新加载</button>
         </section>
@@ -248,7 +244,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
             </div>
             <div class="min-w-0 py-1">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs detail-muted"><span class="rounded-full detail-kind px-3 py-1 text-[11px] font-bold">{{ mediaLabel }}</span><span>{{ detail.date || '日期待定' }}</span><span v-if="detail.genres.length" class="detail-divider border-l pl-3 font-semibold detail-muted">{{ detail.genres.map(item => item.name).join(' / ') }}</span></div>
-              <h1 class="mt-4 break-words text-3xl font-bold leading-tight tracking-tight detail-on-surface lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
+              <div class="mt-4 flex items-start gap-3">
+                <HistoryBackButton :fallback="`/${kind}`" icon-only class="detail-back-button lg:mt-2" />
+                <h1 class="min-w-0 break-words text-3xl font-bold leading-tight tracking-tight detail-on-surface lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
+              </div>
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm detail-muted">{{ detail.originalTitle }}</p>
               <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="detail-collection mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs"><span aria-hidden="true" class="detail-primary"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M7 3h10" /></svg></span><span>{{ detail.collection.name }}</span><span class="detail-primary">查看系列 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span></RouterLink>
@@ -377,6 +376,12 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   --md-sys-color-on-primary-container: var(--detail-dark-on-primary-container);
 }
 .detail-page { background: var(--md-sys-color-surface); }
+.detail-content { padding-top: calc(var(--workbench-header-height) + 24px); }
+.detail-back-button {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+.detail-back-button:hover { background: var(--md-sys-color-surface-container-highest); }
 .detail-backdrop { --backdrop-surface-mix: 35%; height: 75vh; max-height: 800px; }
 .dark .detail-backdrop { --backdrop-surface-mix: 60%; }
 .detail-backdrop img {
