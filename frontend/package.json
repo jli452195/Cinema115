@@ -16,6 +16,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@material/material-color-utilities": "^0.4.0",
     "@types/qrcode": "^1.5.6",
     "fflate": "^0.8.3",
     "js-sha256": "^1.0.0",

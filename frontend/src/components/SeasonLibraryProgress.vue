@@ -68,17 +68,18 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
-  <span ref="root" class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
-    <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-semibold" :title="hint" :class="reliable && ownedCount ? ((progress?.missing.length || progress?.displayMissing.length) ? 'text-amber-600 dark:text-amber-300/90' : 'text-emerald-600 dark:text-emerald-300/90') : 'text-slate-400 dark:text-slate-400'">
+  <span ref="root" class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
+    <slot />
+    <span class="inline-flex min-w-0 items-center gap-1.5 break-words text-[11px] font-semibold" :title="hint" :class="reliable && ownedCount ? ((progress?.missing.length || progress?.displayMissing.length) ? 'text-amber-600 dark:text-amber-300/90' : 'text-emerald-600 dark:text-emerald-300/90') : 'text-slate-400 dark:text-slate-400'">
       <img v-if="reliable && ownedCount" :src="embyIcon" class="h-3.5 w-3.5 shrink-0" alt="" aria-hidden="true" />
       <span v-else-if="state === 'absent' || (reliable && (progress?.aired.length || progress?.displayMissing.length))" class="h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden="true"></span>
       {{ label }}
     </span>
-    <span v-if="state === 'present' && activeTotal && activeCollected" class="group/progress relative inline-flex w-44 max-w-full items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2.5 py-2" :title="hint">
+    <span v-if="state === 'present' && activeTotal && activeCollected" class="media-tonal-inset group/progress relative inline-flex w-full sm:w-44 max-w-full items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2.5 py-2" :title="hint">
       <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-300 dark:bg-slate-600">
         <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? (segment.state === 'owned' ? 'bg-blue-500 dark:bg-blue-400/70' : segment.state === 'missing' ? 'bg-amber-400 dark:bg-amber-400/60' : 'bg-slate-300 dark:bg-slate-600') : (segment.owned ? 'bg-blue-500 dark:bg-blue-400/70' : 'bg-slate-300 dark:bg-slate-600')"></span>
       </span>
-      <span aria-hidden="true" class="pointer-events-none absolute left-1/2 top-1/2 z-10 hidden w-max max-w-[min(28rem,70vw)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-center text-[11px] font-medium text-slate-700 dark:text-slate-300 shadow-md group-hover/progress:block group-focus-visible/season:block">{{ hint }}</span>
+      <span aria-hidden="true" class="media-tonal-panel pointer-events-none absolute left-1/2 top-1/2 z-10 hidden w-max max-w-[min(28rem,70vw)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-center text-[11px] font-medium text-slate-700 dark:text-slate-300 shadow-md group-hover/progress:block group-focus-visible/season:block">{{ hint }}</span>
     </span>
     <span v-if="state === 'present' && !progress && error" class="text-[10px] font-normal text-amber-600">播出信息加载失败</span>
     <span v-if="state === 'present' && progress && (loading || error || stale)" class="text-[10px] font-normal text-slate-400 dark:text-slate-500" :title="error || '当前先显示缓存播出信息'">{{ error ? '缓存 · 刷新失败' : loading ? '更新中…' : '缓存' }}</span>
