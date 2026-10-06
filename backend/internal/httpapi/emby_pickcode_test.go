@@ -37,6 +37,15 @@ func TestPickCodeFilePreparationIndependentOfLinkPrewarm(t *testing.T) {
 
 func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string, prewarm bool, prepare ...bool) {
 	prepareFiles := len(prepare) > 0 && prepare[0]
+	wantSourceReads := 1
+	wantName, wantHash, wantSize := "movie", strings.Repeat("A", 40), int64(100)
+	if strings.HasPrefix(sourcePath, "/play115/") {
+		claim, ok := parsePickCodeSTRMClaim("http://nas" + sourcePath)
+		if !ok {
+			t.Fatal("invalid play115 fixture")
+		}
+		wantSourceReads, wantName, wantHash, wantSize = 0, claim.Name, claim.SHA1, claim.Size
+	}
 	const userID = "8be403a10974486c94a987b8036c8484"
 	accounts, sourceID := proxyTestAccounts(t)
 	targetID, err := accounts.Add("friend")
@@ -68,8 +77,8 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 				w.WriteHeader(500)
 				return
 			}
-			// The path SHA1 deliberately differs from the source account metadata.
-			// It must not replace the trusted source SHA1 or trigger a host request.
+			// The path SHA1 deliberately differs from source metadata. play115
+			// uses its declaration directly; redirect115 retains source fallback.
 			fmt.Fprintf(w, `{"MediaSources":[{"Id":"src","SupportsDirectPlay":true,"Path":"http://unreachable.invalid:8115%s"}]}`, sourcePath)
 		default:
 			w.WriteHeader(403)
@@ -141,7 +150,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 			req.Header.Set("User-Agent", "other-detail-UA")
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			awaitPrewarm(t, h)
-			if fake.links != 0 || fake.uploads != 1 || fake.pickReads != 1 {
+			if fake.links != 0 || fake.uploads != 1 || fake.pickReads != wantSourceReads {
 				t.Fatal("UA change repeated preparation")
 			}
 		}
@@ -152,17 +161,17 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 			t.Fatal("wrong friend redirect", w.Code, w.Body.String())
 		}
 	}
-	if fake.shareReads != 0 || fake.pickReads != 1 || fake.uploads != 1 || fake.links != 1 {
+	if fake.shareReads != 0 || fake.pickReads != wantSourceReads || fake.uploads != 1 || fake.links != 1 {
 		t.Fatal("wrong lookup/cache flow", fake)
 	}
-	if len(fake.files) != 1 || fake.files[0].Name != "movie" || fake.files[0].Size != 100 || fake.files[0].SHA1 != strings.Repeat("A", 40) {
-		t.Fatal("external STRM hints replaced verified upload metadata", fake.files)
+	if len(fake.files) != 1 || fake.files[0].Name != wantName || fake.files[0].Size != wantSize || fake.files[0].SHA1 != wantHash {
+		t.Fatal("wrong metadata for STRM format", fake.files)
 	}
 	h.ClearDirectLinks("")
 	if w := call("HEAD", path); w.Code != 302 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if fake.pickReads != 1 || fake.uploads != 1 || fake.links != 2 || fake.shareReads != 0 {
+	if fake.pickReads != wantSourceReads || fake.uploads != 1 || fake.links != 2 || fake.shareReads != 0 {
 		t.Fatal("file cache not reused")
 	}
 	empty := ""
@@ -170,7 +179,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 		t.Fatal(err)
 	}
 	if strings.HasPrefix(sourcePath, "/play115/") {
-		sourcePath = "/play115/otherpc/999/" + strings.Repeat("a", 40) + "/589916580/other-name.mkv"
+		sourcePath = "/play115/otherpc/999/" + wantHash + "/589916580/other-name.mkv"
 	} else {
 		sourcePath = "/api/redirect115/otherpc/" + strings.Repeat("a", 40) + "/other-name.mkv"
 	}
@@ -178,7 +187,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 	if w := call("GET", path); w.Code != 302 {
 		t.Fatal("external SHA1 failed without primary credentials", w.Code, w.Body.String())
 	}
-	if fake.pickReads != 1 || fake.uploads != 1 || fake.links != 3 {
+	if fake.pickReads != wantSourceReads || fake.uploads != 1 || fake.links != 3 {
 		t.Fatal("external SHA1 did not skip primary metadata")
 	}
 	// A cached CDN URL may outlive a removed local copy. The same request must

@@ -19,10 +19,19 @@ import (
 
 type poolProtocolDrive struct {
 	proxyCacheFake
-	failNext bool
-	attempts []string
-	checks   int
-	checkErr error
+	failNext   bool
+	attempts   []string
+	checks     int
+	checkErr   error
+	shaQueries int
+}
+
+func (f *poolProtocolDrive) FindPlaybackFileBySHA1Quick(_ context.Context, hash, cookie string) (*p115.DrivePlaybackFile, error) {
+	f.shaQueries++
+	if hash != strings.Repeat("A", 40) || p115.CookieUserID(cookie) != "456" {
+		return nil, p115.ErrDriveInvalidResponse
+	}
+	return &p115.DrivePlaybackFile{ID: "88", CID: "0", PickCode: "pick123", SHA1: hash, Size: 100, Name: "movie.mkv"}, nil
 }
 
 func (f *poolProtocolDrive) CheckCookie(context.Context, string) (bool, error) {
@@ -62,6 +71,14 @@ func TestPickCodeReuseCanaryPoolHTTP(t *testing.T) {
 	checkPoolProtocolNegotiationRedirectAndStop(t, false, true)
 }
 
+func TestRedirect115TargetFirstCanaryHTTP(t *testing.T) {
+	checkPoolProtocolNegotiationRedirectAndStop(t, false, true, true)
+}
+
+func TestPlay115TargetFirstCanaryHTTP(t *testing.T) {
+	checkPoolProtocolNegotiationRedirectAndStop(t, false, true, true, true)
+}
+
 func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) { checkPoolProtocolNegotiationRedirectAndStop(t, legacy) })
@@ -70,9 +87,13 @@ func TestPoolProtocolNegotiationRedirectAndStop(t *testing.T) {
 
 func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pickcode ...bool) {
 	fileReuse := len(pickcode) > 0 && pickcode[0]
+	coldTarget := len(pickcode) > 1 && pickcode[1]
 	sourcePath := "http://nas/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123"
 	if fileReuse {
 		sourcePath = "http://nas/api/redirect115/abc123/" + strings.Repeat("A", 40)
+	}
+	if len(pickcode) > 2 && pickcode[2] {
+		sourcePath = "http://nas/play115/abc123/999/" + strings.Repeat("A", 40) + "/100/movie.mkv"
 	}
 	if legacy {
 		sourcePath = "http://nas/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mkv"
@@ -160,7 +181,7 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		t.Fatal(err)
 	}
 	logs := service.NewEmbyProxyLogs(&service.GenerationLogs{})
-	if fileReuse {
+	if fileReuse && !coldTarget {
 		hash := strings.Repeat("A", 40)
 		materialID := service.DirectLinkKey("material-v1", hash, "100")
 		seed := service.PlaybackCacheStatus{
@@ -234,7 +255,8 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		if w.Code != 302 || w.Header().Get("Location") != "https://cdn.115.com/pool" {
 			t.Fatal(w.Code, w.Body.String())
 		}
-		if drive.checks != checksAtStart+i || len(drive.attempts) != 1 {
+		wantChecks := checksAtStart + i
+		if drive.checks != wantChecks || len(drive.attempts) != 1 {
 			t.Fatal("cold share must read once without probe; cache hit must freshly probe", drive.checks, len(drive.attempts))
 		}
 	}
@@ -255,6 +277,9 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		}
 	})
 	if fileReuse {
+		if coldTarget && (drive.shaQueries != 1 || drive.pickReads != 0 || drive.uploads != 0 || len(cache.Status().Materials) != 1 || len(cache.Status().Materials[0].Origins) != 0) {
+			t.Fatal("target-first canary did not bypass source or repeated search")
+		}
 		h.ClearDirectLinks("")
 		beforeChecks := drive.checks
 		beforeReads := len(drive.attempts)
@@ -264,7 +289,7 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		if drive.checks != beforeChecks || len(drive.attempts) != beforeReads+1 || drive.pickReads != 0 || drive.uploads != 0 {
 			t.Fatal("reuse performed directory/source/upload work")
 		}
-		t.Log("canary: cold/repeated reuse = 1 target read, 0 source reads, 0 probes, 0 uploads; cached link = 1 fresh probe; expired cookie rejected")
+		t.Logf("canary: target-first=%t shaQueries=%d source=0 uploads=0; repeated reuse=1 target read; cached link=1 fresh probe; expired cookie rejected", coldTarget, drive.shaQueries)
 		return
 	}
 	settings := members.Pool.Settings()

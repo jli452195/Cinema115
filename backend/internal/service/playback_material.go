@@ -13,6 +13,30 @@ const maxPlaybackMaterials = 100000
 
 type playbackMaterialOrigin struct{}
 type playbackSHA1Hint struct{}
+type playbackTargetSHA1Lookup struct{}
+type play115SourceKey struct{}
+
+// Play115Source is an explicit file declaration from the authorized STRM.
+// It is usable for upload immediately, but does not establish cloud ownership.
+type Play115Source struct {
+	FileID string
+	SHA1   string
+	Size   int64
+	Name   string
+}
+
+func WithPlay115Source(ctx context.Context, source Play115Source) context.Context {
+	source.SHA1 = strings.ToUpper(source.SHA1)
+	ctx = WithRedirect115SHA1(ctx, source.SHA1)
+	return context.WithValue(ctx, play115SourceKey{}, source)
+}
+
+// Redirect115 omits file size. A verified target hit can supply it without
+// reading the primary; the URL alone still cannot establish a source mapping.
+func WithRedirect115SHA1(ctx context.Context, hash string) context.Context {
+	ctx = WithPlaybackSHA1Hint(ctx, hash)
+	return context.WithValue(ctx, playbackTargetSHA1Lookup{}, validMaterialHash(hash))
+}
 
 // A hint from Emby-authorized STRM metadata may locate already verified file
 // data, but cannot create a trusted origin association on its own.
@@ -169,6 +193,17 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 	origin, _ := ctx.Value(playbackMaterialOrigin{}).(string)
 	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
 	material, byHash := s.lookupMaterial(origin, hint)
+	declared, fromPlay115 := ctx.Value(play115SourceKey{}).(Play115Source)
+	if fromPlay115 {
+		material = PlaybackMaterial{ID: playbackMaterialID(declared.SHA1, declared.Size), Name: declared.Name, Size: declared.Size, SHA1: declared.SHA1, CreatedAt: time.Now().UTC()}
+		if err := validatePlaybackMaterials([]PlaybackMaterial{material}); err != nil {
+			return nil, "", nil, err
+		}
+		if old, ok := s.materialByID(material.ID); ok {
+			material.Ranges = old.Ranges
+		}
+		s.logs.Add(ctx, "INFO", "采用 play115 声明的 SHA1、大小和文件名，跳过主账号元数据查询；仅二次校验缺片段时读取来源")
+	}
 	var original *p115.DownloadInfo
 	if material.ID == "" {
 		if hint != "" {
@@ -207,7 +242,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if err := s.putMaterial(material); err != nil {
 			return nil, "", nil, err
 		}
-	} else {
+	} else if !fromPlay115 {
 		s.stats.materialHits.Add(1)
 		if byHash {
 			s.logs.Add(ctx, "INFO", "外部链接 SHA1 命中已验证资料，跳过主账号元数据查询")
@@ -263,6 +298,9 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 				if original.Size != material.Size || !strings.EqualFold(original.SHA1, material.SHA1) {
 					return "", fmt.Errorf("源文件身份与秒传资料不一致，请核查资料")
 				}
+				if fromPlay115 && original.FileID != declared.FileID {
+					return "", fmt.Errorf("play115 校验来源文件 ID 不一致")
+				}
 				s.stats.primaryReads.Add(1)
 				hash, err = reader.PlaybackRangeSHA1(readCtx, original, start, end)
 			}
@@ -280,9 +318,10 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		return strings.ToUpper(hash), nil
 	}
 	commit := func() error {
-		if len(pending) == 0 {
+		if len(pending) == 0 && !fromPlay115 {
 			return nil
 		}
+		material.VerifiedAt = time.Now().UTC()
 		for _, r := range pending {
 			r.VerifiedAt = time.Now().UTC()
 			if len(material.Ranges) == 64 {

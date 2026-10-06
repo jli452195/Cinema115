@@ -454,13 +454,21 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 		return "", report, fmt.Errorf("未选择有效的朋友账号")
 	}
 	report.AccountLabel = PlaybackAccountLabel(selection.accountName, selection.uid, selection.binding.AccountID)
-	s.logs.Add(ctx, "INFO", "进入播放秒传资料查询流程，未命中时由主账号查询 pickcode；目标账号="+report.AccountLabel)
+	if _, ok := ctx.Value(play115SourceKey{}).(Play115Source); ok {
+		s.logs.Add(ctx, "INFO", "进入 play115 参数直用流程，目标未命中时直接准备秒传；目标账号="+report.AccountLabel)
+	} else {
+		s.logs.Add(ctx, "INFO", "进入播放秒传资料查询流程，未命中时由主账号查询 pickcode；目标账号="+report.AccountLabel)
+	}
 	var sourceID string
 	if len(sourceAccountIDs) > 0 {
 		sourceID = sourceAccountIDs[0]
 	}
 	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
 	ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey(sourceID, sourceCookie, pickCode, selection.DirectLinkScope(), hint))
+	declared, fromPlay115 := ctx.Value(play115SourceKey{}).(Play115Source)
+	if fromPlay115 {
+		ctx = context.WithValue(ctx, playbackSourceKey{}, DirectLinkKey("play115", sourceID, sourceCookie, pickCode, selection.DirectLinkScope(), hint, declared.FileID, fmt.Sprint(declared.Size), declared.Name))
+	}
 	origin := DirectLinkKey("pickcode-material", sourceID, pickCode)
 	if sourceID == "" {
 		origin = DirectLinkKey("pickcode-material", sourceCookie, pickCode)
@@ -470,10 +478,13 @@ func (s *PlaybackCache) ResolvePickCodeWithReport(ctx context.Context, selection
 		// With trusted material, this loader is reached only after a range
 		// cache miss. Fetch source identity and URL together, without eager
 		// download requests on the metadata-only or target-hit paths.
-		if material, _ := s.lookupMaterial(origin, hint); material.ID != "" {
+		if material, _ := s.lookupMaterial(origin, hint); material.ID != "" || fromPlay115 {
 			if fused, ok := s.client.(playbackRangeSourceClient); ok {
 				started := time.Now()
 				info, err := fused.PlaybackPickCodeRangeSource(ctx, sourceID, pickCode, sourceCookie)
+				if err == nil && fromPlay115 && (info == nil || info.FileID != declared.FileID) {
+					return nil, fmt.Errorf("play115 校验来源文件 ID 不一致")
+				}
 				if ProxyDebugEnabled(ctx) {
 					s.logs.Add(ctx, "INFO", fmt.Sprintf("校验源取链与元数据合并查询=%d ms｜成功=%t", time.Since(started).Milliseconds(), err == nil))
 				}

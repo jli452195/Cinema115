@@ -91,8 +91,8 @@ func (a *ShareAPI) files(c *gin.Context) {
 }
 
 // 分享播放参数；不包含身份凭证或有效期。
-// PickCode STRM fields are untrusted hints; only 115 responses or verified
-// local material may supply metadata for instant upload and persistence.
+// Complete play115 fields are accepted as upload declarations. Cloud identity
+// and accepted ranges are persisted only after the corresponding verification.
 type sharePlaybackParams struct {
 	Code     string `json:"code"`
 	Password string `json:"password"`

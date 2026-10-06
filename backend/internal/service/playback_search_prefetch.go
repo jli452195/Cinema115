@@ -47,6 +47,9 @@ func (p *playbackSearchPrefetch) stop() {
 // Only a fresh external hash arms speculation. It remains untrusted and cannot
 // create an origin or allow upload until source metadata agrees with it.
 func (s *PlaybackCache) startPlaybackSearch(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, scope string) *playbackSearchPrefetch {
+	if _, ok := ctx.Value(play115SourceKey{}).(Play115Source); ok {
+		return nil
+	}
 	quick, ok := fast.(quickPlaybackSearch)
 	if !ok {
 		return nil

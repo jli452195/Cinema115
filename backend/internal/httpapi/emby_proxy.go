@@ -834,12 +834,15 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		keySHA1 = ""
 	}
 	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, keySHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
+	if claim.PickCode != "" && claim.FileID != "" {
+		key = service.DirectLinkKey(key, strconv.FormatInt(claim.Size, 10), claim.Name)
+	}
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
 		h.logs.Add(fetchCtx, "INFO", fmt.Sprintf("直链缓存未命中，开始向 115 获取直链；缓存时间=%d 分钟（0 为关闭）", h.config.DirectLinkCacheMinutes))
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}
 		var fetchErr error
 		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
-			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(authorization.ResolutionContext(fetchCtx), claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
+			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(pickCodeSHA1Context(authorization.ResolutionContext(fetchCtx), claim), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		} else if claim.PickCode != "" {
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
 			value.Report.Mode = "源账号网盘直取"
@@ -866,7 +869,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 			w.WriteHeader(http.StatusOK)
 			return false
 		}
-		_, report, err := h.cache.ResolvePickCodeWithReport(service.WithPlaybackSHA1Hint(ctx, claim.SHA1), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
+		_, report, err := h.cache.ResolvePickCodeWithReport(pickCodeSHA1Context(ctx, claim), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		if err != nil {
 			fail(err.Error(), 502)
 			return false

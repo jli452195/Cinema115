@@ -117,6 +117,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", err
 	}
 	defer release()
+	next("本地副本查询")
 	sourceKey, _ := ctx.Value(playbackSourceKey{}).(string)
 	targetScope := DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
 	recovery := newPlaybackRecovery()
@@ -159,14 +160,28 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	origin, _ := ctx.Value(playbackMaterialOrigin{}).(string)
 	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
-	if material, _ := s.lookupMaterial(origin, hint); material.ID == "" {
-		// Unknown source identity cannot use the trusted-copy shortcut. Check
-		// the target before starting source I/O or speculative target searches.
+	redirectLookup, _ := ctx.Value(playbackTargetSHA1Lookup{}).(bool)
+	_, verifiesTarget := s.client.(interface {
+		VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
+	})
+	deferDirectory := redirectLookup && validMaterialHash(hint) && verifiesTarget && !preparingPlaybackFile(ctx)
+	if material, _ := s.lookupMaterial(origin, hint); material.ID == "" && !deferDirectory {
+		next("源资料缺失时目录核验")
+		// A verified redirect115 target read can authorize playback without a
+		// directory probe. A miss still reaches the write preflight below.
+		// Other unknown sources and file-only preparation retain their checks.
 		if err := grant.ValidateTargetDirectory(ctx); err != nil {
 			return "", err
 		}
 	}
-	prefetch := s.startPlaybackSearch(ctx, fast, selected, targetScope)
+	next("目标 SHA1 优先查询")
+	targetLink, handled, prefetch, err := s.lookupRedirect115Target(ctx, fast, selected, targetScope, sourceKey, ua, report, recovery)
+	if handled || err != nil {
+		return targetLink, err
+	}
+	if prefetch == nil {
+		prefetch = s.startPlaybackSearch(ctx, fast, selected, targetScope)
+	}
 	defer prefetch.stop()
 	next("文件秒传资料")
 	info, materialID, commitRanges, err := s.preparePlaybackMaterial(ctx, selected, report, func() (*p115.DownloadInfo, error) {
@@ -178,6 +193,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	if err != nil {
 		return "", err
 	}
+	_, fromPlay115 := ctx.Value(play115SourceKey{}).(Play115Source)
 	if err := p115.ValidateInstantSource(info); err != nil {
 		return "", err
 	}
@@ -197,6 +213,11 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			entry.MaterialID = materialID
 			link, err := recovery.reuse(ctx, s, entry, selected, ua, report)
 			if err == nil {
+				if fromPlay115 {
+					if err := commitRanges(); err != nil {
+						return "", err
+					}
+				}
 				s.rememberSource(sourceKey, report.FileCacheKey)
 				return link, nil
 			}
@@ -265,6 +286,11 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			continue
 		}
 		report.Mode = "复用同 SHA1 文件"
+		if fromPlay115 {
+			if err := commitRanges(); err != nil {
+				return "", err
+			}
+		}
 		s.rememberSource(sourceKey, report.FileCacheKey)
 		s.logs.Add(ctx, "INFO", "朋友账号 SHA1 命中，直接取链；无需秒传")
 		return link, nil
@@ -296,27 +322,45 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		s.backoffPlaybackSearch(key, targetScope, minTime(time.Now().Add(3*time.Second), retryAt), nil)
 		return "", &PlaybackPendingError{RetryAt: retryAt}
 	}
-	next("恢复保存目录核验")
+	next("目录与上传凭据并行预检")
 	// A failed/missing read cannot authorize a write. This also checks the
 	// request snapshot again before any upload intent or external write.
-	if err := grant.ValidateTargetDirectory(ctx); err != nil {
-		return "", err
-	}
-	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
-		if directory, ok := fast.(interface {
-			ValidatePlaybackRecoveryDirectory(context.Context, string, string, string) error
-		}); ok {
-			if err := directory.ValidatePlaybackRecoveryDirectory(recovery.budget(ctx), selected.binding.AccountID, selected.binding.ParentCID, selected.cookie); err != nil {
-				return "", &playbackTargetError{stage: "恢复秒传前保存目录核验失败，请检查原目录配置", err: err}
+	preparation, err := preparePlaybackWrite(ctx, fast, selected.binding.AccountID, selected.cookie, func(ctx context.Context) error {
+		if err := grant.ValidateTargetDirectory(ctx); err != nil {
+			return err
+		}
+		if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
+			if directory, ok := fast.(interface {
+				ValidatePlaybackRecoveryDirectory(context.Context, string, string, string) error
+			}); ok {
+				// Retain the recovery deadline without losing sibling cancellation
+				// when its budget was created before this parallel preflight.
+				deadline, _ := recovery.budget(ctx).Deadline()
+				recoveryCtx, cancel := context.WithDeadline(ctx, deadline)
+				defer cancel()
+				if err := directory.ValidatePlaybackRecoveryDirectory(recoveryCtx, selected.binding.AccountID, selected.binding.ParentCID, selected.cookie); err != nil {
+					return &playbackTargetError{stage: "恢复秒传前保存目录核验失败，请检查原目录配置", err: err}
+				}
 			}
 		}
+		return nil
+	})
+	if debug {
+		s.logs.Add(ctx, "INFO", fmt.Sprintf("秒传并行预检：目录核验=%d ms｜上传凭据=%d ms｜两项耗时重叠，不相加", preparation.directoryDuration.Milliseconds(), preparation.ticketDuration.Milliseconds()))
+	}
+	if err != nil {
+		return "", err
+	}
+	// Configuration may have changed while the ticket branch was still waiting.
+	if grant != nil {
+		if err := grant.CheckCurrent(ctx); err != nil {
+			return "", err
+		}
+	}
+	if len(recovery.failed) > 0 || len(recovery.missing) > 0 {
 		s.logs.Add(ctx, "INFO", "目标 UID 完整搜索未找到可用替代文件，向原目录重新秒传；本次最多重建一次")
 	}
-	next("账号上传预检")
-	ticket, err := fast.PreparePlaybackAccount(ctx, selected.binding.AccountID, selected.cookie)
-	if err != nil {
-		return "", fmt.Errorf("朋友账号秒传预检失败：%s", p115.SharePlaybackFailureReason(err))
-	}
+	next("保存秒传意图")
 	// Persist a finite deadline before submitting, including for process crashes.
 	e.RetryNotBefore = time.Now().UTC().Add(playbackRetryCooldown)
 	if err := s.put(e); err != nil {
@@ -324,7 +368,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	}
 	next("秒传预检")
 	s.logs.Add(ctx, "INFO", "朋友账号未查到同 SHA1 文件，允许秒传；SHA1="+strings.ToUpper(info.SHA1)+"｜保存目录="+selected.binding.ParentCID)
-	result, err := fast.UploadPlayback(ctx, info, selected.binding.AccountID, selected.binding.ParentCID, selected.cookie, ticket, func(p p115.InstantProgress) {
+	result, err := fast.UploadPlayback(ctx, info, selected.binding.AccountID, selected.binding.ParentCID, selected.cookie, preparation.ticket, func(p p115.InstantProgress) {
 		switch p.Stage {
 		case "init":
 			next("秒传提交")
@@ -354,6 +398,14 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			next("异常响应 SHA1 确认")
 			link, found, confirmErr := s.confirmUncertainUpload(ctx, fast, e, info, selected, ua, report)
 			if found {
+				if fromPlay115 {
+					// A verified target proves file data, but an uncertain upload
+					// response does not prove acceptance of this request's ranges.
+					m := PlaybackMaterial{ID: materialID, Name: info.Name, Size: info.Size, SHA1: info.SHA1, CreatedAt: time.Now().UTC(), VerifiedAt: time.Now().UTC()}
+					if err := s.putMaterial(m); err != nil {
+						return "", err
+					}
+				}
 				return link, nil
 			}
 			if confirmErr != nil {
@@ -364,8 +416,10 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", fmt.Errorf("朋友账号秒传未完成：%s", reason)
 	}
 	// Only an explicit successful upload response proves the challenge accepted.
-	if err := commitRanges(); err != nil {
-		return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
+	if !fromPlay115 {
+		if err := commitRanges(); err != nil {
+			return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
+		}
 	}
 	if preparingPlaybackFile(ctx) {
 		next("目标文件元数据核验")
@@ -401,6 +455,11 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			return "", saveErr
 		}
 		return "", fmt.Errorf("秒传已成功，%s（fileID=%s，pickcode=%s）", reason, result.FileID, result.PickCode)
+	}
+	if fromPlay115 {
+		if err := commitRanges(); err != nil {
+			return "", fmt.Errorf("秒传已成功，但资料保存失败: %w", err)
+		}
 	}
 	e.File, e.DirectoryID, e.Status, e.Message = file, file.CID, "ready", "秒传完成，SHA1 核对通过；云端文件由用户手动管理"
 	e.RetryNotBefore = time.Time{}

@@ -127,3 +127,54 @@ func TestMediaDirectoryPreflightScopeIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaDirectoryCheckReusedByActualPlaybackUpload(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "root-fallback"}[deleted], func(t *testing.T) {
+			c := newTestShareClient()
+			checks, uploads := 0, 0
+			c.HTTP.Transport = metadataTransport(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Path {
+				case "/files":
+					checks++
+					if deleted {
+						return instantResponse(200, []byte(`{"state":true,"cid":"0"}`)), nil
+					}
+					return instantResponse(200, []byte(`{"state":true,"cid":"9"}`)), nil
+				case "/files/uploadinfo":
+					return instantResponse(200, []byte(`{"user_id":22,"userkey":"test-key"}`)), nil
+				case "/4.0/initupload.php":
+					uploads++
+					if checks != 1 {
+						t.Fatal("duplicate or missing directory check before write")
+					}
+					return instantResponse(200, encryptedInstantResponse(t, `{"status":2,"file_id":"123","pickcode":"pick123"}`)), nil
+				default:
+					t.Fatal("unexpected request", r.URL.Path)
+					return nil, nil
+				}
+			})
+			ctx := context.Background()
+			err := c.ValidateMediaPlaybackDirectory(ctx, "account", "9", "UID=22_A")
+			if deleted {
+				if err == nil || checks != 1 || uploads != 0 {
+					t.Fatal("root fallback allowed write")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ticket, err := c.PreparePlaybackAccount(ctx, "account", "UID=22_A")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.UploadPlayback(ctx, testInstantInfo(), "account", "9", "UID=22_A", ticket, nil); err != nil {
+				t.Fatal(err)
+			}
+			if checks != 1 || uploads != 1 {
+				t.Fatal("upload repeated directory query", checks, uploads)
+			}
+		})
+	}
+}

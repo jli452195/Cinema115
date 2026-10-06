@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -8,7 +9,20 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"strm115/backend/internal/service"
 )
+
+func pickCodeSHA1Context(ctx context.Context, claim *sharePlaybackParams) context.Context {
+	if claim.PickCode != "" && claim.FileID != "" {
+		return service.WithPlay115Source(ctx, service.Play115Source{FileID: claim.FileID, SHA1: claim.SHA1, Size: claim.Size, Name: claim.Name})
+	}
+	// Only redirect115 has a PickCode without the play115 file ID/size fields.
+	if claim.PickCode != "" && claim.FileID == "" {
+		return service.WithRedirect115SHA1(ctx, claim.SHA1)
+	}
+	return service.WithPlaybackSHA1Hint(ctx, claim.SHA1)
+}
 
 var pickCodePattern = regexp.MustCompile("^[a-zA-Z0-9]{6,64}$")
 var pickCodePathSHA1Pattern = regexp.MustCompile("^[a-fA-F0-9]{40}$")
@@ -31,7 +45,8 @@ func parsePickCodeSTRM(raw string) (string, bool) {
 	return claim.PickCode, true
 }
 
-// All path metadata is an external hint, not verified cloud file information.
+// Path metadata is external input. Complete play115 declarations may be used
+// directly for upload; parsing alone does not verify cloud file ownership.
 func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
 	if len(raw) > 16384 {
 		return nil, false
