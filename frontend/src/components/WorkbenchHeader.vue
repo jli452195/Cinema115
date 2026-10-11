@@ -154,16 +154,17 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .dark .icon-button.selected { background: rgb(var(--color-slate-800)); color: rgb(var(--color-accent)); }
 .workbench-header.over-backdrop .top-link,
 .workbench-header.over-backdrop .icon-button { color: #fff; }
+.workbench-header.over-backdrop .nav-indicator { background: rgb(255 255 255 / 8%); }
+.workbench-header.over-backdrop .nav-indicator::after { height: 2px; opacity: 0.75; box-shadow: none; }
 .workbench-header.backdrop-at-top .top-link { text-shadow: 0 1px 3px rgb(0 0 0 / 65%); }
 .workbench-header.backdrop-at-top .icon-button svg { filter: drop-shadow(0 1px 2px rgb(0 0 0 / 65%)); }
 .workbench-header.over-backdrop .top-link:hover,
-.workbench-header.over-backdrop .top-link.selected,
 .workbench-header.over-backdrop .icon-button:hover,
 .workbench-header.over-backdrop .icon-button.selected { background: rgb(15 23 42 / 25%); }
 .dark .workbench-header.over-backdrop .top-link:hover,
-.dark .workbench-header.over-backdrop .top-link.selected,
 .dark .workbench-header.over-backdrop .icon-button:hover,
 .dark .workbench-header.over-backdrop .icon-button.selected { background: rgb(var(--color-slate-950) / 25%); }
+.workbench-header.over-backdrop .top-link.selected { background: transparent; }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
 @media (max-width: 639px) {
