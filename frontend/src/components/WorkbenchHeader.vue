@@ -9,7 +9,7 @@ import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
-const props = defineProps<{ overBackdrop?: boolean }>()
+const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean }>()
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
 const notificationController = new AbortController()
@@ -32,9 +32,13 @@ const highlightOverBackdrop = computed(() => props.overBackdrop && scrollY.value
 const headerStyle = computed(() => {
   const opacity = Math.min(Math.max(scrollY.value / 100, 0), 1)
   return {
-    backgroundColor: `rgb(var(--header-bg) / ${opacity * 0.85})`,
+    backgroundColor: props.tonalSurface
+      ? `color-mix(in srgb, var(--md-sys-color-surface) ${opacity * 85}%, transparent)`
+      : `rgb(var(--header-bg) / ${opacity * 0.85})`,
     backdropFilter: `blur(${opacity * 12}px)`,
-    borderColor: `rgb(var(--header-border) / ${opacity})`
+    borderColor: props.tonalSurface
+      ? `color-mix(in srgb, var(--md-sys-color-outline-variant) ${opacity * 60}%, transparent)`
+      : `rgb(var(--header-border) / ${opacity})`
   }
 })
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
@@ -85,7 +89,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[background-color,backdrop-filter,border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0 }" :style="headerStyle" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[background-color,backdrop-filter,border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface }" :style="headerStyle" @focusout="onFocusOut">
     <div class="header-inner relative mx-auto flex h-[var(--workbench-header-height)] max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:px-10">
       <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
         <CinemaLogo />
@@ -165,6 +169,17 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .dark .workbench-header.over-backdrop .icon-button:hover,
 .dark .workbench-header.over-backdrop .icon-button.selected { background: rgb(var(--color-slate-950) / 25%); }
 .workbench-header.over-backdrop .top-link.selected { background: transparent; }
+.workbench-header.tonal-surface:not(.over-backdrop) .top-link,
+.workbench-header.tonal-surface:not(.over-backdrop) .icon-button { color: var(--md-sys-color-on-surface-variant); }
+.workbench-header.tonal-surface:not(.over-backdrop) .top-link.selected,
+.workbench-header.tonal-surface:not(.over-backdrop) .top-link:hover,
+.workbench-header.tonal-surface:not(.over-backdrop) .icon-button:hover,
+.workbench-header.tonal-surface:not(.over-backdrop) .icon-button.selected { color: var(--md-sys-color-on-surface); }
+.workbench-header.tonal-surface:not(.over-backdrop) .nav-indicator,
+.workbench-header.tonal-surface:not(.over-backdrop) .top-link:hover,
+.workbench-header.tonal-surface:not(.over-backdrop) .icon-button:hover,
+.workbench-header.tonal-surface:not(.over-backdrop) .icon-button.selected { background: var(--md-sys-color-surface-container-high); }
+.workbench-header.tonal-surface:not(.over-backdrop) .nav-indicator::after { background: var(--md-sys-color-primary); }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
 @media (max-width: 639px) {

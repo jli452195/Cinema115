@@ -233,7 +233,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" @close="gyingSearchOpen = false" />
     <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" @close="mikanSearchOpen = false" />
-    <WorkbenchHeader :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
+    <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
         <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
@@ -400,17 +400,60 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   color: var(--md-sys-color-on-surface);
 }
 .detail-back-button:hover { background: var(--md-sys-color-surface-container-highest); }
-.detail-backdrop { --backdrop-surface-mix: 35%; height: 75vh; max-height: 800px; }
-.dark .detail-backdrop { --backdrop-surface-mix: 60%; }
-.detail-backdrop img {
-    opacity: 0.9;
-    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
-    mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
+.detail-backdrop {
+  --backdrop-surface-start: 14%;
+  --backdrop-surface-middle: 32%;
+  height: 75vh;
+  max-height: 800px;
+  overflow: hidden;
+  isolation: isolate;
 }
-.dark .detail-backdrop img { opacity: 0.75; }
+.dark .detail-backdrop {
+  --backdrop-surface-start: 34%;
+  --backdrop-surface-middle: 48%;
+}
+.detail-backdrop img {
+  /* Overscan keeps the blurred image edges outside the visible background. */
+  position: absolute;
+  inset: -12px;
+  width: calc(100% + 24px);
+  height: calc(100% + 24px);
+  filter: blur(3px);
+}
+.detail-backdrop::before,
 .detail-backdrop::after {
-    content: ''; position: absolute; inset: 0;
-    background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-mix), transparent) 50%, var(--md-sys-color-surface) 100%);
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.detail-backdrop::before {
+  z-index: 1;
+  /* A broad falloff protects the reading area without outlining a panel. */
+  background: radial-gradient(ellipse 70% 80% at 62% 32%,
+    color-mix(in srgb, var(--md-sys-color-surface) 50%, transparent) 0%,
+    color-mix(in srgb, var(--md-sys-color-surface) 44%, transparent) 32%,
+    color-mix(in srgb, var(--md-sys-color-surface) 20%, transparent) 65%,
+    transparent 100%);
+}
+.detail-backdrop::after {
+  z-index: 2;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-start), transparent) 0%,
+    color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-start), transparent) 20%,
+    color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-middle), transparent) 40%,
+    color-mix(in srgb, var(--md-sys-color-surface) 58%, transparent) 60%,
+    color-mix(in srgb, var(--md-sys-color-surface) 85%, transparent) 80%,
+    var(--md-sys-color-surface) 100%);
+}
+@media (max-width: 639px) {
+  .detail-backdrop {
+    height: calc(var(--workbench-header-height) + 340px);
+    max-height: none;
+  }
+  .detail-backdrop img { filter: blur(2px); }
+  .detail-backdrop::before {
+    background: color-mix(in srgb, var(--md-sys-color-surface) 22%, transparent);
+  }
 }
 .detail-poster {
   border-color: var(--md-sys-color-outline-variant);
