@@ -337,14 +337,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .bot-dialog {
   --bot-max-height: 90dvh;
-  --bot-container: var(--detail-light-surface-container-high, #e9edf3);
-  --bot-card: var(--detail-light-surface-container-low, #fff);
+  --bot-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
+  --bot-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
   --bot-text: var(--detail-light-on-surface, #18212e);
   --bot-muted: var(--detail-light-on-surface-variant, #475569);
   --bot-outline: var(--detail-light-outline-variant, #cbd5e1);
   --bot-primary: var(--detail-light-primary, #475f85);
   --bot-on-primary: var(--detail-light-on-primary, #fff);
-  --bot-tonal: var(--detail-light-primary-container, #d8e6ff);
+  --bot-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--bot-card));
   --bot-on-tonal: var(--detail-light-on-primary-container, #1a365d);
   --bot-success: #246044;
   --bot-success-bg: #e6f2e9;
@@ -368,14 +368,14 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .bot-dialog {
-  --bot-container: var(--detail-dark-surface-container-high, #242d3c);
-  --bot-card: var(--detail-dark-surface-container-low, #1b2433);
+  --bot-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
+  --bot-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
   --bot-text: var(--detail-dark-on-surface, #e2e8f0);
   --bot-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
   --bot-outline: var(--detail-dark-outline-variant, #465063);
   --bot-primary: var(--detail-dark-primary, #aac7f5);
   --bot-on-primary: var(--detail-dark-on-primary, #173256);
-  --bot-tonal: var(--detail-dark-primary-container, #314967);
+  --bot-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--bot-card));
   --bot-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
   --bot-success: #a5d8b8;
   --bot-success-bg: #223d31;
@@ -430,6 +430,7 @@ onBeforeUnmount(() => {
 .bot-warning { color: var(--bot-warning); background: var(--bot-warning-bg); }
 .bot-error { color: var(--bot-error); background: var(--bot-error-bg); }
 .bot-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
+.bot-notice.bot-info { border: 1px solid color-mix(in srgb, var(--bot-outline) 45%, transparent); background: var(--bot-card); color: var(--bot-text); }
 .bot-notice strong { font-weight: 600; }
 .bot-notice > span, .bot-task-notice > div > span { display: block; font-size: 11px; }
 .bot-resource .bot-notice { margin: 12px 0 0; }

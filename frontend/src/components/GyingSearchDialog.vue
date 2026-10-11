@@ -497,14 +497,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .gy-dialog {
   --gy-max-height: 90dvh;
-  --gy-container: var(--detail-light-surface-container-high, #e9edf3);
-  --gy-card: var(--detail-light-surface-container-low, #fff);
+  --gy-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
+  --gy-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
   --gy-text: var(--detail-light-on-surface, #18212e);
   --gy-muted: var(--detail-light-on-surface-variant, #475569);
   --gy-outline: var(--detail-light-outline-variant, #cbd5e1);
   --gy-primary: var(--detail-light-primary, #475f85);
   --gy-on-primary: var(--detail-light-on-primary, #fff);
-  --gy-tonal: var(--detail-light-primary-container, #d8e6ff);
+  --gy-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--gy-card));
   --gy-on-tonal: var(--detail-light-on-primary-container, #1a365d);
   --gy-success: #246044; --gy-success-bg: #e6f2e9;
   --gy-warning: #765500; --gy-warning-bg: #fff1cd;
@@ -515,14 +515,14 @@ onBeforeUnmount(() => {
   overflow: hidden; box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .gy-dialog {
-  --gy-container: var(--detail-dark-surface-container-high, #242d3c);
-  --gy-card: var(--detail-dark-surface-container-low, #1b2433);
+  --gy-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
+  --gy-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
   --gy-text: var(--detail-dark-on-surface, #e2e8f0);
   --gy-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
   --gy-outline: var(--detail-dark-outline-variant, #465063);
   --gy-primary: var(--detail-dark-primary, #aac7f5);
   --gy-on-primary: var(--detail-dark-on-primary, #173256);
-  --gy-tonal: var(--detail-dark-primary-container, #314967);
+  --gy-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--gy-card));
   --gy-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
   --gy-success: #a5d8b8; --gy-success-bg: #223d31;
   --gy-warning: #eed085; --gy-warning-bg: #42371e;

@@ -366,14 +366,14 @@ onBeforeUnmount(() => {
 .re0-dialog {
   --re0-max-height: 90dvh;
   --re0-surface: var(--detail-light-surface, #f8fafc);
-  --re0-container: var(--detail-light-surface-container-high, #e9edf3);
-  --re0-card: var(--detail-light-surface-container-low, #fff);
+  --re0-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
+  --re0-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
   --re0-text: var(--detail-light-on-surface, #18212e);
   --re0-muted: var(--detail-light-on-surface-variant, #475569);
   --re0-outline: var(--detail-light-outline-variant, #cbd5e1);
   --re0-primary: var(--detail-light-primary, #475f85);
   --re0-on-primary: var(--detail-light-on-primary, #fff);
-  --re0-tonal: var(--detail-light-primary-container, #d8e6ff);
+  --re0-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--re0-card));
   --re0-on-tonal: var(--detail-light-on-primary-container, #1a365d);
   --re0-success: #246044;
   --re0-success-bg: #e6f2e9;
@@ -398,14 +398,14 @@ onBeforeUnmount(() => {
 }
 .dark .re0-dialog {
   --re0-surface: var(--detail-dark-surface, #111827);
-  --re0-container: var(--detail-dark-surface-container-high, #242d3c);
-  --re0-card: var(--detail-dark-surface-container-low, #1b2433);
+  --re0-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
+  --re0-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
   --re0-text: var(--detail-dark-on-surface, #e2e8f0);
   --re0-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
   --re0-outline: var(--detail-dark-outline-variant, #465063);
   --re0-primary: var(--detail-dark-primary, #aac7f5);
   --re0-on-primary: var(--detail-dark-on-primary, #173256);
-  --re0-tonal: var(--detail-dark-primary-container, #314967);
+  --re0-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--re0-card));
   --re0-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
   --re0-success: #a5d8b8;
   --re0-success-bg: #223d31;
@@ -458,6 +458,7 @@ onBeforeUnmount(() => {
 .re0-outlined-button { --re0-button-background: color-mix(in srgb, var(--re0-primary) 4%, var(--re0-card)); padding: 7px 11px; border: 1px solid var(--re0-outline); color: var(--re0-primary); }
 .re0-resource-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 16px; color: var(--re0-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
 .re0-info { color: var(--re0-on-tonal); background: var(--re0-tonal); }
+.re0-notice.re0-info { border: 1px solid color-mix(in srgb, var(--re0-outline) 45%, transparent); background: var(--re0-card); color: var(--re0-text); }
 .re0-success { color: var(--re0-success); background: var(--re0-success-bg); }
 .re0-warning { color: var(--re0-warning); background: var(--re0-warning-bg); }
 .re0-error { color: var(--re0-error); background: var(--re0-error-bg); }
