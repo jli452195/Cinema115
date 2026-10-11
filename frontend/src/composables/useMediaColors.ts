@@ -35,10 +35,12 @@ export function useMediaColors(imageURL: () => string) {
         surface: scheme.surface,
         'on-surface': scheme.onSurface,
         'on-surface-variant': scheme.onSurfaceVariant,
+        'surface-container-low': scheme.surfaceContainerLow,
         'surface-container-high': scheme.surfaceContainerHigh,
         'surface-container-highest': scheme.surfaceContainerHighest,
         'outline-variant': scheme.outlineVariant,
         primary: scheme.primary,
+        'on-primary': scheme.onPrimary,
         'primary-container': scheme.primaryContainer,
         'on-primary-container': scheme.onPrimaryContainer,
       }

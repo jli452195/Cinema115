@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { is115Share, normalize115Share } from '../utils/shareLink'
 import { telegramUserRequest, telegramUserSearchStream, TelegramSearchError, type TelegramUserStatus, type BotSearchResult, type BotSearchProgress } from '../types/telegramUser'
-const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string }>()
+import telegramLogo from '../assets/telegram/telegram.svg'
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; themeColors?: Record<string, string> }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
+const viewportStyle = ref<Record<string, string>>({})
+const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
+const query = ref('')
+const lockedResourceOrder = ref<string[]>([])
 const state = ref<TelegramUserStatus>()
 const result = ref<BotSearchResult>()
 const searchBusy = ref(false)
@@ -46,7 +51,42 @@ const resources = computed(() => {
   if (items.length) return items.map(item => ({ ...item, direct: '' }))
   return (result.value?.links.filter(is115Share) || []).map((link, index) => ({ id: `link:${index}:${link}`, title: `${props.title} · 资源 ${index + 1}`, kind: 'resource' as const, tmdbId: '', size: '', direct: link }))
 })
-// 标题打开与 STRM 生成共用取链队列，避免同时点击导致 Bot 回复错配。
+const orderedResources = computed(() => {
+  const positions = new Map(lockedResourceOrder.value.map((id, index) => [id, index]))
+  return [...resources.value].sort((a, b) => {
+    const position = (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity)
+    return position || Number(matchesCurrent(b)) - Number(matchesCurrent(a))
+  })
+})
+function lockResourceOrder() {
+  // Append later batches once the user interacts, keeping actions in place.
+  if (searchBusy.value && !lockedResourceOrder.value.length) lockedResourceOrder.value = orderedResources.value.map(item => item.id)
+}
+const filteredResources = computed(() => {
+  const filter = query.value.trim().toLowerCase()
+  return orderedResources.value.filter(item => `${item.title} ${item.size || ''} ${item.tmdbId || ''}`.toLowerCase().includes(filter))
+})
+function matchesCurrent(item: (typeof resources.value)[number]) {
+  return item.tmdbId === props.tmdbId
+}
+function clearQuery() {
+  query.value = ''
+  dialog.value?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true })
+}
+async function revealLinks(id: string) {
+  await nextTick()
+  const resource = Array.from(dialog.value?.querySelectorAll<HTMLElement>('[data-resource-id]') || []).find(element => element.dataset.resourceId === id)
+  const links = resource?.querySelector<HTMLElement>('.bot-share-links')
+  const body = dialog.value?.querySelector<HTMLElement>('.bot-body')
+  if (links && body) {
+    const target = links.getBoundingClientRect()
+    const viewport = body.getBoundingClientRect()
+    const top = target.top < viewport.top ? target.top - viewport.top : Math.max(0, Math.min(target.bottom - viewport.bottom, target.top - viewport.top))
+    body.scrollBy({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+  }
+  links?.querySelector<HTMLAnchorElement>('a')?.focus({ preventScroll: true })
+}
+// 打开分享与 STRM 生成共用取链队列，避免同时点击导致 Bot 回复错配。
 function loadResourceLinks(item: (typeof resources.value)[number]): Promise<string[]> {
   const cached = resolvedLinks.value[item.id]
   if (cached) return Promise.resolve(cached)
@@ -69,6 +109,9 @@ function loadResourceLinks(item: (typeof resources.value)[number]): Promise<stri
 }
 async function openResource(item: (typeof resources.value)[number]) {
   if (linkPending.value[item.id]) return
+  if ((resolvedLinks.value[item.id]?.length || 0) > 1) { await revealLinks(item.id); return }
+  const trigger = document.activeElement as HTMLElement | null
+  const returnFocus = trigger?.dataset.botAction === 'open'
   linkErrors.value[item.id] = ''
   // 在点击事件中预开窗口，避免异步取链完成后被浏览器拦截。
   const tab = window.open('about:blank', '_blank')
@@ -78,11 +121,18 @@ async function openResource(item: (typeof resources.value)[number]) {
     if (links.length === 1 && tab && !tab.closed) tab.location.replace(links[0]!)
     else {
       tab?.close()
-      linkErrors.value[item.id] = links.length > 1 ? '该资源包含多个分享，请选择下方链接。' : '浏览器未打开新窗口，请再次点击标题打开。'
+      if (links.length > 1) await revealLinks(item.id)
+      else linkErrors.value[item.id] = '浏览器未打开新窗口，请再次点击“打开分享”。'
     }
   } catch (e) {
     tab?.close()
     if (!lifecycle.signal.aborted) linkErrors.value[item.id] = showError(e)
+  } finally {
+    await nextTick()
+    if (returnFocus && dialog.value?.open && (document.activeElement === document.body || document.activeElement === dialog.value)) {
+      const resource = Array.from(dialog.value.querySelectorAll<HTMLElement>('[data-resource-id]')).find(element => element.dataset.resourceId === item.id)
+      resource?.querySelector<HTMLElement>('[data-bot-action="open"]')?.focus({ preventScroll: true })
+    }
   }
 }
 function shareResource(item: (typeof resources.value)[number]): ShareSTRMResource {
@@ -98,10 +148,11 @@ function shareResource(item: (typeof resources.value)[number]): ShareSTRMResourc
 const nextPage = computed(() => result.value?.items.find(item => item.kind === 'page' && item.title.includes('下一页')))
 async function request(id?: string, refresh = false) {
   if (busy.value || retrySeconds.value > 0) return
+  lockedResourceOrder.value = []
   if (refresh) { resolvedLinks.value = {}; linkErrors.value = {} }
   let finishSearch!: () => void
   searchFinished = new Promise<void>(resolve => { finishSearch = resolve })
-  searchBusy.value = true; loadingMore.value = !!id; error.value = ''; searchStage.value = 'waiting'; retryAt.value = 0
+  searchBusy.value = true; loadingMore.value = !!id; error.value = ''; searchStage.value = 'waiting'; queuePosition.value = 0; retryAt.value = 0
   try {
     if (id) {
       const data = await telegramUserRequest<BotSearchResult>(props.token, 'select', lifecycle.signal, { id })
@@ -119,7 +170,18 @@ async function request(id?: string, refresh = false) {
 }
 function stopRun() { void shareRuns.stop() }
 function shareSTRM(item: (typeof resources.value)[number]) { void shareRuns.submit(shareResource(item)) }
+function syncVisualViewport() {
+  const viewport = window.visualViewport
+  viewportStyle.value = {
+    '--bot-visible-height': `${viewport?.height ?? window.innerHeight}px`,
+    '--bot-visible-top': `${viewport?.offsetTop ?? 0}px`,
+    '--bot-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
+  }
+}
 onMounted(async () => {
+  syncVisualViewport()
+  window.visualViewport?.addEventListener('resize', syncVisualViewport)
+  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   countdown = setInterval(() => { clockNow.value = Date.now() }, 1000)
   document.body.style.overflow = 'hidden'; dialog.value?.showModal()
   try { state.value = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', lifecycle.signal) }
@@ -127,32 +189,311 @@ onMounted(async () => {
   finally { checking.value = false }
   if (!lifecycle.signal.aborted && state.value?.configured && state.value.hasSession) await request()
 })
-onBeforeUnmount(() => { clearInterval(countdown); lifecycle.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; previousFocus?.focus() })
+onBeforeUnmount(() => {
+  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
+  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
+  clearInterval(countdown); lifecycle.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; previousFocus?.focus()
+})
 </script>
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" aria-labelledby="bot-search-title" class="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0 shadow-2xl backdrop:bg-slate-950/40" @cancel.prevent="emit('close')">
-      <div class="flex max-h-[85dvh] flex-col">
-        <header class="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 p-5"><div class="min-w-0"><h2 id="bot-search-title" class="text-lg font-semibold text-slate-900 dark:text-slate-100">Bot 搜索</h2><p class="mt-1 break-words text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ title }} · @{{ state?.bot || '资源 Bot' }}</p></div><button autofocus type="button" aria-label="关闭资源搜索" class="rounded-lg px-2 py-1 text-xl text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800" @click="emit('close')"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
-        <div class="min-h-0 overflow-y-auto p-5">
-          <p v-if="checking" role="status" class="py-12 text-center text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">读取 Telegram 登录状态…</p>
-          <div v-else-if="!state?.configured || !state.hasSession" class="rounded-xl bg-slate-50 dark:bg-slate-950 p-6 text-sm leading-7 text-slate-600 dark:text-slate-400 dark:text-slate-500"><p>请先登录已获资源 Bot 认证的 Telegram 用户账号。</p><RouterLink to="/telegram/user" class="mt-3 inline-block font-medium text-blue-600" @click="emit('close')">配置并登录 Telegram</RouterLink></div>
-          <p v-if="searchBusy" role="status" class="mb-4 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700"><template v-if="searchStage === 'queued'">正在排队，等待前面的 Bot 操作完成<span v-if="queuePosition">，队列位置 {{ queuePosition }}</span>。<span class="block text-xs">尚未发送查询，关闭弹窗可取消排队。</span></template><template v-else-if="searchStage === 'collecting'">已收到 Bot 首批结果，正在收集后续回复…<span class="block text-xs">关闭弹窗后继续收尾并缓存；重新打开可继续查看。</span></template><template v-else>正在连接 Bot 并等待回复…<span class="block text-xs">每次查询最多 45 秒；已开始的查询不因关闭弹窗中断。</span></template></p>
-          <p v-if="generating" role="status" class="mb-4 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">{{ activeRunID ? '任务在后台执行，可继续选择其他资源；关闭页面不影响已提交的任务。' : '正在准备并提交任务，提交成功后可关闭页面。' }}<button v-if="activeRunID" type="button" :disabled="stopping" class="ml-3 underline disabled:opacity-50" @click="stopRun">{{ stopping ? '正在停止…' : '停止已提交批次' }}</button></p>
-          <p v-if="error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-          <p v-if="retryAt" role="status" class="mb-4 text-sm text-slate-500">{{ retrySeconds > 0 ? `迟到回复隔离中，${retrySeconds} 秒后可重试。` : '等待时间已结束，可以重新搜索。' }}</p>
+    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="bot-search-title" aria-describedby="bot-work-title" class="bot-dialog" @cancel.prevent="emit('close')">
+      <div class="bot-layout">
+        <header class="bot-header">
+          <div class="bot-brand"><img :src="telegramLogo" alt="" width="36" height="36" /></div>
+          <div class="bot-heading">
+            <h2 id="bot-search-title">Telegram 资源搜索</h2>
+            <p id="bot-work-title" :title="title">{{ title }}<span v-if="state?.bot" class="bot-identity">@{{ state.bot }}</span></p>
+          </div>
+          <button autofocus type="button" aria-label="关闭资源搜索" class="bot-icon-button" @click="emit('close')">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+
+        <div class="bot-toolbar">
+          <label class="bot-search-field">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+            <span class="sr-only">筛选当前结果</span>
+            <input v-model="query" type="search" placeholder="筛选资源名称、大小或 TMDB ID" :disabled="!resources.length" />
+          </label>
+          <div class="bot-tools">
+            <button type="button" :disabled="!state?.configured || !state.hasSession || busy || checking || retrySeconds > 0" class="bot-tool-button" @click="request(undefined, true)">
+              <svg aria-hidden="true" :class="{ 'bot-spinning': searchBusy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
+              刷新搜索
+            </button>
+            <RouterLink to="/telegram/user" class="bot-tool-button" @click="emit('close')">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--bot-container)" /><circle cx="15" cy="17" r="3" fill="var(--bot-container)" /></svg>
+              Telegram 配置
+            </RouterLink>
+          </div>
+        </div>
+
+        <div class="bot-body">
+          <p v-if="checking" role="status" class="bot-notice bot-info">读取 Telegram 登录状态…</p>
+          <div v-else-if="!state?.configured || !state.hasSession" class="bot-setup">
+            <h3>登录 Telegram 后搜索资源</h3>
+            <p>请使用已获资源 Bot 认证的 Telegram 用户账号。</p>
+            <RouterLink to="/telegram/user" class="bot-button bot-primary-button" @click="emit('close')">配置并登录 Telegram</RouterLink>
+          </div>
+
+          <div v-if="searchBusy" role="status" class="bot-notice bot-info">
+            <template v-if="loadingMore"><strong>正在加载更多资源…</strong><span>已展示的结果仍可查看，等待 Bot 返回后续资源。</span></template>
+            <template v-else-if="searchStage === 'queued'"><strong>搜索排队中<span v-if="queuePosition">，第 {{ queuePosition }} 位</span></strong><span>尚未发送查询，关闭窗口可取消排队。</span></template>
+            <template v-else-if="searchStage === 'collecting'"><strong>已收到首批结果，继续收集回复…</strong><span>关闭窗口后继续收尾并缓存，重新打开可查看。</span></template>
+            <template v-else><strong>正在等待 Bot 回复…</strong><span>单次查询最多等待 45 秒，已开始的查询会在后台收尾。</span></template>
+          </div>
+          <div v-if="generating" role="status" class="bot-notice bot-info bot-task-notice">
+            <div><strong>{{ activeRunID ? 'STRM 任务在后台执行' : '正在准备 STRM 任务' }}</strong><span>{{ activeRunID ? '可以继续选择其他资源，已提交任务不受窗口关闭影响。' : '提交成功后可关闭窗口。' }}</span></div>
+            <button v-if="activeRunID" type="button" :disabled="stopping" class="bot-text-button" @click="stopRun">{{ stopping ? '正在停止…' : '停止已提交批次' }}</button>
+          </div>
+          <p v-if="error" role="alert" class="bot-notice bot-error">{{ error }}</p>
+          <p v-if="retryAt" role="status" class="bot-notice bot-warning">{{ retrySeconds > 0 ? '正在隔离迟到回复，' + retrySeconds + ' 秒后可重试。' : '等待时间已结束，可以重新搜索。' }}</p>
+
           <template v-if="result">
-            <p v-if="result.partial" role="status" class="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-700">{{ result.warning || '当前为部分结果，稍后可刷新补充。' }}</p>
-            <div class="mb-4 flex flex-wrap gap-3 text-xs text-slate-400 dark:text-slate-500"><span v-if="result.cached" class="text-emerald-600">已复用缓存 · 未发送 Bot 查询</span><span v-if="result.remaining !== undefined">本月剩余次数：{{ result.remaining }}{{ result.cached ? '（查询时）' : '' }}</span></div>
-            <p v-if="result.empty" class="py-8 text-center text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">没有找到资源。</p>
-            <ul v-if="resources.length" class="space-y-3"><li v-for="item in resources" :key="item.id" class="rounded-xl border border-slate-200 dark:border-slate-700 p-4"><div class="break-words text-sm leading-6"><a v-if="(resolvedLinks[item.id]?.length || 0) === 1 || item.direct" :href="resolvedLinks[item.id]?.[0] || normalize115Share(item.direct)" target="_blank" rel="noopener noreferrer" class="rounded text-blue-600 underline decoration-blue-200 underline-offset-4 hover:text-blue-800 hover:decoration-blue-500 focus-visible:outline-blue-500">{{ item.title }} <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="ml-1 inline h-3.5 w-3.5"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></a><button v-else type="button" :disabled="!!linkPending[item.id] || retrySeconds > 0" class="rounded text-left text-blue-600 underline decoration-blue-200 underline-offset-4 hover:text-blue-800 hover:decoration-blue-500 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60" @click="openResource(item)">{{ item.title }} <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="ml-1 inline h-3.5 w-3.5"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></button></div><p v-if="linkPending[item.id]" role="status" class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ searchBusy ? '等待搜索结束后获取链接…' : '正在获取分享链接…' }}</p><p v-if="linkErrors[item.id]" role="status" class="mt-2 text-xs text-amber-700">{{ linkErrors[item.id] }}</p><div v-if="(resolvedLinks[item.id]?.length || 0) > 1" class="mt-2 flex flex-wrap gap-3"><a v-for="(link, index) in resolvedLinks[item.id]" :key="link" :href="link" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-600 underline">打开分享 {{ index + 1 }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="ml-1 inline h-3.5 w-3.5"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></a></div><div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400 dark:text-slate-500"><span v-if="item.tmdbId === tmdbId" class="text-emerald-600">TMDB 匹配</span><span v-if="item.size">{{ item.size }}</span><button type="button" :disabled="shareRuns.pending.value[item.id] || generationStatus[item.id]?.success || retrySeconds > 0" class="ml-auto rounded-lg px-3 py-2 font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50" @click="shareSTRM(item)">{{ shareRuns.pending.value[item.id] ? '已加入任务…' : generationStatus[item.id]?.success ? '已生成' : '分享 STRM' }}</button></div><p v-if="generationStatus[item.id]" role="status" class="mt-3 whitespace-pre-wrap break-words text-xs leading-6" :class="generationStatus[item.id]?.success ? 'text-emerald-600' : 'text-slate-600 dark:text-slate-400 dark:text-slate-500'">{{ generationStatus[item.id]?.message }}</p></li></ul>
-            <div v-if="nextPage" class="mt-5 flex justify-center"><button type="button" :disabled="busy || retrySeconds > 0" class="rounded-lg border border-slate-200 dark:border-slate-700 px-5 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-950 disabled:opacity-40" @click="request(nextPage.id)">{{ loadingMore ? '正在加载更多…' : '加载更多资源' }}</button></div>
-            <p v-else-if="result.allLoaded && resources.length && !busy" role="status" class="mt-5 text-center text-xs text-slate-400 dark:text-slate-500">已加载全部资源</p>
-            <details v-if="result.text" :open="!resources.length && !result.empty" class="mt-5 rounded-xl bg-slate-50 dark:bg-slate-950 p-4 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><summary class="cursor-pointer">Bot 原始回复</summary><p class="mt-3 whitespace-pre-wrap break-words leading-6">{{ result.text }}</p></details>
+            <p v-if="result.partial" role="status" class="bot-notice bot-warning">{{ result.warning || '当前为部分结果，稍后可刷新补充。' }}</p>
+            <div class="bot-results-heading">
+              <h3>115 资源</h3>
+              <span role="status">{{ query.trim() ? '显示 ' + filteredResources.length + ' / ' + resources.length + ' 个资源' : resources.length + ' 个资源' }}</span>
+            </div>
+            <div v-if="result.remaining !== undefined || (result.cached && !searchBusy)" class="bot-search-meta">
+              <span v-if="result.remaining !== undefined">本月剩余 {{ result.remaining }} 次{{ result.cached ? '（查询时）' : '' }}</span>
+              <span v-if="result.cached && !searchBusy" class="bot-cache-status">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
+                已复用缓存，未发送 Bot 查询
+              </span>
+            </div>
+            <div v-if="!resources.length && result.empty && !searchBusy" role="status" class="bot-empty">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4M8 10.5h5" /></svg>
+              <p>Bot 暂未找到该影视的资源</p>
+              <span>可以稍后刷新搜索</span>
+            </div>
+            <div v-else-if="resources.length && !filteredResources.length" role="status" class="bot-empty">
+              <p>没有符合筛选条件的资源</p>
+              <button type="button" class="bot-text-button" @click="clearQuery">清除筛选</button>
+            </div>
+
+            <ul v-if="filteredResources.length" aria-label="Bot 资源列表" class="bot-resource-list" @pointerenter="lockResourceOrder" @focusin="lockResourceOrder">
+              <li v-for="item in filteredResources" :key="item.id" :data-resource-id="item.id" class="bot-resource">
+                <div class="bot-resource-main">
+                  <div class="bot-resource-info">
+                    <h3>{{ item.title }}</h3>
+                    <div class="bot-resource-meta">
+                      <span v-if="matchesCurrent(item)" class="bot-badge bot-info" data-current-match>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                        匹配当前条目
+                      </span>
+                      <span v-else-if="item.tmdbId" class="bot-badge bot-neutral">相关资源</span>
+                      <span v-else class="bot-badge bot-neutral">未标注 TMDB</span>
+                      <span v-if="item.size">大小 {{ item.size }}</span>
+                      <span v-if="item.tmdbId">TMDB {{ item.tmdbId }}</span>
+                    </div>
+                  </div>
+                  <div class="bot-actions">
+                    <a v-if="(resolvedLinks[item.id]?.length || 0) === 1 || item.direct" :href="resolvedLinks[item.id]?.[0] || normalize115Share(item.direct)" target="_blank" rel="noopener noreferrer" data-bot-action="open" class="bot-button bot-outlined-button">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
+                      打开分享
+                    </a>
+                    <button v-else type="button" data-bot-action="open" :disabled="!!linkPending[item.id] || retrySeconds > 0" class="bot-button bot-outlined-button" @click="openResource(item)">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
+                      {{ linkPending[item.id] ? '获取链接…' : (resolvedLinks[item.id]?.length || 0) > 1 ? '选择分享' : '打开分享' }}
+                    </button>
+                    <button type="button" data-bot-action="strm" :disabled="shareRuns.pending.value[item.id] || generationStatus[item.id]?.success || retrySeconds > 0" class="bot-button bot-primary-button" @click="shareSTRM(item)">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
+                      {{ shareRuns.pending.value[item.id] ? '已加入任务…' : generationStatus[item.id]?.success ? '已生成' : '分享 STRM' }}
+                    </button>
+                  </div>
+                </div>
+                <p v-if="linkPending[item.id]" role="status" class="bot-notice bot-info">{{ searchBusy ? '等待搜索结束后获取链接…' : '正在获取分享链接…' }}</p>
+                <p v-if="linkErrors[item.id]" role="status" class="bot-notice bot-warning">{{ linkErrors[item.id] }}</p>
+                <div v-if="(resolvedLinks[item.id]?.length || 0) > 1" class="bot-share-links">
+                  <p>该资源包含 {{ resolvedLinks[item.id]?.length }} 个分享，请选择打开。</p>
+                  <div>
+                    <a v-for="(link, index) in resolvedLinks[item.id]" :key="link" :href="link" target="_blank" rel="noopener noreferrer" class="bot-button bot-outlined-button">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
+                      打开分享 {{ index + 1 }}
+                    </a>
+                  </div>
+                </div>
+                <p v-if="generationStatus[item.id]" role="status" class="bot-notice bot-generation-status" :class="generationStatus[item.id]?.success ? 'bot-success' : 'bot-info'">{{ generationStatus[item.id]?.message }}</p>
+              </li>
+            </ul>
+
+            <div v-if="nextPage" class="bot-list-end">
+              <button type="button" :disabled="busy || retrySeconds > 0" class="bot-button bot-outlined-button" @click="request(nextPage.id)">{{ loadingMore ? '正在加载更多…' : '加载更多资源' }}</button>
+            </div>
+            <p v-else-if="result.allLoaded && resources.length && !busy" role="status" class="bot-all-loaded">已加载全部资源</p>
+            <details v-if="result.text" :open="!resources.length" class="bot-raw-reply">
+              <summary><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7" /></svg>Bot 原始回复</summary>
+              <p>{{ result.text }}</p>
+            </details>
           </template>
         </div>
-        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800 p-5"><div class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><RouterLink to="/telegram/user" @click="emit('close')">Telegram 用户配置</RouterLink><p class="mt-1">结果缓存 24 小时；刷新搜索会重新查询 Bot 并追加结果。</p></div><button v-if="state?.configured && state.hasSession" :disabled="busy || checking || retrySeconds > 0" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="request(undefined, true)">刷新搜索</button></footer>
+        <footer v-if="state?.configured && state.hasSession" class="bot-footer">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</footer>
       </div>
     </dialog>
   </Teleport>
 </template>
+
+<style scoped>
+.bot-dialog {
+  --bot-max-height: 90dvh;
+  --bot-container: var(--detail-light-surface-container-high, #e9edf3);
+  --bot-card: var(--detail-light-surface-container-low, #fff);
+  --bot-text: var(--detail-light-on-surface, #18212e);
+  --bot-muted: var(--detail-light-on-surface-variant, #475569);
+  --bot-outline: var(--detail-light-outline-variant, #cbd5e1);
+  --bot-primary: var(--detail-light-primary, #475f85);
+  --bot-on-primary: var(--detail-light-on-primary, #fff);
+  --bot-tonal: var(--detail-light-primary-container, #d8e6ff);
+  --bot-on-tonal: var(--detail-light-on-primary-container, #1a365d);
+  --bot-success: #246044;
+  --bot-success-bg: #e6f2e9;
+  --bot-warning: #765500;
+  --bot-warning-bg: #fff1cd;
+  --bot-error: #a12b2b;
+  --bot-error-bg: #ffe9e7;
+  margin: auto;
+  padding: 0;
+  width: min(960px, calc(100% - 48px));
+  max-width: none;
+  max-height: var(--bot-max-height);
+  border: 0;
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--bot-container) 94%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  color: var(--bot-text);
+  color-scheme: light;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+}
+.dark .bot-dialog {
+  --bot-container: var(--detail-dark-surface-container-high, #242d3c);
+  --bot-card: var(--detail-dark-surface-container-low, #1b2433);
+  --bot-text: var(--detail-dark-on-surface, #e2e8f0);
+  --bot-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
+  --bot-outline: var(--detail-dark-outline-variant, #465063);
+  --bot-primary: var(--detail-dark-primary, #aac7f5);
+  --bot-on-primary: var(--detail-dark-on-primary, #173256);
+  --bot-tonal: var(--detail-dark-primary-container, #314967);
+  --bot-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
+  --bot-success: #a5d8b8;
+  --bot-success-bg: #223d31;
+  --bot-warning: #eed085;
+  --bot-warning-bg: #42371e;
+  --bot-error: #ffb4ab;
+  --bot-error-bg: #502c2b;
+  color-scheme: dark;
+}
+.bot-dialog::backdrop { background: rgb(2 6 23 / 32%); }
+.bot-layout { display: flex; flex-direction: column; max-height: var(--bot-max-height); }
+.bot-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 16px; }
+.bot-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--bot-card); }
+.bot-heading { flex: 1; min-width: 0; }
+.bot-heading h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; }
+.bot-heading p { margin: 4px 0 0; color: var(--bot-muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.bot-identity { display: inline-block; margin-left: 10px; font-size: 12px; }
+.bot-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; color: var(--bot-muted); }
+.bot-icon-button svg { width: 24px; height: 24px; }
+.bot-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 0 24px 20px; }
+.bot-search-field { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10px; min-height: 48px; padding: 0 14px; border: 1px solid transparent; border-radius: 14px; background: var(--bot-card); color: var(--bot-muted); }
+.bot-search-field:focus-within { border-color: var(--bot-primary); }
+.bot-search-field svg { width: 20px; height: 20px; flex-shrink: 0; }
+.bot-search-field input { width: 100%; min-width: 0; height: 46px; border: 0; padding: 0; outline: none; background: transparent; color: var(--bot-text); font-size: 13px; }
+.bot-search-field input::placeholder { color: var(--bot-muted); opacity: .8; }
+.bot-tools { display: flex; gap: 4px; flex-shrink: 0; }
+.bot-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 0 12px; border: 0; border-radius: 24px; background: transparent; color: var(--bot-muted); font-size: 12px; font-weight: 550; text-decoration: none; white-space: nowrap; }
+.bot-tool-button svg { width: 18px; height: 18px; }
+.bot-body { min-height: 0; padding: 0 24px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.bot-results-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.bot-results-heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
+.bot-results-heading span { color: var(--bot-muted); font-size: 12px; }
+.bot-search-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 14px; color: var(--bot-muted); font-size: 11px; line-height: 18px; }
+.bot-cache-status { display: inline-flex; align-items: center; gap: 5px; }
+.bot-cache-status svg { width: 14px; height: 14px; }
+.bot-resource-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.bot-resource { min-width: 0; padding: 20px; border: 1px solid color-mix(in srgb, var(--bot-outline) 35%, transparent); border-radius: 20px; background: var(--bot-card); }
+.bot-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; }
+.bot-resource-info { min-width: 0; }
+.bot-resource-info h3 { margin: 0; font-size: 15px; line-height: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.bot-resource-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; color: var(--bot-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.bot-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px; font-size: 11px; line-height: 18px; font-weight: 550; }
+.bot-badge svg { width: 14px; height: 14px; flex-shrink: 0; }
+.bot-neutral { background: color-mix(in srgb, var(--bot-outline) 18%, transparent); color: var(--bot-muted); }
+.bot-actions { display: flex; align-items: center; gap: 8px; }
+.bot-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 24px; background: var(--bot-button-background); font-size: 12px; line-height: 20px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; transition: box-shadow .15s, background-color .15s; }
+.bot-button svg { flex-shrink: 0; width: 16px; height: 16px; }
+.bot-primary-button { --bot-button-background: var(--bot-primary); color: var(--bot-on-primary); }
+.bot-outlined-button { --bot-button-background: color-mix(in srgb, var(--bot-primary) 4%, var(--bot-card)); padding: 7px 11px; border: 1px solid var(--bot-outline); color: var(--bot-primary); }
+.bot-info { color: var(--bot-on-tonal); background: var(--bot-tonal); }
+.bot-success { color: var(--bot-success); background: var(--bot-success-bg); }
+.bot-warning { color: var(--bot-warning); background: var(--bot-warning-bg); }
+.bot-error { color: var(--bot-error); background: var(--bot-error-bg); }
+.bot-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
+.bot-notice strong { font-weight: 600; }
+.bot-notice > span, .bot-task-notice > div > span { display: block; font-size: 11px; }
+.bot-resource .bot-notice { margin: 12px 0 0; }
+.bot-generation-status { white-space: pre-wrap; }
+.bot-task-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.bot-text-button { min-height: 48px; padding: 10px 12px; border: 0; border-radius: 24px; background: transparent; color: var(--bot-primary); font-size: 12px; line-height: 20px; font-weight: 600; }
+.bot-share-links { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--bot-outline); }
+.bot-share-links p { margin: 0 0 8px; color: var(--bot-muted); font-size: 12px; line-height: 20px; }
+.bot-share-links > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.bot-list-end { display: flex; justify-content: center; margin-top: 16px; }
+.bot-all-loaded { margin: 18px 0 0; color: var(--bot-muted); text-align: center; font-size: 11px; line-height: 18px; }
+.bot-raw-reply { margin-top: 16px; border-radius: 14px; background: color-mix(in srgb, var(--bot-card) 65%, transparent); color: var(--bot-muted); font-size: 12px; }
+.bot-raw-reply summary { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 12px 14px; border-radius: inherit; list-style: none; cursor: pointer; }
+.bot-raw-reply summary::-webkit-details-marker { display: none; }
+.bot-raw-reply summary svg { width: 14px; height: 14px; flex-shrink: 0; }
+.bot-raw-reply[open] summary svg { transform: rotate(90deg); }
+.bot-raw-reply p { margin: 0; padding: 0 14px 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
+.bot-footer { flex-shrink: 0; padding: 0 24px 20px; color: var(--bot-muted); font-size: 11px; line-height: 18px; }
+.bot-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 32px 16px; color: var(--bot-muted); text-align: center; }
+.bot-empty svg { width: 36px; height: 36px; margin-bottom: 8px; }
+.bot-empty p { margin: 0; font-size: 14px; line-height: 22px; }
+.bot-empty span { font-size: 12px; }
+.bot-setup { padding: 24px; border-radius: 20px; background: var(--bot-card); }
+.bot-setup h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.bot-setup p { margin: 10px 0 16px; color: var(--bot-muted); font-size: 13px; line-height: 22px; }
+.bot-dialog button { cursor: pointer; }
+.bot-dialog button:disabled { cursor: default; opacity: .45; }
+.bot-dialog input:disabled { opacity: .6; }
+.bot-dialog button:focus-visible, .bot-dialog a:focus-visible, .bot-dialog summary:focus-visible { outline: 2px solid var(--bot-primary); outline-offset: 3px; }
+.bot-spinning { animation: bot-spin 1s linear infinite; }
+@keyframes bot-spin { to { transform: rotate(360deg); } }
+@media (hover: hover) {
+  .bot-icon-button:hover, .bot-tool-button:hover:not(:disabled), .bot-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--bot-primary) 8%, transparent); }
+  .bot-primary-button:hover:not(:disabled) { --bot-button-background: color-mix(in srgb, var(--bot-primary) 92%, var(--bot-on-primary)); box-shadow: 0 2px 6px rgb(0 0 0 / 18%); }
+  .bot-outlined-button:hover:not(:disabled) { --bot-button-background: color-mix(in srgb, var(--bot-primary) 10%, var(--bot-card)); }
+}
+@media (max-width: 799px) {
+  .bot-resource-main { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+}
+@media (max-width: 639px) {
+  .bot-dialog { --bot-max-height: calc(min(100dvh, var(--bot-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--bot-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--bot-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .bot-header { gap: 10px; padding: 16px 16px 12px; }
+  .bot-heading h2 { font-size: 18px; line-height: 26px; }
+  .bot-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .bot-toolbar { flex-wrap: wrap; gap: 4px; padding: 0 16px 12px; }
+  .bot-search-field { flex-basis: 100%; }
+  .bot-search-field input { font-size: 16px; }
+  .bot-tools { justify-content: flex-end; width: 100%; }
+  .bot-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
+  .bot-resource { padding: 16px; border-radius: 18px; }
+  .bot-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bot-button { position: relative; isolation: isolate; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; }
+  .bot-button::before { position: absolute; z-index: -1; inset: 2px 0; border-radius: inherit; background: var(--bot-button-background); pointer-events: none; content: ''; transition: background-color .15s; }
+  .bot-outlined-button::before { border: 1px solid var(--bot-outline); }
+  .bot-footer { padding: 0 16px 16px; }
+}
+@media (max-width: 359px) {
+  .bot-actions { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-spinning { animation: none; }
+  .bot-button, .bot-button::before { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .bot-dialog { background: var(--bot-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+</style>
