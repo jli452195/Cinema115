@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { copyText } from '../utils/clipboard'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import { gyingRequest, type GyingConfigView, type GyingResourceLink, type GyingSearchAttempt, type GyingSearchItem, type GyingSearchResponse } from '../types/gying'
 import { normalize115Share } from '../utils/shareLink'
+import gyingLogo from '../assets/gying/logo-gying.png'
 
-const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string }>()
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string; themeColors?: Record<string, string> }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
+const viewportStyle = ref<Record<string, string>>({})
+const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
+const mobileViewport = ref(window.matchMedia('(max-width: 639px)').matches)
+const shortViewport = ref(false)
+const displayLimit = ref(30)
 const config = ref<GyingConfigView>()
 const result = ref<GyingSearchResponse>()
 const activeItemId = ref('all')
@@ -39,11 +45,6 @@ let progressTimer: number | undefined
 const previousFocus = document.activeElement as HTMLElement | null
 const previousOverflow = document.body.style.overflow
 const mediaLabels: Record<string, string> = { movie: '电影', tv: '剧集', anime: '动漫', other: '其他' }
-const resourceColors: Record<string, string> = {
-  magnet: '#94a3b8', aliyun: '#60a5fa', quark: '#c084fc', baidu: '#38bdf8',
-  xunlei: '#818cf8', mobile: '#2dd4bf', '115': '#f97316', '123': '#22c55e',
-  guangya: '#ec4899', uc: '#f59e0b', tianyi: '#ef4444', other: '#94a3b8',
-}
 const defaultResourceOrder = ['magnet', 'aliyun', 'quark', 'baidu', 'xunlei', 'mobile', '115', '123', 'guangya', 'uc', 'tianyi', 'other']
 const magnetSubTypeOrder = ['720P', '中字720P', '1080P', '中字1080P', '4K', '中字4K', '原盘', '未知']
 const resourceOrder = computed(() => config.value?.resourceOrder?.length ? config.value.resourceOrder : defaultResourceOrder)
@@ -148,7 +149,44 @@ const visibleItems = computed(() => {
     return links.length ? [{ ...item, links }] : []
   })
 })
+const selectedItem = computed(() => activeItemId.value === 'all' ? undefined : resultItems.value.find(item => item.id === activeItemId.value))
+const singleItemSelected = computed(() => Boolean(selectedItem.value))
+const filteredLinkCount = computed(() => visibleItems.value.reduce((count, item) => count + item.links.length, 0))
+const displayedItems = computed(() => {
+  let remaining = displayLimit.value
+  return visibleItems.value.flatMap(item => {
+    if (remaining <= 0) return []
+    const links = item.links.slice(0, remaining)
+    remaining -= links.length
+    return [{ ...item, links, totalLinks: item.links.length }]
+  })
+})
+const displayedLinkCount = computed(() => Math.min(displayLimit.value, filteredLinkCount.value))
+function resetDisplay() {
+  displayLimit.value = 30
+  void nextTick(() => {
+    const body = dialog.value?.querySelector<HTMLElement>('.gy-body')
+    const anchor = dialog.value?.querySelector<HTMLElement>('.gy-filter-anchor')
+    if (body && anchor) body.scrollTop = Math.min(body.scrollTop, anchor.offsetTop)
+  })
+}
+function selectMagnetSubType(type: string) {
+  activeMagnetSubType.value = type
+  resetDisplay()
+}
+function resetFilters() { selectItem('all') }
+async function showMore() {
+  const previousCount = displayedLinkCount.value
+  displayLimit.value += 30
+  await nextTick()
+  const row = dialog.value?.querySelectorAll<HTMLElement>('[data-resource-row]')[previousCount]
+  row?.querySelector<HTMLElement>('button, a')?.focus({ preventScroll: true })
+  const body = dialog.value?.querySelector<HTMLElement>('.gy-body')
+  const filters = dialog.value?.querySelector<HTMLElement>('.gy-filters')
+  if (row && body && filters) body.scrollTop += row.getBoundingClientRect().top - filters.getBoundingClientRect().bottom - 12
+}
 const searchAttempts = computed(() => result.value?.attempts || [])
+const currentSearchQuery = computed(() => searchAttempts.value.find(attempt => attempt.method === result.value?.matchedBy)?.query || result.value?.query || '')
 const truncatedAttempts = computed(() => searchAttempts.value.filter(attempt => attempt.truncated))
 const emptySummary = computed(() => {
   if (result.value?.partial) return '部分资源详情读取失败，尚不能确认是否有可用资源，请稍后重新搜索。'
@@ -192,11 +230,13 @@ function selectItem(id: string) {
   activeItemId.value = id
   activeResourceType.value = 'all'
   activeMagnetSubType.value = 'all'
+  resetDisplay()
 }
 
 function selectResourceType(type: string) {
   activeResourceType.value = type
   activeMagnetSubType.value = 'all'
+  resetDisplay()
 }
 
 async function search(refresh = false) {
@@ -206,6 +246,10 @@ async function search(refresh = false) {
     result.value = await gyingRequest<GyingSearchResponse>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: props.tmdbId, refresh })
     coverErrors.value = {}
     activeItemId.value = 'all'; activeResourceType.value = 'all'; activeMagnetSubType.value = 'all'
+    displayLimit.value = 30; copyError.value = ''
+    await nextTick()
+    const body = dialog.value?.querySelector<HTMLElement>('.gy-body')
+    if (body) body.scrollTop = 0
   } catch (e) { if (!lifecycle.signal.aborted) error.value = requestErrorMessage(e, '观影搜索') }
   finally { finishPhase('search') }
   if (result.value && !lifecycle.signal.aborted) restoreShareRuns()
@@ -236,9 +280,22 @@ async function copyLink(link: GyingResourceLink) {
   catch { copied.value = ''; copyError.value = link.url }
 }
 
-function linkCount(item: GyingSearchItem, category: 'pan' | 'torrent') { return item.links.filter(link => link.category === category).length }
+function syncVisualViewport() {
+  mobileViewport.value = window.matchMedia('(max-width: 639px)').matches
+  const viewport = window.visualViewport
+  shortViewport.value = (viewport?.height ?? window.innerHeight) < 520
+  viewportStyle.value = {
+    '--gy-visible-height': `${viewport?.height ?? window.innerHeight}px`,
+    '--gy-visible-top': `${viewport?.offsetTop ?? 0}px`,
+    '--gy-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
+  }
+}
 
 onMounted(async () => {
+  syncVisualViewport()
+  window.visualViewport?.addEventListener('resize', syncVisualViewport)
+  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
+  window.addEventListener('resize', syncVisualViewport)
   try {
     document.body.style.overflow = 'hidden'
     if (!dialog.value) throw new Error('观影搜索弹窗初始化失败')
@@ -251,6 +308,9 @@ onMounted(async () => {
   await initialize()
 })
 onBeforeUnmount(() => {
+  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
+  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
+  window.removeEventListener('resize', syncVisualViewport)
   lifecycle.abort()
   finishPhase()
   if (dialog.value?.open) dialog.value.close()
@@ -261,75 +321,392 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" aria-labelledby="gying-search-title" class="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-5xl overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0 shadow-2xl backdrop:bg-slate-950/40" @cancel.prevent="emit('close')">
-      <div class="flex max-h-[90dvh] flex-col">
-        <header class="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 p-5"><div class="min-w-0"><h2 id="gying-search-title" class="text-lg font-semibold text-slate-900 dark:text-slate-100">观影搜索</h2><p class="mt-1 break-words text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ title }}<span v-if="originalTitle && originalTitle !== title"> · {{ originalTitle }}</span><span v-if="imdbId"> · {{ imdbId }}</span></p></div><button autofocus type="button" aria-label="关闭观影搜索" class="rounded-lg px-2 py-1 text-xl text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800" @click="emit('close')">×</button></header>
-        <div class="min-h-0 overflow-y-auto p-5">
-          <div v-if="config && !config.configured" class="rounded-xl bg-slate-50 dark:bg-slate-950 p-6 text-sm leading-7 text-slate-600 dark:text-slate-400 dark:text-slate-500"><p>请先配置并登录观影站账号。</p><RouterLink to="/gying" class="mt-3 inline-block font-medium text-blue-600" @click="emit('close')">前往观影搜索配置 →</RouterLink></div>
-          <p v-if="phase === 'config'" role="status" class="rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">正在读取观影搜索配置…<span v-if="elapsedSeconds >= 10" class="block text-xs">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
-          <p v-else-if="phase === 'search'" role="status" class="rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">正在依次搜索影视原名并读取资源详情…<span class="block text-xs"><template v-if="elapsedSeconds < 10">原名没有有效资源时会自动尝试 IMDb 编号；通常数秒，匹配条目较多时会更久。</template><template v-else>正在读取较多资源详情，已等待 {{ elapsedSeconds }} 秒；最多等待约 2 分钟。</template></span></p>
-          <p v-if="shareRuns.busy.value" role="status" class="mb-4 rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-700">{{ shareRuns.activeRunID.value ? 'STRM 任务正在后台执行，可继续选择其他资源；关闭页面不影响已提交任务。' : '正在准备并提交 STRM 任务…' }}<button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="ml-3 underline disabled:opacity-50" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止已提交批次' }}</button></p>
-          <p v-if="error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
+    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="emit('close')">
+      <div class="gy-layout">
+        <header class="gy-header">
+          <div class="gy-brand"><img :src="gyingLogo" alt="" width="34" height="34" /></div>
+          <div class="gy-heading">
+            <h2 id="gying-search-title">观影搜索</h2>
+            <div class="gy-heading-meta">
+              <p id="gying-work-title" :title="title">{{ title }}</p>
+              <span v-if="result" class="gy-search-caption" :class="{ 'gy-cached-caption': result.cached && phase !== 'search' && !error }">{{ phase === 'search' ? '搜索中' : error ? '上次结果' : result.cached ? '已复用缓存' : result.matchedBy === 'imdb' ? 'IMDb 搜索' : '原名搜索' }}</span>
+            </div>
+          </div>
+          <button autofocus type="button" aria-label="关闭观影搜索" class="gy-icon-button" @click="emit('close')">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <div class="gy-tools">
+          <span v-if="result && currentSearchQuery" class="gy-search-query" :title="currentSearchQuery">
+            <span class="gy-query-method">{{ result.matchedBy === 'imdb' ? 'IMDb' : '原名' }}</span>
+            <span class="gy-query-text">{{ currentSearchQuery }}</span>
+          </span>
+          <span v-else>选择影视条目，筛选网盘与磁力资源</span>
+          <div>
+            <button v-if="config?.configured" type="button" :disabled="busy" class="gy-tool-button" aria-label="重新搜索" @click="search(true)">
+              <svg aria-hidden="true" :class="{ 'gy-spinning': phase === 'search' }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
+              {{ phase === 'search' ? '搜索中 ' + elapsedSeconds + ' 秒' : '重搜' }}
+            </button>
+            <button v-else-if="!config && error" type="button" :disabled="busy" class="gy-tool-button" @click="initialize">重试</button>
+            <RouterLink to="/gying" class="gy-tool-button" aria-label="观影配置" @click="emit('close')">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--gy-container)" /><circle cx="15" cy="17" r="3" fill="var(--gy-container)" /></svg>
+              配置
+            </RouterLink>
+          </div>
+        </div>
+        <div class="gy-body">
+          <div v-if="config && !config.configured" class="gy-setup">
+            <h3>登录观影后搜索资源</h3><p>请先配置并登录观影站账号。</p>
+            <RouterLink to="/gying" class="gy-button gy-primary-button" @click="emit('close')">配置并登录观影</RouterLink>
+          </div>
+          <p v-if="phase === 'config'" role="status" class="gy-notice gy-info">正在读取观影搜索配置…<span v-if="elapsedSeconds >= 10">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
+          <p v-else-if="phase === 'search'" role="status" class="gy-notice gy-info">正在搜索影视原名并读取资源详情…
+            <span v-if="elapsedSeconds < 10">原名没有有效资源时会自动尝试 IMDb 编号；匹配条目较多时会需要更长时间。</span>
+            <span v-else>已等待 {{ elapsedSeconds }} 秒，最多等待约 2 分钟。</span>
+            <span v-if="result">下方保留上次搜索结果，搜索完成后更新。</span>
+          </p>
+          <div v-if="shareRuns.busy.value" role="status" class="gy-notice gy-info gy-task-notice">
+            <div><strong>{{ shareRuns.activeRunID.value ? 'STRM 任务在后台执行' : '正在准备 STRM 任务' }}</strong><span>{{ shareRuns.activeRunID.value ? '可以继续选择其他资源，关闭窗口不影响已提交任务。' : '提交成功后可关闭窗口。' }}</span></div>
+            <button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="gy-text-button" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止已提交批次' }}</button>
+          </div>
+          <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span></p>
           <template v-if="result">
-            <section class="mb-4 rounded-xl bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500" aria-label="搜索过程">
-              <div class="flex flex-wrap items-center justify-between gap-2"><strong class="font-medium text-slate-700 dark:text-slate-300">搜索过程</strong><span v-if="result.cached" class="text-xs text-emerald-700">已使用短期缓存结果，可重新搜索更新</span></div>
-              <ul class="mt-2 space-y-1.5 text-xs leading-5"><li v-for="attempt in searchAttempts" :key="`${attempt.method}:${attempt.query}`" class="flex flex-wrap gap-x-2"><span class="font-medium" :class="attempt.method === 'imdb' ? 'text-violet-700' : 'text-blue-700'">{{ attempt.method === 'imdb' ? 'IMDb' : '原名' }}</span><code class="break-all text-slate-700 dark:text-slate-300">{{ attempt.query }}</code><span class="text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ attemptDescription(attempt) }}</span></li></ul>
+            <section v-if="!resultItems.length" class="gy-search-process" aria-label="搜索过程">
+              <div class="gy-process-heading"><span>搜索过程</span><span v-if="result.cached && phase !== 'search' && !error" class="gy-cache">已复用缓存</span></div>
+              <ul><li v-for="attempt in searchAttempts" :key="attempt.method + ':' + attempt.query">
+                <span class="gy-badge gy-info">{{ attempt.method === 'imdb' ? 'IMDb' : '原名' }}</span>
+                <code>{{ attempt.query }}</code><span>{{ attemptDescription(attempt) }}</span>
+              </li></ul>
             </section>
-            <p v-if="result.partial" role="status" class="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-700">有 {{ result.failedDetails }} 个资源详情读取失败，当前展示其余成功结果；本次不写入搜索缓存。</p>
-            <p v-for="attempt in truncatedAttempts" :key="`truncated:${attempt.method}`" role="status" class="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-700">{{ attempt.method === 'imdb' ? 'IMDb' : '原名' }}搜索返回 {{ attempt.total }} 个条目，本次为保护服务稳定性仅读取前 100 个。</p>
-            <section v-if="resultItems.length" class="mb-5 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" aria-label="观影结果筛选">
-              <div class="flex items-center justify-between gap-3 px-3 pt-3">
-                <span class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">选择影视条目</span>
-                <button type="button" :aria-pressed="activeItemId === 'all'" class="rounded-lg border px-3 py-1.5 text-xs font-medium transition" :class="activeItemId === 'all' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:border-slate-600'" @click="selectItem('all')">全部条目 <span class="opacity-60">{{ resultItems.length }}</span></button>
-              </div>
-              <nav aria-label="影视条目" class="filter-scroll flex gap-3 overflow-x-auto p-3">
-                <button v-for="item in resultItems" :key="item.id" type="button" :aria-label="`${item.title}${item.year ? ` (${item.year})` : ''}`" :aria-pressed="activeItemId === item.id" class="relative aspect-[5/7] w-28 shrink-0 overflow-hidden rounded-xl border-2 bg-slate-100 dark:bg-slate-800 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 sm:w-32" :class="activeItemId === item.id ? 'border-amber-500 ring-2 ring-amber-200' : 'border-transparent hover:border-amber-300'" :title="`${item.title}${item.year ? ` (${item.year})` : ''}`" @click="selectItem(item.id)">
-                  <img v-if="coverSource(item) && !coverErrors[item.id]" :src="coverSource(item)" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" @error="coverErrors[item.id] = true">
-                  <span v-else class="absolute inset-0 flex items-center justify-center pb-12 text-xs text-slate-400 dark:text-slate-500">{{ coverErrors[item.id] ? '封面暂不可用' : '暂无封面' }}</span>
-                  <span class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-2 pb-2 pt-10 text-white"><span class="line-clamp-3 text-xs font-medium leading-5">{{ item.title }}</span><span v-if="item.year" class="mt-0.5 block text-[11px] text-white/75">{{ item.year }}</span></span>
-                  <span v-if="activeItemId === item.id" aria-hidden="true" class="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs text-white">✓</span>
-                </button>
-              </nav>
-              <nav aria-label="资源网盘" class="filter-scroll mt-1 flex gap-2 overflow-x-auto border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 p-3">
-                <button v-for="option in resourceOptions" :key="option.type" type="button" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeResourceType === option.type ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:border-slate-600'" @click="selectResourceType(option.type)">
-                  <span v-if="option.type !== 'all'" class="h-2 w-2 rounded-full" :style="{ backgroundColor: resourceColors[option.type] || resourceColors.other }" aria-hidden="true"></span>{{ option.label }} <span class="opacity-60">{{ option.count }}</span>
-                </button>
-              </nav>
-              <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" aria-label="磁力清晰度分类" class="filter-scroll flex gap-2 overflow-x-auto border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
-                <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition" :class="activeMagnetSubType === option.type ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 dark:text-slate-500 hover:border-violet-300 hover:text-violet-700'" @click="activeMagnetSubType = option.type">
-                  {{ option.label }} <span class="opacity-60">{{ option.count }}</span>
-                </button>
-              </nav>
-            </section>
-            <div v-if="!resultItems.length" class="py-10 text-center"><p class="font-medium text-slate-700 dark:text-slate-300">暂未找到可用资源</p><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ emptySummary }}</p><p v-if="!result.partial" class="mt-1 text-xs text-slate-400 dark:text-slate-500">空结果缓存 2 分钟，也可以立即重新搜索。</p></div>
-            <p v-else-if="!visibleItems.length" class="py-12 text-center text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">当前分类没有资源。</p>
-            <div v-else class="space-y-4">
-              <article v-for="item in visibleItems" :key="item.id" class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 sm:p-5">
-                <div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold leading-6 text-slate-900 dark:text-slate-100">{{ item.title }} <span v-if="item.year" class="font-normal text-slate-400 dark:text-slate-500">({{ item.year }})</span></h3><div class="mt-2 flex flex-wrap gap-2 text-[11px]"><span class="rounded bg-amber-50 px-2 py-1 text-amber-700">{{ mediaLabels[item.mediaType] }}</span><span v-if="linkCount(item, 'pan')" class="rounded bg-blue-50 px-2 py-1 text-blue-700">网盘 {{ linkCount(item, 'pan') }}</span><span v-if="linkCount(item, 'torrent')" class="rounded bg-violet-50 px-2 py-1 text-violet-700">种子 {{ linkCount(item, 'torrent') }}</span></div></div></div>
-                <p v-if="item.description" class="mt-3 break-words text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.description }}</p>
-                <ul class="mt-4 space-y-2"><li v-for="(link, index) in item.links" :key="`${link.type}:${link.url}:${index}`" class="rounded-lg bg-slate-50 dark:bg-slate-950 p-3 text-xs"><div class="flex flex-wrap items-center gap-2"><span class="rounded bg-white dark:bg-slate-900 px-2 py-1 font-medium text-slate-700 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700">{{ link.typeLabel }}</span><span v-if="link.subTypeLabel" class="rounded bg-violet-50 px-2 py-1 font-medium text-violet-700">{{ link.subTypeLabel }}</span><span v-if="link.size" class="text-slate-400 dark:text-slate-500">{{ link.size }}</span><span v-if="link.seeds !== undefined" class="text-slate-400 dark:text-slate-500">做种 {{ link.seeds }}</span><span v-if="link.updatedAt" class="text-slate-400 dark:text-slate-500">{{ link.updatedAt }}</span><span v-if="link.password" class="text-amber-700">提取码 {{ link.password }}</span><span class="ml-auto flex flex-wrap gap-3"><button v-if="canCloudDownload(link)" type="button" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50" @click="cloudDownload(item, link)">{{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 转存' }}</button><button v-if="canShareSTRM(link)" type="button" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50" @click="shareSTRM(item, link)">{{ shareRuns.pending.value[shareResourceID(item, link)] ? '已加入任务…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM →' }}</button><button type="button" class="text-blue-600" @click="copyLink(link)">{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="text-blue-600">打开 ↗</a></span></div><div v-if="copyError === link.url" role="alert" class="mt-2 text-amber-700"><p>浏览器未允许复制，请手动复制下方链接：</p><textarea :value="`${link.url}${link.password ? `  提取码：${link.password}` : ''}`" readonly aria-label="手动复制资源链接" class="mt-2 w-full rounded border border-amber-200 bg-white dark:bg-slate-900 p-2 text-slate-700 dark:text-slate-300" @focus="($event.target as HTMLTextAreaElement).select()" /></div><p v-if="link.workTitle" class="mt-2 break-words text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ link.workTitle }}</p><p class="mt-2 break-all text-slate-400 dark:text-slate-500">{{ link.url }}</p><p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-red-600'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" class="ml-2 text-blue-600 hover:underline" @click="emit('close')">前往配置</RouterLink></p><p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="mt-3 whitespace-pre-wrap break-words leading-6" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'text-emerald-600' : 'text-slate-600 dark:text-slate-400 dark:text-slate-500'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p></li></ul>
+            <p v-if="result.partial" role="status" class="gy-notice gy-warning">有 {{ result.failedDetails }} 个资源详情读取失败，当前展示其余成功结果。<span>可重新搜索补充；本次结果不写入搜索缓存。</span></p>
+            <p v-for="attempt in truncatedAttempts" :key="'truncated:' + attempt.method" role="status" class="gy-notice gy-warning">{{ attempt.method === 'imdb' ? 'IMDb' : '原名' }}搜索返回 {{ attempt.total }} 个影视条目，本次仅读取前 100 个。</p>
+            <template v-if="resultItems.length">
+              <section id="gy-item-picker" class="gy-item-picker" aria-label="选择影视条目">
+                <div class="gy-picker-heading"><h3>影视条目</h3><span>{{ resultItems.length }} 个条目<span class="gy-picker-hint">，可能包含不同季度与版本</span></span></div>
+                <nav aria-label="影视条目" class="gy-item-strip gy-scroll">
+                  <button type="button" class="gy-item-card gy-all-items" :aria-pressed="activeItemId === 'all'" @click="selectItem('all')">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
+                    <span><strong>全部条目</strong><small>{{ resultItems.length }} 个影视条目</small></span>
+                  </button>
+                  <button v-for="item in resultItems" :key="item.id" type="button" :aria-label="item.title + (item.year ? ' (' + item.year + ')' : '')" :aria-pressed="activeItemId === item.id" class="gy-item-card" :title="item.title" @click="selectItem(item.id)">
+                    <span class="gy-cover">
+                      <img v-if="coverSource(item) && !coverErrors[item.id]" :src="coverSource(item)" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" @error="coverErrors[item.id] = true" />
+                      <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="m9 8 6 4-6 4Z" /></svg>
+                    </span>
+                    <span class="gy-item-name"><strong>{{ item.title }}</strong><small>{{ item.year || '年份未标注' }}<span>{{ mediaLabels[item.mediaType] }}</span></small></span>
+                    <svg v-if="activeItemId === item.id" aria-hidden="true" class="gy-selected-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                  </button>
+                </nav>
+              </section>
+              <div class="gy-filter-anchor" aria-hidden="true"></div>
+              <section class="gy-filters" aria-label="观影结果筛选">
+                <div class="gy-filter-context">
+                  <h3 class="gy-filter-title">资源筛选</h3>
+                  <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
+                </div>
+                <nav aria-label="资源来源" class="gy-source-strip gy-scroll">
+                  <button v-for="option in resourceOptions" :key="option.type" type="button" :aria-pressed="activeResourceType === option.type" class="gy-chip" @click="selectResourceType(option.type)">
+                    <svg v-if="activeResourceType === option.type" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                    {{ option.label }}<span>{{ option.count }}</span>
+                  </button>
+                </nav>
+                <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll">
+                  <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="gy-chip" @click="selectMagnetSubType(option.type)"><svg v-if="activeMagnetSubType === option.type" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>{{ option.label }}<span>{{ option.count }}</span></button>
+                </nav>
+              </section>
+            </template>
+            <div v-if="!resultItems.length" role="status" class="gy-empty">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4M8 10.5h5" /></svg>
+              <h3>{{ result.partial ? '资源详情读取不完整' : '暂未找到可用资源' }}</h3><p>{{ emptySummary }}</p>
+              <span v-if="!result.partial">空结果缓存 2 分钟，也可以立即重新搜索。</span>
+            </div>
+            <div v-else-if="!visibleItems.length" role="status" class="gy-empty">
+              <h3>当前筛选没有资源</h3><p>可以清除筛选，查看其他影视条目与来源。</p>
+              <button type="button" class="gy-text-button" @click="resetFilters">清除筛选</button>
+            </div>
+            <div v-else class="gy-results">
+              <article v-for="item in displayedItems" :key="item.id" class="gy-film" :class="{ 'gy-film-single': singleItemSelected }" :data-film-id="item.id" :aria-label="item.title + '资源'">
+                <header v-if="!singleItemSelected" class="gy-film-heading">
+                  <h3>{{ item.title }}<span v-if="item.year">({{ item.year }})</span></h3>
+                  <div><span class="gy-badge gy-neutral">{{ mediaLabels[item.mediaType] }}</span><span>{{ item.links.length < item.totalLinks ? '显示 ' + item.links.length + ' / ' : '' }}{{ item.totalLinks }} 条链接</span></div>
+                </header>
+                <details v-if="item.description" class="gy-film-details">
+                  <summary><svg aria-hidden="true" class="gy-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7" /></svg>影视详情</summary>
+                  <p>{{ item.description }}</p>
+                </details>
+                <ul class="gy-resource-list">
+                  <li v-for="(link, index) in item.links" :key="link.type + ':' + link.url + ':' + index" class="gy-resource" data-resource-row>
+                    <div class="gy-resource-main">
+                      <div class="gy-resource-info">
+                        <div class="gy-resource-title">
+                          <h4>{{ link.workTitle || link.typeLabel + '资源' }}</h4>
+                          <button type="button" data-gy-action="copy" class="gy-copy-button" @click="copyLink(link)">
+                            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg>
+                            {{ copied === link.url ? '已复制' : link.category === 'torrent' ? '复制磁力' : '复制链接' }}<span class="sr-only">{{ link.password ? '及提取码' : '' }}</span>
+                          </button>
+                        </div>
+                        <div class="gy-resource-meta">
+                          <div class="gy-resource-tags">
+                            <span class="gy-badge gy-info">{{ link.typeLabel }}</span>
+                            <span v-if="link.subTypeLabel" class="gy-badge gy-neutral">{{ link.subTypeLabel }}</span>
+                            <span v-else-if="link.type === 'magnet'" class="gy-badge gy-neutral">分类未知</span>
+                            <span v-if="link.size">{{ link.size }}</span><span v-if="link.seeds !== undefined">做种 {{ link.seeds }}</span>
+                            <span v-if="link.updatedAt">{{ link.updatedAt }}</span><span v-if="link.password">提取码 {{ link.password }}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="gy-actions">
+                        <a :href="link.url" target="_blank" rel="noopener noreferrer" data-gy-action="open" class="gy-button gy-outlined-button">
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
+                          {{ link.category === 'torrent' ? '打开' : '打开分享' }}
+                        </a>
+                        <button v-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18H6a4 4 0 0 1-.7-7.94 7 7 0 0 1 13.4 0A4 4 0 0 1 18 18h-1M12 12v9m-4-4 4 4 4-4" /></svg>
+                          {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : '115 云下载' }}
+                        </button>
+                        <button v-if="canShareSTRM(link)" type="button" data-gy-action="strm" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="gy-button gy-primary-button" @click="shareSTRM(item, link)">
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
+                          {{ shareRuns.pending.value[shareResourceID(item, link)] ? '已加入任务…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM' }}
+                        </button>
+                      </div>
+                    </div>
+                    <div v-if="copyError === link.url" role="alert" class="gy-notice gy-warning">
+                      <p>浏览器未允许复制，请手动复制：</p>
+                      <textarea :value="link.url + (link.password ? '  提取码：' + link.password : '')" readonly aria-label="手动复制资源链接" @focus="($event.target as HTMLTextAreaElement).select()" />
+                    </div>
+                    <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
+                    <p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'gy-success' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" @click="emit('close')">前往配置</RouterLink></p>
+                    <p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'gy-success' : 'gy-info'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p>
+                  </li>
+                </ul>
               </article>
+              <div v-if="displayedLinkCount < filteredLinkCount" class="gy-list-end">
+                <button type="button" class="gy-button gy-outlined-button" @click="showMore">显示更多资源</button>
+                <span>还有 {{ filteredLinkCount - displayedLinkCount }} 条链接，筛选包含全部结果</span>
+              </div>
+              <p v-else class="gy-all-loaded">已展示当前筛选的全部资源</p>
             </div>
           </template>
         </div>
-        <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800 p-5"><p class="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">115 分享资源可生成 STRM；磁力可转存到“115 云下载”设置的下载目录。</p><button v-if="config?.configured" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="search(true)">{{ phase === 'search' ? `搜索中（${elapsedSeconds} 秒）` : '重新搜索' }}</button><button v-else-if="!config && error" :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40" @click="initialize">{{ phase === 'config' ? '读取中…' : '重试' }}</button></footer>
+        <footer class="gy-footer">115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。</footer>
       </div>
     </dialog>
   </Teleport>
 </template>
 
 <style scoped>
-.filter-scroll {
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-  scrollbar-width: thin;
+.gy-dialog {
+  --gy-max-height: 90dvh;
+  --gy-container: var(--detail-light-surface-container-high, #e9edf3);
+  --gy-card: var(--detail-light-surface-container-low, #fff);
+  --gy-text: var(--detail-light-on-surface, #18212e);
+  --gy-muted: var(--detail-light-on-surface-variant, #475569);
+  --gy-outline: var(--detail-light-outline-variant, #cbd5e1);
+  --gy-primary: var(--detail-light-primary, #475f85);
+  --gy-on-primary: var(--detail-light-on-primary, #fff);
+  --gy-tonal: var(--detail-light-primary-container, #d8e6ff);
+  --gy-on-tonal: var(--detail-light-on-primary-container, #1a365d);
+  --gy-success: #246044; --gy-success-bg: #e6f2e9;
+  --gy-warning: #765500; --gy-warning-bg: #fff1cd;
+  --gy-error: #a12b2b; --gy-error-bg: #ffe9e7;
+  margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--gy-max-height);
+  border: 0; border-radius: 28px; background: color-mix(in srgb, var(--gy-container) 94%, transparent);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); color: var(--gy-text); color-scheme: light;
+  overflow: hidden; box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
-
-.filter-scroll::-webkit-scrollbar {
-  height: 4px;
+.dark .gy-dialog {
+  --gy-container: var(--detail-dark-surface-container-high, #242d3c);
+  --gy-card: var(--detail-dark-surface-container-low, #1b2433);
+  --gy-text: var(--detail-dark-on-surface, #e2e8f0);
+  --gy-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
+  --gy-outline: var(--detail-dark-outline-variant, #465063);
+  --gy-primary: var(--detail-dark-primary, #aac7f5);
+  --gy-on-primary: var(--detail-dark-on-primary, #173256);
+  --gy-tonal: var(--detail-dark-primary-container, #314967);
+  --gy-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
+  --gy-success: #a5d8b8; --gy-success-bg: #223d31;
+  --gy-warning: #eed085; --gy-warning-bg: #42371e;
+  --gy-error: #ffb4ab; --gy-error-bg: #502c2b;
+  color-scheme: dark;
 }
-
-.filter-scroll::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--scrollbar-thumb);
+.gy-dialog::backdrop { background: rgb(2 6 23 / 32%); }
+.gy-layout { display: flex; flex-direction: column; max-height: var(--gy-max-height); }
+.gy-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
+.gy-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--gy-card); }
+.gy-heading { flex: 1; min-width: 0; }
+.gy-heading h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; }
+.gy-heading p { margin: 4px 0 0; color: var(--gy-muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.gy-heading-meta { display: flex; align-items: center; gap: 8px; }
+.gy-heading-meta p { flex: 1; min-width: 0; }
+.gy-search-caption { flex-shrink: 0; margin-top: 4px; color: var(--gy-muted); font-size: 10px; line-height: 18px; }
+.gy-cached-caption { color: var(--gy-primary); }
+.gy-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; color: var(--gy-muted); }
+.gy-icon-button svg { width: 24px; height: 24px; }
+.gy-tools { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 12px; padding: 0 24px 8px; }
+.gy-tools > span { color: var(--gy-muted); font-size: 12px; }
+.gy-tools > div { display: flex; gap: 4px; }
+.gy-search-query { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; }
+.gy-query-method { flex-shrink: 0; color: var(--gy-primary); font-size: 10px; font-weight: 600; }
+.gy-query-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.gy-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 0 12px; border: 0; border-radius: 24px; background: transparent; color: var(--gy-muted); font-size: 12px; font-weight: 550; text-decoration: none; white-space: nowrap; }
+.gy-tool-button svg { width: 18px; height: 18px; }
+.gy-body { position: relative; min-height: 0; padding: 0 24px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.gy-search-process { margin-bottom: 12px; color: var(--gy-muted); font-size: 12px; }
+.gy-process-heading { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 11px; line-height: 20px; }
+.gy-cache { margin-left: auto; color: var(--gy-primary); font-size: 11px; }
+.gy-search-process ul { display: grid; gap: 8px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; background: var(--gy-card); list-style: none; }
+.gy-search-process li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; line-height: 20px; overflow-wrap: anywhere; }
+.gy-search-process code { color: var(--gy-text); }
+.gy-picker-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-bottom: 10px; }
+.gy-picker-heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
+.gy-picker-heading > span { font-size: 11px; color: var(--gy-muted); }
+.gy-item-strip { display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
+.gy-item-card { position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 220px; min-height: 92px; padding: 8px; border: 2px solid transparent; border-radius: 16px; background: var(--gy-card); color: var(--gy-text); text-align: left; }
+.gy-item-card[aria-pressed="true"] { border-color: var(--gy-primary); background: var(--gy-tonal); color: var(--gy-on-tonal); }
+.gy-cover { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 70px; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--gy-outline) 20%, transparent); color: var(--gy-muted); }
+.gy-cover img { width: 100%; height: 100%; object-fit: cover; }
+.gy-cover svg { width: 24px; height: 24px; }
+.gy-item-name { min-width: 0; padding-right: 4px; }
+.gy-item-card strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 12px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.gy-item-card small { display: block; margin-top: 4px; color: var(--gy-muted); font-size: 10px; line-height: 16px; }
+.gy-item-card small span { margin-left: 8px; }
+.gy-selected-mark { position: absolute; top: 5px; right: 5px; width: 16px; height: 16px; color: var(--gy-primary); }
+.gy-all-items { width: 160px; padding: 12px; }
+.gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
+.gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; background: var(--gy-container); border-bottom: 1px solid var(--gy-outline); }
+.gy-filter-context { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
+.gy-filter-context > span { flex-shrink: 0; font-size: 11px; line-height: 18px; color: var(--gy-muted); }
+.gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }
+.gy-short-viewport .gy-filters { position: static; }
+.gy-source-strip { display: flex; gap: 6px; padding: 2px; overflow-x: auto; }
+.gy-chip { position: relative; isolation: isolate; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--gy-muted); font-size: 11px; line-height: 18px; }
+.gy-chip::before { position: absolute; z-index: -1; inset: 6px 0; border: 1px solid var(--gy-outline); border-radius: inherit; background: var(--gy-card); pointer-events: none; content: ''; }
+.gy-chip[aria-pressed="true"] { color: var(--gy-on-tonal); font-weight: 600; }
+.gy-chip[aria-pressed="true"]::before { border-color: var(--gy-primary); background: var(--gy-tonal); }
+.gy-chip svg { width: 12px; height: 12px; }
+.gy-chip > span { opacity: .75; font-size: 10px; }
+.gy-film + .gy-film { margin-top: 28px; }
+.gy-film-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.gy-film-heading h3 { margin: 0; min-width: 0; font-size: 16px; line-height: 24px; font-weight: 650; overflow-wrap: anywhere; }
+.gy-film-heading h3 > span { display: inline-block; margin-left: 8px; color: var(--gy-muted); font-size: 13px; font-weight: 400; }
+.gy-film-heading > div { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--gy-muted); }
+.gy-film-details { margin: 4px 0 8px; color: var(--gy-muted); font-size: 11px; }
+.gy-film-details summary { display: inline-flex; align-items: center; gap: 5px; min-height: 40px; }
+.gy-film-details p { margin: 0 0 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
+.gy-film-single .gy-film-details { margin: -8px 0 0; }
+.gy-film-single .gy-resource-list { margin-top: 0; }
+.gy-resource-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.gy-resource { min-width: 0; padding: 16px 20px; border: 1px solid color-mix(in srgb, var(--gy-outline) 35%, transparent); border-radius: 20px; background: var(--gy-card); }
+.gy-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 20px; }
+.gy-resource-info { display: contents; }
+.gy-resource-title { grid-column: 1 / -1; min-width: 0; line-height: 23px; }
+.gy-resource-info h4 { display: inline; margin: 0; font-size: 14px; line-height: 23px; font-weight: 600; overflow-wrap: anywhere; }
+.gy-resource-meta { display: flex; grid-column: 1; grid-row: 2; min-width: 0; align-items: center; gap: 8px; color: var(--gy-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.gy-resource-tags { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.gy-badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 8px; font-size: 11px; line-height: 18px; font-weight: 550; }
+.gy-neutral { background: color-mix(in srgb, var(--gy-outline) 18%, transparent); color: var(--gy-muted); }
+.gy-info { color: var(--gy-on-tonal); background: var(--gy-tonal); }
+.gy-success { color: var(--gy-success); background: var(--gy-success-bg); }
+.gy-warning { color: var(--gy-warning); background: var(--gy-warning-bg); }
+.gy-error { color: var(--gy-error); background: var(--gy-error-bg); }
+.gy-actions { display: flex; grid-column: 2; grid-row: 2; align-items: center; gap: 8px; }
+.gy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 24px; background: var(--gy-button-background); font-size: 12px; line-height: 20px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; transition: box-shadow .15s, background-color .15s; }
+.gy-button svg { flex-shrink: 0; width: 16px; height: 16px; }
+.gy-primary-button { --gy-button-background: var(--gy-primary); color: var(--gy-on-primary); }
+.gy-outlined-button { --gy-button-background: color-mix(in srgb, var(--gy-primary) 4%, var(--gy-card)); padding: 7px 11px; border: 1px solid var(--gy-outline); color: var(--gy-primary); }
+.gy-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; margin-left: 8px; padding: 6px 10px; border: 0; border-radius: 20px; background: transparent; color: var(--gy-primary); font-size: 11px; vertical-align: middle; }
+.gy-copy-button svg { width: 14px; height: 14px; }
+.gy-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
+.gy-notice.gy-info { border: 1px solid color-mix(in srgb, var(--gy-outline) 45%, transparent); background: var(--gy-card); color: var(--gy-text); }
+.gy-notice.gy-info > span, .gy-task-notice.gy-info > div > span { color: var(--gy-muted); }
+.gy-notice > span, .gy-task-notice > div > span { display: block; font-size: 11px; }
+.gy-notice strong { font-weight: 600; }
+.gy-notice p { margin: 0; }
+.gy-task-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.gy-resource .gy-notice { margin: 8px 0 8px; }
+.gy-task-status { white-space: pre-wrap; }
+.gy-task-status a { margin-left: 8px; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.gy-notice textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--gy-outline); border-radius: 8px; background: var(--gy-card); color: var(--gy-text); font-size: 16px; }
+.gy-text-button { min-height: 48px; padding: 10px 12px; border: 0; border-radius: 24px; background: transparent; color: var(--gy-primary); font-size: 12px; line-height: 20px; font-weight: 600; }
+.gy-list-end { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 20px; }
+.gy-list-end > span, .gy-all-loaded { color: var(--gy-muted); font-size: 11px; line-height: 18px; }
+.gy-all-loaded { margin: 20px 0 0; text-align: center; }
+.gy-footer { flex-shrink: 0; padding: 12px 24px 16px; color: var(--gy-muted); font-size: 11px; line-height: 18px; }
+.gy-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 16px; color: var(--gy-muted); text-align: center; }
+.gy-empty svg { width: 36px; height: 36px; margin-bottom: 8px; }
+.gy-empty h3 { margin: 0; font-size: 14px; line-height: 22px; color: var(--gy-text); font-weight: 600; }
+.gy-empty p { margin: 0; font-size: 12px; line-height: 22px; }
+.gy-empty > span { font-size: 11px; line-height: 18px; }
+.gy-setup { padding: 24px; border-radius: 20px; background: var(--gy-card); }
+.gy-setup h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.gy-setup p { margin: 10px 0 16px; color: var(--gy-muted); font-size: 13px; line-height: 22px; }
+.gy-dialog summary { list-style: none; cursor: pointer; }
+.gy-dialog summary::-webkit-details-marker { display: none; }
+.gy-chevron { width: 14px; height: 14px; flex-shrink: 0; }
+details[open] > summary > .gy-chevron { transform: rotate(90deg); }
+.gy-dialog button { cursor: pointer; }
+.gy-dialog button:disabled { cursor: default; opacity: .45; }
+.gy-dialog button:focus-visible, .gy-dialog a:focus-visible, .gy-dialog summary:focus-visible { outline: 2px solid var(--gy-primary); outline-offset: 3px; }
+.gy-scroll { scrollbar-color: var(--gy-outline) transparent; scrollbar-width: thin; }
+.gy-scroll::-webkit-scrollbar { height: 4px; }
+.gy-scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--gy-outline); }
+.gy-spinning { animation: gy-spin 1s linear infinite; }
+@keyframes gy-spin { to { transform: rotate(360deg); } }
+@media (hover: hover) {
+  .gy-icon-button:hover, .gy-tool-button:hover:not(:disabled), .gy-copy-button:hover, .gy-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--gy-primary) 8%, transparent); }
+  .gy-item-card:hover, .gy-chip:hover::before { border-color: var(--gy-primary); }
+  .gy-primary-button:hover:not(:disabled) { --gy-button-background: color-mix(in srgb, var(--gy-primary) 92%, var(--gy-on-primary)); box-shadow: 0 2px 6px rgb(0 0 0 / 18%); }
+  .gy-outlined-button:hover:not(:disabled) { --gy-button-background: color-mix(in srgb, var(--gy-primary) 10%, var(--gy-card)); }
+}
+@media (max-width: 799px) {
+  .gy-resource-main { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .gy-resource-info { display: grid; grid-column: 1; grid-row: 1; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; min-width: 0; }
+  .gy-resource-title { display: contents; }
+  .gy-resource-info h4 { display: block; grid-column: 1 / -1; }
+  .gy-resource-meta { margin-top: 10px; }
+  .gy-copy-button { grid-column: 2; grid-row: 2; margin: 10px 0 0; }
+  .gy-actions { grid-column: 1; }
+}
+@media (max-width: 639px) {
+  .gy-dialog { --gy-max-height: calc(min(100dvh, var(--gy-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--gy-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--gy-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .gy-header { gap: 10px; padding: 16px 16px 8px; }
+  .gy-heading h2 { font-size: 18px; line-height: 26px; }
+  .gy-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 18px; }
+  .gy-tools { justify-content: flex-end; padding: 0 16px 4px; }
+  .gy-tools > span { display: none; }
+  .gy-tools > .gy-search-query { display: flex; }
+  .gy-tool-button { padding-inline: 8px; }
+  .gy-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
+  .gy-item-picker { margin-bottom: 8px; }
+  .gy-filters { margin: 0 -16px 8px; padding: 2px 16px 4px; }
+  .gy-picker-heading { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
+  .gy-picker-heading h3, .gy-picker-heading > span { flex-shrink: 0; }
+  .gy-picker-heading > span { font-size: 10px; }
+  .gy-picker-hint { display: none; }
+  .gy-item-strip { padding-top: 0; }
+  .gy-item-card { width: 176px; min-height: 80px; gap: 8px; }
+  .gy-cover { width: 40px; height: 58px; }
+  .gy-all-items { flex-direction: column; justify-content: center; gap: 4px; width: 112px; padding: 8px; text-align: center; }
+  .gy-all-items > svg { width: 20px; height: 20px; }
+  .gy-all-items small { margin-top: 0; }
+  .gy-filter-context > span { font-size: 10px; }
+  .gy-film-heading h3 { font-size: 15px; }
+  .gy-film-details summary { min-height: 48px; }
+  .gy-resource { padding: 16px; border-radius: 18px; }
+  .gy-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gy-button { position: relative; isolation: isolate; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; }
+  .gy-button::before { position: absolute; z-index: -1; inset: 2px 0; border-radius: inherit; background: var(--gy-button-background); pointer-events: none; content: ''; transition: background-color .15s; }
+  .gy-outlined-button::before { border: 1px solid var(--gy-outline); }
+  .gy-actions > :only-child { grid-column: 1 / -1; }
+  .gy-copy-button { min-height: 48px; }
+  .gy-footer { padding: 8px 16px 12px; font-size: 10px; line-height: 16px; }
+}
+@media (max-width: 359px) { .gy-actions { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .gy-spinning { animation: none; }
+  .gy-button, .gy-button::before { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .gy-dialog { background: var(--gy-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 </style>
