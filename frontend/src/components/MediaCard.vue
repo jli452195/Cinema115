@@ -6,12 +6,12 @@ import type { EmbyMatch } from '../types/emby'
 import embyIcon from '../assets/emby.svg'
 import { tmdbImageURL } from '../utils/tmdbImage'
 
-const props = defineProps<{ item: MediaCardItem; library?: EmbyMatch }>()
+const props = withDefaults(defineProps<{ item: MediaCardItem; library?: EmbyMatch; showKindBadge?: boolean; titleLines?: 1 | 2 }>(), { showKindBadge: true, titleLines: 1 })
 const imageFailed = ref(false)
 const detailPath = computed(() => `/${props.item.kind}/${props.item.id}`)
 const libraryLabel = computed(() => props.library?.state === 'stale' ? '已入库 · 待更新' : '已入库')
 const ratingLabel = computed(() => props.item.votes > 0 && Number.isFinite(props.item.rating)
-  ? `★ ${props.item.rating.toFixed(1)}`
+  ? props.item.rating.toFixed(1)
   : '暂无评分')
 
 // 图片失败状态由卡片自己管理，切换影视或海报后重新尝试加载。
@@ -43,10 +43,10 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
         </svg>
         <span class="text-xs">暂无海报</span>
       </div>
-      <span class="absolute left-2.5 top-2.5 rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold leading-4 text-white shadow-sm">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
-      <span class="absolute right-2.5 top-2.5 rounded bg-white dark:bg-slate-900/95 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-amber-600 shadow-sm">{{ ratingLabel }}</span>
+      <span v-if="showKindBadge" class="absolute left-2.5 top-2.5 rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold leading-4 text-white shadow-sm">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
+      <span class="absolute right-2.5 top-2.5 inline-flex items-center gap-0.5 rounded bg-white dark:bg-slate-900/95 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-amber-600 shadow-sm"><svg v-if="item.votes > 0 && Number.isFinite(item.rating)" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg>{{ ratingLabel }}</span>
     </div>
-    <h2 class="mt-2.5 truncate px-0.5 text-sm font-semibold leading-6 text-slate-800 dark:text-slate-200 group-hover:text-amber-600" :title="item.title">{{ item.title }}</h2>
+    <h2 class="mt-2.5 px-0.5 text-sm font-semibold text-slate-800 dark:text-slate-200 group-hover:text-amber-600" :class="titleLines === 2 ? 'media-card-title-two-lines' : 'truncate leading-6'" :title="item.title">{{ item.title }}</h2>
     <div class="mt-0.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs">
       <span class="shrink-0 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.date?.slice(0, 4) || '年份未知' }}</span>
       <span v-if="library?.items.length" class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-medium" :class="library.state === 'stale' ? 'text-amber-600' : 'text-emerald-600'" :aria-label="`Emby ${libraryLabel}`" :title="library.state === 'stale' ? 'Emby 索引待更新，当前显示上次入库记录' : 'Emby 已入库'">
@@ -56,3 +56,16 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
     </div>
   </RouterLink>
 </template>
+
+<style scoped>
+.media-card-title-two-lines {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-height: 40px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 20px;
+}
+</style>

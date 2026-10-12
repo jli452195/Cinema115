@@ -423,16 +423,16 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 }
 .detail-back-button:hover { background: var(--md-sys-color-surface-container-highest); }
 .detail-backdrop {
-  --backdrop-surface-start: 14%;
-  --backdrop-surface-middle: 32%;
+  --backdrop-surface-start: 10%;
+  --backdrop-surface-middle: 24%;
   height: 75vh;
   max-height: 800px;
   overflow: hidden;
   isolation: isolate;
 }
 .dark .detail-backdrop {
-  --backdrop-surface-start: 34%;
-  --backdrop-surface-middle: 48%;
+  --backdrop-surface-start: 28%;
+  --backdrop-surface-middle: 40%;
 }
 .detail-backdrop img {
   /* Overscan keeps the blurred image edges outside the visible background. */
@@ -452,9 +452,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   z-index: 1;
   /* A broad falloff protects the reading area without outlining a panel. */
   background: radial-gradient(ellipse 70% 80% at 62% 32%,
-    color-mix(in srgb, var(--md-sys-color-surface) 50%, transparent) 0%,
-    color-mix(in srgb, var(--md-sys-color-surface) 44%, transparent) 32%,
-    color-mix(in srgb, var(--md-sys-color-surface) 20%, transparent) 65%,
+    color-mix(in srgb, var(--md-sys-color-surface) 38%, transparent) 0%,
+    color-mix(in srgb, var(--md-sys-color-surface) 34%, transparent) 32%,
+    color-mix(in srgb, var(--md-sys-color-surface) 14%, transparent) 65%,
     transparent 100%);
 }
 .detail-backdrop::after {
@@ -463,8 +463,8 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-start), transparent) 0%,
     color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-start), transparent) 20%,
     color-mix(in srgb, var(--md-sys-color-surface) var(--backdrop-surface-middle), transparent) 40%,
-    color-mix(in srgb, var(--md-sys-color-surface) 58%, transparent) 60%,
-    color-mix(in srgb, var(--md-sys-color-surface) 85%, transparent) 80%,
+    color-mix(in srgb, var(--md-sys-color-surface) 52%, transparent) 60%,
+    color-mix(in srgb, var(--md-sys-color-surface) 82%, transparent) 80%,
     var(--md-sys-color-surface) 100%);
 }
 @media (max-width: 639px) {
@@ -474,7 +474,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   }
   .detail-backdrop img { filter: blur(2px); }
   .detail-backdrop::before {
-    background: color-mix(in srgb, var(--md-sys-color-surface) 22%, transparent);
+    background: color-mix(in srgb, var(--md-sys-color-surface) 16%, transparent);
   }
 }
 .detail-poster {

@@ -89,6 +89,9 @@
 .catalog-year-grid .catalog-chip { min-height: 44px; padding: 0 5px; background: var(--filter-hover); font-variant-numeric: tabular-nums; }
 .catalog-year-grid .catalog-chip[aria-pressed="true"] { background: var(--filter-tone); }
 .catalog-year-reset { margin-top: 10px; width: 100%; min-height: 44px; }
+/* Shared poster density, including loading placeholders. */
+.catalog-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); column-gap: 16px; row-gap: 24px; }
+@media (max-width: 639px) { .catalog-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; } }
 @media (hover: hover) {
   .catalog-chip:hover:not([aria-pressed="true"]):not(.is-selected), .catalog-text-button:hover, .catalog-icon-button:hover { background: var(--filter-hover); color: var(--filter-text); }
   .catalog-segments button:hover { color: var(--filter-text); }

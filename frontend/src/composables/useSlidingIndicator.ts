@@ -4,8 +4,11 @@ export function useSlidingIndicator(
   containerRef: Ref<HTMLElement | undefined>,
   activeSelector: string,
   dependencies: any[],
-  options: { persistKey?: string; debounceMs?: number; insetY?: number } = {}
+  options: { persistKey?: string; debounceMs?: number; insetY?: number; durationMs?: number; easing?: string } = {}
 ) {
+  const transition = ['left', 'top', 'width', 'height']
+    .map(property => `${property} ${options.durationMs ?? 300}ms ${options.easing ?? 'cubic-bezier(0.4, 0, 0.2, 1)'}`)
+    .join(', ')
   const savedPos = options.persistKey ? (window as any)[options.persistKey] : null
   const indicatorStyle = ref<Record<string, any>>(
     savedPos || { left: '0px', top: '0px', width: '0px', height: '0px', opacity: 0, transition: 'none' }
@@ -34,7 +37,7 @@ export function useSlidingIndicator(
         ...position,
         opacity: 1,
         transition: animate && indicatorStyle.value.opacity && !motionQuery.matches
-          ? 'left 300ms cubic-bezier(0.4, 0, 0.2, 1), top 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1), height 300ms cubic-bezier(0.4, 0, 0.2, 1)'
+          ? transition
           : 'none'
       }
       indicatorStyle.value = newStyle

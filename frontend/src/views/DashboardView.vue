@@ -187,10 +187,10 @@ onBeforeUnmount(() => {
       <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="loadGenres(); loadPage()">重新加载</button></div>
       <section aria-label="影视列表" :aria-busy="loading" class="catalog-results">
         <div v-if="loading && hasLoaded" class="catalog-progress" aria-hidden="true"></div>
-        <div v-if="loading && !hasLoaded" aria-label="正在加载影视" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-4 h-4 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-2 h-3 w-10 rounded bg-slate-100 dark:bg-slate-800"></div></div></div>
+        <div v-if="loading && !hasLoaded" aria-label="正在加载影视" class="catalog-card-grid"><div v-for="i in 20" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-2.5 h-10 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-0.5 h-4 w-10 rounded bg-slate-100 dark:bg-slate-800"></div></div></div>
         <div v-else-if="!items.length && hasLoaded" class="catalog-empty">{{ loading || error ? '上次查询没有匹配的影视。' : '没有找到匹配的影视，试试其他筛选条件。' }}</div>
-        <div v-else-if="items.length" class="catalog-media-grid grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" :class="{ 'catalog-updating': loading }">
-          <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" />
+        <div v-else-if="items.length" class="catalog-card-grid catalog-media-grid" :class="{ 'catalog-updating': loading }">
+          <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" :show-kind-badge="false" :title-lines="2" />
         </div>
       </section>
       <div v-if="hasLoaded && totalPages > 1" class="mt-9 flex items-center justify-center gap-5 text-sm"><button :disabled="loading || !!error || page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page--">上一页</button><span class="text-xs text-slate-500 dark:text-slate-400">{{ loading || error ? loadedPage : page }} / {{ totalPages }}</span><button :disabled="loading || !!error || page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page++">下一页</button></div>
@@ -201,8 +201,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.catalog-filters { padding: 2px 0 16px; border-bottom: 1px solid var(--filter-outline); }
-.catalog-categories { margin-bottom: 16px; }
+.catalog-filters { padding: 2px 0 10px; border-bottom: 1px solid var(--filter-outline); }
+.catalog-categories { margin-bottom: 10px; }
 .catalog-desktop-filters { display: flex; flex-direction: column; gap: 6px; }
 .catalog-filter-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .catalog-row-label { flex-shrink: 0; width: 32px; padding-top: 8px; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
 .catalog-genre-error { margin: 0 0 4px 44px; color: #b34a4a; font-size: 12px; }
 .catalog-genre-error button { margin-left: 8px; text-decoration: underline; }
 .catalog-mobile-tools { display: none; }
-.catalog-result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 76px; padding: 14px 0; }
+.catalog-result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 58px; padding: 8px 0; }
 .catalog-result-heading { display: flex; align-items: center; min-width: 0; flex-wrap: wrap; gap: 8px 12px; color: var(--filter-muted); font-size: 12px; }
 .catalog-desktop-summary { max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .catalog-desktop-reset { font-size: 12px; min-height: 32px; padding: 0 8px; }

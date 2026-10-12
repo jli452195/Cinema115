@@ -78,7 +78,11 @@ export const router = createRouter({
     { path: '/emby/users', name: 'emby-users', component: EmbyUsersView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
-  scrollBehavior: (to, _from, savedPosition) => savedPosition ?? (to.path === '/helper115' && to.hash === '#pool' ? { el: '#pool', top: 24 } : { top: 0 }),
+  scrollBehavior: (to, from, savedPosition) => {
+    // Changing only the selected date should not jump the update grid back to the top.
+    if (to.name === 'updates' && from.name === 'updates') return false
+    return savedPosition ?? (to.path === '/helper115' && to.hash === '#pool' ? { el: '#pool', top: 24 } : { top: 0 })
+  },
 })
 
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
