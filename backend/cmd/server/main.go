@@ -116,6 +116,16 @@ func main() {
 	}
 	gyingService.Logs = generationLogs
 	httpapi.RegisterGying(admin, gyingService, tmdbService, generationLogs)
+	woniuStore, err := service.NewSessionStore(filepath.Join(dataDir, "woniu-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	woniuService, err := service.NewWoniuService(woniuStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	woniuService.Logs = generationLogs
+	httpapi.RegisterWoniu(admin, woniuService, tmdbService)
 	nanShareStore, err := service.NewSessionStore(filepath.Join(dataDir, "nanshare-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -148,6 +158,11 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterGyingImages(r, gyingImages)
+	woniuImages, err := imagecache.NewWoniu(filepath.Join(dataDir, "woniu-images"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterWoniuImages(r, woniuImages)
 	embySecrets, err := service.NewSessionStore(filepath.Join(dataDir, "emby-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -375,6 +390,8 @@ func main() {
 	go func() { defer workers.Done(); mikanImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); gyingImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); woniuImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); shareAPI.Runs.Run() }()
 	if os.Getenv("TMDB_API_KEY") != "" {

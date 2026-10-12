@@ -1,64 +1,6 @@
-export interface GyingResourceType {
-  type: string
-  label: string
-}
-
-export interface GyingConfigView {
-  baseUrl: string
-  username: string
-  configured: boolean
-  hasSession: boolean
-  resourceOrder: string[]
-  resourceTypes: GyingResourceType[]
-}
-
-export interface GyingResourceLink {
-  category: 'pan' | 'torrent'
-  type: string
-  typeLabel: string
-  subType?: string
-  subTypeLabel?: string
-  url: string
-  password?: string
-  workTitle?: string
-  size?: string
-  seeds?: number
-  updatedAt?: string
-}
-
-export interface GyingSearchItem {
-  id: string
-  title: string
-  coverUrl?: string
-  year?: number
-  mediaType: 'movie' | 'tv' | 'anime' | 'other'
-  description?: string
-  links: GyingResourceLink[]
-}
-
-export interface GyingSearchAttempt {
-  method: 'title' | 'imdb'
-  query: string
-  total: number
-  usable: number
-  failed?: number
-  unavailable?: number
-  truncated?: boolean
-}
-
-export interface GyingSearchResponse {
-  query: string
-  matchedBy: 'title' | 'imdb'
-  items: GyingSearchItem[]
-  total: number
-  truncated?: boolean
-  attempts: GyingSearchAttempt[]
-  partial?: boolean
-  failedDetails?: number
-  unavailableDetails?: number
-  cached: boolean
-  cacheExpiresAt?: string
-}
+import type { ResourceSearchConfig, ResourceType } from './resourceSearch'
+export type { ResourceType as GyingResourceType, ResourceLink as GyingResourceLink, ResourceSearchItem as GyingSearchItem, ResourceSearchAttempt as GyingSearchAttempt, ResourceSearchResult as GyingSearchResponse } from './resourceSearch'
+export interface GyingConfigView extends ResourceSearchConfig { resourceTypes: ResourceType[] }
 
 export async function gyingRequest<T>(token: string, path: string, signal: AbortSignal, method = 'GET', body?: object): Promise<T> {
   const response = await fetch(`/api/admin/gying/${path}`, {

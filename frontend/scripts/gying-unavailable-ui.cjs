@@ -31,13 +31,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
     })
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/tv/3570')
-    await page.getByRole('button', { name: '观影搜索', exact: true }).click()
+    await page.getByRole('button', { name: /观影\s*搜索/ }).click()
     await page.getByRole('heading', { name: '正常资源条目', exact: true }).waitFor()
-    await page.getByText(/已跳过 1 个下架或不可用条目/).waitFor()
+    assert.equal(await page.locator('.gy-film').count(), 1)
     assert.equal(await page.getByText(/会话失效|重新登录失败/).count(), 0)
     mode = 'all'
     await page.getByRole('button', { name: '重新搜索', exact: true }).click()
     await page.getByText('匹配资源已下架或不可用，暂未取得可用的网盘或磁力资源。', { exact: true }).waitFor()
+    await page.getByText(/已跳过 1 个下架或不可用条目/).waitFor()
     mode = 'partial'
     await page.getByRole('button', { name: '重新搜索', exact: true }).click()
     await page.getByText('部分资源详情读取失败，尚不能确认是否有可用资源，请稍后重新搜索。', { exact: true }).waitFor()

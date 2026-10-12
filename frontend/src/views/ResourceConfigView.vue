@@ -3,21 +3,26 @@ import { onBeforeUnmount, onMounted, reactive } from 'vue'
 import { RouterLink } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
+import gyingLogo from '../assets/gying/logo-gying.png'
+import re0Logo from '../assets/re0/logo-re0-square.webp'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
+import { woniuRequest, type WoniuConfigView } from '../types/woniu'
+import woniuLogo from '../assets/woniu.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-type Source = 'gying' | 're0' | 'telegram'
+type Source = 'gying' | 'woniu' | 're0' | 'telegram'
 type Summary = { label: string; bot?: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const sources: { id: Source; title: string; description: string; settings: string }[] = [
   { id: 'gying', title: '观影配置', description: '管理观影站地址、账号登录与资源优先级。', settings: '/gying' },
+  { id: 'woniu', title: '蜗牛配置', description: '登录蜗牛 I 4K，配置详情页网盘搜索。', settings: '/woniu' },
   { id: 're0', title: 'RE0 配置', description: '管理 NanShare 连接，检查 RE0 搜索与分享 STRM 配置。', settings: '/nanshare' },
   { id: 'telegram', title: 'Telegram 搜索配置', description: '配置 Telegram API、用户账号登录与资源 Bot。', settings: '/telegram/user' },
 ]
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
-const summaries = reactive<Record<Source, Summary>>({ gying: initial(), re0: initial(), telegram: initial() })
+const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial() })
 const lifecycle = new AbortController()
 const toneClasses = {
   neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -36,6 +41,9 @@ async function load(source: Source) {
       summary = config.configured
         ? { label: '已配置', tone: 'success' }
         : { label: '未配置', tone: 'neutral' }
+    } else if (source === 'woniu') {
+      const config = await woniuRequest<WoniuConfigView>(props.token, 'config', signal)
+      summary = config.configured ? { label: '已配置', tone: 'success' } : { label: '未配置', tone: 'neutral' }
     } else if (source === 're0') {
       const config = await nanShareRequest<NanShareConfigView>(props.token, 'config', signal)
       summary = config.configured
@@ -66,10 +74,9 @@ onBeforeUnmount(() => lifecycle.abort())
         <div class="mb-5 flex items-center justify-between gap-3">
           <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
             <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
-            <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <template v-if="source.id === 'gying'"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m10 8 6 4-6 4V8Z" /></template>
-              <template v-else-if="source.id === 're0'"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5M8 10.5h5m-2.5-2.5v5" /></template>
-            </svg>
+            <img v-else-if="source.id === 'woniu'" :src="woniuLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+            <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+            <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           </span>
           <span role="status" :aria-busy="summaries[source.id].loading" class="rounded-full px-3 py-1 text-xs" :class="toneClasses[summaries[source.id].tone]">{{ summaries[source.id].label }}</span>
         </div>

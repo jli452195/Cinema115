@@ -30,6 +30,10 @@ func RegisterGyingImages(r gin.IRoutes, images TMDBImageStore) {
 	registerImages(r, "/api/gying/image/:size/:name", images)
 }
 
+func RegisterWoniuImages(r gin.IRoutes, images TMDBImageStore) {
+	registerImages(r, "/api/woniu/image/:size/:name", images)
+}
+
 func registerImages(r gin.IRoutes, route string, images TMDBImageStore) {
 	// img 标签不携带 Bearer 令牌；仅公开固定来源的图片，不开放搜索或资源接口。
 	handler := func(c *gin.Context) {

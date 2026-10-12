@@ -67,6 +67,7 @@ type refreshRequest struct{ size, name string }
 type Cache struct {
 	mikan     bool
 	gying     bool
+	woniu     bool
 	root      string
 	maxBytes  int64
 	baseURL   string
@@ -125,6 +126,9 @@ func (c *Cache) paths(size, name string) (string, string, error) {
 	}
 	if c.gying {
 		valid = validGyingImage(size, name)
+	}
+	if c.woniu {
+		valid = woniuImageDirectory.MatchString(size) && woniuImageName.MatchString(name)
 	}
 	if !valid || !validName(name) {
 		return "", "", ErrInput
@@ -279,6 +283,13 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	if c.gying {
 		upstream, err = url.JoinPath(c.baseURL, "img", size, strings.TrimSuffix(name, ".webp"), "256.webp")
 	}
+	if c.woniu {
+		if size == "vod" {
+			upstream, err = url.JoinPath(c.baseURL, "upload", "vod", name)
+		} else {
+			upstream, err = url.JoinPath(c.baseURL, "upload", "vod", size, name)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("创建图片地址: %w", err)
 	}
@@ -336,7 +347,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	}
 	// 上游验证页面可能伪装成图片响应；检查文件签名，禁止将 HTML 缓存为封面。
 	var source io.Reader = response.Body
-	if c.mikan || c.gying {
+	if c.mikan || c.gying || c.woniu {
 		reader := bufio.NewReader(response.Body)
 		header, peekErr := reader.Peek(512)
 		if peekErr != nil && !errors.Is(peekErr, io.EOF) {
@@ -388,7 +399,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 		return err
 	}
 	// 小容量缓存写入后通知受控工作协程清理，避免只等定时清理导致持续膨胀。
-	if c.mikan || c.gying {
+	if c.mikan || c.gying || c.woniu {
 		select {
 		case c.prune <- struct{}{}:
 		default:

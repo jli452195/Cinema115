@@ -27,6 +27,7 @@ import NotificationsView from './views/NotificationsView.vue'
 import FollowManagementView from './views/FollowManagementView.vue'
 import UpdatesView from './views/UpdatesView.vue'
 import GyingView from './views/GyingView.vue'
+import WoniuView from './views/WoniuView.vue'
 import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
 import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
@@ -68,6 +69,7 @@ export const router = createRouter({
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },
     { path: '/logs', name: 'logs', component: LogsView },
     { path: '/gying', name: 'gying', component: GyingView, meta: { managementSection: '/resources' } },
+    { path: '/woniu', name: 'woniu', component: WoniuView, meta: { managementSection: '/resources' } },
     { path: '/nanshare', name: 'nanshare', component: NanShareView, meta: { managementSection: '/resources' } },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },

@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import BotSearchDialog from '../components/BotSearchDialog.vue'
 import GyingSearchDialog from '../components/GyingSearchDialog.vue'
+import WoniuSearchDialog from '../components/WoniuSearchDialog.vue'
 import MikanSearchDialog from '../components/MikanSearchDialog.vue'
 import RE0SearchDialog from '../components/RE0SearchDialog.vue'
 import FollowButton from '../components/FollowButton.vue'
@@ -27,20 +28,24 @@ import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
 import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 import re0Logo from '../assets/re0/logo-re0-square.webp'
 import gyingLogo from '../assets/gying/logo-gying.png'
+import woniuLogo from '../assets/woniu.svg'
 import telegramIcon from '../assets/telegram/telegram.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
+import { woniuRequest, type WoniuConfigView } from '../types/woniu'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const botSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
+const woniuSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
-const searchConfigured = ref({ re0: false, bot: false, gying: false })
+const searchConfigured = ref({ re0: false, bot: false, gying: false, woniu: false })
 watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
-  searchConfigured.value = { re0: false, bot: false, gying: false }
+  searchConfigured.value = { re0: false, bot: false, gying: false, woniu: false }
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
+  woniuSearchOpen.value = false
   if (!admin || !token) return
   const controller = new AbortController()
   onCleanup(() => controller.abort())
@@ -56,9 +61,10 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   void check('re0', nanShareRequest<NanShareConfigView>(token, 'config', signal))
   void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal))
   void check('gying', gyingRequest<GyingConfigView>(token, 'config', signal))
+  void check('woniu', woniuRequest<WoniuConfigView>(token, 'config', signal))
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
-watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
+watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
@@ -232,6 +238,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="botSearchOpen = false" />
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
+    <WoniuSearchDialog v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
     <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false" />
     <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
@@ -300,6 +307,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     <img :src="mikanWordmark" alt="Mikan" class="h-2.5 w-auto shrink-0 object-contain" draggable="false" />
                     <span class="detail-muted">搜索</span>
                   </span>
+                </SearchPill>
+                <SearchPill v-if="isPortalAdmin && searchConfigured.woniu" @click="woniuSearchOpen = true">
+                  <img :src="woniuLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
+                  <span class="flex items-center gap-0.5"><span class="font-bold text-[#5b4cf5] dark:text-[#a99bff]">蜗牛</span><span class="detail-muted">搜索</span></span>
                 </SearchPill>
               </div>
               <div class="mt-7"><h2 class="text-sm font-semibold detail-muted">剧情大纲</h2><p v-if="detail.tagline" class="mt-3 text-sm italic detail-muted">{{ detail.tagline }}</p><p class="detail-on-surface mt-3 whitespace-pre-line break-words text-sm leading-7">{{ detail.overview || '暂无剧情简介。' }}</p></div>

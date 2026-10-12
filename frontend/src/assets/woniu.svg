@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="蜗牛">
+  <defs>
+    <linearGradient id="g" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- soft round badge -->
+  <circle cx="32" cy="32" r="30" fill="#F5F3FF"/>
+
+  <!-- tiny blush -->
+  <circle cx="21" cy="40" r="3.2" fill="#F9A8D4" opacity="0.55"/>
+  <circle cx="43" cy="40" r="3.2" fill="#F9A8D4" opacity="0.55"/>
+
+  <!-- body -->
+  <ellipse cx="32" cy="44.5" rx="16" ry="8.5" fill="#DDD6FE"/>
+
+  <!-- shell -->
+  <circle cx="32" cy="30" r="13.5" fill="url(#g)"/>
+  <path d="M32 19.5c5.8 0 10.5 4.7 10.5 10.5" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M32 23.2c3.8 0 6.8 3 6.8 6.8" fill="none" stroke="#FFFFFF" stroke-width="2.1" stroke-linecap="round" opacity="0.45"/>
+  <circle cx="32" cy="30" r="2.1" fill="#FFFFFF"/>
+
+  <!-- cute face -->
+  <circle cx="27.2" cy="42.8" r="1.35" fill="#312E81"/>
+  <circle cx="36.8" cy="42.8" r="1.35" fill="#312E81"/>
+  <path d="M29.4 45.6c1.1 1.1 4.1 1.1 5.2 0" fill="none" stroke="#312E81" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- antennae -->
+  <path d="M36.8 19.2c1.2-3.6 3.1-5.7 5.2-6.2" fill="none" stroke="#818CF8" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M33.6 18.5c.2-3.5 1.4-5.9 3.1-6.8" fill="none" stroke="#818CF8" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="42.5" cy="12.4" r="2.1" fill="#6366F1"/>
+  <circle cx="37" cy="11.2" r="2.1" fill="#6366F1"/>
+  <circle cx="43.1" cy="11.8" r="0.65" fill="#FFFFFF"/>
+  <circle cx="37.6" cy="10.6" r="0.65" fill="#FFFFFF"/>
+</svg>
