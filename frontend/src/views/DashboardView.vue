@@ -4,6 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import DashboardFilterDialog from '../components/DashboardFilterDialog.vue'
+import DashboardYearMenu from '../components/DashboardYearMenu.vue'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import MediaCard from '../components/MediaCard.vue'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
@@ -48,6 +50,10 @@ const year = filter('year', '', value => /^\d{4}$/.test(value) && Number(value) 
 const sort = filter('sort', 'popular', value => ['popular', 'latest', 'rating'].includes(value))
 const pageFilter = filter('page', '1', value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 500)
 const page = computed({ get: () => Number(pageFilter.value), set: (value: number) => { pageFilter.value = String(value) } })
+const categoryStrip = ref<HTMLElement>()
+const sortStrip = ref<HTMLElement>()
+const { indicatorStyle: categoryIndicator } = useSlidingIndicator(categoryStrip, '[aria-pressed="true"]', [category, categories])
+const { indicatorStyle: sortIndicator } = useSlidingIndicator(sortStrip, '[aria-pressed="true"]', [sort])
 const totalPages = ref(0)
 const total = ref(0)
 const genres = ref<DashboardGenre[]>(cachedGenres(kind.value).genres)
@@ -57,11 +63,13 @@ const libraryMatches = useEmbyLibrary(() => props.token, items)
 const loading = ref(true)
 const error = ref('')
 const genreError = ref('')
+const hasLoaded = ref(false)
+const loadedPage = ref(1)
+const loadedSummary = ref('')
 const regions = [{ id: '', name: '全部' }, { id: 'CN', name: '大陆' }, { id: 'HK', name: '香港' }, { id: 'TW', name: '台湾' }, { id: 'JP', name: '日本' }, { id: 'KR', name: '韩国' }, { id: 'TH', name: '泰国' }, { id: 'western', name: '欧美' }]
 const sorts = [{ id: 'popular', name: '热门' }, { id: 'latest', name: '最新' }, { id: 'rating', name: 'TMDB 评分' }]
 const currentYear = new Date().getFullYear()
-const years = Array.from({ length: 12 }, (_, i) => String(currentYear - i))
-const olderYears = Array.from({ length: currentYear - 1911 }, (_, i) => String(currentYear - 12 - i))
+const years = Array.from({ length: 8 }, (_, i) => String(currentYear - i))
 const mobileFiltersOpen = ref(false)
 const activeMobileFilters = computed(() => {
   const values: string[] = []
@@ -76,7 +84,11 @@ const activeMobileFilters = computed(() => {
 let controller: AbortController | undefined
 const genreControllers: Partial<Record<DashboardKind, AbortController>> = {}
 let mounted = true
-function chip(active: boolean) { return active ? 'border-amber-400 bg-amber-50 text-amber-600 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-400' : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-slate-200' }
+const resultSummary = computed(() => {
+  const labels = [...activeMobileFilters.value]
+  if (category.value) labels.unshift(categories.value.find(item => item.id === category.value)?.name || '')
+  return labels.filter(Boolean).join(' · ') || '全部条件 · 热门'
+})
 async function request(path: string, signal: AbortSignal) {
   const response = await fetch(catalogAPI(`tmdb/${path}`), { signal, headers: { Authorization: `Bearer ${props.token}` } })
   const data = await response.json().catch(() => null)
@@ -112,7 +124,8 @@ function clearMobileFilters() {
 async function loadPage() {
   controller?.abort()
   const current = new AbortController(); controller = current
-  loading.value = true; error.value = ''; items.value = []; total.value = 0; totalPages.value = 0
+  loading.value = true; error.value = ''
+  const requestedPage = page.value, requestedSummary = resultSummary.value
   try {
     const params = new URLSearchParams({ kind: kind.value, page: String(page.value) })
     if (category.value) params.set('category', category.value)
@@ -121,10 +134,11 @@ async function loadPage() {
     if (!Array.isArray(data.items)) throw new Error('影视数据格式不正确')
     if (!mounted || current.signal.aborted) return
     items.value = data.items; totalPages.value = data.totalPages; total.value = data.total
+    loadedPage.value = requestedPage; loadedSummary.value = requestedSummary; hasLoaded.value = true
   } catch (e) { if (mounted && !current.signal.aborted) error.value = e instanceof Error ? e.message : '看板加载失败' }
   finally { if (mounted && controller === current) loading.value = false }
 }
-watch(kind, () => { loadGenres() })
+watch(kind, () => { items.value = []; total.value = 0; totalPages.value = 0; hasLoaded.value = false; loadGenres() })
 watch(() => route.fullPath, fullPath => {
   if (route.path === `/${kind.value}`) rememberDashboardPath(kind.value, fullPath)
 }, { immediate: true })
@@ -143,35 +157,90 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
-    <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
+    <main class="catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
-      <section aria-label="看板筛选" class="space-y-3 border-b border-slate-200 dark:border-slate-800 pb-6 text-sm">
-        <fieldset class="space-y-3">
-          <div role="group" aria-label="影视类别" class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800 dark:text-slate-200">类别</span><div class="flex flex-wrap gap-1"><button v-for="item in categories" :key="item.id" :aria-pressed="category === item.id" class="rounded-md border px-3 py-2" :class="chip(category === item.id)" @click="category = item.id">{{ item.name }}</button></div></div>
-          <div class="hidden space-y-3 sm:block">
-            <div role="group" aria-label="影视类型" class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800 dark:text-slate-200">类型</span><div class="flex flex-wrap gap-1"><button :aria-pressed="genre === ''" class="rounded-md border px-3 py-2" :class="chip(genre === '')" @click="genre = ''">全部</button><button v-for="item in visibleGenres" :key="item.id" :aria-pressed="genre === String(item.id)" class="rounded-md border px-3 py-2" :class="chip(genre === String(item.id))" @click="genre = String(item.id)">{{ item.name }}</button></div></div>
-            <p v-if="genreError" class="ml-12 text-xs text-red-500">类型加载失败。<button class="underline" @click="loadGenres(true)">重试</button></p>
-            <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800 dark:text-slate-200">地区</span><div class="flex flex-wrap gap-1"><button v-for="item in regions" :key="item.id" :aria-pressed="region === item.id" class="rounded-md border px-3 py-2" :class="chip(region === item.id)" @click="region = item.id">{{ item.name }}</button></div></div>
-            <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800 dark:text-slate-200">年份</span><div class="flex min-w-0 flex-wrap gap-1"><button :aria-pressed="year === ''" class="rounded-md border px-3 py-2" :class="chip(year === '')" @click="year = ''">全部</button><button v-for="item in years" :key="item" :aria-pressed="year === item" class="rounded-md border px-3 py-2" :class="chip(year === item)" @click="year = item">{{ item }}</button><select aria-label="更早年份" :value="olderYears.includes(year) ? year : ''" class="max-w-32 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500" @change="year = ($event.target as HTMLSelectElement).value"><option value="">更早年份</option><option v-for="item in olderYears" :key="item" :value="item">{{ item }}</option></select></div></div>
-            <div class="flex items-start gap-3"><span class="w-10 shrink-0 py-2 font-semibold text-slate-800 dark:text-slate-200">排序</span><div class="flex flex-wrap gap-1"><button v-for="item in sorts" :key="item.id" :aria-pressed="sort === item.id" class="rounded-md border px-3 py-2" :class="chip(sort === item.id)" @click="sort = item.id">{{ item.name }}</button></div></div>
-          </div>
-          <div class="flex min-w-0 items-center gap-3 pt-1 sm:hidden">
-            <button type="button" class="flex h-10 shrink-0 items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 font-medium text-slate-700 dark:text-slate-300" @click="mobileFiltersOpen = true"><span>筛选</span><span v-if="activeMobileFilters.length" class="min-w-5 rounded-full bg-amber-400 px-1.5 text-center text-xs leading-5 text-slate-950">{{ activeMobileFilters.length }}</span></button>
-            <p class="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ activeMobileFilters.length ? activeMobileFilters.join(' · ') : '全部类型 · 全部地区 · 全部年份' }}</p>
-            <button v-if="activeMobileFilters.length" type="button" class="h-10 shrink-0 px-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500" @click="clearMobileFilters">清除</button>
-          </div>
-        </fieldset>
+      <section aria-label="看板筛选" class="catalog-filters">
+        <div ref="categoryStrip" role="group" aria-label="影视类别" class="catalog-segments catalog-categories">
+          <div class="catalog-segment-indicator" :style="categoryIndicator" aria-hidden="true"></div>
+          <button v-for="item in categories" :key="item.id" type="button" :aria-pressed="category === item.id" @click="category = item.id">{{ item.name }}</button>
+        </div>
+        <div class="catalog-desktop-filters">
+          <div role="group" aria-label="影视题材" class="catalog-filter-row"><span class="catalog-row-label">题材</span><div class="catalog-options">
+            <button type="button" class="catalog-chip" :aria-pressed="genre === ''" @click="genre = ''">全部</button><button v-for="item in visibleGenres" :key="item.id" type="button" class="catalog-chip" :aria-pressed="genre === String(item.id)" @click="genre = String(item.id)">{{ item.name }}</button>
+          </div></div>
+          <p v-if="genreError" class="catalog-genre-error">题材加载失败。<button type="button" @click="loadGenres(true)">重试</button></p>
+          <div role="group" aria-label="影视地区" class="catalog-filter-row"><span class="catalog-row-label">地区</span><div class="catalog-options"><button v-for="item in regions" :key="item.id" type="button" class="catalog-chip" :aria-pressed="region === item.id" @click="region = item.id">{{ item.name }}</button></div></div>
+          <div role="group" aria-label="影视年份" class="catalog-filter-row"><span class="catalog-row-label">年份</span><div class="catalog-options">
+            <button type="button" class="catalog-chip" :aria-pressed="year === ''" @click="year = ''">全部</button><button v-for="value in years" :key="value" type="button" class="catalog-chip" :aria-pressed="year === value" @click="year = value">{{ value }}</button><DashboardYearMenu v-model="year" :recent-years="years" />
+          </div></div>
+        </div>
+        <div class="catalog-mobile-tools">
+          <button type="button" class="catalog-chip catalog-filter-trigger" aria-haspopup="dialog" @click="mobileFiltersOpen = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--filter-tone)" /><circle cx="15" cy="17" r="3" fill="var(--filter-tone)" /></svg>筛选<span v-if="activeMobileFilters.length" class="catalog-filter-count">{{ activeMobileFilters.length }}</span></button>
+          <p :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.length ? activeMobileFilters.join(' · ') : '全部题材 · 全部地区 · 全部年份' }}</p>
+          <button v-if="activeMobileFilters.length" type="button" class="catalog-text-button" @click="clearMobileFilters">清除</button>
+        </div>
       </section>
-      <div class="my-5 flex flex-wrap justify-between gap-2 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><span>{{ loading ? '正在查询 TMDB…' : error ? '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><span v-if="sort === 'rating'">评分排序至少需要 100 人评价</span></div>
-      <div v-if="error" role="alert" class="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-600"><p>{{ error }}</p><button class="mt-4 rounded-lg border border-red-200 px-4 py-2" @click="loadGenres(); loadPage()">重新加载</button></div>
-      <div v-else-if="loading" aria-label="正在加载影视" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-4 h-4 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-2 h-3 w-10 rounded bg-slate-100 dark:bg-slate-800"></div></div></div>
-      <div v-else-if="!items.length" class="py-20 text-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">没有找到匹配的影视，试试其他关键词或筛选条件。</div>
-      <div v-else class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-        <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" />
+      <div class="catalog-result-toolbar">
+        <div class="catalog-result-heading"><span role="status">{{ loading ? hasLoaded ? '正在更新结果…' : '正在查询 TMDB…' : error ? hasLoaded ? '更新失败，保留上次结果' : '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><template v-if="activeMobileFilters.length"><span class="catalog-desktop-summary">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-desktop-reset" @click="clearMobileFilters">清除筛选</button></template></div>
+        <div class="catalog-sort-tools"><div ref="sortStrip" role="group" aria-label="结果排序" class="catalog-segments catalog-sort"><div class="catalog-segment-indicator" :style="sortIndicator" aria-hidden="true"></div><button v-for="item in sorts" :key="item.id" type="button" :aria-pressed="sort === item.id" @click="sort = item.id">{{ item.name }}</button></div><p v-if="sort === 'rating'">评分排序至少需要 100 人评价</p></div>
       </div>
-      <div v-if="!error && totalPages > 1" class="mt-9 flex items-center justify-center gap-5 text-sm"><button :disabled="loading || page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page--">上一页</button><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ page }} / {{ totalPages }}</span><button :disabled="loading || page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page++">下一页</button></div>
+      <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="loadGenres(); loadPage()">重新加载</button></div>
+      <section aria-label="影视列表" :aria-busy="loading" class="catalog-results">
+        <div v-if="loading && hasLoaded" class="catalog-progress" aria-hidden="true"></div>
+        <div v-if="loading && !hasLoaded" aria-label="正在加载影视" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-4 h-4 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-2 h-3 w-10 rounded bg-slate-100 dark:bg-slate-800"></div></div></div>
+        <div v-else-if="!items.length && hasLoaded" class="catalog-empty">{{ loading || error ? '上次查询没有匹配的影视。' : '没有找到匹配的影视，试试其他筛选条件。' }}</div>
+        <div v-else-if="items.length" class="catalog-media-grid grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" :class="{ 'catalog-updating': loading }">
+          <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" />
+        </div>
+      </section>
+      <div v-if="hasLoaded && totalPages > 1" class="mt-9 flex items-center justify-center gap-5 text-sm"><button :disabled="loading || !!error || page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page--">上一页</button><span class="text-xs text-slate-500 dark:text-slate-400">{{ loading || error ? loadedPage : page }} / {{ totalPages }}</span><button :disabled="loading || !!error || page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page++">下一页</button></div>
       <footer class="mt-10 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">TMDB</a> · 评分为 TMDB 用户评分，地区按出品地筛选。点击海报查看影视详情。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
     </main>
     <DashboardFilterDialog v-if="mobileFiltersOpen" :genres="visibleGenres" :regions="regions" :sorts="sorts" :genre="genre" :region="region" :year="year" :sort="sort" @close="mobileFiltersOpen = false" @apply="applyMobileFilters" />
   </div>
 </template>
+
+<style scoped>
+.catalog-filters { padding: 2px 0 16px; border-bottom: 1px solid var(--filter-outline); }
+.catalog-categories { margin-bottom: 16px; }
+.catalog-desktop-filters { display: flex; flex-direction: column; gap: 6px; }
+.catalog-filter-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.catalog-row-label { flex-shrink: 0; width: 32px; padding-top: 8px; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
+.catalog-options { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; }
+.catalog-genre-error { margin: 0 0 4px 44px; color: #b34a4a; font-size: 12px; }
+.catalog-genre-error button { margin-left: 8px; text-decoration: underline; }
+.catalog-mobile-tools { display: none; }
+.catalog-result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 76px; padding: 14px 0; }
+.catalog-result-heading { display: flex; align-items: center; min-width: 0; flex-wrap: wrap; gap: 8px 12px; color: var(--filter-muted); font-size: 12px; }
+.catalog-desktop-summary { max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-desktop-reset { font-size: 12px; min-height: 32px; padding: 0 8px; }
+.catalog-sort-tools { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 5px; }
+.catalog-sort-tools > p { margin: 0; font-size: 11px; color: var(--filter-muted); }
+.catalog-sort { padding: 3px; border-radius: 14px; }
+.catalog-sort button { min-height: 32px; padding: 0 13px; font-size: 12px; }
+.catalog-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 14px 18px; border-radius: 16px; background: color-mix(in srgb, #b34a4a 7%, var(--filter-surface)); color: var(--filter-text); font-size: 13px; }
+.catalog-load-error p { margin: 0; }
+.catalog-load-error .catalog-error-context { margin-top: 5px; color: var(--filter-muted); font-size: 12px; }
+.catalog-results { position: relative; }
+.catalog-media-grid { transition: opacity 160ms ease; }
+.catalog-updating { opacity: 0.65; }
+.catalog-progress { position: absolute; top: -6px; left: 0; right: 0; height: 2px; overflow: hidden; border-radius: 2px; background: var(--filter-track); }
+.catalog-progress::after { content: ''; position: absolute; height: 100%; width: 35%; background: var(--filter-focus); animation: catalog-fetching 1.1s ease-in-out infinite; }
+.catalog-empty { padding: 72px 20px; text-align: center; font-size: 13px; color: var(--filter-muted); }
+@keyframes catalog-fetching { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
+@media (max-width: 639px) {
+  .catalog-filters { padding-bottom: 12px; }
+  .catalog-categories { display: flex; width: 100%; margin-bottom: 10px; gap: 0; padding: 3px; }
+  .catalog-categories button { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; font-size: 12px; }
+  .catalog-desktop-filters, .catalog-sort-tools, .catalog-desktop-summary, .catalog-desktop-reset { display: none; }
+  .catalog-mobile-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .catalog-filter-trigger { background: var(--filter-tone); color: var(--filter-on-tone); padding: 0 12px; }
+  .catalog-filter-count { min-width: 18px; padding: 0 4px; border-radius: 6px; background: color-mix(in srgb, var(--filter-on-tone) 10%, transparent); font-size: 11px; line-height: 18px; }
+  .catalog-mobile-tools p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--filter-muted); font-size: 11px; }
+  .catalog-mobile-tools .catalog-text-button { padding: 0 5px; font-size: 12px; }
+  .catalog-result-toolbar { min-height: 52px; padding: 12px 0; }
+  .catalog-load-error { align-items: flex-start; padding: 12px; }
+}
+@media (pointer: coarse) { .catalog-row-label { padding-top: 12px; } .catalog-sort button { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .catalog-media-grid { transition: none; } .catalog-progress::after { animation: none; width: 100%; opacity: 0.5; } }
+</style>
