@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -19,7 +20,11 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 	group := admin.Group("/p115/cloud-download")
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		limit := int64(16 << 10)
+		if c.Request.URL.Path == "/api/admin/p115/cloud-download/tasks/batch" {
+			limit = 256 << 10
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	})
 	account := func(c *gin.Context) (service.P115Account, bool) {
@@ -175,6 +180,46 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		}
 		// 只返回稳定字段；已接受不代表下载完成，不暴露上游原始响应。
 		c.JSON(http.StatusAccepted, gin.H{"accepted": true, "removedOldTask": receipt.RemovedOldTask, "task": taskView(receipt.Task)})
+	})
+
+	group.POST("/tasks/batch", func(c *gin.Context) {
+		value, ok := account(c)
+		if !ok {
+			return
+		}
+		var input struct {
+			URLs      []string `json:"urls"`
+			TargetCID string   `json:"targetCID"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "批量云下载参数无效"})
+			return
+		}
+		saved := settings.View()
+		config := service.CloudDownloadConfig{AccountID: value.ID, TargetCID: strings.TrimSpace(input.TargetCID), TargetPath: "/"}
+		if saved.AccountID == value.ID && saved.TargetCID == config.TargetCID {
+			config.TargetPath = saved.TargetPath
+		}
+		batch, err := downloads.PrepareBatch(config, input.URLs)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": service.CloudDownloadErrorMessage(err)})
+			return
+		}
+		c.Header("Content-Type", "application/x-ndjson; charset=utf-8")
+		c.Header("X-Accel-Buffering", "no")
+		encoder := json.NewEncoder(c.Writer)
+		// No background queue: disconnecting prevents the next link from starting.
+		if err := batch.Run(c.Request.Context(), func(event service.CloudDownloadBatchEvent) error {
+			if err := encoder.Encode(event); err != nil {
+				return err
+			}
+			c.Writer.Flush()
+			return c.Request.Context().Err()
+		}); err != nil {
+			// Headers have been sent; an incomplete stream is handled as uncertain
+			// by the client. Do not append a second JSON response or retry writes.
+			return
+		}
 	})
 
 	group.GET("/tasks", func(c *gin.Context) {

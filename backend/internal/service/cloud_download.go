@@ -71,12 +71,16 @@ func (s *CloudDownloadService) Redo(ctx context.Context, config CloudDownloadCon
 
 // 先精确查询；仅删除已结束的任务记录，始终保留文件，不自动循环重试。
 func (s *CloudDownloadService) Submit(ctx context.Context, config CloudDownloadConfig, rawURL string) (CloudDownloadReceipt, error) {
-	ctx, cancel := context.WithTimeout(ctx, CloudDownloadTimeout)
-	defer cancel()
 	account, err := s.snapshot(config)
 	if err != nil {
 		return CloudDownloadReceipt{}, err
 	}
+	return s.submitSnapshot(ctx, config, account, rawURL)
+}
+
+func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudDownloadConfig, account P115Account, rawURL string) (CloudDownloadReceipt, error) {
+	ctx, cancel := context.WithTimeout(ctx, CloudDownloadTimeout)
+	defer cancel()
 	resource, err := p115.ParseCloudResource(rawURL)
 	if err != nil {
 		return CloudDownloadReceipt{}, err

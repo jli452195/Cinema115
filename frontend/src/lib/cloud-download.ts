@@ -10,13 +10,13 @@ export async function submitCloudDownload(token: string, accountId: string, url:
       method: 'POST', body: JSON.stringify({ url, targetCID }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(95000)]),
     })
-    if (!receipt.accepted) throw new Error('115 未确认接收任务，请前往云下载页面核对')
+    if (!receipt.accepted) throw Object.assign(new Error('115 未确认接收任务，请前往云下载页面核对'), { outcomeUncertain: true })
     return receipt
   } catch (reason) {
     const httpError = reason as { status?: number; responseData?: { error?: string } } | null
     const gatewayWithoutReceipt = [502, 503, 504].includes(httpError?.status || 0) && !httpError?.responseData?.error
     if (gatewayWithoutReceipt || reason instanceof TypeError || (reason instanceof Error && ['TimeoutError', 'AbortError'].includes(reason.name))) {
-      throw new Error('处理结果尚未确认，请先到 115 云下载核对；不要立即重复提交')
+      throw Object.assign(new Error('处理结果尚未确认，请先到 115 云下载核对；不要立即重复提交'), { outcomeUncertain: true })
     }
     throw reason
   }
