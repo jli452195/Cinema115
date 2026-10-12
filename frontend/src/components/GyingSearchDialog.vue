@@ -3,6 +3,7 @@ import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import { gyingRequest, type GyingConfigView, type GyingResourceLink, type GyingSearchAttempt, type GyingSearchItem, type GyingSearchResponse } from '../types/gying'
@@ -142,6 +143,12 @@ const magnetSubTypeOptions = computed(() => {
   })
   return [{ type: 'all', label: '全部磁力', count: options.reduce((sum, item) => sum + item.count, 0) }, ...options]
 })
+const itemStrip = ref<HTMLElement>()
+const sourceStrip = ref<HTMLElement>()
+const subTypeStrip = ref<HTMLElement>()
+const { indicatorStyle: itemIndicatorStyle } = useSlidingIndicator(itemStrip, '[aria-pressed="true"]', [activeItemId, resultItems])
+const { indicatorStyle: sourceIndicatorStyle } = useSlidingIndicator(sourceStrip, '[aria-pressed="true"]', [activeResourceType, resourceOptions], { insetY: 6 })
+const { indicatorStyle: subTypeIndicatorStyle } = useSlidingIndicator(subTypeStrip, '[aria-pressed="true"]', [activeMagnetSubType, magnetSubTypeOptions], { insetY: 6 })
 const visibleItems = computed(() => {
   return selectedItems.value.flatMap(item => {
     const resourceLinks = activeResourceType.value === 'all' ? item.links : item.links.filter(link => link.type === activeResourceType.value)
@@ -321,7 +328,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="emit('close')">
+    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog media-search-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="emit('close')">
       <div class="gy-layout">
         <header class="gy-header">
           <div class="gy-brand"><img :src="gyingLogo" alt="" width="34" height="34" /></div>
@@ -383,7 +390,8 @@ onBeforeUnmount(() => {
             <template v-if="resultItems.length">
               <section id="gy-item-picker" class="gy-item-picker" aria-label="选择影视条目">
                 <div class="gy-picker-heading"><h3>影视条目</h3><span>{{ resultItems.length }} 个条目<span class="gy-picker-hint">，可能包含不同季度与版本</span></span></div>
-                <nav aria-label="影视条目" class="gy-item-strip gy-scroll">
+                <nav ref="itemStrip" aria-label="影视条目" class="gy-item-strip gy-scroll">
+                  <div class="gy-selection-indicator gy-item-indicator" :style="itemIndicatorStyle" aria-hidden="true"></div>
                   <button type="button" class="gy-item-card gy-all-items" :aria-pressed="activeItemId === 'all'" @click="selectItem('all')">
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
                     <span><strong>全部条目</strong><small>{{ resultItems.length }} 个影视条目</small></span>
@@ -394,7 +402,6 @@ onBeforeUnmount(() => {
                       <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="m9 8 6 4-6 4Z" /></svg>
                     </span>
                     <span class="gy-item-name"><strong>{{ item.title }}</strong><small>{{ item.year || '年份未标注' }}<span>{{ mediaLabels[item.mediaType] }}</span></small></span>
-                    <svg v-if="activeItemId === item.id" aria-hidden="true" class="gy-selected-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
                   </button>
                 </nav>
               </section>
@@ -404,14 +411,15 @@ onBeforeUnmount(() => {
                   <h3 class="gy-filter-title">资源筛选</h3>
                   <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
                 </div>
-                <nav aria-label="资源来源" class="gy-source-strip gy-scroll">
+                <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll">
+                  <div class="gy-selection-indicator gy-chip-indicator" :style="sourceIndicatorStyle" aria-hidden="true"></div>
                   <button v-for="option in resourceOptions" :key="option.type" type="button" :aria-pressed="activeResourceType === option.type" class="gy-chip" @click="selectResourceType(option.type)">
-                    <svg v-if="activeResourceType === option.type" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
-                    {{ option.label }}<span>{{ option.count }}</span>
+                    <span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span>
                   </button>
                 </nav>
-                <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll">
-                  <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="gy-chip" @click="selectMagnetSubType(option.type)"><svg v-if="activeMagnetSubType === option.type" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>{{ option.label }}<span>{{ option.count }}</span></button>
+                <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" ref="subTypeStrip" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll">
+                  <div class="gy-selection-indicator gy-chip-indicator" :style="subTypeIndicatorStyle" aria-hidden="true"></div>
+                  <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="gy-chip" @click="selectMagnetSubType(option.type)"><span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span></button>
                 </nav>
               </section>
             </template>
@@ -497,15 +505,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .gy-dialog {
   --gy-max-height: 90dvh;
-  --gy-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
-  --gy-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
-  --gy-text: var(--detail-light-on-surface, #18212e);
-  --gy-muted: var(--detail-light-on-surface-variant, #475569);
-  --gy-outline: var(--detail-light-outline-variant, #cbd5e1);
-  --gy-primary: var(--detail-light-primary, #475f85);
-  --gy-on-primary: var(--detail-light-on-primary, #fff);
-  --gy-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--gy-card));
-  --gy-on-tonal: var(--detail-light-on-primary-container, #1a365d);
+  --gy-container: var(--search-dialog-container);
+  --gy-card: var(--search-dialog-card);
+  --gy-text: var(--search-dialog-text);
+  --gy-muted: var(--search-dialog-muted);
+  --gy-outline: var(--search-dialog-outline);
+  --gy-primary: var(--search-dialog-primary);
+  --gy-tonal: var(--search-dialog-tonal);
+  --gy-on-tonal: var(--search-dialog-on-tonal);
   --gy-success: #246044; --gy-success-bg: #e6f2e9;
   --gy-warning: #765500; --gy-warning-bg: #fff1cd;
   --gy-error: #a12b2b; --gy-error-bg: #ffe9e7;
@@ -515,15 +522,14 @@ onBeforeUnmount(() => {
   overflow: hidden; box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .gy-dialog {
-  --gy-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
-  --gy-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
-  --gy-text: var(--detail-dark-on-surface, #e2e8f0);
-  --gy-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
-  --gy-outline: var(--detail-dark-outline-variant, #465063);
-  --gy-primary: var(--detail-dark-primary, #aac7f5);
-  --gy-on-primary: var(--detail-dark-on-primary, #173256);
-  --gy-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--gy-card));
-  --gy-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
+  --gy-container: var(--search-dialog-container);
+  --gy-card: var(--search-dialog-card);
+  --gy-text: var(--search-dialog-text);
+  --gy-muted: var(--search-dialog-muted);
+  --gy-outline: var(--search-dialog-outline);
+  --gy-primary: var(--search-dialog-primary);
+  --gy-tonal: var(--search-dialog-tonal);
+  --gy-on-tonal: var(--search-dialog-on-tonal);
   --gy-success: #a5d8b8; --gy-success-bg: #223d31;
   --gy-warning: #eed085; --gy-warning-bg: #42371e;
   --gy-error: #ffb4ab; --gy-error-bg: #502c2b;
@@ -560,9 +566,13 @@ onBeforeUnmount(() => {
 .gy-picker-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-bottom: 10px; }
 .gy-picker-heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
 .gy-picker-heading > span { font-size: 11px; color: var(--gy-muted); }
-.gy-item-strip { display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
+.gy-item-strip { position: relative; isolation: isolate; display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
+.gy-selection-indicator { position: absolute; z-index: 1; background: var(--search-dialog-action-background); pointer-events: none; }
+.gy-item-indicator { border-radius: 16px; }
+.gy-chip-indicator { border-radius: 10px; }
 .gy-item-card { position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 220px; min-height: 92px; padding: 8px; border: 2px solid transparent; border-radius: 16px; background: var(--gy-card); color: var(--gy-text); text-align: left; }
-.gy-item-card[aria-pressed="true"] { border-color: var(--gy-primary); background: var(--gy-tonal); color: var(--gy-on-tonal); }
+.gy-item-card > svg, .gy-item-card > span { position: relative; z-index: 2; }
+.gy-item-card[aria-pressed="true"] { color: var(--gy-on-tonal); }
 .gy-cover { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 70px; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--gy-outline) 20%, transparent); color: var(--gy-muted); }
 .gy-cover img { width: 100%; height: 100%; object-fit: cover; }
 .gy-cover svg { width: 24px; height: 24px; }
@@ -570,7 +580,6 @@ onBeforeUnmount(() => {
 .gy-item-card strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 12px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
 .gy-item-card small { display: block; margin-top: 4px; color: var(--gy-muted); font-size: 10px; line-height: 16px; }
 .gy-item-card small span { margin-left: 8px; }
-.gy-selected-mark { position: absolute; top: 5px; right: 5px; width: 16px; height: 16px; color: var(--gy-primary); }
 .gy-all-items { width: 160px; padding: 12px; }
 .gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
 .gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; background: var(--gy-container); border-bottom: 1px solid var(--gy-outline); }
@@ -578,13 +587,12 @@ onBeforeUnmount(() => {
 .gy-filter-context > span { flex-shrink: 0; font-size: 11px; line-height: 18px; color: var(--gy-muted); }
 .gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }
 .gy-short-viewport .gy-filters { position: static; }
-.gy-source-strip { display: flex; gap: 6px; padding: 2px; overflow-x: auto; }
-.gy-chip { position: relative; isolation: isolate; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--gy-muted); font-size: 11px; line-height: 18px; }
-.gy-chip::before { position: absolute; z-index: -1; inset: 6px 0; border: 1px solid var(--gy-outline); border-radius: inherit; background: var(--gy-card); pointer-events: none; content: ''; }
+.gy-source-strip { position: relative; isolation: isolate; display: flex; gap: 6px; padding: 2px; overflow-x: auto; }
+.gy-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--gy-muted); font-size: 11px; line-height: 18px; }
+.gy-chip::before { position: absolute; z-index: 0; inset: 6px 0; border-radius: inherit; background: var(--gy-card); pointer-events: none; content: ''; }
+.gy-chip > span { position: relative; z-index: 2; }
 .gy-chip[aria-pressed="true"] { color: var(--gy-on-tonal); font-weight: 600; }
-.gy-chip[aria-pressed="true"]::before { border-color: var(--gy-primary); background: var(--gy-tonal); }
-.gy-chip svg { width: 12px; height: 12px; }
-.gy-chip > span { opacity: .75; font-size: 10px; }
+.gy-chip-count { opacity: .75; font-size: 10px; }
 .gy-film + .gy-film { margin-top: 28px; }
 .gy-film-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .gy-film-heading h3 { margin: 0; min-width: 0; font-size: 16px; line-height: 24px; font-weight: 650; overflow-wrap: anywhere; }
@@ -610,10 +618,6 @@ onBeforeUnmount(() => {
 .gy-warning { color: var(--gy-warning); background: var(--gy-warning-bg); }
 .gy-error { color: var(--gy-error); background: var(--gy-error-bg); }
 .gy-actions { display: flex; grid-column: 2; grid-row: 2; align-items: center; gap: 8px; }
-.gy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 24px; background: var(--gy-button-background); font-size: 12px; line-height: 20px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; transition: box-shadow .15s, background-color .15s; }
-.gy-button svg { flex-shrink: 0; width: 16px; height: 16px; }
-.gy-primary-button { --gy-button-background: var(--gy-primary); color: var(--gy-on-primary); }
-.gy-outlined-button { --gy-button-background: color-mix(in srgb, var(--gy-primary) 4%, var(--gy-card)); padding: 7px 11px; border: 1px solid var(--gy-outline); color: var(--gy-primary); }
 .gy-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; margin-left: 8px; padding: 6px 10px; border: 0; border-radius: 20px; background: transparent; color: var(--gy-primary); font-size: 11px; vertical-align: middle; }
 .gy-copy-button svg { width: 14px; height: 14px; }
 .gy-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
@@ -654,9 +658,9 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
 @keyframes gy-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
   .gy-icon-button:hover, .gy-tool-button:hover:not(:disabled), .gy-copy-button:hover, .gy-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--gy-primary) 8%, transparent); }
-  .gy-item-card:hover, .gy-chip:hover::before { border-color: var(--gy-primary); }
-  .gy-primary-button:hover:not(:disabled) { --gy-button-background: color-mix(in srgb, var(--gy-primary) 92%, var(--gy-on-primary)); box-shadow: 0 2px 6px rgb(0 0 0 / 18%); }
-  .gy-outlined-button:hover:not(:disabled) { --gy-button-background: color-mix(in srgb, var(--gy-primary) 10%, var(--gy-card)); }
+  .gy-item-card:hover:not([aria-pressed="true"]), .gy-chip:hover:not([aria-pressed="true"])::before { background: var(--search-dialog-secondary-hover); }
+  .gy-item-strip:has(.gy-item-card[aria-pressed="true"]:hover) > .gy-selection-indicator,
+  .gy-source-strip:has(.gy-chip[aria-pressed="true"]:hover) > .gy-selection-indicator { background: var(--search-dialog-action-hover); }
 }
 @media (max-width: 799px) {
   .gy-resource-main { grid-template-columns: minmax(0, 1fr); gap: 14px; }
@@ -694,17 +698,14 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-film-details summary { min-height: 48px; }
   .gy-resource { padding: 16px; border-radius: 18px; }
   .gy-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .gy-button { position: relative; isolation: isolate; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; }
-  .gy-button::before { position: absolute; z-index: -1; inset: 2px 0; border-radius: inherit; background: var(--gy-button-background); pointer-events: none; content: ''; transition: background-color .15s; }
-  .gy-outlined-button::before { border: 1px solid var(--gy-outline); }
   .gy-actions > :only-child { grid-column: 1 / -1; }
   .gy-copy-button { min-height: 48px; }
   .gy-footer { padding: 8px 16px 12px; font-size: 10px; line-height: 16px; }
 }
 @media (max-width: 359px) { .gy-actions { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
+  .gy-selection-indicator { transition: none !important; }
   .gy-spinning { animation: none; }
-  .gy-button, .gy-button::before { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .gy-dialog { background: var(--gy-container); -webkit-backdrop-filter: none; backdrop-filter: none; }

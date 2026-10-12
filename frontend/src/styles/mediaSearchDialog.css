@@ -1,0 +1,108 @@
+/* Shared artwork tint and action hierarchy for resource dialogs. */
+.media-search-dialog {
+  --search-dialog-surface: color-mix(in srgb, var(--detail-light-surface, #f8fafc) 20%, #fafafa);
+  --search-dialog-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 25%, #f3f4f6);
+  --search-dialog-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 12%, #fff);
+  --search-dialog-text: color-mix(in srgb, var(--detail-light-on-surface, #18212e) 60%, #202226);
+  --search-dialog-muted: color-mix(in srgb, var(--detail-light-on-surface-variant, #475569) 60%, #60646b);
+  --search-dialog-outline: color-mix(in srgb, var(--detail-light-outline-variant, #cbd5e1) 40%, #d8dadd);
+  --search-dialog-primary: color-mix(in srgb, var(--detail-light-primary, #475f85) 75%, var(--search-dialog-text));
+  --search-dialog-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 20%, var(--search-dialog-card));
+  --search-dialog-on-tonal: color-mix(in srgb, var(--detail-light-on-primary-container, #1a365d) 55%, var(--search-dialog-text));
+  --search-dialog-action-background: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 28%, var(--search-dialog-card));
+  --search-dialog-action-hover: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 40%, var(--search-dialog-card));
+  --search-dialog-action-pressed: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 48%, var(--search-dialog-card));
+  --search-dialog-secondary-background: color-mix(in srgb, var(--search-dialog-container) 65%, var(--search-dialog-card));
+  --search-dialog-secondary-hover: color-mix(in srgb, var(--search-dialog-primary) 6%, var(--search-dialog-card));
+  --search-dialog-secondary-pressed: color-mix(in srgb, var(--search-dialog-primary) 10%, var(--search-dialog-card));
+}
+
+.dark .media-search-dialog {
+  --search-dialog-surface: color-mix(in srgb, var(--detail-dark-surface, #111827) 20%, #151719);
+  --search-dialog-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 25%, #232527);
+  --search-dialog-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 12%, #1b1d1f);
+  --search-dialog-text: color-mix(in srgb, var(--detail-dark-on-surface, #e2e8f0) 60%, #e6e8ec);
+  --search-dialog-muted: color-mix(in srgb, var(--detail-dark-on-surface-variant, #bbc5d5) 60%, #b7bcc4);
+  --search-dialog-outline: color-mix(in srgb, var(--detail-dark-outline-variant, #465063) 40%, #45494f);
+  --search-dialog-primary: color-mix(in srgb, var(--detail-dark-primary, #aac7f5) 75%, var(--search-dialog-text));
+  --search-dialog-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 20%, var(--search-dialog-card));
+  --search-dialog-on-tonal: color-mix(in srgb, var(--detail-dark-on-primary-container, #d8e6ff) 55%, var(--search-dialog-text));
+  --search-dialog-action-background: color-mix(in srgb, var(--search-dialog-primary) 16%, var(--search-dialog-card));
+  --search-dialog-action-hover: color-mix(in srgb, var(--search-dialog-primary) 23%, var(--search-dialog-card));
+  --search-dialog-action-pressed: color-mix(in srgb, var(--search-dialog-primary) 29%, var(--search-dialog-card));
+}
+
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+/* The inset surface stays compact without reducing the clickable area. */
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button)::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 4px 0;
+  border: 0;
+  border-radius: inherit;
+  background: var(--search-dialog-button-background);
+  pointer-events: none;
+  transition: background-color .15s;
+}
+
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button) {
+  --search-dialog-button-background: var(--search-dialog-action-background);
+  color: var(--search-dialog-primary);
+}
+
+.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button) {
+  --search-dialog-button-background: var(--search-dialog-secondary-background);
+  color: var(--search-dialog-muted);
+}
+
+@media (hover: hover) {
+  .media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button):hover:not(:disabled) {
+    --search-dialog-button-background: var(--search-dialog-action-hover);
+  }
+
+  .media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button):hover:not(:disabled) {
+    --search-dialog-button-background: var(--search-dialog-secondary-hover);
+  }
+}
+
+.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button):active:not(:disabled) {
+  --search-dialog-button-background: var(--search-dialog-action-pressed);
+}
+
+.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button):active:not(:disabled) {
+  --search-dialog-button-background: var(--search-dialog-secondary-pressed);
+}
+
+@media (max-width: 639px) {
+  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) { min-height: 48px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button)::before { transition: none; }
+}

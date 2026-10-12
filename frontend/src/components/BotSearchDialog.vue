@@ -197,7 +197,7 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="bot-search-title" aria-describedby="bot-work-title" class="bot-dialog" @cancel.prevent="emit('close')">
+    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="bot-search-title" aria-describedby="bot-work-title" class="bot-dialog media-search-dialog" @cancel.prevent="emit('close')">
       <div class="bot-layout">
         <header class="bot-header">
           <div class="bot-brand"><img :src="telegramLogo" alt="" width="36" height="36" /></div>
@@ -337,15 +337,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .bot-dialog {
   --bot-max-height: 90dvh;
-  --bot-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
-  --bot-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
-  --bot-text: var(--detail-light-on-surface, #18212e);
-  --bot-muted: var(--detail-light-on-surface-variant, #475569);
-  --bot-outline: var(--detail-light-outline-variant, #cbd5e1);
-  --bot-primary: var(--detail-light-primary, #475f85);
-  --bot-on-primary: var(--detail-light-on-primary, #fff);
-  --bot-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--bot-card));
-  --bot-on-tonal: var(--detail-light-on-primary-container, #1a365d);
+  --bot-container: var(--search-dialog-container);
+  --bot-card: var(--search-dialog-card);
+  --bot-text: var(--search-dialog-text);
+  --bot-muted: var(--search-dialog-muted);
+  --bot-outline: var(--search-dialog-outline);
+  --bot-primary: var(--search-dialog-primary);
+  --bot-tonal: var(--search-dialog-tonal);
+  --bot-on-tonal: var(--search-dialog-on-tonal);
   --bot-success: #246044;
   --bot-success-bg: #e6f2e9;
   --bot-warning: #765500;
@@ -368,15 +367,14 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .bot-dialog {
-  --bot-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
-  --bot-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
-  --bot-text: var(--detail-dark-on-surface, #e2e8f0);
-  --bot-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
-  --bot-outline: var(--detail-dark-outline-variant, #465063);
-  --bot-primary: var(--detail-dark-primary, #aac7f5);
-  --bot-on-primary: var(--detail-dark-on-primary, #173256);
-  --bot-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--bot-card));
-  --bot-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
+  --bot-container: var(--search-dialog-container);
+  --bot-card: var(--search-dialog-card);
+  --bot-text: var(--search-dialog-text);
+  --bot-muted: var(--search-dialog-muted);
+  --bot-outline: var(--search-dialog-outline);
+  --bot-primary: var(--search-dialog-primary);
+  --bot-tonal: var(--search-dialog-tonal);
+  --bot-on-tonal: var(--search-dialog-on-tonal);
   --bot-success: #a5d8b8;
   --bot-success-bg: #223d31;
   --bot-warning: #eed085;
@@ -421,10 +419,6 @@ onBeforeUnmount(() => {
 .bot-badge svg { width: 14px; height: 14px; flex-shrink: 0; }
 .bot-neutral { background: color-mix(in srgb, var(--bot-outline) 18%, transparent); color: var(--bot-muted); }
 .bot-actions { display: flex; align-items: center; gap: 8px; }
-.bot-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 24px; background: var(--bot-button-background); font-size: 12px; line-height: 20px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; transition: box-shadow .15s, background-color .15s; }
-.bot-button svg { flex-shrink: 0; width: 16px; height: 16px; }
-.bot-primary-button { --bot-button-background: var(--bot-primary); color: var(--bot-on-primary); }
-.bot-outlined-button { --bot-button-background: color-mix(in srgb, var(--bot-primary) 4%, var(--bot-card)); padding: 7px 11px; border: 1px solid var(--bot-outline); color: var(--bot-primary); }
 .bot-info { color: var(--bot-on-tonal); background: var(--bot-tonal); }
 .bot-success { color: var(--bot-success); background: var(--bot-success-bg); }
 .bot-warning { color: var(--bot-warning); background: var(--bot-warning-bg); }
@@ -464,8 +458,6 @@ onBeforeUnmount(() => {
 @keyframes bot-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
   .bot-icon-button:hover, .bot-tool-button:hover:not(:disabled), .bot-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--bot-primary) 8%, transparent); }
-  .bot-primary-button:hover:not(:disabled) { --bot-button-background: color-mix(in srgb, var(--bot-primary) 92%, var(--bot-on-primary)); box-shadow: 0 2px 6px rgb(0 0 0 / 18%); }
-  .bot-outlined-button:hover:not(:disabled) { --bot-button-background: color-mix(in srgb, var(--bot-primary) 10%, var(--bot-card)); }
 }
 @media (max-width: 799px) {
   .bot-resource-main { grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -482,9 +474,6 @@ onBeforeUnmount(() => {
   .bot-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
   .bot-resource { padding: 16px; border-radius: 18px; }
   .bot-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bot-button { position: relative; isolation: isolate; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; }
-  .bot-button::before { position: absolute; z-index: -1; inset: 2px 0; border-radius: inherit; background: var(--bot-button-background); pointer-events: none; content: ''; transition: background-color .15s; }
-  .bot-outlined-button::before { border: 1px solid var(--bot-outline); }
   .bot-footer { padding: 0 16px 16px; }
 }
 @media (max-width: 359px) {
@@ -492,7 +481,6 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .bot-spinning { animation: none; }
-  .bot-button, .bot-button::before { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .bot-dialog { background: var(--bot-container); -webkit-backdrop-filter: none; backdrop-filter: none; }

@@ -232,7 +232,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="botSearchOpen = false" />
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
-    <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" @close="mikanSearchOpen = false" />
+    <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false" />
     <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
@@ -370,28 +370,39 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 
 <style scoped>
 .media-detail {
-  --md-sys-color-surface: var(--detail-light-surface);
+  /* Soften large surfaces locally while keeping the artwork palette for accents. */
+  --md-sys-color-surface: color-mix(in srgb, var(--detail-light-surface) 40%, #f8f9fb);
   --md-sys-color-on-surface: var(--detail-light-on-surface);
   --md-sys-color-on-surface-variant: var(--detail-light-on-surface-variant);
-  --md-sys-color-surface-container-high: var(--detail-light-surface-container-high);
-  --md-sys-color-surface-container-highest: var(--detail-light-surface-container-highest);
+  --md-sys-color-surface-container-high: color-mix(in srgb, var(--detail-light-surface-container-high) 40%, #eceef1);
+  --md-sys-color-surface-container-highest: color-mix(in srgb, var(--detail-light-surface-container-highest) 40%, #e5e7ea);
   --md-sys-color-outline-variant: var(--detail-light-outline-variant);
   --md-sys-color-primary: var(--detail-light-primary);
-  --md-sys-color-primary-container: var(--detail-light-primary-container);
+  --md-sys-color-primary-container: color-mix(in srgb, var(--detail-light-primary-container) 35%, var(--md-sys-color-surface-container-high));
   --md-sys-color-on-primary-container: var(--detail-light-on-primary-container);
+  --detail-media-surface: color-mix(in srgb, var(--detail-light-surface) 15%, #fff);
+  --detail-media-inset: color-mix(in srgb, var(--detail-light-surface-container-high) 18%, #f6f7f8);
+  --detail-media-chip: color-mix(in srgb, var(--detail-light-surface-container-highest) 20%, #eceef1);
+  --detail-media-outline: color-mix(in srgb, var(--detail-light-outline-variant) 20%, #dce0e5);
+  --detail-media-muted: color-mix(in srgb, var(--detail-light-on-surface-variant) 40%, #646970);
   background: var(--md-sys-color-surface);
   color: var(--md-sys-color-on-surface);
 }
 .dark .media-detail {
-  --md-sys-color-surface: var(--detail-dark-surface);
+  --md-sys-color-surface: color-mix(in srgb, var(--detail-dark-surface) 40%, #141618);
   --md-sys-color-on-surface: var(--detail-dark-on-surface);
   --md-sys-color-on-surface-variant: var(--detail-dark-on-surface-variant);
-  --md-sys-color-surface-container-high: var(--detail-dark-surface-container-high);
-  --md-sys-color-surface-container-highest: var(--detail-dark-surface-container-highest);
+  --md-sys-color-surface-container-high: color-mix(in srgb, var(--detail-dark-surface-container-high) 40%, #232527);
+  --md-sys-color-surface-container-highest: color-mix(in srgb, var(--detail-dark-surface-container-highest) 40%, #2d2f31);
   --md-sys-color-outline-variant: var(--detail-dark-outline-variant);
   --md-sys-color-primary: var(--detail-dark-primary);
-  --md-sys-color-primary-container: var(--detail-dark-primary-container);
+  --md-sys-color-primary-container: color-mix(in srgb, var(--detail-dark-primary-container) 35%, var(--md-sys-color-surface-container-high));
   --md-sys-color-on-primary-container: var(--detail-dark-on-primary-container);
+  --detail-media-surface: color-mix(in srgb, var(--detail-dark-surface-container-low) 15%, #1b1d1f);
+  --detail-media-inset: color-mix(in srgb, var(--detail-dark-surface-container-high) 18%, #232527);
+  --detail-media-chip: color-mix(in srgb, var(--detail-dark-surface-container-highest) 20%, #2c2f33);
+  --detail-media-outline: color-mix(in srgb, var(--detail-dark-outline-variant) 20%, #41464d);
+  --detail-media-muted: color-mix(in srgb, var(--detail-dark-on-surface-variant) 40%, #b6bcc5);
 }
 .detail-page { background: var(--md-sys-color-surface); }
 .detail-content { padding-top: calc(var(--workbench-header-height) + 24px); }
@@ -514,6 +525,29 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 .media-detail :deep(.media-tonal-divider),
 .media-detail :deep(.media-tonal-rows > :not([hidden]) ~ :not([hidden])) {
   border-color: var(--md-sys-color-outline-variant);
+}
+.media-detail :deep(.media-version-panel) {
+  background: var(--detail-media-surface);
+  border-color: var(--detail-media-outline);
+}
+.media-detail :deep(.media-version-panel .media-tonal-inset) {
+  background: var(--detail-media-inset);
+  border-color: var(--detail-media-outline);
+}
+.media-detail :deep(.media-version-panel .media-tonal-chip) {
+  background: var(--detail-media-chip);
+  border-color: var(--detail-media-outline);
+  color: var(--detail-media-muted);
+}
+.media-detail :deep(.media-version-panel .media-tonal-divider),
+.media-detail :deep(.media-version-panel .media-tonal-rows > :not([hidden]) ~ :not([hidden])) {
+  border-color: var(--detail-media-outline);
+}
+.media-detail :deep(.media-version-panel .media-tonal-rows dt) {
+  color: var(--detail-media-muted);
+}
+.media-detail :deep(.media-version-panel .media-tonal-toggle:hover) {
+  background: var(--detail-media-inset);
 }
 .detail-kind {
   background: var(--md-sys-color-primary-container);

@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="re0-title" aria-describedby="re0-work-title" class="re0-dialog" @cancel.prevent="close">
+    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="re0-title" aria-describedby="re0-work-title" class="re0-dialog media-search-dialog" @cancel.prevent="close">
       <div class="re0-layout">
         <header class="re0-header">
           <div class="re0-brand"><img :src="re0Logo" alt="" width="40" height="40" /></div>
@@ -365,16 +365,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .re0-dialog {
   --re0-max-height: 90dvh;
-  --re0-surface: var(--detail-light-surface, #f8fafc);
-  --re0-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 40%, #f4f5f7);
-  --re0-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 25%, #fff);
-  --re0-text: var(--detail-light-on-surface, #18212e);
-  --re0-muted: var(--detail-light-on-surface-variant, #475569);
-  --re0-outline: var(--detail-light-outline-variant, #cbd5e1);
-  --re0-primary: var(--detail-light-primary, #475f85);
-  --re0-on-primary: var(--detail-light-on-primary, #fff);
-  --re0-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 35%, var(--re0-card));
-  --re0-on-tonal: var(--detail-light-on-primary-container, #1a365d);
+  --re0-surface: var(--search-dialog-surface);
+  --re0-container: var(--search-dialog-container);
+  --re0-card: var(--search-dialog-card);
+  --re0-text: var(--search-dialog-text);
+  --re0-muted: var(--search-dialog-muted);
+  --re0-outline: var(--search-dialog-outline);
+  --re0-primary: var(--search-dialog-primary);
+  --re0-tonal: var(--search-dialog-tonal);
+  --re0-on-tonal: var(--search-dialog-on-tonal);
   --re0-success: #246044;
   --re0-success-bg: #e6f2e9;
   --re0-warning: #765500;
@@ -397,16 +396,15 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .re0-dialog {
-  --re0-surface: var(--detail-dark-surface, #111827);
-  --re0-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 40%, #232527);
-  --re0-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 25%, #1b1d1f);
-  --re0-text: var(--detail-dark-on-surface, #e2e8f0);
-  --re0-muted: var(--detail-dark-on-surface-variant, #bbc5d5);
-  --re0-outline: var(--detail-dark-outline-variant, #465063);
-  --re0-primary: var(--detail-dark-primary, #aac7f5);
-  --re0-on-primary: var(--detail-dark-on-primary, #173256);
-  --re0-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 35%, var(--re0-card));
-  --re0-on-tonal: var(--detail-dark-on-primary-container, #d8e6ff);
+  --re0-surface: var(--search-dialog-surface);
+  --re0-container: var(--search-dialog-container);
+  --re0-card: var(--search-dialog-card);
+  --re0-text: var(--search-dialog-text);
+  --re0-muted: var(--search-dialog-muted);
+  --re0-outline: var(--search-dialog-outline);
+  --re0-primary: var(--search-dialog-primary);
+  --re0-tonal: var(--search-dialog-tonal);
+  --re0-on-tonal: var(--search-dialog-on-tonal);
   --re0-success: #a5d8b8;
   --re0-success-bg: #223d31;
   --re0-warning: #eed085;
@@ -452,10 +450,6 @@ onBeforeUnmount(() => {
 .re0-metrics dt { color: var(--re0-muted); font-size: 11px; line-height: 16px; }
 .re0-metrics dd { margin: 3px 0 0; font-size: 12px; line-height: 20px; font-weight: 550; overflow-wrap: anywhere; }
 .re0-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.re0-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 24px; background: var(--re0-button-background); font-size: 12px; line-height: 20px; font-weight: 600; overflow-wrap: anywhere; transition: box-shadow .15s, background-color .15s; }
-.re0-button svg { flex-shrink: 0; width: 16px; height: 16px; }
-.re0-primary-button { --re0-button-background: var(--re0-primary); color: var(--re0-on-primary); }
-.re0-outlined-button { --re0-button-background: color-mix(in srgb, var(--re0-primary) 4%, var(--re0-card)); padding: 7px 11px; border: 1px solid var(--re0-outline); color: var(--re0-primary); }
 .re0-resource-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 16px; color: var(--re0-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
 .re0-info { color: var(--re0-on-tonal); background: var(--re0-tonal); }
 .re0-notice.re0-info { border: 1px solid color-mix(in srgb, var(--re0-outline) 45%, transparent); background: var(--re0-card); color: var(--re0-text); }
@@ -493,8 +487,6 @@ onBeforeUnmount(() => {
 @keyframes re0-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
   .re0-icon-button:hover:not(:disabled), .re0-tool-button:hover:not(:disabled), .re0-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--re0-primary) 8%, transparent); }
-  .re0-primary-button:hover:not(:disabled) { --re0-button-background: color-mix(in srgb, var(--re0-primary) 92%, var(--re0-on-primary)); box-shadow: 0 2px 6px rgb(0 0 0 / 18%); }
-  .re0-outlined-button:hover:not(:disabled) { --re0-button-background: color-mix(in srgb, var(--re0-primary) 10%, var(--re0-card)); }
 }
 @media (max-width: 799px) {
   .re0-resource-main { grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -510,10 +502,6 @@ onBeforeUnmount(() => {
   .re0-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
   .re0-resource { padding: 16px; border-radius: 18px; }
   .re0-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* Inset the visible surface while keeping the full 48px button clickable. */
-  .re0-button { position: relative; isolation: isolate; min-height: 48px; padding: 8px 12px; border: 0; background: transparent; }
-  .re0-button::before { position: absolute; z-index: -1; inset: 2px 0; border-radius: inherit; background: var(--re0-button-background); pointer-events: none; content: ''; transition: background-color .15s; }
-  .re0-outlined-button::before { border: 1px solid var(--re0-outline); }
   .re0-metrics { gap: 10px 20px; }
   .re0-field select { font-size: 16px; }
 }
@@ -522,7 +510,6 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .re0-spinning { animation: none; }
-  .re0-button, .re0-button::before { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .re0-dialog { background: var(--re0-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
