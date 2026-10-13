@@ -11,7 +11,7 @@ const router = useRouter()
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
   registeredUsername.value = name
-  void router.replace('/login')
+  void router.replace({ path: '/login', query: route.query })
 }
 const username = computed(() => portalUser.value?.username || '')
 // 登录完成到路由重定向之间也不挂载普通用户无权访问的管理页面。

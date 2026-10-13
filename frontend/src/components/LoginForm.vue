@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { ref, useId } from 'vue'
+import AuthPasswordField from './AuthPasswordField.vue'
+import AuthSpinner from './AuthSpinner.vue'
+import { useAuthRequest } from '../composables/useAuthRequest'
 
 const props = defineProps<{
   endpoint: '/api/auth/login' | '/api/auth/admin/login'
@@ -8,45 +11,51 @@ const props = defineProps<{
   usernameLabel: string
   submitLabel: string
   initialUsername?: string
+  initialPassword?: string
+  usernameReadonly?: boolean
+  passwordReadonly?: boolean
 }>()
 const emit = defineEmits<{ loggedIn: [token: string] }>()
+const id = useId()
 const username = ref(props.initialUsername || '')
-const password = ref('')
+const password = ref(props.initialPassword || '')
 const message = ref('')
 const loading = ref(false)
-const lifecycle = new AbortController()
-onBeforeUnmount(() => lifecycle.abort())
+const { request, retrySeconds, isActive } = useAuthRequest()
 
 async function login() {
-  if (loading.value) return
+  if (loading.value || retrySeconds.value) return
   loading.value = true
   message.value = ''
   try {
-    const response = await fetch(props.endpoint, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value }),
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(30000)]),
-    })
-    const data = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(data?.error || '登录失败，请检查账号和密码')
+    const data = await request<{ token?: string }>(props.endpoint, { username: username.value, password: password.value })
     if (typeof data?.token !== 'string' || !data.token) throw new Error('登录响应异常，请重试')
-    if (!lifecycle.signal.aborted) emit('loggedIn', data.token)
+    if (isActive()) emit('loggedIn', data.token)
   } catch (error) {
-    if (!lifecycle.signal.aborted) message.value = error instanceof Error && !['TypeError', 'TimeoutError'].includes(error.name) ? error.message : '暂时无法登录，请稍后重试'
+    if (isActive()) message.value = error instanceof Error && error.name === 'TimeoutError' ? '登录请求超时，请检查网络后重试' : error instanceof Error && error.name === 'TypeError' ? '暂时无法连接登录服务，请检查网络后重试' : error instanceof Error ? error.message : '暂时无法登录，请稍后重试'
   } finally { loading.value = false }
 }
 </script>
 
 <template>
-  <form class="space-y-5 rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 sm:p-8" :aria-busy="loading" @submit.prevent="login">
-    <div>
-      <h2 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{{ title }}</h2>
-      <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{{ description }}</p>
+  <form class="auth-card" :aria-busy="loading" @submit.prevent="login">
+    <div class="auth-heading">
+      <h2>{{ title }}</h2>
+      <p>{{ description }}</p>
     </div>
-    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">{{ usernameLabel }}<input v-model="username" name="username" required autocomplete="username" maxlength="64" class="mt-2 w-full rounded-lg border border-slate-200 bg-white p-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950" :placeholder="`输入${usernameLabel}`" /></label>
-    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">密码<input v-model="password" name="password" required type="password" autocomplete="current-password" maxlength="128" class="mt-2 w-full rounded-lg border border-slate-200 bg-white p-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950" placeholder="输入密码" /></label>
-    <button type="submit" class="w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" :disabled="loading">{{ loading ? '登录中…' : submitLabel }}</button>
-    <p v-if="message" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-400/10 dark:text-red-300">{{ message }}</p>
+    <slot name="before-fields" />
+    <fieldset class="auth-fields" :disabled="loading">
+      <div class="auth-field">
+        <label :for="`${id}-username`">{{ usernameLabel }}</label>
+        <input :id="`${id}-username`" v-model="username" name="username" required autocomplete="username" autocapitalize="none" autocorrect="off" :spellcheck="false" maxlength="128" class="auth-input" :readonly="usernameReadonly" :placeholder="`输入${usernameLabel}`" />
+      </div>
+      <AuthPasswordField :id="`${id}-password`" v-model="password" label="密码" autocomplete="current-password" placeholder="输入密码" :readonly="passwordReadonly" />
+    </fieldset>
+    <div class="auth-actions">
+      <p v-if="message" role="alert" class="auth-notice auth-notice-error !mb-0">{{ message }}</p>
+      <button type="submit" class="auth-button" :disabled="loading || retrySeconds > 0"><AuthSpinner v-if="loading" />{{ loading ? '正在验证登录' : submitLabel }}</button>
+    </div>
+    <p v-if="retrySeconds" role="status" class="auth-cooldown">请在 {{ retrySeconds }} 秒后重试</p>
     <slot />
   </form>
 </template>

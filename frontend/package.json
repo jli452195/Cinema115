@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",
     "test:organize-workflow": "node --test tests/manual-organize-workflow.test.mjs tests/organize-selection.test.mjs",
     "test:subtitles": "node --test tests/subtitle-import.test.mjs",
