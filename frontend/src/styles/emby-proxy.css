@@ -1,0 +1,107 @@
+.proxy-ui { --proxy-surface: #fff; --proxy-soft: #f3f6fb; --proxy-text: #243248; --proxy-muted: #64748b; --proxy-border: #e5eaf2; --proxy-accent: #2563eb; --proxy-tonal: #eaf1ff; color: var(--proxy-text); }
+.dark .proxy-ui {
+  --proxy-surface: rgb(var(--color-slate-900));
+  --proxy-soft: rgb(var(--color-slate-800));
+  --proxy-text: rgb(var(--color-slate-100));
+  --proxy-muted: rgb(var(--color-slate-400));
+  --proxy-border: rgb(var(--color-slate-700));
+  --proxy-accent: #8daee8;
+  --proxy-tonal: color-mix(in srgb, var(--proxy-surface) 92%, var(--proxy-accent));
+  --proxy-action: #3769b5;
+  --proxy-action-hover: #3b70bd;
+  --proxy-success: #62c499;
+  --proxy-error: #e8788a;
+  --proxy-warning: #dcb068;
+}
+.dark .proxy-ui .proxy-card { box-shadow: 0 3px 15px rgb(0 0 0 / 12%); }
+.proxy-ui .proxy-card { padding: 22px; border: 1px solid var(--proxy-border); border-radius: 20px; background: var(--proxy-surface); box-shadow: 0 3px 15px rgb(18 40 80 / 3%); }
+.proxy-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.proxy-ui h2 { font-size: 15px; font-weight: 650; }
+.proxy-draft-label { flex: none; font-size: 11px; color: var(--proxy-muted); }
+.proxy-help { font-size: 12px; line-height: 1.8; color: var(--proxy-muted); overflow-wrap: anywhere; }
+.proxy-ui .proxy-input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--proxy-border); border-radius: 11px; background: var(--proxy-soft); color: var(--proxy-text); outline: none; font-size: 14px; }
+.proxy-ui .proxy-input:focus { border-color: var(--proxy-accent); box-shadow: 0 0 0 3px rgb(64 118 235 / 12%); }
+.dark .proxy-ui .proxy-input:focus { box-shadow: 0 0 0 3px rgb(141 174 232 / 12%); }
+.dark .proxy-ui .proxy-input::placeholder { color: var(--proxy-muted); opacity: 1; }
+.proxy-ui .proxy-input:disabled { opacity: .6; }
+.dark .proxy-ui .proxy-input:disabled { opacity: 1; color: var(--proxy-muted); }
+.proxy-button { min-height: 40px; padding: 9px 16px; border-radius: 11px; background: #2563eb; color: #fff; font-size: 13px; font-weight: 600; transition: background 160ms; }
+.proxy-button:hover { background: #1d4ed8; }
+.dark .proxy-ui .proxy-button { background: var(--proxy-action); }
+.dark .proxy-ui .proxy-button:hover:not(:disabled) { background: var(--proxy-action-hover); }
+.proxy-ui button:disabled { cursor: default; opacity: .5; }
+.dark .proxy-ui :is(.proxy-button, .proxy-tool, .proxy-copy, .proxy-dialog-close):disabled { background: var(--proxy-soft); color: var(--proxy-muted); border-color: var(--proxy-border); opacity: 1; }
+.dark .proxy-ui .proxy-text-link:disabled { color: var(--proxy-muted); opacity: 1; text-decoration: none; }
+.proxy-ui button:focus-visible, .proxy-ui a:focus-visible, .proxy-ui summary:focus-visible { outline: 2px solid var(--proxy-accent); outline-offset: 3px; }
+.proxy-tool { display: inline-flex; justify-content: center; align-items: center; min-height: 38px; padding: 8px 12px; border-radius: 10px; font-size: 12px; font-weight: 600; color: var(--proxy-muted); background: var(--proxy-surface); border: 1px solid var(--proxy-border); white-space: nowrap; transition: background 160ms; }
+.proxy-tool:hover { background: var(--proxy-soft); }
+.proxy-tool.is-accent { background: var(--proxy-tonal); color: var(--proxy-accent); border-color: transparent; }
+.dark .proxy-ui .proxy-tool:hover:not(:disabled) { background: var(--proxy-soft); }
+.dark .proxy-ui .proxy-tool.is-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--proxy-soft) 85%, var(--proxy-accent)); }
+.proxy-text-link { display: inline-block; font-size: 12px; font-weight: 500; color: var(--proxy-accent); }
+.proxy-text-link:hover { text-decoration: underline; }
+.proxy-alert { padding: 10px 12px; border-radius: 11px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.proxy-alert.is-error { background: #fff0f1; color: #a73145; }.dark .proxy-ui .proxy-alert.is-error { background: #301a20; color: var(--proxy-error); }
+.proxy-alert.is-success { background: #edf8f3; color: #19754c; }.dark .proxy-ui .proxy-alert.is-success { background: #142921; color: var(--proxy-success); }
+.proxy-runtime { padding: 20px 22px; border: 1px solid var(--proxy-border); border-radius: 20px; background: linear-gradient(115deg, var(--proxy-surface), var(--proxy-tonal)); }
+.proxy-runtime-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.proxy-runtime-top > button { flex: none; }
+.proxy-runtime-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 0 5px rgb(148 163 184 / 12%); }
+.proxy-runtime-dot.is-on { background: #25a874; box-shadow: 0 0 0 5px rgb(37 168 116 / 12%); }.proxy-runtime-dot.is-error { background: #dc5672; }
+.dark .proxy-ui .proxy-runtime-dot.is-on { background: var(--proxy-success); box-shadow: 0 0 0 5px rgb(98 196 153 / 10%); }
+.dark .proxy-ui .proxy-runtime-dot.is-error { background: var(--proxy-error); box-shadow: 0 0 0 5px rgb(232 120 138 / 10%); }
+.proxy-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding: 12px 14px; border-radius: 12px; background: var(--proxy-surface); }
+.proxy-entry-label { display: block; color: var(--proxy-muted); font-size: 11px; margin-bottom: 4px; }
+.proxy-entry code { display: block; font-size: 15px; overflow-wrap: anywhere; user-select: all; }
+.proxy-copy { display: inline-flex; flex: none; align-items: center; gap: 5px; min-height: 36px; padding: 6px 9px; border-radius: 8px; background: var(--proxy-soft); color: var(--proxy-accent); font-size: 12px; }.proxy-copy svg { width: 16px; height: 16px; }
+.dark .proxy-ui .proxy-copy:hover:not(:disabled) { background: color-mix(in srgb, var(--proxy-soft) 85%, var(--proxy-accent)); }
+.proxy-settings-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.proxy-switch-surface { padding: 14px; border-radius: 13px; background: var(--proxy-soft); }
+.proxy-pending { margin-top: 7px; font-size: 12px; color: var(--proxy-accent); }
+.proxy-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--proxy-text); }
+.proxy-details summary span { margin-left: 10px; font-size: 11px; font-weight: 400; color: var(--proxy-muted); }
+.proxy-details > p { margin-top: 10px; font-size: 12px; line-height: 1.9; color: var(--proxy-muted); }
+.proxy-advanced { padding: 13px 14px; border-radius: 12px; background: var(--proxy-soft); }
+.proxy-deployment code { padding: 2px 5px; border-radius: 4px; background: var(--proxy-soft); color: var(--proxy-text); }
+.proxy-segment { position: relative; display: grid; grid-template-columns: 1fr 1.25fr; gap: 4px; padding: 4px; border-radius: 12px; background: var(--proxy-soft); }
+.proxy-segment label { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; min-height: 38px; border-radius: 9px; font-size: 12px; font-weight: 600; color: var(--proxy-muted); cursor: pointer; transition: color 150ms; white-space: nowrap; }
+.proxy-segment label.is-selected { color: #fff; }
+.proxy-segment input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.proxy-segment label:has(input:focus-visible) { outline: 2px solid var(--proxy-accent); outline-offset: 2px; }
+.proxy-segment-indicator { position: absolute; pointer-events: none; border-radius: 9px; background: #2563eb; box-shadow: 0 2px 6px rgb(37 99 235 / 18%); }.dark .proxy-ui .proxy-segment-indicator { background: var(--proxy-action); box-shadow: 0 2px 6px rgb(0 0 0 / 14%); }
+.proxy-ui input[role=switch]:checked + span { background: #2563eb !important; }.dark .proxy-ui input[role=switch]:checked + span { background: var(--proxy-action) !important; }
+.dark .proxy-ui input[role=switch]:not(:checked) + span { background: #6e7b8e; }
+.dark .proxy-ui input[role=switch]:disabled + span { background: #44515f !important; }
+.dark .proxy-ui input[role=switch] + span + span > :first-child { color: var(--proxy-text); }
+.dark .proxy-ui input[role=switch] + span + span > :nth-child(2) { color: var(--proxy-muted); }
+.proxy-ui input[role=switch]:focus-visible + span { --tw-ring-color: var(--proxy-accent); }
+.dark .proxy-ui input[role=switch]:focus-visible + span { --tw-ring-color: var(--proxy-accent) !important; --tw-ring-offset-color: var(--proxy-surface) !important; }
+.dark .proxy-ui .proxy-switch-surface input[role=switch]:focus-visible + span { --tw-ring-offset-color: var(--proxy-soft) !important; }
+.proxy-page .management-heading { gap: 10px 18px; }.proxy-page .management-heading > div { gap: 8px; }
+.proxy-upload-dialog { width: min(680px, calc(100% - 32px)); max-width: none; max-height: calc(100dvh - 40px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--proxy-border); border-radius: 24px; background: var(--proxy-surface); box-shadow: 0 24px 80px rgb(3 12 30 / 25%); }
+.proxy-upload-dialog::backdrop { background: rgb(7 16 32 / 40%); backdrop-filter: blur(3px); }
+.proxy-upload-dialog[open] { animation: proxy-dialog-in 180ms ease-out; }
+.proxy-upload-shell { display: flex; flex-direction: column; max-height: calc(100dvh - 42px); }
+.proxy-upload-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 16px; flex: none; }
+.proxy-dialog-close { display: flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; color: var(--proxy-muted); background: var(--proxy-soft); }.proxy-dialog-close svg { width: 20px; height: 20px; }
+.dark .proxy-ui .proxy-dialog-close:hover:not(:disabled) { background: color-mix(in srgb, var(--proxy-soft) 85%, var(--proxy-accent)); color: var(--proxy-text); }
+.proxy-upload-content { flex: 1; min-height: 0; padding: 0 22px 22px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.proxy-upload-target { padding: 16px; border-radius: 15px; background: var(--proxy-soft); }
+.proxy-upload-target .proxy-input { background: var(--proxy-surface); }
+.proxy-upload-progress { padding: 12px 14px; margin-bottom: 16px; font-size: 12px; line-height: 1.8; border-radius: 12px; color: var(--proxy-accent); background: var(--proxy-tonal); }
+.proxy-upload-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 22px; flex: none; border-top: 1px solid var(--proxy-border); }
+.proxy-upload-record { padding: 13px 14px; border-radius: 13px; background: var(--proxy-soft); }.proxy-upload-record time { font-size: 10px; text-align: right; }
+.proxy-record-state { font-size: 12px; font-weight: 650; color: var(--proxy-muted); }.proxy-record-state.success { color: #15835a; }.proxy-record-state.failed { color: #bc4055; }.proxy-record-state.uncertain, .proxy-record-state.unsupported { color: #9c691c; }.dark .proxy-ui .proxy-record-state.success { color: var(--proxy-success); }.dark .proxy-ui .proxy-record-state.failed { color: var(--proxy-error); }.dark .proxy-ui .proxy-record-state.uncertain, .dark .proxy-ui .proxy-record-state.unsupported { color: var(--proxy-warning); }
+@keyframes proxy-dialog-in { from { opacity: 0; transform: translateY(9px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (max-width: 899px) { .proxy-settings-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 639px) {
+  .proxy-page .management-heading { grid-template-columns: minmax(0, 1fr); margin-bottom: 20px; }
+  .proxy-page .management-heading h1 { font-size: 22px; }.proxy-page .management-heading > p { grid-column: 1; grid-row: 2; font-size: 12px; }
+  .proxy-page .management-heading > div { grid-row: 3; display: flex; flex-wrap: wrap; margin-top: 3px; }
+  .proxy-ui .proxy-card { padding: 18px; border-radius: 17px; }.proxy-runtime { padding: 18px; border-radius: 17px; }
+  .proxy-entry { padding: 11px; }.proxy-entry code { font-size: 13px; }.proxy-details summary span { display: block; margin: 4px 0 0 17px; }
+  .proxy-ui .proxy-input { font-size: 16px; }
+  .proxy-upload-dialog { width: calc(100% - 24px); max-height: calc(100dvh - 24px); border-radius: 20px; }.proxy-upload-shell { max-height: calc(100dvh - 26px); }
+  .proxy-upload-header { padding: 18px 18px 14px; }.proxy-upload-content { padding: 0 18px 18px; }.proxy-upload-footer { padding: 12px 18px; }.proxy-upload-footer > span { font-size: 11px; }.proxy-upload-target { padding: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { .proxy-ui, .proxy-ui *, .proxy-ui *::before, .proxy-ui *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

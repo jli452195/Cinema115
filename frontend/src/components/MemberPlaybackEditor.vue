@@ -211,7 +211,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .member-ui { --member-bg: #fff; --member-soft: #f5f7fb; --member-text: #192b47; --member-muted: #61718a; --member-outline: #e5eaf2; --member-blue: #2563eb; --member-blue-hover: #1d4ed8; --member-blue-soft: #eef4ff; --member-blue-text: #245bc7; --member-success: #14714e; --member-success-bg: #eaf8f0; --member-warning: #96601d; --member-warning-bg: #fff6e5; --member-error: #be3446; --member-error-bg: #fff0f2; color: var(--member-text); }
-.dark .member-ui { --member-bg: #182131; --member-soft: #1f2b3e; --member-text: #e4ecf8; --member-muted: #a1b0c7; --member-outline: #2c3b50; --member-blue: #3978f0; --member-blue-hover: #4c86f6; --member-blue-soft: #20365b; --member-blue-text: #a6c6ff; --member-success: #8adbb6; --member-success-bg: #1d3a32; --member-warning: #efd099; --member-warning-bg: #3b3021; --member-error: #ffacb7; --member-error-bg: #3d2834; color-scheme: dark; }
+.dark .member-ui { --member-bg: rgb(var(--color-slate-900)); --member-soft: rgb(var(--color-slate-800)); --member-text: rgb(var(--color-slate-100)); --member-muted: rgb(var(--color-slate-400)); --member-outline: rgb(var(--color-slate-700)); --member-blue: #3769b5; --member-blue-hover: #3b70bd; --member-blue-soft: color-mix(in srgb, var(--member-soft) 90%, #8daee8); --member-blue-text: #8daee8; --member-success: #62c499; --member-success-bg: #142921; --member-warning: #dcb068; --member-warning-bg: #2d2516; --member-error: #e8788a; --member-error-bg: #301a20; color-scheme: dark; }
 .user-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; height: 100%; padding: 16px 18px; border: 1px solid var(--member-outline); border-radius: 18px; background: var(--member-bg); box-shadow: 0 3px 12px #193c7410; transition: transform 180ms ease, box-shadow 180ms ease; }
 .member-card-heading { display: flex; align-items: center; gap: 10px; }
 .member-name { flex: 1; min-width: 0; }
@@ -252,6 +252,7 @@ onBeforeUnmount(() => {
 .member-icon-button { width: 40px; padding: 0; color: var(--member-muted); }
 .member-icon-button svg { width: 20px; height: 20px; }
 .member-button:disabled { cursor: default; opacity: .45; box-shadow: none; }
+.dark .member-ui .member-button:disabled { opacity: 1; background: var(--member-soft); color: var(--member-muted); }
 .member-button:not(:disabled):active { transform: scale(.97); }
 .member-ui button:focus-visible, .member-ui input:focus-visible, .member-ui summary:focus-visible { outline: 2px solid #6095ff; outline-offset: 3px; }
 .member-message { padding: 12px 14px; border-radius: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }

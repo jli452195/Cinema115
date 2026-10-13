@@ -26,9 +26,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const url = (process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/emby/proxy'
   await page.goto(url)
   const save = page.getByRole('button', { name: '保存设备策略', exact: true })
-  await page.getByText('模拟读取失败', { exact: true }).waitFor()
+  await page.getByText('模拟读取失败', { exact: false }).waitFor()
   assert.equal(await save.isDisabled(), true)
-  failRead = false; await page.reload()
+  failRead = false; await page.getByRole('button', { name: '重试读取', exact: true }).click()
   const seconds = page.getByLabel('心跳静默时间（秒）', { exact: true })
   await seconds.waitFor(); assert.equal(await seconds.inputValue(), '60')
   await page.getByText('默认 60 秒，可设为 30 至 180 秒。', { exact: false }).waitFor()
@@ -43,7 +43,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await Promise.all([page.waitForResponse(r => r.url().endsWith('/device-policy') && r.request().method() === 'POST'), save.click()])
    await page.reload(); await seconds.waitFor(); assert.equal(await seconds.inputValue(), value)
   }
-  await page.locator('form').filter({ has: save }).locator('select').selectOption('parallel')
+  await page.locator('.proxy-segment label').filter({ hasText: '多设备并行' }).click()
   await save.click(); await page.getByText('设备策略已保存，对后续取链请求生效。', { exact: true }).waitFor()
   await page.reload(); await save.waitFor(); assert.equal(await seconds.count(), 0)
   assert.equal(policy.mode, 'parallel')

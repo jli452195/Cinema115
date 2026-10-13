@@ -189,7 +189,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= height + 1)
     assert.equal(await dialog.evaluate(e => e.scrollWidth > e.clientWidth), false)
     assert.equal(await dialog.locator('.playback-dialog-body').evaluate(e => e.scrollWidth > e.clientWidth), false)
-    assert.equal(await dialog.evaluate(e => getComputedStyle(e).backgroundColor), dark ? 'rgb(24, 33, 49)' : 'rgb(255, 255, 255)')
+    assert.equal(await dialog.evaluate(e => getComputedStyle(e).backgroundColor), dark ? 'rgb(33, 37, 41)' : 'rgb(255, 255, 255)')
     assert.ok(await dialog.locator('.playback-dialog-body').evaluate(e => e.scrollHeight > e.clientHeight))
     const footer = await dialog.locator('footer').boundingBox()
     assert.ok(footer.y + footer.height <= height + 1)

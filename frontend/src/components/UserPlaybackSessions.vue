@@ -148,7 +148,7 @@ onBeforeUnmount(() => { controller.abort(); readController?.abort(); clearTimeou
 
 <style scoped>
 .playback-ui { --ps-bg: #fff; --ps-soft: #f5f7fb; --ps-text: #192b47; --ps-muted: #61718a; --ps-outline: #e5eaf2; --ps-blue: #245bc7; --ps-blue-soft: #eaf1ff; --ps-error: #aa3446; --ps-error-bg: #fff0f2; color: var(--ps-text); }
-.dark .playback-ui { --ps-bg: #182131; --ps-soft: #1f2b3e; --ps-text: #e4ecf8; --ps-muted: #a1b0c7; --ps-outline: #2c3b50; --ps-blue: #a6c6ff; --ps-blue-soft: #20365b; --ps-error: #ffacb7; --ps-error-bg: #3d2834; color-scheme: dark; }
+.dark .playback-ui { --ps-bg: rgb(var(--color-slate-900)); --ps-soft: rgb(var(--color-slate-800)); --ps-text: rgb(var(--color-slate-100)); --ps-muted: rgb(var(--color-slate-400)); --ps-outline: rgb(var(--color-slate-700)); --ps-blue: #8daee8; --ps-blue-soft: color-mix(in srgb, var(--ps-soft) 90%, var(--ps-blue)); --ps-error: #e8788a; --ps-error-bg: #301a20; color-scheme: dark; }
 .playback-summary { display: flex; align-items: center; gap: 10px; min-height: 48px; margin-top: 12px; padding: 4px 12px; border-radius: 12px; background: var(--ps-soft); }
 .playback-summary-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--ps-blue); }
 .playback-summary-copy { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px 16px; }

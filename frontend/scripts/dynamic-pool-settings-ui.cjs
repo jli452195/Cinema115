@@ -47,6 +47,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.setViewportSize({width:390,height:844})
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
   await page.goto('http://127.0.0.1:5173/emby/proxy')
+  await page.getByRole('button',{name:'秒传验证',exact:true}).click()
   await page.getByLabel('目标用户').selectOption('reader')
   assert.equal(await page.getByLabel('目标用户').locator('option[value="personal"]').count(),0)
   await page.getByRole('button',{name:'保存秒传配置',exact:true}).click()

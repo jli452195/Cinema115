@@ -171,7 +171,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= width + 1 && box.y + box.height <= height + 1)
     assert.ok(footer.y + footer.height <= height + 1)
     assert.equal(await dialog.locator('.cleanup-body').evaluate(e => e.scrollWidth > e.clientWidth), false)
-    assert.equal(await dialog.evaluate(e => getComputedStyle(e).backgroundColor), dark ? 'rgb(24, 33, 49)' : 'rgb(255, 255, 255)')
+    assert.equal(await dialog.evaluate(e => getComputedStyle(e).backgroundColor), dark ? 'rgb(33, 37, 41)' : 'rgb(255, 255, 255)')
     assert.ok(await dialog.locator('.cleanup-body').evaluate(e => e.scrollHeight > e.clientHeight))
     if ([1440,390,320].includes(width)) await page.screenshot({ path: path.join(artifacts, `tasks-${width}-${dark ? 'dark' : 'light'}.png`) })
     await dialog.locator('.cleanup-history > summary').click()

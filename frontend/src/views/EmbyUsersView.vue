@@ -121,8 +121,8 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
    </div>
    <UserPlaybackSessions :token="token" :members="members" />
   </section>
-  <p v-if="childOwner" class="mb-4 flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">正在查看 {{ members.find(m => m.userId === childOwner)?.embyName }} 的子账号<button class="text-blue-600" @click="childOwner = ''; filter = 'all'">显示全部用户</button></p>
-  <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
+  <p v-if="childOwner" class="mb-4 flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">正在查看 {{ members.find(m => m.userId === childOwner)?.embyName }} 的子账号<button class="text-blue-600 dark:text-[#8daee8]" @click="childOwner = ''; filter = 'all'">显示全部用户</button></p>
+  <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-[#301a20] dark:text-[#e8788a]">{{ error }}</p>
   <div v-if="confirmDiscard" class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">刷新会丢弃未保存的修改。<button class="underline" :disabled="busy" @click="load(true)">放弃修改并刷新</button><button @click="confirmDiscard = false">继续编辑</button></div>
   <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
    <div v-for="m in currentMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
@@ -131,20 +131,20 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
   </div>
   <details v-if="reviewMembers.length" :open="reviewOpen || !!query || !!childOwner" class="mt-6 rounded-2xl border border-amber-200 bg-white p-5 dark:border-amber-900 dark:bg-slate-900" @toggle="reviewOpen = ($event.target as HTMLDetailsElement).open">
    <summary class="cursor-pointer text-sm font-medium text-amber-800 dark:text-amber-300">待核实 / 待清理记录（{{ reviewMembers.length }}）</summary>
-   <p class="my-4 text-xs leading-6 text-slate-500">保留原业务关联，核实后可预览清理影响。不会因刷新自动清理，也不会关联同名新账号。</p>
+   <p class="my-4 text-xs leading-6 text-slate-500 dark:text-slate-400">保留原业务关联，核实后可预览清理影响。不会因刷新自动清理，也不会关联同名新账号。</p>
    <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
     <div v-for="m in reviewMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
      <MemberPlaybackEditor :token="token" :member="m" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
     </div>
    </div>
-   <p v-if="!reviewMembers.some(m => visible.has(m.userId))" class="text-sm text-slate-500">没有符合筛选条件的待核实或待清理记录</p>
+   <p v-if="!reviewMembers.some(m => visible.has(m.userId))" class="text-sm text-slate-500 dark:text-slate-400">没有符合筛选条件的待核实或待清理记录</p>
   </details>
-  <p v-if="!visible.size" class="py-12 text-center text-sm text-slate-500">{{ loading ? '正在读取用户…' : error ? '用户状态读取失败，请重新核实' : members.length ? '没有符合筛选条件的用户' : '暂无 Emby 用户' }}</p>
+  <p v-if="!visible.size" class="py-12 text-center text-sm text-slate-500 dark:text-slate-400">{{ loading ? '正在读取用户…' : error ? '用户状态读取失败，请重新核实' : members.length ? '没有符合筛选条件的用户' : '暂无 Emby 用户' }}</p>
  </ManagementLayout>
 </template>
 <style scoped>
 .users-toolbar { --ut-bg: #fff; --ut-soft: #f5f7fb; --ut-text: #192b47; --ut-muted: #61718a; --ut-outline: #e5eaf2; --ut-blue: #2563eb; --ut-blue-soft: #eaf1ff; position: relative; margin-bottom: 20px; padding: 16px 18px; border: 1px solid var(--ut-outline); border-radius: 18px; background: var(--ut-bg); color: var(--ut-text); box-shadow: 0 3px 12px #193c7410; }
-.dark .users-toolbar { --ut-bg: #182131; --ut-soft: #1f2b3e; --ut-text: #e4ecf8; --ut-muted: #a1b0c7; --ut-outline: #2c3b50; --ut-blue: #3770db; --ut-blue-soft: #20365b; }
+.dark .users-toolbar { --ut-bg: rgb(var(--color-slate-900)); --ut-soft: rgb(var(--color-slate-800)); --ut-text: rgb(var(--color-slate-100)); --ut-muted: rgb(var(--color-slate-400)); --ut-outline: rgb(var(--color-slate-700)); --ut-blue: #3769b5; --ut-blue-soft: color-mix(in srgb, var(--ut-bg) 90%, #8daee8); box-shadow: 0 3px 12px rgb(0 0 0 / 12%); }
 .users-toolbar-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 360px) auto; align-items: center; gap: 12px; }
 .users-title-group { display: flex; min-width: 0; align-items: center; gap: 6px; }.users-title-group h2 { font-size: 15px; font-weight: 650; white-space: nowrap; }.users-title-group h2 span { margin-left: 8px; color: var(--ut-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .users-help { position: relative; }.users-help > summary { display: flex; align-items: center; justify-content: center; width: 32px; height: 40px; color: var(--ut-muted); cursor: pointer; list-style: none; }.users-help > summary::-webkit-details-marker { display: none; }.users-help svg { width: 17px; height: 17px; }.users-help-panel { position: absolute; top: 44px; left: -120px; z-index: 20; width: 300px; max-width: calc(100vw - 48px); padding: 14px; border: 1px solid var(--ut-outline); border-radius: 12px; background: var(--ut-bg); color: var(--ut-muted); box-shadow: 0 10px 32px #10203a20; font-size: 12px; line-height: 1.7; }.users-help-panel p + p { margin-top: 8px; }
