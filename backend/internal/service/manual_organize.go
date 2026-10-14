@@ -68,11 +68,12 @@ type OrganizeSelection struct {
 }
 
 type OrganizePreviewInput struct {
-	ScanID    string              `json:"scanId"`
-	Kind      string              `json:"kind"`
-	TMDBID    int                 `json:"tmdbId"`
-	Subtitles bool                `json:"subtitles"`
-	Files     []OrganizeSelection `json:"files"`
+	NumberingRevision *int64              `json:"numberingRevision,omitempty"`
+	ScanID            string              `json:"scanId"`
+	Kind              string              `json:"kind"`
+	TMDBID            int                 `json:"tmdbId"`
+	Subtitles         bool                `json:"subtitles"`
+	Files             []OrganizeSelection `json:"files"`
 }
 
 type OrganizeItem struct {
@@ -87,19 +88,20 @@ type OrganizeItem struct {
 }
 
 type OrganizeJob struct {
-	ID        string         `json:"id"`
-	Config    OrganizeConfig `json:"config"`
-	Revision  uint64         `json:"revision"`
-	Kind      string         `json:"kind"`
-	TMDBID    int            `json:"tmdbId"`
-	Title     string         `json:"title"`
-	Folder    string         `json:"folder"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	Status    string         `json:"status"`
-	Message   string         `json:"message,omitempty"`
-	Items     []OrganizeItem `json:"items"`
-	Stats     OrganizeStats  `json:"stats"`
+	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
+	ID        string              `json:"id"`
+	Config    OrganizeConfig      `json:"config"`
+	Revision  uint64              `json:"revision"`
+	Kind      string              `json:"kind"`
+	TMDBID    int                 `json:"tmdbId"`
+	Title     string              `json:"title"`
+	Folder    string              `json:"folder"`
+	CreatedAt time.Time           `json:"createdAt"`
+	UpdatedAt time.Time           `json:"updatedAt"`
+	Status    string              `json:"status"`
+	Message   string              `json:"message,omitempty"`
+	Items     []OrganizeItem      `json:"items"`
+	Stats     OrganizeStats       `json:"stats"`
 }
 
 type organizeDocument struct {

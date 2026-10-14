@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 36
+const schemaVersion = 37
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -468,7 +468,7 @@ PRAGMA user_version=30;`); err != nil {
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version=36`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS tv_numbering(tmdb_id INTEGER PRIMARY KEY CHECK(tmdb_id>0),revision INTEGER NOT NULL,group_id TEXT NOT NULL,name TEXT NOT NULL,type INTEGER NOT NULL,saved_at INTEGER NOT NULL,snapshot BLOB NOT NULL); PRAGMA user_version=37`); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {

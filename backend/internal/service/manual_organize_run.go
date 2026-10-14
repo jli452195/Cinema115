@@ -30,6 +30,21 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	if a.Revision != job.Revision {
 		return OrganizeJob{}, fmt.Errorf("%w：账号配置已变化，请重新扫描", ErrOrganizeConflict)
 	}
+	if job.Kind == "tv" && job.Numbering != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if source, ok := s.metadata.(interface {
+			NumberingRevision(context.Context, int) (int64, error)
+		}); ok {
+			revision, err := source.NumberingRevision(ctx, job.TMDBID)
+			if err != nil {
+				return OrganizeJob{}, err
+			}
+			if revision != job.Numbering.Revision {
+				return OrganizeJob{}, fmt.Errorf("%w：季集方案已变化，请重新预览", ErrOrganizeConflict)
+			}
+		}
+	}
 	if s.pending != nil || s.cleaning {
 		return OrganizeJob{}, fmt.Errorf("%w：已有整理、清理或字幕导入执行中，请等待完成", ErrOrganizeConflict)
 	}

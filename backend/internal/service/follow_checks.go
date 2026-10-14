@@ -17,6 +17,13 @@ type FollowSchedules interface {
 
 func (s *FollowService) EvaluateFollow(ctx context.Context, job model.FollowCheck, now time.Time) (model.FollowProgress, error) {
 	p := model.FollowProgress{State: "unknown", CheckedAt: now.Unix()}
+	if job.Kind == "tv" {
+		var err error
+		ctx, err = pinNumbering(ctx, s.TMDB, job.TMDBID)
+		if err != nil {
+			return p, err
+		}
+	}
 	matches, err := s.Library.Matches(ctx, []model.EmbyMatch{{Kind: job.Kind, TMDB: strconv.Itoa(job.TMDBID)}}, true)
 	if err != nil {
 		return p, fmt.Errorf("读取入库索引: %w", err)

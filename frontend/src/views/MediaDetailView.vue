@@ -14,6 +14,8 @@ import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
 import SeasonLibraryProgress from '../components/SeasonLibraryProgress.vue'
+import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
+import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
 import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
@@ -41,6 +43,8 @@ const gyingSearchOpen = ref(false)
 const woniuSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
+const numberingOpen = ref(false)
+const numberingNotice = ref('')
 const searchConfigured = ref({ re0: false, bot: false, gying: false, woniu: false })
 watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
   searchConfigured.value = { re0: false, bot: false, gying: false, woniu: false }
@@ -70,6 +74,7 @@ const { media: embyMedia, episodes: embyEpisodes, error: embyError } = useEmbyMe
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
 interface SeasonSummary { id: number; number: number; name: string; episodeCount: number; date: string }
 interface Detail extends CacheInfo {
+  numbering?: NumberingInfo
   id: number; kind: 'movie' | 'tv'; title: string; originalTitle: string; overview: string; posterUrl: string
   backdropUrl: string; date: string; rating: number; votes: number; tagline: string; status: string; runtime: number
   episodeCount: number; genres: { id: number; name: string }[]; countries: string[]; cast: CastMember[]
@@ -85,7 +90,7 @@ const error = ref('')
 const failedImages = ref(new Set<string>())
 const openSeasons = ref(new Set<number>())
 const visitedSeasons = ref(new Set<number>())
-const { seasons, schedules, reset: resetSeasons, prime: primeSchedules, loadSeason, loadSchedule } = useTMDBSeasons(() => props.token, () => props.tmdbId)
+const { seasons, schedules, reset: resetSeasons, prime: primeSchedules, loadSeason, loadSchedule } = useTMDBSeasons(() => props.token, () => props.tmdbId, () => detail.value?.numbering?.revision || 0)
 const episodeLimits = ref<Record<number, number>>({})
 const metadataRefreshing = ref(false)
 const metadataError = ref('')
@@ -190,6 +195,17 @@ function refreshMetadata() {
     if (visitedSeasons.value.has(season.number)) void loadSeason(season.number, true)
   }
 }
+async function numberingSaved(value: NumberingInfo) {
+  numberingOpen.value = false
+  numberingNotice.value = `已保存：${numberingLabel(value)}。追更状态正在重新计算。`
+  await loadDetail()
+}
+watch(() => [props.kind, props.tmdbId, props.token], () => { numberingOpen.value = false; numberingNotice.value = '' })
+watch(() => detail.value?.numbering?.revision, (value, previous) => {
+  if (value === previous) return
+  resetSeasons(); openSeasons.value = new Set(); visitedSeasons.value = new Set(); episodeLimits.value = {}
+  if (detail.value && hasIndexedEpisodes.value && detailController) void primeSchedules(detailController.signal)
+})
 function toggleSeason(number: number) {
   if (openSeasons.value.has(number)) { void closeSeason(number); return }
   openSeasons.value = new Set([number])
@@ -211,7 +227,7 @@ async function closeSeason(number: number) {
   window.scrollBy({ top: button.getBoundingClientRect().top - targetTop, behavior: 'instant' })
 }
 function hasImage(url: string) { return !!url && !failedImages.value.has(url) }
-function seasonName(season: SeasonSummary) { return season.number === 0 ? '特别篇' : `第 ${season.number} 季` }
+function seasonName(season: SeasonSummary) { return detail.value?.numbering?.groupId && season.name ? season.name : season.number === 0 ? '特别篇' : `第 ${season.number} 季` }
 function isEpisodeAvailable(season: number, episode: Episode) {
   // Emby 已入库是独立事实，不能被 TMDB 缺失或未来的播出日期覆盖。
   return (embyMedia.value?.state === 'present' || embyMedia.value?.state === 'stale') && !!embyEpisodes.value[season]?.has(episode.number)
@@ -235,6 +251,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 
 <template>
   <div class="media-detail flex min-h-screen flex-col" :style="mediaColorStyle">
+    <TMDBEpisodeGroupDialog v-if="isPortalAdmin && kind === 'tv' && numberingOpen && detail" :token="token" :tmdb-id="tmdbId" :title="detail.title" @close="numberingOpen = false" @saved="numberingSaved" />
     <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="botSearchOpen = false" />
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
@@ -320,7 +337,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
           <p v-if="embyError" role="status" class="mt-6 text-xs text-amber-700">{{ embyError }}；{{ embyMedia ? '当前显示上次入库查询结果。' : '暂时无法确认入库状态。' }}</p>
           <EmbyMediaInfo v-if="isPortalAdmin && kind === 'movie'" :token="token" :tmdb-id="tmdbId" :media="embyMedia" />
           <section v-if="kind === 'tv'" class="mt-12" aria-label="剧集季列表">
-            <div class="mb-5 flex flex-wrap items-baseline gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><button v-if="isPortalAdmin" class="ml-auto text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600 disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div>
+            <div class="mb-3 flex flex-wrap items-center gap-3"><h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">季</h2><span class="text-xs text-slate-400 dark:text-slate-500">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><div v-if="isPortalAdmin" class="ml-auto flex flex-wrap items-center gap-4"><button type="button" class="inline-flex items-center gap-1.5 text-xs text-blue-600 disabled:opacity-50 dark:text-blue-400" :disabled="metadataBusy" @click="numberingOpen = true"><svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="2" fill="currentColor" /><circle cx="16" cy="12" r="2" fill="currentColor" /><circle cx="10" cy="18" r="2" fill="currentColor" /></svg>设置季集方案</button><button type="button" class="text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 dark:text-slate-400" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div></div>
+            <p v-if="detail.numbering?.groupId" class="mb-4 text-xs text-slate-500 dark:text-slate-400">季集方案：{{ numberingLabel(detail.numbering) }}</p>
+            <p v-if="numberingNotice" role="status" class="mb-4 rounded-xl bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{{ numberingNotice }}</p>
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
             <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400">暂无季信息</p>
             <div class="season-list space-y-3">

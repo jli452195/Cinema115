@@ -1,3 +1,4 @@
+import type { NumberingInfo } from './tvNumbering'
 export interface OrganizeConfig {
   accountId: string
   sourceCID: string
@@ -43,6 +44,7 @@ export interface OrganizeItem {
   message?: string
 }
 export interface OrganizeJob {
+  numbering?: NumberingInfo
   id: string
   config: OrganizeConfig
   title: string

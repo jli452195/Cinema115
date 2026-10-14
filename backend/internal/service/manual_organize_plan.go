@@ -14,6 +14,13 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
 		return OrganizeJob{}, ErrOrganizeInput
 	}
+	if input.Kind == "tv" {
+		var err error
+		ctx, err = pinNumbering(ctx, s.metadata, input.TMDBID)
+		if err != nil {
+			return OrganizeJob{}, err
+		}
+	}
 	s.mu.Lock()
 	s.pruneLocked()
 	scan, ok := s.scans[input.ScanID]
@@ -35,6 +42,15 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	if detail == nil || detail.ID != input.TMDBID || detail.Kind != input.Kind || detail.Title == "" {
 		return OrganizeJob{}, fmt.Errorf("TMDB 返回了无效的作品信息")
 	}
+	if input.NumberingRevision != nil {
+		revision := int64(0)
+		if detail.Numbering != nil {
+			revision = detail.Numbering.Revision
+		}
+		if *input.NumberingRevision != revision {
+			return OrganizeJob{}, fmt.Errorf("%w：季集方案已变化，请重新选择作品并预览", ErrOrganizeConflict)
+		}
+	}
 	title := organizeName(detail.Title)
 	base := title
 	if len(detail.Date) >= 4 {
@@ -45,6 +61,7 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 		return OrganizeJob{}, fmt.Errorf("%w：作品名称过长或为空", ErrOrganizeInput)
 	}
 	job := OrganizeJob{Config: scan.Config, Revision: a.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Folder: folder, Status: "preview", CreatedAt: time.Now(), Items: []OrganizeItem{}}
+	job.Numbering = detail.Numbering
 	files := make(map[string]OrganizeFile, len(scan.Files))
 	for _, f := range scan.Files {
 		files[f.ID] = f

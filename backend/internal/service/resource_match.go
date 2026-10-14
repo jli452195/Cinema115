@@ -33,10 +33,11 @@ type EpisodeRef struct {
 }
 
 type MediaIdentity struct {
-	Kind   string `json:"kind"`
-	TMDBID int    `json:"tmdbId"`
-	Title  string `json:"title"`
-	Year   string `json:"year"`
+	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
+	Kind      string              `json:"kind"`
+	TMDBID    int                 `json:"tmdbId"`
+	Title     string              `json:"title"`
+	Year      string              `json:"year"`
 }
 
 type ResourceCandidate struct {
@@ -349,11 +350,19 @@ func (s *ResourceMatchService) mediaSnapshot(ctx context.Context, kind string, i
 		return MediaIdentity{}, nil, false, ErrResourceMatchUnavailable
 	}
 	ctx = context.WithValue(ctx, tmdbPrewarmKey{}, true)
+	if kind == "tv" {
+		var err error
+		ctx, err = pinNumbering(ctx, s.Metadata, id)
+		if err != nil {
+			return MediaIdentity{}, nil, false, err
+		}
+	}
 	detail, err := s.Metadata.Details(ctx, kind, id)
 	if err != nil || detail == nil || detail.ID != id || detail.Kind != kind || detail.Title == "" || detail.CacheStale {
 		return MediaIdentity{}, nil, false, fmt.Errorf("%w: TMDB 影视详情未就绪", ErrResourceMatchUnavailable)
 	}
 	target := MediaIdentity{Kind: kind, TMDBID: id, Title: detail.Title}
+	target.Numbering = detail.Numbering
 	if len(detail.Date) >= 4 {
 		target.Year = detail.Date[:4]
 	}

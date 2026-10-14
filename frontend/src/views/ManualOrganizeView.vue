@@ -9,6 +9,8 @@ import SubtitleImportDialog from '../components/SubtitleImportDialog.vue'
 import OrganizeFileSelection from '../components/OrganizeFileSelection.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
+import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
+import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
 import { directoryGroups } from '../utils/organizeSelection'
 import type { SubtitleImport } from '../types/subtitleImport'
 import { p115Request } from '../lib/p115-api'
@@ -42,7 +44,8 @@ let scannedEntryKey = ''
 const results = ref<MediaCardItem[]>([])
 const searchPage = ref(1)
 const searchTotalPages = ref(0)
-const media = ref<(MediaCardItem & { seasons?: { number: number; name: string; episodeCount: number }[] })>()
+const media = ref<(MediaCardItem & { numbering?: NumberingInfo; seasons?: { number: number; name: string; episodeCount: number }[] })>()
+const numberingOpen = ref(false)
 const subtitles = ref(true)
 const batchSeason = ref(1)
 const seasonValue = computed({ get: () => String(batchSeason.value), set: (value: string) => { batchSeason.value = Number(value) } })
@@ -218,6 +221,20 @@ async function choose(item: MediaCardItem) {
   await scrollToStep(3)
   notice.value = `已选择《${media.value?.title}》，请核对文件${media.value?.kind === 'tv' ? '与季集编号' : '与版本标记'}。`
 }
+async function numberingSaved() {
+  numberingOpen.value = false
+  if (!media.value) return
+  const selected = media.value
+  preview.value = undefined
+  activeStep.value = 3
+  await work('更新季集方案', async () => {
+    const updated = await tmdb<typeof selected>(`detail/tv/${selected.id}`)
+    if (media.value?.id !== selected.id) return
+    media.value = updated
+    if (!updated.seasons?.some(season => season.number === batchSeason.value)) batchSeason.value = updated.seasons?.find(season => season.number > 0)?.number ?? 1
+    notice.value = '全站季集方案已保存，请按新方案核对文件季集编号后重新预览。'
+  })
+}
 async function search(page = 1) {
   const text = query.value.trim(); if (!text) return
   const link = text.match(/themoviedb\.org\/(movie|tv)\/(\d+)/i)
@@ -240,7 +257,7 @@ function numberEpisodes() {
 async function makePreview() {
   if (!media.value) return
   await save()
-  preview.value = await request<OrganizeJob>(`preview?accountId=${encodeURIComponent(config.value.accountId)}`, { method: 'POST', body: JSON.stringify({ scanId: scanId.value, kind: media.value.kind, tmdbId: media.value.id, subtitles: subtitles.value, files: selectedRows.value.map(row => ({ id: row.id, season: Number(row.season), episode: Number(row.episode), endEpisode: Number(row.endEpisode), suffix: row.suffix })) }) }, 190000)
+  preview.value = await request<OrganizeJob>(`preview?accountId=${encodeURIComponent(config.value.accountId)}`, { method: 'POST', body: JSON.stringify({ scanId: scanId.value, kind: media.value.kind, tmdbId: media.value.id, numberingRevision: media.value.numbering?.revision || 0, subtitles: subtitles.value, files: selectedRows.value.map(row => ({ id: row.id, season: Number(row.season), episode: Number(row.episode), endEpisode: Number(row.endEpisode), suffix: row.suffix })) }) }, 190000)
   onlyConflicts.value = false
   await scrollToStep(4)
   notice.value = conflicts.value ? '存在冲突，请调整选择或命名后重新预览。' : '请核对下方原路径和目标路径，确认后执行。'
@@ -295,6 +312,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 </script>
 
 <template>
+  <TMDBEpisodeGroupDialog v-if="numberingOpen && media?.kind === 'tv'" :key="media.id" :token="token" :tmdb-id="String(media.id)" :title="media.title" @close="numberingOpen = false" @saved="numberingSaved" />
   <ManagementLayout title="手动整理" description="选择网盘文件，指定 TMDB 作品，核对命名后移动到目标目录。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <template #actions><button type="button" class="secondary" @click="shareOpen = true">目录分享</button></template>
     <div class="space-y-6">
@@ -313,7 +331,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <div ref="workflowPanel" class="scroll-mt-6 space-y-4">
           <nav aria-label="整理步骤" class="grid grid-cols-4 gap-1 rounded-2xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
             <button v-for="step in stepItems" :key="step.number" type="button" :disabled="step.number > currentStep" :aria-current="activeStep === step.number ? 'step' : undefined" class="step-button" :class="activeStep === step.number ? 'step-active' : ''" @click="scrollToStep(step.number)">
-              <span class="step-number">{{ step.number < currentStep ? '✓' : step.number }}</span><span>{{ step.label }}</span>
+              <span class="step-number"><svg v-if="step.number < currentStep" aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6" /></svg><template v-else>{{ step.number }}</template></span><span>{{ step.label }}</span>
             </button>
           </nav>
           <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}</p>
@@ -366,6 +384,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 
         <section v-if="scanId" v-show="activeStep === 3" ref="editPanel" tabindex="-1" aria-label="校正文件与命名" class="panel">
           <h2 class="heading">校正文件与命名</h2>
+          <div v-if="media?.kind === 'tv'" class="mt-3 flex flex-wrap items-center gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">季集方案：{{ numberingLabel(media.numbering) }}</span><button type="button" class="text-blue-600 disabled:opacity-50 dark:text-blue-400" :disabled="!!busy || active" @click="numberingOpen = true">设置全站季集方案</button></div>
           <p class="mt-2 break-all text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
           <div class="my-4 flex flex-wrap items-center gap-3 text-sm">
             <label class="flex items-center gap-2"><input v-model="subtitles" type="checkbox" />同时整理匹配的外挂字幕</label>
@@ -384,6 +403,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         <section v-if="preview" v-show="activeStep === 4" ref="previewPanel" tabindex="-1" aria-label="确认整理预览" class="panel">
           <h2 class="heading">确认整理预览</h2>
           <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ preview.title }} · {{ preview.items.length }} 个文件（含字幕）<span v-if="conflicts" class="text-red-600"> · {{ conflicts }} 项冲突</span></p>
+          <p v-if="preview.numbering" class="mt-2 text-xs text-slate-500 dark:text-slate-400">本次季集方案：{{ numberingLabel(preview.numbering) }}</p>
           <div class="my-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center dark:bg-slate-950"><p><strong class="block text-xl">{{ previewVideos }}</strong><span class="text-xs text-slate-500">视频</span></p><p><strong class="block text-xl">{{ previewSubtitles }}</strong><span class="text-xs text-slate-500">字幕</span></p><p><strong class="block text-xl" :class="conflicts ? 'text-red-600' : 'text-emerald-600'">{{ conflicts }}</strong><span class="text-xs text-slate-500">冲突</span></p></div>
           <label v-if="conflicts" class="flex items-center gap-2 text-sm text-red-600 dark:text-red-400"><input v-model="onlyConflicts" type="checkbox" />只显示冲突项</label>
           <div class="mt-4 max-h-[480px] space-y-3 overflow-y-auto"><div v-for="item in previewItems" :key="item.file.id" class="rounded-xl border p-3 text-xs leading-6" :class="item.conflict ? 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30' : 'border-slate-200 dark:border-slate-700'"><p class="break-all text-slate-500 dark:text-slate-400">原路径：{{ item.file.sourcePath }}</p><p class="break-all text-slate-800 dark:text-slate-200">目标：{{ item.targetPath }}</p><p v-if="item.conflict" class="text-red-600 dark:text-red-400">{{ item.conflict }}</p></div></div>

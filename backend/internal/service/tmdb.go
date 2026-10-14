@@ -205,6 +205,14 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 	if (kind != "tv" && kind != "movie") || id < 1 {
 		return nil, tmdb.ErrInput
 	}
+	var selection *numberingSelection
+	if kind == "tv" {
+		var err error
+		selection, err = s.numbering(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// v2 includes IMDb identifiers used by independent resource-search fallbacks.
 	// Keeping the version in the key makes legacy detail records expire naturally.
 	value, info, err := cachedTMDB[tmdb.Detail](ctx, s, "detail:v2:"+kind+":"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, kind, id) })
@@ -212,22 +220,48 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 		return nil, err
 	}
 	value.CacheInfo = info
+	if selection != nil {
+		value.Numbering = &selection.Info
+		if selection.Group != nil {
+			value.Seasons = groupSummaries(selection.Group)
+			value.EpisodeCount = selection.Group.EpisodeCount
+		}
+	}
 	return value, nil
 }
 func (s *TMDBService) Season(ctx context.Context, id, number int) (*tmdb.SeasonDetail, error) {
 	if id < 1 || number < 0 || number > 10000 {
 		return nil, tmdb.ErrInput
 	}
+	selection, err := s.numbering(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if selection.Group != nil {
+		return groupSeason(selection.Group, number, selection.Info)
+	}
 	value, info, err := cachedTMDB[tmdb.SeasonDetail](ctx, s, "season:"+strconv.Itoa(id)+":"+strconv.Itoa(number), time.Hour, func(ctx context.Context) (any, error) { return s.source.Season(ctx, id, number) })
 	if err != nil {
 		return nil, err
 	}
 	value.CacheInfo = info
+	value.NumberingRevision = selection.Info.Revision
 	return value, nil
 }
 func (s *TMDBService) Schedule(ctx context.Context, id, number int) (*tmdb.Schedule, error) {
 	if id < 1 || number < 0 || number > 10000 {
 		return nil, tmdb.ErrInput
+	}
+	selection, err := s.numbering(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if selection.Group != nil {
+		season, err := groupSeason(selection.Group, number, selection.Info)
+		if err != nil {
+			return nil, err
+		}
+		return scheduleFromSeason(season), nil
 	}
 	value, info, err := cachedTMDB[tmdb.Schedule](ctx, s, "schedule:"+strconv.Itoa(id)+":"+strconv.Itoa(number), time.Hour, func(ctx context.Context) (any, error) {
 		full, err := s.source.Season(ctx, id, number)
@@ -244,6 +278,7 @@ func (s *TMDBService) Schedule(ctx context.Context, id, number int) (*tmdb.Sched
 		return nil, err
 	}
 	value.CacheInfo = info
+	value.NumberingRevision = selection.Info.Revision
 	return value, nil
 }
 
@@ -251,6 +286,19 @@ func (s *TMDBService) Schedule(ctx context.Context, id, number int) (*tmdb.Sched
 func (s *TMDBService) Schedules(ctx context.Context, id int) ([]tmdb.Schedule, error) {
 	if id < 1 {
 		return nil, tmdb.ErrInput
+	}
+	selection, err := s.numbering(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if selection.Group != nil {
+		result := make([]tmdb.Schedule, 0, len(selection.Group.Seasons))
+		for _, season := range selection.Group.Seasons {
+			season.CacheInfo = tmdb.CacheInfo{FetchedAt: selection.Info.SavedAt}
+			season.NumberingRevision = selection.Info.Revision
+			result = append(result, *scheduleFromSeason(&season))
+		}
+		return result, nil
 	}
 	records, err := s.db.TMDBSchedules(ctx, id)
 	if err != nil {
@@ -263,6 +311,7 @@ func (s *TMDBService) Schedules(ctx context.Context, id int) ([]tmdb.Schedule, e
 			continue
 		}
 		value.CacheInfo = tmdb.CacheInfo{FetchedAt: r.FetchedAt, CacheStale: s.now().Sub(time.Unix(r.FetchedAt, 0)) >= scheduleTTL(value, s.now(), time.Hour)}
+		value.NumberingRevision = selection.Info.Revision
 		result = append(result, *value)
 	}
 	return result, nil
@@ -283,6 +332,14 @@ func (s *TMDBService) Run(ctx context.Context, list func(context.Context) ([]int
 		end := min(cursor+32, len(ids))
 		failures := 0
 		for _, id := range ids[cursor:end] {
+			selection, err := s.numbering(warmCtx, id)
+			if err != nil {
+				failures++
+				continue
+			}
+			if selection.Group != nil {
+				continue
+			}
 			catalog, _, err := cachedTMDB[[]tmdb.SeasonSummary](warmCtx, s, "catalog:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) {
 				detail, err := s.source.Details(ctx, "tv", id)
 				if err != nil {

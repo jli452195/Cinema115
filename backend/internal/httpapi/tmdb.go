@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/storage"
 )
 
 type TMDBReader interface {
@@ -32,6 +34,9 @@ func tmdbError(c *gin.Context, err error) {
 	if errors.Is(err, tmdb.ErrNotFound) {
 		status = 404
 	}
+	if errors.Is(err, storage.ErrNumberingConflict) {
+		status = 409
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		c.JSON(504, gin.H{"error": "TMDB 请求超时，请稍后重试"})
 		return
@@ -46,6 +51,40 @@ func RegisterTMDB(admin *gin.RouterGroup, client TMDBReader) {
 	admin.Use(func(c *gin.Context) {
 		if c.Query("refresh") == "1" && c.GetString("portal_role") != "user" {
 			c.Request = c.Request.WithContext(tmdb.WithFresh(c.Request.Context()))
+		}
+		if resolver, ok := client.(interface {
+			PinNumbering(context.Context, int) (context.Context, error)
+			NumberingRevision(context.Context, int) (int64, error)
+		}); ok && (c.Param("kind") == "tv" || strings.Contains(c.FullPath(), "/tmdb/tv/")) {
+			id, err := strconv.Atoi(c.Param("id"))
+			if err == nil && id > 0 {
+				ctx, err := resolver.PinNumbering(c.Request.Context(), id)
+				if err != nil {
+					tmdbError(c, err)
+					c.Abort()
+					return
+				}
+				if expected := c.Query("numberingRevision"); expected != "" {
+					revision, parseErr := strconv.ParseInt(expected, 10, 64)
+					actual, readErr := resolver.NumberingRevision(ctx, id)
+					if parseErr != nil || revision < 0 {
+						tmdbError(c, tmdb.ErrInput)
+						c.Abort()
+						return
+					}
+					if readErr != nil {
+						tmdbError(c, readErr)
+						c.Abort()
+						return
+					}
+					if revision != actual {
+						tmdbError(c, storage.ErrNumberingConflict)
+						c.Abort()
+						return
+					}
+				}
+				c.Request = c.Request.WithContext(ctx)
+			}
 		}
 		c.Next()
 	})

@@ -110,7 +110,7 @@ test('季卡片用缺集色标记无日期范围内的中间断档', async () =>
   const progress = seasonLibraryProgress(episodes(63), owned, 63, today)
   const html = await renderToString(createSSRApp(SeasonLibraryProgress, { state: 'present', progress, loading: false, error: '', hasUndated: true }))
   assert.match(html, /缺集 22-33/)
-  assert.match(html, /bg-amber-400/)
+  assert.match(html, /season-segment-missing/)
 })
 
 test('TMDB 加载失败不隐藏已入库事实，过期索引仍明确标注', async () => {

@@ -103,6 +103,7 @@ func main() {
 	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
 	httpapi.RegisterTMDB(admin, tmdbService)
+	httpapi.RegisterTVNumbering(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
 	generationLogs := &service.GenerationLogs{}
 	httpapi.RegisterMikan(admin, service.NewMikanService(mikan.New(), generationLogs))

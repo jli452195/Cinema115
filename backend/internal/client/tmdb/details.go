@@ -45,27 +45,31 @@ type Detail struct {
 	IMDBID       string          `json:"imdbId"`
 	IMDBURL      string          `json:"imdbUrl"`
 	TMDBURL      string          `json:"tmdbUrl"`
+	Numbering    *NumberingInfo  `json:"numbering,omitempty"`
 }
 
 type Episode struct {
-	ID       int     `json:"id"`
-	Number   int     `json:"number"`
-	Name     string  `json:"name"`
-	Overview string  `json:"overview"`
-	Date     string  `json:"date"`
-	Runtime  int     `json:"runtime"`
-	Rating   float64 `json:"rating"`
-	Votes    int     `json:"votes"`
-	StillURL string  `json:"stillUrl"`
+	ID           int     `json:"id"`
+	Number       int     `json:"number"`
+	Name         string  `json:"name"`
+	Overview     string  `json:"overview"`
+	Date         string  `json:"date"`
+	Runtime      int     `json:"runtime"`
+	Rating       float64 `json:"rating"`
+	Votes        int     `json:"votes"`
+	StillURL     string  `json:"stillUrl"`
+	SourceSeason int     `json:"sourceSeason"`
+	SourceNumber int     `json:"sourceNumber"`
 }
 
 type SeasonDetail struct {
 	CacheInfo
-	ID       int       `json:"id"`
-	Number   int       `json:"number"`
-	Name     string    `json:"name"`
-	Overview string    `json:"overview"`
-	Episodes []Episode `json:"episodes"`
+	NumberingRevision int64     `json:"numberingRevision"`
+	ID                int       `json:"id"`
+	Number            int       `json:"number"`
+	Name              string    `json:"name"`
+	Overview          string    `json:"overview"`
+	Episodes          []Episode `json:"episodes"`
 }
 
 // 这些字段由缓存读取时计算，不作为过期状态持久化。
@@ -79,8 +83,9 @@ type ScheduledEpisode struct {
 }
 type Schedule struct {
 	CacheInfo
-	Number   int                `json:"number"`
-	Episodes []ScheduledEpisode `json:"episodes"`
+	NumberingRevision int64              `json:"numberingRevision"`
+	Number            int                `json:"number"`
+	Episodes          []ScheduledEpisode `json:"episodes"`
 }
 
 type rawCast struct {
@@ -258,7 +263,7 @@ func (c *Client) Season(ctx context.Context, id, number int) (*SeasonDetail, err
 	}
 	season := &SeasonDetail{ID: raw.ID, Number: number, Name: raw.Name, Overview: raw.Overview, Episodes: make([]Episode, 0, len(raw.Episodes))}
 	for _, episode := range raw.Episodes {
-		season.Episodes = append(season.Episodes, Episode{ID: episode.ID, Number: episode.Number, Name: episode.Name, Overview: episode.Overview, Date: episode.Date, Runtime: episode.Runtime, Rating: episode.Rating, Votes: episode.Votes, StillURL: imageURL(episode.Still, "w300")})
+		season.Episodes = append(season.Episodes, Episode{ID: episode.ID, Number: episode.Number, SourceSeason: number, SourceNumber: episode.Number, Name: episode.Name, Overview: episode.Overview, Date: episode.Date, Runtime: episode.Runtime, Rating: episode.Rating, Votes: episode.Votes, StillURL: imageURL(episode.Still, "w300")})
 	}
 	return season, nil
 }

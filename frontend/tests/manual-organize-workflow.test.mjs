@@ -41,7 +41,8 @@ const media = { id: 100, title: 'Example', kind: 'tv', date: '2024-01-01', seaso
 
 async function harness(t) {
   const requests = [], jobs = []
-  let conflict = false, historyFailure = false, scanFailure = false
+  let conflict = false, historyFailure = false, scanFailure = false, detailFailure = false
+  let selectedMedia = structuredClone(media)
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init = {}) => {
     const pathname = new URL(url, 'http://test').pathname
@@ -54,7 +55,10 @@ async function harness(t) {
     else if (pathname.endsWith('/scan')) {
       if (scanFailure) return Response.json({ error: '扫描失败' }, { status: 502 })
       data = { id: 'scan-1', files: [video('32', 2), video('31', 1)] }
-    } else if (pathname.endsWith('/detail/tv/100')) data = structuredClone(media)
+    } else if (pathname.endsWith('/detail/tv/100')) {
+      if (detailFailure) return Response.json({ error: '作品资料暂时不可用' }, { status: 502 })
+      data = structuredClone(selectedMedia)
+    }
     else if (pathname.endsWith('/preview') && !pathname.includes('/cleanup/')) {
       data = { id: 'preview-1', title: 'Example', status: 'preview', config, createdAt: '2026-10-01T00:00:00Z', items: body.files.map(file => ({ file: { ...video(file.id, file.episode), ...file }, targetPath: `/library/${file.id}.mkv`, conflict: conflict && file.id === '31' ? '同名冲突' : '', status: 'pending' })) }
     } else if (pathname.endsWith('/cleanup/preview')) {
@@ -77,7 +81,7 @@ async function harness(t) {
   for (let i = 0; i < 40 && (state.busy || !state.historyReady); i++) await new Promise(resolve => setImmediate(resolve))
   assert.equal(state.busy, '')
   assert.equal(state.historyReady, true)
-  return { state, requests, conflict: value => { conflict = value }, historyFailure: value => { historyFailure = value }, scanFailure: value => { scanFailure = value } }
+  return { state, requests, conflict: value => { conflict = value }, historyFailure: value => { historyFailure = value }, scanFailure: value => { scanFailure = value }, detailFailure: value => { detailFailure = value }, metadata: value => { selectedMedia = structuredClone(value) } }
 }
 
 test('step navigation keeps edits and does not allow unavailable steps', async t => {
@@ -195,4 +199,32 @@ test('scan failures remain recoverable at the first step', async t => {
   assert.equal(s.activeStep, 1)
   assert.equal(s.scanId, '')
   assert.match(s.error, /扫描失败/)
+})
+
+test('saving global numbering invalidates organizer preview, preserves edits and sends the new revision', async t => {
+  const h = await harness(t), s = h.state
+  await s.scan(entry)
+  await s.choose(media)
+  s.rows[0].suffix = '4K'
+  await s.makePreview()
+  h.metadata({ ...media, numbering: { groupId: 'group12', name: 'Season', type: 6, revision: 2 }, seasons: [{ number: 2, episodeCount: 12, name: 'Season 2' }] })
+  await s.numberingSaved()
+  assert.equal(s.activeStep, 3)
+  assert.equal(s.preview, undefined)
+  assert.equal(s.rows[0].suffix, '4K')
+  assert.equal(s.media.numbering.revision, 2)
+  await s.makePreview()
+  assert.equal(h.requests.findLast(r => r.pathname.endsWith('/preview')).body.numberingRevision, 2)
+})
+
+test('saved numbering discards old organizer preview even when metadata reload fails', async t => {
+  const h = await harness(t), s = h.state
+  await s.scan(entry)
+  await s.choose(media)
+  await s.makePreview()
+  h.detailFailure(true)
+  await s.numberingSaved()
+  assert.equal(s.preview, undefined)
+  assert.equal(s.activeStep, 3)
+  assert.match(s.error, /作品资料暂时不可用/)
 })
