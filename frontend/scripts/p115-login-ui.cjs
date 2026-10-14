@@ -15,6 +15,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const req = route.request(), url = new URL(req.url()), p = url.pathname
       let data = {}, status = 200
       if (p === '/api/auth/me') data = { user: { id: 'mock', role: 'admin', username: 'mock', disabled: false } }
+      else if (p === '/api/admin/member-playback/pool') data = {settings:{maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:5,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50,notificationBotId:''},accounts:[pool],metrics:{requests:0,succeeded:0,failed:0,switches:0,p50Ms:0,p95Ms:0,samples:0,peakUidSessions:0,resolved:0,copyResolutions:0,directLinkHits:0},api:{requests:0,throttled:0,rejected:0,waitMs:0,waiting:0,sourceRequests:0},events:[]}
       else if (p === '/api/admin/member-playback/accounts') data = { accounts: [pool] }
       else if (p === '/api/admin/p115/accounts') data = { accounts: [main, pool] }
       else if (p.startsWith('/api/admin/p115/accounts/')) {
@@ -50,14 +51,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const mainCard = page.getByRole('region', {name:'主账号配置'})
     const check = () => mainCard.getByRole('button', {name:'检测可用性',exact:true}).click()
     const openQR = () => mainCard.getByRole('button', {name:'扫码登录',exact:true}).click()
-    await mainCard.getByText(/登录客户端：待识别/).waitFor()
+    await mainCard.getByText(/客户端：待识别/).waitFor()
     assert.equal(await page.getByLabel('Cookie', { exact: true }).count(), 0)
     await check()
-    await mainCard.getByText(/登录客户端：115 iPad/).waitFor()
-    await page.reload(); await mainCard.getByText(/登录客户端：115 iPad/).waitFor()
+    await mainCard.getByText(/客户端：115 iPad/).waitFor()
+    await page.reload(); await mainCard.getByText(/客户端：115 iPad/).waitFor()
     assert.equal(await mainCard.locator('select').count(), 0)
     await openQR(); await page.getByLabel('登录设备', { exact: true }).selectOption('115-ios')
-    assert(await mainCard.getByText(/登录客户端：115 iPad/).isVisible())
+    assert(await mainCard.getByText(/客户端：115 iPad/).isVisible())
     await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({state:'detached'})
     passed.push('detect-persist-and-selection-isolation')
     await mainCard.getByRole('button', {name:'更多操作'}).click()
@@ -65,13 +66,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await mainCard.getByRole('button', { name: '手动配置 Cookie' }).click()
     await page.getByLabel('Cookie', { exact: true }).fill('UID=123_B; SEID=draft')
     assert.equal(main.loginClient, '115ipad')
-    assert(await mainCard.getByText(/登录客户端：115 iPad/).isVisible())
+    assert(await mainCard.getByText(/客户端：115 iPad/).isVisible())
     await page.getByRole('button', { name: '验证并继续', exact: true }).click()
     await page.getByRole('dialog').waitFor({state:'detached'})
     detection = ''
     await check()
-    await mainCard.getByText(/登录客户端：未识别/).waitFor()
-    assert(await mainCard.getByText('已连接', { exact: true }).isVisible())
+    await mainCard.getByText(/客户端：未识别/).waitFor()
+    assert(await mainCard.getByText('最近检查通过', { exact: true }).isVisible())
     assert.equal(await mainCard.getByText('账号可用', {exact:true}).count(), 0)
     passed.push('draft-isolation-and-unidentified-valid-cookie')
     for (const width of [1440, 390]) {
@@ -96,7 +97,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByText('已扫码，请在手机上确认登录', { exact: true }).waitFor()
     scenario = 'success'
     await page.getByRole('dialog').waitFor({ state: 'detached' })
-    await mainCard.getByText(/登录客户端：115 iPad/).waitFor()
+    await mainCard.getByText(/客户端：115 iPad/).waitFor()
     passed.push('scan-confirm-save-auto-close')
     scenario = 'expiry'
     await openQR()

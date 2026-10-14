@@ -7,13 +7,23 @@ import P115QRDialog from './P115QRDialog.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import P115PoolDetailsDialog from './P115PoolDetailsDialog.vue'
 import P115ActionDialog from './P115ActionDialog.vue'
+import P115Icon from './P115Icon.vue'
+import { poolHealthLabel } from '../types/dynamicPool'
 
-const props = defineProps<{ account: P115Account; token: string; startLogin?: boolean }>()
-const emit = defineEmits<{ changed: []; loginStarted: [] }>()
+const props = defineProps<{ account: P115Account; token: string; startLogin?: boolean; maxSessions?: number; sharedConfigs?: number; poolBusy?: boolean; poolWorking?: boolean; poolError?: string; poolNotice?: string }>()
+const emit = defineEmits<{ changed: []; loginStarted: []; interaction: [editing: boolean]; poolMode: [mode: string, revision: number]; poolCheck: [] }>()
 const accountName = computed(() => props.account.primary ? '主账号' : props.account.name)
-const poolState = computed(() => ({ ready: '最近检查通过', pending: '等待复查', unknown: '尚未检查', unconfigured: '未完成配置', invalid_credentials: '登录失效', invalid_directory: '目录失效', cooldown: '故障冷却', throttled: '限流冷却' }[props.account.pool?.state || 'unknown'] || '等待复查'))
 const needsDirectory = computed(() => !props.account.primary && !props.account.playbackParentCid)
-const statusLabel = computed(() => !props.account.configured ? '未登录' : checked.value && !connected.value ? '已失效' : needsDirectory.value ? '待设置目录' : checked.value ? '已连接' : '待验证')
+const statusLabel = computed(() => !props.account.configured ? '未登录' : needsDirectory.value ? '待设置目录'
+  : !props.account.primary ? poolHealthLabel(props.account.pool?.state)
+    : checked.value ? connected.value ? '最近检查通过' : '登录失效' : '登录信息已保存')
+const statusTone = computed(() => ['登录失效', '目录失效', '待设置目录'].includes(statusLabel.value) ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400'
+  : statusLabel.value === '最近检查通过' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
+    : ['限流冷却', '故障冷却', '等待复查'].includes(statusLabel.value) ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
+const disabled = computed(() => busy.value || props.poolBusy)
+const overCapacity = computed(() => props.maxSessions !== undefined && (props.account.pool?.sessions || 0) > props.maxSessions)
+const capacityPercent = computed(() => props.maxSessions ? Math.min(100, (props.account.pool?.sessions || 0) / props.maxSessions * 100) : 0)
+const infoOpen = ref(false), poolDisable = ref<number>(), primaryCheckedAt = ref(0)
 const summaryTitle = computed(() => props.account.summary?.checkedAt ? '更新于 ' + new Date(props.account.summary.checkedAt).toLocaleString() + '；检测可用性可更新' : '登录或检测可用性后更新')
 function remainingSpace(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
@@ -48,6 +58,7 @@ async function work(action: () => Promise<void>) {
   } finally { busy.value = false }
 }
 function check() {
+  if (!props.account.primary && props.maxSessions !== undefined) { emit('poolCheck'); return }
   void work(async () => {
     clearTimeout(noticeTimer); notice.value = ''
     checked.value = false; connected.value = false
@@ -55,10 +66,22 @@ function check() {
     const data = await request<{ connected: boolean; clientMessage?: string }>('/status')
     if (revision !== props.account.revision) return
     checked.value = true; connected.value = data.connected
+    primaryCheckedAt.value = Date.now()
     if (!data.connected) error.value = '登录已失效，请重新登录'
     else if (data.clientMessage) notify(data.clientMessage)
     emit('changed')
   })
+}
+function changeMode(event: Event) {
+  const select = event.target as HTMLSelectElement, value = select.value
+  select.value = props.account.pool?.mode || 'enabled'
+  if (disabled.value || value === select.value) return
+  if (value === 'disabled') poolDisable.value = props.account.revision
+  else emit('poolMode', value, props.account.revision)
+}
+function confirmDisable() {
+  if (poolDisable.value !== undefined) emit('poolMode', 'disabled', poolDisable.value)
+  poolDisable.value = undefined
 }
 function saveName(name: string) {
   void work(async () => { await request('', 'PUT', { name, revision: props.account.revision }); details.value = ''; emit('changed'); notify('名称已保存') })
@@ -119,12 +142,13 @@ function loggedIn() {
   checked.value = true; connected.value = true; emit('changed')
   notify(needsDirectory.value ? '登录成功，请设置秒传目录' : '登录信息已保存')
 }
+watch([login, selecting], () => emit('interaction', !!login.value || selecting.value), { flush: 'sync' })
 watch(() => props.startLogin, (start) => {
   if (start) { openLogin('qr'); emit('loginStarted') }
 }, { immediate: true })
 watch(() => props.account, async (next, previous) => {
   if (next.revision !== previous.revision) {
-    login.value = ''; selecting.value = false; confirmation.value = ''; details.value = ''; checked.value = next.revision === loginRevision
+    login.value = ''; selecting.value = false; confirmation.value = ''; details.value = ''; poolDisable.value = undefined; checked.value = next.revision === loginRevision; primaryCheckedAt.value = 0
     const continueSetup = directoryAfterLogin && checked.value && next.configured && !next.playbackParentCid
     directoryAfterLogin = false
     // Wait for the login dialog to unmount and restore focus/scroll before opening the next dialog.
@@ -133,48 +157,62 @@ watch(() => props.account, async (next, previous) => {
   }
 })
 onMounted(() => { document.addEventListener('pointerdown', outside); document.addEventListener('focusin', outside); document.addEventListener('keydown', escapeMenu) })
-onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(noticeTimer); clearTimeout(copyTimer); document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', escapeMenu) })
+onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTimeout(noticeTimer); clearTimeout(copyTimer); document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', escapeMenu) })
 </script>
 
 <template>
-  <article class="relative flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:z-10 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg focus-within:z-10 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600">
-    <header class="flex items-center gap-2">
-      <h2 class="min-w-0 flex-1 truncate font-semibold text-slate-900 dark:text-slate-100">{{ accountName }}</h2>
-      <span class="shrink-0 rounded-full px-2.5 py-1 text-xs" :class="statusLabel === '待设置目录' || statusLabel === '已失效' ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : statusLabel === '已连接' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'">{{ statusLabel }}</span>
+  <article class="account-card relative min-w-0 rounded-xl border border-slate-200 bg-white p-5 focus-within:z-10 dark:border-slate-700 dark:bg-slate-900" :class="account.primary ? 'primary-card' : ''">
+    <header class="account-heading flex min-w-0 items-center gap-2">
+      <div v-if="account.primary" class="mr-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-400"><P115Icon name="drive" /></div>
+      <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="min-w-0 truncate font-semibold text-slate-900 dark:text-slate-100">{{ accountName }}</h2><span v-if="account.primary" class="rounded-md px-2 py-1 text-[11px]" :class="statusTone">{{ statusLabel }}</span></div><p v-if="account.primary" class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">资源管理与默认播放</p></div>
+      <span v-if="!account.primary" class="shrink-0 rounded-md px-2 py-1 text-[11px]" :class="statusTone">{{ statusLabel }}</span>
       <div ref="menuContainer" class="relative shrink-0">
-        <button ref="menuTrigger" aria-label="更多操作" :aria-controls="menuID" class="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" :aria-expanded="more" @click="toggleMenu"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg></button>
+        <button ref="menuTrigger" aria-label="更多操作" :aria-controls="menuID" class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" :aria-expanded="more" @click="toggleMenu"><P115Icon name="more" /></button>
         <div v-if="more" :id="menuID" ref="menu" role="group" aria-label="账号操作" class="absolute right-0 top-full z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl dark:border-slate-700 dark:bg-slate-900">
-          <button v-if="!account.primary" :disabled="busy" class="pool-action text-slate-700 dark:text-slate-200" @click="openDetails('rename')">修改名称</button>
-          <button :disabled="busy" class="pool-action text-slate-700 dark:text-slate-200" @click="openLogin('cookie')">手动配置 Cookie</button>
+          <button class="pool-action" @click="closeMenu(); menuTrigger?.focus(); infoOpen = true">账号详情</button>
+          <button v-if="!account.primary" :disabled="disabled" class="pool-action" @click="openDetails('rename')">修改名称</button>
+          <button :disabled="disabled" class="pool-action" @click="openLogin('cookie')">手动配置 Cookie</button>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800"></div>
-          <button :disabled="busy || !account.configured" class="pool-action text-red-600 dark:text-red-400" @click="disconnect">清除登录信息</button>
-          <button :disabled="busy" class="pool-action text-red-600 dark:text-red-400" @click="remove">删除配置</button>
+          <button :disabled="disabled || !account.configured" class="pool-action text-red-600 dark:text-red-400" @click="disconnect">清除登录信息</button>
+          <button :disabled="disabled" class="pool-action text-red-600 dark:text-red-400" @click="remove">删除配置</button>
         </div>
       </div>
     </header>
-    <p class="mt-3 truncate text-xs leading-6 text-slate-500" :title="'UID：' + (account.uid || '未登录') + ' · 登录客户端：' + (loginClientLabel(account.loginClient || '') || '待识别')">UID：{{ account.uid || '未登录' }} · 登录客户端：{{ account.configured ? loginClientLabel(account.loginClient || '') || (checked ? '未识别' : '待识别') : '未登录' }}</p>
-    <p class="mt-2 flex items-center gap-2 text-xs text-slate-500" :title="summaryTitle"><span :class="account.configured && account.summary?.vip === 'vip' ? 'text-amber-700 dark:text-amber-400' : ''">{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</span><span aria-hidden="true">·</span><span>{{ account.configured && account.summary?.spaceKnown ? '剩余 ' + remainingSpace(account.summary.remainingBytes) : '剩余空间未知' }}</span></p>
-    <p v-if="account.primary" class="mt-3 text-sm text-slate-500">用于资源管理与默认播放</p>
-    <template v-else>
-      <p class="mt-2 text-sm text-slate-500">当前 UID 占用 {{ account.pool?.sessions || 0 }}，准备中 {{ account.pool?.preparing || 0 }}，残余占用 {{ account.pool?.residual || 0 }} · {{ poolState }}</p>
-      <p v-if="account.pool?.retryAt" class="mt-1 text-xs text-slate-500">最早复查：{{ new Date(account.pool.retryAt).toLocaleString() }}</p>
-      <div class="mt-3 text-sm" :class="needsDirectory ? 'rounded-xl border border-red-100 bg-red-50/70 p-3 dark:border-red-900/50 dark:bg-red-950/20' : ''">
-        <div class="flex flex-wrap items-center gap-2">
-          <p class="min-w-0 flex-1 text-slate-600 dark:text-slate-300" :class="needsDirectory ? '' : 'truncate'" :title="account.playbackParentCid">秒传目录：<span :class="needsDirectory ? 'font-semibold text-red-600 dark:text-red-400' : ''">{{ account.playbackParentCid || '未设置（必填）' }}</span></p>
-          <button :disabled="busy || !account.configured" class="shrink-0 rounded-lg disabled:opacity-40" :class="needsDirectory ? 'bg-blue-600 px-3 py-2 text-white hover:bg-blue-700' : 'text-blue-600 dark:text-blue-400'" @click="selectDirectory">{{ needsDirectory ? '设置目录' : '修改' }}</button>
-        </div>
+    <div class="account-meta min-w-0 text-xs text-slate-500 dark:text-slate-400">
+      <p class="truncate leading-6" :title="'UID：' + (account.uid || '未登录') + '，登录客户端：' + (loginClientLabel(account.loginClient || '') || '待识别')">UID：{{ account.uid || '未登录' }}<span class="ml-3">客户端：{{ account.configured ? loginClientLabel(account.loginClient || '') || (checked ? '未识别' : '待识别') : '未登录' }}</span></p>
+      <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1" :title="summaryTitle"><span :class="account.configured && account.summary?.vip === 'vip' ? 'text-amber-700 dark:text-amber-400' : ''">{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</span><span>{{ account.configured && account.summary?.spaceKnown ? '剩余 ' + remainingSpace(account.summary.remainingBytes) : '剩余空间未知' }}</span></p>
+      <p v-if="account.primary && primaryCheckedAt" class="mt-1 text-[11px]">上次检查 {{ new Date(primaryCheckedAt).toLocaleTimeString() }}</p>
+    </div>
+    <template v-if="!account.primary">
+      <div v-if="maxSessions !== undefined" class="my-4 rounded-lg bg-slate-50 p-3.5 dark:bg-slate-800/60">
+        <div class="mb-2 flex items-baseline justify-between gap-2"><span class="text-xs text-slate-600 dark:text-slate-300">UID 共享名额占用</span><span class="text-lg font-semibold tabular-nums" :class="overCapacity ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100'">{{ account.pool ? account.pool.sessions : '暂无数据' }}<small class="ml-1 text-xs font-normal text-slate-500 dark:text-slate-400">/ {{ maxSessions }}</small></span></div>
+        <div aria-hidden="true" class="mb-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div class="h-full rounded-full" :class="overCapacity ? 'bg-amber-500' : 'bg-blue-600 dark:bg-blue-400'" :style="{ width: capacityPercent + '%' }"></div></div>
+        <p v-if="account.pool" class="flex justify-between gap-1 text-[11px] text-slate-500 dark:text-slate-400"><span>准备 {{ account.pool.preparing }}</span><span>活跃 {{ account.pool.active || 0 }}</span><span>残余 {{ account.pool.residual }}</span></p>
+        <p v-if="overCapacity" class="mt-2 text-[11px] text-amber-700 dark:text-amber-300">超过当前上限，已有会话保留</p>
+        <p v-if="(sharedConfigs || 0) > 1" class="mt-2 text-[11px] text-blue-600 dark:text-blue-400">{{ sharedConfigs }} 份配置共用此 UID 名额，容量不累加</p>
+      </div>
+      <div class="mb-4 border-b border-slate-100 pb-4 text-sm dark:border-slate-800" :class="needsDirectory ? 'mt-4 rounded-lg border border-red-100 bg-red-50/70 p-3 dark:border-red-900/50 dark:bg-red-950/20' : ''">
+        <div class="flex flex-wrap items-center gap-2"><p class="min-w-0 flex-1 text-xs text-slate-600 dark:text-slate-300" :class="needsDirectory ? '' : 'truncate'" :title="account.playbackParentCid">秒传目录：<span :class="needsDirectory ? 'font-semibold text-red-600 dark:text-red-400' : 'font-mono'">{{ account.playbackParentCid || '未设置（必填）' }}</span></p><button :disabled="disabled || !account.configured" class="shrink-0 rounded-lg text-xs disabled:opacity-40" :class="needsDirectory ? 'bg-blue-600 px-3 py-2 text-white hover:bg-blue-700' : 'text-blue-600 dark:text-blue-400'" @click="selectDirectory">{{ needsDirectory ? '设置目录' : '修改' }}</button></div>
         <p v-if="needsDirectory" class="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">{{ account.configured ? '设置后才能参与调度，用于保存播放秒传文件。' : '请先登录，再设置秒传目录，完成后才能参与调度。' }}</p>
       </div>
+      <label v-if="maxSessions !== undefined" class="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300">调度模式<select :value="account.pool?.mode || 'enabled'" :disabled="disabled" :aria-label="account.name + ' 调度状态'" class="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-transparent px-3 text-xs disabled:opacity-40 dark:border-slate-700" @change="changeMode"><option value="enabled">参与调度</option><option value="draining">停止新分配</option><option value="disabled">禁用</option></select></label>
+      <p class="mb-3 mt-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{{ account.pool?.checkedAt ? '上次检查 ' + new Date(account.pool.checkedAt).toLocaleString() : '尚未检查' }}<span v-if="account.pool?.retryAt" class="block">最早复查：{{ new Date(account.pool.retryAt).toLocaleString() }}</span></p>
     </template>
-    <div class="mt-4 flex flex-wrap gap-3"><button :disabled="busy" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="openLogin('qr')">扫码登录</button><button :disabled="busy || !account.configured" class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-blue-600 disabled:opacity-40 dark:border-slate-700" @click="check">{{ busy ? '处理中…' : '检测可用性' }}</button></div>
-    <footer class="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800">
-      <span class="shrink-0">配置 ID：</span><span class="flex min-w-0 select-text font-mono" :title="account.id"><span class="truncate">{{ account.id.slice(0, -6) }}</span><span class="shrink-0">{{ account.id.slice(-6) }}</span></span>
-      <button type="button" :aria-label="copied ? '配置 ID 已复制' : '复制配置 ID'" :title="copied ? '已复制' : '复制配置 ID'" class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-slate-800" @click="copyID"><svg v-if="copied" aria-hidden="true" class="h-4 w-4 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg><svg v-else aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg></button>
-      <span role="status" class="sr-only">{{ copied ? '配置 ID 已复制' : '' }}</span>
-    </footer>
-    <p v-if="notice" role="status" class="mt-3 text-xs text-emerald-600">{{ notice }}</p>
-    <p v-if="error && !confirmation && !details && !selecting" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p>
+    <div class="account-actions flex flex-wrap items-center gap-2">
+      <button :disabled="disabled || !account.configured || (!account.primary && maxSessions !== undefined && needsDirectory)" class="account-button border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300" @click="check"><P115Icon name="refresh" />{{ poolWorking ? '处理中…' : busy ? '处理中…' : account.primary ? '检测可用性' : '重新检查' }}</button>
+      <button :disabled="disabled" class="account-button border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300" :class="!account.configured ? '!border-blue-600 bg-blue-600 !text-white' : ''" @click="openLogin('qr')"><P115Icon name="qr" />扫码登录</button>
+    </div>
+    <p v-if="notice || poolNotice" role="status" class="account-feedback mt-3 text-xs leading-5 text-slate-600 dark:text-slate-300">{{ notice || poolNotice }}</p>
+    <p v-if="(error && !confirmation && !details && !selecting) || poolError" role="alert" class="account-feedback mt-3 text-xs leading-5 text-red-600 dark:text-red-400">{{ poolError || error }}</p>
   </article>
+  <P115ActionDialog v-if="infoOpen" :title="accountName + '详情'" @close="infoOpen = false">
+    <p>UID：{{ account.uid || '未登录' }}</p><p>登录客户端：{{ loginClientLabel(account.loginClient || '') || '待识别' }}</p><p>{{ summaryTitle }}</p>
+    <div class="flex items-center gap-2 text-xs"><span class="shrink-0">配置 ID：</span><span class="min-w-0 flex-1 break-all font-mono">{{ account.id }}</span><button type="button" :aria-label="copied ? '配置 ID 已复制' : '复制配置 ID'" class="shrink-0 rounded border border-slate-200 px-2 py-1 dark:border-slate-700" @click="copyID">{{ copied ? '已复制' : '复制' }}</button></div><p role="status" class="sr-only">{{ copied ? '配置 ID 已复制' : '' }}</p>
+    <template #footer><button class="rounded-lg border border-slate-200 px-4 py-2 text-sm dark:border-slate-700" @click="infoOpen = false">关闭</button></template>
+  </P115ActionDialog>
+  <P115ActionDialog v-if="poolDisable !== undefined" :title="'禁用 ' + account.name + '？'" @close="poolDisable = undefined">
+    <p>禁用后拒绝使用此配置的后续取链。已签发的直链无法立即撤回。</p><p class="text-slate-500">网盘文件不会删除。</p><template #footer><button class="px-3 py-2 text-sm" @click="poolDisable = undefined">取消</button><button :disabled="disabled" class="rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="confirmDisable">确认禁用</button></template>
+  </P115ActionDialog>
   <P115PoolDetailsDialog v-if="details" :account="account" :mode="details" :busy="busy" :error="error" @close="details = ''" @save="saveName" />
   <P115QRDialog v-if="login" :token="token" :account-id="account.id" :account-name="accountName" :primary="account.primary" :needs-directory="needsDirectory" :revision="account.revision" :mode="login" @connected="loggedIn" @close="login = ''; emit('changed')" @changed="emit('changed')" />
   <P115ActionDialog v-if="confirmation" :title="confirmation === 'clear' ? '清除登录信息' : '删除账号配置'" :busy="busy" @close="confirmation = ''">
@@ -191,4 +229,14 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(noticeTimer); clearTimeo
 .pool-action { display: block; width: 100%; border-radius: 0.5rem; padding: 0.625rem 0.75rem; text-align: left; }
 .pool-action:hover, .pool-action:focus-visible { background: rgb(148 163 184 / 12%); }
 .pool-action:disabled { opacity: 0.4; }
+.account-meta { margin-top:10px; }
+.account-button { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:6px; border-radius:8px; padding:8px 11px; font-size:12px; }
+.account-button:disabled { opacity:.4; }
+.account-button:hover:not(:disabled) { background:rgb(148 163 184 / 8%); }
+.primary-card { display:flex; flex-wrap:wrap; align-items:center; gap:20px; }
+.primary-card .account-heading { min-width:260px; flex:none; }
+.primary-card .account-meta { margin-top:0; flex:1; }
+.primary-card .account-actions { margin-left:auto; }
+.primary-card .account-feedback { flex-basis:100%; margin-top:0; }
+@media(max-width:767px) { .primary-card { gap:14px; } .primary-card .account-heading { flex-basis:100%; min-width:0; } .primary-card .account-meta { flex-basis:100%; } .primary-card .account-actions { margin-left:0; } }
 </style>

@@ -3,39 +3,35 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import P115ManagedAccountCard from '../components/P115ManagedAccountCard.vue'
-import DynamicPoolSettings from '../components/DynamicPoolSettings.vue'
-import P115ActionDialog from '../components/P115ActionDialog.vue'
+import DynamicPoolSection from '../components/DynamicPoolSection.vue'
+import P115Icon from '../components/P115Icon.vue'
 import { p115Request } from '../lib/p115-api'
-import { memberRequest } from '../types/memberPlayback'
 import type { P115Account } from '../types/p115Accounts'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute()
 const primary = ref<P115Account>(), pool = ref<P115Account[]>([])
-const loading = ref(true), refreshing = ref(false), adding = ref(false), rules = ref(false)
-const primaryError = ref(''), poolError = ref(''), actionError = ref('')
+const loading = ref(true), refreshing = ref(false), adding = ref(false)
+const primaryError = ref(''), actionError = ref('')
+const poolSection = ref<InstanceType<typeof DynamicPoolSection>>()
 const loginAccountID = ref('')
 const lifecycle = new AbortController()
 let sequence = 0
+let locatedPool = false
 async function locatePool() {
-  if (route.hash !== '#pool') return
+  if (route.hash !== '#pool' || locatedPool || loading.value) return
   await nextTick()
-  if (!lifecycle.signal.aborted) document.getElementById('pool')?.scrollIntoView({ block: 'start' })
+  if (!lifecycle.signal.aborted) { document.getElementById('pool')?.scrollIntoView({ block: 'start' }); locatedPool = true }
 }
 async function refresh() {
   const current = ++sequence
   refreshing.value = true
-  const results = await Promise.allSettled([
-    p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) }),
-    memberRequest(props.token, AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]), '/accounts'),
-  ])
+  const results = await Promise.allSettled([p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) }), poolSection.value?.refresh()])
   if (lifecycle.signal.aborted || current !== sequence) return
-  const [managed, shared] = results
+  const [managed] = results
   if (managed.status === 'fulfilled') { primary.value = managed.value.accounts.find(account => account.primary); primaryError.value = '' }
   else primaryError.value = managed.reason instanceof Error ? managed.reason.message : '读取主账号失败'
-  if (shared.status === 'fulfilled') { pool.value = shared.value.accounts; poolError.value = '' }
-  else poolError.value = shared.reason instanceof Error ? shared.reason.message : '读取小号池失败'
   const initial = loading.value
   loading.value = false; refreshing.value = false
   if (initial) await locatePool()
@@ -50,16 +46,16 @@ async function add(isPrimary: boolean) {
   } catch (e) { if (!lifecycle.signal.aborted) actionError.value = e instanceof Error ? e.message : '添加失败' }
   finally { adding.value = false }
 }
-watch(() => route.hash, locatePool)
+watch(() => route.hash, () => { locatedPool = false; void locatePool() })
 onMounted(refresh)
 onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
   <ManagementLayout title="115 助手" description="主账号负责资源管理与默认播放；共享小号用于用户播放和秒传。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
-    <template #actions><button :disabled="refreshing || adding" class="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300" @click="refresh">{{ refreshing ? '刷新中…' : '刷新' }}</button></template>
+    <template #actions><button :disabled="refreshing || adding" class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300" @click="refresh"><P115Icon name="refresh" />{{ refreshing ? '刷新中…' : '刷新状态' }}</button></template>
     <p v-if="actionError" role="alert" class="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ actionError }}</p>
-    <section aria-label="主账号配置" class="mb-8 max-w-lg">
+    <section aria-label="主账号配置" class="mb-8">
       <p v-if="primaryError" role="alert" class="mb-3 text-sm text-red-600">{{ primaryError }}</p>
       <p v-if="loading" role="status" class="py-8 text-sm text-slate-500">正在读取主账号…</p>
       <P115ManagedAccountCard v-else-if="primary" :key="primary.id" :account="primary" :token="token" @changed="refresh" />
@@ -69,26 +65,6 @@ onBeforeUnmount(() => lifecycle.abort())
         <button :disabled="adding" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="add(true)">配置主账号</button>
       </div>
     </section>
-    <DynamicPoolSettings :token="token" :pool="pool" @changed="refresh" />
-    <section id="pool" aria-label="共享小号池" class="scroll-mt-6">
-      <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">共享小号池<span v-if="!loading && !poolError" class="ml-2 text-sm font-normal text-slate-500">{{ pool.length }} 个</span></h2>
-        <div class="flex flex-wrap items-center gap-4 text-sm"><button class="text-slate-500 hover:text-blue-600" @click="rules = true">分配说明</button><RouterLink to="/emby/users" class="text-blue-600">管理 Emby 用户</RouterLink><button :disabled="adding || loading || !!poolError" class="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-40" @click="add(false)">添加共享小号</button></div>
-      </header>
-      <p class="mb-5 text-sm text-slate-500">一个小号可供多位用户共享，个人网盘由用户在个人中心独立管理。</p>
-      <p v-if="poolError" role="alert" class="mb-4 text-sm text-red-600">{{ poolError }}</p>
-      <p v-if="loading" role="status" class="py-8 text-sm text-slate-500">正在读取小号池…</p>
-      <template v-else>
-        <div class="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3"><P115ManagedAccountCard v-for="account in pool" :key="account.id" :account="account" :token="token" :start-login="loginAccountID === account.id" @login-started="loginAccountID = ''" @changed="refresh" /></div>
-        <p v-if="!pool.length && !poolError" class="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">尚未添加共享小号。可先添加小号，再扫码登录并设置秒传目录。</p>
-      </template>
-    </section>
+    <DynamicPoolSection ref="poolSection" :token="token" :adding="adding" :login-account-id="loginAccountID" @add="add(false)" @login-started="loginAccountID = ''" @accounts-changed="pool = $event; locatePool()" />
   </ManagementLayout>
-  <P115ActionDialog v-if="rules" title="共享小号分配说明" @close="rules = false">
-    <p>登录小号并设置秒传目录后，自动参与共享池调度。用户只需选择共享池来源。</p>
-    <p>播放会话优先选择低负载账号，同一会话保持稳定；容量按实际 UID 汇总。</p>
-    <p>账号故障时会在请求预算内尝试其他小号；全池繁忙或不可用时停止新取链，不回退主网盘。</p>
-    <p class="text-slate-500">用户自行绑定的个人网盘不进入管理员共享小号池。</p>
-    <template #footer><button class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white" @click="rules = false">知道了</button></template>
-  </P115ActionDialog>
 </template>

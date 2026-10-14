@@ -6,15 +6,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
     await page.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
+    // Deliberately poll during the QR success delay; passive snapshots must not close its dialog early.
+    await page.addInitScript(() => { const interval = window.setInterval.bind(window); window.setInterval = (handler, delay, ...args) => interval(handler, delay === 10000 ? 100 : delay, ...args) })
     page.setDefaultTimeout(10000)
     const errors = [], passed = [], pool = []
     const main = { id: 'main', name: '主账号', primary: true, configured: true, uid: '1', revision: 1 }
-    let qrSuccess = false, failSave = false, lastSave
+    let qrSuccess = false, failSave = false, lastSave, poolReads = 0
     page.on('pageerror', e => errors.push(e.message))
     await page.route('**/api/**', async route => {
       const req = route.request(), url = new URL(req.url()), p = url.pathname
       let data = {}, status = 200
       if (p === '/api/auth/me') data = { user: { id: 'admin', role: 'admin', username: 'admin' } }
+      else if (p === '/api/admin/member-playback/pool') { poolReads++; data = { settings: { maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:5,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50,notificationBotId:'' }, accounts: pool.map(a => ({...a,pool:{state:a.configured&&a.playbackParentCid?'ready':'unconfigured',mode:'enabled',sessions:0,preparing:0,active:0,residual:0,retryAt:0}})),metrics:{requests:0,succeeded:0,failed:0,switches:0,p50Ms:0,p95Ms:0,samples:0,peakUidSessions:0,resolved:0,copyResolutions:0,directLinkHits:0},api:{requests:0,throttled:0,rejected:0,waitMs:0,waiting:0,sourceRequests:0},events:[] } }
       else if (p === '/api/admin/member-playback/accounts') data = { accounts: pool }
       else if (p === '/api/admin/p115/accounts') {
         if (req.method() === 'POST') {
@@ -56,8 +59,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '关闭目录选择器' }).click()
     await card.getByText('待设置目录', { exact: true }).waitFor()
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')
-    await card.getByRole('button', { name: '检测可用性', exact: true }).click()
-    await card.getByRole('button', { name: '检测可用性', exact: true }).waitFor()
+    assert(await card.getByRole('button', { name: '重新检查', exact: true }).isDisabled())
     assert.equal(await card.getByText('已连接', { exact: true }).count(), 0)
     passed.push('cookie-login-next-step-and-missing-directory-status')
     for (const width of [1440, 390]) {
@@ -89,11 +91,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await card.getByRole('button', { name: '扫码登录', exact: true }).click()
     await page.getByRole('dialog').waitFor({ state: 'visible' })
     await page.getByRole('dialog').waitFor({ state: 'detached' })
-    await card.getByText('已连接', { exact: true }).waitFor()
+    await card.getByText('最近检查通过', { exact: true }).waitFor()
     assert.equal(pool[0].playbackParentCid, '55')
     passed.push('same-account-relogin-keeps-directory')
     await page.getByRole('button', { name: '添加共享小号', exact: true }).click()
     await page.getByRole('dialog', { name: '设置 共享小号 2 的秒传目录' }).waitFor()
+    assert(poolReads > 10, 'passive polling must continue during setup')
     await page.getByRole('button', { name: '保存目录并完成配置', exact: true }).click()
     await page.getByRole('dialog').waitFor({ state: 'detached' })
     const second = page.locator('article').filter({ has: page.getByRole('heading', { name: '共享小号 2', exact: true }) })
@@ -103,7 +106,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.reload()
     await second.getByText('秒传目录：0', { exact: true }).waitFor()
     assert.equal(await page.getByRole('dialog').count(), 0)
-    passed.push('qr-login-next-step-explicit-root-and-refresh')
+    passed.push('qr-login-next-step-explicit-root-and-refresh-during-passive-polling')
     assert.deepEqual(errors, [])
     console.log(JSON.stringify({ passed, pageErrors: errors }))
   } finally { await browser.close() }

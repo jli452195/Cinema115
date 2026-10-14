@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>115 助手 · UI 交互方案</title>
+  <style>
+    :root { color-scheme:light; --bg:#f6f8fb; --surface:#fff; --soft:#f8fafc; --text:#192438; --muted:#738198; --line:#e2e8f0; --blue:#2563eb; --blue-soft:#eff6ff; --green:#167950; --green-soft:#ecf8f1; --amber:#9a590b; --amber-soft:#fff8eb; --red:#bc3542; --red-soft:#fff0f2; --shadow:0 20px 65px #17243a20; }
+    [data-theme="dark"] { color-scheme:dark; --bg:#101722; --surface:#172130; --soft:#1c2839; --text:#e3eaf4; --muted:#9aaac1; --line:#304057; --blue:#659aff; --blue-soft:#203453; --green:#77d7a7; --green-soft:#203b30; --amber:#efbf70; --amber-soft:#3b3020; --red:#f494a1; --red-soft:#432a35; --shadow:0 20px 65px #0006; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    body:has(dialog[open]) { overflow:hidden; }
+    button,input,select { font:inherit; } button,a,select { -webkit-tap-highlight-color:transparent; }
+    button { cursor:pointer; } button:disabled { cursor:default; opacity:.45; }
+    a { color:var(--blue); text-decoration:none; } button:focus-visible,a:focus-visible,select:focus-visible { outline:3px solid #70a5ff; outline-offset:3px; }
+    .icon { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+    .preview { border-bottom:1px solid var(--line); background:var(--surface); }
+    .preview-inner { max-width:1200px; padding:10px 28px; margin:auto; display:flex; align-items:center; justify-content:space-between; gap:16px; font-size:12px; color:var(--muted); }
+    .preview-inner strong { font-weight:600; color:var(--text); margin-right:12px; }
+    .preview-actions { display:flex; align-items:center; gap:12px; }
+    .preview select { padding:4px 8px; width:155px; border-radius:7px; font-size:12px; }
+    .site-header { background:var(--surface); border-bottom:1px solid var(--line); }
+    .site-header-inner { max-width:1200px; margin:auto; padding:18px 28px; display:flex; align-items:center; gap:38px; }
+    .brand { font-weight:750; letter-spacing:2px; font-size:17px; color:var(--text); }
+    .site-nav { display:flex; gap:26px; color:var(--muted); } .site-nav span { font-size:13px; }
+    .site-end { margin-left:auto; color:var(--muted); font-size:12px; }
+    main { max-width:1200px; margin:auto; padding:28px 28px 64px; }
+    .breadcrumb { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; margin-bottom:22px; }
+    .breadcrumb .icon { width:12px; height:12px; }
+    .page-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:22px; }
+    h1 { font-size:26px; line-height:1.35; margin:0 0 7px; letter-spacing:-.6px; } h2 { font-size:19px; margin:0; line-height:1.4; } h3 { font-size:15px; margin:0; }
+    p { margin:0; } .muted { color:var(--muted); } .small { font-size:12px; } .description { color:var(--muted); font-size:13px; }
+    .btn { border:1px solid var(--line); background:var(--surface); color:var(--text); border-radius:9px; padding:9px 14px; display:inline-flex; align-items:center; justify-content:center; gap:7px; line-height:1.4; white-space:nowrap; font-size:13px; min-height:38px; }
+    .btn:hover:not(:disabled) { background:var(--soft); border-color:#a7b9d0; } .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; } .btn.primary:hover:not(:disabled) { background:#1d4ed8; border-color:#1d4ed8; }
+    .btn.ghost { border-color:transparent; background:transparent; color:var(--muted); padding:8px 10px; } .btn.danger { background:#bc3542; border-color:#bc3542; color:#fff; }
+    .btn.icon-only { width:36px; min-height:36px; padding:8px; }
+    .link-button { border:0; background:none; padding:0; color:var(--blue); font-size:12px; text-align:left; }
+    .primary-strip { display:flex; flex-wrap:wrap; align-items:center; gap:24px; padding:20px 22px; border:1px solid var(--line); border-radius:14px; background:var(--surface); margin-bottom:32px; }
+    .primary-identity { display:flex; gap:12px; align-items:center; min-width:240px; }
+    .role-icon { width:42px; height:42px; border:1px solid var(--line); background:var(--soft); border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--blue); }
+    .primary-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px; } .primary-title h2 { font-size:16px; }
+    .primary-meta { display:flex; flex-wrap:wrap; gap:20px; flex:1; font-size:13px; } .meta-label { color:var(--muted); font-size:11px; display:block; margin-bottom:2px; }
+    .primary-actions { display:flex; align-items:center; gap:8px; }
+    .pill { display:inline-flex; align-items:center; gap:5px; border-radius:6px; padding:3px 7px; font-size:11px; font-weight:500; line-height:1.5; white-space:nowrap; color:var(--muted); background:var(--soft); }
+    .pill.green { color:var(--green); background:var(--green-soft); } .pill.amber { color:var(--amber); background:var(--amber-soft); } .pill.red { color:var(--red); background:var(--red-soft); } .pill.blue { color:var(--blue); background:var(--blue-soft); }
+    .section-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .section-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; }
+    .section-actions { display:flex; align-items:center; gap:6px; }
+    .more-wrap { position:relative; }
+    .more-menu { position:absolute; right:0; top:42px; z-index:5; width:184px; padding:6px; border:1px solid var(--line); background:var(--surface); border-radius:11px; box-shadow:var(--shadow); }
+    .more-menu button { display:block; width:100%; border:0; color:var(--text); background:transparent; text-align:left; border-radius:6px; padding:9px 10px; font-size:13px; }
+    .more-menu button:hover { background:var(--soft); }
+    .overview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:14px; background:var(--surface); overflow:hidden; }
+    .metric { padding:18px 20px; position:relative; } .metric + .metric { border-left:1px solid var(--line); }
+    .metric-label { color:var(--muted); font-size:12px; display:flex; align-items:center; gap:7px; }
+    .metric-label .icon { width:14px; height:14px; }
+    .metric-value { margin:7px 0 3px; font-size:29px; line-height:1.45; letter-spacing:-.6px; font-weight:650; font-variant-numeric:tabular-nums; }
+    .metric-value.text-value { font-size:20px; line-height:2.1; letter-spacing:0; }
+    .metric-unit { font-weight:400; font-size:12px; color:var(--muted); margin-left:6px; letter-spacing:0; }
+    .metric-note { font-size:11px; color:var(--muted); }
+    .update { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; margin:10px 2px 16px; color:var(--muted); font-size:11px; }
+    .update span { display:inline-flex; align-items:center; gap:5px; } .update .icon { width:13px; height:13px; }
+    .banner { display:flex; align-items:flex-start; gap:10px; background:var(--amber-soft); color:var(--amber); border:1px solid #d9a04d35; border-radius:10px; padding:12px 14px; margin-bottom:20px; font-size:12px; }
+    .banner .icon { margin-top:1px; width:17px; height:17px; } .banner-body { flex:1; } .banner strong { display:block; font-weight:600; margin-bottom:2px; } .banner .link-button { color:var(--amber); white-space:nowrap; margin-top:2px; }
+    .account-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start; gap:16px; }
+    .account-card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px; }
+    .account-card-head { display:flex; justify-content:space-between; gap:9px; align-items:center; margin-bottom:8px; }
+    .account-sub { color:var(--muted); font-size:12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:5px; }
+    .capacity { margin:18px 0 16px; padding:14px; background:var(--soft); border-radius:9px; }
+    .capacity-head { display:flex; justify-content:space-between; gap:8px; align-items:baseline; font-size:12px; margin-bottom:10px; }
+    .capacity-numbers { font-weight:650; font-size:18px; font-variant-numeric:tabular-nums; } .capacity-numbers small { font-size:12px; font-weight:400; color:var(--muted); }
+    .track { height:5px; background:var(--line); border-radius:8px; overflow:hidden; margin-bottom:8px; } .track-fill { height:100%; background:var(--blue); border-radius:8px; } .track-fill.over { background:var(--amber); }
+    .capacity-parts { display:flex; flex-wrap:wrap; justify-content:space-between; font-size:11px; color:var(--muted); gap:5px; }
+    .shared-note { margin-top:8px; font-size:11px; color:var(--blue); }
+    .directory { padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--line); }
+    .directory-label { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; font-size:12px; }
+    .directory-value { font-size:12px; color:var(--muted); font-family:Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mode-row { display:flex; align-items:center; gap:12px; font-size:12px; margin-bottom:9px; } .mode-row select { flex:1; min-width:0; padding:7px 9px; font-size:12px; }
+    select,input { border:1px solid var(--line); border-radius:8px; color:var(--text); background:var(--surface); }
+    .check-time { color:var(--muted); font-size:11px; margin-bottom:14px; min-height:18px; }
+    .account-actions { display:flex; flex-wrap:wrap; gap:8px; } .account-actions .btn { padding:8px 10px; font-size:12px; }
+    .pool-footnote { color:var(--muted); font-size:11px; margin-top:14px; }
+    .empty { grid-column:1/-1; text-align:center; background:var(--surface); border:1px dashed var(--line); border-radius:14px; padding:36px 20px; }
+    .empty .role-icon { margin:0 auto 14px; } .empty p { margin:8px 0 18px; }
+    dialog { color:var(--text); background:var(--surface); border:0; padding:0; box-shadow:var(--shadow); }
+    dialog::backdrop { background:#13203960; backdrop-filter:blur(2px); }
+    .drawer { width:540px; max-width:100vw; height:100dvh; max-height:100dvh; margin:0 0 0 auto; border-radius:16px 0 0 16px; }
+    .drawer-frame { display:flex; flex-direction:column; height:100%; }
+    .drawer-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:24px; border-bottom:1px solid var(--line); flex:none; }
+    .drawer-header h2 { margin-bottom:5px; } .drawer-body { flex:1; overflow:auto; padding:24px; }
+    .drawer-footer { border-top:1px solid var(--line); padding:16px 24px max(16px,env(safe-area-inset-bottom)); display:flex; align-items:center; gap:10px; background:var(--surface); flex:none; }
+    .drawer-footer .footer-hint { font-size:12px; color:var(--muted); margin-right:auto; }
+    .form-group + .form-group { margin-top:26px; border-top:1px solid var(--line); padding-top:22px; }
+    .group-title { display:flex; align-items:center; gap:9px; margin-bottom:16px; } .group-title .icon { color:var(--muted); }
+    .fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .field { display:block; min-width:0; font-size:12px; } .field.full { grid-column:1/-1; }
+    .field input,.field select { display:block; width:100%; padding:9px 11px; margin:6px 0; height:40px; outline-offset:1px; }
+    .field small { color:var(--muted); display:block; font-size:11px; line-height:1.7; }
+    .form-error { color:var(--red); background:var(--red-soft); padding:10px 12px; border-radius:8px; margin:14px 0 0; font-size:12px; }
+    .info-box { font-size:12px; color:var(--muted); padding:12px 14px; border-radius:9px; background:var(--soft); line-height:1.8; margin-bottom:22px; }
+    .detail-section + .detail-section { margin-top:26px; } .detail-section h3 { margin-bottom:12px; }
+    .data-list { margin:0; font-size:12px; } .data-list div { display:flex; align-items:baseline; justify-content:space-between; gap:18px; padding:9px 0; border-bottom:1px solid var(--line); }
+    .data-list dt { color:var(--muted); } .data-list dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+    .event { display:flex; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); font-size:12px; } .event-time { font-size:11px; color:var(--muted); width:57px; flex:none; }
+    .modal { width:420px; max-width:calc(100vw - 32px); border-radius:14px; padding:24px; }
+    .modal h2 { font-size:18px; margin-bottom:12px; } .modal-content { color:var(--muted); font-size:13px; line-height:1.9; white-space:pre-line; }
+    .modal-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:24px; }
+    .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); max-width:calc(100vw - 32px); width:max-content; border:1px solid var(--line); box-shadow:var(--shadow); color:var(--text); background:var(--surface); padding:12px 18px; border-radius:10px; z-index:20; font-size:13px; }
+    [hidden] { display:none !important; }
+    @media(min-width:1100px) { .account-card:first-child:last-child { grid-column:span 1; } }
+    @media(max-width:1050px) { .account-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .primary-meta { flex:initial; margin-right:auto; } .primary-identity { min-width:220px; } .primary-actions { margin-left:auto; } }
+    @media(max-width:760px) {
+      main { padding:22px 18px 40px; } .preview-inner { padding:10px 18px; flex-wrap:wrap; gap:7px; } .preview-copy { display:none; } .preview-actions { margin-left:auto; }
+      .site-header-inner { padding:15px 18px; } .site-nav { gap:18px; } .site-end { display:none; }
+      .page-heading { margin-bottom:18px; } h1 { font-size:23px; } .description { font-size:12px; }
+      .primary-strip { padding:17px; gap:16px; margin-bottom:28px; } .primary-identity { width:100%; } .primary-meta { flex:1; gap:20px; } .primary-actions { width:100%; margin:0; } .primary-actions .btn.ghost { margin-left:auto; }
+      .section-title { width:100%; } .section-actions { width:100%; gap:5px; } .section-actions .primary { margin-left:auto; } .section-actions .btn { padding:8px 10px; font-size:12px; }
+      .overview { grid-template-columns:1fr 1fr; } .metric { padding:14px; } .metric:nth-child(3) { border-left:0; } .metric:nth-child(n+3) { border-top:1px solid var(--line); }
+      .metric-value { font-size:25px; } .metric-value.text-value { font-size:19px; line-height:1.9; } .metric-note { font-size:10px; }
+      .banner { flex-wrap:wrap; gap:8px; } .banner-body { min-width:220px; } .banner .link-button { margin-left:25px; }
+      .account-grid { grid-template-columns:1fr; } .account-card { padding:18px; } .drawer { width:100%; border-radius:0; }
+      .drawer-header { padding:20px 18px; } .drawer-body { padding:20px 18px; } .drawer-footer { padding:14px 18px max(14px,env(safe-area-inset-bottom)); }
+      .breadcrumb { margin-bottom:18px; } .btn { min-height:40px; } .mode-row select { min-height:40px; }
+    }
+    @media(prefers-reduced-motion:no-preference) { .btn { transition:background .15s,border-color .15s; } .track-fill { transition:width .25s; } }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" style="display:none" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-drive" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 13h18M7 16h.01M11 16h.01"/></symbol>
+    <symbol id="i-pool" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3" fill="var(--surface)"/><circle cx="16" cy="17" r="3" fill="var(--surface)"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 3v17h17M8 15v-4M13 15V7M18 15v-6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="m10.4 4.2-8 14A1.9 1.9 0 0 0 4 21h16a1.9 1.9 0 0 0 1.6-2.8l-8-14a1.9 1.9 0 0 0-3.2 0ZM12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><path d="M3 3h6v6H3ZM15 3h6v6h-6ZM3 15h6v6H3ZM15 15h3v3h3v3M21 12v3M12 3v3M12 12h4M12 18v3"/></symbol>
+    <symbol id="i-theme" viewBox="0 0 24 24"><path d="M20 13a8 8 0 0 1-9-9 8 8 0 1 0 9 9Z"/></symbol>
+  </svg>
+  <div class="preview">
+    <div class="preview-inner">
+      <div><strong>UI 交互方案</strong><span class="preview-copy">示例数据，操作仅演示交互</span></div>
+      <div class="preview-actions"><label for="scenario" class="small">场景</label><select id="scenario"><option value="current">当前截图：单 UID</option><option value="active">正常负载：三个 UID</option><option value="throttle">一个 UID 限流</option><option value="shared">同 UID 多份配置</option><option value="empty">尚未添加小号</option></select><button id="theme" class="btn ghost icon-only" aria-label="切换预览主题"><svg class="icon"><use href="#i-theme"/></svg></button></div>
+    </div>
+  </div>
+  <header class="site-header"><div class="site-header-inner"><span class="brand">CINEMA115</span><nav class="site-nav" aria-label="站点栏目示意"><span>电影</span><span>剧集</span><span>更新</span></nav><span class="site-end">管理工作台</span></div></header>
+  <main>
+    <nav class="breadcrumb" aria-label="当前位置"><span>首页</span><svg class="icon"><use href="#i-chevron"/></svg><span>115 网盘</span><svg class="icon"><use href="#i-chevron"/></svg><span>115 助手</span></nav>
+    <header class="page-heading"><div><h1>115 助手</h1><p class="description">管理主账号与共享小号，查看播放池运行状态。</p></div><button id="refresh" class="btn"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>刷新状态</button></header>
+    <section class="primary-strip" aria-label="主账号">
+      <div class="primary-identity"><div class="role-icon"><svg class="icon" aria-hidden="true"><use href="#i-drive"/></svg></div><div><div class="primary-title"><h2>主账号</h2><span class="pill" title="凭据已保存，当前可用性需主动检测">登录信息已保存</span></div><p class="muted small">资源管理与默认播放</p></div></div>
+      <div class="primary-meta"><div><span class="meta-label">115 UID</span>2461229</div><div><span class="meta-label">会员 / 剩余空间</span>VIP / 50.24 TB</div><div><span class="meta-label">登录客户端</span>TV</div></div>
+      <div class="primary-actions"><button class="btn" data-flow="primary-check">检测可用性</button><button class="btn" data-flow="primary-login"><svg class="icon" aria-hidden="true"><use href="#i-qr"/></svg>扫码登录</button><button class="btn ghost icon-only" aria-label="主账号详情与更多操作" data-flow="primary-details"><svg class="icon"><use href="#i-more"/></svg></button></div>
+    </section>
+    <section aria-labelledby="pool-title">
+      <header class="section-heading"><div class="section-title"><h2 id="pool-title">共享小号池</h2><span id="pool-count" class="muted small"></span></div><div class="section-actions"><button id="open-metrics" class="btn ghost"><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>运行详情</button><button id="open-settings" class="btn"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>调度设置</button><button class="btn primary" data-flow="add"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>添加小号</button><div class="more-wrap"><button id="more" class="btn ghost icon-only" aria-label="共享池更多操作" aria-expanded="false" aria-controls="more-menu"><svg class="icon"><use href="#i-more"/></svg></button><div id="more-menu" class="more-menu" hidden><button data-flow="rules">分配说明</button><button data-flow="users">管理 Emby 用户</button></div></div></div></header>
+      <div id="overview" class="overview" aria-label="共享池运行概览"></div>
+      <div class="update"><span><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>每 10 秒刷新状态，不触发网盘检查</span><span id="updated"></span></div>
+      <div id="banner" class="banner" role="status" hidden></div>
+      <div id="accounts" class="account-grid"></div>
+      <p class="pool-footnote">名额按实际 UID 共享，为逻辑调度容量，不代表 CDN 真实连接数。个人网盘由用户在个人中心管理。</p>
+    </section>
+  </main>
+  <dialog id="drawer" class="drawer" aria-labelledby="drawer-title"><div class="drawer-frame"><header class="drawer-header"><div><h2 id="drawer-title"></h2><p id="drawer-description" class="description"></p></div><button id="close-drawer" class="btn ghost icon-only" aria-label="关闭面板"><svg class="icon"><use href="#i-close"/></svg></button></header><div id="drawer-body" class="drawer-body"></div><footer id="drawer-footer" class="drawer-footer"></footer></div></dialog>
+  <dialog id="modal" class="modal" aria-labelledby="modal-title"><h2 id="modal-title"></h2><div id="modal-content" class="modal-content"></div><div id="modal-actions" class="modal-actions"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script>
+    const $ = id => document.getElementById(id);
+    const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let settings = { maxSessions:5, maxAttempts:3, budgetSeconds:90, leaseMinutes:5, cooldownSeconds:30, uidIntervalMs:250, globalIntervalMs:50, notificationBotId:'' };
+    let accounts = [], report = {}, drawerMode = '', draftBaseline = '', toastTimer, refreshTimer;
+    const checkedTime = () => new Date().toLocaleTimeString('zh-CN', {hour12:false,timeZone:'Asia/Shanghai'});
+    const seed = (id,uid,parts={}) => ({id,uid,name:`共享小号 ${id}`,state:'ready',mode:'enabled',sessions:0,preparing:0,active:0,residual:0,cid:'3526857126909576292',checkedAt:checkedTime(),...parts});
+    function loadScenario(value) {
+      accounts = value === 'empty' ? [] : [seed(1,'1218439')];
+      report = { requests:0,succeeded:0,failed:0,switches:0,samples:0,p50Ms:0,p95Ms:0,waiting:0,apiRequests:1,throttled:0,rejected:0,waitMs:0,resolved:0,copyResolutions:0,copyReuses:0,directLinkHits:0,sourceRequests:0,deviceConflicts:0,capacityDenials:0,capacityTransfers:0,peakUidSessions:0,stages:{credential_check:0,file_lookup:0,direct_link:0,instant_upload:0,directory_write:0,metadata:1},origins:{source:0,donor:0,target:0,probe:1},events:[] };
+      if (value === 'active' || value === 'throttle') {
+        accounts = [seed(1,'1218439',{sessions:3,active:2,preparing:1}),seed(2,'2086137',{sessions:2,active:1,residual:1}),seed(3,'3372056',{sessions:1,active:1})];
+        report = {...report,requests:200,succeeded:198,failed:2,switches:3,samples:200,p50Ms:620,p95Ms:2100,apiRequests:672,waiting:value === 'throttle' ? 3 : 0,resolved:198,copyResolutions:162,copyReuses:150,directLinkHits:96,sourceRequests:22,capacityDenials:2,peakUidSessions:4,stages:{credential_check:10,file_lookup:200,direct_link:190,instant_upload:60,directory_write:18,metadata:194},origins:{source:22,donor:10,target:635,probe:5}};
+        if(value === 'throttle') { accounts[1].state = 'throttled'; report.throttled = 1; report.events = [{time:checkedTime(),name:'共享小号 2',state:'进入限流冷却'}]; }
+      }
+      if(value === 'shared') accounts = [seed(1,'1218439',{sessions:2,active:1,residual:1}),seed(2,'1218439',{mode:'draining',sessions:2,active:1,residual:1})];
+      render();
+    }
+    const modes = {enabled:'参与调度',draining:'停止新分配',disabled:'禁用'};
+    const states = {ready:['最近检查通过','green'],unknown:['尚未检查',''],pending:['等待复查','amber'],throttled:['限流冷却','amber'],cooldown:['故障冷却','amber'],invalid_credentials:['登录失效','red'],invalid_directory:['目录失效','red'],unconfigured:['未完成配置','amber']};
+    function render() {
+      const uids = new Set(accounts.map(a=>a.uid)), participating = new Set(accounts.filter(a=>a.mode==='enabled' && a.cid).map(a=>a.uid));
+      const checked = new Set(accounts.filter(a=>a.mode==='enabled' && a.cid && a.state==='ready').map(a=>a.uid));
+      $('pool-count').textContent = `${accounts.length} 份配置 / ${uids.size} 个 UID`;
+      const metric = (label,value,note,isText=false,unit='') => `<div class="metric"><div class="metric-label">${escapeHTML(label)}</div><div class="metric-value ${isText?'text-value':''}">${escapeHTML(value)}${unit?`<span class="metric-unit">${escapeHTML(unit)}</span>`:''}</div><div class="metric-note">${escapeHTML(note)}</div></div>`;
+      $('overview').innerHTML = metric('检查通过的参与 UID',checked.size,`参与调度涉及 ${participating.size} 个 UID`,false,'个') + metric('本次运行取链成功率',report.requests?`${(report.succeeded/report.requests*100).toFixed(1)}%`:'暂无请求',`${report.succeeded} 成功 / ${report.failed} 失败`,!report.requests) + metric('最近取链耗时 p95',report.samples?report.p95Ms:'暂无样本',report.samples?`最近 ${report.samples} 个完成请求，含重试`:'有完成请求后显示耗时',!report.samples,report.samples?'ms':'') + metric('当前 API 等待',report.waiting,'等待 115 API 放行的请求',false,'个');
+      $('updated').textContent = `更新于 ${checkedTime()}`;
+      $('banner').hidden = !(participating.size === 1 || accounts.some(a=>['throttled','cooldown','invalid_credentials','invalid_directory'].includes(a.state) && a.mode==='enabled'));
+      if(!$('banner').hidden) {
+        const hasFault = accounts.some(a=>a.state!=='ready' && a.mode==='enabled');
+        $('banner').innerHTML = icon('warning') + `<div class="banner-body"><strong>${hasFault?'部分小号需要处理':'仅一个 UID 参与调度，暂无其他 UID 备用'}</strong><p>${hasFault?'查看对应卡片的健康状态。系统会在请求预算内尝试其他小号，不会使用主账号替代。':'发生限流或故障时需等待恢复，不会使用主账号替代。添加不同 UID 的健康小号可提供备用。'}</p></div><button class="link-button" ${hasFault?'data-report':'data-flow="add"'}>${hasFault?'查看运行详情':'添加备用小号'}</button>`;
+      }
+      $('accounts').innerHTML = accounts.length ? accounts.map(a=>{
+        const [status,tone] = states[a.state], shared = accounts.filter(b=>b.uid===a.uid).length, over = a.sessions>settings.maxSessions;
+        return `<article class="account-card"><header class="account-card-head"><h3>${escapeHTML(a.name)}</h3><span class="pill ${tone}">${escapeHTML(status)}</span></header><div class="account-sub"><span>UID ${escapeHTML(a.uid)}</span><span>VIP / 剩余 15.95 TB</span></div><div class="capacity"><div class="capacity-head"><span>UID 共享名额占用</span><span class="capacity-numbers" ${over?'style="color:var(--amber)"':''}>${a.sessions}<small> / ${settings.maxSessions}</small></span></div><div class="track" aria-hidden="true"><div class="track-fill ${over?'over':''}" style="width:${Math.min(100,a.sessions/settings.maxSessions*100)}%"></div></div><div class="capacity-parts"><span>准备 ${a.preparing}</span><span>活跃 ${a.active}</span><span>残余 ${a.residual}</span></div>${over?'<p class="shared-note" style="color:var(--amber)">超过当前上限，已有会话保留</p>':''}${shared>1?`<p class="shared-note">${shared} 份配置共用此 UID 名额，容量不累加</p>`:''}</div><div class="directory"><div class="directory-label"><span>秒传目录</span><button class="link-button" data-flow="directory" data-account="${a.id}">修改</button></div><p class="directory-value" title="${escapeHTML(a.cid)}">${escapeHTML(a.cid)}</p></div><label class="mode-row">调度模式<select data-mode="${a.id}" aria-label="${escapeHTML(a.name)} 调度模式">${Object.entries(modes).map(([key,label])=>`<option value="${key}" ${a.mode===key?'selected':''}>${label}</option>`).join('')}</select></label><p class="check-time">${a.state==='throttled'?'限流冷却中，等待后再检查':`上次检查 ${escapeHTML(a.checkedAt)}`}</p><div class="account-actions"><button class="btn" data-check="${a.id}">${icon('refresh')}重新检查</button><button class="btn" data-flow="login" data-account="${a.id}">${icon('qr')}扫码登录</button><button class="btn ghost icon-only" aria-label="${escapeHTML(a.name)} 配置详情与更多操作" data-flow="account-details" data-account="${a.id}">${icon('more')}</button></div></article>`;
+      }).join('') : `<div class="empty"><div class="role-icon">${icon('pool')}</div><h3>共享池还没有小号</h3><p class="muted small">添加小号，完成登录并设置秒传目录后，即可参与调度。</p><button class="btn primary" data-flow="add">${icon('plus')}添加第一个小号</button></div>`;
+    }
+    function toast(message) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').hidden=false; toastTimer=setTimeout(()=>$('toast').hidden=true,4000); }
+    function showModal(title,content,confirmText='知道了',onConfirm=null,danger=false,cancelText='取消') {
+      $('modal-title').textContent=title; $('modal-content').textContent=content;
+      $('modal-actions').innerHTML=`${onConfirm?`<button class="btn" id="modal-cancel">${escapeHTML(cancelText)}</button>`:''}<button class="btn ${danger?'danger':'primary'}" id="modal-confirm">${escapeHTML(confirmText)}</button>`;
+      $('modal-confirm').onclick=()=>{ $('modal').close(); if(onConfirm) onConfirm(); };
+      if(onConfirm) $('modal-cancel').onclick=()=>$('modal').close();
+      $('modal').showModal();
+    }
+    function flow(name,accountID) {
+      $('more-menu').hidden=true; $('more').setAttribute('aria-expanded','false');
+      const account=accounts.find(a=>a.id===Number(accountID));
+      const flows = {
+        add:['添加共享小号','演示流程：创建独立配置、扫码登录、设置秒传目录，再查看检查结果与调度模式。\n个人网盘由本人在个人中心管理，不进入管理员共享池。'],
+        login:['扫码登录','演示流程：选择登录客户端，生成二维码；扫码验证后保存当前配置的凭据。更换 UID 时先验证新凭据与新目录，成功后切换，失败保留原关联。'],
+        'primary-login':['主账号扫码登录','演示流程：选择客户端并扫码。主账号换 UID 时需要重新配置其他功能的目录。'],
+        'primary-check':['检测主账号可用性','实际页面会主动检查当前主账号凭据并更新会员与空间信息。原型不请求 115。'],
+        directory:['选择秒传目录','演示流程：浏览当前配置账号的目录，选择并保存。可明确选择根目录。目录必须属于当前目标账号，换号后不得沿用旧 UID 的目录。'],
+        'primary-details':['主账号详情','查看配置 ID、会员信息更新时间，以及手动配置 Cookie、清除登录信息、删除配置等操作。\n日常页面只呈现账号身份与常用动作。'],
+        'account-details':[`${account?.name||'小号'} 配置详情`,'查看配置 ID、登录客户端、检查结果和会员信息更新时间。更多操作包含修改名称、手动配置 Cookie、清除登录信息和删除配置；清除、删除保留现有确认流程。'],
+        rules:['共享小号分配说明','主账号负责资源管理与默认播放；共享小号用于动态播放池和秒传目标。\n同一实际 UID 的多份配置共享容量，凭据各自保存。\n池耗尽或不可用不会回退主账号；已签发直链不能立即撤回。'],
+        users:['管理 Emby 用户','实际页面跳转至 /emby/users，管理用户的播放来源与设备策略。\nUID 容量设置与用户设备策略分开管理。']
+      };
+      if(flows[name]) showModal(...flows[name]);
+    }
+    const field = (key,label,min,max,hint) => `<label class="field">${label}<input name="${key}" type="number" step="1" required min="${min}" max="${max}" value="${settings[key]}"><small>${hint}</small></label>`;
+    function openDrawer(mode) {
+      drawerMode=mode;
+      $('drawer-title').textContent=mode==='settings'?'调度设置':'运行详情';
+      $('drawer-description').textContent=mode==='settings'?'配置 UID 容量、请求预算与通知。':'查看本次运行指标和近期健康事件。';
+      if(mode==='settings') {
+        $('drawer-body').innerHTML=`<form id="settings-form"><section class="form-group"><div class="group-title">${icon('pool')}<h3>容量与保留</h3></div><div class="fields">${field('maxSessions','每 UID 名额上限',1,20,'1–20，同 UID 配置共享')}${field('leaseMinutes','无停止通知时保守保留（分钟）',5,1440,'5–1440 分钟')}</div><p class="small muted" style="margin-top:12px">降低上限不会主动结束已有会话；当前占用达到上限时限制新的名额分配。</p></section><section class="form-group"><div class="group-title">${icon('clock')}<h3>重试与冷却</h3></div><div class="fields">${field('maxAttempts','最多尝试账号数',1,3,'1–3 个，故障时有界切换')}${field('budgetSeconds','取链总预算（秒）',5,90,'5–90 秒，包含重试')}${field('cooldownSeconds','临时错误冷却（秒）',5,3600,'5–3600 秒')}</div></section><section class="form-group"><div class="group-title">${icon('settings')}<h3>API 频率与通知</h3></div><div class="fields">${field('uidIntervalMs','每 UID 请求间隔（毫秒）',100,10000,'100–10000 毫秒')}${field('globalIntervalMs','全局请求间隔（毫秒）',10,1000,'10–1000，不能大于每 UID 间隔')}<label class="field full">池健康通知<select name="notificationBotId"><option value="">关闭外部通知</option></select><small>已配置且可用的 Telegram Bot 才可选择。</small></label></div></section><p id="form-error" class="form-error" role="alert" hidden></p></form>`;
+        $('drawer-footer').innerHTML='<span id="draft-state" class="footer-hint">没有未保存修改</span><button id="cancel-settings" class="btn">取消</button><button id="save-settings" class="btn primary" type="submit" form="settings-form" disabled>保存设置</button>';
+        draftBaseline=JSON.stringify(readDraft());
+        $('settings-form').addEventListener('input',updateDraft);
+        $('settings-form').addEventListener('change',updateDraft);
+        $('settings-form').onsubmit=event=>{event.preventDefault();saveSettings();};
+        $('cancel-settings').onclick=closeDrawer;
+      } else {
+        renderReport();
+        $('drawer-footer').innerHTML='<span class="footer-hint">示例数据，不请求外部服务</span><button id="close-report" class="btn">关闭</button>';
+        $('close-report').onclick=closeDrawer;
+      }
+      $('drawer').showModal();
+    }
+    function readDraft() { const values=Object.fromEntries(new FormData($('settings-form'))); Object.keys(values).forEach(key=>{if(key!=='notificationBotId') values[key]=Number(values[key]);}); return values; }
+    function isDirty() { return drawerMode==='settings' && JSON.stringify(readDraft())!==draftBaseline; }
+    function updateDraft() { const dirty=isDirty(); $('draft-state').textContent=dirty?'有未保存修改':'没有未保存修改'; $('save-settings').disabled=!dirty; }
+    function closeDrawer() { if(isDirty()) showModal('放弃未保存的修改？','关闭后将保留上一次保存的设置。','放弃修改',()=>{$('drawer').close();drawerMode='';},false,'继续编辑'); else {$('drawer').close();drawerMode='';} }
+    function saveSettings() {
+      const draft=readDraft(), error=$('form-error');
+      if(draft.globalIntervalMs>draft.uidIntervalMs) { error.hidden=false;error.textContent='全局请求间隔不能大于每 UID 请求间隔。';document.querySelector('[name="globalIntervalMs"]')?.focus();return; }
+      if(Object.entries(draft).some(([key,value])=>key!=='notificationBotId' && !Number.isInteger(value))) {error.hidden=false;error.textContent='数值需要填写整数。';return;}
+      settings={...draft}; $('drawer').close();drawerMode='';render();toast('调度设置已保存（演示）');
+    }
+    function renderReport() {
+      const rows=items=>`<dl class="data-list">${items.map(([name,value])=>`<div><dt>${escapeHTML(name)}</dt><dd>${escapeHTML(value)}</dd></div>`).join('')}</dl>`;
+      const ratio=(value,total)=>total?`${(value/total*100).toFixed(1)}%（${value}/${total}）`:'暂无样本';
+      const stages=[['凭据检查',report.stages.credential_check],['文件查询',report.stages.file_lookup],['取链',report.stages.direct_link],['秒传提交',report.stages.instant_upload],['目录写入',report.stages.directory_write],['其他元数据',report.stages.metadata]];
+      $('drawer-body').innerHTML=`<div class="info-box">指标从服务本次启动开始累计。耗时统计保留最近最多 256 个完成请求，包含失败和重试，不代表播放器起播时间。</div><section class="detail-section"><h3>取链与容量事件</h3>${rows([['成功 / 失败',`${report.succeeded} / ${report.failed}`],['p50 / p95',report.samples?`${report.p50Ms} / ${report.p95Ms} ms`:'暂无样本'],['尝试切换次数',report.switches],['设备冲突 / 容量拒绝 / 容量转交',`${report.deviceConflicts} / ${report.capacityDenials} / ${report.capacityTransfers}`],['运行期单 UID 峰值占用',report.peakUidSessions]])}<p class="small muted" style="margin-top:10px">失败包含业务准入拒绝，不等同于 115 上游故障。</p></section><section class="detail-section"><h3>解析与副本复用</h3>${rows([['成功解析',report.resolved],['副本路径',report.copyResolutions],['已有副本复用率',ratio(report.copyReuses,report.copyResolutions)],['直链缓存命中',report.directLinkHits],['源盘 API 放行',report.sourceRequests]])}<p class="small muted" style="margin-top:10px">复用率分母为成功副本路径，包含直链缓存命中。</p></section><section class="detail-section"><h3>115 API 预算</h3>${rows([['放行请求',report.apiRequests],['收到 429',report.throttled],['队列拒绝',report.rejected],['当前等待',report.waiting],['累计等待',`${report.waitMs} ms`]])}</section><section class="detail-section"><h3>API 阶段</h3>${rows(stages)}<p class="small muted" style="margin-top:10px">统计为预算放行次数，不包含 CDN 读取。</p></section><section class="detail-section"><h3>API 来源</h3>${rows([['源盘',report.origins.source],['校验副本',report.origins.donor],['目标',report.origins.target],['后台探测',report.origins.probe]])}</section><section class="detail-section"><h3>最近健康事件</h3>${report.events.length?report.events.slice(-10).reverse().map(e=>`<div class="event"><span class="event-time">${escapeHTML(e.time)}</span><div><strong>${escapeHTML(e.name)}</strong><p class="muted">${escapeHTML(e.state)}</p></div></div>`).join(''):'<p class="small muted">暂无健康状态变化事件</p>'}</section>`;
+    }
+    document.addEventListener('click',event=>{
+      const target=event.target.closest('button'); if(!target) return;
+      if(target.dataset.flow) flow(target.dataset.flow,target.dataset.account);
+      if(target.hasAttribute('data-report')) openDrawer('metrics');
+      if(target.dataset.check) {
+        const account=accounts.find(a=>a.id===Number(target.dataset.check));
+        target.disabled=true; target.textContent='检查中…';
+        setTimeout(()=>{ if(account.state==='throttled') {render();toast('仍处于限流冷却，请稍后再检查（演示）');return;} account.state='ready';account.checkedAt=checkedTime();render();toast(`${account.name} 最近检查通过（演示）`);},650);
+      }
+      if(!$('more-menu').hidden && !event.target.closest('.more-wrap')) {$('more-menu').hidden=true;$('more').setAttribute('aria-expanded','false');}
+    });
+    $('accounts').addEventListener('change',event=>{
+      if(!event.target.dataset.mode) return;
+      const account=accounts.find(a=>a.id===Number(event.target.dataset.mode)), value=event.target.value;
+      event.target.value=account.mode;
+      const apply=()=>{account.mode=value;render();toast(value==='draining'?'已停止为此配置分配新播放，已有会话保留（演示）':value==='disabled'?'已禁用此配置，后续取链将被拒绝（演示）':'已恢复参与调度，仍需满足健康与容量条件（演示）');};
+      if(value==='disabled') showModal(`禁用 ${account.name}？`,'禁用后拒绝使用此配置的后续取链。已签发的直链无法立即撤回。\n网盘文件不会删除。','确认禁用',apply,true);else apply();
+    });
+    $('scenario').onchange=()=>loadScenario($('scenario').value);
+    $('theme').onclick=()=>document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
+    $('open-settings').onclick=()=>openDrawer('settings'); $('open-metrics').onclick=()=>openDrawer('metrics'); $('close-drawer').onclick=closeDrawer;
+    $('drawer').addEventListener('cancel',event=>{event.preventDefault();closeDrawer();});
+    $('drawer').addEventListener('click',event=>{if(event.target===$('drawer') && event.clientX<$('drawer').getBoundingClientRect().left) closeDrawer();});
+    $('more').onclick=()=>{const hidden=!$('more-menu').hidden;$('more-menu').hidden=hidden;$('more').setAttribute('aria-expanded',String(!hidden));if(!hidden)$('more-menu').querySelector('button').focus();};
+    document.addEventListener('keydown',event=>{if(event.key==='Escape' && !$('more-menu').hidden){$('more-menu').hidden=true;$('more').setAttribute('aria-expanded','false');$('more').focus();}});
+    $('refresh').onclick=()=>{render();if(drawerMode==='metrics')renderReport();toast('已刷新状态。主动检查请使用卡片上的“重新检查”（演示）');};
+    loadScenario('current');
+    refreshTimer=setInterval(()=>{if(!document.hidden){$('updated').textContent=`更新于 ${checkedTime()}`;if(drawerMode==='metrics')renderReport();}},10000);
+    addEventListener('pagehide',()=>{clearInterval(refreshTimer);clearTimeout(toastTimer);});
+  </script>
+</body>
+</html>
