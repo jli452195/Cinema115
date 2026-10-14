@@ -14,10 +14,15 @@ const directories = ref<Directory[]>([])
 const loading = ref(true)
 const error = ref('')
 const lifecycle = new AbortController()
+let loadGeneration = 0, loadController: AbortController | undefined
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
 const previousOverflow = document.body.style.overflow
 
 async function loadCID(cid: string) {
+  const generation = ++loadGeneration
+  loadController?.abort()
+  loadController = new AbortController()
+  const loadSignal = loadController.signal
   currentCID.value = cid
   loading.value = true
   error.value = ''
@@ -25,8 +30,9 @@ async function loadCID(cid: string) {
     const found: Directory[] = []
     for (let offset = 0; ;) {
       const query = `?accountId=${encodeURIComponent(props.accountId)}&cid=${encodeURIComponent(cid)}&offset=${offset}`
-      const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(45000)])
+      const signal = AbortSignal.any([lifecycle.signal, loadSignal, AbortSignal.timeout(45000)])
       const data = props.loadPage ? await props.loadPage(cid, offset, signal) : await p115Request<DirectoryPage>(props.token, `${props.endpoint}${query}`, { signal })
+      if (generation !== loadGeneration || signal.aborted) return
       found.push(...(data.directories ?? data.files?.filter(file => file.directory) ?? []))
       const length = data.files?.length ?? 100
       if (data.files ? offset + length >= (data.count ?? 0) : !data.hasMore) break
@@ -35,11 +41,11 @@ async function loadCID(cid: string) {
       if (next <= offset) throw new Error('目录分页无进展，请刷新重试')
       offset = next
     }
-    if (!lifecycle.signal.aborted) directories.value = found
+    if (!lifecycle.signal.aborted && generation === loadGeneration) directories.value = found
   } catch (reason) {
-    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取 115 目录失败'
+    if (!lifecycle.signal.aborted && generation === loadGeneration) error.value = reason instanceof Error ? reason.message : '读取 115 目录失败'
   } finally {
-    if (!lifecycle.signal.aborted) loading.value = false
+    if (!lifecycle.signal.aborted && generation === loadGeneration) loading.value = false
   }
 }
 
@@ -74,6 +80,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   lifecycle.abort()
+  loadController?.abort()
   dialog.value?.close()
   document.body.style.overflow = previousOverflow
   if (previousFocus?.isConnected) previousFocus.focus()
@@ -95,7 +102,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-4" :aria-busy="loading">
           <div v-if="loading" class="grid min-h-40 place-items-center text-sm text-slate-400 dark:text-slate-400">正在读取 115 目录…</div>
-          <div v-else-if="error" class="grid min-h-40 place-items-center px-5 text-center"><div><p role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p><button type="button" class="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline" @click="openDirectory()">重新读取</button></div></div>
+          <div v-else-if="error" class="grid min-h-40 place-items-center px-5 text-center"><div><p role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p><button type="button" class="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline" @click="loadCID(currentCID)">重新读取</button></div></div>
           <div v-else-if="!directories.length" class="grid min-h-40 place-items-center text-center text-sm text-slate-400 dark:text-slate-400">当前目录没有子文件夹</div>
           <div v-else class="space-y-2">
             <button v-for="directory in directories" :key="directory.id" type="button" class="flex w-full items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/50 dark:hover:bg-slate-800" @click="openDirectory(directory)">
@@ -106,7 +113,7 @@ onBeforeUnmount(() => {
         <p v-if="saveError" role="alert" class="shrink-0 px-5 pb-3 text-sm text-red-600 dark:text-red-400">{{ saveError }}</p>
         <footer class="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4">
           <button type="button" :disabled="saving" class="rounded-lg px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40" @click="close">取消</button>
-          <button v-if="allowCreate" type="button" :disabled="loading || !!error" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" @click="select(true)">在此新建 Cinema115 并使用</button>
+          <button v-if="allowCreate" type="button" :disabled="saving || loading || !!error" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" @click="select(true)">在此新建 Cinema115 并使用</button>
           <button type="button" :disabled="saving || loading || !!error || (!allowRoot && currentCID === '0')" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="select(false)">{{ saving ? '保存中…' : confirmLabel }}</button>
         </footer>
       </section>

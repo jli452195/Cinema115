@@ -2,14 +2,14 @@
 import PageBreadcrumb from './PageBreadcrumb.vue'
 import WorkbenchHeader from './WorkbenchHeader.vue'
 
-defineProps<{ title: string; description: string; parent?: { label: string; to: string } }>()
+defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string }>()
 defineEmits<{ logout: [] }>()
 </script>
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="$emit('logout')" />
-    <main class="workbench-content management-content mx-auto w-full max-w-7xl min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
+    <main :class="contentClass || 'max-w-7xl'" class="workbench-content management-content mx-auto w-full min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <PageBreadcrumb :title="title" :parent="parent" class="mb-5" />
       <header class="management-heading mb-7 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2">
         <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{{ title }}</h1>
