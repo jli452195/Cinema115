@@ -28,16 +28,16 @@ const header = ref<HTMLElement>()
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const scrollY = ref(0)
-const highlightOverBackdrop = computed(() => props.overBackdrop && scrollY.value < 64)
+const highlightOverBackdrop = computed(() => props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
 const headerStyle = computed(() => {
   const opacity = Math.min(Math.max(scrollY.value / 100, 0), 1)
   return {
     backgroundColor: props.tonalSurface
-      ? `color-mix(in srgb, var(--md-sys-color-surface) ${opacity * 85}%, transparent)`
+      ? `color-mix(in srgb, var(--detail-navigation-surface, var(--md-sys-color-surface)) ${90 + opacity * 6}%, transparent)`
       : `rgb(var(--header-bg) / ${opacity * 0.85})`,
-    backdropFilter: `blur(${opacity * 12}px)`,
+    backdropFilter: `blur(${props.tonalSurface ? 16 : opacity * 12}px)`,
     borderColor: props.tonalSurface
-      ? `color-mix(in srgb, var(--md-sys-color-outline-variant) ${opacity * 60}%, transparent)`
+      ? `color-mix(in srgb, var(--md-sys-color-outline-variant) ${30 + opacity * 30}%, transparent)`
       : `rgb(var(--header-border) / ${opacity})`
   }
 })
@@ -169,17 +169,21 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .dark .workbench-header.over-backdrop .icon-button:hover,
 .dark .workbench-header.over-backdrop .icon-button.selected { background: rgb(var(--color-slate-950) / 25%); }
 .workbench-header.over-backdrop .top-link.selected { background: transparent; }
-.workbench-header.tonal-surface:not(.over-backdrop) .top-link,
-.workbench-header.tonal-surface:not(.over-backdrop) .icon-button { color: var(--md-sys-color-on-surface-variant); }
-.workbench-header.tonal-surface:not(.over-backdrop) .top-link.selected,
-.workbench-header.tonal-surface:not(.over-backdrop) .top-link:hover,
-.workbench-header.tonal-surface:not(.over-backdrop) .icon-button:hover,
-.workbench-header.tonal-surface:not(.over-backdrop) .icon-button.selected { color: var(--md-sys-color-on-surface); }
-.workbench-header.tonal-surface:not(.over-backdrop) .nav-indicator,
-.workbench-header.tonal-surface:not(.over-backdrop) .top-link:hover,
-.workbench-header.tonal-surface:not(.over-backdrop) .icon-button:hover,
-.workbench-header.tonal-surface:not(.over-backdrop) .icon-button.selected { background: var(--md-sys-color-surface-container-high); }
-.workbench-header.tonal-surface:not(.over-backdrop) .nav-indicator::after { background: var(--md-sys-color-primary); }
+.workbench-header.tonal-surface .top-link,
+.workbench-header.tonal-surface .icon-button { color: var(--md-sys-color-on-surface-variant); }
+.workbench-header.tonal-surface .top-link.selected,
+.workbench-header.tonal-surface .top-link:hover,
+.workbench-header.tonal-surface .icon-button:hover,
+.workbench-header.tonal-surface .icon-button.selected { color: var(--md-sys-color-on-surface); }
+.workbench-header.tonal-surface .nav-indicator,
+.workbench-header.tonal-surface .top-link:hover,
+.workbench-header.tonal-surface .icon-button:hover,
+.workbench-header.tonal-surface .icon-button.selected { background: var(--md-sys-color-secondary-container); }
+.workbench-header.tonal-surface .top-link.selected { color: var(--md-sys-color-on-secondary-container); }
+.workbench-header.tonal-surface .nav-indicator::after { background: rgb(var(--color-accent)); height: 3px; opacity: 1; box-shadow: none; }
+.workbench-header.tonal-surface .top-link { text-shadow: none; }
+.workbench-header.tonal-surface .icon-button svg { filter: none; }
+.workbench-header.tonal-surface :is(a, button):focus-visible { outline-color: rgb(var(--color-accent)); }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
 @media (max-width: 639px) {

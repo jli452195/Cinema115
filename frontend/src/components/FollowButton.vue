@@ -54,7 +54,8 @@ onBeforeUnmount(() => { controller?.abort(); clearTimeout(cooldownTimer) })
         type="button"
         :disabled="loading || busy || coolingDown || !state || (available && !state.subscribed)"
         :aria-label="state?.subscribed ? '取消追更' : undefined"
-        class="group inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+        class="follow-button group inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+        :data-state="state?.subscribed ? 'subscribed' : available ? 'available' : 'idle'"
         :class="[
           state?.subscribed
             ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20'

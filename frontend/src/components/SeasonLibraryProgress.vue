@@ -82,8 +82,8 @@ onBeforeUnmount(() => observer?.disconnect())
       {{ label }}
     </span>
     <span v-if="state === 'present' && activeTotal" class="inline-flex w-full min-w-0 sm:w-auto">
-      <span class="season-progress-frame group/progress relative inline-flex w-44 max-w-full items-center rounded-lg border px-2.5 py-2" :title="hint">
-      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="season-progress-track flex h-1.5 w-full overflow-hidden rounded-full">
+      <span class="season-progress-frame group/progress relative inline-flex w-36 max-w-full items-center py-1.5" :title="hint">
+      <span role="progressbar" :aria-label="hint" :aria-valuenow="activeCollected" :aria-valuemax="activeTotal" :aria-valuemin="0" :aria-valuetext="`${numberingMode ? '已确认集数' : '已播出'} ${activeTotal} 集，已入库 ${activeCollected} 集。${hint}`" class="season-progress-track flex h-1 w-full overflow-hidden rounded-full">
         <span v-for="(segment, index) in activeSegments" :key="index" class="h-full min-w-0" :style="{ flex: `${segment.count} 1 0%` }" :class="numberingMode ? `season-segment-${segment.state}` : (segment.owned ? 'season-segment-owned' : 'season-segment-unknown')"></span>
       </span>
       <span aria-hidden="true" class="media-tonal-panel pointer-events-none absolute left-1/2 top-1/2 z-10 hidden w-max max-w-[min(28rem,70vw)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-center text-[11px] font-medium text-slate-700 dark:text-slate-300 shadow-md group-hover/progress:block group-focus-visible/season:block">{{ hint }}</span>
@@ -96,16 +96,14 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <style scoped>
 .season-status-owned { color: #059669; }
-.season-status-missing { color: rgb(var(--color-accent-text)); }
+.season-status-missing { color: #b45309; }
 .season-status-unknown { color: var(--md-sys-color-on-surface-variant, #64748b); }
-.season-progress-frame { background: #f1f5f9; border-color: #e2e8f0; }
-.season-progress-track, .season-segment-unknown { background: #cbd5e1; }
-.season-segment-owned { background: #3b82f6; }
+.season-progress-track, .season-segment-unknown { background: var(--md-sys-color-surface-container-highest, #cbd5e1); }
+.season-segment-owned { background: var(--md-sys-color-primary, #3b82f6); }
 .season-segment-missing { background: #fbbf24; }
 .dark .season-status-owned { color: rgb(110 231 183 / 90%); }
 .dark .season-status-missing { color: rgb(252 211 77 / 90%); }
-.dark .season-progress-frame { background: rgb(var(--color-slate-800)); border-color: rgb(var(--color-slate-700)); }
-.dark .season-progress-track, .dark .season-segment-unknown { background: rgb(var(--color-slate-600)); }
-.dark .season-segment-owned { background: #6396d4; }
+.dark .season-progress-track, .dark .season-segment-unknown { background: var(--md-sys-color-surface-container-highest, rgb(var(--color-slate-600))); }
+.dark .season-segment-owned { background: var(--md-sys-color-primary, #6396d4); }
 .dark .season-segment-missing { background: #b89439; }
 </style>
