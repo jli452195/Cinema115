@@ -205,7 +205,7 @@ async function scan(file: DriveFile) {
   scannedEntryKey = entryKey
   selectionRoot.value = file.directory ? `${config.value.sourcePath.replace(/\/$/, '')}/${file.name}` : config.value.sourcePath
   rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: '' }))
-  if (!sameEntry) query.value = file.name.replace(/\.(mkv|mp4|avi|mov|ts|m2ts|iso)$/i, '')
+  if (!sameEntry) query.value = file.directory ? file.name : file.name.replace(/\.[^.]+$/, '')
   if (rows.value.length) await scrollToStep(media.value ? 3 : 2)
   notice.value = rows.value.length ? `已扫描 ${rows.value.length} 个视频，${media.value ? '已保留作品及季选择，请核对文件。' : '请指定 TMDB 作品。'}` : '所选条目中没有支持的视频文件。'
 }

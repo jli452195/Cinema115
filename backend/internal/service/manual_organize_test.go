@@ -458,6 +458,73 @@ func TestManualOrganizeWorkerStopsWithContext(t *testing.T) {
 	}
 }
 
+func TestManualOrganizeScansDefaultVideoFormats(t *testing.T) {
+	s, drive, id, _ := newOrganizeTest(t)
+	extensions := strings.Split(DefaultVideoExtensions, ",")
+	drive.dirs["30"] = []p115.ShareFile{{ID: "104", Name: "readme.txt", Size: 1}}
+	for i, ext := range extensions {
+		drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: fmt.Sprint(200 + i), Name: "视频." + strings.ToUpper(ext), Size: 100})
+	}
+	scan, err := s.Scan(context.Background(), id, "10", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.Files) != len(extensions) {
+		t.Fatalf("扫描遗漏默认视频格式: %+v", scan.Files)
+	}
+	for _, file := range scan.Files {
+		if file.MediaType != "video" {
+			t.Fatalf("错误的媒体类型: %+v", file)
+		}
+	}
+}
+
+func TestManualOrganizeRMVBWithSubtitles(t *testing.T) {
+	for _, ext := range []string{"rmvb", "RMVB"} {
+		for _, single := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/single=%t", ext, single), func(t *testing.T) {
+				s, drive, id, _ := newOrganizeTest(t)
+				drive.dirs["30"] = []p115.ShareFile{
+					{ID: "101", Name: "閃靈二人組 - 01." + ext, Size: 100},
+					{ID: "102", Name: "閃靈二人組 - 01.zh-CN.srt", Size: 10},
+					{ID: "104", Name: "readme.txt", Size: 1},
+				}
+				parent, entry := "10", "30"
+				if single {
+					config := s.Config()
+					config.SourceCID, config.SourcePath = "30", "/来源/待整理"
+					if err := s.SaveConfig(config); err != nil {
+						t.Fatal(err)
+					}
+					parent, entry = "30", "101"
+				}
+				scan, err := s.Scan(context.Background(), id, parent, entry)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(scan.Files) != 2 || scan.Files[0].ID != "101" || scan.Files[0].MediaType != "video" || scan.Files[1].ID != "102" || scan.Files[1].MediaType != "subtitle" {
+					t.Fatalf("RMVB 或配套字幕未被正确扫描: %+v", scan.Files)
+				}
+				plan, err := s.Preview(context.Background(), id, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Subtitles: true, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(plan.Items) != 2 || plan.Items[0].Name != "测试作品 - S01E01.rmvb" || plan.Items[1].Name != "测试作品 - S01E01.zh-CN.srt" {
+					t.Fatalf("RMVB 或字幕命名错误: %+v", plan.Items)
+				}
+				job := organizeTestRun(t, s, id, plan)
+				if job.Status != "completed" || len(drive.dirs["30"]) != 1 || drive.dirs["30"][0].ID != "104" {
+					t.Fatalf("RMVB 整理失败或影响未选文件: %+v", job)
+				}
+				files := drive.dirs[job.Items[0].TargetCID]
+				if len(files) != 2 || files[0].ID != "101" || files[0].Size != 100 || files[0].Name != plan.Items[0].Name {
+					t.Fatalf("整理后应保留原文件身份和格式: %+v", files)
+				}
+			})
+		}
+	}
+}
+
 func TestManualOrganizeSingleVideoAndAmbiguousSubtitles(t *testing.T) {
 	s, drive, id, _ := newOrganizeTest(t)
 	config := s.Config()

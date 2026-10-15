@@ -84,6 +84,16 @@ async function harness(t) {
   return { state, requests, conflict: value => { conflict = value }, historyFailure: value => { historyFailure = value }, scanFailure: value => { scanFailure = value }, detailFailure: value => { detailFailure = value }, metadata: value => { selectedMedia = structuredClone(value) } }
 }
 
+test('scan search terms strip video extensions and preserve dotted directory names', async t => {
+  const { state: s } = await harness(t)
+  await s.scan(entry)
+  assert.equal(s.query, 'Example.S02')
+  for (const [index, ext] of ['rmvb', 'RMVB', 'webm', 'mkv'].entries()) {
+    await s.scan({ id: String(100 + index), name: `閃靈二人組 - 01.${ext}`, directory: false, size: 100 })
+    assert.equal(s.query, '閃靈二人組 - 01')
+  }
+})
+
 test('step navigation keeps edits and does not allow unavailable steps', async t => {
   const { state: s, requests } = await harness(t)
   assert.equal(s.configDirty, false)

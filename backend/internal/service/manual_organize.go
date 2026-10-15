@@ -299,11 +299,14 @@ func (s *ManualOrganize) list(ctx context.Context, cid, cookie string) ([]p115.S
 var organizeEpisode = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:E|[- ]E?\d)`)
 var organizeSingleEpisode = regexp.MustCompile(`(?i)S(\d{1,3})E(\d{1,4})(?:\D|$)`)
 var organizeQuality = regexp.MustCompile(`(?i)(?:2160p|1080p|720p|480p|4k|remux|bluray|blu-ray|web-dl|webrip|hdtv|x265|x264|h[.]?265|h[.]?264|hevc|hdr10\+?|hdr|dovi)`)
+var organizeVideoExtensions = extensionSet("", DefaultVideoExtensions)
 
 func organizeMedia(name string) string {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".m2ts", ".wmv", ".iso":
+	ext := strings.ToLower(path.Ext(name))
+	if organizeVideoExtensions[ext] {
 		return "video"
+	}
+	switch ext {
 	case ".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx":
 		return "subtitle"
 	}
