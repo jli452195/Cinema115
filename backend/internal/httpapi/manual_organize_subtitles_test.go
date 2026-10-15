@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +16,68 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
+
+type subtitleSourceAPIDrive struct {
+	*subtitleAPIDrive
+	reads int
+}
+
+func (d *subtitleSourceAPIDrive) ReadSubtitleSource(ctx context.Context, parent string, file p115.ShareFile, cookie string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if file.ID != "600" || parent != "10" || cookie == "" {
+		return nil, fmt.Errorf("incorrect source identity")
+	}
+	d.reads++
+	return []byte("archive"), nil
+}
+
+func TestManualOrganizeSubtitleSourceBinaryAndRelease(t *testing.T) {
+	router, accounts, id := setupAccountsAPI(t, nil, nil)
+	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "organize.enc"), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := p115.ShareFile{ID: "101", Name: "Movie.mkv", Size: 100}
+	archive := p115.ShareFile{ID: "600", Name: "subtitles.zip", Size: 7}
+	job := service.OrganizeJob{ID: "job", Config: service.OrganizeConfig{AccountID: id}, Status: "completed", Items: []service.OrganizeItem{{File: service.OrganizeFile{ShareFile: video, MediaType: "video"}, TargetCID: "10", TargetPath: "/movies/Movie.mkv", Status: "done"}}}
+	doc, err := json.Marshal(map[string]any{"version": 1, "jobs": []service.OrganizeJob{job}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(string(doc)); err != nil {
+		t.Fatal(err)
+	}
+	drive := &subtitleSourceAPIDrive{subtitleAPIDrive: &subtitleAPIDrive{files: []p115.ShareFile{video, archive}}}
+	organizer, err := service.NewManualOrganize(store, accounts, drive, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RegisterManualOrganize(router.Group("/api/admin"), organizer)
+	body, err := json.Marshal(service.SubtitleSourcesInput{AccountID: id, JobID: "job", Files: []service.SubtitleSourceFile{{ShareFile: archive, ParentID: "10"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := accountRequest(t, router, "POST", "/manual-organize/subtitles/sources", string(body), 200)
+	var plan service.SubtitleSources
+	if err := json.Unmarshal(response.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "/manual-organize/subtitles/sources/" + plan.ID
+	for range 3 {
+		response = accountRequest(t, router, "GET", endpoint+"/files/600?accountId="+id, "", 200)
+		if response.Body.String() != "archive" || response.Header().Get("Content-Type") != "application/octet-stream" || response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatal("binary response or privacy headers invalid")
+		}
+	}
+	accountRequest(t, router, "GET", endpoint+"/files/601?accountId="+id, "", 409)
+	accountRequest(t, router, "DELETE", endpoint+"?accountId="+id, "", 204)
+	accountRequest(t, router, "GET", endpoint+"/files/600?accountId="+id, "", 409)
+	if drive.reads != 3 || drive.uploads != 0 {
+		t.Fatal("source read caused unexpected download or write")
+	}
+}
 
 type subtitleAPIDrive struct {
 	files   []p115.ShareFile

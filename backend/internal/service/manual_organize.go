@@ -121,20 +121,22 @@ type organizePending struct {
 // contain credentials. A restart interrupts work instead of rebinding accounts.
 type ManualOrganize struct {
 	// Set at startup; called after successful persistence and releasing the writer.
-	OnCompleted   func(context.Context, OrganizeConfig)
-	mu            sync.Mutex
-	store         accountSecretStore
-	doc           organizeDocument
-	accounts      *P115Accounts
-	drive         OrganizeDrive
-	metadata      OrganizeMetadata
-	scans         map[string]OrganizeScan
-	plans         map[string]OrganizeJob
-	pending       *organizePending
-	wake          chan struct{}
-	cleanupPlans  map[string]OrganizeCleanup
-	cleaning      bool
-	subtitlePlans map[string]SubtitleImport
+	OnCompleted         func(context.Context, OrganizeConfig)
+	mu                  sync.Mutex
+	store               accountSecretStore
+	doc                 organizeDocument
+	accounts            *P115Accounts
+	drive               OrganizeDrive
+	metadata            OrganizeMetadata
+	scans               map[string]OrganizeScan
+	plans               map[string]OrganizeJob
+	pending             *organizePending
+	wake                chan struct{}
+	cleanupPlans        map[string]OrganizeCleanup
+	cleaning            bool
+	subtitlePlans       map[string]SubtitleImport
+	subtitleSources     map[string]subtitleSourcePlan
+	subtitleSourceReads int
 }
 
 // ReserveDirectoryWork shares the same reservation as organize/cleanup/upload.

@@ -4,7 +4,7 @@ import type { SubtitleVideo } from '../types/subtitleImport'
 
 export const maxFileBytes = 16 * 1024 * 1024
 export const maxTotalBytes = 64 * 1024 * 1024
-export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string }
+export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string; sourceKey?: string; sourceLabel?: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
 const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
@@ -171,6 +171,8 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
     if (!/\.(zip|rar|7z)$/i.test(file.name) && !isSubtitle(file.name)) { ignored++; continue }
     const bytes = new Uint8Array(await file.arrayBuffer())
     signal?.throwIfAborted()
+    const archive = /\.(zip|rar|7z)$/i.test(file.name)
+    const sourceKey = archive ? `archive:${sha256(bytes)}` : undefined
     let result: { files: LocalSubtitle[]; ignored: number }
     if (/\.zip$/i.test(file.name)) result = await readZip(bytes, signal)
     else if (/\.(rar|7z)$/i.test(file.name)) {
@@ -181,7 +183,7 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
     for (const sub of result.files) {
       total += sub.data.length
       if (!sub.data.length || sub.data.length > maxFileBytes || total > maxTotalBytes || files.length >= 100) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB，不能导入空文件。')
-      files.push(sub)
+      files.push({ ...sub, sourceKey, sourceLabel: archive ? file.name : undefined })
     }
   }
   return { files, ignored }

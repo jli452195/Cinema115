@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +14,44 @@ import (
 )
 
 func registerOrganizeSubtitles(group *gin.RouterGroup, organizer *service.ManualOrganize, fail func(*gin.Context, error)) {
+	group.POST("/subtitles/sources", func(c *gin.Context) {
+		var input service.SubtitleSourcesInput
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "字幕来源参数无效"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+		defer cancel()
+		result, err := organizer.PrepareSubtitleSources(ctx, input)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
+	group.GET("/subtitles/sources/:sourceID/files/:fileID", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+		defer cancel()
+		content, err := organizer.ReadSubtitleSource(ctx, c.Query("accountId"), c.Param("sourceID"), c.Param("fileID"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		defer content.Close()
+		controller := http.NewResponseController(c.Writer)
+		deadline, _ := ctx.Deadline()
+		if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			fail(c, fmt.Errorf("设置字幕下载响应超时: %w", err))
+			return
+		}
+		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(200, "application/octet-stream", content.Data)
+	})
+	group.DELETE("/subtitles/sources/:sourceID", func(c *gin.Context) {
+		organizer.ReleaseSubtitleSources(c.Query("accountId"), c.Param("sourceID"))
+		c.Status(204)
+	})
 	group.GET("/subtitles", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": organizer.SubtitleHistory()}) })
 	group.GET("/subtitles/videos", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)

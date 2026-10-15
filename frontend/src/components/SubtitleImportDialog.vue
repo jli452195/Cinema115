@@ -5,12 +5,18 @@ import { analyzeSubtitle, episodeNumber, readLocalSubtitles, subtitleLanguage, s
 import type { LocalSubtitle, SubtitleMatch } from '../utils/subtitleImport'
 import type { OrganizeJob } from '../types/manualOrganize'
 import type { SubtitleImport, SubtitleVideo } from '../types/subtitleImport'
+import SubtitleSourceDialog from './SubtitleSourceDialog.vue'
+import { formatSubtitleSize, mergeSubtitleFiles, readDriveSubtitles, type SubtitleSourceFile } from '../utils/subtitleSources'
 
 const props = defineProps<{ token: string; job: OrganizeJob; accountName: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 interface Row extends LocalSubtitle { id: string; selected: boolean; videoId: string; language: string; version: string; match: SubtitleMatch; manual: boolean; pending: boolean }
 const dialog = ref<HTMLDialogElement>()
 const picker = ref<HTMLInputElement>()
+const sourceDialog = ref(false)
+const importMode = ref<'append' | 'replace'>('append')
+const reading = ref(false)
+let readController: AbortController | undefined, nextRowId = 0
 const lifecycle = new AbortController()
 const videos = ref<SubtitleVideo[]>([])
 const rows = ref<Row[]>([])
@@ -62,32 +68,55 @@ async function loadVideos() {
   videos.value = data.videos
   season.value = data.videos.map(video => episodeNumber(video.name)?.season).find(number => number !== undefined) ?? 1
 }
-async function readFiles(files: File[]) {
-  notice.value = ''
-  const data = await readLocalSubtitles(files, lifecycle.signal)
-  lifecycle.signal.throwIfAborted()
+function applyFiles(data: { files: LocalSubtitle[]; ignored: number }) {
+  if (!data.files.length) throw new Error(`未找到支持的字幕文件${data.ignored ? `，已忽略 ${data.ignored} 个其他文件` : ''}。原有列表已保留。`)
+  const merged = mergeSubtitleFiles(rows.value, data.files, importMode.value === 'append')
   plan.value = undefined; result.value = undefined
   filter.value = 'all'
-  rows.value = data.files.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true })).map((file, index) => {
+  const added: Row[] = merged.added.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true })).map(file => {
     const match = analyzeSubtitle(file.name, videos.value, season.value)
-    return { ...file, id: String(index + 1), selected: true, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', match, manual: false, pending: match.confidence === 'medium' || match.confidence === 'low' }
+    return { ...file, id: String(++nextRowId), selected: true, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', match, manual: false, pending: match.confidence === 'medium' || match.confidence === 'low' }
   })
-  notice.value = `读取 ${rows.value.length} 个字幕${data.ignored ? `，已忽略 ${data.ignored} 个其他文件（包括字体、图片等）` : ''}。请核对视频、语言和版本。`
+  rows.value = [...merged.kept, ...added]
+  notice.value = `新增 ${added.length} 个字幕，当前共 ${rows.value.length} 个${merged.duplicates ? `，跳过 ${merged.duplicates} 个重复字幕` : ''}${data.ignored ? `，已忽略 ${data.ignored} 个其他文件（包括字体、图片等）` : ''}。请核对视频、语言和版本。`
+}
+async function startRead(action: (signal: AbortSignal) => Promise<{ files: LocalSubtitle[]; ignored: number }>) {
+  if (busy.value) return
+  await work('正在读取字幕文件或压缩包', async () => {
+    reading.value = true; readController = new AbortController()
+    const signal = AbortSignal.any([lifecycle.signal, readController.signal])
+    try {
+      const data = await action(signal)
+      signal.throwIfAborted()
+      applyFiles(data)
+    } catch (reason) {
+      if (readController.signal.aborted && !lifecycle.signal.aborted) notice.value = '已取消读取，原有字幕列表和人工匹配已保留。'
+      else throw reason
+    } finally { reading.value = false; readController = undefined }
+  })
+}
+function selectDriveFiles(files: SubtitleSourceFile[]) {
+  sourceDialog.value = false
+  void startRead(signal => readDriveSubtitles(props.token, props.job.config.accountId, props.job.id, files, signal, progress => {
+    if (progress.phase === 'prepare') busy.value = '正在核验网盘来源文件'
+    else if (progress.phase === 'extract') busy.value = `正在本地解析 ${progress.index}/${progress.count}：${progress.name}`
+    else busy.value = `正在下载 ${progress.index}/${progress.count}：${progress.name} · ${formatSubtitleSize(progress.loaded)} / ${formatSubtitleSize(progress.total)}`
+  }))
 }
 function chooseFiles(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
-  if (files.length) void work('正在读取字幕文件或压缩包', () => readFiles(files))
+  if (files.length) void startRead(signal => readLocalSubtitles(files, signal))
 }
 function dropFiles(event: DragEvent) {
   if (busy.value || !videos.value.length) return
   const files = Array.from(event.dataTransfer?.files || [])
-  if (files.length) void work('正在读取字幕文件或压缩包', () => readFiles(files))
+  if (files.length) void startRead(signal => readLocalSubtitles(files, signal))
 }
 function pairRows(row: Row) {
   const key = subtitlePairKey(row.name)
-  return key ? rows.value.filter(other => subtitlePairKey(other.name) === key) : [row]
+  return key ? rows.value.filter(other => other.sourceKey === row.sourceKey && subtitlePairKey(other.name) === key) : [row]
 }
 function syncPair(row: Row) { for (const other of pairRows(row)) { other.selected = row.selected; other.videoId = row.videoId; other.language = row.language; other.version = row.version; other.manual = row.manual; other.pending = row.pending; other.match = { ...row.match } } }
 function manualMatch(row: Row) {
@@ -112,7 +141,7 @@ function matchInOrder() {
   const groups = new Map<string, number>()
   for (const row of selected.value) {
     // Preserve IDX/SUB pairs as a single episode when numbering in order.
-    const key = subtitlePairKey(row.name) || row.id
+    const key = subtitlePairKey(row.name) ? `${row.sourceKey || ''}/${subtitlePairKey(row.name)}` : row.id
     const number = groups.get(key) ?? episode++
     groups.set(key, number)
     if (row.manual) continue
@@ -151,6 +180,7 @@ onMounted(() => {
   void work('读取已整理的视频', loadVideos)
 })
 onBeforeUnmount(() => {
+  readController?.abort()
   lifecycle.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow
   if (previousFocus?.isConnected) previousFocus.focus()
 })
@@ -158,9 +188,9 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" aria-labelledby="subtitle-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 p-5 text-slate-700 dark:text-slate-300 shadow-2xl backdrop:bg-slate-950/50" @cancel.prevent="!busy && emit('close')">
-      <header class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="subtitle-title" class="font-semibold text-slate-900 dark:text-slate-100">补充字幕 · {{ job.title }}</h2><p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountName }} · {{ job.config.targetPath }}</p></div><button :disabled="!!busy" aria-label="关闭字幕导入" class="shrink-0 rounded-lg px-3 py-1 text-xl disabled:opacity-40" @click="emit('close')">×</button></header>
-      <p v-if="busy" role="status" class="mt-3 text-sm text-blue-700">{{ busy }}…</p>
+    <dialog ref="dialog" aria-labelledby="subtitle-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto overscroll-contain rounded-2xl bg-white dark:bg-slate-900 p-5 text-slate-700 dark:text-slate-300 shadow-2xl backdrop:bg-slate-950/50" @cancel.prevent="!busy && !sourceDialog && emit('close')">
+      <header class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="subtitle-title" class="font-semibold text-slate-900 dark:text-slate-100">补充字幕 · {{ job.title }}</h2><p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountName }} · {{ job.config.targetPath }}</p></div><button :disabled="!!busy" aria-label="关闭字幕导入" class="shrink-0 rounded-lg p-2 disabled:opacity-40" @click="emit('close')"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button></header>
+      <div v-if="busy" class="mt-3 flex items-start justify-between gap-3"><p role="status" class="min-w-0 break-all text-sm text-blue-700 dark:text-blue-400">{{ busy }}…</p><button v-if="reading" class="secondary shrink-0" @click="readController?.abort()">取消读取</button></div>
       <p v-if="error" role="alert" class="mt-3 break-all rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
       <button v-if="!videos.length && !busy" class="secondary mt-3" @click="work('读取视频', loadVideos)">重新读取视频</button>
       <fieldset :disabled="!!busy || !videos.length" class="mt-4 min-w-0 space-y-4 disabled:opacity-60">
@@ -168,7 +198,8 @@ onBeforeUnmount(() => {
           <p class="text-sm">拖入字幕压缩包（ZIP / RAR / 7z）或字幕文件</p>
           <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">压缩包仅在本地解析，确认后才上传字幕。支持 SRT / ASS / SSA / VTT / IDX / SUB；不支持加密和分卷。单个字幕 16 MiB，合计 64 MiB，最多 100 个。</p>
           <input ref="picker" type="file" multiple accept=".zip,.rar,.7z,.srt,.ass,.ssa,.vtt,.idx,.sub" aria-label="选择字幕文件或压缩包" class="sr-only" @change="chooseFiles" />
-          <button class="secondary mt-3" @click="picker?.click()">{{ rows.length ? '重新选择文件' : '选择字幕文件 / 压缩包' }}</button>
+          <div class="mt-3 flex flex-wrap justify-center gap-2"><button class="secondary" @click="picker?.click()">选择本地字幕 / 压缩包</button><button class="secondary" @click="sourceDialog = true">从 115 网盘选择</button></div>
+          <div v-if="rows.length" class="mt-3 flex flex-wrap justify-center gap-3 text-xs"><span>新读取字幕：</span><label class="flex items-center gap-1"><input v-model="importMode" type="radio" value="append" name="subtitle-import-mode" />追加到列表</label><label class="flex items-center gap-1"><input v-model="importMode" type="radio" value="replace" name="subtitle-import-mode" />替换当前列表</label></div>
         </div>
         <p v-if="notice" role="status" class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ notice }}</p>
         <template v-if="rows.length">
@@ -188,6 +219,7 @@ onBeforeUnmount(() => {
           <div class="max-h-80 space-y-3 overflow-y-auto">
             <div v-for="row in displayed" :key="row.id" class="rounded-xl border border-slate-200 dark:border-slate-700 p-3">
               <label class="flex items-start gap-2 text-sm"><input v-model="row.selected" type="checkbox" :aria-label="`导入 ${row.name}`" class="mt-1" @change="syncPair(row)" /><span class="min-w-0 break-all">{{ row.name }} <span class="text-xs text-slate-400 dark:text-slate-500">{{ (row.data.length / 1024).toFixed(1) }} KiB</span></span></label>
+              <p v-if="row.sourceLabel" class="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">来源：{{ row.sourceLabel }}</p>
               <p class="mt-2 break-all text-xs" :class="row.videoId && !row.pending ? 'text-emerald-700' : 'text-amber-700'">{{ row.manual ? '人工指定' : confidenceLabel[row.match.confidence] }} · {{ row.match.reason }} <button v-if="row.manual" class="ml-2 text-blue-600 underline" :aria-label="`${row.name} 重新自动匹配`" @click="resetMatch(row)">重新自动匹配</button></p>
               <p v-if="conflicts.has(row.id)" class="mt-2 text-xs text-red-700">{{ conflicts.get(row.id) }}</p>
               <div v-if="!row.videoId && row.match.candidates.length" class="mt-2 space-y-1">
@@ -214,6 +246,7 @@ onBeforeUnmount(() => {
       <footer class="mt-5 flex justify-end"><button class="secondary" :disabled="!!busy" @click="emit('close')">关闭</button></footer>
     </dialog>
   </Teleport>
+  <SubtitleSourceDialog v-if="sourceDialog" :token="token" :account-id="job.config.accountId" @close="sourceDialog = false" @select="selectDriveFiles" />
 </template>
 
 <style scoped>
