@@ -532,15 +532,28 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 }
 .media-detail :deep(.follow-button:focus-visible) { outline-color: var(--md-sys-color-primary); }
 .media-detail :deep(.search-pill) {
-  border: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 55%, transparent);
-  background: color-mix(in srgb, var(--md-sys-color-surface-container-high) 85%, transparent);
-  backdrop-filter: blur(8px);
-  box-shadow: none;
+  border: 1px solid var(--search-dialog-edge);
+  background: var(--search-pill-background);
+  color: var(--search-dialog-text);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 6%), inset 0 1px 0 rgb(255 255 255 / 10%);
 }
 .media-detail :deep(.search-pill:hover) {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-  border-color: var(--md-sys-color-outline-variant);
+  background: var(--search-pill-hover);
+  color: var(--search-dialog-text);
+  box-shadow: 0 4px 12px rgb(15 23 42 / 10%);
+}
+.media-detail :deep(.search-pill:focus-visible) { outline-color: var(--search-dialog-primary); }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .media-detail :deep(.search-pill) {
+    -webkit-backdrop-filter: blur(12px) saturate(1.05);
+    backdrop-filter: blur(12px) saturate(1.05);
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .media-detail :deep(.search-pill) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 .detail-divider { border-color: var(--md-sys-color-outline-variant); }
 .detail-season {

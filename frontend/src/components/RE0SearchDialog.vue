@@ -385,15 +385,10 @@ onBeforeUnmount(() => {
   width: min(960px, calc(100% - 48px));
   max-width: none;
   max-height: var(--re0-max-height);
-  border: 0;
   border-radius: 28px;
-  background: color-mix(in srgb, var(--re0-container) 94%, transparent);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
   color: var(--re0-text);
   color-scheme: light;
   overflow: hidden;
-  box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .re0-dialog {
   --re0-surface: var(--search-dialog-surface);
@@ -413,7 +408,6 @@ onBeforeUnmount(() => {
   --re0-error-bg: #502c2b;
   color-scheme: dark;
 }
-.re0-dialog::backdrop { background: rgb(2 6 23 / 32%); }
 .re0-layout { display: flex; flex-direction: column; max-height: var(--re0-max-height); }
 .re0-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 16px; }
 .re0-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--re0-card); }
@@ -437,7 +431,7 @@ onBeforeUnmount(() => {
 .re0-results-heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
 .re0-results-heading span { color: var(--re0-muted); font-size: 12px; }
 .re0-resource-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
-.re0-resource { min-width: 0; padding: 20px; border: 1px solid color-mix(in srgb, var(--re0-outline) 35%, transparent); border-radius: 20px; background: var(--re0-card); }
+.re0-resource { min-width: 0; padding: 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--re0-card); }
 .re0-resource-active { border-color: var(--re0-primary); }
 .re0-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; }
 .re0-resource-info { min-width: 0; }
@@ -510,8 +504,5 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .re0-spinning { animation: none; }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .re0-dialog { background: var(--re0-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 </style>

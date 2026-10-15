@@ -422,12 +422,10 @@ onBeforeUnmount(() => {
   --mikan-warning: #765500; --mikan-warning-bg: #fff1cd;
   --mikan-error: #a12b2b; --mikan-error-bg: #ffe9e7;
   margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--mikan-max-height);
-  border: 0; border-radius: 28px; background: color-mix(in srgb, var(--search-dialog-container) 94%, transparent);
-  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); color: var(--search-dialog-text); color-scheme: light;
-  overflow: hidden; box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+  border-radius: 28px; color: var(--search-dialog-text); color-scheme: light;
+  overflow: hidden;
 }
 .dark .mikan-dialog { --mikan-success: #a5d8b8; --mikan-success-bg: #223d31; --mikan-warning: #eed085; --mikan-warning-bg: #42371e; --mikan-error: #ffb4ab; --mikan-error-bg: #502c2b; color-scheme: dark; }
-.mikan-dialog::backdrop { background: rgb(2 6 23 / 32%); }
 .mikan-layout { display: flex; flex-direction: column; max-height: var(--mikan-max-height); }
 .mikan-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
 .mikan-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--search-dialog-card); }
@@ -493,7 +491,7 @@ onBeforeUnmount(() => {
 .mikan-result-summary p { margin: 0; }
 .mikan-result-summary .mikan-loading { font-size: 11px; }
 .mikan-resource-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.mikan-resource { min-width: 0; padding: 16px 20px; border: 1px solid color-mix(in srgb, var(--search-dialog-outline) 35%, transparent); border-radius: 20px; background: var(--search-dialog-card); }
+.mikan-resource { min-width: 0; padding: 16px 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--search-dialog-card); }
 .mikan-resource.mikan-selectable { position: relative; cursor: pointer; }
 .mikan-resource-selected { background: var(--search-dialog-tonal); }
 .mikan-selectable .mikan-resource-title { padding-left: 36px; }
@@ -607,8 +605,5 @@ onBeforeUnmount(() => {
   .mikan-batch-progress > span { transition: none; }
   .mikan-item-indicator { transition: none !important; }
   .mikan-loading-spinner { animation: none; }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .mikan-dialog { background: var(--search-dialog-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 </style>

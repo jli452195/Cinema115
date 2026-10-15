@@ -549,9 +549,8 @@ onBeforeUnmount(() => {
   --gy-warning: #765500; --gy-warning-bg: #fff1cd;
   --gy-error: #a12b2b; --gy-error-bg: #ffe9e7;
   margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--gy-max-height);
-  border: 0; border-radius: 28px; background: color-mix(in srgb, var(--gy-container) 94%, transparent);
-  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); color: var(--gy-text); color-scheme: light;
-  overflow: hidden; box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+  border-radius: 28px; color: var(--gy-text); color-scheme: light;
+  overflow: hidden;
 }
 .dark .gy-dialog {
   --gy-container: var(--search-dialog-container);
@@ -567,7 +566,6 @@ onBeforeUnmount(() => {
   --gy-error: #ffb4ab; --gy-error-bg: #502c2b;
   color-scheme: dark;
 }
-.gy-dialog::backdrop { background: rgb(2 6 23 / 32%); }
 .gy-layout { display: flex; flex-direction: column; max-height: var(--gy-max-height); }
 .gy-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
 .gy-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--gy-card); }
@@ -638,7 +636,7 @@ onBeforeUnmount(() => {
 .gy-film-single .gy-film-details { margin: -8px 0 0; }
 .gy-film-single .gy-resource-list { margin-top: 0; }
 .gy-resource-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
-.gy-resource { min-width: 0; padding: 16px 20px; border: 1px solid color-mix(in srgb, var(--gy-outline) 35%, transparent); border-radius: 20px; background: var(--gy-card); }
+.gy-resource { min-width: 0; padding: 16px 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--gy-card); }
 .gy-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 20px; }
 .gy-resource-info { display: contents; }
 .gy-resource-title { grid-column: 1 / -1; min-width: 0; line-height: 23px; }
@@ -740,8 +738,5 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .gy-selection-indicator { transition: none !important; }
   .gy-spinning { animation: none; }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .gy-dialog { background: var(--gy-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 </style>

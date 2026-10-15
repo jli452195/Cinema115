@@ -1,35 +1,141 @@
-/* Shared artwork tint and action hierarchy for resource dialogs. */
-.media-search-dialog {
-  --search-dialog-surface: color-mix(in srgb, var(--detail-light-surface, #f8fafc) 20%, #fafafa);
-  --search-dialog-container: color-mix(in srgb, var(--detail-light-surface-container-high, #e9edf3) 25%, #f3f4f6);
-  --search-dialog-card: color-mix(in srgb, var(--detail-light-surface-container-low, #fff) 12%, #fff);
-  --search-dialog-text: color-mix(in srgb, var(--detail-light-on-surface, #18212e) 60%, #202226);
-  --search-dialog-muted: color-mix(in srgb, var(--detail-light-on-surface-variant, #475569) 60%, #60646b);
-  --search-dialog-outline: color-mix(in srgb, var(--detail-light-outline-variant, #cbd5e1) 40%, #d8dadd);
-  --search-dialog-primary: color-mix(in srgb, var(--detail-light-primary, #475f85) 75%, var(--search-dialog-text));
-  --search-dialog-tonal: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 20%, var(--search-dialog-card));
-  --search-dialog-on-tonal: color-mix(in srgb, var(--detail-light-on-primary-container, #1a365d) 55%, var(--search-dialog-text));
-  --search-dialog-action-background: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 28%, var(--search-dialog-card));
-  --search-dialog-action-hover: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 40%, var(--search-dialog-card));
-  --search-dialog-action-pressed: color-mix(in srgb, var(--detail-light-primary-container, #d8e6ff) 48%, var(--search-dialog-card));
-  --search-dialog-secondary-background: color-mix(in srgb, var(--search-dialog-container) 65%, var(--search-dialog-card));
-  --search-dialog-secondary-hover: color-mix(in srgb, var(--search-dialog-primary) 6%, var(--search-dialog-card));
-  --search-dialog-secondary-pressed: color-mix(in srgb, var(--search-dialog-primary) 10%, var(--search-dialog-card));
+/* Shared neutral glass for search dialogs and their detail-page entry pills. */
+.media-search-dialog,
+.media-detail {
+  --search-dialog-surface: #f1f5f9;
+  --search-dialog-container: #f8fafc;
+  --search-dialog-glass: rgb(248 250 252 / 78%);
+  --search-dialog-filter: blur(24px) saturate(1.05);
+  --search-dialog-card: rgb(255 255 255 / 52%);
+  --search-dialog-card-border: rgb(148 163 184 / 22%);
+  --search-dialog-input: rgb(241 245 249 / 75%);
+  --search-dialog-input-focus: rgb(255 255 255 / 90%);
+  --search-dialog-text: #1e293b;
+  --search-dialog-muted: #475569;
+  --search-dialog-outline: #cbd5e1;
+  --search-dialog-primary: #365b83;
+  --search-dialog-tonal: rgb(59 91 135 / 9%);
+  --search-dialog-on-tonal: #365575;
+  --search-dialog-action-background: rgb(59 91 135 / 11%);
+  --search-dialog-action-hover: rgb(59 91 135 / 17%);
+  --search-dialog-action-pressed: rgb(59 91 135 / 22%);
+  --search-dialog-secondary-background: rgb(15 23 42 / 5%);
+  --search-dialog-secondary-hover: rgb(15 23 42 / 9%);
+  --search-dialog-secondary-pressed: rgb(15 23 42 / 13%);
+  --search-dialog-edge: rgb(255 255 255 / 65%);
+  --search-dialog-shadow: 0 24px 64px -16px rgb(15 23 42 / 22%), 0 0 0 1px rgb(15 23 42 / 5%), inset 0 1px 0 rgb(255 255 255 / 60%);
+  --search-dialog-scrim: rgb(10 12 16 / 18%);
+  --search-pill-background: rgb(248 250 252 / 72%);
+  --search-pill-hover: rgb(255 255 255 / 90%);
 }
 
-.dark .media-search-dialog {
-  --search-dialog-surface: color-mix(in srgb, var(--detail-dark-surface, #111827) 20%, #151719);
-  --search-dialog-container: color-mix(in srgb, var(--detail-dark-surface-container-high, #242d3c) 25%, #232527);
-  --search-dialog-card: color-mix(in srgb, var(--detail-dark-surface-container-low, #1b2433) 12%, #1b1d1f);
-  --search-dialog-text: color-mix(in srgb, var(--detail-dark-on-surface, #e2e8f0) 60%, #e6e8ec);
-  --search-dialog-muted: color-mix(in srgb, var(--detail-dark-on-surface-variant, #bbc5d5) 60%, #b7bcc4);
-  --search-dialog-outline: color-mix(in srgb, var(--detail-dark-outline-variant, #465063) 40%, #45494f);
-  --search-dialog-primary: color-mix(in srgb, var(--detail-dark-primary, #aac7f5) 75%, var(--search-dialog-text));
-  --search-dialog-tonal: color-mix(in srgb, var(--detail-dark-primary-container, #314967) 20%, var(--search-dialog-card));
-  --search-dialog-on-tonal: color-mix(in srgb, var(--detail-dark-on-primary-container, #d8e6ff) 55%, var(--search-dialog-text));
-  --search-dialog-action-background: color-mix(in srgb, var(--search-dialog-primary) 16%, var(--search-dialog-card));
-  --search-dialog-action-hover: color-mix(in srgb, var(--search-dialog-primary) 23%, var(--search-dialog-card));
-  --search-dialog-action-pressed: color-mix(in srgb, var(--search-dialog-primary) 29%, var(--search-dialog-card));
+.dark .media-search-dialog,
+.dark .media-detail {
+  --search-dialog-surface: #10151e;
+  --search-dialog-container: #12161e;
+  --search-dialog-glass: rgb(18 22 30 / 80%);
+  --search-dialog-card: rgb(255 255 255 / 4.5%);
+  --search-dialog-card-border: rgb(255 255 255 / 8%);
+  --search-dialog-input: rgb(10 15 24 / 45%);
+  --search-dialog-input-focus: rgb(10 15 24 / 72%);
+  --search-dialog-text: #e2e8f0;
+  --search-dialog-muted: #b8c4d4;
+  --search-dialog-outline: #475569;
+  --search-dialog-primary: #adc7ec;
+  --search-dialog-tonal: rgb(173 199 236 / 10%);
+  --search-dialog-on-tonal: #c8d8ee;
+  --search-dialog-action-background: rgb(173 199 236 / 14%);
+  --search-dialog-action-hover: rgb(173 199 236 / 21%);
+  --search-dialog-action-pressed: rgb(173 199 236 / 27%);
+  --search-dialog-secondary-background: rgb(255 255 255 / 6%);
+  --search-dialog-secondary-hover: rgb(255 255 255 / 10%);
+  --search-dialog-secondary-pressed: rgb(255 255 255 / 14%);
+  --search-dialog-edge: rgb(255 255 255 / 12%);
+  --search-dialog-shadow: 0 24px 64px -16px rgb(0 0 0 / 55%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  --search-dialog-scrim: rgb(10 12 16 / 38%);
+  --search-pill-background: rgb(30 37 49 / 68%);
+  --search-pill-hover: rgb(45 55 70 / 82%);
+}
+
+.media-search-dialog {
+  border: 1px solid var(--search-dialog-edge);
+  background: var(--search-dialog-container);
+  box-shadow: var(--search-dialog-shadow);
+}
+
+/* Only the shell samples the page; cards and sticky controls use alpha layers. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .media-search-dialog {
+    background: var(--search-dialog-glass);
+    -webkit-backdrop-filter: var(--search-dialog-filter);
+    backdrop-filter: var(--search-dialog-filter);
+  }
+}
+
+.media-search-dialog::backdrop { background: var(--search-dialog-scrim); }
+
+dialog.media-search-dialog :is(.re0-search-field, .bot-search-field, .mikan-input) {
+  background: var(--search-dialog-input);
+  box-shadow: inset 0 0 0 1px var(--search-dialog-card-border);
+}
+
+dialog.media-search-dialog :is(.re0-search-field, .bot-search-field):focus-within,
+dialog.media-search-dialog .mikan-input:focus {
+  background: var(--search-dialog-input-focus);
+}
+
+/* A solid, matching surface prevents scrolling result text bleeding through. */
+dialog.media-search-dialog :is(.gy-filters, .mikan-filter-controls) {
+  background: var(--search-dialog-container);
+}
+
+dialog.media-search-dialog .mikan-batch-footer {
+  background: var(--search-dialog-input);
+  border-top: 1px solid var(--search-dialog-card-border);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .media-search-dialog, .media-detail {
+    --search-dialog-card: #fff;
+    --search-pill-background: #f1f5f9;
+    --search-pill-hover: #fff;
+  }
+  .dark .media-search-dialog, .dark .media-detail {
+    --search-dialog-card: #1e2531;
+    --search-pill-background: #1e2531;
+    --search-pill-hover: #2d3746;
+  }
+  .media-search-dialog {
+    background: var(--search-dialog-container);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .media-search-dialog, .media-detail {
+    --search-dialog-card: #fff;
+    --search-pill-background: #f1f5f9;
+    --search-pill-hover: #fff;
+  }
+  .dark .media-search-dialog, .dark .media-detail {
+    --search-dialog-card: #1e2531;
+    --search-pill-background: #1e2531;
+    --search-pill-hover: #2d3746;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .media-search-dialog, .media-detail {
+    --search-dialog-edge: #64748b;
+    --search-dialog-card-border: #64748b;
+    --search-dialog-muted: #334155;
+  }
+  .dark .media-search-dialog, .dark .media-detail {
+    --search-dialog-edge: #94a3b8;
+    --search-dialog-card-border: #94a3b8;
+    --search-dialog-muted: #e2e8f0;
+  }
 }
 
 .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) {

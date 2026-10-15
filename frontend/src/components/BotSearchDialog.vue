@@ -356,15 +356,10 @@ onBeforeUnmount(() => {
   width: min(960px, calc(100% - 48px));
   max-width: none;
   max-height: var(--bot-max-height);
-  border: 0;
   border-radius: 28px;
-  background: color-mix(in srgb, var(--bot-container) 94%, transparent);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
   color: var(--bot-text);
   color-scheme: light;
   overflow: hidden;
-  box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
 }
 .dark .bot-dialog {
   --bot-container: var(--search-dialog-container);
@@ -383,7 +378,6 @@ onBeforeUnmount(() => {
   --bot-error-bg: #502c2b;
   color-scheme: dark;
 }
-.bot-dialog::backdrop { background: rgb(2 6 23 / 32%); }
 .bot-layout { display: flex; flex-direction: column; max-height: var(--bot-max-height); }
 .bot-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 16px; }
 .bot-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--bot-card); }
@@ -410,7 +404,7 @@ onBeforeUnmount(() => {
 .bot-cache-status { display: inline-flex; align-items: center; gap: 5px; }
 .bot-cache-status svg { width: 14px; height: 14px; }
 .bot-resource-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
-.bot-resource { min-width: 0; padding: 20px; border: 1px solid color-mix(in srgb, var(--bot-outline) 35%, transparent); border-radius: 20px; background: var(--bot-card); }
+.bot-resource { min-width: 0; padding: 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--bot-card); }
 .bot-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; }
 .bot-resource-info { min-width: 0; }
 .bot-resource-info h3 { margin: 0; font-size: 15px; line-height: 24px; font-weight: 600; overflow-wrap: anywhere; }
@@ -481,8 +475,5 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .bot-spinning { animation: none; }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .bot-dialog { background: var(--bot-container); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 </style>
