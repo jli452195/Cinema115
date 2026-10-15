@@ -85,9 +85,13 @@ test('corrupted, encrypted, oversized and traversing ZIPs fail before import', a
   const forged = original.slice(); new DataView(forged.buffer).setUint32(central + 24, 1, true)
   await assert.rejects(readLocalSubtitles([new File([forged], 'bad.zip')]), /大小/)
   const traversal = zipSync({ '../a.srt': strToU8('subtitle') })
+  const absolute = zipSync({ 'C:/a.srt': strToU8('subtitle') })
+  await assert.rejects(readLocalSubtitles([new File([absolute], 'bad.zip')]), /路径/)
   await assert.rejects(readLocalSubtitles([new File([traversal], 'bad.zip')]), /路径/)
   await assert.rejects(readLocalSubtitles([new File([original.slice(0, -3)], 'bad.zip')]), /不完整/)
-  await assert.rejects(readLocalSubtitles([new File(['rar'], 'subtitles.rar')]), /先在电脑上解压/)
+  for (const name of ['subtitles.part1.rar', 'subtitles.7z.001', 'subtitles.r00', 'subtitles.z01']) {
+    await assert.rejects(readLocalSubtitles([new File(['archive'], name)]), /分卷/)
+  }
 })
 
 test('raw subtitles, count limits, empty files and cancellation', async () => {

@@ -1,0 +1,18 @@
+import { libarchiveWasm } from 'libarchive-wasm'
+import wasmURL from 'libarchive-wasm/dist/libarchive.wasm?url'
+import { extractSubtitleArchive, validateArchive, type ArchiveKind, type ArchiveLimits } from '../utils/subtitleArchive'
+
+const worker = self as unknown as {
+  onmessage: ((event: MessageEvent<{ bytes: Uint8Array; kind: ArchiveKind; limits: ArchiveLimits }>) => void) | null
+  postMessage: (value: unknown, transfer: Transferable[]) => void
+}
+worker.onmessage = async ({ data }) => {
+  try {
+    validateArchive(data.bytes, data.kind)
+    const module = await libarchiveWasm({ locateFile: () => wasmURL })
+    const result = extractSubtitleArchive(data.bytes, data.kind, module, data.limits)
+    worker.postMessage({ result }, result.files.map(file => file.data.buffer as ArrayBuffer))
+  } catch (reason) {
+    worker.postMessage({ error: reason instanceof Error ? reason.message : '压缩包读取失败。' }, [])
+  }
+}

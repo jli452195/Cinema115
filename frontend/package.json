@@ -8,7 +8,7 @@
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",
     "test:organize-workflow": "node --test tests/manual-organize-workflow.test.mjs tests/organize-selection.test.mjs tests/organize-history.test.mjs",
     "test:organize-history-ui": "node scripts/organize-history-ui.cjs",
-    "test:subtitles": "node --test tests/subtitle-import.test.mjs",
+    "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test:share-runs": "node --test tests/share-strm-run.test.mjs",

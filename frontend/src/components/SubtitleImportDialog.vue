@@ -63,8 +63,10 @@ async function loadVideos() {
   season.value = data.videos.map(video => episodeNumber(video.name)?.season).find(number => number !== undefined) ?? 1
 }
 async function readFiles(files: File[]) {
-  plan.value = undefined; result.value = undefined; rows.value = []; notice.value = ''
+  notice.value = ''
   const data = await readLocalSubtitles(files, lifecycle.signal)
+  lifecycle.signal.throwIfAborted()
+  plan.value = undefined; result.value = undefined
   filter.value = 'all'
   rows.value = data.files.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true })).map((file, index) => {
     const match = analyzeSubtitle(file.name, videos.value, season.value)
@@ -76,12 +78,12 @@ function chooseFiles(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
-  if (files.length) void work('读取本地字幕', () => readFiles(files))
+  if (files.length) void work('正在读取字幕文件或压缩包', () => readFiles(files))
 }
 function dropFiles(event: DragEvent) {
   if (busy.value || !videos.value.length) return
   const files = Array.from(event.dataTransfer?.files || [])
-  if (files.length) void work('读取本地字幕', () => readFiles(files))
+  if (files.length) void work('正在读取字幕文件或压缩包', () => readFiles(files))
 }
 function pairRows(row: Row) {
   const key = subtitlePairKey(row.name)
@@ -163,10 +165,10 @@ onBeforeUnmount(() => {
       <button v-if="!videos.length && !busy" class="secondary mt-3" @click="work('读取视频', loadVideos)">重新读取视频</button>
       <fieldset :disabled="!!busy || !videos.length" class="mt-4 min-w-0 space-y-4 disabled:opacity-60">
         <div class="rounded-xl border-2 border-dashed border-blue-200 bg-blue-50 p-5 text-center" @dragover.prevent @drop.prevent="dropFiles">
-          <p class="text-sm">拖入本地字幕 ZIP，或直接选择多个字幕文件</p>
-          <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">ZIP 在本机解压，确认后才上传字幕。支持 SRT / ASS / SSA / VTT / IDX / SUB；RAR、7z 请先解压。单个字幕 16 MiB，合计 64 MiB，最多 100 个。</p>
-          <input ref="picker" type="file" multiple accept=".zip,.srt,.ass,.ssa,.vtt,.idx,.sub" aria-label="选择本地字幕或 ZIP" class="sr-only" @change="chooseFiles" />
-          <button class="secondary mt-3" @click="picker?.click()">{{ rows.length ? '重新选择文件' : '选择字幕文件 / ZIP' }}</button>
+          <p class="text-sm">拖入字幕压缩包（ZIP / RAR / 7z）或字幕文件</p>
+          <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">压缩包仅在本地解析，确认后才上传字幕。支持 SRT / ASS / SSA / VTT / IDX / SUB；不支持加密和分卷。单个字幕 16 MiB，合计 64 MiB，最多 100 个。</p>
+          <input ref="picker" type="file" multiple accept=".zip,.rar,.7z,.srt,.ass,.ssa,.vtt,.idx,.sub" aria-label="选择字幕文件或压缩包" class="sr-only" @change="chooseFiles" />
+          <button class="secondary mt-3" @click="picker?.click()">{{ rows.length ? '重新选择文件' : '选择字幕文件 / 压缩包' }}</button>
         </div>
         <p v-if="notice" role="status" class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ notice }}</p>
         <template v-if="rows.length">

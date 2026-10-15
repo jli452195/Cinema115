@@ -6,6 +6,7 @@ export const maxFileBytes = 16 * 1024 * 1024
 export const maxTotalBytes = 64 * 1024 * 1024
 export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
+const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
 const stem = (name: string) => base(name).replace(/\.[^.]+$/, '')
 
@@ -125,10 +126,11 @@ async function readZip(bytes: Uint8Array, signal?: AbortSignal): Promise<{ files
     if (next > end) throw new Error('ZIP 目录不完整。')
     const name = new TextDecoder(flags & 0x800 ? 'utf-8' : 'gb18030').decode(bytes.subarray(offset + 46, offset + 46 + nameSize)).replace(/\\/g, '/')
     offset = next
+    if (flags & 0x2041) throw new Error('不支持加密压缩包，请在电脑上解压后选择字幕。')
+    if (view.getUint16(offset - (46 + nameSize + extraSize + commentSize) + 34, true)) throw new Error('不支持分卷压缩包，请在电脑上解压后选择字幕。')
     if (name.endsWith('/') || name.startsWith('__MACOSX/')) continue
     if (!isSubtitle(name)) { ignored++; continue }
-    if (name.startsWith('/') || name.split('/').includes('..') || /[\x00\r\n]/.test(name)) throw new Error('ZIP 中包含无效文件路径。')
-    if (flags & 1) throw new Error('暂不支持加密 ZIP，请先在电脑上解压。')
+    if (!name || name.length > 2048 || /^(?:\/|[a-z]:)/i.test(name) || name.split('/').includes('..') || /[\x00\r\n]/.test(name)) throw new Error('ZIP 中包含无效文件路径。')
     if (method !== 0 && method !== 8) throw new Error('ZIP 压缩方法不受支持，请先在电脑上解压。')
     if (!size || size > maxFileBytes || total + size > maxTotalBytes || files.length >= 100) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB。')
     if (local + 30 > centralOffset || view.getUint32(local, true) !== 0x04034b50 || view.getUint16(local + 8, true) !== method || view.getUint16(local + 6, true) & 1) throw new Error('ZIP 文件头无效。')
@@ -165,10 +167,16 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
   if (input.length > 100 || input.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) throw new Error('每次选择的文件不能超过 100 个或 64 MiB。')
   for (const file of input) {
     signal?.throwIfAborted()
-    if (/\.(rar|7z)$/i.test(file.name)) throw new Error('RAR / 7z 请先在电脑上解压，再选择字幕文件。')
-    if (!/\.zip$/i.test(file.name) && !isSubtitle(file.name)) { ignored++; continue }
+    if (splitArchiveName.test(file.name)) throw new Error('不支持分卷压缩包，请在电脑上解压后选择字幕。')
+    if (!/\.(zip|rar|7z)$/i.test(file.name) && !isSubtitle(file.name)) { ignored++; continue }
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const result = /\.zip$/i.test(file.name) ? await readZip(bytes, signal) : { files: [{ name: file.name, data: bytes, sha256: sha256(bytes) }], ignored: 0 }
+    signal?.throwIfAborted()
+    let result: { files: LocalSubtitle[]; ignored: number }
+    if (/\.zip$/i.test(file.name)) result = await readZip(bytes, signal)
+    else if (/\.(rar|7z)$/i.test(file.name)) {
+      const { readSubtitleArchive } = await import('./subtitleArchiveClient')
+      result = await readSubtitleArchive(bytes, /\.rar$/i.test(file.name) ? 'rar' : '7z', { bytes: maxTotalBytes - total, files: 100 - files.length }, signal)
+    } else result = { files: [{ name: file.name, data: bytes, sha256: sha256(bytes) }], ignored: 0 }
     ignored += result.ignored
     for (const sub of result.files) {
       total += sub.data.length
