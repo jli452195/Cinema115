@@ -6,7 +6,8 @@
   "scripts": {
     "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",
-    "test:organize-workflow": "node --test tests/manual-organize-workflow.test.mjs tests/organize-selection.test.mjs",
+    "test:organize-workflow": "node --test tests/manual-organize-workflow.test.mjs tests/organize-selection.test.mjs tests/organize-history.test.mjs",
+    "test:organize-history-ui": "node scripts/organize-history-ui.cjs",
     "test:subtitles": "node --test tests/subtitle-import.test.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -22,6 +23,7 @@
     "@types/qrcode": "^1.5.6",
     "fflate": "^0.8.3",
     "js-sha256": "^1.0.0",
+    "libarchive-wasm": "1.2.0",
     "qrcode": "^1.5.4",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"

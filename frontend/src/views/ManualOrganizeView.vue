@@ -7,6 +7,8 @@ import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import OrganizeCleanupDialog from '../components/OrganizeCleanupDialog.vue'
 import SubtitleImportDialog from '../components/SubtitleImportDialog.vue'
 import OrganizeFileSelection from '../components/OrganizeFileSelection.vue'
+import OrganizeTaskHistory from '../components/OrganizeTaskHistory.vue'
+import type { HistoryKind } from '../utils/organizeHistory'
 import SelectMenu from '../components/SelectMenu.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
@@ -61,7 +63,7 @@ const deleteIDs = ref<string[]>([])
 const cleanupOpen = ref(false)
 const shareOpen = ref(false)
 const activeStep = ref(1)
-const historyTab = ref('organize')
+const historyTab = ref<HistoryKind>('organize')
 const onlyConflicts = ref(false)
 const savedConfig = ref('')
 const workflowPanel = ref<HTMLElement>()
@@ -71,6 +73,8 @@ const editPanel = ref<HTMLElement>()
 const previewPanel = ref<HTMLElement>()
 const historyError = ref('')
 const historyReady = ref(false)
+const historyRefreshing = ref(false)
+const historyRefreshedAt = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 let applying = false
 let historyRevision = 0
@@ -93,7 +97,6 @@ const stepItems = [
   { number: 3, label: '校正命名' },
   { number: 4, label: '确认执行' },
 ]
-const statuses: Record<string, string> = { preview: '待确认', queued: '排队中', running: '整理中', completed: '已完成', partial: '已停止', interrupted: '已中断', pending: '未处理', preparing: '检查目录', renaming: '重命名中', renamed: '已命名', moving: '移动中', done: '完成', blocked: '已停止', uncertain: '结果待核实' }
 
 function request<T>(path: string, init: RequestInit = {}, timeout = 45000) {
   return p115Request<T>(props.token, `manual-organize/${path}`, { ...init, signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(timeout)]) })
@@ -102,10 +105,6 @@ function message(reason: unknown) { return reason instanceof Error ? reason.mess
 function accountLabel(id: string) {
   const account = accounts.value.find(value => value.id === id)
   return account?.primary ? '主账号' : account?.name || id
-}
-function duration(ms: number) {
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} 秒`
-  return `${Math.floor(ms / 60000)} 分 ${Math.round((ms % 60000) / 1000)} 秒`
 }
 async function work(label: string, action: () => Promise<void>) {
   if (busy.value) return
@@ -162,6 +161,15 @@ async function executeCleanup() {
     await refreshHistory()
     try { await browse() } catch (reason) { error.value = `文件列表刷新失败：${message(reason)}` }
   }
+}
+function historyActionAllowed(job: OrganizeJob) {
+  return !busy.value && !active.value && historyReady.value && !historyError.value && job.status !== 'running' && job.status !== 'queued' && accounts.value.some(account => account.id === job.config.accountId && account.configured)
+}
+function viewHistorySource(job: OrganizeJob) {
+  if (historyActionAllowed(job)) void work('查看源目录剩余内容', () => showSource(job))
+}
+function supplementSubtitles(job: OrganizeJob) {
+  if (historyActionAllowed(job) && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')) subtitleJob.value = job
 }
 async function showSource(job: OrganizeJob) {
   if (!accounts.value.some(account => account.id === job.config.accountId && account.configured)) throw new Error('此任务的账号已删除或未登录，请先配置凭据。')
@@ -275,14 +283,16 @@ async function execute() {
 }
 async function refreshHistory() {
   const revision = ++historyRevision
+  historyRefreshing.value = true
   try {
     const [data, cleanup, subtitles] = await Promise.all([request<{ jobs: OrganizeJob[] }>('jobs'), request<{ jobs: OrganizeCleanup[] }>('cleanup'), request<{ jobs: SubtitleImport[] }>('subtitles')])
     if (revision !== historyRevision || lifecycle.signal.aborted) return
     jobs.value = data.jobs
     cleanupJobs.value = cleanup.jobs
     subtitleJobs.value = subtitles.jobs
-    historyError.value = ''; historyReady.value = true
+    historyError.value = ''; historyReady.value = true; historyRefreshedAt.value = new Date().toISOString()
   } catch (reason) { if (!lifecycle.signal.aborted && revision === historyRevision) historyError.value = message(reason) }
+  finally { if (revision === historyRevision) historyRefreshing.value = false }
 }
 async function poll() {
   await refreshHistory()
@@ -413,54 +423,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         </div>
       </fieldset>
 
-      <section class="panel" aria-label="任务记录">
-        <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="heading">任务记录 <span v-if="active" class="ml-2 text-xs font-normal text-blue-600 dark:text-blue-400">后台处理中</span></h2><button class="secondary" @click="refreshHistory">刷新记录</button></div>
-        <div class="my-4 flex gap-2" role="group" aria-label="记录类型"><button v-for="tab in [{ id: 'organize', label: '整理', count: jobs.length }, { id: 'cleanup', label: '清理', count: cleanupJobs.length }, { id: 'subtitle', label: '字幕', count: subtitleJobs.length }]" :key="tab.id" class="history-filter" :aria-pressed="historyTab === tab.id" @click="historyTab = tab.id">{{ tab.label }} {{ tab.count }}</button></div>
-        <p v-if="historyError" role="alert" class="my-3 text-sm text-red-600">{{ historyError }}，请刷新记录后再执行操作。</p>
-        <p v-if="!historyReady && !historyError" class="py-6 text-center text-sm text-slate-400">正在读取任务记录…</p>
-      <section v-show="historyTab === 'cleanup'">
-        <h2 class="heading">清理记录</h2>
-        <p v-if="historyReady && !cleanupJobs.length" class="py-6 text-center text-sm text-slate-400">暂无清理记录</p>
-        <details v-for="job in cleanupJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
-          <summary class="cursor-pointer text-sm">{{ job.mode === 'empty' ? '清理空目录' : '删除所选条目' }} · {{ job.status === 'running' ? '清理中' : job.status === 'partial' ? '部分未删除' : statuses[job.status] || job.status }} · {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} <span class="text-xs text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.accountId) }} · {{ job.parentPath }}</p>
-          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ job.message }}</p>
-          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.id" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.path }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || (item.status === 'skipped' ? '已跳过' : statuses[item.status] || item.status) }}</p></li></ul>
-        </details>
-      </section>
-
-      <section v-show="historyTab === 'organize'">
-        <h2 class="heading">整理记录</h2>
-        <p v-if="historyReady && !jobs.length" class="py-6 text-center text-sm text-slate-400">整理任务提交后，会在这里显示进度和结果。</p>
-        <details v-for="job in jobs" :key="job.id" class="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 p-4" :open="job.status === 'running' || job.status === 'queued'">
-          <summary class="cursor-pointer text-sm font-medium text-slate-800 dark:text-slate-200">{{ job.title }} · {{ statuses[job.status] || job.status }} · {{ job.items.filter(i => i.status === 'done').length }}/{{ job.items.length }} <span class="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">{{ new Date(job.createdAt).toLocaleString() }}</span></summary>
-          <p class="mt-3 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.config.accountId) }} · {{ job.config.sourcePath }} → {{ job.config.targetPath }}</p>
-          <button v-if="job.status !== 'running' && job.status !== 'queued'" class="secondary mt-3" :disabled="!!busy || active" @click="work('查看源目录剩余内容', () => showSource(job))">查看源目录剩余内容</button>
-          <button v-if="job.status !== 'running' && job.status !== 'queued' && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')" class="secondary ml-2 mt-3" :disabled="!!busy || active || !historyReady || !!historyError || !accounts.some(account => account.id === job.config.accountId && account.configured)" @click="subtitleJob = job">补充字幕</button>
-          <p v-if="job.message" class="mt-2 text-sm" :class="job.status === 'completed' ? 'text-emerald-700' : 'text-amber-700'">{{ job.message }}</p>
-          <div v-if="job.stats?.batchSize" class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">
-            <p>已完成 {{ job.stats.batchesCompleted }}/{{ job.stats.batchesTotal }} 批 · 每批最多 {{ job.stats.batchSize }} 个文件 · 累计用时 {{ duration(job.stats.elapsedMs) }}</p>
-            <details class="mt-1">
-              <summary class="cursor-pointer text-blue-600">查看耗时详情</summary>
-              <p>115 请求 {{ job.stats.httpRequests }} 次 · 接口响应 {{ duration(job.stats.httpMs) }} · 排队 / 限速等待 {{ duration(job.stats.waitMs) }}</p>
-              <p>目录读取 {{ job.stats.directoryRequests }} 次 · 批量改名 {{ job.stats.renameRequests }} 次 · 批量移动 {{ job.stats.moveRequests }} 次 · 新建目录 {{ job.stats.directoryCreates }} 次</p>
-              <p>目录读取累计 {{ duration(job.stats.directoryMs) }} · 写操作累计 {{ duration(job.stats.mutationMs) }}（均包含等待）</p>
-              <p>记录保存 {{ job.stats.checkpoints }} 次 · {{ duration(job.stats.saveMs) }}；统计在执行阶段结束后更新。</p>
-            </details>
-          </div>
-          <div class="mt-3 max-h-96 space-y-2 overflow-y-auto"><div v-for="item in job.items" :key="item.file.id" class="rounded-lg bg-slate-50 dark:bg-slate-950 p-3 text-xs leading-5"><p class="break-all text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.file.sourcePath }}</p><p class="break-all">→ {{ item.targetPath }}</p><p class="mt-1 font-medium" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ statuses[item.status] || item.status }}{{ item.message ? `：${item.message}` : '' }}</p></div></div>
-        </details>
-      </section>
-      <section v-show="historyTab === 'subtitle'">
-        <h2 class="heading">字幕导入记录</h2>
-        <p v-if="historyReady && !subtitleJobs.length" class="py-6 text-center text-sm text-slate-400">暂无字幕导入记录</p>
-        <details v-for="job in subtitleJobs" :key="job.id" class="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3" :open="job.status !== 'completed'">
-          <summary class="cursor-pointer text-sm">{{ job.status === 'running' ? '字幕上传中' : statuses[job.status] || job.status }} · 已上传 {{ job.items.filter(item => item.status === 'done').length }}/{{ job.items.length }} · {{ new Date(job.createdAt).toLocaleString() }}</summary>
-          <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">账号：{{ accountLabel(job.accountId) }} · {{ job.message }}</p>
-          <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs"><li v-for="item in job.items" :key="item.localId" class="break-all rounded-lg bg-slate-50 dark:bg-slate-950 p-2"><p>{{ item.originalName }} → {{ item.targetPath }}</p><p class="mt-1" :class="item.status === 'done' ? 'text-emerald-700' : 'text-amber-700'">{{ item.message || statuses[item.status] || item.status }}</p></li></ul>
-        </details>
-      </section>
-      </section>
+      <OrganizeTaskHistory v-model:tab="historyTab" :jobs="jobs" :cleanup-jobs="cleanupJobs" :subtitle-jobs="subtitleJobs" :accounts="accounts" :ready="historyReady" :error="historyError" :refreshing="historyRefreshing" :refreshed-at="historyRefreshedAt" :busy="!!busy" @refresh="refreshHistory" @source="viewHistorySource" @subtitle="supplementSubtitles" />
     </div>
     <P115ActionDialog v-if="shareOpen" title="目录分享" @close="shareOpen = false">
       <p class="text-xs text-slate-500 dark:text-slate-400">分享范围由目录分享配置决定，请核对目标目录。</p>
@@ -497,7 +460,5 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 .step-active { @apply bg-blue-50 font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300; }
 .step-active .step-number { @apply bg-blue-600 text-white; }
 .action-bar { @apply sticky bottom-0 z-20 -mx-5 -mb-5 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
-.history-filter { @apply rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800; }
-.history-filter[aria-pressed="true"] { @apply bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300; }
 button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
 </style>
