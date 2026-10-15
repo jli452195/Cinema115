@@ -464,6 +464,8 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   position: absolute;
   inset: -12px;
   width: calc(100% + 24px);
+  /* Override Preflight's max-width: 100% so overscan covers both edges. */
+  max-width: none;
   height: calc(100% + 24px);
   filter: blur(5px);
 }

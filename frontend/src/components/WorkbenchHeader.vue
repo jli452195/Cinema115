@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
@@ -15,30 +15,62 @@ const route = useRoute()
 const notificationController = new AbortController()
 useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
 let notificationTimer: ReturnType<typeof setInterval> | undefined
-function onScroll() { scrollY.value = window.scrollY }
+let scrollFrame: number | undefined
+let compactViewport: MediaQueryList | undefined
+function smoothstep(value: number) { return value * value * (3 - 2 * value) }
+function updateHeaderScroll() {
+  if (!props.tonalSurface) {
+    scrollY.value = window.scrollY
+    return
+  }
+  const threshold = compactViewport?.matches ? 64 : 96
+  const raw = props.overBackdrop ? Math.min(Math.max(window.scrollY / threshold, 0), 1) : 1
+  const progress = smoothstep(raw)
+  const edge = smoothstep(Math.min(Math.max((raw - 0.55) / 0.45, 0), 1))
+  // Scroll position is the animation clock: no time-based transition or trailing interpolation.
+  header.value?.style.setProperty('--header-surface-progress', progress.toFixed(4))
+  header.value?.style.setProperty('--header-edge-progress', edge.toFixed(4))
+  header.value?.style.setProperty('--header-active-opacity', (0.45 + progress * 0.55).toFixed(4))
+}
+function onScroll() {
+  if (!props.tonalSurface) {
+    scrollY.value = window.scrollY
+    return
+  }
+  if (scrollFrame !== undefined) return
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = undefined
+    updateHeaderScroll()
+  })
+}
 onMounted(() => {
+  compactViewport = window.matchMedia('(max-width: 639px)')
+  compactViewport.addEventListener('change', onScroll)
   window.addEventListener('scroll', onScroll, { passive: true })
-  onScroll()
+  updateHeaderScroll()
   void refreshWebsiteUnread(notificationController.signal)
   notificationTimer = setInterval(() => { void refreshWebsiteUnread(notificationController.signal) }, 60000)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('scroll', onScroll); notificationController.abort(); clearInterval(notificationTimer) })
+  window.removeEventListener('scroll', onScroll)
+  compactViewport?.removeEventListener('change', onScroll)
+  if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
+  notificationController.abort()
+  clearInterval(notificationTimer)
+})
 const header = ref<HTMLElement>()
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const scrollY = ref(0)
+watch(() => [props.tonalSurface, props.overBackdrop], onScroll, { flush: 'post' })
 const highlightOverBackdrop = computed(() => props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
 const headerStyle = computed(() => {
+  if (props.tonalSurface) return {}
   const opacity = Math.min(Math.max(scrollY.value / 100, 0), 1)
   return {
-    backgroundColor: props.tonalSurface
-      ? `color-mix(in srgb, var(--detail-navigation-surface, var(--md-sys-color-surface)) ${90 + opacity * 6}%, transparent)`
-      : `rgb(var(--header-bg) / ${opacity * 0.85})`,
-    backdropFilter: `blur(${props.tonalSurface ? 16 : opacity * 12}px)`,
-    borderColor: props.tonalSurface
-      ? `color-mix(in srgb, var(--md-sys-color-outline-variant) ${30 + opacity * 30}%, transparent)`
-      : `rgb(var(--header-border) / ${opacity})`
+    backgroundColor: `rgb(var(--header-bg) / ${opacity * 0.85})`,
+    backdropFilter: `blur(${opacity * 12}px)`,
+    borderColor: `rgb(var(--header-border) / ${opacity})`
   }
 })
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
@@ -89,7 +121,8 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[background-color,backdrop-filter,border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface }" :style="headerStyle" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[background-color,backdrop-filter,border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop }" :style="headerStyle" @focusout="onFocusOut">
+    <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <div class="header-inner relative mx-auto flex h-[var(--workbench-header-height)] max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:px-10">
       <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
         <CinemaLogo />
@@ -143,6 +176,40 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 </style>
 <style scoped>
+.workbench-header.tonal-surface {
+  --header-tonal-bg: 248 250 252;
+  --header-tonal-alpha: 0.9;
+  --header-surface-progress: 1;
+  --header-edge-progress: 1;
+  --header-active-opacity: 1;
+  background: transparent;
+  border-color: transparent;
+  transition: none;
+}
+.dark .workbench-header.tonal-surface {
+  --header-tonal-bg: 24 25 28;
+  --header-tonal-alpha: 0.88;
+}
+.workbench-header.immersive-surface {
+  --header-surface-progress: 0;
+  --header-edge-progress: 0;
+  --header-active-opacity: 0.45;
+}
+.header-surface {
+  background: rgb(var(--header-tonal-bg) / var(--header-tonal-alpha));
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  opacity: var(--header-surface-progress);
+}
+.workbench-header.tonal-surface::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 1px;
+  background: color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent);
+  opacity: var(--header-edge-progress);
+  pointer-events: none;
+}
 .top-link { position: relative; border-radius: 0.6rem; padding: 0.6rem 0.65rem; font-size: 0.875rem; font-weight: 600; color: #334155; white-space: nowrap; transition: color 200ms, background-color 200ms; }
 .dark .top-link { color: rgb(var(--color-slate-300)); }
 .top-link:hover { background: #f8fafc; color: #0f172a; }
@@ -175,7 +242,9 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.tonal-surface .top-link:hover,
 .workbench-header.tonal-surface .icon-button:hover,
 .workbench-header.tonal-surface .icon-button.selected { color: var(--md-sys-color-on-surface); }
-.workbench-header.tonal-surface .nav-indicator,
+.workbench-header.tonal-surface .nav-indicator {
+  background: color-mix(in srgb, var(--md-sys-color-secondary-container) calc(var(--header-active-opacity) * 100%), transparent);
+}
 .workbench-header.tonal-surface .top-link:hover,
 .workbench-header.tonal-surface .icon-button:hover,
 .workbench-header.tonal-surface .icon-button.selected { background: var(--md-sys-color-secondary-container); }
@@ -185,6 +254,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.tonal-surface .icon-button svg { filter: none; }
 .workbench-header.tonal-surface :is(a, button):focus-visible { outline-color: rgb(var(--color-accent)); }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-header.tonal-surface,
+  .dark .workbench-header.tonal-surface { --header-tonal-alpha: 0.95; }
+  .header-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .workbench-header.tonal-surface :is(.top-link, .icon-button) { transition: none; }
+}
 @media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
 @media (max-width: 639px) {
   .desktop-action { display: none; }
