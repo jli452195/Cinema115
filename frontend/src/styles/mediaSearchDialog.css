@@ -11,6 +11,7 @@
   --search-dialog-input-focus: rgb(255 255 255 / 90%);
   --search-dialog-text: var(--floating-surface-text);
   --search-dialog-muted: var(--floating-surface-muted);
+  --search-dialog-pinned-surface: color-mix(in srgb, var(--search-dialog-container) 95%, var(--search-dialog-text));
   --search-dialog-outline: #cbd5e1;
   --search-dialog-primary: #365b83;
   --search-dialog-tonal: rgb(59 91 135 / 9%);
@@ -59,9 +60,29 @@ dialog.media-search-dialog .mikan-input:focus {
   background: var(--search-dialog-input-focus);
 }
 
-/* A solid, matching surface prevents scrolling result text bleeding through. */
-dialog.media-search-dialog :is(.gy-filters, .mikan-filter-controls) {
-  background: var(--search-dialog-container);
+/* Keep filters part of the glass surface until results scroll underneath them. */
+.search-filter-anchor {
+  height: 1px;
+  margin-bottom: -1px;
+  pointer-events: none;
+}
+
+dialog.media-search-dialog .search-filter-surface {
+  background: transparent;
+}
+
+/* An opaque pinned surface masks result text without another backdrop filter. */
+dialog.media-search-dialog .search-filter-surface.is-stuck {
+  background: var(--search-dialog-pinned-surface);
+}
+
+dialog.media-search-dialog .search-filter-surface.is-stuck::after {
+  position: absolute;
+  inset: 100% 0 auto;
+  height: 10px;
+  background: linear-gradient(var(--search-dialog-pinned-surface), transparent);
+  pointer-events: none;
+  content: '';
 }
 
 dialog.media-search-dialog .mikan-batch-footer {

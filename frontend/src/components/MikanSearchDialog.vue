@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
+import { useStickySurface } from '../composables/useStickySurface'
 import { useCloudDownloadBatch, type BatchStatus } from '../composables/useCloudDownloadBatch'
 import { magnetKey } from '../lib/cloud-download-batch'
 import { p115Request } from '../lib/p115-api'
@@ -22,6 +23,9 @@ const dialog = ref<HTMLDialogElement>()
 const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
 const shortViewport = ref(false)
+const scrollBody = ref<HTMLElement>()
+const filterAnchor = ref<HTMLElement>()
+const filtersStuck = useStickySurface(scrollBody, filterAnchor)
 const query = ref(props.title || props.originalTitle)
 const group = ref('')
 const groups = ref<Group[]>([])
@@ -162,7 +166,7 @@ function coverSource(card: Bangumi) {
 async function resetResultPosition() {
   await nextTick()
   const body = dialog.value?.querySelector<HTMLElement>('.mikan-body')
-  const anchor = dialog.value?.querySelector<HTMLElement>('.mikan-filter-controls')
+  const anchor = filterAnchor.value
   if (body && anchor) body.scrollTop = Math.min(body.scrollTop, anchor.offsetTop)
 }
 async function showMore() {
@@ -309,7 +313,7 @@ onBeforeUnmount(() => {
           </div>
           <button autofocus type="button" :aria-label="batchRunning ? '停止提交并关闭蜜柑搜索' : '关闭蜜柑搜索'" class="mikan-icon-button" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
-        <div class="mikan-body">
+        <div ref="scrollBody" class="mikan-body">
           <form class="mikan-search-form" @submit.prevent="search()">
             <input v-model="query" aria-label="蜜柑搜索词" maxlength="200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
             <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
@@ -349,7 +353,8 @@ onBeforeUnmount(() => {
             <p v-else-if="error" role="alert" class="mikan-load-error">{{ error }}</p>
           </div>
           <p v-if="result && !selectedBangumi && result.attempts.length > 1" role="status" class="mikan-search-note">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
-          <section v-if="result" aria-label="蜜柑结果筛选" class="mikan-filter-controls">
+          <div v-if="result" ref="filterAnchor" class="mikan-filter-anchor search-filter-anchor" aria-hidden="true"></div>
+          <section v-if="result" aria-label="蜜柑结果筛选" class="mikan-filter-controls search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }">
             <div class="mikan-filter-row">
               <span class="mikan-filter-label" aria-hidden="true">字幕组</span>
               <MikanFilterSelect :model-value="group" :options="groupOptions" label="蜜柑字幕组" :disabled="interactionBusy" @update:model-value="selectGroup" />
@@ -481,7 +486,8 @@ onBeforeUnmount(() => {
 .mikan-error-details summary svg { width: 12px; height: 12px; flex-shrink: 0; }
 .mikan-error-details[open] summary svg { transform: rotate(90deg); }
 .mikan-error-details p { max-width: 100%; padding-bottom: 8px; overflow-wrap: anywhere; }
-.mikan-filter-controls { position: sticky; top: 0; z-index: 3; display: grid; min-width: 0; gap: 4px; margin: 8px -24px 0; padding: 0 24px 8px; border-bottom: 1px solid var(--search-dialog-outline); background: var(--search-dialog-container); }
+.mikan-filter-anchor { margin-top: 8px; }
+.mikan-filter-controls { position: sticky; top: 0; z-index: 3; display: grid; min-width: 0; gap: 4px; margin: 0 -24px; padding: 0 24px 8px; }
 .mikan-short-viewport .mikan-filter-controls { position: static; }
 .mikan-filter-row { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .mikan-filter-row > nav { flex: 1; }

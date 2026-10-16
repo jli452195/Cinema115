@@ -5,7 +5,7 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import EmbyMissingCard from '../components/EmbyMissingCard.vue'
 import EmbyMissingDetails from '../components/EmbyMissingDetails.vue'
 import EmbyMissingStatus from '../components/EmbyMissingStatus.vue'
-import EmbyMissingPagination from '../components/EmbyMissingPagination.vue'
+import PaginationControl from '../components/PaginationControl.vue'
 import { getEmbyMissingSession, MISSING_PAGE_SIZE, type MissingMode } from '../composables/useEmbyMissingSession'
 import { providePosterCache } from '../composables/useLazyPoster'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
@@ -276,7 +276,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort(); writer?.abort(); ses
           <button v-if="resultQuery" type="button" class="mt-4 min-h-10 text-sm text-blue-600 dark:text-blue-400" @click="clearSearch">清除搜索条件</button>
         </section>
       </template>
-      <EmbyMissingPagination v-if="currentPage && pageCount > 1" :page="pageNumber" :pages="pageCount" :disabled="loading || !!restoring" :label="excludedMode ? '排除记录分页' : '缺集结果分页'" @change="changePage" />
+      <PaginationControl v-if="currentPage && pageCount > 1" :page="pageNumber" :pages="pageCount" :disabled="loading || !!restoring" :label="excludedMode ? '排除记录分页' : '缺集结果分页'" @change="changePage" />
     </div>
     <EmbyMissingDetails v-if="selected" :key="selected.key" :item="selected" :token="token" @close="selected = undefined" @removed="removed" />
   </ManagementLayout>

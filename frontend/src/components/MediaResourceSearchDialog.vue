@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
+import { useStickySurface } from '../composables/useStickySurface'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import { gyingRequest } from '../types/gying'
@@ -27,6 +28,9 @@ const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
 const mobileViewport = ref(window.matchMedia('(max-width: 639px)').matches)
 const shortViewport = ref(false)
+const scrollBody = ref<HTMLElement>()
+const filterAnchor = ref<HTMLElement>()
+const filtersStuck = useStickySurface(scrollBody, filterAnchor)
 const displayLimit = ref(30)
 const config = ref<GyingConfigView>()
 const result = ref<GyingSearchResponse>()
@@ -387,7 +391,7 @@ onBeforeUnmount(() => {
             </RouterLink>
           </div>
         </div>
-        <div class="gy-body">
+        <div ref="scrollBody" class="gy-body">
           <div v-if="config && !searchEnabled" class="gy-setup">
             <h3>登录{{ sourceLabel }}后搜索资源</h3><p>请先在资源配置中保存{{ sourceLabel }}账号并登录。</p>
             <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="emit('close')">配置{{ sourceLabel }}搜索</RouterLink>
@@ -431,8 +435,8 @@ onBeforeUnmount(() => {
                   </button>
                 </nav>
               </section>
-              <div class="gy-filter-anchor" aria-hidden="true"></div>
-              <section class="gy-filters" :aria-label="sourceLabel + '结果筛选'">
+              <div ref="filterAnchor" class="gy-filter-anchor search-filter-anchor" aria-hidden="true"></div>
+              <section class="gy-filters search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }" :aria-label="sourceLabel + '结果筛选'">
                 <div class="gy-filter-context">
                   <h3 class="gy-filter-title">资源筛选</h3>
                   <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
@@ -614,7 +618,7 @@ onBeforeUnmount(() => {
 .gy-item-card small span { margin-left: 8px; }
 .gy-all-items { width: 160px; padding: 12px; }
 .gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
-.gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; background: var(--gy-container); border-bottom: 1px solid var(--gy-outline); }
+.gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; }
 .gy-filter-context { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
 .gy-filter-context > span { flex-shrink: 0; font-size: 11px; line-height: 18px; color: var(--gy-muted); }
 .gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }

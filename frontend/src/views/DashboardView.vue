@@ -7,6 +7,7 @@ import DashboardFilterDialog from '../components/DashboardFilterDialog.vue'
 import DashboardYearMenu from '../components/DashboardYearMenu.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import MediaCard from '../components/MediaCard.vue'
+import PaginationControl from '../components/PaginationControl.vue'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 import { cacheGenres, cachedGenres, rememberDashboardPath, type DashboardGenre, type DashboardKind } from '../utils/dashboardPreferences'
@@ -55,6 +56,10 @@ const sortStrip = ref<HTMLElement>()
 const { indicatorStyle: categoryIndicator } = useSlidingIndicator(categoryStrip, '[aria-pressed="true"]', [category, categories])
 const { indicatorStyle: sortIndicator } = useSlidingIndicator(sortStrip, '[aria-pressed="true"]', [sort])
 const totalPages = ref(0)
+const pageCount = computed(() => Math.min(500, totalPages.value))
+function changePage(value: number) {
+  if (!loading.value && !error.value && value >= 1 && value <= pageCount.value) page.value = value
+}
 const total = ref(0)
 const genres = ref<DashboardGenre[]>(cachedGenres(kind.value).genres)
 const visibleGenres = computed(() => genres.value.filter(item => !hiddenGenre(item.id)))
@@ -193,7 +198,7 @@ onBeforeUnmount(() => {
           <MediaCard v-for="item in items" :key="`${item.kind}-${item.id}`" :item="item" :library="libraryMatches[`${item.kind}:${item.id}`]" :show-kind-badge="false" :title-lines="2" />
         </div>
       </section>
-      <div v-if="hasLoaded && totalPages > 1" class="mt-9 flex items-center justify-center gap-5 text-sm"><button :disabled="loading || !!error || page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page--">上一页</button><span class="text-xs text-slate-500 dark:text-slate-400">{{ loading || error ? loadedPage : page }} / {{ totalPages }}</span><button :disabled="loading || !!error || page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 text-slate-600 dark:text-slate-300 disabled:opacity-40" @click="page++">下一页</button></div>
+      <PaginationControl v-if="hasLoaded && pageCount > 1" class="mt-9" :page="loading || error ? loadedPage : page" :pages="pageCount" :disabled="loading || !!error" :label="kind === 'movie' ? '电影分页' : '剧集分页'" @change="changePage" />
       <footer class="mt-10 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">TMDB</a> · 评分为 TMDB 用户评分，地区按出品地筛选。点击海报查看影视详情。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
     </main>
     <DashboardFilterDialog v-if="mobileFiltersOpen" :genres="visibleGenres" :regions="regions" :sorts="sorts" :genre="genre" :region="region" :year="year" :sort="sort" @close="mobileFiltersOpen = false" @apply="applyMobileFilters" />
