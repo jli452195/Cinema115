@@ -12,7 +12,7 @@ import FollowButton from '../components/FollowButton.vue'
 import SearchPill from '../components/SearchPill.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
-import EmbyMediaVersions from '../components/EmbyMediaVersions.vue'
+import SeasonEpisodeList from '../components/SeasonEpisodeList.vue'
 import SeasonLibraryProgress from '../components/SeasonLibraryProgress.vue'
 import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
 import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
@@ -20,8 +20,9 @@ import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useMediaColors } from '../composables/useMediaColors'
-import { useTMDBSeasons, type CacheInfo, type TMDBEpisode as Episode } from '../composables/useTMDBSeasons'
-import { episodeHasAired, formatEpisodeRanges, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
+import { useTMDBSeasons, type CacheInfo } from '../composables/useTMDBSeasons'
+import { provideEmbyVersionCache } from '../composables/useEmbyVersionCache'
+import { formatEpisodeRanges, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
 import { copyText } from '../utils/clipboard'
 import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
@@ -37,6 +38,7 @@ import { gyingRequest, type GyingConfigView } from '../types/gying'
 import { woniuRequest, type WoniuConfigView } from '../types/woniu'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
+const versionCache = provideEmbyVersionCache()
 const botSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
 const woniuSearchOpen = ref(false)
@@ -70,6 +72,7 @@ const route = useRoute(), router = useRouter()
 watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
+watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
 interface SeasonSummary { id: number; number: number; name: string; episodeCount: number; date: string }
 interface Detail extends CacheInfo {
@@ -149,6 +152,7 @@ function cancelRequests() {
   resetSeasons()
 }
 async function loadDetail() {
+  versionCache.clear()
   cancelRequests()
   const current = new AbortController(); detailController = current
   detail.value = null; error.value = ''; loading.value = true
@@ -188,6 +192,7 @@ async function refreshDetail() {
   }
 }
 function refreshMetadata() {
+  versionCache.clear()
   void refreshDetail()
   for (const season of detail.value?.seasons || []) {
     loadSeasonSchedule(season.number, true)
@@ -202,6 +207,7 @@ async function numberingSaved(value: NumberingInfo) {
 watch(() => [props.kind, props.tmdbId, props.token], () => { numberingOpen.value = false; numberingNotice.value = '' })
 watch(() => detail.value?.numbering?.revision, (value, previous) => {
   if (value === previous) return
+  versionCache.clear()
   resetSeasons(); openSeasons.value = new Set(); visitedSeasons.value = new Set(); episodeLimits.value = {}
   if (detail.value && hasIndexedEpisodes.value && detailController) void primeSchedules(detailController.signal)
 })
@@ -227,10 +233,6 @@ async function closeSeason(number: number) {
 }
 function hasImage(url: string) { return !!url && !failedImages.value.has(url) }
 function seasonName(season: SeasonSummary) { return detail.value?.numbering?.groupId && season.name ? season.name : season.number === 0 ? '特别篇' : `第 ${season.number} 季` }
-function isEpisodeAvailable(season: number, episode: Episode) {
-  // Emby 已入库是独立事实，不能被 TMDB 缺失或未来的播出日期覆盖。
-  return (embyMedia.value?.state === 'present' || embyMedia.value?.state === 'stale') && !!embyEpisodes.value[season]?.has(episode.number)
-}
 // 同一个组件会复用于不同影视，路由变化时取消旧请求并清空季缓存。
 watch(() => [props.kind, props.tmdbId, props.token], () => { namingCopied.value = false; namingCopyError.value = false; void loadDetail() }, { immediate: true })
 // 首次打开和入库状态更新后，仅为已有分集的剧集预读播出缓存，不阻塞详情显示。
@@ -361,15 +363,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     <p v-if="reliableLibrary && seasonProgress[season.number]?.unlistedOwned.length" class="detail-season-note mt-4 inline-flex max-w-full items-start gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-[11px] font-medium leading-5 text-slate-600 dark:text-slate-300 shadow-sm"><span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-300" aria-hidden="true"></span><span class="min-w-0 break-words">额外入库集数：{{ formatEpisodeRanges(seasonProgress[season.number]?.unlistedOwned || []) }}（TMDB 本季未收录）</span></p>
                     <p v-if="seasons[season.number]?.data?.overview" class="py-4 text-sm leading-7 detail-muted">{{ seasons[season.number]?.data?.overview }}</p>
                     <p v-if="!seasons[season.number]?.data?.episodes.length" class="py-5 text-sm detail-muted">暂无分集信息</p>
-                    <div class="divide-y divide-slate-200 dark:divide-slate-700/80">
-                      <article v-for="episode in seasons[season.number]?.data?.episodes.slice(0, episodeLimits[season.number] || 20)" :key="episode.id" class="min-w-0 py-6">
-                        <div class="flex flex-wrap items-start justify-between gap-3"><h3 class="min-w-0 text-base font-semibold detail-on-surface"><span class="mr-2 detail-muted">{{ String(episode.number).padStart(2, '0') }}</span>{{ episode.name || `第 ${episode.number} 集` }}<span v-if="isEpisodeAvailable(season.number, episode)" class="ml-2 rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">{{ embyMedia?.state === 'stale' ? '已入库 · 待更新' : '已入库' }}</span><span v-else-if="!episodeHasAired(episode, today)" class="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-normal detail-muted">{{ episode.date ? '未播出' : '播出日期待定' }}</span><span v-else-if="reliableLibrary" class="ml-2 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-normal text-amber-600 dark:bg-amber-500/10 dark:text-amber-500">未入库</span></h3><span v-if="isEpisodeAvailable(season.number, episode)" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-xs text-white" aria-hidden="true"><svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6" /></svg></span></div>
-                        <p class="mt-2 flex flex-wrap gap-3 text-xs detail-muted"><span>{{ episode.date || '播出日期待定' }}</span><span v-if="episode.runtime">{{ episode.runtime }} 分钟</span><span v-if="episode.votes > 0" class="text-amber-600"><svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg> {{ episode.rating.toFixed(1) }}</span></p>
-                        <p class="mt-3 text-sm leading-7 detail-muted">{{ episode.overview || '暂无分集简介。' }}</p>
-                        <EmbyMediaVersions v-if="isPortalAdmin && isEpisodeAvailable(season.number, episode)" :token="token" kind="tv" :tmdb-id="tmdbId" :season="season.number" :episode="episode.number" />
-                        <div v-if="hasImage(episode.stillUrl)" class="mx-auto mt-5 aspect-video w-full max-w-xs overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800"><img :src="tmdbImageURL(episode.stillUrl)" :alt="episode.name" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(episode.stillUrl)" /></div>
-                      </article>
-                    </div>
+                    <SeasonEpisodeList :key="`${tmdbId}-${season.number}-${detail.numbering?.revision || 0}`" :token="token" :tmdb-id="tmdbId" :season="season.number" :episodes="seasons[season.number]?.data?.episodes.slice(0, episodeLimits[season.number] || 20) || []" :media-state="embyMedia?.state" :owned-episodes="embyEpisodes[season.number]" :admin="isPortalAdmin" :today="today" />
                     <InfiniteLoadMore v-if="seasons[season.number]?.data?.episodes.length" :key="`${tmdbId}-${season.number}`" :active="openSeasons.has(season.number)" :count="Math.min(episodeLimits[season.number] || 20, seasons[season.number]?.data?.episodes.length || 0)" :total="seasons[season.number]?.data?.episodes.length || 0" @load="episodeLimits[season.number] = Math.min((episodeLimits[season.number] || 20) + 20, seasons[season.number]?.data?.episodes.length || 0)" />
                   </template>
               <div class="detail-divider border-t pt-3 text-right">
@@ -630,6 +624,11 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 }
 .media-detail :deep(.media-version-panel .media-tonal-toggle:hover) {
   background: var(--detail-media-inset);
+}
+@media (hover: hover) {
+  .media-detail :deep(.media-version-movie .movie-version-toggle:hover) {
+    background: color-mix(in srgb, var(--md-sys-color-on-surface) 4%, var(--detail-media-surface));
+  }
 }
 .detail-kind {
   background: var(--md-sys-color-tertiary-container);

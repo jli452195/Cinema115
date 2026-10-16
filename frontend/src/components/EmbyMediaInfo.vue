@@ -6,7 +6,12 @@ defineProps<{ token: string; tmdbId: string; media?: EmbyMatch }>()
 </script>
 
 <template>
-  <section v-if="media?.items.length" aria-label="电影媒体版本" class="mt-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/90 p-5">
+  <section v-if="media?.items.length" aria-label="电影媒体版本" class="movie-media mt-8 min-w-0">
+    <h2 class="mb-3 text-lg font-bold">媒体版本</h2>
     <EmbyMediaVersions :token="token" kind="movie" :tmdb-id="tmdbId" :show-title="false" />
   </section>
 </template>
+
+<style scoped>
+.movie-media { color: var(--md-sys-color-on-surface); }
+</style>
