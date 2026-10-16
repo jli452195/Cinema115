@@ -67,6 +67,37 @@ func TestEmbyHTTPWebhookCharsetAndAdminBoundary(t *testing.T) {
 	if w := call("GET", "/api/admin/emby/config", "", false); w.Code != 401 {
 		t.Fatal("管理员接口未鉴权", w.Code)
 	}
+	if w := call("GET", "/api/admin/emby/missing", "", false); w.Code != 401 {
+		t.Fatal("缺集接口未鉴权", w.Code)
+	}
+	for _, tc := range []struct {
+		method, path, body string
+		code               int
+	}{
+		{"GET", "/api/admin/emby/missing/preview?key=tmdb:285479", "", 409},
+		{"GET", "/api/admin/emby/missing/preview", "", 400},
+		{"GET", "/api/admin/emby/missing/exclusions", "", 200},
+		{"GET", "/api/admin/emby/missing/exclusions?offset=invalid", "", 400},
+		{"GET", "/api/admin/emby/missing/exclusions?offset=-1", "", 400},
+		{"POST", "/api/admin/emby/missing/exclusions", `{}`, 400},
+		{"POST", "/api/admin/emby/missing/exclusions", `{invalid`, 400},
+		{"POST", "/api/admin/emby/missing/restore", `{}`, 400},
+	} {
+		if w := call(tc.method, tc.path, tc.body, false); w.Code != 401 {
+			t.Fatal("缺集排除接口未鉴权", tc.path, w.Code)
+		}
+		if w := call(tc.method, tc.path, tc.body, true); w.Code != tc.code || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "private-key") {
+			t.Fatal(tc.path, w.Code, w.Body.String())
+		}
+	}
+	if w := call("GET", "/api/admin/emby/missing", "", true); w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":false`) || strings.Contains(w.Body.String(), "private-key") {
+		t.Fatal("缺集接口状态或凭据边界错误", w.Code, w.Body.String())
+	}
+	for _, query := range []string{"offset=-1", "offset=abc", "offset=1000001", "q=" + url.QueryEscape(strings.Repeat("剧", 101))} {
+		if w := call("GET", "/api/admin/emby/missing?"+query, "", true); w.Code != 400 {
+			t.Fatal("缺集接口查询参数未校验", query, w.Code)
+		}
+	}
 	w := call("GET", "/api/admin/emby/config", "", true)
 	if w.Code != 200 || strings.Contains(w.Body.String(), "private-key") || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("配置泄露或允许缓存")

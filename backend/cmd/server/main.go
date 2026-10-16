@@ -173,6 +173,11 @@ func main() {
 		log.Fatal(err)
 	}
 	embyService.Logs = generationLogs
+	embyImages, err := imagecache.NewEmby(filepath.Join(dataDir, "emby-images"), embyService.PosterRequest)
+	if err != nil {
+		log.Fatal(err)
+	}
+	embyService.Posters = embyImages
 	httpapi.RegisterEmby(r, admin, embyService)
 	httpapi.RegisterWebsiteCatalog(catalog, embyService)
 	recentUpdates := &service.RecentUpdatesService{Source: embyService, Metadata: tmdbService}
@@ -393,6 +398,8 @@ func main() {
 	go func() { defer workers.Done(); gyingImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); woniuImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); embyImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); shareAPI.Runs.Run() }()
 	if os.Getenv("TMDB_API_KEY") != "" {

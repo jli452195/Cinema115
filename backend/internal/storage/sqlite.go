@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 37
+const schemaVersion = 38
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -473,6 +473,13 @@ PRAGMA user_version=30;`); err != nil {
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS playback_origin_material ON playback_origins(material_id)`); err != nil {
 		return fmt.Errorf("创建播放来源反向索引: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS emby_missing_exclusions (
+ id TEXT PRIMARY KEY, service TEXT NOT NULL, series_id TEXT NOT NULL, tmdb TEXT NOT NULL,
+ title TEXT NOT NULL, library_id TEXT NOT NULL, episode_count INTEGER NOT NULL,
+ excluded_at TEXT NOT NULL, UNIQUE(service,series_id,tmdb)
+); PRAGMA user_version=38;`); err != nil {
+		return fmt.Errorf("创建缺集检测排除记录: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交数据库结构迁移: %w", err)

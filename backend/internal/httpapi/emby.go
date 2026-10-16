@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -23,6 +24,8 @@ func RegisterEmby(r *gin.Engine, admin *gin.RouterGroup, s *service.EmbyService)
 		c.Next()
 	})
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, s.Config()) })
+	registerEmbyPosters(group, s)
+	registerEmbyMissingExclusions(group, s)
 	group.POST("/webhook-config", func(c *gin.Context) {
 		var input struct {
 			BaseURL string `json:"baseUrl"`
@@ -69,6 +72,27 @@ func RegisterEmby(r *gin.Engine, admin *gin.RouterGroup, s *service.EmbyService)
 			return
 		}
 		c.JSON(200, status)
+	})
+	group.GET("/missing", func(c *gin.Context) {
+		offset := 0
+		if raw, exists := c.GetQuery("offset"); exists {
+			var err error
+			offset, err = strconv.Atoi(raw)
+			if err != nil || offset < 0 || offset > 1_000_000 {
+				c.JSON(400, gin.H{"error": "分页位置无效"})
+				return
+			}
+		}
+		page, err := s.MissingEpisodes(c.Request.Context(), service.EmbyMissingQuery{Search: c.Query("q"), Offset: offset})
+		if err != nil {
+			code := http.StatusInternalServerError
+			if errors.Is(err, service.ErrEmbyMissingInput) {
+				code = http.StatusBadRequest
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, page)
 	})
 	group.POST("/sync", func(c *gin.Context) {
 		if err := s.StartSync(c.Request.Context()); err != nil {

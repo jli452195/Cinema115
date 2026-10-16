@@ -65,21 +65,22 @@ type negativeEntry struct {
 type refreshRequest struct{ size, name string }
 
 type Cache struct {
-	mikan     bool
-	gying     bool
-	woniu     bool
-	root      string
-	maxBytes  int64
-	baseURL   string
-	http      *http.Client
-	now       func() time.Time
-	mu        sync.Mutex
-	flights   map[string]*flight
-	negative  map[string]negativeEntry
-	pending   map[string]refreshRequest
-	refresh   chan struct{}
-	prune     chan struct{}
-	downloads chan struct{}
+	embyRequest EmbyRequest
+	mikan       bool
+	gying       bool
+	woniu       bool
+	root        string
+	maxBytes    int64
+	baseURL     string
+	http        *http.Client
+	now         func() time.Time
+	mu          sync.Mutex
+	flights     map[string]*flight
+	negative    map[string]negativeEntry
+	pending     map[string]refreshRequest
+	refresh     chan struct{}
+	prune       chan struct{}
+	downloads   chan struct{}
 }
 
 func New(root string, maxBytes int64) (*Cache, error) {
@@ -129,6 +130,9 @@ func (c *Cache) paths(size, name string) (string, string, error) {
 	}
 	if c.woniu {
 		valid = woniuImageDirectory.MatchString(size) && woniuImageName.MatchString(name)
+	}
+	if c.embyRequest != nil {
+		valid = validEmbyImage(size, name)
 	}
 	if !valid || !validName(name) {
 		return "", "", ErrInput
@@ -266,6 +270,14 @@ func (c *Cache) fetch(ctx context.Context, size, name, path, metadataPath string
 	case c.downloads <- struct{}{}:
 	}
 	defer func() { <-c.downloads }()
+	// Another caller may have completed between the initial disk check and joining
+	// this flight. Recheck after acquiring capacity to avoid duplicate downloads.
+	if failure := c.cachedFailure(key); failure != nil {
+		return failure
+	}
+	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && c.now().Sub(info.ModTime()) < freshTTL {
+		return nil
+	}
 	if err = c.download(ctx, size, name, path, metadataPath); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			c.rememberFailure(key, err)
@@ -294,6 +306,9 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 		return fmt.Errorf("创建图片地址: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
+	if c.embyRequest != nil {
+		req, err = c.embyRequest(ctx, size, strings.TrimSuffix(name, ".webp"))
+	}
 	if err != nil {
 		return fmt.Errorf("创建图片请求: %w", err)
 	}
@@ -347,7 +362,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	}
 	// 上游验证页面可能伪装成图片响应；检查文件签名，禁止将 HTML 缓存为封面。
 	var source io.Reader = response.Body
-	if c.mikan || c.gying || c.woniu {
+	if c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		reader := bufio.NewReader(response.Body)
 		header, peekErr := reader.Peek(512)
 		if peekErr != nil && !errors.Is(peekErr, io.EOF) {
@@ -399,7 +414,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 		return err
 	}
 	// 小容量缓存写入后通知受控工作协程清理，避免只等定时清理导致持续膨胀。
-	if c.mikan || c.gying || c.woniu {
+	if c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		select {
 		case c.prune <- struct{}{}:
 		default:

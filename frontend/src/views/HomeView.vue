@@ -25,7 +25,7 @@ const categories = {
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',
-    features: [{ title: '媒体库同步', description: '配置 Emby 连接与同步范围，通过 Webhook 更新影视入库状态。', to: '/emby/library', icon: 'emby' }, { title: 'Emby 302 反代', description: '设置独立播放端口，将分享 STRM 直放跳转到 115。', to: '/emby/proxy', icon: 'emby' }, { title: '缓存管理', description: '查看分享直取与秒传播放直链缓存，搜索、移除或清空临时地址。', to: '/emby/cache', icon: 'emby' }, { title: '用户管理', description: '绑定 Emby 用户使用的 115 账号。', to: '/emby/users', icon: 'emby' }],
+    features: [{ title: '媒体库同步', description: '配置 Emby 连接与同步范围，通过 Webhook 更新影视入库状态。', to: '/emby/library', icon: 'emby' }, { title: '缺集检测', description: '按季检查第 1 集至已入库最后一集，查看缺失集号。', to: '/emby/missing', icon: 'emby' }, { title: 'Emby 302 反代', description: '设置独立播放端口，将分享 STRM 直放跳转到 115。', to: '/emby/proxy', icon: 'emby' }, { title: '缓存管理', description: '查看分享直取与秒传播放直链缓存，搜索、移除或清空临时地址。', to: '/emby/cache', icon: 'emby' }, { title: '用户管理', description: '绑定 Emby 用户使用的 115 账号。', to: '/emby/users', icon: 'emby' }],
   },
 }
 const current = computed(() => categories[props.category])

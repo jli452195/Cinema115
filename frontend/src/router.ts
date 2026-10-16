@@ -14,6 +14,7 @@ import TelegramView from './views/TelegramView.vue'
 import TelegramUserView from './views/TelegramUserView.vue'
 import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
+import EmbyMissingView from './views/EmbyMissingView.vue'
 import EmbyProxyView from './views/EmbyProxyView.vue'
 import EmbyCacheView from './views/EmbyCacheView.vue'
 import EmbyUsersView from './views/EmbyUsersView.vue'
@@ -73,6 +74,7 @@ export const router = createRouter({
     { path: '/nanshare', name: 'nanshare', component: NanShareView, meta: { managementSection: '/resources' } },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true } },
     { path: '/emby/library', name: 'emby', component: EmbyView },
+    { path: '/emby/missing', name: 'emby-missing', component: EmbyMissingView },
     { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView },
     { path: '/emby/cache', name: 'emby-cache', component: EmbyCacheView },
     { path: '/emby/users', name: 'emby-users', component: EmbyUsersView },

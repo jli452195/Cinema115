@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/emby"
+	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -58,6 +59,7 @@ var errEmbyLibraryChanged = errors.New("Emby 媒体库在同步期间发生变�
 type EmbyService struct {
 	// Logs is wired once before the background worker starts.
 	Logs            *GenerationLogs
+	Posters         *imagecache.Cache // Wired once before serving requests or starting workers.
 	mu              sync.RWMutex
 	config          EmbyConfig
 	secrets         *SessionStore
