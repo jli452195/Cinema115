@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
-import { RouterLink } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import NavigationCard from '../components/NavigationCard.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import re0Logo from '../assets/re0/logo-re0-square.webp'
@@ -14,7 +14,7 @@ import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramU
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 type Source = 'gying' | 'woniu' | 're0' | 'telegram'
-type Summary = { label: string; bot?: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
+type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const sources: { id: Source; title: string; description: string; settings: string }[] = [
   { id: 'gying', title: '观影配置', description: '管理观影站地址、账号登录与资源优先级。', settings: '/gying' },
   { id: 'woniu', title: '蜗牛配置', description: '登录蜗牛 I 4K，配置详情页网盘搜索。', settings: '/woniu' },
@@ -25,9 +25,9 @@ const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: 
 const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial() })
 const lifecycle = new AbortController()
 const toneClasses = {
-  neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-  success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  warning: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  neutral: 'text-slate-500 dark:text-slate-400',
+  success: 'text-emerald-600 dark:text-emerald-400',
+  warning: 'text-amber-600 dark:text-amber-400',
 }
 
 // Only read saved configuration; opening this page never logs in or starts a resource search.
@@ -53,8 +53,7 @@ async function load(source: Source) {
       const status = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', signal)
       summary = {
         label: !status.configured ? '未配置' : status.authorized ? '已登录' : status.hasSession ? '会话已保存' : '待登录',
-        bot: status.configured ? status.bot.replace(/^@/, '') : '',
-        tone: status.authorized ? 'success' : status.configured ? 'warning' : 'neutral',
+        tone: !status.configured ? 'neutral' : status.authorized ? 'success' : 'warning',
       }
     }
     if (!lifecycle.signal.aborted) summaries[source] = { ...summary, loading: false }
@@ -69,27 +68,50 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <template>
   <ManagementLayout title="资源配置" description="管理资源来源的账号、连接与搜索设置。" @logout="$emit('logout')">
-    <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-      <RouterLink v-for="source in sources" :key="source.id" :to="source.settings" :aria-labelledby="`source-${source.id}`" class="group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600">
-        <div class="mb-5 flex items-center justify-between gap-3">
-          <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-            <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
-            <img v-else-if="source.id === 'woniu'" :src="woniuLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
-            <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
-            <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+    <div class="grid items-start gap-3 sm:gap-4 md:grid-cols-2">
+      <NavigationCard v-for="source in sources" :key="source.id" :to="source.settings" :title="source.title" :description="source.description" :aria-describedby="`source-status-${source.id}`" class="resource-card">
+        <template #icon>
+          <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
+          <img v-else-if="source.id === 'woniu'" :src="woniuLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+          <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+          <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
+        </template>
+        <template #trailing>
+          <span role="status" :aria-busy="summaries[source.id].loading" :title="summaries[source.id].label" class="inline-flex h-6 w-4 shrink-0 items-center justify-end" :class="toneClasses[summaries[source.id].tone]">
+            <svg aria-hidden="true" class="h-2 w-2" :class="{ 'resource-status-success': summaries[source.id].tone === 'success' }" viewBox="0 0 8 8" fill="currentColor"><circle cx="4" cy="4" r="4" /></svg>
+            <span :id="`source-status-${source.id}`" class="sr-only">{{ summaries[source.id].label }}</span>
           </span>
-          <span role="status" :aria-busy="summaries[source.id].loading" class="rounded-full px-3 py-1 text-xs" :class="toneClasses[summaries[source.id].tone]">{{ summaries[source.id].label }}</span>
-        </div>
-        <h2 :id="`source-${source.id}`" class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ source.title }}</h2>
-        <div class="mb-6 mt-2 flex-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
-          <p>{{ source.description }}</p>
-          <p v-if="summaries[source.id].bot" class="mt-2 break-words text-xs">资源 Bot：@{{ summaries[source.id].bot }}</p>
-        </div>
-        <span class="flex items-center justify-between border-t border-slate-100 pt-4 text-xs font-medium text-slate-500 group-hover:text-blue-600 dark:border-slate-800 dark:text-slate-400 dark:group-hover:text-blue-400">
-          进入设置
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
-        </span>
-      </RouterLink>
+        </template>
+      </NavigationCard>
     </div>
   </ManagementLayout>
 </template>
+
+<style scoped>
+.resource-status-success {
+  --status-glow-color: 16 185 129;
+  filter: drop-shadow(0 0 3px rgb(var(--status-glow-color) / 0.45));
+  transform-origin: center;
+}
+
+:global(.dark .resource-status-success) {
+  --status-glow-color: 52 211 153;
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .resource-card:hover .resource-status-success {
+    animation: resource-status-glow 1050ms ease-in-out;
+  }
+}
+
+@keyframes resource-status-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 3px rgb(var(--status-glow-color) / 0.45));
+    transform: scale(1);
+  }
+  30%, 40% {
+    filter: drop-shadow(0 0 8px rgb(var(--status-glow-color) / 0.8));
+    transform: scale(1.15);
+  }
+}
+</style>

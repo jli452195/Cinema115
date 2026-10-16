@@ -40,8 +40,8 @@ onMounted(revealDecade)
       <button v-for="decade in decades" :key="decade" type="button" class="catalog-chip" :aria-pressed="activeDecade === decade" @click="activeDecade = decade">{{ decade }}年代</button>
     </nav>
     <div ref="grid" class="catalog-year-grid" role="group" :aria-label="activeDecade + '年代年份'" @keydown="moveYear">
+      <button type="button" class="catalog-chip" aria-label="不限年份" :aria-pressed="modelValue === ''" @click="emit('update:modelValue', '')">不限</button>
       <button v-for="value in years" :key="value" type="button" class="catalog-chip" :aria-pressed="modelValue === value" @click="emit('update:modelValue', value)">{{ value }}</button>
     </div>
-    <button type="button" class="catalog-chip catalog-year-reset" :aria-pressed="modelValue === ''" @click="emit('update:modelValue', '')">不限年份</button>
   </div>
 </template>

@@ -239,8 +239,8 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 </template>
 
 <style scoped>
-.numbering-dialog { @apply m-auto flex w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0; max-width: 920px; height: min(760px, calc(100dvh - 2rem)); max-height: calc(100dvh - 2rem); color: var(--search-dialog-text); --search-dialog-glass: rgb(248 250 252 / 82%); --numbering-well: rgb(241 245 249 / 55%); }
-.dark .numbering-dialog { --search-dialog-glass: rgb(18 22 30 / 84%); --numbering-well: rgb(10 14 20 / 45%); }
+.numbering-dialog { @apply m-auto flex w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0; max-width: 920px; height: min(760px, calc(100dvh - 2rem)); max-height: calc(100dvh - 2rem); color: var(--search-dialog-text); --floating-surface-glass: rgb(248 250 252 / 82%); --numbering-well: rgb(241 245 249 / 55%); }
+.dark .numbering-dialog { --floating-surface-glass: rgb(18 22 30 / 84%); --numbering-well: rgb(10 14 20 / 45%); }
 .numbering-header { @apply flex shrink-0 items-center justify-between gap-4 px-5 py-4; border-bottom: 1px solid var(--search-dialog-card-border); }
 .numbering-muted { color: var(--search-dialog-muted); }
 .numbering-close { @apply shrink-0 rounded-lg p-2 disabled:opacity-40; color: var(--search-dialog-muted); }

@@ -77,7 +77,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     const base = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.goto(base + '/emby')
-    await page.getByRole('link', { name: /缺集检测 按季检查/ }).click()
+    await page.getByRole('link', { name: '缺集检测', exact: true }).click()
     const cards = page.locator('[data-missing-card]')
     await cards.nth(23).waitFor()
     assert.equal(await cards.count(), 24)
@@ -368,7 +368,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const beforeReturn = requests.filter(r => r.p === '/api/admin/emby/missing').length
     await page.getByRole('link', { name: 'Emby', exact: true }).click()
     assert.ok(await page.evaluate(() => window.posterObjects.size > 0), 'SPA navigation retains recent decoded posters briefly')
-    await page.getByRole('link', { name: /缺集检测 按季检查/ }).click()
+    await page.getByRole('link', { name: '缺集检测', exact: true }).click()
     await cards.first().getByRole('heading', { name: items[72].title, exact: true }).waitFor()
     assert.equal(requests.filter(r => r.p === '/api/admin/emby/missing').length, beforeReturn, 'returning to the remembered page must not fetch fresh cached results again')
     assert.equal(new URL(page.url()).searchParams.get('offset'), '72')

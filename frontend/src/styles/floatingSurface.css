@@ -1,0 +1,68 @@
+/* Shared visual shell; each dialog/popover keeps its own positioning and lifecycle. */
+.floating-surface,
+.media-search-dialog,
+.media-detail {
+  --floating-surface-container: #f8fafc;
+  --floating-surface-glass: rgb(248 250 252 / 78%);
+  --floating-surface-filter: blur(24px) saturate(1.05);
+  --floating-surface-text: #1e293b;
+  --floating-surface-muted: #475569;
+  --floating-surface-edge: rgb(255 255 255 / 65%);
+  --floating-surface-shadow: 0 24px 64px -16px rgb(15 23 42 / 22%), 0 0 0 1px rgb(15 23 42 / 5%), inset 0 1px 0 rgb(255 255 255 / 60%);
+  --floating-surface-scrim: rgb(10 12 16 / 18%);
+}
+
+.dark .floating-surface,
+.dark .media-search-dialog,
+.dark .media-detail {
+  --floating-surface-container: #12161e;
+  --floating-surface-glass: rgb(18 22 30 / 80%);
+  --floating-surface-text: #e2e8f0;
+  --floating-surface-muted: #b8c4d4;
+  --floating-surface-edge: rgb(255 255 255 / 12%);
+  --floating-surface-shadow: 0 24px 64px -16px rgb(0 0 0 / 55%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  --floating-surface-scrim: rgb(10 12 16 / 38%);
+}
+
+.floating-surface,
+.media-search-dialog {
+  border: 1px solid var(--floating-surface-edge);
+  background: var(--floating-surface-container);
+  box-shadow: var(--floating-surface-shadow);
+}
+
+/* Sample the page once at the shell, never on each control or the backdrop. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .floating-surface,
+  .media-search-dialog {
+    background: var(--floating-surface-glass);
+    -webkit-backdrop-filter: var(--floating-surface-filter);
+    backdrop-filter: var(--floating-surface-filter);
+  }
+}
+
+dialog.floating-surface::backdrop,
+.media-search-dialog::backdrop { background: var(--floating-surface-scrim); }
+
+/* A non-modal picker must not dim or intercept the rest of the page. */
+.floating-surface[popover]::backdrop { background: transparent; pointer-events: none; }
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .floating-surface,
+  .media-search-dialog {
+    background: var(--floating-surface-container);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .floating-surface, .media-search-dialog, .media-detail {
+    --floating-surface-edge: #64748b;
+    --floating-surface-muted: #334155;
+  }
+  .dark .floating-surface, .dark .media-search-dialog, .dark .media-detail {
+    --floating-surface-edge: #94a3b8;
+    --floating-surface-muted: #e2e8f0;
+  }
+}

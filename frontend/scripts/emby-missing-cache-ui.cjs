@@ -56,8 +56,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }
     async function excludedTab() { await page.getByRole('button', { name: /^已排除 \d+ 项$/ }).evaluate(el => el.click()); await idle() }
     async function resultTab() { await page.getByRole('button', { name: '缺集结果', exact: true }).evaluate(el => el.click()); await idle() }
-    async function leave() { await page.getByRole('link', { name: 'Emby', exact: true }).click(); await page.getByRole('link', { name: /缺集检测 按季检查/ }).waitFor() }
-    async function enter() { await page.getByRole('link', { name: /缺集检测 按季检查/ }).click(); await idle() }
+    async function leave() { await page.getByRole('link', { name: 'Emby', exact: true }).click(); await page.getByRole('link', { name: '缺集检测', exact: true }).waitFor() }
+    async function enter() { await page.getByRole('link', { name: '缺集检测', exact: true }).click(); await idle() }
     await page.goto(base + '/emby/missing'); await idle(); await cards.nth(23).waitFor()
     await jump(2)
     await resultSearch().fill('结果草稿')
@@ -98,7 +98,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const routeTop = await page.evaluate(() => scrollY), beforeLeave = listReads()
     // Use programmatic click to avoid scrolling the breadcrumb into view before it captures scrollY.
     await page.getByRole('link', { name: 'Emby', exact: true }).evaluate(el => el.click())
-    await page.getByRole('link', { name: /缺集检测 按季检查/ }).waitFor()
+    await page.getByRole('link', { name: '缺集检测', exact: true }).waitFor()
     const beforeImages = imageReads()
     assert.ok(await page.evaluate(url => window.posterObjects.has(url), blob))
     await enter()

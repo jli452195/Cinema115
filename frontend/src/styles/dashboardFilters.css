@@ -20,6 +20,17 @@
   --filter-outline: #383d45;
   --filter-focus: #adbed7;
 }
+.catalog-filter-theme.floating-surface {
+  --filter-surface: var(--floating-surface-container);
+  --filter-text: var(--floating-surface-text);
+  --filter-muted: var(--floating-surface-muted);
+  --filter-tone: #dbe5f2;
+  --filter-on-tone: #223854;
+}
+.dark .catalog-filter-theme.floating-surface {
+  --filter-tone: #2f3c4e;
+  --filter-on-tone: #e2edfc;
+}
 .catalog-filter-theme :is(button, a):focus-visible {
   outline: 2px solid var(--filter-focus);
   outline-offset: 3px;
@@ -83,12 +94,22 @@
   pointer-events: none;
 }
 .catalog-year-picker { color: var(--filter-text); }
-.catalog-decade-strip { display: flex; gap: 4px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: thin; }
+.catalog-decade-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 34px 6px 6px;
+  scroll-padding-inline: 6px 34px;
+  scrollbar-width: none;
+  /* Trailing space keeps the oldest decade and its focus ring clear of the fade. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.catalog-decade-strip::-webkit-scrollbar { display: none; }
 .catalog-decade-strip .catalog-chip { padding: 0 12px; min-height: 40px; font-size: 12px; }
+.catalog-decade-strip .catalog-chip[aria-pressed="true"] { background: var(--filter-hover); color: var(--filter-text); }
 .catalog-year-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-.catalog-year-grid .catalog-chip { min-height: 44px; padding: 0 5px; background: var(--filter-hover); font-variant-numeric: tabular-nums; }
-.catalog-year-grid .catalog-chip[aria-pressed="true"] { background: var(--filter-tone); }
-.catalog-year-reset { margin-top: 10px; width: 100%; min-height: 44px; }
+.catalog-year-grid .catalog-chip { min-height: 44px; padding: 0 5px; font-variant-numeric: tabular-nums; }
 /* Shared poster density, including loading placeholders. */
 .catalog-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); column-gap: 16px; row-gap: 24px; }
 @media (max-width: 639px) { .catalog-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; } }

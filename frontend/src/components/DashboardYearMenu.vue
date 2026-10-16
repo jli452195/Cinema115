@@ -45,14 +45,14 @@ onBeforeUnmount(() => { popover.value?.hidePopover(); window.removeEventListener
     {{ modelValue && !recentYears.includes(modelValue) ? modelValue + ' 年' : '更多年份' }}
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 10 5 5 5-5" /></svg>
   </button>
-  <div :id="id" ref="popover" popover="auto" role="dialog" :aria-labelledby="id + '-title'" class="catalog-year-menu catalog-filter-theme" :style="position" @toggle="changed">
+  <div :id="id" ref="popover" popover="auto" role="dialog" :aria-labelledby="id + '-title'" class="catalog-year-menu catalog-filter-theme floating-surface" :style="position" @toggle="changed">
     <div class="catalog-year-menu-heading"><h2 :id="id + '-title'">选择年份</h2><span>{{ modelValue ? modelValue + ' 年' : '不限年份' }}</span></div>
     <DashboardYearPicker ref="picker" :model-value="modelValue" @update:model-value="select" />
   </div>
 </template>
 
 <style scoped>
-.catalog-year-menu { position: fixed; inset: auto; width: 340px; max-width: calc(100vw - 24px); margin: 0; padding: 16px; overflow: auto; border: 1px solid var(--filter-outline); border-radius: 20px; background: var(--filter-surface); color: var(--filter-text); box-shadow: 0 12px 40px rgb(0 0 0 / 12%); }
+.catalog-year-menu { position: fixed; inset: auto; width: 340px; max-width: calc(100vw - 24px); margin: 0; padding: 16px; overflow: auto; border-radius: 20px; color: var(--filter-text); }
 .catalog-year-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .catalog-year-menu-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .catalog-year-menu-heading span { font-size: 12px; color: var(--filter-muted); }

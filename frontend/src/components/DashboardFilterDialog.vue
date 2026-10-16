@@ -33,7 +33,7 @@ onBeforeUnmount(() => { dialog.value?.close(); document.body.style.overflow = pr
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" class="catalog-filter-dialog catalog-filter-theme" aria-labelledby="dashboard-filter-title" aria-describedby="dashboard-filter-summary" @cancel.prevent="close" @click="backdropClick">
+    <dialog ref="dialog" class="catalog-filter-dialog catalog-filter-theme floating-surface" aria-labelledby="dashboard-filter-title" aria-describedby="dashboard-filter-summary" @cancel.prevent="close" @click="backdropClick">
       <form class="catalog-filter-form" @submit.prevent="apply">
         <header class="catalog-dialog-heading">
           <div><h2 id="dashboard-filter-title">筛选影视</h2><p id="dashboard-filter-summary">{{ summary || '选择题材、地区与年份' }}</p></div>
@@ -59,8 +59,7 @@ onBeforeUnmount(() => { dialog.value?.close(); document.body.style.overflow = pr
 </template>
 
 <style scoped>
-.catalog-filter-dialog { position: fixed; inset: 0; width: calc(100% - 24px); max-width: 560px; max-height: min(88dvh, 820px); margin: auto; overflow: hidden; padding: 0; border: 1px solid var(--filter-outline); border-radius: 28px; background: var(--filter-surface); color: var(--filter-text); box-shadow: 0 24px 80px rgb(0 0 0 / 20%); }
-.catalog-filter-dialog::backdrop { background: rgb(15 20 28 / 32%); backdrop-filter: blur(3px); }
+.catalog-filter-dialog { position: fixed; inset: 0; width: calc(100% - 24px); max-width: 560px; max-height: min(88dvh, 820px); margin: auto; overflow: hidden; padding: 0; border-radius: 28px; color: var(--filter-text); }
 .catalog-filter-dialog[open] { animation: catalog-dialog-enter 220ms cubic-bezier(0.2, 0, 0, 1); }
 .catalog-filter-form { display: flex; max-height: min(calc(88dvh - 2px), 818px); flex-direction: column; }
 .catalog-dialog-heading { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 12px; padding: 18px 16px 16px 22px; }
@@ -77,7 +76,7 @@ onBeforeUnmount(() => { dialog.value?.close(); document.body.style.overflow = pr
 .catalog-sort-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
 .catalog-sort-grid .catalog-chip { padding: 0 4px; font-size: 12px; }
 .catalog-rating-note { margin: 8px 0 0; color: var(--filter-muted); font-size: 11px; line-height: 18px; }
-.catalog-dialog-footer { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 14px 22px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--filter-outline); background: var(--filter-surface); }
+.catalog-dialog-footer { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 14px 22px max(14px, env(safe-area-inset-bottom)); }
 .catalog-dialog-footer .catalog-text-button { min-width: 70px; min-height: 48px; }
 .catalog-apply-button { flex: 1; min-height: 48px; border: 0; border-radius: 16px; background: var(--filter-tone); color: var(--filter-on-tone); font-size: 14px; font-weight: 600; }
 .catalog-apply-button:active { filter: brightness(0.96); }
