@@ -7,6 +7,7 @@ import MemberPlaybackEditor from '../components/MemberPlaybackEditor.vue'
 import UserPlaybackSessions from '../components/UserPlaybackSessions.vue'
 import MemberDeletionPanel from '../components/MemberDeletionPanel.vue'
 import { memberRequest, memberNeedsReview, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
+import { playbackTargetName, type PlaybackSessionsSnapshot, type PlaybackCardSummary, type UserPlaybackSession } from '../types/userPlayback'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const members = ref<MemberPlayback[]>([])
@@ -18,6 +19,30 @@ const dirtyUsers = ref(new Set<string>()), busyUsers = ref(new Set<string>())
 const generation = ref(0), confirmDiscard = ref(false)
 const childOwner = ref('')
 const deletionPanel = ref<InstanceType<typeof MemberDeletionPanel>>()
+const playbackSessions = ref<InstanceType<typeof UserPlaybackSessions>>()
+const playbackSnapshot = ref<PlaybackSessionsSnapshot>({ sessions: [], loaded: false, stale: false })
+const playbackSummaries = computed(() => {
+ const grouped = new Map<string, UserPlaybackSession[]>()
+ for (const session of playbackSnapshot.value.sessions) {
+  const group = grouped.get(session.userId) || []
+  group.push(session); grouped.set(session.userId, group)
+ }
+ const summaries = new Map<string, PlaybackCardSummary>()
+ for (const [userId, sessions] of grouped) {
+  const issued = sessions.filter(session => session.issued).sort((a, b) => (b.target?.issuedAt || 0) - (a.target?.issuedAt || 0) || a.key.localeCompare(b.key))
+  const targets = new Map<string, NonNullable<UserPlaybackSession['target']>>()
+  for (const session of issued) if (session.target?.accountId && !targets.has(session.target.accountId)) targets.set(session.target.accountId, session.target)
+  const names = [...targets.values()].map(playbackTargetName)
+  summaries.set(userId, names.length ? {
+   label: names.length > 1 ? '取链配置' : '本次取链', name: names[0], suffix: names.length > 1 ? `等 ${names.length} 份` : '',
+   detail: `取链配置：${names.join('、')}；${sessions.length} 个会话${sessions.length > issued.length ? '，含准备中的会话' : ''}${issued.some(session => !session.target?.accountId) ? '，部分配置待核实' : ''}`,
+  } : { label: issued.length ? '取链配置待核实' : '准备取链', detail: issued.length ? '本会话尚无成功取链配置记录' : '准备取链，成功后显示实际配置' })
+ }
+ return summaries
+})
+function showPlaybackSessions(userId: string, event: MouseEvent) {
+ void playbackSessions.value?.openForUser(userId, event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined)
+}
 const currentMembers = computed(() => members.value.filter(m => !memberNeedsReview(m)))
 const reviewMembers = computed(() => members.value.filter(memberNeedsReview))
 const currentCount = computed(() => members.value.filter(m => m.embyState === 'active' || m.embyState === 'disabled').length)
@@ -119,14 +144,14 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
     <fieldset ref="filterControl" class="users-filters" aria-label="筛选用户"><legend class="sr-only">筛选用户</legend><div class="users-filter-indicator" :style="filterIndicatorStyle" aria-hidden="true"></div><label v-for="option in filterOptions" :key="option.value" :class="{ 'is-selected': filter === option.value }" :title="option.hint"><input v-model="filter" type="radio" name="emby-user-filter" :value="option.value" :aria-label="option.label" /><span>{{ option.label }}</span></label></fieldset>
     <p v-if="statusError || dirtyUsers.size || statusRefreshing" class="users-filter-status" :class="{ 'has-error': !!statusError }" :title="statusError || (dirtyUsers.size ? `${dirtyUsers.size} 位用户有未保存的修改` : '')" role="status">{{ statusError ? '网盘状态待核实' : dirtyUsers.size ? '有未保存的修改' : '检查网盘中' }}</p>
    </div>
-   <UserPlaybackSessions :token="token" :members="members" />
+   <UserPlaybackSessions ref="playbackSessions" :token="token" :members="members" @snapshot="playbackSnapshot = $event" />
   </section>
   <p v-if="childOwner" class="mb-4 flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">正在查看 {{ members.find(m => m.userId === childOwner)?.embyName }} 的子账号<button class="text-blue-600 dark:text-[#8daee8]" @click="childOwner = ''; filter = 'all'">显示全部用户</button></p>
   <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-[#301a20] dark:text-[#e8788a]">{{ error }}</p>
   <div v-if="confirmDiscard" class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">刷新会丢弃未保存的修改。<button class="underline" :disabled="busy" @click="load(true)">放弃修改并刷新</button><button @click="confirmDiscard = false">继续编辑</button></div>
   <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
    <div v-for="m in currentMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
-    <MemberPlaybackEditor :token="token" :member="m" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
+    <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
    </div>
   </div>
   <details v-if="reviewMembers.length" :open="reviewOpen || !!query || !!childOwner" class="mt-6 rounded-2xl border border-amber-200 bg-white p-5 dark:border-amber-900 dark:bg-slate-900" @toggle="reviewOpen = ($event.target as HTMLDetailsElement).open">
@@ -134,7 +159,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
    <p class="my-4 text-xs leading-6 text-slate-500 dark:text-slate-400">保留原业务关联，核实后可预览清理影响。不会因刷新自动清理，也不会关联同名新账号。</p>
    <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
     <div v-for="m in reviewMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
-     <MemberPlaybackEditor :token="token" :member="m" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
+     <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
     </div>
    </div>
    <p v-if="!reviewMembers.some(m => visible.has(m.userId))" class="text-sm text-slate-500 dark:text-slate-400">没有符合筛选条件的待核实或待清理记录</p>

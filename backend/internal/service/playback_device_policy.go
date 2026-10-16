@@ -188,6 +188,8 @@ func (a *MediaAuthorization) commitNonPoolDevicePolicy(ctx context.Context) erro
 	current.Issued = true
 	current.IssuedAt, current.UpdatedAt = now.UnixMilli(), now.UnixMilli()
 	current.ExpiresAt = now.Add(userPlaybackIdleTTL).UnixMilli()
+	current.Target = a.playbackTarget()
+	current.Target.IssuedAt = now.UnixMilli()
 	ud.Leases[current.Key] = current
 	if err := a.service.db.SavePlaybackState(ctx, ud, pd); err != nil {
 		return err

@@ -24,7 +24,7 @@ onMounted(() => {
 onBeforeUnmount(() => { observer?.disconnect(); clear() })
 </script>
 <template>
-  <span ref="element" class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-base font-semibold text-blue-600">
+  <span ref="element" class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-base font-semibold text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
     <img v-if="image" :src="image" :alt="name + ' 的头像'" class="h-full w-full object-cover" @error="clear" />
     <span v-else aria-hidden="true">{{ Array.from(name)[0]?.toUpperCase() || '?' }}</span>
   </span>

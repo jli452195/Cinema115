@@ -18,7 +18,7 @@ func TestUserPlaybackSQLiteRestartAndCanceledWrite(t *testing.T) {
 	}
 	doc := model.UserPlaybackDocument{
 		Generation: 7,
-		Leases:     map[string]model.UserPlaybackLease{"key": {Key: "key", ServerID: "server", UserID: "user", SessionDigest: "digest", EventKey: "event", Generation: 7, Issued: true, ExpiresAt: 123456}},
+		Leases:     map[string]model.UserPlaybackLease{"key": {Key: "key", ServerID: "server", UserID: "user", SessionDigest: "digest", EventKey: "event", Generation: 7, Issued: true, ExpiresAt: 123456, Target: model.UserPlaybackTarget{AccountID: "config", AccountName: "小号", Source: "assigned", IssuedAt: 123000}}},
 		Stopped:    map[string]int64{"admin-released": 654321},
 	}
 	if err := db.SaveUserPlayback(ctx, doc); err != nil {

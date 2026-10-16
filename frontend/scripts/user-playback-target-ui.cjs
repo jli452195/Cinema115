@@ -1,0 +1,152 @@
+// All /api/ requests are mocked; these checks never reach real playback sessions.
+const path = require('node:path'), os = require('node:os'), fs = require('node:fs'), assert = require('node:assert/strict')
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
+;(async () => {
+ const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+ try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block', reducedMotion: 'reduce' })
+  page.setDefaultTimeout(10000)
+  await page.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
+  const start = Date.parse('2026-10-17T10:00:00Z')
+  await page.clock.install({ time: new Date(start) })
+  const errors = [], reads = [], writes = []
+  page.on('pageerror', e => errors.push(e.message))
+  page.on('console', message => { if (message.type() === 'warning' && message.text().includes('[Vue warn]')) errors.push(message.text()) })
+  const member = (userId, source = 'assigned', extra = {}) => ({ userId, embyId: userId.padEnd(32, 'a'), embyName: userId, source, accountId: '', embyState: 'active', disabled: false, childLimit: 0, childUsed: 0, stage: 'ready', driveStatus: { state: 'ready', message: '共享池自动调度，播放时核验' }, ...extra })
+  const members = [member('Pool'), member('Main', 'primary'), member('Personal', 'personal'), member('Child', 'personal_shared', { playbackOnly: true, ownerName: 'Personal', ownerUserId: 'Personal' }), member('Preparing'), member('Idle'), member('Unrecorded')]
+  const longName = '很长的主网盘配置名称'.repeat(10)
+  const target = (accountId, accountName, source = 'assigned') => ({ accountId, accountName, source, issuedAt: start })
+  const session = (key, userId, account, extra = {}) => ({ key, userId, item: `movie-${key}`, generation: 7, issued: true, updatedAt: start, expiresAt: start + 3600000, target: account, ...extra })
+  let sessions = [session('pool-a', 'Pool', target('config-a', '共享小号')), session('pool-b', 'Pool', target('config-b', '共享小号')), session('main', 'Main', target('main-config', longName, 'primary')), session('personal', 'Personal', target('private-config', '本人网盘', 'personal')), session('child', 'Child', target('private-config', '本人网盘', 'personal_shared')), session('prepare', 'Preparing', undefined, { issued: false }), session('unrecorded', 'Unrecorded'), session('expired', 'Idle', target('expired-config', '过期配置'), { expiresAt: start - 1 })]
+  let failRead = false
+  await page.route('**/api/**', async route => {
+   const req = route.request(), p = new URL(req.url()).pathname
+   if (req.method() === 'POST') {
+    const body = req.postDataJSON(); writes.push({ p, body })
+    assert.match(p, /\/playback-sessions\/[^/]+\/release$/)
+    const key = decodeURIComponent(p.split('/').at(-2))
+    sessions = sessions.filter(s => s.key !== key)
+    return route.fulfill({ json: { sessions } })
+   }
+   reads.push(p)
+   if (p.endsWith('/playback-sessions')) return failRead ? route.fulfill({ status: 503, json: { error: '模拟会话读取失败' } }) : route.fulfill({ json: { sessions, devicePolicy: { mode: 'parallel', silenceSeconds: 60 } } })
+   if (p === '/api/auth/me') return route.fulfill({ json: { user: { id: 'admin', role: 'admin', username: 'admin' } } })
+   return route.fulfill({ json: { members, settings: { enabled: true, libraryIds: [], allowDownload: false }, proxy: { listening: true }, accounts: [], pending: [], jobs: [], leases: [] } })
+  })
+  await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/users/list')
+  const card = name => page.locator('article.user-card').filter({ has: page.getByRole('heading', { name, exact: true }) })
+  const link = name => card(name).locator('.member-playback-link')
+  const dialog = page.locator('dialog.playback-dialog[open]')
+  const rows = () => dialog.locator('.playback-session-row')
+  const close = async () => { await dialog.getByRole('button', { name: '关闭播放会话' }).click(); await dialog.waitFor({ state: 'hidden' }) }
+  const refresh = async () => {
+   const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/playback-sessions'))
+   await dialog.getByRole('button', { name: '重新读取', exact: true }).click(); await response
+   await page.waitForFunction(() => document.querySelector('.playback-dialog-footer button')?.getAttribute('aria-disabled') === 'false')
+  }
+  await link('Pool').waitFor()
+  assert.match(await link('Pool').innerText(), /等 2 份/)
+  assert.equal(await link('Idle').count(), 0)
+  assert.match(await card('Idle').innerText(), /动态调度，播放时核验/)
+  assert.match(await link('Preparing').innerText(), /^准备取链/)
+  assert.match(await link('Unrecorded').innerText(), /取链配置待核实/)
+  assert.equal(reads.filter(p => p.endsWith('/playback-sessions')).length, 1, 'One shared request for every user card')
+  assert.equal(writes.length, 0)
+  await link('Pool').focus(); await page.keyboard.press('Enter'); await dialog.waitFor()
+  assert.equal(await rows().count(), 2)
+  assert.equal(await dialog.locator('.playback-target').count(), 2)
+  assert.match(await dialog.innerText(), /config-a/); assert.match(await dialog.innerText(), /config-b/)
+  assert.equal(await dialog.getByRole('button', { name: '关闭播放会话' }).evaluate(e => e === document.activeElement), true)
+  await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
+  assert.equal(await link('Pool').evaluate(e => e === document.activeElement), true)
+  await link('Child').click(); await dialog.waitFor()
+  assert.match(await dialog.innerText(), /所有者个人网盘/)
+  await dialog.getByRole('button', { name: '查看全部会话' }).click()
+  assert.equal(await rows().count(), 7)
+  await close()
+  // One credential configuration shared by multiple sessions counts once.
+  sessions = sessions.map(s => s.key === 'pool-b' ? { ...s, target: target('config-a', '共享小号') } : s)
+  await link('Pool').click(); await refresh(); await close()
+  assert.doesNotMatch(await link('Pool').innerText(), /等 2 份/)
+  // A new successful target replaces the old one, without consulting account settings.
+  sessions = sessions.map(s => s.userId === 'Pool' ? { ...s, target: target('config-c', '切换后的配置') } : s)
+  await link('Pool').click(); await refresh(); await close()
+  await link('Pool').filter({ hasText: '切换后的配置' }).waitFor()
+  // Failed reads conceal card names and clearly identify the dialog as old data.
+  failRead = true
+  await link('Pool').click(); await refresh()
+  await dialog.getByRole('alert').waitFor()
+  assert.equal(await rows().first().getByRole('button', { name: '释放占用' }).isDisabled(), true)
+  assert.match(await dialog.innerText(), /上次读取的取链配置/)
+  await close()
+  assert.equal(await link('Pool').innerText(), '取链状态待核实')
+  failRead = false
+  await link('Pool').click()
+  await dialog.getByRole('alert').waitFor({ state: 'hidden' })
+  await close()
+  await link('Pool').filter({ hasText: '切换后的配置' }).waitFor()
+  // The prior generation's confirmation must not apply to a new session.
+  await link('Pool').click()
+  await rows().first().getByRole('button', { name: '释放占用' }).click()
+  sessions = sessions.map(s => s.key === 'pool-a' ? { ...s, generation: 8 } : s)
+  await refresh()
+  await dialog.getByText('所选会话已更新或结束，请重新选择。', { exact: true }).waitFor()
+  assert.equal(await dialog.locator('.playback-release-confirm').count(), 0)
+  assert.equal(writes.length, 0)
+  await rows().first().getByRole('button', { name: '释放占用' }).click()
+  await dialog.getByRole('button', { name: '确认释放' }).click()
+  await dialog.getByText('已释放此会话的占用。已签发直链可能仍有效。', { exact: true }).waitFor()
+  assert.equal(writes[0].body.generation, 8)
+  assert.equal(await rows().count(), 1)
+  await close()
+  // Stopping the last session removes its summary; closing falls back to the toolbar.
+  await link('Pool').click()
+  sessions = sessions.filter(s => s.userId !== 'Pool')
+  await refresh()
+  await dialog.getByText('此用户暂无播放会话', { exact: true }).waitFor()
+  await close()
+  assert.equal(await link('Pool').count(), 0)
+  assert.equal(await page.getByRole('button', { name: '查看会话', exact: true }).evaluate(e => e === document.activeElement), true)
+  // Expiry is checked locally even when the next backend read has not run.
+  sessions = sessions.map(s => s.userId === 'Personal' ? { ...s, expiresAt: start + 3000 } : s)
+  await link('Main').click(); await refresh(); await close()
+  await page.clock.runFor(5000)
+  assert.equal(await link('Personal').count(), 0)
+  const screenshots = path.join(__dirname, '../test-results/playback-target')
+  fs.mkdirSync(screenshots, { recursive: true })
+  // Restore the duplicate-name configurations for layout review.
+  sessions.push(session('pool-layout-a', 'Pool', target('config-a', '很长的共享配置名称'.repeat(10))), session('pool-layout-b', 'Pool', target('config-b', '另一份共享配置')))
+  await link('Main').click(); await refresh(); await close()
+  for (const [width, height] of [[1440,1000], [768,900], [390,844], [320,568], [667,375]]) {
+   await page.setViewportSize({ width, height })
+   for (const dark of [false, true]) {
+    await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+    const suffix = await link('Pool').locator('.member-playback-suffix').boundingBox(), bounds = await link('Pool').boundingBox()
+    assert.ok(suffix.x + suffix.width <= bounds.x + bounds.width)
+    assert.ok(bounds.height >= 44)
+    await page.evaluate(() => scrollTo(0, 0))
+    if ([1440,320].includes(width)) await page.screenshot({ path: path.join(screenshots, `cards-${width}-${dark ? 'dark' : 'light'}.png`), fullPage: true })
+    await link('Main').click()
+    assert.equal(await dialog.locator('.playback-target strong').innerText(), longName)
+    assert.equal(await dialog.evaluate(e => e.scrollWidth > e.clientWidth), false)
+    assert.equal(await dialog.locator('.playback-dialog-body').evaluate(e => e.scrollWidth > e.clientWidth), false)
+    const modalBounds = await dialog.boundingBox(), footer = await dialog.locator('footer').boundingBox()
+    assert.ok(modalBounds.y >= 0 && footer.y + footer.height <= height + 1)
+    if ([1440,320].includes(width)) await page.screenshot({ path: path.join(screenshots, `dialog-${width}-${dark ? 'dark' : 'light'}.png`) })
+    await dialog.locator('.playback-dialog-body').evaluate(e => { e.scrollTop = e.scrollHeight })
+    const releaseBounds = await dialog.getByRole('button', { name: '释放占用', exact: true }).boundingBox()
+    assert.ok(releaseBounds.y + releaseBounds.height <= footer.y, 'The final row remains above the footer when fully scrolled')
+    await close()
+   }
+  }
+  sessions = sessions.map(s => s.userId === 'Main' ? { ...s, target: target('x'.repeat(150), 'x'.repeat(300), 'primary') } : s)
+  await link('Main').click(); await refresh()
+  assert.equal(await dialog.locator('.playback-dialog-body').evaluate(e => e.scrollWidth > e.clientWidth), false, 'Unbroken English names and configuration IDs wrap')
+  await close()
+  assert.deepEqual(errors, [])
+  assert.equal(writes.length, 1)
+  assert.ok(reads.filter(p => p.endsWith('/playback-sessions')).length < 25, 'No per-card polling')
+  console.log('Playback target UI passed: source types, duplicate names/configuration IDs, shared reads, switching, stale data, expiry, generation release, keyboard/focus, 5 viewports and light/dark')
+ } finally { await browser.close() }
+})().catch(e => { console.error(e); process.exit(1) })

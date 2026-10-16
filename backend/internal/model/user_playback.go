@@ -21,6 +21,17 @@ type UserPlaybackLease struct {
 	Issued         bool   `json:"issued"`
 	UpdatedAt      int64  `json:"updatedAt"`
 	ExpiresAt      int64  `json:"expiresAt"`
+
+	Target UserPlaybackTarget `json:"target"`
+}
+
+// Snapshot of the credential configuration used by the last successful link
+// issuance. It never contains credentials, a CDN URL, or a donor account.
+type UserPlaybackTarget struct {
+	AccountID   string `json:"accountId,omitempty"`
+	AccountName string `json:"accountName,omitempty"`
+	Source      string `json:"source,omitempty"`
+	IssuedAt    int64  `json:"issuedAt,omitempty"`
 }
 
 type UserPlaybackDocument struct {

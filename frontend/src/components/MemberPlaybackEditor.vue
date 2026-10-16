@@ -4,9 +4,10 @@ import EmbyUserAvatar from './EmbyUserAvatar.vue'
 import MemberDriveSourceIcon from './MemberDriveSourceIcon.vue'
 import { useToast } from '../composables/useToast'
 import { memberRequest, memberStage, memberEmbyLabel, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
+import type { PlaybackCardSummary } from '../types/userPlayback'
 
-const props = defineProps<{ token: string; member: MemberPlayback; disabled: boolean; deleteDisabled?: boolean }>()
-const emit = defineEmits<{ updated: [member: MemberPlayback, settings: MemberSettings]; busy: [value: boolean]; dirty: [value: boolean]; children: [owner: string]; delete: [id: string]; refresh: [] }>()
+const props = defineProps<{ token: string; member: MemberPlayback; disabled: boolean; deleteDisabled?: boolean; playback?: PlaybackCardSummary; playbackStale?: boolean }>()
+const emit = defineEmits<{ updated: [member: MemberPlayback, settings: MemberSettings]; busy: [value: boolean]; dirty: [value: boolean]; children: [owner: string]; delete: [id: string]; refresh: []; sessions: [userId: string, event: MouseEvent] }>()
 interface Values { source: string; accountId: string; childLimit: number }
 function values(m: MemberPlayback): Values { return { source: m.source || 'primary', accountId: '', childLimit: m.childLimit || 0 } }
 const initial = ref(values(props.member)), source = ref(props.member.source || 'primary')
@@ -146,19 +147,17 @@ onBeforeUnmount(() => {
    <span class="member-account-badge" :class="member.embyState === 'active' ? 'is-active' : member.embyState === 'disabled' ? 'is-disabled' : 'is-unverified'" :title="memberEmbyLabel(member.embyState)">{{ accountLabel }}</span>
   </header>
   <section v-if="available" class="member-drive-summary" aria-label="网盘摘要">
-   <div class="member-source-line"><span class="member-source-icon" :class="`source-${savedSource}`"><MemberDriveSourceIcon :source="savedSource" /></span><span class="member-source-name">{{ sourceLabel }}</span><button type="button" :disabled="locked" class="member-button member-button-text member-check-button" @click="mutate('/sync', {})">{{ action === 'check' ? '检查中…' : '检查网盘' }}</button></div>
-   <p class="member-drive-state" :class="error ? 'tone-error' : `tone-${statusTone}`" :title="error || state">{{ error || statusText }}</p>
-   <p v-if="checkedTime" class="member-muted member-caption">最近检查 <time :datetime="member.driveStatus?.checkedAt">{{ checkedTime }}</time></p>
-   <p v-else class="member-muted member-caption">{{ poolScheduled ? '按播放会话分配健康小号' : '尚无网盘检查记录' }}</p>
+   <div class="member-source-line"><span class="member-source-symbol"><MemberDriveSourceIcon :source="savedSource" /></span><span class="member-source-name">{{ sourceLabel }}</span></div>
+   <p v-if="!playback || error || statusTone === 'warning' || statusTone === 'error'" class="member-drive-state" :class="error ? 'tone-error' : `tone-${statusTone}`"><span>{{ error || statusText }}</span><time v-if="checkedTime && !error" class="member-checked-time member-muted" :datetime="member.driveStatus?.checkedAt"><span class="sr-only">最近检查时间：</span>{{ checkedTime }}</time></p>
+   <button v-if="playback" type="button" class="member-playback-link" :class="{ 'is-stale': playbackStale }" :aria-label="`${member.embyName}，${playbackStale ? '取链状态待核实' : playback.detail}，查看播放会话`" aria-haspopup="dialog" @click="emit('sessions', member.userId, $event)"><template v-if="!playbackStale"><span class="member-playback-label">{{ playback.label }}{{ playback.name ? '：' : '' }}</span><span v-if="playback.name" class="member-playback-name">{{ playback.name }}</span><span v-if="playback.suffix" class="member-playback-suffix">{{ playback.suffix }}</span></template><span v-else class="member-playback-name">取链状态待核实</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
   </section>
-  <section v-else class="member-message member-message-warning member-summary-warning"><p>{{ accountHint }}</p><button type="button" :disabled="locked" class="member-button member-button-text" @click="refreshAccount">重新核实</button></section>
+  <section v-else class="member-summary-warning"><p>{{ accountHint }}</p></section>
   <footer class="member-card-footer">
    <p v-if="member.playbackOnly" class="member-footer-summary" :title="member.ownerName || member.ownerUserId"><span class="member-muted">所有者</span><strong>{{ member.ownerName || member.ownerUserId || '待核实' }}</strong></p>
-   <p v-else-if="!member.administrator && available" class="member-footer-summary"><span class="member-muted">子账号</span><strong>{{ usage }} / {{ member.childLimit || 0 }}</strong></p>
+   <p v-else-if="!member.administrator && available" class="member-footer-summary"><span v-if="member.childUsed === 0 && !member.childLimit" class="member-muted">未开放子账号</span><template v-else><span class="member-muted">子账号</span><strong>{{ usage }} / {{ member.childLimit || 0 }}</strong></template></p>
    <p v-else class="member-muted member-caption">{{ member.administrator ? '管理员账号' : '原业务关联保留' }}</p>
-   <button ref="trigger" type="button" class="member-button member-button-primary" :disabled="locked" :aria-label="`${available ? '管理用户' : '查看记录'} ${member.embyName}`" aria-haspopup="dialog" :aria-expanded="opened" :aria-controls="opened ? dialogID : undefined" @click="openDialog">{{ available ? '管理用户' : '查看记录' }}</button>
+   <button ref="trigger" type="button" class="member-button member-button-secondary member-manage-button" :disabled="locked" :aria-label="`${available ? '管理用户' : '查看记录'} ${member.embyName}`" aria-haspopup="dialog" :aria-expanded="opened" :aria-controls="opened ? dialogID : undefined" @click="openDialog">{{ available ? '管理用户' : '查看记录' }}</button>
   </footer>
-  <p class="member-card-id member-muted">Emby ID：{{ member.embyId }}</p>
  </article>
 
  <Teleport to="body">
@@ -212,18 +211,19 @@ onBeforeUnmount(() => {
 <style scoped>
 .member-ui { --member-bg: #fff; --member-soft: #f5f7fb; --member-text: #192b47; --member-muted: #61718a; --member-outline: #e5eaf2; --member-blue: #2563eb; --member-blue-hover: #1d4ed8; --member-blue-soft: #eef4ff; --member-blue-text: #245bc7; --member-success: #14714e; --member-success-bg: #eaf8f0; --member-warning: #96601d; --member-warning-bg: #fff6e5; --member-error: #be3446; --member-error-bg: #fff0f2; color: var(--member-text); }
 .dark .member-ui { --member-bg: rgb(var(--color-slate-900)); --member-soft: rgb(var(--color-slate-800)); --member-text: rgb(var(--color-slate-100)); --member-muted: rgb(var(--color-slate-400)); --member-outline: rgb(var(--color-slate-700)); --member-blue: #3769b5; --member-blue-hover: #3b70bd; --member-blue-soft: color-mix(in srgb, var(--member-soft) 90%, #8daee8); --member-blue-text: #8daee8; --member-success: #62c499; --member-success-bg: #142921; --member-warning: #dcb068; --member-warning-bg: #2d2516; --member-error: #e8788a; --member-error-bg: #301a20; color-scheme: dark; }
-.user-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; height: 100%; padding: 16px 18px; border: 1px solid var(--member-outline); border-radius: 18px; background: var(--member-bg); box-shadow: 0 3px 12px #193c7410; transition: transform 180ms ease, box-shadow 180ms ease; }
+.user-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; height: 100%; padding: 18px; border: 1px solid color-mix(in srgb, var(--member-outline) 55%, transparent); border-radius: 16px; background: var(--member-bg); box-shadow: 0 1px 3px rgb(15 23 42 / 4%); transition: background-color 160ms ease; }
 .member-card-heading { display: flex; align-items: center; gap: 10px; }
 .member-name { flex: 1; min-width: 0; }
 .member-name h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; }
 .member-name > p { margin-top: 4px; font-size: 12px; }
 .member-muted { color: var(--member-muted); }
 .member-caption { font-size: 12px; line-height: 1.6; }
-.member-account-badge { flex-shrink: 0; border-radius: 7px; padding: 4px 7px; font-size: 11px; font-weight: 600; line-height: 1.4; background: var(--member-soft); color: var(--member-muted); }
-.member-account-badge.is-active { color: var(--member-success); background: var(--member-success-bg); }
-.member-account-badge.is-disabled, .member-account-badge.is-unverified { color: var(--member-warning); background: var(--member-warning-bg); }
-.member-drive-summary { border-radius: 12px; padding: 10px 12px; background: var(--member-soft); }
+.member-account-badge { flex-shrink: 0; border-radius: 7px; font-size: 11px; line-height: 1.4; color: var(--member-muted); }
+.member-account-badge.is-active { color: var(--member-success); }
+.member-account-badge.is-disabled, .member-account-badge.is-unverified { padding: 4px 7px; color: var(--member-warning); background: var(--member-warning-bg); }
+.member-drive-summary { min-width: 0; }
 .member-source-line { display: flex; align-items: center; gap: 8px; }
+.member-source-symbol { display: flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; color: color-mix(in srgb, var(--member-muted) 65%, var(--member-blue-text)); }
 .member-source-icon { display: flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; color: #7555c9; background: #ede8fb; }
 .source-assigned { color: #2868d9; background: #e0ecff; }
 .source-personal, .source-personal_shared { color: #137d80; background: #ddf4ef; }
@@ -231,23 +231,27 @@ onBeforeUnmount(() => {
 .dark .source-assigned { color: #a5c6ff; background: #273f65; }
 .dark .source-personal, .dark .source-personal_shared { color: #8cddd2; background: #203e40; }
 .member-source-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
-.member-drive-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 20px; margin-top: 6px; font-size: 12px; line-height: 20px; }
-.member-drive-summary > .member-caption { margin-top: 2px; }
+.member-playback-link { display: flex; align-items: center; gap: 3px; width: 100%; min-width: 0; min-height: 44px; margin-block: -5px; padding-block: 5px; color: var(--member-blue-text); text-align: left; font-size: 12px; cursor: pointer; border-radius: 7px; }.member-playback-label, .member-playback-suffix { flex-shrink: 0; }.member-playback-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.member-playback-link > svg { flex: 0 0 13px; width: 13px; height: 13px; margin-left: auto; }.member-playback-link.is-stale { color: var(--member-muted); }.member-playback-link:focus-visible { outline: 2px solid #6095ff; outline-offset: 2px; }
+@media (hover: hover) { .member-playback-link:hover { background: var(--member-blue-soft); } }
+.member-drive-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 6px; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.member-checked-time { white-space: nowrap; }
+.member-drive-state.tone-success, .member-drive-state.tone-scheduled { color: var(--member-muted); }
 .tone-muted { color: var(--member-muted); }
 .tone-success { color: var(--member-success); }
 .tone-scheduled { color: var(--member-blue-text); }
 .tone-warning { color: var(--member-warning); }
 .tone-error { color: var(--member-error); }
 .member-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
-.member-card-footer .member-button { position: relative; top: 6px; min-height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
+.member-card-footer .member-button { min-height: 44px; padding: 0 12px; font-size: 12px; border-radius: 10px; }
 .member-footer-summary { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; gap: 4px 7px; font-size: 12px; line-height: 1.5; }
 .member-footer-summary strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .member-button { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 13px; border-radius: 10px; font-size: 13px; font-weight: 600; line-height: 1.4; transition: background 150ms ease, transform 150ms ease; cursor: pointer; }
 .member-button svg { width: 16px; height: 16px; }
 .member-button-primary { color: #fff; background: var(--member-blue); box-shadow: 0 2px 4px #1d4ed818; }
 .member-button-secondary { color: var(--member-text); background: var(--member-soft); }
+.member-manage-button { --member-action-bg: var(--member-blue-soft); color: var(--member-blue-text); background: var(--member-action-bg); }
+.dark .member-manage-button { --member-action-bg: color-mix(in srgb, var(--member-bg) 78%, #3b82f6); }
 .member-button-text { color: var(--member-blue-text); background: transparent; }
-.member-check-button { min-height: 36px; margin-right: -6px; padding: 0 7px; font-size: 12px; }
 .member-button-danger { color: var(--member-error); background: var(--member-error-bg); }
 .member-icon-button { width: 40px; padding: 0; color: var(--member-muted); }
 .member-icon-button svg { width: 20px; height: 20px; }
@@ -259,8 +263,7 @@ onBeforeUnmount(() => {
 .member-message-warning { background: var(--member-warning-bg); color: var(--member-warning); }
 .member-message-error { background: var(--member-error-bg); color: var(--member-error); }
 .member-message-success { background: var(--member-success-bg); color: var(--member-success); }
-.member-summary-warning { padding: 10px 12px; font-size: 12px; }
-.member-summary-warning .member-button { min-height: 32px; padding: 0; }
+.member-summary-warning { min-width: 0; color: var(--member-warning); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .member-dialog { width: min(560px, calc(100% - 24px)); max-width: none; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin: auto; padding: 0; border: 1px solid var(--member-outline); border-radius: 22px; overflow: hidden; background: var(--member-bg); box-shadow: 0 24px 90px #02061735; }
 .member-dialog::backdrop { background: #0b15275c; backdrop-filter: blur(3px); }
 .member-dialog[open] { animation: member-dialog-enter 200ms cubic-bezier(.2, 0, 0, 1); }
@@ -300,14 +303,12 @@ onBeforeUnmount(() => {
 .member-more summary { width: fit-content; padding-block: 6px; color: var(--member-muted); cursor: pointer; }
 .member-more .member-button { margin-top: 12px; }
 .member-id { margin-top: 10px; font-family: monospace; overflow-wrap: anywhere; user-select: text; }
-.member-card-id { margin-top: -4px; padding-top: 4px; font-family: monospace; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
 .member-dialog-footer { display: flex; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 16px 24px max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--member-outline); background: var(--member-bg); }
 .member-dialog-actions { display: flex; gap: 8px; margin-left: auto; }
 .member-dialog-actions .member-button { min-height: 42px; }
-@media (hover: hover) { .user-card:hover { transform: translateY(-2px); box-shadow: 0 8px 22px #193c7418; } .member-button-primary:not(:disabled):hover { background: var(--member-blue-hover); } .member-button-secondary:not(:disabled):hover, .member-button-text:not(:disabled):hover, .member-icon-button:not(:disabled):hover { background: var(--member-blue-soft); } .member-source-option:not(.is-locked):not(.is-selected):hover { background: var(--member-blue-soft); } }
-@media (max-width: 639px) { .user-card { padding: 16px; min-height: 230px; } .member-button { min-height: 44px; } .member-check-button { min-height: 44px; } .member-dialog { max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 20px; } .member-dialog-heading { padding: 18px 12px 14px 18px; } .member-dialog-body { padding: 0 18px 18px; scrollbar-gutter: auto; } .member-dialog-footer { padding: 14px 18px max(14px, env(safe-area-inset-bottom)); } .member-dialog-footer > p { flex-basis: 100%; } .member-dialog-actions { width: 100%; } .member-dialog-actions > button { flex: 1; } .member-source-option { gap: 10px; padding: 11px; } }
+@media (hover: hover) { .user-card:hover { background: color-mix(in srgb, var(--member-bg) 72%, var(--member-soft)); } .member-button-primary:not(:disabled):hover { background: var(--member-blue-hover); } .member-button-secondary:not(:disabled):hover, .member-button-text:not(:disabled):hover, .member-icon-button:not(:disabled):hover { background: var(--member-blue-soft); } .member-manage-button:not(:disabled):hover { background: color-mix(in srgb, var(--member-action-bg) 88%, var(--member-blue-text)); } .member-source-option:not(.is-locked):not(.is-selected):hover { background: var(--member-blue-soft); } }
+@media (max-width: 639px) { .user-card { padding: 16px; } .member-button { min-height: 44px; } .member-dialog { max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 20px; } .member-dialog-heading { padding: 18px 12px 14px 18px; } .member-dialog-body { padding: 0 18px 18px; scrollbar-gutter: auto; } .member-dialog-footer { padding: 14px 18px max(14px, env(safe-area-inset-bottom)); } .member-dialog-footer > p { flex-basis: 100%; } .member-dialog-actions { width: 100%; } .member-dialog-actions > button { flex: 1; } .member-source-option { gap: 10px; padding: 11px; } }
 @keyframes member-dialog-enter { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .user-card, .member-button, .member-source-option { transition: none; } .member-dialog[open] { animation: none; } .user-card:hover, .member-button:not(:disabled):active { transform: none; } }
 @media (hover: hover) { .member-button-danger:not(:disabled):hover { background: color-mix(in srgb, var(--member-error) 12%, var(--member-error-bg)); } }
-@media (max-width: 639px) { .user-card { min-height: 0; } .member-card-footer .member-button { position: relative; min-height: 36px; } .member-card-footer .member-button::before { content: ''; position: absolute; inset: -4px 0; } }
 </style>

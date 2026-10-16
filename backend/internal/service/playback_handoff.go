@@ -150,6 +150,12 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 	if confirmed {
 		current.HandoffAt = now.UnixMilli()
 	}
+	// Playback evidence can confirm a previously committed handoff without a
+	// new link request. Keep its existing target snapshot in that case.
+	if a.account.ID != "" {
+		current.Target = a.playbackTarget()
+		current.Target.IssuedAt = now.UnixMilli()
+	}
 	d.Leases[current.Key] = current
 	if a.poolLease == nil {
 		if err := u.save(ctx, d); err != nil {

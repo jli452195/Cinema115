@@ -191,6 +191,8 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 	} else {
 		current.CandidateUntil = 0
 	}
+	current.Target = a.playbackTarget()
+	current.Target.IssuedAt = now.UnixMilli()
 	ud.Leases[current.Key] = current
 	lease.Issued, lease.IssuedAt, lease.BorrowedKey, lease.BorrowedGeneration = true, now.UnixMilli(), "", 0
 	lease.ExpiresAt = min(current.ExpiresAt, now.Add(time.Duration(pd.Settings.LeaseMinutes)*time.Minute).UnixMilli())

@@ -237,9 +237,15 @@ func (a *MediaAuthorization) Commit(ctx context.Context) error {
 		}
 	}
 	if a.userLease != nil {
-		return a.userLease.Commit(ctx)
+		return a.userLease.commitTarget(ctx, a.playbackTarget())
 	}
 	return nil
+}
+
+// Use the pinned request target, never the user's current settings or a source
+// copy. Publish it only in the transaction that commits successful issuance.
+func (a *MediaAuthorization) playbackTarget() model.UserPlaybackTarget {
+	return model.UserPlaybackTarget{AccountID: a.account.ID, AccountName: a.account.Name, Source: a.record.Source}
 }
 
 func (s *MemberPlaybackService) IsPoolUser(server, id string) bool {

@@ -11,12 +11,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   page.on('pageerror', e => errors.push(e.message))
   const base = (userId, source = 'assigned', extra = {}) => ({ userId, embyId: userId.padEnd(32, '0'), embyName: userId, username: userId, source, accountId: '', embyState: 'active', disabled: false, childLimit: 3, childUsed: 2, stage: 'ready', driveStatus: { state: 'ready', message: '共享池自动调度，播放时实时核验' }, ...extra })
   let members = [
-   base('PoolUser'), base('MainUser', 'primary', { driveStatus: { state: 'ready', message: '最近检查通过', checkedAt: '2026-10-12T10:00:00Z' } }),
+   base('PoolUser'), base('MainUser', 'primary', { childLimit: 0, childUsed: 0, driveStatus: { state: 'ready', message: '最近检查通过', checkedAt: '2026-10-12T10:00:00Z' } }),
+   base('OverQuota', 'primary', { childLimit: 0, childUsed: 2, driveStatus: { state: 'ready', message: '最近检查通过', checkedAt: '2026-10-12T10:00:00Z' } }),
+   base('UnreadQuota', 'primary', { childLimit: 0, childUsed: undefined, driveStatus: { state: 'pending', message: '尚无网盘检查记录' } }),
    base('AdminUser', 'assigned', { administrator: true }),
    // Deliberately inconsistent partial boolean to exercise the authoritative Emby state.
    base('DisabledUser', 'assigned', { embyState: 'disabled', disabled: false }),
    base('ChildUser', 'personal_shared', { playbackOnly: true, ownerUserId: 'PoolUser', ownerName: 'PoolUser', childRevoked: true }),
-   base('LongUser', 'personal', { embyName: '很长的用户名'.repeat(14), embyId: 'id'.repeat(80), personalDrive: { connected: false } }),
+   base('LongUser', 'personal', { embyName: '很长的用户名'.repeat(14), embyId: 'id'.repeat(80), personalDrive: { connected: false }, driveStatus: { state: 'invalid_login', message: '个人网盘登录已失效，请在个人中心重新扫码并核实目录。', checkedAt: '2026-10-12T10:00:00Z' } }),
    ...['deleted', 'missing', 'other_server'].map(state => base(state, 'assigned', { embyState: state })),
   ]
   const settings = { enabled: true, libraryIds: [], allowDownload: false }
@@ -39,7 +41,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    if (p.endsWith('/deletions/preview')) data = { key: body.key, name: body.key, fingerprint: 'mock', children: 1, personalDrives: 1, sessions: 0, embyStates: { [body.key]: body.key === 'deleted' ? 'deleted' : 'active', ChildUser: 'active' }, targets: [{ key: body.key, name: body.key, embyId: 'a'.repeat(32), remoteDeleted: body.key === 'deleted' }, { key: 'ChildUser', name: 'ChildUser', embyId: 'b'.repeat(32) }] }
    await route.fulfill({ json: data })
   })
-  await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/emby/users')
+  await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/users/list')
   const card = id => page.locator('article.user-card').filter({ has: page.getByRole('heading', { name: id, exact: true }) })
   const pool = card('PoolUser'), modal = page.locator('dialog.member-dialog[open]')
   const settle = async () => page.evaluate(async () => { await Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished.catch(() => {}))) })
@@ -53,21 +55,30 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await page.locator('article.user-card input, article.user-card select').count(), 0)
   assert.match(await pool.innerText(), /动态调度，播放时核验/)
   assert.equal(await pool.locator('time').count(), 0)
-  assert.match(await pool.locator('.member-card-id').innerText(), /Emby ID/)
+  assert.equal(await pool.getByRole('button').count(), 1)
+  assert.equal(await pool.getByRole('button', { name: '检查网盘', exact: true }).count(), 0)
+  assert.doesNotMatch(await pool.innerText(), /Emby ID/)
+  assert.match(await card('MainUser').innerText(), /未开放子账号/)
+  assert.match(await card('OverQuota').innerText(), /子账号\s+2 \/ 0/)
+  assert.match(await card('UnreadQuota').innerText(), /子账号\s+未读取 \/ 0/)
+  assert.equal(await card('MainUser').locator('time').getAttribute('datetime'), '2026-10-12T10:00:00Z')
   const initialHeight = await pool.evaluate(e => e.offsetHeight)
-  assert.ok(initialHeight <= 280, `Summary card too tall: ${initialHeight}`)
+  assert.ok(initialHeight <= 230, `Summary card too tall: ${initialHeight}`)
   assert.equal(await pool.evaluate(e => getComputedStyle(e.parentElement.parentElement).gridTemplateColumns.split(' ').length), 3)
-  assert.ok(await pool.locator('.member-card-footer button').evaluate(e => e.offsetHeight) <= 36)
+  assert.ok(await pool.locator('.member-card-footer button').evaluate(e => e.offsetHeight) >= 44)
   console.log('Summary layout passed')
-  // Card checks use toast feedback and retain the layout even on error.
-  await pool.getByRole('button', { name: '检查网盘' }).click()
-  await page.locator('.toast-container').getByText('PoolUser：已更新网盘检查结果。').waitFor()
-  assert.equal(await pool.evaluate(e => e.offsetHeight), initialHeight)
+  // The dialog retains health checks, full identity and actionable failure feedback.
+  await open('PoolUser')
+  await modal.locator('summary').click()
+  assert.match(await modal.locator('.member-id').innerText(), new RegExp(members[0].embyId))
+  await modal.locator('summary').click()
+  await modal.getByRole('button', { name: '检查网盘' }).click()
+  await modal.getByText('已更新网盘检查结果。', { exact: true }).waitFor()
   failCheck = true
-  await pool.getByRole('button', { name: '检查网盘' }).click()
-  await pool.locator('.member-drive-state').filter({ hasText: '网盘检查失败' }).waitFor()
-  assert.equal(await pool.evaluate(e => e.offsetHeight), initialHeight)
+  await modal.getByRole('button', { name: '检查网盘' }).click()
+  await modal.getByRole('alert').filter({ hasText: '网盘检查失败' }).waitFor()
   failCheck = false
+  await close()
   await page.evaluate(() => { document.body.style.overflow = 'auto' })
   await open('PoolUser')
   console.log('Opened settings')
@@ -188,6 +199,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    assert.equal(await pool.evaluate(e => getComputedStyle(e.parentElement.parentElement).gridTemplateColumns.split(' ').length), columns)
    for (const dark of [false, true]) {
     await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark); await settle()
+    assert.ok(await pool.getByRole('button', { name: '管理用户 PoolUser' }).evaluate(e => e.getBoundingClientRect().height) >= 44)
+    if ([1440, 390, 320].includes(width)) {
+     await page.mouse.move(0, 0)
+     await page.evaluate(() => window.scrollTo(0, 0))
+     await page.screenshot({ path: path.join(screenshots, `cards-${width}-${dark ? 'dark' : 'light'}.png`), fullPage: true })
+     await card('MainUser').screenshot({ path: path.join(screenshots, `card-main-${width}-${dark ? 'dark' : 'light'}.png`) })
+    }
     await open('很长的用户名'.repeat(14))
     await modal.locator('summary').click()
     const bounds = await modal.boundingBox()
@@ -196,7 +214,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await modal.locator('.member-dialog-body').evaluate(e => e.scrollWidth > e.clientWidth), false)
     const footer = await modal.locator('footer').boundingBox()
     assert.ok(footer.y + footer.height <= height + 1)
-    assert.equal(await modal.evaluate(e => getComputedStyle(e).backgroundColor), dark ? 'rgb(24, 33, 49)' : 'rgb(255, 255, 255)')
+    const surface = await modal.evaluate(e => getComputedStyle(e).backgroundColor.match(/\d+/g).map(Number))
+    assert.ok(surface.every(channel => dark ? channel < 80 : channel === 255), 'Dialog must follow the active light/dark palette')
     await modal.locator('.member-dialog-body').evaluate(e => { e.scrollTop = e.scrollHeight })
     if ([1440, 390, 320].includes(width)) await page.screenshot({ path: path.join(screenshots, `dialog-${width}-${dark ? 'dark' : 'light'}.png`) })
     await close(); await noOverflow()
@@ -209,6 +228,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(writes.some(w => w.p.endsWith('/deletions')), false, 'Must never perform a deletion in UI review')
   assert.equal(writes.some(w => /policy|permission|authorize/.test(w.p)), false)
   assert.deepEqual(errors, [])
-  console.log('User cards: compact/stable layout, toast, save baseline/failure, health draft, ESC/backdrop/focus, roles, preview handoff, refresh recovery, 6 viewports, light/dark and reduced motion passed')
+  console.log('User cards: compact layout, quota edge cases, dialog identity/checks, save baseline/failure, health draft, ESC/backdrop/focus, roles, preview handoff, refresh recovery, 44px targets, 6 viewports, light/dark and reduced motion passed')
  } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exit(1) })

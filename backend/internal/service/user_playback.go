@@ -175,6 +175,10 @@ func (l *UserPlaybackLease) Current() bool {
 	return ok && v.Generation == l.Record.Generation && v.ExpiresAt > p.now().UnixMilli() && l.policyRevision == p.doc.PolicyRevision
 }
 func (l *UserPlaybackLease) Commit(ctx context.Context) error {
+	return l.commitTarget(ctx, model.UserPlaybackTarget{})
+}
+
+func (l *UserPlaybackLease) commitTarget(ctx context.Context, target model.UserPlaybackTarget) error {
 	p := l.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -197,6 +201,10 @@ func (l *UserPlaybackLease) Commit(ctx context.Context) error {
 	v.IssuedAt = p.now().UnixMilli()
 	v.UpdatedAt = p.now().UnixMilli()
 	v.ExpiresAt = p.now().Add(userPlaybackIdleTTL).UnixMilli()
+	if target.AccountID != "" {
+		target.IssuedAt = v.IssuedAt
+		v.Target = target
+	}
 	d.Leases[v.Key] = v
 	return p.save(ctx, d)
 }
