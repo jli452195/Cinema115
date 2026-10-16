@@ -49,6 +49,6 @@ onBeforeUnmount(() => lifecycle.abort())
       <SettingSwitch v-model="settings.allowDownload" :disabled="busy || !loaded" label="允许下载原文件" description="仅开放 Cinema115 下载入口，仍遵守 Emby 下载权限和网盘绑定；反代关闭时入口停止。" />
       <button type="submit" :disabled="busy || !loaded" class="proxy-button">{{ busy ? '正在保存…' : '保存访问设置' }}</button>
     </form>
-    <RouterLink to="/emby/users" class="proxy-text-link">管理用户与网盘绑定</RouterLink>
+    <RouterLink to="/users/list" class="proxy-text-link">管理用户与网盘绑定</RouterLink>
   </section>
 </template>

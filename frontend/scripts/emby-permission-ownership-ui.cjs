@@ -41,7 +41,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByRole('button', { name: '检查网盘' }).click()
   await dialog.getByText('操作已完成。').waitFor()
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
-  await page.goto(base + '/users')
+  await page.goto(base + '/users/invites')
   await page.getByRole('heading', { name: '新注册用户的默认媒体库' }).waitFor()
   await page.getByRole('checkbox', { name: '电影', exact: true }).check()
   await page.getByRole('button', { name: '保存注册媒体库' }).click()

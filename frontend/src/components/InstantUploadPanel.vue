@@ -115,7 +115,7 @@ onBeforeUnmount(() => { clearTimeout(refreshTimer); close(); lifecycle.abort() }
               <p class="proxy-help">目标网盘和已验证目录在启动时自动选择并固定。</p>
               <p v-if="loaded && !bindings.length" class="proxy-help">暂无可用的动态池用户，请先配置用户来源。</p>
               <p v-if="!accounts.some(a => a.primary && a.configured)" class="proxy-help">需要先配置主账号和动态小号池。</p>
-              <div class="flex flex-wrap items-center gap-4"><button type="submit" :disabled="blocked || !ready" class="proxy-button">保存秒传配置</button><RouterLink to="/emby/users" class="proxy-text-link">管理用户来源</RouterLink></div>
+              <div class="flex flex-wrap items-center gap-4"><button type="submit" :disabled="blocked || !ready" class="proxy-button">保存秒传配置</button><RouterLink to="/users/list" class="proxy-text-link">管理用户来源</RouterLink></div>
             </form>
           </div>
           <div class="mt-5">

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
-import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
+import HeaderAccountMenu from './HeaderAccountMenu.vue'
+import { isPortalAdmin } from '../composables/usePortalAuth'
 import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
+import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigation'
 
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
@@ -76,19 +78,8 @@ const headerStyle = computed(() => {
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const updatesActive = computed(() => route.path === '/updates')
-const managementLinks = computed(() => isPortalAdmin.value ? [
-  { label: '追更管理', to: '/follows/manage' },
-  { label: '注册邀请', to: '/users' },
-  { label: '115 网盘', to: '/115' },
-  { label: '资源配置', to: '/resources' },
-  { label: 'Telegram 配置', to: '/telegram' },
-  { label: '查看日志', to: '/logs' },
-  { label: 'Emby', to: '/emby' },
-] : [])
-function isManagementActive(to: string) {
-  return route.meta.managementSection ? route.meta.managementSection === to : route.path.startsWith(to)
-}
-const managementActive = computed(() => managementLinks.value.some(link => isManagementActive(link.to)))
+const managementActive = computed(() => isPortalAdmin.value && adminAccountGroups.some(group =>
+  group.links.some(link => isAccountLinkActive(route, link))))
 
 const navContainerRef = ref<HTMLElement>()
 const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
@@ -102,14 +93,27 @@ function closePanels() { accountOpen.value = false }
 
 function toggleAccount() { accountOpen.value = !accountOpen.value }
 
+function isWithinAccount(target: EventTarget | null) {
+  return target instanceof Node && (accountButton.value?.contains(target) || header.value?.querySelector('#header-management')?.contains(target))
+}
 function onPointerDown(event: PointerEvent) {
-  if (!header.value?.contains(event.target as Node)) closePanels()
+  if (!isWithinAccount(event.target)) closePanels()
 }
 function onFocusOut(event: FocusEvent) {
-  if (!header.value?.contains(event.relatedTarget as Node | null)) closePanels()
+  if (isWithinAccount(event.relatedTarget)) return
+  // A child panel may move focus after Vue reveals its parent in the same update.
+  void nextTick(() => { if (!isWithinAccount(document.activeElement)) closePanels() })
+}
+function activateAccountMenu(element: Element) {
+  element.removeAttribute('inert')
+  element.removeAttribute('aria-hidden')
+}
+function deactivateAccountMenu(element: Element) {
+  element.setAttribute('inert', '')
+  element.setAttribute('aria-hidden', 'true')
 }
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !accountOpen.value) return
+  if (event.defaultPrevented || event.key !== 'Escape' || !accountOpen.value) return
   event.preventDefault()
   const trigger = accountButton.value
   closePanels()
@@ -121,8 +125,9 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[background-color,backdrop-filter,border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop }" :style="headerStyle" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
+    <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative mx-auto flex h-[var(--workbench-header-height)] max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:px-10">
       <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
         <CinemaLogo />
@@ -148,18 +153,9 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
           <span v-if="websiteUnread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 sm:hidden" aria-hidden="true"></span>
         </button>
       </div>
-      <nav v-if="accountOpen" id="header-management" aria-label="更多功能" class="absolute right-4 top-full mt-2 max-h-[calc(100dvh-var(--workbench-header-height)-1rem)] w-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10 dark:border-slate-700/70 dark:bg-slate-900 dark:shadow-black/25 sm:right-8">
-        <p class="px-3 py-2 text-xs text-slate-400 dark:text-slate-400">{{ portalUser?.username }} · {{ isPortalAdmin ? '管理员' : '普通用户' }}</p>
-        <div class="mb-1 border-b border-slate-100 pb-1 dark:border-slate-700/60 sm:hidden">
-          <RouterLink to="/notifications" class="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels"><span>站内通知</span><span v-if="websiteUnread" class="rounded-full bg-amber-500 px-2 text-xs leading-5 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span></RouterLink>
-          <ThemeSwitcher show-label />
-        </div>
-        <RouterLink v-if="!isPortalAdmin" to="/account/playback" class="block rounded-lg px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" @click="closePanels">我的播放</RouterLink>
-        <RouterLink to="/follows" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="route.name === 'my-follows' ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" :aria-current="route.name === 'my-follows' ? 'page' : undefined" @click="closePanels">我的追更</RouterLink>
-        <RouterLink v-for="link in managementLinks" :key="link.to" :to="link.to" :aria-current="isManagementActive(link.to) ? 'page' : undefined" class="block rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80" :class="isManagementActive(link.to) ? 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'" @click="closePanels">{{ link.label }}</RouterLink>
-        <div class="my-1 border-t border-slate-100 dark:border-slate-700/60"></div>
-        <button type="button" class="w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-400/10 dark:hover:text-red-300" @click="closePanels(); emit('logout')">退出登录</button>
-      </nav>
+      <Transition name="account-menu-motion" @before-enter="activateAccountMenu" @before-leave="deactivateAccountMenu">
+        <HeaderAccountMenu v-if="accountOpen" @close="closePanels" @logout="emit('logout')" />
+      </Transition>
     </div>
   </header>
 </template>
@@ -254,7 +250,15 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.tonal-surface .icon-button svg { filter: none; }
 .workbench-header.tonal-surface :is(a, button):focus-visible { outline-color: rgb(var(--color-accent)); }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
+.account-menu-motion-enter-active, .account-menu-motion-leave-active { transition: transform 140ms ease; }
+.account-menu-motion-enter-active :deep(.account-surface), .account-menu-motion-leave-active :deep(.account-surface) { transition: opacity 140ms ease; }
+.account-menu-motion-enter-from, .account-menu-motion-leave-to { transform: translateY(-4px); }
+.account-menu-motion-enter-from :deep(.account-surface), .account-menu-motion-leave-to :deep(.account-surface) { opacity: 0; }
+.account-menu-motion-leave-active { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
+  .account-menu-motion-enter-active, .account-menu-motion-leave-active { transition: none; }
+  .account-menu-motion-enter-active :deep(.account-surface), .account-menu-motion-leave-active :deep(.account-surface) { transition: none; }
+  .account-menu-motion-enter-from, .account-menu-motion-leave-to { transform: none; }
   .workbench-header.tonal-surface,
   .dark .workbench-header.tonal-surface { --header-tonal-alpha: 0.95; }
   .header-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }

@@ -10,17 +10,12 @@ import { woniuRequest, type WoniuConfigView } from '../types/woniu'
 import woniuLogo from '../assets/woniu.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
+import { resourceSources as sources } from '../utils/managementFeatures'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-type Source = 'gying' | 'woniu' | 're0' | 'telegram'
+type Source = typeof sources[number]['id']
 type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
-const sources: { id: Source; title: string; description: string; settings: string }[] = [
-  { id: 'gying', title: '观影配置', description: '管理观影站地址、账号登录与资源优先级。', settings: '/gying' },
-  { id: 'woniu', title: '蜗牛配置', description: '登录蜗牛 I 4K，配置详情页网盘搜索。', settings: '/woniu' },
-  { id: 're0', title: 'RE0 配置', description: '管理 NanShare 连接，检查 RE0 搜索与分享 STRM 配置。', settings: '/nanshare' },
-  { id: 'telegram', title: 'Telegram 搜索配置', description: '配置 Telegram API、用户账号登录与资源 Bot。', settings: '/telegram/user' },
-]
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
 const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial() })
 const lifecycle = new AbortController()

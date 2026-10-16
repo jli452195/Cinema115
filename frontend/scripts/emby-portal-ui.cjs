@@ -70,7 +70,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'
  await page.getByText('Emby 账号创建成功，请使用刚设置的密码登录。').waitFor()
  assert.equal(new URL(page.url()).pathname,'/login')
  assert.equal(await page.getByLabel('Emby 用户名',{exact:true}).inputValue(),'newreader')
- role='admin';await page.evaluate(()=>localStorage.setItem('admin_token','mock'));await page.goto(base+'/users')
+ role='admin';await page.evaluate(()=>localStorage.setItem('admin_token','mock'));await page.goto(base+'/users/invites')
  await page.getByRole('heading',{name:'生成注册邀请'}).waitFor();await page.getByLabel('播放开通方式').selectOption('assigned');await page.getByRole('button',{name:'生成邀请',exact:true}).click();await page.getByRole('heading',{name:'请保存新生成的邀请'}).waitFor()
  assert.equal(writes.at(-1).playbackSource,'assigned')
  await page.getByRole('button',{name:'管理菜单',exact:true}).click()

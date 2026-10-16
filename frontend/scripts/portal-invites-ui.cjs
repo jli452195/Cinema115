@@ -75,7 +75,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const recordsPanel = page.getByRole('region', { name: '邀请记录', exact: true })
     const openEditor = () => summary.getByRole('button', { name: '编辑', exact: true }).click()
     const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
-    await page.goto(base + '/users')
+    await page.goto(base + '/users/invites')
     await summary.getByText('已选 3 个媒体库', { exact: true }).waitFor()
     const initialLayout = await page.locator('.invite-workspace').evaluate(element => {
       const form = element.querySelector('.invite-generate-form').getBoundingClientRect()
