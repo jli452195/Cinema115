@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 )
@@ -185,7 +186,7 @@ func TestMissingEpisodesPublishedScopeEventsAndPaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{})
-	if err != nil || len(page.Warnings) < 2 || !page.Ready {
+	if err != nil || len(page.Notices) < 2 || !page.Ready {
 		t.Fatal("old snapshot must remain visible with warnings", page, err)
 	}
 	f.service.mu.Lock()
@@ -199,5 +200,119 @@ func TestMissingEpisodesPublishedScopeEventsAndPaging(t *testing.T) {
 		if _, err := f.service.MissingEpisodes(ctx, q); !errors.Is(err, ErrEmbyMissingInput) {
 			t.Fatal("bad query accepted", q, err)
 		}
+	}
+}
+
+func TestEmbyMissingNoticesDistinguishMetadataAndIndexFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status EmbyStatus
+		broken int
+		want   map[string]EmbyMissingNotice
+	}{
+		{name: "metadata alone is neutral", status: EmbyStatus{Connected: true, Failed: 8, MetadataFailed: 8}, want: map[string]EmbyMissingNotice{"metadata_incomplete": {Level: "info", Count: 8}}},
+		{name: "real event failures remain visible", status: EmbyStatus{Connected: true, Pending: 5, MetadataPending: 3, Failed: 10, MetadataFailed: 8}, want: map[string]EmbyMissingNotice{"events_pending": {Level: "info", Count: 2}, "events_failed": {Level: "warning", Count: 2}, "metadata_incomplete": {Level: "info", Count: 11}}},
+		{name: "unconfirmed is not disconnected", status: EmbyStatus{}, want: map[string]EmbyMissingNotice{"connection_unconfirmed": {Level: "info"}}},
+		{name: "connection error", status: EmbyStatus{ConnectionError: "timeout"}, want: map[string]EmbyMissingNotice{"connection_failed": {Level: "warning"}}},
+		{name: "episode information is required", status: EmbyStatus{Connected: true}, broken: 2, want: map[string]EmbyMissingNotice{"episodes_incomplete": {Level: "warning", Count: 2}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			notices := embyMissingNotices(tt.status, tt.broken)
+			if len(notices) != len(tt.want) {
+				t.Fatal(notices)
+			}
+			for _, n := range notices {
+				want, ok := tt.want[n.Code]
+				if !ok || n.Level != want.Level || n.Count != want.Count || n.Message == "" {
+					t.Fatal(n)
+				}
+			}
+		})
+	}
+}
+
+func TestEmbyMissingIncrementalWithoutTMDB(t *testing.T) {
+	f := newEmbyFixture(t)
+	f.sync(t)
+	ctx := context.Background()
+	f.items = append(f.items,
+		emby.Item{ID: "local", Type: "Series", ParentID: "tv", Name: "本地资源"},
+		emby.Item{ID: "local-1", Type: "Episode", SeriesID: "local", ParentIndexNumber: number(1), IndexNumber: number(1)},
+		emby.Item{ID: "local-3", Type: "Episode", SeriesID: "local", ParentIndexNumber: number(1), IndexNumber: number(3)},
+	)
+	series := f.event(t, "local", "upsert")
+	f.apply(t, series)
+	page, err := f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Key != "emby:local" || page.Items[0].MissingCount != 1 {
+		t.Fatal("TMDB metadata blocked a complete series notification", page, err)
+	}
+	f.items = append(f.items, emby.Item{ID: "local-2", Type: "Episode", SeriesID: "local", ParentIndexNumber: number(1), IndexNumber: number(2)})
+	episode := f.event(t, "local-2", "upsert")
+	f.apply(t, episode)
+	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil || len(page.Items) != 0 || page.CheckedSeries != 2 {
+		t.Fatal("TMDB metadata blocked the newly arrived episode", page, err)
+	}
+	state, err := f.service.Status(ctx)
+	if err != nil || state.MetadataPending != 2 {
+		t.Fatal("local updates consumed metadata retries", state, err)
+	}
+	// A stale metadata result must not apply records or consume its replacement event.
+	f.items[len(f.items)-1].IndexNumber = number(4)
+	latest := f.event(t, "local-2", "upsert")
+	f.apply(t, episode)
+	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatal("stale metadata result changed the local index", page, err)
+	}
+	f.apply(t, latest)
+	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].MissingCount != 1 {
+		t.Fatal("replacement notification did not update the local index", page, err)
+	}
+	// Invalid episode fields stay out of the algorithm and produce an explicit notice.
+	f.items = append(f.items, emby.Item{ID: "local-incomplete", Type: "Episode", SeriesID: "local", ParentIndexNumber: number(1)})
+	f.apply(t, f.event(t, "local-incomplete", "upsert"))
+	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, notice := range page.Notices {
+		if notice.Code == "episodes_incomplete" && notice.Count == 1 && notice.Level == "warning" {
+			found = true
+		}
+	}
+	if !found || page.Items[0].MissingCount != 1 {
+		t.Fatal("incomplete episode fields were hidden or counted as gaps", page)
+	}
+	for i := range f.items {
+		if f.items[i].ID == "local" {
+			f.items[i].ProviderIDs = map[string]string{"Tmdb": "9999"}
+		}
+	}
+	f.apply(t, f.event(t, "local", "upsert"))
+	page, err = f.service.MissingEpisodes(ctx, EmbyMissingQuery{Search: "本地资源"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Key != "tmdb:9999" || f.match(t, "tv", "9999").State != "present" {
+		t.Fatal("corrected TMDB binding did not update detection and matching", page, err)
+	}
+}
+
+func TestEmbyMetadataIndexDoesNotPublishPartialReads(t *testing.T) {
+	f := newEmbyFixture(t)
+	f.sync(t)
+	f.items = append(f.items, emby.Item{ID: "new-local", Type: "Series", ParentID: "tv", Name: "分页失败本地剧"})
+	for i := 1; i <= 201; i++ {
+		f.items = append(f.items, emby.Item{ID: fmt.Sprintf("new-local-%d", i), Type: "Episode", SeriesID: "new-local", ParentIndexNumber: number(1), IndexNumber: number(i * 2)})
+	}
+	f.failPage = true
+	f.apply(t, f.event(t, "new-local", "upsert"))
+	page, err := f.service.MissingEpisodes(context.Background(), EmbyMissingQuery{Search: "分页失败本地剧"})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatal("partial series pages entered the published index", page, err)
+	}
+	state, err := f.service.Status(context.Background())
+	if err != nil || state.Pending != 1 || state.MetadataPending != 0 {
+		t.Fatal("page failure was incorrectly downgraded to missing metadata", state, err)
 	}
 }

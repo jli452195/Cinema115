@@ -3,7 +3,8 @@ export interface EmbyItem { id: string; type: string; name: string; libraryId: s
 export interface EmbyMatch { kind: 'tv' | 'movie'; tmdbId: string; state: 'present' | 'absent' | 'unknown' | 'stale'; items: EmbyItem[]; episodeCount: number }
 export interface EmbyMissingSeason { season: number; lastEpisode: number; ownedCount: number; missingCount: number; ranges: { first: number; last: number }[] }
 export interface EmbyMissingSeries { key: string; tmdbId: string; title: string; posterUrl: string; missingCount: number; seasons: EmbyMissingSeason[] }
-export interface EmbyMissingPage { items: EmbyMissingSeries[]; ready: boolean; configured: boolean; syncedAt: string; warnings: string[]; checkedSeries: number; excludedCount: number; summary: { series: number; seasons: number; episodes: number }; total: number; offset: number; nextOffset: number; hasMore: boolean }
+export interface EmbyMissingNotice { code: string; level: 'info' | 'warning'; message: string; count?: number }
+export interface EmbyMissingPage { items: EmbyMissingSeries[]; ready: boolean; configured: boolean; syncedAt: string; notices: EmbyMissingNotice[]; checkedSeries: number; excludedCount: number; summary: { series: number; seasons: number; episodes: number }; total: number; offset: number; nextOffset: number; hasMore: boolean }
 export interface EmbyMissingSource { seriesId: string; tmdbId: string; title: string; libraryId: string; episodeCount: number }
 export interface EmbyMissingPreview { scope: string; key: string; revision: string; title: string; missingCount: number; sources: EmbyMissingSource[] }
 export interface EmbyMissingExclusion extends EmbyMissingSource { id: string; excludedAt: string }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,12 +51,19 @@ type EmbyMissingSummary struct {
 	Episodes int `json:"episodes"`
 }
 
+type EmbyMissingNotice struct {
+	Code    string `json:"code"`
+	Level   string `json:"level"`
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
+}
+
 type EmbyMissingPage struct {
 	Items         []EmbyMissingSeries `json:"items"`
 	Ready         bool                `json:"ready"`
 	Configured    bool                `json:"configured"`
 	SyncedAt      string              `json:"syncedAt"`
-	Warnings      []string            `json:"warnings"`
+	Notices       []EmbyMissingNotice `json:"notices"`
 	CheckedSeries int                 `json:"checkedSeries"`
 	ExcludedCount int                 `json:"excludedCount"`
 	Summary       EmbyMissingSummary  `json:"summary"`
@@ -66,7 +74,7 @@ type EmbyMissingPage struct {
 }
 
 func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuery) (EmbyMissingPage, error) {
-	page := EmbyMissingPage{Items: []EmbyMissingSeries{}, Warnings: []string{}}
+	page := EmbyMissingPage{Items: []EmbyMissingSeries{}, Notices: []EmbyMissingNotice{}}
 	search := strings.TrimSpace(query.Search)
 	if !validEmbyMissingQuery(query) {
 		return page, ErrEmbyMissingInput
@@ -92,23 +100,18 @@ func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuer
 		return page, nil
 	}
 	scope := embyScope(s.config)
+	incomplete, err := s.db.EmbyMissingIncompleteEpisodes(ctx, scope, status.Active)
+	if err != nil {
+		s.mu.RUnlock()
+		return page, err
+	}
 	items, err := s.db.EmbyMissingItems(ctx, scope, status.Active)
 	s.mu.RUnlock()
 	if err != nil {
 		return page, err
 	}
 	items = filterEmbyMissingExclusions(items, exclusions)
-	if status.Status == "queued" || status.Status == "running" {
-		page.Warnings = append(page.Warnings, "媒体库正在同步，当前显示上次完整索引的检测结果。")
-	} else if status.Status == "failed" {
-		page.Warnings = append(page.Warnings, "最近一次同步失败，当前显示上次成功建立的索引结果。")
-	}
-	if !status.Connected {
-		page.Warnings = append(page.Warnings, "Emby 连接尚未确认或连接异常，近期变动可能尚未反映在结果中。")
-	}
-	if status.Pending > 0 || status.Failed > 0 {
-		page.Warnings = append(page.Warnings, "存在待处理或处理失败的入库通知，检测结果可能尚未更新完整。")
-	}
+	page.Notices = embyMissingNotices(status, incomplete)
 	groups, checked, err := buildEmbyMissing(ctx, items)
 	if err != nil {
 		return page, err
@@ -167,6 +170,36 @@ func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuer
 		}
 	}
 	return page, nil
+}
+
+func embyMissingNotices(status EmbyStatus, incomplete int) []EmbyMissingNotice {
+	notices := make([]EmbyMissingNotice, 0, 6)
+	if status.Status == "queued" || status.Status == "running" {
+		notices = append(notices, EmbyMissingNotice{Code: "sync_running", Level: "info", Message: "媒体库同步中，当前显示上次完整索引的检测结果。"})
+	} else if status.Status == "failed" {
+		notices = append(notices, EmbyMissingNotice{Code: "sync_failed", Level: "warning", Message: "最近同步失败，当前显示上次完整索引。"})
+	}
+	if !status.Connected {
+		if status.ConnectionError != "" {
+			notices = append(notices, EmbyMissingNotice{Code: "connection_failed", Level: "warning", Message: "Emby 连接异常，近期变动可能尚未反映在结果中。"})
+		} else {
+			notices = append(notices, EmbyMissingNotice{Code: "connection_unconfirmed", Level: "info", Message: "Emby 连接尚未确认；检测依据当前本地索引。"})
+		}
+	}
+	// Metadata retries are a subset of the event queue, not additional failures.
+	if count := status.Pending - status.MetadataPending; count > 0 {
+		notices = append(notices, EmbyMissingNotice{Code: "events_pending", Level: "info", Count: count, Message: fmt.Sprintf("%d 条入库通知处理中，结果将在本地索引更新后反映。", count)})
+	}
+	if count := status.Failed - status.MetadataFailed; count > 0 {
+		notices = append(notices, EmbyMissingNotice{Code: "events_failed", Level: "warning", Count: count, Message: fmt.Sprintf("%d 条入库通知处理失败，近期变动可能尚未完整更新。", count)})
+	}
+	if count := status.MetadataPending + status.MetadataFailed; count > 0 {
+		notices = append(notices, EmbyMissingNotice{Code: "metadata_incomplete", Level: "info", Count: count, Message: fmt.Sprintf("%d 条资料补查未完成，可能涉及 TMDB 编号或分集信息；检测依据当前本地索引。", count)})
+	}
+	if incomplete > 0 {
+		notices = append(notices, EmbyMissingNotice{Code: "episodes_incomplete", Level: "warning", Count: incomplete, Message: fmt.Sprintf("%d 条分集记录缺少剧集归属、季号或集号，未参与缺集检测。", incomplete)})
+	}
+	return notices
 }
 
 func buildEmbyMissing(ctx context.Context, items []model.EmbyItem) ([]EmbyMissingSeries, int, error) {

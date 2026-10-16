@@ -22,8 +22,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     items[3] = { ...items[3], title: '很长的剧名也不能撑高卡片'.repeat(8), missingCount: 30, seasons: Array.from({ length: 30 }, (_, i) => season(i + 1)) }
     items[4].posterUrl = embyPoster('missing')
     items[20].posterUrl = embyPoster('offscreen')
-    let fail = false, ready = true, configured = true, empty = false, checkedSeries = 100, warnings = [], delay = 0
+    let fail = false, ready = true, configured = true, empty = false, checkedSeries = 100, notices = [], delay = 0, posterDelay = 0
     let exclusions = [], previewFail = false, excludeFail = false, restoreFail = false, writeDelay = 0
+    let posterGate
     const service = 's'.repeat(64), scope = 'a'.repeat(64), revision = 'r'.repeat(64)
     const previewFor = key => {
       const item = items.find(item => item.key === key)
@@ -34,6 +35,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       requests.push({ p, method: req.method(), auth: req.headers().authorization })
       if (p.includes('/tmdb/image/') || p.includes('/emby/posters/')) {
         if (p === embyPoster('missing')) return route.fulfill({ status: 404 })
+        if (p === embyPoster('blocked') && posterGate) await posterGate
+        if (/test-(25|26)\.jpg$/.test(p)) await new Promise(resolve => setTimeout(resolve, posterDelay))
         return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240"><rect width="160" height="240" fill="#85714b"/></svg>' })
       }
       let data = {}, code = 200
@@ -66,7 +69,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         let filtered = empty ? [] : items.filter(item => !exclusions.some(excluded => excluded.key === item.key) && (!q || item.title.includes(q) || item.tmdbId.includes(q)))
         if (!ready) filtered = []
         const offset = filtered.length ? Math.min(Number(url.searchParams.get('offset') || 0), Math.floor((filtered.length - 1) / 24) * 24) : 0
-        data = { configured, ready, warnings, excludedCount: exclusions.length, syncedAt: '2026-10-16T02:00:00Z', checkedSeries, total: filtered.length, offset, nextOffset: offset + 24, hasMore: filtered.length > offset + 24, summary: { series: filtered.length, seasons: filtered.reduce((n, x) => n + x.seasons.length, 0), episodes: filtered.reduce((n, x) => n + x.missingCount, 0) }, items: filtered.slice(offset, offset + 24) }
+        data = { configured, ready, notices, excludedCount: exclusions.length, syncedAt: '2026-10-16T02:00:00Z', checkedSeries, total: filtered.length, offset, nextOffset: offset + 24, hasMore: filtered.length > offset + 24, summary: { series: filtered.length, seasons: filtered.reduce((n, x) => n + x.seasons.length, 0), episodes: filtered.reduce((n, x) => n + x.missingCount, 0) }, items: filtered.slice(offset, offset + 24) }
         if (fail) { code = 500; data = { error: '模拟读取失败' } }
         await new Promise(resolve => setTimeout(resolve, q === '慢请求' ? 500 : delay))
       }
@@ -118,14 +121,56 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await dialog.getByText(items[2].title, { exact: true }).count(), 1, 'local shows retain full details')
     await dialog.getByRole('button', { name: '关闭缺集明细' }).click()
     await dialog.waitFor({ state: 'hidden' })
+    delay = 100; posterDelay = 250
+    await page.evaluate(() => {
+      window.paginationFrames = []; window.probingPagination = true
+      const sample = () => {
+        const grid = document.querySelector('[data-missing-grid]'), card = grid?.querySelector('[data-missing-card]')
+        const image = card?.querySelector('img[alt]:not([alt=""])')
+        window.paginationFrames.push({ title: card?.querySelector('h2')?.textContent?.trim(), top: Math.round(grid?.getBoundingClientRect().top || 0), ready: !!image?.complete && image.naturalWidth > 0 })
+        if (window.probingPagination) requestAnimationFrame(sample)
+      }
+      sample()
+    })
     await page.getByRole('button', { name: '下一页', exact: true }).click()
     await cards.filter({ hasText: '示例剧25' }).waitFor()
-    assert.equal(await page.evaluate(url => window.posterObjects.has(url), firstBlob), false, 'pagination must revoke removed card blobs')
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+    const paginationFrames = await page.evaluate(() => { window.probingPagination = false; return window.paginationFrames })
+    assert.equal(new Set(paginationFrames.map(frame => frame.top)).size, 1, 'loading must never push the grid down and back up')
+    assert.equal(paginationFrames.filter(frame => frame.title === '示例剧25').every(frame => frame.ready), true, 'the incoming page must show decoded visible posters on its first painted frame')
+    assert.equal(await page.evaluate(url => window.posterObjects.has(url), firstBlob), true, 'recent pages retain their decoded poster for flicker-free back navigation')
     assert.equal(await cards.count(), 2)
     assert.equal(new URL(page.url()).searchParams.get('offset'), '24')
     await page.getByRole('button', { name: '上一页', exact: true }).click()
     await cards.nth(23).waitFor()
+    assert.equal(await cards.first().locator('img[alt="示例剧01"]').getAttribute('src'), firstBlob, 'back navigation must reuse the decoded image URL')
+    assert.equal(requests.filter(r => r.p === '/api/tmdb/image/w185/test-1.jpg').length, 1, 'back navigation must not fetch the same thumbnail again')
+    assert.equal(requests.filter(r => r.p === '/api/tmdb/image/w185/test-25.jpg').length, 1, 'preparing the incoming page and mounting it must share one fetch')
     assert.equal(requests.filter(r => r.p === embyPoster('missing')).length, 1, 'known missing posters must not retry on pagination')
+    delay = 0; posterDelay = 0
+    // Slow or cancelled image preparation must not block text or overwrite a later search.
+    const originalPoster = items[24].posterUrl
+    items[24].posterUrl = embyPoster('blocked')
+    let unblockPoster
+    posterGate = new Promise(resolve => { unblockPoster = resolve })
+    const slowStart = Date.now()
+    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    await cards.filter({ hasText: '示例剧25' }).waitFor()
+    assert.ok(Date.now() - slowStart < 2400, 'slow posters must not delay pagination beyond its 1500ms preparation budget')
+    assert.equal(requests.filter(r => r.p === embyPoster('blocked')).length, 1, 'a slow prepared image and its card must share the in-flight request')
+    await page.getByRole('button', { name: '上一页', exact: true }).click()
+    await cards.nth(23).waitFor()
+    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    await page.waitForRequest(req => new URL(req.url()).pathname === embyPoster('blocked'))
+    const changingSearch = page.getByRole('searchbox', { name: '搜索缺集剧集' })
+    await changingSearch.fill('示例剧01'); await changingSearch.press('Enter')
+    await page.getByText('当前结果：示例剧01', { exact: false }).waitFor()
+    unblockPoster(); posterGate = undefined; items[24].posterUrl = originalPoster
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+    assert.equal(await cards.count(), 1, 'cancelled preparation must not replace a newer search')
+    assert.equal(await cards.first().locator('img[alt="示例剧01"]').getAttribute('src'), firstBlob)
+    await page.getByRole('button', { name: '清除搜索', exact: true }).click()
+    await cards.nth(23).waitFor()
     const search = page.getByRole('searchbox', { name: '搜索缺集剧集' })
     await search.fill('示例剧01'); await search.press('Enter')
     await page.getByText('当前结果：示例剧01', { exact: false }).waitFor()
@@ -241,12 +286,48 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     exclusions = []; writeDelay = 0
     await page.getByRole('button', { name: '缺集结果', exact: true }).click()
     await cards.nth(23).waitFor()
+    // Metadata is an optional neutral disclosure; actual index failures stay visible.
+    notices = [{ code: 'metadata_incomplete', level: 'info', count: 8, message: '8 条资料补查未完成，可能涉及 TMDB 编号或分集信息；检测依据当前本地索引。' }, { code: 'episodes_incomplete', level: 'warning', count: 6, message: '6 条分集记录缺少剧集归属、季号或集号，未参与缺集检测。' }]
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    const metadata = page.getByRole('button', { name: '资料待补充', exact: true })
+    await metadata.waitFor()
+    assert.equal(await page.getByRole('status').getByText(notices[0].message, { exact: true }).count(), 0, 'metadata must not become a global warning')
+    assert.equal(await page.getByRole('status').getByText(notices[1].message, { exact: true }).count(), 0, 'incomplete episode information must not occupy a banner')
+    const statusPanel = page.getByRole('dialog', { name: '索引状态', exact: true })
+    const gridBeforeStatus = await page.locator('[data-missing-grid]').boundingBox(), requestsBeforeStatus = requests.length
+    await metadata.click(); await statusPanel.waitFor()
+    assert.equal(await statusPanel.getByText(notices[0].message, { exact: true }).isVisible(), true)
+    assert.equal(await statusPanel.getByText(notices[1].message, { exact: true }).isVisible(), true, 'skipped episode records must remain discoverable')
+    assert.equal((await page.locator('[data-missing-grid]').boundingBox()).y, gridBeforeStatus.y, 'status details must not move the cards')
+    assert.equal(requests.length, requestsBeforeStatus, 'opening status must not make extra requests')
+    await page.keyboard.press('Escape'); await statusPanel.waitFor({ state: 'hidden' })
+    assert.equal(await metadata.evaluate(el => el === document.activeElement), true, 'closing status restores focus')
+    await metadata.click(); await statusPanel.waitFor()
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+    await statusPanel.waitFor({ state: 'hidden' })
+    assert.equal(await page.evaluate(() => !!document.activeElement?.closest('[popover]')), false, 'tabbing out of a nonmodal disclosure closes it without trapping focus')
+    await metadata.click(); await statusPanel.waitFor()
+    await page.getByRole('heading', { name: '缺集检测', exact: true }).click()
+    await statusPanel.waitFor({ state: 'hidden' })
+    notices = [{ code: 'sync_failed', level: 'warning', message: '最近同步失败，当前显示上次完整索引。' }, ...notices]
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    await page.getByRole('status').getByText(notices[0].message, { exact: true }).waitFor()
+    assert.equal(await cards.count(), 24, 'sync failure must not discard the published results')
+    notices = notices.slice(1)
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    await page.getByRole('status').getByText('最近同步失败，当前显示上次完整索引。', { exact: true }).waitFor({ state: 'hidden' })
     fs.mkdirSync(path.join(__dirname, '../test-results'), { recursive: true })
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme)
       for (const [width, height] of [[1440, 1000], [768, 1024], [390, 844], [320, 780]]) {
         await page.setViewportSize({ width, height }); await page.evaluate(() => window.scrollTo(0, 0))
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${theme} ${width}`)
+        await metadata.click(); await statusPanel.waitFor()
+        const statusBounds = await statusPanel.boundingBox()
+        assert.ok(statusBounds.x >= 0 && statusBounds.x + statusBounds.width <= width && statusBounds.y >= 0 && statusBounds.y + statusBounds.height <= height, 'status disclosure must fit every viewport')
+        assert.equal(await statusPanel.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+        if (width === 320) await page.screenshot({ path: path.join(__dirname, `../test-results/missing-status-${theme}-${width}.png`) })
+        await statusPanel.getByRole('button', { name: '关闭索引状态' }).click(); await statusPanel.waitFor({ state: 'hidden' })
         const heights = await cards.evaluateAll(elements => elements.map(el => Math.round(el.getBoundingClientRect().height)))
         assert.ok(Math.max(...heights) <= 150, `${theme} ${width}: compact cards must stay near 144px, got ${heights}`)
         const links = cards.first().getByRole('link')
@@ -266,22 +347,44 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         await page.screenshot({ path: path.join(__dirname, `../test-results/missing-${theme}-${width}.png`) })
       }
     }
+    // Exercise eviction over several full pages, then check actual SPA unmount cleanup.
+    await page.setViewportSize({ width: 1440, height: 5000 })
+    for (let i = 27; i <= 90; i++) items.push({ key: `tmdb:${i}`, tmdbId: String(i), title: `缓存测试${i}`, posterUrl: `https://image.tmdb.org/t/p/w500/cache-${i}.jpg`, missingCount: 1, seasons: [season()] })
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    await page.getByRole('button', { name: '刷新检测结果' }).waitFor()
+    for (let index = 1; index <= 3; index++) {
+      await page.getByRole('button', { name: '下一页', exact: true }).click()
+      await cards.first().getByRole('heading', { name: items[index * 24].title, exact: true }).waitFor()
+      assert.ok(await page.evaluate(() => window.posterObjects.size <= 48), 'LRU retention must not exceed two full pages')
+      assert.equal(await cards.evaluateAll(elements => elements.every(el => { const img = el.querySelector('img[alt]:not([alt=""])'); return img?.complete && img.naturalWidth > 0 })), true, 'eviction must never revoke visible posters')
+    }
+    assert.equal(await page.evaluate(url => window.posterObjects.has(url), firstBlob), false, 'least recently used unmounted posters must be revoked')
+    assert.ok(await page.evaluate(() => window.posterObjects.size > 0))
+    await page.getByRole('link', { name: 'Emby', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.posterObjects.size), 0, 'SPA navigation must release every cached poster')
+    await page.getByRole('link', { name: /缺集检测 按季检查/ }).click()
+    await cards.nth(23).waitFor()
     ready = false; configured = false; await page.reload()
     await page.getByRole('heading', { name: '尚未配置需要同步的媒体库' }).waitFor()
     assert.equal(await page.getByText('当前索引未检测到缺集', { exact: true }).count(), 0)
     configured = true; await page.getByRole('button', { name: '刷新检测结果' }).click()
     await page.getByRole('heading', { name: '当前媒体库索引尚未建立' }).waitFor()
-    ready = true; empty = true; warnings = ['媒体库正在同步，当前显示上次完整索引的检测结果。']
+    ready = true; empty = true; notices = [{ code: 'sync_running', level: 'info', message: '媒体库同步中，当前显示上次完整索引的检测结果。' }]
     await page.getByRole('button', { name: '刷新检测结果' }).click()
     await page.getByRole('heading', { name: '当前索引未检测到缺集' }).waitFor()
-    assert.equal(await page.getByRole('status').getByText(warnings[0], { exact: true }).isVisible(), true)
+    await page.getByRole('button', { name: '媒体库同步中', exact: true }).click()
+    await statusPanel.waitFor()
+    assert.equal(await statusPanel.getByText(notices[0].message, { exact: true }).isVisible(), true)
+    await page.keyboard.press('Escape')
     checkedSeries = 0; await page.getByRole('button', { name: '刷新检测结果' }).click()
     await page.getByRole('heading', { name: '当前索引没有可检测的正式分集' }).waitFor()
     fail = true; await page.reload(); await page.getByRole('alert').waitFor()
     assert.equal(await cards.count(), 0)
-    assert.equal(await page.evaluate(() => window.posterObjects.size), 0, 'empty or failed pages must retain no poster blobs')
+    assert.ok(await page.evaluate(() => window.posterObjects.size <= 48), 'recent-page poster retention must remain bounded')
+    await page.getByRole('link', { name: 'Emby', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.posterObjects.size), 0, 'leaving detection must release every cached poster')
     assert.equal(requests.some(r => r.method !== 'GET' && !['/api/admin/emby/missing/exclusions', '/api/admin/emby/missing/restore'].includes(r.p)), false, 'manual exclusions must never submit a scan or remote deletion')
     assert.deepEqual(errors, [])
-    console.log('Emby missing UI: manual preview/exclude/cancel/restore, stale and failed writes, double-submit guard, focus/scroll recovery, excluded search/paging, lazy posters, compact cards, light/dark and 320/390/768/1440 widths passed')
+    console.log('Emby missing UI: neutral metadata disclosure, visible sync failures, keyboard/outside dismissal, viewport bounds, no extra status requests, flicker-free pagination, bounded poster cache/SPA cleanup, exclusions, light/dark and 320/390/768/1440 widths passed')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

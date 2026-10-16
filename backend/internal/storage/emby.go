@@ -291,6 +291,15 @@ func (s *Store) EmbyRetryEvent(ctx context.Context, event model.EmbyEvent, messa
 	return s.embyExec(ctx, `UPDATE emby_events SET attempts=attempts+1,last_error=?,due=?,kind=? WHERE id=?`, message, time.Now().Add(delay).Unix(), event.Kind, event.ID)
 }
 func (s *Store) EmbyApplyEvent(ctx context.Context, scope, generation string, event model.EmbyEvent, items []model.EmbyItem, remove bool) error {
+	return s.applyEmbyEvent(ctx, scope, generation, event, items, remove, "")
+}
+
+// Missing metadata must not block usable local rows or consume the pending retry.
+func (s *Store) EmbyApplyMetadataEvent(ctx context.Context, scope, generation string, event model.EmbyEvent, items []model.EmbyItem, message string) error {
+	return s.applyEmbyEvent(ctx, scope, generation, event, items, false, message)
+}
+
+func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, event model.EmbyEvent, items []model.EmbyItem, remove bool, metadataError string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开始应用 Emby 通知: %w", err)
@@ -361,8 +370,15 @@ func (s *Store) EmbyApplyEvent(ctx context.Context, scope, generation string, ev
 	if err := dirtyEmbyFollows(ctx, tx, scope, generation, string(changedJSON), ""); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM emby_events WHERE id=?`, event.ID); err != nil {
-		return fmt.Errorf("完成 Emby 通知: %w", err)
+	if metadataError != "" {
+		delay := time.Duration(30*(1<<event.Attempts)) * time.Second
+		if _, err := tx.ExecContext(ctx, `UPDATE emby_events SET attempts=attempts+1,last_error=?,due=?,kind='metadata' WHERE id=?`, metadataError, time.Now().Add(delay).Unix(), event.ID); err != nil {
+			return fmt.Errorf("保存 Emby 资料补查: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM emby_events WHERE id=?`, event.ID); err != nil {
+			return fmt.Errorf("完成 Emby 通知: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE emby_state SET count=MAX(0,count+?) WHERE scope=? AND active=?`, delta, scope, generation); err != nil {
 		return fmt.Errorf("更新 Emby 条目计数: %w", err)

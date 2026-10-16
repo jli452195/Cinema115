@@ -682,18 +682,30 @@ func (s *EmbyService) applyEvent(ctx context.Context, c EmbyConfig, generation s
 	if fetchErr != nil {
 		if errors.Is(fetchErr, errEmbyMetadataPending) {
 			event.Kind = "metadata"
-		}
-		if err := s.db.EmbyRetryEvent(ctx, event, fetchErr.Error()); err != nil {
-			return err
+			// Local detection needs Emby identity and episode numbers, not TMDB.
+			// Commit the complete fetched records and the bounded metadata retry together.
+			if err := s.db.EmbyApplyMetadataEvent(ctx, embyScope(c), generation, event, items, fetchErr.Error()); err != nil {
+				return err
+			}
+		} else {
+			if err := s.db.EmbyRetryEvent(ctx, event, fetchErr.Error()); err != nil {
+				return err
+			}
 		}
 		if event.Attempts+1 >= 6 {
-			logEmby(ctx, "ERROR", fmt.Sprintf("条目 %s 处理失败，已达 6 次尝试上限，请修复后发送更新通知或全量同步：%s", event.ItemID, embyLogError(fetchErr)))
+			if errors.Is(fetchErr, errEmbyMetadataPending) {
+				logEmby(ctx, "ERROR", fmt.Sprintf("条目 %s 资料补查已达 6 次尝试上限，可用本地索引已保存；补充资料后发送更新通知或全量同步：%s", event.ItemID, embyLogError(fetchErr)))
+			} else {
+				logEmby(ctx, "ERROR", fmt.Sprintf("条目 %s 处理失败，已达 6 次尝试上限，请修复后发送更新通知或全量同步：%s", event.ItemID, embyLogError(fetchErr)))
+			}
 		} else {
 			level := "WARNING"
+			state := "暂未更新"
 			if errors.Is(fetchErr, errEmbyMetadataPending) {
 				level = "DEBUG"
+				state = "可用本地索引已保存，资料待补充"
 			}
-			logEmby(ctx, level, fmt.Sprintf("条目 %s 暂未更新，%d 秒后重试（%d/6）：%s", event.ItemID, 30*(1<<event.Attempts), event.Attempts+1, embyLogError(fetchErr)))
+			logEmby(ctx, level, fmt.Sprintf("条目 %s %s，%d 秒后重试（%d/6）：%s", event.ItemID, state, 30*(1<<event.Attempts), event.Attempts+1, embyLogError(fetchErr)))
 		}
 		return nil
 	}
@@ -745,15 +757,19 @@ func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.
 	}
 	record, ok := item.Record(library)
 	records := make([]model.EmbyItem, 0, 4)
+	var metadataErr error
 	if ok {
 		if (item.Type == "Movie" || item.Type == "Series") && record.TMDB == "" {
-			return nil, false, fmt.Errorf("%w：尚未填写 TMDB ID", errEmbyMetadataPending)
+			metadataErr = fmt.Errorf("%w：尚未填写 TMDB ID", errEmbyMetadataPending)
 		}
 		records = append(records, record)
 	}
 	if item.Type == "Episode" || item.Type == "Season" {
 		if item.SeriesID == "" || (item.Type == "Episode" && (record.Season < 0 || record.Episode < 0)) {
-			return nil, false, fmt.Errorf("%w：缺少剧集 ID、季号或集号", errEmbyMetadataPending)
+			metadataErr = fmt.Errorf("%w：缺少剧集 ID、季号或集号", errEmbyMetadataPending)
+		}
+		if item.SeriesID == "" {
+			return records, false, metadataErr
 		}
 		series, err := client.Item(ctx, item.SeriesID, false)
 		if err != nil {
@@ -763,8 +779,11 @@ func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.
 			return nil, false, fmt.Errorf("Emby 剧集尚未就绪")
 		}
 		r, valid := series.Record(library)
-		if !valid || r.TMDB == "" {
-			return nil, false, fmt.Errorf("%w：剧集 TMDB ID 尚未刮削", errEmbyMetadataPending)
+		if !valid {
+			return nil, false, fmt.Errorf("Emby 剧集条目暂不可用于索引")
+		}
+		if r.TMDB == "" && metadataErr == nil {
+			metadataErr = fmt.Errorf("%w：剧集 TMDB ID 尚未刮削", errEmbyMetadataPending)
 		}
 		records = append(records, r)
 	}
@@ -791,6 +810,9 @@ func (s *EmbyService) eventItems(ctx context.Context, c EmbyConfig, event model.
 				return nil, false, fmt.Errorf("通知目录过大，请手动全量同步")
 			}
 		}
+	}
+	if metadataErr != nil {
+		return records, false, metadataErr
 	}
 	return records, !ok && len(records) == 0, nil
 }

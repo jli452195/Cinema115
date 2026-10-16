@@ -7,6 +7,17 @@ import (
 	"strm115/backend/internal/model"
 )
 
+func (s *Store) EmbyMissingIncompleteEpisodes(ctx context.Context, scope, generation string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM emby_items
+ WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)
+ AND type='Episode' AND season<>0 AND (series_id='' OR season<0 OR episode<0)`, scope, generation).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("读取缺集检测分集资料状态: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Store) EmbyPublishedSeries(ctx context.Context, scope, id string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (

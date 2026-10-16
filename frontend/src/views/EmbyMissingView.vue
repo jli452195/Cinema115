@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import EmbyMissingCard from '../components/EmbyMissingCard.vue'
 import EmbyMissingDetails from '../components/EmbyMissingDetails.vue'
+import EmbyMissingStatus from '../components/EmbyMissingStatus.vue'
+import { providePosterCache } from '../composables/useLazyPoster'
+import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { embyRequest, type EmbyMissingPage, type EmbyMissingSeries, type EmbyMissingExclusion, type EmbyMissingExcludedPage } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
@@ -15,8 +18,14 @@ const excludedMode = computed(() => route.query.view === 'excluded')
 const excluded = ref<EmbyMissingExcludedPage>(), selected = ref<EmbyMissingSeries>()
 const restoring = ref(''), notice = ref(''), noticeElement = ref<HTMLElement>()
 const currentPage = computed(() => excludedMode.value ? excluded.value : page.value)
-const excludedCount = computed(() => excludedMode.value ? excluded.value?.count || 0 : page.value?.excludedCount || 0)
+const excludedCount = computed(() => excludedMode.value ? excluded.value?.count ?? page.value?.excludedCount ?? 0 : page.value?.excludedCount ?? excluded.value?.count ?? 0)
+const viewNav = ref<HTMLElement>()
+const { indicatorStyle } = useSlidingIndicator(viewNav, '[aria-pressed="true"]', [excludedMode, excludedCount])
+const detailNotices = computed(() => page.value?.notices.filter(item => item.level === 'info' || item.code === 'episodes_incomplete') || [])
+const warningNotices = computed(() => page.value?.notices.filter(item => item.level === 'warning' && item.code !== 'episodes_incomplete') || [])
 const lifecycle = new AbortController()
+const grid = ref<HTMLElement>()
+const posters = providePosterCache(() => props.token)
 let reader: AbortController | undefined, writer: AbortController | undefined
 function routeQuery() { return typeof route.query.q === 'string' ? route.query.q.slice(0, 100).trim() : '' }
 function routeOffset() {
@@ -24,6 +33,16 @@ function routeOffset() {
   return Number.isInteger(offset) && offset >= 0 && offset <= 1_000_000 ? offset : 0
 }
 function time(value: string) { return new Date(value).toLocaleString() }
+function visiblePosters(items: EmbyMissingSeries[]) {
+  const element = grid.value, card = element?.querySelector<HTMLElement>('[data-missing-card]')
+  if (!element || !card) return []
+  const style = getComputedStyle(element), columns = style.gridTemplateColumns.split(' ').length
+  const gap = parseFloat(style.rowGap) || 0, height = card.offsetHeight, top = element.getBoundingClientRect().top
+  return items.filter((_item, index) => {
+    const rowTop = top + Math.floor(index / columns) * (height + gap)
+    return rowTop < window.innerHeight + 100 && rowTop + height > -100
+  }).map(item => item.posterUrl)
+}
 async function load() {
   reader?.abort()
   const current = new AbortController()
@@ -32,6 +51,10 @@ async function load() {
   const params = new URLSearchParams({ q: search, offset: String(routeOffset()) })
   try {
     const data = await embyRequest(props.token, `${mode ? 'missing/exclusions' : 'missing'}?${params}`, AbortSignal.any([lifecycle.signal, current.signal]))
+    if (!mode && !current.signal.aborted && !lifecycle.signal.aborted) {
+      // Keep the current page steady while only the incoming visible thumbnails decode.
+      await posters.prepare(visiblePosters((data as EmbyMissingPage).items), AbortSignal.any([lifecycle.signal, current.signal]))
+    }
     if (!current.signal.aborted && !lifecycle.signal.aborted) {
       if (mode) excluded.value = data as EmbyMissingExcludedPage
       else page.value = data as EmbyMissingPage
@@ -76,7 +99,12 @@ async function restore(item: EmbyMissingExclusion) {
   } finally { if (writer === current) restoring.value = '' }
 }
 watch(() => [props.token, route.query.q, route.query.offset, excludedMode.value], (values, previous) => {
-  if (previous && (values[0] !== previous[0] || values[3] !== previous[3])) { page.value = undefined; excluded.value = undefined }
+  if (previous && values[0] !== previous[0]) { page.value = undefined; excluded.value = undefined }
+  else if (previous && values[3] !== previous[3]) {
+    notice.value = ''
+    if (excludedMode.value) excluded.value = undefined
+    else page.value = undefined
+  }
   if (previous && values[0] !== previous[0]) { writer?.abort(); restoring.value = ''; notice.value = '' }
   selected.value = undefined
   query.value = routeQuery(); void load()
@@ -85,44 +113,52 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort(); writer?.abort() })
 </script>
 
 <template>
-  <ManagementLayout title="缺集检测" description="按季检查第 1 集至已入库最后一集，列出其中缺失的集号。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
-    <template #actions><RouterLink to="/emby/library" class="text-sm text-blue-600 dark:text-blue-400">媒体库同步</RouterLink></template>
-    <div class="space-y-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="text-xs leading-5 text-slate-500 dark:text-slate-400">已选媒体库合并去重，特别篇不参与检测。</p>
-        <button type="button" :disabled="loading || !!restoring" aria-label="刷新检测结果" class="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:border-amber-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" @click="load">
+  <ManagementLayout class="missing-page" title="缺集检测" description="按季检查第 1 集至已入库最后一集；合并所选媒体库，不含特别篇。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
+    <template #actions>
+      <RouterLink to="/emby/library" class="inline-flex min-h-11 items-center whitespace-nowrap text-sm text-blue-600 dark:text-blue-400">媒体库同步</RouterLink>
+        <button type="button" :disabled="loading || !!restoring" aria-label="刷新检测结果" class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:border-slate-400 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" @click="load">
           <svg aria-hidden="true" class="h-4 w-4" :class="loading ? 'animate-spin motion-reduce:animate-none' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7A7 7 0 0 1 18 5l2 2M4 17l2 2a7 7 0 0 0 11.9-2"/></svg>
           {{ loading ? '读取中' : '刷新' }}
         </button>
-      </div>
-      <div class="flex flex-wrap items-center gap-4 text-sm" aria-label="检测视图">
-        <button type="button" :aria-pressed="!excludedMode" :disabled="!!restoring" :class="!excludedMode ? 'font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-500 underline underline-offset-4 dark:text-slate-400'" class="min-h-11 disabled:opacity-50" @click="filter(0, routeQuery(), false)">缺集结果</button>
-        <button type="button" :aria-pressed="excludedMode" :disabled="!!restoring" :class="excludedMode ? 'font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-500 underline underline-offset-4 dark:text-slate-400'" class="min-h-11 disabled:opacity-50" @click="filter(0, routeQuery(), true)">已排除 {{ excludedCount }} 项</button>
-      </div>
+    </template>
+    <div class="space-y-4">
       <p v-if="notice" ref="noticeElement" role="status" tabindex="-1" class="break-words rounded-xl bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">{{ notice }}</p>
       <div v-if="error" role="alert" class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 p-4 text-sm leading-6 text-red-700 dark:bg-red-500/10 dark:text-red-300">
         <p>{{ currentPage ? '操作或读取失败，当前保留上次结果：' : '读取失败：' }}{{ error }}</p><button type="button" :disabled="loading || !!restoring" class="min-h-9 underline disabled:opacity-50" @click="load">重新读取列表</button>
       </div>
-      <div v-if="page?.warnings.length" role="status" class="space-y-1 rounded-xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><p v-for="warning in page.warnings" :key="warning">{{ warning }}</p></div>
-      <template v-if="page?.ready || excludedMode">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <dl v-if="!excludedMode && page" class="flex min-w-0 flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="缺集统计">
-            <div class="flex items-baseline gap-2"><dt class="text-slate-500 dark:text-slate-400">缺集剧</dt><dd class="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{{ page.summary.series.toLocaleString() }} 部</dd></div>
-            <div class="flex items-baseline gap-2"><dt class="text-slate-500 dark:text-slate-400">涉及</dt><dd class="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{{ page.summary.seasons.toLocaleString() }} 季</dd></div>
-            <div class="flex items-baseline gap-2"><dt class="text-slate-500 dark:text-slate-400">共缺</dt><dd class="font-semibold tabular-nums text-amber-800 dark:text-amber-300">{{ page.summary.episodes.toLocaleString() }} 集</dd></div>
-          </dl>
-          <p v-else class="text-sm leading-6 text-slate-600 dark:text-slate-300">当前 Emby 服务的手动排除记录，按具体来源计数。</p>
-          <form role="search" class="flex min-w-0 gap-2 lg:w-80" @submit.prevent="filter()">
+      <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <nav ref="viewNav" class="relative flex w-max max-w-full gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60" aria-label="检测视图">
+          <div aria-hidden="true" class="pointer-events-none absolute rounded-lg bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700" :style="indicatorStyle"></div>
+          <button type="button" :aria-pressed="!excludedMode" :disabled="!!restoring" :class="!excludedMode ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" class="relative z-10 min-h-11 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset disabled:opacity-50" @click="filter(0, routeQuery(), false)">缺集结果</button>
+          <button type="button" :aria-pressed="excludedMode" :disabled="!!restoring" :class="excludedMode ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" class="relative z-10 min-h-11 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset disabled:opacity-50" @click="filter(0, routeQuery(), true)">已排除 <span class="ml-1 text-xs tabular-nums opacity-60">{{ excludedCount }} 项</span></button>
+        </nav>
+          <form role="search" class="flex w-full min-w-0 gap-2 sm:w-80" @submit.prevent="filter()">
             <div class="relative min-w-0 flex-1">
-              <input v-model="query" type="search" :aria-label="excludedMode ? '搜索已排除条目' : '搜索缺集剧集'" :disabled="!!restoring" maxlength="100" placeholder="剧名或 TMDB ID" class="w-full min-w-0 rounded-lg border border-slate-200 bg-white py-2.5 pl-3 pr-10 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 [&::-webkit-search-cancel-button]:appearance-none" @search="nativeSearch" />
+              <input v-model="query" type="search" :aria-label="excludedMode ? '搜索已排除条目' : '搜索缺集剧集'" :disabled="!!restoring" maxlength="100" placeholder="剧名或 TMDB ID" class="min-h-11 w-full min-w-0 rounded-lg border border-slate-200 bg-white py-2.5 pl-3 pr-10 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 [&::-webkit-search-cancel-button]:appearance-none" @search="nativeSearch" />
               <button v-if="query" type="button" aria-label="清除搜索" class="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100" @click="clearSearch"><svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
             </div>
-            <button :disabled="!!restoring" class="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900">搜索</button>
+            <button :disabled="!!restoring" class="min-h-11 shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900">搜索</button>
           </form>
         </div>
-        <div v-if="!excludedMode && page" class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-          <p>已检查 {{ page.checkedSeries.toLocaleString() }} 部有正式分集的剧集<span v-if="resultQuery">，当前结果：{{ resultQuery }}</span></p>
-          <p v-if="page.syncedAt">最近全量同步 {{ time(page.syncedAt) }}</p>
+      <template v-if="page?.ready || excludedMode">
+        <div v-if="!excludedMode && page" class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs leading-5 text-slate-500 dark:text-slate-400" data-missing-summary>
+          <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1">
+            <dl class="flex flex-wrap gap-x-4 gap-y-1" aria-label="缺集统计">
+              <div class="flex items-baseline gap-1.5"><dt>缺集剧</dt><dd class="font-medium tabular-nums text-slate-800 dark:text-slate-200">{{ page.summary.series.toLocaleString() }} 部</dd></div>
+              <div class="flex items-baseline gap-1.5"><dt>涉及</dt><dd class="font-medium tabular-nums text-slate-800 dark:text-slate-200">{{ page.summary.seasons.toLocaleString() }} 季</dd></div>
+              <div class="flex items-baseline gap-1.5"><dt>共缺</dt><dd class="font-medium tabular-nums text-slate-800 dark:text-slate-200">{{ page.summary.episodes.toLocaleString() }} 集</dd></div>
+            </dl>
+            <p>已检查 {{ page.checkedSeries.toLocaleString() }} 部<span class="sr-only">有正式分集的剧集</span></p>
+          </div>
+          <div class="flex max-w-full flex-wrap items-center gap-x-2">
+            <p v-if="page.syncedAt">最近全量同步 <time :datetime="page.syncedAt">{{ time(page.syncedAt) }}</time></p>
+            <EmbyMissingStatus v-if="detailNotices.length" :notices="detailNotices" />
+          </div>
+          <p v-if="resultQuery" class="w-full break-words">当前结果：{{ resultQuery }}</p>
+        </div>
+        <div v-if="!excludedMode && warningNotices.length" role="status" class="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs leading-6 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+          <svg aria-hidden="true" class="mt-1 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v4m0 4v.1"/></svg>
+          <div class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3"><div><p v-for="item in warningNotices" :key="item.code">{{ item.message }}</p></div><RouterLink to="/emby/library" class="inline-flex min-h-11 shrink-0 items-center text-blue-600 dark:text-blue-400">查看媒体库同步</RouterLink></div>
         </div>
       </template>
       <template v-if="excludedMode">
@@ -153,8 +189,8 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort(); writer?.abort() })
         <RouterLink to="/emby/library" class="mt-5 inline-flex min-h-10 items-center text-sm text-blue-600 dark:text-blue-400">{{ page.configured ? '查看同步状态' : '配置媒体库同步' }}</RouterLink>
       </section>
       <template v-else-if="page?.ready">
-        <p v-if="loading" role="status" class="text-xs text-slate-500 dark:text-slate-400">正在刷新检测结果</p>
-        <div v-if="page.items.length" class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" :aria-busy="loading" data-missing-grid>
+        <p role="status" class="sr-only">{{ loading ? '正在刷新检测结果' : '' }}</p>
+        <div v-if="page.items.length" ref="grid" class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" :aria-busy="loading" data-missing-grid>
           <EmbyMissingCard v-for="item in page.items" :key="item.key" :item="item" :token="token" @details="selected = item" />
         </div>
         <section v-else class="rounded-2xl border border-slate-200 bg-white px-5 py-14 text-center dark:border-slate-700 dark:bg-slate-900">
@@ -172,3 +208,13 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort(); writer?.abort() })
     <EmbyMissingDetails v-if="selected" :key="selected.key" :item="selected" :token="token" @close="selected = undefined" @removed="removed" />
   </ManagementLayout>
 </template>
+
+<style scoped>
+.missing-page :deep(.management-heading) { align-items: center; margin-bottom: 20px; }
+.missing-page :deep(.management-heading > p) { max-width: none; }
+@media (max-width: 639px) {
+  .missing-page :deep(.management-heading) { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .missing-page :deep(.management-heading > p) { grid-column: 1; grid-row: 2; font-size: 12px; }
+  .missing-page :deep(.management-heading > div) { grid-row: 3; }
+}
+</style>
