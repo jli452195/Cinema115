@@ -10,9 +10,8 @@ function thumbnailURL(source: string) {
   return tmdbImageURL(source).replace(/^\/api\/tmdb\/image\/(?:w185|w300|w342|w500|w1280)\//, '/api/tmdb/image/w185/')
 }
 
-// Owned by one missing-detection view: current cards pin their URLs, recent pages
-// reuse decoded images, and leaving the view releases every retained image.
-function createPosterCache(token: () => string) {
+// Current cards pin their URLs; the owner determines the cache lifetime.
+export function createPosterCache(token: () => string) {
   const ready = new Map<string, PosterEntry>(), pending = new Map<string, PosterTask>(), missing = new Map<string, number>()
   function trim() {
     for (const [address, entry] of ready) {
@@ -31,9 +30,12 @@ function createPosterCache(token: () => string) {
     const address = thumbnailURL(source), entry = ready.get(address)
     return entry ? retain(address, entry) : undefined
   }
-  function clear() {
+  function cancelPending() {
     for (const task of pending.values()) task.reader.abort()
     pending.clear()
+  }
+  function clear() {
+    cancelPending()
     for (const entry of ready.values()) URL.revokeObjectURL(entry.url)
     ready.clear(); missing.clear()
   }
@@ -115,14 +117,14 @@ function createPosterCache(token: () => string) {
       ])
     } finally { clearTimeout(timer) }
   }
-  return { cached, acquire, prepare, clear }
+  return { cached, acquire, prepare, cancelPending, clear }
 }
 
-export function providePosterCache(token: () => string) {
-  const cache = createPosterCache(token)
+export function providePosterCache(token: () => string, retained?: ReturnType<typeof createPosterCache>) {
+  const cache = retained || createPosterCache(token)
   provide(posterCacheKey, cache)
   watch(token, cache.clear, { flush: 'sync' })
-  onBeforeUnmount(cache.clear)
+  onBeforeUnmount(() => { if (!retained) cache.clear() })
   return cache
 }
 

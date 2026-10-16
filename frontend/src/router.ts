@@ -81,6 +81,8 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (to, from, savedPosition) => {
+    // The missing view restores its per-view/page scroll after installing cached rows.
+    if (to.name === 'emby-missing') return false
     // Changing only the selected date should not jump the update grid back to the top.
     if (to.name === 'updates' && from.name === 'updates') return false
     return savedPosition ?? (to.path === '/helper115' && to.hash === '#pool' ? { el: '#pool', top: 24 } : { top: 0 })

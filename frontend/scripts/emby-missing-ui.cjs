@@ -127,7 +127,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const sample = () => {
         const grid = document.querySelector('[data-missing-grid]'), card = grid?.querySelector('[data-missing-card]')
         const image = card?.querySelector('img[alt]:not([alt=""])')
-        window.paginationFrames.push({ title: card?.querySelector('h2')?.textContent?.trim(), top: Math.round(grid?.getBoundingClientRect().top || 0), ready: !!image?.complete && image.naturalWidth > 0 })
+        window.paginationFrames.push({ title: card?.querySelector('h2')?.textContent?.trim(), top: Math.round((grid?.getBoundingClientRect().top || 0) + scrollY), ready: !!image?.complete && image.naturalWidth > 0 })
         if (window.probingPagination) requestAnimationFrame(sample)
       }
       sample()
@@ -151,6 +151,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     // Slow or cancelled image preparation must not block text or overwrite a later search.
     const originalPoster = items[24].posterUrl
     items[24].posterUrl = embyPoster('blocked')
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    await page.waitForFunction(() => !document.querySelector('[aria-label="刷新检测结果"]').disabled)
     let unblockPoster
     posterGate = new Promise(resolve => { unblockPoster = resolve })
     const slowStart = Date.now()
@@ -160,8 +162,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(requests.filter(r => r.p === embyPoster('blocked')).length, 1, 'a slow prepared image and its card must share the in-flight request')
     await page.getByRole('button', { name: '上一页', exact: true }).click()
     await cards.nth(23).waitFor()
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
+    await page.waitForFunction(() => !document.querySelector('[aria-label="刷新检测结果"]').disabled)
+    const blockedRequest = page.waitForRequest(req => new URL(req.url()).pathname === embyPoster('blocked'))
     await page.getByRole('button', { name: '下一页', exact: true }).click()
-    await page.waitForRequest(req => new URL(req.url()).pathname === embyPoster('blocked'))
+    await blockedRequest
     const changingSearch = page.getByRole('searchbox', { name: '搜索缺集剧集' })
     await changingSearch.fill('示例剧01'); await changingSearch.press('Enter')
     await page.getByText('当前结果：示例剧01', { exact: false }).waitFor()
@@ -258,9 +263,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '返回缺集检测' }).click()
     await cards.nth(23).waitFor()
     assert.equal(await cards.filter({ hasText: '示例剧01' }).count(), 1)
-    // Search persists between views; excluded pagination clamps after restoring its final row.
+    // Each view retains its own search; excluded pagination clamps after restoring its final row.
     exclusions = Array.from({ length: 25 }, (_, i) => ({ ...previewFor('tmdb:1').sources[0], id: `seed-${i}`, title: `排除示例${String(i).padStart(2, '0')}`, tmdbId: String(300 + i), excludedAt: '2026-10-16T05:00:00Z' }))
     await page.getByRole('button', { name: '已排除 0 项', exact: true }).click()
+    await page.getByRole('button', { name: '刷新检测结果' }).click()
     await excludedRows.nth(23).waitFor()
     assert.equal(await excludedRows.count(), 24)
     const excludedSearch = page.getByRole('searchbox', { name: '搜索已排除条目' })
@@ -268,8 +274,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByText('当前搜索：排除示例00', { exact: false }).waitFor()
     assert.equal(await excludedRows.count(), 1)
     await page.getByRole('button', { name: '缺集结果', exact: true }).click()
-    await page.getByRole('heading', { name: '未找到匹配的缺集剧集' }).waitFor()
-    assert.equal(await search.inputValue(), '排除示例00')
+    await cards.nth(23).waitFor()
+    assert.equal(await search.inputValue(), '')
     await page.getByRole('button', { name: '已排除 25 项', exact: true }).click()
     await excludedRows.first().waitFor()
     assert.equal(await excludedSearch.inputValue(), '排除示例00')
@@ -280,7 +286,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await excludedRows.count(), 1)
     await excludedRows.first().getByRole('button').click()
     await excludedRows.nth(23).waitFor()
-    assert.equal(await page.getByText('第 2 页', { exact: true }).count(), 0)
     assert.equal(new URL(page.url()).searchParams.has('offset'), false, 'restore must normalize the route when the final page disappears')
     assert.equal(await page.getByRole('navigation', { name: '排除记录分页' }).count(), 0, 'pagination disappears when restoring leaves one full page')
     exclusions = []; writeDelay = 0
@@ -347,7 +352,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         await page.screenshot({ path: path.join(__dirname, `../test-results/missing-${theme}-${width}.png`) })
       }
     }
-    // Exercise eviction over several full pages, then check actual SPA unmount cleanup.
+    // Exercise eviction over several full pages, then check short-term SPA retention.
     await page.setViewportSize({ width: 1440, height: 5000 })
     for (let i = 27; i <= 90; i++) items.push({ key: `tmdb:${i}`, tmdbId: String(i), title: `缓存测试${i}`, posterUrl: `https://image.tmdb.org/t/p/w500/cache-${i}.jpg`, missingCount: 1, seasons: [season()] })
     await page.getByRole('button', { name: '刷新检测结果' }).click()
@@ -360,10 +365,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }
     assert.equal(await page.evaluate(url => window.posterObjects.has(url), firstBlob), false, 'least recently used unmounted posters must be revoked')
     assert.ok(await page.evaluate(() => window.posterObjects.size > 0))
+    const beforeReturn = requests.filter(r => r.p === '/api/admin/emby/missing').length
     await page.getByRole('link', { name: 'Emby', exact: true }).click()
-    assert.equal(await page.evaluate(() => window.posterObjects.size), 0, 'SPA navigation must release every cached poster')
+    assert.ok(await page.evaluate(() => window.posterObjects.size > 0), 'SPA navigation retains recent decoded posters briefly')
     await page.getByRole('link', { name: /缺集检测 按季检查/ }).click()
-    await cards.nth(23).waitFor()
+    await cards.first().getByRole('heading', { name: items[72].title, exact: true }).waitFor()
+    assert.equal(requests.filter(r => r.p === '/api/admin/emby/missing').length, beforeReturn, 'returning to the remembered page must not fetch fresh cached results again')
+    assert.equal(new URL(page.url()).searchParams.get('offset'), '72')
     ready = false; configured = false; await page.reload()
     await page.getByRole('heading', { name: '尚未配置需要同步的媒体库' }).waitFor()
     assert.equal(await page.getByText('当前索引未检测到缺集', { exact: true }).count(), 0)
@@ -385,6 +393,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.evaluate(() => window.posterObjects.size), 0, 'leaving detection must release every cached poster')
     assert.equal(requests.some(r => r.method !== 'GET' && !['/api/admin/emby/missing/exclusions', '/api/admin/emby/missing/restore'].includes(r.p)), false, 'manual exclusions must never submit a scan or remote deletion')
     assert.deepEqual(errors, [])
-    console.log('Emby missing UI: neutral metadata disclosure, visible sync failures, keyboard/outside dismissal, viewport bounds, no extra status requests, flicker-free pagination, bounded poster cache/SPA cleanup, exclusions, light/dark and 320/390/768/1440 widths passed')
+    console.log('Emby missing UI: neutral metadata disclosure, visible sync failures, keyboard/outside dismissal, viewport bounds, no extra status requests, flicker-free pagination, bounded poster cache/SPA retention, exclusions, light/dark and 320/390/768/1440 widths passed')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

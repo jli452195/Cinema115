@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import { copyText } from '../utils/clipboard'
 import { embyRequest, type EmbyConfig, type EmbyStatus } from '../types/emby'
+import { invalidateEmbyMissingCache, observeEmbyMissingSync } from '../composables/useEmbyMissingSession'
 import '../styles/emby-library.css'
 
 const props = defineProps<{ token: string }>()
@@ -75,6 +76,7 @@ async function refresh() {
     try {
       const data: EmbyStatus = await request('status')
       if (!lifecycle.signal.aborted) {
+        observeEmbyMissingSync(data.syncedAt || '')
         status.value = data; pollingError.value = ''
         if (requestAfterAcceptance) syncAccepted.value = false
       }
@@ -137,6 +139,7 @@ async function saveConnection() {
   try {
     // The backend validates the credentials and every selected library again on save.
     const data: EmbyConfig = await request('config', { url: url.value.trim(), apiKey: apiKey.value.trim(), libraryIds: [...selected.value] })
+    invalidateEmbyMissingCache()
     if (lifecycle.signal.aborted) return
     const retainLibraries = librariesCurrent.value
     config.value = data; url.value = data.url; apiKey.value = ''; selected.value = [...data.libraryIds]
@@ -158,6 +161,7 @@ async function startSync() {
   busy.value = 'sync'; syncError.value = ''; syncNotice.value = ''
   try {
     await request('sync', {})
+    invalidateEmbyMissingCache()
     if (lifecycle.signal.aborted) return
     syncAccepted.value = true
     // An in-flight poll may describe the state before the task was accepted.
