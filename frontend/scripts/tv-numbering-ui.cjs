@@ -10,6 +10,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
     await context.addInitScript(() => localStorage.setItem('cinema115-theme', 'light'))
     await context.addInitScript(() => localStorage.setItem('admin_token', 'mock-token'))
+    await context.addInitScript(() => {
+      window.__copyMode = 'fallback'; window.__copies = []; window.__copyStarts = 0
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => {
+        if (window.__copyMode === 'hold') { window.__copyStarts++; await new Promise(resolve => { window.__releaseCopy = resolve }); return }
+        if (window.__copyMode === 'secure') { window.__copies.push({ value, mode: 'secure' }); return }
+        throw new Error('Mock clipboard permission denied')
+      } } })
+      const original = document.execCommand.bind(document)
+      document.execCommand = (command, ...args) => {
+        if (command !== 'copy') return original(command, ...args)
+        const input = document.activeElement
+        window.__copies.push({ value: input?.value, mode: 'fallback', modal: !!input?.closest('dialog[open]'), selected: input?.selectionStart === 0 && input?.selectionEnd === input?.value?.length })
+        return window.__copyMode !== 'failure'
+      }
+    })
+    await context.route('https://www.themoviedb.org/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Mock TMDB episode group</title>' }))
     const page = await context.newPage()
     page.setDefaultTimeout(12000)
     page.on('pageerror', e => errors.push(e.message))
@@ -22,7 +38,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const previewReads = []
     const manySeasons = Array.from({ length: 19 }, (_, i) => ({ id: i + 1, number: i, name: '编排分组 ' + i, overview: '', episodes: episodes.slice(0, 7).map(e => ({ ...e, id: i * 100 + e.id })) }))
     const longGroup = { ...group, id: 'long-group', name: 'Order by initial air date', groupCount: 19, episodeCount: 133, seasons: manySeasons }
-    const extraGroups = [longGroup, ...Array.from({ length: 15 }, (_, i) => ({ ...group, id: 'option-' + i, name: i < 2 ? '同名方案' : '候选方案 ' + i })), { ...group, id: 'zero-summary', name: '统计待核对', episodeCount: 0 }, { ...group, id: 'empty-group', name: '空分集方案', episodeCount: 0, seasons: [] }]
+    const fullGroupID = '68e4db648dba4d8e56bd9fe2'
+    const extraGroups = [longGroup, ...Array.from({ length: 15 }, (_, i) => ({ ...group, id: 'option-' + i, name: i < 2 ? '同名方案' : '候选方案 ' + i })), { ...group, id: 'zero-summary', name: '统计待核对', episodeCount: 0 }, { ...group, id: 'empty-group', name: '空分集方案', episodeCount: 0, seasons: [] }, { ...group, id: fullGroupID, name: 'Seasons' }]
     const summary = { id: 1, number: 1, name: '第 1 季', episodeCount: 29, date: '2018-07-06', posterUrl: '' }
     await page.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url()), endpoint = url.pathname
@@ -71,22 +88,52 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const open = () => page.getByRole('button', { name: '设置季集方案', exact: true }).click()
     await open()
     const dialog = page.getByRole('dialog'), save = dialog.locator('.numbering-primary')
+    const groupID = dialog.locator('.numbering-group-id'), copyID = dialog.locator('.numbering-copy-id'), groupLink = dialog.locator('.numbering-group-actions a')
     await dialog.getByRole('group', { name: /^选择方案/ }).waitFor()
     await dialog.getByText('当前方案未更改。', { exact: true }).waitFor()
     assert.equal(await save.isDisabled(), true)
     assert.equal(await dialog.getByRole('radio').count(), 2)
     assert.equal(await dialog.getByRole('radio').first().evaluate(el => el === document.activeElement), true)
+    assert.equal(await groupID.count(), 0, 'default seasons have no episode group ID')
     holdPreview = true
     await dialog.getByRole('radio').nth(1).check()
     await dialog.getByText('正在读取 TMDB 分集…', { exact: true }).waitFor()
+    assert.equal(await groupID.innerText(), 'group12', 'identity is available without waiting for preview detail')
     await dialog.getByRole('radio').first().check()
     releasePreview(); holdPreview = false
     await dialog.getByText('使用 TMDB 默认季集，后续随常规资料刷新更新。', { exact: true }).waitFor()
     assert.equal(await save.isDisabled(), true)
+    assert.equal(await groupID.count(), 0)
     passed.push('delayed group preview cannot replace a newer default selection; initial radio receives focus')
     await dialog.getByRole('radio').nth(1).check()
     await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
     assert.equal(await save.isEnabled(), true)
+    const readsBeforeCopy = previewReads.length
+    await copyID.click()
+    await dialog.getByRole('status').filter({ hasText: '剧集组 ID 已复制' }).waitFor()
+    assert.deepEqual(await page.evaluate(() => window.__copies.at(-1)), { value: 'group12', mode: 'fallback', modal: true, selected: true })
+    assert.equal(await copyID.evaluate(el => el === document.activeElement), true)
+    await page.evaluate(() => { window.__copyMode = 'failure' })
+    await copyID.click()
+    await dialog.locator('.numbering-copy-feedback').waitFor()
+    assert.equal(await page.evaluate(() => window.getSelection().toString()), 'group12')
+    assert.equal(await groupID.evaluate(el => el === document.activeElement), true)
+    await page.evaluate(() => { window.__copyMode = 'hold' })
+    await copyID.click()
+    await page.waitForFunction(() => !!window.__releaseCopy)
+    await copyID.evaluate(el => el.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    assert.equal(await page.evaluate(() => window.__copyStarts), 1)
+    await dialog.getByRole('radio').first().check()
+    await page.evaluate(() => { window.__releaseCopy(); window.__copyMode = 'fallback' })
+    assert.equal(await groupID.count(), 0)
+    assert.equal(await dialog.locator('.numbering-copy-feedback').count(), 0)
+    await dialog.getByRole('radio').nth(1).check()
+    await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
+    assert.equal(await copyID.getAttribute('aria-busy'), 'false')
+    assert.equal(await copyID.getAttribute('aria-label'), '复制剧集组 ID')
+    assert.equal(previewReads.length, readsBeforeCopy + 1, 'copying must not fetch new data')
+    assert.equal(writes, 0, 'copying or following a group link must not apply a scheme')
+    passed.push('default hides ID; preview identity is immediate; dialog clipboard fallback, manual selection on failure, stale copy feedback discarded')
     holdSave = true
     await save.click()
     await dialog.getByRole('button', { name: '正在保存…' }).waitFor()
@@ -196,6 +243,48 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await dialog.locator('.numbering-preview-content').getByText('该方案详情无有效分集数据，无法应用。', { exact: true }).waitFor()
     assert.equal(await save.isDisabled(), true)
     passed.push('duplicate summaries receive ID disambiguation; zero summary is previewable; confirmed empty detail cannot be applied')
+
+    await dialog.locator(`input[value="${fullGroupID}"]`).check()
+    await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
+    assert.equal(await groupID.innerText(), fullGroupID)
+    assert.equal(await groupLink.getAttribute('href'), `https://www.themoviedb.org/tv/80462/episode_group/${fullGroupID}?language=zh-CN`)
+    assert.equal(await groupLink.getAttribute('rel'), 'noopener noreferrer')
+    const fullIDReads = previewReads.length, fullIDWrites = writes
+    await page.evaluate(() => { window.__copyMode = 'secure' })
+    await copyID.focus(); await page.keyboard.press('Enter')
+    await dialog.getByRole('status').filter({ hasText: '剧集组 ID 已复制' }).waitFor()
+    assert.deepEqual(await page.evaluate(() => window.__copies.at(-1)), { value: fullGroupID, mode: 'secure' })
+    await page.keyboard.press('Tab')
+    assert.equal(await groupLink.evaluate(el => el === document.activeElement && getComputedStyle(el).outlineStyle === 'solid'), true)
+    const popupPromise = page.waitForEvent('popup')
+    await page.keyboard.press('Enter')
+    const popup = await popupPromise
+    await popup.waitForLoadState('domcontentloaded')
+    assert.equal(popup.url(), await groupLink.getAttribute('href'))
+    await popup.close()
+    assert.equal(previewReads.length, fullIDReads)
+    assert.equal(writes, fullIDWrites)
+    await page.screenshot({ path: 'test-results/tv-numbering-group-id-desktop.png' })
+    for (const width of [375, 320]) {
+      await page.setViewportSize({ width, height: 812 })
+      await dialog.getByRole('tab', { name: '分集预览', exact: true }).click()
+      const identityBounds = await dialog.locator('.numbering-group-meta').evaluate(el => ({ width: el.clientWidth, contentWidth: el.scrollWidth, right: el.getBoundingClientRect().right }))
+      assert.ok(identityBounds.contentWidth <= identityBounds.width && identityBounds.right <= width)
+      assert.equal(await groupID.innerText(), fullGroupID)
+      assert.ok((await copyID.boundingBox()).height >= 44 && (await groupLink.boundingBox()).width >= 44)
+      await page.screenshot({ path: `test-results/tv-numbering-group-id-${width}.png` })
+    }
+    await page.setViewportSize({ width: 320, height: 568 })
+    await page.screenshot({ path: 'test-results/tv-numbering-group-id-short.png' })
+    const shortPreview = await rightScroll.evaluate(el => ({ height: el.clientHeight, scrollHeight: el.scrollHeight }))
+    assert.ok(shortPreview.height >= 40 && shortPreview.scrollHeight > shortPreview.height, 'short mobile preview must scroll to episode content')
+    await rightScroll.evaluate(el => { el.scrollTop = 200 })
+    assert.ok(await rightScroll.evaluate(el => el.scrollTop >= 200))
+    await page.screenshot({ path: 'test-results/tv-numbering-group-id-short-scrolled.png' })
+    await page.setViewportSize({ width: 375, height: 812 })
+    await dialog.getByRole('tab', { name: '选择方案', exact: true }).click()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    passed.push('full 24-character ID, secure clipboard, accessible copy/link keyboard actions, safe external tab, mobile wrap and no extra API requests')
 
     await dialog.locator('input[value="long-group"]').check()
     await dialog.getByText('编排分组 18', { exact: true }).waitFor({ state: 'attached' })

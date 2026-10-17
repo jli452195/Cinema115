@@ -253,6 +253,16 @@ func (s *TMDBService) SaveNumbering(ctx context.Context, id int, input SaveNumbe
 		if preview.Fingerprint != input.Fingerprint {
 			return nil, fmt.Errorf("%w：TMDB 内容已变化，请重新预览", storage.ErrNumberingConflict)
 		}
+		hasEpisodes := false
+		for _, season := range preview.Group.Seasons {
+			if len(season.Episodes) > 0 {
+				hasEpisodes = true
+				break
+			}
+		}
+		if !hasEpisodes {
+			return nil, fmt.Errorf("%w：剧集组暂无分集，无法保存", tmdb.ErrInput)
+		}
 		r.Name, r.Type = preview.Group.Name, preview.Group.Type
 		raw, err := json.Marshal(preview.Group)
 		if err != nil {

@@ -64,3 +64,63 @@ func TestEpisodeGroupOrderingIdentityAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestEpisodeGroupEmptySeasons(t *testing.T) {
+	const before = `{"id":11,"order":0,"show_id":80462,"season_number":1,"episode_number":9}`
+	const after = `{"id":12,"order":0,"show_id":80462,"season_number":2,"episode_number":7}`
+	const valid = `{"id":"group1","name":"Season","type":6,"group_count":3,"episode_count":2,"groups":[` +
+		`{"order":14,"name":"After","episodes":[` + after + `]},` +
+		`{"order":13,"name":"Empty","episodes":[]},` +
+		`{"order":12,"name":"Before","episodes":[` + before + `]}]}`
+	for _, tc := range []struct {
+		name, body string
+		counts     []int
+	}{
+		{"empty middle season", valid, []int{1, 0, 1}},
+		{"all seasons empty", strings.NewReplacer(before, "", after, "", `"episode_count":2`, `"episode_count":0`).Replace(valid), []int{0, 0, 0}},
+		{"duplicate empty season", strings.Replace(valid, `"order":12`, `"order":13`, 1), nil},
+		{"negative empty season", strings.Replace(valid, `"order":13`, `"order":-1`, 1), nil},
+		{"out of range empty season", strings.Replace(valid, `"order":13`, `"order":1001`, 1), nil},
+		{"group count mismatch", strings.Replace(valid, `"group_count":3`, `"group_count":2`, 1), nil},
+		{"episode count mismatch", strings.Replace(valid, `"episode_count":2`, `"episode_count":3`, 1), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client := New("key")
+			client.base = server.URL
+			group, err := client.EpisodeGroup(context.Background(), 80462, "group1")
+			if tc.counts == nil {
+				if err == nil {
+					t.Fatal("invalid group accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if group.GroupCount != 3 || len(group.Seasons) != 3 {
+				t.Fatalf("empty season lost: %+v", group)
+			}
+			total := 0
+			for i, name := range []string{"Before", "Empty", "After"} {
+				season := group.Seasons[i]
+				if season.ID != i+12 || season.Number != i+12 || season.Name != name || season.Episodes == nil || len(season.Episodes) != tc.counts[i] {
+					t.Fatalf("season identity or content lost: %+v", season)
+				}
+				total += len(season.Episodes)
+			}
+			if group.EpisodeCount != total {
+				t.Fatalf("incorrect episode count: %d, want %d", group.EpisodeCount, total)
+			}
+			if total > 0 {
+				first, last := group.Seasons[0].Episodes[0], group.Seasons[2].Episodes[0]
+				if first.ID != 11 || first.Number != 1 || first.SourceSeason != 1 || first.SourceNumber != 9 || last.ID != 12 || last.Number != 1 || last.SourceSeason != 2 || last.SourceNumber != 7 {
+					t.Fatalf("episode identity lost: %+v, %+v", first, last)
+				}
+			}
+		})
+	}
+}

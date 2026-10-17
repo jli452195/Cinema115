@@ -116,10 +116,11 @@ func (c *Client) EpisodeGroup(ctx context.Context, seriesID int, id string) (*Ep
 	result := &EpisodeGroup{EpisodeGroupSummary: EpisodeGroupSummary{ID: id, Name: raw.Name, Description: raw.Description, Type: raw.Type}, Seasons: make([]SeasonDetail, 0, len(raw.Groups))}
 	seasons, identities := make(map[int]bool, len(raw.Groups)), make(map[int]bool)
 	for _, group := range raw.Groups {
-		if group.Order < 0 || group.Order > 1000 || seasons[group.Order] || len(group.Episodes) == 0 {
+		if group.Order < 0 || group.Order > 1000 || seasons[group.Order] {
 			return nil, fmt.Errorf("TMDB 剧集组季编号重复或无效")
 		}
 		seasons[group.Order] = true
+		// Empty groups still reserve their original season number and count.
 		season := SeasonDetail{ID: group.Order, Number: group.Order, Name: group.Name, Episodes: make([]Episode, 0, len(group.Episodes))}
 		numbers := make(map[int]bool, len(group.Episodes))
 		for _, ep := range group.Episodes {

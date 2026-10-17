@@ -132,6 +132,67 @@ func TestNumberingChoicesRetainsSnapshotWhenGroupListIsOffline(t *testing.T) {
 		t.Fatal("could not reset offline group", err)
 	}
 }
+
+func TestNumberingSnapshotPreservesEmptySeason(t *testing.T) {
+	s, source, db := numberingFixture(t)
+	ctx := context.Background()
+	before := source.group.Seasons[0]
+	before.ID, before.Number = 12, 12
+	after := tmdb.SeasonDetail{ID: 14, Number: 14, Name: "After", Episodes: []tmdb.Episode{{ID: 13, Number: 1, SourceSeason: 2, SourceNumber: 7}}}
+	source.group.Seasons = []tmdb.SeasonDetail{before, {ID: 13, Number: 13, Name: "Empty", Episodes: []tmdb.Episode{}}, after}
+	source.group.GroupCount, source.group.EpisodeCount = 3, 13
+	saveGroup(t, s, 80462, 0)
+	source.groupError = errors.New("offline")
+	restarted := NewTMDBService(source, db)
+	detail, err := restarted.Details(ctx, "tv", 80462)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.EpisodeCount != 13 || len(detail.Seasons) != 3 || detail.Seasons[1].Number != 13 || detail.Seasons[1].Name != "Empty" || detail.Seasons[1].EpisodeCount != 0 || detail.Seasons[2].Number != 14 {
+		t.Fatalf("empty season lost in detail: %+v", detail)
+	}
+	season, err := restarted.Season(ctx, 80462, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if season.Number != 13 || season.Name != "Empty" || season.Episodes == nil || len(season.Episodes) != 0 || season.NumberingRevision != 1 {
+		t.Fatalf("empty season lost in snapshot: %+v", season)
+	}
+	schedules, err := restarted.Schedules(ctx, 80462)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schedules) != 3 || schedules[1].Number != 13 || schedules[1].Episodes == nil || len(schedules[1].Episodes) != 0 || schedules[2].Number != 14 || len(schedules[2].Episodes) != 1 {
+		t.Fatalf("empty season changed schedules: %+v", schedules)
+	}
+}
+
+func TestNumberingRejectsSavingAllEmptySeasons(t *testing.T) {
+	for _, count := range []int{0, 12} {
+		t.Run(fmt.Sprint("summary count ", count), func(t *testing.T) {
+			s, source, _ := numberingFixture(t)
+			ctx := context.Background()
+			saveGroup(t, s, 80462, 0)
+			source.group.Seasons = []tmdb.SeasonDetail{{ID: 13, Number: 13, Name: "Empty", Episodes: []tmdb.Episode{}}}
+			source.group.EpisodeCount = count
+			preview, err := s.PreviewNumbering(ctx, 80462, "group12")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = s.SaveNumbering(ctx, 80462, SaveNumberingInput{GroupID: "group12", Revision: 1, Fingerprint: preview.Fingerprint}); !errors.Is(err, tmdb.ErrInput) {
+				t.Fatal("all-empty group was not rejected", err)
+			}
+			current, err := s.numbering(ctx, 80462)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Info.Revision != 1 || current.Group.EpisodeCount != 12 || len(current.Group.Seasons) != 1 || len(current.Group.Seasons[0].Episodes) != 12 {
+				t.Fatalf("rejected save changed current snapshot: %+v", current)
+			}
+		})
+	}
+}
+
 func TestNumberingVotesDoNotConflictButOversizedSnapshotIsRejected(t *testing.T) {
 	s, source, _ := numberingFixture(t)
 	ctx := context.Background()

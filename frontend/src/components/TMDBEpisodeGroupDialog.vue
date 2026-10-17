@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-vue'
 import type { NumberingChoices, NumberingInfo, NumberingPreview } from '../types/tvNumbering'
 import { episodeCode, episodeGroupTypes, numberingChanges, numberingLabel } from '../types/tvNumbering'
+import { copyText } from '../utils/clipboard'
 
 const props = defineProps<{ token: string; tmdbId: string; title: string }>()
 const emit = defineEmits<{ close: []; saved: [value: NumberingInfo] }>()
@@ -13,6 +15,10 @@ const choiceScroll = ref<HTMLElement>(), previewScroll = ref<HTMLElement>()
 const choiceTab = ref<HTMLButtonElement>(), previewTab = ref<HTMLButtonElement>()
 const mobilePanel = ref<'choices' | 'preview'>('choices'), isMobile = ref(false)
 const panelID = useId(), statusID = useId()
+const groupIDElement = ref<HTMLElement>(), copiedID = ref(''), copyError = ref(''), copying = ref(false)
+const groupURL = computed(() => `https://www.themoviedb.org/tv/${encodeURIComponent(props.tmdbId)}/episode_group/${encodeURIComponent(draftID.value)}?language=zh-CN`)
+let copyAttempt = 0
+let copyTimer: ReturnType<typeof setTimeout> | undefined
 const scrollPositions = { choices: 0, preview: 0 }
 let mobileQuery: MediaQueryList | undefined
 const lifecycle = new AbortController()
@@ -57,6 +63,36 @@ const statusMessage = computed(() => {
   if (isCurrent.value) return '当前方案未更改。'
   return '正在预览新方案，应用后更新本剧编排。'
 })
+watch(draftID, () => {
+  copyAttempt++
+  clearTimeout(copyTimer)
+  copiedID.value = ''; copyError.value = ''; copying.value = false
+}, { flush: 'sync' })
+async function copyGroupID() {
+  const id = draftID.value
+  if (!id || copying.value) return
+  const attempt = ++copyAttempt
+  clearTimeout(copyTimer)
+  copiedID.value = ''; copyError.value = ''; copying.value = true
+  try {
+    await copyText(id, dialog.value)
+    if (lifecycle.signal.aborted || attempt !== copyAttempt) return
+    copiedID.value = id
+    copyTimer = setTimeout(() => { copiedID.value = '' }, 2000)
+  } catch {
+    if (lifecycle.signal.aborted || attempt !== copyAttempt) return
+    copyError.value = '复制失败，请选中 ID 手动复制。'
+    const selection = window.getSelection()
+    if (selection && groupIDElement.value) {
+      groupIDElement.value.focus({ preventScroll: true })
+      const range = document.createRange()
+      range.selectNodeContents(groupIDElement.value)
+      selection.removeAllRanges(); selection.addRange(range)
+    }
+  } finally {
+    if (!lifecycle.signal.aborted && attempt === copyAttempt) copying.value = false
+  }
+}
 function rememberScroll() {
   if (!isMobile.value || mobilePanel.value === 'choices') scrollPositions.choices = choiceScroll.value?.scrollTop || 0
   if (!isMobile.value || mobilePanel.value === 'preview') scrollPositions.preview = previewScroll.value?.scrollTop || 0
@@ -165,7 +201,7 @@ async function save() {
   } finally { if (!lifecycle.signal.aborted) saving.value = false }
 }
 onMounted(() => { mobileQuery = window.matchMedia('(max-width: 639px)'); isMobile.value = mobileQuery.matches; mobileQuery.addEventListener('change', updateViewport); document.body.style.overflow = 'hidden'; dialog.value?.showModal(); void load() })
-onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); previewController?.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected && previousFocus !== document.body) previousFocus.focus({ preventScroll: true }) })
+onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); clearTimeout(copyTimer); previewController?.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected && previousFocus !== document.body) previousFocus.focus({ preventScroll: true }) })
 </script>
 
 <template>
@@ -203,8 +239,25 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
               </fieldset>
             </section>
             <section :id="`${panelID}-preview`" class="numbering-preview" :hidden="isMobile && mobilePanel !== 'preview'" :role="isMobile ? 'tabpanel' : 'region'" :aria-labelledby="`${panelID}-preview${isMobile ? '-tab' : '-heading'}`" :aria-busy="previewLoading">
-              <div class="numbering-preview-heading"><div class="min-w-0"><p class="numbering-muted mb-1 text-[11px]">正在预览</p><h3 :id="`${panelID}-preview-heading`" class="break-words text-sm font-semibold">{{ selectedName }}</h3><p v-if="draftID && preview && !previewLoading" class="numbering-muted mt-1 text-xs">{{ preview.group.groupCount }} 组，共 {{ preview.group.episodeCount }} 集</p></div><button v-if="draftID && isCurrent" type="button" class="numbering-text-button" :disabled="previewLoading || saving || conflict" @click="checkUpstream">查看 TMDB 更新</button></div>
               <div ref="previewScroll" class="numbering-preview-content numbering-scroll" tabindex="0" aria-label="分集编排内容">
+              <div class="numbering-preview-heading">
+                <div class="min-w-0"><p class="numbering-muted mb-1 text-[11px]">正在预览</p><h3 :id="`${panelID}-preview-heading`" class="break-words text-sm font-semibold">{{ selectedName }}</h3><p v-if="draftID && preview && !previewLoading" class="numbering-muted mt-1 text-xs">{{ preview.group.groupCount }} 组，共 {{ preview.group.episodeCount }} 集</p></div>
+                <button v-if="draftID && isCurrent" type="button" class="numbering-text-button" :disabled="previewLoading || saving || conflict" @click="checkUpstream">查看 TMDB 更新</button>
+                <div v-if="draftID" class="numbering-group-meta">
+                  <span class="numbering-group-label">剧集组 ID</span>
+                  <code ref="groupIDElement" class="numbering-group-id" tabindex="-1">{{ draftID }}</code>
+                  <div class="numbering-group-actions">
+                    <button type="button" class="numbering-id-action numbering-copy-id" :aria-label="copying ? '正在复制剧集组 ID' : copiedID === draftID ? '剧集组 ID 已复制' : '复制剧集组 ID'" :title="copying ? '正在复制' : copiedID === draftID ? '已复制' : '复制剧集组 ID'" :aria-busy="copying" :aria-disabled="copying" @click="copyGroupID">
+                      <IconCheck v-if="copiedID === draftID" :size="16" stroke="1.75" aria-hidden="true" focusable="false" />
+                      <IconCopy v-else :size="16" stroke="1.75" aria-hidden="true" focusable="false" />
+                    </button>
+                    <a :href="groupURL" target="_blank" rel="noopener noreferrer" class="numbering-id-action" aria-label="在 TMDB 打开此剧集组（新标签页）" title="在 TMDB 打开此剧集组（新标签页）"><IconExternalLink :size="16" stroke="1.75" aria-hidden="true" focusable="false" /></a>
+                  </div>
+                  <p v-if="copyError" class="numbering-copy-feedback">{{ copyError }}</p>
+                  <span role="status" class="sr-only">{{ copiedID === draftID ? '剧集组 ID 已复制' : copyError }}</span>
+                </div>
+              </div>
+              <div class="numbering-preview-detail">
               <p v-if="previewLoading" role="status" class="numbering-muted py-8 text-center text-xs">正在读取 TMDB 分集…</p>
               <p v-if="previewError" role="alert" class="numbering-error">{{ previewError }}<button type="button" class="ml-2 underline" :disabled="previewLoading || saving || conflict" @click="checkUpstream">重试</button></p>
               <template v-if="draftID && preview && !previewLoading">
@@ -228,6 +281,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
                 <p class="numbering-muted mb-3 text-xs leading-5">使用 TMDB 默认季集，后续随常规资料刷新更新。</p>
                 <ul><li v-for="season in choices.defaultSeasons" :key="season.number" class="numbering-season flex items-center justify-between gap-3 py-3 text-xs"><span>{{ season.name || `第 ${season.number} 季` }}</span><span class="numbering-muted shrink-0">{{ season.episodeCount }} 集</span></li></ul>
               </template>
+              </div>
               </div>
             </section>
           </div>
@@ -266,7 +320,16 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 .numbering-current-badge { @apply mt-1 block text-[11px] font-medium; color: var(--search-dialog-primary); }
 .numbering-preview { @apply overflow-hidden rounded-xl border; background: var(--numbering-well); border-color: var(--search-dialog-card-border); }
 .numbering-preview-heading { @apply flex shrink-0 flex-wrap items-start justify-between gap-2 px-4 py-3; border-bottom: 1px solid var(--search-dialog-card-border); }
-.numbering-preview-content { @apply flex-1 px-4 py-3; }
+.numbering-group-meta { @apply grid w-full min-w-0 items-center gap-x-2 gap-y-1 text-[11px]; grid-template-columns: auto minmax(0, 1fr) auto; color: var(--search-dialog-muted); }
+.numbering-group-label { @apply whitespace-nowrap; }
+.numbering-group-id { @apply min-w-0 select-all font-mono leading-5; overflow-wrap: anywhere; }
+.numbering-group-actions { @apply flex shrink-0 items-center gap-1; }
+.numbering-id-action { @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors; color: var(--search-dialog-muted); }
+.numbering-id-action:hover { background: var(--search-dialog-secondary-hover); color: var(--search-dialog-primary); }
+.numbering-id-action[aria-disabled='true'] { cursor: wait; opacity: .6; }
+.numbering-copy-feedback { @apply col-span-full leading-5; }
+.numbering-preview-content { @apply flex-1; }
+.numbering-preview-detail { @apply px-4 py-3; }
 .numbering-season { border-bottom: 1px solid var(--search-dialog-card-border); }
 .numbering-season-summary { @apply flex min-h-11 cursor-pointer items-center gap-2 py-3 text-xs font-semibold; list-style: none; }
 .numbering-season-summary::-webkit-details-marker { display: none; }
@@ -289,7 +352,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 .numbering-secondary { color: var(--search-dialog-muted); background: var(--search-dialog-secondary-background); }
 .numbering-secondary:hover:not(:disabled) { background: var(--search-dialog-secondary-hover); }
 .numbering-secondary:disabled { opacity: .5; }
-.numbering-dialog :is(button, summary, .numbering-preview-content):focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; }
+.numbering-dialog :is(button, a, summary, .numbering-preview-content, .numbering-group-id):focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; }
 .numbering-tabs { @apply mb-3 grid shrink-0 grid-cols-2 rounded-xl p-1; background: var(--search-dialog-secondary-background); }
 .numbering-tabs button { @apply min-h-10 rounded-lg px-3 py-2 text-xs font-medium; color: var(--search-dialog-muted); }
 .numbering-tabs button[aria-selected='true'] { background: var(--search-dialog-card); color: var(--search-dialog-text); box-shadow: 0 1px 3px rgb(15 23 42 / 8%); }
@@ -301,8 +364,11 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
   .numbering-footer { @apply flex-col items-stretch gap-2 px-4; }
   .numbering-footer-actions { @apply w-full; }
   .numbering-primary, .numbering-secondary { @apply min-h-11 px-3; }
+  .numbering-group-meta { grid-template-columns: minmax(0, 1fr) auto; }
+  .numbering-group-label { @apply col-span-full; }
+  .numbering-id-action { @apply h-11 w-11; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .numbering-option, .numbering-season-summary svg, .numbering-primary, .numbering-secondary { transition: none; }
+  .numbering-option, .numbering-season-summary svg, .numbering-primary, .numbering-secondary, .numbering-id-action { transition: none; }
 }
 </style>
