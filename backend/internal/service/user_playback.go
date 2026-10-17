@@ -246,6 +246,10 @@ func (p *UserPlayback) EventGeneration(event string) uint64 {
 }
 
 func (p *UserPlayback) Event(ctx context.Context, event string, stopped bool, generation uint64) (bool, error) {
+	return p.eventState(ctx, event, stopped, generation, "", 0)
+}
+
+func (p *UserPlayback) eventState(ctx context.Context, event string, stopped bool, generation uint64, state string, at int64) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
@@ -266,6 +270,7 @@ func (p *UserPlayback) Event(ctx context.Context, event string, stopped bool, ge
 			changed = true
 			l.CandidateUntil = 0
 			l.LastPlaybackAt = p.now().UnixMilli()
+			observePlaybackState(&l, state, at, p.now())
 			if l.Issued && (p.now().UnixMilli()-l.UpdatedAt >= 60000 || l.ExpiresAt < p.now().Add(userPlaybackIdleTTL-time.Minute).UnixMilli()) {
 				l.UpdatedAt = p.now().UnixMilli()
 				l.ExpiresAt = p.now().Add(userPlaybackIdleTTL).UnixMilli()
@@ -284,6 +289,10 @@ func (p *UserPlayback) Reconcile(ctx context.Context, keys map[string]bool) erro
 }
 
 func (p *UserPlayback) reconcilePlayback(ctx context.Context, keys map[string]bool, playback map[string]int64) error {
+	return p.reconcilePlaybackStates(ctx, keys, playback, nil)
+}
+
+func (p *UserPlayback) reconcilePlaybackStates(ctx context.Context, keys map[string]bool, playback map[string]int64, states map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d := p.clone()
@@ -304,6 +313,8 @@ func (p *UserPlayback) reconcilePlayback(ctx context.Context, keys map[string]bo
 			l.LastPlaybackAt = evidence
 			changed = true
 		}
+		stateChanged := observePlaybackState(&l, states[l.ObservationKey], evidence, p.now())
+		changed = changed || stateChanged
 		if evidence-l.UpdatedAt >= 60000 || l.ExpiresAt < time.UnixMilli(evidence).Add(userPlaybackIdleTTL-time.Minute).UnixMilli() {
 			l.UpdatedAt = evidence
 			l.ExpiresAt = time.UnixMilli(evidence).Add(userPlaybackIdleTTL).UnixMilli()

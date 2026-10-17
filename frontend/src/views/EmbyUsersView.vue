@@ -6,8 +6,8 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import MemberPlaybackEditor from '../components/MemberPlaybackEditor.vue'
 import UserPlaybackSessions from '../components/UserPlaybackSessions.vue'
 import MemberDeletionPanel from '../components/MemberDeletionPanel.vue'
-import { memberRequest, memberNeedsReview, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
-import { playbackTargetName, type PlaybackSessionsSnapshot, type PlaybackCardSummary, type UserPlaybackSession } from '../types/userPlayback'
+import { memberRequest, memberNeedsReview, type MemberProxyPlaybackState, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
+import { playbackActivity, playbackTargetName, type PlaybackSessionsSnapshot, type PlaybackCardSummary, type UserPlaybackSession } from '../types/userPlayback'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const members = ref<MemberPlayback[]>([])
@@ -20,23 +20,28 @@ const generation = ref(0), confirmDiscard = ref(false)
 const childOwner = ref('')
 const deletionPanel = ref<InstanceType<typeof MemberDeletionPanel>>()
 const playbackSessions = ref<InstanceType<typeof UserPlaybackSessions>>()
-const playbackSnapshot = ref<PlaybackSessionsSnapshot>({ sessions: [], loaded: false, stale: false })
-const playbackSummaries = computed(() => {
+const playbackSnapshot = ref<PlaybackSessionsSnapshot>({ sessions: [], loaded: false, stale: false, now: Date.now() })
+const playbackRows = computed(() => playbackSnapshot.value.sessions)
+const playbackGroups = computed(() => {
  const grouped = new Map<string, UserPlaybackSession[]>()
- for (const session of playbackSnapshot.value.sessions) {
+ for (const session of playbackRows.value) {
   const group = grouped.get(session.userId) || []
   group.push(session); grouped.set(session.userId, group)
  }
+ return grouped
+})
+const playbackActivities = computed(() => new Map([...playbackGroups.value].map(([id, sessions]) => [id, playbackActivity(sessions, playbackSnapshot.value.now, playbackSnapshot.value.stale)])))
+const playbackSummaries = computed(() => {
  const summaries = new Map<string, PlaybackCardSummary>()
- for (const [userId, sessions] of grouped) {
+ for (const [userId, sessions] of playbackGroups.value) {
   const issued = sessions.filter(session => session.issued).sort((a, b) => (b.target?.issuedAt || 0) - (a.target?.issuedAt || 0) || a.key.localeCompare(b.key))
   const targets = new Map<string, NonNullable<UserPlaybackSession['target']>>()
   for (const session of issued) if (session.target?.accountId && !targets.has(session.target.accountId)) targets.set(session.target.accountId, session.target)
   const names = [...targets.values()].map(playbackTargetName)
   summaries.set(userId, names.length ? {
-   label: names.length > 1 ? '取链配置' : '本次取链', name: names[0], suffix: names.length > 1 ? `等 ${names.length} 份` : '',
+   label: names.length > 1 ? '取链配置' : '本次取链', name: names[0], suffix: names.length > 1 ? `等 ${names.length} 个配置` : '',
    detail: `取链配置：${names.join('、')}；${sessions.length} 个会话${sessions.length > issued.length ? '，含准备中的会话' : ''}${issued.some(session => !session.target?.accountId) ? '，部分配置待核实' : ''}`,
-  } : { label: issued.length ? '取链配置待核实' : '准备取链', detail: issued.length ? '本会话尚无成功取链配置记录' : '准备取链，成功后显示实际配置' })
+  } : { label: issued.length ? '取链配置待核实' : '正在准备取链', detail: issued.length ? '本会话尚无成功取链配置记录' : '准备取链，成功后显示实际配置' })
  }
  return summaries
 })
@@ -102,6 +107,9 @@ function updated(member: MemberPlayback, next: MemberSettings) {
  settings.value = next
  scheduleStatusPoll()
 }
+function proxyPlayback(state: MemberProxyPlaybackState) {
+ members.value = members.value.map(member => member.userId === state.userId ? { ...member, proxyPlaybackDisabled: !state.enabled, proxyPlaybackRevision: state.revision } : member)
+}
 function applyDriveStatuses(items: Array<{ userId: string; driveStatus?: MemberPlayback['driveStatus'] }>) {
  const byID = new Map(items.map(item => [item.userId, item.driveStatus]))
  members.value = members.value.map(member => byID.has(member.userId) ? { ...member, driveStatus: byID.get(member.userId) } : member)
@@ -151,7 +159,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
   <div v-if="confirmDiscard" class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">刷新会丢弃未保存的修改。<button class="underline" :disabled="busy" @click="load(true)">放弃修改并刷新</button><button @click="confirmDiscard = false">继续编辑</button></div>
   <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
    <div v-for="m in currentMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
-    <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
+    <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-activity="playbackActivities.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="loading || [...busyUsers].some(id => id !== m.userId)" :delete-disabled="dirtyUsers.size > 0" @proxy-playback="proxyPlayback" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
    </div>
   </div>
   <details v-if="reviewMembers.length" :open="reviewOpen || !!query || !!childOwner" class="mt-6 rounded-2xl border border-amber-200 bg-white p-5 dark:border-amber-900 dark:bg-slate-900" @toggle="reviewOpen = ($event.target as HTMLDetailsElement).open">
@@ -159,7 +167,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(pollTimer); window.remov
    <p class="my-4 text-xs leading-6 text-slate-500 dark:text-slate-400">保留原业务关联，核实后可预览清理影响。不会因刷新自动清理，也不会关联同名新账号。</p>
    <div class="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
     <div v-for="m in reviewMembers" v-show="visible.has(m.userId)" :key="generation + ':' + m.userId" class="min-w-0">
-     <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="busy" :delete-disabled="dirtyUsers.size > 0" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
+     <MemberPlaybackEditor :token="token" :member="m" :playback="playbackSummaries.get(m.userId)" :playback-activity="playbackActivities.get(m.userId)" :playback-stale="playbackSnapshot.stale" :disabled="loading || [...busyUsers].some(id => id !== m.userId)" :delete-disabled="dirtyUsers.size > 0" @proxy-playback="proxyPlayback" @sessions="showPlaybackSessions" @refresh="load(false, false)" @delete="deletionPanel?.inspect($event)" @updated="updated" @children="showChildren" @dirty="mark(dirtyUsers, m.userId, $event)" @busy="mark(busyUsers, m.userId, $event)" />
     </div>
    </div>
    <p v-if="!reviewMembers.some(m => visible.has(m.userId))" class="text-sm text-slate-500 dark:text-slate-400">没有符合筛选条件的待核实或待清理记录</p>

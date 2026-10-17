@@ -23,6 +23,10 @@ type UserPlaybackLease struct {
 	ExpiresAt      int64  `json:"expiresAt"`
 
 	Target UserPlaybackTarget `json:"target"`
+
+	// Display-only observations; never used for capacity, authorization or handoff.
+	PlaybackState   string `json:"playbackState,omitempty"`
+	PlaybackStateAt int64  `json:"playbackStateAt,omitempty"`
 }
 
 // Snapshot of the credential configuration used by the last successful link

@@ -2,24 +2,35 @@
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import EmbyUserAvatar from './EmbyUserAvatar.vue'
 import MemberDriveSourceIcon from './MemberDriveSourceIcon.vue'
+import MemberProxyPlaybackSwitch from './MemberProxyPlaybackSwitch.vue'
+import { vAmbientVisibility } from '../directives/ambientVisibility'
 import { useToast } from '../composables/useToast'
-import { memberRequest, memberStage, memberEmbyLabel, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
-import type { PlaybackCardSummary } from '../types/userPlayback'
+import { memberRequest, memberStage, memberEmbyLabel, type MemberProxyPlaybackState, type MemberPlayback, type MemberSettings } from '../types/memberPlayback'
+import type { PlaybackActivity, PlaybackCardSummary } from '../types/userPlayback'
 
-const props = defineProps<{ token: string; member: MemberPlayback; disabled: boolean; deleteDisabled?: boolean; playback?: PlaybackCardSummary; playbackStale?: boolean }>()
-const emit = defineEmits<{ updated: [member: MemberPlayback, settings: MemberSettings]; busy: [value: boolean]; dirty: [value: boolean]; children: [owner: string]; delete: [id: string]; refresh: []; sessions: [userId: string, event: MouseEvent] }>()
+const props = defineProps<{ token: string; member: MemberPlayback; disabled: boolean; deleteDisabled?: boolean; playback?: PlaybackCardSummary; playbackStale?: boolean; playbackActivity?: PlaybackActivity }>()
+const activity = computed(() => props.playbackActivity || 'idle')
+const activityPhase = computed(() => {
+ let hash = 0
+ for (const char of props.member.userId) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0
+ return { '--playback-delay-a': `-${hash % 7000}ms`, '--playback-delay-b': `-${(Math.imul(hash, 17) >>> 0) % 11000}ms` }
+})
+const emit = defineEmits<{ proxyPlayback: [state: MemberProxyPlaybackState]; updated: [member: MemberPlayback, settings: MemberSettings]; busy: [value: boolean]; dirty: [value: boolean]; children: [owner: string]; delete: [id: string]; refresh: []; sessions: [userId: string, event: MouseEvent] }>()
 interface Values { source: string; accountId: string; childLimit: number }
 function values(m: MemberPlayback): Values { return { source: m.source || 'primary', accountId: '', childLimit: m.childLimit || 0 } }
 const initial = ref(values(props.member)), source = ref(props.member.source || 'primary')
 const childLimit = ref(props.member.childLimit || 0), action = ref(''), error = ref(''), notice = ref('')
 const lifecycle = new AbortController()
 const toast = useToast()
-const locked = computed(() => !!action.value || props.disabled)
+const accountBusy = ref(false)
+function markAccountBusy(value: boolean) { accountBusy.value = value; emit('busy', value) }
+const locked = computed(() => !!action.value || accountBusy.value || props.disabled)
 const draft = computed<Values>(() => ({ source: source.value, accountId: '', childLimit: Number(childLimit.value) }))
 const changed = computed(() => JSON.stringify(draft.value) !== JSON.stringify(initial.value))
 const state = computed(() => props.member.childRevoked ? '共享已撤销' : props.member.childDisabled ? '所有者已停用登录' : props.member.childPaused ? '所有者已暂停播放' : props.member.driveStatus?.message || memberStage(props.member))
 const identity = computed(() => props.member.playbackOnly ? '播放子账号' : props.member.administrator ? '管理员' : props.member.createdByCinema ? '邀请注册用户' : 'Emby 原有账号')
 const available = computed(() => props.member.embyState === 'active' || props.member.embyState === 'disabled')
+const canToggleProxy = computed(() => available.value && !props.member.administrator && !props.member.playbackOnly && props.member.provisioned !== false)
 const embyDisabled = computed(() => props.member.embyState === 'disabled' || props.member.disabled)
 const accountLabel = computed(() => ({ active: '账号正常', disabled: '已停用', deleted: '已删除', missing: '待核实', other_server: '其他服务', unknown: '待核实' })[props.member.embyState || 'unknown'])
 const accountHint = computed(() => {
@@ -33,7 +44,7 @@ const accountHint = computed(() => {
 const savedSource = computed(() => props.member.playbackOnly ? 'personal_shared' : props.member.source || 'primary')
 const sourceLabel = computed(() => ({ primary: '主网盘', assigned: '动态共享池', personal: '个人网盘', personal_shared: '所有者个人网盘' })[savedSource.value] || '待核实来源')
 const poolScheduled = computed(() => savedSource.value === 'assigned' && props.member.driveStatus?.state === 'ready' && !props.member.driveStatus.checkedAt && !props.member.childRevoked && !props.member.childDisabled && !props.member.childPaused)
-const statusText = computed(() => poolScheduled.value ? '动态调度，播放时核验' : state.value)
+const statusText = computed(() => poolScheduled.value ? '播放时自动分配' : state.value)
 const statusTone = computed(() => {
  if (props.member.childRevoked || props.member.childDisabled || props.member.childPaused) return 'warning'
  if (poolScheduled.value) return 'scheduled'
@@ -140,16 +151,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
- <article class="user-card member-ui" :aria-label="member.embyName">
+ <article v-ambient-visibility class="user-card member-ui ambient-glow" :data-playback-activity="activity" :aria-label="member.embyName">
+  <Transition name="member-activity">
+   <span v-if="activity !== 'idle'" class="member-activity-light ambient-glow ambient-glow--playback" :class="{ 'is-playing': activity === 'playing' }" :style="activityPhase" aria-hidden="true" />
+  </Transition>
   <header class="member-card-heading">
    <EmbyUserAvatar :token="token" :user-id="member.embyId" :name="member.embyName" :image-tag="available ? member.imageTag : undefined" />
-   <div class="member-name"><h2 :title="member.embyName">{{ member.embyName }}</h2><p class="member-muted">{{ identity }}</p></div>
-   <span class="member-account-badge" :class="member.embyState === 'active' ? 'is-active' : member.embyState === 'disabled' ? 'is-disabled' : 'is-unverified'" :title="memberEmbyLabel(member.embyState)">{{ accountLabel }}</span>
+   <div class="member-name"><h2 :title="member.embyName">{{ member.embyName }}</h2><p class="member-muted member-card-identity"><span>{{ identity }}</span><span v-if="canToggleProxy && embyDisabled" class="member-emby-disabled" title="Emby 账号本身已停用，需在 Emby 中恢复；反代播放开关不会修改此状态">Emby 已停用</span></p></div>
+   <MemberProxyPlaybackSwitch v-if="canToggleProxy" :token="token" :user-id="member.userId" :name="member.embyName" :enabled="!member.proxyPlaybackDisabled" :revision="member.proxyPlaybackRevision || 0" :emby-disabled="embyDisabled" :disabled="disabled || !!action || opened || changed" @updated="emit('proxyPlayback', $event)" @busy="markAccountBusy" />
+   <span v-else-if="member.embyState === 'active'" class="member-account-ok" role="img" aria-label="账号已启用" :title="memberEmbyLabel(member.embyState)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5 5-5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+   <span v-else class="member-account-badge" :class="member.embyState === 'disabled' ? 'is-disabled' : 'is-unverified'" :title="memberEmbyLabel(member.embyState)">{{ accountLabel }}</span>
   </header>
   <section v-if="available" class="member-drive-summary" aria-label="网盘摘要">
-   <div class="member-source-line"><span class="member-source-symbol"><MemberDriveSourceIcon :source="savedSource" /></span><span class="member-source-name">{{ sourceLabel }}</span></div>
-   <p v-if="!playback || error || statusTone === 'warning' || statusTone === 'error'" class="member-drive-state" :class="error ? 'tone-error' : `tone-${statusTone}`"><span>{{ error || statusText }}</span><time v-if="checkedTime && !error" class="member-checked-time member-muted" :datetime="member.driveStatus?.checkedAt"><span class="sr-only">最近检查时间：</span>{{ checkedTime }}</time></p>
-   <button v-if="playback" type="button" class="member-playback-link" :class="{ 'is-stale': playbackStale }" :aria-label="`${member.embyName}，${playbackStale ? '取链状态待核实' : playback.detail}，查看播放会话`" aria-haspopup="dialog" @click="emit('sessions', member.userId, $event)"><template v-if="!playbackStale"><span class="member-playback-label">{{ playback.label }}{{ playback.name ? '：' : '' }}</span><span v-if="playback.name" class="member-playback-name">{{ playback.name }}</span><span v-if="playback.suffix" class="member-playback-suffix">{{ playback.suffix }}</span></template><span v-else class="member-playback-name">取链状态待核实</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+   <span class="member-source-symbol member-source-icon" :class="`source-${savedSource}`"><MemberDriveSourceIcon :source="savedSource" /></span>
+   <div class="member-source-copy">
+    <p class="member-source-name">{{ sourceLabel }}</p>
+    <p v-if="!playback || error || statusTone === 'warning' || statusTone === 'error'" class="member-drive-state" :class="error ? 'tone-error' : `tone-${statusTone}`"><span>{{ error || statusText }}</span><time v-if="checkedTime && !error" class="member-checked-time member-muted" :datetime="member.driveStatus?.checkedAt"><span class="sr-only">最近检查时间：</span>{{ checkedTime }}</time></p>
+    <button v-if="playback" type="button" class="member-playback-link" :class="{ 'is-stale': playbackStale }" :aria-label="`${member.embyName}，${playbackStale ? '取链状态待核实' : playback.detail}，查看播放会话`" aria-haspopup="dialog" @click="emit('sessions', member.userId, $event)">
+     <template v-if="!playbackStale"><span class="member-playback-label">{{ playback.label }}</span><span v-if="playback.name" class="member-playback-name" :title="playback.name">{{ playback.name }}</span><span v-if="playback.suffix" class="member-playback-suffix">{{ playback.suffix }}</span></template>
+     <span v-else class="member-playback-label">取链状态待核实</span>
+     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+   </div>
   </section>
   <section v-else class="member-summary-warning"><p>{{ accountHint }}</p></section>
   <footer class="member-card-footer">
@@ -211,29 +234,44 @@ onBeforeUnmount(() => {
 <style scoped>
 .member-ui { --member-bg: #fff; --member-soft: #f5f7fb; --member-text: #192b47; --member-muted: #61718a; --member-outline: #e5eaf2; --member-blue: #2563eb; --member-blue-hover: #1d4ed8; --member-blue-soft: #eef4ff; --member-blue-text: #245bc7; --member-success: #14714e; --member-success-bg: #eaf8f0; --member-warning: #96601d; --member-warning-bg: #fff6e5; --member-error: #be3446; --member-error-bg: #fff0f2; color: var(--member-text); }
 .dark .member-ui { --member-bg: rgb(var(--color-slate-900)); --member-soft: rgb(var(--color-slate-800)); --member-text: rgb(var(--color-slate-100)); --member-muted: rgb(var(--color-slate-400)); --member-outline: rgb(var(--color-slate-700)); --member-blue: #3769b5; --member-blue-hover: #3b70bd; --member-blue-soft: color-mix(in srgb, var(--member-soft) 90%, #8daee8); --member-blue-text: #8daee8; --member-success: #62c499; --member-success-bg: #142921; --member-warning: #dcb068; --member-warning-bg: #2d2516; --member-error: #e8788a; --member-error-bg: #301a20; color-scheme: dark; }
-.user-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; height: 100%; padding: 18px; border: 1px solid color-mix(in srgb, var(--member-outline) 55%, transparent); border-radius: 16px; background: var(--member-bg); box-shadow: 0 1px 3px rgb(15 23 42 / 4%); transition: background-color 160ms ease; }
+.user-card { --member-card-wash: rgb(37 99 235 / 3.5%); display: flex; flex-direction: column; gap: 16px; min-width: 0; height: 100%; padding: 18px; border: 1px solid color-mix(in srgb, var(--member-outline) 55%, transparent); border-radius: 16px; background: radial-gradient(ellipse at 100% 0%, var(--member-card-wash), transparent 60%), var(--member-bg); box-shadow: 0 1px 3px rgb(15 23 42 / 4%); transition: box-shadow 250ms ease-out, transform 250ms ease-out; }
+.dark .user-card { --member-card-wash: rgb(147 197 253 / 5%); }
+.user-card:has(> .member-activity-light)::before, .user-card:has(> .member-activity-light)::after { animation: none; opacity: 0; }
+.user-card > .member-activity-light { position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none; opacity: .55; transition: opacity 600ms ease; }
+.user-card > .member-activity-light.is-playing { opacity: 1; }
+.member-activity-enter-active, .member-activity-leave-active { transition: opacity 700ms ease; }
+.user-card > .member-activity-light.member-activity-enter-from, .user-card > .member-activity-light.member-activity-leave-to { opacity: 0; }
 .member-card-heading { display: flex; align-items: center; gap: 10px; }
 .member-name { flex: 1; min-width: 0; }
 .member-name h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; }
 .member-name > p { margin-top: 4px; font-size: 12px; }
+.member-card-identity { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.member-card-identity > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-emby-disabled { flex-shrink: 0; font-size: 11px; color: var(--member-muted); }
 .member-muted { color: var(--member-muted); }
 .member-caption { font-size: 12px; line-height: 1.6; }
 .member-account-badge { flex-shrink: 0; border-radius: 7px; font-size: 11px; line-height: 1.4; color: var(--member-muted); }
 .member-account-badge.is-active { color: var(--member-success); }
+.member-account-ok { display: flex; flex: 0 0 52px; align-items: center; justify-content: center; min-height: 44px; color: var(--member-blue-text); }.member-account-ok svg { width: 16px; height: 16px; }
 .member-account-badge.is-disabled, .member-account-badge.is-unverified { padding: 4px 7px; color: var(--member-warning); background: var(--member-warning-bg); }
-.member-drive-summary { min-width: 0; }
-.member-source-line { display: flex; align-items: center; gap: 8px; }
-.member-source-symbol { display: flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; color: color-mix(in srgb, var(--member-muted) 65%, var(--member-blue-text)); }
+.member-drive-summary { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: start; column-gap: 10px; }
+.member-source-copy { min-width: 0; }
+.member-source-symbol.member-source-icon { flex-basis: 28px; width: 28px; height: 28px; margin-top: -4px; border-radius: 8px; }
 .member-source-icon { display: flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; color: #7555c9; background: #ede8fb; }
 .source-assigned { color: #2868d9; background: #e0ecff; }
 .source-personal, .source-personal_shared { color: #137d80; background: #ddf4ef; }
 .dark .member-source-icon { color: #c2b1f4; background: #352f50; }
 .dark .source-assigned { color: #a5c6ff; background: #273f65; }
 .dark .source-personal, .dark .source-personal_shared { color: #8cddd2; background: #203e40; }
-.member-source-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
-.member-playback-link { display: flex; align-items: center; gap: 3px; width: 100%; min-width: 0; min-height: 44px; margin-block: -5px; padding-block: 5px; color: var(--member-blue-text); text-align: left; font-size: 12px; cursor: pointer; border-radius: 7px; }.member-playback-label, .member-playback-suffix { flex-shrink: 0; }.member-playback-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.member-playback-link > svg { flex: 0 0 13px; width: 13px; height: 13px; margin-left: auto; }.member-playback-link.is-stale { color: var(--member-muted); }.member-playback-link:focus-visible { outline: 2px solid #6095ff; outline-offset: 2px; }
-@media (hover: hover) { .member-playback-link:hover { background: var(--member-blue-soft); } }
-.member-drive-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 6px; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.member-source-name { font-size: 13px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+.member-playback-link { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: calc(100% + 12px); min-height: 44px; margin-inline: -6px; padding-inline: 6px; color: var(--member-muted); text-align: left; font-size: 12px; line-height: 20px; cursor: pointer; border-radius: 7px; transition: background-color 160ms ease; }
+.member-playback-label, .member-playback-suffix { flex-shrink: 0; }
+.member-playback-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--member-text); font-weight: 600; }
+.member-playback-link > svg { flex: 0 0 13px; width: 13px; height: 13px; color: var(--member-muted); transition: color 160ms ease, transform 160ms ease; }
+.member-playback-link:focus-visible { outline: 2px solid #6095ff; outline-offset: 2px; }
+@media (hover: hover) { .member-playback-link:hover { background: var(--member-blue-soft); } .member-playback-link:hover > svg { color: var(--member-blue-text); } }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) { .member-playback-link:hover > svg { transform: translateX(2px); } }
+.member-drive-state { display: flex; flex-wrap: wrap; align-items: baseline; align-content: center; gap: 2px 8px; min-height: 44px; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
 .member-checked-time { white-space: nowrap; }
 .member-drive-state.tone-success, .member-drive-state.tone-scheduled { color: var(--member-muted); }
 .tone-muted { color: var(--member-muted); }
@@ -306,9 +344,11 @@ onBeforeUnmount(() => {
 .member-dialog-footer { display: flex; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 16px 24px max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--member-outline); background: var(--member-bg); }
 .member-dialog-actions { display: flex; gap: 8px; margin-left: auto; }
 .member-dialog-actions .member-button { min-height: 42px; }
-@media (hover: hover) { .user-card:hover { background: color-mix(in srgb, var(--member-bg) 72%, var(--member-soft)); } .member-button-primary:not(:disabled):hover { background: var(--member-blue-hover); } .member-button-secondary:not(:disabled):hover, .member-button-text:not(:disabled):hover, .member-icon-button:not(:disabled):hover { background: var(--member-blue-soft); } .member-manage-button:not(:disabled):hover { background: color-mix(in srgb, var(--member-action-bg) 88%, var(--member-blue-text)); } .member-source-option:not(.is-locked):not(.is-selected):hover { background: var(--member-blue-soft); } }
+@media (hover: hover) and (pointer: fine) { .user-card:hover { z-index: 1; box-shadow: 0 12px 28px -12px rgb(15 23 42 / 18%); } .dark .user-card:hover { box-shadow: 0 12px 28px -12px rgb(0 0 0 / 40%); } }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) { .user-card:hover { transform: translateY(-3px); } }
+@media (hover: hover) { .member-button-primary:not(:disabled):hover { background: var(--member-blue-hover); } .member-button-secondary:not(:disabled):hover, .member-button-text:not(:disabled):hover, .member-icon-button:not(:disabled):hover { background: var(--member-blue-soft); } .member-manage-button:not(:disabled):hover { background: color-mix(in srgb, var(--member-action-bg) 88%, var(--member-blue-text)); } .member-source-option:not(.is-locked):not(.is-selected):hover { background: var(--member-blue-soft); } }
 @media (max-width: 639px) { .user-card { padding: 16px; } .member-button { min-height: 44px; } .member-dialog { max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 20px; } .member-dialog-heading { padding: 18px 12px 14px 18px; } .member-dialog-body { padding: 0 18px 18px; scrollbar-gutter: auto; } .member-dialog-footer { padding: 14px 18px max(14px, env(safe-area-inset-bottom)); } .member-dialog-footer > p { flex-basis: 100%; } .member-dialog-actions { width: 100%; } .member-dialog-actions > button { flex: 1; } .member-source-option { gap: 10px; padding: 11px; } }
 @keyframes member-dialog-enter { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .user-card, .member-button, .member-source-option { transition: none; } .member-dialog[open] { animation: none; } .user-card:hover, .member-button:not(:disabled):active { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .user-card, .member-button, .member-source-option, .member-playback-link, .member-playback-link > svg, .user-card > .member-activity-light { transition: none; } .member-dialog[open] { animation: none; } .user-card:hover, .member-button:not(:disabled):active { transform: none; } }
 @media (hover: hover) { .member-button-danger:not(:disabled):hover { background: color-mix(in srgb, var(--member-error) 12%, var(--member-error-bg)); } }
 </style>

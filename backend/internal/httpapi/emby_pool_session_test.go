@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
@@ -100,6 +102,7 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 	}
 	ctx := context.Background()
 	const uid = "ff7da35afaaa40cd80e0c6c9a6bce2a6"
+	profileID := fmt.Sprintf("%x", sha256.Sum256([]byte("server\x00"+uid)))
 	accepted := true
 	acceptedPing := true
 	bodySeen := ""
@@ -114,6 +117,12 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		case "/emby/Sessions/Playing/Stopped":
 			data, _ := io.ReadAll(r.Body)
 			bodySeen = string(data)
+			if accepted {
+				w.WriteHeader(204)
+			} else {
+				w.WriteHeader(401)
+			}
+		case "/emby/Sessions/Playing/Progress":
 			if accepted {
 				w.WriteHeader(204)
 			} else {
@@ -147,10 +156,10 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err = db.SaveEmbyProfile(ctx, model.PortalUser{ID: "owner", ServerID: "server", EmbyID: uid, Username: "viewer"}); err != nil {
+	if err = db.SaveEmbyProfile(ctx, model.PortalUser{ID: profileID, ServerID: "server", EmbyID: uid, Username: "viewer"}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.SaveMemberPlayback(ctx, model.MemberPlayback{UserID: "owner", ServerID: "server", EmbyURL: upstream.URL, EmbyID: uid, Source: "assigned", Stage: "ready", Provisioned: true}); err != nil {
+	if err = db.SaveMemberPlayback(ctx, model.MemberPlayback{UserID: profileID, ServerID: "server", EmbyURL: upstream.URL, EmbyID: uid, Source: "assigned", Stage: "ready", Provisioned: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.SaveMemberPlaybackSettings(ctx, model.MemberPlaybackSettings{Enabled: true, ServerID: "server", EmbyURL: upstream.URL}); err != nil {
@@ -264,6 +273,43 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 	if err != nil || len(d.Leases) != 1 {
 		t.Fatal("repeat redirect double-counted", err)
 	}
+	t.Run("local-proxy-pause-blocks-cached-and-new-playback", func(t *testing.T) {
+		beforeChecks, beforeReads := drive.checks, len(drive.attempts)
+		beforeUsers := members.UserPlayback.List()
+		state, err := members.SetMemberProxyPlayback(ctx, profileID, false, 0)
+		if err != nil || state.Enabled {
+			t.Fatal(state, err)
+		}
+		t.Cleanup(func() {
+			if _, err := members.SetMemberProxyPlayback(ctx, profileID, true, state.Revision); err != nil {
+				t.Error(err)
+			}
+		})
+		for _, request := range []struct{ method, path string }{
+			{"GET", path}, {"HEAD", path},
+			{"GET", strings.Replace(path, "PlaySessionId=session", "PlaySessionId=paused-new", 1)},
+			{"GET", "/emby/Items/movie/PlaybackInfo?api_key=token"},
+		} {
+			w := call(request.method, request.path, "")
+			if w.Code != 403 || w.Header().Get("Location") != "" {
+				t.Fatal("paused playback bypassed local gate", request, w.Code, w.Body.String())
+			}
+		}
+		after, err := db.PlaybackPool(ctx)
+		if err != nil || !reflect.DeepEqual(d.Leases, after.Leases) || !reflect.DeepEqual(beforeUsers, members.UserPlayback.List()) {
+			t.Fatal("local pause released or changed issued capacity", err)
+		}
+		if drive.checks != beforeChecks || len(drive.attempts) != beforeReads {
+			t.Fatal("paused playback reached 115")
+		}
+		if _, err := members.SetMemberProxyPlayback(ctx, profileID, true, state.Revision); err != nil {
+			t.Fatal(err)
+		}
+		// Negotiation after resuming passes without reserving extra capacity.
+		if w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=token", ""); w.Code != 200 {
+			t.Fatal("fresh negotiation did not resume", w.Code, w.Body.String())
+		}
+	})
 	t.Run("cached-share-rejects-expired-cookie", func(t *testing.T) {
 		drive.checkErr = p115.ErrShareLoginRequired
 		before := len(drive.attempts)
@@ -291,6 +337,23 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		}
 		t.Logf("canary: target-first=%t shaQueries=%d source=0 uploads=0; repeated reuse=1 target read; cached link=1 fresh probe; expired cookie rejected", coldTarget, drive.shaQueries)
 		return
+	}
+	if members.UserPlayback.List()[0].PlaybackState != "" {
+		t.Fatal("redirect alone claimed playback")
+	}
+	w = call("POST", "/emby/Sessions/Playing/Progress?api_key=token", `{"ItemId":"movie","PlaySessionId":"session","IsPaused":true}`)
+	if w.Code != 204 || members.UserPlayback.List()[0].PlaybackState != "paused" {
+		t.Fatal("accepted pause not exposed", w.Code)
+	}
+	accepted = false
+	w = call("POST", "/emby/Sessions/Playing/Progress?api_key=token", `{"ItemId":"movie","PlaySessionId":"session","IsPaused":false}`)
+	if w.Code != 401 || members.UserPlayback.List()[0].PlaybackState != "paused" {
+		t.Fatal("rejected progress changed display state", w.Code)
+	}
+	accepted = true
+	w = call("POST", "/emby/Sessions/Playing/Progress?api_key=token", `{"ItemId":"movie","PlaySessionId":"session","IsPaused":"unknown"}`)
+	if w.Code != 204 || members.UserPlayback.List()[0].PlaybackState != "paused" {
+		t.Fatal("invalid optional display metadata affected lifecycle or supplied state", w.Code)
 	}
 	settings := members.Pool.Settings()
 	limited := settings
@@ -424,13 +487,13 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 		}
 	}
 	metrics := members.Pool.Metrics()
-	if metrics.Requests != 7 || metrics.Succeeded != 5 || metrics.Failed != 2 || metrics.Switches != 2 || metrics.Samples != 7 {
+	if metrics.Requests != 10 || metrics.Succeeded != 5 || metrics.Failed != 5 || metrics.Switches != 2 || metrics.Samples != 10 {
 		t.Fatal("redirect metrics lost retries or double-counted", metrics)
 	}
 	// Missing token identity still fails before pool admission; no budget change
 	// may turn client-supplied UserId into a recognized identity.
 	w = call("GET", strings.Replace(path, "api_key=token", "api_key=unknown&UserId="+uid, 1), "")
-	if w.Code != 401 || members.Pool.Metrics().Requests != 7 {
+	if w.Code != 401 || members.Pool.Metrics().Requests != 10 {
 		t.Fatal("unrecognized identity reached pool", w.Code)
 	}
 	// A valid second playback by the same user is admitted when UID capacity

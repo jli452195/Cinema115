@@ -13,12 +13,29 @@ export interface UserPlaybackSession {
  issued: boolean
  updatedAt: number
  expiresAt: number
+ issuedAt?: number
+ firstIssuedAt?: number
+ playbackState?: 'playing' | 'paused'
+ playbackStateAt?: number
  target?: UserPlaybackTarget
 }
 export interface PlaybackSessionsSnapshot {
  sessions: UserPlaybackSession[]
  loaded: boolean
  stale: boolean
+ now: number
+}
+export type PlaybackActivity = 'idle' | 'quiet' | 'playing'
+export function playbackActivity(sessions: UserPlaybackSession[], now: number, stale: boolean): PlaybackActivity {
+ let observed = false
+ for (const session of sessions) {
+  const at = session.playbackStateAt || 0
+  if (!session.issued || session.expiresAt <= now || !Number.isFinite(at) || at <= 0 || at > now ||
+   at < (session.firstIssuedAt || session.issuedAt || 0) || !['playing', 'paused'].includes(session.playbackState || '')) continue
+  observed = true
+  if (!stale && session.playbackState === 'playing' && now - at <= 90000) return 'playing'
+ }
+ return observed ? 'quiet' : 'idle'
 }
 export interface PlaybackCardSummary {
  label: string

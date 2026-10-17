@@ -52,15 +52,20 @@ func (h *embyProxyHandler) capturePoolSession(r *http.Request) *http.Request {
 		return r
 	}
 	var v struct {
-		ItemID        string `json:"ItemId"`
-		PlaySessionID string `json:"PlaySessionId"`
+		ItemID        string          `json:"ItemId"`
+		PlaySessionID string          `json:"PlaySessionId"`
+		IsPaused      json.RawMessage `json:"IsPaused"`
 	}
 	if json.Unmarshal(data, &v) != nil || !embyProxyID.MatchString(v.ItemID) || len(v.PlaySessionID) > 256 {
 		return r
 	}
 	e := poolSessionEvent{user: user, session: service.DirectLinkKey(token, v.PlaySessionID), item: v.ItemID, stopped: path == "sessions/playing/stopped"}
 	e.missingSession = v.PlaySessionID == ""
-	e.captured = h.cache.Members.CapturePlaybackEvent(h.config.URL, e.user, e.session, service.DirectLinkKey("playback-client", token), e.item, e.missingSession)
+	var paused *bool
+	if json.Unmarshal(v.IsPaused, &paused) != nil {
+		paused = nil // Optional display metadata must not affect event lifecycle.
+	}
+	e.captured = h.cache.Members.CapturePlaybackEvent(h.config.URL, e.user, e.session, service.DirectLinkKey("playback-client", token), e.item, e.missingSession).WithPlaybackPause(paused)
 	return r.WithContext(context.WithValue(r.Context(), poolSessionEventKey{}, e))
 }
 

@@ -47,7 +47,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }
     const flyout = async () => {
       await page.locator('.account-flyout').waitFor()
-      await page.locator('.account-flyout').evaluate(el => Promise.all(el.getAnimations({ subtree: true }).map(animation => animation.finished)))
+      // Wait for panel entrance only; descendant hover transitions may cancel as the pointer moves.
+      await page.locator('.account-submenu').evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
     }
     const focusedCategory = to => page.waitForFunction(value => document.activeElement?.getAttribute('data-category') === value, to)
     const go = to => page.goto(origin + to, { waitUntil: 'networkidle' })

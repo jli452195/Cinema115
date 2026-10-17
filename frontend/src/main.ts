@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import './style.css'
 import './styles/floatingSurface.css'
+import './styles/ambientGlow.css'
 import './styles/mediaSearchDialog.css'
 import './styles/dashboardFilters.css'
 import App from './App.vue'

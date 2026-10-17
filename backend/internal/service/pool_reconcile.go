@@ -58,6 +58,7 @@ func (s *MemberPlaybackService) reconcilePoolSessions(ctx context.Context) {
 	}
 	keys := make(map[string]bool, len(sessions))
 	playback := make(map[string]int64, len(sessions))
+	states := make(map[string]string, len(sessions))
 	for _, session := range sessions {
 		play := session.PlaySessionID
 		if play == "" {
@@ -72,12 +73,18 @@ func (s *MemberPlaybackService) reconcilePoolSessions(ctx context.Context) {
 		key := DirectLinkKey("pool-observation", cfg.ServerID, session.UserID, play, session.NowPlayingItem.ID)
 		keys[key] = true
 		playback[key] = session.LastPlaybackCheckIn.UnixMilli()
+		if session.PlayState.IsPaused != nil {
+			states[key] = "playing"
+			if *session.PlayState.IsPaused {
+				states[key] = "paused"
+			}
+		}
 	}
 	if err := p.reconcileObserved(ctx, playback); err != nil {
 		return
 	}
 	if s.UserPlayback != nil {
-		if err := s.UserPlayback.reconcilePlayback(ctx, keys, playback); err != nil {
+		if err := s.UserPlayback.reconcilePlaybackStates(ctx, keys, playback, states); err != nil {
 			return
 		}
 		// List deliberately redacts ObservationKey for the administrator API.

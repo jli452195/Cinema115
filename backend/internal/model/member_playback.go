@@ -2,6 +2,9 @@ package model
 
 // Contains lifecycle metadata only; no passwords, tokens, cookies or links.
 type MemberPlayback struct {
+	// Local proxy playback only; never mirrors or writes Emby permissions.
+	ProxyPlaybackDisabled   bool     `json:"proxyPlaybackDisabled"`
+	ProxyPlaybackRevision   uint64   `json:"proxyPlaybackRevision"`
 	CheckedAt               string   `json:"checkedAt"`
 	CheckError              string   `json:"checkError"`
 	PlaybackOnly            bool     `json:"playbackOnly"`

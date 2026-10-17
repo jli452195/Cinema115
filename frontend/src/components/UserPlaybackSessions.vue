@@ -19,9 +19,15 @@ let timer: ReturnType<typeof setTimeout> | undefined, previousOverflow = '', bac
 let clockTimer: ReturnType<typeof setInterval> | undefined, returnFocus: HTMLElement | null = null
 let readController: AbortController | undefined, readVersion = 0
 let releaseTrigger: HTMLElement | null = null
+let clockOffset = 0
+function syncClock(serverTime: unknown) {
+ if (typeof serverTime === 'number' && Number.isFinite(serverTime) && serverTime > 0) clockOffset = serverTime - Date.now()
+ now.value = Date.now() + clockOffset
+ checkedAt.value = now.value
+}
 const busy = computed(() => reading.value || releasing.value)
 const countLabel = computed(() => loaded.value ? String(sessions.value.length) : readError.value ? '待核实' : '读取中')
-watch([sessions, loaded, stale], () => emit('snapshot', { sessions: sessions.value, loaded: loaded.value, stale: stale.value }), { immediate: true })
+watch([sessions, loaded, stale, now], () => emit('snapshot', { sessions: sessions.value, loaded: loaded.value, stale: stale.value, now: now.value }), { immediate: true })
 const policyLabel = computed(() => policy.value?.mode === 'heartbeat_takeover' ? `单设备心跳熔断 · ${policy.value.silenceSeconds} 秒` : policy.value?.mode === 'parallel' ? '多设备并行' : '设备策略待核实')
 const policyDescription = computed(() => {
  if (policy.value?.mode === 'heartbeat_takeover') return `原设备静默 ${policy.value.silenceSeconds} 秒后，其他设备可尝试接替；成功后转交原名额，旧播放不再占容量。缺少可信设备信息时需通过反代重新登录。`
@@ -52,7 +58,7 @@ async function load() {
  try {
   const data = await memberRequest(props.token, AbortSignal.any([controller.signal, request.signal, AbortSignal.timeout(15000)]), '/playback-sessions')
   if (controller.signal.aborted || version !== readVersion) return
-  now.value = Date.now(); checkedAt.value = now.value
+  syncClock(data.serverTime)
   applySessions((data.sessions || []).filter((session: Session) => session.expiresAt > now.value)); policy.value = data.devicePolicy; readError.value = ''; loaded.value = true
  } catch (e) {
   if (!controller.signal.aborted && !request.signal.aborted && version === readVersion) {
@@ -110,14 +116,14 @@ function cancelRelease() {
 function requestClose() { if (selected.value && !releasing.value) cancelRelease(); else closeDialog() }
 async function release() {
  const session = selected.value
- if (!session || releasing.value || stale.value || !sessions.value.some(current => current.key === session.key && current.generation === session.generation && current.expiresAt > Date.now())) return
+ if (!session || releasing.value || stale.value || !sessions.value.some(current => current.key === session.key && current.generation === session.generation && current.expiresAt > Date.now() + clockOffset)) return
  // A pending read cannot overwrite the release result or disable focused controls.
  readVersion++; readController?.abort(); readController = undefined; reading.value = false
  releasing.value = true; releaseError.value = ''; notice.value = ''
  try {
   const data = await memberRequest(props.token, controller.signal, `/playback-sessions/${encodeURIComponent(session.key)}/release`, { generation: session.generation })
   if (controller.signal.aborted) return
-  now.value = Date.now(); checkedAt.value = now.value
+  syncClock(data.serverTime)
   selected.value = undefined; applySessions((data.sessions || []).filter((session: Session) => session.expiresAt > now.value)); loaded.value = true
   notice.value = '已释放此会话的占用。已签发直链可能仍有效。'
   focusList()
@@ -131,7 +137,7 @@ async function release() {
  finally { releasing.value = false }
 }
 function tick() {
- now.value = Date.now()
+ now.value = Date.now() + clockOffset
  if (sessions.value.some(session => session.expiresAt <= now.value)) applySessions(sessions.value.filter(session => session.expiresAt > now.value))
 }
 function onVisible() { tick(); if (!document.hidden) void load() }

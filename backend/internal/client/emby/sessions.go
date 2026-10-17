@@ -17,6 +17,7 @@ type PlaybackSession struct {
 	} `json:"NowPlayingItem"`
 	PlayState struct {
 		PlaySessionID string `json:"PlaySessionId"`
+		IsPaused      *bool  `json:"IsPaused"`
 	} `json:"PlayState"`
 }
 

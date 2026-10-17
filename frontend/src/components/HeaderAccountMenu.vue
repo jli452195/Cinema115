@@ -155,17 +155,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="account-group mobile-utilities" role="group" aria-label="通知与外观">
-        <RouterLink to="/notifications" class="account-row" :class="{ 'is-active': route.path === '/notifications' }" :aria-current="route.path === '/notifications' ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
+        <RouterLink to="/notifications" class="account-row ambient-glow" :class="{ 'is-active': route.path === '/notifications' }" :aria-current="route.path === '/notifications' ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
           <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons.bell" /></svg>
           <span>站内通知</span>
           <span v-if="websiteUnread" class="account-unread" :aria-label="`${websiteUnread} 条未读`">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
         </RouterLink>
-        <ThemeSwitcher show-label class="account-row" @pointerenter="scheduleClose" />
+        <ThemeSwitcher show-label class="account-row ambient-glow" @pointerenter="scheduleClose" />
       </div>
 
       <div v-for="group in groups" :key="group.label" class="account-group" role="group" :aria-label="group.label">
         <template v-for="link in group.links" :key="link.to">
-          <div v-if="link.children" class="account-row account-category" :class="{ 'is-active': isActive(link), 'is-expanded': activeCategory?.to === link.to }" :data-category="link.to" @pointerenter="hoverCategory(link, $event)" @pointerleave="leaveCategory">
+          <div v-if="link.children" class="account-row account-category ambient-glow" :class="{ 'is-active': isActive(link), 'is-expanded': activeCategory?.to === link.to }" :data-category="link.to" @pointerenter="hoverCategory(link, $event)" @pointerleave="leaveCategory">
             <RouterLink :to="link.to" class="account-category-link" :aria-current="route.path === link.to ? 'page' : undefined" @click="emit('close')">
               <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
               <span>{{ link.label }}</span>
@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
               <svg class="account-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
             </button>
           </div>
-          <RouterLink v-else :to="link.to" class="account-row" :class="{ 'is-active': isActive(link) }" :aria-current="isActive(link) ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
+          <RouterLink v-else :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isActive(link) }" :aria-current="isActive(link) ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
             <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
             <span>{{ link.label }}</span>
           </RouterLink>
@@ -192,12 +192,12 @@ onBeforeUnmount(() => {
     <div v-if="activeCategory" :id="submenuId(activeCategory.to)" class="account-flyout" :style="compact ? undefined : { top: `${flyoutTop}px` }" @pointerenter="cancelPending">
       <section ref="subPanel" class="account-surface account-submenu floating-surface" :aria-label="activeCategory.label" @focusin="cancelPending">
         <div class="account-submenu-heading">
-          <button v-if="compact" type="button" class="account-back" aria-label="返回更多功能" @click="closeCategory(true)">
+          <button v-if="compact" type="button" class="account-back ambient-glow" aria-label="返回更多功能" @click="closeCategory(true)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
           </button>
           <h2 class="account-subtitle">{{ activeCategory.label }}</h2>
         </div>
-        <RouterLink v-for="link in activeCategory.children" :key="link.to" :to="link.to" class="account-row" :class="{ 'is-active': isChildActive(link.to) }" :aria-current="isChildActive(link.to) ? 'page' : undefined" @click="emit('close')">
+        <RouterLink v-for="link in activeCategory.children" :key="link.to" :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isChildActive(link.to) }" :aria-current="isChildActive(link.to) ? 'page' : undefined" @click="emit('close')">
           <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
           <span>{{ link.label }}</span>
         </RouterLink>
@@ -229,7 +229,19 @@ onBeforeUnmount(() => {
   scrollbar-width: thin;
   border-radius: 1rem;
   color: var(--account-text);
+  background: var(--floating-surface-container);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
+.account-menu .ambient-glow {
+  --ambient-glow-strength: 0.65;
+  --ambient-glow-step: 1px;
+  --ambient-glow-wide-step: 1px;
+  --ambient-glow-primary-stop: 60%;
+  --ambient-glow-secondary-stop: 55%;
+}
+.account-menu .ambient-glow::before,
+.account-menu .ambient-glow::after { animation: none; }
 .dark .account-menu {
   --account-hover: #2c3442;
   --account-active: #303e52;
@@ -277,6 +289,30 @@ onBeforeUnmount(() => {
   .account-logout:hover .account-icon { color: inherit; }
   .dark .account-logout:hover { color: #fca5a5; background: #432c34; }
 }
+@media (hover: hover) and (pointer: fine) {
+  .account-menu .ambient-glow::before, .account-menu .ambient-glow::after { transition: opacity 200ms ease-out; }
+  .account-menu .ambient-glow:hover::before { opacity: calc(0.85 * var(--ambient-glow-strength)); }
+  .account-menu .ambient-glow:hover::after { opacity: calc(0.75 * var(--ambient-glow-strength)); }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .account-row.ambient-glow:not(.account-category) > span:not(.account-unread),
+  .account-category-link > span,
+  .account-menu :deep(.theme-menu-button > span) { transform-origin: left center; transition: transform 180ms ease-out; }
+
+  .account-row.ambient-glow:not(.account-category) > .account-icon,
+  .account-category-link > .account-icon,
+  .account-back > svg,
+  .account-menu :deep(.theme-menu-button > svg) { transform-origin: center; transition: color 140ms ease, transform 180ms ease-out; }
+
+  .account-row.ambient-glow:not(.account-category):hover > span:not(.account-unread),
+  .account-category:hover .account-category-link > span,
+  .account-menu :deep(.theme-menu-button:hover > span) { transform: scale(1.035); }
+
+  .account-row.ambient-glow:not(.account-category):hover > .account-icon,
+  .account-category:hover .account-category-link > .account-icon,
+  .account-back:hover > svg,
+  .account-menu :deep(.theme-menu-button:hover > svg) { transform: scale(1.06); }
+}
 @media (min-width: 640px) {
   .account-menu { right: 2rem; }
   .mobile-utilities { display: none; }
@@ -284,6 +320,7 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .account-submenu { animation: none; }
+  .account-menu .ambient-glow::before, .account-menu .ambient-glow::after { transition: none; }
   .account-row, .account-icon, .account-menu :deep(.theme-menu-button), .account-menu :deep(.theme-menu-button svg) { transition: none; }
 }
 </style>

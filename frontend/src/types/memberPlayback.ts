@@ -6,6 +6,8 @@ export function memberNeedsReview(member: MemberPlayback) {
  return ['missing', 'deleted', 'other_server'].includes(member.embyState || '')
 }
 export interface MemberPlayback {
+ proxyPlaybackDisabled?: boolean; proxyPlaybackRevision?: number
+ provisioned?: boolean
  embyState?: MemberEmbyState; embyCheckedAt?: string
 	childUsed?: number
  playbackOnly?: boolean; ownerUserId?: string; ownerName?: string; childLimit?: number; childPaused?: boolean; childDisabled?: boolean; childRevoked?: boolean
@@ -19,6 +21,9 @@ export interface MemberPlayback {
   personalDrive?: { uid: string; connected: boolean; directoryId: string }
 }
 export interface MemberSettings { enabled: boolean; libraryIds: string[]; allowDownload: boolean }
+export interface MemberProxyPlaybackState {
+ userId: string; enabled: boolean; revision: number
+}
 export async function memberRequest(token: string, signal: AbortSignal, path = '', body?: object) {
   const response = await fetch(`/api/admin/member-playback${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(95000)]), body: body ? JSON.stringify(body) : undefined })
   const data = await response.json().catch(() => null)

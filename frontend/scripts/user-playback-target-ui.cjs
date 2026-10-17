@@ -36,6 +36,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/users/list')
   const card = name => page.locator('article.user-card').filter({ has: page.getByRole('heading', { name, exact: true }) })
   const link = name => card(name).locator('.member-playback-link')
+  const geometry = name => card(name).evaluate(el => {
+   const cardBounds = el.getBoundingClientRect()
+   return {
+    height: cardBounds.height,
+    summaryHeight: el.querySelector('.member-drive-summary').getBoundingClientRect().height,
+    footerOffset: el.querySelector('.member-card-footer').getBoundingClientRect().top - cardBounds.top,
+   }
+  })
   const dialog = page.locator('dialog.playback-dialog[open]')
   const rows = () => dialog.locator('.playback-session-row')
   const close = async () => { await dialog.getByRole('button', { name: '关闭播放会话' }).click(); await dialog.waitFor({ state: 'hidden' }) }
@@ -45,13 +53,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await page.waitForFunction(() => document.querySelector('.playback-dialog-footer button')?.getAttribute('aria-disabled') === 'false')
   }
   await link('Pool').waitFor()
-  assert.match(await link('Pool').innerText(), /等 2 份/)
+  assert.match(await link('Pool').innerText(), /等 2 个配置/)
   assert.equal(await link('Idle').count(), 0)
-  assert.match(await card('Idle').innerText(), /动态调度，播放时核验/)
-  assert.match(await link('Preparing').innerText(), /^准备取链/)
+  assert.match(await card('Idle').innerText(), /播放时自动分配/)
+  assert.match(await link('Preparing').innerText(), /^正在准备取链/)
   assert.match(await link('Unrecorded').innerText(), /取链配置待核实/)
   assert.equal(reads.filter(p => p.endsWith('/playback-sessions')).length, 1, 'One shared request for every user card')
   assert.equal(writes.length, 0)
+  const poolLayout = await geometry('Pool'), preparingLayout = await geometry('Preparing')
   await link('Pool').focus(); await page.keyboard.press('Enter'); await dialog.waitFor()
   assert.equal(await rows().count(), 2)
   assert.equal(await dialog.locator('.playback-target').count(), 2)
@@ -67,7 +76,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   // One credential configuration shared by multiple sessions counts once.
   sessions = sessions.map(s => s.key === 'pool-b' ? { ...s, target: target('config-a', '共享小号') } : s)
   await link('Pool').click(); await refresh(); await close()
-  assert.doesNotMatch(await link('Pool').innerText(), /等 2 份/)
+  assert.doesNotMatch(await link('Pool').innerText(), /等 2 个配置/)
   // A new successful target replaces the old one, without consulting account settings.
   sessions = sessions.map(s => s.userId === 'Pool' ? { ...s, target: target('config-c', '切换后的配置') } : s)
   await link('Pool').click(); await refresh(); await close()
@@ -80,6 +89,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.match(await dialog.innerText(), /上次读取的取链配置/)
   await close()
   assert.equal(await link('Pool').innerText(), '取链状态待核实')
+  assert.deepEqual(await geometry('Pool'), poolLayout, 'A stale snapshot must not shift the card or its footer')
   failRead = false
   await link('Pool').click()
   await dialog.getByRole('alert').waitFor({ state: 'hidden' })
@@ -106,6 +116,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByText('此用户暂无播放会话', { exact: true }).waitFor()
   await close()
   assert.equal(await link('Pool').count(), 0)
+  assert.deepEqual(await geometry('Pool'), poolLayout, 'Ending playback must preserve the summary height and footer position')
   assert.equal(await page.getByRole('button', { name: '查看会话', exact: true }).evaluate(e => e === document.activeElement), true)
   // Expiry is checked locally even when the next backend read has not run.
   sessions = sessions.map(s => s.userId === 'Personal' ? { ...s, expiresAt: start + 3000 } : s)
@@ -115,8 +126,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const screenshots = path.join(__dirname, '../test-results/playback-target')
   fs.mkdirSync(screenshots, { recursive: true })
   // Restore the duplicate-name configurations for layout review.
+  const idleLayout = await geometry('Pool')
   sessions.push(session('pool-layout-a', 'Pool', target('config-a', '很长的共享配置名称'.repeat(10))), session('pool-layout-b', 'Pool', target('config-b', '另一份共享配置')))
+  sessions = sessions.map(s => s.key === 'prepare' ? { ...s, issued: true, target: target('prepared-config', '准备完成的配置') } : s)
   await link('Main').click(); await refresh(); await close()
+  assert.deepEqual(await geometry('Pool'), idleLayout, 'Starting playback with multiple configurations must not shift the card')
+  assert.deepEqual(await geometry('Preparing'), preparingLayout, 'Successful issuance must preserve the preparing summary geometry')
   for (const [width, height] of [[1440,1000], [768,900], [390,844], [320,568], [667,375]]) {
    await page.setViewportSize({ width, height })
    for (const dark of [false, true]) {
@@ -147,6 +162,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.deepEqual(errors, [])
   assert.equal(writes.length, 1)
   assert.ok(reads.filter(p => p.endsWith('/playback-sessions')).length < 25, 'No per-card polling')
-  console.log('Playback target UI passed: source types, duplicate names/configuration IDs, shared reads, switching, stale data, expiry, generation release, keyboard/focus, 5 viewports and light/dark')
+  console.log('Playback target UI passed: stable start/stop/preparing/stale geometry, source types, duplicate names/configuration IDs, shared reads, switching, expiry, generation release, keyboard/focus, 5 viewports and light/dark')
  } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exit(1) })

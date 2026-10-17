@@ -189,6 +189,7 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 	})
 	manage := admin.Group("/member-playback", guard)
 	registerMemberDeletion(manage, s, fail)
+	registerMemberProxyPlayback(manage, s, fail)
 	manage.GET("/device-policy", func(c *gin.Context) {
 		c.JSON(200, s.UserPlayback.DevicePolicy())
 	})
@@ -254,7 +255,7 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 	})
 	manage.GET("/accounts", func(c *gin.Context) { c.JSON(200, gin.H{"accounts": s.AccountOptions()}) })
 	manage.GET("/playback-sessions", func(c *gin.Context) {
-		c.JSON(200, gin.H{"sessions": s.UserPlayback.List(), "devicePolicy": s.UserPlayback.DevicePolicy()})
+		c.JSON(200, gin.H{"sessions": s.UserPlayback.List(), "devicePolicy": s.UserPlayback.DevicePolicy(), "serverTime": time.Now().UnixMilli()})
 	})
 	manage.POST("/playback-sessions/:key/release", func(c *gin.Context) {
 		var input struct {
@@ -272,7 +273,7 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 			}
 			return
 		}
-		c.JSON(200, gin.H{"sessions": s.UserPlayback.List()})
+		c.JSON(200, gin.H{"sessions": s.UserPlayback.List(), "serverTime": time.Now().UnixMilli()})
 	})
 	manage.GET("/pool", func(c *gin.Context) {
 		c.JSON(200, gin.H{"settings": s.Pool.Settings(), "accounts": s.AccountOptions(), "metrics": s.Pool.Metrics(), "api": s.PoolRequests.Stats(), "events": s.Pool.Events()})

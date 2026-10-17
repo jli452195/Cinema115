@@ -342,6 +342,9 @@ func (s *MemberPlaybackService) checkMediaLocal(r model.MemberPlayback, server s
 	if download && !settings.AllowDownload {
 		return memberError("原文件下载已关闭，请联系管理员")
 	}
+	if !download && r.ProxyPlaybackDisabled {
+		return memberError("此用户的 Cinema115 反代播放已暂停，请联系管理员")
+	}
 	if r.UserID == "" || r.EmbyURL != server || c.URL != server || c.ServerID != r.ServerID || !r.Provisioned || r.Suspended {
 		return memberError("媒体访问尚未开通或已暂停，请检查账号与网盘绑定")
 	}
@@ -366,6 +369,9 @@ func (a *MediaAuthorization) CheckCurrent(ctx context.Context) error {
 	}
 	if r.EmbyID != a.record.EmbyID || r.Source != a.record.Source || r.PlaybackOnly != a.record.PlaybackOnly || r.OwnerUserID != a.record.OwnerUserID {
 		return ErrAccountChanged
+	}
+	if !a.download && r.ProxyPlaybackRevision != a.record.ProxyPlaybackRevision {
+		return ErrAccountChanged // A pause/resume cycle cannot revive an old grant.
 	}
 	var current P115Account
 	var err error

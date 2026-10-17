@@ -14,9 +14,36 @@ type PlaybackEvent struct {
 	key             string
 	userGeneration  uint64
 	poolGenerations map[string]uint64
+	observedAt      int64
+	playbackState   string
 }
 
 func (e PlaybackEvent) Matched() bool { return e.userGeneration != 0 || len(e.poolGenerations) > 0 }
+
+// Only an explicit player report supplies a display state. Issuance and pings
+// alone cannot distinguish playback from pause or preload.
+func (e PlaybackEvent) WithPlaybackPause(paused *bool) PlaybackEvent {
+	if paused != nil {
+		e.playbackState = "playing"
+		if *paused {
+			e.playbackState = "paused"
+		}
+	}
+	return e
+}
+
+func observePlaybackState(l *model.UserPlaybackLease, state string, at int64, now time.Time) bool {
+	firstIssued := l.FirstIssuedAt
+	if firstIssued == 0 {
+		firstIssued = l.IssuedAt
+	}
+	if (state == "playing" || state == "paused") && freshPlaybackEvidence(at, now) && at >= firstIssued &&
+		(at > l.PlaybackStateAt || at == l.PlaybackStateAt && state == "paused" && l.PlaybackState != "paused") {
+		l.PlaybackState, l.PlaybackStateAt = state, at
+		return true
+	}
+	return false
+}
 
 // Ping has no ItemId. Only an unambiguous authenticated session is eligible;
 // never pick one item when a player reuses a session for several children.
@@ -69,6 +96,7 @@ func (s *MemberPlaybackService) CapturePlaybackEvent(server, id, session, client
 	if s.UserPlayback != nil {
 		p := s.UserPlayback
 		p.mu.Lock()
+		e.observedAt = p.now().UnixMilli()
 		for _, l := range p.doc.Leases {
 			if l.ExpiresAt <= p.now().UnixMilli() || l.UserID != r.UserID || l.ServerID != r.ServerID {
 				continue
@@ -115,7 +143,7 @@ func (s *MemberPlaybackService) ApplyPlaybackEvent(ctx context.Context, e Playba
 	}
 	var userErr, poolErr error
 	if s.UserPlayback != nil && e.userGeneration != 0 {
-		_, userErr = s.UserPlayback.Event(ctx, e.key, stopped, e.userGeneration)
+		_, userErr = s.UserPlayback.eventState(ctx, e.key, stopped, e.userGeneration, e.playbackState, e.observedAt)
 	}
 	// Pool release is independent of the user slot, which may already be gone.
 	if s.Pool != nil {
@@ -149,6 +177,7 @@ func (s *MemberPlaybackService) applyPlaybackEventAtomic(ctx context.Context, e 
 		} else {
 			l.CandidateUntil = 0
 			l.LastPlaybackAt = now.UnixMilli()
+			observePlaybackState(&l, e.playbackState, e.observedAt, now)
 			if l.Issued && (now.UnixMilli()-l.UpdatedAt >= 60000 || l.ExpiresAt < now.Add(userPlaybackIdleTTL-time.Minute).UnixMilli()) {
 				l.UpdatedAt = now.UnixMilli()
 				l.ExpiresAt = now.Add(userPlaybackIdleTTL).UnixMilli()
