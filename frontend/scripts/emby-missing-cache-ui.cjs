@@ -56,8 +56,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }
     async function excludedTab() { await page.getByRole('button', { name: /^已排除 \d+ 项$/ }).evaluate(el => el.click()); await idle() }
     async function resultTab() { await page.getByRole('button', { name: '缺集结果', exact: true }).evaluate(el => el.click()); await idle() }
-    async function leave() { await page.getByRole('link', { name: 'Emby', exact: true }).click(); await page.getByRole('link', { name: '缺集检测', exact: true }).waitFor() }
-    async function enter() { await page.getByRole('link', { name: '缺集检测', exact: true }).click(); await idle() }
+    async function leave() { await page.getByRole('navigation', { name: '上级导航', exact: true }).getByRole('link', { name: '返回 Emby', exact: true }).click(); await page.locator('main').getByRole('link', { name: '缺集检测', exact: true }).waitFor() }
+    async function enter() { await page.locator('main').getByRole('link', { name: '缺集检测', exact: true }).click(); await idle() }
     await page.goto(base + '/emby/missing'); await idle(); await cards.nth(23).waitFor()
     await jump(2)
     await resultSearch().fill('结果草稿')
@@ -97,8 +97,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.evaluate(() => window.scrollTo(0, 480))
     const routeTop = await page.evaluate(() => scrollY), beforeLeave = listReads()
     // Use programmatic click to avoid scrolling the breadcrumb into view before it captures scrollY.
-    await page.getByRole('link', { name: 'Emby', exact: true }).evaluate(el => el.click())
-    await page.getByRole('link', { name: '缺集检测', exact: true }).waitFor()
+    await page.getByRole('navigation', { name: '上级导航', exact: true }).getByRole('link', { name: '返回 Emby', exact: true }).evaluate(el => el.click())
+    await page.locator('main').getByRole('link', { name: '缺集检测', exact: true }).waitFor()
     const beforeImages = imageReads()
     assert.ok(await page.evaluate(url => window.posterObjects.has(url), blob))
     await enter()
@@ -154,14 +154,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await resultSearch().inputValue(), '保留结果草稿')
     excludedDelay = 0
     // Explicit synchronization and saved scope changes invalidate both views.
-    await page.getByRole('link', { name: '媒体库同步', exact: true }).click()
+    await page.locator('main').getByRole('link', { name: '媒体库同步', exact: true }).click()
     await page.locator('.library-option').last().waitFor()
     await page.getByRole('button', { name: '开始全量同步', exact: true }).click()
     await page.getByText('已加入后台队列，离开页面也会继续。', { exact: true }).waitFor()
     const beforeSyncReturn = listReads()
     await page.goBack(); await idle()
     assert.equal(listReads(), beforeSyncReturn + 1)
-    await page.getByRole('link', { name: '媒体库同步', exact: true }).click()
+    await page.locator('main').getByRole('link', { name: '媒体库同步', exact: true }).click()
     await page.locator('.library-option').last().waitFor()
     await page.locator('.library-option').filter({ hasText: '电影' }).locator('input').uncheck()
     await page.locator('.library-save-row button[type=submit]').click()
@@ -170,7 +170,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goBack(); await idle()
     assert.equal(listReads(), beforeScopeReturn + 1)
     statusSyncedAt = '2026-10-16T04:00:00Z'
-    await page.getByRole('link', { name: '媒体库同步', exact: true }).click()
+    await page.locator('main').getByRole('link', { name: '媒体库同步', exact: true }).click()
     await page.getByText('已建立索引', { exact: true }).first().waitFor()
     const beforeCompletedSync = listReads()
     await page.goBack(); await idle()

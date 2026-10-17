@@ -2,9 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import ThemeSwitcher from './ThemeSwitcher.vue'
+import NavigationIcon from './NavigationIcon.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
 import { websiteUnread } from '../composables/useWebsiteNotifications'
-import { accountIcons, adminAccountGroups, isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
+import { adminAccountGroups, isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
 
 const emit = defineEmits<{ close: []; logout: [] }>()
 const route = useRoute()
@@ -146,7 +147,7 @@ onBeforeUnmount(() => {
     <div v-show="!compact || !activeCategory" ref="mainPanel" class="account-surface account-main floating-surface" @scroll.passive="schedulePosition">
       <div class="account-summary">
         <span class="account-avatar" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path :d="accountIcons.user" /></svg>
+          <NavigationIcon name="user" :size="20" />
         </span>
         <div class="account-identity">
           <p class="account-name" :title="portalUser?.username">{{ portalUser?.username }}</p>
@@ -156,7 +157,7 @@ onBeforeUnmount(() => {
 
       <div class="account-group mobile-utilities" role="group" aria-label="通知与外观">
         <RouterLink to="/notifications" class="account-row ambient-glow" :class="{ 'is-active': route.path === '/notifications' }" :aria-current="route.path === '/notifications' ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
-          <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons.bell" /></svg>
+          <NavigationIcon name="bell" class="account-icon" />
           <span>站内通知</span>
           <span v-if="websiteUnread" class="account-unread" :aria-label="`${websiteUnread} 条未读`">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
         </RouterLink>
@@ -167,15 +168,15 @@ onBeforeUnmount(() => {
         <template v-for="link in group.links" :key="link.to">
           <div v-if="link.children" class="account-row account-category ambient-glow" :class="{ 'is-active': isActive(link), 'is-expanded': activeCategory?.to === link.to }" :data-category="link.to" @pointerenter="hoverCategory(link, $event)" @pointerleave="leaveCategory">
             <RouterLink :to="link.to" class="account-category-link" :aria-current="route.path === link.to ? 'page' : undefined" @click="emit('close')">
-              <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
+              <NavigationIcon :name="link.icon" class="account-icon" />
               <span>{{ link.label }}</span>
             </RouterLink>
             <button type="button" class="account-expand" :data-category="link.to" :aria-label="`展开${link.label}子菜单`" :aria-expanded="activeCategory?.to === link.to" :aria-controls="submenuId(link.to)" @click="openCategory(link, compact || $event.detail === 0)">
-              <svg class="account-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+              <NavigationIcon name="chevron" class="account-chevron" :size="14" />
             </button>
           </div>
           <RouterLink v-else :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isActive(link) }" :aria-current="isActive(link) ? 'page' : undefined" @click="emit('close')" @pointerenter="scheduleClose">
-            <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
+            <NavigationIcon :name="link.icon" class="account-icon" />
             <span>{{ link.label }}</span>
           </RouterLink>
         </template>
@@ -183,7 +184,7 @@ onBeforeUnmount(() => {
 
       <div class="account-group">
         <button type="button" class="account-row account-logout" @click="logout" @pointerenter="scheduleClose">
-          <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons.logout" /></svg>
+          <NavigationIcon name="logout" class="account-icon" />
           <span>退出登录</span>
         </button>
       </div>
@@ -193,12 +194,12 @@ onBeforeUnmount(() => {
       <section ref="subPanel" class="account-surface account-submenu floating-surface" :aria-label="activeCategory.label" @focusin="cancelPending">
         <div class="account-submenu-heading">
           <button v-if="compact" type="button" class="account-back ambient-glow" aria-label="返回更多功能" @click="closeCategory(true)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
+            <NavigationIcon name="back" :size="18" />
           </button>
           <h2 class="account-subtitle">{{ activeCategory.label }}</h2>
         </div>
         <RouterLink v-for="link in activeCategory.children" :key="link.to" :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isChildActive(link.to) }" :aria-current="isChildActive(link.to) ? 'page' : undefined" @click="emit('close')">
-          <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="accountIcons[link.icon]" /></svg>
+          <NavigationIcon :name="link.icon" class="account-icon" />
           <span>{{ link.label }}</span>
         </RouterLink>
       </section>
