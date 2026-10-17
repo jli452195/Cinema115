@@ -18,6 +18,7 @@
     "test:tv-numbering-ui": "node scripts/tv-numbering-ui.cjs",
     "test:season-episodes-ui": "node scripts/season-episodes-ui.cjs",
     "test:follows": "node --test tests/follows.test.mjs",
+    "test:movie-follow-ui": "node scripts/movie-follow-ui.cjs",
     "test:notifications": "node --test tests/notifications.test.mjs",
     "preview": "vite preview"
   },

@@ -71,14 +71,16 @@ test('管理徽标与分组一致，异常复核保留为进度说明', async ()
 })
 
 const buttonSource = await readFile(new URL('../src/components/FollowButton.vue', import.meta.url), 'utf8')
+const iconsURL = dataModule(`export { default as IconChevronDown, default as IconClock, default as IconHeart, default as IconHeartFilled, default as IconLoader2, default as IconRefresh, default as IconX } from '${stubURL}'`)
 const buttonCompiled = compile(compileScript(parse(buttonSource).descriptor, { id: 'follow-button-test', inlineTemplate: true }).content)
   .replaceAll(/from ["']vue["']/g, `from '${vueURL}'`)
   .replaceAll(/from ["']vue-router["']/g, `from '${routerURL}'`)
   .replaceAll(/from ["']\.\.\/types\/follows["']/g, `from '${followsURL}'`)
+  .replaceAll(/from ["']@tabler\/icons-vue["']/g, `from '${iconsURL}'`)
 const { default: FollowButton } = await import(dataModule(buttonCompiled))
 
 // 用 Vue 实际渲染按钮并触发点击，只替换 DOM 与网络边界。
-const node = (type, text = '') => ({ type, text, props: {}, children: [], parent: null })
+const node = (type, text = '') => ({ type, text, props: {}, children: [], parent: null, hidePopover() {} })
 const renderer = createRenderer({
   createElement: type => node(type), createText: text => node('text', text), createComment: text => node('comment', text),
   setText: (target, text) => { target.text = text },
@@ -94,10 +96,11 @@ const renderer = createRenderer({
   parentNode: target => target.parent,
   nextSibling: target => target.parent?.children[target.parent.children.indexOf(target) + 1] || null,
 })
-const findButton = target => target.type === 'button' ? target : target.children.map(findButton).find(Boolean)
+const findButton = target => target.type === 'button' && (target.props['data-state'] || target.props.class?.includes('follow-button')) ? target : target.children.map(findButton).find(Boolean)
+const findAvailable = target => target.props['data-state'] === 'available' ? target : target.children.map(findAvailable).find(Boolean)
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); await nextTick() }
 
-async function mountFollowButton(t, kind, initialState) {
+async function mountFollowButton(t, kind, initialState, props = {}) {
   const requests = []
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     requests.push({ url, method: options.method })
@@ -107,27 +110,49 @@ async function mountFollowButton(t, kind, initialState) {
     return { ok: true, json: async () => data }
   })
   const root = node('root')
-  const app = renderer.createApp(FollowButton, { token: 'test-token', kind, tmdbId: '94664' })
+  const app = renderer.createApp(FollowButton, { token: 'test-token', kind, tmdbId: '94664', ...props })
   app.mount(root)
   t.after(() => app.unmount())
   await flush()
-  return { button: () => findButton(root), requests }
+  return { button: () => findButton(root), available: () => findAvailable(root), requests }
 }
 
-test('已入库且未追更的电影不能再申请追更', async t => {
-  const { button, requests } = await mountFollowButton(t, 'movie', { subscribed: false, request: null, libraryState: 'present' })
-  assert.equal(button().props.disabled, true)
+test('电影已入库统一为静态状态，不论是否有个人订阅', async t => {
+  for (const subscribed of [false, true]) {
+    await t.test(String(subscribed), async t => {
+      const { button, available, requests } = await mountFollowButton(t, 'movie', { subscribed, request: null, libraryState: 'present' })
+      assert.equal(button(), undefined)
+      assert.equal(available().type, 'span')
+      assert.equal(requests.length, 1)
+    })
+  }
+})
+
+test('电影按钮服从详情页可靠入库状态，旧申请结果不能覆盖', async t => {
+  const { button, available } = await mountFollowButton(t, 'movie', { subscribed: true, request: { status: 'completed' }, libraryState: 'present' }, { libraryState: 'absent' })
+  assert.equal(available(), undefined)
+  assert.equal(button().props['data-state'], 'requested')
+  assert.equal(button().props['aria-label'], '已申请，查看申请详情')
+  assert.equal(button().props['aria-haspopup'], 'dialog')
+})
+
+test('电影详情页已入库优先于旧的未入库申请状态', async t => {
+  const { available, button } = await mountFollowButton(t, 'movie', { subscribed: true, request: { status: 'processing' }, libraryState: 'absent' }, { libraryState: 'present' })
+  assert.equal(button(), undefined)
+  assert.equal(available().type, 'span')
+})
+
+test('电影入库未知时不能作为未入库发起申请', async t => {
+  const { button, available, requests } = await mountFollowButton(t, 'movie', { subscribed: false, request: null, libraryState: 'absent' }, { libraryState: 'unknown' })
+  assert.equal(button(), undefined)
+  assert.equal(available(), undefined)
   assert.equal(requests.length, 1)
 })
 
-test('已追更电影入库后，仍可通过合并按钮取消，取消后禁用', async t => {
-  const { button, requests } = await mountFollowButton(t, 'movie', { subscribed: true, request: null, libraryState: 'present' })
-  assert.equal(button().props.disabled, false)
-  assert.equal(button().props['aria-label'], '取消追更')
-  await button().props.onClick()
-  await flush()
-  assert.deepEqual(requests.at(-1), { url: '/api/me/follows/movie/94664/cancel', method: 'POST' })
-  assert.equal(button().props.disabled, true)
+test('电影关闭申请仍可查看原因，不误报处理中或开放重新申请', async t => {
+  const { button } = await mountFollowButton(t, 'movie', { subscribed: true, request: { status: 'closed', note: '暂无可用资源' }, libraryState: 'absent' })
+  assert.equal(button().props['aria-label'], '申请已关闭，查看申请详情')
+  assert.equal(button().props['aria-haspopup'], 'dialog')
 })
 
 test('已入库剧集仍可追更，同一按钮可取消追更', async t => {

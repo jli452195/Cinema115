@@ -71,7 +71,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
 const route = useRoute(), router = useRouter()
 watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
-const { media: embyMedia, episodes: embyEpisodes, error: embyError } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
+const { media: embyMedia, episodes: embyEpisodes, error: embyError, refresh: refreshEmbyMedia, lastReadSucceeded: embyReadSucceeded } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
 interface CastMember { id: number; name: string; character: string; profileUrl: string }
 interface SeasonSummary { id: number; number: number; name: string; episodeCount: number; date: string }
@@ -295,7 +295,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
               </div>
               <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs detail-muted"><span v-if="statusLabel">{{ statusLabel }}</span><span v-if="detail.runtime">{{ kind === 'tv' ? '每集约 ' : '' }}{{ detail.runtime }} 分钟</span><span v-if="kind === 'tv' && detail.episodeCount">共 {{ detail.episodeCount }} 集</span><span v-if="detail.countries.length">{{ detail.countries.join(' / ') }}</span></div>
               <div class="mt-6">
-                <FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" />
+                <FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" :library-state="kind === 'movie' ? embyReadSucceeded ? embyMedia?.state || 'unknown' : 'unknown' : undefined" @refresh-library="refreshEmbyMedia" />
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-3">
                 <SearchPill v-if="isPortalAdmin && searchConfigured.re0" @click="re0SearchOpen = true">

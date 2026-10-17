@@ -7,15 +7,17 @@ export function useEmbyMedia(token: () => string, kind: () => 'tv' | 'movie', id
   const serverId = ref('')
   const error = ref('')
   const loading = ref(false)
+  const lastReadSucceeded = ref(false)
   let controller: AbortController | undefined
   async function refresh() {
     controller?.abort(); const current = new AbortController(); controller = current
     error.value = ''; loading.value = true
     try {
       const data = await embyRequest(token(), `media/${kind()}/${id()}`, current.signal)
-      if (!current.signal.aborted) { media.value = data.media; baseUrl.value = data.baseUrl; serverId.value = data.serverId }
+      if (!current.signal.aborted) { media.value = data.media; baseUrl.value = data.baseUrl; serverId.value = data.serverId; lastReadSucceeded.value = true }
     } catch (e) {
       if (!current.signal.aborted) {
+        lastReadSucceeded.value = false
         error.value = e instanceof Error ? e.message : '入库状态查询失败'
         // 读取失败时保留上次匹配结果，由页面单独提示刷新异常。
       }
@@ -32,9 +34,9 @@ export function useEmbyMedia(token: () => string, kind: () => 'tv' | 'movie', id
     }
     return result
   })
-  watch(() => [token(), kind(), id()], () => { media.value = undefined; baseUrl.value = ''; serverId.value = ''; void refresh() }, { immediate: true })
+  watch(() => [token(), kind(), id()], () => { media.value = undefined; baseUrl.value = ''; serverId.value = ''; lastReadSucceeded.value = false; void refresh() }, { immediate: true })
   // 只轮询本地索引，Webhook 增删后页面自动跟进；隐藏页面不发请求。
   const timer = window.setInterval(() => { if (!document.hidden && !loading.value) void refresh() }, 30000)
   onBeforeUnmount(() => { controller?.abort(); window.clearInterval(timer) })
-  return { media, baseUrl, serverId, error, loading, episodes, refresh }
+  return { media, baseUrl, serverId, error, loading, lastReadSucceeded, episodes, refresh }
 }
