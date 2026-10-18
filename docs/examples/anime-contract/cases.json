@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "now": 1800000000000,
+  "sources": [
+    {"id": "source-a", "role": "main", "itemId": "900001", "groupId": "900011", "groupName": "GroupA", "sourceBase": 25, "chapterBase": 1, "minimumEpisode": 30},
+    {"id": "source-b", "role": "standby", "itemId": "900002", "groupId": "900012", "groupName": "GroupB", "sourceBase": 1, "chapterBase": 1, "minimumEpisode": 1},
+    {"id": "source-mirror", "role": "standby", "itemId": "900003", "groupId": "900011", "groupName": "GroupA", "sourceBase": 25, "chapterBase": 1, "minimumEpisode": 25}
+  ],
+  "resources": [
+    {"id": "resource-a", "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"id": "resource-b", "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"id": "resource-a-v2", "hash": "cccccccccccccccccccccccccccccccccccccccc"}
+  ],
+  "releases": [
+    {"id": "release-a", "postKey": "episode-example-a", "guid": "colliding-guid", "sourceId": "source-a", "episode": 30, "resourceId": "resource-a", "title": "[GroupA] Example - 30 [1080p HEVC]"},
+    {"id": "release-b", "postKey": "episode-example-b", "guid": "colliding-guid", "sourceId": "source-b", "episode": 6, "resourceId": "resource-b", "title": "[GroupB] Example - 06 [1080p]"},
+    {"id": "release-a-v2", "postKey": "episode-example-a-v2", "guid": "v2-guid", "sourceId": "source-a", "episode": 30, "resourceId": "resource-a-v2", "title": "[GroupA] Example - 30v2 [1080p HEVC]"}
+  ],
+  "serviceCases": [
+    {"id": "same-episode-two-groups", "input": {"releases": ["release-a", "release-b"]}, "expect": {"distinctResources": 2, "chapterEpisode": 6, "target": "S02E06", "bothAllowed": true}},
+    {"id": "same-group-v2", "input": {"releases": ["release-a", "release-a-v2"]}, "expect": {"bothDownloadsAllowed": true, "replaceOldVersion": false, "sameFullTargetPath": "TARGET_NAME_CONFLICT"}},
+    {"id": "same-hash-two-rss", "input": {"resourceId": "resource-a", "sources": ["source-a", "source-mirror"]}, "expect": {"submitCount": 1, "keepBothSourceLinks": true}},
+    {"id": "main-fails-standby-runs", "input": {"mainHealth": "error", "standbyHealth": "ok"}, "expect": {"standbyMayRun": true}},
+    {"id": "standby-draft", "input": {"mainValid": true, "standbyComplete": false, "activateSourceIds": ["source-a"]}, "expect": {"enableMain": true, "standbyState": "draft"}},
+    {"id": "mapping-base-not-download-minimum", "input": {"sourceBase": 25, "targetBase": 1, "season": 2, "minimumEpisode": 30}, "expect": {"firstTarget": "S02E06"}},
+    {"id": "source-preview-expired", "input": {"now": 1800000900000, "generatedAt": 1800000000000}, "expect": {"code": "PREVIEW_EXPIRED", "preserveSelection": true}},
+    {"id": "cached-snapshot-boundary", "input": {"observedAt": 1799999940000, "generatedAt": 1800000000000, "newPublishedAt": 1799999970000}, "expect": {"t0": 1799999940000, "newReleaseNotLost": true}},
+    {"id": "aggregate-preview-budget", "input": {"sourceRawCounts": [1200, 801]}, "expect": {"acceptLoad": false, "preserveOldSnapshots": true}},
+    {"id": "idempotent-response-loss", "input": {"sameKey": true, "sameBody": true, "currentRevisionChanged": true}, "expect": {"replayOriginalReceipt": true, "submitAgain": false}},
+    {"id": "same-key-different-body", "input": {"sameKey": true, "sameBody": false}, "expect": {"code": "IDEMPOTENCY_KEY_REUSED"}},
+    {"id": "unknown-submit-after-restart", "input": {"operationState": "dispatched", "receiptPersisted": false}, "expect": {"readOnlyReconcile": true, "blindResubmit": false}},
+    {"id": "directory-is-not-video", "input": {"downloadState": "completed", "resultObjectKind": "directory", "childrenRead": false}, "expect": {"fileVerified": false, "organizeAllowed": false}},
+    {"id": "pause-after-rename-authorized", "input": {"renameDispatched": true, "paused": true}, "expect": {"recordRenameResult": true, "startMove": false}},
+    {"id": "stale-lease-result", "input": {"requestGeneration": 1, "currentGeneration": 2}, "expect": {"recordOperationObservation": true, "advanceJob": false}},
+    {"id": "credentials-changed", "input": {"sameUid": true, "taskAccountRevision": 1, "currentAccountRevision": 2}, "expect": {"code": "ACCOUNT_SNAPSHOT_CHANGED", "autoContinueWrite": false}},
+    {"id": "no-tmdb-download", "input": {"tmdbId": null, "sourceValid": true, "primaryBindingValid": true}, "expect": {"downloadAllowed": true, "organizeEnabled": false}},
+    {"id": "completed-no-recheck", "input": {"workflowState": "organized", "externalFileDeletedLater": true}, "expect": {"nextRunAt": null, "redownload": false}},
+    {"id": "p1-forged-enable", "input": {"capabilities": {"configure": true, "download": false, "organize": false}, "saveMode": "enabled"}, "expect": {"code": "CAPABILITY_UNAVAILABLE", "cloudWrites": 0}},
+    {"id": "ordinary-zero", "input": {"readSucceeded": true, "matchedCount": 0, "reviewCount": 0}, "expect": {"httpStatus": 200, "p2Action": "enable_and_wait", "warningColor": false}},
+    {"id": "no-matches-with-uncertain-release", "input": {"readSucceeded": true, "matchedCount": 0, "reviewCount": 1}, "expect": {"primaryAction": "review", "ordinaryZero": false}},
+    {"id": "repreview-selection-outside-window", "input": {"previousSelectedIds": ["release-a"], "currentLoadedIds": ["release-b"], "historyComplete": false}, "expect": {"unresolvedIds": ["release-a"], "validSelectedCount": 0, "declareDeleted": false, "silentlyForgetSelection": false}},
+    {"id": "parent-resume-keeps-source-intent", "input": {"parentState": "paused", "sourceStates": ["enabled", "paused", "draft"], "runWhenEnabled": [true, false, true]}, "expect": {"afterResumeEffectiveStates": ["enabled", "paused", "draft"], "overwriteSourceIntent": false}}
+  ]
+}
