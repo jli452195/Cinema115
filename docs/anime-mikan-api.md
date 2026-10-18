@@ -2,6 +2,8 @@
 
 验证日期：2026-10-18，17:14～17:20（Asia/Shanghai）。对应[实施任务表](anime-subscription-tasks.md)的 P0-02，承接 [Bangumi 接口验证](anime-bangumi-api.md)。本项核实来源能力，不实现业务接口或页面。
 
+后续客户端已在 P1-03 实现，见[蜜柑RSS与历史读取记录](anime-mikan-implementation.md)；本报告保留原始实站观察，不将模拟测试补写成实站结论。
+
 ## 验证范围与结论
 
 共 20 次公开 GET 请求，不携带 Cookie 或 Authorization，不跟随重定向。19 次读取并解析完整正文，合计 2,946,054 字节；另一次宽泛搜索在超过本次自定 4 MiB 正文预算时中止，明确记录为未读完整。没有下载图片、种子、视频或调用 115。

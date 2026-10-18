@@ -48,17 +48,21 @@ type mikanFlight struct {
 	err   error
 }
 type MikanService struct {
-	Client      MikanReader
-	Logs        *GenerationLogs
-	mu          sync.Mutex
-	cache       map[string]mikanCache
-	flights     map[string]*mikanFlight
-	gate        chan struct{}
-	lastRequest time.Time
+	Client          MikanReader
+	Logs            *GenerationLogs
+	mu              sync.Mutex
+	cache           map[string]mikanCache
+	flights         map[string]*mikanFlight
+	gate            chan struct{}
+	lastRequest     time.Time
+	cooldownUntil   time.Time
+	animeCache      map[string]animeMikanCache
+	animeFlights    map[string]*animeMikanFlight
+	animeCacheBytes int
 }
 
 func NewMikanService(client MikanReader, logs *GenerationLogs) *MikanService {
-	return &MikanService{Client: client, Logs: logs, cache: make(map[string]mikanCache, 16), flights: make(map[string]*mikanFlight), gate: make(chan struct{}, 1)}
+	return &MikanService{Client: client, Logs: logs, cache: make(map[string]mikanCache, 16), flights: make(map[string]*mikanFlight), gate: make(chan struct{}, 1), animeCache: make(map[string]animeMikanCache, 16), animeFlights: make(map[string]*animeMikanFlight)}
 }
 func cloneMikan(result mikan.Result) mikan.Result {
 	result.Items = append([]mikan.Item{}, result.Items...)
@@ -177,7 +181,7 @@ func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool,
 				return flight.entry, true, flight.err
 			}
 		}
-		if len(s.flights) >= 32 {
+		if len(s.flights)+len(s.animeFlights) >= 32 {
 			s.mu.Unlock()
 			return mikanCache{}, false, errors.New("蜜柑搜索繁忙，请稍后重试")
 		}
@@ -219,12 +223,33 @@ func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool,
 }
 
 func (s *MikanService) fetch(ctx context.Context, read func(context.Context) (mikan.Result, error)) (mikan.Result, error) {
+	var result mikan.Result
+	err := s.withMikanAccess(ctx, func() (err error) {
+		result, err = read(ctx)
+		return err
+	})
+	return result, err
+}
+
+type MikanCooldownError struct{ Until time.Time }
+
+func (e *MikanCooldownError) Error() string { return "蜜柑来源冷却中，请稍后重试" }
+func (e *MikanCooldownError) Unwrap() error { return mikan.ErrBlocked }
+
+// All legacy search/detail and anime feed/history reads use this same gate.
+func (s *MikanService) withMikanAccess(ctx context.Context, read func() error) error {
 	select {
 	case s.gate <- struct{}{}:
 	case <-ctx.Done():
-		return mikan.Result{}, ctx.Err()
+		return ctx.Err()
 	}
 	defer func() { <-s.gate }()
+	s.mu.Lock()
+	until := s.cooldownUntil
+	s.mu.Unlock()
+	if time.Now().Before(until) {
+		return &MikanCooldownError{Until: until}
+	}
 	// 同时只访问一次蜜柑，相邻请求至少间隔一秒，降低站点压力。
 	if delay := time.Until(s.lastRequest.Add(time.Second)); delay > 0 {
 		timer := time.NewTimer(delay)
@@ -232,9 +257,21 @@ func (s *MikanService) fetch(ctx context.Context, read func(context.Context) (mi
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
-			return mikan.Result{}, ctx.Err()
+			return ctx.Err()
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.lastRequest = time.Now()
-	return read(ctx)
+	err := read()
+	var response *mikan.ResponseError
+	if errors.As(err, &response) && !response.RetryAt.IsZero() {
+		s.mu.Lock()
+		if response.RetryAt.After(s.cooldownUntil) {
+			s.cooldownUntil = response.RetryAt
+		}
+		s.mu.Unlock()
+	}
+	return err
 }

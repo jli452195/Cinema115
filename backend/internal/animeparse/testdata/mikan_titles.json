@@ -1,0 +1,79 @@
+[
+  {
+    "label": "continuous",
+    "title": "【DHR动研字幕组】[Re：从零开始的异世界生活 第二季_Re Zero S2][26][繁体][720P][MP4]",
+    "kind": "episode",
+    "episode": 26,
+    "resolution": "720p"
+  },
+  {
+    "label": "season-local",
+    "title": "[爱恋字幕社][7月新番][Re:从零开始的异世界生活 S2][Re:Zero kara Hajimeru Isekai Seikatsu S2][13][1080p][AVC][繁中]",
+    "kind": "episode",
+    "episode": 13,
+    "resolution": "1080p"
+  },
+  {
+    "label": "part-two",
+    "title": "​[c.c动漫][7月新番][Re：从零开始的异世界生活 第二季][18][BIG5][1080P][MP4]",
+    "kind": "episode",
+    "episode": 18,
+    "resolution": "1080p"
+  },
+  {
+    "label": "recut-a",
+    "title": "[Lilith-Raws] Re：从零开始的异世界生活 新编集版 / Re Zero Shin hensuu ban - 07A [Baha][WEB-DL][1080p][AVC AAC][CHT][MKV]",
+    "kind": "special",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "recut-b",
+    "title": "[Lilith-Raws] Re：从零开始的异世界生活 新编集版 / Re Zero Shin hensuu ban - 06B [Baha][WEB-DL][1080p][AVC AAC][CHT][MKV]",
+    "kind": "special",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "dual-number",
+    "title": "[晚街与灯][Re：从零开始的异世界的生活_Re Zero kara Hajimeru Isekai Seikatsu][59][3rd - 09][WEB-DL_1080P_x264_AAC][繁日双语]",
+    "kind": "composite",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "cross-chapter",
+    "title": "[7³ACG] Re：从零开始的异世界生活/Re:Zero kara Hajimeru Isekai Seikatsu S01 | 26-50 [简繁字幕] BDrip 1080p x265 OPUS 2.0",
+    "kind": "batch",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "cross-chapter-later",
+    "title": "[7³ACG] Re：从零开始的异世界生活/Re:Zero kara Hajimeru Isekai Seikatsu S01 | 51-66 [简繁字幕] BDrip 1080p x265 OPUS 2.0",
+    "kind": "batch",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "mixed-sp",
+    "title": "【动漫国&KNA&轻之国度字幕组】★07月新番[Re:从零开始的异世界生活][26-38+SP26-38(前半全集)][1080P][简体][MP4]",
+    "kind": "batch",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "mixed-sp-pair",
+    "title": "【动漫国&KNA&轻之国度字幕组】★07月新番[Re:从零开始的异世界生活][33-34+SP33-34][1080P][简体][MP4]",
+    "kind": "batch",
+    "episode": 0,
+    "resolution": "1080p"
+  },
+  {
+    "label": "recut-range",
+    "title": "[SAIO-Raws] Re:从零开始的异世界生活 新编集版 Re Zero Shin Henshuu-ban 1-13 [BD 1920x1080 HEVC-10bit OPUS][简繁内封字幕]",
+    "kind": "batch",
+    "episode": 0,
+    "resolution": "unknown"
+  }
+]

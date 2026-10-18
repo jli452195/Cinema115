@@ -3,7 +3,6 @@ package mikan
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,6 +49,7 @@ type Result struct {
 	Bangumis []Bangumi   `json:"bangumis"`
 	Bangumi  *Bangumi    `json:"bangumi,omitempty"`
 	More     []Expansion `json:"more"`
+	RawCount int         `json:"-"`
 }
 
 type Client struct {
@@ -98,11 +98,8 @@ func (c *Client) read(ctx context.Context, path, bangumiID, group string, take i
 		return Result{}, ErrNetwork
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 403 || resp.StatusCode == 429 || resp.StatusCode == 503 {
-		return Result{}, ErrBlocked
-	}
 	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("蜜柑返回 HTTP %d", resp.StatusCode)
+		return Result{}, responseError(resp, time.Now())
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20+1))
 	if err != nil {
@@ -185,6 +182,10 @@ func Parse(reader io.Reader) (Result, error) {
 }
 
 func parse(reader io.Reader, bangumiID, group string, take int) (Result, error) {
+	return parseWithOptions(reader, bangumiID, group, take, false)
+}
+
+func parseWithOptions(reader io.Reader, bangumiID, group string, take int, strict bool) (Result, error) {
 	doc, err := html.Parse(reader)
 	if err != nil {
 		return Result{}, ErrParse
@@ -196,6 +197,7 @@ func parse(reader io.Reader, bangumiID, group string, take int) (Result, error) 
 	parseBangumis(doc, &result)
 	currentGroup, rowCount := group, 0
 	seen := make(map[string]bool, 64)
+	seenItems := make(map[string]Item, 64)
 	groups := make(map[string]bool, 16)
 	tableFound, bodyFound, badRow := false, false, false
 	emptyFound, searchInputFound := false, false
@@ -278,6 +280,9 @@ func parse(reader io.Reader, bangumiID, group string, take int) (Result, error) 
 			return
 		}
 		rowCount++
+		if strict && rowCount > AnimeMaxRows {
+			return
+		}
 		item := Item{GroupID: currentGroup}
 		if bangumiID != "" && !ValidID(currentGroup) {
 			badRow = true
@@ -323,8 +328,15 @@ func parse(reader io.Reader, bangumiID, group string, take int) (Result, error) 
 		if !seen[item.ID] {
 			result.Items = append(result.Items, item)
 			seen[item.ID] = true
+			seenItems[item.ID] = item
+		} else if strict && seenItems[item.ID] != item {
+			badRow = true
 		}
 	})
+	result.RawCount = rowCount
+	if strict && rowCount > AnimeMaxRows {
+		return Result{}, &LimitError{Kind: "rows"}
+	}
 	// 蜜柑零结果使用独立提示页，不包含结果表格；需同时确认搜索框及明确的空结果标记。
 	if !tableFound && emptyFound && searchInputFound && !badRow && len(result.Items) == 0 {
 		return result, nil
