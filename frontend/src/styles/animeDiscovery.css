@@ -1,0 +1,57 @@
+.anime-browser { min-width: 0; padding-bottom: 24px; }
+.anime-browser-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 26px; }
+.anime-mode-switch { display: inline-flex; padding: 4px; border-radius: 14px; background: rgb(var(--color-slate-200) / .55); }
+.anime-mode-switch button { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 0 16px; border-radius: 11px; font-size: 13px; color: rgb(var(--color-slate-600)); }
+.anime-mode-switch button[aria-pressed="true"] { background: white; box-shadow: 0 2px 6px rgb(15 23 42 / .06); color: #2563eb; font-weight: 600; }
+.anime-refresh { display: inline-flex; min-height: 40px; min-width: 40px; align-items: center; justify-content: center; gap: 7px; border-radius: 12px; padding: 0 10px; color: rgb(var(--color-slate-600)); font-size: 12px; }
+.anime-refresh:hover:not(:disabled) { background: rgb(148 163 184 / .12); }
+.anime-refresh:disabled { opacity: .5; cursor: wait; }
+.anime-weekdays { display: grid; position: relative; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; max-width: 600px; padding: 4px; border-radius: 14px; background: rgb(var(--color-slate-200) / .45); }
+.anime-weekdays button { position: relative; z-index: 1; display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 5px; border-radius: 11px; font-size: 13px; color: rgb(var(--color-slate-600)); }
+.anime-weekdays button[aria-pressed="true"] { color: #2563eb; font-weight: 600; }
+.anime-weekday-indicator { position: absolute; border-radius: 11px; background: white; box-shadow: 0 2px 6px rgb(15 23 42 / .05); pointer-events: none; }
+.anime-today-dot { width: 4px; height: 4px; flex: none; border-radius: 50%; background: currentColor; opacity: .7; }
+.anime-context { margin-top: 12px; font-size: 12px; line-height: 22px; color: rgb(var(--color-slate-500)); }
+.anime-search-form { display: flex; gap: 10px; max-width: 680px; }
+.anime-search-input { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; padding-left: 14px; border: 1px solid rgb(var(--color-slate-200)); border-radius: 13px; background: white; color: rgb(var(--color-slate-500)); }
+.anime-search-input:focus-within { border-color: #60a5fa; box-shadow: 0 0 0 3px rgb(96 165 250 / .12); }
+.anime-search-input > svg { flex: none; }
+.anime-search-input input { width: 100%; min-width: 0; height: 46px; outline: none; background: transparent; color: rgb(var(--color-slate-800)); font-size: 14px; }
+.anime-search-input input::-webkit-search-cancel-button { display: none; }
+.anime-input-clear { display: flex; width: 42px; height: 44px; flex: none; align-items: center; justify-content: center; border-radius: 12px; }
+.anime-search-submit { min-height: 46px; padding: 0 22px; flex: none; border-radius: 13px; color: white; background: #2563eb; font-size: 13px; font-weight: 600; }
+.anime-search-submit:hover:not(:disabled) { background: #1d4ed8; }
+.anime-search-submit:disabled { opacity: .5; cursor: wait; }
+.anime-results-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-top: 30px; }
+.anime-results-heading h2 { min-width: 0; overflow-wrap: anywhere; color: rgb(var(--color-slate-800)); font-size: 15px; font-weight: 600; }
+.anime-feedback { display: flex; min-height: 32px; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 22px; color: rgb(var(--color-slate-500)); padding-bottom: 8px; }
+.anime-feedback button, .anime-empty button { min-height: 36px; color: #2563eb; }
+.anime-feedback button:disabled { opacity: .5; }
+.anime-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 14px; }
+.anime-skeleton > div { aspect-ratio: 2 / 3; border-radius: 12px; background: rgb(var(--color-slate-200)); }
+.anime-skeleton > span { display: block; height: 14px; width: 80%; margin-top: 14px; border-radius: 4px; background: rgb(var(--color-slate-200)); }
+.anime-skeleton > span:last-child { width: 45%; height: 10px; margin-top: 10px; }
+.anime-empty { display: flex; min-height: 280px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px 16px; text-align: center; color: rgb(var(--color-slate-500)); }
+.anime-empty > svg { opacity: .65; }
+.anime-empty h3 { font-size: 15px; font-weight: 500; color: rgb(var(--color-slate-700)); }
+.anime-empty p { font-size: 13px; line-height: 24px; }
+.anime-pagination { display: flex; align-items: center; justify-content: center; gap: 20px; margin-top: 32px; font-size: 12px; color: rgb(var(--color-slate-500)); }
+.anime-pagination button { display: inline-flex; min-width: 92px; min-height: 44px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 12px; background: white; color: rgb(var(--color-slate-700)); box-shadow: 0 2px 8px rgb(15 23 42 / .04); }
+.anime-pagination button:hover:not(:disabled) { background: rgb(96 165 250 / .12); color: #2563eb; }
+.anime-pagination button:disabled { opacity: .35; cursor: default; box-shadow: none; }
+.anime-browser button:focus-visible, .anime-refresh:focus-visible { outline: 2px solid #60a5fa; outline-offset: 3px; }
+.dark .anime-mode-switch, .dark .anime-weekdays { background: rgb(var(--color-slate-800) / .6); }
+.dark .anime-mode-switch button, .dark .anime-weekdays button, .dark .anime-refresh { color: rgb(var(--color-slate-400)); }
+.dark .anime-mode-switch button[aria-pressed="true"], .dark .anime-weekdays button[aria-pressed="true"] { color: #93c5fd; }
+.dark .anime-mode-switch button[aria-pressed="true"], .dark .anime-weekday-indicator { background: rgb(var(--color-slate-700)); }
+.dark .anime-search-input { background: rgb(var(--color-slate-900)); border-color: rgb(var(--color-slate-700)); }
+.dark .anime-search-input input, .dark .anime-results-heading h2, .dark .anime-empty h3 { color: rgb(var(--color-slate-100)); }
+.dark .anime-context, .dark .anime-feedback, .dark .anime-empty, .dark .anime-pagination { color: rgb(var(--color-slate-400)); }
+.dark .anime-feedback button, .dark .anime-empty button { color: #93c5fd; }
+.dark .anime-skeleton > div, .dark .anime-skeleton > span { background: rgb(var(--color-slate-800)); }
+.dark .anime-pagination button { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-300)); }
+.dark .anime-pagination button:hover:not(:disabled) { color: #93c5fd; }
+@media (min-width: 640px) { .anime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px 20px; } }
+@media (min-width: 900px) { .anime-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .anime-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (max-width: 399px) { .anime-mode-switch button { padding-inline: 12px; } .anime-browser-toolbar > p { display: none; } .anime-weekdays { gap: 0; } .anime-weekdays button { font-size: 12px; gap: 3px; } .anime-search-input { gap: 6px; padding-left: 10px; } .anime-search-input input { font-size: 12px; } .anime-search-submit { padding-inline: 16px; } }

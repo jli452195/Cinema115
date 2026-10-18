@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:anime-discovery-ui": "node scripts/anime-discovery-ui.cjs",
     "test:account-menu-ui": "node scripts/account-menu-ui.cjs",
     "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",

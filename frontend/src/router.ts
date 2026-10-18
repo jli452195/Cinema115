@@ -31,6 +31,8 @@ import GyingView from './views/GyingView.vue'
 import WoniuView from './views/WoniuView.vue'
 import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
+import AnimeDiscoveryView from './views/AnimeDiscoveryView.vue'
+import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
@@ -44,6 +46,10 @@ export const router = createRouter({
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
+    { path: '/anime', name: 'anime-discovery', component: AnimeDiscoveryView, beforeEnter: to => {
+      const query = animeRememberedQuery()
+      if (!Object.keys(to.query).length && query) return { path: '/anime', query, replace: true }
+    } },
     { path: '/follows', name: 'my-follows', component: MyFollowsView },
     { path: '/users', name: 'users-category', component: HomeView, props: { category: 'users' }, meta: { categoryPage: true } },
     { path: '/users/list', name: 'user-management', component: EmbyUsersView },
@@ -85,6 +91,8 @@ export const router = createRouter({
   scrollBehavior: (to, from, savedPosition) => {
     // The missing view restores its per-view/page scroll after installing cached rows.
     if (to.name === 'emby-missing') return false
+    // Anime installs cached rows before restoring each filter/page's scroll.
+    if (to.name === 'anime-discovery') return false
     // Changing only the selected date should not jump the update grid back to the top.
     if (to.name === 'updates' && from.name === 'updates') return false
     return savedPosition ?? (to.path === '/helper115' && to.hash === '#pool' ? { el: '#pool', top: 24 } : { top: 0 })
