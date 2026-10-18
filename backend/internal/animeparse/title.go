@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 1
+const ParserVersion int64 = 3
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -62,6 +62,11 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 		return out, ErrInput
 	}
 	out.Resolution = resolution(title)
+	out.Spec, out.SpecAmbiguous = specification(title)
+	if out.Resolution != nil && *out.Resolution == "unknown" && out.Spec.Resolution != "" {
+		value := out.Spec.Resolution
+		out.Resolution = &value
+	}
 	out.VersionLabel = version(title)
 	candidates := make([]candidate, 0, 8)
 	add := func(start, end int, kind string, strong bool) {

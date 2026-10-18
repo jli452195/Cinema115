@@ -522,3 +522,33 @@ func TestAnimeReleaseObservationAndDecisionRollback(t *testing.T) {
 		t.Fatal("context cancellation lost", err)
 	}
 }
+
+func TestAnimeStructuredRulesPersistWithoutRevisionChurn(t *testing.T) {
+	s, path := testStore(t)
+	ctx := context.Background()
+	entry := createAnimeEntry(t, s, animePtr("123"))
+	c := animeConfig(entry.ID)
+	c.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "confirmed_chapter"}
+	c.Sources[0].Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}
+	c.Sources[0].Rules.Resolution = animePtr("any")
+	c.Sources[0].Rules.SpecMode = "profiles"
+	c.Sources[0].Rules.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"ja", "zh-Hans"}, SubtitleMode: "hard"}, {Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard"}}
+	saved := saveAnimeConfig(t, s, c)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetAnimeSubscription(ctx, saved.ID, false)
+	if err != nil || !reflect.DeepEqual(got, saved) {
+		t.Fatal("structured rules changed on reopen", err)
+	}
+	edit := model.AnimeSubscriptionConfig{ID: got.ID, EntryID: entry.ID, ExpectedRevision: got.Revision, Status: got.Status, Form: got.Form, Sources: []model.AnimeSourceConfig{sourceEdit(got.Sources[0], "main")}}
+	again := saveAnimeConfig(t, reopened, edit)
+	if again.Sources[0].Revision != got.Sources[0].Revision {
+		t.Fatal("unchanged structured rules bumped source revision")
+	}
+}

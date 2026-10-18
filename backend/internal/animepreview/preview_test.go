@@ -254,3 +254,78 @@ func TestPreviewRawCountBeforeDedupAndReliableEnd(t *testing.T) {
 		t.Fatal("empty source")
 	}
 }
+
+func TestPreviewMultipleSpecificationProfiles(t *testing.T) {
+	c := config()
+	r := &c.Sources[0].Rules
+	r.Resolution = ptr("any")
+	r.SpecMode = "profiles"
+	r.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard"}, {Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard"}}
+	s := build(t, c, page("[组] 动画 [30][1080p][简体内嵌]", "[组] 动画 [30v2][1080p][繁体内嵌]", "[组] 动画 [30][1080p][简繁内封]", "[组] 动画 [31][1080p]"))
+	want := []string{"MATCHED_METADATA_ONLY", "MATCHED_METADATA_ONLY", "TITLE_SPECIFICATION_MISMATCH", "TITLE_SPECIFICATION_UNKNOWN"}
+	for i, item := range s.Items {
+		if item.ReasonCode != want[i] {
+			t.Fatalf("row%d: %+v", i, item)
+		}
+	}
+	if len(s.SelectedIDs) != 2 {
+		t.Fatal("same episode versions were lost", s.SelectedIDs)
+	}
+	r.SpecProfiles = []model.AnimeSpec{{Resolution: "2160p"}}
+	s = build(t, c, page("[组] 动画 [30][1080p][简体内嵌]"))
+	if len(s.SelectedIDs) != 0 {
+		t.Fatal("zero matches broadened profile")
+	}
+	r.SpecMode = "any"
+	r.SpecProfiles = nil
+	s = build(t, c, page("[组] 动画 [30][1080p][简体内嵌]"))
+	if len(s.SelectedIDs) != 1 {
+		t.Fatal("explicit all specifications failed")
+	}
+}
+
+func TestSpecificationNormalizationAndFingerprint(t *testing.T) {
+	c := config()
+	c.Sources[0].Rules.SpecMode = "profiles"
+	c.Sources[0].Rules.SpecProfiles = []model.AnimeSpec{{Languages: []string{"zh-Hans", "ja"}, Resolution: "1080p"}, {Languages: []string{"ja", "zh-Hans"}, Resolution: "1080p"}}
+	n, err := Normalize(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Sources[0].Rules.SpecProfiles) != 1 {
+		t.Fatal("profile normalization", n)
+	}
+	a, _ := ConfigFingerprint(n)
+	n.Sources[0].Rules.SpecProfiles[0].Resolution = "2160p"
+	b, _ := ConfigFingerprint(n)
+	if a == b {
+		t.Fatal("spec change did not invalidate preview")
+	}
+	r, err := NormalizeRules(config().Sources[0].Rules)
+	if err != nil || r.SpecProfiles != nil {
+		t.Fatal("empty optional profiles must roundtrip as nil", r, err)
+	}
+}
+
+func TestPreviewSilverBulletLanguageAndContainerMatching(t *testing.T) {
+	c := config()
+	r := &c.Sources[0].Rules
+	r.Resolution = ptr("any")
+	r.SpecMode = "profiles"
+	r.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"ja", "zh-Hans"}, Container: "mp4"}}
+	titles := []string{"[银色子弹字幕组][名侦探柯南][第30集][简日双语MP4][1080P]", "[银色子弹字幕组][名侦探柯南][第30集][繁日双语MP4][1080P]", "[银色子弹字幕组][名侦探柯南][第30集][简繁日多语MKV][1080P]", "[银色子弹字幕组][名侦探柯南][第31集][简日双语MP4/繁日双语MP4/简繁日多语MKV][1080P]"}
+	s := build(t, c, page(titles...))
+	if len(s.SelectedIDs) != 1 || !s.Items[0].Selectable {
+		t.Fatal("simplified MP4 selection mixed other languages/containers", s.Items)
+	}
+	r.SpecProfiles = append(r.SpecProfiles, model.AnimeSpec{Resolution: "1080p", Languages: []string{"ja", "zh-Hant"}, Container: "mp4"})
+	s = build(t, c, page(titles...))
+	if len(s.SelectedIDs) != 2 {
+		t.Fatal("multiple language versions cannot coexist", s.Items)
+	}
+	r.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"ja", "zh-Hans", "zh-Hant"}, Container: "mkv"}}
+	s = build(t, c, page(titles...))
+	if len(s.SelectedIDs) != 1 || s.Items[3].ReasonCode != "TITLE_SPECIFICATION_UNKNOWN" {
+		t.Fatal("ambiguous container must need review", s.Items)
+	}
+}

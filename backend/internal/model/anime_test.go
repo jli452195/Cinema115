@@ -63,3 +63,43 @@ func TestAnimeJSONRejectsUnknownFieldsAndTrailingValues(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAnimeSpecificationAndReviewValidation(t *testing.T) {
+	valid := func() AnimeSourceConfig {
+		s := validAnimeSource()
+		s.Binding.Scope = &AnimeScope{Kind: "confirmed_chapter"}
+		s.Binding.Review = &AnimeSourceReview{Method: "source_review", ItemID: *s.ItemID, GroupID: *s.GroupID}
+		s.Rules.Resolution = animeValue("any")
+		s.Rules.SpecMode = "profiles"
+		s.Rules.SpecProfiles = []AnimeSpec{{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard"}}
+		return s
+	}
+	if err := valid().Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*AnimeSourceConfig){
+		func(s *AnimeSourceConfig) { s.Binding.Review.ItemID = "999" },
+		func(s *AnimeSourceConfig) { s.Binding.Review.Method = "automatic" },
+		func(s *AnimeSourceConfig) { s.Binding.Confirmed = false },
+		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles = nil },
+		func(s *AnimeSourceConfig) { s.Rules.SpecMode = "any" },
+		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0] = AnimeSpec{} },
+		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0].Codec = "unknown" },
+		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0].Languages = []string{"zh-Hans", "zh-Hans"} },
+		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles = make([]AnimeSpec, 13) },
+	} {
+		s := valid()
+		change(&s)
+		if s.Validate() == nil {
+			t.Fatal("invalid specification/review accepted", s)
+		}
+	}
+	draft := valid()
+	draft.Status = "draft"
+	draft.Binding.Confirmed = false
+	draft.Binding.Review = nil
+	draft.Rules.SpecProfiles = nil
+	if err := draft.Validate(); err != nil {
+		t.Fatal("incomplete draft blocked", err)
+	}
+}

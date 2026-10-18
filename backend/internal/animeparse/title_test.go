@@ -120,7 +120,7 @@ func TestTitleResolution(t *testing.T) {
 		{"[1080p/720p]", "unknown"}, {"[720p][2160p]", "unknown"},
 		{"[1080i]", "unknown"}, {"[1080p/1080i]", "unknown"},
 		{"[480p/1080p]", "unknown"}, {"[8K/2160p]", "unknown"},
-		{"[1920x1080]", "unknown"}, {"[x1080p]", "unknown"}, {"[AV1]", "unknown"},
+		{"[1920x1080]", "1080p"}, {"[x1080p]", "unknown"}, {"[AV1]", "unknown"},
 	} {
 		got, err := Title("[组] 测试 [01] " + tc.labels)
 		if err != nil {

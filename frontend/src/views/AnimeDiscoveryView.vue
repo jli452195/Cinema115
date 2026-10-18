@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch, IconX } from '@tabler/icons-vue'
+import { IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch, IconX, IconBookmark } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
 import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
-import { portalUser } from '../composables/usePortalAuth'
+import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
-import { animeCooldownMessage, animeCooldownUntil, animeFailure, animeScroll, cachedAnime, rememberAnimeQuery, rememberAnimeScroll, requestAnime } from '../composables/useAnimeDiscovery'
-import type { AnimeCalendar, AnimeCardItem, AnimeSearch } from '../types/anime'
+import { animeCooldownMessage, animeCooldownUntil, animeDetailState, animeFailure, animeScroll, cachedAnime, rememberAnimeQuery, rememberAnimeScroll, requestAnime } from '../composables/useAnimeDiscovery'
+import type { AnimeCalendar, AnimeCardItem, AnimeSearch, AnimeSubjectResult } from '../types/anime'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
@@ -21,11 +21,17 @@ const weekday = computed(() => /^[1-7]$/.test(String(route.query.day)) ? Number(
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(51, Math.max(1, Number(route.query.page))) : 1)
 const input = ref(keyword.value), inputError = ref(''), keywordInput = ref<HTMLInputElement>()
 const calendar = ref<AnimeCalendar>(), search = ref<AnimeSearch>()
-const loading = ref(false), error = ref(''), selected = ref<AnimeCardItem>()
+const loading = ref(false), error = ref('')
 const dataKey = computed(() => mode.value === 'calendar' ? 'calendar' : `search:${keyword.value}:${page.value}`)
 const scrollKey = computed(() => mode.value === 'calendar' ? `calendar:${weekday.value}` : dataKey.value)
 const result = computed(() => mode.value === 'calendar' ? calendar.value : search.value)
 const items = computed(() => mode.value === 'calendar' ? calendar.value?.days.find(day => day.weekday === weekday.value)?.items || [] : search.value?.items || [])
+const selected = computed<AnimeCardItem | undefined>(() => {
+  if (!props.token || props.token !== portalToken.value || portalUser.value?.role !== 'admin') return
+  const id = typeof route.query.subject === 'string' && /^[1-9]\d*$/.test(route.query.subject) ? route.query.subject : ''
+  if (!id) return
+  return animeDetailState(id)?.current || cachedAnime<AnimeSubjectResult>(`subject:${id}`)?.data.subject || items.value.find(item => item.id === id) || { id, title: `Bangumi ${id}`, originalTitle: '', coverUrl: '', date: '', weekday: null, url: '' }
+})
 const sourceStale = computed(() => !!result.value && (result.value.stale || result.value.expiresAt <= Date.now()))
 const totalPages = computed(() => Math.min(51, Math.max(1, Math.ceil((search.value?.total || 0) / 20))))
 const weekContainer = ref<HTMLElement>()
@@ -36,7 +42,7 @@ let interactionVersion = 0
 function markInteraction() { interactionVersion++ }
 
 function query(overrides: Record<string, string | undefined> = {}) {
-  return { view: mode.value, day: String(weekday.value), ...(keyword.value ? { q: keyword.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
+  return { view: mode.value, day: String(weekday.value), ...(keyword.value ? { q: keyword.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...(selected.value ? { subject: selected.value.id } : {}), ...overrides }
 }
 function validKeyword(value: string) {
   return Array.from(value).length <= 128 && !/[\u0000-\u001f\u007f]/.test(value)
@@ -47,11 +53,13 @@ function submitSearch() {
   inputError.value = !value ? '请输入番剧名称' : !validKeyword(value) ? '名称最多 128 个字符，不能含控制字符' : ''
   if (inputError.value) return
   if (mode.value === 'search' && value === keyword.value && page.value === 1) { void load(true); return }
-  void router.push({ path: '/anime', query: query({ view: 'search', q: value, page: undefined }) })
+  void router.push({ path: '/anime', query: query({ view: 'search', q: value, page: undefined, subject: undefined }) })
 }
-function switchMode(value: 'calendar' | 'search') { void router.push({ path: '/anime', query: query({ view: value }) }) }
-function selectDay(day: number) { void router.push({ path: '/anime', query: query({ day: String(day) }) }) }
-function changePage(value: number) { void router.push({ path: '/anime', query: query({ page: value > 1 ? String(value) : undefined }) }) }
+function switchMode(value: 'calendar' | 'search') { void router.push({ path: '/anime', query: query({ view: value, subject: undefined }) }) }
+function selectDay(day: number) { void router.push({ path: '/anime', query: query({ day: String(day), subject: undefined }) }) }
+function changePage(value: number) { void router.push({ path: '/anime', query: query({ page: value > 1 ? String(value) : undefined, subject: undefined }) }) }
+function openDetail(item: AnimeCardItem, replace = false) { void router[replace ? 'replace' : 'push']({ path: '/anime', query: query({ subject: item.id }) }) }
+function closeDetail() { void router.replace({ path: '/anime', query: query({ subject: undefined }) }) }
 function savePosition() { rememberAnimeScroll(scrollKey.value, window.scrollY) }
 async function restorePosition(key: string) {
   await nextTick()
@@ -97,7 +105,6 @@ async function load(force = false) {
 
 watch(keyword, value => { input.value = value; inputError.value = '' })
 watch([dataKey, () => props.token, () => portalUser.value?.id, () => portalUser.value?.role], () => {
-  selected.value = undefined
   void load()
 }, { immediate: true })
 watch(scrollKey, key => { void restorePosition(key) })
@@ -118,7 +125,7 @@ onBeforeUnmount(() => {
 
 <template>
   <ManagementLayout title="动漫订阅" description="从 Bangumi 找到想追的番剧，先确认作品与篇章。" @logout="$emit('logout')">
-    <template #actions><button type="button" class="anime-refresh" :disabled="loading || !!animeCooldownUntil || mode === 'search' && !keyword" :aria-label="mode === 'calendar' ? '刷新新番日历' : '刷新搜索结果'" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+    <template #actions><RouterLink to="/anime/subscriptions" class="anime-refresh"><IconBookmark :size="18" aria-hidden="true" />我的订阅</RouterLink><button type="button" class="anime-refresh" :disabled="loading || !!animeCooldownUntil || mode === 'search' && !keyword" :aria-label="mode === 'calendar' ? '刷新新番日历' : '刷新搜索结果'" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
     <div class="anime-browser">
       <div class="anime-browser-toolbar">
         <div class="anime-mode-switch" aria-label="找番方式">
@@ -157,7 +164,7 @@ onBeforeUnmount(() => {
         <div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span></div>
       </div>
       <div v-else-if="items.length" class="anime-grid" :aria-label="mode === 'calendar' ? '放送番剧列表' : '搜索结果列表'" :aria-busy="loading">
-        <AnimeCard v-for="item in items" :key="item.id" :item="item" @select="selected = $event" />
+        <AnimeCard v-for="item in items" :key="item.id" :item="item" @select="openDetail($event)" />
       </div>
       <div v-else-if="!error" class="anime-empty">
         <component :is="mode === 'calendar' ? IconCalendar : IconSearch" :size="32" aria-hidden="true" />
@@ -173,7 +180,7 @@ onBeforeUnmount(() => {
       </nav>
       <p v-if="mode === 'search' && (search?.total || 0) > 1020" class="anime-context text-center">当前可翻阅前 1020 条结果，建议补充作品名缩小范围。</p>
     </div>
-    <AnimeDetailDialog v-if="selected" :key="selected.id" :token="token" :item="selected" @close="selected = undefined" />
+    <AnimeDetailDialog v-if="selected" :key="portalUser?.id" :token="token" :item="selected" @close="closeDetail" @navigate="openDetail($event, true)" />
   </ManagementLayout>
 </template>
 

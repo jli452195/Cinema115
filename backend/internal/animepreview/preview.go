@@ -156,6 +156,22 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 		}
 	}
 	pass("keywords")
+	if rules.SpecMode == "profiles" {
+		matched, unknown := false, false
+		for _, profile := range rules.SpecProfiles {
+			ok, missing := animeparse.MatchSpec(profile, item.Release.Parse.Spec)
+			matched, unknown = matched || ok, unknown || missing
+		}
+		if !matched {
+			if unknown {
+				stop("specification", "needs_confirmation", "TITLE_SPECIFICATION_UNKNOWN")
+			} else {
+				stop("specification", "filtered", "TITLE_SPECIFICATION_MISMATCH")
+			}
+			return nil
+		}
+	}
+	pass("specification")
 	if *rules.Resolution != "any" && (item.Release.Parse.Resolution == nil || *item.Release.Parse.Resolution != *rules.Resolution) {
 		stop("resolution", "filtered", "TITLE_RESOLUTION_MISMATCH")
 		return nil

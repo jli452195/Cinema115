@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const RuleVersion int64 = 1
+const RuleVersion int64 = 2
 const LifetimeMillis int64 = 15 * 60 * 1000
 
 var (
@@ -79,6 +79,21 @@ func NormalizeRules(r model.AnimeRules) (model.AnimeRules, error) {
 	r.Include, r.Exclude = normalize(r.Include), normalize(r.Exclude)
 	if err := r.Validate(false); err != nil {
 		return r, ErrInput
+	}
+	profiles := make([]model.AnimeSpec, 0, len(r.SpecProfiles))
+	seen := make(map[string]bool, len(r.SpecProfiles))
+	for _, profile := range r.SpecProfiles {
+		profile = animeparse.NormalizeSpec(profile)
+		key := animeparse.SpecKey(profile)
+		if !seen[key] {
+			profiles = append(profiles, profile)
+			seen[key] = true
+		}
+	}
+	sort.Slice(profiles, func(i, j int) bool { return animeparse.SpecKey(profiles[i]) < animeparse.SpecKey(profiles[j]) })
+	r.SpecProfiles = profiles
+	if len(profiles) == 0 {
+		r.SpecProfiles = nil
 	}
 	return r, nil
 }

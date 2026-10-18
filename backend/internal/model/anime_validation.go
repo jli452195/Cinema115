@@ -81,6 +81,9 @@ func (b AnimeBinding) Validate(complete bool) error {
 	if complete && (!b.Confirmed || b.Scope == nil) || b.Confirmed && b.Scope == nil {
 		return fmt.Errorf("binding is incomplete")
 	}
+	if r := b.Review; r != nil && (r.Method != "source_review" || !ValidAnimeExternalID(r.ItemID) || !ValidAnimeExternalID(r.GroupID) || !b.Confirmed || b.Scope == nil) {
+		return fmt.Errorf("invalid source review")
+	}
 	if s := b.Scope; s != nil {
 		switch s.Kind {
 		case "range":
@@ -88,7 +91,7 @@ func (b AnimeBinding) Validate(complete bool) error {
 				return fmt.Errorf("invalid binding range")
 			}
 		case "confirmed_chapter":
-			if s.First != nil || s.Last != nil || !animeText(s.Evidence, 512, true) {
+			if s.First != nil || s.Last != nil || !animeText(s.Evidence, 512, false) || b.Confirmed && strings.TrimSpace(s.Evidence) == "" && b.Review == nil {
 				return fmt.Errorf("chapter confirmation needs evidence")
 			}
 		default:
@@ -112,6 +115,17 @@ func (r AnimeRules) Validate(complete bool) error {
 	}
 	if complete && (r.Resolution == nil || r.MinimumEpisode == nil || r.InitialMode == "") {
 		return fmt.Errorf("rules are incomplete")
+	}
+	if r.SpecMode != "" && r.SpecMode != "any" && r.SpecMode != "profiles" || len(r.SpecProfiles) > 12 || r.SpecMode != "profiles" && len(r.SpecProfiles) != 0 || complete && r.SpecMode == "profiles" && len(r.SpecProfiles) == 0 {
+		return fmt.Errorf("invalid specification selection")
+	}
+	for _, spec := range r.SpecProfiles {
+		if err := spec.Validate(); err != nil {
+			return err
+		}
+		if spec.Empty() {
+			return fmt.Errorf("empty specification profile")
+		}
 	}
 	if r.Resolution != nil {
 		switch *r.Resolution {
@@ -167,6 +181,9 @@ func (s AnimeSourceConfig) Validate() error {
 	}
 	if err := s.Binding.Validate(complete); err != nil {
 		return err
+	}
+	if r := s.Binding.Review; r != nil && (s.ItemID == nil || s.GroupID == nil || *s.ItemID != r.ItemID || *s.GroupID != r.GroupID) {
+		return fmt.Errorf("source review belongs to another publisher")
 	}
 	return s.Rules.Validate(complete)
 }
@@ -252,7 +269,7 @@ func (p AnimeReleaseParse) Validate() error {
 			return fmt.Errorf("invalid parsed resolution")
 		}
 	}
-	return nil
+	return p.Spec.Validate()
 }
 
 func (r AnimeRelease) Validate() error {

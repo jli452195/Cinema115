@@ -45,15 +45,37 @@ type AnimeBinding struct {
 	Confirmed             bool                        `json:"confirmed"`
 	Scope                 *AnimeScope                 `json:"scope"`
 	ChapterCorrespondence *AnimeChapterCorrespondence `json:"chapterCorrespondence"`
+	Review                *AnimeSourceReview          `json:"review,omitempty"`
+}
+
+// Review records the explicit source-review action, scoped to the immutable
+// publisher identity. The authenticated save operation records its actor.
+type AnimeSourceReview struct {
+	Method  string `json:"method"`
+	ItemID  string `json:"itemId"`
+	GroupID string `json:"groupId"`
+}
+
+// AnimeSpec describes title-declared properties, never verified file tracks.
+// Empty dimensions are unconstrained in a profile and unknown on a release.
+type AnimeSpec struct {
+	Resolution   string   `json:"resolution,omitempty"`
+	Languages    []string `json:"languages,omitempty"`
+	SubtitleMode string   `json:"subtitleMode,omitempty"`
+	Codec        string   `json:"codec,omitempty"`
+	Container    string   `json:"container,omitempty"`
+	BitDepth     string   `json:"bitDepth,omitempty"`
 }
 
 type AnimeRules struct {
-	SchemaVersion  int      `json:"schemaVersion"`
-	Resolution     *string  `json:"resolution"`
-	Include        []string `json:"include"`
-	Exclude        []string `json:"exclude"`
-	MinimumEpisode *int     `json:"minimumEpisode"`
-	InitialMode    string   `json:"initialMode"`
+	SchemaVersion  int         `json:"schemaVersion"`
+	Resolution     *string     `json:"resolution"`
+	Include        []string    `json:"include"`
+	Exclude        []string    `json:"exclude"`
+	MinimumEpisode *int        `json:"minimumEpisode"`
+	InitialMode    string      `json:"initialMode"`
+	SpecMode       string      `json:"specMode,omitempty"`
+	SpecProfiles   []AnimeSpec `json:"specProfiles,omitempty"`
 }
 
 // Form selections are input restoration only. Saving one cannot authorize work
@@ -177,12 +199,14 @@ type AnimeConfigReceipt struct {
 }
 
 type AnimeReleaseParse struct {
-	SchemaVersion int     `json:"schemaVersion"`
-	Kind          string  `json:"kind"`
-	RawEpisode    string  `json:"rawEpisode"`
-	Episode       *int    `json:"episode"`
-	Resolution    *string `json:"resolution"`
-	VersionLabel  string  `json:"versionLabel"`
+	SchemaVersion int       `json:"schemaVersion"`
+	Kind          string    `json:"kind"`
+	RawEpisode    string    `json:"rawEpisode"`
+	Episode       *int      `json:"episode"`
+	Resolution    *string   `json:"resolution"`
+	VersionLabel  string    `json:"versionLabel"`
+	Spec          AnimeSpec `json:"spec"`
+	SpecAmbiguous bool      `json:"specAmbiguous,omitempty"`
 }
 
 type AnimeRelease struct {

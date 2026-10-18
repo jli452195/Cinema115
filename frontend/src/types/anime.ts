@@ -19,4 +19,5 @@ export interface AnimeCalendar extends AnimeCacheMeta { days: { weekday: number;
 export interface AnimeSearch extends AnimeCacheMeta { items: AnimeCardItem[]; total: number; limit: number; offset: number }
 export interface AnimeSubject extends AnimeCardItem { synopsis: string; platform: string; episodes: number | null; totalEpisodes: number | null }
 export interface AnimeRelations extends AnimeCacheMeta { items: (AnimeCardItem & { relation: string })[] }
+export interface AnimeDetailState { current: AnimeCardItem; history: AnimeCardItem[]; relationsOpen: boolean; relationsLimit: number; synopsisOpen: boolean; top: number }
 export interface AnimeSubjectResult { subject: AnimeSubject; metadata: AnimeCacheMeta; relations?: AnimeRelations }

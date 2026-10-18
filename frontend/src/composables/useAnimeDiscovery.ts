@@ -1,10 +1,11 @@
 import { ref, watch } from 'vue'
 import { clearPortalSession, portalToken, portalUser } from './usePortalAuth'
-import type { AnimeCacheMeta } from '../types/anime'
+import type { AnimeCacheMeta, AnimeDetailState } from '../types/anime'
 
 // Public metadata stays in bounded memory only. Never persist tokens or query results.
 const cache = new Map<string, { data: unknown; expiresAt: number }>()
 const scrolls = new Map<string, number>()
+const details = new Map<string, AnimeDetailState>()
 let generation = 0
 let lastQuery: Record<string, string> | undefined
 let cooldownTimer: ReturnType<typeof setTimeout> | undefined
@@ -12,13 +13,14 @@ export const animeCooldownUntil = ref(0)
 
 watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
   generation++
-  cache.clear(); scrolls.clear(); lastQuery = undefined
+  cache.clear(); scrolls.clear(); details.clear(); lastQuery = undefined
   clearTimeout(cooldownTimer); animeCooldownUntil.value = 0
 }, { flush: 'sync' })
 
 export function animeRememberedQuery() { return lastQuery ? { ...lastQuery } : undefined }
-export function rememberAnimeQuery(query: Record<string, string>) { lastQuery = { ...query } }
+export function rememberAnimeQuery(query: Record<string, string>) { if (portalToken.value && portalUser.value?.role === 'admin') lastQuery = { ...query } }
 export function rememberAnimeScroll(key: string, top: number) {
+  if (!portalToken.value || portalUser.value?.role !== 'admin') return
   scrolls.delete(key); scrolls.set(key, top)
   if (scrolls.size > 32) scrolls.delete(scrolls.keys().next().value!)
 }
@@ -28,6 +30,12 @@ export function cachedAnime<T>(key: string): { data: T; fresh: boolean } | undef
   if (!entry) return
   cache.delete(key); cache.set(key, entry)
   return { data: entry.data as T, fresh: entry.expiresAt > Date.now() }
+}
+
+export function animeDetailState(id: string) { return details.get(id) }
+export function rememberAnimeDetail(state: AnimeDetailState) {
+  details.delete(state.current.id); details.set(state.current.id, { ...state, history: [...state.history] })
+  while (details.size > 32) details.delete(details.keys().next().value!)
 }
 
 function setCooldown(until: number | null | undefined) {

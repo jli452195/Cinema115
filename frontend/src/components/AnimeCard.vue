@@ -4,20 +4,21 @@ import { IconPhotoOff } from '@tabler/icons-vue'
 import type { AnimeCardItem } from '../types/anime'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 
-const props = defineProps<{ item: AnimeCardItem }>()
+const props = defineProps<{ item: AnimeCardItem; actionLabel?: string }>()
 defineEmits<{ select: [item: AnimeCardItem] }>()
 const failed = ref(false)
 watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false })
 </script>
 
 <template>
-  <button type="button" class="anime-card group" :aria-label="`${item.title}，查看篇章`" aria-haspopup="dialog" :data-anime-id="item.id" @click="$emit('select', item)">
+  <button type="button" class="anime-card group" :aria-label="`${item.title}，${actionLabel || '查看篇章'}`" aria-haspopup="dialog" :data-anime-id="item.id" @click="$emit('select', item)">
     <span class="anime-poster ambient-glow">
       <img v-if="animeImageURL(item.coverUrl) && !failed" :src="animeImageURL(item.coverUrl)" :alt="item.title" loading="lazy" decoding="async" referrerpolicy="no-referrer" @error="failed = true" />
       <span v-else class="anime-poster-empty"><IconPhotoOff :size="28" aria-hidden="true" /><span>暂无海报</span></span>
+      <slot name="badge" />
     </span>
     <span class="anime-card-title" :title="item.title">{{ item.title }}</span>
-    <span class="anime-card-date">{{ item.date ? `${item.date} 首播` : '首播日期未收录' }}</span>
+    <span class="anime-card-date"><slot name="meta">{{ item.date ? `${item.date} 首播` : '首播日期未收录' }}</slot></span>
   </button>
 </template>
 

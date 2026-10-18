@@ -1,0 +1,36 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { IconAdjustmentsHorizontal, IconRss, IconTrash, IconChevronDown } from '@tabler/icons-vue'
+import AnimeSourcePicker from './AnimeSourcePicker.vue'
+import { animeBindingConfirmed, animeSourceSpecs, type SourceForm } from '../utils/animeSourceForm'
+const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; previewBusy: boolean; now: number }>()
+const emit = defineEmits<{ search: []; choose: [id: string, title: string]; group: []; remove: []; open: []; sample: [] }>()
+const pickerOpen = ref(false)
+const prefix = computed(() => `anime-source-${props.source.ref}`)
+const confirmed = computed(() => animeBindingConfirmed(props.source))
+const range = computed(() => props.source.scope === 'range' ? `发布第 ${props.source.first || '未填'} 至 ${props.source.last || '未填'} 话` : props.source.scope === 'confirmed_chapter' ? '整个来源属于当前篇章' : '尚未选择来源范围')
+const numbering = computed(() => props.source.correspondence ? `发布第 ${props.source.sourceEpisode || '未填'} 话对应篇章第 ${props.source.chapterEpisode || '未填'} 集` : props.source.identityNumbering ? '保持原编号' : '建议保持原编号')
+function open() { pickerOpen.value = true; emit('open') }
+</script>
+
+<template>
+  <div class="anime-source-form">
+    <div class="anime-editor-section-heading">
+      <div><h2>{{ source.role === 'main' ? '主 RSS' : '备用 RSS' }}</h2><p>各来源独立运行，同集不同字幕组与版本分别保留。</p></div>
+      <button type="button" class="ae-icon" :disabled="disabled || previewBusy" :aria-label="source.role === 'main' ? '重置主 RSS 来源' : '移除备用 RSS 来源'" @click="$emit('remove')"><IconTrash :size="18" /></button>
+    </div>
+    <div v-if="source.groupId" class="ae-source-summary">
+      <div class="ae-summary-title"><IconRss :size="20" aria-hidden="true" /><div><h3>{{ source.groupName || '字幕组待核对' }}</h3><p class="ae-note">{{ source.itemTitle }} · 蜜柑 {{ source.itemId }}</p></div><button type="button" class="ae-button" :disabled="disabled || previewBusy" @click="open"><IconAdjustmentsHorizontal :size="16" />修改来源规则</button></div>
+      <dl class="ae-source-facts"><div><dt>规格</dt><dd>{{ animeSourceSpecs(source) }}</dd></div><div><dt>编号</dt><dd>{{ numbering }}</dd></div><div><dt>范围</dt><dd>{{ range }}<span class="ae-confirmation" :class="{ ready: confirmed }">{{ confirmed ? '已确认' : '待确认' }}</span></dd></div></dl>
+      <p v-if="!confirmed" class="ae-note">查看最近发布并确认来源范围后，即可生成匹配预览。未确认也能保存草稿。</p>
+    </div>
+    <div v-else class="ae-choose-source"><IconRss :size="28" aria-hidden="true" /><div><h3>选择资源与字幕组</h3><p>先看最近发布，再选择想保留的规格。</p></div><button type="button" class="ae-button ae-primary" :disabled="disabled || previewBusy" @click="open">选择资源</button></div>
+    <fieldset v-if="source.groupId" :disabled="disabled || previewBusy" class="ae-fields ae-source-options">
+      <legend class="sr-only">补番与过滤规则</legend>
+      <div class="ae-pair"><div class="ae-field"><label :for="`${prefix}-minimum`" class="ae-label">从第几话开始（含本话）</label><input :id="`${prefix}-minimum`" v-model="source.minimum" inputmode="numeric" placeholder="字幕组标题中的编号" /><p class="ae-note">按发布话数填写，与篇章对应和范围独立。</p></div><div class="ae-field"><label :for="`${prefix}-mode`" class="ae-label">首次历史处理</label><select :id="`${prefix}-mode`" v-model="source.initialMode"><option value="from_episode">从指定话数补齐已加载资源</option><option value="selected_history">手动选择已加载历史资源</option><option value="new_only">只追后续新发布</option></select><p class="ae-note">未加载的历史不会自动补齐。</p></div></div>
+      <details class="ae-advanced"><summary>更多过滤条件<IconChevronDown :size="15" /></summary><div class="ae-pair"><div class="ae-field"><label :for="`${prefix}-include`" class="ae-label">标题包含词</label><textarea :id="`${prefix}-include`" v-model="source.include" rows="2" placeholder="用逗号或换行分隔" /></div><div class="ae-field"><label :for="`${prefix}-exclude`" class="ae-label">标题排除词</label><textarea :id="`${prefix}-exclude`" v-model="source.exclude" rows="2" placeholder="用逗号或换行分隔" /></div></div><p class="ae-note">按文字匹配，各最多 10 个；包含词需全部命中，排除词任一命中即排除。</p></details>
+      <label v-if="source.role === 'standby'" class="ae-check"><input v-model="source.runWhenEnabled" type="checkbox" /><span>未来启用订阅时运行此备用 RSS</span></label>
+    </fieldset>
+    <AnimeSourcePicker v-if="pickerOpen" :source="source" :chapter-title="chapterTitle" :disabled="disabled || previewBusy" :now="now" @close="pickerOpen = false" @search="$emit('search')" @choose="(id, title) => $emit('choose', id, title)" @group="$emit('group')" @sample="$emit('sample')" @confirm="pickerOpen = false" />
+  </div>
+</template>

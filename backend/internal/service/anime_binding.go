@@ -219,6 +219,9 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeMik
 	if err := in.Binding.Validate(false); err != nil {
 		return out, fmt.Errorf("%w: %v", ErrAnimeBindingInput, err)
 	}
+	if review := in.Binding.Review; review != nil && (review.ItemID != in.Source.ItemID || review.GroupID != in.Source.GroupID) {
+		return out, ErrAnimeBindingInput
+	}
 	ctx, cancel := context.WithDeadline(ctx, budget.deadline)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -304,20 +307,34 @@ type AnimeBindingRelease struct {
 	Parse         model.AnimeReleaseParse `json:"parse"`
 	ParserVersion int64                   `json:"parserVersion"`
 	Projection    animebinding.Projection `json:"projection"`
+	SpecKey       string                  `json:"specKey"`
+	SizeRaw       string                  `json:"sizeRaw"`
+	PublishedRaw  string                  `json:"publishedRaw"`
+}
+
+type AnimeSpecOption struct {
+	Key   string          `json:"key"`
+	Label string          `json:"label"`
+	Spec  model.AnimeSpec `json:"spec"`
+	Count int             `json:"count"`
 }
 
 type AnimeBindingPreview struct {
 	AnimeBindingCheck
-	Releases     []AnimeBindingRelease `json:"releases"`
-	RawCount     *int                  `json:"rawCount"`
-	Completeness string                `json:"completeness"`
-	ObservedAt   *int64                `json:"observedAt"`
+	Releases           []AnimeBindingRelease `json:"releases"`
+	RawCount           *int                  `json:"rawCount"`
+	Completeness       string                `json:"completeness"`
+	ObservedAt         *int64                `json:"observedAt"`
+	SpecVersion        int64                 `json:"specVersion"`
+	Profiles           []AnimeSpecOption     `json:"profiles"`
+	ProfilesTruncated  bool                  `json:"profilesTruncated"`
+	ProfileReviewCount int                   `json:"profileReviewCount"`
 }
 
 // PreviewBinding optionally follows metadata confirmation with one bounded
 // single-group RSS read. It explains scope/numbering only, never selects rows.
 func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeMikanBudget, in AnimeBindingInput) (AnimeBindingPreview, error) {
-	out := AnimeBindingPreview{Releases: []AnimeBindingRelease{}}
+	out := AnimeBindingPreview{Releases: []AnimeBindingRelease{}, Profiles: []AnimeSpecOption{}, SpecVersion: animeparse.SpecVersion}
 	check, err := s.CheckBinding(ctx, budget, in)
 	out.AnimeBindingCheck = check
 	if err != nil {
@@ -330,6 +347,7 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeM
 	observed := read.ObservedAt.UnixMilli()
 	out.RawCount, out.ObservedAt, out.Completeness = &read.RawCount, &observed, read.Completeness
 	out.Releases = make([]AnimeBindingRelease, 0, len(read.Releases))
+	profileIndexes := make(map[string]int, min(12, len(read.Releases)))
 	for _, release := range read.Releases {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -342,12 +360,30 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeM
 		if err != nil {
 			return out, fmt.Errorf("project anime binding example: %w", err)
 		}
-		out.Releases = append(out.Releases, AnimeBindingRelease{PostKey: release.PostKey, Title: release.Title, Parse: parsed, ParserVersion: animeparse.ParserVersion, Projection: projection})
+		key := animeparse.SpecKey(parsed.Spec)
+		if parsed.SpecAmbiguous {
+			out.ProfileReviewCount++
+		}
+		if !parsed.Spec.Empty() && !parsed.SpecAmbiguous {
+			if index, ok := profileIndexes[key]; ok {
+				out.Profiles[index].Count++
+			} else if len(out.Profiles) < 12 {
+				profileIndexes[key] = len(out.Profiles)
+				out.Profiles = append(out.Profiles, AnimeSpecOption{Key: key, Label: animeparse.SpecLabel(parsed.Spec), Spec: parsed.Spec, Count: 1})
+			} else {
+				out.ProfilesTruncated = true
+			}
+		}
+		out.Releases = append(out.Releases, AnimeBindingRelease{PostKey: release.PostKey, Title: release.Title, Parse: parsed, ParserVersion: animeparse.ParserVersion, Projection: projection, SpecKey: key, SizeRaw: release.SizeRaw, PublishedRaw: release.PublishedRaw})
 	}
 	return out, nil
 }
 
 func cloneAnimeBinding(in model.AnimeBinding) model.AnimeBinding {
+	if in.Review != nil {
+		review := *in.Review
+		in.Review = &review
+	}
 	if in.Scope != nil {
 		scope := *in.Scope
 		if scope.First != nil {

@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { useRoute } from 'vue-router'
+import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { IconArrowLeft, IconChevronDown, IconExternalLink, IconPhotoOff, IconX } from '@tabler/icons-vue'
 import type { AnimeCardItem, AnimeSubjectResult } from '../types/anime'
-import { animeCooldownUntil, animeFailure, animeImageURL, cachedAnime, requestAnime } from '../composables/useAnimeDiscovery'
+import { animeCooldownUntil, animeDetailState, animeFailure, animeImageURL, cachedAnime, rememberAnimeDetail, requestAnime } from '../composables/useAnimeDiscovery'
 
 const props = defineProps<{ token: string; item: AnimeCardItem }>()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; navigate: [item: AnimeCardItem] }>()
+const route = useRoute()
+const remembered = animeDetailState(props.item.id)
+const ownerToken = props.token, ownerID = portalUser.value?.id
 const dialog = ref<HTMLDialogElement>(), body = ref<HTMLElement>(), closeButton = ref<HTMLButtonElement>()
 const headingID = useId(), relationsID = useId()
-const current = ref(props.item), history = ref<AnimeCardItem[]>([])
+const current = ref(remembered?.current || props.item), history = ref<AnimeCardItem[]>(remembered?.history || [])
 const details = ref<AnimeSubjectResult>(), related = ref<AnimeSubjectResult>()
 const loading = ref(false), error = ref(''), relationsLoading = ref(false), relationsError = ref('')
-const relationsOpen = ref(false), relationsLimit = ref(12), synopsisOpen = ref(false), imageFailed = ref(false)
+const relationsOpen = ref(remembered?.relationsOpen || false), relationsLimit = ref(remembered?.relationsLimit || 12), synopsisOpen = ref(remembered?.synopsisOpen || false), imageFailed = ref(false)
 const subject = computed(() => details.value?.subject || current.value)
 const stale = computed(() => details.value && (details.value.metadata.stale || details.value.metadata.expiresAt <= Date.now()))
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -51,11 +56,12 @@ async function loadRelations(force = false) {
 }
 async function select(item: AnimeCardItem, back = false) {
   if (item.id === current.value.id) return
-  if (!back) history.value.push(current.value)
+  if (!back) { history.value.push(current.value); if (history.value.length > 32) history.value.shift() }
   subjectController.abort(); relationsController.abort()
   current.value = item; details.value = undefined; related.value = undefined
   error.value = ''; relationsError.value = ''; loading.value = false; relationsLoading.value = false
   relationsOpen.value = false; relationsLimit.value = 12; synopsisOpen.value = false; imageFailed.value = false
+  emit('navigate', item)
   void loadSubject()
   await nextTick()
   body.value?.scrollTo({ top: 0 }); closeButton.value?.focus({ preventScroll: true })
@@ -77,8 +83,11 @@ onMounted(() => {
   dialog.value?.showModal(); document.body.style.overflow = 'hidden'
   closeButton.value?.focus({ preventScroll: true })
   void loadSubject()
+  if (relationsOpen.value) void loadRelations()
+  void nextTick(() => body.value?.scrollTo({ top: remembered?.top || 0, behavior: 'instant' }))
 })
 onBeforeUnmount(() => {
+  if (ownerToken === portalToken.value && ownerID === portalUser.value?.id && portalUser.value?.role === 'admin') rememberAnimeDetail({ current: current.value, history: history.value, relationsOpen: relationsOpen.value, relationsLimit: relationsLimit.value, synopsisOpen: synopsisOpen.value, top: body.value?.scrollTop || 0 })
   disposed = true; subjectController.abort(); relationsController.abort(); dialog.value?.close()
   document.body.style.overflow = previousOverflow
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
@@ -140,6 +149,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <p class="anime-detail-footnote">以上为放送及篇章资料，不代表字幕组已发布或资源可下载。</p>
+        <RouterLink :to="{ path: '/anime/new', query: { bangumiId: current.id, returnTo: route.fullPath } }" class="anime-configure-link">选择资源并配置订阅</RouterLink>
       </div>
     </dialog>
   </Teleport>
@@ -172,6 +182,8 @@ onBeforeUnmount(() => {
 .anime-relations-list button:hover { background: rgb(96 165 250 / .12); }
 .anime-relations-list button:disabled { opacity: .5; }
 .anime-detail-footnote { margin-top: 30px; font-size: 12px; line-height: 22px; color: var(--floating-surface-muted); }
+.anime-configure-link { display: flex; min-height: 44px; align-items: center; justify-content: center; padding: 0 18px; margin-top: 16px; border-radius: 12px; background: #2563eb; color: #fff; font-size: 13px; font-weight: 500; }
+.anime-configure-link:hover { background: #1d4ed8; }
 .anime-detail button:focus-visible, .anime-detail a:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) { .anime-detail { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); border-radius: 18px; } .anime-detail-toolbar { padding-inline: 16px 10px; } .anime-detail-body { padding: 8px 18px max(22px, env(safe-area-inset-bottom)); } .anime-detail-heading { grid-template-columns: 76px minmax(0, 1fr); gap: 14px; } .anime-detail-heading h2 { font-size: 18px; } .anime-relations-list button { grid-template-columns: 48px minmax(0, 1fr); } .anime-relations-list button > :last-child { grid-column: 2; } }
 </style>

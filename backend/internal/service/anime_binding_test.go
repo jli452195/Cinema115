@@ -3,13 +3,16 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
@@ -162,7 +165,7 @@ func TestAnimeBindingPreviewExplainsActualPublisherRows(t *testing.T) {
 		t.Fatalf("unexpected preview: %+v %v", got, err)
 	}
 	for i, want := range []string{"in_scope", "in_scope", "in_scope", "out_of_scope", "needs_confirmation", "needs_confirmation"} {
-		if got.Releases[i].Projection.Status != want || got.Releases[i].ParserVersion != 1 {
+		if got.Releases[i].Projection.Status != want || got.Releases[i].ParserVersion != animeparse.ParserVersion {
 			t.Fatalf("row %d: %+v", i, got.Releases[i])
 		}
 	}
@@ -409,5 +412,76 @@ func TestAnimeBindingSQLiteRetainsIndependentSourceConfiguration(t *testing.T) {
 	}
 	if got.FirstEnabledAt != nil || got.Sources[0].ActiveBaselineID != nil || got.Sources[0].NextCheckAt != nil {
 		t.Fatal("configuration authorized execution")
+	}
+}
+
+func TestAnimeBindingStructuredReviewAndUnconfirmedSamples(t *testing.T) {
+	s, f, _ := bindingTestService()
+	in := bindingTestInput()
+	in.Binding = model.AnimeBinding{SchemaVersion: 1}
+	f.read = func(_ context.Context, req mikan.SourceRequest) (mikan.SourcePage, error) {
+		p := animeMikanFakePage(req)
+		if req.Kind == "rss" {
+			p.Releases = []mikan.SourceRelease{{PostKey: fmt.Sprintf("%040x", 1), Title: "[组] 动画 [25][1080p][简体内嵌]"}, {PostKey: fmt.Sprintf("%040x", 2), Title: "[组] 动画 [25][1080p][繁体内嵌]"}}
+			p.RawCount = 2
+		}
+		return p, nil
+	}
+	got, err := s.PreviewBinding(context.Background(), animeMikanTestBudget(t, nil), in)
+	if err != nil || got.Ready || len(got.Profiles) != 2 || got.SpecVersion != animeparse.SpecVersion || got.Binding.Confirmed {
+		t.Fatal("sample read required confirmation or lost profiles", got, err)
+	}
+	in.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "confirmed_chapter"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: in.Source.ItemID, GroupID: in.Source.GroupID}}
+	checked, err := s.CheckBinding(context.Background(), animeMikanTestBudget(t, nil), in)
+	if err != nil || !checked.Ready {
+		t.Fatal("explicit structured review rejected", checked, err)
+	}
+	checked.Binding.Review.GroupID = "28"
+	if in.Binding.Review.GroupID == "28" {
+		t.Fatal("review aliases input")
+	}
+	before := f.reads
+	in.Binding.Review.GroupID = "28"
+	if _, err = s.CheckBinding(context.Background(), animeMikanTestBudget(t, nil), in); !errors.Is(err, ErrAnimeBindingInput) || f.reads != before {
+		t.Fatal("review accepted for different publisher", err)
+	}
+	in.Binding.Review.GroupID = in.Source.GroupID
+	in.Binding.Review.Method = "automatic"
+	if _, err = s.CheckBinding(context.Background(), animeMikanTestBudget(t, nil), in); !errors.Is(err, ErrAnimeBindingInput) {
+		t.Fatal("automatic confirmation accepted", err)
+	}
+}
+
+func TestAnimeBindingSilverBulletSpecificationOptions(t *testing.T) {
+	data, err := os.ReadFile("../animeparse/testdata/silver_bullet_titles.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	if err = json.Unmarshal(data, &titles); err != nil {
+		t.Fatal(err)
+	}
+	s, f, _ := bindingTestService()
+	f.read = func(_ context.Context, req mikan.SourceRequest) (mikan.SourcePage, error) {
+		p := animeMikanFakePage(req)
+		if req.Kind == "rss" {
+			p.Releases = make([]mikan.SourceRelease, 0, len(titles))
+			for i, title := range titles {
+				p.Releases = append(p.Releases, mikan.SourceRelease{PostKey: fmt.Sprintf("%040x", i+1), Title: title})
+			}
+			p.RawCount = len(titles)
+		}
+		return p, nil
+	}
+	in := bindingTestInput()
+	in.Binding = model.AnimeBinding{SchemaVersion: 1}
+	got, err := s.PreviewBinding(context.Background(), animeMikanTestBudget(t, nil), in)
+	if err != nil || len(got.Profiles) != 3 || got.ProfileReviewCount != 6 || len(got.Releases) != 100 {
+		t.Fatal(got, err)
+	}
+	for _, profile := range got.Profiles {
+		if profile.Spec.Container == "" || len(profile.Spec.Languages) < 2 {
+			t.Fatal("mixed-resource title broadened a profile", profile)
+		}
 	}
 }
