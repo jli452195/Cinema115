@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
@@ -106,7 +107,12 @@ func main() {
 	httpapi.RegisterTVNumbering(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
 	generationLogs := &service.GenerationLogs{}
-	httpapi.RegisterMikan(admin, service.NewMikanService(mikan.New(), generationLogs))
+	mikanService := service.NewMikanService(mikan.New(), generationLogs)
+	httpapi.RegisterMikan(admin, mikanService)
+	animeDiscovery := bangumi.New()
+	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService}
+	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
+	httpapi.RegisterAnime(admin, &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient()})
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)

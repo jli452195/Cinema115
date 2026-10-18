@@ -44,12 +44,13 @@ type Group struct {
 	Name string `json:"name"`
 }
 type Result struct {
-	Items    []Item      `json:"items"`
-	Groups   []Group     `json:"groups"`
-	Bangumis []Bangumi   `json:"bangumis"`
-	Bangumi  *Bangumi    `json:"bangumi,omitempty"`
-	More     []Expansion `json:"more"`
-	RawCount int         `json:"-"`
+	Items      []Item      `json:"items"`
+	Groups     []Group     `json:"groups"`
+	Bangumis   []Bangumi   `json:"bangumis"`
+	Bangumi    *Bangumi    `json:"bangumi,omitempty"`
+	More       []Expansion `json:"more"`
+	RawCount   int         `json:"-"`
+	BangumiIDs []string    `json:"-"`
 }
 
 type Client struct {
@@ -203,6 +204,20 @@ func parseWithOptions(reader io.Reader, bangumiID, group string, take int, stric
 	emptyFound, searchInputFound := false, false
 	walk(doc, func(n *html.Node) {
 		if bangumiID != "" {
+			if n.Data == "a" && len(result.BangumiIDs) < 32 {
+				if id := bangumiSubjectHint(attr(n, "href")); id != "" {
+					found := false
+					for _, old := range result.BangumiIDs {
+						if old == id {
+							found = true
+							break
+						}
+					}
+					if !found {
+						result.BangumiIDs = append(result.BangumiIDs, id)
+					}
+				}
+			}
 			if hasClass(n, "bangumi-title") {
 				result.Bangumi.Title = content(n)
 			}

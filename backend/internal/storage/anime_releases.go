@@ -37,12 +37,25 @@ func (s *Store) SaveAnimeReleases(ctx context.Context, releases []model.AnimeRel
 			return nil, fmt.Errorf("%w: %v", ErrAnimeInvalid, err)
 		}
 	}
-	out := make([]model.AnimeRelease, 0, len(releases))
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin anime releases: %w", err)
 	}
 	defer tx.Rollback()
+	out, err := saveAnimeReleasesTx(ctx, tx, releases)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, animeDBError("commit anime releases", err)
+	}
+	return out, nil
+}
+
+// The preview and its release identities must commit together. The caller
+// owns the transaction; this helper never reacquires Store's single connection.
+func saveAnimeReleasesTx(ctx context.Context, tx *sql.Tx, releases []model.AnimeRelease) ([]model.AnimeRelease, error) {
+	out := make([]model.AnimeRelease, 0, len(releases))
 	for _, r := range releases {
 		old, err := scanAnimeRelease(tx.QueryRowContext(ctx, `SELECT `+animeReleaseColumns+` FROM anime_releases WHERE provider=? AND post_key=?`, r.Provider, r.PostKey))
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -75,9 +88,6 @@ func (s *Store) SaveAnimeReleases(ctx context.Context, releases []model.AnimeRel
 			return nil, animeDBError("save anime release", err)
 		}
 		out = append(out, r)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, animeDBError("commit anime releases", err)
 	}
 	return out, nil
 }

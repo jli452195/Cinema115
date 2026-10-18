@@ -30,14 +30,31 @@ func portalAuthError(c *gin.Context, err error) {
 	case errors.Is(err, storage.ErrEmbyUserNotFound):
 		status, message = 404, err.Error()
 	}
-	c.AbortWithStatusJSON(status, gin.H{"error": message})
+	c.AbortWithStatusJSON(status, portalAuthPayload(c, status, message))
+}
+
+// Keep existing auth behavior; anime clients additionally get stable codes.
+func portalAuthPayload(c *gin.Context, status int, message string) gin.H {
+	out := gin.H{"error": message}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/admin/anime/") {
+		switch status {
+		case 401:
+			out["code"] = "UNAUTHENTICATED"
+		case 403:
+			out["code"] = "ADMIN_REQUIRED"
+		default:
+			out["code"] = "AUTH_UNAVAILABLE"
+		}
+		out["details"] = gin.H{}
+	}
+	return out
 }
 func PortalAuthenticated(auth *service.PortalAuth) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(401, gin.H{"error": "请先登录"})
+			c.AbortWithStatusJSON(401, portalAuthPayload(c, 401, "请先登录"))
 			return
 		}
 		u, err := auth.Authenticate(c.Request.Context(), strings.TrimPrefix(header, "Bearer "))
@@ -56,7 +73,7 @@ func PortalAuthenticated(auth *service.PortalAuth) gin.HandlerFunc {
 func PortalAdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetString("portal_role") != "admin" {
-			c.AbortWithStatusJSON(403, gin.H{"error": "仅管理员可以使用此功能"})
+			c.AbortWithStatusJSON(403, portalAuthPayload(c, 403, "仅管理员可以使用此功能"))
 			return
 		}
 		c.Next()

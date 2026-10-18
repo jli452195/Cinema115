@@ -69,6 +69,7 @@ func cloneMikan(result mikan.Result) mikan.Result {
 	result.Groups = append([]mikan.Group{}, result.Groups...)
 	result.Bangumis = append([]mikan.Bangumi{}, result.Bangumis...)
 	result.More = append([]mikan.Expansion{}, result.More...)
+	result.BangumiIDs = append([]string{}, result.BangumiIDs...)
 	if result.Bangumi != nil {
 		copy := *result.Bangumi
 		result.Bangumi = &copy

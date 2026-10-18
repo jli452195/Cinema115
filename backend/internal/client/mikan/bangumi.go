@@ -27,6 +27,23 @@ func ValidID(id string) bool {
 	return groupPattern.MatchString(id) && id[0] != '0'
 }
 
+// External subject links are display hints only. Never request these URLs or
+// treat their presence (or agreement) as evidence of a confirmed edition.
+func bangumiSubjectHint(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.EscapedPath() != u.Path {
+		return ""
+	}
+	if u.Host != "bgm.tv" && u.Host != "bangumi.tv" && u.Host != "chii.in" {
+		return ""
+	}
+	id := strings.TrimPrefix(u.Path, "/subject/")
+	if id == u.Path || !ValidID(id) {
+		return ""
+	}
+	return id
+}
+
 func ValidBangumiInput(id, group string, take int) bool {
 	return ValidID(id) && ((group == "" && take == 0) || (ValidID(group) && take >= 1 && take <= 10000))
 }

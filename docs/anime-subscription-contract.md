@@ -101,6 +101,8 @@
 
 scope 为 `range` 时 first/last 均为合法整数且 first<=last；`confirmed_chapter` 用于已确认独属当前篇章的来源，带人工确认依据，不能自动从名称推断。跨篇章混合来源不能用该选项代替范围。`chapterCorrespondence` 可空；有值只作篇章回显，不含 TMDB 目标。初次范围三种值为 `from_episode/new_only/selected_history`。
 
+P1-05 补充实现校验：有 `chapterCorrespondence` 的有限范围，其首尾换算结果须在1～99999内；基准可在该范围之外，但不得产生非法篇章序号。无对应时保持篇章序号未知，不从已见最小集号、补番下限或其他来源推断。来源核验与只读编号预览见[实现记录](anime-source-binding-implementation.md)，管理API装配仍在P1-07。
+
 来源 `namespace_id` 在确认编号空间时固定，解析升级不改变它；更换条目/组/篇章通过替换来源完成，旧源软移除，新源生成新的 sourceId/namespace 与预览，不拿已有编号直接覆盖旧任务。PATCH 已有 sourceId 不允许原地更换其身份字段，使用 removedSourceIds 与新来源 ref 同事务替换。普通规则编辑保留旧发布决定与资源处理依据。
 
 P3 的 mapping JSON 使用 `segments[{first,last,sourceBase,targetSeason,targetBase}]`、`overrides[{rawKind,rawNumber,action,targetSeason,targetEpisode}]`，action 为 `map/ignore`；单集例外/忽略优先于唯一适用段。一个来源不同剧情分集不能误指同一目标；同集不同版本或不同组的目标相同是正常共存。目标快照保存作品名称/首播年、TMDB ID、默认或剧集组名称/ID、本地方案版本、目标季集及原始 episode ID，文件名取实际来源组名。
@@ -166,6 +168,8 @@ P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入
 
 ### 6.1 指纹及有效期
 
+P1-06 实现补充：预览批次和单源各保存服务端类型化 `snapshot_json`，包含规范化配置、原始读取窗口、显式选择及待复核的旧发布快照；零资源预览也能恢复，项目 SQLite 版本升至40。未保存篇章用同一表单内稳定的 `draftKey` 与篇章/发行版共同限定复用范围，仍须校验认证 actor；此标识不授予额外权限。来源复用进新 batch 时复制快照并返回新的 sourcePreviewId，沿用原 generatedAt/expiresAt/observedAt/T0 和 loadRevision。
+
 服务端规范化输入并对带类型的 DTO 按固定字段顺序、UTF-8 JSON、SHA-256 计算 `v1:<lowerhex>`；不依赖客户端 JSON 键顺序。关键词首尾清理、去重、排序，集合型 ID 排序，角色顺序/映射段保留语义；空值与缺失按各字段定义归一。不包含 Cookie、签名、图片二进制或当前轮询时间。
 
 - 总配置指纹包括篇章/发行版、subscription revision、来源列表及各自 revision/规范化规则与编号、设置版本及目录归属、解析/时间/规则引擎版本。只用于判定本次保存输入是否相符，不让无关备用草稿编辑使有效来源的预览失效。
@@ -191,6 +195,7 @@ P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入
 - 同一 batch 各来源已加载快照合计最多 2000 原始发布，含过滤/待确认行，不能按 Hash 合并规避。`take<=2000`，累计展开替换/按原帖合并，不能当增量追加；先预估预算再请求，超出时不丢旧快照。
 - 当前来源正常短响应、结构与原始行数可靠且 rawCount<requestedTake，才可返回 `visible_end`；其他为 partial，stopReason 可为 `more_available/budget/limit/read_failed/invalid_rows/no_progress`。表示本次可见末尾，不保证全站历史完整。
 - 页面分页每页 50 条，选择作用于当前来源全部已加载匹配发布，明确返回 loaded/matched/review/selected 数量。后端校验 selected IDs 全部在对应未过期快照中且可选；大于当前页可选合法。
+- `from_episode` 只在首次成功生成时默认勾选已加载匹配发布；`new_only` 与 `selected_history` 初选为0。后续继续加载和重预览只保留原合法选择，新加载历史与预览后新发布都列入 addedIds，须显式勾选，不扩大已确认初批。完整选择更新也递增 loadRevision；取消原已选项记录为显式 dismissed，重预览不恢复默认勾选。
 - P1 不下载种子。P2 只核验明确选中资源，得到相同 Hash 后关联；“已选 N 条”始终是发布数，不承诺 N 个新任务或文件。待核验阶段用持久发布决定 `selected` 承接，后台可恢复，不能先建虚假的已验证 Hash claim。
 - T0 后可信新发布要求未在基线、时间可解析且>=T0、未超读取时刻 5 分钟，并通过该源规则。缺日期、异常未来时间、旧帖补录先待确认。过滤后的同帖若内容变化，保留旧决定并重新解释，不把 dismissed 自动改 selected。
 
@@ -226,6 +231,7 @@ P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入
 | `POST /subscriptions/preview` | 完整配置、可选 subscriptionId、各 expectedRevision、previewSourceRef、可选复用的其他源 previewRefs | batchId、该源 preview、其他复用源摘要、合计预算；全新读取失败返回结构化错误 |
 | `POST /previews/:id/load` | sourceRef、expectedLoadRevision、nextTake | 有效来源继续加载，返回新 loadRevision、保留/变更身份、范围；过期409不清输入 |
 | `GET /previews/:id/releases` | sourceRef、page/pageSize | 当前快照投影及可选身份；不隐式补上游历史 |
+| `POST /previews/:id/selections` | sourceRef、sourcePreviewId、expectedLoadRevision、明确 selectedReleaseIds/dismissedReleaseIds 数组 | 只更新预览快照的表单选择及 loadRevision，不写执行决定；空数组明确清空 |
 | `POST /subscriptions` | config、saveMode=draft/paused、expectedRevision=0、settingsRevision、可选 previewRefs 与表单选择 | 201，实体 ID、revision、各 ref->id、保存状态；paused 不建立初批下载任务 |
 | `PATCH /subscriptions/:id` | 完整 config、expectedRevision；不以列表缺项隐式删除来源，移除用 removedSourceIds | 200，新 revision、逐源 revision、失效预览/受影响未执行选择说明；不触发旧文件整理 |
 | `GET /subscriptions`、`GET /subscriptions/:id` | 列表筛选 status/keyword；详情为稳定 ID | 本地配置、effectiveState、各源健康、各层统计和 permittedActions；外部资料不再逐次必读 |
@@ -238,6 +244,8 @@ P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入
 完整配置保存暂停不要求首次读取成功，但来源/规则/主账号目录结构必须有效；否则明确保存 draft。用户请求 paused 时不能静默降级 draft，返回 `CONFIG_INCOMPLETE` 及缺项，让页面保留输入并提供“保存草稿”。草稿备用源不影响完整主源。P1 保存主按钮“保存配置”，结果暂停；不显示禁用的下载占位。
 
 `/previews/:id` 的 id 指 batchId，`previewRefs` 每项引用对应 sourcePreviewId 与 loadRevision，不把两类标识混用。保存 draft/paused 的显式选择放在 `formSelections` 中，仅作为表单输入恢复。
+
+P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-admin-api-implementation.md)。配置保存的 entry/sources/removedSourceIds/formSelections/previewRefs 放在 config 中，removedSourceIds 每项携带 id/expectedRevision；设置的账号版本字段为 expectedPrimaryAccountRevision。预览生成沿用 chapter/subscriptionId/revision/settings/sources 结构，不将 config 保存 DTO 与预览快照 DTO 混用。恢复引用保留原 sourceRef，另存稳定 sourceId，保存不续期或消费预览，回执 requiresRepreview=true。未选定身份的草稿允许首次补全条目/组，已选字段不能重绑定。
 
 ### 7.2 P2 API
 

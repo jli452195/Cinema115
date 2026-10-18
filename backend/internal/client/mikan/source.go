@@ -81,9 +81,10 @@ type SourceRelease struct {
 }
 
 type SourceEntry struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Groups []Group `json:"groups"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Groups     []Group  `json:"groups"`
+	BangumiIDs []string `json:"bangumiIds"` // Optional hints, never a confirmed chapter binding.
 }
 
 type SourcePage struct {

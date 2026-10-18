@@ -128,7 +128,8 @@ CREATE TABLE anime_preview_batches (
  expected_revision INTEGER NOT NULL CHECK(expected_revision>=0),
  settings_revision INTEGER NOT NULL CHECK(settings_revision>=0),
  config_fingerprint TEXT NOT NULL,
- created_at INTEGER NOT NULL
+ created_at INTEGER NOT NULL,
+ snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(snapshot_json))
 );
 CREATE TABLE anime_source_previews (
  id TEXT PRIMARY KEY NOT NULL,
@@ -146,6 +147,7 @@ CREATE TABLE anime_source_previews (
  requested_take INTEGER NOT NULL CHECK(requested_take BETWEEN 1 AND 2000),
  completeness TEXT NOT NULL CHECK(completeness IN ('partial','visible_end')),
  stop_reason TEXT,
+ snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(snapshot_json)),
  UNIQUE(batch_id,source_ref)
 );
 CREATE TABLE anime_preview_items (

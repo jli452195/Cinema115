@@ -77,7 +77,7 @@ func TestAnimeSchemaUpgradeAndReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := reopened.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 39 {
+		if err := reopened.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
 			t.Fatalf("version regressed: %d %v", version, err)
 		}
 		got, err := reopened.GetAnimeSubscription(ctx, sub.ID, false)

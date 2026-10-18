@@ -46,6 +46,7 @@ func cloneAnimeMikanPage(page mikan.SourcePage) mikan.SourcePage {
 	if page.Entry != nil {
 		copy := *page.Entry
 		copy.Groups = append([]mikan.Group{}, copy.Groups...)
+		copy.BangumiIDs = append([]string{}, copy.BangumiIDs...)
 		page.Entry = &copy
 	}
 	return page
@@ -83,6 +84,9 @@ func (s *MikanService) ReadAnimeMikan(ctx context.Context, budget *AnimeMikanBud
 	entry, _, err := s.animeMikanRead(ctx, budget, reader, mikan.SourceRequest{Kind: "entry", Source: mikan.Source{ItemID: in.Source.ItemID}, MaxRows: mikan.AnimeMaxRows}, false)
 	if err != nil {
 		return out, err
+	}
+	if !validAnimeMikanEntry(entry.page, in.Source.ItemID) {
+		return out, mikan.ErrParse
 	}
 	found := false
 	if entry.page.Entry != nil {
@@ -184,6 +188,9 @@ func (s *MikanService) animeMikanRead(ctx context.Context, budget *AnimeMikanBud
 			return err
 		})
 		entry := animeMikanCache{page: cloneAnimeMikanPage(page)}
+		if err == nil && in.Kind == "entry" && !validAnimeMikanEntry(page, in.Source.ItemID) {
+			err = mikan.ErrParse
+		}
 		ttl := time.Minute
 		if in.Kind == "entry" {
 			ttl = 10 * time.Minute

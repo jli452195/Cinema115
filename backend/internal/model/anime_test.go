@@ -28,6 +28,8 @@ func TestAnimeSourceRulesAreIndependentOfCorrespondence(t *testing.T) {
 		{"reverse-scope", func(s *AnimeSourceConfig) { s.Binding.Scope.Last = animeValue(24) }},
 		{"unconfirmed", func(s *AnimeSourceConfig) { s.Binding.Confirmed = false }},
 		{"chapter-without-evidence", func(s *AnimeSourceConfig) { s.Binding.Scope = &AnimeScope{Kind: "confirmed_chapter"} }},
+		{"negative-chapter-range", func(s *AnimeSourceConfig) { s.Binding.ChapterCorrespondence.SourceEpisode = 30 }},
+		{"overflow-chapter-range", func(s *AnimeSourceConfig) { s.Binding.ChapterCorrespondence.ChapterEpisode = 99999 }},
 		{"missing-resolution", func(s *AnimeSourceConfig) { s.Rules.Resolution = nil }},
 		{"duplicate-words", func(s *AnimeSourceConfig) { s.Rules.Include = []string{"HEVC", "HEVC"} }},
 		{"long-unicode-word", func(s *AnimeSourceConfig) { s.Rules.Exclude = []string{strings.Repeat("字", 65)} }},

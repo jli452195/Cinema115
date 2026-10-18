@@ -98,6 +98,11 @@ func (b AnimeBinding) Validate(complete bool) error {
 	if c := b.ChapterCorrespondence; c != nil && (!animeEpisode(c.SourceEpisode) || !animeEpisode(c.ChapterEpisode)) {
 		return fmt.Errorf("invalid chapter correspondence")
 	}
+	if s, c := b.Scope, b.ChapterCorrespondence; s != nil && s.Kind == "range" && c != nil {
+		if !animeEpisode(*s.First-c.SourceEpisode+c.ChapterEpisode) || !animeEpisode(*s.Last-c.SourceEpisode+c.ChapterEpisode) {
+			return fmt.Errorf("chapter correspondence exceeds valid numbering within scope")
+		}
+	}
 	return nil
 }
 
@@ -176,7 +181,7 @@ func (c AnimeSubscriptionConfig) Validate() error {
 	if len(c.Sources) > AnimeMaxSources || len(c.RemovedSources) > AnimeMaxSources {
 		return fmt.Errorf("too many source changes")
 	}
-	if c.Form.SchemaVersion != AnimeSchemaVersion || len(c.Form.FormSelections) > AnimeMaxSources {
+	if c.Form.SchemaVersion != AnimeSchemaVersion || len(c.Form.FormSelections) > AnimeMaxSources || len(c.Form.PreviewRefs) > AnimeMaxSources {
 		return fmt.Errorf("invalid saved form")
 	}
 	refs := make(map[string]bool, len(c.Sources))
@@ -201,12 +206,12 @@ func (c AnimeSubscriptionConfig) Validate() error {
 	}
 	selectionRefs := make(map[string]bool, len(c.Form.FormSelections))
 	for _, f := range c.Form.FormSelections {
-		if !ValidAnimeID(f.SourceRef) || selectionRefs[f.SourceRef] || len(f.SelectedReleaseIDs)+len(f.UnresolvedReleaseIDs) > 2000 {
+		if !ValidAnimeID(f.SourceRef) || selectionRefs[f.SourceRef] || len(f.SelectedReleaseIDs)+len(f.UnresolvedReleaseIDs)+len(f.DismissedReleaseIDs) > 2000 {
 			return fmt.Errorf("invalid form selection")
 		}
 		selectionRefs[f.SourceRef] = true
 		seen := make(map[string]bool, len(f.SelectedReleaseIDs)+len(f.UnresolvedReleaseIDs))
-		for _, list := range [][]string{f.SelectedReleaseIDs, f.UnresolvedReleaseIDs} {
+		for _, list := range [][]string{f.SelectedReleaseIDs, f.UnresolvedReleaseIDs, f.DismissedReleaseIDs} {
 			for _, id := range list {
 				if !ValidAnimeID(id) || seen[id] {
 					return fmt.Errorf("invalid selected release")
@@ -214,6 +219,13 @@ func (c AnimeSubscriptionConfig) Validate() error {
 				seen[id] = true
 			}
 		}
+	}
+	previewSources := make(map[string]bool, len(c.Form.PreviewRefs))
+	for _, p := range c.Form.PreviewRefs {
+		if !ValidAnimeID(p.BatchID) || !ValidAnimeID(p.SourceRef) || !ValidAnimeID(p.SourcePreviewID) || p.SourceID != "" && !ValidAnimeID(p.SourceID) || p.LoadRevision < 1 || p.LoadRevision > AnimeMaxRevision || previewSources[p.SourceRef] {
+			return fmt.Errorf("invalid saved preview reference")
+		}
+		previewSources[p.SourceRef] = true
 	}
 	return nil
 }

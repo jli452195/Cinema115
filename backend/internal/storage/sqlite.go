@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 39
+const schemaVersion = 41
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -482,11 +482,21 @@ PRAGMA user_version=30;`); err != nil {
 		return fmt.Errorf("创建缺集检测排除记录: %w", err)
 	}
 	if version < 39 {
-		if err := archiveLegacyAnimeV38(ctx, tx); err != nil {
-			return fmt.Errorf("保留旧动漫订阅存储: %w", err)
+		if err := discardLegacyAnimeV38(ctx, tx); err != nil {
+			return fmt.Errorf("清理废弃动漫订阅存储: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, animeSchemaV39); err != nil {
 			return fmt.Errorf("创建动漫订阅基础存储: %w", err)
+		}
+	}
+	if version < 40 {
+		if err := upgradeAnimePreviewsV40(ctx, tx); err != nil {
+			return fmt.Errorf("创建动漫预览快照存储: %w", err)
+		}
+	}
+	if version < 41 {
+		if err := discardArchivedAnimeV38(ctx, tx); err != nil {
+			return err
 		}
 	}
 	// Earlier idempotent schema repairs assign historical versions above. Always

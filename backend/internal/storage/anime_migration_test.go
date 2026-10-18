@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -67,10 +68,6 @@ func TestAnimeSchemaUpgradeWithLegacyTables(t *testing.T) {
 	s, path := legacyAnimeStore(t)
 	ctx := context.Background()
 	tables := []string{"subscriptions", "releases", "download_claims", "transfers"}
-	before := make(map[string][][]any, len(tables))
-	for _, table := range tables {
-		before[table] = animeMigrationRows(t, s.db, "anime_"+table)
-	}
 	job := sampleJob("unrelated-job", "completed")
 	if err := s.SaveReshareJob(ctx, job); err != nil {
 		t.Fatal(err)
@@ -79,23 +76,19 @@ func TestAnimeSchemaUpgradeWithLegacyTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, table := range tables {
-		if got := animeMigrationRows(t, s.db, "legacy_anime_v38_"+table); !reflect.DeepEqual(got, before[table]) {
-			t.Fatalf("legacy %s records changed", table)
-		}
+		assertAnimeLegacyTableAbsent(t, s, "legacy_anime_v38_"+table)
 	}
+	assertAnimeLegacyTableAbsent(t, s, "anime_download_claims")
+	assertAnimeLegacyTableAbsent(t, s, "anime_transfers")
 	if got, err := s.ListAnimeSubscriptions(ctx, AnimeSubscriptionFilter{}); err != nil || got.Total != 0 {
 		t.Fatalf("legacy work must not be activated: %+v %v", got, err)
-	}
-	var foreignTable string
-	if err := s.db.QueryRowContext(ctx, `SELECT "table" FROM pragma_foreign_key_list('legacy_anime_v38_releases')`).Scan(&foreignTable); err != nil || foreignTable != "legacy_anime_v38_subscriptions" {
-		t.Fatalf("legacy FK was redirected to new subscriptions: %q %v", foreignTable, err)
 	}
 	rows, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rows.Next() {
-		t.Fatal("foreign key violation after archive")
+		t.Fatal("foreign key violation after cleanup")
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
@@ -112,9 +105,7 @@ func TestAnimeSchemaUpgradeWithLegacyTables(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, table := range tables {
-			if got := animeMigrationRows(t, reopened.db, "legacy_anime_v38_"+table); !reflect.DeepEqual(got, before[table]) {
-				t.Fatalf("legacy %s changed on reopen", table)
-			}
+			assertAnimeLegacyTableAbsent(t, reopened, "legacy_anime_v38_"+table)
 		}
 		if got, err := reopened.GetAnimeSubscription(ctx, sub.ID, false); err != nil || !reflect.DeepEqual(got, sub) {
 			t.Fatalf("new subscription changed: %+v %v", got, err)
@@ -123,7 +114,7 @@ func TestAnimeSchemaUpgradeWithLegacyTables(t *testing.T) {
 			t.Fatalf("unrelated business data changed: %+v %v", got, err)
 		}
 		var version int
-		if err := reopened.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 39 {
+		if err := reopened.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
 			t.Fatalf("unexpected version: %d %v", version, err)
 		}
 		reopened.Close()
@@ -134,7 +125,7 @@ func TestAnimeLegacyMigrationFailureRollsBack(t *testing.T) {
 	cases := []struct {
 		name, inject string
 	}{
-		{"archive_name_conflict", `CREATE TABLE legacy_anime_v38_releases(marker TEXT); INSERT INTO legacy_anime_v38_releases VALUES('preserve-me')`},
+		{"archive_cleanup_failure", `CREATE VIEW legacy_anime_v38_releases AS SELECT 1 AS marker`},
 		{"unrecognized_table", `ALTER TABLE anime_releases ADD COLUMN unknown_field TEXT`},
 		{"new_schema_failure", `CREATE VIEW anime_settings AS SELECT 1 AS id, 1 AS revision`},
 	}
@@ -161,5 +152,48 @@ func TestAnimeLegacyMigrationFailureRollsBack(t *testing.T) {
 				t.Fatalf("failed migration changed version: %d %v", version, err)
 			}
 		})
+	}
+}
+
+func assertAnimeLegacyTableAbsent(t *testing.T, s *Store, name string) {
+	t.Helper()
+	var count int
+	if err := s.db.QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE name=?`, name).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("legacy table still present: %s count=%d err=%v", name, count, err)
+	}
+}
+
+func TestAnimeArchivedPrototypeCleanupPreservesNewData(t *testing.T) {
+	s, path := testStore(t)
+	ctx := context.Background()
+	e := createAnimeEntry(t, s, animePtr("123"))
+	sub := saveAnimeConfig(t, s, animeConfig(e.ID))
+	job := sampleJob("keep-current-business", "completed")
+	if err := s.SaveReshareJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	archive := strings.ReplaceAll(animeLegacyV38Fixture, "anime_", "legacy_anime_v38_")
+	if _, err := s.db.ExecContext(ctx, archive+`PRAGMA user_version=40;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	for _, table := range []string{"subscriptions", "releases", "download_claims", "transfers"} {
+		assertAnimeLegacyTableAbsent(t, reopened, "legacy_anime_v38_"+table)
+	}
+	if got, err := reopened.GetAnimeSubscription(ctx, sub.ID, false); err != nil || !reflect.DeepEqual(got, sub) {
+		t.Fatal("new config changed", err)
+	}
+	if got, err := reopened.GetReshareJob(ctx, job.ID); err != nil || !reflect.DeepEqual(got, job) {
+		t.Fatal("other business changed", err)
+	}
+	if err := reopened.initialize(ctx); err != nil {
+		t.Fatal("reopen cleanup was not idempotent", err)
 	}
 }

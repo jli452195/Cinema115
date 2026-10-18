@@ -38,6 +38,10 @@ func (k AnimeWriteKey) validate() error {
 // idempotency receipt. It never creates a baseline, selection, task or due time.
 // The service must supply verified entry/group metadata and check readiness.
 func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscriptionConfig, key *AnimeWriteKey) (model.AnimeConfigReceipt, error) {
+	return s.saveAnimeConfiguration(ctx, in, key, nil)
+}
+
+func (s *Store) saveAnimeConfiguration(ctx context.Context, in model.AnimeSubscriptionConfig, key *AnimeWriteKey, guard *AnimeConfigGuard) (model.AnimeConfigReceipt, error) {
 	var receipt model.AnimeConfigReceipt
 	if key != nil {
 		if err := key.validate(); err != nil {
@@ -55,7 +59,7 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 		err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json FROM anime_request_keys WHERE actor_key=? AND operation=? AND request_key=?`, key.ActorKey, key.Operation, key.Key).Scan(&digest, &raw)
 		if err == nil {
 			if digest != key.Digest {
-				return receipt, ErrAnimeConflict
+				return receipt, ErrAnimeIdempotency
 			}
 			if err := decodeAnimeJSON(raw, &receipt); err != nil {
 				return receipt, fmt.Errorf("read anime receipt: %w", err)
@@ -68,6 +72,13 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 	}
 	if in.Status == "enabled" {
 		return receipt, ErrAnimeCapability
+	}
+	if guard != nil {
+		entryID, err := prepareAnimeConfigurationTx(ctx, tx, *guard)
+		if err != nil {
+			return receipt, err
+		}
+		in.EntryID = entryID
 	}
 	for _, source := range in.Sources {
 		if source.Status == "enabled" {
@@ -141,7 +152,7 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 		}
 		delete(final, removal.ID)
 	}
-	receipt = model.AnimeConfigReceipt{ID: in.ID, Revision: in.ExpectedRevision + 1, Status: in.Status, SourceIDs: make(map[string]string, len(in.Sources))}
+	receipt = model.AnimeConfigReceipt{ID: in.ID, EntryID: in.EntryID, Revision: in.ExpectedRevision + 1, Status: in.Status, SourceIDs: make(map[string]string, len(in.Sources)), SourceRevisions: make(map[string]int64, len(in.Sources)), RequiresRepreview: true}
 	changed := make([]model.AnimeSource, 0, len(in.Sources))
 	for _, input := range in.Sources {
 		var source model.AnimeSource
@@ -150,7 +161,7 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 			if !ok || old.Revision != input.ExpectedRevision {
 				return receipt, ErrAnimeConflict
 			}
-			if !sameAnimeString(old.ItemID, input.ItemID) || !sameAnimeString(old.GroupID, input.GroupID) || old.Provider != input.Provider {
+			if !old.AcceptsIdentity(input.Provider, input.ItemID, input.GroupID) {
 				return receipt, ErrAnimeIdentity
 			}
 			if old.Status != "draft" && old.Status != "paused" || old.ActiveBaselineID != nil {
@@ -191,6 +202,9 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 		final[source.ID] = source
 		receipt.SourceIDs[input.Ref] = source.ID
 	}
+	for id, source := range final {
+		receipt.SourceRevisions[id] = source.Revision
+	}
 	if err := validateAnimeSources(final, in.Status); err != nil {
 		return receipt, err
 	}
@@ -210,6 +224,19 @@ func (s *Store) SaveAnimeSubscription(ctx context.Context, in model.AnimeSubscri
 			return receipt, ErrAnimeInvalid
 		}
 		selectionSources[f.SourceRef] = true
+	}
+	in.Form.PreviewRefs = append([]model.AnimeFormPreviewRef{}, in.Form.PreviewRefs...)
+	for i := range in.Form.PreviewRefs {
+		f := &in.Form.PreviewRefs[i]
+		if f.SourceID == "" {
+			f.SourceID = f.SourceRef
+			if id, ok := receipt.SourceIDs[f.SourceRef]; ok {
+				f.SourceID = id
+			}
+		}
+		if _, ok := final[f.SourceID]; !ok {
+			return receipt, ErrAnimeInvalid
+		}
 	}
 	form, err := animeJSON(in.Form)
 	if err != nil {
@@ -306,7 +333,7 @@ func writeAnimeSource(ctx context.Context, tx *sql.Tx, source model.AnimeSource,
 	if previousRevision == 0 {
 		result, err = tx.ExecContext(ctx, `INSERT INTO anime_subscription_sources(id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,health,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, source.ID, source.SubscriptionID, source.Role, source.Position, source.Status, source.RunWhenEnabled, source.Provider, source.SourceKey, source.ItemID, source.GroupID, source.GroupName, source.NamespaceID, binding, rules, source.Revision, source.RunGeneration, source.Health, source.CreatedAt, source.UpdatedAt)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET role=?,position=?,status=?,run_when_enabled=?,group_name=?,binding_json=?,rules_json=?,revision=?,run_generation=?,updated_at=? WHERE id=? AND subscription_id=? AND revision=?`, source.Role, source.Position, source.Status, source.RunWhenEnabled, source.GroupName, binding, rules, source.Revision, source.RunGeneration, source.UpdatedAt, source.ID, source.SubscriptionID, previousRevision)
+		result, err = tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET role=?,position=?,status=?,run_when_enabled=?,source_key=?,item_id=?,group_id=?,group_name=?,binding_json=?,rules_json=?,revision=?,run_generation=?,updated_at=? WHERE id=? AND subscription_id=? AND revision=?`, source.Role, source.Position, source.Status, source.RunWhenEnabled, source.SourceKey, source.ItemID, source.GroupID, source.GroupName, binding, rules, source.Revision, source.RunGeneration, source.UpdatedAt, source.ID, source.SubscriptionID, previousRevision)
 	}
 	if err != nil {
 		return animeDBError("save anime source", err)
