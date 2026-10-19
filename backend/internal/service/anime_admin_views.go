@@ -80,7 +80,13 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		}
 		v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: action, Allowed: allowed, ReasonCode: reason})
 	}
-	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", ReasonCode: "CAPABILITY_UNAVAILABLE"})
+	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt != nil && sub.Status == "paused"})
+	v.PermittedActions[1] = AnimeAction{Name: "enable", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}
+	jobs, err := s.Store.AnimeJobCountsBySource(ctx, sub.ID)
+	if err != nil {
+		return v, err
+	}
+	v.JobStats, v.FileStats, v.CompletionStats = animeViewCounts(jobs[""])
 	counts, err := s.Store.AnimeDecisionCountsBySource(ctx, sub.ID)
 	if err != nil {
 		return v, err
@@ -90,10 +96,17 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 	for _, source := range sub.Sources {
 		stats := counts[source.ID]
 		effective, blockedBy := animeSourceEffectiveState(sub.Status, source)
-		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["selected"]}, PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
+		if source.RunWhenEnabled && (source.Status == "draft" || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil) {
+			v.Readiness.Issues = append(v.Readiness.Issues, "ACTIVE_SOURCE_INCOMPLETE")
+		}
+		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"] + stats["linked"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["pending_verification"]}, PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
+		v.Sources[len(v.Sources)-1].JobStats, v.Sources[len(v.Sources)-1].FileStats, v.Sources[len(v.Sources)-1].CompletionStats = animeViewCounts(jobs[source.ID])
 		if source.Role == "main" {
 			main = true
-			if source.Status != "paused" {
+			if !source.RunWhenEnabled {
+				v.Readiness.Issues = append(v.Readiness.Issues, "MAIN_SOURCE_REQUIRED")
+			}
+			if source.Status != "paused" && source.Status != "enabled" {
 				v.Readiness.Issues = append(v.Readiness.Issues, "MAIN_SOURCE_INCOMPLETE")
 			}
 		}
@@ -102,13 +115,18 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		v.Readiness.Issues = append(v.Readiness.Issues, "MAIN_SOURCE_REQUIRED")
 	}
 	v.Readiness.Ready = len(v.Readiness.Issues) == 0
+	v.PermittedActions[1].Allowed = v.PermittedActions[1].Allowed && v.Readiness.Ready
 	for _, stats := range counts {
-		v.ReleaseStats.SelectedCount += stats["selected"]
+		v.ReleaseStats.SelectedCount += stats["selected"] + stats["linked"]
 		v.ReleaseStats.DismissedCount += stats["dismissed"]
-		v.ReleaseStats.PendingVerificationCount += stats["selected"]
+		v.ReleaseStats.PendingVerificationCount += stats["pending_verification"]
 	}
 	v.DataVersion, err = animepreview.Digest(v)
 	return v, err
+}
+
+func animeViewCounts(c storage.AnimeJobCounts) (AnimeJobStats, AnimeFileStats, AnimeCompletionStats) {
+	return AnimeJobStats{TotalCount: c.Total, QueuedCount: c.Queued, DownloadingCount: c.Downloading, RemoteCompletedCount: c.RemoteCompleted, FailedCount: c.Failed, NeedsReviewCount: c.NeedsReview}, AnimeFileStats{VerifiedCount: c.Verified, NeedsReviewCount: c.FileReview}, AnimeCompletionStats{OriginalSavedCount: c.OriginalSaved, OrganizedCount: c.Organized}
 }
 
 func animeSourceEffectiveState(parent string, source model.AnimeSource) (state, blockedBy string) {

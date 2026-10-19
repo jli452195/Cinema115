@@ -50,7 +50,8 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
           data = { id, entryId: item.entryId, revision: item.revision, status: item.status, sourceIds: {}, sourceRevisions: {}, requiresRepreview: true }
         } else if (state.failDetail) { status = 503; data = { error: '模拟详情读取失败' } }
         else data = item
-      } else if (endpoint.endsWith('/settings')) data = { settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载' }, primaryAccount: { id: 'primary', name: '115 主网盘', uid: '10001', revision: 2 }, readiness: { ready: true, issues: [] } }
+      } else if (endpoint.endsWith('/jobs')) data = { items: [], total: 0, page: Number(url.searchParams.get('page') || 1), pageSize: 20, dataVersion: 'jobs-empty' }
+      else if (endpoint.endsWith('/settings')) data = { settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载' }, primaryAccount: { id: 'primary', name: '115 主网盘', uid: '10001', revision: 2 }, readiness: { ready: true, issues: [] } }
       else if (endpoint.endsWith('/discovery/calendar')) data = { ...meta(), days: Array.from({ length: 7 }, (_, n) => ({ weekday: n + 1, items: Array.from({ length: 20 }, (_, i) => card(n * 100 + i + 1)) })) }
       else if (endpoint.endsWith('/discovery/search')) data = { ...meta(), total: 60, items: Array.from({ length: 20 }, (_, i) => card(8000 + body.offset + i)), limit: 20, offset: body.offset }
       else if (endpoint.endsWith('/catalog/mikan')) data = { ...meta(), provider:'mikan', days:Array.from({length:9},(_,n)=>({day:n+1,items:Array.from({length:20},(_,i)=>({...card(n*100+i+1),updatedDate:'2026-10-16'}))})),items:Array.from({length:60},(_,i)=>({...card(8000+i),updatedDate:'2026-10-16'})) }
@@ -198,7 +199,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     assert.equal(await direct.page.getByRole('searchbox', { name: '订阅名称' }).evaluate(el => el === document.activeElement), true, 'off-page detail has a keyboard fallback')
     assert.ok(direct.page.url().includes('status=draft&page=2'))
     await direct.navigate('/anime/subscriptions/not-found')
-    await direct.page.getByText('这条订阅不存在或已移除。', { exact: true }).waitFor()
+    await direct.page.getByText('这条订阅不存在。', { exact: true }).waitFor()
     assert.equal(await direct.page.getByRole('link', { name: '编辑订阅配置' }).count(), 0)
     await direct.page.keyboard.press('Escape')
     direct.state.failDetail = true
@@ -306,7 +307,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     const validation = await page.evaluate(async () => { const { animeReturnPath } = await import('/src/composables/useAnimeSubscriptionBrowser.ts'); return ['https://example.test', '//example.test', '/anime/subscriptions/sub-1/edit', '/anime/new', '/anime?day=4&subject=302', '/anime/subscriptions/sub-1?page=2'].map(animeReturnPath) })
     assert.deepEqual(validation.slice(0, 4), [undefined, undefined, undefined, undefined])
     assert.equal(validation[4], '/anime?day=4&subject=302'); assert.equal(validation[5], '/anime/subscriptions/sub-1?page=2')
-    assert.equal(calls.some(c => /\/anime\/.+(enable|check|jobs|organize|releases)/.test(c.endpoint)), false)
+    assert.equal(calls.some(c => /\/anime\/.+(enable|check|organize|releases)/.test(c.endpoint)), false)
     assert.equal(calls.filter(c => c.endpoint.includes('/admin/anime/') && c.method !== 'GET' && !c.endpoint.endsWith('/catalog-status') && !c.endpoint.endsWith('/catalog/mikan') && !c.endpoint.endsWith('/discovery/search') && !c.endpoint.endsWith('/naming/search') && !c.endpoint.endsWith('/subscriptions/sub-1')).length, 0)
     assert.deepEqual(errors, [])
     passed.push('回跳仅限已知只读动漫路由，无伪下载/启用请求，未访问真实配置或115')

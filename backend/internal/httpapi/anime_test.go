@@ -241,11 +241,12 @@ func TestAnimeHTTPConfigReceiptAndLocalReads(t *testing.T) {
 	if v := f.call(t, "POST", "/subscriptions", f.admin, "enabled_01", in, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
 		t.Fatal(v)
 	}
-	for _, path := range []string{"/subscriptions/" + id + "/enable", "/jobs/a/retry", "/subscriptions/" + id + "/organize/apply"} {
+	for _, path := range []string{"/subscriptions/" + id + "/enable", "/subscriptions/" + id + "/organize/apply"} {
 		if v := f.call(t, "POST", path, f.admin, "", nil, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
 			t.Fatal(v)
 		}
 	}
+	f.call(t, "POST", "/jobs/a/retry", f.admin, "", nil, 400)
 }
 
 func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {

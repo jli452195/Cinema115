@@ -63,6 +63,7 @@ export interface AnimePreviewPage {
   selectedIds: string[]; pendingSelections: AnimePendingSelection[]
 }
 export interface AnimePreviewResponse {
+	selectionNotice?: string
   batchId: string; budget: { totalRawCount: number; limit: number; remaining: number }
   sources: AnimePreviewSummary[]; issues: { sourceRef: string; code: string }[]; page?: AnimePreviewPage
 }
@@ -70,11 +71,24 @@ export interface AnimeSubscriptionView {
   naming?: AnimeNamingPlan | null
   id: string; entryId: string; status: string; revision: number
   createdAt?: number; updatedAt?: number; dataVersion?: string
+  firstEnabledAt?: number | null
+  permittedActions?: { name: string; allowed: boolean; reasonCode?: string }[]
+  jobStats?: { totalCount: number; queuedCount: number; downloadingCount: number; remoteCompletedCount: number; failedCount: number; needsReviewCount: number }
+  completionStats?: { originalSavedCount: number; organizedCount: number }
   readiness?: { ready: boolean; issues: string[] }
   entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string } }
-  sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; checkedAt?: number | null })[]
+  sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null })[]
   form: { formSelections: AnimeFormSelection[]; previewRefs: AnimePreviewRef[] }
 }
+export interface AnimeDownloadJob {
+  id: string; title: string; groupName: string; revision: number
+  downloadState: string; fileState: string; workflowState: string; blockCode: string | null
+  executionPath: string; directoryCid: string | null; createdAt: number; updatedAt: number
+  observedAt: number; attemptedAt: number; nextRunAt: number | null; progress: number | null
+  files: { id: string; name: string; kind: string; size: string }[]
+  permittedActions: { reconcile: boolean; retry: boolean }
+}
+export interface AnimeDownloadPage { items: AnimeDownloadJob[]; total: number; page: number; pageSize: number; dataVersion: string }
 export interface AnimeSubscriptionPage { items: AnimeSubscriptionView[]; total: number; page: number; pageSize: number; dataVersion: string }
 export interface AnimeSaveReceipt { id: string; entryId: string; revision: number; status: string; sourceIds: Record<string, string>; sourceRevisions: Record<string, number>; requiresRepreview: boolean }
 

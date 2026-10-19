@@ -4,7 +4,8 @@ import { animeConfigRequest } from '../lib/anime-config-api'
 
 // Local configuration reads only. Writes keep their own idempotency and receipt handling.
 const cache = new Map<string, { data: unknown; fetchedAt: number; version: number }>()
-const states = new Map<string, { top: number; expanded: string[] }>()
+interface BrowserState { top: number; expanded: string[]; page?: number }
+const states = new Map<string, BrowserState>()
 let version = 0
 export const animeSubscriptionsVersion = ref(0)
 let lastQuery: Record<string, string> | undefined
@@ -29,10 +30,10 @@ export function rememberSubscriptionQuery(query: Record<string, string>, id = ''
   if (!portalToken.value || portalUser.value?.role !== 'admin') return
   lastQuery = { ...query }; lastID = id
 }
-export function subscriptionState(key: string) { return { ...(states.get(key) || { top: 0, expanded: [] }), saved: states.has(key) } }
-export function rememberSubscriptionState(key: string, state: { top: number; expanded: string[] }) {
+export function subscriptionState(key: string) { return { ...(states.get(key) || { top: 0, expanded: [], page: 1 }), saved: states.has(key) } }
+export function rememberSubscriptionState(key: string, state: BrowserState) {
   if (!portalToken.value || portalUser.value?.role !== 'admin') return
-  boundedSet(states, key, { top: state.top, expanded: [...state.expanded] })
+  boundedSet(states, key, { top: state.top, expanded: [...state.expanded], page: state.page })
 }
 export function cachedSubscription<T>(key: string) {
   const item = cache.get(key)

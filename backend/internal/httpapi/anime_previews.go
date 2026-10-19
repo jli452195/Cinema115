@@ -10,17 +10,18 @@ import (
 )
 
 type animePreviewView struct {
-	BatchID     string                      `json:"batchId"`
-	Fingerprint string                      `json:"fingerprint"`
-	Budget      animepreview.Budget         `json:"budget"`
-	Sources     []animepreview.Summary      `json:"sources"`
-	Issues      []service.AnimePreviewIssue `json:"issues"`
-	Page        *animepreview.Page          `json:"page,omitempty"`
-	DataVersion string                      `json:"dataVersion"`
+	SelectionNotice string                      `json:"selectionNotice,omitempty"`
+	BatchID         string                      `json:"batchId"`
+	Fingerprint     string                      `json:"fingerprint"`
+	Budget          animepreview.Budget         `json:"budget"`
+	Sources         []animepreview.Summary      `json:"sources"`
+	Issues          []service.AnimePreviewIssue `json:"issues"`
+	Page            *animepreview.Page          `json:"page,omitempty"`
+	DataVersion     string                      `json:"dataVersion"`
 }
 
 func animePreviewResponse(c *gin.Context, v service.AnimePreviewResult, ref string) {
-	out := animePreviewView{Budget: v.Budget, Sources: v.Sources, Issues: v.Issues}
+	out := animePreviewView{Budget: v.Budget, Sources: v.Sources, Issues: v.Issues, SelectionNotice: v.SelectionNotice}
 	if v.Batch != nil {
 		out.BatchID, out.Fingerprint = v.Batch.ID, v.Batch.Fingerprint
 		for _, source := range v.Batch.Sources {

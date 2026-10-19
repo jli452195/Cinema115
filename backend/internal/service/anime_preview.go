@@ -53,10 +53,11 @@ type AnimePreviewIssue struct {
 }
 
 type AnimePreviewResult struct {
-	Batch   *animepreview.Batch    `json:"batch,omitempty"`
-	Budget  animepreview.Budget    `json:"budget"`
-	Sources []animepreview.Summary `json:"sources"`
-	Issues  []AnimePreviewIssue    `json:"issues"`
+	SelectionNotice string                 `json:"selectionNotice,omitempty"`
+	Batch           *animepreview.Batch    `json:"batch,omitempty"`
+	Budget          animepreview.Budget    `json:"budget"`
+	Sources         []animepreview.Summary `json:"sources"`
+	Issues          []AnimePreviewIssue    `json:"issues"`
 }
 
 func (s *AnimePreviewService) result(batch animepreview.Batch, issues []AnimePreviewIssue) AnimePreviewResult {

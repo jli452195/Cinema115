@@ -238,7 +238,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, e)
 			return
 		}
-		c.JSON(200, gin.H{"capabilities": gin.H{"configure": true, "download": false, "organize": false}, "readiness": v.Readiness, "settingsRevision": v.Settings.Revision})
+		c.JSON(200, gin.H{"capabilities": gin.H{"configure": true, "download": s.DownloadAvailable(), "organize": false}, "readiness": v.Readiness, "settingsRevision": v.Settings.Revision})
 	})
 	r.GET("/settings", func(c *gin.Context) {
 		v, e := s.Settings(c.Request.Context())
@@ -468,7 +468,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	})
 	registerAnimeControl(r, s)
 	// Explicit execution endpoints remain closed until their phase is accepted.
-	for _, path := range []string{"/subscriptions/:id/enable", "/subscriptions/:id/resume", "/subscriptions/:id/check", "/subscriptions/:id/history/apply", "/subscriptions/:id/organize/apply", "/subscriptions/:id/organize/preview", "/subscriptions/:id/naming-mapping/preview", "/subscriptions/:id/naming-metadata/check", "/subscriptions/:id/naming-metadata/apply", "/subscriptions/:id/sources/:sourceId/enable", "/subscriptions/:id/sources/:sourceId/pause", "/subscriptions/:id/sources/:sourceId/recover", "/jobs/:id/reconcile", "/jobs/:id/retry"} {
+	for _, path := range []string{"/subscriptions/:id/check", "/subscriptions/:id/history/apply", "/subscriptions/:id/organize/apply", "/subscriptions/:id/organize/preview", "/subscriptions/:id/naming-mapping/preview", "/subscriptions/:id/naming-metadata/check", "/subscriptions/:id/naming-metadata/apply", "/subscriptions/:id/sources/:sourceId/enable", "/subscriptions/:id/sources/:sourceId/pause", "/subscriptions/:id/sources/:sourceId/recover"} {
 		r.POST(path, func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 	}
 	r.PUT("/subscriptions/:id/naming-mapping", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })

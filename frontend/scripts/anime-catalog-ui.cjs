@@ -53,6 +53,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       }
       else if (endpoint.endsWith('/subscriptions')) data = {items:state.saved?[state.saved]:[],total:state.saved?1:0,page:1,pageSize:20}
       else if (endpoint.endsWith('/subscriptions/cross-site-sub')) data=state.saved
+      else if (endpoint.endsWith('/subscriptions/cross-site-sub/jobs')) data={items:[],total:0,page:1,pageSize:20,dataVersion:'empty-jobs'}
       else if (endpoint.endsWith('/settings')) data = { settings:{revision:1,downloadCid:null},primaryAccount:null,readiness:{ready:false,issues:['PRIMARY_ACCOUNT_REQUIRED']} }
       else if (endpoint.includes('/discovery/subjects/')) {
         const id=endpoint.split('/').pop(); data={subject:{id,title:'原站关联的 Bangumi 篇章',coverUrl:'',date:'2026-10-01'},metadata:{expiresAt:Date.now()+600000}}
@@ -118,7 +119,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.screenshot({path:'test-results/mikan-entry-loading-desktop.png',animations:'disabled'})
     assert.equal(calls.filter(c=>c.endpoint.endsWith('/sources/mikan/4062')).length,1)
     await page.goBack();await page.locator('[data-mikan-id="4062"]').waitFor()
-    await page.getByRole('button',{name:'AniBT',exact:true}).click();await page.locator('.anibt-anime-card').waitFor()
+    // Provider switches use today's weekday; the fixture has AniBT entries on Monday only.
+    await page.getByRole('button',{name:'AniBT',exact:true}).click();await page.getByRole('button',{name:/^周一/}).click();await page.locator('.anibt-anime-card').waitFor()
     state.entryRelease();await page.waitForTimeout(100);assert.equal(new URL(page.url()).searchParams.get('source'),'anibt')
     await page.getByRole('button',{name:'蜜柑',exact:true}).click();await page.locator('[data-mikan-id="4063"]').waitFor()
     state.slowEntry='4063';await page.locator('[data-mikan-id="4063"]').click();await page.locator('.ae-entry-loading').waitFor()
@@ -174,7 +176,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,1)
     await garden.page.screenshot({path:'test-results/garden-catalog-desktop.png',animations:'disabled'})
     await garden.page.getByRole('searchbox').fill('many');await garden.page.getByRole('button',{name:'搜索',exact:true}).click();await garden.page.getByText(/Anime Garden.*100/).waitFor()
-    await garden.page.getByRole('button',{name:'AniBT',exact:true}).click();await garden.page.locator('.anibt-anime-card').waitFor()
+    await garden.page.getByRole('button',{name:'AniBT',exact:true}).click();await garden.page.getByRole('button',{name:/^周一/}).click();await garden.page.locator('.anibt-anime-card').waitFor()
     await garden.page.getByRole('button',{name:'Anime Garden',exact:true}).click();await garden.page.locator('.garden-anime-card').waitFor()
     assert.equal(await garden.page.getByRole('searchbox').inputValue(),'many')
     assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,2)
@@ -187,7 +189,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 
     const cross = await session(); cross.state.statusEnabled = true; cross.state.links = ['630160']
     await cross.go('/anime?source=anibt&day=1');await cross.page.locator('[data-anibt-id="630160"]').waitFor()
-    await cross.page.getByRole('button',{name:'Anime Garden',exact:true}).click();await cross.page.locator('[data-garden-id="630160"]').waitFor()
+    await cross.page.getByRole('button',{name:'Anime Garden',exact:true}).click();await cross.page.getByRole('button',{name:/^周一/}).click();await cross.page.locator('[data-garden-id="630160"]').waitFor()
     await cross.navigate('/anime?source=mikan&day=1');await cross.page.locator('[data-mikan-id="4058"]').click();await cross.page.locator('.ae-chapter').waitFor()
     await cross.page.getByRole('button',{name:'保存草稿',exact:true}).click();await cross.page.getByRole('heading',{name:'草稿已保存'}).waitFor()
     await cross.page.locator('.ae-receipt').getByRole('link',{name:'返回选番'}).click()
@@ -261,7 +263,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     passed.push('多个版本进入精确Bangumi筛选列表；30秒后回焦点仅核对本地状态；切站迟到响应隔离，退出清空状态')
     const touch=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true});await touch.go()
     assert.ok(await touch.page.evaluate(()=>navigator.maxTouchPoints>0&&matchMedia('(pointer: coarse)').matches))
-    await touch.page.getByRole('button',{name:'AniBT',exact:true}).tap();await touch.page.locator('.anibt-anime-card').first().waitFor()
+    await touch.page.getByRole('button',{name:'AniBT',exact:true}).tap();await touch.page.getByRole('button',{name:/^周一/}).tap();await touch.page.locator('.anibt-anime-card').first().waitFor()
     await touch.page.getByRole('button',{name:'蜜柑',exact:true}).tap();await touch.page.locator('[data-mikan-id="4058"]').waitFor()
     assert.equal(touch.count(),1,'touch site round-trip uses the existing calendar cache')
     await touch.page.locator('[data-mikan-id="4058"]').tap();await touch.page.locator('.ae-chapter').waitFor()

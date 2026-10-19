@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:anime-download-ui": "node scripts/anime-download-ui.cjs",
     "test:anime-subscription-browser-ui": "node scripts/anime-subscription-browser-ui.cjs",
     "test:anime-subscription-ui": "node scripts/anime-subscription-ui.cjs",
     "test:anime-discovery-ui": "node scripts/anime-catalog-ui.cjs",

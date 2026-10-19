@@ -269,34 +269,42 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 
 ### 7.2 P2 API
 
+2026-10-20，P2-10～12 实际交付如下，详见[下载阶段实现与验收](anime-download-stage-implementation.md)。创建/保存仍仅接受 draft/paused；先保存，再用已保存配置预览并独立启用。首次启用和未修改规则的恢复已开放；启用后规则重确认、单独来源控制、手动 RSS 检查及历史后补尚未开放。下方“后续接口”仅为规划。
+
 | 方法/路径 | 输入 | 成功结果/边界 |
 | --- | --- | --- |
-| `POST /subscriptions` | 增加 saveMode=enabled、activateSourceRefs、各有效 previewRef/loadRevision、selected/dismissed release IDs | 201，本地配置/基线/已选发布决定同事务；返回 selectionCount、待核验数，不声称已提交115 |
-| `POST /subscriptions/:id/enable` | expectedRevision、activateSourceIds、previewRefs、各源选择 | 200，本地首次启用回执；新加备用源同样逐源确认，其他已启用源不重建基线 |
+| `POST /subscriptions/:id/enable-preview` | expectedRevision、settingsRevision、sourceId | 200，从已保存配置生成该来源新预览，返回 batchId/page；恢复当前可确认的表单预选，无法确认的旧预选提示重新核对，不自动下载 |
+| `POST /subscriptions/:id/enable` | expectedRevision、settingsRevision、sources[]，每项含 batchId/sourceRef/sourcePreviewId/loadRevision/selectedReleaseIds/dismissedReleaseIds | 200，首次启用；全部参与来源必须有有效预览且含主源，基线、显式选择、启用状态与幂等回执同事务；不直接提交115 |
 | `POST /subscriptions/:id/pause` | expectedRevision | 200，停止后续写阶段，返回 inFlightOperationCount；已获准单操作继续确认结果 |
 | `POST /subscriptions/:id/resume` | expectedRevision | 200，曾启用且未变规则恢复原意图；首次或修改后返回 BASELINE_RECONFIRM_REQUIRED，不偷偷重选历史 |
-| `POST /subscriptions/:id/check` | expectedRevision、可选 sourceIds | 202，持久或合并的只读检查安排回执；返回 check token/sourceIds，详情靠 checkedAt/health/候选更新反馈，不代表下载已完成 |
 | `POST /subscriptions/:id/archive`、`/remove` | expectedRevision | 200，软状态改变，保留未结束任务入口；不删115任务/文件 |
 | `POST /subscriptions/:id/unarchive` | expectedRevision | 200，仅回到暂停；不直接重新下载 |
+| `GET /subscriptions/:id/jobs`、`GET /jobs/:id` | 前者按订阅分页，后者按任务 ID | 200，本地精简投影，含 withdrawn 关联、title/groupName、下载/文件/workflow 状态、错误码、执行时路径/CID、时间、进度、文件清单和 permittedActions；文件 size 为十进制字符串，不触发115刷新 |
+| `POST /jobs/:id/reconcile` | expectedRevision | 200，安排原任务必要的只读核对，暂停中也允许；不新建任务或提交授权，已保存清单的任务拒绝核对 |
+| `POST /jobs/:id/retry` | expectedRevision | 200，仅重试读取或尚未派发的准备，沿用原任务/操作；不创建新 attempt、不删除旧任务重提。unknown 只能核对，failed/终态/归属冲突无重试入口 |
+
+任务动作由服务端当前 permittedActions 控制，执行时重新校验 revision、租约、固定主账号及目录归属；30秒内最近尝试和未到期 Retry-After 不可被手动点击绕过。queued 目录未知仍走原自动恢复，不提供可能继续写入的“只读核对”按钮。幂等 key 与请求体必须原样保留；成功回执重放优先于当前版本校验。
+
+后续接口（尚未开放）：
+
+| 方法/路径 | 规划输入 | 规划成功结果/边界 |
+| --- | --- | --- |
+| `POST /subscriptions/:id/check` | expectedRevision、可选 sourceIds | 202，持久或合并的只读检查安排回执；返回 check token/sourceIds，详情靠 checkedAt/health/候选更新反馈，不代表下载已完成 |
 | `POST /subscriptions/:id/sources/:sourceId/pause` | 父及来源 expectedRevision | 200，撤回该源新意图和写授权；其他源继续 |
 | `POST /subscriptions/:id/sources/:sourceId/enable` | 父/来源 expectedRevision、该源有效 preview/选择 | 200，该源首次启用/规则变更重确认；不重选其他源历史 |
 | `POST /subscriptions/:id/sources/:sourceId/recover` | 父/来源 expectedRevision | 202，显式解除该源 unavailable 后安排一次受限探测；共享站点 Retry-After 未到仍不请求 |
-| `GET /subscriptions/:id/jobs`、`GET /jobs/:id` | 前者按订阅分页，后者按任务 ID | 只读本地下载/文件/工作流及固定目标快照，包含 withdrawn 关联；移除订阅的任务仍可访问，不触发115刷新。其他过滤及任务 permittedActions 随后续交互接入 |
-| `POST /jobs/:id/reconcile` | expectedRevision | 202，安排只读核对；暂停中也允许，不授予写权限 |
-| `POST /jobs/:id/retry` | expectedRevision、明确 reason | 202，先核对旧尝试再决定是否建新 attempt；未知结果/暂停时拒绝，不自动删除旧任务重提 |
 
-新历史后补通过同样的有效预览和显式选择接口 `POST /subscriptions/:id/history/apply`（expectedRevision、previewRefs、selected/dismissed IDs），202 返回本地选择回执；不重置 T0，不把未加载历史转为全量后台任务。
+新历史后补规划通过同样的有效预览和显式选择接口 `POST /subscriptions/:id/history/apply`（expectedRevision、previewRefs、selected/dismissed IDs），202 返回本地选择回执；不重置 T0，不把未加载历史转为全量后台任务。当前接口继续关闸。
 
-首次激活已有订阅的请求结构如下；新建启用用 activateSourceRefs 代替 activateSourceIds，previewRefs 对应使用客户端 sourceRef。selected/dismissed 集合必须显式传入、互不相交，且属于该源快照；为空是合法的明确选择，不自动改为全选。
+首次激活已保存订阅的实际请求如下。sourceRef 使用已保存的稳定来源 ID，各来源可来自不同 batch。sources 必须准确覆盖所有 runWhenEnabled 来源；selected/dismissed 集合必须显式传入、互不相交，且属于该源快照；为空是合法的明确选择，不自动改为全选。
 
 ```json
 {
   "expectedRevision": 1,
   "settingsRevision": 1,
-  "activateSourceIds": ["source-a"],
-  "previewBatchId": "batch-example",
-  "previewRefs": [{
-    "sourceId": "source-a",
+  "sources": [{
+    "batchId": "batch-example",
+    "sourceRef": "source-a",
     "sourcePreviewId": "preview-example",
     "loadRevision": 1,
     "selectedReleaseIds": ["release-a"],
@@ -305,11 +313,11 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 }
 ```
 
-有匹配发布但用户本次不选历史时，动作显示“启用订阅”，说明“本次未选择历史资源，后续按规则检查”；不出现“下载已选0条”，也不伪装成来源零匹配。仅新发布模式同样不提交当前历史。activate 集合与本次待确认 previewRefs 要一致，来源启用计划不能由漏传字段暗中改变。
+有匹配发布但用户本次不选历史时，动作显示“启用订阅”，说明“本次未选择历史资源，后续按规则检查”；不出现“下载已选0条”，也不伪装成来源零匹配。仅新发布模式同样不提交当前历史。来源启用计划不能由漏传字段暗中改变。首次启用回执复用 AnimeControlReceipt，返回 id/revision/status/resumedSourceIds 等控制字段，未返回示意中的下载完成数。
 
 来源问题处理优先于按钮数量判断；在有效激活集合内，主动作依次为：selectedCount>0 时“启用并下载已选N条”；selectedCount=0、matchedCount=0 且 reviewCount>0 时“查看待确认”；有效零匹配且无待确认时“启用并等待资源”；有合法匹配但未选历史或明确 new_only 时“启用订阅”。reviewCount 是解析/归属不明且不可勾选的发布，pendingVerificationCount 是已明确选择、尚待 Hash 核验的发布，二者不能混用。待确认项要先修正规则/归属并生成新有效预览，成为匹配项后才能勾选；不提供直接勾选未知编号的入口。有已选N条及M条待确认时邻近说明“另有M条待确认，本次不提交”，不承诺它们之后自动变为可下载。
 
-异步只读检查不另造长期任务系统：以来源 next_check_at 原子置为到期及 check token 回执实现调度合并，返回的 token 只关联这次安排，不是有独立完成状态的资源任务 ID。无有效新鲜数据时详情继续显示旧 checkedAt；检查失败也更新独立的 attemptedAt/errorCode，不能把旧成功数据写成刚刷新。
+后续手动异步只读检查不另造长期任务系统：以来源 next_check_at 原子置为到期及 check token 回执实现调度合并，返回的 token 只关联这次安排，不是有独立完成状态的资源任务 ID。无有效新鲜数据时详情继续显示旧 checkedAt；检查失败也更新独立的 attemptedAt/errorCode，不能把旧成功数据写成刚刷新。
 
 检查按钮被接受后显示中性“检查已安排”，不锁住整个表单；同来源在途请求合并，站点冷却/来源 unavailable 不能被 check 绕过。缓存复用时展示对应 fetchedAt，不把点击时刻写成上次成功检查时间。
 
@@ -328,7 +336,7 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 
 ## 8. 响应与错误投影
 
-成功回执示例（仅示意本地接受，非115回执）：
+规划成功回执示例（仅示意本地接受，非115回执；P2 首次启用实际采用第7.2节控制回执）：
 
 ```json
 {
@@ -344,7 +352,7 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 }
 ```
 
-后台 Hash 核验后任务数可能小于已选发布数；页面显示“已保存4条选择，正在核验资源”，不可显示“115已下载4集”。任务详情返回 downloadState、fileState、organizeState、effectiveState、readinessIssues、permittedActions、dataVersion；`permittedActions` 含动作名和不可用原因供按钮解释，后端执行时再次校验。size 以十进制字符串投影给 JS。
+后台资源 Hash 核验后任务数可能小于已选发布数；页面显示“已保存4条选择，正在核验资源”，不可显示“115已下载4集”。此处 Hash 是下载资源身份，不读取网盘文件 SHA1。P2 任务详情实际字段见第7.2节，permittedActions 为 reconcile/retry 布尔对象；订阅级动作仍使用动作数组。size 以十进制字符串投影给 JS。
 
 订阅/来源统计字段固定如下；界面按所在区域选择少量必要指标，不全塞进卡片：
 
@@ -352,7 +360,7 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 | --- | --- |
 | `releaseStats.selectedCount/dismissedCount/pendingVerificationCount` | 来源-发布选择数；跨来源可重复关联同一发布，仅表示选择意图，文案“已选 N 条发布/待核验 N 条” |
 | `jobStats.totalCount/queuedCount/downloadingCount/remoteCompletedCount/failedCount/needsReviewCount` | 当前范围按 claim 去重、仅计最新有效尝试；历史失败尝试不重复加总。remoteCompleted 只代表115任务返回完成，文案“关联 M 个下载任务/网盘标记完成 X 个任务” |
-| `fileStats.verifiedCount/needsReviewCount` | 按 UID+fileId 去重的实际文件核对数量；未读完目录不计 verified，文案“已核实 X 个文件” |
+| `fileStats.verifiedCount/needsReviewCount` | P2 按已保存任务清单中的 file 条目计数，不按资源数估算文件数；目录未读完整不计 verified，needsReviewCount 暂为0，资源受阻另计 jobStats，文案“已保存 X 个文件记录” |
 | `completionStats.originalSavedCount/organizedCount` | 按资源 claim 去重的最终工作结果；后续显式整理成功可将同资源投影更新为 organized，二者不重复计。文案“原名保存 X 条/整理完成 Y 条资源” |
 
 不同统计维度不能相加，downloadState=completed 不能直接增加 organizedCount。默认不显示“已完成 N 集”，如后续需要剧情集覆盖统计，须另按已确认篇章映射去重，而非发布/任务数。预览已选数是前端明确选择的集合大小，状态条区分“已加载/匹配/待确认/已选”；待确认数量不含在 matchedCount 中。
