@@ -64,7 +64,7 @@ func TestCloudDownloadPOSTDefaultsToSafeResubmit(t *testing.T) {
 			r, accounts, id := setupAccountsAPI(t, nil, nil)
 			settings := testCloudDownloadSettings(t, accounts)
 			client := &cloudSubmitAPIFake{task: p115.CloudTask{InfoHash: hash, DisplayStatus: tc.display}, found: tc.found, removeErr: tc.removeErr, addErr: tc.addErr}
-			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client}, p115.NewCloudClient(), p115.NewShareClient())
+			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
 			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId="+id, strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
 			response := httptest.NewRecorder()
 			r.ServeHTTP(response, request)
@@ -103,7 +103,7 @@ func TestCloudDownloadRequiresConfiguredPrimary(t *testing.T) {
 	}
 	settings := testCloudDownloadSettings(t, accounts)
 	cloud := p115.NewCloudClient()
-	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud}, cloud, p115.NewShareClient())
+	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud, Coordinator: &service.CloudDownloadCoordinator{}}, cloud, p115.NewShareClient())
 	for _, tc := range []struct {
 		method string
 		path   string
@@ -145,7 +145,7 @@ func TestCloudDownloadDirectoryAndTaskUseSelectedAccount(t *testing.T) {
 	drive := p115.NewShareClient()
 	drive.HTTP, drive.WebURL = upstream.Client(), upstream.URL
 	settings := testCloudDownloadSettings(t, accounts)
-	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud}, cloud, drive)
+	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud, Coordinator: &service.CloudDownloadCoordinator{}}, cloud, drive)
 
 	for _, path := range []string{
 		"/api/admin/p115/cloud-download/paths?accountId=" + id + "&cid=0",

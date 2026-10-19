@@ -11,8 +11,10 @@ import (
 )
 
 type DriveDirectory struct {
-	CID  string `json:"cid"`
-	Path string `json:"path"`
+	CID       string `json:"cid"`
+	Path      string `json:"path"`
+	ParentCID string `json:"parentCid,omitempty"`
+	Name      string `json:"name,omitempty"`
 }
 
 // ReadDirectory reads one row at most, using the returned breadcrumb as the
@@ -70,5 +72,10 @@ func (c *ShareClient) ReadDirectory(ctx context.Context, cid, cookie string) (Dr
 		}
 		parts = append(parts, name)
 	}
-	return DriveDirectory{CID: cid, Path: "/" + strings.Join(parts, "/")}, nil
+	out = DriveDirectory{CID: cid, Path: "/" + strings.Join(parts, "/")}
+	if cid != "0" && len(data.Path) >= 2 {
+		out.ParentCID = data.Path[len(data.Path)-2].CID.String()
+		out.Name = parts[len(parts)-1]
+	}
+	return out, nil
 }

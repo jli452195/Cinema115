@@ -15,7 +15,7 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
 	settings := testCloudDownloadSettings(t, accounts)
 	client := &cloudSubmitAPIFake{}
-	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client}, p115.NewCloudClient(), p115.NewShareClient())
+	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
 	link := "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)
 	for _, tc := range []struct {
 		name, body    string

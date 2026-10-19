@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/p115"
@@ -47,13 +48,19 @@ type animeDirectories interface {
 }
 
 type AnimeAdminService struct {
-	Store       *storage.Store
-	Bindings    *AnimeBindingService
-	Previews    *AnimePreviewService
-	Discovery   AnimeDiscovery
-	Accounts    animePrimaryAccounts
-	Directories animeDirectories
-	Naming      *AnimeNamingService
+	Store               *storage.Store
+	Bindings            *AnimeBindingService
+	Previews            *AnimePreviewService
+	Discovery           AnimeDiscovery
+	Accounts            animePrimaryAccounts
+	Directories         animeDirectories
+	Naming              *AnimeNamingService
+	Torrents            animeresource.TorrentReader
+	Offline             CloudTaskReader
+	SubmitGateway       AnimeOfflineGateway
+	StatusGateway       AnimeStatusReader
+	FileGateway         AnimeFileGateway
+	DownloadCoordinator *CloudDownloadCoordinator
 }
 
 type AnimeSaveConfig struct {

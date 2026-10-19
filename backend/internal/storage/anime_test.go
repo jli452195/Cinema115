@@ -89,11 +89,11 @@ func TestAnimeSchemaUpgradeAndReopen(t *testing.T) {
 			t.Fatal("existing data lost", err)
 		}
 		var count int
-		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('anime_download_jobs','anime_resources','anime_naming_plans')`).Scan(&count); err != nil || count != 0 {
+		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('anime_naming_plans','anime_files')`).Scan(&count); err != nil || count != 0 {
 			t.Fatal("later-phase tables created", count, err)
 		}
-		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_releases') WHERE name='resource_id'`).Scan(&count); err != nil || count != 0 {
-			t.Fatal("dangling P2 column", err)
+		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_releases') WHERE name='resource_id'`).Scan(&count); err != nil || count != 1 {
+			t.Fatal("missing P2 resource association", err)
 		}
 		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_subscriptions') WHERE name IN ('naming_plan_id','organize_enabled')`).Scan(&count); err != nil || count != 0 {
 			t.Fatal("dangling P3 columns", err)
@@ -164,8 +164,8 @@ func resetAnimeSchemaToV38(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(tables) != 13 {
-		t.Fatalf("P1 table count: %d", len(tables))
+	if len(tables) != 18 {
+		t.Fatalf("current anime table count: %d", len(tables))
 	}
 	// Build a v38 fixture with the existing business schema and no anime tables.
 	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {

@@ -37,7 +37,7 @@ func TestCloudBatchSnapshotsAndContinuesKnownFailure(t *testing.T) {
 			return json.RawMessage(`{}`), nil
 		},
 	}
-	s := &CloudDownloadService{Accounts: accounts, Client: client}
+	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	batch, err := s.PrepareBatch(config, []string{"magnet:?xt=urn:btih:" + strings.Repeat("a", 40), "magnet:?xt=urn:btih:" + strings.Repeat("b", 40)})
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestCloudBatchSnapshotsAndContinuesKnownFailure(t *testing.T) {
 		t.Fatalf("events=%+v", events)
 	}
 	for _, cookie := range cookies {
-		if cookie != "UID=test; CID=original" {
+		if cookie != "UID=123_A; CID=original" {
 			t.Fatal("batch changed credentials")
 		}
 	}
@@ -74,7 +74,7 @@ func TestCloudBatchValidationDeduplicationAndStop(t *testing.T) {
 			return nil, context.DeadlineExceeded
 		},
 	}
-	s := &CloudDownloadService{Accounts: accounts, Client: client}
+	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	const hash = "0123456789abcdef0123456789abcdef01234567"
 	decoded, _ := hex.DecodeString(hash)
 	b32 := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(decoded)

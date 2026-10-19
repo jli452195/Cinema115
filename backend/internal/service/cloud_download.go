@@ -8,18 +8,20 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"strm115/backend/internal/client/p115"
 )
 
-// CloudURLAdder is the small upstream surface needed by the shared cloud
-// download workflow. Keeping it narrow makes the account-binding rules easy
-// to test without a live 115 account.
-type CloudURLAdder interface {
-	AddURL(context.Context, string, string, string) (json.RawMessage, error)
+// CloudTaskReader exposes exact observations without manual delete/redo access.
+type CloudTaskReader interface {
 	LookupTask(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error)
+}
+
+// CloudURLAdder is the upstream surface used only by manual cloud downloads.
+type CloudURLAdder interface {
+	CloudTaskReader
+	AddURL(context.Context, string, string, string) (json.RawMessage, error)
 	DeleteTaskKeepFiles(context.Context, string, string) error
 }
 
@@ -42,14 +44,13 @@ type CloudDownloadReceipt struct {
 // Each call resolves one explicit account and snapshots its cookie before the
 // upstream request; it never falls back to another account.
 type CloudDownloadService struct {
-	Accounts *P115Accounts
-	Client   CloudURLAdder
-	mu       sync.Mutex
-	inflight map[string]struct{}
+	Accounts    *P115Accounts
+	Client      CloudURLAdder
+	Coordinator *CloudDownloadCoordinator
 }
 
 func (s *CloudDownloadService) ValidateConfig(config CloudDownloadConfig) error {
-	if s == nil || s.Accounts == nil || s.Client == nil {
+	if s == nil || s.Accounts == nil || s.Client == nil || s.Coordinator == nil {
 		return generationInputError("云下载服务尚未初始化")
 	}
 	config.AccountID = strings.TrimSpace(config.AccountID)
@@ -86,23 +87,13 @@ func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudD
 		return CloudDownloadReceipt{}, err
 	}
 	receipt := CloudDownloadReceipt{AccountName: account.Name, TargetPath: strings.TrimSpace(config.TargetPath)}
-	// 锁不包含目录，防止不同入口将同一资源同时提交到不同目录；只保存编号，不保存凭据。
-	key := account.ID + ":" + resource.Protocol + ":" + resource.Hash
-	s.mu.Lock()
-	if _, exists := s.inflight[key]; exists {
-		s.mu.Unlock()
-		return receipt, ErrCloudTaskBusy
+	// Use the pinned credential's actual UID, independent of configuration ID,
+	// target directory or Cookie device suffix. Automatic BT v1 uses this gate too.
+	release, err := s.Coordinator.Acquire(ctx, p115.CookieUserID(account.Cookie), resource.Protocol, resource.Hash)
+	if err != nil {
+		return receipt, err
 	}
-	if s.inflight == nil {
-		s.inflight = make(map[string]struct{})
-	}
-	s.inflight[key] = struct{}{}
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.inflight, key)
-		s.mu.Unlock()
-	}()
+	defer release()
 	if err := ctx.Err(); err != nil {
 		return receipt, err
 	}
@@ -151,6 +142,10 @@ func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account
 	}
 	if strings.TrimSpace(account.Cookie) == "" {
 		return P115Account{}, generationInputError("所选 115 账号凭据已清空，请重新登录")
+	}
+	uid := p115.CookieUserID(account.Cookie)
+	if uid == "" || uid != p115.CookieUserID("UID="+account.UID) {
+		return P115Account{}, generationInputError("无法确认所选 115 账号 UID，请重新登录")
 	}
 	return account, nil
 }

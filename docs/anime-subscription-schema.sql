@@ -1,3 +1,6 @@
+-- Archived P0 design: 2026-10-20 low-request revision supersedes file/postprocess tables.
+-- Current v50 uses two JSON columns on anime_download_jobs; no file SHA1 is collected.
+-- This snapshot is not a requirement to add a file registry or another task queue.
 -- P0-05 contract, 2026-10-18. Execute only in an empty temporary database.
 -- Not a production migration. Do not change the application's user_version here.
 -- All timestamps are UTC Unix milliseconds. External IDs and hashes are TEXT.

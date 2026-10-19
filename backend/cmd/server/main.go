@@ -117,7 +117,16 @@ func main() {
 	animeBindings.Anibt.CatalogLinks = database
 	animeBindings.Garden.CatalogLinks = database
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
-	httpapi.RegisterAnime(admin, &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}})
+	cloudClient := p115.NewCloudClient()
+	downloadCoordinator := &service.CloudDownloadCoordinator{}
+	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator}
+	httpapi.RegisterAnime(admin, animeAdmin)
+	animeDiscoveryRunner := &service.AnimeDiscoveryRunner{Admin: animeAdmin, Feeds: animeBindings}
+	animeAdmin.StatusGateway = cloudClient
+	animeFiles := p115.NewShareClient()
+	animeFiles.ReadRetryDelays = nil
+	animeAdmin.FileGateway = animeFiles
+	animeStatusRunner := &service.AnimeStatusRunner{Admin: animeAdmin}
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
 	if err != nil {
 		log.Fatal(err)
@@ -224,8 +233,7 @@ func main() {
 	}
 	cloudDownloadSettings.ValidateAccount = accounts.ValidatePrimary
 	cloudDownloadSettings.PrimaryID = accounts.PrimaryID
-	cloudClient := p115.NewCloudClient()
-	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient}
+	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient, Coordinator: downloadCoordinator}
 	httpapi.RegisterCloudDownload(admin, accounts, cloudDownloadSettings, cloudDownloads, cloudClient, p115.NewShareClient())
 	organizeStore, err := service.NewSessionStore(filepath.Join(dataDir, "manual-organize.enc"), secret)
 	if err != nil {
@@ -433,6 +441,23 @@ func main() {
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
 	}
 	workerErrors := make(chan error, 8)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := animeStatusRunner.Run(ctx); err != nil {
+			select {
+			case workerErrors <- err:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := animeDiscoveryRunner.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

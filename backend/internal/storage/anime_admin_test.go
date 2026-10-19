@@ -70,9 +70,11 @@ func TestAnimeAdminAtomicChapterAndReceipt(t *testing.T) {
 			t.Fatal("configuration authorized execution", table, n, err)
 		}
 	}
-	var executionTables int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('anime_resource_claims','anime_download_jobs')`).Scan(&executionTables); err != nil || executionTables != 0 {
-		t.Fatal("P2 tables unexpectedly installed", executionTables, err)
+	for _, table := range []string{"anime_resources", "anime_resource_claims", "anime_download_jobs", "anime_job_selections"} {
+		var count int
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
+			t.Fatal("configuration created P2 execution records", table, count, err)
+		}
 	}
 }
 

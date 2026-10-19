@@ -8,8 +8,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const contexts = [], errors = [], passed = []
   await fs.mkdir('test-results', { recursive: true })
-  async function session(viewport = { width: 1440, height: 1080 }, role = 'admin') {
-    const context = await browser.newContext({ viewport, serviceWorkers: 'block' }); contexts.push(context)
+  async function session(viewport = { width: 1440, height: 1080 }, role = 'admin', options = {}) {
+    const context = await browser.newContext({ viewport, serviceWorkers: 'block', ...options }); contexts.push(context)
     await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light'); Object.defineProperty(crypto, 'randomUUID', { value: undefined }) })
     const page = await context.newPage(); page.setDefaultTimeout(10000)
     page.on('pageerror', e => errors.push(e.message))
@@ -95,7 +95,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           { resolution: '1080p', languages: ['zh-Hans', 'zh-Hant', 'ja'], subtitleMode: 'soft', codec: 'h265', bitDepth: '10', container: 'mkv' },
         ]
         if (state.distinctGroups && body.source.groupId === '20') specs.splice(0, specs.length, { resolution: '720p' })
-        const labels = state.distinctGroups && body.source.groupId === '20' ? ['720p'] : ['1080p 简 内嵌', '1080p 繁 内嵌', '1080p 简繁日 内封 HEVC 10bit MKV']
+        let labels = state.distinctGroups && body.source.groupId === '20' ? ['720p'] : ['1080p 简 内嵌', '1080p 繁 内嵌', '1080p 简繁日 内封 HEVC 10bit MKV']
+        if (state.manySpecs) {
+          specs.splice(0, specs.length, ...Array.from({length:13}, (_, i) => ({resolution:['720p','1080p','2160p'][i%3],languages:[i%2 ? 'zh-Hans' : 'zh-Hant'],subtitleMode:i%3 ? 'soft' : 'hard',codec:i<6 ? 'h264' : 'h265',container:i<12 ? 'mkv' : 'mp4'})))
+          labels = specs.map((_, i) => `规格组合 ${i+1}`)
+        }
         data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), specVersion: 1, profilesTruncated: false,
           profiles: specs.map((spec, i) => ({ key: `spec-${i}`, label: labels[i], spec, count: 1 })),
           releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode || 25}] [${labels[i]}]`, parse: { episode: state.sampleEpisode || 25, spec }, sizeRaw: '650 MB' })) }
@@ -370,6 +374,26 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await specs.page.keyboard.press('Escape')
     assert.equal(await specs.page.getByRole('button', { name: '修改来源规则', exact: true }).evaluate(el => el === document.activeElement), true, 'Escape restores launcher focus')
     passed.push('读取样本先于范围确认，多规格OR与明确全部互斥、零选项阻断确认、缓存复用、320px浮窗与焦点恢复')
+
+    const limit = await session(); limit.state.manySpecs = true; await limit.go()
+    await limit.page.getByRole('button', {name:'选择资源',exact:true}).click()
+    await limit.page.getByRole('button', {name:/从零开始 第三季 字幕资源/}).click()
+    await limit.page.getByRole('button', {name:/字幕组甲/}).click()
+    const specOptions = limit.page.locator('.ae-spec-option input')
+    await wait(async () => await specOptions.count() === 14)
+    for (let i=0;i<12;i++) await specOptions.nth(i).check()
+    await specOptions.nth(12).click()
+    await limit.page.getByRole('alert').filter({hasText:'每个来源最多选择 12 种规格'}).waitFor()
+    assert.equal(await specOptions.nth(12).isChecked(), false, 'rejected specification is visually unchecked')
+    assert.equal(await limit.page.locator('.ae-spec-option input:checked').count(), 12)
+    await specOptions.first().uncheck(); await specOptions.nth(12).check()
+    assert.equal(await limit.page.getByRole('alert').count(), 0, 'removing a selection allows a new one and clears the error')
+    await limit.page.getByRole('button', {name:'使用此来源',exact:true}).click()
+    await limit.preview()
+    const limitProfiles = limit.calls.findLast(c => c.endpoint.endsWith('/subscriptions/preview')).body.config.sources[0].rules.specProfiles
+    assert.equal(limitProfiles.length, 12)
+    assert.deepEqual(limitProfiles.at(-1), {resolution:'720p',languages:['zh-Hant'],subtitleMode:'hard',codec:'h265',container:'mp4'})
+    passed.push('规格上限12项明确提示并还原被拒绝的勾选；取消一项可改选，预览正文与可见选择一致')
 
     const delayed = await session(); await delayed.go(); delayed.state.distinctGroups = true
     let releaseSample
@@ -664,6 +688,73 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.deepEqual(gardenSave.sources.map(s=>s.provider),['garden','mikan','anibt'])
     assert.equal(await garden.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
     passed.push('Garden native entry shares Bangumi editor; origin and publisher disambiguation; source-only preview; cancelled replacement retains main; three-site backups save independently at 320px')
+
+    const keyboard = await session(); await keyboard.go()
+    const press = async (locator, key = 'Enter') => { await locator.focus(); await keyboard.page.keyboard.press(key) }
+    await press(keyboard.page.getByRole('button', {name:'选择资源',exact:true}))
+    await press(keyboard.page.getByRole('button', {name:/从零开始 第三季 字幕资源/}))
+    await keyboard.page.waitForFunction(() => document.activeElement?.textContent === '选择字幕组')
+    await press(keyboard.page.getByRole('button', {name:/字幕组甲/}))
+    await keyboard.page.waitForFunction(() => document.activeElement?.textContent === '选择资源规格')
+    await press(keyboard.page.getByRole('checkbox', {name:/^1080p 简 内嵌/}), 'Space')
+    await press(keyboard.page.getByRole('button', {name:'使用此来源',exact:true}))
+    await keyboard.page.getByRole('dialog').waitFor({state:'detached'})
+    await keyboard.page.getByLabel('从第几话开始').fill('25')
+    keyboard.page.removeAllListeners('dialog')
+    const dismissals = []
+    keyboard.page.on('dialog', async dialog => { dismissals.push(dialog.message()); await dialog.dismiss() })
+    const initialURL = keyboard.page.url(), initialReads = keyboard.calls.length
+    const navigateKeyboard = path => keyboard.page.evaluate(async path => { await document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(path) }, path)
+    await navigateKeyboard('/anime/new?bangumiId=456')
+    assert.equal(keyboard.page.url(), initialURL, 'query-only navigation also protects dirty inputs')
+    assert.equal(await keyboard.page.getByLabel('从第几话开始').inputValue(), '25')
+    assert.equal(keyboard.calls.length, initialReads, 'dismissed navigation does not restart data reads')
+    await press(keyboard.page.locator('.ae-chapter').getByRole('link', {name:'返回选番'}))
+    assert.equal(keyboard.page.url(), initialURL)
+    assert.equal(await keyboard.page.getByLabel('从第几话开始').inputValue(), '25')
+    assert.equal(dismissals.length, 2)
+    assert.ok(dismissals.every(message => message.includes('未保存')))
+    assert.equal(keyboard.writes().length, 0)
+    passed.push('键盘完成资源/字幕组/规格选择，步骤标题接收焦点；取消离页和同页换篇章均保留输入且不重读')
+
+    keyboard.page.removeAllListeners('dialog')
+    const alerts = []
+    keyboard.page.on('dialog', async dialog => { alerts.push(dialog.message()); await dialog.accept() })
+    keyboard.state.saveMode = 'unknown'
+    await press(keyboard.page.getByRole('button', {name:'保存草稿',exact:true}))
+    await keyboard.page.getByRole('button', {name:'重试原保存请求',exact:true}).waitFor()
+    await navigateKeyboard('/anime/new?bangumiId=456')
+    assert.equal(keyboard.page.url(), initialURL)
+    assert.ok(alerts.some(message => message.includes('保存结果尚未确认')))
+    assert.equal(keyboard.writes().length, 1, 'blocked departure does not submit another write')
+    await press(keyboard.page.getByRole('button', {name:'重试原保存请求',exact:true}))
+    await keyboard.page.getByRole('heading', {name:'草稿已保存'}).waitFor()
+    assert.deepEqual(keyboard.writes()[1], keyboard.writes()[0], 'keyboard recovery preserves exact request and key')
+    passed.push('保存结果未知时阻止路由切换，键盘重试原键原正文并恢复回执')
+
+    const touch = await session({width:320,height:760}, 'admin', {hasTouch:true,isMobile:true}); await touch.go()
+    assert.ok(await touch.page.evaluate(() => navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches))
+    await touch.page.getByRole('button', {name:'选择资源',exact:true}).tap()
+    await touch.page.getByRole('button', {name:/从零开始 第三季 字幕资源/}).tap()
+    await touch.page.getByRole('button', {name:/字幕组甲/}).tap()
+    await touch.page.getByRole('checkbox', {name:/^1080p 简 内嵌/}).tap()
+    await touch.page.getByRole('button', {name:'使用此来源',exact:true}).tap()
+    await touch.page.getByRole('dialog').waitFor({state:'detached'})
+    await touch.page.getByLabel('从第几话开始').fill('25')
+    await touch.page.getByRole('button', {name:'修改来源规则',exact:true}).tap()
+    await touch.page.getByRole('checkbox', {name:/^全部规格/}).tap()
+    await touch.page.getByRole('button', {name:'关闭来源选择器',exact:true}).tap()
+    await touch.page.getByRole('dialog').waitFor({state:'detached'})
+    assert.equal(await touch.page.getByLabel('从第几话开始').inputValue(), '25')
+    await touch.page.getByRole('button', {name:'生成预览',exact:true}).tap()
+    await touch.page.locator('.ae-preview-stats').waitFor()
+    const touchRules = touch.calls.findLast(c => c.endpoint.endsWith('/subscriptions/preview')).body.config.sources[0].rules
+    assert.equal(touchRules.specMode, 'profiles', 'touch cancellation discards the staged specification change')
+    assert.equal(touchRules.minimumEpisode, 25)
+    assert.equal(await touch.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+    await touch.page.screenshot({path:'test-results/anime-editor-touch-320.png',animations:'disabled'})
+    assert.equal(touch.writes().length, 0)
+    passed.push('真实触屏模拟320px完成来源选择与预览；关闭丢弃临时规格，保留起点，无横向溢出或保存写入')
 
     const ordinary = await session(undefined, 'user'); await ordinary.go()
     await ordinary.page.waitForURL(origin + '/')

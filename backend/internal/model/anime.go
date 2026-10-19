@@ -226,14 +226,18 @@ type AnimeRelease struct {
 	ObservedAt         int64             `json:"observedAt"`
 }
 
-// A P1 decision is an explanation, never an executable selection. P2 will add
-// the separate, fixed account/target snapshot needed for selected/linked.
+// P1 explanations omit Selection and cannot authorize downloads. P2 execution
+// choices also fix the target, generations and interpretation versions.
 type AnimeDecisionSnapshot struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Title         string            `json:"title"`
-	Binding       AnimeBinding      `json:"binding"`
-	Rules         AnimeRules        `json:"rules"`
-	Parse         AnimeReleaseParse `json:"parse"`
+	SchemaVersion int                  `json:"schemaVersion"`
+	Title         string               `json:"title"`
+	Binding       AnimeBinding         `json:"binding"`
+	Rules         AnimeRules           `json:"rules"`
+	Parse         AnimeReleaseParse    `json:"parse"`
+	Selection     *AnimeSelectionBasis `json:"selection,omitempty"`
+	RuleVersion   int64                `json:"ruleVersion,omitempty"`
+	ParserVersion int64                `json:"parserVersion,omitempty"`
+	TimeVersion   int64                `json:"timeVersion,omitempty"`
 }
 
 type AnimeReleaseDecision struct {

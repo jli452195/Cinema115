@@ -184,6 +184,16 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 	return nil
 }
 
+// MatchesRelease reuses the preview's metadata rules at the execution boundary.
+// It does not grant a selection or verify the resource identity.
+func MatchesRelease(binding model.AnimeBinding, rules model.AnimeRules, release model.AnimeRelease) (bool, error) {
+	item := Item{Release: release}
+	if err := evaluate(binding, rules, &item); err != nil {
+		return false, err
+	}
+	return item.Selectable, nil
+}
+
 // Build interprets one already verified single-group page. Release IDs are
 // attached by the repository later; post keys are not trusted BT identities.
 func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, error) {

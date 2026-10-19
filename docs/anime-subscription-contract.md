@@ -2,9 +2,21 @@
 
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。
 
-2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前为 v44，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前结构版本为 v50，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+
+P2-01～02 接入注记：固定主账号/目录/凭据内存会话，新增资源核验、资源/UID认领、下载意图和具体来源选择四表，以及发布可空 `resource_id`。核验方法仅为实际 BT v1 种子 info 字节或 Garden 受控磁力身份；P1表单选择仍不授权执行。新增执行选择另固定 `selection`（初批/新增依据、基线、目标和父/来源代次）、规则/解析/时间版本；本地事务不能代替后续115提交/对账。未创建文件、外部操作或P3历史表，未开放HTTP启用与后台调度。实际行为与验证见[下载目标快照](anime-download-target-implementation.md)及[资源核验与认领](anime-resource-claim-implementation.md)。
+
+P2-03 接入注记：网页单条/批量、Telegram及动漫任务读取共享应用装配的实际UID/协议/Hash协调；手动magnet与动漫bt_v1归一，同UID操作闸门可取消，缺少共享实例不创建私有锁。自动 `LookupDownload` 只读固定持久任务并复核账号/目标/代次，不清除已结束任务或将未查到视为允许提交；持久写意图/对账、状态严格规范化及文件核对仍由后续P2实现。详见[下载共享协调](anime-download-coordination-implementation.md)，无新增迁移。
+
+P2-04 接入注记：v47 新增 `anime_drive_operations`，目前仅接 `submit` 操作。独立 `EnsureDownload` 在已绑定且验证的资源子目录内持久准备、事务派发一次并精确对账；派发前既有任务不自动接管，派发后不确定结果不删除、不重提。至少一条有效来源授权才允许新写，旧代次回执只能保留原操作观测。目录创建/绑定、状态追踪、租约及P3文件表/操作仍待对应阶段；HTTP启用与后台调度尚未开放。详见[确保提交与对账](anime-submit-implementation.md)。
+
+P2-05 接入注记：v48 在既有来源/决定表增加检查期限、失败计数、成功RSS窗口摘要及待核验原始观测。应用装配共享三站读取服务的发现循环和独立资源核验循环，每轮各最多四项、取消后等待退出；持久来源基线固定目标及解释版本，保留原T0和已见集合，只对可信新发布建立自动选择。核验成功复用P2-02认领本地任务，未触发115提交。主备独立错峰、退避、Retry-After及不可用停止生效，旧token/代次不能推进新检查或认领。当前HTTP启用仍关闸，普通草稿/暂停配置不会被自动激活；下载执行及其租约、状态、子目录/文件仍待后续阶段。详见[RSS持续发现与调度](anime-discovery-scheduler-implementation.md)。
+
+P2-06 接入注记：v49为既有下载任务增加UID状态查询索引，复用预留观测/结果/调度列。只追踪同代次confirmed提交，精确Hash单次GET按接口来源规范化，不以100%、列表缺页或查询错误判断成功/不存在。任务缺失不重提；错误保留原成功时间与观测，凭据/目标/结果冲突待核对。同UID共享间隔和Retry-After，暂停来源不阻止已接受任务只读核对；旧token/代次/版本不能推进任务。远端completed仍待P2-07核对文件，verified/终态后停止领取。公开启用保持关闭，完整执行恢复仍由P2-08完成，详见[115状态追踪](anime-status-tracking-implementation.md)。
 
 站点调整补充：当前来源支持 `mikan`、`anibt`、`garden`，provider 参与来源、发布及预览身份；AniBT 字幕组为 slug，历史窗口最多 100 条。Garden 发布方 ID 包含原站、字幕组/发布者类别及稳定数字 ID（如 `dmhy_f776`），候选来自最近 200 条资源，历史最多 1000 条，保留原站帖身份，不按集数合并版本；资源 JSON 与生成的 RSS 使用相同发布方筛选。公共配置页以 Bangumi 为主体，主/备用 RSS 独立选站，保存时保持单篇章有效订阅约束；换来源使用新身份和旧来源移除同事务提交。实现与验证见[按站点选番](anime-catalog-implementation.md)。配套 P0 DDL 保留为当时契约记录，实际结构以版本化迁移为准。
+
+2026-10-20 低请求修订及 P2-07：按用户确认取消文件 SHA1 校验与正常成功后的例行读回，完成后不维护文件当前位置。v50 仅给 `anime_download_jobs` 增加 `directory_operation_json`、`files_json` 两列；目录创建成功回执直接保存，下载完成只列本任务目录及必要子目录一次，保存 ID/父级/名称/类型/随列表返回的大小。`file_state=verified` 沿用状态枚举，现仅表示清单已收集，不表示内容校验；`collectedAt` 表示这次收集时间。目录回执不明才只读恢复。P3 后续复用现有任务和操作记录，批量改名/移动收到明确成功即完成，只有未知回执才最小补查，不再创建独立文件注册表。下文旧 DDL 的文件与后处理表仅为历史草案，不作为新建表要求。详见[本步实现](anime-files-implementation.md)和[任务表](anime-subscription-tasks.md)，此修订优先。
 
 ## 1. 不变量与复用边界
 
@@ -19,7 +31,7 @@
 | `backend/internal/storage/sqlite.go` | `database/sql`、modernc SQLite、逐连接外键与 busy_timeout、WAL、事务迁移 | 当前结构版本 38；实际接入时取最新版本递增，不在本契约占用版本号；P1/P2/P3 分阶段建表 |
 | `backend/cmd/server/main.go`、`httpapi/portal_auth.go` | 既有管理端鉴权组 `PortalAuthenticated`、`PortalAdminOnly` | 新增 `RegisterAnime`；cmd 只装配生命周期，不放业务规则 |
 | `client/mikan`、`service/mikan*.go` | 受控地址、网页解析、累计 take、封面缓存、进行中合并及站点间隔 | 新增有界 RSS 解码与动漫预算；将网页/RSS/交互/调度共享协调实例，不复制一个独立限流器 |
-| `client/p115/cloud_download.go`、`service/cloud_download.go` | BT v1 规范化、精确查询、基础写接口与主账号验证 | 自动入口独立“确保提交/核对”；手动 `Submit` 会删除已结束任务记录再重提，不能直接用于轮询；现有账号 ID 锁须在 P2-03 升级为共享实际 UID/协议/Hash 协调 |
+| `client/p115/cloud_download.go`、`service/cloud_download.go` | BT v1 规范化、精确查询、基础写接口与主账号验证；P2-03已接入共享实际UID/协议/Hash协调 | 自动入口独立“确保提交/核对”；手动 `Submit` 会删除已结束任务记录再重提，不能直接用于轮询；持久提交与对账由P2-04实现 |
 | `service/manual_organize*.go` | 提取文件身份、命名清洗、冲突及云端改名/移动能力 | 不复用其内存队列、跨业务扫描、自动清理或不可恢复任务历史 |
 | `service/tv_numbering.go`、`storage/tv_numbering.go` | TMDB 客户端、缓存和纯校验可复用 | 不调用会重置追更/机器人任务的保存方法；动漫编号快照存自己的表 |
 | `frontend/src/components` | 现有卡片、浮层、选择器、目录选择及 SVG 组件 | 新增动漫内容组件与状态缓存；不让 API 内部字段成为用户菜单文案 |
@@ -35,7 +47,7 @@
 | `revision` | 乐观锁，正整数，不超过 JS 安全整数；新对象 `expectedRevision=0`。订阅/来源配置版本只在配置/管理动作改变时递增，后台进度不使表单持续冲突；任务 revision 随任务状态改变，用于任务动作与执行写回的 CAS |
 | `generation` | 后端执行代次；暂停、撤权、计划变更使旧许可失效，与配置 revision、租约 token 不混用 |
 | 时间 | JSON/SQLite 均用 UTC Unix 毫秒，未知为 null；日期原文另存。无时区蜜柑日期按 Asia/Shanghai 解释，记录 `timeVersion` |
-| Hash | BT v1 转为 40 位小写十六进制；32 位 base32 磁力规范化后再核验。文件 SHA1 也是 40 位小写，但类型独立，不与 info-hash 比较 |
+| Hash | BT v1 转为 40 位小写十六进制；32 位 base32 磁力规范化后再核验。保留该 Hash 仅用于资源幂等；不读取、保存或比对文件 SHA1 |
 | JSON 字段 | SQLite 仅检查 JSON 合法；Go 类型严格校验字段、枚举、上下限和跨表归属，拒绝未知字段及多段 JSON；不把任意 JSON 当作可执行表达式 |
 
 蜜柑发布键为受控来源加规范化 Episode 原帖标识；原 GUID 仅为观测字段。缺少可靠原帖身份则待确认，不用标题/集数/GUID 自造可信唯一键。`sourceKey=mikan:{itemId}:{groupId}` 由服务端产生；粘贴地址只接受固定蜜柑主机和已允许的 RSS 路径/参数，不接受 userinfo、任意端口、未知参数、任意重定向或内网目标。
@@ -57,10 +69,10 @@
 | P2 | `anime_resources` | 仅保存已验证 BT v1 身份及白名单证据，`(protocol, info_hash)` 唯一；P1 release 的可空关联在此阶段生效 |
 | P2 | `anime_resource_claims` | `UID + resource_id` 唯一的资源处理依据；不包含集号，保留原账号与目标边界 |
 | P2 | `anime_download_jobs`、`anime_job_selections` | 同资源的显式尝试与多来源选中关联；每 claim 同时最多一个未结束有效尝试，任务保存固定账号/规则/目录/可选命名快照 |
-| P2 | `anime_files`、`anime_job_files` | `UID + file_id` 唯一的实物，以及本任务实际文件集合与原始事实；视频/字幕/附件分别标注 |
+| P2 | `anime_download_jobs.directory_operation_json/files_json` | 单次创建记录与有界一次文件清单；不建立 `anime_files/anime_job_files`，不维护实时网盘索引 |
 | P2 | `anime_drive_operations` | 单次建目录、提交、改名、移动的写意图和结果；唯一 `operation_key`，不确定结果不可直接重放 |
 | P3 | `anime_naming_plans`、`anime_naming_mappings`、`anime_action_previews` | 本订阅独立资料/编号/模板版本、各来源映射及命名/资料/已有文件预览；确认后追加新版本，不原地改旧任务引用的快照 |
-| P3 | `anime_postprocess_jobs`、`anime_postprocess_items` | 明确文件集合、每文件改名/移动/读回阶段、目标路径与恢复事实；原文件移动，无复制后删除流程 |
+| P3 | 复用下载任务清单与既有操作记录 | 保存改名/移动步骤与成功回执，批量执行；未知结果才补查。原独立后处理两表为历史设计，后续不按原案新增队列 |
 
 阶段性外键：P1 建表时对尚不存在的 P2/P3 表关联字段只允许 null；对应后续迁移建齐目标表后才能写非空值。完整 SQL 用于验证最终契约，P1 的实际迁移应暂缓这些跨阶段外键/列到相应阶段，不能留下运行时引用不存在表的结构。
 
@@ -145,7 +157,7 @@ resume 只解除父级遮罩，重新按上述优先级计算来源状态，不�
 | 可证明失败 | 活跃状态 `-> failed/blocked` | failed 需明确业务失败；blocked 表示账号、目录、授权等受阻，不伪造下载失败 |
 | 取消 | 仅未写入且无未知操作 `-> cancelled` | 取消本地意图不取消 115 已接受任务；在途事实继续核对 |
 | 文件 | `pending -> checking -> verified/needs_review` | 完成状态、目录身份及实际文件事实分开核实，空/缺页/解析异常不证明文件不存在 |
-| 工作终态 | `active -> original_saved/organized` | 前者要 download completed + file verified；后者另需全部所选整理文件最终读回；终态 `next_run_at=NULL` 且无租约 |
+| 工作终态 | `active -> original_saved/organized` | 前者要 download completed + 一次文件清单；后者另需全部所选整理操作收到成功回执或异常补查确认；终态 `next_run_at=NULL` 且无租约 |
 
 任务完成或外部清理不清 claim；正常轮询不会重开相同 Hash。同集其他 Hash 有独立 claim 和任务。显式失败重试先核对旧尝试，成功领取新 attempt 后保留所有旧记录；不修改旧失败行伪装为同一次重试。曾被 115 接受但随后列表消失，只能待核对，不能当作不存在再提交。
 
@@ -157,14 +169,14 @@ resume 只解除父级遮罩，重新按上述优先级计算来源状态，不�
 
 1. 在 UID/资源或目录协调范围内复核租约、任务代次、有效 selection、来源/订阅代次、固定账号及目录。事务保存 `prepared` 操作及唯一 operation_key。
 2. 事务再次复核并保存 `dispatched`、authorized_at 与 generation，提交后才发送一次请求。此刻定义为已获准的单个操作；暂停可等它核对结果，但不允许下一写操作。
-3. 外部调用在事务外，使用固定内存凭据。成功也要按具体操作读回；确认正确后 `confirmed`，明确失败为 failed，其他为 unknown。
+3. 外部调用在事务外，使用固定内存凭据。明确成功回执直接记录 `confirmed`，不追加例行读回；明确失败为 failed，其他为 unknown。P2-04 旧版提交后立即查询的实现，在 P2-08 合并至首轮状态追踪。
 4. 重启遇到 dispatched/unknown 只读对账；同文件 ID 已在目标则完成原操作，仍未能确定则保留 needs_review。查询报错、短暂缺项或有限次数重试不能证明未执行。只在足以证明未执行且版本/许可仍有效时，才重新授权该未执行阶段；不能由超时自行推断。
 
 租约使用随机 token + generation + expiresAt，所有写回 CAS；旧执行者不得推进阶段或释放新租约。旧代次已发操作的真实回执可按 operation ID 记录为观察结果，由当前恢复流程核验合并，不能直接推进任务。租约默认 120 秒、每 30 秒续约，单个写调用最多 90 秒；这些为实现默认，网络完成后仍须校验 token，丢失租约只对账。调度查询只能领取 due 的非终态工作，暂停阻止新写、不阻止必要只读核对。
 
 写协调的获取顺序统一为实际 UID 写闸门、资源键、按 CID 排序的目录键；只在单个操作及其结果核对期间持有，不跨整条下载/整理流程占用。网络等待不得持有数据库事务，手动/自动使用同一协调实例，不能各自维护一把互不相知的锁。
 
-P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入 conflict/needs_review。无需改名或移动的阶段可以通过读回事实跳过，不发无意义写请求。改名/移动分别有 operation；最后同时核实 UID、文件 ID、目录、名称、大小及已有 SHA1。完整路径已存在则暂停对应整理、保留下载目录中的原文件；不覆盖、不删旧版本、不自动随机后缀。未选附件及空目录保留。整理失败不让下载回到 queued，成功后停止该任务全部定时复查。
+P3 每文件 `planned -> renamed -> moved -> completed`，冲突/不确定进入 conflict/needs_review。无需改名或移动的阶段依据本次清单与已确认操作跳过，不另发查询或写请求。改名/移动分别保存步骤与批次回执，全部明确成功即可完成，不追加最后读回、不比对SHA1或大小；只有未知回执才按固定ID最小补查。完整路径已存在则暂停对应整理、保留下载目录中的原文件；不覆盖、不删旧版本、不自动随机后缀。未选附件及空目录保留。整理失败不让下载回到 queued，成功后停止该任务全部定时复查。
 
 未配置整理或明确忽略全部待整理视频的资源，以 original_saved 结束，并说明“按原名保存”；不能因为 ignored 项没有移动就误报 organized。完成视频与唯一匹配字幕的所有已选项才允许 organized。已有终态文件的显式整理另建后处理记录，不使原下载任务重新轮询115。
 
@@ -308,7 +320,7 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 | `POST /subscriptions/:id/organize/preview` | 明确 downloadJobIds/fileIds、expectedRevision、expectedPlanRevision | 200，只接受本模块已确认精确文件，已有任务/文件的新路径计划及冲突 |
 | `POST /subscriptions/:id/organize/apply` | 有效previewId及其版本、明确文件集合 | 202，幂等建立独立后处理计划；不自动批量处理所有旧文件 |
 
-命名及已有文件预览沿用绝对15分钟、指纹/文件事实版本与失败保留选择，另包含文件 UID/ID/原路径/大小/SHA1、目标目录与 namingPlan revision。它们不共享资源预览的 T0，也不建立下载基线。任何文件事实/目标方案变化只阻止受影响的整理，下载事实保留。
+命名及已有文件预览沿用绝对15分钟、指纹/文件事实版本与失败保留选择，另包含文件 UID/ID/执行时路径、目标目录与 namingPlan revision，不包含文件SHA1。它们不共享资源预览的 T0，也不建立下载基线。选中的未完成文件/目标方案变化只阻止受影响的整理，下载事实保留。已完成记录不跟踪文件后续位置，不做后台重定位或补下载。
 
 ## 8. 响应与错误投影
 

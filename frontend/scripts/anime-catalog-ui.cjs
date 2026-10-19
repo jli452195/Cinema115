@@ -7,8 +7,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const contexts = [], errors = [], passed = []
   await fs.mkdir('test-results', { recursive: true })
-  async function session(viewport = { width: 1440, height: 1000 }, role = 'admin') {
-    const context = await browser.newContext({ viewport, serviceWorkers: 'block' }); contexts.push(context)
+  async function session(viewport = { width: 1440, height: 1000 }, role = 'admin', options = {}) {
+    const context = await browser.newContext({ viewport, serviceWorkers: 'block', ...options }); contexts.push(context)
     await context.addInitScript(() => { localStorage.setItem('admin_token','mock-token'); localStorage.setItem('cinema115-theme','light') })
     const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
     const calls = [], state = { fail: false, links: ['624085'], empty: false, failEntry: false, slowEntry: '', entryRelease: undefined, statusEnabled: false, knownMikan: {}, saved: undefined, failStatus: false, slowStatus: false, statusRelease: undefined }
@@ -259,6 +259,19 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await cross.page.waitForURL(/\/admin\/login/)
     assert.equal(await cross.page.locator('.catalog-subscription-badge').count(),0)
     passed.push('多个版本进入精确Bangumi筛选列表；30秒后回焦点仅核对本地状态；切站迟到响应隔离，退出清空状态')
+    const touch=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true});await touch.go()
+    assert.ok(await touch.page.evaluate(()=>navigator.maxTouchPoints>0&&matchMedia('(pointer: coarse)').matches))
+    await touch.page.getByRole('button',{name:'AniBT',exact:true}).tap();await touch.page.locator('.anibt-anime-card').first().waitFor()
+    await touch.page.getByRole('button',{name:'蜜柑',exact:true}).tap();await touch.page.locator('[data-mikan-id="4058"]').waitFor()
+    assert.equal(touch.count(),1,'touch site round-trip uses the existing calendar cache')
+    await touch.page.locator('[data-mikan-id="4058"]').tap();await touch.page.locator('.ae-chapter').waitFor()
+    await touch.page.getByRole('button',{name:'选择资源',exact:true}).tap();await touch.page.getByRole('button',{name:/Kirara Fantasia/}).waitFor()
+    await touch.page.getByRole('button',{name:'关闭来源选择器',exact:true}).tap()
+    await touch.page.locator('.ae-chapter').getByRole('link',{name:'返回选番'}).tap();await touch.page.locator('[data-mikan-id="4058"]').waitFor()
+    assert.equal(touch.count(),1);assert.equal(touch.calls.filter(c=>c.endpoint.endsWith('/sources/mikan/4058')).length,1)
+    assert.equal(await touch.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    assert.equal(touch.calls.some(c=>c.endpoint.endsWith('/subscriptions')&&c.method==='POST'),false)
+    passed.push('真实触屏模拟320px切换站点、卡片进入/关闭来源/返回；日历和条目复用缓存且不保存订阅')
     const ordinary=await session(undefined,'user'); await ordinary.go(); assert.equal(ordinary.calls.some(c=>c.endpoint.includes('/admin/anime')),false)
     assert.deepEqual(errors,[]); console.log(JSON.stringify({passed,errors},null,2))
   } finally { await Promise.allSettled(contexts.map(c=>c.close())); await browser.close() }

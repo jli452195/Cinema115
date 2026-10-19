@@ -57,7 +57,7 @@ func TestCloudDownloadServiceUsesOnlyPrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &cloudAdderStub{}
-	downloads := &CloudDownloadService{Accounts: accounts, Client: client}
+	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	receipt, err := downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: secondID, TargetCID: "88", TargetPath: "/电影"}, link)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestCloudDownloadRedoDeletesOnlyVerifiedTerminalTaskAndKeepsFiles(t *testin
 	}
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	client := &cloudAdderStub{found: true, task: p115.CloudTask{InfoHash: "0123456789ABCDEF0123456789ABCDEF01234567", Status: 2, StatusKnown: true}}
-	downloads := &CloudDownloadService{Accounts: accounts, Client: client}
+	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	receipt, err := downloads.Redo(context.Background(), CloudDownloadConfig{AccountID: id, TargetCID: "9", TargetPath: "/重下"}, link)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +108,7 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	accounts.value.Accounts[0].Primary = true
+	accounts.value.Accounts[0].UID = "444"
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	for _, tc := range []struct {
 		name string
@@ -119,7 +120,7 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &cloudAdderStub{found: true, task: tc.task}
-			downloads := &CloudDownloadService{Accounts: accounts, Client: client}
+			downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 			_, err := downloads.Redo(context.Background(), CloudDownloadConfig{AccountID: "default", TargetCID: "0", TargetPath: "/"}, link)
 			if !errors.Is(err, tc.want) || client.deleted != "" || client.url != "" {
 				t.Fatalf("未阻止不安全删除：err=%v client=%+v", err, client)

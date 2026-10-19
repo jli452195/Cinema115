@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func cloudWorkflowAccounts(t *testing.T) (*P115Accounts, CloudDownloadConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := "UID=test; CID=original"
+	cookie := "UID=123_A; CID=original"
 	if err := accounts.Update(id, account.Revision, account.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +112,12 @@ func TestCloudSubmitDefaultWorkflow(t *testing.T) {
 					return json.RawMessage(`{}`), tc.addErr
 				},
 			}
-			s := &CloudDownloadService{Accounts: accounts, Client: client}
+			s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 			receipt, err := s.Submit(context.Background(), config, link)
 			if !errors.Is(err, tc.wantErr) || receipt.RemovedOldTask != tc.removed || !reflect.DeepEqual(steps, tc.steps) {
 				t.Fatalf("err=%v removed=%v steps=%v", err, receipt.RemovedOldTask, steps)
 			}
-			if len(s.inflight) != 0 {
+			if len(s.Coordinator.uids) != 0 {
 				t.Fatal("并发锁未释放")
 			}
 		})
@@ -148,7 +149,7 @@ func TestCloudSubmitDeduplicatesConcurrentEntrances(t *testing.T) {
 			return json.RawMessage(`{}`), nil
 		},
 	}
-	s := &CloudDownloadService{Accounts: accounts, Client: client}
+	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	go func() { _, err := s.Submit(ctx, config, "magnet:?xt=urn:btih:"+hash); finished <- err }()
 	defer func() { cancel(); <-finished }()
 	select {
@@ -200,14 +201,97 @@ func TestCloudSubmitSnapshotsCredentialsAndSupportsED2K(t *testing.T) {
 			return json.RawMessage(`{}`), nil
 		},
 	}
-	s := &CloudDownloadService{Accounts: accounts, Client: client}
+	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	receipt, err := s.Submit(context.Background(), config, "ed2k://|file|movie.mkv|123|"+hash+"|/")
 	if err != nil || !receipt.RemovedOldTask || len(cookies) != 3 {
 		t.Fatal("ED2K 重提失败", err)
 	}
 	for _, cookie := range cookies {
-		if cookie != "UID=test; CID=original" {
+		if cookie != "UID=123_A; CID=original" {
 			t.Fatal("同一次操作改变了凭据")
 		}
+	}
+}
+
+func TestCloudSubmitCoordinatesActualUIDAcrossConfigurationAndDevice(t *testing.T) {
+	accounts, config := cloudWorkflowAccounts(t)
+	otherAccounts, otherConfig := cloudWorkflowAccounts(t)
+	other, err := otherAccounts.Primary(otherConfig.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=123_B; SEID=independent-credential"
+	if err := otherAccounts.Update(other.ID, other.Revision, other.Name, &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if config.AccountID == otherConfig.AccountID {
+		t.Fatal("fixture configuration IDs must differ")
+	}
+	c := &CloudDownloadCoordinator{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	entered := make(chan struct{})
+	client := &cloudWorkflowStub{lookup: func(ctx context.Context, cookie string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+		if cookie != "UID=123_A; CID=original" {
+			return p115.CloudTask{}, false, errors.New("credential changed")
+		}
+		close(entered)
+		<-ctx.Done()
+		return p115.CloudTask{}, false, ctx.Err()
+	}}
+	first := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: c}
+	done := make(chan struct{})
+	link := "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)
+	go func() { defer close(done); _, _ = first.Submit(ctx, config, link) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("first lookup not started")
+	}
+	var reads atomic.Int32
+	secondClient := &cloudWorkflowStub{lookup: func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
+		reads.Add(1)
+		return p115.CloudTask{}, false, nil
+	}}
+	second := &CloudDownloadService{Accounts: otherAccounts, Client: secondClient, Coordinator: c}
+	if _, err := second.Submit(ctx, otherConfig, link); !errors.Is(err, ErrCloudTaskBusy) || reads.Load() != 0 {
+		t.Fatal("configuration ID/device suffix bypassed UID coordination", err)
+	}
+	cancel()
+	<-done
+	waitCloudResources(t, c, "123", 0)
+}
+
+func TestCloudSubmitRequiresSharedCoordinatorAndVerifiedUID(t *testing.T) {
+	for _, mode := range []string{"missing coordinator", "invalid UID", "conflicting UID"} {
+		t.Run(mode, func(t *testing.T) {
+			accounts, config := cloudWorkflowAccounts(t)
+			client := &cloudWorkflowStub{lookup: func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
+				t.Fatal("invalid identity reached upstream")
+				return p115.CloudTask{}, false, nil
+			}}
+			s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
+			switch mode {
+			case "missing coordinator":
+				s.Coordinator = nil
+			case "invalid UID":
+				a, err := accounts.Primary(config.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cookie := "UID=invalid; SEID=redacted"
+				if err := accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
+					t.Fatal(err)
+				}
+			case "conflicting UID":
+				accounts.mu.Lock()
+				accounts.value.Accounts[0].UID = "999"
+				accounts.mu.Unlock()
+			}
+			_, err := s.Submit(context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
+			if !errors.Is(err, ErrGenerationInput) || strings.Contains(err.Error(), "SEID=") {
+				t.Fatal("invalid identity was not rejected safely", err)
+			}
+		})
 	}
 }
