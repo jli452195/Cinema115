@@ -82,6 +82,7 @@ export interface AnimeSubscriptionView {
 }
 export interface AnimeDownloadJob {
 	organizationPlanned?: boolean
+  organization?: { state: string; total: number; renamed: number; moved: number; targetPath: string; updatedAt: number }
   id: string; title: string; groupName: string; revision: number
   downloadState: string; fileState: string; workflowState: string; blockCode: string | null
   executionPath: string; directoryCid: string | null; createdAt: number; updatedAt: number

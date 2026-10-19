@@ -238,7 +238,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, e)
 			return
 		}
-		c.JSON(200, gin.H{"capabilities": gin.H{"configure": true, "download": s.DownloadAvailable(), "organize": false}, "readiness": v.Readiness, "settingsRevision": v.Settings.Revision})
+		c.JSON(200, gin.H{"capabilities": gin.H{"configure": true, "download": s.DownloadAvailable(), "organize": s.OrganizationAvailable()}, "readiness": v.Readiness, "settingsRevision": v.Settings.Revision})
 	})
 	r.GET("/settings", func(c *gin.Context) {
 		v, e := s.Settings(c.Request.Context())

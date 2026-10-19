@@ -30,7 +30,7 @@ onBeforeUnmount(() => controller.abort())
   <section class="as-detail-section as-organization" aria-label="整理计划" :aria-busy="loading || directory.loading.value">
     <details @toggle="toggle"><summary>整理计划<span class="as-muted">标准命名整理</span></summary>
       <div v-if="opened" class="as-organization-body">
-        <p class="as-muted">按标准命名整理到目录2，旧任务保留原方案。目前支持配置与预览，云端整理将在后续步骤接入。</p>
+        <p class="as-muted">下载完成后按标准命名，将视频与已配对字幕从目录1移动到目录2。附件和空目录保留，旧任务沿用原方案。</p>
         <p v-if="!view.naming" class="as-muted">请先在订阅配置中关联 TMDB，并设置来源季集对应。</p>
         <dl v-if="settings" class="as-source-fields"><div><dt>下载目录1</dt><dd>{{ settings.settings.downloadPath || '尚未配置' }}</dd></div><div><dt>整理目录2</dt><dd>{{ settings.settings.organizePath || '尚未配置' }}<button v-if="settings.primaryAccount && settings.readiness.ready" type="button" class="as-text-button" :disabled="busy" @click="directoryOpen = true">选择整理目录</button></dd></div></dl>
         <p v-if="settings && !settings.readiness.ready" class="as-muted">主账号或下载目录已变化，请先重新配置下载目录。</p>

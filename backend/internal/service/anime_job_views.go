@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -24,6 +26,7 @@ type AnimeJobView struct {
 	FileState           string                  `json:"fileState"`
 	WorkflowState       string                  `json:"workflowState"`
 	OrganizationPlanned bool                    `json:"organizationPlanned"`
+	Organization        *AnimeOrganizationView  `json:"organization,omitempty"`
 	BlockCode           *string                 `json:"blockCode"`
 	Revision            int64                   `json:"revision"`
 	ExecutionPath       string                  `json:"executionPath"`
@@ -37,6 +40,20 @@ type AnimeJobView struct {
 	Files               []AnimeJobFileView      `json:"files"`
 	PermittedActions    storage.AnimeJobActions `json:"permittedActions"`
 }
+
+type AnimeOrganizationView struct {
+	State      string `json:"state"`
+	Total      int    `json:"total"`
+	Renamed    int    `json:"renamed"`
+	Moved      int    `json:"moved"`
+	TargetPath string `json:"targetPath"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+func (s *AnimeAdminService) OrganizationAvailable() bool {
+	return s.DownloadAvailable() && s.OrganizationGateway != nil
+}
+
 type AnimeJobPageView struct {
 	Items       []AnimeJobView `json:"items"`
 	Total       int            `json:"total"`
@@ -59,6 +76,24 @@ func (s *AnimeAdminService) jobView(ctx context.Context, job model.AnimeDownload
 		}
 	}
 	v.OrganizationPlanned = job.Snapshot.Organization != nil
+	if v.OrganizationPlanned {
+		v.Organization = &AnimeOrganizationView{State: "pending", TargetPath: job.Snapshot.Organization.Target.ParentPath}
+		op, err := s.Store.GetAnimeOrganization(ctx, job.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return v, err
+		}
+		if err == nil {
+			v.Organization.State, v.Organization.Total, v.Organization.UpdatedAt = op.Progress.State, len(op.Progress.Files), op.UpdatedAt
+			for _, f := range op.Progress.Files {
+				if f.Renamed {
+					v.Organization.Renamed++
+				}
+				if f.Moved {
+					v.Organization.Moved++
+				}
+			}
+		}
+	}
 	if job.Files != nil {
 		for _, file := range job.Files.Entries {
 			v.Files = append(v.Files, AnimeJobFileView{ID: file.ID, Name: file.Name, Kind: file.Kind, Size: strconv.FormatInt(file.Size, 10)})

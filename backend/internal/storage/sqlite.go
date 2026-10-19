@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 51
+const schemaVersion = 52
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -506,6 +506,19 @@ PRAGMA user_version=30;`); err != nil {
 	if version < 51 {
 		if err := resetDevelopmentAnime(ctx, tx); err != nil {
 			return fmt.Errorf("重建动漫订阅测试存储: %w", err)
+		}
+	}
+	if version == 51 {
+		// Extend the existing operation journal, preserving v51 subscriptions
+		// and submit receipts. The development-data reset runs only below v51.
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE anime_drive_operations RENAME TO anime_drive_operations_v51`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, animeDriveOperationsSchema); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_drive_operations SELECT * FROM anime_drive_operations_v51; DROP TABLE anime_drive_operations_v51`); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

@@ -126,6 +126,7 @@ func main() {
 	animeFiles := p115.NewShareClient()
 	animeFiles.ReadRetryDelays = nil
 	animeAdmin.FileGateway = animeFiles
+	animeAdmin.OrganizationGateway = animeFiles
 	animeStatusRunner := &service.AnimeStatusRunner{Admin: animeAdmin}
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
 	if err != nil {
@@ -243,6 +244,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	animeAdmin.ReserveOrganization = manualOrganize.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest

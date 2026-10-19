@@ -17,7 +17,9 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 	session, runErr := r.Admin.ResumeDownloadTarget(runCtx, work.Job.Snapshot.Target)
 	if runErr == nil {
 		session.work = &work
-		if work.Job.DownloadState == "completed" {
+		if work.Job.FileState == "verified" && work.Job.Snapshot.Organization != nil {
+			runErr = r.Admin.OrganizeDownloadedFiles(runCtx, session, work.Job.ID)
+		} else if work.Job.DownloadState == "completed" {
 			// Completion already persisted: read the task directory directly,
 			// without asking the offline service for the same state again.
 			_, runErr = r.Admin.CollectDownloadedFiles(runCtx, session, work.Job.ID)
@@ -38,6 +40,9 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 		code = "TASK_POLL_CANCELLED"
 	case errors.Is(runErr, context.DeadlineExceeded), errors.Is(runErr, ErrAnimeOfflineRead), errors.Is(runErr, ErrAnimeDirectoryRead):
 		code = "TASK_READ_FAILED"
+		if work.Job.FileState == "verified" {
+			code = "ORGANIZE_READ_FAILED"
+		}
 	default:
 		// Database/programming failures must reach the owner of this loop.
 		// The durable lease expires; any dispatched write remains read-only.

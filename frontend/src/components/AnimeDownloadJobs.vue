@@ -50,19 +50,23 @@ onBeforeUnmount(() => { save(); disposed = true; controller?.abort() })
     <div v-for="job in result?.items || []" :key="job.id" class="as-job" :data-job-id="job.id">
       <button type="button" class="as-job-row" :aria-expanded="expanded.includes(job.id)" :aria-controls="`job-${job.id}`" @click="toggle(job.id)">
         <span class="as-job-title"><strong :title="job.title">{{ job.title }}</strong><span>{{ job.groupName || '字幕组未记录' }}<span v-if="job.progress != null && job.downloadState === 'downloading'"> · {{ Math.round(job.progress) }}%</span> · {{ animeLocalTime(job.updatedAt) }}</span></span>
-        <span class="as-job-phase"><span class="as-state" :data-status="job.blockCode ? 'review' : job.fileState === 'verified' ? 'saved' : job.downloadState">{{ animeDownloadState(job) }}</span><IconChevronDown :size="16" aria-hidden="true" :class="{ 'rotate-180': expanded.includes(job.id) }" /></span>
+        <span class="as-job-phase"><span class="as-state" :data-status="job.blockCode ? 'review' : ['organized', 'original_saved'].includes(job.workflowState) ? 'saved' : job.organization?.state || job.downloadState">{{ animeDownloadState(job) }}</span><IconChevronDown :size="16" aria-hidden="true" :class="{ 'rotate-180': expanded.includes(job.id) }" /></span>
       </button>
       <div v-show="expanded.includes(job.id)" :id="`job-${job.id}`" class="as-job-detail" role="region" :aria-label="`${job.groupName || '资源'}执行详情`">
         <dl class="as-source-fields">
           <div><dt>执行时路径</dt><dd>{{ job.executionPath }}<span v-if="!job.directoryCid" class="as-muted">（目录尚未确认创建）</span></dd></div>
           <div><dt>115 状态</dt><dd>{{ ({ queued: '待提交', submitting: '提交中', unknown: '未知', accepted: '已接收', downloading: '下载中', completed: '已完成', failed: '失败', blocked: '受阻', cancelled: '已取消' } as Record<string, string>)[job.downloadState] || job.downloadState }}</dd></div>
           <div><dt>文件清单</dt><dd>{{ job.fileState === 'verified' ? `已保存 ${job.files?.filter(file => file.kind === 'file').length ?? 0} 个文件的记录` : job.fileState === 'needs_review' ? '需要处理' : '尚未取得完整清单' }}</dd></div>
+          <template v-if="job.organizationPlanned">
+            <div><dt>整理进度</dt><dd>{{ job.fileState !== 'verified' ? '等待下载与清单完成' : animeDownloadState(job) }}<span v-if="job.organization?.total" class="as-muted"> · <span class="inline-block">已改名 {{ job.organization.renamed }}/{{ job.organization.total }}</span>，<span class="inline-block">已移动 {{ job.organization.moved }}/{{ job.organization.total }}</span></span></dd></div>
+            <div v-if="job.organization?.targetPath"><dt>整理目录2</dt><dd>{{ job.organization.targetPath }}</dd></div>
+          </template>
           <div><dt>最近结果</dt><dd>{{ animeLocalTime(job.observedAt) }}<span v-if="job.attemptedAt && job.attemptedAt > job.observedAt" class="as-muted"> · 最近尝试 {{ animeLocalTime(job.attemptedAt) }}</span></dd></div>
         </dl>
         <p class="as-muted">路径仅为执行时记录，不跟踪二次整理后的位置。</p>
         <p v-if="job.blockCode" class="as-job-reason">{{ animeDownloadReason(job.blockCode) }}<code>{{ job.blockCode }}</code></p>
         <AnimeDownloadActions :token="token" :subscription-id="id" :job="job" :locked="locked" @changed="changed" />
-        <AnimeOrganizationPreview v-if="job.organizationPlanned" :key="`${job.id}:${job.revision}`" :token="token" :path="`jobs/${job.id}/organization-preview`" :disabled="locked" />
+        <AnimeOrganizationPreview v-if="job.organizationPlanned" :key="job.id" :token="token" :path="`jobs/${job.id}/organization-preview`" :disabled="locked" />
       </div>
     </div>
     <nav v-if="result && result.total > 20" class="as-job-pagination" aria-label="资源任务分页"><button type="button" :aria-disabled="page <= 1 || loading" aria-label="任务上一页" @click="changePage(page - 1)"><IconChevronLeft :size="17" aria-hidden="true" />上一页</button><span aria-live="polite">{{ page }} / {{ pages }}</span><button type="button" :aria-disabled="page >= pages || loading" aria-label="任务下一页" @click="changePage(page + 1)">下一页<IconChevronRight :size="17" aria-hidden="true" /></button></nav>

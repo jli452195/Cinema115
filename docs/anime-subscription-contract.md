@@ -1,5 +1,7 @@
 # 动漫订阅数据与接口契约（P0-05）
 
+2026-10-20 P3-07～08接入：自动标准命名、批量移动原文件已装配，`organize`能力按实际依赖开放。SQLite v52扩展既有操作日志的kind约束，保存单个任务的目录及逐文件进度，不新建注册表/队列；v51数据保留。成功不读回，未知仅按固定对象核对，完成不跟踪二次整理；用户已确认取消P3-10，历史文件应用接口不再计划接入，既有占位路由继续关闭。新任务DTO含 `organization:{state,total,renamed,moved,targetPath,updatedAt}`，状态为pending/working/unknown/needs_review/done。此注记优先于下文阶段性关闸说明，详见[整理执行实现](anime-organization-execution-implementation.md)。
+
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。
 
 2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前结构版本为 v51，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
@@ -333,10 +335,10 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 | `PUT /subscriptions/:id/naming-mapping` | 相同版本与有效命名previewId，organizeEnabled | 200，追加独立方案版本，只影响新任务；不改其他业务编号 |
 | `POST /subscriptions/:id/naming-metadata/check` | expectedRevision | 200，读取资料差异，不自动替换当前快照 |
 | `POST /subscriptions/:id/naming-metadata/apply` | expectedRevision、expectedPlanRevision、有效差异previewId | 200，本订阅新快照版本；保留旧任务计划 |
-| `POST /subscriptions/:id/organize/preview` | 明确 downloadJobIds/fileIds、expectedRevision、expectedPlanRevision | 200，只接受本模块已确认精确文件，已有任务/文件的新路径计划及冲突 |
-| `POST /subscriptions/:id/organize/apply` | 有效previewId及其版本、明确文件集合 | 202，幂等建立独立后处理计划；不自动批量处理所有旧文件 |
 
-命名及已有文件预览沿用绝对15分钟、指纹/文件事实版本与失败保留选择，另包含文件 UID/ID/执行时路径、目标目录与 namingPlan revision，不包含文件SHA1。它们不共享资源预览的 T0，也不建立下载基线。选中的未完成文件/目标方案变化只阻止受影响的整理，下载事实保留。已完成记录不跟踪文件后续位置，不做后台重定位或补下载。
+P3-10已取消，上表不再规划已有任务/历史文件的 `organize/preview` 与 `organize/apply`；既有占位路由保持关闭。新任务默认自动整理，配置与任务详情中的本地路径预览继续保留。
+
+命名预览沿用绝对15分钟、指纹/事实版本与失败保留选择，不共享资源预览的 T0，也不建立下载基线。任务中的文件 UID/ID/执行时路径、目标目录与 namingPlan revision 固定保存，不包含文件SHA1；下载事实保留。已完成记录不跟踪文件后续位置，不做后台重定位或补下载。
 
 ## 8. 响应与错误投影
 

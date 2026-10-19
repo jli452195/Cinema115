@@ -10,7 +10,7 @@ function act(action: 'reconcile' | 'retry') {
 </script>
 <template>
   <div v-if="job.permittedActions?.reconcile || job.permittedActions?.retry || pending || error || notice">
-    <div class="as-actions"><button v-if="job.permittedActions?.reconcile" type="button" class="as-action" :disabled="locked || busy" @click="act('reconcile')">核对原任务</button><button v-if="job.permittedActions?.retry" type="button" class="as-action" :disabled="locked || busy" @click="act('retry')">{{ job.downloadState === 'queued' ? '继续准备下载' : '重试读取' }}</button></div>
+    <div class="as-actions"><button v-if="job.permittedActions?.reconcile" type="button" class="as-action" :disabled="locked || busy" @click="act('reconcile')">{{ job.organizationPlanned && job.fileState === 'verified' ? '核对整理结果' : '核对原任务' }}</button><button v-if="job.permittedActions?.retry" type="button" class="as-action" :disabled="locked || busy" @click="act('retry')">{{ job.downloadState === 'queued' ? '继续准备下载' : '重试读取' }}</button></div>
     <div class="as-operation-feedback" role="status"><p v-if="error">{{ error }}</p><p v-else-if="loading">正在安排…</p><p v-else-if="notice">{{ notice }}，后台会沿用原任务处理。</p><template v-if="pending && !loading"><p>安排结果待确认，已保留原请求。</p><button type="button" class="as-text-button" @click="confirmPending">核对原安排</button></template><button v-if="error && !pending" type="button" class="as-text-button" @click="emit('changed')">刷新本地记录</button></div>
   </div>
 </template>

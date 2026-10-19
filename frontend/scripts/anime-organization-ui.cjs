@@ -8,7 +8,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
   const page = await context.newPage(), passed = [], errors = [], calls = [], receipts = new Map()
   page.setDefaultTimeout(10000); page.on('pageerror', err => errors.push(err.message)); page.on('dialog', dialog => dialog.accept())
-  const now = Date.now(), state = { failPreview: false, loseDirectory: true, writes: 0 }
+  const now = Date.now(), state = { failPreview: false, loseDirectory: true, writes: 0, phase: 'pending', jobRevision: 1 }
   let settings = { revision: 3, accountId: 'main', accountRevision: 2, uid: '123', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
   const naming = { schemaVersion: 1, target: { tmdbId: '335790', title: '黑暗召唤师在地下恋爱中', year: '2026', season: 1, groupId: '', groupName: 'TMDB 默认', fingerprint: 'a'.repeat(64), seasons: [{ number: 1, name: '第1季', episodeCount: 12, episodes: [{ id: '101', number: 1, name: '开始' }] }] }, sources: [{ sourceRef: 'source-a', segments: [{ first: 25, sourceBase: 25, targetSeason: 1, targetBase: 1 }], overrides: [] }] }
   const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, initialMode: 'from_episode', minimumEpisode: 25, include: [], exclude: [] } }
@@ -27,7 +27,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     else if (endpoint.endsWith('/subscriptions')) data = { items: [sub], total: 1, page: 1, pageSize: 20 }
     else if (endpoint.endsWith('/subscriptions/sub-a')) data = sub
     else if (endpoint.endsWith('/settings')) data = { settings, primaryAccount: { id: 'main', name: '主网盘', uid: '123', revision: 2 }, readiness: { ready: true, issues: [] } }
-    else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: 1, downloadState: 'completed', fileState: 'verified', workflowState: 'active', organizationPlanned: true, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: false, retry: false } }], total: 1, page: 1, pageSize: 20 }
+    else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: state.jobRevision, downloadState: 'completed', fileState: 'verified', workflowState: state.phase === 'done' ? 'organized' : 'active', organizationPlanned: true, organization: { state: state.phase, total: 2, renamed: state.phase === 'pending' ? 0 : 2, moved: state.phase === 'done' ? 2 : state.phase === 'needs_review' ? 1 : 0, targetPath: '/旧整理/这是一个很长的目录用来确认手机上自然折行', updatedAt: now }, blockCode: state.phase === 'unknown' ? 'ORGANIZE_UNCERTAIN' : state.phase === 'needs_review' ? 'ORGANIZE_RESULT_UNRESOLVED' : null, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: ['unknown', 'needs_review'].includes(state.phase), retry: false } }], total: 1, page: 1, pageSize: 20 }
     else if (endpoint.endsWith('/organization-preview')) {
       if (state.failPreview) { status = 503; data = { error: '模拟预览失败' } }
       else data = plan(endpoint.includes('/jobs/'))
@@ -83,6 +83,24 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await job.getByText('字幕已配对', { exact: true }).waitFor(); await job.getByText('目标路径重复，不覆盖', { exact: true }).waitFor(); await job.getByText('附件保留原处', { exact: true }).waitFor()
     assert.ok((await job.locator('.as-plan-item').first().innerText()).includes('/旧整理/'))
     passed.push('实际任务保持冻结目录，展示视频、字幕、冲突与附件，不追踪当前位置')
+    for (const [phase, label] of [['working', '正在整理'], ['unknown', '整理结果待核对'], ['needs_review', '整理需要处理'], ['done', '已整理']]) {
+      state.phase = phase; state.jobRevision++
+      await page.locator('.as-jobs').getByRole('button', { name: '刷新本地任务记录' }).click()
+      await job.locator('.as-job-phase .as-state').filter({ hasText: label }).waitFor()
+      assert.equal(await job.locator('.as-plan-item').count(), 4, '轮询不能重置展开的命名计划')
+      if (['unknown', 'needs_review'].includes(phase)) {
+        await job.getByRole('button', { name: '核对整理结果', exact: true }).waitFor()
+        assert.equal(await job.getByRole('button', { name: /继续准备下载|重试读取/ }).count(), 0)
+        if (phase === 'unknown') { await job.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-unknown.png' }) }
+      } else assert.equal(await job.getByRole('button', { name: '核对整理结果', exact: true }).count(), 0)
+    }
+    await job.getByText('已改名 2/2，已移动 2/2', { exact: false }).waitFor()
+    passed.push('真实整理进度区分工作、未知、部分成功与完成，未知仅核对，完成无执行按钮且保留预览DOM')
+    await page.setViewportSize({ width: 320, height: 740 }); await job.scrollIntoViewIfNeeded()
+    assert.equal(await job.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    await page.screenshot({ path: 'test-results/anime-organization-job-320.png' })
+    await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-organization-job-dark.png' })
+    await page.evaluate(() => document.documentElement.classList.remove('dark')); await page.setViewportSize({ width: 1440, height: 1000 })
     await organization.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-desktop.png' })
     await page.setViewportSize({ width: 320, height: 740 }); await organization.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-320.png' })
     assert.equal(await organization.evaluate(el => el.scrollWidth <= el.clientWidth), true)

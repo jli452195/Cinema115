@@ -76,7 +76,7 @@ func (r *AnimeStatusRunner) PollOnce(ctx context.Context) error {
 			return err
 		}
 		if r.Admin.FileGateway != nil && r.Admin.SubmitGateway != nil {
-			work, found, err := r.Admin.Store.ReserveAnimeDownloadWork(ctx, r.timestamp(), uids)
+			work, found, err := r.Admin.Store.ReserveAnimeDownloadWork(ctx, r.timestamp(), uids, r.Admin.OrganizationGateway != nil)
 			if err != nil {
 				return fmt.Errorf("reserve anime download stage: %w", err)
 			}

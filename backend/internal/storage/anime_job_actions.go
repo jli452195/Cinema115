@@ -24,7 +24,7 @@ type AnimeJobActionReceipt struct {
 // unissued preparation; neither can create a job or replay a dispatched write.
 func animeJobActionsTx(ctx context.Context, tx *sql.Tx, job model.AnimeDownloadJob, now int64) (AnimeJobActions, error) {
 	var out AnimeJobActions
-	if job.WorkflowState != "active" || job.FileState == "verified" || job.DownloadState == "cancelled" || job.DownloadState == "failed" || job.DownloadState == "blocked" {
+	if job.WorkflowState != "active" || job.FileState == "verified" && job.Snapshot.Organization == nil || job.DownloadState == "cancelled" || job.DownloadState == "failed" || job.DownloadState == "blocked" {
 		return out, nil
 	}
 	var busy bool
@@ -49,6 +49,19 @@ func animeJobActionsTx(ctx context.Context, tx *sql.Tx, job model.AnimeDownloadJ
 	}
 	// A recorded Retry-After must survive every manual click.
 	if code == "TASK_RATE_LIMITED" && job.NextRunAt != nil && *job.NextRunAt > now {
+		return out, nil
+	}
+	if job.FileState == "verified" {
+		op, err := scanAnimeOrganize(tx.QueryRowContext(ctx, `SELECT `+animeOrganizeColumns+` FROM anime_drive_operations WHERE download_job_id=? AND kind='organize'`, job.ID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, nil
+		}
+		if err != nil {
+			return out, err
+		}
+		// Only an exact persisted step can be reconciled. No retry means no
+		// replay, including partially completed batches and target conflicts.
+		out.Reconcile = op.Progress.Step != nil && op.Progress.State != "done" && code != "DOWNLOAD_ACCOUNT_CHANGED" && code != "TASK_ACCESS_DENIED"
 		return out, nil
 	}
 	switch code {
@@ -129,7 +142,14 @@ func (s *Store) ScheduleAnimeJobAction(ctx context.Context, id, action string, r
 	if job.DownloadState == "completed" || job.DownloadState == "accepted" || job.DownloadState == "downloading" || job.DownloadState == "queued" && actions.Retry {
 		code = nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state='pending',block_code=?,next_run_at=?,revision=revision+1,updated_at=? WHERE id=?`, code, now, now, id); err != nil {
+	if job.FileState == "verified" {
+		organizationCode := "ORGANIZE_UNCERTAIN"
+		code = &organizationCode
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state='unknown',result_json=json_set(result_json,'$.state','unknown','$.code','ORGANIZE_UNCERTAIN'),error_code='ORGANIZE_UNCERTAIN',updated_at=? WHERE download_job_id=? AND kind='organize' AND json_extract(result_json,'$.step') IS NOT NULL`, now, id); err != nil {
+			return out, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state=CASE WHEN file_state='verified' THEN file_state ELSE 'pending' END,block_code=?,next_run_at=?,revision=revision+1,updated_at=? WHERE id=?`, code, now, now, id); err != nil {
 		return out, err
 	}
 	out.Revision, out.ScheduledAt = revision+1, now

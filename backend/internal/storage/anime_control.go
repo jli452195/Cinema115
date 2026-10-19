@@ -121,7 +121,7 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM anime_download_jobs j WHERE j.workflow_state='active' AND j.download_state NOT IN ('failed','blocked','cancelled') AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=?)`, id).Scan(&out.PendingJobs); err != nil {
 		return out, err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM anime_download_jobs j WHERE j.workflow_state='active' AND (json_extract(j.directory_operation_json,'$.state') IN ('dispatched','unknown') OR EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state IN ('dispatched','unknown'))) AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=?)`, id).Scan(&out.InFlightOperationCount); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM anime_download_jobs j WHERE j.workflow_state='active' AND (json_extract(j.directory_operation_json,'$.state') IN ('dispatched','unknown') OR EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind IN ('submit','organize') AND o.state IN ('dispatched','unknown'))) AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=?)`, id).Scan(&out.InFlightOperationCount); err != nil {
 		return out, err
 	}
 	if key != nil {
@@ -201,7 +201,7 @@ func checkAnimeResumeTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscrip
 }
 
 func controlAnimeQueuedJobsTx(ctx context.Context, tx *sql.Tx, id string, resuming bool, now int64) (int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs j WHERE workflow_state='active' AND download_state='queued' AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=? AND (?=0 OR (x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1)))`, id, resuming)
+	rows, err := tx.QueryContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs j WHERE workflow_state='active' AND (download_state='queued' OR (file_state='verified' AND json_extract(snapshot_json,'$.organization') IS NOT NULL)) AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=? AND (?=0 OR (x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1)))`, id, resuming)
 	if err != nil {
 		return 0, err
 	}
@@ -237,6 +237,14 @@ func controlAnimeQueuedJobsTx(ctx context.Context, tx *sql.Tx, id string, resumi
 		}
 		if resuming {
 			return 0, ErrAnimeReconfirm
+		}
+		if job.FileState == "verified" {
+			// Keep in-flight receipts and leases intact. Pause suppresses new
+			// writes, not the observation of an already-issued request.
+			if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET block_code='DOWNLOAD_PAUSED',next_run_at=NULL,revision=revision+1,updated_at=? WHERE id=? AND block_code IS NULL AND NOT EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=? AND o.kind='organize' AND json_extract(o.result_json,'$.step') IS NOT NULL)`, now, job.ID, job.ID); err != nil {
+				return 0, err
+			}
+			continue
 		}
 		changed, err := suspendAnimeQueuedJobTx(ctx, tx, job, now)
 		if err != nil {

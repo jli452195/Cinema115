@@ -19,21 +19,31 @@ type AnimeDownloadWork struct {
 	Until int64
 }
 
-func (s *Store) ReserveAnimeDownloadWork(ctx context.Context, now int64, excludeUIDs []string) (AnimeDownloadWork, bool, error) {
+func (s *Store) ReserveAnimeDownloadWork(ctx context.Context, now int64, excludeUIDs []string, organize ...bool) (AnimeDownloadWork, bool, error) {
 	var out AnimeDownloadWork
-	if now <= 0 || len(excludeUIDs) > 4 {
+	if now <= 0 || len(excludeUIDs) > 4 || len(organize) > 1 {
 		return out, false, ErrAnimeInvalid
 	}
-	query := `SELECT ` + animeJobColumns + ` FROM anime_download_jobs j WHERE j.workflow_state='active' AND j.file_state IN ('pending','checking')
+	query := `SELECT ` + animeJobColumns + ` FROM anime_download_jobs j WHERE j.workflow_state='active' AND (
+ (j.file_state='verified' AND json_extract(j.snapshot_json,'$.organization') IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM anime_drive_operations stale WHERE stale.download_job_id=j.id AND stale.kind='organize' AND stale.generation<>j.generation)
+ AND (NOT EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='organize' AND o.state IN ('failed','confirmed')))
+ AND (EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='organize' AND json_extract(o.result_json,'$.step') IS NOT NULL)
+ OR EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE x.job_id=j.id AND x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled')))
+ OR (j.file_state IN ('pending','checking')
  AND ((j.download_state='queued' AND NOT EXISTS(SELECT 1 FROM anime_drive_operations done WHERE done.download_job_id=j.id AND done.kind='submit' AND done.state IN ('confirmed','failed'))) OR (j.download_state IN ('submitting','unknown') AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state IN ('dispatched','unknown') AND o.generation=j.generation)) OR (j.download_state='completed' AND j.result_object_id IS NOT NULL))
  AND (j.download_state<>'queued' OR json_extract(j.directory_operation_json,'$.state') IN ('dispatched','unknown') OR EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE x.job_id=j.id AND x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL))
- AND (j.block_code IS NULL OR j.block_code IN ('SUBMIT_UNCERTAIN','TASK_READ_FAILED','TASK_MISSING','TASK_POLL_CANCELLED','DIRECTORY_CREATE_UNCERTAIN','DIRECTORY_READ_FAILED'))
+ ))
+ AND (j.block_code IS NULL OR j.block_code IN ('SUBMIT_UNCERTAIN','TASK_READ_FAILED','TASK_MISSING','TASK_POLL_CANCELLED','DIRECTORY_CREATE_UNCERTAIN','DIRECTORY_READ_FAILED','ORGANIZE_UNCERTAIN','ORGANIZE_READ_FAILED','DOWNLOAD_PAUSED','TASK_RATE_LIMITED'))
  AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED' AND denied.workflow_state='active')`
 	args := []any{now, now, now, now, now - 5000}
+	if len(organize) == 1 && !organize[0] {
+		query += ` AND j.file_state<>'verified'`
+	}
 	if len(excludeUIDs) > 0 {
 		query += ` AND j.uid NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(excludeUIDs)), ",") + `)`
 		for _, uid := range excludeUIDs {
@@ -107,7 +117,7 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		return ErrAnimeInvalid
 	}
 	switch code {
-	case "", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "DOWNLOAD_ACCOUNT_CHANGED", "DOWNLOAD_DIRECTORY_REQUIRED", "DOWNLOAD_PAUSED":
+	case "", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "DOWNLOAD_ACCOUNT_CHANGED", "DOWNLOAD_DIRECTORY_REQUIRED", "DOWNLOAD_PAUSED", "ORGANIZE_READ_FAILED":
 	default:
 		return ErrAnimeInvalid
 	}
@@ -158,7 +168,20 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 	}
 	next := job.NextRunAt
 	fileState := job.FileState
-	if job.WorkflowState != "active" || job.DownloadState == "failed" || job.DownloadState == "blocked" || job.FileState == "verified" || job.FileState == "needs_review" {
+	if job.FileState == "verified" && job.WorkflowState == "active" && job.Snapshot.Organization != nil {
+		// The manifest remains verified throughout organization; exceptions do
+		// not send it back through offline polling or another source listing.
+		switch code {
+		case "", "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
+			due := now + int64(5*time.Minute/time.Millisecond)
+			if next != nil {
+				due = max(due, *next)
+			}
+			next = &due
+		default:
+			next = nil
+		}
+	} else if job.WorkflowState != "active" || job.DownloadState == "failed" || job.DownloadState == "blocked" || job.FileState == "verified" || job.FileState == "needs_review" {
 		next = nil
 	} else {
 		switch code {

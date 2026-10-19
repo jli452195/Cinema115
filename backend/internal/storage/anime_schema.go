@@ -288,11 +288,17 @@ CREATE TABLE IF NOT EXISTS anime_catalog_links (
 );
 CREATE INDEX IF NOT EXISTS anime_sources_catalog ON anime_subscription_sources(provider,item_id,subscription_id) WHERE status<>'removed';
 
-CREATE TABLE IF NOT EXISTS anime_drive_operations (
+` + animeDriveOperationsSchema + `
+
+CREATE INDEX IF NOT EXISTS anime_discovery_pending ON anime_release_decisions(disposition,next_verify_at,lease_until) WHERE observation_json IS NOT NULL;
+CREATE INDEX IF NOT EXISTS anime_jobs_status_uid ON anime_download_jobs(uid,lease_until,next_run_at) WHERE workflow_state='active' AND file_state<>'verified';
+`
+
+const animeDriveOperationsSchema = `CREATE TABLE IF NOT EXISTS anime_drive_operations (
  id TEXT PRIMARY KEY NOT NULL,
  download_job_id TEXT NOT NULL REFERENCES anime_download_jobs(id),
  operation_key TEXT NOT NULL UNIQUE,
- kind TEXT NOT NULL CHECK(kind='submit'),
+ kind TEXT NOT NULL CHECK(kind IN ('submit','organize')),
  state TEXT NOT NULL CHECK(state IN ('prepared','dispatched','confirmed','unknown','failed')),
  generation INTEGER NOT NULL CHECK(generation>0),
  request_json TEXT NOT NULL CHECK(json_valid(request_json)),
@@ -303,7 +309,4 @@ CREATE TABLE IF NOT EXISTS anime_drive_operations (
  UNIQUE(download_job_id,kind),
  CHECK(state NOT IN ('dispatched','confirmed','unknown') OR authorized_at IS NOT NULL)
 );
-
-CREATE INDEX IF NOT EXISTS anime_discovery_pending ON anime_release_decisions(disposition,next_verify_at,lease_until) WHERE observation_json IS NOT NULL;
-CREATE INDEX IF NOT EXISTS anime_jobs_status_uid ON anime_download_jobs(uid,lease_until,next_run_at) WHERE workflow_state='active' AND file_state<>'verified';
 `

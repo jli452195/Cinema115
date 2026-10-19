@@ -22,7 +22,7 @@ onBeforeUnmount(() => controller.abort())
     <p v-if="error" class="as-muted" role="status">{{ error }}{{ result ? '，上次预览已保留。' : '' }}</p>
     <div v-if="result" class="as-plan-items">
       <p class="as-muted">{{ result.example ? '映射示例，未包含实际文件扩展名。' : '依据任务保存的文件清单与命名方案，不查询文件当前位置。' }}</p>
-      <p class="as-muted">仅预览，不执行改名或移动。云端重名尚未检查，执行时遇到同名文件不会覆盖。</p>
+      <p class="as-muted">这里仅展示命名计划，实际执行结果见任务记录。执行时检查同名冲突，不覆盖文件。</p>
       <p v-if="!result.items.length" class="as-muted">{{ result.mode === 'original' ? '尚未保存整理计划，请先补齐 TMDB 命名目标。' : '还没有可用的文件清单或映射示例。' }}</p>
       <article v-for="item in result.items" :key="item.id" class="as-plan-item" :data-plan-status="item.status">
         <span class="as-plan-status">{{ labels[item.reason] || '需要确认' }}<span v-if="item.kind === 'example'"> · 示例</span></span>

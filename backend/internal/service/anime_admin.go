@@ -60,6 +60,9 @@ type AnimeAdminService struct {
 	SubmitGateway       AnimeOfflineGateway
 	StatusGateway       AnimeStatusReader
 	FileGateway         AnimeFileGateway
+	OrganizationGateway AnimeOrganizationGateway
+	ReserveOrganization func() (func(), error)
+	organizationCache   animeOrganizationCache
 	DownloadCoordinator *CloudDownloadCoordinator
 }
 
