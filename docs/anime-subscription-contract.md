@@ -2,7 +2,11 @@
 
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。
 
-2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前结构版本为 v50，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前结构版本为 v51，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+
+2026-10-20 最新约定：P3-04～06已实现默认标准命名整理的目录、任务快照及本地路径预览，不提供处理方式选择或整理开关；云端执行仍由P3-07～08接入，organize能力仍false。新增 `PATCH /settings/organize-directory`、`GET /subscriptions/:id/organization-preview`、`GET /jobs/:id/organization-preview`（均在 `/api/admin/anime` 下），实际DTO及限制见[实现记录](anime-organization-preview-implementation.md)。目录2变更不使未变化的目录1授权失效；旧任务不追溯新目标，无命名资料时不猜测。
+
+用户明确动漫尚无生产数据。本轮取消旧开发数据的增量兼容，将旧于v51的动漫表按固定白名单一次性清理并重建完整结构，修复v50缺失poll_snapshot_json。其他业务表和云端文件不变；v51之后的新数据正常持久化。该要求优先于下文历史阶段中保留旧开发动漫数据的说明。
 
 P2-01～02 接入注记：固定主账号/目录/凭据内存会话，新增资源核验、资源/UID认领、下载意图和具体来源选择四表，以及发布可空 `resource_id`。核验方法仅为实际 BT v1 种子 info 字节或 Garden 受控磁力身份；P1表单选择仍不授权执行。新增执行选择另固定 `selection`（初批/新增依据、基线、目标和父/来源代次）、规则/解析/时间版本；本地事务不能代替后续115提交/对账。未创建文件、外部操作或P3历史表，未开放HTTP启用与后台调度。实际行为与验证见[下载目标快照](anime-download-target-implementation.md)及[资源核验与认领](anime-resource-claim-implementation.md)。
 

@@ -265,7 +265,7 @@ func TestAnimeDownloadClaimRejectsStaleOrWithdrawnAuthorization(t *testing.T) {
 		`UPDATE anime_release_decisions SET disposition='seen'`,
 		`UPDATE anime_releases SET content_fingerprint='changed'`,
 		`UPDATE anime_releases SET parser_version=parser_version+1`,
-		`UPDATE anime_settings SET revision=revision+1`,
+		`UPDATE anime_settings SET revision=revision+1,download_cid='999'`,
 		`UPDATE p115_accounts SET revision=revision+1`,
 	} {
 		t.Run(change, func(t *testing.T) {

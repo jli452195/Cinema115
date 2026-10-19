@@ -81,6 +81,7 @@ export interface AnimeSubscriptionView {
   form: { formSelections: AnimeFormSelection[]; previewRefs: AnimePreviewRef[] }
 }
 export interface AnimeDownloadJob {
+	organizationPlanned?: boolean
   id: string; title: string; groupName: string; revision: number
   downloadState: string; fileState: string; workflowState: string; blockCode: string | null
   executionPath: string; directoryCid: string | null; createdAt: number; updatedAt: number
@@ -101,4 +102,6 @@ export interface AnimeNamingTarget {
 }
 export interface AnimeNamingInput { tmdbId: string; groupId: string; season: number; fingerprint: string; loadedSeasons?: number[]; sources: AnimeSourceMapping[] }
 export interface AnimeNamingPlan { schemaVersion: 1; target: AnimeNamingTarget; sources: AnimeSourceMapping[] }
+export interface AnimeOrganizationItem { id: string; kind: string; originalPath: string; targetPath: string; status: string; reason: string; videoId?: string }
+export interface AnimeOrganizationPreview { mode: string; revision: number; items: AnimeOrganizationItem[]; example?: boolean; cloudConflictChecked: boolean; ready?: number; needsReview?: number }
 export interface AnimeNamingCandidate { id: number; title: string; originalTitle: string; date: string }

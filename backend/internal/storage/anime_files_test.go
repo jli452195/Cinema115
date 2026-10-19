@@ -222,32 +222,3 @@ func TestAnimeFilesReceiptFailureRollsBack(t *testing.T) {
 		})
 	}
 }
-
-func TestAnimeFilesMigrationPreservesExistingJobs(t *testing.T) {
-	f, job := animeFilesStoreFixture(t)
-	for _, query := range []string{`ALTER TABLE anime_download_jobs DROP COLUMN directory_operation_json`, `ALTER TABLE anime_download_jobs DROP COLUMN files_json`, `PRAGMA user_version=49`} {
-		if _, err := f.store.db.Exec(query); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var path string
-	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	got, err := reopened.GetAnimeDownloadJob(context.Background(), job.ID)
-	if err != nil || !reflect.DeepEqual(got, job) {
-		t.Fatal("migration changed download", got, err)
-	}
-	var version int
-	if err := reopened.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
-		t.Fatal(version, err)
-	}
-}

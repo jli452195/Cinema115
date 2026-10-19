@@ -29,16 +29,17 @@ type AnimeDownloadSource struct {
 }
 
 type AnimeDownloadSnapshot struct {
-	SchemaVersion       int                    `json:"schemaVersion"`
-	Target              AnimeDownloadTarget    `json:"target"`
-	Protocol            string                 `json:"protocol"`
-	InfoHash            string                 `json:"infoHash"`
-	VerificationVersion int                    `json:"verificationVersion"`
-	Evidence            animeresource.Evidence `json:"evidence"`
-	Source              AnimeDownloadSource    `json:"source"`
-	Release             AnimeRelease           `json:"release"`
-	Decision            AnimeDecisionSnapshot  `json:"decision"`
-	Naming              *AnimeNamingPlan       `json:"naming"`
+	SchemaVersion       int                        `json:"schemaVersion"`
+	Target              AnimeDownloadTarget        `json:"target"`
+	Protocol            string                     `json:"protocol"`
+	InfoHash            string                     `json:"infoHash"`
+	VerificationVersion int                        `json:"verificationVersion"`
+	Evidence            animeresource.Evidence     `json:"evidence"`
+	Source              AnimeDownloadSource        `json:"source"`
+	Release             AnimeRelease               `json:"release"`
+	Decision            AnimeDecisionSnapshot      `json:"decision"`
+	Naming              *AnimeNamingPlan           `json:"naming"`
+	Organization        *AnimeOrganizationSnapshot `json:"organization,omitempty"`
 }
 
 type AnimeDownloadJob struct {

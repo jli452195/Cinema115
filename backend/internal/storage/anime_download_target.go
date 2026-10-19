@@ -49,7 +49,9 @@ func checkAnimeDownloadTargetTx(ctx context.Context, tx *sql.Tx, v model.AnimeDo
 	if err != nil {
 		return fmt.Errorf("check anime download settings: %w", err)
 	}
-	if settings.Revision != v.SettingsRevision || !sameAnimeString(settings.AccountID, &v.AccountID) || settings.AccountRevision == nil || *settings.AccountRevision != v.AccountRevision || !sameAnimeString(settings.UID, &v.UID) || !sameAnimeString(settings.DownloadCID, &v.ParentCID) || !sameAnimeString(settings.DownloadPath, &v.ParentPath) {
+	// Organization-only changes advance the shared settings revision without
+	// changing this download authorization. Compare the actual fixed binding.
+	if !sameAnimeString(settings.AccountID, &v.AccountID) || settings.AccountRevision == nil || *settings.AccountRevision != v.AccountRevision || !sameAnimeString(settings.UID, &v.UID) || !sameAnimeString(settings.DownloadCID, &v.ParentCID) || !sameAnimeString(settings.DownloadPath, &v.ParentPath) {
 		return ErrAnimeSettingsChanged
 	}
 	return nil

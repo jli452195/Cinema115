@@ -267,7 +267,7 @@ func TestAnimeControlResumeKeepsSourceIntentAndCooldown(t *testing.T) {
 }
 
 func TestAnimeControlResumeRejectsChangedBaselineOrTarget(t *testing.T) {
-	for _, query := range []string{`UPDATE anime_settings SET revision=revision+1`, `UPDATE anime_source_baselines SET snapshot_json='{}'`, `UPDATE anime_subscription_sources SET revision=revision+1`, `UPDATE p115_accounts SET cookie_enc=x''`} {
+	for _, query := range []string{`UPDATE anime_settings SET revision=revision+1,download_cid='999'`, `UPDATE anime_source_baselines SET snapshot_json='{}'`, `UPDATE anime_subscription_sources SET revision=revision+1`, `UPDATE p115_accounts SET cookie_enc=x''`} {
 		t.Run(query, func(t *testing.T) {
 			f, _ := discoveryFixture(t)
 			paused := controlAnime(t, f.store, f.sub.ID, "pause")

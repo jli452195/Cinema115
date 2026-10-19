@@ -526,7 +526,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     late.state.namingGate=new Promise(resolve=>{releaseNaming=resolve})
     await late.page.goto(origin+'/anime/new?bangumiId=123',{waitUntil:'domcontentloaded'})
     await late.page.getByRole('button',{name:'关联 TMDB',exact:true}).click()
-    await late.page.getByRole('button',{name:'保留原名，不关联 TMDB',exact:true}).click()
+    await late.page.getByRole('button',{name:'暂不关联 TMDB',exact:true}).click()
     releaseNaming(); await late.page.waitForLoadState('networkidle')
     assert.equal(late.calls.some(c=>c.endpoint.endsWith('/naming/target')),false,'late automatic recommendation cannot override explicit original mode')
     await late.page.getByRole('button',{name:'保存草稿',exact:true}).click(); await late.page.getByRole('heading',{name:'草稿已保存'}).waitFor()

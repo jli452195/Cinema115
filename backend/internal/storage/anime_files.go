@@ -173,10 +173,10 @@ func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownload
 			resultKind = entry.Kind
 		}
 	}
-	// No naming plan means this is intentionally saved under its original
-	// name. A naming plan leaves workflow active for the later organizer.
+	// Metadata alone does not authorize organization. Only an explicit frozen
+	// organization plan leaves work for the later organizer.
 	workflow := "active"
-	if job.Snapshot.Naming == nil {
+	if job.Snapshot.Organization == nil {
 		workflow = "original_saved"
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET files_json=?,file_state='verified',result_object_kind=?,workflow_state=?,block_code=NULL,next_run_at=NULL,lease_token=NULL,lease_until=NULL,revision=revision+1,updated_at=? WHERE id=?`, raw, resultKind, workflow, manifest.CollectedAt, job.ID); err != nil {

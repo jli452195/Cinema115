@@ -183,6 +183,9 @@ func TestAnimeFilesCompletionSavesManifestAndStopsAllOfflinePolling(t *testing.T
 			f, db, job, runner, now := animeStatusFixture(t)
 			if naming {
 				job.Snapshot.Naming = &model.AnimeNamingPlan{SchemaVersion: 1}
+				job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: job.Snapshot.Target}
+				job.Snapshot.Organization.Target.ParentCID = "900"
+				job.Snapshot.Organization.Target.ParentPath = "/整理"
 				raw, _ := json.Marshal(job.Snapshot)
 				if _, err := db.Exec(`UPDATE anime_download_jobs SET snapshot_json=? WHERE id=?`, string(raw), job.ID); err != nil {
 					t.Fatal(err)

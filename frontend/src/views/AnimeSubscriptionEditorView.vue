@@ -51,7 +51,7 @@ async function reloadConfiguration() {
 </script>
 
 <template>
-  <ManagementLayout :title="local ? '编辑动漫订阅' : '配置动漫订阅'" description="选择字幕组与规格，预览匹配结果。当前仅保存配置，下载尚未开放。" :parent="{ label: '动漫订阅', to: returnPath }" @logout="$emit('logout')">
+  <ManagementLayout :title="local ? '编辑动漫订阅' : '配置动漫订阅'" description="选择字幕组与规格，预览匹配结果。保存后在订阅详情启用下载。" :parent="{ label: '动漫订阅', to: returnPath }" @logout="$emit('logout')">
     <div class="anime-editor">
       <p v-if="loading" role="status" class="ae-loading">正在读取篇章与配置…</p>
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button><RouterLink :to="returnPath" class="ae-link">{{ returnLabel }}</RouterLink></div>
@@ -69,12 +69,13 @@ async function reloadConfiguration() {
           <AnimeNamingTarget :naming="editor.naming" :disabled="locked" />
           <section class="ae-download-summary" aria-label="下载存放设置">
             <IconFolder :size="20" aria-hidden="true" />
-            <div class="ae-download-path"><span class="ae-label">下载位置<span class="ae-note"> · 所有订阅共用</span></span><p>{{ settings?.settings.downloadPath || '尚未配置下载目录' }}</p><small v-if="settings && !settings.readiness.ready">{{ settings.readiness.issues.includes('ACCOUNT_SNAPSHOT_CHANGED') ? '主账号已变化，请重新选择并确认目录。' : '补齐主账号与目录后可保存为暂停；不影响查看资源或保存草稿。' }}</small></div>
-            <button v-if="settings?.primaryAccount" type="button" class="ae-button" :disabled="locked || !!previewBusy" @click="directoryOpen = true">{{ settings.settings.downloadCid ? '更改目录' : '选择目录' }}</button>
+            <div class="ae-download-path"><span class="ae-label">下载目录1<span class="ae-note"> · 所有订阅共用</span></span><p>{{ settings?.settings.downloadPath || '尚未配置下载目录' }}</p><small v-if="settings && !settings.readiness.ready">{{ settings.readiness.issues.includes('ACCOUNT_SNAPSHOT_CHANGED') ? '主账号已变化，请重新选择并确认目录。' : '补齐主账号与目录后可保存为暂停；不影响查看资源或保存草稿。' }}</small></div>
+            <button v-if="settings?.primaryAccount" type="button" class="ae-button" :disabled="locked || !!previewBusy" @click="editor.directoryKind.value = 'download'; directoryOpen = true">{{ settings.settings.downloadCid ? '更改目录' : '选择目录' }}</button>
             <RouterLink v-else-if="settings" to="/helper115" class="ae-button">配置主账号</RouterLink>
             <button type="button" class="ae-link" :aria-expanded="settingsExpanded" @click="settingsExpanded = !settingsExpanded">目录选项</button>
             <div v-if="settingsExpanded || settingsError || pendingSettings" class="ae-download-options"><p v-if="settings?.primaryAccount" class="ae-note">使用主账号 {{ settings.primaryAccount.name }}，每条发布保存到独立子目录。</p><p v-if="settingsError" role="status" class="ae-error">{{ settingsError }}</p><button type="button" class="ae-link" :disabled="locked || !!previewBusy" @click="editor.reloadSettings">重读设置</button><button v-if="pendingSettings && !directoryOpen" type="button" class="ae-button ae-primary" :disabled="settingsBusy" @click="editor.saveDirectory()">重试原目录保存请求</button></div>
           </section>
+          <section v-if="editor.naming.target.value" class="ae-download-summary" aria-label="整理归档目录"><IconFolder :size="20" aria-hidden="true" /><div class="ae-download-path"><span class="ae-label">整理目录2<span class="ae-note"> · 所有订阅共用</span></span><p>{{ settings?.settings.organizePath || '尚未配置整理目录' }}</p><small v-if="settings && !settings.readiness.ready">主账号与下载目录准备完毕后可选择整理目录。</small><small v-else>标准命名后移动原文件至此目录。已建立的任务保留原目标。</small></div><button v-if="settings?.primaryAccount" type="button" class="ae-button" :disabled="locked || !!previewBusy || !settings.readiness.ready" @click="editor.directoryKind.value = 'organize'; directoryOpen = true">选择整理目录</button></section>
           <div class="ae-editor-grid">
             <section class="ae-workspace" aria-label="RSS 来源配置">
               <div class="ae-source-tabs" role="group" aria-label="切换 RSS 来源"><button v-for="(source, index) in sources" :key="source.ref" type="button" :aria-pressed="activeRef === source.ref" @click="activeRef = source.ref"><span>{{ source.role === 'main' ? '主 RSS' : `备用 ${index}` }}</span><span v-if="source.groupName" class="ae-tab-group">{{ source.groupName }}</span><span class="ae-tab-state" :class="{ ready: animeSourceReady(source) }">{{ animeSourceReady(source) ? '已配置' : '草稿' }}</span></button><button type="button" class="ae-add-source" :disabled="locked || !!previewBusy || sources.length >= 5" @click="editor.addSource"><IconPlus :size="16" />添加备用</button></div>
@@ -91,6 +92,6 @@ async function reloadConfiguration() {
         </template>
       </template>
     </div>
-    <P115DirectoryDialog v-if="directoryOpen && settings?.primaryAccount" :token="token" :account-id="settings.primaryAccount.id" title="动漫订阅下载目录" description="固定使用主账号，为所有动漫订阅保存下载目录。" :allow-create="false" :saving="settingsBusy" :save-error="settingsError" :confirm-label="pendingSettings ? '重试原保存请求' : '保存此目录'" @close="() => { if (!pendingSettings) directoryOpen = false }" @select="editor.saveDirectory($event.id)" />
+    <P115DirectoryDialog v-if="directoryOpen && settings?.primaryAccount" :token="token" :account-id="settings.primaryAccount.id" :title="editor.directoryKind.value === 'organize' ? '动漫整理目录2' : '动漫订阅下载目录'" description="固定使用主账号；下载目录1与整理目录2分开，任务固定启动时的目标。" :allow-create="false" :saving="settingsBusy" :save-error="settingsError" :confirm-label="pendingSettings ? '重试原保存请求' : '保存此目录'" @close="() => { if (!pendingSettings) directoryOpen = false }" @select="editor.saveDirectory($event.id)" />
   </ManagementLayout>
 </template>

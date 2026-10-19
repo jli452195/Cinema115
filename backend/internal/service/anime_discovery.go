@@ -228,7 +228,7 @@ func (r *AnimeDiscoveryRunner) verify(ctx context.Context, work storage.AnimeDis
 		if errors.Is(err, animeresource.ErrRead) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, ErrAnimeDirectoryRead) {
 			code, retryable = "RESOURCE_READ_FAILED", true
 		}
-		if errors.Is(err, storage.ErrAnimeAccountChanged) || errors.Is(err, storage.ErrAnimeSettingsChanged) {
+		if errors.Is(err, storage.ErrAnimeAccountChanged) || errors.Is(err, storage.ErrAnimeSettingsChanged) || errors.Is(err, storage.ErrAnimeDirectoryRequired) {
 			code = "DOWNLOAD_TARGET_CHANGED"
 		}
 		if err != nil && code == "RESOURCE_REVIEW_REQUIRED" && !animeDiscoveryReviewError(err) {

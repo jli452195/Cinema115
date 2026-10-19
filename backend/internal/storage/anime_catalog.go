@@ -9,17 +9,6 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const animeCatalogSchemaV45 = `
-CREATE TABLE IF NOT EXISTS anime_catalog_links (
- provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt','garden')),
- item_id TEXT NOT NULL,
- bangumi_id TEXT,
- observed_at INTEGER NOT NULL CHECK(observed_at>0),
- PRIMARY KEY(provider,item_id)
-);
-CREATE INDEX IF NOT EXISTS anime_sources_catalog ON anime_subscription_sources(provider,item_id,subscription_id) WHERE status<>'removed';
-`
-
 // Only server-observed site metadata may populate these links. A nil identity
 // records a successful read with no unique association, replacing older links.
 type AnimeCatalogLink struct {

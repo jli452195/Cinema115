@@ -258,6 +258,16 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		Evidence: evidence, Release: release, Decision: d.Snapshot, Naming: sub.Naming,
 		Source: model.AnimeDownloadSource{SubscriptionID: sub.ID, SubscriptionRevision: sub.Revision, SubscriptionGeneration: sub.RunGeneration, SourceID: source.ID, SourceRevision: source.Revision, SourceGeneration: source.RunGeneration, Provider: source.Provider, ItemID: *source.ItemID, GroupID: *source.GroupID, GroupName: *source.GroupName, NamespaceID: source.NamespaceID},
 	}
+	if out.Created {
+		settings, err := readAnimeSettingsTx(ctx, tx)
+		if err != nil {
+			return out, err
+		}
+		snapshot.Organization, err = model.FreezeAnimeOrganization(sub.Naming, settings, sub.Revision, target)
+		if err != nil {
+			return out, ErrAnimeDirectoryRequired
+		}
+	}
 	raw, err := animeJSON(snapshot)
 	if err != nil {
 		return out, err

@@ -17,24 +17,25 @@ type AnimeJobFileView struct {
 	Size string `json:"size"`
 }
 type AnimeJobView struct {
-	ID               string                  `json:"id"`
-	Title            string                  `json:"title"`
-	GroupName        string                  `json:"groupName"`
-	DownloadState    string                  `json:"downloadState"`
-	FileState        string                  `json:"fileState"`
-	WorkflowState    string                  `json:"workflowState"`
-	BlockCode        *string                 `json:"blockCode"`
-	Revision         int64                   `json:"revision"`
-	ExecutionPath    string                  `json:"executionPath"`
-	DirectoryCID     *string                 `json:"directoryCid"`
-	CreatedAt        int64                   `json:"createdAt"`
-	UpdatedAt        int64                   `json:"updatedAt"`
-	ObservedAt       int64                   `json:"observedAt"`
-	AttemptedAt      int64                   `json:"attemptedAt"`
-	NextRunAt        *int64                  `json:"nextRunAt"`
-	Progress         *float64                `json:"progress"`
-	Files            []AnimeJobFileView      `json:"files"`
-	PermittedActions storage.AnimeJobActions `json:"permittedActions"`
+	ID                  string                  `json:"id"`
+	Title               string                  `json:"title"`
+	GroupName           string                  `json:"groupName"`
+	DownloadState       string                  `json:"downloadState"`
+	FileState           string                  `json:"fileState"`
+	WorkflowState       string                  `json:"workflowState"`
+	OrganizationPlanned bool                    `json:"organizationPlanned"`
+	BlockCode           *string                 `json:"blockCode"`
+	Revision            int64                   `json:"revision"`
+	ExecutionPath       string                  `json:"executionPath"`
+	DirectoryCID        *string                 `json:"directoryCid"`
+	CreatedAt           int64                   `json:"createdAt"`
+	UpdatedAt           int64                   `json:"updatedAt"`
+	ObservedAt          int64                   `json:"observedAt"`
+	AttemptedAt         int64                   `json:"attemptedAt"`
+	NextRunAt           *int64                  `json:"nextRunAt"`
+	Progress            *float64                `json:"progress"`
+	Files               []AnimeJobFileView      `json:"files"`
+	PermittedActions    storage.AnimeJobActions `json:"permittedActions"`
 }
 type AnimeJobPageView struct {
 	Items       []AnimeJobView `json:"items"`
@@ -57,6 +58,7 @@ func (s *AnimeAdminService) jobView(ctx context.Context, job model.AnimeDownload
 			v.Progress = job.Tracking.Observation.Progress
 		}
 	}
+	v.OrganizationPlanned = job.Snapshot.Organization != nil
 	if job.Files != nil {
 		for _, file := range job.Files.Entries {
 			v.Files = append(v.Files, AnimeJobFileView{ID: file.ID, Name: file.Name, Kind: file.Kind, Size: strconv.FormatInt(file.Size, 10)})

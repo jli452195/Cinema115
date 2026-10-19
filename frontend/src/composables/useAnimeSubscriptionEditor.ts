@@ -18,6 +18,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const previewBusy = ref(''), saveBusy = ref(false), settingsBusy = ref(false)
   const pendingSave = ref<PendingWrite>(), pendingSettings = ref<PendingWrite>(), receipt = ref<AnimeSaveReceipt>()
   const duplicateID = ref(''), conflict = ref(false), directoryOpen = ref(false)
+  const directoryKind = ref<'download' | 'organize'>('download')
   const now = ref(Date.now()), budget = ref({ totalRawCount: 0, limit: 2000, remaining: 2000 })
   const removed = ref<{ id: string; expectedRevision: number }[]>([])
   const baseline = ref(''), draftKey = ref(animeRequestKey())
@@ -352,12 +353,15 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (!pendingSettings.value) {
       if (!cid || !settings.value.primaryAccount) return
       const primary = settings.value.primaryAccount
-      pendingSettings.value = { path: 'settings', method: 'PATCH', key: animeRequestKey(), body: { expectedRevision: settings.value.settings.revision, downloadCid: cid, organizeCid: settings.value.settings.organizeCid, expectedPrimaryAccountId: primary.id, expectedPrimaryAccountRevision: primary.revision } }
+      pendingSettings.value = directoryKind.value === 'organize'
+        ? { path: 'settings/organize-directory', method: 'PATCH', key: animeRequestKey(), body: { expectedRevision: settings.value.settings.revision, cid } }
+        : { path: 'settings', method: 'PATCH', key: animeRequestKey(), body: { expectedRevision: settings.value.settings.revision, downloadCid: cid, organizeCid: settings.value.settings.organizeCid, expectedPrimaryAccountId: primary.id, expectedPrimaryAccountRevision: primary.revision } }
     }
     settingsBusy.value = true; const current = generation
     try {
       const pending = pendingSettings.value
-      const result = await animeConfigRequest<AnimeSettings>(token.value, pending.path, { ...pending, signal: lifetime.signal })
+      const response = await animeConfigRequest<AnimeSettings | { settings: AnimeSettings }>(token.value, pending.path, { ...pending, signal: lifetime.signal })
+      const result = 'settings' in response ? response.settings : response
       if (current !== generation) return
       if (!Number.isSafeInteger(result.revision) || !result.accountId || !result.downloadCid) throw new AnimeConfigError('目录保存回执不完整，请重试原请求', '', 0, {}, true)
       settings.value = { ...settings.value, settings: result, readiness: { ready: true, issues: [] } }
@@ -372,6 +376,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady,
+  return { directoryKind, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady,
     initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, selectRelease, dismissPending, dismissRecovery, save, retrySave, saveDirectory }
 }

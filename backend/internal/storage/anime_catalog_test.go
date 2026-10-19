@@ -9,15 +9,11 @@ import (
 	"strm115/backend/internal/model"
 )
 
-func TestAnimeCatalogCrossSiteStatusSurvivesUpgradeAndRestart(t *testing.T) {
+func TestAnimeCatalogCrossSiteStatusSurvivesRestart(t *testing.T) {
 	s, path := testStore(t)
 	ctx := context.Background()
 	entry := createAnimeEntry(t, s, animePtr("123"))
 	sub := saveAnimeConfig(t, s, animeConfig(entry.ID))
-	// Reproduce a genuine v44 additive upgrade with a real saved subscription.
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE anime_catalog_links; DROP INDEX anime_sources_catalog; PRAGMA user_version=44`); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}

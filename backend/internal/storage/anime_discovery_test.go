@@ -152,7 +152,7 @@ func TestAnimeDiscoveryMutationAndTransactionRollback(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, now := discoveryFixture(t)
 			p := discoveryPoll(t, f.store, now)
-			query := map[string]string{"pause": `UPDATE anime_subscriptions SET status='paused'`, "source generation": `UPDATE anime_subscription_sources SET run_generation=run_generation+1`, "parent generation": `UPDATE anime_subscriptions SET run_generation=run_generation+1`, "revision": `UPDATE anime_subscription_sources SET revision=revision+1`, "target": `UPDATE anime_settings SET revision=revision+1`, "write failure": `CREATE TRIGGER fail_poll BEFORE INSERT ON anime_release_decisions BEGIN SELECT RAISE(ABORT,'injected'); END`}[mode]
+			query := map[string]string{"pause": `UPDATE anime_subscriptions SET status='paused'`, "source generation": `UPDATE anime_subscription_sources SET run_generation=run_generation+1`, "parent generation": `UPDATE anime_subscriptions SET run_generation=run_generation+1`, "revision": `UPDATE anime_subscription_sources SET revision=revision+1`, "target": `UPDATE anime_settings SET revision=revision+1,download_cid='999'`, "write failure": `CREATE TRIGGER fail_poll BEFORE INSERT ON anime_release_decisions BEGIN SELECT RAISE(ABORT,'injected'); END`}[mode]
 			if _, err := f.store.db.Exec(query); err != nil {
 				t.Fatal(err)
 			}
@@ -355,7 +355,7 @@ func TestAnimeDiscoveryRejectsInvalidBaselineWithoutRequest(t *testing.T) {
 	for _, mode := range []string{"legacy", "parser", "target"} {
 		t.Run(mode, func(t *testing.T) {
 			f, now := discoveryFixture(t)
-			query := map[string]string{"legacy": `UPDATE anime_source_baselines SET snapshot_json='{}'`, "parser": `UPDATE anime_source_baselines SET snapshot_json=json_set(snapshot_json,'$.parserVersion',1)`, "target": `UPDATE anime_settings SET revision=revision+1`}[mode]
+			query := map[string]string{"legacy": `UPDATE anime_source_baselines SET snapshot_json='{}'`, "parser": `UPDATE anime_source_baselines SET snapshot_json=json_set(snapshot_json,'$.parserVersion',1)`, "target": `UPDATE anime_settings SET revision=revision+1,download_cid='999'`}[mode]
 			if _, err := f.store.db.Exec(query); err != nil {
 				t.Fatal(err)
 			}

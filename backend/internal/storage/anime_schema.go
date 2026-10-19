@@ -1,8 +1,8 @@
 package storage
 
-// animeSchemaV39 is the P1 subset of docs/anime-subscription-schema.sql.
-// P2 resource_id and P3 naming columns/FKs are deliberately deferred.
-const animeSchemaV39 = `
+// The current anime schema is created as one unit. Pre-v51 anime data was
+// development-only and is discarded once, as explicitly requested by the user.
+const animeSchema = `
 CREATE TABLE IF NOT EXISTS anime_settings (
  id INTEGER PRIMARY KEY CHECK(id=1),
  revision INTEGER NOT NULL CHECK(revision>0),
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS anime_subscriptions (
  run_generation INTEGER NOT NULL CHECK(run_generation>0),
  first_enabled_at INTEGER,
  form_json TEXT NOT NULL CHECK(json_valid(form_json)),
+ naming_json TEXT NOT NULL DEFAULT 'null' CHECK(json_valid(naming_json)),
  created_at INTEGER NOT NULL,
  updated_at INTEGER NOT NULL
 );
@@ -78,6 +79,9 @@ CREATE TABLE IF NOT EXISTS anime_subscription_sources (
  checked_at INTEGER,
  attempted_at INTEGER,
  check_token TEXT,
+ check_until INTEGER,
+ poll_failures INTEGER NOT NULL DEFAULT 0 CHECK(poll_failures BETWEEN 0 AND 4),
+ poll_snapshot_json TEXT CHECK(poll_snapshot_json IS NULL OR json_valid(poll_snapshot_json)),
  next_check_at INTEGER,
  retry_after INTEGER,
  error_code TEXT,
@@ -99,6 +103,7 @@ CREATE INDEX IF NOT EXISTS anime_sources_due ON anime_subscription_sources(statu
 
 CREATE TABLE IF NOT EXISTS anime_releases (
  id TEXT PRIMARY KEY NOT NULL,
+ resource_id TEXT REFERENCES anime_resources(id),
  provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt','garden')),
  post_key TEXT NOT NULL CHECK(length(post_key)>0),
  original_guid TEXT,
@@ -120,6 +125,7 @@ CREATE TABLE IF NOT EXISTS anime_preview_batches (
  expected_revision INTEGER NOT NULL CHECK(expected_revision>=0),
  settings_revision INTEGER NOT NULL CHECK(settings_revision>=0),
  config_fingerprint TEXT NOT NULL,
+ snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(snapshot_json)),
  created_at INTEGER NOT NULL
 );
 
@@ -135,6 +141,7 @@ CREATE TABLE IF NOT EXISTS anime_source_previews (
  generated_at INTEGER NOT NULL,
  expires_at INTEGER NOT NULL CHECK(expires_at=generated_at+900000),
  snapshot_observed_at INTEGER NOT NULL,
+ snapshot_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(snapshot_json)),
  raw_count INTEGER NOT NULL CHECK(raw_count BETWEEN 0 AND 2000),
  requested_take INTEGER NOT NULL CHECK(requested_take BETWEEN 1 AND 2000),
  completeness TEXT NOT NULL CHECK(completeness IN ('partial','visible_end')),
@@ -182,6 +189,8 @@ CREATE TABLE IF NOT EXISTS anime_release_decisions (
  release_fingerprint TEXT NOT NULL,
  snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
  next_verify_at INTEGER,
+ observation_json TEXT CHECK(observation_json IS NULL OR json_valid(observation_json)),
+ verify_failures INTEGER NOT NULL DEFAULT 0 CHECK(verify_failures BETWEEN 0 AND 4),
  generation INTEGER NOT NULL DEFAULT 1 CHECK(generation>0),
  lease_token TEXT,
  lease_until INTEGER,
@@ -203,4 +212,98 @@ CREATE TABLE IF NOT EXISTS anime_request_keys (
  PRIMARY KEY(actor_key,operation,request_key)
 );
 INSERT OR IGNORE INTO anime_settings(id,revision) VALUES(1,1);
+
+CREATE TABLE IF NOT EXISTS anime_resources (
+ id TEXT PRIMARY KEY NOT NULL,
+ protocol TEXT NOT NULL CHECK(protocol='bt_v1'),
+ info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
+ verification_version INTEGER NOT NULL CHECK(verification_version>0),
+ verified_at INTEGER NOT NULL,
+ evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+ UNIQUE(protocol,info_hash)
+);
+CREATE TABLE IF NOT EXISTS anime_resource_claims (
+ id TEXT PRIMARY KEY NOT NULL,
+ uid TEXT NOT NULL CHECK(length(uid)>0),
+ resource_id TEXT NOT NULL REFERENCES anime_resources(id),
+ account_id TEXT NOT NULL,
+ target_cid TEXT NOT NULL,
+ created_at INTEGER NOT NULL,
+ UNIQUE(uid,resource_id)
+);
+CREATE TABLE IF NOT EXISTS anime_download_jobs (
+ id TEXT PRIMARY KEY NOT NULL,
+ claim_id TEXT NOT NULL REFERENCES anime_resource_claims(id),
+ attempt INTEGER NOT NULL CHECK(attempt>0),
+ account_id TEXT NOT NULL,
+ account_revision INTEGER NOT NULL CHECK(account_revision>0),
+ uid TEXT NOT NULL,
+ settings_revision INTEGER NOT NULL CHECK(settings_revision>0),
+ parent_cid TEXT NOT NULL,
+ directory_name TEXT NOT NULL,
+ directory_cid TEXT,
+ snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+ download_state TEXT NOT NULL CHECK(download_state IN ('queued','submitting','unknown','accepted','downloading','completed','failed','blocked','cancelled')),
+ file_state TEXT NOT NULL CHECK(file_state IN ('pending','checking','verified','needs_review')),
+ workflow_state TEXT NOT NULL CHECK(workflow_state IN ('active','original_saved','organized','cancelled')),
+ block_code TEXT,
+ directory_operation_json TEXT CHECK(directory_operation_json IS NULL OR json_valid(directory_operation_json)),
+ files_json TEXT CHECK(files_json IS NULL OR json_valid(files_json)),
+ raw_status_json TEXT CHECK(raw_status_json IS NULL OR json_valid(raw_status_json)),
+ result_object_id TEXT,
+ result_object_kind TEXT CHECK(result_object_kind IN ('file','directory','unknown')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ generation INTEGER NOT NULL CHECK(generation>0),
+ lease_token TEXT,
+ lease_until INTEGER,
+ next_run_at INTEGER,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ UNIQUE(claim_id,attempt),
+ CHECK((lease_token IS NULL)=(lease_until IS NULL)),
+ CHECK(workflow_state='active' OR (next_run_at IS NULL AND lease_token IS NULL)),
+ CHECK(workflow_state NOT IN ('original_saved','organized') OR (download_state='completed' AND file_state='verified'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS anime_jobs_live_claim ON anime_download_jobs(claim_id)
+ WHERE workflow_state='active' AND download_state NOT IN ('failed','cancelled');
+CREATE INDEX IF NOT EXISTS anime_jobs_due ON anime_download_jobs(workflow_state,next_run_at);
+CREATE TABLE IF NOT EXISTS anime_job_selections (
+ job_id TEXT NOT NULL REFERENCES anime_download_jobs(id),
+ source_id TEXT NOT NULL REFERENCES anime_subscription_sources(id),
+ release_id TEXT NOT NULL REFERENCES anime_releases(id),
+ status TEXT NOT NULL CHECK(status IN ('authorized','withdrawn')),
+ source_revision INTEGER NOT NULL CHECK(source_revision>0),
+ snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY(job_id,source_id,release_id)
+);
+CREATE INDEX IF NOT EXISTS anime_selections_release ON anime_job_selections(source_id,release_id);
+
+CREATE TABLE IF NOT EXISTS anime_catalog_links (
+ provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt','garden')),
+ item_id TEXT NOT NULL,
+ bangumi_id TEXT,
+ observed_at INTEGER NOT NULL CHECK(observed_at>0),
+ PRIMARY KEY(provider,item_id)
+);
+CREATE INDEX IF NOT EXISTS anime_sources_catalog ON anime_subscription_sources(provider,item_id,subscription_id) WHERE status<>'removed';
+
+CREATE TABLE IF NOT EXISTS anime_drive_operations (
+ id TEXT PRIMARY KEY NOT NULL,
+ download_job_id TEXT NOT NULL REFERENCES anime_download_jobs(id),
+ operation_key TEXT NOT NULL UNIQUE,
+ kind TEXT NOT NULL CHECK(kind='submit'),
+ state TEXT NOT NULL CHECK(state IN ('prepared','dispatched','confirmed','unknown','failed')),
+ generation INTEGER NOT NULL CHECK(generation>0),
+ request_json TEXT NOT NULL CHECK(json_valid(request_json)),
+ result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+ error_code TEXT,
+ authorized_at INTEGER,
+ updated_at INTEGER NOT NULL,
+ UNIQUE(download_job_id,kind),
+ CHECK(state NOT IN ('dispatched','confirmed','unknown') OR authorized_at IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS anime_discovery_pending ON anime_release_decisions(disposition,next_verify_at,lease_until) WHERE observation_json IS NOT NULL;
+CREATE INDEX IF NOT EXISTS anime_jobs_status_uid ON anime_download_jobs(uid,lease_until,next_run_at) WHERE workflow_state='active' AND file_state<>'verified';
 `

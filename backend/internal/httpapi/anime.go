@@ -419,6 +419,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	})
 	registerAnimePreviews(r, s)
 	registerAnimeNaming(r, s)
+	registerAnimeOrganization(r, s)
 	r.POST("/subscriptions", func(c *gin.Context) { animeSave(c, s, "") })
 	r.PATCH("/subscriptions/:id", func(c *gin.Context) {
 		id, ok := animeID(c)

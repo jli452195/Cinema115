@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 50
+const schemaVersion = 51
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -77,7 +77,7 @@ func (s *Store) initialize(ctx context.Context) (resultErr error) {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&priorVersion); err != nil {
 		return err
 	}
-	if priorVersion >= 39 && priorVersion < 44 {
+	if priorVersion >= 39 && priorVersion < 51 {
 		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
 			return err
 		}
@@ -503,73 +503,9 @@ PRAGMA user_version=30;`); err != nil {
 ); PRAGMA user_version=38;`); err != nil {
 		return fmt.Errorf("创建缺集检测排除记录: %w", err)
 	}
-	if version < 39 {
-		if err := discardLegacyAnimeV38(ctx, tx); err != nil {
-			return fmt.Errorf("清理废弃动漫订阅存储: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, animeSchemaV39); err != nil {
-			return fmt.Errorf("创建动漫订阅基础存储: %w", err)
-		}
-	}
-	if version < 40 {
-		if err := upgradeAnimePreviewsV40(ctx, tx); err != nil {
-			return fmt.Errorf("创建动漫预览快照存储: %w", err)
-		}
-	}
-	if version < 41 {
-		if err := discardArchivedAnimeV38(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if version < 42 {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_subscriptions') WHERE name='naming_json'`).Scan(&exists); err != nil {
-			return err
-		}
-		if exists == 0 {
-			if _, err := tx.ExecContext(ctx, `ALTER TABLE anime_subscriptions ADD COLUMN naming_json TEXT NOT NULL DEFAULT 'null' CHECK(json_valid(naming_json))`); err != nil {
-				return fmt.Errorf("创建动漫命名配置: %w", err)
-			}
-		}
-	}
-	// Earlier idempotent schema repairs assign historical versions above. Always
-	// finish with the current version, including when reopening a migrated DB.
-	if version < 43 {
-		if err := upgradeAnimeProvidersV43(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if version < 44 {
-		if err := upgradeAnimeProvidersV44(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, animeCatalogSchemaV45); err != nil {
-		return fmt.Errorf("create anime catalog links: %w", err)
-	}
-	if version < 46 {
-		if err := upgradeAnimeDownloadsV46(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if version < 47 {
-		if err := upgradeAnimeSubmitV47(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if version < 48 {
-		if err := upgradeAnimeDiscoveryV48(ctx, tx); err != nil {
-			return err
-		}
-	}
-	if version < 49 {
-		if err := upgradeAnimeTrackingV49(ctx, tx); err != nil {
-			return fmt.Errorf("创建动漫状态追踪索引: %w", err)
-		}
-	}
-	if version < 50 {
-		if err := upgradeAnimeFilesV50(ctx, tx); err != nil {
-			return fmt.Errorf("创建动漫目录与文件快照: %w", err)
+	if version < 51 {
+		if err := resetDevelopmentAnime(ctx, tx); err != nil {
+			return fmt.Errorf("重建动漫订阅测试存储: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

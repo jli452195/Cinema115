@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconRefresh } from '@tabler/icons-vue'
 import AnimeDownloadActions from './AnimeDownloadActions.vue'
+import AnimeOrganizationPreview from './AnimeOrganizationPreview.vue'
 import { cachedSubscription, readSubscription, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { animeConfigMessage } from '../lib/anime-config-api'
@@ -61,6 +62,7 @@ onBeforeUnmount(() => { save(); disposed = true; controller?.abort() })
         <p class="as-muted">路径仅为执行时记录，不跟踪二次整理后的位置。</p>
         <p v-if="job.blockCode" class="as-job-reason">{{ animeDownloadReason(job.blockCode) }}<code>{{ job.blockCode }}</code></p>
         <AnimeDownloadActions :token="token" :subscription-id="id" :job="job" :locked="locked" @changed="changed" />
+        <AnimeOrganizationPreview v-if="job.organizationPlanned" :key="`${job.id}:${job.revision}`" :token="token" :path="`jobs/${job.id}/organization-preview`" :disabled="locked" />
       </div>
     </div>
     <nav v-if="result && result.total > 20" class="as-job-pagination" aria-label="资源任务分页"><button type="button" :aria-disabled="page <= 1 || loading" aria-label="任务上一页" @click="changePage(page - 1)"><IconChevronLeft :size="17" aria-hidden="true" />上一页</button><span aria-live="polite">{{ page }} / {{ pages }}</span><button type="button" :aria-disabled="page >= pages || loading" aria-label="任务下一页" @click="changePage(page + 1)">下一页<IconChevronRight :size="17" aria-hidden="true" /></button></nav>

@@ -382,7 +382,7 @@ func TestAnimeDiscoveryRunnerStalePollAndInvalidResponseIsolation(t *testing.T) 
 			r.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 				calls++
 				page := discoveryServicePage(in, now, 1)
-				query := map[string]string{"paused": `UPDATE anime_subscriptions SET status='paused'`, "generation": `UPDATE anime_subscription_sources SET run_generation=run_generation+1`, "target": `UPDATE anime_settings SET revision=revision+1`}[mode]
+				query := map[string]string{"paused": `UPDATE anime_subscriptions SET status='paused'`, "generation": `UPDATE anime_subscription_sources SET run_generation=run_generation+1`, "target": `UPDATE anime_settings SET revision=revision+1,download_cid='999'`}[mode]
 				if query != "" {
 					if _, err := db.Exec(query); err != nil {
 						t.Error(err)

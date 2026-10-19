@@ -280,33 +280,3 @@ func TestAnimePreviewFrozenObservation(t *testing.T) {
 		t.Fatal("preview read mutable release")
 	}
 }
-
-func TestAnimePreviewV39UpgradePreservesConfiguration(t *testing.T) {
-	s, path := testStore(t)
-	ctx := context.Background()
-	entry := createAnimeEntry(t, s, animePtr("123"))
-	sub := saveAnimeConfig(t, s, animeConfig(entry.ID))
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE anime_preview_batches DROP COLUMN snapshot_json; ALTER TABLE anime_source_previews DROP COLUMN snapshot_json; PRAGMA user_version=39;`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	got, err := reopened.GetAnimeSubscription(ctx, sub.ID, false)
-	if err != nil || !reflect.DeepEqual(sub, got) {
-		t.Fatal("migration lost config", err)
-	}
-	var version int
-	if err := reopened.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
-		t.Fatal("schema version", version, err)
-	}
-	var count int
-	if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_source_previews') WHERE name='snapshot_json'`).Scan(&count); err != nil || count != 1 {
-		t.Fatal("missing snapshot column", err)
-	}
-}

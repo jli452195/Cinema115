@@ -4,6 +4,7 @@ import { IconChevronDown, IconPhotoOff, IconRefresh } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import AnimeDownloadJobs from './AnimeDownloadJobs.vue'
 import AnimeSubscriptionActivation from './AnimeSubscriptionActivation.vue'
+import AnimeOrganizationSettings from './AnimeOrganizationSettings.vue'
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
@@ -109,6 +110,7 @@ onBeforeUnmount(() => { saveState(); disposed = true; controller?.abort(); if (r
         <p v-if="view.firstEnabledAt && ['paused', 'archived'].includes(view.status)" class="as-muted">已停止新提交；已被 115 接收的任务继续只读追踪，不删除网盘文件。</p>
         <AnimeSubscriptionActivation v-if="allowed('enable')" :token="token" :view="view" :locked="locked" @enable="body => execute(`subscriptions/${encodeURIComponent(id)}/enable`, body, '启用订阅')" />
         <AnimeDownloadJobs :token="token" :id="id" :locked="locked" :version="jobsVersion" @changed="load(true, true)" />
+        <AnimeOrganizationSettings v-if="!['removed', 'archived'].includes(view.status)" :token="token" :view="view" :locked="locked" @changed="load(true, true)" />
         <section class="as-detail-section"><h4>RSS 来源 <span>{{ sources.length }}</span></h4><p v-if="!sources.length" class="as-muted">还没有配置 RSS 来源，可进入编辑补充。</p>
           <div class="as-source-list"><section v-for="source in sources" :key="source.id" class="as-source">
             <button type="button" :aria-expanded="isExpanded(source)" :aria-controls="`source-${source.id}`" @click="toggleSource(source)"><span><span class="as-source-role">{{ source.role === 'main' ? '主 RSS' : `备用 ${source.position}` }}</span><strong>{{ source.groupName || '字幕组待配置' }}</strong><span class="as-muted">{{ sourceState(source) }}</span></span><IconChevronDown :size="18" aria-hidden="true" :class="{ 'rotate-180': isExpanded(source) }" /></button>
