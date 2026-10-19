@@ -26,6 +26,7 @@ func (s *Store) ReserveAnimeDownloadWork(ctx context.Context, now int64, exclude
 	}
 	query := `SELECT ` + animeJobColumns + ` FROM anime_download_jobs j WHERE j.workflow_state='active' AND j.file_state IN ('pending','checking')
  AND ((j.download_state='queued' AND NOT EXISTS(SELECT 1 FROM anime_drive_operations done WHERE done.download_job_id=j.id AND done.kind='submit' AND done.state IN ('confirmed','failed'))) OR (j.download_state IN ('submitting','unknown') AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state IN ('dispatched','unknown') AND o.generation=j.generation)) OR (j.download_state='completed' AND j.result_object_id IS NOT NULL))
+ AND (j.download_state<>'queued' OR json_extract(j.directory_operation_json,'$.state') IN ('dispatched','unknown') OR EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE x.job_id=j.id AND x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL))
  AND (j.block_code IS NULL OR j.block_code IN ('SUBMIT_UNCERTAIN','TASK_READ_FAILED','TASK_MISSING','TASK_POLL_CANCELLED','DIRECTORY_CREATE_UNCERTAIN','DIRECTORY_READ_FAILED'))
  AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
@@ -125,6 +126,22 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, work.Job.ID))
 	if err != nil {
 		return err
+	}
+	if code == "DOWNLOAD_PAUSED" && job.DownloadState == "queued" && job.WorkflowState == "active" {
+		// A create/reconciliation may finish after pause/remove. Save that
+		// result, then suspend the next write without turning pause into a
+		// file error. A quick resume or another source may already allow it.
+		err := checkAnimeJobAuthorizationTx(ctx, tx, job)
+		if errors.Is(err, ErrAnimeWriteUnauthorized) {
+			if _, err := suspendAnimeQueuedJobTx(ctx, tx, job, now); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}
+		if err != nil {
+			return err
+		}
+		code = ""
 	}
 	if code == "" && job.BlockCode != nil {
 		code = *job.BlockCode

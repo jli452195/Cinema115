@@ -20,6 +20,8 @@ P2-06 接入注记：v49为既有下载任务增加UID状态查询索引，复�
 
 P2-08 接入注记：SQLite 仍为 v50。复用任务租约、调度及观测，提交成功保存 `confirmed/kind=accepted`，不立即 GET；未知回执恢复匹配为 `kind=matched`，不重提。单次执行九十秒、租约两分钟；创建/提交/清单写入校验 token，重启按阶段恢复，completed且有结果ID直接收集文件。恢复目标及换号校验纯本地，新账号重新选目录即可；不做跨账号迁移或探测。完成后不领取、不定位文件。详见[低请求执行恢复](anime-download-recovery-implementation.md)。
 
+P2-09 接入注记：新增本地暂停、归档、移除和取消归档 API 及移除后的任务查询；恢复服务复用原基线和任务，公开 resume/enable 与 download/organize 能力仍保持关闸。停止动作清未获准租约，不递增父执行代次；已获准操作继续保存回执，已接受任务继续必要只读追踪。移除只取消独占且未提交的本地意图，保留共享任务、未结束入口和资源幂等；不操作云端文件。回执包括 cancelledJobs、pendingJobs、inFlightOperationCount、resumedSourceIds、unchangedSources。详见[订阅控制实现](anime-subscription-control-implementation.md)。
+
 ## 1. 不变量与复用边界
 
 - 模块只负责订阅、主网盘下载、原文件整理，不引用 Emby 用户/媒体索引、追更、STRM、播放或通知表及事件。TMDB 不是下载前提。
@@ -47,7 +49,7 @@ P2-08 接入注记：SQLite 仍为 v50。复用任务租约、调度及观测，
 | 本地 ID | 服务端生成不透明字符串，最多 64 个 ASCII 字符；创建表单的 `source.ref` 是客户端稳定临时标识，不是持久 ID |
 | 外部 ID | Bangumi、蜜柑条目/组、TMDB、115 UID/CID/文件 ID 均为十进制字符串；零只允许合法根目录 CID `"0"`，不经 JS 浮点转换 |
 | `revision` | 乐观锁，正整数，不超过 JS 安全整数；新对象 `expectedRevision=0`。订阅/来源配置版本只在配置/管理动作改变时递增，后台进度不使表单持续冲突；任务 revision 随任务状态改变，用于任务动作与执行写回的 CAS |
-| `generation` | 后端执行代次；暂停、撤权、计划变更使旧许可失效，与配置 revision、租约 token 不混用 |
+| `generation` | 后端执行代次；撤权、计划变更使旧许可失效；整体暂停按 P2-09 清除未获准租约并保留确认代次，与配置 revision、租约 token 不混用 |
 | 时间 | JSON/SQLite 均用 UTC Unix 毫秒，未知为 null；日期原文另存。无时区蜜柑日期按 Asia/Shanghai 解释，记录 `timeVersion` |
 | Hash | BT v1 转为 40 位小写十六进制；32 位 base32 磁力规范化后再核验。保留该 Hash 仅用于资源幂等；不读取、保存或比对文件 SHA1 |
 | JSON 字段 | SQLite 仅检查 JSON 合法；Go 类型严格校验字段、枚举、上下限和跨表归属，拒绝未知字段及多段 JSON；不把任意 JSON 当作可执行表达式 |
@@ -146,7 +148,7 @@ P3 的 mapping JSON 使用 `segments[{first,last,sourceBase,targetSeason,targetB
 
 resume 只解除父级遮罩，重新按上述优先级计算来源状态，不把所有来源改为 enabled 或 runWhenEnabled=true。回执返回 resumedSourceIds 和 unchangedSources（含 draft/source_paused 原因），页面摘要可显示“恢复X个来源，Y个草稿或单独停用来源保持原状”。来源 enable 动作仅在父订阅已 enabled 时可执行；父级暂停时返回 PAUSED，允许编辑配置，但不能借单源启用绕过整体暂停建立执行意图。
 
-配置变更递增相关 revision；父订阅暂停递增其 run_generation，单源停用递增该源代次并撤回对应 selections，任务许可按关联重新计算。规则改变使旧未提交选择失效并要求重预览；已被 115 接受的尝试保留原快照只读核对。
+配置变更递增相关 revision；父订阅暂停/归档保留 run_generation 和确认快照，清 RSS token、递增未认领选择的核验 generation、清未获准外部写入的任务租约；在途单次写许可保留以接收回执。单源停用递增该源代次并撤回对应 selections，任务许可按关联重新计算。规则改变使旧未提交选择失效并要求重预览；已被 115 接受的尝试保留原快照只读核对。
 
 ### 5.2 资源、下载与文件事实
 
@@ -272,14 +274,14 @@ P1-07 已接通上述 API，实际 DTO 与验证见[管理员 API 实现](anime-
 | `POST /subscriptions` | 增加 saveMode=enabled、activateSourceRefs、各有效 previewRef/loadRevision、selected/dismissed release IDs | 201，本地配置/基线/已选发布决定同事务；返回 selectionCount、待核验数，不声称已提交115 |
 | `POST /subscriptions/:id/enable` | expectedRevision、activateSourceIds、previewRefs、各源选择 | 200，本地首次启用回执；新加备用源同样逐源确认，其他已启用源不重建基线 |
 | `POST /subscriptions/:id/pause` | expectedRevision | 200，停止后续写阶段，返回 inFlightOperationCount；已获准单操作继续确认结果 |
-| `POST /subscriptions/:id/resume` | expectedRevision | 200，曾启用且未变规则恢复原意图；首次或修改后返回 REPREVIEW_REQUIRED，不偷偷重选历史 |
+| `POST /subscriptions/:id/resume` | expectedRevision | 200，曾启用且未变规则恢复原意图；首次或修改后返回 BASELINE_RECONFIRM_REQUIRED，不偷偷重选历史 |
 | `POST /subscriptions/:id/check` | expectedRevision、可选 sourceIds | 202，持久或合并的只读检查安排回执；返回 check token/sourceIds，详情靠 checkedAt/health/候选更新反馈，不代表下载已完成 |
 | `POST /subscriptions/:id/archive`、`/remove` | expectedRevision | 200，软状态改变，保留未结束任务入口；不删115任务/文件 |
 | `POST /subscriptions/:id/unarchive` | expectedRevision | 200，仅回到暂停；不直接重新下载 |
 | `POST /subscriptions/:id/sources/:sourceId/pause` | 父及来源 expectedRevision | 200，撤回该源新意图和写授权；其他源继续 |
 | `POST /subscriptions/:id/sources/:sourceId/enable` | 父/来源 expectedRevision、该源有效 preview/选择 | 200，该源首次启用/规则变更重确认；不重选其他源历史 |
 | `POST /subscriptions/:id/sources/:sourceId/recover` | 父/来源 expectedRevision | 202，显式解除该源 unavailable 后安排一次受限探测；共享站点 Retry-After 未到仍不请求 |
-| `GET /jobs`、`GET /jobs/:id` | 可按 subscriptionId、状态筛选，分页 | 下载/文件/整理分开，固定目标、关联来源及 permittedActions；移除订阅的任务仍可访问 |
+| `GET /subscriptions/:id/jobs`、`GET /jobs/:id` | 前者按订阅分页，后者按任务 ID | 只读本地下载/文件/工作流及固定目标快照，包含 withdrawn 关联；移除订阅的任务仍可访问，不触发115刷新。其他过滤及任务 permittedActions 随后续交互接入 |
 | `POST /jobs/:id/reconcile` | expectedRevision | 202，安排只读核对；暂停中也允许，不授予写权限 |
 | `POST /jobs/:id/retry` | expectedRevision、明确 reason | 202，先核对旧尝试再决定是否建新 attempt；未知结果/暂停时拒绝，不自动删除旧任务重提 |
 

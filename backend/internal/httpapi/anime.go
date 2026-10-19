@@ -56,8 +56,14 @@ func animeError(c *gin.Context, err error) {
 		status, code, message = 404, "NAMING_TARGET_NOT_FOUND", "目标作品或季集不存在，请更换目标"
 	case errors.Is(err, storage.ErrAnimeIdempotency):
 		status, code, message = 409, "IDEMPOTENCY_KEY_REUSED", "该请求标识已用于其他内容"
+	case errors.Is(err, storage.ErrAnimeTransition):
+		status, code, message = 409, "STATE_CONFLICT", "当前订阅状态不支持此操作"
+	case errors.Is(err, storage.ErrAnimeReconfirm):
+		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请先启用订阅或重新核对配置"
+	case errors.Is(err, storage.ErrAnimeDirectoryRequired):
+		status, code, message = 409, "DIRECTORY_REQUIRED", "请为当前主账号重新选择目录"
 	case errors.Is(err, storage.ErrAnimeCapability):
-		status, code, message = 409, "CAPABILITY_UNAVAILABLE", "当前阶段仅支持保存配置"
+		status, code, message = 409, "CAPABILITY_UNAVAILABLE", "下载与整理能力尚未开放"
 	case errors.Is(err, storage.ErrAnimeAccountChanged):
 		status, code, message = 409, "ACCOUNT_SNAPSHOT_CHANGED", "主账号已变化，请重新核对目录"
 	case errors.Is(err, storage.ErrAnimeSettingsChanged):
@@ -460,8 +466,9 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		c.JSON(200, v)
 	})
+	registerAnimeControl(r, s)
 	// Explicit execution endpoints remain closed until their phase is accepted.
-	for _, path := range []string{"/subscriptions/:id/enable", "/subscriptions/:id/pause", "/subscriptions/:id/resume", "/subscriptions/:id/check", "/subscriptions/:id/archive", "/subscriptions/:id/remove", "/subscriptions/:id/unarchive", "/subscriptions/:id/history/apply", "/subscriptions/:id/organize/apply", "/subscriptions/:id/organize/preview", "/subscriptions/:id/naming-mapping/preview", "/subscriptions/:id/naming-metadata/check", "/subscriptions/:id/naming-metadata/apply", "/subscriptions/:id/sources/:sourceId/enable", "/subscriptions/:id/sources/:sourceId/pause", "/subscriptions/:id/sources/:sourceId/recover", "/jobs/:id/reconcile", "/jobs/:id/retry"} {
+	for _, path := range []string{"/subscriptions/:id/enable", "/subscriptions/:id/resume", "/subscriptions/:id/check", "/subscriptions/:id/history/apply", "/subscriptions/:id/organize/apply", "/subscriptions/:id/organize/preview", "/subscriptions/:id/naming-mapping/preview", "/subscriptions/:id/naming-metadata/check", "/subscriptions/:id/naming-metadata/apply", "/subscriptions/:id/sources/:sourceId/enable", "/subscriptions/:id/sources/:sourceId/pause", "/subscriptions/:id/sources/:sourceId/recover", "/jobs/:id/reconcile", "/jobs/:id/retry"} {
 		r.POST(path, func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 	}
 	r.PUT("/subscriptions/:id/naming-mapping", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })

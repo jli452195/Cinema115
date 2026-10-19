@@ -377,13 +377,13 @@ func TestAnimeRecoveryRunnerExpiredLeaseMakesNoRequest(t *testing.T) {
 }
 
 func TestAnimeRecoveryRunnerPreparedPauseStopsBeforeNetwork(t *testing.T) {
-	f, db, session, job := animeSubmitFixture(t)
+	f, _, session, job := animeSubmitFixture(t)
 	if _, err := f.service.Store.PrepareAnimeSubmit(context.Background(), job.ID, job.Generation, session.Target()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE anime_subscriptions SET status='paused'`); err != nil {
-		t.Fatal(err)
-	}
+	// Exercise the real control transaction, including lease fencing and the
+	// retained queue marker, instead of changing only the parent SQL row.
+	serviceControlAnime(t, f.service, job.Snapshot.Source.SubscriptionID, "pause")
 	f.service.FileGateway = &animeFileGatewayStub{}
 	f.service.SubmitGateway = &animeSubmitGatewayStub{inspect: func(context.Context, string, string) (p115.AnimeTaskObservation, error) {
 		t.Error("paused prepared task still queried")
@@ -398,7 +398,7 @@ func TestAnimeRecoveryRunnerPreparedPauseStopsBeforeNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
-	if got.NextRunAt != nil || got.BlockCode == nil || *got.BlockCode != "DOWNLOAD_PAUSED" {
+	if got.NextRunAt != nil || got.BlockCode == nil || *got.BlockCode != "DOWNLOAD_PAUSED" || got.FileState != "pending" || got.Generation != job.Generation {
 		t.Fatal("paused task kept polling", got)
 	}
 }

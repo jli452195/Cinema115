@@ -71,7 +71,16 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 	if err != nil {
 		return AnimeSubscriptionView{}, err
 	}
-	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.Status == "draft" || sub.Status == "paused"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
+	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
+	for _, action := range []string{"pause", "archive", "remove", "unarchive"} {
+		allowed := animeLocalControlAllowed(sub.Status, action)
+		reason := ""
+		if !allowed {
+			reason = "STATE_CONFLICT"
+		}
+		v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: action, Allowed: allowed, ReasonCode: reason})
+	}
+	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", ReasonCode: "CAPABILITY_UNAVAILABLE"})
 	counts, err := s.Store.AnimeDecisionCountsBySource(ctx, sub.ID)
 	if err != nil {
 		return v, err
@@ -81,7 +90,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 	for _, source := range sub.Sources {
 		stats := counts[source.ID]
 		effective, blockedBy := animeSourceEffectiveState(sub.Status, source)
-		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["selected"]}, PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.Status == "draft" || sub.Status == "paused"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
+		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["selected"]}, PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
 		if source.Role == "main" {
 			main = true
 			if source.Status != "paused" {
@@ -191,4 +200,18 @@ func (s *AnimeAdminService) Releases(ctx context.Context, id string, f storage.A
 	}
 	out.DataVersion, err = animepreview.Digest(out)
 	return out, err
+}
+
+func animeLocalControlAllowed(state, action string) bool {
+	switch action {
+	case "pause":
+		return state == "enabled" || state == "paused"
+	case "archive":
+		return state != "removed"
+	case "remove":
+		return true
+	case "unarchive":
+		return state == "archived" || state == "paused"
+	}
+	return false
 }
