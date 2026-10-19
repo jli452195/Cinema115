@@ -329,3 +329,35 @@ func TestPreviewSilverBulletLanguageAndContainerMatching(t *testing.T) {
 		t.Fatal("ambiguous container must need review", s.Items)
 	}
 }
+
+func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
+	c := config()
+	source := &c.Sources[0]
+	source.Provider, source.ItemID, source.GroupID = "anibt", ptr("393010"), ptr("ani")
+	source.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "393010", GroupID: "ani"}}
+	source.Rules.MinimumEpisode = ptr(1)
+	source.Rules.SpecMode = "profiles"
+	source.Rules.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"}}
+	p := page(
+		"[ANi] Tantei wa Mō Shindeiru / 侦探已经，死了。 Season 2 - 02 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+		"[ANi] 侦探已经，死了。 Season 2 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+		"[ANi] 侦探已经，死了。 Season 2 - 01-12 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+	)
+	p.Source = mikan.Source{Provider: "anibt", ItemID: "393010", GroupID: "ani"}
+	for i := range p.Releases {
+		p.Releases[i].PostKey = fmt.Sprintf("rel_ani_fixture_%d", i+1)
+	}
+	s := build(t, c, p)
+	if len(s.SelectedIDs) != 2 {
+		t.Fatal("ordinary ANi episodes did not match the selected specification", s.Items)
+	}
+	for i, episode := range []int{2, 1} {
+		item := s.Items[i]
+		if !item.Selectable || item.Decision != "matched" || item.Release.Parse.Episode == nil || *item.Release.Parse.Episode != episode || item.Release.ParserVersion != animeparse.ParserVersion {
+			t.Fatal("season number replaced the publisher episode", item)
+		}
+	}
+	if s.Items[2].Selectable || s.Items[2].Release.Parse.Kind != "batch" || s.Items[2].ReasonCode != "EPISODE_NUMBER_UNRESOLVED" {
+		t.Fatal("a genuine episode range became a single episode", s.Items[2])
+	}
+}

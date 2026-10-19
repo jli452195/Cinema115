@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 3
+const ParserVersion int64 = 4
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -34,6 +34,7 @@ var (
 	labeledEpisode = regexp.MustCompile(`(?i)(?:EPISODE|EP|E)\s*#?\s*(` + expression + `)`)
 	dashedEpisode  = regexp.MustCompile(`(?:^|[\s|：:])-\s*(` + expression + `)`)
 	bareEpisode    = regexp.MustCompile(`(?:^|[\s_])(` + expression + `)`)
+	seasonMetadata = regexp.MustCompile(`(?i)SEASON\s*[0-9]{1,3}`)
 	// More than one numbering system in a title needs confirmation, even when
 	// one of them looks like a perfectly ordinary standalone bracket number.
 	ordinalEpisode = regexp.MustCompile(`(?i)[0-9]{1,2}(?:st|nd|rd|th)\s*-\s*(` + expression + `)`)
@@ -68,10 +69,26 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 		out.Resolution = &value
 	}
 	out.VersionLabel = version(title)
+	// "Season 2 - 01" declares season 2 and episode 01. Do not let the
+	// generic range/bare-number rules turn the season counter into "2 - 01".
+	// Retain the original title and offsets as evidence, and keep genuine
+	// episode ranges after the separator available to the other grammars.
+	seasonSpans := seasonMetadata.FindAllStringIndex(title, -1)
+	metadataSpans := make([][]int, 0, len(seasonSpans))
+	for _, span := range seasonSpans {
+		if leftBoundary(title, span[0]) && rightBoundary(title, span[1]) {
+			metadataSpans = append(metadataSpans, span)
+		}
+	}
 	candidates := make([]candidate, 0, 8)
 	add := func(start, end int, kind string, strong bool) {
 		if start < 0 || end <= start {
 			return
+		}
+		for _, span := range metadataSpans {
+			if start < span[1] && end > span[0] {
+				return
+			}
 		}
 		raw := title[start:end]
 		n := 0

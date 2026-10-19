@@ -31,6 +31,11 @@ func TestTitleOrdinaryNumbering(t *testing.T) {
 		{"[Group] Show 第2026话 [1080p]", "2026", 2026, ""},
 		{"[Group] Show [2026] [01][1080p]", "01", 1, ""},
 		{"[Group] Show S01E01.mkv", "01", 1, ""},
+		{"[ANi] Tantei wa Mō Shindeiru / 侦探已经，死了。 Season 2 - 02 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", "02", 2, ""},
+		{"[ANi] 侦探已经，死了。 Season 2 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", "01", 1, ""},
+		{"[Group] Show season 02 - 03 [1080p]", "03", 3, ""},
+		{"[Group] Show Season 12 - 01v2 [1080p]", "01v2", 1, "v2"},
+		{"[Group] Show [Season 2] - 04 [1080p]", "04", 4, ""},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
 			got, err := Title(tc.title)
@@ -72,6 +77,10 @@ func TestTitleUnsupportedAndAmbiguousNumbering(t *testing.T) {
 		{"[组] 动画 [00][1080p]", "unknown", "00"},
 		{"[组] 动画 [100000][1080p]", "unknown", "100000"},
 		{"[组] 动画 第零话 [1080p]", "unknown", ""},
+		{"[Group] Show Season 2 - 01-12 [1080p]", "batch", "01-12"},
+		{"[Group] Show Season 2 - 01+02 [1080p]", "batch", "01+02"},
+		{"[Group] Show Season 2 [01][02][1080p]", "composite", "01 / 02"},
+		{"[Group] Show [59][Season 3 - 09][1080p]", "composite", "59 / 09"},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
 			got, err := Title(tc.title)
@@ -102,6 +111,8 @@ func TestTitleDoesNotGuessFromMetadata(t *testing.T) {
 		"[组] Show v2 2026",
 		"[组] Show - 1080p",
 		"[组] Show - 07C [1080p]",
+		"[Group] Show Season 02 [1080p]",
+		"[Group] Show Season 2 [1080p]",
 	} {
 		got, err := Title(title)
 		if err != nil {
