@@ -35,8 +35,8 @@ func (r *AnimeStatusRunner) valid() bool {
 	return r != nil && r.Admin != nil && r.Admin.Store != nil && r.Admin.StatusGateway != nil && r.Admin.DownloadCoordinator != nil
 }
 
-// Run owns a sequential, bounded read loop. Shutdown cancels and waits for the
-// current read and its synchronous receipt cleanup; there are no detached I/Os.
+// Run owns one sequential, bounded loop for recovery and status reads. Shutdown
+// cancels and waits for current I/O and its synchronous receipt cleanup.
 func (r *AnimeStatusRunner) Run(ctx context.Context) error {
 	if !r.valid() {
 		return storage.ErrAnimeInvalid
@@ -75,6 +75,19 @@ func (r *AnimeStatusRunner) PollOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if r.Admin.FileGateway != nil && r.Admin.SubmitGateway != nil {
+			work, found, err := r.Admin.Store.ReserveAnimeDownloadWork(ctx, r.timestamp(), uids)
+			if err != nil {
+				return fmt.Errorf("reserve anime download stage: %w", err)
+			}
+			if found {
+				uids = append(uids, work.Job.UID)
+				if err := r.execute(ctx, work); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		poll, found, err := r.Admin.Store.ReserveAnimeStatusPoll(ctx, r.timestamp(), uids)
 		if err != nil {
 			return fmt.Errorf("reserve anime status read: %w", err)
@@ -96,6 +109,7 @@ func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPo
 	var observation *model.AnimeOfflineStatus
 	session, readErr := r.Admin.restoreAnimeStatusSession(readCtx, poll.Job.Snapshot.Target)
 	if readErr == nil {
+		session.work = &storage.AnimeDownloadWork{Job: poll.Job, Token: poll.Token, Until: poll.Until}
 		readErr = r.Admin.withDownloadResource(readCtx, session, poll.Job.ID, func(ctx context.Context, job model.AnimeDownloadJob) error {
 			// Recheck after the shared UID/resource gate. Another stage may have
 			// completed file verification while this request was queued.
@@ -132,6 +146,7 @@ func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPo
 		return nil
 	}
 	if err == nil && r.Admin.FileGateway != nil && observation != nil && observation.State == "completed" && ctx.Err() == nil {
+		session.work = nil // status receipt released its lease before collection
 		_, verifyErr := r.Admin.CollectDownloadedFiles(ctx, session, poll.Job.ID)
 		if errors.Is(verifyErr, ErrAnimeFilesIncomplete) || errors.Is(verifyErr, storage.ErrAnimeConflict) || errors.Is(verifyErr, storage.ErrAnimeAccountChanged) || errors.Is(verifyErr, ErrCloudTaskBusy) {
 			return nil
@@ -146,18 +161,7 @@ func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPo
 // Avoiding that extra request also keeps a directory endpoint's failure from
 // hiding the exact status endpoint's authentication/rate-limit response.
 func (s *AnimeAdminService) restoreAnimeStatusSession(ctx context.Context, target model.AnimeDownloadTarget) (*AnimeDownloadSession, error) {
-	if target.Validate() != nil || s.Accounts == nil || s.Directories == nil {
-		return nil, storage.ErrAnimeInvalid
-	}
-	account, err := s.Accounts.Primary(target.AccountID)
-	if err != nil || !animeDownloadAccountMatches(account, target) {
-		return nil, storage.ErrAnimeAccountChanged
-	}
-	session := &AnimeDownloadSession{target: target, cookie: account.Cookie, store: s.Store, accounts: s.Accounts, directories: s.Directories}
-	if err := session.Validate(ctx); err != nil {
-		return nil, err
-	}
-	return session, nil
+	return s.ResumeDownloadTarget(ctx, target)
 }
 
 func animeStatusReadFailure(err error, now int64) (string, int64) {

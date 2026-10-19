@@ -11,13 +11,13 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const animeStatusEligible = `j.workflow_state='active' AND j.file_state<>'verified'
+const animeStatusEligible = `j.workflow_state='active' AND j.file_state IN ('pending','checking')
  AND j.download_state IN ('accepted','downloading','unknown','completed')
  AND (j.block_code IS NULL OR j.block_code IN ('TASK_READ_FAILED','TASK_STATUS_UNKNOWN','TASK_MISSING','TASK_RATE_LIMITED','TASK_POLL_CANCELLED','TASK_RESULT_PENDING'))
  AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state='confirmed' AND o.generation=j.generation AND o.authorized_at IS NOT NULL)`
 
 // Status reads have their own short reservation. They cannot authorize a drive
-// write or replay a submit. Full write-stage recovery remains a separate worker.
+// write or replay a submit. The same runner also resumes unfinished stages.
 type AnimeStatusPoll struct {
 	Job       model.AnimeDownloadJob
 	Operation model.AnimeSubmitOperation
@@ -65,7 +65,7 @@ func (s *Store) ReserveAnimeStatusPoll(ctx context.Context, now int64, excludeUI
 		return out, false, err
 	}
 	request, err := animeSubmitRequest(out.Job, out.Job.Snapshot.Target)
-	if err != nil || request != out.Operation.Request || out.Operation.Result == nil || out.Operation.Result.Kind != "matched" || out.Operation.Result.TargetCID != request.DirectoryCID {
+	if err != nil || request != out.Operation.Request || out.Operation.Result == nil || (out.Operation.Result.Kind != "matched" && out.Operation.Result.Kind != "accepted") || out.Operation.Result.TargetCID != request.DirectoryCID {
 		return out, false, ErrAnimeIdentity
 	}
 	out.Token, err = newAnimeID()
@@ -121,7 +121,7 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 	if err != nil {
 		return err
 	}
-	if op.ID != poll.Operation.ID || op.Request != request || op.Result == nil || op.Result.Kind != "matched" || op.Result.TargetCID != request.DirectoryCID {
+	if op.ID != poll.Operation.ID || op.Request != request || op.Result == nil || (op.Result.Kind != "matched" && op.Result.Kind != "accepted") || op.Result.TargetCID != request.DirectoryCID {
 		return ErrAnimeIdentity
 	}
 	if code != "DOWNLOAD_ACCOUNT_CHANGED" {
@@ -145,7 +145,7 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 			code, observation = "TASK_TARGET_CONFLICT", nil
 		} else if observation.Present && resultID != nil && observation.ResultID != "" && observation.ResultID != *resultID {
 			code, observation = "TASK_RESULT_CHANGED", nil
-		} else if observation.Present && observation.TargetCID == "" && (resultID == nil || observation.ResultID != *resultID) {
+		} else if observation.Present && observation.TargetCID == "" && op.Result.Kind != "accepted" && (resultID == nil || observation.ResultID != *resultID) {
 			code, observation = "TASK_TARGET_CONFLICT", nil
 		} else if state == "completed" && observation.State != "completed" && observation.State != "unknown" {
 			code, observation = "TASK_STATUS_CONFLICT", nil
@@ -182,8 +182,8 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 		tracking.Failures = min(tracking.Failures+1, 1000)
 	}
 	if !stop && state != "failed" {
-		delay := int64(time.Minute / time.Millisecond)
-		if state == "completed" {
+		delay := int64(2 * time.Minute / time.Millisecond)
+		if state == "completed" || state == "accepted" {
 			delay = int64(5 * time.Minute / time.Millisecond)
 		}
 		if tracking.Failures > 0 {

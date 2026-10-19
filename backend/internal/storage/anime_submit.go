@@ -158,7 +158,7 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 
 // PrepareAnimeSubmit is idempotent. A dispatched/unknown operation is returned
 // for reconciliation even after pause/withdrawal; it never authorizes a replay.
-func (s *Store) PrepareAnimeSubmit(ctx context.Context, jobID string, generation int64, target model.AnimeDownloadTarget) (model.AnimeSubmitOperation, error) {
+func (s *Store) PrepareAnimeSubmit(ctx context.Context, jobID string, generation int64, target model.AnimeDownloadTarget, leaseToken ...string) (model.AnimeSubmitOperation, error) {
 	var empty model.AnimeSubmitOperation
 	if !model.ValidAnimeID(jobID) || generation < 1 || target.Validate() != nil {
 		return empty, ErrAnimeInvalid
@@ -168,6 +168,9 @@ func (s *Store) PrepareAnimeSubmit(ctx context.Context, jobID string, generation
 		return empty, err
 	}
 	defer tx.Rollback()
+	if err := checkAnimeLeaseTx(ctx, tx, jobID, leaseToken...); err != nil {
+		return empty, err
+	}
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, jobID))
 	if err != nil {
 		return empty, err
@@ -186,6 +189,11 @@ func (s *Store) PrepareAnimeSubmit(ctx context.Context, jobID string, generation
 	if err == nil {
 		if op.Request != request {
 			return empty, ErrAnimeResourceTarget
+		}
+		if op.State == "prepared" {
+			if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err != nil {
+				return empty, err
+			}
 		}
 		return op, nil
 	}
@@ -218,7 +226,7 @@ func (s *Store) PrepareAnimeSubmit(ctx context.Context, jobID string, generation
 
 // DispatchAnimeSubmit commits permission for exactly one external request.
 // A caller may send only after this transaction returns successfully.
-func (s *Store) DispatchAnimeSubmit(ctx context.Context, operationID string) error {
+func (s *Store) DispatchAnimeSubmit(ctx context.Context, operationID string, leaseToken ...string) error {
 	if !model.ValidAnimeID(operationID) {
 		return ErrAnimeInvalid
 	}
@@ -229,6 +237,9 @@ func (s *Store) DispatchAnimeSubmit(ctx context.Context, operationID string) err
 	defer tx.Rollback()
 	op, err := scanAnimeSubmit(tx.QueryRowContext(ctx, `SELECT `+animeSubmitColumns+` FROM anime_drive_operations WHERE id=?`, operationID))
 	if err != nil {
+		return err
+	}
+	if err := checkAnimeLeaseTx(ctx, tx, op.JobID, leaseToken...); err != nil {
 		return err
 	}
 	if op.State != "prepared" {
@@ -272,7 +283,7 @@ func animeSubmitOutcomeCode(code string) bool {
 // RecordAnimeSubmitOutcome records facts even if authorization was withdrawn
 // after dispatch. A changed job generation keeps the observation but does not
 // advance the current job. It cannot turn an unknown request back to prepared.
-func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state, code string, observation model.AnimeSubmitObservation) error {
+func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state, code string, observation model.AnimeSubmitObservation, leaseToken ...string) error {
 	if !model.ValidAnimeID(operationID) || !animeSubmitOutcomeCode(code) || observation.SchemaVersion != 1 {
 		return ErrAnimeInvalid
 	}
@@ -280,7 +291,7 @@ func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state
 		return ErrAnimeInvalid
 	}
 	switch observation.Kind {
-	case "matched", "missing", "conflict", "unreadable", "rejected":
+	case "accepted", "matched", "missing", "conflict", "unreadable", "rejected":
 	default:
 		return ErrAnimeInvalid
 	}
@@ -299,10 +310,13 @@ func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state
 	if op.State == "confirmed" || op.State == "failed" {
 		return nil
 	}
+	if err := checkAnimeLeaseTx(ctx, tx, op.JobID, leaseToken...); err != nil {
+		return err
+	}
 	if op.State == "prepared" && (state != "failed" || code != "TASK_TARGET_CONFLICT" || observation.Kind != "conflict") {
 		return ErrAnimeConflict
 	}
-	if state == "confirmed" && (observation.Kind != "matched" || observation.TargetCID != op.Request.DirectoryCID || code != "") {
+	if state == "confirmed" && ((observation.Kind != "matched" && observation.Kind != "accepted") || observation.TargetCID != op.Request.DirectoryCID || code != "") {
 		return ErrAnimeInvalid
 	}
 	if state == "failed" && op.State != "prepared" && (observation.Kind != "rejected" || code != "SUBMIT_REJECTED") {
@@ -343,7 +357,15 @@ func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state
 				downloadState = "blocked"
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET download_state=?,block_code=NULLIF(?,''),revision=revision+1,next_run_at=NULL,updated_at=? WHERE id=?`, downloadState, code, now, job.ID); err != nil {
+		var next *int64
+		if state != "failed" {
+			due := now + int64(5*time.Minute/time.Millisecond)
+			if state == "confirmed" {
+				due = now + int64(2*time.Minute/time.Millisecond)
+			}
+			next = &due
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET download_state=?,block_code=NULLIF(?,''),revision=revision+1,next_run_at=?,updated_at=? WHERE id=?`, downloadState, code, next, now, job.ID); err != nil {
 			return err
 		}
 	}

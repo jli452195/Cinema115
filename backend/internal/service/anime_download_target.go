@@ -15,6 +15,7 @@ import (
 // then restore via ResumeDownloadTarget; never persist a P115Account or Cookie.
 // All fields are private and fixed at construction, so workers may share it.
 type AnimeDownloadSession struct {
+	work        *storage.AnimeDownloadWork
 	target      model.AnimeDownloadTarget
 	cookie      string
 	store       *storage.Store
@@ -94,7 +95,7 @@ func (s *AnimeAdminService) ResumeDownloadTarget(ctx context.Context, target mod
 		return nil, storage.ErrAnimeAccountChanged
 	}
 	session := &AnimeDownloadSession{target: target, cookie: a.Cookie, store: s.Store, accounts: s.Accounts, directories: s.Directories}
-	if _, err := session.ReadDirectory(ctx); err != nil {
+	if err := session.Validate(ctx); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -118,7 +119,13 @@ func (s *AnimeDownloadSession) Validate(ctx context.Context) error {
 	if err != nil || !animeDownloadAccountMatches(a, s.target) || a.Cookie != s.cookie {
 		return storage.ErrAnimeAccountChanged
 	}
-	return s.store.CheckAnimeDownloadAccount(ctx, s.target)
+	if err := s.store.CheckAnimeDownloadAccount(ctx, s.target); err != nil {
+		return err
+	}
+	if s.work != nil {
+		return s.store.CheckAnimeDownloadWork(ctx, *s.work)
+	}
+	return nil
 }
 
 // ReadDirectory verifies exact CID accessibility with the pinned credential,
@@ -159,4 +166,11 @@ func animeDownloadDirectoryError(ctx context.Context, err error) error {
 		return fmt.Errorf("read anime download directory: %w", context.DeadlineExceeded)
 	}
 	return ErrAnimeDirectoryRead
+}
+
+func (s *AnimeDownloadSession) leaseToken() string {
+	if s == nil || s.work == nil {
+		return ""
+	}
+	return s.work.Token
 }

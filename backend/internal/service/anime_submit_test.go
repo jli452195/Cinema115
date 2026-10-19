@@ -54,7 +54,7 @@ func matchedAnimeTask(job model.AnimeDownloadJob) p115.AnimeTaskObservation {
 	return p115.AnimeTaskObservation{Present: true, InfoHash: job.Snapshot.InfoHash, TargetCID: "200", ResultID: "300"}
 }
 
-func TestAnimeEnsureSubmitOnceAndReadBack(t *testing.T) {
+func TestAnimeEnsureSubmitOnceUsesReceiptWithoutReadBack(t *testing.T) {
 	for _, relation := range []string{"target", "result directory", "target result"} {
 		t.Run(relation, func(t *testing.T) {
 			f, db, session, job := animeSubmitFixture(t)
@@ -95,7 +95,7 @@ func TestAnimeEnsureSubmitOnceAndReadBack(t *testing.T) {
 					t.Fatal("wrong acceptance/completion result", out, err)
 				}
 			}
-			if writes != 1 || reads != 2 {
+			if writes != 1 || reads != 1 {
 				t.Fatal("repeated submit or needless query", reads, writes)
 			}
 			var raw string
@@ -107,7 +107,7 @@ func TestAnimeEnsureSubmitOnceAndReadBack(t *testing.T) {
 }
 
 func TestAnimeEnsureUnknownOnlyReconciles(t *testing.T) {
-	for _, mode := range []string{"timeout", "missing after success", "cancel", "rejected", "wrong directory", "unreadable", "missing relation", "account changed"} {
+	for _, mode := range []string{"timeout", "cancel", "rejected", "wrong directory", "unreadable", "missing relation", "account changed"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _, session, job := animeSubmitFixture(t)
 			writes, reads := 0, 0
@@ -140,7 +140,7 @@ func TestAnimeEnsureUnknownOnlyReconciles(t *testing.T) {
 					case "cancel":
 						cancel()
 						return context.Canceled
-					case "timeout":
+					case "timeout", "wrong directory", "unreadable", "missing relation":
 						return context.DeadlineExceeded
 					case "rejected":
 						return p115.ErrAnimeSubmitRejected
@@ -162,7 +162,7 @@ func TestAnimeEnsureUnknownOnlyReconciles(t *testing.T) {
 			if mode == "rejected" {
 				want = "failed"
 			}
-			if err != nil || out.Operation.State != want || out.Job.DownloadState != want || writes != 1 {
+			if err != nil || out.Operation.State != want || out.Job.DownloadState != want || writes != 1 || reads != 1 {
 				t.Fatal("uncertain request lost", out, err)
 			}
 			if mode == "account changed" {
@@ -414,6 +414,10 @@ func TestAnimeEnsureLostReceiptStillConfirmsExactTask(t *testing.T) {
 		submit: func(context.Context, string, string, string) error { writes++; return context.DeadlineExceeded },
 	}
 	out, err := f.service.EnsureDownload(context.Background(), session, job.ID)
+	if err != nil || out.Operation.State != "unknown" || writes != 1 {
+		t.Fatal("uncertain receipt not saved", out, err)
+	}
+	out, err = f.service.EnsureDownload(context.Background(), session, job.ID)
 	if err != nil || out.Operation.State != "confirmed" || out.Job.DownloadState != "accepted" || writes != 1 {
 		t.Fatal("lost receipt was replayed or acceptance lost", out, writes, err)
 	}

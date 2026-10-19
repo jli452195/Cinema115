@@ -10,7 +10,7 @@ import (
 
 // StartAnimeDirectory commits exactly one create permission. All subsequent
 // calls return the saved intent for read-only reconciliation, never a replay.
-func (s *Store) StartAnimeDirectory(ctx context.Context, jobID string, generation int64, target model.AnimeDownloadTarget) (model.AnimeDownloadJob, bool, error) {
+func (s *Store) StartAnimeDirectory(ctx context.Context, jobID string, generation int64, target model.AnimeDownloadTarget, leaseToken ...string) (model.AnimeDownloadJob, bool, error) {
 	var empty model.AnimeDownloadJob
 	if !model.ValidAnimeID(jobID) || generation < 1 || target.Validate() != nil {
 		return empty, false, ErrAnimeInvalid
@@ -20,6 +20,9 @@ func (s *Store) StartAnimeDirectory(ctx context.Context, jobID string, generatio
 		return empty, false, err
 	}
 	defer tx.Rollback()
+	if err := checkAnimeLeaseTx(ctx, tx, jobID, leaseToken...); err != nil {
+		return empty, false, err
+	}
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, jobID))
 	if err != nil {
 		return empty, false, err
@@ -67,7 +70,7 @@ func (s *Store) StartAnimeDirectory(ctx context.Context, jobID string, generatio
 
 // A successful create receipt or a unique scoped recovery listing binds the
 // directory. Successful writes do not require a second metadata request.
-func (s *Store) FinishAnimeDirectory(ctx context.Context, expected model.AnimeDownloadJob, directory *model.AnimeDriveEntry, code string) error {
+func (s *Store) FinishAnimeDirectory(ctx context.Context, expected model.AnimeDownloadJob, directory *model.AnimeDriveEntry, code string, leaseToken ...string) error {
 	if !model.ValidAnimeID(expected.ID) || expected.DirectoryOperation == nil {
 		return ErrAnimeInvalid
 	}
@@ -87,6 +90,9 @@ func (s *Store) FinishAnimeDirectory(ctx context.Context, expected model.AnimeDo
 		return err
 	}
 	defer tx.Rollback()
+	if err := checkAnimeLeaseTx(ctx, tx, expected.ID, leaseToken...); err != nil {
+		return err
+	}
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, expected.ID))
 	if err != nil {
 		return err
@@ -121,7 +127,7 @@ func (s *Store) FinishAnimeDirectory(ctx context.Context, expected model.AnimeDo
 
 // SaveAnimeFiles atomically saves one bounded result tree and ends offline
 // polling. Organizing is a later action over this same manifest, not a copy.
-func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownloadJob, manifest model.AnimeFileManifest) error {
+func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownloadJob, manifest model.AnimeFileManifest, leaseToken ...string) error {
 	if !model.ValidAnimeID(expected.ID) || manifest.Validate(expected) != nil {
 		return ErrAnimeInvalid
 	}
@@ -130,6 +136,9 @@ func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownload
 		return err
 	}
 	defer tx.Rollback()
+	if err := checkAnimeLeaseTx(ctx, tx, expected.ID, leaseToken...); err != nil {
+		return err
+	}
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, expected.ID))
 	if err != nil {
 		return err
@@ -176,7 +185,7 @@ func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownload
 	return tx.Commit()
 }
 
-func (s *Store) MarkAnimeFilesReview(ctx context.Context, expected model.AnimeDownloadJob, code string) error {
+func (s *Store) MarkAnimeFilesReview(ctx context.Context, expected model.AnimeDownloadJob, code string, leaseToken ...string) error {
 	if !model.ValidAnimeID(expected.ID) {
 		return ErrAnimeInvalid
 	}
@@ -185,7 +194,14 @@ func (s *Store) MarkAnimeFilesReview(ctx context.Context, expected model.AnimeDo
 	default:
 		return ErrAnimeInvalid
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state='needs_review',block_code=?,revision=revision+1,next_run_at=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND revision=? AND generation=? AND workflow_state='active' AND download_state='completed' AND file_state<>'verified' AND (block_code IS NULL OR block_code IN ('FILES_READ_FAILED','FILES_INCOMPLETE','TASK_MISSING','TASK_READ_FAILED'))`, code, time.Now().UnixMilli(), expected.ID, expected.Revision, expected.Generation)
+	token := ""
+	if len(leaseToken) > 1 {
+		return ErrAnimeInvalid
+	}
+	if len(leaseToken) == 1 {
+		token = leaseToken[0]
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state='needs_review',block_code=?,revision=revision+1,next_run_at=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND revision=? AND generation=? AND workflow_state='active' AND download_state='completed' AND file_state<>'verified' AND (block_code IS NULL OR block_code IN ('FILES_READ_FAILED','FILES_INCOMPLETE','TASK_MISSING','TASK_READ_FAILED')) AND ((?='' AND lease_token IS NULL) OR (lease_token=? AND lease_until>?))`, code, time.Now().UnixMilli(), expected.ID, expected.Revision, expected.Generation, token, token, time.Now().UnixMilli())
 	if err != nil {
 		return err
 	}

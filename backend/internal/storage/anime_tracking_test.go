@@ -31,7 +31,7 @@ func animeStatusStoreFixture(t *testing.T) (*downloadClaimFixture, model.AnimeDo
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f, job, time.Now().UnixMilli()
+	return f, job, *job.NextRunAt
 }
 
 func animeStatusObservation(job model.AnimeDownloadJob, display string, progress float64) model.AnimeOfflineStatus {

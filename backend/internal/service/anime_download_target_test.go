@@ -272,7 +272,11 @@ func TestAnimeDownloadTargetDirectoryFailuresAreReadOnly(t *testing.T) {
 				}
 				return result.dir, result.err
 			})
-			_, err := f.service.PrepareDownloadTarget(context.Background(), before.Revision)
+			session, err := f.service.PrepareDownloadTarget(context.Background(), before.Revision)
+			if err != nil || calls != 0 {
+				t.Fatal("prepare queried upstream", calls, err)
+			}
+			_, err = session.ReadDirectory(context.Background())
 			if err == nil || calls != 1 || strings.Contains(err.Error(), "SEID") {
 				t.Fatal("unsafe directory failure", calls, err)
 			}
@@ -310,7 +314,17 @@ func TestAnimeDownloadTargetChangesDuringDirectoryRead(t *testing.T) {
 				return p115.DriveDirectory{CID: cid, Path: "/动漫/100"}, nil
 			})
 			revision := f.settings.Revision
-			_, err := f.service.PrepareDownloadTarget(context.Background(), revision)
+			session, err := f.service.PrepareDownloadTarget(context.Background(), revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = session.ReadDirectory(context.Background())
+			if change == "settings" {
+				if err != nil || session.Target().ParentCID != "100" {
+					t.Fatal("settings retargeted existing session", err)
+				}
+				return
+			}
 			want := storage.ErrAnimeSettingsChanged
 			if change == "account" {
 				want = storage.ErrAnimeAccountChanged
@@ -406,7 +420,11 @@ func TestAnimeDownloadTargetCancellationAndDeadline(t *testing.T) {
 	})
 	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := f.service.PrepareDownloadTarget(ctx, f.settings.Revision); !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "SEID") {
+	session, err := f.service.PrepareDownloadTarget(ctx, f.settings.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ReadDirectory(ctx); !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "SEID") {
 		t.Fatal("deadline lost or credentials leaked", err)
 	}
 }
@@ -435,5 +453,48 @@ func TestAnimeDownloadTargetUnconfiguredAndExplicitRoot(t *testing.T) {
 	var incomplete *AnimeConfigError
 	if !errors.As(err, &incomplete) || incomplete.Code != "CONFIG_INCOMPLETE" || len(incomplete.Issues) != 2 {
 		t.Fatal("unconfigured task accepted", err)
+	}
+}
+
+func TestAnimeDownloadTargetPrepareAndRestoreMakeNo115Requests(t *testing.T) {
+	f := newAnimeDownloadFixture(t)
+	f.service.Directories = animeDownloadDirectoryFunc(func(context.Context, string, string) (p115.DriveDirectory, error) {
+		t.Error("local target preparation queried 115")
+		return p115.DriveDirectory{}, nil
+	})
+	for i := 0; i < 3; i++ {
+		session := f.prepare(t)
+		if _, err := f.service.ResumeDownloadTarget(context.Background(), session.Target()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAnimeDownloadTargetNewAccountOnlyNeedsDirectorySelection(t *testing.T) {
+	f := newAnimeDownloadFixture(t)
+	old := f.prepare(t).Target()
+	a, err := f.accounts.Primary("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=999_A; SEID=new-primary"
+	if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	f.service.Directories = animeDownloadDirectoryFunc(func(_ context.Context, cid, credential string) (p115.DriveDirectory, error) {
+		reads++
+		if cid != "200" || credential != cookie {
+			t.Fatal("new directory selection used old account")
+		}
+		return p115.DriveDirectory{CID: cid, Path: "/new"}, nil
+	})
+	f.saveSettings(t, "200")
+	session := f.prepare(t)
+	if reads != 1 || session.Target().UID != "999" || session.Target().AccountID == old.AccountID || session.Target().ParentCID != "200" {
+		t.Fatal("account replacement required extra probes", reads)
+	}
+	if _, err := f.service.ResumeDownloadTarget(context.Background(), old); !errors.Is(err, storage.ErrAnimeAccountChanged) || reads != 1 {
+		t.Fatal("old task silently retargeted", err)
 	}
 }

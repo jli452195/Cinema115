@@ -35,7 +35,7 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		if s.SubmitGateway == nil {
 			return ErrAnimeOfflineUnavailable
 		}
-		op, err := s.Store.PrepareAnimeSubmit(ctx, job.ID, job.Generation, session.Target())
+		op, err := s.Store.PrepareAnimeSubmit(ctx, job.ID, job.Generation, session.Target(), session.leaseToken())
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 			return nil
 		}
 		if op.State != "prepared" {
-			return s.reconcileAnimeSubmit(ctx, session, op, nil)
+			return s.reconcileAnimeSubmit(ctx, session, op)
 		}
 		observation, err := s.SubmitGateway.InspectAnimeTask(ctx, session.cookie, op.Request.InfoHash)
 		if err != nil {
@@ -55,7 +55,7 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		}
 		if observation.Present {
 			// A task predating dispatch is not ours, even in the same directory.
-			return s.recordAnimeSubmit(ctx, op.ID, "failed", "TASK_TARGET_CONFLICT", model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "conflict"})
+			return s.recordAnimeSubmit(ctx, session, op.ID, "failed", "TASK_TARGET_CONFLICT", model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "conflict"})
 		}
 		if observation.InfoHash != "" || observation.TargetCID != "" || observation.ResultID != "" {
 			return ErrAnimeOfflineRead
@@ -75,13 +75,27 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		}
 		// This transaction rechecks persisted primary account, current selection,
 		// source/subscription generations and the immutable resource/target.
-		if err := s.Store.DispatchAnimeSubmit(ctx, op.ID); err != nil {
+		if err := s.Store.DispatchAnimeSubmit(ctx, op.ID, session.leaseToken()); err != nil {
 			return err
 		}
 		// No retries inside the gateway. Permission was committed immediately
 		// above; a later pause may stop the next operation, not undo this one.
 		submitErr := s.SubmitGateway.SubmitAnimeTask(ctx, session.cookie, op.Request.InfoHash, op.Request.DirectoryCID)
-		return s.reconcileAnimeSubmit(ctx, session, op, submitErr)
+		// A successful write receipt needs no immediate GET. Uncertain writes
+		// are reconciled on a later scheduled pass, never submitted again.
+		receipt := model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "unreadable"}
+		state, code := "unknown", "SUBMIT_UNCERTAIN"
+		checkCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		if err := session.Validate(checkCtx); err == nil {
+			if submitErr == nil {
+				state, code, receipt.Kind = "confirmed", "", "accepted"
+				receipt.TargetCID = op.Request.DirectoryCID
+			} else if errors.Is(submitErr, p115.ErrAnimeSubmitRejected) {
+				state, code, receipt.Kind = "failed", "SUBMIT_REJECTED", "rejected"
+			}
+		}
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, code, receipt)
 	})
 	// Receipt persistence is synchronous and bounded even after a disconnect.
 	// If it fails, dispatched remains durable and the next call only reconciles.
@@ -116,38 +130,35 @@ func animeSubmitReadError(ctx context.Context, err error) error {
 	return ErrAnimeOfflineRead
 }
 
-func (s *AnimeAdminService) recordAnimeSubmit(ctx context.Context, id, state, code string, observation model.AnimeSubmitObservation) error {
+func (s *AnimeAdminService) recordAnimeSubmit(ctx context.Context, session *AnimeDownloadSession, id, state, code string, observation model.AnimeSubmitObservation) error {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return s.Store.RecordAnimeSubmitOutcome(writeCtx, id, state, code, observation)
+	return s.Store.RecordAnimeSubmitOutcome(writeCtx, id, state, code, observation, session.leaseToken())
 }
 
-func (s *AnimeAdminService) reconcileAnimeSubmit(ctx context.Context, session *AnimeDownloadSession, op model.AnimeSubmitOperation, submitErr error) error {
+func (s *AnimeAdminService) reconcileAnimeSubmit(ctx context.Context, session *AnimeDownloadSession, op model.AnimeSubmitOperation) error {
 	observation := model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "unreadable"}
 	state, code := "unknown", "TASK_READ_FAILED"
 	if err := session.Validate(ctx); err != nil {
-		return s.recordAnimeSubmit(ctx, op.ID, state, "SUBMIT_UNCERTAIN", observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, "SUBMIT_UNCERTAIN", observation)
 	}
 	remote, err := s.SubmitGateway.InspectAnimeTask(ctx, session.cookie, op.Request.InfoHash)
 	if err != nil {
-		return s.recordAnimeSubmit(ctx, op.ID, state, code, observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, code, observation)
 	}
 	if err := session.Validate(ctx); err != nil {
-		return s.recordAnimeSubmit(ctx, op.ID, state, "SUBMIT_UNCERTAIN", observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, "SUBMIT_UNCERTAIN", observation)
 	}
 	if !remote.Present {
 		if remote.InfoHash != "" || remote.TargetCID != "" || remote.ResultID != "" {
-			return s.recordAnimeSubmit(ctx, op.ID, state, code, observation)
+			return s.recordAnimeSubmit(ctx, session, op.ID, state, code, observation)
 		}
 		observation.Kind, code = "missing", "TASK_MISSING"
-		if errors.Is(submitErr, p115.ErrAnimeSubmitRejected) {
-			state, code, observation.Kind = "failed", "SUBMIT_REJECTED", "rejected"
-		}
-		return s.recordAnimeSubmit(ctx, op.ID, state, code, observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, code, observation)
 	}
 	if remote.InfoHash != op.Request.InfoHash || remote.TargetCID != "" && remote.TargetCID != op.Request.DirectoryCID {
 		observation.Kind = "conflict"
-		return s.recordAnimeSubmit(ctx, op.ID, state, "TASK_TARGET_CONFLICT", observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, "TASK_TARGET_CONFLICT", observation)
 	}
 	matched := remote.TargetCID == op.Request.DirectoryCID
 	if !matched && model.ValidAnimeExternalID(remote.ResultID) {
@@ -162,14 +173,14 @@ func (s *AnimeAdminService) reconcileAnimeSubmit(ctx context.Context, session *A
 		}
 	}
 	if !matched {
-		return s.recordAnimeSubmit(ctx, op.ID, state, "TASK_TARGET_CONFLICT", observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, "TASK_TARGET_CONFLICT", observation)
 	}
 	if err := session.Validate(ctx); err != nil {
-		return s.recordAnimeSubmit(ctx, op.ID, state, "SUBMIT_UNCERTAIN", observation)
+		return s.recordAnimeSubmit(ctx, session, op.ID, state, "SUBMIT_UNCERTAIN", observation)
 	}
 	observation.Kind, observation.TargetCID = "matched", op.Request.DirectoryCID
 	if model.ValidAnimeExternalID(remote.ResultID) {
 		observation.ResultID = remote.ResultID
 	}
-	return s.recordAnimeSubmit(ctx, op.ID, "confirmed", "", observation)
+	return s.recordAnimeSubmit(ctx, session, op.ID, "confirmed", "", observation)
 }

@@ -130,16 +130,22 @@ func TestAnimeDiscoveryRunnerFailureIsolationAndHealthPolicy(t *testing.T) {
 		{"captcha", mikan.ErrBlocked, "unavailable", "SOURCE_UNAVAILABLE", 0},
 		{"budget", &mikan.LimitError{Kind: "requests"}, "error", "SOURCE_READ_BUDGET", 0},
 		{"binding", mikan.ErrSourceBinding, "unavailable", "SOURCE_BINDING_CHANGED", 0},
-		{"rate", &animefeed.HTTPError{Site: "anibt", Status: 429, RetryAt: time.Now().Add(time.Hour)}, "cooldown", "SOURCE_RATE_LIMITED", 3600000},
+		{"rate", &animefeed.HTTPError{Site: "anibt", Status: 429}, "cooldown", "SOURCE_RATE_LIMITED", 3600000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, db, r, src, now := discoveryServiceFixture(t)
 			addDiscoveryServiceBackup(t, db, src, now)
+			readErr := tc.err
+			if tc.retry > 0 {
+				response := *tc.err.(*animefeed.HTTPError)
+				response.RetryAt = time.UnixMilli(now + tc.retry)
+				readErr = &response
+			}
 			var reads atomic.Int32
 			r.Feeds = animeRSSFunc(func(ctx context.Context, b *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 				reads.Add(1)
 				if in.Source.GroupID == "45" {
-					return AnimeSourceResult{}, tc.err
+					return AnimeSourceResult{}, readErr
 				}
 				return discoveryServicePage(in, now, 1), nil
 			})
@@ -154,7 +160,7 @@ func TestAnimeDiscoveryRunnerFailureIsolationAndHealthPolicy(t *testing.T) {
 			if err != nil || backup.Health != "ok" || backup.CheckedAt == nil || reads.Load() != 2 {
 				t.Fatal("failed main blocked standby", backup, reads.Load(), err)
 			}
-			if tc.retry > 0 && (main.NextCheckAt == nil || *main.NextCheckAt < now+tc.retry-1000) {
+			if tc.retry > 0 && (main.NextCheckAt == nil || *main.NextCheckAt < now+tc.retry) {
 				t.Fatal("Retry-After lost", main)
 			}
 		})
@@ -222,14 +228,14 @@ func TestAnimeDiscoveryRunnerBoundedVerificationAndSameEpisodeVersions(t *testin
 	if err := r.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for round, want := range []int32{4, 8, 9} {
+	for _, want := range []int32{4, 8, 9} {
 		if err := r.VerifyOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if calls.Load() != want {
 			t.Fatal("unbounded or lost verification", calls.Load(), want)
 		}
-		if directoryReads != round+1 {
+		if directoryReads != 0 {
 			t.Fatal("same target reread within one bounded pass", directoryReads)
 		}
 		var n int
@@ -418,11 +424,11 @@ func TestAnimeDiscoveryRunnerRunCancellationWaitsForBothLanes(t *testing.T) {
 		exited.Add(1)
 		return AnimeSourceResult{}, ctx.Err()
 	})
-	f.service.Directories = animeDownloadDirectoryFunc(func(ctx context.Context, _, _ string) (p115.DriveDirectory, error) {
+	f.service.Torrents = animeClaimTorrentFunc(func(ctx context.Context, _, _, _ string) ([]byte, error) {
 		verifyOnce.Do(func() { close(verifyStarted) })
 		<-ctx.Done()
 		exited.Add(1)
-		return p115.DriveDirectory{}, ctx.Err()
+		return nil, ctx.Err()
 	})
 	r.now = nil
 	r.interval = time.Millisecond

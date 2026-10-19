@@ -10,7 +10,7 @@ type AnimeSubmitRequest struct {
 
 type AnimeSubmitObservation struct {
 	SchemaVersion int    `json:"schemaVersion"`
-	Kind          string `json:"kind"` // matched, missing, conflict, unreadable, rejected
+	Kind          string `json:"kind"` // accepted receipt; or matched, missing, conflict, unreadable, rejected lookup
 	TargetCID     string `json:"targetCid,omitempty"`
 	ResultID      string `json:"resultId,omitempty"`
 }

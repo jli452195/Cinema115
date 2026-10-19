@@ -36,7 +36,7 @@ func (s *AnimeAdminService) EnsureDownloadDirectory(ctx context.Context, session
 		if job.DirectoryCID != nil {
 			return nil
 		}
-		current, create, err := s.Store.StartAnimeDirectory(ctx, job.ID, job.Generation, session.Target())
+		current, create, err := s.Store.StartAnimeDirectory(ctx, job.ID, job.Generation, session.Target(), session.leaseToken())
 		if err != nil {
 			return err
 		}
@@ -52,7 +52,7 @@ func (s *AnimeAdminService) EnsureDownloadDirectory(ctx context.Context, session
 				if errors.Is(err, storage.ErrAnimeAccountChanged) {
 					code = "DOWNLOAD_ACCOUNT_CHANGED"
 				}
-				if writeErr := s.finishAnimeDirectory(ctx, current, nil, code); writeErr != nil {
+				if writeErr := s.finishAnimeDirectory(ctx, session, current, nil, code); writeErr != nil {
 					return writeErr
 				}
 				return err
@@ -103,7 +103,7 @@ func (s *AnimeAdminService) EnsureDownloadDirectory(ctx context.Context, session
 				code = "DOWNLOAD_ACCOUNT_CHANGED"
 			}
 		}
-		if err := s.finishAnimeDirectory(ctx, current, directory, code); err != nil {
+		if err := s.finishAnimeDirectory(ctx, session, current, directory, code); err != nil {
 			return err
 		}
 		if directory == nil {
@@ -124,12 +124,12 @@ func (s *AnimeAdminService) EnsureDownloadDirectory(ctx context.Context, session
 	return out, err
 }
 
-func (s *AnimeAdminService) finishAnimeDirectory(ctx context.Context, job model.AnimeDownloadJob, directory *model.AnimeDriveEntry, code string) error {
+func (s *AnimeAdminService) finishAnimeDirectory(ctx context.Context, session *AnimeDownloadSession, job model.AnimeDownloadJob, directory *model.AnimeDriveEntry, code string) error {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	err := s.Store.FinishAnimeDirectory(writeCtx, job, directory, code)
+	err := s.Store.FinishAnimeDirectory(writeCtx, job, directory, code, session.leaseToken())
 	if errors.Is(err, storage.ErrAnimeAccountChanged) {
-		if writeErr := s.Store.FinishAnimeDirectory(writeCtx, job, nil, "DOWNLOAD_ACCOUNT_CHANGED"); writeErr != nil {
+		if writeErr := s.Store.FinishAnimeDirectory(writeCtx, job, nil, "DOWNLOAD_ACCOUNT_CHANGED", session.leaseToken()); writeErr != nil {
 			return writeErr
 		}
 		return storage.ErrAnimeAccountChanged
@@ -204,7 +204,7 @@ func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session 
 			}
 			writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer stop()
-			if err := s.Store.MarkAnimeFilesReview(writeCtx, job, code); err != nil {
+			if err := s.Store.MarkAnimeFilesReview(writeCtx, job, code, session.leaseToken()); err != nil {
 				return err
 			}
 			if ctx.Err() != nil {
@@ -212,7 +212,7 @@ func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session 
 			}
 			return ErrAnimeFilesIncomplete
 		}
-		return s.Store.SaveAnimeFiles(ctx, job, manifest)
+		return s.Store.SaveAnimeFiles(ctx, job, manifest, session.leaseToken())
 	})
 	if out.ID != "" {
 		readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

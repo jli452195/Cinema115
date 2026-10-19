@@ -42,7 +42,11 @@ func animeStatusFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, model.Ani
 		},
 		submit: func(context.Context, string, string, string) error { t.Error("status submitted task"); return nil },
 	}
-	now := time.Now().UnixMilli()
+	job, err = f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := *job.NextRunAt
 	runner := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
 	return f, db, job, runner, &now
 }
