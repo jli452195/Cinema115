@@ -198,6 +198,9 @@
   .ae-extra-mapping .ae-pair { grid-template-columns: minmax(0, 1fr); }
 }
 .ae-picker button[aria-disabled="true"] { opacity: .65; cursor: wait; }
+.ae-source-sites { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.ae-source-sites > div { display: flex; gap: 7px; }
+@media (max-width: 639px) { .ae-source-sites { justify-content: flex-start; } .ae-source-sites > div { display: grid; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .ae-spec-grid[aria-busy="true"] { min-height: 100px; }
 .ae-picker-dock { background: transparent; }
 .ae-picker-dock > p { margin-bottom: 8px; font-size: 11px; }

@@ -14,15 +14,15 @@ type animeMikanReader interface {
 	ReadSource(context.Context, mikan.SourceRequest) (mikan.SourcePage, error)
 }
 
-type AnimeMikanInput struct {
+type AnimeSourceInput struct {
 	Source   mikan.Source
 	Kind     string // rss or history; entry verification is automatic
 	Take     int
 	Refresh  bool
-	Previous *AnimeMikanResult // Trusted prior snapshot, supplied by P1-06.
+	Previous *AnimeSourceResult // Trusted prior snapshot, supplied by P1-06.
 }
 
-type AnimeMikanResult struct {
+type AnimeSourceResult struct {
 	mikan.SourcePage
 	Cached        bool      `json:"cached"`
 	ExpiresAt     time.Time `json:"expiresAt"`
@@ -52,11 +52,11 @@ func cloneAnimeMikanPage(page mikan.SourcePage) mikan.SourcePage {
 	return page
 }
 
-// ReadAnimeMikan only reads one confirmed publisher's metadata. Cumulative
+// ReadAnimeSource only reads one confirmed publisher's metadata. Cumulative
 // history replaces that source's raw count; it is never appended as a new page.
 // Failures do not clear cached successes or modify the caller's prior counts.
-func (s *MikanService) ReadAnimeMikan(ctx context.Context, budget *AnimeMikanBudget, in AnimeMikanInput) (AnimeMikanResult, error) {
-	var out AnimeMikanResult
+func (s *MikanService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+	var out AnimeSourceResult
 	if budget == nil || !in.Source.Valid() || (in.Kind != "rss" && in.Kind != "history") ||
 		(in.Kind == "rss" && in.Take != 0) || (in.Kind == "history" && (in.Take < 1 || in.Take > mikan.AnimeMaxRows)) {
 		return out, mikan.ErrInput
@@ -144,7 +144,7 @@ func compareMikanHistory(current *mikan.SourcePage, previous mikan.SourcePage) b
 	return changed
 }
 
-func (s *MikanService) animeMikanRead(ctx context.Context, budget *AnimeMikanBudget, reader animeMikanReader, in mikan.SourceRequest, refresh bool) (animeMikanCache, bool, error) {
+func (s *MikanService) animeMikanRead(ctx context.Context, budget *AnimeSourceBudget, reader animeMikanReader, in mikan.SourceRequest, refresh bool) (animeMikanCache, bool, error) {
 	key := in.Kind + ":" + in.Source.ItemID + ":" + in.Source.GroupID + ":" + strconv.Itoa(in.Take)
 	for {
 		if err := ctx.Err(); err != nil {

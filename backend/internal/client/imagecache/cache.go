@@ -67,6 +67,7 @@ type refreshRequest struct{ size, name string }
 type Cache struct {
 	embyRequest EmbyRequest
 	mikan       bool
+	anibt       bool
 	gying       bool
 	woniu       bool
 	root        string
@@ -122,6 +123,9 @@ func validName(name string) bool {
 
 func (c *Cache) paths(size, name string) (string, string, error) {
 	_, valid := allowedSizes[size]
+	if c.anibt {
+		valid = anibtCoverDirectory.MatchString(size) && anibtCoverName.MatchString(name)
+	}
 	if c.mikan {
 		valid = validMikanMonth(size)
 	}
@@ -288,6 +292,9 @@ func (c *Cache) fetch(ctx context.Context, size, name, path, metadataPath string
 
 func (c *Cache) download(ctx context.Context, size, name, path, metadataPath string) error {
 	upstream, err := url.JoinPath(c.baseURL, "t", "p", size, name)
+	if c.anibt {
+		upstream, err = url.JoinPath(c.baseURL, "anime_covers", size, strings.TrimSuffix(name, ".webp"), "v4", "w240.webp")
+	}
 	if c.mikan {
 		upstream, err = url.JoinPath(c.baseURL, "images", "Bangumi", size, name)
 		upstream += "?width=240&height=336&format=webp"
@@ -362,7 +369,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	}
 	// 上游验证页面可能伪装成图片响应；检查文件签名，禁止将 HTML 缓存为封面。
 	var source io.Reader = response.Body
-	if c.mikan || c.gying || c.woniu || c.embyRequest != nil {
+	if c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		reader := bufio.NewReader(response.Body)
 		header, peekErr := reader.Peek(512)
 		if peekErr != nil && !errors.Is(peekErr, io.EOF) {
@@ -414,7 +421,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 		return err
 	}
 	// 小容量缓存写入后通知受控工作协程清理，避免只等定时清理导致持续膨胀。
-	if c.mikan || c.gying || c.woniu || c.embyRequest != nil {
+	if c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		select {
 		case c.prune <- struct{}{}:
 		default:

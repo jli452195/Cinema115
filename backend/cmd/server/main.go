@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
@@ -110,7 +111,7 @@ func main() {
 	mikanService := service.NewMikanService(mikan.New(), generationLogs)
 	httpapi.RegisterMikan(admin, mikanService)
 	animeDiscovery := bangumi.New()
-	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService}
+	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService, Anibt: service.NewAnibtService(anibt.New())}
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	httpapi.RegisterAnime(admin, &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}})
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
@@ -160,6 +161,12 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterMikanImages(r, mikanImages)
+	anibtImages, err := imagecache.NewAnibt(filepath.Join(dataDir, "anibt-images"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterAnibtImages(r, anibtImages)
+
 	gyingImages, err := imagecache.NewGying(filepath.Join(dataDir, "gying-images"))
 	if err != nil {
 		log.Fatal(err)
@@ -400,6 +407,8 @@ func main() {
 	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); mikanImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); anibtImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); gyingImages.Run(ctx) }()
 	workers.Add(1)

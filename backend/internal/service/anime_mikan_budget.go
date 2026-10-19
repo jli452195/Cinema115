@@ -8,10 +8,10 @@ import (
 	"strm115/backend/internal/client/mikan"
 )
 
-// AnimeMikanBudget belongs to one generate/continue operation, shared by its
+// AnimeSourceBudget belongs to one generate/continue operation, shared by its
 // metadata reads. Seed it with the current batch's raw counts, not deduplicated
 // release counts. P1-06 will obtain those counts from trusted stored previews.
-type AnimeMikanBudget struct {
+type AnimeSourceBudget struct {
 	gate      chan struct{}
 	mu        sync.Mutex
 	deadline  time.Time
@@ -21,7 +21,7 @@ type AnimeMikanBudget struct {
 	source    mikan.Source
 }
 
-func (b *AnimeMikanBudget) bindSource(source mikan.Source) error {
+func (b *AnimeSourceBudget) bindSource(source mikan.Source) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.source.Valid() && b.source != source {
@@ -31,7 +31,7 @@ func (b *AnimeMikanBudget) bindSource(source mikan.Source) error {
 	return nil
 }
 
-type AnimeMikanBudgetStats struct {
+type AnimeSourceBudgetStats struct {
 	Requests      int   `json:"requests"`
 	ReadBytes     int64 `json:"readBytes"`
 	TotalRawCount int   `json:"totalRawCount"`
@@ -39,11 +39,11 @@ type AnimeMikanBudgetStats struct {
 	Remaining     int   `json:"remaining"`
 }
 
-func NewAnimeMikanBudget(loaded map[mikan.Source]int) (*AnimeMikanBudget, error) {
+func NewAnimeSourceBudget(loaded map[mikan.Source]int) (*AnimeSourceBudget, error) {
 	if len(loaded) > 5 {
 		return nil, mikan.ErrInput
 	}
-	b := &AnimeMikanBudget{gate: make(chan struct{}, 1), deadline: time.Now().Add(45 * time.Second), loaded: make(map[mikan.Source]int, len(loaded))}
+	b := &AnimeSourceBudget{gate: make(chan struct{}, 1), deadline: time.Now().Add(45 * time.Second), loaded: make(map[mikan.Source]int, len(loaded))}
 	total := 0
 	for source, count := range loaded {
 		if !source.Valid() || count < 0 || count > mikan.AnimeMaxRows {
@@ -58,10 +58,10 @@ func NewAnimeMikanBudget(loaded map[mikan.Source]int) (*AnimeMikanBudget, error)
 	return b, nil
 }
 
-func (b *AnimeMikanBudget) Stats() AnimeMikanBudgetStats {
+func (b *AnimeSourceBudget) Stats() AnimeSourceBudgetStats {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	stats := AnimeMikanBudgetStats{Requests: b.requests, ReadBytes: b.readBytes, Limit: mikan.AnimeMaxRows}
+	stats := AnimeSourceBudgetStats{Requests: b.requests, ReadBytes: b.readBytes, Limit: mikan.AnimeMaxRows}
 	for _, count := range b.loaded {
 		stats.TotalRawCount += count
 	}
@@ -69,7 +69,7 @@ func (b *AnimeMikanBudget) Stats() AnimeMikanBudgetStats {
 	return stats
 }
 
-func (b *AnimeMikanBudget) allowance(source mikan.Source) int {
+func (b *AnimeSourceBudget) allowance(source mikan.Source) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	remaining := mikan.AnimeMaxRows
@@ -81,7 +81,7 @@ func (b *AnimeMikanBudget) allowance(source mikan.Source) int {
 	return remaining
 }
 
-func (b *AnimeMikanBudget) startRequest() (int64, error) {
+func (b *AnimeSourceBudget) startRequest() (int64, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.requests >= 3 {
@@ -94,19 +94,19 @@ func (b *AnimeMikanBudget) startRequest() (int64, error) {
 	return min(int64(mikan.AnimeMaxBodyBytes), (8<<20)-b.readBytes), nil
 }
 
-func (b *AnimeMikanBudget) addBytes(n int64) {
+func (b *AnimeSourceBudget) addBytes(n int64) {
 	b.mu.Lock()
 	b.readBytes += n
 	b.mu.Unlock()
 }
 
-func (b *AnimeMikanBudget) replaceCount(source mikan.Source, count int) {
+func (b *AnimeSourceBudget) replaceCount(source mikan.Source, count int) {
 	b.mu.Lock()
 	b.loaded[source] = count
 	b.mu.Unlock()
 }
 
-func (b *AnimeMikanBudget) acquire(ctx context.Context) error {
+func (b *AnimeSourceBudget) acquire(ctx context.Context) error {
 	select {
 	case b.gate <- struct{}{}:
 		return nil

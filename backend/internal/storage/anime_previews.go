@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 )
@@ -304,7 +305,7 @@ func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepre
 			var feed mikan.Source
 			for _, config := range c.Sources {
 				if config.Ref == seed.SourceRef && config.ItemID != nil && config.GroupID != nil {
-					feed = mikan.Source{ItemID: *config.ItemID, GroupID: *config.GroupID}
+					feed = animefeed.NewSource(config.Provider, *config.ItemID, *config.GroupID)
 				}
 			}
 			if old.Page.Source != feed {

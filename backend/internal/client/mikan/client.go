@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"golang.org/x/net/html"
+	"strm115/backend/internal/client/animefeed"
 )
 
 const BaseURL = "https://mikanani.me"
@@ -39,10 +40,7 @@ type Item struct {
 	GroupID    string `json:"groupId,omitempty"`
 }
 
-type Group struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
+type Group = animefeed.Group
 type Result struct {
 	Catalog    *Catalog    `json:"-"`
 	Items      []Item      `json:"items"`
@@ -236,7 +234,7 @@ func parseWithOptions(reader io.Reader, bangumiID, group string, take int, stric
 			if n.Data == "a" && hasClass(n, "subgroup-name") {
 				id := strings.TrimPrefix(attr(n, "data-anchor"), "#")
 				if ValidID(id) && content(n) != "" && !groups[id] {
-					result.Groups = append(result.Groups, Group{id, content(n)})
+					result.Groups = append(result.Groups, Group{ID: id, Name: content(n)})
 					groups[id] = true
 				}
 			}
@@ -281,7 +279,7 @@ func parseWithOptions(reader io.Reader, bangumiID, group string, take int, stric
 			id := attr(n, "data-subgroupid")
 			name := content(n)
 			if id != "" && ValidGroup(id) && name != "" && !groups[id] {
-				result.Groups = append(result.Groups, Group{id, name})
+				result.Groups = append(result.Groups, Group{ID: id, Name: name})
 				groups[id] = true
 			}
 		}

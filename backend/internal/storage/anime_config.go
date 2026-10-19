@@ -184,7 +184,7 @@ func (s *Store) saveAnimeConfiguration(ctx context.Context, in model.AnimeSubscr
 		source.ItemID, source.GroupID, source.GroupName = input.ItemID, input.GroupID, input.GroupName
 		source.Binding, source.Rules = input.Binding, input.Rules
 		if input.ItemID != nil && input.GroupID != nil {
-			key := "mikan:" + *input.ItemID + ":" + *input.GroupID
+			key := input.Provider + ":" + *input.ItemID + ":" + *input.GroupID
 			source.SourceKey = &key
 		}
 		old, exists := oldSources[source.ID]

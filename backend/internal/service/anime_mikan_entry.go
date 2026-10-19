@@ -10,17 +10,17 @@ import (
 	"strm115/backend/internal/client/mikan"
 )
 
-type AnimeMikanEntryResult struct {
+type AnimeSourceEntryResult struct {
 	Entry      mikan.SourceEntry `json:"entry"`
 	ObservedAt time.Time         `json:"observedAt"`
 	ExpiresAt  time.Time         `json:"expiresAt"`
 	Cached     bool              `json:"cached"`
 }
 
-// ReadAnimeMikanEntry reads one actual item/group list without fetching any
+// ReadAnimeSourceEntry reads one actual item/group list without fetching any
 // publisher history. It shares the existing anime budget, cache and site gate.
-func (s *MikanService) ReadAnimeMikanEntry(ctx context.Context, budget *AnimeMikanBudget, itemID string, refresh bool) (AnimeMikanEntryResult, error) {
-	var out AnimeMikanEntryResult
+func (s *MikanService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeSourceBudget, itemID string, refresh bool) (AnimeSourceEntryResult, error) {
+	var out AnimeSourceEntryResult
 	if budget == nil || !mikan.ValidID(itemID) {
 		return out, mikan.ErrInput
 	}

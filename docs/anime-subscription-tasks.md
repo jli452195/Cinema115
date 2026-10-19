@@ -28,14 +28,16 @@
 | 核心合计 | 23 / 47 | 设计准备完成；实施验收 18 / 42 | 每项满足完成标准后打卡 |
 | E：后续扩展 | 0 / 3 | 后续安排 | 季度浏览、其他站点、复杂合集；不洗版 |
 
-2026-10-19 新增站点入口调整，按用户要求逐站实施，调整任务已完成 1/4，不计作下载/整理阶段完成。核心合计仍为 23/47。记录见[按站点选番实现](anime-catalog-implementation.md)。
+2026-10-19 新增站点入口调整，按用户要求逐站实施，调整任务已完成 2/4，不计作下载/整理阶段完成。核心合计仍为 23/47。记录见[按站点选番实现](anime-catalog-implementation.md)。
 
 - [x] **R-01 站点身份基础与蜜柑完整入口**：独立卡片、季度/星期/剧场版/OVA、本站搜索、缓存/返回、唯一原站 Bangumi 默认关联、条目直接进入字幕组与现有配置保存；2026-10-19 完成后端回归、37 组 UI 场景、Gemini CLI 代码/实际 PNG 审查与构建验证，含三个官方品牌按钮。证据见[按站点选番实现](anime-catalog-implementation.md)。
-- [ ] **R-02 AniBT 完整来源适配**：本站卡片、日历/搜索、字幕组与样本/RSS、预览保存，不回退蜜柑。
+- [x] **R-02 AniBT 完整来源适配**：本站卡片、日历/搜索、字幕组与样本/RSS、预览保存，不回退蜜柑；2026-10-19 完成 v43 引用保留升级、后端测试/vet/构建、40 组模拟交互和 Gemini CLI 代码/实际截图审查。配置入口改为同一 Bangumi 共用页面，站点放在 RSS 内选择。
 - [ ] **R-03 Anime Garden 完整来源适配**：独立卡片、日历/搜索、发布者/原站归属与样本/RSS、预览保存。
 - [ ] **R-04 跨站来源与最终交互验收**：主/备用分别指定站点，切站状态保留，已配置 RSS 不被浏览覆盖；手机、请求数量及 Gemini CLI 复核。
 
-当前优先下一项为 R-02；原 P1-11 后端阶段验证、P2 下载和 P3 云端整理仍待按依赖推进。
+R-04 部分进展：蜜柑/AniBT 主备来源已可就地选择；临时副本确认、取消不覆盖、持久来源原子替换、同 Bangumi URL、320px 明暗和返回恢复已验证。三站最终验收待 R-03 后进行，保持未勾选。
+
+当前优先下一项为 R-03；原 P1-11 后端阶段验证、P2 下载和 P3 云端整理仍待按依赖推进。
 
 下一项：**P1-11，后端阶段验证**。[基础存储](anime-storage-implementation.md)、[Bangumi客户端及缓存](anime-bangumi-implementation.md)、[蜜柑RSS/历史读取](anime-mikan-implementation.md)、[发布解析](anime-release-parser-implementation.md)、[来源绑定核验](anime-source-binding-implementation.md)、[筛选/历史预览](anime-preview-implementation.md)、[管理员配置 API](anime-admin-api-implementation.md)、[日历/历史搜索页面](anime-discovery-ui-implementation.md)、[资源选择/订阅配置页面](anime-subscription-editor-implementation.md)及[订阅列表/详情恢复](anime-subscription-browser-implementation.md)已完成。34组相关模拟浏览器回归、类型检查/构建及 Gemini CLI 代码/实际截图审查完成；P1阶段验证与验收未提前打卡，115子文件实站验证在P2补齐。废弃旧原型数据已按用户要求清理。
 

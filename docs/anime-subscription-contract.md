@@ -2,7 +2,9 @@
 
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。
 
-2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前为 v42，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前为 v43，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+
+站点调整补充：当前来源支持 `mikan`、`anibt`，provider 参与来源、发布及预览身份；AniBT 字幕组为 slug，历史窗口最多 100 条。公共配置页以 Bangumi 为主体，主/备用 RSS 独立选站，保存时保持单篇章有效订阅约束；换来源使用新身份和旧来源移除同事务提交。实现与验证见[按站点选番](anime-catalog-implementation.md)。配套 P0 DDL 保留为当时契约记录，实际结构以版本化迁移为准。
 
 ## 1. 不变量与复用边界
 

@@ -69,9 +69,9 @@ func newAnimeMikanTestService() (*MikanService, *animeMikanFake) {
 	return s, f
 }
 
-func animeMikanTestBudget(t *testing.T, loaded map[mikan.Source]int) *AnimeMikanBudget {
+func animeMikanTestBudget(t *testing.T, loaded map[mikan.Source]int) *AnimeSourceBudget {
 	t.Helper()
-	b, err := NewAnimeMikanBudget(loaded)
+	b, err := NewAnimeSourceBudget(loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,24 +83,24 @@ func TestAnimeMikanReadCacheAndCumulativeCounts(t *testing.T) {
 	ctx := context.Background()
 	source := mikan.Source{ItemID: "2259", GroupID: "45"}
 	budget := animeMikanTestBudget(t, nil)
-	in := AnimeMikanInput{Source: source, Kind: "history", Take: 1}
-	first, err := s.ReadAnimeMikan(ctx, budget, in)
+	in := AnimeSourceInput{Source: source, Kind: "history", Take: 1}
+	first, err := s.ReadAnimeSource(ctx, budget, in)
 	if err != nil || first.RawCount != 1 || first.Cached || budget.Stats().Requests != 2 {
 		t.Fatal(first, budget.Stats(), err)
 	}
 	in.Take = 3
-	second, err := s.ReadAnimeMikan(ctx, budget, in)
+	second, err := s.ReadAnimeSource(ctx, budget, in)
 	if err != nil || second.RawCount != 2 || second.Completeness != "visible_end" || budget.Stats().TotalRawCount != 2 || budget.Stats().Requests != 3 {
 		t.Fatal(second, budget.Stats(), err)
 	}
 	second.Releases[0].Title = "modified"
 	newBudget := animeMikanTestBudget(t, nil)
-	cached, err := s.ReadAnimeMikan(ctx, newBudget, in)
+	cached, err := s.ReadAnimeSource(ctx, newBudget, in)
 	if err != nil || !cached.Cached || cached.Releases[0].Title != "资源" || !cached.ObservedAt.Equal(second.ObservedAt) || !cached.ExpiresAt.Equal(second.ExpiresAt) || cached.ReadBytes != 0 || newBudget.Stats().Requests != 0 || f.calls.Load() != 3 {
 		t.Fatal(cached, newBudget.Stats(), err)
 	}
 	in.Take = 4
-	if _, err := s.ReadAnimeMikan(ctx, budget, in); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 3 || budget.Stats().TotalRawCount != 2 {
+	if _, err := s.ReadAnimeSource(ctx, budget, in); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 3 || budget.Stats().TotalRawCount != 2 {
 		t.Fatal(budget.Stats(), err)
 	}
 }
@@ -108,8 +108,8 @@ func TestAnimeMikanReadCacheAndCumulativeCounts(t *testing.T) {
 func TestAnimeMikanValidZeroAndInvalidBinding(t *testing.T) {
 	s, f := newAnimeMikanTestService()
 	ctx := context.Background()
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "999"}, Kind: "rss"}
-	if _, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrSourceBinding) || f.calls.Load() != 1 {
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "999"}, Kind: "rss"}
+	if _, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrSourceBinding) || f.calls.Load() != 1 {
 		t.Fatal(err, f.calls.Load())
 	}
 	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
@@ -119,12 +119,12 @@ func TestAnimeMikanValidZeroAndInvalidBinding(t *testing.T) {
 		return page, nil
 	}
 	in.Source.GroupID = "45"
-	zero, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in)
+	zero, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in)
 	if err != nil || zero.Releases == nil || zero.RawCount != 0 || zero.Completeness != "partial" {
 		t.Fatal(zero, err)
 	}
 	in.Source.GroupID = "../45"
-	if _, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrInput) || f.calls.Load() != 2 {
+	if _, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrInput) || f.calls.Load() != 2 {
 		t.Fatal(err, f.calls.Load())
 	}
 }
@@ -136,16 +136,16 @@ func TestAnimeMikanBatchRawBudgetCheckedBeforeRead(t *testing.T) {
 	loaded := map[mikan.Source]int{a: 1500, b: 400}
 	budget := animeMikanTestBudget(t, loaded)
 	loaded[a] = 1 // Constructor must copy its seed, not borrow mutable caller state.
-	if _, err := s.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: a, Kind: "history", Take: 1601}); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 0 {
+	if _, err := s.ReadAnimeSource(ctx, budget, AnimeSourceInput{Source: a, Kind: "history", Take: 1601}); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 0 {
 		t.Fatal(err, f.calls.Load())
 	}
-	if _, err := s.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: b, Kind: "history", Take: 501}); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 0 {
+	if _, err := s.ReadAnimeSource(ctx, budget, AnimeSourceInput{Source: b, Kind: "history", Take: 501}); !errors.Is(err, mikan.ErrLimit) || f.calls.Load() != 0 {
 		t.Fatal(err, f.calls.Load())
 	}
-	if _, err := NewAnimeMikanBudget(map[mikan.Source]int{a: 1500, b: 501}); !errors.Is(err, mikan.ErrLimit) {
+	if _, err := NewAnimeSourceBudget(map[mikan.Source]int{a: 1500, b: 501}); !errors.Is(err, mikan.ErrLimit) {
 		t.Fatal(err)
 	}
-	if _, err := s.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: a, Kind: "history", Take: 1600}); err != nil || budget.Stats().TotalRawCount != 402 {
+	if _, err := s.ReadAnimeSource(ctx, budget, AnimeSourceInput{Source: a, Kind: "history", Take: 1600}); err != nil || budget.Stats().TotalRawCount != 402 {
 		t.Fatal(budget.Stats(), err)
 	}
 }
@@ -166,15 +166,15 @@ func TestAnimeMikanByteBudgetAndExpiredOperation(t *testing.T) {
 	}
 	source := mikan.Source{ItemID: "2259", GroupID: "45"}
 	budget := animeMikanTestBudget(t, nil)
-	if _, err := s.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: source, Kind: "history", Take: 1}); err != nil {
+	if _, err := s.ReadAnimeSource(ctx, budget, AnimeSourceInput{Source: source, Kind: "history", Take: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: source, Kind: "history", Take: 3}); !errors.Is(err, mikan.ErrLimit) || budget.Stats().ReadBytes != (8<<20)+1 || budget.Stats().TotalRawCount != 1 {
+	if _, err := s.ReadAnimeSource(ctx, budget, AnimeSourceInput{Source: source, Kind: "history", Take: 3}); !errors.Is(err, mikan.ErrLimit) || budget.Stats().ReadBytes != (8<<20)+1 || budget.Stats().TotalRawCount != 1 {
 		t.Fatal(budget.Stats(), err)
 	}
 	expired := animeMikanTestBudget(t, nil)
 	expired.deadline = time.Now().Add(-time.Second)
-	if _, err := s.ReadAnimeMikan(ctx, expired, AnimeMikanInput{Source: source, Kind: "history", Take: 1}); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := s.ReadAnimeSource(ctx, expired, AnimeSourceInput{Source: source, Kind: "history", Take: 1}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
 }
@@ -182,8 +182,8 @@ func TestAnimeMikanByteBudgetAndExpiredOperation(t *testing.T) {
 func TestAnimeMikanFailurePreservesLastSuccess(t *testing.T) {
 	s, f := newAnimeMikanTestService()
 	ctx := context.Background()
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
-	first, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in)
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
+	first, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +192,11 @@ func TestAnimeMikanFailurePreservesLastSuccess(t *testing.T) {
 	}
 	in.Refresh = true
 	budget := animeMikanTestBudget(t, map[mikan.Source]int{in.Source: 2})
-	if _, err := s.ReadAnimeMikan(ctx, budget, in); !errors.Is(err, mikan.ErrParse) || budget.Stats().TotalRawCount != 2 {
+	if _, err := s.ReadAnimeSource(ctx, budget, in); !errors.Is(err, mikan.ErrParse) || budget.Stats().TotalRawCount != 2 {
 		t.Fatal(err, budget.Stats())
 	}
 	in.Refresh = false
-	cached, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in)
+	cached, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in)
 	if err != nil || !cached.Cached || !first.ObservedAt.Equal(cached.ObservedAt) || cached.RawCount != 2 {
 		t.Fatal(cached, err)
 	}
@@ -219,18 +219,18 @@ func TestAnimeMikanConcurrentMergeAndWaiterCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
 	results := make(chan error, 2)
 	firstBudget := animeMikanTestBudget(t, nil)
-	go func() { _, err := s.ReadAnimeMikan(ctx, firstBudget, in); results <- err }()
+	go func() { _, err := s.ReadAnimeSource(ctx, firstBudget, in); results <- err }()
 	<-started
 	waitCtx, stop := context.WithCancel(ctx)
 	stop()
-	if _, err := s.ReadAnimeMikan(waitCtx, animeMikanTestBudget(t, nil), in); !errors.Is(err, context.Canceled) {
+	if _, err := s.ReadAnimeSource(waitCtx, animeMikanTestBudget(t, nil), in); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	secondBudget := animeMikanTestBudget(t, nil)
-	go func() { _, err := s.ReadAnimeMikan(ctx, secondBudget, in); results <- err }()
+	go func() { _, err := s.ReadAnimeSource(ctx, secondBudget, in); results <- err }()
 	close(release)
 	for i := 0; i < 2; i++ {
 		if err := <-results; err != nil {
@@ -260,13 +260,13 @@ func TestAnimeMikanLeaderCancellationAllowsNewRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	leaderCtx, stop := context.WithCancel(ctx)
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
 	result := make(chan error, 1)
 	leaderBudget := animeMikanTestBudget(t, nil)
-	go func() { _, err := s.ReadAnimeMikan(leaderCtx, leaderBudget, in); result <- err }()
+	go func() { _, err := s.ReadAnimeSource(leaderCtx, leaderBudget, in); result <- err }()
 	<-started
 	stop()
-	if _, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in); err != nil {
+	if _, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-result; !errors.Is(err, context.Canceled) {
@@ -284,8 +284,8 @@ func TestAnimeMikanCooldownSharedWithLegacySearch(t *testing.T) {
 	f.read = func(context.Context, mikan.SourceRequest) (mikan.SourcePage, error) {
 		return mikan.SourcePage{}, &mikan.ResponseError{StatusCode: 429, RetryAt: until}
 	}
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss", Refresh: true}
-	if _, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrBlocked) {
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss", Refresh: true}
+	if _, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrBlocked) {
 		t.Fatal(err)
 	}
 	var cooldown *MikanCooldownError
@@ -298,7 +298,7 @@ func TestAnimeMikanCooldownSharedWithLegacySearch(t *testing.T) {
 	if _, err := s2.Search(ctx, MikanInput{Query: "测试"}); !errors.Is(err, mikan.ErrBlocked) {
 		t.Fatal(err)
 	}
-	if _, err := s2.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), in); !errors.As(err, &cooldown) || f2.calls.Load() != 0 {
+	if _, err := s2.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), in); !errors.As(err, &cooldown) || f2.calls.Load() != 0 {
 		t.Fatal(err, f2.calls.Load())
 	}
 }
@@ -318,7 +318,7 @@ func TestAnimeMikanSharedInterval(t *testing.T) {
 		last = time.Now()
 		return animeMikanFakePage(in), nil
 	}
-	if _, err := s.ReadAnimeMikan(ctx, animeMikanTestBudget(t, nil), AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}); err != nil {
+	if _, err := s.ReadAnimeSource(ctx, animeMikanTestBudget(t, nil), AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -340,12 +340,12 @@ func TestAnimeMikanContinuationBoundaries(t *testing.T) {
 				return page, nil
 			}
 			source := mikan.Source{ItemID: "2259", GroupID: "45"}
-			first, err := s.ReadAnimeMikan(context.Background(), animeMikanTestBudget(t, nil), AnimeMikanInput{Source: source, Kind: "history", Take: 1})
+			first, err := s.ReadAnimeSource(context.Background(), animeMikanTestBudget(t, nil), AnimeSourceInput{Source: source, Kind: "history", Take: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
 			budget := animeMikanTestBudget(t, map[mikan.Source]int{source: first.RawCount})
-			continued, err := s.ReadAnimeMikan(context.Background(), budget, AnimeMikanInput{Source: source, Kind: "history", Take: 3, Previous: &first})
+			continued, err := s.ReadAnimeSource(context.Background(), budget, AnimeSourceInput{Source: source, Kind: "history", Take: 3, Previous: &first})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -373,12 +373,12 @@ func TestAnimeMikanContinuationBoundaries(t *testing.T) {
 func TestAnimeMikanOperationKeepsOneSource(t *testing.T) {
 	s, f := newAnimeMikanTestService()
 	budget := animeMikanTestBudget(t, nil)
-	in := AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
-	if _, err := s.ReadAnimeMikan(context.Background(), budget, in); err != nil {
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"}
+	if _, err := s.ReadAnimeSource(context.Background(), budget, in); err != nil {
 		t.Fatal(err)
 	}
 	in.Source.GroupID = "28"
-	if _, err := s.ReadAnimeMikan(context.Background(), budget, in); !errors.Is(err, mikan.ErrInput) || f.calls.Load() != 2 {
+	if _, err := s.ReadAnimeSource(context.Background(), budget, in); !errors.Is(err, mikan.ErrInput) || f.calls.Load() != 2 {
 		t.Fatal(err, f.calls.Load())
 	}
 }
@@ -406,7 +406,7 @@ func TestAnimeMikanHTTPIntegration(t *testing.T) {
 	client.BaseURL = server.URL
 	s := NewMikanService(client, nil)
 	budget := animeMikanTestBudget(t, nil)
-	result, err := s.ReadAnimeMikan(context.Background(), budget, AnimeMikanInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"})
+	result, err := s.ReadAnimeSource(context.Background(), budget, AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss"})
 	if err != nil || calls.Load() != 2 || result.RawCount != 1 || result.Completeness != "partial" || result.Releases[0].PostKey != key || budget.Stats().Requests != 2 || budget.Stats().ReadBytes <= 0 {
 		t.Fatal(result, budget.Stats(), err)
 	}

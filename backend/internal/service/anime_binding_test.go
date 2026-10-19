@@ -108,7 +108,7 @@ func TestAnimeBindingExplicitScopeAndVerifiedMetadata(t *testing.T) {
 	if *in.Binding.Scope.First != 26 || in.Binding.ChapterCorrespondence.SourceEpisode != 26 {
 		t.Fatal("result aliases request")
 	}
-	again, err := s.Mikan.ReadAnimeMikanEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
+	again, err := s.Mikan.ReadAnimeSourceEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
 	if err != nil || !again.Cached || again.Entry.BangumiIDs[0] != "278826" || f.reads != 1 {
 		t.Fatal("result mutated source cache", again, err)
 	}
@@ -335,7 +335,7 @@ func TestAnimeBindingCancellationAndSubjectMismatch(t *testing.T) {
 
 func TestAnimeBindingMetadataFailurePreservesSuccessfulCache(t *testing.T) {
 	s, f, _ := bindingTestService()
-	first, err := s.Mikan.ReadAnimeMikanEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
+	first, err := s.Mikan.ReadAnimeSourceEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,10 +344,10 @@ func TestAnimeBindingMetadataFailurePreservesSuccessfulCache(t *testing.T) {
 		p.Entry.ID = "999"
 		return p, nil
 	}
-	if _, err := s.Mikan.ReadAnimeMikanEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", true); !errors.Is(err, mikan.ErrParse) {
+	if _, err := s.Mikan.ReadAnimeSourceEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", true); !errors.Is(err, mikan.ErrParse) {
 		t.Fatal("wrong entry cached", err)
 	}
-	last, err := s.Mikan.ReadAnimeMikanEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
+	last, err := s.Mikan.ReadAnimeSourceEntry(context.Background(), animeMikanTestBudget(t, nil), "2259", false)
 	if err != nil || !last.Cached || last.Entry.ID != first.Entry.ID || !last.ObservedAt.Equal(first.ObservedAt) {
 		t.Fatal("bad metadata replaced success", last, err)
 	}

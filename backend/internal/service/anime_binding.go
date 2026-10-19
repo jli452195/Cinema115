@@ -30,6 +30,7 @@ type AnimeBindingService struct {
 	Entries  animeBindingEntries
 	Subjects animeBindingSubjects
 	Mikan    *MikanService
+	Anibt    *AnibtService
 }
 
 type AnimeEntryRef struct {
@@ -211,9 +212,9 @@ type AnimeBindingCheck struct {
 // CheckBinding verifies actual item/group membership and explicit scope. It
 // intentionally needs no RSS success, download directory, or TMDB metadata.
 // The returned confirmation is input restoration, not an activation token.
-func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeMikanBudget, in AnimeBindingInput) (AnimeBindingCheck, error) {
+func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSourceBudget, in AnimeBindingInput) (AnimeBindingCheck, error) {
 	out := AnimeBindingCheck{Issues: []string{}, Notes: []string{}, RangePreview: []animebinding.Projection{}}
-	if budget == nil || s.Mikan == nil || !in.Source.Valid() || in.Entry.validate() != nil {
+	if budget == nil || !in.Source.Valid() || in.Entry.validate() != nil {
 		return out, ErrAnimeBindingInput
 	}
 	if err := in.Binding.Validate(false); err != nil {
@@ -237,7 +238,7 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeMik
 		}
 		out.Entry, out.BangumiMeta = entry, meta
 	}
-	read, err := s.Mikan.ReadAnimeMikanEntry(ctx, budget, in.Source.ItemID, false)
+	read, err := s.ReadEntry(ctx, budget, in.Source.Site(), in.Source.ItemID, false)
 	if err != nil {
 		return out, fmt.Errorf("verify anime source item: %w", err)
 	}
@@ -262,7 +263,7 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeMik
 	if err != nil {
 		return out, err
 	}
-	out.Source = AnimeVerifiedSource{Source: in.Source, Title: read.Entry.Title, GroupName: groupName, URL: mikan.BaseURL + "/Home/Bangumi/" + in.Source.ItemID, RSSURL: rssURL, BangumiIDs: append([]string{}, read.Entry.BangumiIDs...), ObservedAt: read.ObservedAt.UnixMilli(), ExpiresAt: read.ExpiresAt.UnixMilli()}
+	out.Source = AnimeVerifiedSource{Source: in.Source, Title: read.Entry.Title, GroupName: groupName, URL: in.Source.URL(), RSSURL: rssURL, BangumiIDs: append([]string{}, read.Entry.BangumiIDs...), ObservedAt: read.ObservedAt.UnixMilli(), ExpiresAt: read.ExpiresAt.UnixMilli()}
 	out.Binding = cloneAnimeBinding(in.Binding)
 	if !in.Binding.Confirmed {
 		out.Issues = append(out.Issues, "SOURCE_BINDING_UNCONFIRMED")
@@ -333,14 +334,14 @@ type AnimeBindingPreview struct {
 
 // PreviewBinding optionally follows metadata confirmation with one bounded
 // single-group RSS read. It explains scope/numbering only, never selects rows.
-func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeMikanBudget, in AnimeBindingInput) (AnimeBindingPreview, error) {
+func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeSourceBudget, in AnimeBindingInput) (AnimeBindingPreview, error) {
 	out := AnimeBindingPreview{Releases: []AnimeBindingRelease{}, Profiles: []AnimeSpecOption{}, SpecVersion: animeparse.SpecVersion}
 	check, err := s.CheckBinding(ctx, budget, in)
 	out.AnimeBindingCheck = check
 	if err != nil {
 		return out, err
 	}
-	read, err := s.Mikan.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: in.Source, Kind: "rss"})
+	read, err := s.ReadSource(ctx, budget, AnimeSourceInput{Source: in.Source, Kind: "rss"})
 	if err != nil {
 		return out, fmt.Errorf("read anime binding examples: %w", err)
 	}

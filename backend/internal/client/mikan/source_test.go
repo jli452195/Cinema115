@@ -25,7 +25,7 @@ func sourceRequest(kind string, take int) SourceRequest {
 
 func TestSourceRSSInput(t *testing.T) {
 	source, err := ParseRSSSource(BaseURL + "/RSS/Bangumi?subgroupid=45&bangumiId=2259")
-	if err != nil || source != (Source{"2259", "45"}) {
+	if err != nil || source != (Source{ItemID:"2259", GroupID:"45"}) {
 		t.Fatal(source, err)
 	}
 	canonical, err := source.RSSURL()

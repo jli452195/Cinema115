@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -96,7 +97,7 @@ func findAnimePreview(b animepreview.Batch, ref storage.AnimePreviewRef) (animep
 
 func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in AnimePreviewInput) (AnimePreviewResult, error) {
 	out := AnimePreviewResult{Budget: animepreview.Budget{Limit: 2000, Remaining: 2000}, Issues: []AnimePreviewIssue{}}
-	if s.Repository == nil || s.Bindings == nil || s.Bindings.Mikan == nil || actor == "" || strings.TrimSpace(actor) != actor || len(actor) > 256 || len(in.Reuse) > 4 || in.Take < 0 || in.Take > 2000 {
+	if s.Repository == nil || s.Bindings == nil || actor == "" || strings.TrimSpace(actor) != actor || len(actor) > 256 || len(in.Reuse) > 4 || in.Take < 0 || in.Take > 2000 {
 		return out, animepreview.ErrInput
 	}
 	settings, err := s.Repository.GetAnimeSettings(ctx)
@@ -185,13 +186,13 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 		if err != nil {
 			return out, err
 		}
-		if source.Page.Source != (mikan.Source{ItemID: *target.ItemID, GroupID: *target.GroupID}) {
+		if source.Page.Source != (animefeed.NewSource(target.Provider, *target.ItemID, *target.GroupID)) {
 			return out, animepreview.ErrInput
 		}
 		old = &source
 		loaded[source.Page.Source] = source.Page.RawCount
 	}
-	budget, err := NewAnimeMikanBudget(loaded)
+	budget, err := NewAnimeSourceBudget(loaded)
 	if err != nil {
 		return out, err
 	}
@@ -199,10 +200,10 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 	if take == 0 {
 		take = 50
 	}
-	page, readErr := s.Bindings.Mikan.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: mikan.Source{ItemID: *target.ItemID, GroupID: *target.GroupID}, Kind: "history", Take: take, Refresh: in.Refresh})
+	page, readErr := s.Bindings.ReadSource(ctx, budget, AnimeSourceInput{Source: animefeed.NewSource(target.Provider, *target.ItemID, *target.GroupID), Kind: "history", Take: take, Refresh: in.Refresh})
 	if readErr == nil {
 		// GroupName is display metadata from the already verified entry cache.
-		metadata, err := s.Bindings.Mikan.ReadAnimeMikanEntry(ctx, budget, *target.ItemID, false)
+		metadata, err := s.Bindings.ReadEntry(ctx, budget, target.Provider, *target.ItemID, false)
 		if err != nil {
 			readErr = err
 		} else {
@@ -245,7 +246,7 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 
 func (s *AnimePreviewService) Load(ctx context.Context, actor string, ref storage.AnimePreviewRef, nextTake int) (AnimePreviewResult, error) {
 	out := AnimePreviewResult{Issues: []AnimePreviewIssue{}}
-	if s.Repository == nil || s.Bindings == nil || s.Bindings.Mikan == nil || nextTake < 1 || nextTake > 2000 {
+	if s.Repository == nil || s.Bindings == nil || nextTake < 1 || nextTake > 2000 {
 		return out, animepreview.ErrInput
 	}
 	batch, err := s.Repository.GetAnimePreview(ctx, actor, ref.BatchID)
@@ -277,12 +278,12 @@ func (s *AnimePreviewService) Load(ctx context.Context, actor string, ref storag
 	for _, source := range batch.Sources {
 		loaded[source.Page.Source] = source.Page.RawCount
 	}
-	budget, err := NewAnimeMikanBudget(loaded)
+	budget, err := NewAnimeSourceBudget(loaded)
 	if err != nil {
 		return out, err
 	}
-	previous := &AnimeMikanResult{SourcePage: source.Page}
-	page, err := s.Bindings.Mikan.ReadAnimeMikan(ctx, budget, AnimeMikanInput{Source: source.Page.Source, Kind: "history", Take: nextTake, Previous: previous})
+	previous := &AnimeSourceResult{SourcePage: source.Page}
+	page, err := s.Bindings.ReadSource(ctx, budget, AnimeSourceInput{Source: source.Page.Source, Kind: "history", Take: nextTake, Previous: previous})
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()

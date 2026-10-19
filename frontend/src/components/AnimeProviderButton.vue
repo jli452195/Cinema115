@@ -5,12 +5,12 @@ import mikanWordmark from '../assets/mikan/mikan-text.svg'
 import anibtLogo from '../assets/anime-providers/anibt-logo.webp'
 import gardenLogo from '../assets/anime-providers/garden.svg'
 
-defineProps<{ provider: AnimeProviderID; name: string; available: boolean; selected: boolean }>()
+defineProps<{ provider: AnimeProviderID; name: string; available: boolean; selected: boolean; compact?: boolean }>()
 defineEmits<{ select: [] }>()
 </script>
 
 <template>
-  <button type="button" class="anime-provider-button" :class="`provider-${provider}`" :aria-label="available ? name : `${name} 待接入`" :aria-pressed="selected" :disabled="!available" :title="available ? `浏览${name}` : `${name}将在后续步骤接入`" @click="$emit('select')">
+  <button type="button" class="anime-provider-button" :class="[`provider-${provider}`, { 'provider-compact': compact }]" :aria-label="available ? name : `${name} 待接入`" :aria-pressed="selected" :disabled="!available" :title="available ? `${compact ? '选择' : '浏览'}${name}` : `${name}将在后续步骤接入`" @click="$emit('select')">
     <span class="provider-brand" aria-hidden="true">
       <template v-if="provider === 'mikan'"><img :src="mikanMascot" class="provider-mikan-mascot" width="36" height="36" alt="" /><img :src="mikanWordmark" class="provider-mikan-wordmark" width="80" height="20" alt="" /></template>
       <img v-else-if="provider === 'anibt'" :src="anibtLogo" class="provider-anibt-logo" width="82" height="42" alt="" />
@@ -53,4 +53,14 @@ defineEmits<{ select: [] }>()
 }
 @media (max-width: 359px) { .provider-mikan-mascot { width: 25px; height: 25px; } .provider-mikan-wordmark { width: 48px; height: 14px; } .provider-anibt-logo { width: 68px; height: 35px; } .provider-garden-logo { width: 22px; height: 22px; } .provider-garden-name { font-size: 10px; line-height: 12px; } }
 @media (prefers-reduced-motion: reduce) { .anime-provider-button, .provider-brand { transition: none; } }
+.anime-provider-button.provider-compact { min-width: 0; width: 116px; min-height: 44px; padding: 4px 10px; border-radius: 10px; }
+.provider-compact .provider-brand { height: 32px; gap: 4px; }
+.provider-compact .provider-mikan-mascot { width: 25px; height: 25px; }
+.provider-compact .provider-mikan-wordmark { width: 55px; height: 16px; }
+.provider-compact .provider-anibt-logo { width: 65px; height: 32px; }
+.provider-compact .provider-garden-logo { width: 21px; height: 21px; }
+.provider-compact .provider-garden-name { font-size: 10px; line-height: 12px; }
+.provider-compact .provider-status { display: none; }
+.provider-compact[aria-pressed="true"]::after { bottom: 3px; height: 2px; }
+@media (max-width: 639px) { .anime-provider-button.provider-compact { width: 100%; padding-inline: 5px; } .provider-compact .provider-mikan-mascot { width: 21px; height: 21px; } .provider-compact .provider-mikan-wordmark { width: 47px; height: 14px; } }
 </style>

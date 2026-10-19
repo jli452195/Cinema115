@@ -8,6 +8,7 @@ import (
 
 	"strm115/backend/internal/animebinding"
 	"strm115/backend/internal/animeparse"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 )
@@ -202,14 +203,14 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 		}
 	}
 	if config == nil || config.ItemID == nil || config.GroupID == nil ||
-		page.Source != (mikan.Source{ItemID: *config.ItemID, GroupID: *config.GroupID}) ||
+		page.Source != (animefeed.NewSource(config.Provider, *config.ItemID, *config.GroupID)) ||
 		(page.Kind != "history" && page.Kind != "rss") || page.ObservedAt.IsZero() || page.ObservedAt.UnixMilli() <= 0 || now < page.ObservedAt.UnixMilli() ||
 		page.RawCount < len(page.Releases) || page.RawCount > mikan.AnimeMaxRows ||
 		(page.Completeness != "partial" && page.Completeness != "visible_end") ||
 		page.Kind == "history" && (page.RequestedTake < 1 || page.RequestedTake > mikan.AnimeMaxRows) {
 		return out, ErrInput
 	}
-	if page.Completeness == "visible_end" && (page.Kind != "history" || page.RawCount >= page.RequestedTake || page.StopReason != "") {
+	if page.Completeness == "visible_end" && (page.Kind != "history" || (page.RawCount >= page.RequestedTake && !(page.Source.Site() == "anibt" && page.Total != nil && *page.Total == page.RawCount)) || page.StopReason != "") {
 		return out, ErrInput
 	}
 	fp, err := SourceFingerprint(c, ref)
@@ -223,14 +224,18 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 	precision := int64(0)
 	seen := make(map[string]bool, len(page.Releases))
 	for _, row := range page.Releases {
-		if row.PostKey != strings.ToLower(row.PostKey) || len(row.PostKey) != 40 || seen[row.PostKey] {
-			if seen[row.PostKey] {
-				continue
-			}
-			return out, ErrInput
+		if seen[row.PostKey] {
+			continue
 		}
-		if _, err := hexPostKey(row.PostKey); err != nil {
-			return out, err
+		if page.Source.Site() == "mikan" {
+			if row.PostKey != strings.ToLower(row.PostKey) || len(row.PostKey) != 40 {
+				return out, ErrInput
+			}
+			if _, err := hexPostKey(row.PostKey); err != nil {
+				return out, err
+			}
+		} else if !strings.HasPrefix(row.PostKey, "rel_") || !model.ValidAnimeID(row.PostKey) {
+			return out, ErrInput
 		}
 		seen[row.PostKey] = true
 		parse, err := animeparse.Title(row.Title)
@@ -248,7 +253,7 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 		if err != nil {
 			return out, err
 		}
-		r := model.AnimeRelease{Provider: "mikan", PostKey: row.PostKey, Title: row.Title, TimeVersion: animeparse.TimeVersion,
+		r := model.AnimeRelease{Provider: page.Source.Site(), PostKey: row.PostKey, Title: row.Title, TimeVersion: animeparse.TimeVersion,
 			PublishedAt: published.UnixMillis, Parse: parse, ParserVersion: animeparse.ParserVersion, ContentFingerprint: content, ObservedAt: page.ObservedAt.UnixMilli()}
 		if row.OriginalGUID != "" {
 			value := row.OriginalGUID

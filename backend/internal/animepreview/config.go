@@ -138,7 +138,7 @@ func Normalize(c Config) (Config, error) {
 			main++
 		}
 		if s.ItemID != nil && s.GroupID != nil {
-			key := *s.ItemID + ":" + *s.GroupID
+			key := s.Provider + ":" + *s.ItemID + ":" + *s.GroupID
 			if feeds[key] {
 				return c, ErrInput
 			}

@@ -8,11 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 42
+const schemaVersion = 43
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -59,7 +60,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) initialize(ctx context.Context) error {
+func (s *Store) initialize(ctx context.Context) (resultErr error) {
 	var mode string
 	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
 		return fmt.Errorf("启用数据库 WAL: %w", err)
@@ -67,7 +68,28 @@ func (s *Store) initialize(ctx context.Context) error {
 	if !strings.EqualFold(mode, "wal") {
 		return fmt.Errorf("数据库未启用 WAL")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire schema connection: %w", err)
+	}
+	defer conn.Close()
+	var priorVersion int
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&priorVersion); err != nil {
+		return err
+	}
+	if priorVersion >= 39 && priorVersion < 43 {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			return err
+		}
+		defer func() {
+			restoreCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := conn.ExecContext(restoreCtx, "PRAGMA foreign_keys=ON"); err != nil && resultErr == nil {
+				resultErr = fmt.Errorf("restore schema foreign keys: %w", err)
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开始数据库结构迁移: %w", err)
 	}
@@ -512,6 +534,11 @@ PRAGMA user_version=30;`); err != nil {
 	}
 	// Earlier idempotent schema repairs assign historical versions above. Always
 	// finish with the current version, including when reopening a migrated DB.
+	if version < 43 {
+		if err := upgradeAnimeProvidersV43(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)
 	}

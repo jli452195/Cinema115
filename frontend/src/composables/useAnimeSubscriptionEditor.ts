@@ -4,7 +4,7 @@ import { useAnimeNaming } from './useAnimeNaming'
 import { portalUser } from './usePortalAuth'
 import { cachedAnime, requestAnime } from './useAnimeDiscovery'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
-import { animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
+import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSubjectResult } from '../types/anime'
 import type { AnimePreviewPage, AnimePreviewResponse, AnimeSaveReceipt, AnimeSettings, AnimeSettingsView, AnimeSourceSample, AnimeSubscriptionView, MikanEntry, MikanSearch } from '../types/animeSubscription'
 
@@ -29,7 +29,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!pendingSettings.value || !!receipt.value || loading.value || !!loadError.value)
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', 'selected', 'unresolved', 'recovery', 'dismissed']
+    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', 'selected', 'unresolved', 'recovery', 'dismissed']
     return JSON.stringify({ naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -59,13 +59,19 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     loading.value = true; saveBusy.value = false; settingsBusy.value = false; loadError.value = ''; feedback.value = ''; duplicateID.value = ''; conflict.value = false; settingsError.value = ''; previewBusy.value = ''; directoryOpen.value = false
     if (!token.value || portalUser.value?.role !== 'admin') { loadError.value = '请使用管理员身份重新登录'; loading.value = false; return }
     const signal = lifetime.signal
+    let seedIssue = ''
     async function newConfiguration(): Promise<AnimeSubjectResult & { sourceEntry?: MikanEntry }> {
       let sourceEntry: MikanEntry | undefined
       if (seed?.value.provider || seed?.value.itemId) {
-        if (seed.value.provider !== 'mikan' || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
-        const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/mikan/${seed.value.itemId}`, { signal })
-        if (result.entry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
-        sourceEntry = result.entry
+        if (!['mikan', 'anibt'].includes(seed.value.provider) || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
+        try {
+          const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${seed.value.provider}/${seed.value.itemId}`, { signal })
+          if (result.entry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
+          sourceEntry = result.entry
+        } catch (reason) {
+          if (!bangumiID.value || signal.aborted) throw reason
+          seedIssue = '入口来源暂时无法读取，可在 RSS 中重新选择站点。'
+        }
       }
       if (/^[1-9]\d*$/.test(bangumiID.value)) {
         const cached = cachedAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`)
@@ -92,9 +98,9 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         local.value = view
         subject.value = { id: view.entry.bangumiId || '', title: view.entry.title, coverUrl: view.entry.metadata?.coverUrl || '', date: view.entry.metadata?.airDate || '' }
         sources.value = view.sources.map(saved => {
-          const form = newAnimeSource(saved.role, view.entry.title)
+          const form = newAnimeSource(saved.role, view.entry.title, saved.provider)
           Object.assign(form, { ref: saved.id, id: saved.id, revision: saved.revision, runWhenEnabled: saved.runWhenEnabled,
-            itemId: saved.itemId || '', itemTitle: saved.itemId ? `蜜柑条目 ${saved.itemId}` : '', groupId: saved.groupId || '', groupName: saved.groupName || '', lockedItem: !!saved.itemId, lockedGroup: !!saved.groupId,
+            itemId: saved.itemId || '', itemTitle: saved.itemId ? `${animeProviderName(saved.provider)}条目 ${saved.itemId}` : '', groupId: saved.groupId || '', groupName: saved.groupName || '', lockedItem: !!saved.itemId, lockedGroup: !!saved.groupId,
             scope: saved.binding.scope?.kind || '', first: saved.binding.scope?.kind === 'range' ? String(saved.binding.scope.first) : '', last: saved.binding.scope?.kind === 'range' ? String(saved.binding.scope.last) : '', evidence: saved.binding.scope?.kind === 'confirmed_chapter' ? saved.binding.scope.evidence || '' : '', confirmed: saved.binding.confirmed, review: saved.binding.review,
             identityNumbering: saved.binding.chapterCorrespondence?.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1,
             correspondence: !!saved.binding.chapterCorrespondence && !(saved.binding.chapterCorrespondence.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1), sourceEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.sourceEpisode) : '', chapterEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.chapterEpisode) : '',
@@ -107,9 +113,10 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         })
       }
     } else {
+      feedback.value = seedIssue
       const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry }
       subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date }
-      sources.value = [newAnimeSource('main', data.subject.title)]
+      sources.value = [newAnimeSource('main', data.subject.title, seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
       if (data.sourceEntry) {
         const form = sources.value[0]!
         form.itemId = data.sourceEntry.id; form.itemTitle = data.sourceEntry.title; form.entry = data.sourceEntry
@@ -129,7 +136,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function addSource() {
     if (locked.value || previewBusy.value || sources.value.length >= 5) return
-    const source = newAnimeSource('standby', subject.value?.title); sources.value.push(source); activeRef.value = source.ref
+    const source = newAnimeSource('standby', subject.value?.title, sources.value[0]?.provider || 'mikan'); sources.value.push(source); activeRef.value = source.ref
   }
   function removeSource(source: SourceForm) {
     if (locked.value || previewBusy.value) return
@@ -138,17 +145,17 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     searchControllers.get(source.ref)?.abort()
     sampleControllers.get(source.ref)?.abort()
     sources.value = sources.value.filter(item => item !== source)
-    if (source.role === 'main') sources.value.unshift(newAnimeSource('main', subject.value?.title))
+    if (source.role === 'main') sources.value.unshift(newAnimeSource('main', subject.value?.title, source.provider))
     activeRef.value = sources.value[0]?.ref || ''
   }
   async function search(source: SourceForm) {
     if (locked.value || source.cooldown > Date.now()) return
     const keyword = source.keyword.trim()
-    if (!keyword || Array.from(keyword).length > 128 || /[\u0000-\u001f\u007f]/.test(keyword)) { source.searchError = '请输入 1 至 128 字的番剧名称'; return }
+    if (!keyword || Array.from(keyword).length > (source.provider === 'anibt' ? 120 : 128) || /[\u0000-\u001f\u007f]/.test(keyword)) { source.searchError = `请输入 1 至 ${source.provider === 'anibt' ? 120 : 128} 字的番剧名称`; return }
     searchControllers.get(source.ref)?.abort(); const controller = new AbortController(); searchControllers.set(source.ref, controller)
     source.searchBusy = true; source.searchError = ''
     try {
-      const result = await animeConfigRequest<MikanSearch>(token.value, 'sources/mikan/search', { method: 'POST', body: { keyword, ...(subject.value?.id ? { bangumiId: subject.value.id } : {}) }, signal: AbortSignal.any([controller.signal, lifetime.signal]) })
+      const result = await animeConfigRequest<MikanSearch>(token.value, `sources/${source.provider}/search`, { method: 'POST', body: { keyword, ...(subject.value?.id ? { bangumiId: subject.value.id } : {}) }, signal: AbortSignal.any([controller.signal, lifetime.signal]) })
       if (!controller.signal.aborted) { source.search = result; source.searchedKeyword = keyword }
     } catch (reason) { if (!controller.signal.aborted) { source.searchError = animeConfigMessage(reason); setCooldown(source, reason, 'search') } }
     finally { if (searchControllers.get(source.ref) === controller) source.searchBusy = false }
@@ -159,12 +166,29 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     searchControllers.get(source.ref)?.abort(); const controller = new AbortController(); searchControllers.set(source.ref, controller)
     source.searchBusy = true; source.searchError = ''
     try {
-      const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/mikan/${encodeURIComponent(id)}`, { signal: AbortSignal.any([controller.signal, lifetime.signal]) })
+      const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${source.provider}/${encodeURIComponent(id)}`, { signal: AbortSignal.any([controller.signal, lifetime.signal]) })
       if (controller.signal.aborted) return
+      if (result.entry.id !== id) throw new Error('来源条目不一致，请重新选择')
       if (source.itemId !== id) { source.groupId = ''; source.groupName = ''; resetRules(source) }
-      source.itemId = id; source.itemTitle = title; source.entry = result.entry
+      source.itemId = id; source.itemTitle = result.entry.title; source.entry = result.entry
     } catch (reason) { if (!controller.signal.aborted) { source.searchError = animeConfigMessage(reason); setCooldown(source, reason, 'search') } }
     finally { if (searchControllers.get(source.ref) === controller) source.searchBusy = false }
+  }
+  function cancelSourceEdit(source: SourceForm) {
+    searchControllers.get(source.ref)?.abort(); sampleControllers.get(source.ref)?.abort()
+  }
+  function applySource(source: SourceForm, candidate: SourceForm) {
+    if (locked.value || previewBusy.value) return
+    const changed = animeBindingKey(source) !== animeBindingKey(candidate)
+    cancelSourceEdit(source)
+    if (changed && source.id) removed.value.push({ id: source.id, expectedRevision: source.revision })
+    const position = sources.value.indexOf(source)
+    if (position < 0) return
+    const next: SourceForm = { ...candidate, ref: changed && source.id ? animeRequestKey() : source.ref,
+      searchBusy: false, sampleBusy: false, id: changed ? '' : source.id, revision: changed ? 0 : source.revision,
+      lockedItem: !changed && source.lockedItem, lockedGroup: !changed && source.lockedGroup }
+    if (!changed) Object.assign(next, { preview: source.preview, selected: source.selected, unresolved: source.unresolved, recovery: source.recovery, dismissed: source.dismissed })
+    sources.value[position] = next; activeRef.value = next.ref
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
@@ -181,14 +205,14 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   async function readSample(source: SourceForm, retry = false) {
     if (locked.value || !source.itemId || !source.groupId || source.sampleBusy || source.sampleCooldown > Date.now()) return
-    const key = `${source.itemId}:${source.groupId}`, cached = samples.get(key)
+    const key = `${source.provider}:${source.itemId}:${source.groupId}`, cached = samples.get(key)
     if (!retry && cached && cached.until > Date.now()) { source.sample = cached.data; source.sampleError = ''; return }
     sampleControllers.get(source.ref)?.abort(); const controller = new AbortController(); sampleControllers.set(source.ref, controller)
     source.sampleBusy = true; source.sampleError = ''; const current = generation
     try {
-      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(), source: { itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
-      if (current !== generation || controller.signal.aborted || key !== `${source.itemId}:${source.groupId}`) return
-      if (data.source.itemId !== source.itemId || data.source.groupId !== source.groupId || !Array.isArray(data.releases) || !Array.isArray(data.profiles)) throw new Error('来源样本无法核对，请重试读取')
+      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(), source: { ...(source.provider === 'anibt' ? { provider: source.provider } : {}), itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
+      if (current !== generation || controller.signal.aborted || key !== `${source.provider}:${source.itemId}:${source.groupId}`) return
+      if ((data.source.provider || 'mikan') !== source.provider || data.source.itemId !== source.itemId || data.source.groupId !== source.groupId || !Array.isArray(data.releases) || !Array.isArray(data.profiles)) throw new Error('来源样本无法核对，请重试读取')
       source.sample = data
       if (samples.size >= 15) samples.delete(samples.keys().next().value!)
       samples.set(key, { data, until: Math.min(Date.now() + 120000, data.source.expiresAt) })
@@ -347,5 +371,5 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
   return { naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady,
-    initialize, reloadSettings, addSource, removeSource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, selectRelease, dismissPending, dismissRecovery, save, retrySave, saveDirectory }
+    initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, selectRelease, dismissPending, dismissRecovery, save, retrySave, saveDirectory }
 }

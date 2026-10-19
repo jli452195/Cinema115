@@ -1,3 +1,4 @@
+import type { AnimeSourceProvider } from './animeCatalog'
 export interface AnimeBinding {
   schemaVersion: 1
   confirmed: boolean
@@ -19,7 +20,7 @@ export interface AnimeRules {
 export interface AnimeSourceConfig {
   ref: string; id: string; expectedRevision: number
   role: 'main' | 'standby'; position: number; status: 'draft' | 'paused'
-  runWhenEnabled: boolean; provider: 'mikan'
+  runWhenEnabled: boolean; provider: AnimeSourceProvider
   itemId: string | null; groupId: string | null; groupName: string | null
   binding: AnimeBinding; rules: AnimeRules
 }
@@ -36,7 +37,7 @@ export interface AnimeSettingsView {
 export interface MikanEntry { id: string; title: string; groups: { id: string; name: string }[]; bangumiIds: string[] }
 export interface MikanSearch { items: { id: string; title: string; coverUrl: string; url: string }[]; truncated: boolean }
 export interface AnimeSourceSample {
-  source: { itemId: string; groupId: string; title: string; groupName: string; expiresAt: number }
+  source: { provider?: AnimeSourceProvider; itemId: string; groupId: string; title: string; groupName: string; expiresAt: number }
   releases: { postKey: string; title: string; parse: { episode: number | null; kind: string; spec: AnimeSpec }; specKey: string; sizeRaw: string; publishedRaw: string }[]
   profiles: { key: string; label: string; spec: AnimeSpec; count: number }[]
   profilesTruncated: boolean; profileReviewCount?: number; completeness: string; observedAt: number | null; specVersion: number

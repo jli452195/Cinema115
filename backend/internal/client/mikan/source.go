@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/client/animefeed"
 )
 
 const (
@@ -32,20 +34,7 @@ type LimitError struct{ Kind string }
 func (e *LimitError) Error() string { return ErrLimit.Error() }
 func (e *LimitError) Unwrap() error { return ErrLimit }
 
-// Source identifies a publisher feed, not a Bangumi subject or a BT resource.
-type Source struct {
-	ItemID  string `json:"itemId"`
-	GroupID string `json:"groupId"`
-}
-
-func (s Source) Valid() bool { return ValidID(s.ItemID) && ValidID(s.GroupID) }
-
-func (s Source) RSSURL() (string, error) {
-	if !s.Valid() {
-		return "", ErrInput
-	}
-	return BaseURL + "/RSS/Bangumi?" + url.Values{"bangumiId": {s.ItemID}, "subgroupid": {s.GroupID}}.Encode(), nil
-}
+type Source = animefeed.Source
 
 // ParseRSSSource accepts only the verified single-group HTTPS endpoint. URLs
 // are converted to IDs; callers never send arbitrary input URLs upstream.
@@ -65,52 +54,13 @@ func ParseRSSSource(raw string) (Source, error) {
 	return s, nil
 }
 
-// A PostKey is a controlled Episode identifier. Neither it nor TorrentURL is
-// proof of a verified BT info-hash. P1 only retains these metadata hints.
-type SourceRelease struct {
-	PostKey               string `json:"postKey"`
-	Title                 string `json:"title"`
-	OriginalGUID          string `json:"originalGuid"`
-	URL                   string `json:"url"`
-	TorrentURL            string `json:"torrentUrl"`
-	MagnetHint            string `json:"magnetHint"`
-	SizeRaw               string `json:"sizeRaw"`
-	SizeBytes             int64  `json:"sizeBytes"`
-	PublishedRaw          string `json:"publishedRaw"`
-	AlternatePublishedRaw string `json:"alternatePublishedRaw"`
-}
-
-type SourceEntry struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Groups     []Group  `json:"groups"`
-	BangumiIDs []string `json:"bangumiIds"` // Optional hints, never a confirmed chapter binding.
-}
-
-type SourcePage struct {
-	Kind          string          `json:"kind"`
-	Source        Source          `json:"source"`
-	Entry         *SourceEntry    `json:"entry,omitempty"`
-	Releases      []SourceRelease `json:"releases"`
-	RawCount      int             `json:"rawCount"`
-	RequestedTake int             `json:"requestedTake"`
-	NextTake      int             `json:"nextTake"`
-	Completeness  string          `json:"completeness"`
-	StopReason    string          `json:"stopReason"`
-	ObservedAt    time.Time       `json:"observedAt"`
-	ReadBytes     int64           `json:"-"`
-}
-
-type SourceRequest struct {
-	Kind      string // entry, rss, history
-	Source    Source
-	Take      int
-	MaxRows   int
-	BodyLimit int64
-}
+type SourceRelease = animefeed.SourceRelease
+type SourceEntry = animefeed.SourceEntry
+type SourcePage = animefeed.SourcePage
+type SourceRequest = animefeed.SourceRequest
 
 func ValidSourceRequest(in SourceRequest) bool {
-	if !ValidID(in.Source.ItemID) || in.MaxRows < 1 || in.MaxRows > AnimeMaxRows || in.BodyLimit < 1 || in.BodyLimit > AnimeMaxBodyBytes {
+	if in.Source.Site() != "mikan" || !ValidID(in.Source.ItemID) || in.MaxRows < 1 || in.MaxRows > AnimeMaxRows || in.BodyLimit < 1 || in.BodyLimit > AnimeMaxBodyBytes {
 		return false
 	}
 	if in.Kind == "entry" {

@@ -19,11 +19,15 @@ defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
 const subscriptionID = computed(() => String(route.params.id || ''))
 const bangumiID = computed(() => typeof route.query.bangumiId === 'string' ? route.query.bangumiId : '')
-const seed = computed(() => ({ provider: typeof route.query.source === 'string' ? route.query.source : '', itemId: typeof route.query.itemId === 'string' ? route.query.itemId : '' }))
+const seed = computed(() => {
+  const initial = window.history.state?.animeSource
+  if (initial?.bangumiId === bangumiID.value) return { provider: String(initial.provider || ''), itemId: String(initial.itemId || '') }
+  return { provider: typeof route.query.source === 'string' ? route.query.source : '', itemId: typeof route.query.itemId === 'string' ? route.query.itemId : '' }
+})
 const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), subscriptionID, bangumiID, seed)
 const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady } = editor
 const imageFailed = ref(false), settingsExpanded = ref(false)
-const returnPath = computed(() => animeReturnPath(route.query.returnTo) || (subscriptionID.value ? `/anime/subscriptions/${encodeURIComponent(subscriptionID.value)}` : '/anime'))
+const returnPath = computed(() => animeReturnPath(route.query.returnTo || window.history.state?.animeReturnTo) || (subscriptionID.value ? `/anime/subscriptions/${encodeURIComponent(subscriptionID.value)}` : '/anime'))
 const returnLabel = computed(() => returnPath.value.startsWith('/anime/subscriptions') ? '返回订阅' : '返回选番')
 watch(() => subject.value?.coverUrl, () => { imageFailed.value = false })
 function canLeave() {
@@ -74,7 +78,7 @@ async function reloadConfiguration() {
           <div class="ae-editor-grid">
             <section class="ae-workspace" aria-label="RSS 来源配置">
               <div class="ae-source-tabs" role="group" aria-label="切换 RSS 来源"><button v-for="(source, index) in sources" :key="source.ref" type="button" :aria-pressed="activeRef === source.ref" @click="activeRef = source.ref"><span>{{ source.role === 'main' ? '主 RSS' : `备用 ${index}` }}</span><span v-if="source.groupName" class="ae-tab-group">{{ source.groupName }}</span><span class="ae-tab-state" :class="{ ready: animeSourceReady(source) }">{{ animeSourceReady(source) ? '已配置' : '草稿' }}</span></button><button type="button" class="ae-add-source" :disabled="locked || !!previewBusy || sources.length >= 5" @click="editor.addSource"><IconPlus :size="16" />添加备用</button></div>
-              <AnimeSourceForm v-if="active" :key="active.ref" :source="active" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search(active)" @choose="(id, title) => editor.chooseEntry(active!, id, title)" @group="editor.groupChanged(active)" @remove="editor.removeSource(active)" @open="editor.openSource(active)" @sample="editor.readSample(active, true)" />
+              <AnimeSourceForm v-if="active" :key="active.ref" :source="active" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(active)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="candidate => editor.applySource(active!, candidate)" />
             </section>
 
 

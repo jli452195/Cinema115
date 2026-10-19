@@ -29,7 +29,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       const selected = previous ? previous.selected.filter(id => items.some(item => item.release.id === id && item.selectable) && !pending.some(item => item.releaseId === id)) : config.rules.initialMode === 'from_episode' ? items.filter(item => item.selectable).map(item => item.release.id) : []
       return { ref: config.ref, config, id: `preview-${config.ref}-${state.batch}`, rev: 1, take, items, selected, pending, expires: Date.now() + (state.expired ? -1000 : 900000) }
     }
-    function summary(source) { return { sourceRef: source.ref, sourcePreviewId: source.id, loadRevision: source.rev, generatedAt: Date.now(), expiresAt: source.expires, expired: source.expires < Date.now(), rawCount: source.items.length, loadedCount: source.items.length, matchedCount: source.items.filter(i => i.selectable).length, reviewCount: source.items.filter(i => i.decision === 'needs_confirmation').length, selectedCount: source.selected.length, pendingSelectionCount: source.pending.length, completeness: source.take > 100 || state.empty ? 'visible_end' : 'partial', stopReason: source.take > 100 ? '' : 'more_available', loadedFirst: source.items.length ? 25 : null, loadedLast: source.items.length ? 25 + Math.floor((source.items.length - 1) / 2) : null, gapsWithinLoadedMatches: [{ first: 26, last: 26 }], unloadedHistory: source.take <= 100 && !state.empty } }
+    function summary(source) { return { sourceRef: source.ref, sourcePreviewId: source.id, loadRevision: source.rev, generatedAt: Date.now(), expiresAt: source.expires, expired: source.expires < Date.now(), rawCount: source.items.length, loadedCount: source.items.length, matchedCount: source.items.filter(i => i.selectable).length, reviewCount: source.items.filter(i => i.decision === 'needs_confirmation').length, selectedCount: source.selected.length, pendingSelectionCount: source.pending.length, completeness: source.take > 100 || state.empty ? 'visible_end' : 'partial', stopReason: source.config.provider === 'anibt' && source.take >= 100 ? 'source_limit' : source.take > 100 ? '' : 'more_available', loadedFirst: source.items.length ? 25 : null, loadedLast: source.items.length ? 25 + Math.floor((source.items.length - 1) / 2) : null, gapsWithinLoadedMatches: [{ first: 26, last: 26 }], unloadedHistory: source.take <= 100 && !state.empty } }
     function previewPage(source, number = 1) { return { items: source.items.slice((number - 1) * 50, number * 50), page: number, pageSize: 50, total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
     function response(batch, target, issues = []) {
       const sources = [...batch.sources.values()], totalRawCount = sources.reduce((n, s) => n + s.items.length, 0)
@@ -70,6 +70,12 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         if (state.settingsMode === 'unknown') { state.settingsMode = ''; await route.abort(); return }
         data = state.settings
       } else if (endpoint.includes('/cloud-download/paths')) data = { directories: [{ id: '200', name: '新动漫目录' }], hasMore: false }
+      else if (endpoint.endsWith('/catalog/anibt')) data = {provider:'anibt', season:'2026-10', days:[{day:1,items:[{id:'123',bangumiId:'123',animeId:'native-anibt',title:'AniBT 原站番剧',originalTitle:'Re:ZERO',coverUrl:'',format:'TV',rating:7.8,episodes:12,airingAt:null,releaseCount:120,hasRelease:true}]}],items:[],fetchedAt:Date.now(),expiresAt:Date.now()+600000}
+      else if (endpoint.endsWith('/sources/anibt/search')) {
+        if (state.anibtGate) await state.anibtGate
+        data={items:[{id:'123',title:'AniBT 原站番剧'}],truncated:false}
+      }
+      else if (endpoint.endsWith('/sources/anibt/123')) data={entry:{id:'123',title:'AniBT 原站番剧',groups:state.noAnibtGroups?[]:[{id:'lolihouse',name:'LoliHouse'},{id:'toonshub',name:'ToonsHub'}],bangumiIds:['123']}}
       else if (endpoint.endsWith('/sources/mikan/search')) {
         if (state.failSearch) { status = 429; data = { code: 'SOURCE_COOLDOWN', error: '模拟来源冷却', details: { retryAfterAt: Date.now() + 20000 } } }
         else data = { items: body.keyword === 'none' ? [] : [{ id: '300', title: '从零开始 第三季 字幕资源' }], truncated: false }
@@ -135,7 +141,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       else if (endpoint.includes('/emby/')) data = { configured: false, items: [] }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
-    async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card' : '.ae-chapter').first().waitFor() }
+    async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card, .anibt-anime-card' : '.ae-chapter').first().waitFor() }
     async function source(group = '10', first = '25', last = '64') {
       await page.getByRole('button', { name: '选择资源', exact: true }).click()
       await page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
@@ -522,6 +528,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await chapter.page.screenshot({path:'test-results/anime-chapter-desktop-dark.png',animations:'disabled'})
     await chapter.page.evaluate(()=>document.documentElement.classList.remove('dark'))
     await chapter.page.setViewportSize({width:320,height:800})
+    await chapter.page.waitForFunction(()=>matchMedia('(max-width: 639px)').matches && getComputedStyle(document.querySelector('.ae-chapter')).display==='grid')
     const mobileChapterLayout = await chapter.page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>innerWidth+1).slice(0,10).map(el=>({tag:el.tagName,cls:el.className,right:el.getBoundingClientRect().right,width:el.getBoundingClientRect().width}))}))
     assert.ok(mobileChapterLayout.scroll<=mobileChapterLayout.width,JSON.stringify(mobileChapterLayout))
     assert.ok(await chapter.page.locator('.ae-chapter-identity').evaluate(el=>el.getBoundingClientRect().width)>120)
@@ -552,7 +559,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const cta = await session(); await cta.go('/anime?view=calendar&day=1')
     await cta.page.locator('.mikan-anime-card').first().click()
     await cta.page.getByRole('link', { name: '选择字幕组并配置订阅', exact: true }).click()
-    await wait(() => /bangumiId=123/.test(cta.page.url()) && /itemId=300/.test(cta.page.url()))
+    await wait(() => /bangumiId=123/.test(cta.page.url()) && !/itemId=|source=/.test(cta.page.url()))
     await cta.page.getByRole('heading', { name: '从零开始的异世界生活 第三季', exact: true }).waitFor()
     const unlinked = await session(); await unlinked.go('/anime/new?source=mikan&itemId=300')
     await unlinked.page.getByRole('button',{name:'选择资源',exact:true}).click()
@@ -565,6 +572,71 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(unlinked.writes().at(-1).body.config.entry.bangumiId,undefined)
     assert.equal(unlinked.writes().at(-1).body.config.sources[0].itemId,'300')
     passed.push('蜜柑条目直接继承到字幕组，无 Bangumi 也可读取样本、选择规格和保存草稿')
+    const shared = await session(); shared.state.naming = true
+    await shared.go('/anime?source=anibt&day=1')
+    assert.equal(shared.calls.some(c=>c.endpoint.includes('/sources/')||c.endpoint.includes('/discovery/')),false,'native catalogue avoids per-card metadata')
+    const nativeLink=shared.page.locator('.anibt-anime-card').first()
+    assert.equal(new URL(await nativeLink.getAttribute('href'),origin).search,'?bangumiId=123')
+    await nativeLink.click(); await shared.page.locator('.ae-chapter').waitFor(); await shared.page.locator('.ae-mapping-anchor').waitFor({state:'detached'})
+    assert.equal(new URL(shared.page.url()).search,'?bangumiId=123')
+    await shared.page.getByRole('button',{name:'AniBT',exact:true}).click()
+    await shared.page.getByRole('button',{name:/LoliHouse/}).click()
+    await shared.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check()
+    await shared.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    await shared.page.getByLabel('从第几话开始').fill('25')
+    await shared.page.getByLabel('发布第几话', {exact:true}).fill('25')
+    const originalUrl=shared.page.url()
+    await shared.page.getByRole('button',{name:'蜜柑',exact:true}).click()
+    await shared.page.getByRole('button',{name:/从零开始 第三季 字幕资源/}).click()
+    await shared.page.getByRole('button',{name:/字幕组乙/}).click()
+    await shared.page.keyboard.press('Escape')
+    assert.equal(shared.page.url(),originalUrl)
+    assert.equal(await shared.page.getByLabel('从第几话开始').inputValue(),'25')
+    assert.equal(await shared.page.getByLabel('发布第几话', {exact:true}).inputValue(),'25')
+    assert.equal(await shared.page.locator('.ae-source-summary h3').innerText(),'LoliHouse')
+    assert.equal(shared.calls.some(c=>c.endpoint.includes('/source-bindings/')&&c.body.source.provider==='anibt'&&c.body.source.groupId==='lolihouse'),true)
+    await shared.preview()
+    assert.equal(shared.calls.filter(c=>c.endpoint.endsWith('/subscriptions/preview')).at(-1).body.config.sources[0].provider,'anibt')
+    await shared.page.locator('.anime-source-form').screenshot({path:'test-results/anime-shared-editor-desktop.png',animations:'disabled'})
+    await shared.page.getByRole('button',{name:'保存草稿',exact:true}).click();await shared.page.getByRole('heading',{name:'草稿已保存',exact:true}).waitFor()
+    assert.equal(shared.writes().at(-1).body.config.sources[0].provider,'anibt')
+    await shared.page.getByRole('button',{name:'继续编辑',exact:true}).click();await shared.page.locator('.ae-source-summary').waitFor()
+    const oldId=shared.state.saved.sources[0].id
+    await shared.page.getByRole('button',{name:'蜜柑',exact:true}).click()
+    await shared.page.getByRole('button',{name:/从零开始 第三季 字幕资源/}).click()
+    await shared.page.getByRole('button',{name:/字幕组乙/}).click()
+    await shared.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check()
+    await shared.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    assert.equal(await shared.page.getByLabel('从第几话开始').inputValue(),'1','replacement numbering is independently reviewed')
+    await shared.page.getByRole('button',{name:'保存草稿',exact:true}).click();await shared.page.getByRole('heading',{name:'草稿已保存',exact:true}).waitFor()
+    const replace=shared.writes().at(-1).body.config
+    assert.equal(replace.sources[0].provider,'mikan');assert.equal(replace.sources[0].id,'');assert.equal(replace.removedSourceIds[0].id,oldId)
+    assert.equal(replace.naming.tmdbId,'117061','TMDB stays on the subscription')
+    passed.push('AniBT card uses Bangumi URL and same editor; provider/group samples and save isolated; cancelling switch preserves rules; confirmed persisted source replacement is atomic')
+
+    const alternate=await session({width:320,height:800}); await alternate.go()
+    await alternate.page.getByRole('button',{name:'AniBT',exact:true}).click()
+    await alternate.page.getByRole('button',{name:/AniBT 原站番剧/}).click()
+    await alternate.page.getByRole('button',{name:/LoliHouse/}).click()
+    await alternate.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check()
+    await alternate.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    await alternate.preview()
+    await alternate.page.getByRole('button',{name:'继续加载历史',exact:true}).click()
+    await alternate.page.getByText(/AniBT.*100/).waitFor()
+    assert.equal(await alternate.page.getByRole('button',{name:'继续加载历史',exact:true}).isDisabled(),true,'source window is not infinite paging')
+    assert.equal(await alternate.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await alternate.page.locator('.ae-source-sites').screenshot({path:'test-results/anime-rss-sites-mobile.png'})
+    await alternate.page.getByRole('button',{name:'添加备用',exact:true}).click()
+    await alternate.page.getByRole('button',{name:'蜜柑',exact:true}).click()
+    await alternate.page.getByRole('button',{name:/从零开始 第三季 字幕资源/}).waitFor()
+    await alternate.page.screenshot({path:'test-results/anime-shared-picker-mobile.png',animations:'disabled'})
+    await alternate.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await alternate.page.screenshot({path:'test-results/anime-shared-picker-mobile-dark.png',animations:'disabled'})
+    await alternate.page.keyboard.press('Escape')
+    await alternate.page.getByRole('button',{name:/主 RSS/}).click()
+    assert.equal(await alternate.page.locator('.ae-source-summary h3').innerText(),'LoliHouse')
+    passed.push('100-record AniBT boundary stops loading; 320px provider buttons and dark picker fit; backup site search leaves main source intact')
+
     const ordinary = await session(undefined, 'user'); await ordinary.go()
     assert.equal(new URL(ordinary.page.url()).pathname, '/')
     assert.equal(ordinary.calls.some(c => c.endpoint.includes('/admin/anime')), false)

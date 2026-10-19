@@ -1,8 +1,9 @@
+import type { AnimeSourceProvider } from '../types/animeCatalog'
 import { animeRequestKey } from '../lib/anime-config-api'
 import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch, AnimeMappingSegment, AnimeMappingOverride } from '../types/animeSubscription'
 
 export interface SourceForm {
-  ref: string; id: string; revision: number; role: 'main' | 'standby'; runWhenEnabled: boolean
+  provider: AnimeSourceProvider; ref: string; id: string; revision: number; role: 'main' | 'standby'; runWhenEnabled: boolean
   itemId: string; itemTitle: string; groupId: string; groupName: string
   lockedItem: boolean; lockedGroup: boolean
   keyword: string; searchedKeyword: string; search?: MikanSearch; entry?: MikanEntry; searchBusy: boolean; searchError: string; cooldown: number
@@ -16,8 +17,8 @@ export interface SourceForm {
   preview?: { ref: AnimePreviewRef; summary: AnimePreviewSummary; signature: string; take: number; page?: AnimePreviewPage; needsSync?: boolean }
   selected: string[]; unresolved: string[]; recovery: string[]; dismissed: string[]; previewError: string; previewCooldown: number
 }
-export function newAnimeSource(role: SourceForm['role'], keyword = ''): SourceForm {
-  return { ref: role === 'main' ? 'main' : animeRequestKey(), id: '', revision: 0, role, runWhenEnabled: true,
+export function newAnimeSource(role: SourceForm['role'], keyword = '', provider: AnimeSourceProvider = 'mikan'): SourceForm {
+  return { provider, ref: role === 'main' ? 'main' : animeRequestKey(), id: '', revision: 0, role, runWhenEnabled: true,
     itemId: '', itemTitle: '', groupId: '', groupName: '', lockedItem: false, lockedGroup: false,
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
@@ -59,7 +60,7 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
   const confirmed = animeBindingConfirmed(form)
   const specificationsReady = form.specMode === 'any' || form.specMode === 'profiles' && form.specProfiles.length > 0 || !form.specMode && !!form.resolution
   const complete = !!(form.itemId && form.groupId && scope && confirmed && specificationsReady && minimumEpisode)
-  return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: 'mikan',
+  return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: form.provider,
     itemId: form.itemId || null, groupId: form.groupId || null, groupName: form.groupName || null,
     binding: { schemaVersion: 1, confirmed, scope, chapterCorrespondence, ...(confirmed && form.review ? { review: form.review } : {}) },
     rules: { schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, initialMode: form.initialMode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
@@ -68,7 +69,7 @@ export function animeSourceReady(form: SourceForm) { try { return animeSourceCon
 export function animeBindingKey(form: SourceForm) {
   // Range and numbering are separate rules. Editing them invalidates the
   // release preview, without undoing the user's source-identity selection.
-  return JSON.stringify([form.itemId, form.groupId])
+  return JSON.stringify([form.provider, form.itemId, form.groupId])
 }
 export function animeBindingConfirmed(form: SourceForm) { return form.confirmed && form.confirmedFor === animeBindingKey(form) }
 export function confirmAnimeSource(form: SourceForm) {
@@ -88,3 +89,6 @@ export function animeSpecLabel(spec?: AnimeSpec) {
   return [spec.resolution, languages, ({ hard: '内嵌', soft: '内封', external: '外挂' } as Record<string, string>)[spec.subtitleMode || ''], ({ h264: 'AVC', h265: 'HEVC', av1: 'AV1', vp9: 'VP9' } as Record<string, string>)[spec.codec || ''], spec.bitDepth ? `${spec.bitDepth}bit` : '', spec.container?.toUpperCase()].filter(Boolean).join(' ')
 }
 export function animeSourceSpecs(form: SourceForm) { return form.specMode === 'profiles' ? form.specProfiles.map(animeSpecLabel).join('、') || '尚未选择规格' : form.specMode === 'any' ? '全部规格' : form.resolution === 'any' ? '不限画质（原规则）' : form.resolution || '尚未选择规格' }
+
+export function animeProviderName(provider: AnimeSourceProvider) { return provider === 'anibt' ? 'AniBT' : '蜜柑' }
+export function animeSourceURL(form: SourceForm) { return form.provider === 'anibt' ? `https://anibt.net/anime/${encodeURIComponent(form.itemId)}` : `https://mikanani.me/Home/Bangumi/${encodeURIComponent(form.itemId)}` }

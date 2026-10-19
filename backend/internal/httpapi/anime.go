@@ -15,6 +15,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/client/anibt"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/tmdb"
@@ -31,6 +33,14 @@ func animeError(c *gin.Context, err error) {
 	var upstream *bangumi.UpstreamError
 	var sourceHTTP *mikan.ResponseError
 	switch {
+	case errors.Is(err, animefeed.ErrInput):
+		status, code, message = 400, "INVALID_INPUT", "站点、条目或字幕组参数不正确"
+	case errors.Is(err, anibt.ErrInvalid):
+		status, code, message = 502, "UPSTREAM_INVALID", "AniBT 返回的数据无法核验，原配置保留"
+	case errors.Is(err, anibt.ErrMoved):
+		status, code, message = 409, "SOURCE_MOVED", "AniBT 条目已合并，请返回该站点重新选择，原配置保留"
+	case errors.Is(err, anibt.ErrUnavailable):
+		status, code, message = 502, "UPSTREAM_UNAVAILABLE", "AniBT 暂时无法读取，已有配置保留"
 	case errors.Is(err, service.ErrAnimeNamingChanged):
 		status, code, message = 409, "NAMING_METADATA_CHANGED", "TMDB 资料已变化，请重新读取命名预览"
 	case errors.Is(err, tmdb.ErrInput):
@@ -95,6 +105,17 @@ func animeError(c *gin.Context, err error) {
 		details["issues"] = config.Issues
 	}
 	var retry time.Time
+	var anibtHTTP *anibt.HTTPError
+	if errors.As(err, &anibtHTTP) {
+		status, code, message = 502, "UPSTREAM_UNAVAILABLE", "AniBT 暂时无法读取，已有配置保留"
+		if anibtHTTP.Status == 404 {
+			status, code, message = 404, "UPSTREAM_NOT_FOUND", "AniBT 条目不存在或已隐藏"
+		}
+		if anibtHTTP.Status == 429 || anibtHTTP.Status == 503 && !anibtHTTP.RetryAt.IsZero() {
+			status, code, message = 429, "SOURCE_COOLDOWN", "AniBT 正在冷却，请稍后重试"
+		}
+		retry = anibtHTTP.RetryAt
+	}
 	var mikanCooldown *service.MikanCooldownError
 	if errors.As(err, &mikanCooldown) {
 		status, code, message, retry = 429, "SOURCE_COOLDOWN", "蜜柑正在冷却，请稍后再试", mikanCooldown.Until
@@ -226,6 +247,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		c.JSON(200, v)
 	})
 	registerAnimeCatalog(r, s)
+	registerAnimeAnibt(r, s)
 	r.GET("/discovery/calendar", func(c *gin.Context) {
 		day := 0
 		if raw, ok := c.GetQuery("weekday"); ok {
@@ -351,12 +373,12 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, storage.ErrAnimeInvalid)
 			return
 		}
-		b, e := service.NewAnimeMikanBudget(nil)
+		b, e := service.NewAnimeSourceBudget(nil)
 		if e != nil {
 			animeError(c, e)
 			return
 		}
-		v, e := s.Bindings.Mikan.ReadAnimeMikanEntry(c.Request.Context(), b, id, false)
+		v, e := s.Bindings.Mikan.ReadAnimeSourceEntry(c.Request.Context(), b, id, false)
 		if e != nil {
 			animeError(c, e)
 			return
@@ -368,7 +390,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		if !animeBody(c, &in, false) {
 			return
 		}
-		b, e := service.NewAnimeMikanBudget(nil)
+		b, e := service.NewAnimeSourceBudget(nil)
 		if e != nil {
 			animeError(c, e)
 			return

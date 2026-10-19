@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"strm115/backend/internal/client/animefeed"
 	"unicode/utf8"
 )
 
@@ -81,7 +82,7 @@ func (b AnimeBinding) Validate(complete bool) error {
 	if complete && (!b.Confirmed || b.Scope == nil) || b.Confirmed && b.Scope == nil {
 		return fmt.Errorf("binding is incomplete")
 	}
-	if r := b.Review; r != nil && (r.Method != "source_review" || !ValidAnimeExternalID(r.ItemID) || !ValidAnimeExternalID(r.GroupID) || !b.Confirmed || b.Scope == nil) {
+	if r := b.Review; r != nil && (r.Method != "source_review" || !ValidAnimeExternalID(r.ItemID) || !(animefeed.ValidGroup("mikan", r.GroupID) || animefeed.ValidGroup("anibt", r.GroupID)) || !b.Confirmed || b.Scope == nil) {
 		return fmt.Errorf("invalid source review")
 	}
 	if s := b.Scope; s != nil {
@@ -168,13 +169,11 @@ func (s AnimeSourceConfig) Validate() error {
 	if s.Status != "draft" && s.Status != "paused" {
 		return fmt.Errorf("P1 source must be draft or paused")
 	}
-	if s.Role != "main" && s.Role != "standby" || s.Position < 0 || s.Position >= AnimeMaxSources || s.Provider != "mikan" {
+	if s.Role != "main" && s.Role != "standby" || s.Position < 0 || s.Position >= AnimeMaxSources || !animefeed.ValidProvider(s.Provider) {
 		return fmt.Errorf("invalid source role/position/provider")
 	}
-	for _, id := range []*string{s.ItemID, s.GroupID} {
-		if id != nil && !ValidAnimeExternalID(*id) {
-			return fmt.Errorf("invalid mikan ID")
-		}
+	if s.ItemID != nil && !animefeed.ValidItem(*s.ItemID) || s.GroupID != nil && !animefeed.ValidGroup(s.Provider, *s.GroupID) {
+		return fmt.Errorf("invalid source item/group identity")
 	}
 	if s.GroupName != nil && !animeText(*s.GroupName, 256, true) {
 		return fmt.Errorf("invalid group name")
@@ -282,7 +281,7 @@ func (p AnimeReleaseParse) Validate() error {
 }
 
 func (r AnimeRelease) Validate() error {
-	if r.ID != "" && !ValidAnimeID(r.ID) || r.Provider != "mikan" || !ValidAnimeID(r.PostKey) || !animeText(r.Title, 1024, true) || !animeText(r.ContentFingerprint, 128, true) {
+	if r.ID != "" && !ValidAnimeID(r.ID) || !animefeed.ValidProvider(r.Provider) || !ValidAnimeID(r.PostKey) || !animeText(r.Title, 1024, true) || !animeText(r.ContentFingerprint, 128, true) {
 		return fmt.Errorf("invalid release identity/content")
 	}
 	if r.TimeVersion < 1 || r.TimeVersion > AnimeMaxRevision || r.ParserVersion < 1 || r.ParserVersion > AnimeMaxRevision || r.ObservedAt <= 0 {

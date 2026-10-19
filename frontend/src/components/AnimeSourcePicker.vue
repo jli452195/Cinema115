@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { IconArrowLeft, IconCheck, IconChevronDown, IconChevronRight, IconExternalLink, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
-import { animeBindingConfirmed, confirmAnimeSource, animeSpecKey, animeSpecLabel, type SourceForm } from '../utils/animeSourceForm'
+import { animeProviderName, animeSourceURL, animeBindingConfirmed, confirmAnimeSource, animeSpecKey, animeSpecLabel, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSpec } from '../types/animeSubscription'
 const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; now: number }>()
 const emit = defineEmits<{ close: []; search: []; choose: [id: string, title: string]; group: []; sample: []; confirm: [] }>()
@@ -56,22 +56,22 @@ async function confirm() {
 </script>
 
 <template>
-  <AnimeFloatingDialog ref="shell" title="选择订阅来源" close-label="关闭来源选择器" @close="$emit('close')" @scroll="top = $event">
+  <AnimeFloatingDialog ref="shell" :title="`选择${animeProviderName(source.provider)}来源`" close-label="关闭来源选择器" @close="$emit('close')" @scroll="top = $event">
     <div ref="body" class="anime-editor ae-picker">
       <nav class="ae-picker-nav" aria-label="来源选择步骤"><button v-if="step !== 'items' && !(step === 'rules' && source.lockedGroup)" type="button" class="ae-icon" :aria-label="step === 'rules' ? '返回字幕组' : '返回资源条目'" :disabled="disabled" @click="go(step === 'rules' ? 'groups' : 'items')"><IconArrowLeft :size="18" /></button><div><p class="ae-note">{{ chapterTitle }}</p><h3 ref="heading" tabindex="-1">{{ step === 'items' ? '选择资源条目' : step === 'groups' ? '选择字幕组' : '选择资源规格' }}</h3></div><span class="ae-note">{{ step === 'items' ? '1' : step === 'groups' ? '2' : '3' }} / 3</span></nav>
       <p v-if="source.searchError" class="ae-error" role="status">{{ source.searchError }}</p><p v-if="source.cooldown > now" class="ae-note">来源冷却中，请 {{ Math.ceil((source.cooldown - now) / 1000) }} 秒后重试。</p>
       <fieldset :disabled="disabled" :aria-busy="source.searchBusy" class="ae-picker-content">
-        <legend class="sr-only">{{ step === 'items' ? '蜜柑候选' : step === 'groups' ? '字幕组列表' : '来源规格' }}</legend>
+        <legend class="sr-only">{{ step === 'items' ? `${animeProviderName(source.provider)}候选` : step === 'groups' ? '字幕组列表' : '来源规格' }}</legend>
         <template v-if="step === 'items'">
-          <label :for="`${prefix}-search`" class="ae-label">搜索蜜柑资源</label><form class="ae-search" @submit.prevent="!source.searchBusy && $emit('search')"><input :id="`${prefix}-search`" v-model="source.keyword" type="search" maxlength="128" placeholder="输入番剧名称" autocomplete="off" /><button type="submit" class="ae-button ae-primary" :disabled="source.searchBusy || source.cooldown > now"><IconSearch :size="17" />搜索</button></form>
+          <label :for="`${prefix}-search`" class="ae-label">搜索{{ animeProviderName(source.provider) }}资源</label><form class="ae-search" @submit.prevent="!source.searchBusy && $emit('search')"><input :id="`${prefix}-search`" v-model="source.keyword" type="search" :maxlength="source.provider === 'anibt' ? 120 : 128" placeholder="输入番剧名称" autocomplete="off" /><button type="submit" class="ae-button ae-primary" :disabled="source.searchBusy || source.cooldown > now"><IconSearch :size="17" />搜索</button></form>
           <p class="ae-note ae-picker-help">请选择与当前篇章对应的条目，搜索结果不会自动绑定。</p>
           <p v-if="source.searchBusy" class="ae-note" role="status">正在读取候选条目…</p>
           <p v-if="source.search" class="ae-note">{{ source.searchError ? '上次成功搜索' : '搜索结果' }}：{{ source.searchedKeyword }}</p>
-          <div v-if="source.search" class="ae-picker-list"><button v-for="item in source.search.items" :key="item.id" type="button" :aria-disabled="source.searchBusy" :disabled="source.cooldown > now || source.lockedItem && source.itemId !== item.id" @click="choose(item.id, item.title)"><span><strong>{{ item.title }}</strong><small>蜜柑 {{ item.id }}</small></span><IconChevronRight :size="18" aria-hidden="true" /></button></div>
+          <div v-if="source.search" class="ae-picker-list"><button v-for="item in source.search.items" :key="item.id" type="button" :aria-disabled="source.searchBusy" :disabled="source.cooldown > now || source.lockedItem && source.itemId !== item.id" @click="choose(item.id, item.title)"><span><strong>{{ item.title }}</strong><small>{{ animeProviderName(source.provider) }} {{ item.id }}</small></span><IconChevronRight :size="18" aria-hidden="true" /></button></div>
           <p v-if="source.search && !source.search.items.length" class="ae-source-empty">没有找到资源，可以换个名称搜索，或先保存草稿。</p><p v-if="source.search?.truncated" class="ae-note">结果较多，请缩小搜索范围。</p>
         </template>
         <template v-else-if="step === 'groups'">
-          <p class="ae-picker-selected">{{ source.itemTitle }}<small>蜜柑 {{ source.itemId }}</small></p>
+          <p class="ae-picker-selected">{{ source.itemTitle }}<small>{{ animeProviderName(source.provider) }} {{ source.itemId }}</small></p>
           <p class="ae-note">展开一个字幕组，查看它的最近发布和可选规格。</p>
           <p v-if="source.searchBusy" class="ae-note" role="status">正在读取字幕组…</p>
           <div class="ae-picker-list"><button v-for="item in source.entry?.groups" :key="item.id" type="button" :aria-disabled="source.searchBusy" :disabled="source.lockedGroup && source.groupId !== item.id" @click="group(item.id)"><span><strong>{{ item.name }}</strong><small>{{ source.groupId === item.id ? '已选字幕组' : '查看最近发布' }}</small></span><IconChevronRight :size="18" aria-hidden="true" /></button></div>
@@ -79,7 +79,7 @@ async function confirm() {
           <button v-if="!source.entry && !source.searchBusy" type="button" class="ae-button" :disabled="source.cooldown > now" @click="$emit('choose', source.itemId, source.itemTitle)">重试读取字幕组</button>
         </template>
         <template v-else>
-          <p class="ae-picker-selected">{{ source.groupName }}<small>{{ source.itemTitle }} · 蜜柑 {{ source.itemId }}</small></p>
+          <p class="ae-picker-selected">{{ source.groupName }}<small>{{ source.itemTitle }} · {{ animeProviderName(source.provider) }} {{ source.itemId }}</small></p>
           <section class="ae-recent" aria-label="最近发布" :aria-busy="source.sampleBusy"><div class="ae-recent-heading"><h4>最近发布</h4><button type="button" class="ae-link" :disabled="source.sampleBusy || source.sampleCooldown > now" @click="$emit('sample')"><IconRefresh :size="14" :class="{ 'animate-spin': source.sampleBusy }" />{{ source.sampleBusy ? '读取中' : source.sampleError ? '重试读取' : '刷新样本' }}</button></div>
             <p v-if="source.sampleError" role="status" class="ae-error">{{ source.sampleError }}{{ sample ? '，保留上次成功样本。' : '' }}</p><p v-else-if="source.sampleBusy && !sample" role="status" class="ae-note">正在读取此字幕组的近期资源…</p>
             <template v-if="sample"><ul class="ae-recent-list"><li v-for="item in sample.releases.slice(0, 1)" :key="item.postKey"><p>{{ item.title }}</p><small>{{ item.parse.episode != null ? `发布第 ${item.parse.episode} 话` : '编号待核对' }}<span v-if="item.sizeRaw"> · {{ item.sizeRaw }}</span></small></li></ul><details v-if="sample.releases.length > 1" class="ae-advanced"><summary>其余 {{ sample.releases.length - 1 }} 条样本<IconChevronDown :size="15" /></summary><ul class="ae-recent-list"><li v-for="item in sample.releases.slice(1)" :key="item.postKey"><p>{{ item.title }}</p><small>{{ item.sizeRaw }}</small></li></ul></details><p v-if="!sample.releases.length" class="ae-note">来源读取成功，当前没有发布。可明确选择全部规格，或先保存草稿。</p><p class="ae-note ae-sample-boundary">{{ sample.releases.length }} 条近期样本，仅代表已读窗口。规格依据标题声明。<span v-if="sample.observedAt">读取于 {{ new Date(sample.observedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}。</span></p></template>
@@ -91,7 +91,7 @@ async function confirm() {
       <p v-if="source.sampleCooldown > now" class="ae-note">样本读取冷却中，请 {{ Math.ceil((source.sampleCooldown - now) / 1000) }} 秒后重试。</p>
     </div>
     <template v-if="step === 'rules'" #footer>
-      <footer class="anime-editor ae-picker-dock"><p class="ae-note">选择所需规格，返回配置页查看季集与命名预览。</p><div><button type="button" class="ae-button ae-primary" :disabled="disabled || source.searchBusy || source.sampleBusy && !sample" @click="confirm"><IconCheck :size="17" />{{ animeBindingConfirmed(source) ? '更新来源规则' : '使用此来源' }}</button><a :href="`https://mikanani.me/Home/Bangumi/${encodeURIComponent(source.itemId)}`" class="ae-link" target="_blank" rel="noopener noreferrer">查看来源<IconExternalLink :size="13" /><span class="sr-only">（新窗口）</span></a></div></footer>
+      <footer class="anime-editor ae-picker-dock"><p class="ae-note">选择所需规格，返回配置页查看季集与命名预览。</p><div><button type="button" class="ae-button ae-primary" :disabled="disabled || source.searchBusy || source.sampleBusy && !sample" @click="confirm"><IconCheck :size="17" />{{ animeBindingConfirmed(source) ? '更新来源规则' : '使用此来源' }}</button><a :href="animeSourceURL(source)" class="ae-link" target="_blank" rel="noopener noreferrer">查看来源<IconExternalLink :size="13" /><span class="sr-only">（新窗口）</span></a></div></footer>
     </template>
   </AnimeFloatingDialog>
 </template>

@@ -6,6 +6,7 @@ import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import { animeConfigMessage, animeConfigRequest } from '../lib/anime-config-api'
 import type { MikanEntry } from '../types/animeSubscription'
 import type { MikanCatalogItem } from '../types/animeCatalog'
+import { animeEditorEntry } from '../utils/animeEditorEntry'
 const props = defineProps<{ token: string; item: MikanCatalogItem }>()
 defineEmits<{ close: [] }>()
 const route = useRoute(), entry = ref<MikanEntry>(), loading = ref(false), error = ref(''), bangumiID = ref<string | null>(null)
@@ -15,7 +16,7 @@ let controller: AbortController | undefined, associationInitialized = false
 const choiceName = useId()
 const bangumiLinks = computed(() => [...new Set((entry.value?.bangumiIds || []).map(String).filter(id => /^[1-9]\d{0,11}$/.test(id)))])
 const validID = computed(() => !bangumiID.value || /^[1-9]\d{0,11}$/.test(bangumiID.value))
-const target = computed(() => ({ path: '/anime/new', query: { source: 'mikan', itemId: props.item.id, ...(bangumiID.value ? { bangumiId: bangumiID.value } : {}), returnTo: route.fullPath } }))
+const target = computed(() => animeEditorEntry(bangumiID.value || '', 'mikan', props.item.id, route.fullPath))
 async function load() {
   controller?.abort(); const active = new AbortController(); controller = active; loading.value = true; error.value = ''
   try {

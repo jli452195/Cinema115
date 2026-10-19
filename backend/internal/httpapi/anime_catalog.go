@@ -14,9 +14,9 @@ func registerAnimeCatalog(r *gin.RouterGroup, s *service.AnimeAdminService) {
 	r.GET("/providers", func(c *gin.Context) { c.JSON(200, gin.H{"items": service.AnimeProviders()}) })
 	r.POST("/catalog/:provider", func(c *gin.Context) {
 		provider := c.Param("provider")
-		if provider != "mikan" {
+		if provider != "mikan" && provider != "anibt" {
 			status, code := http.StatusNotFound, "PROVIDER_NOT_FOUND"
-			if provider == "anibt" || provider == "garden" {
+			if provider == "garden" {
 				status, code = http.StatusServiceUnavailable, "PROVIDER_NOT_READY"
 			}
 			c.JSON(status, gin.H{"code": code, "error": "该站点暂未接入，请明确选择可用站点"})
@@ -34,6 +34,19 @@ func registerAnimeCatalog(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		in.Keyword = strings.TrimSpace(in.Keyword)
 		if in.Mode != "calendar" && in.Mode != "search" || in.Mode == "calendar" && (!mikan.ValidCatalogSeason(in.Season) || in.Keyword != "") || in.Mode == "search" && (!validAnimeSearch(in.Keyword, 128) || in.Season != "") {
 			animeError(c, storage.ErrAnimeInvalid)
+			return
+		}
+		if provider == "anibt" {
+			if s.Bindings == nil || s.Bindings.Anibt == nil {
+				c.JSON(503, gin.H{"code": "PROVIDER_NOT_READY", "error": "AniBT unavailable"})
+				return
+			}
+			out, err := s.Bindings.Anibt.Catalog(c.Request.Context(), in.Season, in.Keyword, in.Refresh)
+			if err != nil {
+				animeError(c, err)
+				return
+			}
+			c.JSON(200, out)
 			return
 		}
 		if s.Bindings == nil || s.Bindings.Mikan == nil {

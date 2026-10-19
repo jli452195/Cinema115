@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
-	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -294,11 +294,11 @@ func (s *AnimeAdminService) SaveConfiguration(ctx context.Context, actor, key, i
 			continue
 		}
 		if v.ItemID != nil && v.GroupID != nil {
-			budget, e := NewAnimeMikanBudget(nil)
+			budget, e := NewAnimeSourceBudget(nil)
 			if e != nil {
 				return out, e
 			}
-			checked, e := s.Bindings.CheckBinding(ctx, budget, AnimeBindingInput{Entry: bindingEntry, Source: mikan.Source{ItemID: *v.ItemID, GroupID: *v.GroupID}, Binding: v.Binding})
+			checked, e := s.Bindings.CheckBinding(ctx, budget, AnimeBindingInput{Entry: bindingEntry, Source: animefeed.NewSource(v.Provider, *v.ItemID, *v.GroupID), Binding: v.Binding})
 			if e != nil {
 				return out, e
 			}
@@ -312,11 +312,11 @@ func (s *AnimeAdminService) SaveConfiguration(ctx context.Context, actor, key, i
 		title := ""
 		for _, v := range c.Sources {
 			if v.ItemID != nil {
-				budget, e := NewAnimeMikanBudget(nil)
+				budget, e := NewAnimeSourceBudget(nil)
 				if e != nil {
 					return out, e
 				}
-				read, e := s.Bindings.Mikan.ReadAnimeMikanEntry(ctx, budget, *v.ItemID, false)
+				read, e := s.Bindings.ReadEntry(ctx, budget, v.Provider, *v.ItemID, false)
 				if e != nil {
 					return out, e
 				}
@@ -363,7 +363,7 @@ func (s *AnimeAdminService) SaveConfiguration(ctx context.Context, actor, key, i
 			}
 		}
 		if v.ItemID != nil && v.GroupID != nil {
-			feed := *v.ItemID + ":" + *v.GroupID
+			feed := v.Provider + ":" + *v.ItemID + ":" + *v.GroupID
 			if feeds[feed] {
 				return out, &storage.AnimeExistsError{Kind: "source"}
 			}
@@ -404,7 +404,7 @@ func (s *AnimeAdminService) SaveConfiguration(ctx context.Context, actor, key, i
 		for _, preview := range b.Sources {
 			if preview.ID == ref.SourcePreviewID && preview.Ref == ref.SourceRef && ref.LoadRevision <= preview.LoadRevision {
 				for _, source := range final {
-					if (ref.SourceID != "" && ref.SourceID == source.ID || ref.SourceID == "" && ref.SourceRef == source.Ref) && source.ItemID != nil && source.GroupID != nil && preview.Page.Source == (mikan.Source{ItemID: *source.ItemID, GroupID: *source.GroupID}) {
+					if (ref.SourceID != "" && ref.SourceID == source.ID || ref.SourceID == "" && ref.SourceRef == source.Ref) && source.ItemID != nil && source.GroupID != nil && preview.Page.Source == (animefeed.NewSource(source.Provider, *source.ItemID, *source.GroupID)) {
 						matched = true
 					}
 				}
