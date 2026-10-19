@@ -82,7 +82,7 @@ func (b AnimeBinding) Validate(complete bool) error {
 	if complete && (!b.Confirmed || b.Scope == nil) || b.Confirmed && b.Scope == nil {
 		return fmt.Errorf("binding is incomplete")
 	}
-	if r := b.Review; r != nil && (r.Method != "source_review" || !ValidAnimeExternalID(r.ItemID) || !(animefeed.ValidGroup("mikan", r.GroupID) || animefeed.ValidGroup("anibt", r.GroupID)) || !b.Confirmed || b.Scope == nil) {
+	if r := b.Review; r != nil && (r.Method != "source_review" || !ValidAnimeExternalID(r.ItemID) || !(animefeed.ValidGroup("mikan", r.GroupID) || animefeed.ValidGroup("anibt", r.GroupID) || animefeed.ValidGroup("garden", r.GroupID)) || !b.Confirmed || b.Scope == nil) {
 		return fmt.Errorf("invalid source review")
 	}
 	if s := b.Scope; s != nil {

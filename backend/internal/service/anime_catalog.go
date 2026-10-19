@@ -15,7 +15,7 @@ type AnimeProvider struct {
 }
 
 func AnimeProviders() []AnimeProvider {
-	return []AnimeProvider{{ID: "anibt", Name: "AniBT", Available: true}, {ID: "mikan", Name: "蜜柑", Available: true}, {ID: "garden", Name: "Anime Garden"}}
+	return []AnimeProvider{{ID: "anibt", Name: "AniBT", Available: true}, {ID: "mikan", Name: "蜜柑", Available: true}, {ID: "garden", Name: "Anime Garden", Available: true}}
 }
 
 type AnimeMikanCatalog struct {

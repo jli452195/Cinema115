@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS anime_subscription_sources (
  position INTEGER NOT NULL CHECK(position BETWEEN 0 AND 4),
  status TEXT NOT NULL CHECK(status IN ('draft','paused','enabled','removed')),
  run_when_enabled INTEGER NOT NULL CHECK(run_when_enabled IN (0,1)),
- provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt')),
+ provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt','garden')),
  source_key TEXT,
  item_id TEXT,
  group_id TEXT,
@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS anime_sources_due ON anime_subscription_sources(statu
 
 CREATE TABLE IF NOT EXISTS anime_releases (
  id TEXT PRIMARY KEY NOT NULL,
- provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt')),
+ provider TEXT NOT NULL CHECK(provider IN ('mikan','anibt','garden')),
  post_key TEXT NOT NULL CHECK(length(post_key)>0),
  original_guid TEXT,
  title TEXT NOT NULL,

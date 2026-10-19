@@ -29,6 +29,10 @@ func RegisterAnibtImages(r gin.IRoutes, images TMDBImageStore) {
 	// size 是 AniBT 封面目录，name 是内容哈希，由缓存层校验固定源。
 	registerImages(r, "/api/anibt/image/:size/:name", images)
 }
+func RegisterGardenImages(r gin.IRoutes, images TMDBImageStore) {
+	// size 是 AniBT 封面目录，name 是内容哈希，由缓存层校验固定源。
+	registerImages(r, "/api/garden/image/:size/:name", images)
+}
 
 func RegisterGyingImages(r gin.IRoutes, images TMDBImageStore) {
 	// size 表示观影类型，name 表示条目编号及扩展名；只允许固定图片源。

@@ -17,6 +17,7 @@ import (
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
+	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
@@ -111,7 +112,7 @@ func main() {
 	mikanService := service.NewMikanService(mikan.New(), generationLogs)
 	httpapi.RegisterMikan(admin, mikanService)
 	animeDiscovery := bangumi.New()
-	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService, Anibt: service.NewAnibtService(anibt.New())}
+	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService, Anibt: service.NewAnibtService(anibt.New()), Garden: service.NewGardenService(garden.New())}
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	httpapi.RegisterAnime(admin, &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}})
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)
@@ -166,6 +167,11 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterAnibtImages(r, anibtImages)
+	gardenImages, err := imagecache.NewGarden(filepath.Join(dataDir, "garden-images"))
+	if err != nil {
+		log.Fatalf("Garden image cache: %v", err)
+	}
+	httpapi.RegisterGardenImages(r, gardenImages)
 
 	gyingImages, err := imagecache.NewGying(filepath.Join(dataDir, "gying-images"))
 	if err != nil {
@@ -409,6 +415,8 @@ func main() {
 	go func() { defer workers.Done(); mikanImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); anibtImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); gardenImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); gyingImages.Run(ctx) }()
 	workers.Add(1)

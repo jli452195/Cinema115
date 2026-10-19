@@ -19,6 +19,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       if (endpoint === '/api/auth/me') data = { user: { id:'mock',username:'admin',role,disabled:false } }
       else if (endpoint.startsWith('/api/mikan/image/')) {
         await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="336"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#405d85"/><stop offset="1" stop-color="#98b6ad"/></linearGradient></defs><path fill="url(#g)" d="M0 0h240v336H0z"/><circle cx="170" cy="120" r="80" fill="white" opacity=".18"/></svg>'}); return
+      } else if (endpoint.endsWith('/catalog/garden')) {
+        const native={id:'630160',bangumiId:'630160',title:'Garden 原生卡片',originalTitle:'Garden original',coverUrl:'',platform:'TV',airDate:'2026-10-18'}
+        if(state.fail){status=502;data={error:'Garden unavailable'}}
+        else data={provider:'garden',season:body.season||'',days:Array.from({length:7},(_,i)=>({day:i+1,items:[{...native,id:String(630160+i),bangumiId:String(630160+i)}]})),items:body.keyword==='none'?[]:[native],truncated:body.keyword==='many',fetchedAt:Date.now(),expiresAt:Date.now()+600000}
       } else if (endpoint.endsWith('/catalog/anibt')) {
         if(state.fail){status=502;data={error:'模拟 AniBT 读取失败'}}
         else {
@@ -46,12 +50,12 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const s=await session(), {page,state,calls}=s; await s.go()
     assert.equal(s.count(),1)
     assert.equal(await page.getByRole('button',{name:'AniBT',exact:true}).isDisabled(),false)
-    assert.equal(await page.getByRole('button',{name:'Anime Garden 待接入',exact:true}).isDisabled(),true)
+    assert.equal(await page.getByRole('button',{name:'Anime Garden',exact:true}).isDisabled(),false)
     assert.equal(calls.some(c=>c.endpoint.includes('/discovery/')||c.endpoint.includes('/sources/')),false)
     await page.getByRole('button',{name:'周日',exact:true}).click(); await page.getByRole('button',{name:'剧场版',exact:true}).click(); await page.getByRole('button',{name:'OVA',exact:true}).click(); await page.getByRole('button',{name:/^周一/}).click()
     assert.equal(s.count(),1,'categories use one calendar request')
     await page.screenshot({path:'test-results/anime-catalog-desktop-light.png',fullPage:true,animations:'disabled'})
-    passed.push('独立蜜柑入口与真实待接入状态，整季一次请求，星期/剧场版/OVA本地切换，无逐卡详情')
+    passed.push('独立蜜柑入口与三站可用状态，整季一次请求，星期/剧场版/OVA本地切换，无逐卡详情')
     await page.locator('[data-mikan-id="4058"]').click()
     const dialog=page.getByRole('dialog'); await dialog.getByRole('link',{name:'选择字幕组并配置订阅',exact:true}).waitFor()
     let href=await dialog.getByRole('link',{name:'选择字幕组并配置订阅',exact:true}).getAttribute('href')
@@ -96,7 +100,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await mobile.page.screenshot({path:'test-results/anime-catalog-dialog-mobile.png',animations:'disabled'})
     await mobile.page.keyboard.press('Escape'); await mobile.page.setViewportSize({width:320,height:760}); assert.equal(await mobile.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
     await mobile.page.locator('.catalog-providers').screenshot({path:'test-results/anime-provider-buttons-mobile-320.png',animations:'disabled'})
-    await mobile.navigate('/anime?source=garden&q=test'); await mobile.page.getByText('该站点暂未接入',{exact:true}).waitFor(); assert.equal(mobile.count(),1,'unsupported site must never fall back to mikan'); await mobile.page.getByRole('button',{name:'蜜柑',exact:true}).click(); await mobile.page.locator('[data-mikan-id="4058"]').waitFor()
+    await mobile.navigate('/anime?source=garden&q=test'); await mobile.page.locator('.garden-anime-card').waitFor(); assert.equal(mobile.count(),1,'Garden never falls back to Mikan'); await mobile.page.getByRole('button',{name:'蜜柑',exact:true}).click(); await mobile.page.locator('[data-mikan-id="4058"]').waitFor()
     passed.push('390/320手机布局与暗色，无横向溢出，未接入站点直达不回退蜜柑')
     const native=await session(); await native.go('/anime?source=anibt&day=1')
     await native.page.locator('[data-anibt-id="630160"]').waitFor()
@@ -114,6 +118,27 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     native.state.fail=true;await native.page.getByRole('button',{name:'刷新当前站点',exact:true}).click();await native.page.getByText(/模拟 AniBT/).waitFor();assert.equal(await native.page.locator('.anibt-anime-card').count(),1)
     await native.page.screenshot({path:'test-results/anibt-catalog-desktop.png',animations:'disabled'})
     passed.push('AniBT native cards/categories/search isolated from Mikan; one seasonal read, 50-result boundary, per-site drafts/cache, failed refresh retains cards')
+    const garden=await session(); await garden.go('/anime?source=garden&day=1')
+    await garden.page.locator('.garden-anime-card').waitFor()
+    assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,1)
+    assert.equal(garden.calls.some(c=>c.endpoint.includes('/discovery/')||c.endpoint.includes('/sources/')),false)
+    assert.equal(await garden.page.getByRole('button',{name:'OVA',exact:true}).count(),0)
+    assert.equal(await garden.page.locator('.garden-anime-card').getAttribute('href'),'/anime/new?bangumiId=630160')
+    assert.equal(await garden.page.locator('.garden-anime-card').innerText().then(t=>t.includes('2026-10-18')),true)
+    await garden.page.getByRole('button',{name:/^周日/}).click();await garden.page.locator('[data-garden-id="630166"]').waitFor()
+    assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,1)
+    await garden.page.screenshot({path:'test-results/garden-catalog-desktop.png',animations:'disabled'})
+    await garden.page.getByRole('searchbox').fill('many');await garden.page.getByRole('button',{name:'搜索',exact:true}).click();await garden.page.getByText(/Anime Garden.*100/).waitFor()
+    await garden.page.getByRole('button',{name:'AniBT',exact:true}).click();await garden.page.locator('.anibt-anime-card').waitFor()
+    await garden.page.getByRole('button',{name:'Anime Garden',exact:true}).click();await garden.page.locator('.garden-anime-card').waitFor()
+    assert.equal(await garden.page.getByRole('searchbox').inputValue(),'many')
+    assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,2)
+    garden.state.fail=true;await garden.page.getByRole('button',{name:'刷新当前站点'}).click();await garden.page.getByText(/Garden unavailable/).waitFor();assert.equal(await garden.page.locator('.garden-anime-card').count(),1)
+    await garden.page.setViewportSize({width:320,height:800});await garden.page.waitForTimeout(120)
+    assert.equal(await garden.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await garden.page.screenshot({path:'test-results/garden-catalog-mobile.png',animations:'disabled'})
+    await garden.page.evaluate(()=>document.documentElement.classList.add('dark'));await garden.page.screenshot({path:'test-results/garden-catalog-mobile-dark.png',animations:'disabled'})
+    passed.push('Garden native card, one seasonal request, no per-card calls, same Bangumi URL, scoped search/cache/errors and 320px light/dark')
     const ordinary=await session(undefined,'user'); await ordinary.go(); assert.equal(ordinary.calls.some(c=>c.endpoint.includes('/admin/anime')),false)
     assert.deepEqual(errors,[]); console.log(JSON.stringify({passed,errors},null,2))
   } finally { await Promise.allSettled(contexts.map(c=>c.close())); await browser.close() }

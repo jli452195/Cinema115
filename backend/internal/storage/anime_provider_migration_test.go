@@ -2,13 +2,19 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strm115/backend/internal/model"
 	"testing"
 	"time"
 )
 
-func TestAnimeV43PreservesPopulatedV42(t *testing.T) {
+func TestAnimeProviderMigrationPreservesReferences(t *testing.T) {
+	for _, prior := range []int{42, 43} {
+		t.Run(fmt.Sprint(prior), func(t *testing.T) { testAnimeProviderMigration(t, prior) })
+	}
+}
+func testAnimeProviderMigration(t *testing.T, prior int) {
 	s, path := testStore(t)
 	ctx := context.Background()
 	c := previewConfig(t, s)
@@ -33,9 +39,17 @@ func TestAnimeV43PreservesPopulatedV42(t *testing.T) {
 	}
 	// Reproduce the exact old CHECK with real referencing rows, without changing
 	// data. This is a disposable fixture database, never an application operation.
-	if _, e = s.db.ExecContext(ctx, `PRAGMA writable_schema=ON;
- UPDATE sqlite_master SET sql=replace(sql, 'CHECK(provider IN (''mikan'',''anibt''))', 'CHECK(provider=''mikan'')') WHERE name IN ('anime_subscription_sources','anime_releases');
- PRAGMA writable_schema=OFF; PRAGMA user_version=42;`); e != nil {
+	oldCheck := "CHECK(provider='mikan')"
+	if prior == 43 {
+		oldCheck = "CHECK(provider IN ('mikan','anibt'))"
+	}
+	if _, e = s.db.ExecContext(ctx, `PRAGMA writable_schema=ON;`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.db.ExecContext(ctx, `UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name IN ('anime_subscription_sources','anime_releases')`, "CHECK(provider IN ('mikan','anibt','garden'))", oldCheck); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA writable_schema=OFF; PRAGMA user_version=%d;", prior)); e != nil {
 		t.Fatal(e)
 	}
 	if e = s.Close(); e != nil {
@@ -79,6 +93,10 @@ func TestAnimeV43PreservesPopulatedV42(t *testing.T) {
 	r.Provider = "anibt"
 	if _, e := reopened.SaveAnimeReleases(ctx, []model.AnimeRelease{r}); e != nil {
 		t.Fatal("new provider rejected", e)
+	}
+	r.Provider = "garden"
+	if _, e := reopened.SaveAnimeReleases(ctx, []model.AnimeRelease{r}); e != nil {
+		t.Fatal("Garden provider rejected", e)
 	}
 	r.Provider = "other"
 	if _, e := reopened.SaveAnimeReleases(ctx, []model.AnimeRelease{r}); e == nil {

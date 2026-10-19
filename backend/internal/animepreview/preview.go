@@ -210,7 +210,7 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 		page.Kind == "history" && (page.RequestedTake < 1 || page.RequestedTake > mikan.AnimeMaxRows) {
 		return out, ErrInput
 	}
-	if page.Completeness == "visible_end" && (page.Kind != "history" || (page.RawCount >= page.RequestedTake && !(page.Source.Site() == "anibt" && page.Total != nil && *page.Total == page.RawCount)) || page.StopReason != "") {
+	if page.Completeness == "visible_end" && (page.Kind != "history" || (page.RawCount >= page.RequestedTake && !((page.Source.Site() == "anibt" || page.Source.Site() == "garden") && page.Total != nil && *page.Total == page.RawCount)) || page.StopReason != "") {
 		return out, ErrInput
 	}
 	fp, err := SourceFingerprint(c, ref)

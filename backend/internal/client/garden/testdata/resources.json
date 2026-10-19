@@ -1,0 +1,105 @@
+{
+  "status": "OK",
+  "resources": [
+    {
+      "id": 2468830,
+      "provider": "dmhy",
+      "providerId": "729236",
+      "title": "[Skymoon-Raws] 龍珠超：比路斯 / Dragon Ball Super: Beerus - 02 [ViuTV][WEB-DL][CHT][1080p][AVC AAC]",
+      "href": "https://share.dmhy.org/topics/view/729236_Skymoon-Raws_Dragon_Ball_Super_Beerus_-_02_ViuTV_WEB-DL_CHT_1080p_AVC_AAC.html",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:7HJKJIQ5XTK4DGGECVU7XCZTWDWQQFQ3",
+      "size": 499960832,
+      "createdAt": "2026-10-19T08:48:00.000Z",
+      "fetchedAt": "2026-10-19T09:10:00.003Z",
+      "publisher": {
+        "id": 99,
+        "name": "Laputa",
+        "avatar": "https://bangumi.moe/data/images/2016/07/6e57sn7irphcjzoprke.jpg"
+      },
+      "fansub": {
+        "id": 776,
+        "name": "天月動漫發佈組",
+        "avatar": "https://bangumi.moe/data/images/2024/01/30ew7moszj9kxmjbidu.jpg"
+      },
+      "subjectId": 623249
+    },
+    {
+      "id": 2468768,
+      "provider": "dmhy",
+      "providerId": "729212",
+      "title": "[沸班亚马制作组] 龙珠超 比鲁斯 - 01 [IQIYI WebRip 2160p H265 Veryslow AAC][简繁内封字幕]",
+      "href": "https://share.dmhy.org/topics/view/729212_-_01_IQIYI_WebRip_2160p_H265_Veryslow_AAC.html",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:O3T7EFOCF2WZOHBUHNX6PUXCCSO3LIW5",
+      "size": 2362231808,
+      "createdAt": "2026-10-19T00:31:00.000Z",
+      "fetchedAt": "2026-10-19T00:35:00.002Z",
+      "publisher": {
+        "id": 33,
+        "name": "B站沸羊羊都得叫我师傅",
+        "avatar": "https://pic.superbed.cc/item/674853e2fa9f77b4dc31709a.png"
+      },
+      "fansub": {
+        "id": 672,
+        "name": "沸班亚马制作组",
+        "avatar": "https://maxpcimg.online/i/2025/04/18/68019e3c3d78a.jpg"
+      },
+      "subjectId": 623249
+    },
+    {
+      "id": 2468765,
+      "provider": "dmhy",
+      "providerId": "729211",
+      "title": "[沸班亚马制作组] 龙珠超 比鲁斯 - 01 [CR WebRip 1080p H265 Veryslow AAC][简繁内封字幕]",
+      "href": "https://share.dmhy.org/topics/view/729211_-_01_CR_WebRip_1080p_H265_Veryslow_AAC.html",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:TBVEJMDIGRSBV2RNMXYS3XGEWM2GE2ZL",
+      "size": 1073741824,
+      "createdAt": "2026-10-18T23:19:00.000Z",
+      "fetchedAt": "2026-10-18T23:25:00.005Z",
+      "publisher": {
+        "id": 33,
+        "name": "B站沸羊羊都得叫我师傅",
+        "avatar": "https://pic.superbed.cc/item/674853e2fa9f77b4dc31709a.png"
+      },
+      "fansub": {
+        "id": 672,
+        "name": "沸班亚马制作组",
+        "avatar": "https://maxpcimg.online/i/2025/04/18/68019e3c3d78a.jpg"
+      },
+      "subjectId": 623249
+    },
+    {
+      "id": 2468761,
+      "provider": "mikan",
+      "providerId": "26bd131a81492d3cc6312659b8644721a1347c1e",
+      "title": "[Nix-Raws] 龙珠超 比鲁斯 / 龙珠超 比鲁斯 / ドラゴンボール超 ビルス / Dragon Ball Super Beerus S01E02 [CR WEB-DL 1080p AVC AAC][简繁内封]",
+      "href": "https://mikanani.me/Home/Episode/26bd131a81492d3cc6312659b8644721a1347c1e",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:26bd131a81492d3cc6312659b8644721a1347c1e",
+      "size": 1181115392,
+      "createdAt": "2026-10-18T21:45:00.000Z",
+      "fetchedAt": "2026-10-18T21:50:00.003Z",
+      "publisher": {
+        "id": 4785,
+        "name": "Nix-Raws"
+      },
+      "fansub": {
+        "id": 827,
+        "name": "Nix-Raws"
+      },
+      "subjectId": 623249
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 200,
+    "complete": false
+  },
+  "filter": {
+    "subjects": [
+      623249
+    ]
+  }
+}

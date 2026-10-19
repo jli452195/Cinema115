@@ -31,6 +31,7 @@ type AnimeBindingService struct {
 	Subjects animeBindingSubjects
 	Mikan    *MikanService
 	Anibt    *AnibtService
+	Garden   *GardenService
 }
 
 type AnimeEntryRef struct {
@@ -259,7 +260,7 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 		}
 		out.Entry = entry
 	}
-	rssURL, err := in.Source.RSSURL()
+	rssURL, err := in.Source.RSSURL(groupName)
 	if err != nil {
 		return out, err
 	}

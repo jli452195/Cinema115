@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"strm115/backend/internal/client/anibt"
@@ -13,150 +11,10 @@ import (
 	"strm115/backend/internal/client/mikan"
 )
 
-type anibtTransport interface {
-	Fetch(context.Context, string, int64) ([]byte, error)
-}
-type anibtCache struct {
-	body              []byte
-	observed, expires time.Time
-}
-type anibtFlight struct {
-	done   chan struct{}
-	result anibtCache
-	err    error
-}
-type AnibtService struct {
-	Client                anibtTransport
-	mu                    sync.Mutex
-	cache                 map[string]anibtCache
-	flights               map[string]*anibtFlight
-	gate                  chan struct{}
-	lastRequest, cooldown time.Time
-	spacing               time.Duration
-}
+type AnibtService struct{ *animeSiteCache }
 
-func NewAnibtService(client anibtTransport) *AnibtService {
-	return &AnibtService{Client: client, cache: make(map[string]anibtCache, 32), flights: make(map[string]*anibtFlight, 8), gate: make(chan struct{}, 1), spacing: 2100 * time.Millisecond}
-}
-
-// All AniBT JSON and RSS requests share one bounded cache, request gate and
-// cooldown. Failed refreshes retain successes; a cancelled leader does not
-// poison another caller. No background goroutines are started.
-func (s *AnibtService) read(ctx context.Context, path string, ttl time.Duration, refresh bool, budget *AnimeSourceBudget, validate func([]byte) error) (anibtCache, bool, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return anibtCache{}, false, err
-		}
-		s.mu.Lock()
-		if v, ok := s.cache[path]; ok && !refresh && time.Now().Before(v.expires) {
-			s.mu.Unlock()
-			return v, true, nil
-		}
-		if f, ok := s.flights[path]; ok {
-			s.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return anibtCache{}, false, ctx.Err()
-			case <-f.done:
-				if errors.Is(f.err, context.Canceled) || errors.Is(f.err, context.DeadlineExceeded) || errors.Is(f.err, mikan.ErrLimit) {
-					continue
-				}
-				return f.result, true, f.err
-			}
-		}
-		if len(s.flights) >= 16 {
-			s.mu.Unlock()
-			return anibtCache{}, false, &anibt.HTTPError{Status: 429, RetryAt: time.Now().Add(2 * time.Second)}
-		}
-		f := &anibtFlight{done: make(chan struct{})}
-		s.flights[path] = f
-		s.mu.Unlock()
-		v, err := s.fetch(ctx, path, ttl, budget, validate)
-		s.mu.Lock()
-		if err == nil {
-			s.cache[path] = v
-			bytes := 0
-			for key, entry := range s.cache {
-				if !time.Now().Before(entry.expires) {
-					delete(s.cache, key)
-				} else {
-					bytes += len(entry.body)
-				}
-			}
-			for len(s.cache) > 32 || bytes > 8<<20 {
-				oldestKey := ""
-				var oldest time.Time
-				for key, entry := range s.cache {
-					if oldestKey == "" || entry.observed.Before(oldest) {
-						oldestKey, oldest = key, entry.observed
-					}
-				}
-				bytes -= len(s.cache[oldestKey].body)
-				delete(s.cache, oldestKey)
-			}
-		}
-		f.result, f.err = v, err
-		delete(s.flights, path)
-		close(f.done)
-		s.mu.Unlock()
-		return v, false, err
-	}
-}
-func (s *AnibtService) fetch(ctx context.Context, path string, ttl time.Duration, budget *AnimeSourceBudget, validate func([]byte) error) (anibtCache, error) {
-	select {
-	case s.gate <- struct{}{}:
-	case <-ctx.Done():
-		return anibtCache{}, ctx.Err()
-	}
-	defer func() { <-s.gate }()
-	s.mu.Lock()
-	cooldown, last := s.cooldown, s.lastRequest
-	s.mu.Unlock()
-	if time.Now().Before(cooldown) {
-		return anibtCache{}, &anibt.HTTPError{Status: 429, RetryAt: cooldown}
-	}
-	if delay := time.Until(last.Add(s.spacing)); delay > 0 {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			return anibtCache{}, ctx.Err()
-		}
-	}
-	limit := int64(4 << 20)
-	if budget != nil {
-		var err error
-		limit, err = budget.startRequest()
-		if err != nil {
-			return anibtCache{}, err
-		}
-	}
-	s.mu.Lock()
-	s.lastRequest = time.Now()
-	s.mu.Unlock()
-	body, err := s.Client.Fetch(ctx, path, limit)
-	if budget != nil {
-		budget.addBytes(int64(len(body)))
-	}
-	if err != nil {
-		var e *anibt.HTTPError
-		if errors.As(err, &e) && (e.Status == 429 || e.Status == 503 && !e.RetryAt.IsZero()) {
-			until := e.RetryAt
-			if !until.After(time.Now()) {
-				until = time.Now().Add(time.Minute)
-			}
-			s.mu.Lock()
-			s.cooldown = until
-			s.mu.Unlock()
-		}
-		return anibtCache{}, err
-	}
-	if err := validate(body); err != nil {
-		return anibtCache{}, err
-	}
-	observed := time.Now()
-	return anibtCache{body: body, observed: observed, expires: observed.Add(ttl)}, nil
+func NewAnibtService(client animeSiteTransport) *AnibtService {
+	return &AnibtService{newAnimeSiteCache(client, "anibt")}
 }
 
 type AnimeAnibtCatalog struct {
@@ -305,6 +163,10 @@ func (s *AnimeBindingService) sourceReader(provider string) (AnimeSourceReader, 
 	case "mikan":
 		if s.Mikan != nil {
 			return s.Mikan, nil
+		}
+	case "garden":
+		if s.Garden != nil {
+			return s.Garden, nil
 		}
 	case "anibt":
 		if s.Anibt != nil {

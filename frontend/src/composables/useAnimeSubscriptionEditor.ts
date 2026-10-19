@@ -63,7 +63,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     async function newConfiguration(): Promise<AnimeSubjectResult & { sourceEntry?: MikanEntry }> {
       let sourceEntry: MikanEntry | undefined
       if (seed?.value.provider || seed?.value.itemId) {
-        if (!['mikan', 'anibt'].includes(seed.value.provider) || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
+        if (!['mikan', 'anibt', 'garden'].includes(seed.value.provider) || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
         try {
           const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${seed.value.provider}/${seed.value.itemId}`, { signal })
           if (result.entry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
@@ -116,7 +116,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       feedback.value = seedIssue
       const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry }
       subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date }
-      sources.value = [newAnimeSource('main', data.subject.title, seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
+      sources.value = [newAnimeSource('main', data.subject.title, seed?.value.provider === 'garden' ? 'garden' : seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
       if (data.sourceEntry) {
         const form = sources.value[0]!
         form.itemId = data.sourceEntry.id; form.itemTitle = data.sourceEntry.title; form.entry = data.sourceEntry
@@ -210,7 +210,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     sampleControllers.get(source.ref)?.abort(); const controller = new AbortController(); sampleControllers.set(source.ref, controller)
     source.sampleBusy = true; source.sampleError = ''; const current = generation
     try {
-      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(), source: { ...(source.provider === 'anibt' ? { provider: source.provider } : {}), itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
+      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(), source: { ...(source.provider !== 'mikan' ? { provider: source.provider } : {}), itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
       if (current !== generation || controller.signal.aborted || key !== `${source.provider}:${source.itemId}:${source.groupId}`) return
       if ((data.source.provider || 'mikan') !== source.provider || data.source.itemId !== source.itemId || data.source.groupId !== source.groupId || !Array.isArray(data.releases) || !Array.isArray(data.profiles)) throw new Error('来源样本无法核对，请重试读取')
       source.sample = data

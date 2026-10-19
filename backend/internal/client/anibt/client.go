@@ -23,12 +23,7 @@ var ErrInvalid = errors.New("invalid AniBT response")
 var ErrMoved = errors.New("AniBT source has been merged; select its current entry")
 var ErrUnavailable = errors.New("AniBT unavailable")
 
-type HTTPError struct {
-	Status  int
-	RetryAt time.Time
-}
-
-func (e *HTTPError) Error() string { return fmt.Sprintf("AniBT HTTP %d", e.Status) }
+type HTTPError = animefeed.HTTPError
 
 type Client struct {
 	HTTP    *http.Client

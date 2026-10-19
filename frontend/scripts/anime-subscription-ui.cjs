@@ -71,6 +71,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         data = state.settings
       } else if (endpoint.includes('/cloud-download/paths')) data = { directories: [{ id: '200', name: '新动漫目录' }], hasMore: false }
       else if (endpoint.endsWith('/catalog/anibt')) data = {provider:'anibt', season:'2026-10', days:[{day:1,items:[{id:'123',bangumiId:'123',animeId:'native-anibt',title:'AniBT 原站番剧',originalTitle:'Re:ZERO',coverUrl:'',format:'TV',rating:7.8,episodes:12,airingAt:null,releaseCount:120,hasRelease:true}]}],items:[],fetchedAt:Date.now(),expiresAt:Date.now()+600000}
+      else if (endpoint.endsWith('/catalog/garden')) data={provider:'garden',season:'2026-10',days:[{day:1,items:[{id:'123',bangumiId:'123',title:'Garden 原站番剧',originalTitle:'Re:ZERO',coverUrl:'',platform:'TV',airDate:'2026-10-01'}]}],items:[],fetchedAt:Date.now(),expiresAt:Date.now()+600000}
+      else if (endpoint.endsWith('/sources/garden/search')) data={items:[{id:'123',title:'Garden 原站番剧'}],truncated:false}
+      else if (endpoint.endsWith('/sources/garden/123')) data={entry:{id:'123',title:'Garden 原站番剧',groupsPartial:true,groups:[{id:'dmhy_f9',name:'桜都字幕组',origin:'dmhy',originName:'动漫花园',kind:'fansub'},{id:'mikan_f9',name:'桜都字幕组',origin:'mikan',originName:'蜜柑计划',kind:'fansub'},{id:'moe_p99',name:'独立发布者',origin:'moe',originName:'萌番组',kind:'publisher'}],bangumiIds:['123']}}
       else if (endpoint.endsWith('/sources/anibt/search')) {
         if (state.anibtGate) await state.anibtGate
         data={items:[{id:'123',title:'AniBT 原站番剧'}],truncated:false}
@@ -141,7 +144,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       else if (endpoint.includes('/emby/')) data = { configured: false, items: [] }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
-    async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card, .anibt-anime-card' : '.ae-chapter').first().waitFor() }
+    async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card, .anibt-anime-card, .garden-anime-card' : '.ae-chapter').first().waitFor() }
     async function source(group = '10', first = '25', last = '64') {
       await page.getByRole('button', { name: '选择资源', exact: true }).click()
       await page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
@@ -636,6 +639,31 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await alternate.page.getByRole('button',{name:/主 RSS/}).click()
     assert.equal(await alternate.page.locator('.ae-source-summary h3').innerText(),'LoliHouse')
     passed.push('100-record AniBT boundary stops loading; 320px provider buttons and dark picker fit; backup site search leaves main source intact')
+
+    const garden=await session({width:320,height:800});garden.state.naming=true;await garden.go('/anime?source=garden&day=1')
+    const gardenLink=garden.page.locator('.garden-anime-card').first();assert.equal(await gardenLink.getAttribute('href'),'/anime/new?bangumiId=123')
+    await gardenLink.click();await garden.page.locator('.ae-chapter').waitFor();await garden.page.getByRole('button',{name:'Anime Garden',exact:true}).click()
+    await garden.page.getByRole('heading',{name:'选择发布方',exact:true}).waitFor()
+    await garden.page.getByText(/最近 200/).waitFor()
+    assert.equal(await garden.page.getByRole('button',{name:/桜都字幕组/}).count(),2)
+    await garden.page.screenshot({path:'test-results/garden-picker-groups-mobile.png',animations:'disabled'})
+    await garden.page.evaluate(()=>document.documentElement.classList.add('dark'));await garden.page.screenshot({path:'test-results/garden-picker-groups-mobile-dark.png',animations:'disabled'})
+    await garden.page.getByRole('button',{name:/桜都字幕组.*动漫花园/}).click()
+    await garden.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check();await garden.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    await garden.preview();assert.equal(garden.calls.filter(c=>c.endpoint.endsWith('/subscriptions/preview')).at(-1).body.config.sources[0].provider,'garden')
+    await garden.page.getByRole('button',{name:'添加备用',exact:true}).click();await garden.page.getByRole('button',{name:'蜜柑',exact:true}).click();await garden.page.getByRole('button',{name:/从零开始 第三季 字幕资源/}).click();await garden.page.getByRole('button',{name:/字幕组乙/}).click();await garden.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check();await garden.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    await garden.page.getByRole('button',{name:/主 RSS/}).click();assert.equal(await garden.page.locator('.ae-source-summary h3').innerText(),'桜都字幕组')
+    await garden.page.getByRole('button',{name:'AniBT',exact:true}).click();await garden.page.getByRole('button',{name:/AniBT 原站番剧/}).click();await garden.page.keyboard.press('Escape')
+    assert.equal(await garden.page.locator('.ae-source-summary h3').innerText(),'桜都字幕组')
+    await garden.page.getByRole('button',{name:'保存草稿',exact:true}).click();await garden.page.getByRole('heading',{name:'草稿已保存',exact:true}).waitFor()
+    let gardenSave=garden.writes().at(-1).body.config;assert.equal(gardenSave.sources[0].provider,'garden');assert.equal(gardenSave.sources[0].groupId,'dmhy_f9');assert.equal(gardenSave.sources[1].provider,'mikan')
+    assert.equal(gardenSave.naming.tmdbId,'117061')
+    await garden.page.getByRole('button',{name:'继续编辑',exact:true}).click();await garden.page.locator('.ae-source-summary').waitFor()
+    await garden.page.getByRole('button',{name:'添加备用',exact:true}).click();await garden.page.getByRole('button',{name:'AniBT',exact:true}).click();await garden.page.getByRole('button',{name:/AniBT 原站番剧/}).click();await garden.page.getByRole('button',{name:/LoliHouse/}).click();await garden.page.getByRole('checkbox',{name:/^1080p 简 内嵌/}).check();await garden.page.getByRole('button',{name:'使用此来源',exact:true}).click()
+    await garden.page.getByRole('button',{name:'保存草稿',exact:true}).click();await garden.page.getByRole('heading',{name:'草稿已保存',exact:true}).waitFor();gardenSave=garden.writes().at(-1).body.config
+    assert.deepEqual(gardenSave.sources.map(s=>s.provider),['garden','mikan','anibt'])
+    assert.equal(await garden.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    passed.push('Garden native entry shares Bangumi editor; origin and publisher disambiguation; source-only preview; cancelled replacement retains main; three-site backups save independently at 320px')
 
     const ordinary = await session(undefined, 'user'); await ordinary.go()
     assert.equal(new URL(ordinary.page.url()).pathname, '/')

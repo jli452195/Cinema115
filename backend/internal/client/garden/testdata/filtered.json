@@ -1,0 +1,66 @@
+{
+  "status": "OK",
+  "resources": [
+    {
+      "id": 2468830,
+      "provider": "dmhy",
+      "providerId": "729236",
+      "title": "[Skymoon-Raws] 龍珠超：比路斯 / Dragon Ball Super: Beerus - 02 [ViuTV][WEB-DL][CHT][1080p][AVC AAC]",
+      "href": "https://share.dmhy.org/topics/view/729236_Skymoon-Raws_Dragon_Ball_Super_Beerus_-_02_ViuTV_WEB-DL_CHT_1080p_AVC_AAC.html",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:7HJKJIQ5XTK4DGGECVU7XCZTWDWQQFQ3",
+      "size": 499960832,
+      "createdAt": "2026-10-19T08:48:00.000Z",
+      "fetchedAt": "2026-10-19T09:10:00.003Z",
+      "publisher": {
+        "id": 99,
+        "name": "Laputa",
+        "avatar": "https://bangumi.moe/data/images/2016/07/6e57sn7irphcjzoprke.jpg"
+      },
+      "fansub": {
+        "id": 776,
+        "name": "天月動漫發佈組",
+        "avatar": "https://bangumi.moe/data/images/2024/01/30ew7moszj9kxmjbidu.jpg"
+      },
+      "subjectId": 623249
+    },
+    {
+      "id": 2467321,
+      "provider": "dmhy",
+      "providerId": "728768",
+      "title": "[Skymoon-Raws] 龍珠超：比路斯 / Dragon Ball Super: Beerus - 01 [ViuTV][WEB-DL][CHT][1080p][AVC AAC]",
+      "href": "https://share.dmhy.org/topics/view/728768_Skymoon-Raws_Dragon_Ball_Super_Beerus_-_01_ViuTV_WEB-DL_CHT_1080p_AVC_AAC.html",
+      "type": "动画",
+      "magnet": "magnet:?xt=urn:btih:66ENHIGC4F4GVXA42HX7EYQIKDM2T4EM",
+      "size": 551235584,
+      "createdAt": "2026-10-12T17:07:00.000Z",
+      "fetchedAt": "2026-10-12T17:15:01.882Z",
+      "publisher": {
+        "id": 99,
+        "name": "Laputa",
+        "avatar": "https://bangumi.moe/data/images/2016/07/6e57sn7irphcjzoprke.jpg"
+      },
+      "fansub": {
+        "id": 776,
+        "name": "天月動漫發佈組",
+        "avatar": "https://bangumi.moe/data/images/2024/01/30ew7moszj9kxmjbidu.jpg"
+      },
+      "subjectId": 623249
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 3,
+    "complete": true
+  },
+  "filter": {
+    "provider": "dmhy",
+    "duplicate": true,
+    "fansubs": [
+      "天月動漫發佈組"
+    ],
+    "subjects": [
+      623249
+    ]
+  }
+}

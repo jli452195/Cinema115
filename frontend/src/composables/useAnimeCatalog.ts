@@ -17,7 +17,7 @@ export async function requestCatalog(token: string, provider: AnimeSourceProvide
   const epoch = generation
   const result = await animeConfigRequest<AnimeCatalog>(token, `catalog/${provider}`, { method: 'POST', body, signal })
   if (signal.aborted || epoch !== generation || token !== portalToken.value || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
-  if (result.provider !== provider || !Array.isArray(result.days) || !Array.isArray(result.items)) throw new Error(`${provider === 'anibt' ? 'AniBT' : '蜜柑'}返回的列表格式不正确`)
+  if (result.provider !== provider || !Array.isArray(result.days) || !Array.isArray(result.items)) throw new Error(`${provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑'}返回的列表格式不正确`)
   catalogs.delete(key); catalogs.set(key, result)
   while (catalogs.size > 24) catalogs.delete(catalogs.keys().next().value!)
   return result

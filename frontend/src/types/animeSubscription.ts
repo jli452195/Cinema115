@@ -34,7 +34,7 @@ export interface AnimeSettingsView {
   primaryAccount: { id: string; name: string; uid: string; revision: number } | null
   readiness: { ready: boolean; issues: string[] }
 }
-export interface MikanEntry { id: string; title: string; groups: { id: string; name: string }[]; bangumiIds: string[] }
+export interface MikanEntry { id: string; title: string; groups: { id: string; name: string; origin?: string; originName?: string; kind?: string }[]; groupsPartial?: boolean; bangumiIds: string[] }
 export interface MikanSearch { items: { id: string; title: string; coverUrl: string; url: string }[]; truncated: boolean }
 export interface AnimeSourceSample {
   source: { provider?: AnimeSourceProvider; itemId: string; groupId: string; title: string; groupName: string; expiresAt: number }

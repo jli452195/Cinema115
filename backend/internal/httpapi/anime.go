@@ -18,6 +18,7 @@ import (
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
+	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
@@ -35,6 +36,10 @@ func animeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, animefeed.ErrInput):
 		status, code, message = 400, "INVALID_INPUT", "站点、条目或字幕组参数不正确"
+	case errors.Is(err, garden.ErrInvalid):
+		status, code, message = 502, "UPSTREAM_INVALID", "Anime Garden \u8fd4\u56de\u6570\u636e\u65e0\u6cd5\u6838\u9a8c"
+	case errors.Is(err, garden.ErrUnavailable):
+		status, code, message = 502, "UPSTREAM_UNAVAILABLE", "Anime Garden \u6682\u65f6\u65e0\u6cd5\u8bfb\u53d6"
 	case errors.Is(err, anibt.ErrInvalid):
 		status, code, message = 502, "UPSTREAM_INVALID", "AniBT 返回的数据无法核验，原配置保留"
 	case errors.Is(err, anibt.ErrMoved):
@@ -105,7 +110,7 @@ func animeError(c *gin.Context, err error) {
 		details["issues"] = config.Issues
 	}
 	var retry time.Time
-	var anibtHTTP *anibt.HTTPError
+	var anibtHTTP *animefeed.HTTPError
 	if errors.As(err, &anibtHTTP) {
 		status, code, message = 502, "UPSTREAM_UNAVAILABLE", "AniBT 暂时无法读取，已有配置保留"
 		if anibtHTTP.Status == 404 {
@@ -113,6 +118,9 @@ func animeError(c *gin.Context, err error) {
 		}
 		if anibtHTTP.Status == 429 || anibtHTTP.Status == 503 && !anibtHTTP.RetryAt.IsZero() {
 			status, code, message = 429, "SOURCE_COOLDOWN", "AniBT 正在冷却，请稍后重试"
+		}
+		if anibtHTTP.Site == "garden" {
+			message = strings.ReplaceAll(message, "AniBT", "Anime Garden")
 		}
 		retry = anibtHTTP.RetryAt
 	}
@@ -248,6 +256,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	})
 	registerAnimeCatalog(r, s)
 	registerAnimeAnibt(r, s)
+	registerAnimeGarden(r, s)
 	r.GET("/discovery/calendar", func(c *gin.Context) {
 		day := 0
 		if raw, ok := c.GetQuery("weekday"); ok {

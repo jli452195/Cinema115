@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 43
+const schemaVersion = 44
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -77,7 +77,7 @@ func (s *Store) initialize(ctx context.Context) (resultErr error) {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&priorVersion); err != nil {
 		return err
 	}
-	if priorVersion >= 39 && priorVersion < 43 {
+	if priorVersion >= 39 && priorVersion < 44 {
 		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
 			return err
 		}
@@ -536,6 +536,11 @@ PRAGMA user_version=30;`); err != nil {
 	// finish with the current version, including when reopening a migrated DB.
 	if version < 43 {
 		if err := upgradeAnimeProvidersV43(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if version < 44 {
+		if err := upgradeAnimeProvidersV44(ctx, tx); err != nil {
 			return err
 		}
 	}

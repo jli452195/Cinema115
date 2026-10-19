@@ -7,7 +7,7 @@ import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { cachedSubscription, readSubscription, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { AnimeConfigError, animeConfigMessage } from '../lib/anime-config-api'
 import { animeLocalTime, subscriptionSources, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
-import { animeSpecLabel } from '../utils/animeSourceForm'
+import { animeSpecLabel, animeProviderName, animeOriginLabel } from '../utils/animeSourceForm'
 import type { AnimeSubscriptionView } from '../types/animeSubscription'
 
 const props = defineProps<{ token: string; id: string; returnPath: string; initial?: AnimeSubscriptionView }>()
@@ -82,6 +82,7 @@ onBeforeUnmount(() => { saveState(); disposed = true; controller?.abort(); if (r
           <div class="as-source-list"><section v-for="source in sources" :key="source.id" class="as-source">
             <button type="button" :aria-expanded="isExpanded(source)" :aria-controls="`source-${source.id}`" @click="toggleSource(source)"><span><span class="as-source-role">{{ source.role === 'main' ? '主 RSS' : `备用 ${source.position}` }}</span><strong>{{ source.groupName || '字幕组待配置' }}</strong><span class="as-muted">{{ source.runWhenEnabled ? '参与后续订阅' : '保留配置' }}</span></span><IconChevronDown :size="18" aria-hidden="true" :class="{ 'rotate-180': isExpanded(source) }" /></button>
             <dl v-show="isExpanded(source)" :id="`source-${source.id}`" class="as-source-fields">
+              <div><dt>资源站点</dt><dd>{{ animeProviderName(source.provider) }}<span v-if="animeOriginLabel(source)"> · {{ animeOriginLabel(source) }}</span></dd></div>
               <div><dt>发布范围</dt><dd>{{ source.binding.scope?.kind === 'range' ? `第 ${source.binding.scope.first} 至 ${source.binding.scope.last} 话` : source.binding.scope?.kind === 'confirmed_chapter' ? source.binding.scope.evidence || '已确认整个来源属于本篇章' : '尚未确认' }}</dd></div>
               <div><dt>篇章编号</dt><dd>{{ source.binding.chapterCorrespondence ? `发布 ${source.binding.chapterCorrespondence.sourceEpisode} → 篇章 ${source.binding.chapterCorrespondence.chapterEpisode}` : '尚未设置对应关系' }}</dd></div>
               <div><dt>资源规格</dt><dd>{{ source.rules.specMode === 'profiles' ? source.rules.specProfiles?.map(animeSpecLabel).join('、') : source.rules.specMode === 'any' ? '全部规格' : source.rules.resolution === 'any' ? '不限画质' : source.rules.resolution || '尚未设置' }}</dd></div>

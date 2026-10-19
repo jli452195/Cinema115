@@ -1,0 +1,183 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 8,
+      "title": "コードギアス 反逆のルルーシュR2",
+      "bangumi": {
+        "id": 8,
+        "type": 2,
+        "name": "コードギアス 反逆のルルーシュR2",
+        "name_cn": "Code Geass 反叛的鲁路修R2",
+        "summary": "“东京决战”一年后，布里塔尼亚少年鲁路修在11区（原日本国）过着平凡的学生生活。但是，鲁路修与弟弟罗洛的一次出行，遇到了黑色骑士团的余党。在与少女C.C再次结成契约之后，尘封的记忆摆在了鲁路修的面前。\n　　身为帝国王子的鲁路修，为了建立人人平等的世界、让妹妹娜娜丽幸福的世界，而使用GEASS，令人绝对服从的力量，带领黑色骑士团向帝国宣战。带上假面化名ZERO的他，却在一年前的“东京决战”中被好友朱雀击败，被帝国皇帝抹去了记忆。\n　　现在，恢复记忆的鲁路修不仅要面对帝国的强大军事力量，更要面对虚假的弟弟罗洛、失踪的妹妹娜娜丽、不知敌友的中华联盟、内部出现分歧的黑色骑士团。面对内忧外患，鲁路修走上了GEASS之力的诅咒——孤独的王之路。",
+        "date": "2008-04-06",
+        "platform": "TV",
+        "images": {
+          "small": "https://lain.bgm.tv/r/200/pic/cover/l/c9/f0/8_wK0z3.jpg",
+          "grid": "https://lain.bgm.tv/r/100/pic/cover/l/c9/f0/8_wK0z3.jpg",
+          "large": "https://lain.bgm.tv/pic/cover/l/c9/f0/8_wK0z3.jpg",
+          "medium": "https://lain.bgm.tv/r/800/pic/cover/l/c9/f0/8_wK0z3.jpg",
+          "common": "https://lain.bgm.tv/r/400/pic/cover/l/c9/f0/8_wK0z3.jpg"
+        },
+        "eps": 25,
+        "total_episodes": 25,
+        "meta_tags": [
+          "机战",
+          "TV",
+          "日本",
+          "原创",
+          "战斗"
+        ],
+        "tags": [
+          "2008年4月",
+          "CLAMP",
+          "R2",
+          "SUNRISE",
+          "TV",
+          "codegeass",
+          "中二",
+          "原创",
+          "反逆のルルーシュ",
+          "叛逆的鲁鲁修",
+          "大河内一楼",
+          "妹控",
+          "战争",
+          "战斗",
+          "日升",
+          "智斗",
+          "机战",
+          "热血",
+          "狗得鸡鸭死",
+          "神作",
+          "福山润",
+          "科幻",
+          "萝卜",
+          "谷口悟朗",
+          "还是死妹控",
+          "露露胸",
+          "鲁路修",
+          "鲁鲁修"
+        ],
+        "rating": {
+          "score": 8.3,
+          "rank": 84
+        }
+      },
+      "tmdb": null,
+      "poster": "https://lain.bgm.tv/pic/cover/l/c9/f0/8_wK0z3.jpg",
+      "onair_date": "2008-04-06",
+      "alias": {
+        "ja": [
+          "コードギアス 反逆のルルーシュR2"
+        ],
+        "zh": [
+          "Code Geass 反叛的鲁路修R2",
+          "CODE GEASS 反叛的鲁路修 第2季",
+          "叛逆的鲁路修R2",
+          "叛逆的勒鲁什R2",
+          "叛逆的鲁鲁修R2",
+          "叛逆的勒路什R2",
+          "Code Geass 叛逆的魯魯修 R2",
+          "Code Geass 反叛的魯路修 R2"
+        ],
+        "en": [
+          "Code Geass: Lelouch of the Rebellion R2",
+          "Code Geass: Hangyaku no Lelouch R2"
+        ]
+      },
+      "search": {
+        "include": [
+          "コードギアス 反逆のルルーシュR2",
+          "Code Geass 反叛的鲁路修R2",
+          "CODE GEASS 反叛的鲁路修 第2季",
+          "叛逆的鲁路修R2",
+          "叛逆的勒鲁什R2",
+          "叛逆的鲁鲁修R2",
+          "叛逆的勒路什R2",
+          "Code Geass 叛逆的魯魯修 R2",
+          "Code Geass 反叛的魯路修 R2",
+          "Code Geass: Lelouch of the Rebellion R2",
+          "Code Geass: Hangyaku no Lelouch R2"
+        ]
+      },
+      "updated_at": "2026-10-15T01:15:53.416Z"
+    },
+    {
+      "id": 244,
+      "title": "神霊狩/GHOST HOUND",
+      "bangumi": {
+        "id": 244,
+        "type": 2,
+        "name": "神霊狩/GHOST HOUND",
+        "name_cn": "神灵狩",
+        "summary": "居住在水天町的三为中学生，都有着各自无法抹杀却又不想回忆起的过去，不知是否因为相同的原因，他们的灵魂会发生体外脱离，并以这种形式穿梭于现世与 “幽世”之间。这个现实世界本没有神灵，随着“幽世”中不断发生异常，而开始吞噬现实世界。三位少年在“幽世”冒险的时候，逐渐了解到“幽世”与什么地方相连——献给持有少年心的成人们，一部永远的心灵少年谭。",
+        "date": "2007-10-18",
+        "platform": "TV",
+        "images": {
+          "small": "https://lain.bgm.tv/r/200/pic/cover/l/91/88/244_gIPgp.jpg",
+          "grid": "https://lain.bgm.tv/r/100/pic/cover/l/91/88/244_gIPgp.jpg",
+          "large": "https://lain.bgm.tv/pic/cover/l/91/88/244_gIPgp.jpg",
+          "medium": "https://lain.bgm.tv/r/800/pic/cover/l/91/88/244_gIPgp.jpg",
+          "common": "https://lain.bgm.tv/r/400/pic/cover/l/91/88/244_gIPgp.jpg"
+        },
+        "eps": 22,
+        "total_episodes": 22,
+        "meta_tags": [
+          "TV",
+          "日本",
+          "原创"
+        ],
+        "tags": [
+          "2007年10月",
+          "ProductionI.G",
+          "ProductionIG",
+          "TV",
+          "中村隆太郎",
+          "原创",
+          "士郎正宗",
+          "小中千昭",
+          "心理学",
+          "意识流",
+          "深奥",
+          "灵异",
+          "神霊狩"
+        ],
+        "rating": {
+          "score": 6.8,
+          "rank": 3485
+        }
+      },
+      "tmdb": null,
+      "poster": "https://lain.bgm.tv/pic/cover/l/91/88/244_gIPgp.jpg",
+      "onair_date": "2007-10-18",
+      "alias": {
+        "ja": [
+          "神霊狩/GHOST HOUND",
+          "神霊狩／GHOST HOUND"
+        ],
+        "zh": [
+          "神灵狩",
+          "神霊狩"
+        ],
+        "en": [
+          "Shinreigari: Ghost Hound",
+          "Ghost Hound",
+          "GHOST HOUND"
+        ]
+      },
+      "search": {
+        "include": [
+          "神霊狩/GHOST HOUND",
+          "神霊狩／GHOST HOUND",
+          "神灵狩",
+          "神霊狩",
+          "Shinreigari: Ghost Hound",
+          "Ghost Hound",
+          "GHOST HOUND"
+        ]
+      },
+      "updated_at": "2026-10-12T11:24:54.323Z"
+    }
+  ],
+  "next_cursor": 3642
+}

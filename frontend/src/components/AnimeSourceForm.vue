@@ -7,7 +7,7 @@ import { newAnimeSource } from '../utils/animeSourceForm'
 import AnimeSourcePicker from './AnimeSourcePicker.vue'
 import AnimeSourceNaming from './AnimeSourceNaming.vue'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
-import { animeProviderName, animeBindingConfirmed, animeSourceSpecs, type SourceForm } from '../utils/animeSourceForm'
+import { animeProviderName, animeOriginLabel, animeBindingConfirmed, animeSourceSpecs, type SourceForm } from '../utils/animeSourceForm'
 const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; previewBusy: boolean; now: number; namingTarget?: AnimeNamingTarget }>()
 const emit = defineEmits<{ search: [source: SourceForm]; choose: [source: SourceForm, id: string, title: string]; group: [source: SourceForm]; remove: []; open: [source: SourceForm]; sample: [source: SourceForm]; cancel: [source: SourceForm]; apply: [source: SourceForm] }>()
 const editing = ref<SourceForm>()
@@ -24,7 +24,7 @@ function open(provider = props.source.provider) {
   editing.value = draft
   emit('open', editing.value)
 }
-function selectSite(id: string) { if (id === 'mikan' || id === 'anibt') open(id as AnimeSourceProvider) }
+function selectSite(id: string) { if (id === 'mikan' || id === 'anibt' || id === 'garden') open(id as AnimeSourceProvider) }
 function apply() {
   const draft = editing.value
   editing.value = undefined
@@ -41,7 +41,7 @@ onBeforeUnmount(close)
     </div>
     <div class="ae-source-sites"><span class="ae-note">{{ source.groupId ? '换个来源' : '选择资源站点' }}</span><div role="group" aria-label="选择 RSS 站点"><AnimeProviderButton v-for="site in animeProviders" :key="site.id" :provider="site.id" :name="site.name" :available="site.available && !disabled && !previewBusy" :selected="!!source.groupId && source.provider === site.id" compact @select="selectSite(site.id)" /></div></div>
     <div v-if="source.groupId" class="ae-source-summary">
-      <div class="ae-summary-title"><IconRss :size="20" aria-hidden="true" /><div><h3>{{ source.groupName || '字幕组待核对' }}</h3><p class="ae-note">{{ source.itemTitle }} · {{ animeProviderName(source.provider) }} {{ source.itemId }}</p></div><button type="button" class="ae-button" :disabled="disabled || previewBusy" @click="open()"><IconAdjustmentsHorizontal :size="16" />修改来源规则</button></div>
+      <div class="ae-summary-title"><IconRss :size="20" aria-hidden="true" /><div><h3>{{ source.groupName || '字幕组待核对' }}</h3><p class="ae-note">{{ animeOriginLabel(source) }}{{ animeOriginLabel(source) ? ' · ' : '' }}{{ source.itemTitle }} · {{ animeProviderName(source.provider) }} {{ source.itemId }}</p></div><button type="button" class="ae-button" :disabled="disabled || previewBusy" @click="open()"><IconAdjustmentsHorizontal :size="16" />修改来源规则</button></div>
       <dl class="ae-source-facts"><div><dt>规格</dt><dd>{{ animeSourceSpecs(source) }}</dd></div><div><dt>来源</dt><dd>{{ confirmed ? '已选定' : '待选定' }}<span v-if="source.scope === 'range'"> · {{ range }}</span></dd></div></dl>
       <p v-if="!confirmed" class="ae-note">查看最近发布并选择规格后，即可生成匹配预览。</p>
     </div>

@@ -12,12 +12,18 @@ import (
 // IDs, snapshots, indices and all referencing rows are preserved and checked
 // before commit. No prototype data or source ownership is changed.
 func upgradeAnimeProvidersV43(ctx context.Context, tx *sql.Tx) error {
+	return upgradeAnimeProviderCheck(ctx, tx, "CHECK(provider='mikan')", "CHECK(provider IN ('mikan','anibt'))", "v43")
+}
+func upgradeAnimeProvidersV44(ctx context.Context, tx *sql.Tx) error {
+	return upgradeAnimeProviderCheck(ctx, tx, "CHECK(provider IN ('mikan','anibt'))", "CHECK(provider IN ('mikan','anibt','garden'))", "v44")
+}
+func upgradeAnimeProviderCheck(ctx context.Context, tx *sql.Tx, oldCheck, newCheck, version string) error {
 	for _, table := range []string{"anime_subscription_sources", "anime_releases"} {
 		var ddl string
 		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&ddl); err != nil {
 			return fmt.Errorf("read anime provider schema: %w", err)
 		}
-		if !strings.Contains(ddl, "CHECK(provider='mikan')") {
+		if !strings.Contains(ddl, oldCheck) {
 			continue
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`, table)
@@ -44,8 +50,8 @@ func upgradeAnimeProvidersV43(ctx context.Context, tx *sql.Tx) error {
 		if start < 0 {
 			return fmt.Errorf("unexpected anime table schema")
 		}
-		copyName := table + "_v43"
-		ddl = "CREATE TABLE " + copyName + " " + strings.ReplaceAll(ddl[start:], "CHECK(provider='mikan')", "CHECK(provider IN ('mikan','anibt'))")
+		copyName := table + "_" + version
+		ddl = "CREATE TABLE " + copyName + " " + strings.ReplaceAll(ddl[start:], oldCheck, newCheck)
 		for _, statement := range []string{ddl, "INSERT INTO " + copyName + " SELECT * FROM " + table, "DROP TABLE " + table, "ALTER TABLE " + copyName + " RENAME TO " + table} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("extend anime provider table %s: %w", table, err)

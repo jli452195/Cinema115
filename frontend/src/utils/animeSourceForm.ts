@@ -90,5 +90,13 @@ export function animeSpecLabel(spec?: AnimeSpec) {
 }
 export function animeSourceSpecs(form: SourceForm) { return form.specMode === 'profiles' ? form.specProfiles.map(animeSpecLabel).join('、') || '尚未选择规格' : form.specMode === 'any' ? '全部规格' : form.resolution === 'any' ? '不限画质（原规则）' : form.resolution || '尚未选择规格' }
 
-export function animeProviderName(provider: AnimeSourceProvider) { return provider === 'anibt' ? 'AniBT' : '蜜柑' }
-export function animeSourceURL(form: SourceForm) { return form.provider === 'anibt' ? `https://anibt.net/anime/${encodeURIComponent(form.itemId)}` : `https://mikanani.me/Home/Bangumi/${encodeURIComponent(form.itemId)}` }
+export function animeProviderName(provider: AnimeSourceProvider) { return provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑' }
+export function animeSourceURL(form: SourceForm) { return form.provider === 'garden' ? `https://animes.garden/subject/${encodeURIComponent(form.itemId)}` : form.provider === 'anibt' ? `https://anibt.net/anime/${encodeURIComponent(form.itemId)}` : `https://mikanani.me/Home/Bangumi/${encodeURIComponent(form.itemId)}` }
+
+export function animeOriginLabel(form: { provider: AnimeSourceProvider; groupId: string | null }) {
+ if (form.provider !== 'garden') return ''
+ const match = /^(dmhy|mikan|moe|ani)_(f|p)[1-9]\d*$/.exec(form.groupId || '')
+ if (!match) return ''
+ const names: Record<string, string> = { dmhy: '动漫花园', mikan: '蜜柑计划', moe: '萌番组', ani: 'ANi' }
+ return `${names[match[1]!] || match[1]}${match[2] === 'p' ? ' · 发布者' : ''}`
+}

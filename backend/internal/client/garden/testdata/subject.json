@@ -1,0 +1,112 @@
+{
+  "ok": true,
+  "data": {
+    "revisions": [],
+    "subject": {
+      "id": 623249,
+      "title": "ドラゴンボール超 ビルス",
+      "bangumi": {
+        "id": 623249,
+        "type": 2,
+        "name": "ドラゴンボール超 ビルス",
+        "name_cn": "龙珠超 比鲁斯",
+        "summary": "鳥山明先生による世界的大人気漫画作品『DRAGON BALL』（ドラゴンボール）。TVアニメ・映画・ゲームなど様々なメディアミックスでファンを魅了しながら、モンスタータイトルとして全世界で桁外れの人気を誇る。\nそして、2026年―。鳥山明先生が原作・ストーリー・キャラクターデザインを手掛けるアニメ『ドラゴンボール超』が『ドラゴンボール超 ビルス』として新たに始動！ 本作では、大幅な新規カットの追加や描き直し、さらに物語の再構築を行い“エンハンスド”。最新の映像表現により、バトルシーンのさらなる臨場感と、より精密な原作再現がほどこされたエンハンスド版としてここに登場する。\n\n魔人ブウとの壮絶な闘いから数年が経ち、地球は束の間の平和を取り戻していた。\n時を同じくして、長い眠りから目覚めた破壊神・ビルス。\n星々を破壊する圧倒的な力を持つビルスの目覚めを、界王や界王神たちですら畏れをもって見守っていたのだが…そのさなか、フリーザを倒したサイヤ人の噂を聞きつけたビルスは、突如悟空の前に現れるー。\nかつてない力を持つビルスの襲来により、消滅の危機に直面する地球・・・破壊神と悟空たちの宇宙を揺るがす超絶バトルが幕を開ける――。",
+        "date": "2026-10-11",
+        "platform": "TV",
+        "images": {
+          "small": "https://lain.bgm.tv/r/200/pic/cover/l/0f/0f/623249_zCdly.jpg",
+          "grid": "https://lain.bgm.tv/r/100/pic/cover/l/0f/0f/623249_zCdly.jpg",
+          "large": "https://lain.bgm.tv/pic/cover/l/0f/0f/623249_zCdly.jpg",
+          "medium": "https://lain.bgm.tv/r/800/pic/cover/l/0f/0f/623249_zCdly.jpg",
+          "common": "https://lain.bgm.tv/r/400/pic/cover/l/0f/0f/623249_zCdly.jpg"
+        },
+        "eps": 0,
+        "total_episodes": 12,
+        "meta_tags": [
+          "TV",
+          "日本",
+          "原创"
+        ],
+        "tags": [
+          "2026年10月",
+          "TV",
+          "东映",
+          "东映アニメーション",
+          "原创",
+          "战斗",
+          "漫改",
+          "热血",
+          "重制版",
+          "龙珠",
+          "龙珠超"
+        ],
+        "rating": {
+          "score": 7.5,
+          "rank": 1564
+        }
+      },
+      "tmdb": null,
+      "poster": "https://lain.bgm.tv/pic/cover/l/0f/0f/623249_zCdly.jpg",
+      "onair_date": "2026-10-11",
+      "alias": {
+        "ja": [
+          "ドラゴンボール超 ビルス"
+        ],
+        "zh": [
+          "龙珠超 比鲁斯"
+        ],
+        "en": [
+          "Dragon Ball Super: Beerus"
+        ]
+      },
+      "search": {
+        "include": [
+          "ドラゴンボール超 ビルス",
+          "龙珠超 比鲁斯",
+          "Dragon Ball Super: Beerus"
+        ]
+      },
+      "updated_at": "2026-10-19T07:11:34.475Z"
+    },
+    "relations": [
+      {
+        "id": 44636,
+        "title": "ドラゴンボールZ 神と神",
+        "alias": {
+          "ja": [
+            "ドラゴンボールZ 神と神",
+            "Dragon Ball Z：Battle of Gods"
+          ],
+          "zh": [
+            "龙珠Z 神与神",
+            "龙珠Z剧场版18 神与神"
+          ]
+        },
+        "poster": "https://lain.bgm.tv/pic/cover/l/3d/f7/44636_Cuv50.jpg",
+        "onair_date": "2013-03-30",
+        "relation": "不同演绎"
+      },
+      {
+        "id": 132220,
+        "title": "ドラゴンボール超",
+        "alias": {
+          "ja": [
+            "ドラゴンボール超"
+          ],
+          "zh": [
+            "龙珠超",
+            "龙珠 超",
+            "龍珠超"
+          ],
+          "en": [
+            "DRAGON BALL SUPER",
+            "Dragon Ball Super"
+          ]
+        },
+        "poster": "https://lain.bgm.tv/pic/cover/l/0d/a2/132220_E3vck.jpg",
+        "onair_date": "2015-07-05",
+        "relation": "不同演绎"
+      }
+    ]
+  }
+}
