@@ -65,6 +65,15 @@ func NewMikanService(client MikanReader, logs *GenerationLogs) *MikanService {
 	return &MikanService{Client: client, Logs: logs, cache: make(map[string]mikanCache, 16), flights: make(map[string]*mikanFlight), gate: make(chan struct{}, 1), animeCache: make(map[string]animeMikanCache, 16), animeFlights: make(map[string]*animeMikanFlight)}
 }
 func cloneMikan(result mikan.Result) mikan.Result {
+	if result.Catalog != nil {
+		copy := *result.Catalog
+		copy.Items = append([]mikan.CatalogItem{}, copy.Items...)
+		copy.Days = append([]mikan.CatalogDay{}, copy.Days...)
+		for i := range copy.Days {
+			copy.Days[i].Items = append([]mikan.CatalogItem{}, copy.Days[i].Items...)
+		}
+		result.Catalog = &copy
+	}
 	result.Items = append([]mikan.Item{}, result.Items...)
 	result.Groups = append([]mikan.Group{}, result.Groups...)
 	result.Bangumis = append([]mikan.Bangumi{}, result.Bangumis...)
@@ -192,7 +201,7 @@ func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool,
 		result, err := s.fetch(ctx, read)
 		entry := mikanCache{result: result, fetched: time.Now()}
 		ttl := 10 * time.Minute
-		if len(result.Items) == 0 && len(result.Bangumis) == 0 {
+		if result.Catalog == nil && len(result.Items) == 0 && len(result.Bangumis) == 0 {
 			ttl = time.Minute
 		}
 		entry.expires = entry.fetched.Add(ttl)

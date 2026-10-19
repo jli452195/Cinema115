@@ -44,6 +44,7 @@ type Group struct {
 	Name string `json:"name"`
 }
 type Result struct {
+	Catalog    *Catalog    `json:"-"`
 	Items      []Item      `json:"items"`
 	Groups     []Group     `json:"groups"`
 	Bangumis   []Bangumi   `json:"bangumis"`
@@ -85,34 +86,42 @@ func (c *Client) Search(ctx context.Context, query, group string) (Result, error
 }
 
 func (c *Client) read(ctx context.Context, path, bangumiID, group string, take int) (Result, error) {
+	body, err := c.readHTML(ctx, path)
+	if err != nil {
+		return Result{}, err
+	}
+	return parse(strings.NewReader(string(body)), bangumiID, group, take)
+}
+
+func (c *Client) readHTML(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
-		return Result{}, ErrInput
+		return nil, ErrInput
 	}
 	req.Header.Set("User-Agent", "Cinema115-MikanSearch/1.0")
 	req.Header.Set("Accept", "text/html")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return Result{}, ctx.Err()
+			return nil, ctx.Err()
 		}
-		return Result{}, ErrNetwork
+		return nil, ErrNetwork
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return Result{}, responseError(resp, time.Now())
+		return nil, responseError(resp, time.Now())
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20+1))
 	if err != nil {
-		return Result{}, ErrNetwork
+		return nil, ErrNetwork
 	}
 	if len(body) > 16<<20 {
-		return Result{}, errors.New("蜜柑结果页面过大，请缩小搜索范围")
+		return nil, errors.New("蜜柑结果页面过大，请缩小搜索范围")
 	}
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
+		return nil, err
 	}
-	return parse(strings.NewReader(string(body)), bangumiID, group, take)
+	return body, nil
 }
 
 func attr(n *html.Node, key string) string {

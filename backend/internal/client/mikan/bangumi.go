@@ -87,6 +87,21 @@ func parseBangumis(doc *html.Node, result *Result) {
 				}
 			}
 		})
+		// The current site puts the poster next to the title link in the same
+		// list item, while older cards wrap both in one link.
+		if card.CoverURL == "" {
+			for parent := n.Parent; parent != nil; parent = parent.Parent {
+				if parent.Data != "li" {
+					continue
+				}
+				walk(parent, func(child *html.Node) {
+					if card.CoverURL == "" {
+						card.CoverURL = coverLink(attr(child, "data-src"))
+					}
+				})
+				break
+			}
+		}
 		if card.Title == "" || len(card.Title) > 2048 {
 			return
 		}

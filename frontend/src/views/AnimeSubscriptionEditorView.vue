@@ -4,6 +4,8 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { IconPlus, IconFolder, IconPhotoOff, IconCheck, IconArrowLeft } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeSourceForm from '../components/AnimeSourceForm.vue'
+import AnimeNamingTarget from '../components/AnimeNamingTarget.vue'
+import AnimeChapterEpisodes from '../components/AnimeChapterEpisodes.vue'
 import AnimeReleasePreview from '../components/AnimeReleasePreview.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
@@ -17,7 +19,8 @@ defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
 const subscriptionID = computed(() => String(route.params.id || ''))
 const bangumiID = computed(() => typeof route.query.bangumiId === 'string' ? route.query.bangumiId : '')
-const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), subscriptionID, bangumiID)
+const seed = computed(() => ({ provider: typeof route.query.source === 'string' ? route.query.source : '', itemId: typeof route.query.itemId === 'string' ? route.query.itemId : '' }))
+const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), subscriptionID, bangumiID, seed)
 const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady } = editor
 const imageFailed = ref(false), settingsExpanded = ref(false)
 const returnPath = computed(() => animeReturnPath(route.query.returnTo) || (subscriptionID.value ? `/anime/subscriptions/${encodeURIComponent(subscriptionID.value)}` : '/anime'))
@@ -51,13 +54,15 @@ async function reloadConfiguration() {
       <template v-else-if="subject">
         <section class="ae-chapter" aria-label="当前篇章">
           <div class="ae-chapter-poster"><img v-if="animeImageURL(subject.coverUrl) && !imageFailed" :src="animeImageURL(subject.coverUrl)" :alt="subject.title" referrerpolicy="no-referrer" @error="imageFailed = true" /><IconPhotoOff v-else :size="24" aria-hidden="true" /></div>
-          <div><p class="ae-eyebrow">当前 Bangumi 篇章</p><h2>{{ subject.title }}</h2><p class="ae-note">{{ subject.date || '首播日期未收录' }}<span v-if="subject.id"> · Bangumi {{ subject.id }}</span><span v-if="local"> · 配置版本 {{ local.revision }}</span></p></div>
+          <div class="ae-chapter-identity"><p class="ae-eyebrow">{{ subject.id ? '当前 Bangumi 篇章' : '当前订阅番剧' }}</p><h2>{{ subject.title }}</h2><p class="ae-note">{{ subject.id ? subject.date || '首播日期未收录' : '未关联 Bangumi，可直接配置来源与 TMDB 命名' }}<span v-if="subject.id"> · Bangumi {{ subject.id }}</span><span v-if="local"> · 配置版本 {{ local.revision }}</span></p></div>
+          <AnimeChapterEpisodes v-if="subject.id" :token="token" :bangumi-id="subject.id" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" />
           <RouterLink :to="returnPath" class="ae-button"><IconArrowLeft :size="16" />{{ returnLabel }}</RouterLink>
         </section>
 
         <section v-if="receipt" class="ae-receipt" role="status"><IconCheck :size="26" aria-hidden="true" /><div><h2>{{ receipt.status === 'paused' ? '已保存为暂停配置' : '草稿已保存' }}</h2><p>配置版本 {{ receipt.revision }}。未创建下载任务，历史选择需在之后执行前重新预览。</p><div class="ae-receipt-actions"><button type="button" class="ae-button ae-primary" @click="openSaved(receipt.id)">继续编辑</button><RouterLink :to="savedLocation(receipt.id)" class="ae-button">查看订阅</RouterLink><RouterLink :to="returnPath" class="ae-button">{{ returnLabel }}</RouterLink></div></div></section>
 
         <template v-else>
+          <AnimeNamingTarget :naming="editor.naming" :disabled="locked" />
           <section class="ae-download-summary" aria-label="下载存放设置">
             <IconFolder :size="20" aria-hidden="true" />
             <div class="ae-download-path"><span class="ae-label">下载位置<span class="ae-note"> · 所有订阅共用</span></span><p>{{ settings?.settings.downloadPath || '尚未配置下载目录' }}</p><small v-if="settings && !settings.readiness.ready">{{ settings.readiness.issues.includes('ACCOUNT_SNAPSHOT_CHANGED') ? '主账号已变化，请重新选择并确认目录。' : '补齐主账号与目录后可保存为暂停；不影响查看资源或保存草稿。' }}</small></div>
@@ -69,7 +74,7 @@ async function reloadConfiguration() {
           <div class="ae-editor-grid">
             <section class="ae-workspace" aria-label="RSS 来源配置">
               <div class="ae-source-tabs" role="group" aria-label="切换 RSS 来源"><button v-for="(source, index) in sources" :key="source.ref" type="button" :aria-pressed="activeRef === source.ref" @click="activeRef = source.ref"><span>{{ source.role === 'main' ? '主 RSS' : `备用 ${index}` }}</span><span v-if="source.groupName" class="ae-tab-group">{{ source.groupName }}</span><span class="ae-tab-state" :class="{ ready: animeSourceReady(source) }">{{ animeSourceReady(source) ? '已配置' : '草稿' }}</span></button><button type="button" class="ae-add-source" :disabled="locked || !!previewBusy || sources.length >= 5" @click="editor.addSource"><IconPlus :size="16" />添加备用</button></div>
-              <AnimeSourceForm v-if="active" :key="active.ref" :source="active" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search(active)" @choose="(id, title) => editor.chooseEntry(active!, id, title)" @group="editor.groupChanged(active)" @remove="editor.removeSource(active)" @open="editor.openSource(active)" @sample="editor.readSample(active, true)" />
+              <AnimeSourceForm v-if="active" :key="active.ref" :source="active" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search(active)" @choose="(id, title) => editor.chooseEntry(active!, id, title)" @group="editor.groupChanged(active)" @remove="editor.removeSource(active)" @open="editor.openSource(active)" @sample="editor.readSample(active, true)" />
             </section>
 
 
@@ -78,7 +83,7 @@ async function reloadConfiguration() {
           <AnimeReleasePreview v-if="active" :key="`preview-${active.ref}`" :source="active" :valid="editor.validPreview(active)" :busy="!!previewBusy" :disabled="locked" :now="now" :remaining="budget.remaining" :settings-available="!!settings" @generate="editor.runPreview(active, 'generate')" @load="editor.runPreview(active, 'load')" @page="editor.runPreview(active, 'page', { page: $event })" @select="(id, checked) => editor.selectRelease(active!, id, checked)" @dismiss="editor.dismissPending(active, $event)" @clear-recovery="editor.dismissRecovery(active)" />
 
           <div v-if="feedback" class="ae-save-feedback" role="status"><p>{{ feedback }}</p><button v-if="pendingSave" type="button" class="ae-button ae-primary" :disabled="saveBusy" @click="editor.retrySave">{{ saveBusy ? '核对保存结果…' : '重试原保存请求' }}</button><button v-if="duplicateID" type="button" class="ae-link" @click="openSaved(duplicateID)">打开已有配置</button><button v-if="conflict && local" type="button" class="ae-link" :disabled="locked || !!previewBusy" @click="reloadConfiguration">重新读取配置</button><button v-if="conflict" type="button" class="ae-link" :disabled="locked || !!previewBusy" @click="editor.reloadSettings">重新读取目录设置</button></div>
-          <footer class="ae-save-bar"><p>{{ pendingSave || pendingSettings ? '保存结果待确认，输入已锁定保留。' : dirty ? '有未保存的修改' : '仅保存配置，不会开始下载' }}<span v-if="!pausedReady">主 RSS 与下载目录完整后可保存为暂停。</span></p><div><button type="button" class="ae-button" :disabled="locked || !!previewBusy || sources.some(source => source.searchBusy) || !settings" @click="editor.save('draft')">{{ saveBusy ? '保存中…' : '保存草稿' }}</button><button type="button" class="ae-button ae-primary" :disabled="locked || !!previewBusy || sources.some(source => source.searchBusy) || !pausedReady" @click="editor.save('paused')">保存为暂停</button></div></footer>
+          <footer class="ae-save-bar"><p>{{ pendingSave || pendingSettings ? '保存结果待确认，输入已锁定保留。' : dirty ? '有未保存的修改' : '仅保存配置，不会开始下载' }}<span v-if="!pausedReady">主 RSS 与下载目录完整后可保存为暂停。</span></p><div><button type="button" class="ae-button" :disabled="locked || editor.naming.busy.value || editor.naming.searching.value || !!previewBusy || sources.some(source => source.searchBusy) || !settings" @click="editor.save('draft')">{{ saveBusy ? '保存中…' : '保存草稿' }}</button><button type="button" class="ae-button ae-primary" :disabled="locked || editor.naming.busy.value || editor.naming.searching.value || !!previewBusy || sources.some(source => source.searchBusy) || !pausedReady" @click="editor.save('paused')">保存为暂停</button></div></footer>
         </template>
       </template>
     </div>

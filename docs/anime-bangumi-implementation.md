@@ -10,6 +10,7 @@
 | `Search(ctx, options)` | POST `/v0/search/subjects` | 关键词去首尾后 1～128 个 Unicode 字符，拒绝控制字符；只接受 match，limit 默认20/最大50，offset=0～1000；明确发送 type=[2] |
 | `Subject(ctx, id)` | 按需 GET `/v0/subjects/:id` | 正十进制 ID；核对实际返回身份和动画类型，保留简介、平台、eps/total_episodes，不据此判断下载完成 |
 | `Relations(ctx, id)` | 按需 GET `/v0/subjects/:id/subjects` | 独立读取并筛选动画关系，保留上游关系文字；不递归、不生成篇章或 TMDB 编号对应 |
+| `Episodes(ctx, id, offset)`（2026-10-19 补充） | 按需 GET `/v0/episodes?subject_id=:id&type=0&limit=100&offset=:offset` | 只读正片，一次一页，offset 为 100 的倍数且小于 2000；核对篇章身份、类型、分页与重复 ID；分别保留显示编号及篇章内编号，不生成 TMDB 对应 |
 
 输出 ID 全为字符串，时间为 UTC Unix 毫秒。中文名为空时回退原名；日期保留上游文字，原始放送星期不表示资源已可下载。卡片直接使用周历/搜索资料。
 

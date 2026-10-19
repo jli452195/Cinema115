@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 41
+const schemaVersion = 42
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -497,6 +497,17 @@ PRAGMA user_version=30;`); err != nil {
 	if version < 41 {
 		if err := discardArchivedAnimeV38(ctx, tx); err != nil {
 			return err
+		}
+	}
+	if version < 42 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_subscriptions') WHERE name='naming_json'`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE anime_subscriptions ADD COLUMN naming_json TEXT NOT NULL DEFAULT 'null' CHECK(json_valid(naming_json))`); err != nil {
+				return fmt.Errorf("创建动漫命名配置: %w", err)
+			}
 		}
 	}
 	// Earlier idempotent schema repairs assign historical versions above. Always

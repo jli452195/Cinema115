@@ -202,17 +202,20 @@ func sameAnimeString(a, b *string) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
-const animeSubscriptionColumns = `id,entry_id,status,revision,run_generation,first_enabled_at,form_json,created_at,updated_at`
+const animeSubscriptionColumns = `id,entry_id,status,revision,run_generation,first_enabled_at,form_json,created_at,updated_at,naming_json`
 
 func scanAnimeSubscription(row animeScanner) (model.AnimeSubscription, error) {
 	var sub model.AnimeSubscription
-	var raw string
-	err := row.Scan(&sub.ID, &sub.EntryID, &sub.Status, &sub.Revision, &sub.RunGeneration, &sub.FirstEnabledAt, &raw, &sub.CreatedAt, &sub.UpdatedAt)
+	var raw, naming string
+	err := row.Scan(&sub.ID, &sub.EntryID, &sub.Status, &sub.Revision, &sub.RunGeneration, &sub.FirstEnabledAt, &raw, &sub.CreatedAt, &sub.UpdatedAt, &naming)
 	if err != nil {
 		return sub, err
 	}
 	sub.Sources = make([]model.AnimeSource, 0, model.AnimeMaxSources)
 	if err := decodeAnimeJSON(raw, &sub.Form); err != nil {
+		return sub, err
+	}
+	if err := decodeAnimeJSON(naming, &sub.Naming); err != nil {
 		return sub, err
 	}
 	return sub, nil

@@ -21,3 +21,9 @@ export interface AnimeSubject extends AnimeCardItem { synopsis: string; platform
 export interface AnimeRelations extends AnimeCacheMeta { items: (AnimeCardItem & { relation: string })[] }
 export interface AnimeDetailState { current: AnimeCardItem; history: AnimeCardItem[]; relationsOpen: boolean; relationsLimit: number; synopsisOpen: boolean; top: number }
 export interface AnimeSubjectResult { subject: AnimeSubject; metadata: AnimeCacheMeta; relations?: AnimeRelations }
+export interface AnimeChapterEpisode {
+  id: string; number: number; chapterNumber: number | null; title: string; originalTitle: string; date: string
+}
+export interface AnimeChapterEpisodes extends AnimeCacheMeta {
+  items: AnimeChapterEpisode[]; total: number; limit: number; offset: number; maxItems: number
+}

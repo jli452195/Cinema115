@@ -17,6 +17,7 @@ import (
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
+	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
@@ -30,6 +31,14 @@ func animeError(c *gin.Context, err error) {
 	var upstream *bangumi.UpstreamError
 	var sourceHTTP *mikan.ResponseError
 	switch {
+	case errors.Is(err, service.ErrAnimeNamingChanged):
+		status, code, message = 409, "NAMING_METADATA_CHANGED", "TMDB 资料已变化，请重新读取命名预览"
+	case errors.Is(err, tmdb.ErrInput):
+		status, code, message = 400, "INVALID_INPUT", "TMDB 目标或季集参数不正确"
+	case errors.Is(err, tmdb.ErrNotConfigured):
+		status, code, message = 503, "TMDB_NOT_CONFIGURED", "TMDB 暂未配置，可保留原名继续配置订阅"
+	case errors.Is(err, tmdb.ErrNotFound):
+		status, code, message = 404, "NAMING_TARGET_NOT_FOUND", "目标作品或季集不存在，请更换目标"
 	case errors.Is(err, storage.ErrAnimeIdempotency):
 		status, code, message = 409, "IDEMPOTENCY_KEY_REUSED", "该请求标识已用于其他内容"
 	case errors.Is(err, storage.ErrAnimeCapability):
@@ -86,6 +95,10 @@ func animeError(c *gin.Context, err error) {
 		details["issues"] = config.Issues
 	}
 	var retry time.Time
+	var mikanCooldown *service.MikanCooldownError
+	if errors.As(err, &mikanCooldown) {
+		status, code, message, retry = 429, "SOURCE_COOLDOWN", "蜜柑正在冷却，请稍后再试", mikanCooldown.Until
+	}
 	if errors.As(err, &upstream) {
 		retry = upstream.RetryAfterAt
 	}
@@ -212,6 +225,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		c.JSON(200, v)
 	})
+	registerAnimeCatalog(r, s)
 	r.GET("/discovery/calendar", func(c *gin.Context) {
 		day := 0
 		if raw, ok := c.GetQuery("weekday"); ok {
@@ -248,6 +262,33 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		v, e := s.Discovery.Search(c.Request.Context(), in)
 		if e != nil {
 			animeError(c, e)
+			return
+		}
+		c.JSON(200, v)
+	})
+	r.GET("/discovery/subjects/:id/episodes", func(c *gin.Context) {
+		id := c.Param("id")
+		offset := 0
+		if raw, ok := c.GetQuery("offset"); ok {
+			n, err := strconv.Atoi(raw)
+			if err != nil || strconv.Itoa(n) != raw || n < 0 || n >= bangumi.MaxEpisodeItems || n%bangumi.EpisodePageSize != 0 {
+				animeError(c, storage.ErrAnimeInvalid)
+				return
+			}
+			offset = n
+		}
+		if !model.ValidAnimeExternalID(id) {
+			animeError(c, storage.ErrAnimeInvalid)
+			return
+		}
+		reader, ok := s.Discovery.(service.AnimeEpisodeDiscovery)
+		if !ok {
+			animeError(c, storage.ErrAnimeCapability)
+			return
+		}
+		v, err := reader.Episodes(c.Request.Context(), id, offset)
+		if err != nil {
+			animeError(c, err)
 			return
 		}
 		c.JSON(200, v)
@@ -340,6 +381,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		c.JSON(200, v)
 	})
 	registerAnimePreviews(r, s)
+	registerAnimeNaming(r, s)
 	r.POST("/subscriptions", func(c *gin.Context) { animeSave(c, s, "") })
 	r.PATCH("/subscriptions/:id", func(c *gin.Context) {
 		id, ok := animeID(c)

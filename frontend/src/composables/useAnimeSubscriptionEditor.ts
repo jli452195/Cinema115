@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { invalidateAnimeSubscriptions } from './useAnimeSubscriptionBrowser'
+import { useAnimeNaming } from './useAnimeNaming'
 import { portalUser } from './usePortalAuth'
 import { cachedAnime, requestAnime } from './useAnimeDiscovery'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
@@ -8,7 +9,7 @@ import type { AnimeSubjectResult } from '../types/anime'
 import type { AnimePreviewPage, AnimePreviewResponse, AnimeSaveReceipt, AnimeSettings, AnimeSettingsView, AnimeSourceSample, AnimeSubscriptionView, MikanEntry, MikanSearch } from '../types/animeSubscription'
 
 interface PendingWrite { path: string; method: string; key: string; body: unknown }
-export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: Ref<string>, bangumiID: Ref<string>) {
+export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: Ref<string>, bangumiID: Ref<string>, seed?: Ref<{ provider: string; itemId: string }>) {
   const sources = ref<SourceForm[]>([]), activeRef = ref('main')
   const subject = ref<{ id: string; title: string; coverUrl: string; date: string }>()
   const local = ref<AnimeSubscriptionView>(), settings = ref<AnimeSettingsView>()
@@ -26,14 +27,15 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const clock = window.setInterval(() => { now.value = Date.now() }, 10000)
   const active = computed(() => sources.value.find(source => source.ref === activeRef.value))
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!pendingSettings.value || !!receipt.value || loading.value || !!loadError.value)
+  const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', 'selected', 'unresolved', 'recovery', 'dismissed']
-    return JSON.stringify({ removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
+    const keys: (keyof SourceForm)[] = ['mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', 'selected', 'unresolved', 'recovery', 'dismissed']
+    return JSON.stringify({ naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
   const pausedReady = computed(() => !!settings.value?.readiness.ready && sources.value.some(s => s.role === 'main' && animeSourceReady(s)))
-  function entryRef() { return local.value ? { id: local.value.entryId } : { bangumiId: bangumiID.value, editionKey: 'original' } }
-  function chapter() { return local.value ? { id: local.value.entry.id, bangumiId: local.value.entry.bangumiId, editionKey: local.value.entry.editionKey, revision: local.value.entry.revision, draftKey: '' } : { id: '', bangumiId: bangumiID.value, editionKey: 'original', revision: 0, draftKey: draftKey.value } }
+  function entryRef() { return local.value ? { id: local.value.entryId } : { ...(subject.value?.id ? { bangumiId: subject.value.id } : {}), editionKey: 'original' } }
+  function chapter() { return local.value ? { id: local.value.entry.id, bangumiId: local.value.entry.bangumiId, editionKey: local.value.entry.editionKey, revision: local.value.entry.revision, draftKey: '' } : { id: '', bangumiId: subject.value?.id || null, editionKey: 'original', revision: 0, draftKey: draftKey.value } }
   function signature(source: SourceForm) {
     try {
       const { position: _p, role: _r, status: _s, runWhenEnabled: _e, groupName: _g, ...config } = animeSourceConfig(source, 0)
@@ -57,13 +59,25 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     loading.value = true; saveBusy.value = false; settingsBusy.value = false; loadError.value = ''; feedback.value = ''; duplicateID.value = ''; conflict.value = false; settingsError.value = ''; previewBusy.value = ''; directoryOpen.value = false
     if (!token.value || portalUser.value?.role !== 'admin') { loadError.value = '请使用管理员身份重新登录'; loading.value = false; return }
     const signal = lifetime.signal
+    async function newConfiguration(): Promise<AnimeSubjectResult & { sourceEntry?: MikanEntry }> {
+      let sourceEntry: MikanEntry | undefined
+      if (seed?.value.provider || seed?.value.itemId) {
+        if (seed.value.provider !== 'mikan' || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
+        const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/mikan/${seed.value.itemId}`, { signal })
+        if (result.entry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
+        sourceEntry = result.entry
+      }
+      if (/^[1-9]\d*$/.test(bangumiID.value)) {
+        const cached = cachedAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`)
+        const result = cached?.fresh ? cached.data : await requestAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`, `subjects/${bangumiID.value}`, token.value, signal)
+        return { ...result, sourceEntry }
+      }
+      if (bangumiID.value || !sourceEntry) throw new Error('缺少有效番剧条目，请返回选番')
+      return { sourceEntry, subject: { id: '', title: sourceEntry.title, originalTitle: '', coverUrl: '', date: '', weekday: null, url: '', synopsis: '', platform: '', episodes: null, totalEpisodes: null }, metadata: { fetchedAt: 0, expiresAt: 0, stale: false, dataVersion: '', issue: null } }
+    }
     const configPromise = subscriptionID.value
       ? animeConfigRequest<AnimeSubscriptionView>(token.value, `subscriptions/${encodeURIComponent(subscriptionID.value)}`, { signal })
-      : /^[1-9]\d*$/.test(bangumiID.value)
-        ? cachedAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`)?.fresh
-          ? Promise.resolve(cachedAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`)!.data)
-          : requestAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`, `subjects/${bangumiID.value}`, token.value, signal)
-        : Promise.reject(new Error('缺少有效 Bangumi 篇章，请返回选番'))
+      : newConfiguration()
     const results = await Promise.allSettled([configPromise, animeConfigRequest<AnimeSettingsView>(token.value, 'settings', { signal })])
     if (current !== generation || signal.aborted) return
     const [config, setting] = results
@@ -93,12 +107,18 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         })
       }
     } else {
-      const data = config.value as AnimeSubjectResult
+      const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry }
       subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date }
       sources.value = [newAnimeSource('main', data.subject.title)]
+      if (data.sourceEntry) {
+        const form = sources.value[0]!
+        form.itemId = data.sourceEntry.id; form.itemTitle = data.sourceEntry.title; form.entry = data.sourceEntry
+      }
     }
     if (!sources.value.length && !loadError.value) sources.value = [newAnimeSource('main', subject.value?.title)]
+    naming.reset(local.value?.naming, !!local.value)
     activeRef.value = sources.value[0]?.ref || ''; loading.value = false; baseline.value = rawForm()
+    if (!local.value && !loadError.value) void naming.search(true)
   }
   async function reloadSettings() {
     if (locked.value || previewBusy.value) return
@@ -148,7 +168,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', resolution: '', specMode: '', specProfiles: [], sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '1', initialMode: 'from_episode', include: '', exclude: '', preview: undefined, selected: [], unresolved: [], recovery: [], dismissed: [], previewError: '' })
+    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', resolution: '', specMode: '', specProfiles: [], sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '1', initialMode: 'from_episode', include: '', exclude: '', preview: undefined, selected: [], unresolved: [], recovery: [], dismissed: [], previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)
@@ -267,13 +287,14 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   function dismissPending(source: SourceForm, id: string) { void runPreview(source, 'select', { selected: source.selected, dismissed: [id] }) }
   function dismissRecovery(source: SourceForm) { if (!locked.value && !previewBusy.value) source.recovery = [] }
   async function save(mode: 'draft' | 'paused') {
+    if (naming.busy.value || naming.searching.value) return
     if (locked.value || previewBusy.value || sources.value.some(source => source.searchBusy) || !settings.value) return
     feedback.value = ''; duplicateID.value = ''; conflict.value = false
     try {
       const configs = sources.value.map(animeSourceConfig)
       if (mode === 'paused' && !pausedReady.value) throw new Error('请先补齐主 RSS 与主账号下载目录，也可以先保存草稿')
       const body = { saveMode: mode, expectedRevision: local.value?.revision || 0, settingsRevision: settings.value.settings.revision,
-        config: { entry: entryRef(), sources: configs, removedSourceIds: removed.value,
+        config: { naming: naming.input(), entry: entryRef(), sources: configs, removedSourceIds: removed.value,
           formSelections: sources.value.map(source => ({ sourceRef: source.ref, selectedReleaseIds: validPreview(source) ? source.selected : [], unresolvedReleaseIds: [...new Set([...source.unresolved, ...source.recovery, ...(!validPreview(source) ? source.selected : [])])].filter(id => !(validPreview(source) && source.selected.includes(id)) && !source.dismissed.includes(id)), dismissedReleaseIds: source.dismissed })), previewRefs: previewRefs() } }
       pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}` : 'subscriptions', method: local.value ? 'PATCH' : 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
       await retrySave()
@@ -323,8 +344,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       else pendingSettings.value = undefined
     } finally { if (current === generation) settingsBusy.value = false }
   }
-  watch([token, subscriptionID, bangumiID, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
+  watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady,
+  return { naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, pendingSettings, receipt, duplicateID, conflict, directoryOpen, now, budget, locked, dirty, pausedReady,
     initialize, reloadSettings, addSource, removeSource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, selectRelease, dismissPending, dismissRecovery, save, retrySave, saveDirectory }
 }

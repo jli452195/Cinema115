@@ -35,6 +35,10 @@ type AnimeDiscovery interface {
 	Subject(context.Context, string) (bangumi.SubjectResult, error)
 	Relations(context.Context, string) (bangumi.RelationsResult, error)
 }
+
+type AnimeEpisodeDiscovery interface {
+	Episodes(context.Context, string, int) (bangumi.EpisodesResult, error)
+}
 type animePrimaryAccounts interface {
 	Primary(string) (P115Account, error)
 }
@@ -49,9 +53,11 @@ type AnimeAdminService struct {
 	Discovery   AnimeDiscovery
 	Accounts    animePrimaryAccounts
 	Directories animeDirectories
+	Naming      *AnimeNamingService
 }
 
 type AnimeSaveConfig struct {
+	Naming           *model.AnimeNamingInput     `json:"naming"`
 	Entry            AnimeEntryRef               `json:"entry"`
 	Sources          []model.AnimeSourceConfig   `json:"sources"`
 	RemovedSourceIDs []model.AnimeSourceRemoval  `json:"removedSourceIds"`
@@ -256,6 +262,15 @@ func (s *AnimeAdminService) SaveConfiguration(ctx context.Context, actor, key, i
 	// Verify source metadata, never RSS availability, under one total deadline.
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	if in.Config.Naming != nil {
+		if s.Naming == nil {
+			return out, storage.ErrAnimeCapability
+		}
+		c.Naming, err = s.Naming.Resolve(ctx, *in.Config.Naming, old.Naming)
+		if err != nil {
+			return out, err
+		}
+	}
 	var entry model.AnimeEntry
 	if bindingEntry.ID != "" || bindingEntry.BangumiID != nil {
 		entry, _, err = s.Bindings.resolveEntry(ctx, bindingEntry, "")

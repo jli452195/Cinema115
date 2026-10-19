@@ -53,6 +53,7 @@ export function animeCooldownMessage() {
   return `Bangumi 暂时限流，请在 ${new Date(animeCooldownUntil.value).toLocaleTimeString('zh-CN', { hour12: false })} 后重试`
 }
 export function animeImageURL(value: string) {
+  if (/^\/api\/mikan\/image\/\d{6}\/[a-zA-Z0-9._-]+$/.test(value)) return value
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : '' } catch { return '' }
 }
 

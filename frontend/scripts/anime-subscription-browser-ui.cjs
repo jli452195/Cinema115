@@ -52,6 +52,8 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
       } else if (endpoint.endsWith('/settings')) data = { settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载' }, primaryAccount: { id: 'primary', name: '115 主网盘', uid: '10001', revision: 2 }, readiness: { ready: true, issues: [] } }
       else if (endpoint.endsWith('/discovery/calendar')) data = { ...meta(), days: Array.from({ length: 7 }, (_, n) => ({ weekday: n + 1, items: Array.from({ length: 20 }, (_, i) => card(n * 100 + i + 1)) })) }
       else if (endpoint.endsWith('/discovery/search')) data = { ...meta(), total: 60, items: Array.from({ length: 20 }, (_, i) => card(8000 + body.offset + i)), limit: 20, offset: body.offset }
+      else if (endpoint.endsWith('/catalog/mikan')) data = { ...meta(), provider:'mikan', days:Array.from({length:9},(_,n)=>({day:n+1,items:Array.from({length:20},(_,i)=>({...card(n*100+i+1),updatedDate:'2026-10-16'}))})),items:Array.from({length:60},(_,i)=>({...card(8000+i),updatedDate:'2026-10-16'})) }
+      else if (/\/sources\/mikan\/\d+$/.test(endpoint)) data={entry:{id:endpoint.split('/').pop(),title:'蜜柑来源',groups:[{id:'10',name:'字幕组甲'}],bangumiIds:['9001']}}
       else if (endpoint.includes('/discovery/subjects/')) {
         const id = endpoint.split('/').pop(); data = { subject: { ...card(id), synopsis: '这是独立篇章的简介。'.repeat(70), platform: 'TV', totalEpisodes: 12 }, metadata: meta() }
         if (url.searchParams.has('includeRelations')) data.relations = { ...meta(), items: [{ ...card(9001), title: '续作篇章', relation: '续集' }] }
@@ -162,32 +164,26 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
 
     await navigate('/anime?view=search&q=Re0&page=3&day=4')
     assert.equal(await page.getByRole('link', { name: '我的订阅', exact: true }).getAttribute('href'), '/anime/subscriptions')
-    const discoveryCard = page.locator('[data-anime-id="8040"]'); await discoveryCard.waitFor()
+    const discoveryCard = page.locator('[data-mikan-id="8040"]'); await discoveryCard.waitFor()
     await page.evaluate(() => window.scrollTo(0, 400)); const discoveryTop = await page.evaluate(() => scrollY)
     await discoveryCard.evaluate(el => el.click())
-    await page.getByRole('dialog').getByRole('button', { name: /^关联篇章/ }).click()
-    await page.getByRole('button', { name: '续集 续作篇章 2026' }).click()
-    await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 9001', exact: true }).waitFor()
-    assert.equal(new URL(page.url()).searchParams.get('subject'), '9001')
-    await page.getByRole('link', { name: '选择资源并配置订阅' }).click()
+    await page.getByRole('link', { name: '选择字幕组并配置订阅' }).click()
     await page.locator('.ae-chapter').waitFor()
     assert.equal(new URL(page.url()).searchParams.get('bangumiId'), '9001')
     await page.locator('.ae-chapter').getByRole('link', { name: '返回选番' }).click()
-    await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 9001', exact: true }).waitFor()
+    await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 8040', exact: true }).waitFor()
     assert.equal(new URL(page.url()).searchParams.get('page'), '3')
-    await page.getByRole('button', { name: '返回上一篇章' }).click()
-    await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 8040' }).waitFor()
     await page.keyboard.press('Escape')
     await page.getByRole('dialog').waitFor({ state: 'detached' })
     await page.waitForFunction(expected => Math.abs(scrollY - expected) < 4, discoveryTop)
-    await navigate('/anime?view=calendar&day=4&subject=302')
+    await navigate('/anime?source=mikan&view=calendar&day=4&item=302')
     await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 302' }).waitFor()
-    await page.getByRole('link', { name: '选择资源并配置订阅' }).click(); await page.locator('.ae-chapter').waitFor()
+    await page.getByRole('link', { name: '选择字幕组并配置订阅' }).click(); await page.locator('.ae-chapter').waitFor()
     await page.locator('.ae-chapter').getByRole('link', { name: '返回选番' }).click()
     assert.equal(new URL(page.url()).searchParams.get('day'), '4')
     await page.getByRole('dialog').getByRole('heading', { name: '番剧篇章 302' }).waitFor()
     await page.keyboard.press('Escape')
-    passed.push('发现页搜索页码/星期/关联中的当前篇章与历史、滚动通过配置往返恢复')
+    passed.push('蜜柑发现页搜索页码/星期/选中条目与滚动通过配置往返恢复')
 
     const direct = await session()
     await direct.go('/anime/subscriptions/sub-1?status=draft&page=2')
@@ -268,18 +264,18 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     await direct.page.waitForURL(/\/admin\/login/)
     const cleared = await direct.page.evaluate(async () => { const cache = await import(window.__cacheModuleURL); return { cached: !!cache.cachedSubscription('subscriptions/sub-1'), query: cache.animeSubscriptionQuery(), saved: cache.subscriptionState('detail:sub-1').saved } })
     assert.equal(cleared.cached, false); assert.equal(cleared.query, undefined); assert.equal(cleared.saved, false)
-    await navigate('/anime?view=calendar&day=4&subject=302')
+    await navigate('/anime?source=mikan&view=calendar&day=4&item=302')
     await page.getByRole('dialog').waitFor()
     const discoveryState = await page.evaluate(async () => {
-      const url = performance.getEntriesByType('resource').find(e => new URL(e.name).pathname === '/src/composables/useAnimeDiscovery.ts')?.name
+      const url = performance.getEntriesByType('resource').find(e => new URL(e.name).pathname === '/src/composables/useAnimeCatalog.ts')?.name
       if (!url) throw new Error('active discovery module not found')
       window.__discoveryModuleURL = url
-      const cache = await import(url); return !!cache.animeDetailState('302')
+      const cache = await import(url); return !!cache.catalogSnapshot('mikan:calendar:2026-10')
     })
     assert.equal(discoveryState, true)
     await page.evaluate(async () => { const auth = await import('/src/composables/usePortalAuth.ts'); auth.clearPortalSession() })
     await page.waitForURL(/\/admin\/login/)
-    assert.equal(await page.evaluate(async () => { const cache = await import(window.__discoveryModuleURL); return !!cache.animeDetailState('302') }), false)
+    assert.equal(await page.evaluate(async () => { const cache = await import(window.__discoveryModuleURL); return !!cache.catalogSnapshot('mikan:calendar:2026-10') }), false)
     const denied = await session({ width: 1000, height: 800 }, 'user'); await denied.go('/anime/subscriptions/sub-1')
     assert.equal(await denied.page.locator('.as-detail').count(), 0)
     assert.equal(denied.calls.some(c => c.endpoint.includes('/admin/anime')), false)
@@ -289,7 +285,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     assert.deepEqual(validation.slice(0, 4), [undefined, undefined, undefined, undefined])
     assert.equal(validation[4], '/anime?day=4&subject=302'); assert.equal(validation[5], '/anime/subscriptions/sub-1?page=2')
     assert.equal(calls.some(c => /\/anime\/.+(enable|check|jobs|organize|releases)/.test(c.endpoint)), false)
-    assert.equal(calls.filter(c => c.endpoint.includes('/admin/anime/') && c.method !== 'GET' && !c.endpoint.endsWith('/discovery/search') && !c.endpoint.endsWith('/subscriptions/sub-1')).length, 0)
+    assert.equal(calls.filter(c => c.endpoint.includes('/admin/anime/') && c.method !== 'GET' && !c.endpoint.endsWith('/catalog/mikan') && !c.endpoint.endsWith('/discovery/search') && !c.endpoint.endsWith('/naming/search') && !c.endpoint.endsWith('/subscriptions/sub-1')).length, 0)
     assert.deepEqual(errors, [])
     passed.push('回跳仅限已知只读动漫路由，无伪下载/启用请求，未访问真实配置或115')
     console.log(JSON.stringify({ passed, total: passed.length, pageErrors: errors }, null, 2))

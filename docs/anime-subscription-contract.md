@@ -2,6 +2,8 @@
 
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。
 
+2026-10-19 更新：P1 配置接口已接入；按用户确认提前实现 P3-01～03，当前以[订阅命名实现](anime-naming-implementation.md)为准。来源新增 `scope:{kind:"feed"}`，仅表示选择该 RSS，不证明整条来源属于 Bangumi 篇章，也不附带 `chapterCorrespondence`。编号范围是可选过滤，最终发布编号→TMDB 季集直接存于 `config.naming`，不再强制经过篇章编号。SQLite 当前为 v42，配置命名快照保存在 `anime_subscriptions.naming_json`；下文独立历史方案表仍为有执行任务后的设计，不代表已经建表。
+
 ## 1. 不变量与复用边界
 
 - 模块只负责订阅、主网盘下载、原文件整理，不引用 Emby 用户/媒体索引、追更、STRM、播放或通知表及事件。TMDB 不是下载前提。
@@ -99,7 +101,7 @@
 
 这些 ID 只沿用 P0 读取样本，编号对应是算法示例，不声明该蜜柑条目的实际编排。组名取已确认来源资料，不能由客户端任意覆盖实际组。`resolution` 可为 `720p/1080p/2160p/any`；null 仅在草稿中允许。include/exclude 各最多 10 个去重词、每词 64 Unicode 字符，字面匹配、排除优先。`minimumEpisode` 为 1～99999 且含本集。
 
-scope 为 `range` 时 first/last 均为合法整数且 first<=last；`confirmed_chapter` 用于已确认独属当前篇章的来源，带人工确认依据，不能自动从名称推断。跨篇章混合来源不能用该选项代替范围。`chapterCorrespondence` 可空；有值只作篇章回显，不含 TMDB 目标。初次范围三种值为 `from_episode/new_only/selected_history`。
+当前选择来源使用 `scope:{kind:"feed"}`，`confirmed:true` 同时要求 `review:{method:"source_review",itemId,groupId}`，`chapterCorrespondence:null`。上例为既有有限范围/篇章对应示例；`range` 的 first/last 均为合法整数且 first<=last，`confirmed_chapter` 仅用于明确核对过篇章归属的既有输入，不能从名称或点选来源推断。初次历史范围三种值为 `from_episode/new_only/selected_history`。最终命名映射使用独立 `naming.sources[].segments/overrides`。
 
 P1-05 补充实现校验：有 `chapterCorrespondence` 的有限范围，其首尾换算结果须在1～99999内；基准可在该范围之外，但不得产生非法篇章序号。无对应时保持篇章序号未知，不从已见最小集号、补番下限或其他来源推断。来源核验与只读编号预览见[实现记录](anime-source-binding-implementation.md)，管理API装配仍在P1-07。
 

@@ -27,7 +27,24 @@
 .ae-chapter { display: flex; min-width: 0; align-items: center; gap: 18px; margin-bottom: 24px; }
 .ae-chapter-poster { display: grid; flex: none; width: 58px; height: 80px; border-radius: 10px; place-items: center; background: var(--ae-inset); color: var(--ae-muted); overflow: hidden; }
 .ae-chapter-poster img { width: 100%; height: 100%; object-fit: cover; }
-.ae-chapter > div:nth-child(2) { min-width: 0; flex: 1; }
+.ae-chapter-identity { min-width: 0; flex: 1 1 260px; }
+.ae-chapter-episodes { min-width: 0; flex: 1.4 1 320px; }
+.ae-episode-heading { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; font-size: 11px; color: var(--ae-muted); }
+.ae-episode-heading > span:first-child { color: var(--ae-ink); font-weight: 500; }
+.ae-episode-chips { display: flex; flex-wrap: wrap; align-content: start; gap: 6px; }
+.ae-episode-chips.expanded { max-height: 142px; overflow-y: auto; overscroll-behavior: contain; padding: 3px; margin: -3px; scrollbar-width: thin; }
+.ae-episode-chip { display: inline-flex; align-items: center; min-height: 26px; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-variant-numeric: tabular-nums; background: var(--ae-inset); color: var(--ae-muted); cursor: default; }
+.ae-episode-chip.mapped { background: rgb(96 165 250 / .12); color: var(--ae-blue); }
+.ae-episode-note { font-size: 11px; line-height: 1.8; color: var(--ae-muted); margin-top: 6px; overflow-wrap: anywhere; }
+.ae-episode-note .ae-link { margin-left: 8px; }
+.ae-episode-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
+.ae-episode-actions .ae-link, .ae-episode-note .ae-link { font-size: 11px; min-height: 36px; }
+.ae-episode-chips:focus-visible { outline: 2px solid #60a5fa; outline-offset: 3px; }
+@media (min-width: 640px) and (max-width: 1100px) {
+  .ae-chapter { flex-wrap: wrap; }
+  .ae-chapter-identity { flex-basis: calc(100% - 220px); }
+  .ae-chapter-episodes { order: 4; flex-basis: 100%; margin-left: 76px; }
+}
 .ae-chapter h2 { font-size: 18px; font-weight: 600; margin: 3px 0 5px; overflow-wrap: anywhere; }
 .ae-eyebrow { font-size: 11px; color: var(--ae-muted); }
 .ae-editor-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
@@ -72,6 +89,7 @@
   .ae-chapter { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
   .ae-chapter-poster { grid-row: 1 / 3; align-self: start; }
   .ae-chapter > a { grid-column: 2; justify-self: start; min-height: 36px; }
+  .ae-chapter-episodes { grid-column: 1 / -1; grid-row: 3; }
   .ae-chapter h2 { font-size: 16px; }
   .ae-source-tabs { padding: 12px 12px 0; gap: 5px; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
   .ae-source-tabs > button { flex: none; max-width: 220px; }
@@ -145,7 +163,6 @@
 @media (max-width: 639px) {
   .ae-download-summary { gap: 8px 10px; padding: 12px 14px; }
   .ae-download-path { min-width: 0; flex-basis: calc(100% - 40px); }
-  .ae-summary-title { flex-wrap: wrap; }.ae-summary-title > button { margin-left: 32px; }
   .ae-source-summary { padding: 14px; }.ae-source-facts > div { grid-template-columns: 30px minmax(0, 1fr); }
   .ae-choose-source > button { margin-left: 44px; }
   .ae-spec-grid { grid-template-columns: minmax(0, 1fr); }
@@ -153,6 +170,33 @@
 }
 
 .ae-section-state { margin-left: 10px; color: var(--ae-muted); font-size: 11px; font-weight: 400; }
+.ae-naming-target { margin-bottom: 18px; padding: 18px 20px; border-radius: 14px; background: var(--ae-surface); box-shadow: 0 3px 18px rgb(15 23 42 / .025); }
+.ae-naming-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; }
+.ae-naming-heading > div { flex: 1; min-width: 150px; }
+.ae-naming-heading h3 { font-size: 14px; font-weight: 600; line-height: 1.8; overflow-wrap: anywhere; }
+.ae-naming-heading h3 small { color: var(--ae-muted); font-size: 11px; font-weight: 400; }
+.ae-target-season { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.ae-target-season select { width: auto; max-width: 100%; min-height: 42px; }
+.ae-target-picker { display: grid; gap: 10px; margin-top: 16px; }
+.ae-target-candidates { display: grid; gap: 5px; }
+.ae-target-candidates > button { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px; text-align: left; border-radius: 10px; background: var(--ae-inset); }
+.ae-target-candidates strong { font-size: 12px; font-weight: 500; }.ae-target-candidates small { color: var(--ae-muted); font-size: 11px; }
+.ae-source-naming { margin-top: 20px; padding: 16px; background: var(--ae-inset); border-radius: 13px; }
+.ae-source-naming h3 { font-size: 13px; font-weight: 600; }
+.ae-mapping-anchor { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.ae-mapping-examples { margin-top: 12px; font-size: 12px; color: var(--ae-muted); line-height: 1.9; }
+.ae-mapping-examples > p:first-child { color: var(--ae-blue); }
+.ae-path-preview { margin-top: 8px; overflow-wrap: anywhere; }
+.ae-mapping-examples small { display: block; font-size: 11px; margin-top: 6px; }
+.ae-original-note { margin-top: 18px; font-size: 12px; color: var(--ae-muted); }
+.ae-extra-mapping { padding: 14px 0; }.ae-extra-mapping h4 { margin-bottom: 10px; font-size: 12px; font-weight: 600; }.ae-extra-mapping .ae-field { font-size: 11px; color: var(--ae-muted); }
+@media (max-width: 639px) {
+  .ae-naming-target { padding: 16px; }.ae-target-season { align-items: stretch; }.ae-target-season select { width: 100%; }.ae-target-season .ae-note { flex-basis: 100%; }
+  .ae-source-naming { padding: 12px; }.ae-mapping-anchor { gap: 10px; grid-template-columns: minmax(0, 1fr); }
+  .ae-summary-title { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; }
+  .ae-summary-title > button { grid-column: 2; justify-self: start; margin-left: 0; }
+  .ae-extra-mapping .ae-pair { grid-template-columns: minmax(0, 1fr); }
+}
 .ae-picker button[aria-disabled="true"] { opacity: .65; cursor: wait; }
 .ae-spec-grid[aria-busy="true"] { min-height: 100px; }
 .ae-picker-dock { background: transparent; }

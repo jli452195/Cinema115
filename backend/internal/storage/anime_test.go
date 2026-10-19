@@ -113,6 +113,38 @@ func TestAnimeSchemaUpgradeAndReopen(t *testing.T) {
 	}
 }
 
+func TestAnimeNamingSnapshotReopenAndAtomicReferenceValidation(t *testing.T) {
+	s, path := testStore(t)
+	ctx := context.Background()
+	e := createAnimeEntry(t, s, animePtr("234"))
+	in := animeConfig(e.ID)
+	in.Naming = &model.AnimeNamingPlan{SchemaVersion: 1, Target: model.AnimeNamingTarget{TMDBID: "117061", Title: "作品", Year: "2021", Season: 2, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 2, Episodes: []model.AnimeNamingEpisode{{ID: "201", Number: 1, Name: "开始"}}}}}, Sources: []model.AnimeSourceMapping{{SourceRef: "unknown", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}
+	if _, err := s.SaveAnimeSubscription(ctx, in, nil); !errors.Is(err, ErrAnimeInvalid) {
+		t.Fatal("unknown naming source accepted", err)
+	}
+	page, err := s.ListAnimeSubscriptions(ctx, AnimeSubscriptionFilter{})
+	if err != nil || page.Total != 0 {
+		t.Fatal("failed naming save left a partial subscription", page, err)
+	}
+	in.Naming.Sources[0].SourceRef = "main"
+	saved := saveAnimeConfig(t, s, in)
+	if saved.Naming.Sources[0].SourceRef != saved.Sources[0].ID || in.Naming.Sources[0].SourceRef != "main" {
+		t.Fatal("unstable naming source reference", saved)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetAnimeSubscription(ctx, saved.ID, false)
+	if err != nil || !reflect.DeepEqual(saved, got) {
+		t.Fatal("naming snapshot changed after reopen", got, err)
+	}
+}
+
 func resetAnimeSchemaToV38(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()

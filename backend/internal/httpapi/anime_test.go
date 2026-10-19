@@ -21,7 +21,13 @@ import (
 
 type animeHTTPDiscovery struct {
 	calls, relationCalls int
+	episodeCalls         int
 	err                  error
+}
+
+func (f *animeHTTPDiscovery) Episodes(ctx context.Context, id string, offset int) (bangumi.EpisodesResult, error) {
+	f.episodeCalls++
+	return bangumi.EpisodesResult{Items: []bangumi.Episode{{ID: "1388677", Number: 59, ChapterNumber: animeHTTPPtr(1.0), Title: "混战都市", Date: "2025-02-05"}}, Total: 1, Offset: offset, Limit: 100, MaxItems: 2000}, f.err
 }
 
 func (f *animeHTTPDiscovery) Calendar(ctx context.Context, day int) (bangumi.CalendarResult, error) {

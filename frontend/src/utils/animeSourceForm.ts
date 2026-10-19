@@ -1,12 +1,13 @@
 import { animeRequestKey } from '../lib/anime-config-api'
-import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch } from '../types/animeSubscription'
+import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch, AnimeMappingSegment, AnimeMappingOverride } from '../types/animeSubscription'
 
 export interface SourceForm {
   ref: string; id: string; revision: number; role: 'main' | 'standby'; runWhenEnabled: boolean
   itemId: string; itemTitle: string; groupId: string; groupName: string
   lockedItem: boolean; lockedGroup: boolean
   keyword: string; searchedKeyword: string; search?: MikanSearch; entry?: MikanEntry; searchBusy: boolean; searchError: string; cooldown: number
-  scope: '' | 'range' | 'confirmed_chapter'; first: string; last: string; evidence: string; confirmed: boolean
+  scope: '' | 'feed' | 'range' | 'confirmed_chapter'; first: string; last: string; evidence: string; confirmed: boolean
+  mappingSource: string; mappingTarget: string; mappingSeason: string; mappingLast: string; mappingManual: boolean; mappingSegments: AnimeMappingSegment[]; mappingOverrides: AnimeMappingOverride[]
   confirmedFor: string; review?: AnimeBinding['review']; identityNumbering: boolean
   correspondence: boolean; sourceEpisode: string; chapterEpisode: string
   specMode: '' | 'profiles' | 'any'; specProfiles: AnimeSpec[]
@@ -20,6 +21,7 @@ export function newAnimeSource(role: SourceForm['role'], keyword = ''): SourceFo
     itemId: '', itemTitle: '', groupId: '', groupName: '', lockedItem: false, lockedGroup: false,
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
+    mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [],
     specMode: '', specProfiles: [], sampleBusy: false, sampleError: '', sampleCooldown: 0,
     resolution: '', minimum: '1', initialMode: 'from_episode', include: '', exclude: '', selected: [], unresolved: [], recovery: [], dismissed: [], previewError: '', previewCooldown: 0 }
 }
@@ -41,17 +43,18 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
       if (first === null || last === null || first > last) throw new Error('请完整填写编号范围，起点不能大于终点')
       scope = { kind: 'range', first, last }
     }
-  } else if (form.scope === 'confirmed_chapter') {
+  } else if (form.scope === 'feed') scope = { kind: 'feed' }
+  else if (form.scope === 'confirmed_chapter') {
     if (Array.from(form.evidence.trim()).length > 512 || /[\u0000-\u001f\u007f]/.test(form.evidence.trim())) throw new Error('核对说明最多 512 字，不能含控制字符')
     scope = { kind: 'confirmed_chapter', ...(form.evidence.trim() ? { evidence: form.evidence.trim() } : {}) }
   }
   let chapterCorrespondence: AnimeSourceConfig['binding']['chapterCorrespondence'] = null
-  if (form.correspondence) {
+  if (form.scope !== 'feed' && form.correspondence) {
     const sourceEpisode = episode(form.sourceEpisode, '字幕组编号'), chapterEpisode = episode(form.chapterEpisode, '篇章编号')
     if (sourceEpisode === null || chapterEpisode === null) throw new Error('请完整填写编号对应，或关闭编号对应')
     if (scope?.kind === 'range' && (scope.first - sourceEpisode + chapterEpisode < 1 || scope.last - sourceEpisode + chapterEpisode > 99999)) throw new Error('编号对应会超出篇章集号范围，请核对')
     chapterCorrespondence = { sourceEpisode, chapterEpisode }
-  } else if (form.identityNumbering) chapterCorrespondence = { sourceEpisode: 1, chapterEpisode: 1 }
+  } else if (form.scope !== 'feed' && form.identityNumbering) chapterCorrespondence = { sourceEpisode: 1, chapterEpisode: 1 }
   const minimumEpisode = episode(form.minimum, '补番起点')
   const confirmed = animeBindingConfirmed(form)
   const specificationsReady = form.specMode === 'any' || form.specMode === 'profiles' && form.specProfiles.length > 0 || !form.specMode && !!form.resolution
@@ -63,18 +66,18 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
 }
 export function animeSourceReady(form: SourceForm) { try { return animeSourceConfig(form, 0).status === 'paused' } catch { return false } }
 export function animeBindingKey(form: SourceForm) {
-  return JSON.stringify([form.itemId, form.groupId, form.scope, form.scope === 'range' ? [form.first.trim(), form.last.trim()] : [], form.correspondence ? [form.sourceEpisode.trim(), form.chapterEpisode.trim()] : form.identityNumbering ? [1, 1] : null])
+  // Range and numbering are separate rules. Editing them invalidates the
+  // release preview, without undoing the user's source-identity selection.
+  return JSON.stringify([form.itemId, form.groupId])
 }
 export function animeBindingConfirmed(form: SourceForm) { return form.confirmed && form.confirmedFor === animeBindingKey(form) }
 export function confirmAnimeSource(form: SourceForm) {
   if (!form.itemId || !form.groupId) throw new Error('请先选择资源与字幕组')
-  if (!form.scope) throw new Error('请确认来源属于当前篇章，或限定发布编号范围')
+  if (!form.scope) form.scope = 'feed'
   if (!form.specMode && !form.resolution || form.specMode === 'profiles' && !form.specProfiles.length) throw new Error('请选择至少一种规格，或明确选择全部规格')
   // Validate inputs before recording the explicit review. This never supplies
   // a fictional free-text explanation to satisfy the old contract.
-  const config = animeSourceConfig({ ...form, minimum: '1', include: '', exclude: '' }, 0)
-  if (!config.binding.scope) throw new Error('请完整填写篇章范围')
-  if (!form.correspondence) form.identityNumbering = true
+  animeSourceConfig({ ...form, scope: 'feed', correspondence: false, identityNumbering: false, minimum: '1', include: '', exclude: '' }, 0)
   form.evidence = ''; form.review = { method: 'source_review', itemId: form.itemId, groupId: form.groupId }
   form.confirmed = true; form.confirmedFor = animeBindingKey(form)
 }

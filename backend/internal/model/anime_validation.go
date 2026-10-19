@@ -86,6 +86,10 @@ func (b AnimeBinding) Validate(complete bool) error {
 	}
 	if s := b.Scope; s != nil {
 		switch s.Kind {
+		case "feed":
+			if s.First != nil || s.Last != nil || s.Evidence != "" || b.ChapterCorrespondence != nil || b.Confirmed && b.Review == nil {
+				return fmt.Errorf("invalid feed scope")
+			}
 		case "range":
 			if s.First == nil || s.Last == nil || !animeEpisode(*s.First) || !animeEpisode(*s.Last) || *s.First > *s.Last || s.Evidence != "" {
 				return fmt.Errorf("invalid binding range")
@@ -189,6 +193,11 @@ func (s AnimeSourceConfig) Validate() error {
 }
 
 func (c AnimeSubscriptionConfig) Validate() error {
+	if c.Naming != nil {
+		if err := c.Naming.Validate(); err != nil {
+			return err
+		}
+	}
 	if c.ID != "" && !ValidAnimeID(c.ID) || !ValidAnimeID(c.EntryID) || !animeRevision(c.ExpectedRevision) || (c.ID == "") != (c.ExpectedRevision == 0) {
 		return fmt.Errorf("invalid subscription identity/revision")
 	}

@@ -102,16 +102,17 @@ type AnimeForm struct {
 }
 
 type AnimeSubscription struct {
-	ID             string        `json:"id"`
-	EntryID        string        `json:"entryId"`
-	Status         string        `json:"status"`
-	Revision       int64         `json:"revision"`
-	RunGeneration  int64         `json:"runGeneration"`
-	FirstEnabledAt *int64        `json:"firstEnabledAt"`
-	Form           AnimeForm     `json:"form"`
-	CreatedAt      int64         `json:"createdAt"`
-	UpdatedAt      int64         `json:"updatedAt"`
-	Sources        []AnimeSource `json:"sources"`
+	Naming         *AnimeNamingPlan `json:"naming"`
+	ID             string           `json:"id"`
+	EntryID        string           `json:"entryId"`
+	Status         string           `json:"status"`
+	Revision       int64            `json:"revision"`
+	RunGeneration  int64            `json:"runGeneration"`
+	FirstEnabledAt *int64           `json:"firstEnabledAt"`
+	Form           AnimeForm        `json:"form"`
+	CreatedAt      int64            `json:"createdAt"`
+	UpdatedAt      int64            `json:"updatedAt"`
+	Sources        []AnimeSource    `json:"sources"`
 }
 
 type AnimeSource struct {
@@ -179,6 +180,7 @@ type AnimeSourceRemoval struct {
 }
 
 type AnimeSubscriptionConfig struct {
+	Naming           *AnimeNamingPlan     `json:"naming"`
 	ID               string               `json:"id"`
 	EntryID          string               `json:"entryId"`
 	ExpectedRevision int64                `json:"expectedRevision"`

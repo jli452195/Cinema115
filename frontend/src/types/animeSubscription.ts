@@ -1,7 +1,7 @@
 export interface AnimeBinding {
   schemaVersion: 1
   confirmed: boolean
-  scope: null | { kind: 'range'; first: number; last: number } | { kind: 'confirmed_chapter'; evidence?: string }
+  scope: null | { kind: 'feed' } | { kind: 'range'; first: number; last: number } | { kind: 'confirmed_chapter'; evidence?: string }
   chapterCorrespondence: null | { sourceEpisode: number; chapterEpisode: number }
   review?: { method: 'source_review'; itemId: string; groupId: string }
 }
@@ -66,6 +66,7 @@ export interface AnimePreviewResponse {
   sources: AnimePreviewSummary[]; issues: { sourceRef: string; code: string }[]; page?: AnimePreviewPage
 }
 export interface AnimeSubscriptionView {
+  naming?: AnimeNamingPlan | null
   id: string; entryId: string; status: string; revision: number
   createdAt?: number; updatedAt?: number; dataVersion?: string
   readiness?: { ready: boolean; issues: string[] }
@@ -75,3 +76,14 @@ export interface AnimeSubscriptionView {
 }
 export interface AnimeSubscriptionPage { items: AnimeSubscriptionView[]; total: number; page: number; pageSize: number; dataVersion: string }
 export interface AnimeSaveReceipt { id: string; entryId: string; revision: number; status: string; sourceIds: Record<string, string>; sourceRevisions: Record<string, number>; requiresRepreview: boolean }
+
+export interface AnimeMappingSegment { first: number; last: number | null; sourceBase: number; targetSeason: number; targetBase: number }
+export interface AnimeMappingOverride { rawKind: 'episode' | 'special' | 'composite'; rawNumber: string; action: 'map' | 'ignore'; targetSeason: number; targetEpisode: number }
+export interface AnimeSourceMapping { sourceRef: string; segments: AnimeMappingSegment[]; overrides: AnimeMappingOverride[] }
+export interface AnimeNamingTarget {
+  tmdbId: string; title: string; year: string; groupId: string; groupName: string; season: number; fingerprint: string
+  seasons: { number: number; name: string; date: string; episodeCount: number; episodes: { id: string; number: number; name: string; date?: string; sourceSeason: number; sourceNumber: number }[] | null }[]
+}
+export interface AnimeNamingInput { tmdbId: string; groupId: string; season: number; fingerprint: string; loadedSeasons?: number[]; sources: AnimeSourceMapping[] }
+export interface AnimeNamingPlan { schemaVersion: 1; target: AnimeNamingTarget; sources: AnimeSourceMapping[] }
+export interface AnimeNamingCandidate { id: number; title: string; originalTitle: string; date: string }

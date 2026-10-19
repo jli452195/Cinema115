@@ -238,15 +238,36 @@ func (s *Store) saveAnimeConfiguration(ctx context.Context, in model.AnimeSubscr
 			return receipt, ErrAnimeInvalid
 		}
 	}
+	if in.Naming != nil {
+		// Copy before converting temporary client references to stable source IDs.
+		plan := *in.Naming
+		plan.Sources = append([]model.AnimeSourceMapping{}, plan.Sources...)
+		seen := make(map[string]bool, len(plan.Sources))
+		for i := range plan.Sources {
+			m := &plan.Sources[i]
+			if id, ok := receipt.SourceIDs[m.SourceRef]; ok {
+				m.SourceRef = id
+			}
+			if _, ok := final[m.SourceRef]; !ok || seen[m.SourceRef] {
+				return receipt, ErrAnimeInvalid
+			}
+			seen[m.SourceRef] = true
+		}
+		in.Naming = &plan
+	}
+	naming, err := animeJSON(in.Naming)
+	if err != nil {
+		return receipt, err
+	}
 	form, err := animeJSON(in.Form)
 	if err != nil {
 		return receipt, err
 	}
 	var result sql.Result
 	if in.ExpectedRevision == 0 {
-		result, err = tx.ExecContext(ctx, `INSERT INTO anime_subscriptions(`+animeSubscriptionColumns+`) VALUES(?,?,?,1,1,NULL,?,?,?)`, in.ID, in.EntryID, in.Status, form, now, now)
+		result, err = tx.ExecContext(ctx, `INSERT INTO anime_subscriptions(`+animeSubscriptionColumns+`) VALUES(?,?,?,1,1,NULL,?,?,?,?)`, in.ID, in.EntryID, in.Status, form, now, now, naming)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,run_generation=run_generation+1,form_json=?,updated_at=? WHERE id=? AND revision=?`, in.Status, form, now, in.ID, in.ExpectedRevision)
+		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,run_generation=run_generation+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, in.Status, form, naming, now, in.ID, in.ExpectedRevision)
 	}
 	if err != nil {
 		return receipt, animeDBError("save anime subscription", err)
