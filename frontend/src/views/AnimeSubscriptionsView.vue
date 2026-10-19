@@ -6,7 +6,7 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
 import AnimeSubscriptionDialog from '../components/AnimeSubscriptionDialog.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
-import { cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
+import { animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { animeConfigMessage } from '../lib/anime-config-api'
 import { animeLocalTime, subscriptionCard, subscriptionStatus, subscriptionSummary } from '../utils/animeSubscriptionPresentation'
 import type { AnimeSubscriptionPage } from '../types/animeSubscription'
@@ -18,17 +18,19 @@ defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
 const status = computed(() => ['draft', 'paused'].includes(String(route.query.status)) ? String(route.query.status) : '')
 const keyword = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')
+const bangumiId = computed(() => /^[1-9]\d{0,11}$/.test(String(route.query.bangumiId)) ? String(route.query.bangumiId) : '')
+const returnTo = computed(() => animeReturnPath(route.query.returnTo))
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(1000000, Math.max(1, Number(route.query.page))) : 1)
 const detailID = computed(() => String(route.params.id || ''))
 const input = ref(keyword.value), inputError = ref('')
-const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}`)
+const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}${bangumiId.value ? `&bangumiId=${bangumiId.value}` : ''}`)
 const result = ref<AnimeSubscriptionPage>(), loading = ref(false), error = ref(''), fetchedAt = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
 const selected = computed(() => result.value?.items.find(item => item.id === detailID.value))
 let controller: AbortController | undefined, disposed = false, frame: number | undefined, interaction = 0
 function interacted() { interaction++ }
 function query(overrides: Record<string, string | undefined> = {}) {
-  return { ...(status.value ? { status: status.value } : {}), ...(keyword.value ? { q: keyword.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
+  return { ...(status.value ? { status: status.value } : {}), ...(keyword.value ? { q: keyword.value } : {}), ...(bangumiId.value ? { bangumiId: bangumiId.value } : {}), ...(returnTo.value ? { returnTo: returnTo.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
 }
 function savePosition() { rememberSubscriptionState(`list:${dataKey.value}`, { top: window.scrollY, expanded: [] }) }
 async function restorePosition(key: string) {
@@ -46,6 +48,7 @@ function submitSearch() {
 }
 function openDetail(id: string) { void router.push({ path: `/anime/subscriptions/${encodeURIComponent(id)}`, query: query() }) }
 async function closeDetail() {
+  if (returnTo.value && window.history.state?.animeCatalogDirect === true) { await router.replace(returnTo.value); return }
   const id = detailID.value
   await router.replace({ path: '/anime/subscriptions', query: query() }); await nextTick()
   const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-subscription-id]'))
@@ -85,8 +88,9 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
 
 <template>
   <ManagementLayout title="我的动漫订阅" description="查看保存的篇章与 RSS 配置，继续完善订阅。" @logout="$emit('logout')">
-    <template #actions><RouterLink to="/anime" class="as-link"><IconCalendar :size="17" aria-hidden="true" />返回选番</RouterLink><button type="button" class="anime-refresh" aria-label="刷新订阅列表" :disabled="loading" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+    <template #actions><RouterLink :to="returnTo || '/anime'" class="as-link"><IconCalendar :size="17" aria-hidden="true" />返回选番</RouterLink><button type="button" class="anime-refresh" aria-label="刷新订阅列表" :disabled="loading" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
     <div class="anime-browser">
+      <p v-if="bangumiId" class="anime-context">当前篇章的订阅配置（Bangumi {{ bangumiId }}）<RouterLink :to="{ path: '/anime/subscriptions', query: query({ bangumiId: undefined, page: undefined }) }" class="as-link">查看全部</RouterLink></p>
       <div class="as-toolbar">
         <div class="as-filters" role="group" aria-label="订阅状态"><button v-for="option in [{ value: '', label: '全部' }, { value: 'draft', label: '草稿' }, { value: 'paused', label: '已暂停' }]" :key="option.value" type="button" :aria-pressed="status === option.value" @click="filter(option.value)">{{ option.label }}</button></div>
         <form class="as-search" role="search" aria-label="搜索本地订阅" @submit.prevent="submitSearch"><label class="sr-only" for="subscription-keyword">订阅名称</label><input id="subscription-keyword" v-model="input" type="search" placeholder="搜索订阅名称" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'subscription-search-error' : undefined" /><button type="submit"><IconSearch :size="16" aria-hidden="true" />搜索</button></form>

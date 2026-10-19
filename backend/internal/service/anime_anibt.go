@@ -9,12 +9,16 @@ import (
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
+	"strm115/backend/internal/storage"
 )
 
-type AnibtService struct{ *animeSiteCache }
+type AnibtService struct {
+	*animeSiteCache
+	CatalogLinks AnimeCatalogLinks
+}
 
 func NewAnibtService(client animeSiteTransport) *AnibtService {
-	return &AnibtService{newAnimeSiteCache(client, "anibt")}
+	return &AnibtService{animeSiteCache: newAnimeSiteCache(client, "anibt")}
 }
 
 type AnimeAnibtCatalog struct {
@@ -47,6 +51,24 @@ func (s *AnibtService) Catalog(ctx context.Context, season, keyword string, refr
 	for i := range catalog.Items {
 		catalog.Items[i].CoverURL = imagecache.AnibtCoverURL(catalog.Items[i].CoverURL)
 	}
+	if s.CatalogLinks != nil {
+		links := make([]storage.AnimeCatalogLink, 0, len(catalog.Items)+100)
+		add := func(item anibt.Item) {
+			b := item.BangumiID
+			links = append(links, storage.AnimeCatalogLink{ItemID: item.ID, BangumiID: &b, ObservedAt: read.observed.UnixMilli()})
+		}
+		for _, day := range catalog.Days {
+			for _, item := range day.Items {
+				add(item)
+			}
+		}
+		for _, item := range catalog.Items {
+			add(item)
+		}
+		if err := s.CatalogLinks.CacheAnimeCatalogLinks(ctx, "anibt", links); err != nil {
+			return out, err
+		}
+	}
 	return AnimeAnibtCatalog{Catalog: catalog, FetchedAt: read.observed.UnixMilli(), ExpiresAt: read.expires.UnixMilli()}, nil
 }
 func (s *AnibtService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeSourceBudget, id string, refresh bool) (AnimeSourceEntryResult, error) {
@@ -72,7 +94,11 @@ func (s *AnibtService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeSo
 	if err != nil {
 		return out, err
 	}
-	return AnimeSourceEntryResult{Entry: entry, ObservedAt: read.observed, ExpiresAt: read.expires, Cached: cached}, nil
+	out = AnimeSourceEntryResult{Entry: entry, ObservedAt: read.observed, ExpiresAt: read.expires, Cached: cached}
+	if err := cacheAnimeEntryLink(ctx, s.CatalogLinks, "anibt", out); err != nil {
+		return AnimeSourceEntryResult{}, err
+	}
+	return out, nil
 }
 func (s *AnibtService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 	var out AnimeSourceResult

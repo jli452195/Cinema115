@@ -40,6 +40,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       const call = { endpoint, query: url.search, method, body, key: request.headers()['idempotency-key'] }; calls.push(call)
       let status = 200, data = {}
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: state.role, disabled: false } }
+      else if (endpoint.endsWith('/catalog-status')) data = { items: body.itemIds.map(itemId => ({ itemId, bangumiId: null, subscriptions: [] })) }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
       else if (endpoint.endsWith('/naming/search')) {
         if (state.namingGate) await state.namingGate
@@ -665,6 +666,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     passed.push('Garden native entry shares Bangumi editor; origin and publisher disambiguation; source-only preview; cancelled replacement retains main; three-site backups save independently at 320px')
 
     const ordinary = await session(undefined, 'user'); await ordinary.go()
+    await ordinary.page.waitForURL(origin + '/')
     assert.equal(new URL(ordinary.page.url()).pathname, '/')
     assert.equal(ordinary.calls.some(c => c.endpoint.includes('/admin/anime')), false)
     passed.push('详情关联导航后使用当前篇章建立配置，普通用户前端守卫拒绝管理员页面')

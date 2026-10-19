@@ -425,7 +425,7 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		if !ok {
 			return
 		}
-		v, e := s.Subscriptions(c.Request.Context(), storage.AnimeSubscriptionFilter{Status: c.Query("status"), Keyword: strings.TrimSpace(c.Query("keyword")), Page: p, PageSize: n})
+		v, e := s.Subscriptions(c.Request.Context(), storage.AnimeSubscriptionFilter{Status: c.Query("status"), Keyword: strings.TrimSpace(c.Query("keyword")), BangumiID: c.Query("bangumiId"), Page: p, PageSize: n})
 		if e != nil {
 			animeError(c, e)
 			return

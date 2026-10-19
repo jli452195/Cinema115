@@ -3,6 +3,7 @@ import { portalToken, portalUser } from './usePortalAuth'
 import { animeConfigRequest } from '../lib/anime-config-api'
 import type { AnimeProviderID, AnimeCatalog, AnimeSourceProvider } from '../types/animeCatalog'
 import type { MikanEntry } from '../types/animeSubscription'
+import { forgetAnimeCatalogStatus } from './useAnimeCatalogStatus'
 
 const catalogs = new Map<string, AnimeCatalog>()
 const queries = new Map<AnimeProviderID, Record<string, string>>()
@@ -25,6 +26,7 @@ export async function requestMikanCatalogEntry(token: string, id: string, signal
   const result = await animeConfigRequest<{ entry: MikanEntry; expiresAt?: number }>(token, `sources/mikan/${id}`, { signal })
   if (signal.aborted || epoch !== generation) throw new DOMException('Request cancelled', 'AbortError')
   if (result.entry?.id !== id || !result.entry.title || !Array.isArray(result.entry.groups) || !Array.isArray(result.entry.bangumiIds)) throw new Error('蜜柑条目无法核对，请重新选择')
+  forgetAnimeCatalogStatus('mikan', id)
   const until = Math.min(Date.now() + 60000, Number(result.expiresAt) || Infinity)
   mikanEntries.delete(id); mikanEntries.set(id, { entry: structuredClone(result.entry), until })
   while (mikanEntries.size > 24) mikanEntries.delete(mikanEntries.keys().next().value!)
@@ -40,6 +42,8 @@ export async function requestCatalog(token: string, provider: AnimeSourceProvide
   const result = await animeConfigRequest<AnimeCatalog>(token, `catalog/${provider}`, { method: 'POST', body, signal })
   if (signal.aborted || epoch !== generation || token !== portalToken.value || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
   if (result.provider !== provider || !Array.isArray(result.days) || !Array.isArray(result.items)) throw new Error(`${provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑'}返回的列表格式不正确`)
+  for (const item of result.items) forgetAnimeCatalogStatus(provider, item.id)
+  for (const day of result.days) for (const item of day.items) forgetAnimeCatalogStatus(provider, item.id)
   catalogs.delete(key); catalogs.set(key, result)
   while (catalogs.size > 24) catalogs.delete(catalogs.keys().next().value!)
   return result

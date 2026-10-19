@@ -31,6 +31,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
       const req = route.request(), url = new URL(req.url()), endpoint = url.pathname, method = req.method(), body = req.postDataJSON()
       calls.push({ endpoint, query: url.search, method, body }); let data = {}, status = 200
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: state.role, disabled: false } }
+      else if (endpoint.endsWith('/catalog-status')) data = { items: body.itemIds.map(itemId => ({ itemId, bangumiId: null, subscriptions: [] })) }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
       else if (endpoint === '/api/admin/anime/subscriptions' && method === 'GET') {
         if (state.slow) { state.slow = false; await new Promise(resolve => { state.release = resolve }) }
@@ -282,7 +283,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     assert.deepEqual(validation.slice(0, 4), [undefined, undefined, undefined, undefined])
     assert.equal(validation[4], '/anime?day=4&subject=302'); assert.equal(validation[5], '/anime/subscriptions/sub-1?page=2')
     assert.equal(calls.some(c => /\/anime\/.+(enable|check|jobs|organize|releases)/.test(c.endpoint)), false)
-    assert.equal(calls.filter(c => c.endpoint.includes('/admin/anime/') && c.method !== 'GET' && !c.endpoint.endsWith('/catalog/mikan') && !c.endpoint.endsWith('/discovery/search') && !c.endpoint.endsWith('/naming/search') && !c.endpoint.endsWith('/subscriptions/sub-1')).length, 0)
+    assert.equal(calls.filter(c => c.endpoint.includes('/admin/anime/') && c.method !== 'GET' && !c.endpoint.endsWith('/catalog-status') && !c.endpoint.endsWith('/catalog/mikan') && !c.endpoint.endsWith('/discovery/search') && !c.endpoint.endsWith('/naming/search') && !c.endpoint.endsWith('/subscriptions/sub-1')).length, 0)
     assert.deepEqual(errors, [])
     passed.push('回跳仅限已知只读动漫路由，无伪下载/启用请求，未访问真实配置或115')
     console.log(JSON.stringify({ passed, total: passed.length, pageErrors: errors }, null, 2))

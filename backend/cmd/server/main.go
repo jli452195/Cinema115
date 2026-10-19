@@ -113,6 +113,9 @@ func main() {
 	httpapi.RegisterMikan(admin, mikanService)
 	animeDiscovery := bangumi.New()
 	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService, Anibt: service.NewAnibtService(anibt.New()), Garden: service.NewGardenService(garden.New())}
+	animeBindings.Mikan.CatalogLinks = database
+	animeBindings.Anibt.CatalogLinks = database
+	animeBindings.Garden.CatalogLinks = database
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	httpapi.RegisterAnime(admin, &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}})
 	gyingStore, err := service.NewSessionStore(filepath.Join(dataDir, "gying-config.enc"), secret)

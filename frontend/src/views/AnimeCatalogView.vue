@@ -10,8 +10,10 @@ import AnimeProviderButton from '../components/AnimeProviderButton.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { animeScroll, rememberAnimeQuery, rememberAnimeScroll } from '../composables/useAnimeDiscovery'
 import { catalogDraft, catalogQuery, catalogSnapshot, rememberCatalogDraft, rememberCatalogQuery, requestCatalog } from '../composables/useAnimeCatalog'
+import { animeCatalogStatusSnapshot, requestAnimeCatalogStatuses } from '../composables/useAnimeCatalogStatus'
+import { animeSubscriptionsVersion } from '../composables/useAnimeSubscriptionBrowser'
 import { animeConfigMessage } from '../lib/anime-config-api'
-import { animeProviders, type AnimeProviderID, type AnimeCatalog, type GardenCatalogItem, type AnibtCatalogItem, type MikanCatalogItem } from '../types/animeCatalog'
+import { animeProviders, type AnimeCatalogStatus, type AnimeProviderID, type AnimeCatalog, type GardenCatalogItem, type AnibtCatalogItem, type MikanCatalogItem } from '../types/animeCatalog'
 import '../styles/animeDiscovery.css'
 
 const props = defineProps<{ token: string }>()
@@ -39,6 +41,20 @@ const mikanItems = computed(() => result.value?.provider === 'mikan' ? items.val
 const gardenItems = computed(() => result.value?.provider === 'garden' ? items.value as GardenCatalogItem[] : [])
 const anibtItems = computed(() => result.value?.provider === 'anibt' ? items.value as AnibtCatalogItem[] : [])
 const pages = computed(() => Math.max(1, Math.ceil(allItems.value.length / 20)))
+const subscriptionStates = ref<Record<string, AnimeCatalogStatus>>({}), statusError = ref('')
+let statusController: AbortController | undefined, statusPending = false
+async function loadStatuses(force = false) {
+  statusController?.abort(); const active = new AbortController(); statusController = active
+  statusPending = false
+  subscriptionStates.value = animeCatalogStatusSnapshot(provider.value as AnimeProviderID, items.value.map(item => item.id)); statusError.value = ''
+  if (!available.value || !items.value.length || !props.token || props.token !== portalToken.value || portalUser.value?.role !== 'admin') return
+  statusPending = true
+  try {
+    const states = await requestAnimeCatalogStatuses(props.token, provider.value as AnimeProviderID, items.value.map(item => item.id), active.signal, force)
+    if (!active.signal.aborted && statusController === active) subscriptionStates.value = states
+  } catch (reason) { if (!active.signal.aborted && statusController === active && !(reason instanceof DOMException && reason.name === 'AbortError')) statusError.value = '订阅状态暂时无法核对' }
+  finally { if (statusController === active) statusPending = false }
+}
 const seasons = computed(() => {
   const list = []
   for (let year = Math.max(now.getFullYear() + 1, Number(season.value.slice(0, 4))); year >= 2000; year--) {
@@ -94,14 +110,16 @@ watch(keyword, value => { input.value = value; inputError.value = '' })
 watch(provider, value => { input.value = catalogDraft(value as AnimeProviderID) ?? keyword.value; inputError.value = '' })
 watch(input, value => { if (available.value) rememberCatalogDraft(provider.value as AnimeProviderID, value) })
 watch(scrollKey, value => { void restorePosition(value) })
+watch([result, () => items.value.map(item => item.id).join(','), provider, animeSubscriptionsVersion, () => props.token, portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadStatuses() }, { immediate: true })
+function recheckStatuses() { if (!statusPending && document.visibilityState === 'visible') void loadStatuses() }
 watch(() => route.fullPath, () => {
   if (route.name !== 'anime-discovery' || !available.value) return
   const canonical = Object.fromEntries(Object.entries(query()).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
   rememberAnimeQuery(canonical); rememberCatalogQuery(provider.value as AnimeProviderID, canonical)
 }, { immediate: true })
 onBeforeRouteUpdate(savePosition); onBeforeRouteLeave(savePosition)
-onMounted(() => { for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interact, { passive: true }) })
-onBeforeUnmount(() => { disposed = true; controller?.abort(); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
+onMounted(() => { document.addEventListener('visibilitychange', recheckStatuses); window.addEventListener('focus', recheckStatuses); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interact, { passive: true }) })
+onBeforeUnmount(() => { disposed = true; controller?.abort(); statusController?.abort(); document.removeEventListener('visibilitychange', recheckStatuses); window.removeEventListener('focus', recheckStatuses); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
 </script>
 
 <template>
@@ -117,8 +135,9 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); cancelAnimationFra
         <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span></div>
         <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
         <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton"><div></div><span></span></div></div>
-        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="item in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" /><AnibtAnimeCard v-for="item in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" /><MikanAnimeCard v-for="item in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" /></div>
+        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="item in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /><AnibtAnimeCard v-for="item in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /><MikanAnimeCard v-for="item in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /></div>
         <div v-else-if="!error" class="anime-empty"><component :is="mode === 'calendar' ? IconCalendar : IconSearch" :size="30" aria-hidden="true" /><h3>{{ mode === 'calendar' ? '当前分类暂无条目' : keyword ? `${providerName}未找到相关番剧` : `在${providerName}查找想追的番剧` }}</h3><p>{{ mode === 'calendar' ? '可以切换分类、季度，或搜索番剧名称。' : '试试原名、简称或更短的关键词。' }}</p></div>
+        <p v-if="statusError" class="catalog-status-error" role="status">{{ statusError }}<button type="button" @click="loadStatuses(true)">重新核对</button></p>
         <p v-if="result?.provider === 'anibt' && result.truncated" class="ae-note">AniBT 最多返回 50 部搜索结果，请缩小关键词范围。</p>
         <p v-if="result?.provider === 'garden' && result.truncated" class="ae-note">Anime Garden 最多显示 100 部搜索结果，请缩小关键词范围。</p>
         <nav v-if="mode === 'search' && pages > 1" class="anime-pagination" :aria-label="`${providerName}搜索分页`"><button type="button" :disabled="page <= 1" aria-label="搜索上一页" @click="navigate({ page: page > 2 ? String(page - 1) : undefined, item: undefined })"><IconChevronLeft :size="18" aria-hidden="true" />上一页</button><span>{{ page }} / {{ pages }}</span><button type="button" :disabled="page >= pages" aria-label="搜索下一页" @click="navigate({ page: String(page + 1), item: undefined })">下一页<IconChevronRight :size="18" aria-hidden="true" /></button></nav>
@@ -141,6 +160,9 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); cancelAnimationFra
 .catalog-count { margin-left: 10px; font-size: 12px; color: rgb(var(--color-slate-500)); font-weight: 400; }
 .catalog-updated { font-size: 11px; color: rgb(var(--color-slate-500)); }
 .catalog-scope { margin: 0; }
+.catalog-status-error { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 12px; color: rgb(var(--color-slate-500)); }
+.catalog-status-error button { min-height: 44px; color: #2563eb; }
+.dark .catalog-status-error button { color: #93c5fd; }
 .dark .catalog-days button[aria-pressed="true"], .dark .catalog-calendar-toggle[aria-pressed="true"] { color: #93c5fd; }
 .dark .catalog-season select { color: rgb(var(--color-slate-300)); }
 .dark .catalog-season option { background: rgb(var(--color-slate-900)); }

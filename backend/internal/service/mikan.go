@@ -48,6 +48,7 @@ type mikanFlight struct {
 	err   error
 }
 type MikanService struct {
+	CatalogLinks    AnimeCatalogLinks
 	Client          MikanReader
 	Logs            *GenerationLogs
 	mu              sync.Mutex

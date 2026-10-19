@@ -287,8 +287,8 @@ func (s *Store) GetAnimeSubscription(ctx context.Context, id string, includeRemo
 }
 
 type AnimeSubscriptionFilter struct {
-	Status, Keyword string
-	Page, PageSize  int
+	Status, Keyword, BangumiID string
+	Page, PageSize             int
 }
 type AnimeSubscriptionPage struct {
 	Items                 []model.AnimeSubscription
@@ -319,7 +319,7 @@ func (s *Store) ListAnimeSubscriptions(ctx context.Context, f AnimeSubscriptionF
 	default:
 		return out, ErrAnimeInvalid
 	}
-	if len(f.Keyword) > 512 {
+	if len(f.Keyword) > 512 || f.BangumiID != "" && !model.ValidAnimeExternalID(f.BangumiID) {
 		return out, ErrAnimeInvalid
 	}
 	out.Page, out.PageSize = page, size
@@ -330,7 +330,8 @@ func (s *Store) ListAnimeSubscriptions(ctx context.Context, f AnimeSubscriptionF
 	}
 	defer tx.Rollback()
 	where := ` WHERE (?='' AND status<>'removed' OR status=?) AND (?='' OR entry_id IN (SELECT id FROM anime_entries WHERE instr(lower(title),lower(?))>0 OR instr(lower(original_title),lower(?))>0))`
-	args := []any{f.Status, f.Status, f.Keyword, f.Keyword, f.Keyword}
+	where += ` AND (?='' OR entry_id IN (SELECT id FROM anime_entries WHERE bangumi_id=?))`
+	args := []any{f.Status, f.Status, f.Keyword, f.Keyword, f.Keyword, f.BangumiID, f.BangumiID}
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM anime_subscriptions`+where, args...).Scan(&out.Total); err != nil {
 		return out, fmt.Errorf("count anime subscriptions: %w", err)
 	}

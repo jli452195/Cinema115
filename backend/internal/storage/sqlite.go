@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 44
+const schemaVersion = 45
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -543,6 +543,9 @@ PRAGMA user_version=30;`); err != nil {
 		if err := upgradeAnimeProvidersV44(ctx, tx); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, animeCatalogSchemaV45); err != nil {
+		return fmt.Errorf("create anime catalog links: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)

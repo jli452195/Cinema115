@@ -13,6 +13,11 @@ export interface MikanCatalog {
 }
 
 export type AnimeSourceProvider = AnimeProviderID
+export interface AnimeCatalogStatus {
+ itemId: string
+ bangumiId: string | null
+ subscriptions: { id: string; status: 'draft' | 'paused' | 'enabled' | 'archived' }[]
+}
 export interface AnibtCatalogItem {
  id: string; bangumiId: string; animeId: string; title: string; originalTitle: string; coverUrl: string; format: string
  rating: number | null; episodes: number | null; airingAt: number | null; releaseCount: number; hasRelease: boolean

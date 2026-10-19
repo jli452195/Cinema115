@@ -1,4 +1,4 @@
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { portalToken, portalUser } from './usePortalAuth'
 import { animeConfigRequest } from '../lib/anime-config-api'
 
@@ -6,6 +6,7 @@ import { animeConfigRequest } from '../lib/anime-config-api'
 const cache = new Map<string, { data: unknown; fetchedAt: number; version: number }>()
 const states = new Map<string, { top: number; expanded: string[] }>()
 let version = 0
+export const animeSubscriptionsVersion = ref(0)
 let lastQuery: Record<string, string> | undefined
 let lastID = ''
 function boundedSet<T>(map: Map<string, T>, key: string, value: T) {
@@ -14,10 +15,12 @@ function boundedSet<T>(map: Map<string, T>, key: string, value: T) {
 }
 watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
   version++; cache.clear(); states.clear(); lastQuery = undefined; lastID = ''
+  animeSubscriptionsVersion.value++
 }, { flush: 'sync' })
 
 export function invalidateAnimeSubscriptions(id?: string) {
   version++
+  animeSubscriptionsVersion.value++
   if (id) cache.delete(`subscriptions/${encodeURIComponent(id)}`)
 }
 export function animeSubscriptionQuery() { return lastQuery ? { ...lastQuery } : undefined }

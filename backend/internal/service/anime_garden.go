@@ -7,12 +7,16 @@ import (
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/mikan"
+	"strm115/backend/internal/storage"
 )
 
-type GardenService struct{ *animeSiteCache }
+type GardenService struct {
+	*animeSiteCache
+	CatalogLinks AnimeCatalogLinks
+}
 
 func NewGardenService(client animeSiteTransport) *GardenService {
-	return &GardenService{newAnimeSiteCache(client, "garden")}
+	return &GardenService{animeSiteCache: newAnimeSiteCache(client, "garden")}
 }
 
 type AnimeGardenCatalog struct {
@@ -36,6 +40,24 @@ func (s *GardenService) Catalog(ctx context.Context, season, keyword string, ref
 	catalog, err := garden.ParseCatalog(read.body, season)
 	if err != nil {
 		return out, err
+	}
+	if s.CatalogLinks != nil {
+		links := make([]storage.AnimeCatalogLink, 0, len(catalog.Items)+100)
+		add := func(item garden.Item) {
+			b := item.BangumiID
+			links = append(links, storage.AnimeCatalogLink{ItemID: item.ID, BangumiID: &b, ObservedAt: read.observed.UnixMilli()})
+		}
+		for _, day := range catalog.Days {
+			for _, item := range day.Items {
+				add(item)
+			}
+		}
+		for _, item := range catalog.Items {
+			add(item)
+		}
+		if err := s.CatalogLinks.CacheAnimeCatalogLinks(ctx, "garden", links); err != nil {
+			return out, err
+		}
 	}
 	return AnimeGardenCatalog{Catalog: catalog, FetchedAt: read.observed.UnixMilli(), ExpiresAt: read.expires.UnixMilli()}, nil
 }
@@ -77,7 +99,11 @@ func (s *GardenService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeS
 	if err != nil {
 		return out, err
 	}
-	return AnimeSourceEntryResult{Entry: garden.Entry(item, resources), ObservedAt: read.observed, ExpiresAt: read.expires, Cached: cached && cachedSubject}, nil
+	out = AnimeSourceEntryResult{Entry: garden.Entry(item, resources), ObservedAt: read.observed, ExpiresAt: read.expires, Cached: cached && cachedSubject}
+	if err := cacheAnimeEntryLink(ctx, s.CatalogLinks, "garden", out); err != nil {
+		return AnimeSourceEntryResult{}, err
+	}
+	return out, nil
 }
 func (s *GardenService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 	var out AnimeSourceResult

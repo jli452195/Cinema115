@@ -2,18 +2,19 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { IconPhotoOff } from '@tabler/icons-vue'
-import type { GardenCatalogItem } from '../types/animeCatalog'
-import { animeEditorEntry } from '../utils/animeEditorEntry'
-const props = defineProps<{ item: GardenCatalogItem; returnTo: string }>()
+import type { AnimeCatalogStatus, GardenCatalogItem } from '../types/animeCatalog'
+import AnimeCatalogSubscriptionBadge from './AnimeCatalogSubscriptionBadge.vue'
+import { animeCatalogCardLabel, animeCatalogSubscriptionTarget } from '../utils/animeCatalogSubscription'
+const props = defineProps<{ item: GardenCatalogItem; returnTo: string; subscription?: AnimeCatalogStatus }>()
 const failed = ref(false)
 watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false })
 const cover = computed(() => /^\/api\/garden\/image\/[1-9]\d{0,7}\/poster\.jpeg$/.test(props.item.coverUrl) ? props.item.coverUrl : '')
-const target = computed(() => animeEditorEntry(props.item.bangumiId, 'garden', props.item.id, props.returnTo))
+const target = computed(() => animeCatalogSubscriptionTarget(props.subscription, props.item.bangumiId, 'garden', props.item.id, props.returnTo))
 </script>
 
 <template>
-  <RouterLink :to="target" class="garden-anime-card" :data-garden-id="item.id" :aria-label="`${item.title}，配置订阅`">
-    <span class="garden-poster ambient-glow"><img v-if="cover && !failed" :src="cover" :alt="item.title" loading="lazy" decoding="async" @error="failed = true" /><span v-else class="garden-placeholder"><IconPhotoOff :size="26" aria-hidden="true" /><span>暂无封面</span></span><span v-if="item.platform" class="garden-platform">{{ item.platform }}</span></span>
+  <RouterLink :to="target" class="garden-anime-card" :data-garden-id="item.id" :aria-label="animeCatalogCardLabel(item.title, subscription)">
+    <span class="garden-poster ambient-glow"><img v-if="cover && !failed" :src="cover" :alt="item.title" loading="lazy" decoding="async" @error="failed = true" /><span v-else class="garden-placeholder"><IconPhotoOff :size="26" aria-hidden="true" /><span>暂无封面</span></span><span v-if="item.platform" class="garden-platform">{{ item.platform }}</span><AnimeCatalogSubscriptionBadge :state="subscription" /></span>
     <strong :title="item.title">{{ item.title }}</strong>
     <span class="garden-original" :title="item.originalTitle !== item.title ? item.originalTitle : undefined">{{ item.originalTitle !== item.title ? item.originalTitle : '' }}</span>
     <small>{{ item.airDate ? `${item.airDate} 首播` : '首播日期待定' }}</small>

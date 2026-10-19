@@ -164,7 +164,7 @@ func resetAnimeSchemaToV38(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(tables) != 12 {
+	if len(tables) != 13 {
 		t.Fatalf("P1 table count: %d", len(tables))
 	}
 	// Build a v38 fixture with the existing business schema and no anime tables.

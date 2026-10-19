@@ -11,12 +11,20 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const context = await browser.newContext({ viewport, serviceWorkers: 'block' }); contexts.push(context)
     await context.addInitScript(() => { localStorage.setItem('admin_token','mock-token'); localStorage.setItem('cinema115-theme','light') })
     const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
-    const calls = [], state = { fail: false, links: ['624085'], empty: false, failEntry: false, slowEntry: '', entryRelease: undefined }
+    const calls = [], state = { fail: false, links: ['624085'], empty: false, failEntry: false, slowEntry: '', entryRelease: undefined, statusEnabled: false, knownMikan: {}, saved: undefined, failStatus: false, slowStatus: false, statusRelease: undefined }
     const item = id => ({ id: String(id), title: id === 4058 ? '乱世千金倪亚·利斯顿转生为娇弱千金的弑神武人华丽无双录' : `蜜柑番剧 ${id}`, coverUrl: `/api/mikan/image/202610/${id}.jpg`, updatedDate: '2026-10-16' })
     await page.route('**/api/**', async route => {
       const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON(); calls.push({ endpoint, body })
       let data = {}, status = 200
       if (endpoint === '/api/auth/me') data = { user: { id:'mock',username:'admin',role,disabled:false } }
+      else if (endpoint.endsWith('/catalog-status')) {
+        if (state.slowStatus) { state.slowStatus = false; await new Promise(resolve => { state.statusRelease = resolve }) }
+        if (state.failStatus) { status = 503; data = { error: 'status unavailable' } }
+        else data = { items: body.itemIds.map(itemId => {
+          const bangumiId = state.statusEnabled ? body.provider === 'mikan' ? state.knownMikan[itemId] || null : itemId : null
+          return { itemId, bangumiId: state.omitBangumi ? null : bangumiId, subscriptions: state.saved && bangumiId === '630160' ? [{ id: state.saved.id, status: state.saved.status }, ...(state.multiple ? [{id:'other-edition',status:'paused'}] : [])] : [] }
+        }) }
+      }
       else if (endpoint.startsWith('/api/mikan/image/')) {
         await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="336"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#405d85"/><stop offset="1" stop-color="#98b6ad"/></linearGradient></defs><path fill="url(#g)" d="M0 0h240v336H0z"/><circle cx="170" cy="120" r="80" fill="white" opacity=".18"/></svg>'}); return
       } else if (endpoint.endsWith('/catalog/garden')) {
@@ -37,8 +45,14 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         const id=endpoint.split('/').pop()
         if (state.slowEntry===id) await new Promise(resolve=>{state.entryRelease=resolve})
         if(state.failEntry){status=502;data={error:'模拟条目读取失败'}}
-        else data={entry:{id,title:'蜜柑原站番名',groups:[{id:'10',name:'Kirara Fantasia'},{id:'20',name:'LoliHouse'},{id:'30',name:'三明治摆烂组'},{id:'40',name:'ANi'}],bangumiIds:state.links}}
+        else { if (state.statusEnabled) state.knownMikan[id] = state.links.length === 1 ? state.links[0] : null; data={entry:{id,title:'蜜柑原站番名',groups:[{id:'10',name:'Kirara Fantasia'},{id:'20',name:'LoliHouse'},{id:'30',name:'三明治摆烂组'},{id:'40',name:'ANi'}],bangumiIds:state.links}} }
       }
+      else if (endpoint.endsWith('/subscriptions') && req.method() === 'POST') {
+        state.saved = { id:'cross-site-sub',entryId:'cross-site-entry',status:body.saveMode,revision:1,entry:{id:'cross-site-entry',bangumiId:'630160',title:'原站关联的 Bangumi 篇章',editionKey:'original',metadata:{}},sources:body.config.sources.map((s,i)=>({...s,id:`cross-source-${i}`,revision:1})),form:{formSelections:[]},readiness:{ready:false,issues:[]} }
+        data={id:state.saved.id,revision:1,status:body.saveMode}
+      }
+      else if (endpoint.endsWith('/subscriptions')) data = {items:state.saved?[state.saved]:[],total:state.saved?1:0,page:1,pageSize:20}
+      else if (endpoint.endsWith('/subscriptions/cross-site-sub')) data=state.saved
       else if (endpoint.endsWith('/settings')) data = { settings:{revision:1,downloadCid:null},primaryAccount:null,readiness:{ready:false,issues:['PRIMARY_ACCOUNT_REQUIRED']} }
       else if (endpoint.includes('/discovery/subjects/')) {
         const id=endpoint.split('/').pop(); data={subject:{id,title:'原站关联的 Bangumi 篇章',coverUrl:'',date:'2026-10-01'},metadata:{expiresAt:Date.now()+600000}}
@@ -170,6 +184,81 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await garden.page.screenshot({path:'test-results/garden-catalog-mobile.png',animations:'disabled'})
     await garden.page.evaluate(()=>document.documentElement.classList.add('dark'));await garden.page.screenshot({path:'test-results/garden-catalog-mobile-dark.png',animations:'disabled'})
     passed.push('Garden native card, one seasonal request, no per-card calls, same Bangumi URL, scoped search/cache/errors and 320px light/dark')
+
+    const cross = await session(); cross.state.statusEnabled = true; cross.state.links = ['630160']
+    await cross.go('/anime?source=anibt&day=1');await cross.page.locator('[data-anibt-id="630160"]').waitFor()
+    await cross.page.getByRole('button',{name:'Anime Garden',exact:true}).click();await cross.page.locator('[data-garden-id="630160"]').waitFor()
+    await cross.navigate('/anime?source=mikan&day=1');await cross.page.locator('[data-mikan-id="4058"]').click();await cross.page.locator('.ae-chapter').waitFor()
+    await cross.page.getByRole('button',{name:'保存草稿',exact:true}).click();await cross.page.getByRole('heading',{name:'草稿已保存'}).waitFor()
+    await cross.page.locator('.ae-receipt').getByRole('link',{name:'返回选番'}).click()
+    await cross.page.locator('[data-mikan-id="4058"] .catalog-subscription-badge').waitFor()
+    assert.equal(await cross.page.locator('[data-mikan-id="4058"] .catalog-subscription-badge').innerText(),'草稿')
+    const sourceReads=cross.calls.filter(c=>c.endpoint.includes('/sources/')||c.endpoint.includes('/discovery/')).length
+    for (const provider of ['mikan','anibt','garden']) {
+      await cross.navigate(`/anime?source=${provider}&day=1`)
+      const selector=provider==='mikan'?'[data-mikan-id="4058"]':`[data-${provider}-id="630160"]`
+      await cross.page.locator(`${selector} .catalog-subscription-badge`).waitFor()
+      assert.match(await cross.page.locator(selector).getAttribute('href'),/^\/anime\/subscriptions\/cross-site-sub\?/)
+      assert.match(await cross.page.locator(selector).getAttribute('aria-label'),/草稿，查看订阅配置/)
+      await cross.page.locator(selector).click();await cross.page.getByRole('dialog').waitFor()
+      assert.equal(new URL(cross.page.url()).pathname,'/anime/subscriptions/cross-site-sub')
+      await cross.page.keyboard.press('Escape');await cross.page.locator(selector).waitFor()
+      assert.equal(new URL(cross.page.url()).searchParams.get('source'),provider)
+    }
+    assert.equal(cross.calls.filter(c=>c.endpoint.includes('/sources/')||c.endpoint.includes('/discovery/')).length,sourceReads,'existing subscription never searches a provider or metadata')
+    assert.equal(cross.calls.filter(c=>c.endpoint.endsWith('/subscriptions')&&c.body?.saveMode).length,1,'one configuration across all sites')
+    const beforeCache=cross.calls.filter(c=>c.endpoint.endsWith('/catalog-status')).length
+    await cross.navigate('/anime?source=anibt&day=1');await cross.page.locator('.catalog-subscription-badge').waitFor()
+    await cross.navigate('/anime?source=garden&day=1');await cross.page.locator('.catalog-subscription-badge').waitFor()
+    assert.equal(cross.calls.filter(c=>c.endpoint.endsWith('/catalog-status')).length,beforeCache,'switching back uses the short local status cache')
+    await cross.page.screenshot({path:'test-results/anime-cross-site-status-desktop.png',animations:'disabled'})
+    await cross.page.setViewportSize({width:320,height:844});await cross.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    assert.equal(await cross.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await cross.page.screenshot({path:'test-results/anime-cross-site-status-mobile-dark.png',animations:'disabled'})
+    await cross.page.reload({waitUntil:'networkidle'});await cross.page.locator('.catalog-subscription-badge').waitFor()
+    await cross.navigate('/anime?source=mikan&day=1');await cross.page.locator('.catalog-subscription-badge').waitFor()
+    assert.equal(cross.calls.filter(c=>c.endpoint.includes('/sources/')||c.endpoint.includes('/discovery/')).length,sourceReads,'persistent mapping works after a document reload')
+    passed.push('保存后失效三站状态缓存；同 Bangumi 草稿标记和直达已有订阅，关闭恢复站点；切站/重载无额外上游读取，320px暗色')
+
+    cross.state.saved.status='paused';await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.locator('.catalog-subscription-badge[data-status="paused"]').waitFor()
+    cross.state.saved.status='enabled';await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.locator('.catalog-subscription-badge[data-status="enabled"]').waitFor()
+    cross.state.saved.status='archived';await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.locator('.catalog-subscription-badge[data-status="archived"]').waitFor()
+    cross.state.failStatus=true;await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.getByRole('button',{name:'重新核对',exact:true}).waitFor()
+    assert.equal(await cross.page.locator('.catalog-subscription-badge').count(),0,'failed status read does not claim subscribed')
+    cross.state.failStatus=false;await cross.page.getByRole('button',{name:'重新核对',exact:true}).click();await cross.page.locator('.catalog-subscription-badge').waitFor()
+    const previousSaved=cross.state.saved
+    cross.state.saved=undefined;await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.waitForTimeout(150)
+    assert.equal(await cross.page.locator('.catalog-subscription-badge').count(),0,'removed configurations are not marked')
+    assert.equal(await cross.page.locator('[data-mikan-id="4058"]').getAttribute('href'),'/anime/new?bangumiId=630160','mapping survives subscription removal')
+    passed.push('草稿/暂停/启用/归档准确区分，刷新读取本地真值；状态失败可重试，移除后保留映射但去掉标记')
+
+    cross.state.saved=previousSaved;cross.state.multiple=true
+    await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.getByText('2 个配置',{exact:true}).waitFor()
+    await cross.page.locator('[data-mikan-id="4058"]').click();await cross.page.locator('.as-toolbar').waitFor()
+    assert.equal(new URL(cross.page.url()).pathname,'/anime/subscriptions')
+    assert.equal(new URL(cross.page.url()).searchParams.get('bangumiId'),'630160')
+    assert.equal(await cross.page.getByRole('dialog').count(),0,'multiple editions do not select one arbitrarily')
+    await cross.page.locator('[data-subscription-id="cross-site-sub"]').click();await cross.page.getByRole('dialog').waitFor()
+    await cross.page.keyboard.press('Escape');await cross.page.locator('[data-subscription-id="cross-site-sub"]').waitFor()
+    assert.equal(new URL(cross.page.url()).pathname,'/anime/subscriptions','closing a selected edition returns to its filtered list')
+    assert.equal(new URL(cross.page.url()).searchParams.get('bangumiId'),'630160')
+    await cross.page.getByRole('link',{name:'返回选番',exact:true}).click();await cross.page.getByText('2 个配置',{exact:true}).waitFor()
+    cross.state.multiple=false;cross.state.saved.status='draft'
+    await cross.page.evaluate(()=>{const current=Date.now;Date.now=()=>current()+31000;window.dispatchEvent(new Event('focus'))})
+    await cross.page.locator('.catalog-subscription-badge[data-status="draft"]').waitFor()
+    cross.state.slowStatus=true;await cross.page.getByRole('button',{name:'刷新当前站点'}).click()
+    while(!cross.state.statusRelease) await cross.page.waitForTimeout(20)
+    await cross.navigate('/anime?source=anibt&day=1');await cross.page.locator('.catalog-subscription-badge[data-status="draft"]').waitFor()
+    cross.state.statusRelease();await cross.page.waitForTimeout(80)
+    assert.equal(new URL(cross.page.url()).searchParams.get('source'),'anibt')
+    assert.equal(await cross.page.locator('[data-anibt-id="630160"] .catalog-subscription-badge').innerText(),'草稿')
+    cross.state.multiple=true;cross.state.omitBangumi=true
+    await cross.page.getByRole('button',{name:'刷新当前站点'}).click();await cross.page.getByText('2 个配置',{exact:true}).waitFor()
+    assert.equal(new URL(await cross.page.locator('[data-anibt-id="630160"]').getAttribute('href'),origin).searchParams.get('bangumiId'),'630160','native catalog identity still filters multiple configurations if status has no external link')
+    await cross.page.evaluate(async()=>{const auth=await import('/src/composables/usePortalAuth.ts');auth.clearPortalSession()})
+    await cross.page.waitForURL(/\/admin\/login/)
+    assert.equal(await cross.page.locator('.catalog-subscription-badge').count(),0)
+    passed.push('多个版本进入精确Bangumi筛选列表；30秒后回焦点仅核对本地状态；切站迟到响应隔离，退出清空状态')
     const ordinary=await session(undefined,'user'); await ordinary.go(); assert.equal(ordinary.calls.some(c=>c.endpoint.includes('/admin/anime')),false)
     assert.deepEqual(errors,[]); console.log(JSON.stringify({passed,errors},null,2))
   } finally { await Promise.allSettled(contexts.map(c=>c.close())); await browser.close() }

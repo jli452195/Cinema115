@@ -11,6 +11,22 @@ import (
 )
 
 func registerAnimeCatalog(r *gin.RouterGroup, s *service.AnimeAdminService) {
+	r.POST("/catalog-status", func(c *gin.Context) {
+		var in struct {
+			Provider string   `json:"provider"`
+			ItemIDs  []string `json:"itemIds"`
+		}
+		if !animeBody(c, &in, false) {
+			return
+		}
+		out, err := s.Store.AnimeCatalogStatuses(c.Request.Context(), in.Provider, in.ItemIDs)
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, gin.H{"items": out})
+	})
 	r.GET("/providers", func(c *gin.Context) { c.JSON(200, gin.H{"items": service.AnimeProviders()}) })
 	r.POST("/catalog/:provider", func(c *gin.Context) {
 		provider := c.Param("provider")

@@ -43,6 +43,9 @@ func (s *MikanService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeSo
 	}
 	copy := cloneAnimeMikanPage(entry.page)
 	out.Entry, out.ObservedAt, out.ExpiresAt, out.Cached = *copy.Entry, copy.ObservedAt, entry.expires, cached
+	if err := cacheAnimeEntryLink(ctx, s.CatalogLinks, "mikan", out); err != nil {
+		return AnimeSourceEntryResult{}, err
+	}
 	return out, nil
 }
 

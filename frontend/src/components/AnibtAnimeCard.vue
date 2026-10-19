@@ -2,19 +2,20 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { IconPhotoOff, IconStar } from '@tabler/icons-vue'
-import type { AnibtCatalogItem } from '../types/animeCatalog'
-import { animeEditorEntry } from '../utils/animeEditorEntry'
-const props = defineProps<{ item: AnibtCatalogItem; returnTo: string }>()
+import type { AnimeCatalogStatus, AnibtCatalogItem } from '../types/animeCatalog'
+import AnimeCatalogSubscriptionBadge from './AnimeCatalogSubscriptionBadge.vue'
+import { animeCatalogCardLabel, animeCatalogSubscriptionTarget } from '../utils/animeCatalogSubscription'
+const props = defineProps<{ item: AnibtCatalogItem; returnTo: string; subscription?: AnimeCatalogStatus }>()
 const failed = ref(false)
 watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false })
 const cover = computed(() => /^\/api\/anibt\/image\/[a-zA-Z0-9_-]{1,64}\/[a-f0-9]{64}\.webp$/.test(props.item.coverUrl) ? props.item.coverUrl : '')
-const target = computed(() => animeEditorEntry(props.item.bangumiId, 'anibt', props.item.id, props.returnTo))
+const target = computed(() => animeCatalogSubscriptionTarget(props.subscription, props.item.bangumiId, 'anibt', props.item.id, props.returnTo))
 const schedule = computed(() => props.item.airingAt && Number.isFinite(props.item.airingAt) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(props.item.airingAt * 1000) : '放送时间待定')
 </script>
 
 <template>
-  <RouterLink :to="target" class="anibt-anime-card" :data-anibt-id="item.id" :aria-label="`${item.title}，配置订阅`">
-    <span class="anibt-poster ambient-glow"><img v-if="cover && !failed" :src="cover" :alt="item.title" loading="lazy" decoding="async" @error="failed = true" /><span v-else class="anibt-placeholder"><IconPhotoOff :size="26" aria-hidden="true" /><span>暂无封面</span></span><span v-if="item.format" class="anibt-format">{{ item.format }}</span></span>
+  <RouterLink :to="target" class="anibt-anime-card" :data-anibt-id="item.id" :aria-label="animeCatalogCardLabel(item.title, subscription)">
+    <span class="anibt-poster ambient-glow"><img v-if="cover && !failed" :src="cover" :alt="item.title" loading="lazy" decoding="async" @error="failed = true" /><span v-else class="anibt-placeholder"><IconPhotoOff :size="26" aria-hidden="true" /><span>暂无封面</span></span><span v-if="item.format" class="anibt-format">{{ item.format }}</span><AnimeCatalogSubscriptionBadge :state="subscription" /></span>
     <strong :title="item.title">{{ item.title }}</strong>
     <span v-if="item.originalTitle && item.originalTitle !== item.title" class="anibt-original" :title="item.originalTitle">{{ item.originalTitle }}</span><span v-else class="anibt-original" aria-hidden="true"></span>
     <span class="anibt-facts"><span>{{ item.episodes ? `全 ${item.episodes} 集` : '集数待定' }}</span><span v-if="item.rating != null && item.rating > 0" class="anibt-rating"><IconStar :size="12" aria-hidden="true" />{{ item.rating.toFixed(1) }}<span class="sr-only">分</span></span></span>

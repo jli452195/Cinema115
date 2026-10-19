@@ -5,9 +5,12 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeSubscriptionEditorView from './AnimeSubscriptionEditorView.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { requestMikanCatalogEntry } from '../composables/useAnimeCatalog'
+import { requestAnimeCatalogStatuses } from '../composables/useAnimeCatalogStatus'
 import { animeReturnPath } from '../composables/useAnimeSubscriptionBrowser'
 import { animeConfigMessage } from '../lib/anime-config-api'
 import { animeEditorEntry } from '../utils/animeEditorEntry'
+import { animeCatalogSubscriptionTarget } from '../utils/animeCatalogSubscription'
+import type { AnimeSourceProvider } from '../types/animeCatalog'
 import '../styles/animeSubscriptionEditor.css'
 
 const props = defineProps<{ token: string }>()
@@ -19,13 +22,22 @@ function cancel() { controller?.abort(); controller = undefined }
 async function resolveEntry() {
   cancel(); error.value = ''; ready.value = false
   const origin = window.history.state?.animeSource
-  const seed = origin?.bangumiId === '' ? origin : undefined
+  const seed = origin?.bangumiId === String(route.query.bangumiId || '') ? origin : undefined
   const itemId = String(seed?.itemId || '')
-  if (route.query.bangumiId || seed?.provider !== 'mikan' || !/^[1-9]\d{0,11}$/.test(itemId)) { ready.value = true; return }
+  if (!['mikan', 'anibt', 'garden'].includes(seed?.provider) || !/^[1-9]\d{0,11}$/.test(itemId)) { ready.value = true; return }
+  const provider = seed.provider as AnimeSourceProvider
   const active = new AbortController(); controller = active
   try {
+    let status = (await requestAnimeCatalogStatuses(props.token, provider, [itemId], active.signal))[itemId]
+    if (active.signal.aborted || controller !== active) return
+    if (status?.subscriptions.length) { await router.replace(animeCatalogSubscriptionTarget(status, '', provider, itemId, returnTo.value)); return }
+    if (route.query.bangumiId || provider !== 'mikan') { ready.value = true; return }
+    if (status?.bangumiId) { await router.replace(animeEditorEntry(status.bangumiId, provider, itemId, returnTo.value)); return }
     const entry = await requestMikanCatalogEntry(props.token, itemId, active.signal)
     if (active.signal.aborted || controller !== active) return
+    status = (await requestAnimeCatalogStatuses(props.token, provider, [itemId], active.signal, true))[itemId]
+    if (active.signal.aborted || controller !== active) return
+    if (status?.subscriptions.length) { await router.replace(animeCatalogSubscriptionTarget(status, '', provider, itemId, returnTo.value)); return }
     const ids = [...new Set(entry.bangumiIds.map(String).filter(id => /^[1-9]\d{0,11}$/.test(id)))]
     if (ids.length === 1) await router.replace(animeEditorEntry(ids[0]!, 'mikan', itemId, returnTo.value))
     else ready.value = true
