@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { IconPhotoOff } from '@tabler/icons-vue'
 import type { MikanCatalogItem } from '../types/animeCatalog'
-const props = defineProps<{ item: MikanCatalogItem }>()
-defineEmits<{ select: [item: MikanCatalogItem] }>()
+import { animeEditorEntry } from '../utils/animeEditorEntry'
+const props = defineProps<{ item: MikanCatalogItem; returnTo: string }>()
+const target = computed(() => animeEditorEntry('', 'mikan', props.item.id, props.returnTo))
 const failed = ref(false)
 watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false })
 const cover = () => /^\/api\/mikan\/image\/\d{6}\/[a-zA-Z0-9._-]+$/.test(props.item.coverUrl) ? props.item.coverUrl : ''
 </script>
 
 <template>
-  <button type="button" class="mikan-anime-card" :data-mikan-id="item.id" :aria-label="`${item.title}，选择订阅来源`" aria-haspopup="dialog" @click="$emit('select', item)">
+  <RouterLink :to="target" class="mikan-anime-card" :data-mikan-id="item.id" :aria-label="`${item.title}，配置订阅`">
     <span class="mikan-anime-poster ambient-glow"><img v-if="cover() && !failed" :src="cover()" :alt="item.title" loading="lazy" decoding="async" @error="failed = true" /><span v-else class="mikan-anime-placeholder"><IconPhotoOff :size="26" aria-hidden="true" /><span>暂无封面</span></span></span>
     <strong :title="item.title">{{ item.title }}</strong>
     <small>{{ item.updatedDate ? `资源更新 ${item.updatedDate}` : '蜜柑资源条目' }}</small>
-  </button>
+  </RouterLink>
 </template>
 
 <style scoped>

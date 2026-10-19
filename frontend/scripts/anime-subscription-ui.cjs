@@ -561,7 +561,6 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
 
     const cta = await session(); await cta.go('/anime?view=calendar&day=1')
     await cta.page.locator('.mikan-anime-card').first().click()
-    await cta.page.getByRole('link', { name: '选择字幕组并配置订阅', exact: true }).click()
     await wait(() => /bangumiId=123/.test(cta.page.url()) && !/itemId=|source=/.test(cta.page.url()))
     await cta.page.getByRole('heading', { name: '从零开始的异世界生活 第三季', exact: true }).waitFor()
     const unlinked = await session(); await unlinked.go('/anime/new?source=mikan&itemId=300')

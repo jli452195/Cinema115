@@ -33,6 +33,7 @@ import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
 import AnimeDiscoveryView from './views/AnimeCatalogView.vue'
 import AnimeSubscriptionEditorView from './views/AnimeSubscriptionEditorView.vue'
+import AnimeNewSubscriptionView from './views/AnimeNewSubscriptionView.vue'
 import AnimeSubscriptionsView from './views/AnimeSubscriptionsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
@@ -53,7 +54,7 @@ export const router = createRouter({
       const query = animeRememberedQuery()
       if (!Object.keys(to.query).length && query) return { path: '/anime', query, replace: true }
     } },
-    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeSubscriptionEditorView, meta: { managementSection: '/anime' } },
+    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeNewSubscriptionView, meta: { managementSection: '/anime' } },
     { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeSubscriptionEditorView, meta: { managementSection: '/anime' } },
     { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeSubscriptionsView, meta: { managementSection: '/anime' }, beforeEnter: to => {
       const location = animeSubscriptionLocation()

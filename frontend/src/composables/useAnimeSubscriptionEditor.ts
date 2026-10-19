@@ -3,6 +3,7 @@ import { invalidateAnimeSubscriptions } from './useAnimeSubscriptionBrowser'
 import { useAnimeNaming } from './useAnimeNaming'
 import { portalUser } from './usePortalAuth'
 import { cachedAnime, requestAnime } from './useAnimeDiscovery'
+import { requestMikanCatalogEntry } from './useAnimeCatalog'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
 import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSubjectResult } from '../types/anime'
@@ -65,9 +66,10 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (seed?.value.provider || seed?.value.itemId) {
         if (!['mikan', 'anibt', 'garden'].includes(seed.value.provider) || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
         try {
-          const result = await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${seed.value.provider}/${seed.value.itemId}`, { signal })
-          if (result.entry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
-          sourceEntry = result.entry
+          sourceEntry = seed.value.provider === 'mikan'
+            ? await requestMikanCatalogEntry(token.value, seed.value.itemId, signal)
+            : (await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${seed.value.provider}/${seed.value.itemId}`, { signal })).entry
+          if (sourceEntry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
         } catch (reason) {
           if (!bangumiID.value || signal.aborted) throw reason
           seedIssue = '入口来源暂时无法读取，可在 RSS 中重新选择站点。'

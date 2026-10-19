@@ -6,7 +6,6 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import GardenAnimeCard from '../components/GardenAnimeCard.vue'
 import AnibtAnimeCard from '../components/AnibtAnimeCard.vue'
 import MikanAnimeCard from '../components/MikanAnimeCard.vue'
-import MikanCatalogDialog from '../components/MikanCatalogDialog.vue'
 import AnimeProviderButton from '../components/AnimeProviderButton.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { animeScroll, rememberAnimeQuery, rememberAnimeScroll } from '../composables/useAnimeDiscovery'
@@ -40,11 +39,6 @@ const mikanItems = computed(() => result.value?.provider === 'mikan' ? items.val
 const gardenItems = computed(() => result.value?.provider === 'garden' ? items.value as GardenCatalogItem[] : [])
 const anibtItems = computed(() => result.value?.provider === 'anibt' ? items.value as AnibtCatalogItem[] : [])
 const pages = computed(() => Math.max(1, Math.ceil(allItems.value.length / 20)))
-const selected = computed<MikanCatalogItem | undefined>(() => {
-  if (provider.value !== 'mikan' || !props.token || props.token !== portalToken.value || portalUser.value?.role !== 'admin') return
-  const id = typeof route.query.item === 'string' && /^[1-9]\d{0,11}$/.test(route.query.item) ? route.query.item : ''
-  if (id) return (result.value?.provider === 'mikan' ? result.value.items.concat(...result.value.days.map(g => g.items)) : []).find(item => item.id === id) || { id, title: `蜜柑条目 ${id}`, url: '', coverUrl: '', updatedDate: '' }
-})
 const seasons = computed(() => {
   const list = []
   for (let year = Math.max(now.getFullYear() + 1, Number(season.value.slice(0, 4))); year >= 2000; year--) {
@@ -55,7 +49,7 @@ const seasons = computed(() => {
 let controller: AbortController | undefined, disposed = false, restoreFrame = 0, interactions = 0
 const interact = () => { interactions++ }
 function query(overrides: Record<string, string | undefined> = {}) {
-  return { source: provider.value, view: mode.value, season: season.value, day: String(day.value), ...(keyword.value ? { q: keyword.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...(selected.value ? { item: selected.value.id } : {}), ...overrides }
+  return { source: provider.value, view: mode.value, season: season.value, day: String(day.value), ...(keyword.value ? { q: keyword.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
 }
 function navigate(overrides: Record<string, string | undefined>) { void router.push({ path: '/anime', query: query(overrides) }) }
 function switchProvider(id: AnimeProviderID) {
@@ -123,7 +117,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); cancelAnimationFra
         <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span></div>
         <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
         <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton"><div></div><span></span></div></div>
-        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="item in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" /><AnibtAnimeCard v-for="item in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" /><MikanAnimeCard v-for="item in mikanItems" :key="item.id" :item="item" @select="navigate({ item: $event.id })" /></div>
+        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="item in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" /><AnibtAnimeCard v-for="item in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" /><MikanAnimeCard v-for="item in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" /></div>
         <div v-else-if="!error" class="anime-empty"><component :is="mode === 'calendar' ? IconCalendar : IconSearch" :size="30" aria-hidden="true" /><h3>{{ mode === 'calendar' ? '当前分类暂无条目' : keyword ? `${providerName}未找到相关番剧` : `在${providerName}查找想追的番剧` }}</h3><p>{{ mode === 'calendar' ? '可以切换分类、季度，或搜索番剧名称。' : '试试原名、简称或更短的关键词。' }}</p></div>
         <p v-if="result?.provider === 'anibt' && result.truncated" class="ae-note">AniBT 最多返回 50 部搜索结果，请缩小关键词范围。</p>
         <p v-if="result?.provider === 'garden' && result.truncated" class="ae-note">Anime Garden 最多显示 100 部搜索结果，请缩小关键词范围。</p>
@@ -131,7 +125,6 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); cancelAnimationFra
       </template>
       <div v-else class="anime-empty"><h3>该站点暂未接入</h3><p>请在上方明确选择可用站点。</p></div>
     </div>
-    <MikanCatalogDialog v-if="selected" :key="`${portalUser?.id}:${selected.id}`" :token="token" :item="selected" @close="router.replace({ path: '/anime', query: query({ item: undefined }) })" />
   </ManagementLayout>
 </template>
 
