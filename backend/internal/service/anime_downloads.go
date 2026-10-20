@@ -78,5 +78,9 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	if err := session.Validate(ctx); err != nil {
 		return empty, err
 	}
-	return s.Store.ClaimAnimeDownload(ctx, sourceID, releaseID, generation, verified, session.Target())
+	result, err := s.Store.ClaimAnimeDownload(ctx, sourceID, releaseID, generation, verified, session.Target())
+	if err == nil {
+		s.wakeDownloads()
+	}
+	return result, err
 }

@@ -84,6 +84,9 @@ func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session
 			return err
 		}
 		r := animeOrganizationRun{service: s, session: session, job: job, op: op, listings: make(map[string][]model.AnimeDriveEntry, 8)}
+		if op.Progress.State == "needs_review" {
+			return nil // Only an explicit reconcile action reopens this saved step.
+		}
 		// A persisted in-flight step is read-only, including after a restart.
 		// Finish this pass after reconciliation; do not mix it with new writes.
 		if op.Progress.Step != nil {
@@ -223,6 +226,7 @@ func (r *animeOrganizationRun) dispatch(ctx context.Context, step model.AnimeOrg
 	p.State, p.Code = "working", ""
 	p.RetryAt = 0
 	p.ReceiptIssue = ""
+	p.RecoveryChecks = 0
 	if err := r.save(ctx, p, true); err != nil {
 		return err
 	}
@@ -268,10 +272,19 @@ func (r *animeOrganizationRun) confirm(ctx context.Context, ids []string, cid st
 	p.State, p.Code = "working", ""
 	p.RetryAt = 0
 	if partial {
-		p.State, p.Code = "needs_review", "ORGANIZE_RESULT_UNRESOLVED"
+		// An early check may precede the drive's visible update. Allow one
+		// later scoped read, never another write or an unbounded scan loop.
+		p.RecoveryChecks = min(p.RecoveryChecks+1, 2)
+		p.State, p.Code = "unknown", "ORGANIZE_UNCERTAIN"
+		p.RetryAt = time.Now().Add(30 * time.Second).UnixMilli()
+		if p.RecoveryChecks >= 2 {
+			p.State, p.Code = "needs_review", "ORGANIZE_RESULT_UNRESOLVED"
+			p.RetryAt = 0
+		}
 	} else {
 		p.Step = nil
 		p.ReceiptIssue = ""
+		p.RecoveryChecks = 0
 	}
 	all := len(p.Files) > 0
 	for _, f := range p.Files {
@@ -332,8 +345,11 @@ func (r *animeOrganizationRun) reconcile(ctx context.Context) error {
 	}
 	if step.Kind == "mkdir" {
 		cid, err := organizeFindDirectory(animeOrganizeShareFiles(entries), path.Base(step.Path))
-		if err != nil || cid == "" {
+		if err != nil {
 			return r.stop(ctx, "ORGANIZE_RESULT_UNRESOLVED")
+		}
+		if cid == "" {
+			return r.confirm(ctx, nil, "", true)
 		}
 		return r.confirm(ctx, nil, cid, false)
 	}

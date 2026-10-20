@@ -87,8 +87,15 @@ func TestAnimeCleanupNeverRunsBeforeAllMovesAreConfirmed(t *testing.T) {
 				t.Fatal("read-only recovery mixed in a delete")
 			}
 			if partial {
+				if op.Progress.State != "unknown" || op.Progress.RecoveryChecks != 1 {
+					t.Fatal("early partial observation was not deferred", op.Progress)
+				}
+				op = organizeTestCall(t, f, session, job.ID)
 				if op.Progress.State != "needs_review" {
 					t.Fatal(op.Progress)
+				}
+				if c.deletes != 0 || d.moves != 1 {
+					t.Fatal("partial move caused cleanup or a repeated write", c.deletes, d.moves)
 				}
 				return
 			}

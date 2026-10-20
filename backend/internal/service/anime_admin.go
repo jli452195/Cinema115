@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"strm115/backend/internal/animepreview"
@@ -64,6 +65,8 @@ type AnimeAdminService struct {
 	ReserveOrganization func() (func(), error)
 	organizationCache   animeOrganizationCache
 	DownloadCoordinator *CloudDownloadCoordinator
+	downloadWakeOnce    sync.Once
+	downloadWake        chan struct{}
 }
 
 type AnimeSaveConfig struct {

@@ -81,8 +81,9 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		// No retries inside the gateway. Permission was committed immediately
 		// above; a later pause may stop the next operation, not undo this one.
 		submitErr := s.SubmitGateway.SubmitAnimeTask(ctx, session.cookie, op.Request.InfoHash, op.Request.DirectoryCID)
-		// A successful write receipt needs no immediate GET. Uncertain writes
-		// are reconciled on a later scheduled pass, never submitted again.
+		// Persist acceptance without a verification GET. The runner can then
+		// check completion once and continue directly into file organization.
+		// Uncertain writes use scheduled read-only recovery, never resubmission.
 		receipt := model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "unreadable"}
 		state, code := "unknown", "SUBMIT_UNCERTAIN"
 		checkCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

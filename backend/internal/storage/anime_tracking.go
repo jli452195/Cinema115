@@ -28,16 +28,33 @@ type AnimeStatusPoll struct {
 // A pass excludes UIDs already read, sharing the same budget across that UID's
 // jobs. NULL next_run_at means an initial confirmed task has not been polled.
 func (s *Store) ReserveAnimeStatusPoll(ctx context.Context, now int64, excludeUIDs []string) (AnimeStatusPoll, bool, error) {
+	return s.reserveAnimeStatusPoll(ctx, now, excludeUIDs, "")
+}
+
+// Target only this job's next due read. Its persisted due time enforces poll
+// spacing; other jobs' UID cooldowns, denials and all leases still apply.
+func (s *Store) ReserveAnimeStatusContinuation(ctx context.Context, now int64, jobID string) (AnimeStatusPoll, bool, error) {
+	if !model.ValidAnimeID(jobID) {
+		return AnimeStatusPoll{}, false, ErrAnimeInvalid
+	}
+	return s.reserveAnimeStatusPoll(ctx, now, nil, jobID)
+}
+
+func (s *Store) reserveAnimeStatusPoll(ctx context.Context, now int64, excludeUIDs []string, jobID string) (AnimeStatusPoll, bool, error) {
 	var out AnimeStatusPoll
 	if now <= 0 || len(excludeUIDs) > 4 {
 		return out, false, ErrAnimeInvalid
 	}
 	args := []any{now, now, now, now, now - 5000}
 	query := `SELECT ` + animeJobColumns + ` FROM anime_download_jobs j WHERE ` + animeStatusEligible + ` AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.workflow_state='active' AND busy.file_state<>'verified' AND busy.lease_until>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.file_state<>'verified' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND recent.file_state<>'verified' AND json_extract(recent.raw_status_json,'$.attemptedAt')>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.uid=j.uid AND denied.workflow_state='active' AND denied.file_state<>'verified' AND denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED')`
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>j.id)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED' AND denied.workflow_state='active')`
+	if jobID != "" {
+		query += ` AND j.id=?`
+		args = append(args, jobID)
+	}
 	if len(excludeUIDs) > 0 {
 		query += ` AND j.uid NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(excludeUIDs)), ",") + `)`
 		for _, uid := range excludeUIDs {
@@ -182,14 +199,16 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 		tracking.Failures = min(tracking.Failures+1, 1000)
 	}
 	if !stop && state != "failed" {
-		delay := int64(2 * time.Minute / time.Millisecond)
-		if state == "completed" || state == "accepted" {
-			delay = int64(5 * time.Minute / time.Millisecond)
+		due := animeNextStatusAt(op, now)
+		if state == "completed" && resultID != nil {
+			// Known completion needs files, not another offline status read.
+			// A missing result ID keeps the early, then gradually slower checks.
+			due = now + (5 * time.Minute).Milliseconds()
 		}
 		if tracking.Failures > 0 {
-			delay = max(delay, animeDiscoveryBackoff(tracking.Failures))
+			due = max(due, now+animeDiscoveryBackoff(tracking.Failures))
 		}
-		due := max(now+delay+animeDiscoveryJitter(job.ID)/6, retryAt)
+		due = max(due, retryAt)
 		next = &due
 	}
 	fileState := job.FileState

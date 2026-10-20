@@ -132,5 +132,10 @@ func (s *AnimeAdminService) JobAction(ctx context.Context, actor, key, id, actio
 		return out, err
 	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
+	defer func() {
+		if resultErr == nil {
+			s.wakeDownloads()
+		}
+	}()
 	return s.Store.ScheduleAnimeJobAction(ctx, id, action, in.ExpectedRevision, k)
 }

@@ -110,6 +110,11 @@ func TestAnimeControlRunnerInFlightSubmitReceiptOrUnknown(t *testing.T) {
 			}
 			now := time.Now().UnixMilli()
 			runner := newAnimeControlRunner(t, f, &now)
+			statuses := 0
+			f.service.StatusGateway = animeStatusReaderFunc(func(context.Context, string, string) (model.AnimeOfflineStatus, error) {
+				statuses++
+				return serviceAnimeStatus(job, "pending", 0), nil
+			})
 			if err := runner.PollOnce(ctx); err != nil {
 				t.Fatal(err)
 			}

@@ -95,7 +95,7 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 				v.TargetCID, v.ResultID = "200", "200"
 				return v, nil
 			})
-			now := time.Now().UnixMilli()
+			now := time.Now().Add(time.Second).UnixMilli()
 			runner := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
 			tick := func() model.AnimeDownloadJob {
 				t.Helper()
@@ -112,18 +112,19 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 				}
 				return current
 			}
-			tick()            // One submit receipt, with no immediate confirmation read.
-			current := tick() // One status read and one task directory listing.
-			if current.FileState != "verified" || current.WorkflowState == "organized" || d.renames != 0 || d.moves != 0 {
-				t.Fatal("download and organization stages were conflated", current)
+			current := tick() // Durable stages now advance in one pass, without sleeps.
+			if current.FileState != "verified" || statuses != 1 || submits != 1 || inspects != 1 {
+				t.Fatal("download did not advance with one completion read", current, statuses, submits, inspects)
 			}
-			tick() // The same task reaches organization, without resubmission.
+			if failure == "none" && current.WorkflowState != "organized" {
+				t.Fatal("successful stages still required another scheduler pass", current)
+			}
 			if failure != "none" {
 				op, err := f.service.Store.GetAnimeOrganization(ctx, job.ID)
 				if err != nil || op.Progress.State != "unknown" || op.Progress.Step == nil {
 					t.Fatal("lost receipt was not retained", op, err)
 				}
-				writes, reads := d.creates+d.renames+d.moves, d.reads
+				reads := d.reads
 				// Close the real SQLite store and rebuild the service/accounts/gates;
 				// recovery must not depend on a live session or directory cache.
 				if err := db.Close(); err != nil {
@@ -151,12 +152,16 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 				f.service = &AnimeAdminService{Store: reopened, Accounts: accounts, Directories: old.Directories, FileGateway: d, OrganizationGateway: d, SubmitGateway: old.SubmitGateway, StatusGateway: old.StatusGateway, DownloadCoordinator: &CloudDownloadCoordinator{}}
 				runner = &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
 				d.lost = ""
-				tick()
-				if d.creates+d.renames+d.moves != writes || d.reads != reads+1 {
-					t.Fatal("first restart pass was not one scoped read", d)
+				current = tick()
+				if d.creates > 2 || d.renames > 1 || d.moves > 1 || d.reads <= reads {
+					t.Fatal("restart repeated a write or failed to reconcile the saved step", d)
+				}
+				if !d.moveRejected && current.WorkflowState != "organized" {
+					t.Fatal("confirmed recovery did not continue immediately", current)
 				}
 			}
 			if d.moveRejected {
+				tick() // One extra delayed read allows for temporarily invisible results.
 				view, err := f.service.JobView(ctx, job.ID)
 				if err != nil || view.Organization.State != "needs_review" || view.Organization.Renamed != 2 || view.Organization.Moved != 0 || view.PermittedActions.Retry {
 					t.Fatal("failed move lost successful rename or exposed replay", view, err)

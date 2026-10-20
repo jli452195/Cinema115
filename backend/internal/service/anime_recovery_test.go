@@ -60,20 +60,8 @@ func TestAnimeRecoveryConfirmedRenameContinuesNextStageWithoutReplaying(t *testi
 		t.Fatal(err)
 	}
 	got, err = f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
-	if err != nil || got.BlockCode != nil || got.NextRunAt == nil || *got.NextRunAt != now+5000 || drive.renames != 1 || drive.moves != 0 || cleanup.deletes != 0 || drive.reads != 2 {
-		t.Fatal("recovery must be read-only and schedule the next stage promptly", got, err, drive)
-	}
-	now += 4999
-	if err := runner.PollOnce(ctx); err != nil || drive.reads != 2 {
-		t.Fatal("next stage bypassed the per-UID interval", err)
-	}
-	now += 2
-	if err := runner.PollOnce(ctx); err != nil {
-		t.Fatal(err)
-	}
-	got, err = f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
 	if err != nil || got.WorkflowState != "organized" || drive.renames != 1 || drive.moves != 1 || cleanup.deletes != 1 || drive.reads != 3 {
-		t.Fatal("continued stage repeated a rename, added reads, or failed to finish", got, err, drive)
+		t.Fatal("confirmed recovery did not continue without replaying rename", got, err, drive)
 	}
 }
 
@@ -109,29 +97,14 @@ func TestAnimeRecoveryRunnerMinimalRequestsUntilFinished(t *testing.T) {
 		// submission receipt already binds it; files stay scoped to our CID.
 		return serviceAnimeStatus(job, "finished", 100), nil
 	})
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(time.Second).UnixMilli()
 	r := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
 	if err := r.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
-	if creates != 1 || submits != 1 || lookups != 1 || statuses != 0 || pages != 0 || got.DownloadState != "accepted" || got.NextRunAt == nil || *got.NextRunAt-now < 120000 {
-		t.Fatal("excess submit requests", got, creates, submits, lookups, statuses, pages)
-	}
-	now = *got.NextRunAt - 1
-	if err := r.PollOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if statuses != 0 {
-		t.Fatal("status read before due")
-	}
-	now++
-	if err := r.PollOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
-	if statuses != 1 || pages != 2 || got.FileState != "verified" || got.WorkflowState != "original_saved" || got.NextRunAt != nil {
-		t.Fatal("completion requests or state", got, statuses, pages)
+	if creates != 1 || submits != 1 || lookups != 1 || statuses != 1 || pages != 2 || got.FileState != "verified" || got.WorkflowState != "original_saved" || got.NextRunAt != nil {
+		t.Fatal("instant completion did not finish in one pass with minimal requests", got, creates, submits, lookups, statuses, pages)
 	}
 	// User's subsequent rename/move is deliberately not monitored.
 	now += 86400000
@@ -257,7 +230,7 @@ func TestAnimeRecoveryRunnerLostDirectoryReceiptReadsParentOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	forbidAnimeRecoveryDirectoryRead(t, f)
-	creates, pages, submits, reads := 0, 0, 0, 0
+	creates, pages, submits, reads, statuses := 0, 0, 0, 0, 0
 	f.service.FileGateway = &animeFileGatewayStub{
 		create: func(context.Context, string, string, string) (string, error) {
 			creates++
@@ -276,8 +249,8 @@ func TestAnimeRecoveryRunnerLostDirectoryReceiptReadsParentOnce(t *testing.T) {
 		return p115.AnimeTaskObservation{}, nil
 	}, submit: func(context.Context, string, string, string) error { submits++; return nil }}
 	f.service.StatusGateway = animeStatusReaderFunc(func(context.Context, string, string) (model.AnimeOfflineStatus, error) {
-		t.Error("unexpected status")
-		return model.AnimeOfflineStatus{}, nil
+		statuses++
+		return serviceAnimeStatus(job, "pending", 0), nil
 	})
 	now := time.Now().UnixMilli()
 	r := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
@@ -294,7 +267,7 @@ func TestAnimeRecoveryRunnerLostDirectoryReceiptReadsParentOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
-	if creates != 1 || pages != 1 || reads != 1 || submits != 1 || got.DownloadState != "accepted" {
+	if creates != 1 || pages != 1 || reads != 1 || submits != 1 || statuses != 1 || got.DownloadState != "accepted" {
 		t.Fatal("directory restart budget", got, creates, pages, reads, submits)
 	}
 }

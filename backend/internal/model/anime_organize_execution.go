@@ -34,14 +34,15 @@ type AnimeOrganizeStep struct {
 }
 
 type AnimeOrganizeProgress struct {
-	State        string                      `json:"state"` // working, unknown, needs_review, done
-	Code         string                      `json:"code,omitempty"`
-	RetryAt      int64                       `json:"retryAt,omitempty"`
-	Directories  []AnimeOrganizeDirectory    `json:"directories"`
-	Files        []AnimeOrganizeFileProgress `json:"files"`
-	Step         *AnimeOrganizeStep          `json:"step,omitempty"`
-	Cleanup      string                      `json:"cleanup,omitempty"`      // recycled, uncertain, skipped
-	ReceiptIssue string                      `json:"receiptIssue,omitempty"` // fixed diagnostic enum, never raw upstream content
+	State          string                      `json:"state"` // working, unknown, needs_review, done
+	Code           string                      `json:"code,omitempty"`
+	RetryAt        int64                       `json:"retryAt,omitempty"`
+	Directories    []AnimeOrganizeDirectory    `json:"directories"`
+	Files          []AnimeOrganizeFileProgress `json:"files"`
+	Step           *AnimeOrganizeStep          `json:"step,omitempty"`
+	Cleanup        string                      `json:"cleanup,omitempty"`        // recycled, uncertain, skipped
+	ReceiptIssue   string                      `json:"receiptIssue,omitempty"`   // fixed diagnostic enum, never raw upstream content
+	RecoveryChecks int                         `json:"recoveryChecks,omitempty"` // bounded read-only checks of this uncertain step
 }
 
 type AnimeOrganizeOperation struct {

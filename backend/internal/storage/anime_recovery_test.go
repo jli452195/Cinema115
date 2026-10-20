@@ -39,6 +39,8 @@ func TestAnimeOrganizationRecoverySuccessContinuesWithoutFailureBackoff(t *testi
 			got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
 			wantDelay := int64(300000)
 			if code == "" {
+				wantDelay = 0
+			} else if code == "ORGANIZE_UNCERTAIN" {
 				wantDelay = 5000
 			}
 			if err != nil || got.NextRunAt == nil || *got.NextRunAt != now+wantDelay {
@@ -48,7 +50,7 @@ func TestAnimeOrganizationRecoverySuccessContinuesWithoutFailureBackoff(t *testi
 				t.Fatal("per-UID interval bypassed", found, err)
 			}
 			_, found, err := f.store.ReserveAnimeDownloadWork(ctx, now+5001, nil)
-			if err != nil || found != (code == "") {
+			if err != nil || found != (code == "" || code == "ORGANIZE_UNCERTAIN") {
 				t.Fatal("successful recovery delayed or failure retried early", found, err)
 			}
 		})
@@ -133,8 +135,8 @@ func TestAnimeRecoverySingleLeaseAndExpiredOwnerFencing(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
-	if err != nil || got.DownloadState != "accepted" || got.NextRunAt == nil || *got.NextRunAt < now+120000 {
-		t.Fatal("success did not defer first status GET", got, err)
+	if err != nil || got.DownloadState != "accepted" || got.NextRunAt == nil || *got.NextRunAt > time.Now().Add(time.Second).UnixMilli() {
+		t.Fatal("success delayed first completion check", got, err)
 	}
 	if _, found, err := f.store.ReserveAnimeStatusPoll(ctx, *got.NextRunAt-1, nil); err != nil || found {
 		t.Fatal("immediate duplicate status query", found, err)

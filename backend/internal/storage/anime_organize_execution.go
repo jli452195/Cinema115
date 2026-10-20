@@ -213,7 +213,7 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 	} else if next.State == "working" || next.State == "unknown" {
 		at := now
 		if next.State == "unknown" {
-			at += int64(5 * time.Minute / time.Millisecond)
+			at += (5 * time.Second).Milliseconds()
 		}
 		at = max(at, next.RetryAt)
 		due = &at
@@ -226,6 +226,9 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 }
 
 func validAnimeOrganizeProgress(op model.AnimeOrganizeOperation, next model.AnimeOrganizeProgress) bool {
+	if next.RecoveryChecks < 0 || next.RecoveryChecks > 2 || next.Step == nil && next.RecoveryChecks != 0 {
+		return false
+	}
 	if next.ReceiptIssue != "" {
 		if next.Step == nil || (next.Step.Kind != "rename" && next.Step.Kind != "move") {
 			return false

@@ -26,6 +26,11 @@ func (s *AnimeAdminService) ControlSubscription(ctx context.Context, actor, key,
 		return out, err
 	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
+	defer func() {
+		if resultErr == nil {
+			s.wakeDownloads()
+		}
+	}()
 	return s.Store.ControlAnimeSubscription(ctx, id, action, in.ExpectedRevision, &k)
 }
 

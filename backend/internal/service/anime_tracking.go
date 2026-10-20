@@ -18,10 +18,23 @@ type AnimeStatusReader interface {
 }
 
 type AnimeStatusRunner struct {
-	Admin    *AnimeAdminService
-	mu       sync.Mutex
-	now      func() time.Time
-	interval time.Duration
+	Admin        *AnimeAdminService
+	mu           sync.Mutex
+	now          func() time.Time
+	interval     time.Duration
+	preferStatus bool // protected by mu; execution and status reads take turns
+}
+
+func (s *AnimeAdminService) downloadWakeSignal() chan struct{} {
+	s.downloadWakeOnce.Do(func() { s.downloadWake = make(chan struct{}, 1) })
+	return s.downloadWake
+}
+
+func (s *AnimeAdminService) wakeDownloads() {
+	select {
+	case s.downloadWakeSignal() <- struct{}{}:
+	default:
+	}
 }
 
 func (r *AnimeStatusRunner) timestamp() int64 {
@@ -43,8 +56,10 @@ func (r *AnimeStatusRunner) Run(ctx context.Context) error {
 	}
 	interval := r.interval
 	if interval <= 0 {
-		interval = 5 * time.Second
+		// This scans local due records only. It does not poll 115 every second.
+		interval = time.Second
 	}
+	wake := r.Admin.downloadWakeSignal()
 	for ctx.Err() == nil {
 		if err := r.PollOnce(ctx); err != nil && ctx.Err() == nil {
 			return err
@@ -55,6 +70,8 @@ func (r *AnimeStatusRunner) Run(ctx context.Context) error {
 			timer.Stop()
 			return nil
 		case <-timer.C:
+		case <-wake:
+			timer.Stop()
 		}
 	}
 	return nil
@@ -75,27 +92,80 @@ func (r *AnimeStatusRunner) PollOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if r.Admin.FileGateway != nil && r.Admin.SubmitGateway != nil {
-			work, found, err := r.Admin.Store.ReserveAnimeDownloadWork(ctx, r.timestamp(), uids, r.Admin.OrganizationGateway != nil)
+		uid, jobID, found, err := r.runReady(ctx, uids)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return nil
+		}
+		uids = append(uids, uid)
+		if jobID != "" {
+			if err := r.continueReadyJob(ctx, jobID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *AnimeStatusRunner) runReady(ctx context.Context, uids []string) (string, string, bool, error) {
+	// Alternate priorities so a backlog of submissions cannot starve status
+	// reads. Each admitted job gets a bounded continuation before yielding.
+	for _, status := range [...]bool{r.preferStatus, !r.preferStatus} {
+		if status {
+			poll, found, err := r.Admin.Store.ReserveAnimeStatusPoll(ctx, r.timestamp(), uids)
 			if err != nil {
-				return fmt.Errorf("reserve anime download stage: %w", err)
+				return "", "", false, fmt.Errorf("reserve anime status read: %w", err)
 			}
 			if found {
-				uids = append(uids, work.Job.UID)
+				r.preferStatus = false
+				return poll.Job.UID, poll.Job.ID, true, r.poll(ctx, poll)
+			}
+		} else if r.Admin.FileGateway != nil && r.Admin.SubmitGateway != nil {
+			work, found, err := r.Admin.Store.ReserveAnimeDownloadWork(ctx, r.timestamp(), uids, r.Admin.OrganizationGateway != nil)
+			if err != nil {
+				return "", "", false, fmt.Errorf("reserve anime download stage: %w", err)
+			}
+			if found {
+				r.preferStatus = true
+				jobID := work.Job.ID
+				if work.Job.DownloadState == "submitting" || work.Job.DownloadState == "unknown" {
+					// Recovery already performed an exact lookup. Do not follow it
+					// with another immediate GET of the same offline task.
+					jobID = ""
+				}
+				return work.Job.UID, jobID, true, r.execute(ctx, work)
+			}
+		}
+	}
+	return "", "", false, nil
+}
+
+// Keep every transaction/lease boundary, but do not insert a scheduler sleep
+// between acceptance, completion, manifest collection and organization. The
+// saved due time prevents a second status read or uncertain-write replay.
+func (r *AnimeStatusRunner) continueReadyJob(ctx context.Context, jobID string) error {
+	for stage := 0; stage < 3 && ctx.Err() == nil; stage++ {
+		if r.Admin.FileGateway != nil && r.Admin.SubmitGateway != nil {
+			work, found, err := r.Admin.Store.ReserveAnimeDownloadContinuation(ctx, r.timestamp(), jobID, r.Admin.OrganizationGateway != nil)
+			if err != nil {
+				return fmt.Errorf("reserve anime stage continuation: %w", err)
+			}
+			if found {
 				if err := r.execute(ctx, work); err != nil {
 					return err
 				}
 				continue
 			}
 		}
-		poll, found, err := r.Admin.Store.ReserveAnimeStatusPoll(ctx, r.timestamp(), uids)
+		poll, found, err := r.Admin.Store.ReserveAnimeStatusContinuation(ctx, r.timestamp(), jobID)
 		if err != nil {
-			return fmt.Errorf("reserve anime status read: %w", err)
+			return fmt.Errorf("reserve anime status continuation: %w", err)
 		}
 		if !found {
 			return nil
 		}
-		uids = append(uids, poll.Job.UID)
 		if err := r.poll(ctx, poll); err != nil {
 			return err
 		}

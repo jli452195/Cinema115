@@ -361,7 +361,11 @@ func (s *Store) RecordAnimeSubmitOutcome(ctx context.Context, operationID, state
 		if state != "failed" {
 			due := now + int64(5*time.Minute/time.Millisecond)
 			if state == "confirmed" {
-				due = now + int64(2*time.Minute/time.Millisecond)
+				due = now // First completion check is ready as soon as acceptance is durable.
+				if observation.Kind == "matched" {
+					// Recovery just read this exact task; avoid another immediate GET.
+					due += 5000
+				}
 			}
 			next = &due
 		}

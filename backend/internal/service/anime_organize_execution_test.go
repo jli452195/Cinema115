@@ -280,6 +280,10 @@ func TestAnimeOrganizePartialMoveKeepsSuccessAndNeverReplays(t *testing.T) {
 	d.partial = true
 	organizeTestCall(t, f, session, job.ID)
 	op := organizeTestCall(t, f, session, job.ID)
+	if op.Progress.State != "unknown" || op.Progress.RecoveryChecks != 1 || !op.Progress.Files[0].Moved || d.moves != 1 {
+		t.Fatal("early partial result lost progress or replayed a write", op.Progress, d)
+	}
+	op = organizeTestCall(t, f, session, job.ID)
 	if op.Progress.State != "needs_review" || op.Progress.Code != "ORGANIZE_RESULT_UNRESOLVED" || !op.Progress.Files[0].Moved || op.Progress.Files[1].Moved {
 		t.Fatal(op.Progress)
 	}

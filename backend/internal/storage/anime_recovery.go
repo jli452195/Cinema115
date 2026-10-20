@@ -20,6 +20,17 @@ type AnimeDownloadWork struct {
 }
 
 func (s *Store) ReserveAnimeDownloadWork(ctx context.Context, now int64, excludeUIDs []string, organize ...bool) (AnimeDownloadWork, bool, error) {
+	return s.reserveAnimeDownloadWork(ctx, now, excludeUIDs, "", organize...)
+}
+
+func (s *Store) ReserveAnimeDownloadContinuation(ctx context.Context, now int64, jobID string, organize bool) (AnimeDownloadWork, bool, error) {
+	if !model.ValidAnimeID(jobID) {
+		return AnimeDownloadWork{}, false, ErrAnimeInvalid
+	}
+	return s.reserveAnimeDownloadWork(ctx, now, nil, jobID, organize)
+}
+
+func (s *Store) reserveAnimeDownloadWork(ctx context.Context, now int64, excludeUIDs []string, jobID string, organize ...bool) (AnimeDownloadWork, bool, error) {
 	var out AnimeDownloadWork
 	if now <= 0 || len(excludeUIDs) > 4 || len(organize) > 1 {
 		return out, false, ErrAnimeInvalid
@@ -38,9 +49,13 @@ func (s *Store) ReserveAnimeDownloadWork(ctx context.Context, now int64, exclude
  AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>?)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED' AND denied.workflow_state='active')`
-	args := []any{now, now, now, now, now - 5000}
+	args := []any{now, now, now, now, now - 5000, jobID}
+	if jobID != "" {
+		query += ` AND j.id=?`
+		args = append(args, jobID)
+	}
 	if len(organize) == 1 && !organize[0] {
 		query += ` AND j.file_state<>'verified'`
 	}
@@ -173,15 +188,21 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		// not send it back through offline polling or another source listing.
 		switch code {
 		case "":
-			// A confirmed recovery (or a busy organizer with no dispatched
-			// write) is ready for the next stage. Keep the per-UID five-second
-			// admission interval, without adding the exception backoff again.
+			// A confirmed recovery can continue immediately. A busy organizer
+			// without a checkpoint remains on the normal admission interval.
+			due := now
+			if next != nil {
+				due = max(due, *next)
+			}
+			next = &due
+		case "ORGANIZE_UNCERTAIN":
+			// The checkpoint already scheduled a bounded read-only recovery.
 			due := now + 5000
 			if next != nil {
 				due = max(due, *next)
 			}
 			next = &due
-		case "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
+		case "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
 			due := now + int64(5*time.Minute/time.Millisecond)
 			if next != nil {
 				due = max(due, *next)
@@ -197,7 +218,7 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		case "", "SUBMIT_UNCERTAIN", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "DIRECTORY_CREATE_UNCERTAIN", "DIRECTORY_READ_FAILED":
 			delay := int64(5 * time.Minute / time.Millisecond)
 			if code == "" && job.DownloadState == "accepted" {
-				delay = int64(2 * time.Minute / time.Millisecond)
+				delay = 0
 			}
 			if tracking.Failures > 0 {
 				delay = max(delay, animeDiscoveryBackoff(tracking.Failures))

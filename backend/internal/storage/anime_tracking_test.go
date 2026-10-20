@@ -50,6 +50,64 @@ func takeAnimeStatusPoll(t *testing.T, f *downloadClaimFixture, now int64) Anime
 	return poll
 }
 
+func TestAnimeContinuationsRespectOtherStagesUIDGuards(t *testing.T) {
+	for _, kind := range []string{"status", "execution"} {
+		for _, guard := range []string{"lease", "rate limit", "credentials"} {
+			t.Run(kind+"/"+guard, func(t *testing.T) {
+				var f *downloadClaimFixture
+				var job model.AnimeDownloadJob
+				now := time.Now().UnixMilli()
+				if kind == "status" {
+					f, job, now = animeStatusStoreFixture(t)
+				} else {
+					f, job = animeSubmitStoreFixture(t)
+				}
+				release, verified := f.selectTitle(t, 0, "rel_uid_guard", strings.Repeat("b", 40), "[字幕组] 测试 - 31 [1080p][HEVC]")
+				other := f.claim(t, 0, release, verified).Job
+				// A different task has already reached organization. Its locks and
+				// cooldown must still protect this UID's earlier download stages.
+				if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET file_state='verified' WHERE id=?`, other.ID); err != nil {
+					t.Fatal(err)
+				}
+				switch guard {
+				case "lease":
+					_, err := f.store.db.Exec(`UPDATE anime_download_jobs SET lease_token=?,lease_until=? WHERE id=?`, strings.Repeat("c", 32), now+60000, other.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "rate limit":
+					_, err := f.store.db.Exec(`UPDATE anime_download_jobs SET block_code='TASK_RATE_LIMITED',next_run_at=? WHERE id=?`, now+60000, other.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "credentials":
+					_, err := f.store.db.Exec(`UPDATE anime_download_jobs SET block_code='TASK_ACCESS_DENIED' WHERE id=?`, other.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				reserve := func() (bool, error) {
+					if kind == "status" {
+						_, found, err := f.store.ReserveAnimeStatusContinuation(context.Background(), now, job.ID)
+						return found, err
+					}
+					_, found, err := f.store.ReserveAnimeDownloadContinuation(context.Background(), now, job.ID, true)
+					return found, err
+				}
+				if found, err := reserve(); err != nil || found {
+					t.Fatal("continuation bypassed another stage's UID guard", found, err)
+				}
+				if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET lease_token=NULL,lease_until=NULL,block_code=NULL,next_run_at=NULL WHERE id=?`, other.ID); err != nil {
+					t.Fatal(err)
+				}
+				if found, err := reserve(); err != nil || !found {
+					t.Fatal("guard release did not unblock the saved job", found, err)
+				}
+			})
+		}
+	}
+}
+
 func TestAnimeStatusConcurrentReservationAndDue(t *testing.T) {
 	f, job, now := animeStatusStoreFixture(t)
 	var wg sync.WaitGroup
@@ -78,7 +136,7 @@ func TestAnimeStatusConcurrentReservationAndDue(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
-	if got.DownloadState != "downloading" || got.NextRunAt == nil || *got.NextRunAt < now+60000 || got.Tracking.ObservedAt != now+1 {
+	if got.DownloadState != "downloading" || got.NextRunAt == nil || *got.NextRunAt < now+5000 || *got.NextRunAt > now+20000 || got.Tracking.ObservedAt != now+1 {
 		t.Fatal(got)
 	}
 	if _, found, err := f.store.ReserveAnimeStatusPoll(context.Background(), *got.NextRunAt-1, nil); err != nil || found {
@@ -118,6 +176,33 @@ func TestAnimeStatusCompletionIsNotFileVerification(t *testing.T) {
 	}
 	if _, found, err := f.store.ReserveAnimeStatusPoll(context.Background(), now+86400000, nil); err != nil || found {
 		t.Fatal("verified task still polled", found, err)
+	}
+}
+
+func TestAnimeStatusEarlyCompletionWithoutResultIDKeepsFastChecks(t *testing.T) {
+	f, job, now := animeStatusStoreFixture(t)
+	ctx := context.Background()
+	if _, err := f.store.db.Exec(`UPDATE anime_drive_operations SET result_json=json_remove(result_json,'$.resultId') WHERE download_job_id=? AND kind='submit'`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	poll := takeAnimeStatusPoll(t, f, now)
+	observation := animeStatusObservation(job, "finished", 100)
+	observation.ResultID = ""
+	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, now+1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.DownloadState != "completed" || got.ResultObjectID != nil || got.FileState != "pending" || got.NextRunAt == nil || *got.NextRunAt > now+20000 || got.BlockCode == nil || *got.BlockCode != "TASK_RESULT_PENDING" {
+		t.Fatal("early completion with delayed result ID was postponed for minutes", got, err)
+	}
+	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
+	observation.ResultID = "300"
+	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, *got.NextRunAt+1); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.ResultObjectID == nil || *got.ResultObjectID != "300" || got.BlockCode != nil {
+		t.Fatal("delayed result ID was not adopted", got, err)
 	}
 }
 
