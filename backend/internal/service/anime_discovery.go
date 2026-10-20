@@ -121,10 +121,15 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	// Continue a bounded pass immediately when more feeds are due. The store
+	// still enforces every source's persisted schedule and retry cooldown.
+	r.Admin.wakeAnimeDiscovery()
 	return nil
 }
 
 func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourcePoll) error {
+	ctx, finishTiming := r.Admin.observeAnimeStage(ctx, poll.Subscription.ID, "source")
+	defer finishTiming()
 	var readErr error
 	if poll.IssueCode == "" {
 		budget, err := NewAnimeSourceBudget(nil)
@@ -134,7 +139,7 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		readCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		input := AnimeSourceInput{Source: animefeed.NewSource(poll.Source.Provider, *poll.Source.ItemID, *poll.Source.GroupID), Kind: "rss"}
 		if poll.Initialize {
-			input.Kind, input.Take = "history", 2000
+			input.Kind, input.Take = "history", animeSourceHistoryLimit(poll.Source.Provider)
 		}
 		page, err := r.Feeds.ReadSource(readCtx, budget, input)
 		cancel()
@@ -154,7 +159,7 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		}
 	}
 	code, retry, unavailable := animeDiscoveryReadFailure(readErr)
-	if errors.Is(readErr, animepreview.ErrInput) || errors.Is(readErr, storage.ErrAnimeInvalid) {
+	if errors.Is(readErr, animepreview.ErrInput) || errors.Is(readErr, animefeed.ErrInput) || errors.Is(readErr, mikan.ErrInput) || errors.Is(readErr, storage.ErrAnimeInvalid) {
 		code = "SOURCE_RESPONSE_INVALID"
 	}
 	if poll.IssueCode != "" {

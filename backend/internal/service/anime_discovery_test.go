@@ -125,6 +125,8 @@ func TestAnimeDiscoveryRunnerFailureIsolationAndHealthPolicy(t *testing.T) {
 		retry        int64
 	}{
 		{"network", errors.New("upstream Cookie=private"), "error", "SOURCE_READ_FAILED", 0},
+		{"provider input", animefeed.ErrInput, "error", "SOURCE_RESPONSE_INVALID", 0},
+		{"mikan input", mikan.ErrInput, "error", "SOURCE_RESPONSE_INVALID", 0},
 		{"forbidden", &mikan.ResponseError{StatusCode: 403}, "unavailable", "SOURCE_UNAVAILABLE", 0},
 		{"garden auth", &animefeed.HTTPError{Site: "garden", Status: 401}, "unavailable", "SOURCE_UNAVAILABLE", 0},
 		{"captcha", mikan.ErrBlocked, "unavailable", "SOURCE_UNAVAILABLE", 0},
@@ -590,6 +592,58 @@ func TestAnimeDiscoveryCommitWakesVerifierWithoutAnotherRSSRead(t *testing.T) {
 	}
 	if feedCalls.Load() != 1 || len(f.service.animeVerificationWakeSignal()) > 1 {
 		t.Fatal("verification notifications caused extra RSS reads or unbounded queuing")
+	}
+}
+
+func TestAnimeDiscoveryDrainsDueSourcesWithoutSchedulerSleep(t *testing.T) {
+	f, db, r, source, now := discoveryServiceFixture(t)
+	for i := 1; i <= 4; i++ {
+		id, baseline := fmt.Sprintf("%032x", i+100), fmt.Sprintf("%032x", i+200)
+		group := fmt.Sprint(45 + i)
+		_, err := db.Exec(`INSERT INTO anime_subscription_sources(id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,active_baseline_id,health,checked_at,next_check_at,created_at,updated_at) SELECT ?,subscription_id,'standby',?,'enabled',1,provider,?,item_id,?,group_name,?,json_set(binding_json,'$.review.groupId',?),rules_json,1,1,NULL,'unknown',1,?,created_at,updated_at FROM anime_subscription_sources WHERE id=?`, id, i, "mikan:2259:"+group, group, id, group, now, source.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT ?,?,1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, baseline, id, source.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE anime_subscription_sources SET active_baseline_id=? WHERE id=?`, baseline, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Consume any fixture notification: only the bounded batch's own wakeup
+	// can process the fifth source while the fallback timer is one hour long.
+	select {
+	case <-f.service.animeDiscoveryWakeSignal():
+	default:
+	}
+	r.interval = time.Hour
+	var calls atomic.Int32
+	lastRead := make(chan struct{})
+	r.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		if calls.Add(1) == 5 {
+			close(lastRead)
+		}
+		return discoveryServicePage(in, now, 0), nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("discovery did not stop")
+		}
+	})
+	select {
+	case <-lastRead:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fifth due source waited for the scheduler timer")
 	}
 }
 

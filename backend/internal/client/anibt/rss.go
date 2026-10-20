@@ -11,14 +11,16 @@ import (
 	"strm115/backend/internal/client/animefeed"
 )
 
+const HistoryLimit = 100
+
 var releaseID = regexp.MustCompile(`^rel_[A-Za-z0-9_-]{1,60}$`)
 
 func RSSPath(source animefeed.Source, take int) (string, error) {
-	if source.Site() != "anibt" || !source.Valid() || take < 1 || take > 100 {
+	if source.Site() != "anibt" || !source.Valid() || take < 1 || take > HistoryLimit {
 		return "", animefeed.ErrInput
 	}
 	q := url.Values{"bgmId": {source.ItemID}, "groupSlug": {source.GroupID}}
-	if take != 100 {
+	if take != HistoryLimit {
 		q.Set("limit", strconv.Itoa(take))
 	}
 	return "/rss/anime.xml?" + q.Encode(), nil
@@ -43,7 +45,7 @@ func ParseRSS(body []byte, source animefeed.Source) ([]animefeed.SourceRelease, 
 			} `xml:"item"`
 		} `xml:"channel"`
 	}
-	if source.Site() != "anibt" || !source.Valid() || xml.Unmarshal(body, &v) != nil || v.XMLName.Local != "rss" || v.Channel == nil || len(v.Channel.Items) > 100 {
+	if source.Site() != "anibt" || !source.Valid() || xml.Unmarshal(body, &v) != nil || v.XMLName.Local != "rss" || v.Channel == nil || len(v.Channel.Items) > HistoryLimit {
 		return nil, ErrInvalid
 	}
 	out := make([]animefeed.SourceRelease, 0, len(v.Channel.Items))
@@ -77,8 +79,8 @@ func HistoryPage(source animefeed.Source, rows []animefeed.SourceRelease, take, 
 	}
 	if total == len(rows) && len(rows) <= take {
 		page.Completeness, page.StopReason = "visible_end", ""
-	} else if take < 100 && len(rows) >= take {
-		page.NextTake = min(100, take+50)
+	} else if take < HistoryLimit && len(rows) >= take {
+		page.NextTake = min(HistoryLimit, take+50)
 	} else {
 		page.StopReason = "source_limit"
 	}

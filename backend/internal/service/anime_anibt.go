@@ -102,7 +102,7 @@ func (s *AnibtService) ReadAnimeSourceEntry(ctx context.Context, budget *AnimeSo
 }
 func (s *AnibtService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 	var out AnimeSourceResult
-	if budget == nil || in.Source.Site() != "anibt" || !in.Source.Valid() || (in.Kind != "rss" && in.Kind != "history") || in.Kind == "rss" && in.Take != 0 || in.Kind == "history" && (in.Take < 1 || in.Take > 100) {
+	if budget == nil || in.Source.Site() != "anibt" || !in.Source.Valid() || (in.Kind != "rss" && in.Kind != "history") || in.Kind == "rss" && in.Take != 0 || in.Kind == "history" && (in.Take < 1 || in.Take > anibt.HistoryLimit) {
 		return out, animefeed.ErrInput
 	}
 	if err := budget.bindSource(in.Source); err != nil {
@@ -133,7 +133,7 @@ func (s *AnibtService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceB
 	}
 	take := in.Take
 	if in.Kind == "rss" {
-		take = 100
+		take = anibt.HistoryLimit
 	}
 	if take > budget.allowance(in.Source) {
 		return out, &mikan.LimitError{Kind: "rows"}
@@ -170,7 +170,7 @@ func (s *AnibtService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceB
 	}
 	if in.Previous != nil {
 		out.WindowChanged = compareMikanHistory(&page, in.Previous.SourcePage)
-		if take == 100 && page.Completeness == "partial" {
+		if take == anibt.HistoryLimit && page.Completeness == "partial" {
 			page.StopReason, page.NextTake = "source_limit", 0
 		}
 	}

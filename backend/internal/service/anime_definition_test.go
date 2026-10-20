@@ -11,6 +11,60 @@ import (
 	"strm115/backend/internal/storage"
 )
 
+func TestAnimeDefinitionInitialReadUsesRealProviderAdapters(t *testing.T) {
+	for _, tc := range []struct {
+		provider, item, group string
+		count                 int
+	}{
+		{"mikan", "2259", "45", 2},
+		{"anibt", "630160", "lolihouse", 3},
+		{"garden", "623249", "dmhy_f776", 2},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			s, _, directories, in := animeAdminFixture(t)
+			in.SettingsRevision = animeSaveReadySettings(t, s).Revision
+			anibt := NewAnibtService(&anibtFake{})
+			anibt.spacing = 0
+			garden := NewGardenService(&gardenFake{})
+			garden.spacing = 0
+			s.Bindings.Anibt, s.Bindings.Garden = anibt, garden
+			source := &in.Config.Sources[0]
+			source.Provider, source.ItemID, source.GroupID = tc.provider, &tc.item, &tc.group
+			source.Binding.Scope = &model.AnimeScope{Kind: "feed"}
+			source.Binding.ChapterCorrespondence = nil
+			source.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: tc.item, GroupID: tc.group}
+			ctx := context.Background()
+			receipt, err := s.SaveDefinition(ctx, "admin", "initial_provider_01", "", in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			directoryReads := directories.calls
+			reads := 0
+			runner := AnimeDiscoveryRunner{Admin: s, Feeds: animeRSSFunc(func(ctx context.Context, budget *AnimeSourceBudget, input AnimeSourceInput) (AnimeSourceResult, error) {
+				reads++
+				return s.Bindings.ReadSource(ctx, budget, input)
+			})}
+			if err := runner.PollOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			sub, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source := sub.Sources[0]; source.CheckedAt == nil || source.Health != "ok" || source.ErrorCode != nil {
+				t.Fatalf("initial read failed: %+v", source)
+			}
+			page, err := s.Store.ListAnimeReleases(ctx, storage.AnimeReleaseFilter{SourceID: sub.Sources[0].ID, Page: 1, PageSize: 20})
+			if err != nil || len(page.Items) != tc.count {
+				t.Fatal("initial releases missing", len(page.Items), err)
+			}
+			if err := runner.PollOnce(ctx); err != nil || reads != 1 || directories.calls != directoryReads {
+				t.Fatal("initialization repeated or read 115", reads, directories.calls, err)
+			}
+		})
+	}
+}
+
 func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) {
 	s, feed, old := newAnimeDefinitionService(t)
 	s.Previews = nil // Saving cannot depend on the UI preview service.
