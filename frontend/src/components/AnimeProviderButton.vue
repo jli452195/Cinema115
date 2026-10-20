@@ -25,6 +25,7 @@ defineEmits<{ select: [] }>()
 .provider-anibt { --provider-accent: 235 119 156; }
 .provider-garden { --provider-accent: 250 117 158; }
 .provider-brand { display: inline-flex; height: 40px; min-width: 0; align-items: center; justify-content: center; gap: 7px; transition: transform 180ms ease; }
+.provider-anibt .provider-brand { transition: transform 400ms cubic-bezier(.34, 1.56, .64, 1); }
 .provider-brand img { display: block; flex: none; object-fit: contain; }
 .provider-mikan-mascot { width: 36px; height: 36px; }
 .provider-mikan-wordmark { width: 80px; height: 20px; }
@@ -41,7 +42,11 @@ defineEmits<{ select: [] }>()
 .dark .anime-provider-button[aria-pressed="true"] { background: rgb(var(--provider-accent) / .12); }
 .dark .provider-garden-name { color: #f2b0c7; }
 @media (hover: hover) and (pointer: fine) { .anime-provider-button:hover:not(:disabled) { background: rgb(var(--provider-accent) / .15); } }
-@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) { .anime-provider-button:hover:not(:disabled) .provider-brand { transform: scale(1.04); } }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .anime-provider-button:hover:not(:disabled) .provider-brand { transform: scale(1.04); }
+  .provider-anibt:hover:not(:disabled) .provider-brand { transform: rotate(-3deg) scale(1.04); }
+}
+@media (prefers-reduced-motion: no-preference) { .provider-anibt:focus-visible:not(:disabled) .provider-brand { transform: rotate(-3deg) scale(1.04); } }
 @media (max-width: 639px) {
   .anime-provider-button { width: 100%; min-width: 0; min-height: 66px; padding-inline: 7px; border-radius: 13px; }
   .provider-brand { gap: 4px; }
@@ -52,7 +57,7 @@ defineEmits<{ select: [] }>()
   .provider-garden-name { font-size: 11px; line-height: 13px; }
 }
 @media (max-width: 359px) { .provider-mikan-mascot { width: 25px; height: 25px; } .provider-mikan-wordmark { width: 48px; height: 14px; } .provider-anibt-logo { width: 68px; height: 35px; } .provider-garden-logo { width: 22px; height: 22px; } .provider-garden-name { font-size: 10px; line-height: 12px; } }
-@media (prefers-reduced-motion: reduce) { .anime-provider-button, .provider-brand { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .anime-provider-button, .anime-provider-button .provider-brand { transition: none; transform: none; } }
 .anime-provider-button.provider-compact { min-width: 0; width: 116px; min-height: 44px; padding: 4px 10px; border-radius: 10px; }
 .provider-compact .provider-brand { height: 32px; gap: 4px; }
 .provider-compact .provider-mikan-mascot { width: 25px; height: 25px; }

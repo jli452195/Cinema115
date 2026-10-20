@@ -95,7 +95,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
       @click="toggle"
       @keydown="keydown"
     >
-      <span class="truncate">{{ selectedLabel }}</span>
+      <slot name="trigger" :label="selectedLabel"><span class="truncate">{{ selectedLabel }}</span></slot>
       <IconChevronDown :size="16" class="shrink-0 transition-transform" :class="{ 'rotate-180': open }" aria-hidden="true" />
     </button>
     <ul
