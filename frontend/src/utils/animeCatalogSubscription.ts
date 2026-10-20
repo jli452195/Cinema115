@@ -1,7 +1,7 @@
 import type { AnimeCatalogStatus, AnimeSourceProvider } from '../types/animeCatalog'
 import { animeEditorEntry } from './animeEditorEntry'
 
-const labels = { draft: '草稿', paused: '已暂停', enabled: '订阅中', archived: '已归档' } as const
+const labels = { paused: '已暂停', enabled: '订阅中', archived: '已归档' } as const
 export function animeCatalogSubscriptionLabel(state?: AnimeCatalogStatus) {
   if (!state?.subscriptions.length) return ''
   return state.subscriptions.length > 1 ? `${state.subscriptions.length} 个配置` : labels[state.subscriptions[0]!.status]

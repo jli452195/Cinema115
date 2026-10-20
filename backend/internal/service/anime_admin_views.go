@@ -71,7 +71,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 	if err != nil {
 		return AnimeSubscriptionView{}, err
 	}
-	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
+	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
 	for _, action := range []string{"pause", "archive", "remove", "unarchive"} {
 		allowed := animeLocalControlAllowed(sub.Status, action)
 		reason := ""
@@ -81,7 +81,6 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: action, Allowed: allowed, ReasonCode: reason})
 	}
 	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt != nil && sub.Status == "paused"})
-	v.PermittedActions[1] = AnimeAction{Name: "enable", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}
 	jobs, err := s.Store.AnimeJobCountsBySource(ctx, sub.ID)
 	if err != nil {
 		return v, err
@@ -99,7 +98,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		if source.RunWhenEnabled && (source.Status == "draft" || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil) {
 			v.Readiness.Issues = append(v.Readiness.Issues, "ACTIVE_SOURCE_INCOMPLETE")
 		}
-		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"] + stats["linked"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["pending_verification"]}, PermittedActions: []AnimeAction{{Name: "save", Allowed: sub.FirstEnabledAt == nil && (sub.Status == "draft" || sub.Status == "paused")}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
+		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"] + stats["linked"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["pending_verification"]}, PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
 		v.Sources[len(v.Sources)-1].JobStats, v.Sources[len(v.Sources)-1].FileStats, v.Sources[len(v.Sources)-1].CompletionStats = animeViewCounts(jobs[source.ID])
 		if source.Role == "main" {
 			main = true

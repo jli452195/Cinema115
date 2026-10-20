@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { onBeforeUnmount, onMounted, onUnmounted, ref, useId } from 'vue'
 import { IconX } from '@tabler/icons-vue'
 defineProps<{ title: string; closeLabel: string }>()
 const emit = defineEmits<{ close: []; scroll: [top: number] }>()
@@ -11,9 +11,12 @@ let backdropDown = false
 function backdrop(event: MouseEvent) { if (backdropDown && event.target === dialog.value) emit('close'); backdropDown = false }
 onMounted(() => { dialog.value?.showModal(); document.body.style.overflow = 'hidden'; closeButton.value?.focus({ preventScroll: true }) })
 onBeforeUnmount(() => {
-  dialog.value?.close(); document.body.style.overflow = previousOverflow
+  dialog.value?.close()
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
+// Descendant dialogs finish restoring their locks before the outer dialog
+// restores the page's original overflow on a route change.
+onUnmounted(() => { document.body.style.overflow = previousOverflow })
 defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 'instant' }) })
 </script>
 

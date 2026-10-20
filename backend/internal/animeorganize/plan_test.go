@@ -145,3 +145,36 @@ func TestAnimeOrganizationRejectsBrokenSnapshotAndManifest(t *testing.T) {
 		t.Fatalf("%+v %v", p, err)
 	}
 }
+
+func TestAnimeOrganizationSplitSeasonsAndExplicitSpecial(t *testing.T) {
+	job := planJob("[组] 测试 - 12.mkv", "[组] 测试 - 13.mkv", "[组] 测试 [SP01].mkv", "[组] 测试 [SP01].zh-Hans.ass")
+	job.Snapshot.Naming.Target.Seasons = append(job.Snapshot.Naming.Target.Seasons,
+		model.AnimeNamingSeason{Number: 2, Episodes: []model.AnimeNamingEpisode{{ID: "2001", Number: 1}}},
+		model.AnimeNamingSeason{Number: 0, Episodes: []model.AnimeNamingEpisode{{ID: "9001", Number: 1}}},
+	)
+	end := 12
+	job.Snapshot.Naming.Sources[0].Segments = []model.AnimeMappingSegment{
+		{First: 1, Last: &end, SourceBase: 1, TargetSeason: 1, TargetBase: 1},
+		{First: 13, SourceBase: 13, TargetSeason: 2, TargetBase: 1},
+	}
+	job.Snapshot.Naming.Sources[0].Overrides = []model.AnimeMappingOverride{{RawKind: "special", RawNumber: "SP01", Action: "map", TargetSeason: 0, TargetEpisode: 1}}
+	p, err := Build(job)
+	if err != nil || p.Ready != 4 || p.NeedsReview != 0 {
+		t.Fatalf("split season or explicit special failed: %+v %v", p, err)
+	}
+	for i, number := range []string{"S01E12", "S02E01", "S00E01", "S00E01"} {
+		if !strings.Contains(p.Items[i].TargetPath, number) {
+			t.Fatal("incorrect target season", p.Items[i])
+		}
+	}
+	if !strings.HasSuffix(p.Items[3].TargetPath, ".zh-Hans.ass") || p.Items[3].VideoID != "302" {
+		t.Fatal("special subtitle lost its explicit video", p.Items[3])
+	}
+	// A saved target snapshot may not yet include the next episode. Preserve
+	// its exact source and expose a review reason instead of inventing a target.
+	job.Files.Entries[2].Name = "[组] 测试 - 14.mkv"
+	p, err = Build(job)
+	if err != nil || p.Items[1].Reason != "target_missing" || p.Items[1].TargetPath != "" || !strings.HasSuffix(p.Items[1].OriginalPath, "/[组] 测试 - 14.mkv") {
+		t.Fatalf("missing target was guessed: %+v %v", p, err)
+	}
+}

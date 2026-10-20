@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { IconChevronDown, IconPhotoOff, IconRefresh } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import AnimeDownloadJobs from './AnimeDownloadJobs.vue'
-import AnimeSubscriptionActivation from './AnimeSubscriptionActivation.vue'
 import AnimeOrganizationSettings from './AnimeOrganizationSettings.vue'
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
@@ -24,9 +23,7 @@ const expanded = ref<string[]>([])
 const jobsVersion = ref(0), confirmRemove = ref(false), removeButton = ref<HTMLButtonElement>(), removeConfirm = ref<HTMLButtonElement>()
 const { loading: acting, error: actionError, notice: actionNotice, pending: pendingAction, locked, execute, confirmPending } = useAnimeSubscriptionActions(props.token, props.id, async () => { confirmRemove.value = false; jobsVersion.value++; await load(true) })
 const sources = computed(() => view.value ? subscriptionSources(view.value) : [])
-const pendingCount = computed(() => (view.value?.form?.formSelections || []).reduce((n, item) => n + new Set([...(item.selectedReleaseIds || []), ...(item.unresolvedReleaseIds || [])]).size, 0))
 const allowed = (action: string) => !!view.value?.permittedActions?.some(item => item.name === action && item.allowed)
-const canEdit = computed(() => view.value && !view.value.firstEnabledAt && ['draft', 'paused'].includes(view.value.status) && !missing.value && !locked.value)
 let controller: AbortController | undefined, disposed = false, refreshing = false, top = 0, userScrolled = false, restore = false, restoreVersion = 0
 let restoreFrame: number | undefined
 const stateKey = () => `detail:${props.id}`
@@ -77,7 +74,6 @@ function sourceState(source: AnimeSubscriptionView['sources'][number]) {
   if (['removed', 'archived'].includes(view.value?.status || '')) return '已停止'
   if (view.value?.status === 'paused' && view.value.firstEnabledAt) return '已暂停'
   if (!source.runWhenEnabled) return '保留配置'
-  if (source.configuredState === 'draft') return '来源待配置'
   if (view.value?.status === 'enabled' && source.configuredState === 'enabled') return source.health === 'unavailable' ? '来源暂不可用' : source.health === 'cooldown' ? '来源冷却中' : '检查更新中'
   return '准备参与订阅'
 }
@@ -97,7 +93,7 @@ onBeforeUnmount(() => { saveState(); disposed = true; controller?.abort(); if (r
       </div>
       <div class="as-detail-feedback" role="status"><span v-if="error">{{ error }}{{ view ? ' 已保留上次配置。' : '' }}</span><span v-else-if="loading">{{ view ? '正在核对最新配置…' : '正在读取订阅配置…' }}</span><span v-else-if="fetchedAt">读取于 {{ animeLocalTime(fetchedAt) }}</span><button v-if="!missing" type="button" class="as-text-button" :disabled="loading" @click="load(true)"><IconRefresh :size="14" aria-hidden="true" />{{ error ? '重试' : '刷新配置' }}</button></div>
       <template v-if="view">
-        <section class="as-detail-section"><h4>本地篇章</h4><p class="as-muted">{{ view.entry.editionKey === 'original' ? '原始篇章' : view.entry.editionKey || '尚未设置篇章标识' }}</p><p class="as-muted">{{ view.firstEnabledAt ? `首次启用于 ${animeLocalTime(view.firstEnabledAt)}` : '仅保存订阅配置，尚未开始检查更新与下载。' }}</p></section>
+        <section class="as-detail-section"><h4>本地篇章</h4><p class="as-muted">{{ view.entry.editionKey === 'original' ? '原始篇章' : view.entry.editionKey || '尚未设置篇章标识' }}</p><p class="as-muted">{{ view.firstEnabledAt ? `开始订阅于 ${animeLocalTime(view.firstEnabledAt)}` : '暂无开始时间' }}</p></section>
         <div class="as-actions" aria-label="订阅操作">
           <button v-if="allowed('pause') && view.status === 'enabled'" type="button" class="as-action" :disabled="locked" @click="control('pause', '暂停订阅')">暂停订阅</button>
           <button v-if="allowed('resume')" type="button" class="as-action as-action-primary" :disabled="locked" @click="control('resume', '恢复订阅')">恢复订阅</button>
@@ -108,7 +104,6 @@ onBeforeUnmount(() => { saveState(); disposed = true; controller?.abort(); if (r
         <div v-if="confirmRemove" class="as-inline-confirm" @keydown.esc.stop.prevent="cancelRemove"><p>确认移除此订阅？停止后续下载并保留执行记录，不删除网盘文件。</p><div class="as-actions"><button ref="removeConfirm" type="button" class="as-action as-danger" :disabled="locked" @click="control('remove', '移除订阅')">确认移除</button><button type="button" class="as-action" :disabled="acting" @click="cancelRemove">取消</button></div></div>
         <div class="as-operation-feedback" role="status"><p v-if="actionError">{{ actionError }}</p><p v-else-if="acting">正在记录操作…</p><p v-else-if="actionNotice">{{ actionNotice }}</p><template v-if="pendingAction && !acting"><p>“{{ pendingAction.label }}”结果尚未确认，已保留原请求。核对时继续使用原请求标识和内容。</p><button type="button" class="as-text-button" @click="confirmPending">核对原操作</button></template><button v-if="actionError && !pendingAction" type="button" class="as-text-button" :disabled="loading" @click="load(true)">重载最新配置</button></div>
         <p v-if="view.firstEnabledAt && ['paused', 'archived'].includes(view.status)" class="as-muted">已停止新提交；已被 115 接收的任务继续只读追踪，不删除网盘文件。</p>
-        <AnimeSubscriptionActivation v-if="allowed('enable')" :token="token" :view="view" :locked="locked" @enable="body => execute(`subscriptions/${encodeURIComponent(id)}/enable`, body, '启用订阅')" />
         <AnimeDownloadJobs :token="token" :id="id" :locked="locked" :version="jobsVersion" @changed="load(true, true)" />
         <AnimeOrganizationSettings v-if="!['removed', 'archived'].includes(view.status)" :token="token" :view="view" :locked="locked" @changed="load(true, true)" />
         <section class="as-detail-section"><h4>RSS 来源 <span>{{ sources.length }}</span></h4><p v-if="!sources.length" class="as-muted">还没有配置 RSS 来源，可进入编辑补充。</p>
@@ -125,9 +120,7 @@ onBeforeUnmount(() => { saveState(); disposed = true; controller?.abort(); if (r
             </dl>
           </section></div>
         </section>
-        <p v-if="pendingCount && !view.firstEnabledAt" class="as-saved-selections">已保存 {{ pendingCount }} 条待核对预选。尚未下载，执行前需要重新预览。</p>
         <p v-if="view.readiness && !view.readiness.ready" class="as-muted mt-4">配置尚未完整，可在编辑页补充来源或下载目录。</p>
-        <RouterLink v-if="canEdit" :to="{ path: `/anime/subscriptions/${encodeURIComponent(id)}/edit`, query: { returnTo: returnPath } }" class="as-edit-link">编辑订阅配置</RouterLink>
       </template>
     </div>
   </AnimeFloatingDialog>

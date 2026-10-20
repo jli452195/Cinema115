@@ -11,7 +11,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const now = Date.now(); await page.clock.install({ time: new Date(now) });
   const calls = [], receipts = new Map(), changes = {}, state = { status: 'enabled', revision: 2, failJobs: false, loseJob: true, losePause: true, empty: false }
   const source = { id: 'source-a', role: 'main', position: 0, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: '10', groupName: '银色子弹字幕组', revision: 1, health: 'ok', checkedAt: now, binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 1, last: 12 }, chapterCorrespondence: { sourceEpisode: 1, chapterEpisode: 1 } }, rules: { schemaVersion: 1, resolution: '1080p', include: [], exclude: [], minimumEpisode: 1, initialMode: 'from_episode' } }
-  const sub = () => ({ id: 'sub-a', entryId: 'entry-a', status: state.status, revision: state.revision, firstEnabledAt: state.status === 'draft' ? null : now - 300000, updatedAt: now, entry: { id: 'entry-a', bangumiId: '123', editionKey: 'original', title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } }, sources: [{ ...source, configuredState: state.status === 'draft' ? 'paused' : 'enabled' }], form: { formSelections: [], previewRefs: [] }, readiness: { ready: true, issues: [] }, permittedActions: ['enable', 'pause', 'resume', 'archive', 'unarchive', 'remove'].map(name => ({ name, allowed: name === 'enable' ? state.status === 'draft' : name === 'pause' ? state.status === 'enabled' : name === 'resume' ? state.status === 'paused' : name === 'unarchive' ? state.status === 'archived' : state.status !== 'removed' })) })
+  const sub = () => ({ id: 'sub-a', entryId: 'entry-a', status: state.status, revision: state.revision, firstEnabledAt: now - 300000, updatedAt: now, entry: { id: 'entry-a', bangumiId: '123', editionKey: 'original', title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } }, sources: [{ ...source, configuredState: 'enabled' }], form: { formSelections: [], previewRefs: [] }, readiness: { ready: true, issues: [] }, permittedActions: ['pause', 'resume', 'archive', 'unarchive', 'remove'].map(name => ({ name, allowed: name === 'pause' ? state.status === 'enabled' : name === 'resume' ? state.status === 'paused' : name === 'unarchive' ? state.status === 'archived' : state.status !== 'removed' })) })
   const jobs = Array.from({ length: 23 }, (_, i) => ({ id: `job-${i}`, title: `[银色子弹字幕组] 从零开始的异世界生活 - ${String(i + 1).padStart(2, '0')} [1080p HEVC 简繁内封]`, groupName: '银色子弹字幕组', revision: 1, downloadState: i === 0 ? 'unknown' : i === 1 || i === 2 || i === 3 ? 'completed' : 'accepted', fileState: i === 2 ? 'verified' : i === 3 ? 'needs_review' : 'pending', workflowState: i === 2 ? 'original_saved' : 'active', blockCode: i === 0 ? 'SUBMIT_UNCERTAIN' : i === 3 ? 'FILES_INCOMPLETE' : null, executionPath: `/动漫下载/anime-job-${i}`, directoryCid: '200', createdAt: now - 600000, updatedAt: now, observedAt: now - 100000, attemptedAt: now - 50000, nextRunAt: now + 200000, progress: null, files: i === 2 ? [{ id: '400', name: '03.mkv', kind: 'file', size: '12345' }] : [], permittedActions: { reconcile: i !== 2, retry: i === 3 } }))
   const items = () => state.empty ? [] : Array.from({ length: 13 }, (_, i) => ({ release: { id: `release-${i}`, title: `[银色子弹字幕组] 番剧 - ${i + 1} [1080p]`, parse: { episode: i + 1 } }, observation: {}, projection: { sourceEpisode: i + 1, chapterEpisode: i + 1 }, selectable: true, decision: 'matched', reasonCode: 'MATCHED_METADATA_ONLY' }))
   const previewPage = (number = 1, size = 50) => ({ items: items().slice((number - 1) * size, number * size), total: items().length, page: number, pageSize: size, selectedIds: items().map(item => item.release.id), pendingSelections: [], summary: { sourceRef: 'source-a', sourcePreviewId: 'preview-a', loadRevision: 1, matchedCount: items().length, reviewCount: 0, selectedCount: items().length, pendingSelectionCount: 0, loadedCount: items().length, rawCount: items().length, unloadedHistory: false, generatedAt: now, expiresAt: now + 900000 } })
@@ -24,7 +24,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     else if (endpoint.endsWith('/subscriptions/sub-a')) data = sub()
     else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) {
       if (state.failJobs) { status = 503; data = { error: '模拟本地读取失败' } }
-      else { const number = Number(url.searchParams.get('page') || 1); data = { items: state.status === 'draft' ? [] : jobs.slice((number - 1) * 20, number * 20), total: state.status === 'draft' ? 0 : jobs.length, page: number, pageSize: 20, dataVersion: 'jobs' } }
+      else { const number = Number(url.searchParams.get('page') || 1); data = { items: jobs.slice((number - 1) * 20, number * 20), total: jobs.length, page: number, pageSize: 20, dataVersion: 'jobs' } }
     } else if (endpoint.endsWith('/settings')) data = { settings: { revision: 3 }, readiness: { ready: true } }
     else if (endpoint.endsWith('/enable-preview')) data = { batchId: 'batch-a', sources: [previewPage().summary], issues: [], page: previewPage(), budget: { limit: 2000, remaining: 1987 } }
     else if (endpoint.endsWith('/previews/batch-a/releases')) data = previewPage(Number(url.searchParams.get('page')), Number(url.searchParams.get('pageSize')))
@@ -92,23 +92,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await dialog.getByRole('button', { name: '移除订阅', exact: true }).click(); await dialog.getByRole('button', { name: '确认移除', exact: true }).waitFor()
     await page.keyboard.press('Escape'); assert.equal(await dialog.count(), 1); assert.equal(await dialog.getByRole('button', { name: '确认移除', exact: true }).count(), 0)
     passed.push('320px和暗色无横向溢出，移除原位确认支持Esc返回')
-    state.status = 'draft'; state.revision++; await go()
-    await dialog.getByRole('button', { name: '预览并启用订阅', exact: true }).click()
-    await dialog.getByRole('button', { name: '启用并下载已选 13 条', exact: true }).waitFor()
-    assert.equal(await dialog.locator('.as-preview-choice').count(), 10)
-    await dialog.locator('.as-preview-choice input').first().uncheck()
-    await dialog.getByRole('button', { name: '历史下一页' }).click(); await page.waitForFunction(() => document.querySelectorAll('.as-preview-choice').length === 3)
-    assert.equal(await dialog.locator('.as-preview-choice').count(), 3); await dialog.locator('.as-preview-choice input').first().uncheck()
-    await dialog.getByRole('button', { name: '历史上一页' }).click(); await page.waitForFunction(() => document.querySelectorAll('.as-preview-choice').length === 10); assert.equal(await dialog.locator('.as-preview-choice input').first().isChecked(), false)
-    await page.screenshot({ path: 'test-results/anime-enable-320.png' }); await dialog.getByRole('button', { name: '启用并下载已选 11 条', exact: true }).scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-enable-action-320.png' })
-    await dialog.getByRole('button', { name: '启用并下载已选 11 条', exact: true }).click(); await dialog.getByRole('button', { name: '暂停订阅', exact: true }).waitFor()
-    const enable = calls.find(call => call.endpoint.endsWith('/enable')); assert.equal(enable.body.sources[0].selectedReleaseIds.length, 11); assert.equal(enable.body.expectedRevision, state.revision - 1)
-    passed.push('首次启用每页10条，跨页保留勾选，明确提交选择与配置版本')
-    state.status = 'draft'; state.revision++; state.empty = true; await go()
-    await dialog.getByRole('button', { name: '预览并启用订阅', exact: true }).click(); await dialog.getByRole('button', { name: '启用并等待更新', exact: true }).waitFor()
-    state.revision++; await dialog.getByRole('button', { name: '启用并等待更新', exact: true }).click(); await dialog.getByText(/配置版本已变化，请重载/).waitFor()
-    assert.equal(changes.enable, 1); assert.equal(await dialog.getByRole('button', { name: '核对原操作', exact: true }).count(), 0)
-    passed.push('零资源准确显示等待更新，版本冲突不套新版本重提')
+    state.status='enabled';state.revision++;await go()
+    assert.equal(await dialog.getByRole('button',{name:'预览并启用订阅',exact:true}).count(),0)
+    assert.equal(calls.some(call=>/enable-preview|\/enable$/.test(call.endpoint)),false)
+    passed.push('运行订阅详情无需再次预览启用，暂停恢复不依赖配置保存')
     assert.equal(calls.some(call => /p115|\/cloud|\/drive/.test(call.endpoint)), false)
     assert.deepEqual(errors, []); console.log(JSON.stringify({ passed, apiCalls: calls.length, errors }, null, 2))
   } finally { await browser.close() }

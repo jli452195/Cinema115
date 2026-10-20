@@ -4,9 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/storage"
 )
 
 type animeDownloadHTTPDirectory struct{}
@@ -15,7 +18,7 @@ func (animeDownloadHTTPDirectory) ReadDirectory(_ context.Context, cid, cookie s
 	return p115.DriveDirectory{CID: cid, Path: "/动漫"}, nil
 }
 
-func TestAnimeDownloadHTTPEnablePreviewStrictAuthAndReceipt(t *testing.T) {
+func TestAnimeDownloadHTTPStartStrictAuthAndReceipt(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
 	ctx := context.Background()
 	accounts, err := service.OpenP115AccountsSQLite(ctx, f.s.Store, t.TempDir(), "test-secret")
@@ -37,7 +40,7 @@ func TestAnimeDownloadHTTPEnablePreviewStrictAuthAndReceipt(t *testing.T) {
 	f.s.StatusGateway = cloud
 	f.s.FileGateway = p115.NewShareClient()
 	f.s.DownloadCoordinator = &service.CloudDownloadCoordinator{}
-	settings, err := f.s.SaveSettings(ctx, "admin", "http_settings", service.AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", ExpectedPrimaryAccountID: id, ExpectedPrimaryAccountRevision: 2})
+	settings, err := f.s.SaveSettings(ctx, "admin", "http_settings", service.AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: animeHTTPPtr("200"), ExpectedPrimaryAccountID: id, ExpectedPrimaryAccountRevision: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,44 +51,36 @@ func TestAnimeDownloadHTTPEnablePreviewStrictAuthAndReceipt(t *testing.T) {
 	source := animeHTTPSource()
 	source.GroupName = animeHTTPPtr("字幕组甲")
 	source.RunWhenEnabled = true
-	r, err := f.s.Store.SaveAnimeSubscription(ctx, model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{source}}, nil)
+	f.s.Naming = &service.AnimeNamingService{Metadata: animeStartHTTPNaming{}}
+	config := animepreview.Config{Chapter: animepreview.Chapter{ID: e.ID, EditionKey: e.EditionKey, Revision: e.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{source}}
+	previewInput := service.AnimePreviewInput{Config: config, SourceRef: source.Ref}
+	preview := f.call(t, "POST", "/subscriptions/preview", f.admin, "", previewInput, 200)
+	page := preview["page"].(map[string]any)
+	summary := page["summary"].(map[string]any)
+	selected := page["selectedIds"].([]any)
+	season := 1
+	target, err := f.s.Naming.Target(ctx, service.AnimeNamingTargetInput{TMDBID: "123", Season: &season}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub, err := f.s.Store.GetAnimeSubscription(ctx, r.ID, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := "/subscriptions/" + sub.ID
-	for _, path := range []string{base + "/enable-preview", base + "/enable", base + "/resume", "/jobs/missing/reconcile", "/jobs/missing/retry"} {
+	input := service.AnimeStartInput{Config: service.AnimeSaveConfig{Entry: service.AnimeEntryRef{ID: e.ID}, Sources: config.Sources, Naming: &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: source.Ref, Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 1}}}}}}, SettingsRevision: settings.Revision, Chapter: config.Chapter, Sources: []storage.AnimeActivationSource{{AnimePreviewRef: storage.AnimePreviewRef{BatchID: preview["batchId"].(string), SourceRef: source.Ref, PreviewID: summary["sourcePreviewId"].(string), LoadRevision: int64(summary["loadRevision"].(float64))}, SelectedIDs: []string{selected[0].(string)}, DismissedIDs: []string{}}}}
+	for _, path := range []string{"/subscriptions/start", "/subscriptions/missing/start"} {
 		f.call(t, "POST", path, "", "", `broken`, 401)
 		f.call(t, "POST", path, f.user, "", `broken`, 403)
 		f.call(t, "POST", path, f.admin, "invalid_body_01", `{"unexpected":1}`, 400)
 	}
-	preview := f.call(t, "POST", base+"/enable-preview", f.admin, "", service.AnimeEnablePreviewInput{ExpectedRevision: 1, SettingsRevision: settings.Revision, SourceID: sub.Sources[0].ID}, 200)
-	page := preview["page"].(map[string]any)
-	summary := page["summary"].(map[string]any)
-	selected := page["selectedIds"].([]any)
-	source.ID, source.Ref, source.ExpectedRevision = sub.Sources[0].ID, sub.Sources[0].ID, sub.Sources[0].Revision
-	_, err = f.s.Store.SaveAnimeSubscription(ctx, model.AnimeSubscriptionConfig{ID: sub.ID, EntryID: e.ID, ExpectedRevision: 1, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1, FormSelections: []model.AnimeFormSelection{{SourceRef: source.ID, SelectedReleaseIDs: []string{selected[0].(string)}, DismissedReleaseIDs: []string{selected[1].(string)}, UnresolvedReleaseIDs: []string{"missing_old"}}}}, Sources: []model.AnimeSourceConfig{source}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	preview = f.call(t, "POST", base+"/enable-preview", f.admin, "", service.AnimeEnablePreviewInput{ExpectedRevision: 2, SettingsRevision: settings.Revision, SourceID: source.ID}, 200)
-	page = preview["page"].(map[string]any)
-	summary = page["summary"].(map[string]any)
-	if preview["selectionNotice"] == nil || len(page["selectedIds"].([]any)) != 1 {
-		t.Fatal("saved selections replaced by defaults", preview)
-	}
-	body := map[string]any{"expectedRevision": 2, "settingsRevision": settings.Revision, "sources": []any{map[string]any{"batchId": preview["batchId"], "sourceRef": sub.Sources[0].ID, "sourcePreviewId": summary["sourcePreviewId"], "loadRevision": summary["loadRevision"], "selectedReleaseIds": page["selectedIds"], "dismissedReleaseIds": []string{}}}}
-	first := f.call(t, "POST", base+"/enable", f.admin, "http_enable_01", body, 200)
-	if first["status"] != "enabled" || first["revision"] != float64(3) {
+	reads := f.mikan.reads
+	first := f.call(t, "POST", "/subscriptions/start", f.admin, "http_start_01", input, 201)
+	if first["status"] != "enabled" || first["revision"] != float64(2) {
 		t.Fatal(first)
 	}
-	reads := f.mikan.reads
-	again := f.call(t, "POST", base+"/enable", f.admin, "http_enable_01", body, 200)
-	if again["revision"] != first["revision"] || f.mikan.reads != reads {
-		t.Fatal("replay reread upstream", again)
+	again := f.call(t, "POST", "/subscriptions/start", f.admin, "http_start_01", input, 201)
+	if again["id"] != first["id"] || again["revision"] != first["revision"] || f.mikan.reads != reads {
+		t.Fatal("start or replay re-read RSS", again)
+	}
+	base := "/subscriptions/" + first["id"].(string)
+	for _, path := range []string{base + "/enable-preview", base + "/enable"} {
+		f.call(t, "POST", path, f.admin, "closed_enable_01", input, 409)
 	}
 	for _, action := range []string{"pause", "resume"} {
 		v := f.call(t, "GET", base, f.admin, "", nil, 200)
@@ -103,4 +98,22 @@ func TestAnimeDownloadHTTPEnablePreviewStrictAuthAndReceipt(t *testing.T) {
 	if capabilities["download"] != true || capabilities["organize"] != false {
 		t.Fatal(capabilities)
 	}
+}
+
+type animeStartHTTPNaming struct{}
+
+func (animeStartHTTPNaming) Browse(context.Context, tmdb.Options) (*tmdb.Page, error) {
+	return &tmdb.Page{}, nil
+}
+func (animeStartHTTPNaming) AnimeDetails(context.Context, int) (*tmdb.Detail, error) {
+	return &tmdb.Detail{Item: tmdb.Item{ID: 123, Title: "test", Date: "2026-10-01"}, Seasons: []tmdb.SeasonSummary{{Number: 1, EpisodeCount: 100}}}, nil
+}
+func (animeStartHTTPNaming) AnimeSeason(context.Context, int, int) (*tmdb.SeasonDetail, error) {
+	return &tmdb.SeasonDetail{Number: 1, Episodes: []tmdb.Episode{{ID: 101, Number: 1, SourceSeason: 1, SourceNumber: 1}}}, nil
+}
+func (animeStartHTTPNaming) AnimeGroups(context.Context, int) ([]tmdb.EpisodeGroupSummary, error) {
+	return []tmdb.EpisodeGroupSummary{}, nil
+}
+func (animeStartHTTPNaming) AnimeGroup(context.Context, int, string) (*tmdb.EpisodeGroup, error) {
+	return nil, tmdb.ErrNotFound
 }

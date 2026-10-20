@@ -16,7 +16,7 @@ export type AnimeSourceProvider = AnimeProviderID
 export interface AnimeCatalogStatus {
  itemId: string
  bangumiId: string | null
- subscriptions: { id: string; status: 'draft' | 'paused' | 'enabled' | 'archived' }[]
+ subscriptions: { id: string; status: 'paused' | 'enabled' | 'archived' }[]
 }
 export interface AnibtCatalogItem {
  id: string; bangumiId: string; animeId: string; title: string; originalTitle: string; coverUrl: string; format: string

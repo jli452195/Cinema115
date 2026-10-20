@@ -19,7 +19,7 @@ const schedule = computed(() => props.item.airingAt && Number.isFinite(props.ite
     <strong :title="item.title">{{ item.title }}</strong>
     <span v-if="item.originalTitle && item.originalTitle !== item.title" class="anibt-original" :title="item.originalTitle">{{ item.originalTitle }}</span><span v-else class="anibt-original" aria-hidden="true"></span>
     <span class="anibt-facts"><span>{{ item.episodes ? `全 ${item.episodes} 集` : '集数待定' }}</span><span v-if="item.rating != null && item.rating > 0" class="anibt-rating"><IconStar :size="12" aria-hidden="true" />{{ item.rating.toFixed(1) }}<span class="sr-only">分</span></span></span>
-    <small>{{ schedule }}</small><small class="anibt-releases">{{ item.releaseCount ? `${item.releaseCount} 条资源` : '暂无资源，可保存草稿' }}</small>
+    <small>{{ schedule }}</small><small class="anibt-releases">{{ item.releaseCount ? `${item.releaseCount} 条资源` : '暂无资源' }}</small>
   </RouterLink>
 </template>
 

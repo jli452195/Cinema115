@@ -49,6 +49,20 @@ func (s *Store) EnableAnimeSubscription(ctx context.Context, id string, revision
 		return out, err
 	}
 	defer tx.Rollback()
+	out, err = enableAnimeSubscriptionTx(ctx, tx, id, revision, target, refs, key, nil)
+	if err != nil {
+		return out, err
+	}
+	if err := tx.Commit(); err != nil {
+		return out, fmt.Errorf("commit anime activation: %w", err)
+	}
+	return out, nil
+}
+
+type animeActivationPreview func(context.Context, *sql.Tx, model.AnimeSource, AnimeActivationSource) (animepreview.Source, error)
+
+func enableAnimeSubscriptionTx(ctx context.Context, tx *sql.Tx, id string, revision int64, target model.AnimeDownloadTarget, refs []AnimeActivationSource, key AnimeWriteKey, resolve animeActivationPreview) (model.AnimeControlReceipt, error) {
+	out := model.AnimeControlReceipt{ID: id, ResumedSourceIDs: []string{}, UnchangedSources: []model.AnimeUnchangedSource{}}
 	if found, err := readAnimeActionReceiptTx(ctx, tx, key, &out); found || err != nil {
 		return out, err
 	}
@@ -102,22 +116,25 @@ func (s *Store) EnableAnimeSubscription(ctx context.Context, id string, revision
 		if !ok {
 			return out, ErrAnimeInvalid
 		}
-		b, err := readAnimePreviewTx(ctx, tx, key.ActorKey, ref.BatchID)
+		var resolved animepreview.Source
+		if resolve != nil {
+			resolved, err = resolve(ctx, tx, source, ref)
+		} else {
+			var b animepreview.Batch
+			b, err = readAnimePreviewTx(ctx, tx, key.ActorKey, ref.BatchID)
+			if err == nil {
+				fp, e := animepreview.ConfigFingerprint(b.Config)
+				if e != nil || fp != fingerprint {
+					return out, animepreview.ErrConflict
+				}
+				resolved, err = previewReferencedSource(b, ref.AnimePreviewRef)
+			}
+		}
 		if err != nil {
 			return out, err
 		}
-		fp, err := animepreview.ConfigFingerprint(b.Config)
-		if err != nil || fp != fingerprint {
-			return out, animepreview.ErrConflict
-		}
-		var preview *animepreview.Source
-		for i := range b.Sources {
-			if b.Sources[i].ID == ref.PreviewID && b.Sources[i].Ref == source.ID {
-				preview = &b.Sources[i]
-				break
-			}
-		}
-		if preview == nil || preview.SourceID != source.ID || preview.SourceRevision != source.Revision || preview.LoadRevision != ref.LoadRevision {
+		preview := &resolved
+		if preview.SourceID != source.ID || preview.SourceRevision != source.Revision || preview.LoadRevision != ref.LoadRevision {
 			return out, animepreview.ErrConflict
 		}
 		if !preview.ValidAt(now) {
@@ -212,11 +229,10 @@ func (s *Store) EnableAnimeSubscription(ctx context.Context, id string, revision
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status='enabled',revision=revision+1,first_enabled_at=?,updated_at=? WHERE id=?`, now, now, id); err != nil {
 		return out, err
 	}
-	if err := writeAnimeActionReceiptTx(ctx, tx, key, out, now); err != nil {
-		return out, err
-	}
-	if err := tx.Commit(); err != nil {
-		return out, fmt.Errorf("commit anime activation: %w", err)
+	if resolve == nil {
+		if err := writeAnimeActionReceiptTx(ctx, tx, key, out, now); err != nil {
+			return out, err
+		}
 	}
 	return out, nil
 }

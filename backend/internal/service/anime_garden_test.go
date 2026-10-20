@@ -62,6 +62,9 @@ func TestGardenProviderPreviewAndSave(t *testing.T) {
 	f := &gardenFake{}
 	a := NewGardenService(f)
 	a.spacing = 0
+	// Garden records real observation times. Use the real preview clock too,
+	// so a slower run cannot put observations after the fixture's frozen time.
+	s.Previews.now = nil
 	s.Bindings.Garden = a
 	source := &in.Config.Sources[0]
 	source.Provider = "garden"

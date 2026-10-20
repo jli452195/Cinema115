@@ -18,6 +18,11 @@ import (
 // manufacturing an enabled subscription or execution selection.
 func animeEnabledStage(t *testing.T) (*animeDownloadFixture, string, model.AnimeDownloadJob) {
 	t.Helper()
+	return animeEnabledStageWithConfig(t, nil)
+}
+
+func animeEnabledStageWithConfig(t *testing.T, configure func(*animeDownloadFixture, *model.AnimeSubscriptionConfig, *animefeed.SourceRelease)) (*animeDownloadFixture, string, model.AnimeDownloadJob) {
+	t.Helper()
 	ctx := context.Background()
 	f := newAnimeDownloadFixture(t)
 	e, err := f.service.Store.SaveAnimeEntry(ctx, model.AnimeEntry{EditionKey: "original", Title: "完整下载流程", Metadata: model.AnimeMetadata{SchemaVersion: 1}})
@@ -25,6 +30,10 @@ func animeEnabledStage(t *testing.T) (*animeDownloadFixture, string, model.Anime
 		t.Fatal(err)
 	}
 	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "garden", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("123"), GroupID: bindingPtr("dmhy_f45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(12)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: bindingPtr(1), InitialMode: "from_episode"}}}}
+	row := animefeed.SourceRelease{PostKey: "rel_stage", Title: "[字幕组] 番剧 - 01 [1080p]", MagnetHint: "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)}
+	if configure != nil {
+		configure(f, &c, &row)
+	}
 	r, err := f.service.Store.SaveAnimeSubscription(ctx, c, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +44,7 @@ func animeEnabledStage(t *testing.T) (*animeDownloadFixture, string, model.Anime
 	}
 	source := sub.Sources[0]
 	now := time.Now().UnixMilli()
-	page := animefeed.SourcePage{Kind: "history", Source: animefeed.NewSource("garden", "123", "dmhy_f45"), ObservedAt: time.UnixMilli(now - 1000), RawCount: 1, RequestedTake: 50, Completeness: "visible_end", Releases: []animefeed.SourceRelease{{PostKey: "rel_stage", Title: "[字幕组] 番剧 - 01 [1080p]", MagnetHint: "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)}}}
+	page := animefeed.SourcePage{Kind: "history", Source: animefeed.NewSource("garden", "123", "dmhy_f45"), ObservedAt: time.UnixMilli(now - 1000), RawCount: 1, RequestedTake: 50, Completeness: "visible_end", Releases: []animefeed.SourceRelease{row}}
 	b, err := f.service.Store.CreateAnimePreview(ctx, "admin", storage.ActivationConfig(sub, e, f.settings), []storage.AnimePreviewSeed{{SourceRef: source.ID, Page: &page}}, now)
 	if err != nil {
 		t.Fatal(err)

@@ -8,13 +8,14 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
   const page = await context.newPage(), passed = [], errors = [], calls = [], receipts = new Map()
   page.setDefaultTimeout(10000); page.on('pageerror', err => errors.push(err.message)); page.on('dialog', dialog => dialog.accept())
-  const now = Date.now(), state = { failPreview: false, loseDirectory: true, writes: 0, phase: 'pending', jobRevision: 1 }
+  const now = Date.now(), state = { failPreview: false, failJobs: false, loseDirectory: true, loseReconcile: true, writes: 0, reconcileWrites: 0, phase: 'pending', jobRevision: 1, longPath: false }
+  await page.clock.install({ time: new Date(now) })
   let settings = { revision: 3, accountId: 'main', accountRevision: 2, uid: '123', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
   const naming = { schemaVersion: 1, target: { tmdbId: '335790', title: '黑暗召唤师在地下恋爱中', year: '2026', season: 1, groupId: '', groupName: 'TMDB 默认', fingerprint: 'a'.repeat(64), seasons: [{ number: 1, name: '第1季', episodeCount: 12, episodes: [{ id: '101', number: 1, name: '开始' }] }] }, sources: [{ sourceRef: 'source-a', segments: [{ first: 25, sourceBase: 25, targetSeason: 1, targetBase: 1 }], overrides: [] }] }
   const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, initialMode: 'from_episode', minimumEpisode: 25, include: [], exclude: [] } }
   const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { formSelections: [], previewRefs: [] }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
   const plan = job => ({ mode: 'standard', revision: 2, example: !job, cloudConflictChecked: false, items: job ? [
-    { id: '300', kind: 'video', originalPath: '/下载/anime-job/video.mkv', targetPath: '/旧整理/作品 (2026) {tmdb-335790}/Season 01/作品.S01E01.银色子弹.mkv', status: 'ready', reason: 'mapped' },
+    { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: 'ready', reason: 'mapped' },
     { id: '301', kind: 'subtitle', originalPath: '/下载/anime-job/video.chs.ass', targetPath: '/旧整理/作品 (2026) {tmdb-335790}/Season 01/作品.S01E01.银色子弹.chs.ass', status: 'ready', reason: 'subtitle_matched', videoId: '300' },
     { id: '302', kind: 'video', originalPath: '/下载/anime-job/other.mkv', targetPath: '/旧整理/重复.mkv', status: 'conflict', reason: 'duplicate_target' },
     { id: '303', kind: 'attachment', originalPath: '/下载/anime-job/readme.txt', targetPath: '', status: 'preserved', reason: 'attachment_preserved' }
@@ -23,11 +24,28 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const req = route.request(), url = new URL(req.url()), endpoint = url.pathname, body = req.postDataJSON(), key = req.headers()['idempotency-key']
     calls.push({ endpoint, body, key, method: req.method() }); let data = {}, status = 200
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint.endsWith('/discovery/subjects/123')) data={subject:{id:'123',title:naming.target.title,coverUrl:'',date:'2026-10-01'},metadata:{expiresAt:Date.now()+600000}}
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
     else if (endpoint.endsWith('/subscriptions')) data = { items: [sub], total: 1, page: 1, pageSize: 20 }
     else if (endpoint.endsWith('/subscriptions/sub-a')) data = sub
     else if (endpoint.endsWith('/settings')) data = { settings, primaryAccount: { id: 'main', name: '主网盘', uid: '123', revision: 2 }, readiness: { ready: true, issues: [] } }
-    else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: state.jobRevision, downloadState: 'completed', fileState: 'verified', workflowState: state.phase === 'done' ? 'organized' : 'active', organizationPlanned: true, organization: { state: state.phase, total: 2, renamed: state.phase === 'pending' ? 0 : 2, moved: state.phase === 'done' ? 2 : state.phase === 'needs_review' ? 1 : 0, targetPath: '/旧整理/这是一个很长的目录用来确认手机上自然折行', updatedAt: now }, blockCode: state.phase === 'unknown' ? 'ORGANIZE_UNCERTAIN' : state.phase === 'needs_review' ? 'ORGANIZE_RESULT_UNRESOLVED' : null, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: ['unknown', 'needs_review'].includes(state.phase), retry: false } }], total: 1, page: 1, pageSize: 20 }
+    else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) {
+      if (state.failJobs) { status = 503; data = { error: '模拟本地任务读取失败' } }
+      else data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: state.jobRevision, downloadState: 'completed', fileState: 'verified', workflowState: state.phase === 'done' ? 'organized' : 'active', organizationPlanned: true, organization: { state: state.phase, total: 2, renamed: state.phase === 'pending' ? 0 : 2, moved: state.phase === 'done' ? 2 : state.phase === 'needs_review' ? 1 : 0, targetPath: '/旧整理/这是一个很长的目录用来确认手机上自然折行', updatedAt: now }, blockCode: state.phase === 'unknown' ? 'ORGANIZE_UNCERTAIN' : state.phase === 'needs_review' ? 'ORGANIZE_RESULT_UNRESOLVED' : null, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: ['unknown', 'needs_review'].includes(state.phase), retry: false } }], total: 1, page: 1, pageSize: 20 }
+    }
+    else if (endpoint.endsWith('/jobs/job-a/reconcile')) {
+      assert.equal(req.method(), 'POST')
+      assert.deepEqual(Object.keys(body), ['expectedRevision'])
+      if (state.reconcileGate) await state.reconcileGate
+      if (receipts.has(key)) { assert.deepEqual(receipts.get(key).body, body); data = receipts.get(key).data; state.phase = 'working' }
+      else {
+        assert.equal(body.expectedRevision, state.jobRevision)
+        state.reconcileWrites++; data = { id: 'job-a', revision: ++state.jobRevision }
+        receipts.set(key, { body, data })
+        if (state.loseReconcile) { state.loseReconcile = false; return route.abort() }
+        state.phase = 'working'
+      }
+    }
     else if (endpoint.endsWith('/organization-preview')) {
       if (state.failPreview) { status = 503; data = { error: '模拟预览失败' } }
       else data = plan(endpoint.includes('/jobs/'))
@@ -64,16 +82,19 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await organization.getByText(/模拟预览失败.*上次预览已保留/).waitFor()
     assert.equal(await organization.locator('.as-plan-item').count(), 1); state.failPreview = false
     passed.push('示例标明无实际扩展名，读取失败保留上次结果且不查询115')
-    await organization.getByRole('button', { name: '选择整理目录' }).click()
+    await organization.getByRole('button', { name: '动漫存储设置' }).click()
+    await page.getByRole('button', { name: '选择整理目录' }).click()
     const picker = page.getByRole('dialog', { name: '动漫整理目录2' })
     await picker.getByRole('button', { name: '新整理', exact: true }).click()
     await picker.getByRole('button', { name: '保存整理目录', exact: true }).click()
-    await picker.getByRole('button', { name: '核对原目录保存', exact: true }).waitFor()
-    await picker.getByRole('button', { name: '核对原目录保存', exact: true }).click()
-    await picker.waitFor({ state: 'detached' }); await organization.locator('dd').nth(1).filter({ hasText: '/新整理' }).waitFor()
+    await picker.waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: '核对原目录保存', exact: true }).click()
+    await page.getByText('目录已保存', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '关闭弹窗', exact: true }).click()
+    await organization.locator('dd').nth(1).filter({ hasText: '/新整理' }).waitFor()
     const saves = calls.filter(c => c.endpoint.endsWith('/settings/organize-directory'))
     assert.equal(saves.length, 2); assert.equal(saves[0].key, saves[1].key); assert.deepEqual(saves[0].body, saves[1].body); assert.equal(state.writes, 1)
-    passed.push('目录保存回执丢失时在选择器核对原PATCH，不替换key、版本或目标')
+    passed.push('目录保存回执丢失时在共用设置核对原PATCH，不替换key、版本或目标')
     await organization.getByRole('button', { name: '查看整理预览', exact: true }).click()
     await organization.getByText(/新整理\/黑暗召唤师/).waitFor()
     passed.push('整理目录保存后旧预览失效，新预览显示新目标')
@@ -83,6 +104,61 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await job.getByText('字幕已配对', { exact: true }).waitFor(); await job.getByText('目标路径重复，不覆盖', { exact: true }).waitFor(); await job.getByText('附件保留原处', { exact: true }).waitFor()
     assert.ok((await job.locator('.as-plan-item').first().innerText()).includes('/旧整理/'))
     passed.push('实际任务保持冻结目录，展示视频、字幕、冲突与附件，不追踪当前位置')
+    const refresh = page.locator('.as-jobs').getByRole('button', { name: '刷新本地任务记录' })
+    const previewReads = () => calls.filter(c => c.endpoint.includes('/jobs/') && c.endpoint.endsWith('/organization-preview')).length
+    await job.evaluate(el => { window.pinnedPlan = el.querySelector('.as-plan-items'); window.pinnedJob = el })
+    state.failJobs = true; await refresh.click(); await page.getByText(/模拟本地任务读取失败/).waitFor()
+    assert.equal(await job.evaluate(el => el === window.pinnedJob && el.querySelector('.as-plan-items') === window.pinnedPlan), true)
+    state.failJobs = false; await refresh.click(); await page.getByText(/模拟本地任务读取失败/).waitFor({ state: 'detached' })
+    state.failPreview = true; await job.getByRole('button', { name: '重新读取整理预览' }).click()
+    await job.getByText(/模拟预览失败.*上次预览已保留/).waitFor()
+    assert.equal(await job.locator('.as-plan-item').count(), 4); state.failPreview = false
+    passed.push('任务记录或实际路径预览读取失败保留原DOM、展开与旧结果')
+    const jobsReads = () => calls.filter(c => c.endpoint.endsWith('/subscriptions/sub-a/jobs')).length
+    await job.scrollIntoViewIfNeeded()
+    const pinnedReads = previewReads()
+    const scrollTop = () => job.evaluate(el => {
+      for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+        if (parent.scrollHeight > parent.clientHeight && /auto|scroll/.test(getComputedStyle(parent).overflowY)) return parent.scrollTop
+      }
+      return window.scrollY
+    })
+    const initialTop = await scrollTop()
+    state.phase = 'working'
+    for (let i = 0; i < 3; i++) {
+      const before = jobsReads(); state.jobRevision++
+      await page.clock.fastForward(31000)
+      await page.waitForFunction(() => document.querySelector('.as-job-phase .as-state')?.textContent === '正在整理')
+      await page.waitForFunction(() => document.querySelector('[aria-label="刷新本地任务记录"]')?.disabled === false)
+      assert.ok(jobsReads() > before)
+      assert.equal(await job.evaluate(el => el === window.pinnedJob && el.querySelector('.as-plan-items') === window.pinnedPlan), true)
+      assert.ok(Math.abs(await scrollTop() - initialTop) <= 2, '本地轮询保持滚动位置')
+    }
+    assert.equal(previewReads(), pinnedReads, '轮询不能重复读取冻结命名计划')
+    passed.push('三轮30秒静默轮询保持展开、预览DOM与滚动位置，不重复读取命名计划')
+    state.phase = 'unknown'; state.jobRevision++; await refresh.click()
+    const reconcile = job.getByRole('button', { name: '核对整理结果', exact: true })
+    await reconcile.focus(); await page.keyboard.press('Enter')
+    await job.getByText('安排结果待确认，已保留原请求。').waitFor()
+    assert.equal(await reconcile.isDisabled(), true)
+    state.jobRevision++; await refresh.click()
+    const confirm = job.getByRole('button', { name: '核对原安排', exact: true })
+    await confirm.focus(); await page.keyboard.press('Enter')
+    await job.getByText(/安排核对已记录/).waitFor()
+    const reconciles = calls.filter(c => c.endpoint.endsWith('/jobs/job-a/reconcile'))
+    assert.equal(reconciles.length, 2); assert.equal(reconciles[0].key, reconciles[1].key)
+    assert.deepEqual(reconciles[0].body, reconciles[1].body); assert.equal(state.reconcileWrites, 1)
+    assert.equal(await job.locator('.as-operation-feedback').evaluate(el => el === document.activeElement), true, '核对按钮消失后焦点留在操作反馈')
+    passed.push('整理核对回执丢失保留原版本与幂等请求，键盘确认后焦点留在反馈区域')
+    state.phase = 'unknown'; state.jobRevision++; await refresh.click()
+    let releaseReconcile
+    state.reconcileGate = new Promise(resolve => { releaseReconcile = resolve })
+    await reconcile.focus(); await page.keyboard.press('Enter')
+    await job.getByText('正在安排…', { exact: true }).waitFor()
+    await refresh.focus(); releaseReconcile()
+    await job.getByText(/安排核对已记录/).waitFor(); state.reconcileGate = undefined
+    assert.equal(await refresh.evaluate(el => el === document.activeElement), true, '异步反馈不抢走用户已移动的焦点')
+    passed.push('等待核对回执时用户可继续键盘导航，异步完成不抢回焦点')
     for (const [phase, label] of [['working', '正在整理'], ['unknown', '整理结果待核对'], ['needs_review', '整理需要处理'], ['done', '已整理']]) {
       state.phase = phase; state.jobRevision++
       await page.locator('.as-jobs').getByRole('button', { name: '刷新本地任务记录' }).click()
@@ -97,6 +173,9 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await job.getByText('已改名 2/2，已移动 2/2', { exact: false }).waitFor()
     passed.push('真实整理进度区分工作、未知、部分成功与完成，未知仅核对，完成无执行按钮且保留预览DOM')
     await page.setViewportSize({ width: 320, height: 740 }); await job.scrollIntoViewIfNeeded()
+    state.longPath = true; await job.getByRole('button', { name: '重新读取整理预览' }).click()
+    await job.getByText(/UnbrokenRelease/).waitFor()
+    assert.equal(await page.getByRole('dialog').evaluate(el => el.scrollWidth <= el.clientWidth), true)
     assert.equal(await job.evaluate(el => el.scrollWidth <= el.clientWidth), true)
     await page.screenshot({ path: 'test-results/anime-organization-job-320.png' })
     await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-organization-job-dark.png' })
@@ -105,15 +184,25 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.setViewportSize({ width: 320, height: 740 }); await organization.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-320.png' })
     assert.equal(await organization.evaluate(el => el.scrollWidth <= el.clientWidth), true)
     await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-organization-dark.png' })
-    passed.push('320px和暗色目录与路径自然折行，无横向溢出')
-    await page.goto(origin + '/anime/subscriptions/sub-a/edit', { waitUntil: 'networkidle' })
+    passed.push('320px和暗色目录、连续英文长路径自然折行，无横向溢出')
+    await page.goto(origin + '/anime/new?bangumiId=123', { waitUntil: 'networkidle' })
     await page.getByRole('region', { name: 'TMDB 命名目标' }).waitFor()
     assert.equal(await page.getByText('下载后的处理方式', { exact: true }).count(), 0)
     assert.equal(await page.locator('.ae-organize-modes').count(), 0)
-    await page.getByText('整理目录2', { exact: false }).first().waitFor()
+    await page.getByRole('region', { name: '共用存储目录' }).waitFor()
     assert.equal(await page.locator('.anime-editor').evaluate(el => el.scrollWidth <= el.clientWidth), true)
     await page.screenshot({ path: 'test-results/anime-organization-editor-320.png' })
-    passed.push('编辑页直接配置下载目录1与整理目录2，无多余处理方式单选项')
+    passed.push('编辑页仅显示共用目录摘要和统一设置入口，无多余处理方式单选项')
+    await page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' })
+    await organization.locator('summary').click()
+    await organization.getByRole('button', { name: '动漫存储设置', exact: true }).click()
+    await page.getByRole('button', { name: '选择整理目录', exact: true }).click()
+    await page.getByRole('dialog', { name: '动漫整理目录2', exact: true }).waitFor()
+    assert.equal(await page.getByRole('dialog').count(), 3)
+    await page.evaluate(async () => document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/anime/subscriptions'))
+    await page.getByRole('dialog').waitFor({ state: 'detached' })
+    assert.equal(await page.evaluate(() => document.body.style.overflow), '')
+    passed.push('详情、共用设置和目录选择器三级弹窗路由离开后释放滚动锁')
     assert.equal(calls.some(c => /\/organization$|\/organize\/apply|\/rename|\/move/.test(c.endpoint)), false)
     assert.deepEqual(errors, []); console.log(JSON.stringify({ passed, apiCalls: calls.length, errors }, null, 2))
   } finally { await browser.close() }

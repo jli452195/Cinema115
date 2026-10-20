@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:anime-storage-ui": "node scripts/anime-storage-ui.cjs",
     "test:anime-organization-ui": "node scripts/anime-organization-ui.cjs",
     "test:anime-download-ui": "node scripts/anime-download-ui.cjs",
     "test:anime-subscription-browser-ui": "node scripts/anime-subscription-browser-ui.cjs",

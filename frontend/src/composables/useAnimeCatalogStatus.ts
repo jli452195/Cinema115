@@ -37,7 +37,7 @@ export async function requestAnimeCatalogStatuses(token: string, provider: Anime
     const batch = missing.slice(offset, offset + 200)
     const data = await animeConfigRequest<{ items: AnimeCatalogStatus[] }>(token, 'catalog-status', { method: 'POST', body: { provider, itemIds: batch }, signal })
     if (!allowed()) throw new DOMException('Request cancelled', 'AbortError')
-    if (!Array.isArray(data.items) || data.items.length !== batch.length || new Set(data.items.map(item => item.itemId)).size !== batch.length || data.items.some(item => !batch.includes(item.itemId) || item.bangumiId !== null && !/^[1-9]\d{0,11}$/.test(item.bangumiId) || !Array.isArray(item.subscriptions) || item.subscriptions.some(sub => !/^[a-zA-Z0-9_-]{1,128}$/.test(sub.id) || !['draft', 'paused', 'enabled', 'archived'].includes(sub.status)))) throw new Error('订阅状态暂时无法核对')
+    if (!Array.isArray(data.items) || data.items.length !== batch.length || new Set(data.items.map(item => item.itemId)).size !== batch.length || data.items.some(item => !batch.includes(item.itemId) || item.bangumiId !== null && !/^[1-9]\d{0,11}$/.test(item.bangumiId) || !Array.isArray(item.subscriptions) || item.subscriptions.some(sub => !/^[a-zA-Z0-9_-]{1,128}$/.test(sub.id) || !['paused', 'enabled', 'archived'].includes(sub.status)))) throw new Error('订阅状态暂时无法核对')
     for (const item of data.items) {
       const key = `${provider}:${item.itemId}`
       cache.delete(key); cache.set(key, { data: structuredClone(item), until: Date.now() + 30000 })

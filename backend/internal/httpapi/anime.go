@@ -51,7 +51,7 @@ func animeError(c *gin.Context, err error) {
 	case errors.Is(err, tmdb.ErrInput):
 		status, code, message = 400, "INVALID_INPUT", "TMDB 目标或季集参数不正确"
 	case errors.Is(err, tmdb.ErrNotConfigured):
-		status, code, message = 503, "TMDB_NOT_CONFIGURED", "TMDB 暂未配置，可保留原名继续配置订阅"
+		status, code, message = 503, "TMDB_NOT_CONFIGURED", "请先配置 TMDB 服务，再选择整理命名目标"
 	case errors.Is(err, tmdb.ErrNotFound):
 		status, code, message = 404, "NAMING_TARGET_NOT_FOUND", "目标作品或季集不存在，请更换目标"
 	case errors.Is(err, storage.ErrAnimeIdempotency):
@@ -59,11 +59,11 @@ func animeError(c *gin.Context, err error) {
 	case errors.Is(err, storage.ErrAnimeTransition):
 		status, code, message = 409, "STATE_CONFLICT", "当前订阅状态不支持此操作"
 	case errors.Is(err, storage.ErrAnimeReconfirm):
-		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请先启用订阅或重新核对配置"
+		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请重新预览并核对订阅配置"
 	case errors.Is(err, storage.ErrAnimeDirectoryRequired):
 		status, code, message = 409, "DIRECTORY_REQUIRED", "请为当前主账号重新选择目录"
 	case errors.Is(err, storage.ErrAnimeCapability):
-		status, code, message = 409, "CAPABILITY_UNAVAILABLE", "下载与整理能力尚未开放"
+		status, code, message = 409, "CAPABILITY_UNAVAILABLE", "当前操作暂不可用"
 	case errors.Is(err, storage.ErrAnimeAccountChanged):
 		status, code, message = 409, "ACCOUNT_SNAPSHOT_CHANGED", "主账号已变化，请重新核对目录"
 	case errors.Is(err, storage.ErrAnimeSettingsChanged):
@@ -107,7 +107,7 @@ func animeError(c *gin.Context, err error) {
 		code = config.Code
 		switch code {
 		case "CONFIG_INCOMPLETE":
-			status, message = 409, "配置尚未完整，可保存为草稿"
+			status, message = 409, "请补齐订阅来源、命名与存储目录"
 		case "UPSTREAM_INVALID":
 			status, message = 502, "目录身份无法核验"
 		default:
@@ -420,13 +420,16 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	registerAnimePreviews(r, s)
 	registerAnimeNaming(r, s)
 	registerAnimeOrganization(r, s)
-	r.POST("/subscriptions", func(c *gin.Context) { animeSave(c, s, "") })
-	r.PATCH("/subscriptions/:id", func(c *gin.Context) {
+	r.POST("/subscriptions/start", func(c *gin.Context) { animeStart(c, s, "") })
+	r.POST("/subscriptions/:id/start", func(c *gin.Context) {
 		id, ok := animeID(c)
 		if ok {
-			animeSave(c, s, id)
+			animeStart(c, s, id)
 		}
 	})
+	// Saving an unstarted subscription is no longer a public operation.
+	r.POST("/subscriptions", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
+	r.PATCH("/subscriptions/:id", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 	r.GET("/subscriptions", func(c *gin.Context) {
 		p, n, ok := animePage(c)
 		if !ok {
@@ -475,12 +478,16 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	r.PUT("/subscriptions/:id/naming-mapping", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 }
 
-func animeSave(c *gin.Context, s *service.AnimeAdminService, id string) {
-	var in service.AnimeSaveInput
+func animeStart(c *gin.Context, s *service.AnimeAdminService, id string) {
+	if !s.DownloadAvailable() {
+		animeError(c, storage.ErrAnimeCapability)
+		return
+	}
+	var in service.AnimeStartInput
 	if !animeBody(c, &in, true) {
 		return
 	}
-	v, e := s.SaveConfiguration(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), id, in)
+	v, e := s.StartSubscription(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), id, in)
 	if e != nil {
 		animeError(c, e)
 		return

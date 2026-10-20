@@ -183,7 +183,7 @@ func TestAnimeHTTPStrictBoundaryAndSafeErrors(t *testing.T) {
 		f.call(t, "POST", "/discovery/search", f.admin, "", body, 400)
 	}
 	f.call(t, "POST", "/discovery/search", f.admin, "", strings.Repeat(" ", 65<<10), 413)
-	f.call(t, "POST", "/subscriptions", f.admin, "key_0001", strings.Repeat(" ", (1<<20)+1), 413)
+	f.call(t, "POST", "/subscriptions/preview", f.admin, "key_0001", strings.Repeat(" ", (1<<20)+1), 413)
 	f.call(t, "PATCH", "/settings", f.admin, "key_0001", `{"downloadPath":"browser lie"}`, 400)
 	for _, path := range []string{"/subscriptions?page=0", "/subscriptions?pageSize=101", "/subscriptions?page=1&page=2", "/discovery/calendar?weekday=9", "/discovery/subjects/not-decimal", "/sources/mikan/not-decimal"} {
 		f.call(t, "GET", path, f.admin, "", nil, 400)
@@ -212,41 +212,36 @@ func TestAnimeHTTPStrictBoundaryAndSafeErrors(t *testing.T) {
 	}
 }
 
-func TestAnimeHTTPConfigReceiptAndLocalReads(t *testing.T) {
+func TestAnimeHTTPUnstartedSavesClosedAndLocalReads(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
-	in := service.AnimeSaveInput{SaveMode: "draft", SettingsRevision: 1, Config: service.AnimeSaveConfig{Entry: service.AnimeEntryRef{BangumiID: animeHTTPPtr("123"), EditionKey: "original"}, Sources: []model.AnimeSourceConfig{animeHTTPSource()}}}
-	f.call(t, "POST", "/subscriptions", f.admin, "", in, 400)
-	first := f.call(t, "POST", "/subscriptions", f.admin, "create_001", in, 201)
-	bgmCalls, mikanReads := f.bgm.calls, f.mikan.reads
-	f.bgm.err = bangumi.ErrNotFound
-	f.mikan.err = mikan.ErrNetwork
-	again := f.call(t, "POST", "/subscriptions", f.admin, "create_001", in, 201)
-	if first["id"] != again["id"] || first["revision"] != again["revision"] || f.bgm.calls != bgmCalls || f.mikan.reads != mikanReads {
-		t.Fatal("replay consulted upstream", again)
-	}
-	id := first["id"].(string)
-	f.call(t, "GET", "/subscriptions/"+id, f.admin, "", nil, 200)
-	f.call(t, "GET", "/subscriptions?pageSize=1", f.admin, "", nil, 200)
-	if f.bgm.calls != bgmCalls || f.mikan.reads != mikanReads {
-		t.Fatal("local list read upstream")
-	}
-	if v := f.call(t, "POST", "/subscriptions", f.admin, "duplicate_new", in, 409); v["code"] != "SUBSCRIPTION_EXISTS" || v["details"].(map[string]any)["existingId"] != id {
-		t.Fatal(v)
-	}
-	in.SaveMode = "paused"
-	if v := f.call(t, "POST", "/subscriptions", f.admin, "create_001", in, 409); v["code"] != "IDEMPOTENCY_KEY_REUSED" {
-		t.Fatal(v)
-	}
-	in.SaveMode = "enabled"
-	if v := f.call(t, "POST", "/subscriptions", f.admin, "enabled_01", in, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
-		t.Fatal(v)
-	}
-	for _, path := range []string{"/subscriptions/" + id + "/enable", "/subscriptions/" + id + "/organize/apply"} {
-		if v := f.call(t, "POST", path, f.admin, "", nil, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
-			t.Fatal(v)
+	for _, mode := range []string{"draft", "paused", "enabled"} {
+		in := service.AnimeSaveInput{SaveMode: mode, SettingsRevision: 1}
+		for _, route := range []struct{ method, path string }{{"POST", "/subscriptions"}, {"PATCH", "/subscriptions/old-config"}} {
+			if v := f.call(t, route.method, route.path, f.admin, "obsolete_save_01", in, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
+				t.Fatal(v)
+			}
 		}
 	}
-	f.call(t, "POST", "/jobs/a/retry", f.admin, "", nil, 400)
+	if f.bgm.calls != 0 || f.mikan.reads != 0 {
+		t.Fatal("closed saves contacted upstream")
+	}
+	e, err := f.s.Store.SaveAnimeEntry(context.Background(), model.AnimeEntry{EditionKey: "original", Title: "test", Metadata: model.AnimeMetadata{SchemaVersion: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := f.s.Store.SaveAnimeSubscription(context.Background(), model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{func() model.AnimeSourceConfig {
+		v := animeHTTPSource()
+		v.GroupName = animeHTTPPtr("verified")
+		return v
+	}()}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", "/subscriptions/"+receipt.ID, f.admin, "", nil, 200)
+	f.call(t, "GET", "/subscriptions?pageSize=1", f.admin, "", nil, 200)
+	if f.bgm.calls != 0 || f.mikan.reads != 0 {
+		t.Fatal("local list contacted upstream")
+	}
 }
 
 func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {
@@ -277,9 +272,17 @@ func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {
 	}
 	// Saved release rows from a different subscription cannot be read by
 	// passing their source ID to this subscription's endpoint.
-	create := service.AnimeSaveInput{SaveMode: "draft", SettingsRevision: 1, Config: service.AnimeSaveConfig{Entry: service.AnimeEntryRef{BangumiID: animeHTTPPtr("123"), EditionKey: "original"}, Sources: in.Config.Sources}}
-	sub := f.call(t, "POST", "/subscriptions", f.admin, "source_scope_01", create, 201)
-	f.call(t, "GET", "/subscriptions/"+sub["id"].(string)+"/releases?sourceId=foreign-source", f.admin, "", nil, 400)
+	entry, err := f.s.Store.SaveAnimeEntry(context.Background(), model.AnimeEntry{EditionKey: "original", Title: "test", Metadata: model.AnimeMetadata{SchemaVersion: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := in.Config.Sources[0]
+	source.GroupName = animeHTTPPtr("verified")
+	sub, err := f.s.Store.SaveAnimeSubscription(context.Background(), model.AnimeSubscriptionConfig{EntryID: entry.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{source}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", "/subscriptions/"+sub.ID+"/releases?sourceId=foreign-source", f.admin, "", nil, 400)
 	if _, err := f.s.Previews.Releases(context.Background(), "other-admin", batch, "main", 1, 50); err == nil {
 		t.Fatal("preview crossed administrator boundary")
 	}

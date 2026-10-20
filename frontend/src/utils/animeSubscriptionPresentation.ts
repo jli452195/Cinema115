@@ -2,7 +2,7 @@ import type { AnimeCardItem } from '../types/anime'
 import type { AnimeSubscriptionView } from '../types/animeSubscription'
 
 export function subscriptionStatus(status: string) {
-  return ({ draft: '草稿', paused: '已暂停', enabled: '已启用', archived: '已归档', removed: '已移除' } as Record<string, string>)[status] || '未知状态'
+  return ({ paused: '已暂停', enabled: '已启用', archived: '已归档', removed: '已移除' } as Record<string, string>)[status] || '未知状态'
 }
 export function subscriptionCard(view: AnimeSubscriptionView): AnimeCardItem {
   return { id: view.entry.bangumiId || view.entry.id, title: view.entry.title, originalTitle: view.entry.originalTitle,

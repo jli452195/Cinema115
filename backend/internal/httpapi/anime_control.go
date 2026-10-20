@@ -76,44 +76,7 @@ func registerAnimeControl(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			c.JSON(200, v)
 		})
 	}
-	r.POST("/subscriptions/:id/enable-preview", func(c *gin.Context) {
-		id, ok := animeID(c)
-		if !ok {
-			return
-		}
-		if !s.DownloadAvailable() {
-			animeError(c, storage.ErrAnimeCapability)
-			return
-		}
-		var in service.AnimeEnablePreviewInput
-		if !animeBody(c, &in, false) {
-			return
-		}
-		v, err := s.EnablePreview(c.Request.Context(), animeActor(c), id, in)
-		if err != nil {
-			animeError(c, err)
-			return
-		}
-		animePreviewResponse(c, v, in.SourceID)
-	})
-	r.POST("/subscriptions/:id/enable", func(c *gin.Context) {
-		id, ok := animeID(c)
-		if !ok {
-			return
-		}
-		if !s.DownloadAvailable() {
-			animeError(c, storage.ErrAnimeCapability)
-			return
-		}
-		var in service.AnimeEnableInput
-		if !animeBody(c, &in, true) {
-			return
-		}
-		v, err := s.EnableSubscription(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), id, in)
-		if err != nil {
-			animeError(c, err)
-			return
-		}
-		c.JSON(200, v)
-	})
+	for _, path := range []string{"/subscriptions/:id/enable-preview", "/subscriptions/:id/enable"} {
+		r.POST(path, func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
+	}
 }

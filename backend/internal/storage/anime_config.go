@@ -53,6 +53,20 @@ func (s *Store) saveAnimeConfiguration(ctx context.Context, in model.AnimeSubscr
 		return receipt, fmt.Errorf("begin anime configuration: %w", err)
 	}
 	defer tx.Rollback()
+	receipt, err = saveAnimeConfigurationTx(ctx, tx, in, key, guard)
+	if err != nil {
+		return receipt, err
+	}
+	if err := tx.Commit(); err != nil {
+		return receipt, animeDBError("commit anime configuration", err)
+	}
+	return receipt, nil
+}
+
+// The caller owns the transaction, allowing initial configuration and activation
+// to commit together without exposing an unstarted subscription.
+func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSubscriptionConfig, key *AnimeWriteKey, guard *AnimeConfigGuard) (model.AnimeConfigReceipt, error) {
+	var receipt model.AnimeConfigReceipt
 	// Replay before revision validation so a lost successful response is safe.
 	if key != nil {
 		var digest, raw string
@@ -304,9 +318,6 @@ func (s *Store) saveAnimeConfiguration(ctx context.Context, in model.AnimeSubscr
 		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_request_keys(actor_key,operation,request_key,request_digest,http_status,receipt_json,created_at) VALUES(?,?,?,?,?,?,?)`, key.ActorKey, key.Operation, key.Key, key.Digest, status, raw, now); err != nil {
 			return receipt, animeDBError("save anime receipt", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return receipt, animeDBError("commit anime configuration", err)
 	}
 	return receipt, nil
 }

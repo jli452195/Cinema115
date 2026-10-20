@@ -49,7 +49,7 @@ onBeforeRouteLeave(cancel); onBeforeRouteUpdate(cancel); onBeforeUnmount(cancel)
 
 <template>
   <AnimeSubscriptionEditorView v-if="ready" :token="token" @logout="$emit('logout')" />
-  <ManagementLayout v-else title="配置动漫订阅" description="选择字幕组与规格，预览匹配结果。当前仅保存配置，下载尚未开放。" :parent="{ label: '动漫订阅', to: returnTo }" @logout="$emit('logout')">
+  <ManagementLayout v-else title="配置动漫订阅" description="选择字幕组与规格，预览匹配结果。核对后直接开始订阅，下载完成后自动整理。" :parent="{ label: '动漫订阅', to: returnTo }" @logout="$emit('logout')">
     <div class="anime-editor">
       <div v-if="error" class="ae-load-error" role="status"><p>{{ error }}</p><button type="button" class="ae-button" @click="resolveEntry">重新读取</button><RouterLink :to="returnTo" class="ae-link">返回选番</RouterLink></div>
       <p v-else class="ae-loading ae-entry-loading" role="status" aria-busy="true">正在读取番剧与订阅来源…</p>
