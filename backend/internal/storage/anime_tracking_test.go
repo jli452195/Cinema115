@@ -275,7 +275,7 @@ func TestAnimeStatusUIDBudgetAndSharedCooldown(t *testing.T) {
 	for _, mode := range []string{"normal", "rate limited", "access denied"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _, now := animeStatusStoreFixture(t)
-			release, verified := f.selectRelease(t, 0, "rel_second", strings.Repeat("b", 40))
+			release, verified := f.selectTitle(t, 0, "rel_second", strings.Repeat("b", 40), "[字幕组] 测试 - 31 [1080p][HEVC]")
 			job := f.claim(t, 0, release, verified).Job
 			if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET directory_cid='201' WHERE id=?`, job.ID); err != nil {
 				t.Fatal(err)

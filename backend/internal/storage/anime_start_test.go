@@ -119,7 +119,7 @@ func TestAnimeStartRejectsInvalidPreviewWithoutPartialSubscription(t *testing.T)
 	}
 }
 
-func TestAnimeStartZeroHistoryAndIndependentVersions(t *testing.T) {
+func TestAnimeStartZeroHistoryAndCurrentHighestVersion(t *testing.T) {
 	for _, count := range []int{0, 2} {
 		t.Run(string(rune('0'+count)), func(t *testing.T) {
 			s, in, guard, expected, _, target := animeStartFixture(t)
@@ -131,7 +131,9 @@ func TestAnimeStartZeroHistoryAndIndependentVersions(t *testing.T) {
 			b := createPreview(t, s, expected, page, now)
 			ids := make([]string, 0, count)
 			for _, item := range b.Sources[0].Items {
-				ids = append(ids, item.Release.ID)
+				if item.Selectable {
+					ids = append(ids, item.Release.ID)
+				}
 			}
 			refs := []AnimeActivationSource{{AnimePreviewRef: previewRef(b, 0), SelectedIDs: ids, DismissedIDs: []string{}}}
 			out, err := s.StartAnimeConfiguration(context.Background(), in, activationKey("start_history_01"), guard, expected, refs, target)
@@ -139,7 +141,7 @@ func TestAnimeStartZeroHistoryAndIndependentVersions(t *testing.T) {
 				t.Fatal(out, err)
 			}
 			var selected int
-			if err := s.db.QueryRow(`SELECT count(*) FROM anime_release_decisions WHERE disposition='selected'`).Scan(&selected); err != nil || selected != count {
+			if err := s.db.QueryRow(`SELECT count(*) FROM anime_release_decisions WHERE disposition='selected'`).Scan(&selected); err != nil || selected != len(ids) {
 				t.Fatal(selected, err)
 			}
 		})

@@ -19,9 +19,10 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const card = id => ({ id, title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', coverUrl: '', date: '2026-10-01', weekday: 1 })
     function item(ref, index) {
       const review = index === 2, filtered = state.zeroMatch || index === 3, ep = 25 + Math.floor(index / 2)
-      return { release: { id: `${ref.replace(/^source-/, '')}-release-${index}`, title: `[示例字幕组] 从零开始的异世界生活 [${ep}] [1080p] ${index % 2 ? '简繁内封 v2' : '简体内嵌'}`, parse: { episode: ep, rawEpisode: String(ep), resolution: '1080p', versionLabel: index % 2 ? 'v2' : '' } },
+      const result = { release: { id: `${ref.replace(/^source-/, '')}-release-${index}`, title: `[示例字幕组] 从零开始的异世界生活 [${ep}] [1080p] ${index % 2 ? '简繁内封 v2' : '简体内嵌'}`, parse: { kind: 'episode', episode: ep, rawEpisode: String(ep), resolution: '1080p', versionLabel: index % 2 ? 'v2' : '' } },
         observation: { title: '', sizeRaw: '650 MB' }, projection: { status: 'in_scope', sourceEpisode: ep },
         selectable: !review && !filtered, decision: review ? 'needs_confirmation' : filtered ? 'filtered' : 'matched', reasonCode: review ? 'EPISODE_NUMBER_UNRESOLVED' : filtered ? 'BELOW_SOURCE_MINIMUM' : 'MATCHED_METADATA_ONLY' }
+      return state.previewTransform ? state.previewTransform(result, index) : result
     }
     function makeSource(config, take, previous) {
       const items = state.empty ? [] : Array.from({ length: Math.min(take, 120) }, (_, i) => item(config.ref, i))
@@ -220,6 +221,99 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(calls.filter(c => c.endpoint.endsWith('/subscriptions/preview')).length, reads, 'start reuses reviewed snapshots')
     assert.equal(calls.some(c => /enable-preview|\/enable$/.test(c.endpoint)), false)
     passed.push('跨页选择、多版本与备用独立提交，直接开始不重复读取 RSS')
+
+    const names = await session(); await names.go(); await names.source()
+    names.state.previewTransform = (item, index) => {
+      if (index === 0) item.release.title = '[字幕组甲] 从零开始的异世界生活 '.repeat(10) + '[25][1080p] 简体内嵌'
+      if (index === 2) item.release.parse = { ...item.release.parse, kind: 'special', episode: null, rawEpisode: '12.5' }
+      if ([0, 4].includes(index)) Object.assign(item, { selectable: false, decision: 'filtered', reasonCode: 'RELEASE_VERSION_SUPERSEDED' })
+      if (index === 4) item.release.parse.versionLabel = 'v2'
+      if (index === 5) { item.release.parse.versionLabel = 'V3'; item.release.title = item.release.title.replace('v2', 'V3') }
+      return item
+    }
+    await names.page.getByLabel('发布第几话', { exact: true }).fill('25')
+    await names.preview()
+    const table = names.page.getByRole('table', { name: '原标题与整理名称对照' })
+    await table.waitFor()
+    assert.match(await names.page.locator('.ae-preview-destination').innerText(), /\/动漫整理\/从零开始的异世界生活 \(2016\) \{tmdb-117061\}/)
+    assert.match(await names.page.locator('.ae-release-filename').first().innerText(), /从零开始的异世界生活\.S02E01\.字幕组甲/)
+    assert.equal(await names.page.locator('.ae-release').count(), 50, 'different release versions remain separate rows')
+    assert.equal(await names.page.locator('.ae-release').nth(0).getByRole('checkbox').isDisabled(), true)
+    assert.match(await names.page.locator('.ae-release').nth(0).innerText(), /同集已有更高版本.*不会下载/s)
+    assert.equal(await names.page.locator('.ae-release').nth(1).getByRole('checkbox').isChecked(), true)
+    assert.equal(await names.page.locator('.ae-release').nth(5).locator('.ae-release-version').innerText(), 'V3')
+    assert.equal(await names.page.locator('.ae-release').nth(5).getByRole('checkbox').isChecked(), true)
+    assert.match(await names.page.locator('.ae-release').nth(2).innerText(), /未设置对应，保留原名/)
+    assert.match(await names.page.locator('.ae-release').nth(3).innerText(), /S02E02.*低于补番起点.*不会下载/s)
+    assert.match(await names.page.locator('.ae-release').last().innerText(), /S02E25 的 TMDB 资料待核对/)
+    const checked = await names.page.locator('.ae-release input:checked').count(), nameCalls = names.calls.length
+    await names.page.getByLabel('对应第几集', { exact: true }).fill('2')
+    await wait(async () => (await names.page.locator('.ae-release-filename').first().innerText()).includes('.S02E02.'))
+    assert.equal(names.calls.length, nameCalls, 'mapping updates use local facts only')
+    assert.equal(await names.page.locator('.ae-release input:checked').count(), checked, 'mapping does not alter selections')
+    assert.equal(await names.page.locator('.ae-preview .ae-inline-notice').filter({ hasText: '规则或目录已变化' }).count(), 0)
+    await names.page.getByLabel('发布第几话', { exact: true }).fill('0')
+    assert.equal(await names.page.locator('.ae-release-filename').count(), 0, 'invalid maps never show stale names')
+    assert.match(await names.page.locator('.ae-preview .ae-error').innerText(), /有效整数/)
+    await names.page.getByLabel('发布第几话', { exact: true }).fill('25')
+    await names.page.getByLabel('对应第几集', { exact: true }).fill('1')
+    assert.equal(await names.page.getByRole('checkbox', { name: '展开完整名称', exact: true }).count(), 0)
+    assert.equal(await names.page.locator('.ae-release-title').first().evaluate(el => el.scrollWidth <= el.clientWidth + 1 && getComputedStyle(el).whiteSpace === 'nowrap'), true, 'full titles never clamp or wrap')
+    const region = names.page.getByRole('region', { name: '本页资源列表', exact: true })
+    await region.focus(); await names.page.keyboard.press('ArrowRight')
+    await wait(async () => await region.evaluate(el => el.scrollLeft > 0), 'keyboard can scroll the table')
+    assert.equal(await names.page.evaluate(() => scrollX), 0)
+    await names.page.getByLabel('显示', { exact: true }).selectOption('matched')
+    assert.equal(await names.page.locator('.ae-release input:disabled').count(), 0)
+    await names.page.getByLabel('显示', { exact: true }).selectOption('all')
+    assert.equal(names.calls.length, nameCalls, 'scrolling and filtering do not fetch resources')
+    passed.push('紧凑表格逐条对照完整标准名称，表格内部左右滚动；偏移本地刷新保留选择，过滤与未映射原因明确显示')
+
+    await names.page.getByRole('button', { name: '继续加载历史', exact: true }).click()
+    await wait(async () => (await names.page.locator('.ae-page-buttons').innerText()).includes('1 / 2'))
+    await names.page.getByRole('button', { name: '资源下一页' }).click()
+    await wait(async () => (await names.page.locator('.ae-page-buttons').innerText()).includes('2 / 2'))
+    const pageReads = names.calls.length
+    await names.page.getByLabel('发布第几话', { exact: true }).fill('50')
+    assert.match(await names.page.locator('.ae-release-filename').first().innerText(), /S02E01/)
+    assert.match(await names.page.locator('.ae-page-buttons').innerText(), /2 \/ 2/)
+    assert.equal(names.calls.length, pageReads, 'local rename keeps the current page and snapshot')
+    passed.push('第2页更改映射即时更新名称，维持页码且无额外请求')
+
+    await names.page.getByRole('button', { name: '资源上一页' }).click()
+    await wait(async () => (await names.page.locator('.ae-page-buttons').innerText()).includes('1 / 2'))
+    await names.page.getByLabel('发布第几话', { exact: true }).fill('25')
+    for (const width of [1440, 320]) {
+      await names.page.setViewportSize({ width, height: width === 320 ? 900 : 1080 })
+      await names.page.locator('.ae-preview').evaluate(el => { el.style.scrollMarginTop = '82px'; el.scrollIntoView({ block: 'start' }) })
+      for (const dark of [false, true]) {
+        await names.page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+        assert.equal(await names.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+        assert.equal(await region.evaluate(el => el.scrollWidth > el.clientWidth + 1), true, 'only the table scrolls horizontally')
+        await region.evaluate(el => { el.scrollLeft = 0 })
+        await names.page.screenshot({ path: `test-results/anime-rename-${width}-${dark ? 'dark' : 'light'}.png`, animations: 'disabled' })
+        await names.page.locator('.ae-release-renamed').first().evaluate(el => { const region = el.closest('.ae-release-list'); region.scrollLeft = el.offsetLeft - 60 })
+        assert.equal(await names.page.locator('.ae-release-select').first().evaluate(el => { const region = el.closest('.ae-release-list'); return Math.abs(el.getBoundingClientRect().left - region.getBoundingClientRect().left) < 1 }), true, 'checkbox column stays visible after horizontal scrolling')
+        assert.equal(await names.page.locator('.ae-release-filename').first().evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+        await names.page.screenshot({ path: `test-results/anime-rename-${width}-${dark ? 'dark' : 'light'}-scrolled.png`, animations: 'disabled' })
+      }
+    }
+    passed.push('320px与桌面仅表格内部横滚，名称不截断，选择列固定；已生成明暗及左右滚动截图')
+
+    const touch = await session({ width: 390, height: 844 }, 'admin', { isMobile: true, hasTouch: true })
+    await touch.go(); await touch.source(); await touch.page.getByLabel('发布第几话', { exact: true }).fill('25'); await touch.preview()
+    const touchRegion = touch.page.getByRole('region', { name: '本页资源列表', exact: true })
+    await touchRegion.scrollIntoViewIfNeeded()
+    const box = await touchRegion.boundingBox(), cdp = await touch.context.newCDPSession(touch.page)
+    const y = Math.min(box.y + 100, 720), x = box.x + box.width - 30, touchCalls = touch.calls.length
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    for (let step = 1; step <= 8; step++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - step * 24, y }] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await wait(async () => await touchRegion.evaluate(el => el.scrollLeft > 0), 'finger swipe scrolls only the table')
+    assert.equal(await touch.page.evaluate(() => scrollX), 0)
+    assert.equal(touch.calls.length, touchCalls)
+    await cdp.detach()
+    passed.push('真实触控事件验证手机左右滑动，页面不横移且不产生新请求')
 
     const unknown = await session(); await unknown.go(); await unknown.source(); await unknown.preview()
     unknown.state.saveMode = 'unknown'

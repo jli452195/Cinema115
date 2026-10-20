@@ -128,18 +128,18 @@ func TestPreviewLiteralKeywordsAndUnknownResolution(t *testing.T) {
 	}
 }
 
-func TestPreviewModesAndCoexistingVersions(t *testing.T) {
+func TestPreviewModesChooseOnlyCurrentHighestVersion(t *testing.T) {
 	for _, mode := range []string{"from_episode", "new_only", "selected_history"} {
 		t.Run(mode, func(t *testing.T) {
 			c := config()
 			c.Sources[0].Rules.InitialMode = mode
 			s := build(t, c, page("[组] 动画 [30][1080p]", "[组] 动画 [30v2][1080p]"))
-			if len(s.Items) != 2 || !s.Items[0].Selectable || !s.Items[1].Selectable {
-				t.Fatal("episode dedup")
+			if len(s.Items) != 2 || s.Items[0].Selectable || !s.Items[1].Selectable || s.Items[0].ReasonCode != "RELEASE_VERSION_SUPERSEDED" {
+				t.Fatal("highest version not selected", s.Items)
 			}
 			want := 0
 			if mode == "from_episode" {
-				want = 2
+				want = 1
 			}
 			if len(s.SelectedIDs) != want {
 				t.Fatal("initial mode", s.SelectedIDs)

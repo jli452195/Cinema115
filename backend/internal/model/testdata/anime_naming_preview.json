@@ -1,0 +1,34 @@
+{
+  "plan": {
+    "schemaVersion": 1,
+    "target": {"tmdbId":"335790","title":"黑暗召唤师在地下恋爱中","year":"2026","groupId":"","groupName":"TMDB 默认","season":1,"fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","seasons":[
+      {"number":0,"name":"特别篇","date":"","episodeCount":2,"episodes":[{"id":"901","number":1,"name":"特典","sourceSeason":0,"sourceNumber":1},{"id":"902","number":2,"name":"合并特典","sourceSeason":0,"sourceNumber":2}]},
+      {"number":1,"name":"第一季","date":"","episodeCount":2,"episodes":[{"id":"101","number":1,"name":"第一集","sourceSeason":1,"sourceNumber":1},{"id":"102","number":2,"name":"第二集","sourceSeason":1,"sourceNumber":2}]},
+      {"number":2,"name":"第二季","date":"","episodeCount":1,"episodes":[{"id":"201","number":1,"name":"续篇","sourceSeason":2,"sourceNumber":1}]}
+    ]},
+    "sources":[
+      {"sourceRef":"main","segments":[{"first":25,"last":26,"sourceBase":25,"targetSeason":1,"targetBase":1},{"first":27,"last":28,"sourceBase":27,"targetSeason":2,"targetBase":1}],"overrides":[{"rawKind":"episode","rawNumber":"26","action":"ignore","targetSeason":0,"targetEpisode":0},{"rawKind":"special","rawNumber":"12.5","action":"map","targetSeason":0,"targetEpisode":1},{"rawKind":"composite","rawNumber":"01-02","action":"map","targetSeason":0,"targetEpisode":2}]},
+      {"sourceRef":"standby","segments":[{"first":1,"last":null,"sourceBase":1,"targetSeason":1,"targetBase":1}],"overrides":[]}
+    ]
+  },
+  "cases":[
+    {"name":"absolute-offset","sourceRef":"main","parse":{"kind":"episode","episode":25,"rawEpisode":"025v2"},"group":"银色子弹","expected":{"status":"mapped","season":1,"episode":1,"episodeId":"101","episodeName":"第一集","pathStem":"黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01.银色子弹"}},
+    {"name":"ignored-padded-version","sourceRef":"main","parse":{"kind":"episode","episode":26,"rawEpisode":"026v2"},"group":"银色子弹","expected":{"status":"ignored","season":null,"episode":null}},
+    {"name":"second-segment","sourceRef":"main","parse":{"kind":"episode","episode":27,"rawEpisode":"27"},"group":"字幕组甲","expected":{"status":"mapped","season":2,"episode":1,"episodeId":"201","episodeName":"续篇","pathStem":"黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 02/黑暗召唤师在地下恋爱中.S02E01.字幕组甲"}},
+    {"name":"missing-tmdb-episode","sourceRef":"main","parse":{"kind":"episode","episode":28,"rawEpisode":"28"},"group":"组","expected":{"status":"target_missing","season":2,"episode":2}},
+    {"name":"outside-mapping","sourceRef":"main","parse":{"kind":"episode","episode":24,"rawEpisode":"24"},"group":"组","expected":{"status":"unmapped","season":null,"episode":null}},
+    {"name":"unknown-source","sourceRef":"other","parse":{"kind":"episode","episode":25,"rawEpisode":"25"},"group":"组","expected":{"status":"unmapped","season":null,"episode":null}},
+    {"name":"explicit-special","sourceRef":"main","parse":{"kind":"special","episode":null,"rawEpisode":"12.5"},"group":" .银色/子弹. ","expected":{"status":"mapped","season":0,"episode":1,"episodeId":"901","episodeName":"特典","pathStem":"黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 00/黑暗召唤师在地下恋爱中.S00E01.银色_子弹"}},
+    {"name":"special-never-inherits-offset","sourceRef":"main","parse":{"kind":"special","episode":25,"rawEpisode":"SP25"},"group":"组","expected":{"status":"unmapped","season":null,"episode":null}},
+    {"name":"composite-override","sourceRef":"main","parse":{"kind":"composite","episode":null,"rawEpisode":"01-02"},"group":"组","expected":{"status":"mapped","season":0,"episode":2,"episodeId":"902","episodeName":"合并特典","pathStem":"黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 00/黑暗召唤师在地下恋爱中.S00E02.组"}},
+    {"name":"missing-parsed-number","sourceRef":"main","parse":{"kind":"episode","episode":null,"rawEpisode":"25"},"group":"组","expected":{"status":"unmapped","season":null,"episode":null}},
+    {"name":"separate-source-same-episode","sourceRef":"standby","parse":{"kind":"episode","episode":1,"rawEpisode":"01"},"group":"字幕组乙","expected":{"status":"mapped","season":1,"episode":1,"episodeId":"101","episodeName":"第一集","pathStem":"黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01.字幕组乙"}}
+  ],
+  "filenameCases":[
+    {"input":" .标题<>:\"/\\|?*\n. ","expected":"标题__________"},
+    {"input":"　标题　","expected":"标题"},
+    {"input":"﻿标题﻿","expected":"﻿标题﻿"},
+    {"input":"...  ","expected":"未命名"},
+    {"input":"\u0085标题\u0085","expected":"_标题_"}
+  ]
+}

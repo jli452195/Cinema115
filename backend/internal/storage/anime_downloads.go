@@ -220,6 +220,9 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if !match {
 		return out, ErrAnimeConflict
 	}
+	if err := checkAnimeClaimedEditionTx(ctx, tx, sourceID, release, verified.Hash()); err != nil {
+		return out, err
+	}
 	now := time.Now().UTC().UnixMilli()
 	resourceID, err := saveAnimeVerifiedResourceTx(ctx, tx, verified)
 	if err != nil {

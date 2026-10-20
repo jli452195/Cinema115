@@ -65,10 +65,14 @@ func newDownloadClaimFixture(t *testing.T) *downloadClaimFixture {
 }
 
 func (f *downloadClaimFixture) selectRelease(t *testing.T, index int, post, hash string) (model.AnimeRelease, animeresource.Verified) {
+	return f.selectTitle(t, index, post, hash, "[字幕组] 测试 - 30 [1080p][HEVC]")
+}
+
+func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, title string) (model.AnimeRelease, animeresource.Verified) {
 	t.Helper()
 	ctx := context.Background()
 	source := f.sub.Sources[index]
-	row := animefeed.SourceRelease{PostKey: post, Title: "[字幕组] 测试 - 30 [1080p][HEVC]", OriginalGUID: "shared-guid", MagnetHint: "magnet:?xt=urn:btih:" + hash}
+	row := animefeed.SourceRelease{PostKey: post, Title: title, OriginalGUID: "shared-guid", MagnetHint: "magnet:?xt=urn:btih:" + hash}
 	parsed, err := animeparse.Title(row.Title)
 	if err != nil {
 		t.Fatal(err)
@@ -186,15 +190,16 @@ func TestAnimeDownloadClaimConcurrentSourcesSameHash(t *testing.T) {
 	}
 }
 
-func TestAnimeDownloadClaimSameEpisodeDifferentResources(t *testing.T) {
+func TestAnimeDownloadClaimIndependentGroupsButNeverReplacesEdition(t *testing.T) {
 	f := newDownloadClaimFixture(t)
-	// A distinct subtitle group and a corrected release all retain episode 30.
+	// Different groups remain independent; a later correction of the first
+	// group's established edition cannot create another download.
 	if _, err := f.store.db.ExecContext(context.Background(), `UPDATE anime_subscription_sources SET group_name='另一字幕组' WHERE id=?`, f.sub.Sources[1].ID); err != nil {
 		t.Fatal(err)
 	}
 	f.sub.Sources[1].GroupName = animePtr("另一字幕组")
 	var jobs []string
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		r, v := f.selectRelease(t, i%2, fmt.Sprintf("rel_dmhy_%d", i+1), strings.Repeat(fmt.Sprint(i+1), 40))
 		out := f.claim(t, i%2, r, v)
 		if !out.Created {
@@ -202,10 +207,14 @@ func TestAnimeDownloadClaimSameEpisodeDifferentResources(t *testing.T) {
 		}
 		jobs = append(jobs, out.Job.ID)
 	}
-	if jobs[0] == jobs[1] || jobs[0] == jobs[2] {
+	if jobs[0] == jobs[1] {
 		t.Fatal("different hash reused job")
 	}
-	assertDownloadCounts(t, f.store, 3, 3, 3, 3)
+	r, v := f.selectTitle(t, 0, "rel_dmhy_v3", strings.Repeat("3", 40), "[字幕组] 测试 - 30v3 [1080p][HEVC]")
+	if _, err := f.store.ClaimAnimeDownload(context.Background(), f.sub.Sources[0].ID, r.ID, 1, v, f.target); !errors.Is(err, ErrAnimeConflict) {
+		t.Fatal("later revision created another download", err)
+	}
+	assertDownloadCounts(t, f.store, 2, 2, 2, 2)
 }
 
 func TestAnimeDownloadClaimNeverReopensKnownResource(t *testing.T) {

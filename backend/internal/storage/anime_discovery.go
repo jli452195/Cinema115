@@ -183,6 +183,12 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if err != nil {
 		return stats, err
 	}
+	frozen, err := animeAuthorizedEditionsTx(ctx, tx, poll.Source.ID)
+	if err != nil {
+		return stats, err
+	}
+	candidates := make([]animepreview.Item, 0, len(releases))
+	generations := make(map[string]int64, len(releases))
 	for i, r := range releases {
 		item := parsed.Items[i]
 		stats.Observed++
@@ -218,6 +224,20 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		} else if timing := animepreview.ClassifyTime(item.Publication, poll.T0, page.ObservedAt.UnixMilli()); timing != "post_preview_new" {
 			disposition, reason = "needs_confirmation", "PUBLICATION_REVIEW_REQUIRED"
 		}
+		if disposition == "selected" && frozen[animepreview.EpisodeEdition(r.Parse)] {
+			disposition, reason = "filtered", "RELEASE_EDITION_ALREADY_SELECTED"
+		}
+		item.Release, item.Decision, item.ReasonCode = r, disposition, reason
+		item.Selectable = disposition == "selected"
+		candidates = append(candidates, item)
+		generations[r.ID] = generation
+	}
+	// Only eligible, genuinely new candidates compete. A filtered or undated
+	// higher version cannot hide an otherwise eligible lower version.
+	animepreview.PreferCurrentVersions(candidates)
+	for _, item := range candidates {
+		r, disposition, reason := item.Release, item.Decision, item.ReasonCode
+		generation := generations[r.ID]
 		snapshot := model.AnimeDecisionSnapshot{SchemaVersion: model.AnimeSchemaVersion, Title: r.Title, Binding: poll.Source.Binding, Rules: poll.Source.Rules, Parse: r.Parse, RuleVersion: animepreview.RuleVersion, ParserVersion: r.ParserVersion, TimeVersion: r.TimeVersion}
 		var observation any
 		var next any

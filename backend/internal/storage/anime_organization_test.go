@@ -50,7 +50,7 @@ func TestAnimeOrganizationClaimFreezesTargetAndLeavesExistingTaskUntouched(t *te
 	if again.Created || !reflect.DeepEqual(first.Job, again.Job) {
 		t.Fatal("existing job changed")
 	}
-	r2, v2 := f.selectRelease(t, 0, "rel_dmhy_2", strings.Repeat("b", 40))
+	r2, v2 := f.selectTitle(t, 0, "rel_dmhy_2", strings.Repeat("b", 40), "[字幕组] 测试 - 31 [1080p][HEVC]")
 	if _, err := f.store.ClaimAnimeDownload(ctx, f.sub.Sources[0].ID, r2.ID, 1, v2, f.target); !errors.Is(err, ErrAnimeDirectoryRequired) {
 		t.Fatal("new named task lacks organization target", err)
 	}

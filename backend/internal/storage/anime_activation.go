@@ -159,6 +159,22 @@ func enableAnimeSubscriptionTx(ctx context.Context, tx *sql.Tx, id string, revis
 				choices[rid] = pair.state
 			}
 		}
+		// Re-evaluate the bounded saved snapshot to guard old preview bodies and
+		// direct API callers. One source/episode/spec grants only one revision.
+		animepreview.PreferCurrentVersions(preview.Items)
+		editions := make(map[string]bool, len(ref.SelectedIDs))
+		for _, item := range preview.Items {
+			if choices[item.Release.ID] != "selected" {
+				continue
+			}
+			key := animepreview.EpisodeEdition(item.Release.Parse)
+			if !item.Selectable || key != "" && editions[key] {
+				return out, animepreview.ErrReview
+			}
+			if key != "" {
+				editions[key] = true
+			}
+		}
 		baselineID, err := newAnimeID()
 		if err != nil {
 			return out, err

@@ -52,7 +52,7 @@ export interface AnimePreviewSummary {
   gapsWithinLoadedMatches: { first: number; last: number }[]; unloadedHistory: boolean
 }
 export interface AnimePreviewItem {
-  release: { id: string; title: string; parse: { episode: number | null; rawEpisode: string; resolution: string; versionLabel: string; spec?: AnimeSpec } }
+  release: { id: string; title: string; parse: { kind: string; episode: number | null; rawEpisode: string; resolution: string | null; versionLabel: string; spec?: AnimeSpec } }
   observation: { title: string; url: string; sizeRaw: string }
   projection: { status: string; sourceEpisode: number | null; chapterEpisode: number | null }
   decision: string; reasonCode: string; selectable: boolean

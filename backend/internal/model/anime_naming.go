@@ -3,9 +3,11 @@ package model
 import (
 	"encoding/hex"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Naming is subscription-owned configuration, never the site's TV numbering.
@@ -278,13 +280,34 @@ func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, gro
 				out.Status = "mapped"
 				out.EpisodeID = e.ID
 				out.EpisodeName = e.Name
-				title := AnimeFilenamePart(p.Target.Title)
-				out.PathStem = fmt.Sprintf("%s (%s) {tmdb-%s}/Season %02d/%s.S%02dE%02d.%s", title, p.Target.Year, p.Target.TMDBID, season, title, season, episode, AnimeFilenamePart(group))
+				out.PathStem = AnimeNamingPath(p.Target, season, episode, group, "")
 				return out
 			}
 		}
 	}
 	return out
+}
+
+// AnimeNamingPath is shared by release previews and file organization. A preview
+// has no extension yet; the actual file reserves its extension's byte length.
+func AnimeNamingPath(target AnimeNamingTarget, season, episode int, group, ext string) string {
+	title := AnimeFilenamePart(target.Title)
+	folder := AnimeNamingFolder(target)
+	suffix := fmt.Sprintf(".S%02dE%02d.%s", season, episode, truncateAnimeFilename(AnimeFilenamePart(group), 80))
+	stem := truncateAnimeFilename(title, 200-len(suffix)-len(ext)) + suffix
+	return path.Join(folder, fmt.Sprintf("Season %02d", season), stem+ext)
+}
+
+func AnimeNamingFolder(target AnimeNamingTarget) string {
+	return fmt.Sprintf("%s (%s) {tmdb-%s}", truncateAnimeFilename(AnimeFilenamePart(target.Title), 180), target.Year, target.TMDBID)
+}
+
+func truncateAnimeFilename(value string, max int) string {
+	for len(value) > max && len(value) > 0 {
+		_, n := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-n]
+	}
+	return strings.TrimRight(value, ". ")
 }
 func AnimeFilenamePart(v string) string {
 	v = strings.Map(func(r rune) rune {

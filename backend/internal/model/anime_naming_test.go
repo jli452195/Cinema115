@@ -1,9 +1,67 @@
 package model
 
 import (
+	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestAnimeNamingFrontendContract(t *testing.T) {
+	data, err := os.ReadFile("testdata/anime_naming_preview.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Plan  AnimeNamingPlan `json:"plan"`
+		Cases []struct {
+			Name      string                `json:"name"`
+			SourceRef string                `json:"sourceRef"`
+			Parse     AnimeReleaseParse     `json:"parse"`
+			Group     string                `json:"group"`
+			Expected  AnimeNamingProjection `json:"expected"`
+		} `json:"cases"`
+		FilenameCases []struct {
+			Input    string `json:"input"`
+			Expected string `json:"expected"`
+		} `json:"filenameCases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Plan.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, example := range fixture.Cases {
+		t.Run(example.Name, func(t *testing.T) {
+			got := fixture.Plan.Project(example.SourceRef, example.Parse, example.Group)
+			if !reflect.DeepEqual(got, example.Expected) {
+				t.Fatalf("got %+v; want %+v", got, example.Expected)
+			}
+		})
+	}
+	for _, example := range fixture.FilenameCases {
+		if got := AnimeFilenamePart(example.Input); got != example.Expected {
+			t.Fatalf("clean %q: got %q; want %q", example.Input, got, example.Expected)
+		}
+	}
+	target := fixture.Plan.Target
+	target.Title = strings.Repeat("界", 100)
+	folder := strings.Repeat("界", 60) + " (2026) {tmdb-335790}"
+	for _, example := range []struct {
+		ext    string
+		length int
+	}{{"", 38}, {".mkv", 36}} {
+		want := folder + "/Season 01/" + strings.Repeat("界", example.length) + ".S01E01." + strings.Repeat("组", 26) + example.ext
+		if got := AnimeNamingPath(target, 1, 1, strings.Repeat("组", 40), example.ext); got != want {
+			t.Fatalf("byte-limited name: got %q; want %q", got, want)
+		}
+	}
+	if got := AnimeFilenamePart(strings.Repeat("𠮷", 121)); got != strings.Repeat("𠮷", 120) {
+		t.Fatal("Unicode rune limit differs from frontend")
+	}
+}
 
 func namingNumber(n int) *int { return &n }
 func namingPlan() AnimeNamingPlan {

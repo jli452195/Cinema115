@@ -280,17 +280,25 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 		if err := evaluate(config.Binding, config.Rules, &item); err != nil {
 			return out, err
 		}
+		out.Items = append(out.Items, item)
+		out.InitialPostKeys = append(out.InitialPostKeys, row.PostKey)
+	}
+	// RSS candidates are ranked by the repository after baseline/time and
+	// durable authorization checks, so an ineligible revision cannot win.
+	if page.Kind == "history" {
+		PreferCurrentVersions(out.Items)
+	}
+	for i := range out.Items {
+		item := &out.Items[i]
 		item.ConfirmationFingerprint, err = Digest(struct {
 			Source, Content string
 			Projection      animebinding.Projection
 			Selectable      bool
-		}{fp, content, item.Projection, item.Selectable})
+		}{fp, item.Release.ContentFingerprint, item.Projection, item.Selectable})
 		if err != nil {
 			return out, err
 		}
 		item.DefaultSelected = item.Selectable && config.Rules.InitialMode == "from_episode"
-		out.Items = append(out.Items, item)
-		out.InitialPostKeys = append(out.InitialPostKeys, row.PostKey)
 	}
 	if precision == 0 {
 		precision = 60000

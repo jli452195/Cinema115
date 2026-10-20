@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:anime-naming": "node --test tests/anime-naming-preview.test.mjs",
     "test:anime-storage-ui": "node scripts/anime-storage-ui.cjs",
     "test:anime-organization-ui": "node scripts/anime-organization-ui.cjs",
     "test:anime-download-ui": "node scripts/anime-download-ui.cjs",

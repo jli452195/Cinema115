@@ -158,9 +158,9 @@ func Normalize(c Config) (Config, error) {
 	return c, nil
 }
 
-type engineVersions struct{ Parser, Time, Rule int64 }
+type engineVersions struct{ Parser, Time, Rule, VersionPolicy int64 }
 
-var engines = engineVersions{animeparse.ParserVersion, animeparse.TimeVersion, RuleVersion}
+var engines = engineVersions{animeparse.ParserVersion, animeparse.TimeVersion, RuleVersion, VersionPolicyVersion}
 
 func ConfigFingerprint(c Config) (string, error) {
 	var err error

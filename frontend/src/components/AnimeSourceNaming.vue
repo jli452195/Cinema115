@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { IconPlus, IconTrash, IconChevronDown } from '@tabler/icons-vue'
 import { sourceNaming } from '../composables/useAnimeNaming'
+import { projectAnimeNaming } from '../utils/animeNamingPreview'
 import type { SourceForm } from '../utils/animeSourceForm'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
 const props = defineProps<{ source: SourceForm; target: AnimeNamingTarget; disabled: boolean }>()
@@ -15,14 +16,11 @@ const examples = computed(() => {
   const samples = [...numbers.map(n => ({ kind: 'episode', raw: String(n), n })), ...mapping.overrides.filter(o => o.rawKind !== 'episode' || !numbers.includes(Number(o.rawNumber))).map(o => ({ kind: o.rawKind, raw: o.rawNumber, n: Number(o.rawNumber) }))]
   return samples.map(sample => {
     const { n, raw, kind } = sample, key = `${kind}:${raw}`, sourceLabel = kind === 'episode' ? `发布第 ${raw} 话` : `${kind === 'special' ? '特殊集' : '复合编号'} ${raw}`
-    const override = mapping.overrides.find(o => o.rawKind === kind && o.rawNumber === raw), segment = kind === 'episode' ? mapping.segments.find(s => n >= s.first && (s.last == null || n <= s.last)) : undefined
-    if (override?.action === 'ignore') return { key, sourceLabel, label: '不整理', path: '' }
-    if (!override && !segment) return { key, sourceLabel, label: '未设置对应，保留原名', path: '' }
-    const season = override?.targetSeason ?? segment!.targetSeason, episode = override?.targetEpisode ?? n - segment!.sourceBase + segment!.targetBase
-    const target = props.target.seasons.find(s => s.number === season)?.episodes?.find(e => e.number === episode)
-    const code = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
-    const clean = (s: string) => Array.from(s.replace(/[<>:"/\\|?*\p{Cc}]/gu, '_').trim().replace(/^[. ]+|[. ]+$/g, '')).slice(0, 120).join('') || '未命名'
-    return { key, sourceLabel, label: `${code}${target ? ` · ${target.name}` : ' · 目标资料待核对'}`, path: target ? `${clean(props.target.title)} (${props.target.year}) {tmdb-${props.target.tmdbId}}/Season ${String(season).padStart(2, '0')}/${clean(props.target.title)}.${code}.${clean(props.source.groupName)}` : '' }
+    const result = projectAnimeNaming(props.target, mapping, { kind, rawEpisode: raw, episode: kind === 'episode' ? n : null }, props.source.groupName)
+    if (result.status === 'ignored') return { key, sourceLabel, label: '不整理', path: '' }
+    if (result.status === 'unmapped') return { key, sourceLabel, label: '未设置对应，保留原名', path: '' }
+    const code = `S${String(result.season).padStart(2, '0')}E${String(result.episode).padStart(2, '0')}`
+    return { key, sourceLabel, label: `${code} · ${result.status === 'mapped' ? result.episodeName : '目标资料待核对'}`, path: result.pathStem || '' }
   })
 })
 function manual() { props.source.mappingManual = true }

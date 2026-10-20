@@ -209,7 +209,7 @@ func TestAnimeDiscoveryRunnerChecksBudgetAndPreservesSuccess(t *testing.T) {
 	}
 }
 
-func TestAnimeDiscoveryRunnerBoundedVerificationAndSameEpisodeVersions(t *testing.T) {
+func TestAnimeDiscoveryRunnerBoundedVerificationAcrossEpisodes(t *testing.T) {
 	f, db, r, _, now := discoveryServiceFixture(t)
 	originalDirectories := f.service.Directories
 	directoryReads := 0
@@ -218,7 +218,11 @@ func TestAnimeDiscoveryRunnerBoundedVerificationAndSameEpisodeVersions(t *testin
 		return originalDirectories.ReadDirectory(ctx, cid, cookie)
 	})
 	r.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
-		return discoveryServicePage(in, now, 9), nil
+		page := discoveryServicePage(in, now, 9)
+		for i := range page.SourcePage.Releases {
+			page.SourcePage.Releases[i].Title = fmt.Sprintf("[字幕组] 测试 - %02d [1080p]", 1+i)
+		}
+		return page, nil
 	})
 	var calls atomic.Int32
 	f.service.Torrents = animeClaimTorrentFunc(func(_ context.Context, _, key, _ string) ([]byte, error) {
@@ -240,7 +244,64 @@ func TestAnimeDiscoveryRunnerBoundedVerificationAndSameEpisodeVersions(t *testin
 		}
 		var n int
 		if err := db.QueryRow(`SELECT count(*) FROM anime_download_jobs`).Scan(&n); err != nil || n != int(want) {
-			t.Fatal("same-episode variants collapsed", n, want, err)
+			t.Fatal("independent episodes lost", n, want, err)
+		}
+	}
+}
+
+func TestAnimeDiscoveryRunnerOnlyHighestVersionAndSkipsLaterWithoutTorrentReads(t *testing.T) {
+	f, db, runner, source, now := discoveryServiceFixture(t)
+	var reads atomic.Int32
+	f.service.Torrents = animeClaimTorrentFunc(func(context.Context, string, string, string) ([]byte, error) {
+		reads.Add(1)
+		return animeClaimTestTorrent(), nil
+	})
+	runner.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		page := discoveryServicePage(in, now, 3)
+		for i, label := range []string{"", "v3", "v2"} {
+			page.SourcePage.Releases[i].Title = "[字幕组] 动画 - 01" + label + " [1080p]"
+		}
+		return page, nil
+	})
+	if err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.VerifyOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 1 {
+		t.Fatal("read lower versions' torrents", reads.Load())
+	}
+	var title string
+	if err := db.QueryRow(`SELECT json_extract(snapshot_json,'$.release.title') FROM anime_download_jobs`).Scan(&title); err != nil || !strings.Contains(title, "01v3") {
+		t.Fatal(title, err)
+	}
+	// The first job is only locally queued, yet its chosen version is final.
+	now += 1000
+	runner.now = func() time.Time { return time.UnixMilli(now) }
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET next_check_at=? WHERE id=?`, now, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	runner.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		page := discoveryServicePage(in, now, 1)
+		page.SourcePage.Releases[0].PostKey = strings.Repeat("4", 40)
+		page.SourcePage.Releases[0].Title = "[字幕组] 动画 - 01v4 [1080p]"
+		page.SourcePage.Releases[0].TorrentURL = "https://mikanani.me/Download/20261019/" + page.SourcePage.Releases[0].PostKey + ".torrent"
+		return page, nil
+	})
+	if err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.VerifyOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 1 {
+		t.Fatal("later version fetched torrent", reads.Load())
+	}
+	for query, want := range map[string]int{`SELECT count(*) FROM anime_download_jobs`: 1, `SELECT count(*) FROM anime_drive_operations`: 0} {
+		var count int
+		if err := db.QueryRow(query).Scan(&count); err != nil || count != want {
+			t.Fatal(query, count, err)
 		}
 	}
 }

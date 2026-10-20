@@ -44,7 +44,7 @@ func activationFixture(t *testing.T) (*Store, model.AnimeSubscription, model.Ani
 		if err != nil {
 			t.Fatal(err)
 		}
-		refs = append(refs, AnimeActivationSource{AnimePreviewRef: previewRef(b, 0), SelectedIDs: []string{b.Sources[0].Items[0].Release.ID, b.Sources[0].Items[1].Release.ID}, DismissedIDs: []string{}})
+		refs = append(refs, AnimeActivationSource{AnimePreviewRef: previewRef(b, 0), SelectedIDs: append([]string{}, b.Sources[0].SelectedIDs...), DismissedIDs: []string{}})
 	}
 	return s, sub, target, refs
 }
@@ -79,6 +79,12 @@ func TestAnimeActivationRealPreviewClaimVersionsAndResume(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if !item.Selectable {
+				if d.Disposition != "filtered" || d.Snapshot.Selection != nil {
+					t.Fatal("lower version received download permission", d)
+				}
+				continue
+			}
 			if d.Disposition != "selected" || d.SourceRevision != source.Revision || d.Snapshot.Selection.Kind != "initial_history" {
 				t.Fatal(d)
 			}
@@ -96,11 +102,11 @@ func TestAnimeActivationRealPreviewClaimVersionsAndResume(t *testing.T) {
 		}
 	}
 	jobs, err := s.ListAnimeDownloadJobs(ctx, sub.ID, 1, 20)
-	if err != nil || jobs.Total != 2 {
+	if err != nil || jobs.Total != 1 {
 		t.Fatal(jobs.Total, err)
 	}
 	stats, err := s.AnimeJobCountsBySource(ctx, sub.ID)
-	if err != nil || stats[""].Total != 2 || stats[sub.Sources[0].ID].Total != 2 {
+	if err != nil || stats[""].Total != 1 || stats[sub.Sources[0].ID].Total != 1 {
 		t.Fatal(stats, err)
 	}
 	controlAnime(t, s, sub.ID, "pause")
@@ -115,7 +121,7 @@ func TestAnimeActivationRealPreviewClaimVersionsAndResume(t *testing.T) {
 }
 
 func TestAnimeActivationRejectsStaleOrImplicitSelectionsAtomically(t *testing.T) {
-	for _, kind := range []string{"revision", "load", "expired", "actor", "missing_source", "extra_source", "unknown_release", "unselectable", "settings", "account", "failure"} {
+	for _, kind := range []string{"revision", "load", "expired", "actor", "missing_source", "extra_source", "unknown_release", "unselectable", "lower_version", "settings", "account", "failure"} {
 		t.Run(kind, func(t *testing.T) {
 			s, sub, target, refs := activationFixture(t)
 			key := activationKey("activation_bad")
@@ -139,6 +145,12 @@ func TestAnimeActivationRejectsStaleOrImplicitSelectionsAtomically(t *testing.T)
 				refs = append(refs, extra)
 			case "unknown_release":
 				refs[0].SelectedIDs = []string{"not_loaded"}
+			case "lower_version":
+				preview, err := s.GetAnimePreview(context.Background(), "admin-a", refs[0].BatchID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				refs[0].SelectedIDs = []string{preview.Sources[0].Items[0].Release.ID, preview.Sources[0].Items[1].Release.ID}
 			case "unselectable":
 				if _, err := s.db.Exec(`UPDATE anime_preview_items SET snapshot_json=json_set(snapshot_json,'$.selectable',json('false'))`); err != nil {
 					t.Fatal(err)
@@ -198,7 +210,7 @@ func TestAnimeActivationSkippedHistoryNeverSelectedByPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, count := range counts {
-		if count["history_skipped"] != 2 || count["selected"] != 0 {
+		if count["history_skipped"] != 1 || count["filtered"] != 1 || count["selected"] != 0 {
 			t.Fatal(count)
 		}
 	}

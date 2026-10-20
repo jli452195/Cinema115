@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"strings"
-	"unicode/utf8"
 
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/model"
@@ -30,20 +29,8 @@ type Plan struct {
 }
 
 func base(v string) string { return strings.TrimSuffix(v, path.Ext(v)) }
-func truncate(v string, max int) string {
-	for len(v) > max {
-		_, n := utf8.DecodeLastRuneInString(v)
-		v = v[:len(v)-n]
-	}
-	return strings.TrimRight(v, ". ")
-}
 func targetName(n model.AnimeNamingPlan, p model.AnimeNamingProjection, group, ext string) string {
-	title := model.AnimeFilenamePart(n.Target.Title)
-	folder := fmt.Sprintf("%s (%s) {tmdb-%s}", truncate(title, 180), n.Target.Year, n.Target.TMDBID)
-	suffix := fmt.Sprintf(".S%02dE%02d.%s", *p.Season, *p.Episode, truncate(model.AnimeFilenamePart(group), 80))
-	// Reserve room for language/forced suffixes on paired subtitles.
-	stem := truncate(title, 200-len(suffix)-len(ext)) + suffix
-	return path.Join(folder, fmt.Sprintf("Season %02d", *p.Season), stem+ext)
+	return model.AnimeNamingPath(n.Target, *p.Season, *p.Episode, group, ext)
 }
 func isVideo(ext string) bool {
 	switch strings.ToLower(ext) {

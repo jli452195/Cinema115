@@ -233,7 +233,7 @@ func TestAnimeRecoveryUnknownOnlyReadsOnceAndFailureBackoff(t *testing.T) {
 
 func TestAnimeRecoverySharesUIDLeaseIntervalAndRateLimitWithStatus(t *testing.T) {
 	f, _, now := animeStatusStoreFixture(t)
-	release, verified := f.selectRelease(t, 0, "rel_waiting", strings.Repeat("b", 40))
+	release, verified := f.selectTitle(t, 0, "rel_waiting", strings.Repeat("b", 40), "[字幕组] 测试 - 31 [1080p][HEVC]")
 	queued := f.claim(t, 0, release, verified).Job
 	ctx := context.Background()
 	work := takeAnimeWork(t, f.store, now)
