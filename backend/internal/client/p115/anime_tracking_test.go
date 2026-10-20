@@ -78,6 +78,17 @@ func TestAnimeStatusListsAndMalformedIdentityAreNeverAbsence(t *testing.T) {
 	}
 }
 
+func TestAnimeStatusEmptyResultRemainsPresentAndIncomplete(t *testing.T) {
+	hash := strings.Repeat("a", 40)
+	// Observed immediately after a real accepted submission. Unknown display
+	// values and unequal progress must not prove download/file completion.
+	raw := `{"state":true,"errcode":0,"info_hash":"` + hash + `","file_id":"","status":0,"display_status":"unrecognized","percentDone":100,"display_percent":99}`
+	got, err := parseAnimeTaskStatus([]byte(raw), hash)
+	if err != nil || !got.Valid() || !got.Present || got.ResultID != "" || got.State != "unknown" || !got.Malformed {
+		t.Fatal("initial result was treated as a missing task, failed read or completion", got, err)
+	}
+}
+
 func TestAnimeStatusGatewayOnlyOneExactRead(t *testing.T) {
 	hash := strings.Repeat("a", 40)
 	for _, status := range []int{200, 502} {

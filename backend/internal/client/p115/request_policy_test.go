@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -161,5 +162,32 @@ func TestRequestTimingCancellationDoesNotCountHTTPAttempt(t *testing.T) {
 	_, err := client.metadataRequest(ctx, http.MethodPost, func() ([]byte, error) { t.Error("冷却期不应发出请求"); return nil, nil })
 	if !errors.Is(err, context.DeadlineExceeded) || len(samples) != 1 || samples[0].Requests != 0 || samples[0].HTTP != 0 || samples[0].Wait <= 0 {
 		t.Fatal("取消等待的统计错误", samples, err)
+	}
+}
+
+func TestRequestTimingCountsMetadataWritesAndOfflineReadsTogether(t *testing.T) {
+	var total RequestTiming
+	ctx := WithRequestTiming(context.Background(), func(v RequestTiming) {
+		total.Requests += v.Requests
+		total.Writes += v.Writes
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"state":true}`))
+	}))
+	defer server.Close()
+	files := newTestShareClient()
+	files.WebURL = server.URL
+	if err := files.MoveAnimeEntries(ctx, []string{"100"}, "200", "fixed-cookie"); err != nil {
+		t.Fatal(err)
+	}
+	cloud := NewCloudClient()
+	cloud.HTTP = server.Client()
+	cloud.BaseURL = server.URL
+	// Even a failed response parse has consumed one upstream read.
+	if _, err := cloud.InspectAnimeTask(ctx, "fixed-cookie", strings.Repeat("a", 40)); !errors.Is(err, ErrAnimeOfflineResponse) {
+		t.Fatal(err)
+	}
+	if total.Requests != 2 || total.Writes != 1 {
+		t.Fatal("offline and drive attempts were not counted in the same context", total)
 	}
 }

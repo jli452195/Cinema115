@@ -123,6 +123,7 @@ func main() {
 	httpapi.RegisterAnime(admin, animeAdmin)
 	animeDiscoveryRunner := &service.AnimeDiscoveryRunner{Admin: animeAdmin, Feeds: animeBindings}
 	animeAdmin.StatusGateway = cloudClient
+	animeAdmin.Logs = generationLogs
 	animeFiles := p115.NewShareClient()
 	animeFiles.ReadRetryDelays = nil
 	animeAdmin.FileGateway = animeFiles

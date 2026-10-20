@@ -49,24 +49,27 @@ type animeDirectories interface {
 }
 
 type AnimeAdminService struct {
-	Store               *storage.Store
-	Bindings            *AnimeBindingService
-	Previews            *AnimePreviewService
-	Discovery           AnimeDiscovery
-	Accounts            animePrimaryAccounts
-	Directories         animeDirectories
-	Naming              *AnimeNamingService
-	Torrents            animeresource.TorrentReader
-	Offline             CloudTaskReader
-	SubmitGateway       AnimeOfflineGateway
-	StatusGateway       AnimeStatusReader
-	FileGateway         AnimeFileGateway
-	OrganizationGateway AnimeOrganizationGateway
-	ReserveOrganization func() (func(), error)
-	organizationCache   animeOrganizationCache
-	DownloadCoordinator *CloudDownloadCoordinator
-	downloadWakeOnce    sync.Once
-	downloadWake        chan struct{}
+	Store                *storage.Store
+	Bindings             *AnimeBindingService
+	Previews             *AnimePreviewService
+	Discovery            AnimeDiscovery
+	Accounts             animePrimaryAccounts
+	Directories          animeDirectories
+	Naming               *AnimeNamingService
+	Torrents             animeresource.TorrentReader
+	Offline              CloudTaskReader
+	SubmitGateway        AnimeOfflineGateway
+	StatusGateway        AnimeStatusReader
+	FileGateway          AnimeFileGateway
+	OrganizationGateway  AnimeOrganizationGateway
+	ReserveOrganization  func() (func(), error)
+	Logs                 *GenerationLogs
+	organizationCache    animeOrganizationCache
+	DownloadCoordinator  *CloudDownloadCoordinator
+	downloadWakeOnce     sync.Once
+	downloadWake         chan struct{}
+	verificationWakeOnce sync.Once
+	verificationWake     chan struct{}
 }
 
 type AnimeSaveConfig struct {
@@ -109,6 +112,8 @@ func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWrite
 // SaveConfiguration validates all local fields before upstream reads. A source
 // omitted by PATCH is retained; only explicit removals can delete one.
 func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput, start *AnimeStartInput) (out model.AnimeConfigReceipt, resultErr error) {
+	ctx, finishTiming := s.observeAnimeStage(ctx, id, "subscription")
+	defer finishTiming()
 	// Deep-copy before canonicalization; caller form slices remain untouched.
 	raw, err := json.Marshal(in)
 	if err != nil {
@@ -478,7 +483,11 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 			return out, err
 		}
 		expected := animepreview.Config{Chapter: start.Chapter, SubscriptionID: id, Revision: in.ExpectedRevision, Settings: settings, Sources: c.Sources}
-		return s.Store.StartAnimeConfiguration(ctx, c, k, guard, expected, start.Sources, session.Target())
+		out, err = s.Store.StartAnimeConfiguration(ctx, c, k, guard, expected, start.Sources, session.Target())
+		if err == nil {
+			s.wakeAnimeVerification()
+		}
+		return out, err
 	}
 	return s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
 }

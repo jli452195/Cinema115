@@ -65,6 +65,8 @@ type animeOrganizationRun struct {
 }
 
 func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string) error {
+	ctx, finishTiming := s.observeAnimeStage(ctx, jobID, "organize")
+	defer finishTiming()
 	if s.OrganizationGateway == nil || s.FileGateway == nil {
 		return ErrAnimeOfflineUnavailable
 	}

@@ -36,6 +36,7 @@ type requestTimingKey struct{}
 // (including read retries), or with Requests=0 when canceled while waiting.
 type RequestTiming struct {
 	Requests int
+	Writes   int // Non-GET attempts; no request parameters are retained.
 	Retries  int // 1 only when this attempt repeats a preceding HTTP request.
 	Wait     time.Duration
 	HTTP     time.Duration
@@ -107,7 +108,11 @@ func (c *ShareClient) metadataRequest(ctx context.Context, method string, reques
 		if attempt > 0 {
 			retries = 1
 		}
-		reportRequestTiming(ctx, RequestTiming{Requests: 1, Retries: retries, Wait: waited, HTTP: time.Since(requestStarted)})
+		writes := 0
+		if method != http.MethodGet {
+			writes = 1
+		}
+		reportRequestTiming(ctx, RequestTiming{Requests: 1, Writes: writes, Retries: retries, Wait: waited, HTTP: time.Since(requestStarted)})
 		c.nextRequest = time.Now().Add(c.RequestInterval)
 		waitStarted = time.Now()
 		var upstream *HTTPError

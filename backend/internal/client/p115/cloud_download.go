@@ -427,6 +427,14 @@ func (c *CloudClient) webRequest(ctx context.Context, cookie string, method stri
 	if client == nil {
 		client = http.DefaultClient
 	}
+	started := time.Now()
+	writes := 0
+	if method != http.MethodGet {
+		writes = 1
+	}
+	defer func() {
+		reportRequestTiming(ctx, RequestTiming{Requests: 1, Writes: writes, HTTP: time.Since(started)})
+	}()
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

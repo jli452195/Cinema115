@@ -112,6 +112,20 @@ func animeRenameReceipt(raw []byte, entries []RenameTarget) error {
 }
 
 func animeMutationReceipt(raw []byte, renamed []RenameTarget) error {
+	// The web move endpoint returns {state:true,errno:"",error:""} on
+	// synchronous success. Normalize that empty error code only here; exact
+	// offline-task identity/missing responses retain their stricter contract.
+	fields, err := animeObject(raw)
+	if err != nil {
+		return animeReceiptError("invalid_envelope")
+	}
+	if bytes.Equal(bytes.TrimSpace(fields["errno"]), []byte(`""`)) {
+		fields["errno"] = json.RawMessage("0")
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			return animeReceiptError("invalid_envelope")
+		}
+	}
 	m, ok, _, err := animeEnvelope(raw)
 	if err != nil || !ok {
 		return animeReceiptError("invalid_envelope")

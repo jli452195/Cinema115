@@ -68,6 +68,11 @@ func TestAnimeStartServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
 	if err != nil || out.Status != "enabled" || feed.reads != reads {
 		t.Fatal(out, err, feed.reads, reads)
 	}
+	select {
+	case <-s.animeVerificationWakeSignal():
+	default:
+		t.Fatal("committed start did not wake pending resource verification")
+	}
 	after, err := json.Marshal(in)
 	if err != nil || string(before) != string(after) {
 		t.Fatal("start mutated caller input", err)
@@ -76,6 +81,11 @@ func TestAnimeStartServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
 	again, err := s.StartSubscription(ctx, "admin", "service_start_01", "", in)
 	if err != nil || !reflect.DeepEqual(out, again) || feed.reads != reads {
 		t.Fatal(again, err)
+	}
+	select {
+	case <-s.animeVerificationWakeSignal():
+		t.Fatal("idempotent start replay created another notification")
+	default:
 	}
 }
 

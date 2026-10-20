@@ -25,6 +25,8 @@ func TestAnimeTaskObservationStrictIdentityAndAbsence(t *testing.T) {
 		{"absent with upstream defaults", animeMissingTaskResponse, true, false, "", ""},
 		{"exact", `{"state":true,"data":{"info_hash":"` + hash + `","wp_path_id":"9007199254740993","file_id":300}}`, true, true, "9007199254740993", "300"},
 		{"root payload", `{"state":1,"info_hash":"` + hash + `","file_id":"300"}`, true, true, "", "300"},
+		{"present result initializing", `{"state":true,"info_hash":"` + hash + `","file_id":""}`, true, true, "", ""},
+		{"result zero is invalid", `{"state":true,"info_hash":"` + hash + `","file_id":0}`, false, false, "", ""},
 		{"missing state", `{"info_hash":"` + hash + `"}`, false, false, "", ""},
 		{"wrong flag", `{"state":"false","errcode":10021}`, false, false, "", ""},
 		{"false with data", `{"state":false,"errcode":10021,"data":{"info_hash":"` + hash + `"}}`, false, false, "", ""},

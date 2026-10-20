@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -203,6 +204,57 @@ func TestAnimeStatusEarlyCompletionWithoutResultIDKeepsFastChecks(t *testing.T) 
 	got, err = f.store.GetAnimeDownloadJob(ctx, job.ID)
 	if err != nil || got.ResultObjectID == nil || *got.ResultObjectID != "300" || got.BlockCode != nil {
 		t.Fatal("delayed result ID was not adopted", got, err)
+	}
+}
+
+func TestAnimeStatusInitializingResultUsesOnlyBoundedEarlyChecks(t *testing.T) {
+	for _, readFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint("read failure=", readFailure), func(t *testing.T) {
+			f, job := animeSubmitStoreFixture(t)
+			ctx := context.Background()
+			op, err := f.store.PrepareAnimeSubmit(ctx, job.ID, job.Generation, f.target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.store.DispatchAnimeSubmit(ctx, op.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.store.RecordAnimeSubmitOutcome(ctx, op.ID, "confirmed", "", model.AnimeSubmitObservation{SchemaVersion: 1, Kind: "accepted", TargetCID: "200"}); err != nil {
+				t.Fatal(err)
+			}
+			op, err = f.store.GetAnimeSubmitOperation(ctx, job.ID)
+			if err != nil || op.AuthorizedAt == nil {
+				t.Fatal(op, err)
+			}
+			when := *op.AuthorizedAt + 1
+			for i := 0; i < 3; i++ {
+				poll := takeAnimeStatusPoll(t, f, when)
+				observation := animeStatusObservation(job, "", 100)
+				zero := int64(0)
+				observation.Status, observation.ResultID, observation.Malformed, observation.State = &zero, "", true, "unknown"
+				remote, code := &observation, ""
+				if readFailure {
+					remote, code = nil, "TASK_READ_FAILED"
+				}
+				if err := f.store.CompleteAnimeStatusPoll(ctx, poll, remote, code, 0, when); err != nil {
+					t.Fatal(err)
+				}
+				got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
+				if err != nil || got.ResultObjectID != nil || got.FileState != "pending" || got.NextRunAt == nil || got.WorkflowState != "active" {
+					t.Fatal("initial observation invented file completion", got, err)
+				}
+				if readFailure || i == 2 {
+					if got.Tracking.Failures != 1 || *got.NextRunAt < when+animeDiscoveryBackoff(1) {
+						t.Fatal("unreadable or persistently unknown result bypassed backoff", got)
+					}
+					break
+				}
+				if got.Tracking.Failures != 0 || *got.NextRunAt > *op.AuthorizedAt+20001 {
+					t.Fatal("initializing result incurred a minute of error backoff", got)
+				}
+				when = *got.NextRunAt
+			}
+		})
 	}
 }
 

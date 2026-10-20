@@ -524,6 +524,75 @@ func TestAnimeDiscoveryRunnerRunCancellationWaitsForBothLanes(t *testing.T) {
 	}
 }
 
+func TestAnimeDiscoveryCommitWakesVerifierWithoutAnotherRSSRead(t *testing.T) {
+	f, db, r, _, now := discoveryServiceFixture(t)
+	r.interval = time.Hour // The test cannot succeed through the fallback tick.
+	feedStarted, allowFeed, verified := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var feedCalls atomic.Int32
+	var verifiedOnce sync.Once
+	r.Feeds = animeRSSFunc(func(ctx context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		if feedCalls.Add(1) == 1 {
+			close(feedStarted)
+		}
+		select {
+		case <-ctx.Done():
+			return AnimeSourceResult{}, ctx.Err()
+		case <-allowFeed:
+			return discoveryServicePage(in, now, 1), nil
+		}
+	})
+	f.service.Torrents = animeClaimTorrentFunc(func(context.Context, string, string, string) ([]byte, error) {
+		verifiedOnce.Do(func() { close(verified) })
+		return animeClaimTestTorrent(), nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("discovery lanes did not stop")
+		}
+	})
+	select {
+	case <-feedStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RSS lane did not start")
+	}
+	// Let the empty verifier finish its initial pass while RSS is blocked.
+	time.Sleep(50 * time.Millisecond)
+	close(allowFeed)
+	select {
+	case <-verified:
+	case <-time.After(2 * time.Second):
+		t.Fatal("committed RSS selections waited for the verifier timer")
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		var jobs int
+		if err := db.QueryRow(`SELECT count(*) FROM anime_download_jobs`).Scan(&jobs); err != nil {
+			t.Fatal(err)
+		}
+		if jobs == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("woken verification did not commit the download intent")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for i := 0; i < 100; i++ {
+		f.service.wakeAnimeVerification()
+	}
+	if feedCalls.Load() != 1 || len(f.service.animeVerificationWakeSignal()) > 1 {
+		t.Fatal("verification notifications caused extra RSS reads or unbounded queuing")
+	}
+}
+
 func TestAnimeDiscoveryRunnerReusesInteractiveMikanCache(t *testing.T) {
 	_, _, r, _, now := discoveryServiceFixture(t)
 	m, transport := newAnimeMikanTestService()

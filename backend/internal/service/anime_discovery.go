@@ -39,6 +39,18 @@ func (r *AnimeDiscoveryRunner) valid() bool {
 	return r != nil && r.Admin != nil && r.Admin.Store != nil && r.Feeds != nil
 }
 
+func (s *AnimeAdminService) animeVerificationWakeSignal() chan struct{} {
+	s.verificationWakeOnce.Do(func() { s.verificationWake = make(chan struct{}, 1) })
+	return s.verificationWake
+}
+
+func (s *AnimeAdminService) wakeAnimeVerification() {
+	select {
+	case s.animeVerificationWakeSignal() <- struct{}{}:
+	default:
+	}
+}
+
 // Run owns both loops and waits for both on cancellation/error. A slow or broken
 // RSS source cannot consume the verifier's capacity. Each lane has one worker,
 // at most four operations per pass, and no detached request goroutines.
@@ -47,8 +59,11 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 		return storage.ErrAnimeInvalid
 	}
 	group, runCtx := errgroup.WithContext(ctx)
-	for _, tick := range []func(context.Context) error{r.PollOnce, r.VerifyOnce} {
-		tick := tick
+	for _, lane := range []struct {
+		tick func(context.Context) error
+		wake <-chan struct{}
+	}{{r.PollOnce, nil}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}} {
+		lane := lane
 		group.Go(func() error {
 			interval := r.interval
 			if interval <= 0 {
@@ -58,7 +73,7 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 				if err := runCtx.Err(); err != nil {
 					return nil
 				}
-				if err := tick(runCtx); err != nil && runCtx.Err() == nil {
+				if err := lane.tick(runCtx); err != nil && runCtx.Err() == nil {
 					return err
 				}
 				timer := time.NewTimer(interval)
@@ -67,6 +82,8 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 					timer.Stop()
 					return nil
 				case <-timer.C:
+				case <-lane.wake:
+					timer.Stop()
 				}
 			}
 		})
@@ -109,7 +126,11 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		readErr = err
 		if err == nil {
 			_, readErr = r.Admin.Store.CompleteAnimeSourcePoll(ctx, poll, page.SourcePage, r.timestamp())
-			if readErr == nil || errors.Is(readErr, storage.ErrAnimeConflict) {
+			if readErr == nil {
+				r.Admin.wakeAnimeVerification()
+				return nil
+			}
+			if errors.Is(readErr, storage.ErrAnimeConflict) {
 				return nil
 			}
 			if ctx.Err() == nil && !errors.Is(readErr, storage.ErrAnimeInvalid) && !errors.Is(readErr, animepreview.ErrInput) && !errors.Is(readErr, storage.ErrAnimeSettingsChanged) && !errors.Is(readErr, storage.ErrAnimeAccountChanged) {
@@ -197,6 +218,9 @@ func (r *AnimeDiscoveryRunner) VerifyOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	// Yield after a bounded batch, then drain locally pending selections without
+	// an extra five-second sleep. Persisted due times still gate retries.
+	r.Admin.wakeAnimeVerification()
 	return nil
 }
 

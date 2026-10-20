@@ -193,7 +193,14 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 	}
 	var next *int64
 	stop := code == "TASK_TARGET_CONFLICT" || code == "TASK_RESULT_CHANGED" || code == "TASK_STATUS_CONFLICT" || code == "DOWNLOAD_ACCOUNT_CHANGED" || code == "TASK_ACCESS_DENIED"
-	if code == "" || code == "TASK_RESULT_PENDING" {
+	// During the first seconds 115 can return an exact present task with
+	// status=0, file_id:"" and two different progress values (100/99).
+	// Completion stays unknown; allow only the existing early read slots before
+	// falling back to normal failure backoff. HTTP/read failures never qualify.
+	resultInitializing := code == "TASK_STATUS_UNKNOWN" && resultID == nil &&
+		observation != nil && observation.Present && observation.Status != nil && *observation.Status == 0 &&
+		op.Result.Kind == "accepted" && op.AuthorizedAt != nil && now >= *op.AuthorizedAt && now-*op.AuthorizedAt < (20*time.Second).Milliseconds()
+	if code == "" || code == "TASK_RESULT_PENDING" || resultInitializing {
 		tracking.Failures = 0
 	} else {
 		tracking.Failures = min(tracking.Failures+1, 1000)

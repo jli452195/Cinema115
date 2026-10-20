@@ -213,9 +213,13 @@ func parseAnimeTask(raw []byte, hash string) (AnimeTaskObservation, error) {
 	if err != nil {
 		return AnimeTaskObservation{}, err
 	}
-	out.ResultID, err = animeTaskID(payload, "file_id")
-	if err != nil {
-		return AnimeTaskObservation{}, err
+	// A newly accepted task can be transferring its result into the drive and
+	// return file_id:"". This is a present task without a result, never a miss.
+	if !bytes.Equal(bytes.TrimSpace(payload["file_id"]), []byte(`""`)) {
+		out.ResultID, err = animeTaskID(payload, "file_id")
+		if err != nil {
+			return AnimeTaskObservation{}, err
+		}
 	}
 	out.Present = true
 	return out, nil

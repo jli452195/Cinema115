@@ -84,12 +84,12 @@ func TestAnimeReceiptDiagnosticDoesNotRetainUpstreamContent(t *testing.T) {
 }
 
 func TestAnimeBatchAcceptsOnlyClearSynchronousReceipts(t *testing.T) {
-	for _, body := range []string{`{"state":true}`, `{"state":1,"errno":0}`, `{"state":true,"data":[]}`, `{"state":true,"data":null}`, `{"state":true,"error":""}`} {
+	for _, body := range []string{`{"state":true}`, `{"state":1,"errno":0}`, `{"state":true,"data":[]}`, `{"state":true,"data":null}`, `{"state":true,"error":""}`, `{"state":true,"errno":"","error":""}`} {
 		if err := animeBatchReceipt([]byte(body)); err != nil {
 			t.Fatal(body, err)
 		}
 	}
-	for _, body := range []string{`{}`, `{"state":false}`, `{"state":true,"errno":1}`, `{"state":true,"error":"partial failure"}`, `{"state":true,"data":{"400":{"state":true},"401":{"state":false}}}`, `{"state":true,"task_id":"123"}`, `{"state":true,"state":false}`, `{"state":true,"data":[{"id":"400"}]}`} {
+	for _, body := range []string{`{}`, `{"state":false}`, `{"state":true,"errno":1}`, `{"state":false,"errno":"","error":""}`, `{"state":true,"errno":"","errcode":1}`, `{"state":true,"errno":"","error":"partial failure"}`, `{"state":true,"errno":"","task_id":"123"}`, `{"state":true,"errno":"","errno":1}`, `{"state":true,"error":"partial failure"}`, `{"state":true,"data":{"400":{"state":true},"401":{"state":false}}}`, `{"state":true,"task_id":"123"}`, `{"state":true,"state":false}`, `{"state":true,"data":[{"id":"400"}]}`} {
 		if err := animeBatchReceipt([]byte(body)); err == nil {
 			t.Fatal("ambiguous batch marked successful", body)
 		}
