@@ -22,13 +22,8 @@ func parseAnimeTaskStatus(raw []byte, hash string) (model.AnimeOfflineStatus, er
 		return model.AnimeOfflineStatus{}, err
 	}
 	if !identity.Present {
-		// Even the missing code cannot turn a list/partial task response into
-		// an authoritative exact miss when contradictory payload is present.
-		for _, key := range []string{"tasks", "list", "count", "total", "page", "page_count", "status", "stat", "display_status", "percentDone", "display_percent"} {
-			if _, exists := envelope[key]; exists {
-				return model.AnimeOfflineStatus{}, ErrAnimeOfflineResponse
-			}
-		}
+		// parseAnimeTask already checked the exact missing envelope, including
+		// the upstream's empty task defaults and rejection of partial lists.
 		return out, nil
 	}
 	payload, err := animePayload(envelope)

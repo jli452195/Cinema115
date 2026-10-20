@@ -21,6 +21,58 @@ func takeAnimeWork(t *testing.T, s *Store, now int64) AnimeDownloadWork {
 	return work
 }
 
+func TestAnimeOrganizationRecoverySuccessContinuesWithoutFailureBackoff(t *testing.T) {
+	for _, code := range []string{"", "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "TASK_RATE_LIMITED"} {
+		t.Run("code="+code, func(t *testing.T) {
+			f, job := animeOrganizeStoreFixture(t)
+			ctx := context.Background()
+			work := takeAnimeWork(t, f.store, time.Now().UnixMilli())
+			// The checkpoint of a successfully reconciled step makes the next
+			// stage due now. Only unresolved failures should add five minutes.
+			now := time.Now().UnixMilli()
+			if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET block_code=NULLIF(?,''),next_run_at=? WHERE id=?`, code, now, job.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.store.CompleteAnimeDownloadWork(ctx, work, "", now); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
+			wantDelay := int64(300000)
+			if code == "" {
+				wantDelay = 5000
+			}
+			if err != nil || got.NextRunAt == nil || *got.NextRunAt != now+wantDelay {
+				t.Fatal("wrong next stage time", got.NextRunAt, err)
+			}
+			if _, found, err := f.store.ReserveAnimeDownloadWork(ctx, now+4999, nil); err != nil || found {
+				t.Fatal("per-UID interval bypassed", found, err)
+			}
+			_, found, err := f.store.ReserveAnimeDownloadWork(ctx, now+5001, nil)
+			if err != nil || found != (code == "") {
+				t.Fatal("successful recovery delayed or failure retried early", found, err)
+			}
+		})
+	}
+}
+
+func TestAnimeOrganizationRecoveryRetainsLongerRetryTime(t *testing.T) {
+	f, job := animeOrganizeStoreFixture(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+	work := takeAnimeWork(t, f.store, now)
+	later := now + 900000
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET next_run_at=? WHERE id=?`, later, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.CompleteAnimeDownloadWork(ctx, work, "", now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.NextRunAt == nil || *got.NextRunAt != later {
+		t.Fatal("saved delay was shortened", got.NextRunAt, err)
+	}
+}
+
 func TestAnimeRecoverySingleLeaseAndExpiredOwnerFencing(t *testing.T) {
 	f, job := animeSubmitStoreFixture(t)
 	ctx := context.Background()

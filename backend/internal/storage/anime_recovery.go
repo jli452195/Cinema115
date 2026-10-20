@@ -172,7 +172,16 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		// The manifest remains verified throughout organization; exceptions do
 		// not send it back through offline polling or another source listing.
 		switch code {
-		case "", "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
+		case "":
+			// A confirmed recovery (or a busy organizer with no dispatched
+			// write) is ready for the next stage. Keep the per-UID five-second
+			// admission interval, without adding the exception backoff again.
+			due := now + 5000
+			if next != nil {
+				due = max(due, *next)
+			}
+			next = &due
+		case "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
 			due := now + int64(5*time.Minute/time.Millisecond)
 			if next != nil {
 				due = max(due, *next)

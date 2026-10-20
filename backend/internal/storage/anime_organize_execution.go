@@ -137,7 +137,14 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 		return empty, ErrAnimeConflict
 	}
 	if dispatch {
-		if op.Progress.Step != nil || next.Step == nil || next.State != "working" || !validAnimeOrganizeStep(op.Request, op.Progress, *next.Step) {
+		if op.Progress.Step != nil || next.Step == nil || next.State != "working" {
+			return empty, ErrAnimeConflict
+		}
+		valid := validAnimeOrganizeStep(op.Request, op.Progress, *next.Step)
+		if next.Step.Kind == "cleanup" {
+			valid = validAnimeCleanupStep(job, op, *next.Step)
+		}
+		if !valid {
 			return empty, ErrAnimeConflict
 		}
 		unchanged := next
@@ -219,12 +226,44 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 }
 
 func validAnimeOrganizeProgress(op model.AnimeOrganizeOperation, next model.AnimeOrganizeProgress) bool {
+	if next.ReceiptIssue != "" {
+		if next.Step == nil || (next.Step.Kind != "rename" && next.Step.Kind != "move") {
+			return false
+		}
+		switch next.ReceiptIssue {
+		case "invalid_envelope", "error_field", "unexpected_field", "data_object", "data_array", "data_string", "data_boolean", "data_other":
+		default:
+			return false
+		}
+	}
 	switch next.Code {
 	case "", "ORGANIZE_MAPPING_REQUIRED", "ORGANIZE_TARGET_CONFLICT", "ORGANIZE_UNCERTAIN", "ORGANIZE_READ_FAILED", "ORGANIZE_RESULT_UNRESOLVED", "TASK_RATE_LIMITED", "TASK_ACCESS_DENIED":
 	default:
 		return false
 	}
 	previous := op.Progress
+	if next.Cleanup != previous.Cleanup {
+		if previous.Cleanup != "" || next.State != "done" || next.Step != nil {
+			return false
+		}
+		switch next.Cleanup {
+		case "recycled", "uncertain":
+			if previous.Step == nil || previous.Step.Kind != "cleanup" {
+				return false
+			}
+		case "skipped":
+			if previous.Step != nil && previous.Step.Kind != "move" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if previous.Step != nil && previous.Step.Kind == "cleanup" {
+		return next.State == "done" && next.Step == nil && next.Code == "" &&
+			(next.Cleanup == "recycled" || next.Cleanup == "uncertain") &&
+			reflect.DeepEqual(next.Files, previous.Files) && reflect.DeepEqual(next.Directories, previous.Directories)
+	}
 	if next.Step != nil && !reflect.DeepEqual(previous.Step, next.Step) {
 		return false
 	}
@@ -297,6 +336,32 @@ func validAnimeOrganizeProgress(op model.AnimeOrganizeOperation, next model.Anim
 		}
 	}
 	return true
+}
+
+func validAnimeCleanupStep(job model.AnimeDownloadJob, op model.AnimeOrganizeOperation, step model.AnimeOrganizeStep) bool {
+	if step.Kind != "cleanup" || job.DirectoryCID == nil || !model.ValidAnimeExternalID(*job.DirectoryCID) || step.CID != *job.DirectoryCID || step.CID == job.ParentCID || step.CID == op.Request.Target.ParentCID || step.Path != "" || len(step.IDs) != 0 || op.Progress.Cleanup != "" || job.DirectoryName != "anime-"+job.ID || job.Files == nil || len(op.Progress.Files) == 0 {
+		return false
+	}
+	for _, f := range op.Progress.Files {
+		if !f.Moved || !f.Renamed {
+			return false
+		}
+	}
+	for _, d := range op.Progress.Directories {
+		if d.CID == step.CID {
+			return false
+		}
+	}
+	resourcePath := strings.TrimRight(job.Snapshot.Target.ParentPath, "/") + "/" + job.DirectoryName
+	if strings.HasPrefix(strings.TrimRight(op.Request.Target.ParentPath, "/")+"/", resourcePath+"/") {
+		return false
+	}
+	for _, entry := range job.Files.Entries {
+		if entry.ID == step.CID {
+			return entry.Kind == "directory" && entry.ParentCID == job.ParentCID && entry.Name == job.DirectoryName
+		}
+	}
+	return false
 }
 
 func validAnimeOrganizeStep(req model.AnimeOrganizeRequest, p model.AnimeOrganizeProgress, step model.AnimeOrganizeStep) bool {

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path"
 	"strings"
 	"testing"
@@ -25,6 +27,7 @@ type animeOrganizeDrive struct {
 	lost                           string
 	partial                        bool
 	readErr                        error
+	renameErr                      error
 	hook                           func(string)
 }
 
@@ -81,7 +84,7 @@ func (d *animeOrganizeDrive) RenameAnimeEntries(_ context.Context, names []p115.
 	if d.lost == "rename" {
 		return context.DeadlineExceeded
 	}
-	return nil
+	return d.renameErr
 }
 func (d *animeOrganizeDrive) MoveAnimeEntries(_ context.Context, ids []string, cid, cookie string) error {
 	d.intent("move", cookie)
@@ -245,6 +248,30 @@ func TestAnimeOrganizeUnknownOnlyRecoversFixedStep(t *testing.T) {
 				t.Fatal("saved steps were repeated", op.Progress, d)
 			}
 		})
+	}
+}
+
+func TestAnimeOrganizeRetainsSafeReceiptIssueAndClearsAfterConfirmation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"state":true,"data":{"secret-upstream-content":false}}`)
+	}))
+	defer server.Close()
+	client := p115.NewShareClient()
+	client.WebURL = server.URL
+	receiptErr := client.RenameAnimeEntries(context.Background(), []p115.RenameTarget{{ID: "400", Name: "episode.mkv"}}, "test-cookie")
+	f, _, session, job, drive := animeOrganizeFixture(t)
+	drive.renameErr = receiptErr
+	op := organizeTestCall(t, f, session, job.ID)
+	if op.Progress.State != "unknown" || op.Progress.ReceiptIssue != "data_object" || drive.renames != 1 || drive.moves != 0 {
+		t.Fatal("safe receipt diagnostic lost", op.Progress)
+	}
+	var raw string
+	if err := drive.db.QueryRow(`SELECT result_json FROM anime_drive_operations WHERE download_job_id=? AND kind='organize'`, job.ID).Scan(&raw); err != nil || strings.Contains(raw, "secret-upstream-content") || strings.Contains(raw, "test-cookie") {
+		t.Fatal("upstream content persisted", err)
+	}
+	op = organizeTestCall(t, f, session, job.ID)
+	if op.Progress.Step != nil || op.Progress.ReceiptIssue != "" || drive.renames != 1 || drive.moves != 0 {
+		t.Fatal("confirmed recovery retained stale failure or replayed rename", op.Progress)
 	}
 }
 

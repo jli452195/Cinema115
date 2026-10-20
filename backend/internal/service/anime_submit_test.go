@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -52,6 +54,40 @@ func animeSubmitFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *AnimeDow
 
 func matchedAnimeTask(job model.AnimeDownloadJob) p115.AnimeTaskObservation {
 	return p115.AnimeTaskObservation{Present: true, InfoHash: job.Snapshot.InfoHash, TargetCID: "200", ResultID: "300"}
+}
+
+func TestAnimeEnsureSubmitAcceptsUpstreamMissingTaskDefaults(t *testing.T) {
+	f, _, session, job := animeSubmitFixture(t)
+	reads, writes := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != animeDownloadTestCookie {
+			t.Error("unfixed credential")
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/web/" && r.URL.Query().Get("ac") == "get_user_task" && r.URL.Query().Get("info_hash") == job.Snapshot.InfoHash:
+			reads++
+			_, _ = w.Write([]byte(`{"state":false,"errcode":10021,"error_msg":"用户任务不存在","info_hash":"","file_id":"","status":0,"percentDone":0,"display_percent":0,"display_status":""}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/lixianssp/":
+			writes++
+			_, _ = w.Write([]byte(`{"state":true}`))
+		default:
+			t.Error("unexpected request", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	client := p115.NewCloudClient()
+	client.HTTP, client.BaseURL = server.Client(), server.URL
+	f.service.SubmitGateway = client
+	for i := 0; i < 2; i++ {
+		out, err := f.service.EnsureDownload(context.Background(), session, job.ID)
+		if err != nil || out.Operation.State != "confirmed" || out.Job.DownloadState != "accepted" || out.Job.FileState != "pending" {
+			t.Fatal("valid missing response did not reach first submit", out, err)
+		}
+	}
+	if reads != 1 || writes != 1 {
+		t.Fatal("repeated submit or needless read-back", reads, writes)
+	}
 }
 
 func TestAnimeEnsureSubmitOnceUsesReceiptWithoutReadBack(t *testing.T) {

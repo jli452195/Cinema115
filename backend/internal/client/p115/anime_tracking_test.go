@@ -72,6 +72,10 @@ func TestAnimeStatusListsAndMalformedIdentityAreNeverAbsence(t *testing.T) {
 	if err != nil || !got.Valid() || got.Present || got.State != "unknown" {
 		t.Fatal("strict absence lost", got, err)
 	}
+	got, err = parseAnimeTaskStatus([]byte(animeMissingTaskResponse), hash)
+	if err != nil || !got.Valid() || got.Present || got.State != "unknown" {
+		t.Fatal("upstream empty defaults became a failed read", got, err)
+	}
 }
 
 func TestAnimeStatusGatewayOnlyOneExactRead(t *testing.T) {

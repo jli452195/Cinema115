@@ -3,6 +3,7 @@ package p115
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,7 +48,7 @@ func (c *ShareClient) renameEntries(ctx context.Context, entries []RenameTarget,
 		return fmt.Errorf("115 批量重命名失败: %w", err)
 	}
 	if receipt {
-		return animeBatchReceipt(raw)
+		return animeRenameReceipt(raw, entries)
 	}
 	return nil
 }
@@ -88,13 +89,32 @@ func (c *ShareClient) moveEntriesBatch(ctx context.Context, ids []string, cid, c
 
 var ErrAnimeBatchReceipt = errors.New("anime batch receipt is ambiguous")
 
-// The synchronous web endpoints normally return a bare success envelope.
-// Item reports, async acknowledgements and unknown response shapes need scoped
-// recovery instead of assuming every member succeeded. No extra success GET.
+// Only a fixed classification is retained, never upstream text or credentials.
+type AnimeBatchReceiptError struct{ reason string }
+
+func (e *AnimeBatchReceiptError) Error() string {
+	return ErrAnimeBatchReceipt.Error() + ": " + e.reason
+}
+func (e *AnimeBatchReceiptError) Unwrap() error  { return ErrAnimeBatchReceipt }
+func (e *AnimeBatchReceiptError) Reason() string { return e.reason }
+
+func animeReceiptError(reason string) error { return &AnimeBatchReceiptError{reason: reason} }
+
+// Moves return a synchronous success envelope. Renames can also report the
+// resulting names keyed by file ID; every member must match the submitted batch.
+// Partial/async/unknown receipts still require scoped recovery, never a replay.
 func animeBatchReceipt(raw []byte) error {
+	return animeMutationReceipt(raw, nil)
+}
+
+func animeRenameReceipt(raw []byte, entries []RenameTarget) error {
+	return animeMutationReceipt(raw, entries)
+}
+
+func animeMutationReceipt(raw []byte, renamed []RenameTarget) error {
 	m, ok, _, err := animeEnvelope(raw)
 	if err != nil || !ok {
-		return ErrAnimeBatchReceipt
+		return animeReceiptError("invalid_envelope")
 	}
 	for key, value := range m {
 		switch key {
@@ -102,17 +122,50 @@ func animeBatchReceipt(raw []byte) error {
 		case "error":
 			value = bytes.TrimSpace(value)
 			if !bytes.Equal(value, []byte("null")) && !bytes.Equal(value, []byte("0")) && !bytes.Equal(value, []byte(`""`)) {
-				return ErrAnimeBatchReceipt
+				return animeReceiptError("error_field")
 			}
 		case "data":
 			value = bytes.TrimSpace(value)
 			if !bytes.Equal(value, []byte("null")) && !bytes.Equal(value, []byte("[]")) && !bytes.Equal(value, []byte("{}")) {
-				return ErrAnimeBatchReceipt
+				if len(renamed) != 0 && animeRenameReport(value, renamed) {
+					continue
+				}
+				return animeReceiptError(animeReceiptDataIssue(value))
 			}
 		default:
-			return ErrAnimeBatchReceipt
+			return animeReceiptError("unexpected_field")
 		}
 	}
 	// A missing state must not be inferred from HTTP 200 or an empty object.
 	return nil
+}
+
+func animeReceiptDataIssue(raw []byte) string {
+	if len(raw) > 0 {
+		switch raw[0] {
+		case '{':
+			return "data_object"
+		case '[':
+			return "data_array"
+		case '"':
+			return "data_string"
+		case 't', 'f':
+			return "data_boolean"
+		}
+	}
+	return "data_other"
+}
+
+func animeRenameReport(raw []byte, entries []RenameTarget) bool {
+	report, err := animeObject(raw)
+	if err != nil || len(report) != len(entries) {
+		return false
+	}
+	for _, entry := range entries {
+		var name string
+		if err := json.Unmarshal(report[entry.ID], &name); err != nil || name != entry.Name {
+			return false
+		}
+	}
+	return true
 }

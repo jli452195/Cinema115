@@ -40,6 +40,43 @@ func forbidAnimeRecoveryDirectoryRead(t *testing.T, f *animeDownloadFixture) {
 	})
 }
 
+func TestAnimeRecoveryConfirmedRenameContinuesNextStageWithoutReplaying(t *testing.T) {
+	f, _, _, job, drive := animeOrganizeFixture(t)
+	cleanup := animeEnableCleanup(f, drive)
+	drive.lost = "rename"
+	now := time.Now().UnixMilli()
+	runner := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
+	ctx := context.Background()
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.NextRunAt == nil || got.BlockCode == nil || *got.BlockCode != "ORGANIZE_UNCERTAIN" || drive.renames != 1 || drive.moves != 0 || cleanup.deletes != 0 {
+		t.Fatal("expected a saved uncertain rename", got, err, drive)
+	}
+	now = *got.NextRunAt
+	drive.lost = ""
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.BlockCode != nil || got.NextRunAt == nil || *got.NextRunAt != now+5000 || drive.renames != 1 || drive.moves != 0 || cleanup.deletes != 0 || drive.reads != 2 {
+		t.Fatal("recovery must be read-only and schedule the next stage promptly", got, err, drive)
+	}
+	now += 4999
+	if err := runner.PollOnce(ctx); err != nil || drive.reads != 2 {
+		t.Fatal("next stage bypassed the per-UID interval", err)
+	}
+	now += 2
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || got.WorkflowState != "organized" || drive.renames != 1 || drive.moves != 1 || cleanup.deletes != 1 || drive.reads != 3 {
+		t.Fatal("continued stage repeated a rename, added reads, or failed to finish", got, err, drive)
+	}
+}
+
 func TestAnimeRecoveryRunnerMinimalRequestsUntilFinished(t *testing.T) {
 	f, db, _, job := animeSubmitFixture(t)
 	if _, err := db.Exec(`UPDATE anime_download_jobs SET directory_cid=NULL`); err != nil {

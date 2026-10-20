@@ -27,19 +27,21 @@ type AnimeOrganizeDirectory struct {
 }
 
 type AnimeOrganizeStep struct {
-	Kind string   `json:"kind"` // mkdir, rename, move
+	Kind string   `json:"kind"` // mkdir, rename, move, cleanup
 	CID  string   `json:"cid"`  // fixed parent/source/destination
 	Path string   `json:"path,omitempty"`
 	IDs  []string `json:"ids,omitempty"`
 }
 
 type AnimeOrganizeProgress struct {
-	State       string                      `json:"state"` // working, unknown, needs_review, done
-	Code        string                      `json:"code,omitempty"`
-	RetryAt     int64                       `json:"retryAt,omitempty"`
-	Directories []AnimeOrganizeDirectory    `json:"directories"`
-	Files       []AnimeOrganizeFileProgress `json:"files"`
-	Step        *AnimeOrganizeStep          `json:"step,omitempty"`
+	State        string                      `json:"state"` // working, unknown, needs_review, done
+	Code         string                      `json:"code,omitempty"`
+	RetryAt      int64                       `json:"retryAt,omitempty"`
+	Directories  []AnimeOrganizeDirectory    `json:"directories"`
+	Files        []AnimeOrganizeFileProgress `json:"files"`
+	Step         *AnimeOrganizeStep          `json:"step,omitempty"`
+	Cleanup      string                      `json:"cleanup,omitempty"`      // recycled, uncertain, skipped
+	ReceiptIssue string                      `json:"receiptIssue,omitempty"` // fixed diagnostic enum, never raw upstream content
 }
 
 type AnimeOrganizeOperation struct {

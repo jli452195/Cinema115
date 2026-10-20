@@ -142,6 +142,41 @@ func animeTaskID(m map[string]json.RawMessage, keys ...string) (string, error) {
 	return value, nil
 }
 
+// The exact endpoint returns empty task fields alongside errcode 10021.
+// Only those empty defaults may accompany a miss: actual identities, progress
+// or list pagination would contradict it and must never authorize submission.
+func animeMissingTaskDefaults(m map[string]json.RawMessage) bool {
+	if data, exists := m["data"]; exists && string(data) != "null" {
+		return false
+	}
+	for _, key := range []string{"tasks", "list", "count", "total", "page", "page_count"} {
+		if _, exists := m[key]; exists {
+			return false
+		}
+	}
+	for _, key := range []string{"info_hash", "infoHash", "hash", "file_id", "wp_path_id", "url", "name", "display_status", "status_text"} {
+		if raw, exists := m[key]; exists {
+			var value string
+			if json.Unmarshal(raw, &value) != nil || string(raw) == "null" || value != "" {
+				return false
+			}
+		}
+	}
+	for _, key := range []string{"status", "stat", "percentDone", "display_percent", "percent_done", "progress", "percent", "size", "move", "retry_count", "retry_limit"} {
+		if raw, exists := m[key]; exists {
+			var value json.Number
+			if json.Unmarshal(raw, &value) != nil {
+				return false
+			}
+			n, err := value.Float64()
+			if err != nil || n != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func parseAnimeTask(raw []byte, hash string) (AnimeTaskObservation, error) {
 	var out AnimeTaskObservation
 	m, ok, code, err := animeEnvelope(raw)
@@ -149,7 +184,7 @@ func parseAnimeTask(raw []byte, hash string) (AnimeTaskObservation, error) {
 		return out, err
 	}
 	if !ok {
-		if code == 10021 && (m["data"] == nil || string(m["data"]) == "null") && m["info_hash"] == nil && m["hash"] == nil && m["infoHash"] == nil && m["file_id"] == nil && m["wp_path_id"] == nil {
+		if code == 10021 && animeMissingTaskDefaults(m) {
 			return out, nil
 		}
 		return out, ErrAnimeOfflineResponse

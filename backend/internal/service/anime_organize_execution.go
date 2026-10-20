@@ -21,6 +21,11 @@ type AnimeOrganizationGateway interface {
 	MoveAnimeEntries(context.Context, []string, string, string) error
 }
 
+// Cleanup is scoped to the saved resource directory and uses the recycle bin.
+type AnimeOrganizationCleanupGateway interface {
+	DeleteDirectory(context.Context, string, string) error
+}
+
 type animeDirectoryCacheEntry struct {
 	cid     string
 	expires time.Time
@@ -217,6 +222,7 @@ func (r *animeOrganizationRun) dispatch(ctx context.Context, step model.AnimeOrg
 	p.Step = &step
 	p.State, p.Code = "working", ""
 	p.RetryAt = 0
+	p.ReceiptIssue = ""
 	if err := r.save(ctx, p, true); err != nil {
 		return err
 	}
@@ -227,6 +233,10 @@ func (r *animeOrganizationRun) dispatch(ctx context.Context, step model.AnimeOrg
 func (r *animeOrganizationRun) unknown(ctx context.Context, writeErr error) error {
 	p := r.progress()
 	p.State, p.Code = "unknown", "ORGANIZE_UNCERTAIN"
+	var receiptErr *p115.AnimeBatchReceiptError
+	if errors.As(writeErr, &receiptErr) {
+		p.ReceiptIssue = receiptErr.Reason()
+	}
 	if writeErr != nil {
 		code, retryAt := animeStatusReadFailure(writeErr, time.Now().UnixMilli())
 		if code == "TASK_RATE_LIMITED" {
@@ -261,19 +271,57 @@ func (r *animeOrganizationRun) confirm(ctx context.Context, ids []string, cid st
 		p.State, p.Code = "needs_review", "ORGANIZE_RESULT_UNRESOLVED"
 	} else {
 		p.Step = nil
+		p.ReceiptIssue = ""
 	}
 	all := len(p.Files) > 0
 	for _, f := range p.Files {
 		all = all && f.Moved
 	}
 	if all && p.Step == nil {
-		p.State = "done"
+		if _, ok := r.service.OrganizationGateway.(AnimeOrganizationCleanupGateway); !ok {
+			p.State, p.Cleanup = "done", "skipped"
+		}
 	}
 	return r.save(ctx, p, false)
 }
 
+func (r *animeOrganizationRun) finishCleanup(ctx context.Context, outcome string) error {
+	p := r.progress()
+	p.State, p.Code, p.Cleanup, p.Step, p.RetryAt = "done", "", outcome, nil, 0
+	p.ReceiptIssue = ""
+	return r.save(ctx, p, false)
+}
+
+func (r *animeOrganizationRun) cleanup(ctx context.Context) error {
+	gateway, ok := r.service.OrganizationGateway.(AnimeOrganizationCleanupGateway)
+	if !ok {
+		return r.finishCleanup(ctx, "skipped")
+	}
+	if r.job.DirectoryCID == nil {
+		return storage.ErrAnimeConflict
+	}
+	// The transaction checks all moved receipts, the saved root identity and
+	// current authorization. No extra drive listing or metadata read is needed.
+	if err := r.dispatch(ctx, model.AnimeOrganizeStep{Kind: "cleanup", CID: *r.job.DirectoryCID}); err != nil {
+		if errors.Is(err, storage.ErrAnimeWriteUnauthorized) {
+			return r.finishCleanup(ctx, "skipped")
+		}
+		return err
+	}
+	outcome := "recycled"
+	if err := gateway.DeleteDirectory(ctx, *r.job.DirectoryCID, r.session.cookie); err != nil {
+		outcome = "uncertain"
+	}
+	// Cleanup failure does not invalidate completed media moves. An uncertain
+	// delete is never replayed, including when its receipt cannot be persisted.
+	return r.finishCleanup(ctx, outcome)
+}
+
 func (r *animeOrganizationRun) reconcile(ctx context.Context) error {
 	step := r.op.Progress.Step
+	if step.Kind == "cleanup" {
+		return r.finishCleanup(ctx, "uncertain")
+	}
 	entries, err := r.list(ctx, step.CID)
 	if err != nil {
 		var readErr *animeOrganizationReadFailure
@@ -307,6 +355,13 @@ func (r *animeOrganizationRun) reconcile(ctx context.Context) error {
 }
 
 func (r *animeOrganizationRun) run(ctx context.Context) error {
+	allMoved := len(r.op.Progress.Files) > 0
+	for _, file := range r.op.Progress.Files {
+		allMoved = allMoved && file.Moved
+	}
+	if allMoved {
+		return r.cleanup(ctx)
+	}
 	// Resolve each path once; all batches share its conflict listing in this pass.
 	for _, f := range r.op.Request.Files {
 		cid, err := r.resolveDirectory(ctx, path.Dir(f.TargetPath))
@@ -389,7 +444,7 @@ func (r *animeOrganizationRun) run(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return r.cleanup(ctx)
 }
 
 // Upstream read failures remain a recoverable stage, not a worker-wide stop.

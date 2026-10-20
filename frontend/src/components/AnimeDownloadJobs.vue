@@ -64,7 +64,7 @@ onBeforeUnmount(() => { save(); disposed = true; controller?.abort() })
           <div><dt>最近结果</dt><dd>{{ animeLocalTime(job.observedAt) }}<span v-if="job.attemptedAt && job.attemptedAt > job.observedAt" class="as-muted"> · 最近尝试 {{ animeLocalTime(job.attemptedAt) }}</span></dd></div>
         </dl>
         <p class="as-muted">路径仅为执行时记录，不跟踪二次整理后的位置。</p>
-        <p v-if="job.blockCode" class="as-job-reason">{{ animeDownloadReason(job.blockCode) }}<code>{{ job.blockCode }}</code></p>
+        <p v-if="job.blockCode" class="as-job-reason">{{ animeDownloadReason(job.blockCode, job.downloadState) }}<code>{{ job.blockCode }}</code></p>
         <AnimeDownloadActions :token="token" :subscription-id="id" :job="job" :locked="locked" @changed="changed" />
         <AnimeOrganizationPreview v-if="job.organizationPlanned" :key="job.id" :token="token" :path="`jobs/${job.id}/organization-preview`" :disabled="locked" />
       </div>

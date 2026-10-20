@@ -2,12 +2,17 @@ package p115
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// Observed get_user_task response for a missing task: 115 includes empty task
+// defaults even though state=false and errcode=10021.
+const animeMissingTaskResponse = `{"info_hash":"","status":0,"url":"","size":0,"error_msg":"用户任务不存在","errcode":10021,"file_id":"","percentDone":0,"display_percent":0,"retry_count":0,"retry_limit":0,"state":false,"name":"","move":0,"display_status":"","status_text":""}`
 
 func TestAnimeTaskObservationStrictIdentityAndAbsence(t *testing.T) {
 	hash := strings.Repeat("a", 40)
@@ -17,6 +22,7 @@ func TestAnimeTaskObservationStrictIdentityAndAbsence(t *testing.T) {
 		target, result string
 	}{
 		{"absent", `{"state":false,"errcode":10021}`, true, false, "", ""},
+		{"absent with upstream defaults", animeMissingTaskResponse, true, false, "", ""},
 		{"exact", `{"state":true,"data":{"info_hash":"` + hash + `","wp_path_id":"9007199254740993","file_id":300}}`, true, true, "9007199254740993", "300"},
 		{"root payload", `{"state":1,"info_hash":"` + hash + `","file_id":"300"}`, true, true, "", "300"},
 		{"missing state", `{"info_hash":"` + hash + `"}`, false, false, "", ""},
@@ -40,6 +46,36 @@ func TestAnimeTaskObservationStrictIdentityAndAbsence(t *testing.T) {
 			v, err := parseAnimeTask([]byte(tc.body), hash)
 			if (err == nil) != tc.ok || tc.ok && (v.Present != tc.present || v.TargetCID != tc.target || v.ResultID != tc.result) {
 				t.Fatal(v, err)
+			}
+		})
+	}
+}
+
+func TestAnimeMissingTaskDefaultsRejectContradictions(t *testing.T) {
+	hash := strings.Repeat("a", 40)
+	for field, value := range map[string]any{
+		"info_hash": hash, "infoHash": hash, "hash": hash,
+		"file_id": "300", "wp_path_id": "200", "url": "magnet:?xt=urn:btih:" + hash,
+		"status": 1, "stat": 2, "percentDone": 100, "display_percent": 100,
+		"progress": 100, "display_status": "finished", "name": "old task",
+		"tasks": []any{}, "list": []any{}, "count": 0, "total": 0, "page": 1, "page_count": 1,
+		"data": map[string]any{},
+	} {
+		t.Run(field, func(t *testing.T) {
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(animeMissingTaskResponse), &payload); err != nil {
+				t.Fatal(err)
+			}
+			payload[field] = value
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseAnimeTask(raw, hash); !errors.Is(err, ErrAnimeOfflineResponse) {
+				t.Fatal("contradictory miss authorized submission", err)
+			}
+			if _, err := parseAnimeTaskStatus(raw, hash); !errors.Is(err, ErrAnimeOfflineResponse) {
+				t.Fatal("contradictory miss became status observation", err)
 			}
 		})
 	}
@@ -88,7 +124,7 @@ func TestAnimeOfflineInspectUsesOnlyExactHashEndpoint(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/web/" || r.URL.Query().Get("ac") != "get_user_task" || r.URL.Query().Get("info_hash") != hash || r.Header.Get("Cookie") != "UID=123_A" {
 			t.Error("wrong exact query")
 		}
-		w.Write([]byte(`{"state":false,"errcode":10021}`))
+		w.Write([]byte(animeMissingTaskResponse))
 	}))
 	defer server.Close()
 	client := NewCloudClient()
