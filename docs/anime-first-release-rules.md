@@ -1,5 +1,7 @@
 # 动漫订阅首版规则与阶段边界（P0-04）
 
+> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+
 日期：2026-10-18。依据[总体方案](anime-subscription-plan.md)及 [Bangumi](anime-bangumi-api.md)、[蜜柑](anime-mikan-api.md)、[115](anime-p115-api.md)验证报告。本文件固定后续实现采用的首版行为，不代表业务代码或页面已完成；DDL、状态字段与 API 细节见 P0-05 的[数据与接口契约](anime-subscription-contract.md)。
 
 2026-10-20 用户修订：115 请求尽量少。下载完成只列任务目录和必要结果子目录一次，不逐文件取元数据、不读取或比对文件 SHA1。正常创建、改名与移动信任明确成功回执，回执不明才按固定对象补查；目录与冲突列表按批次复用。整理结束即终态，之后用户二次整理、移动、改名或删除均不复查、不定位、不恢复、不自动重下。此修订优先于下文旧版严格读回要求；任务执行进度见任务表。P2-08已将提交成功后的检查合并至首次状态追踪，恢复会话及换号仅做本地检查；换号后重新选择目录，不新增探测或迁移。

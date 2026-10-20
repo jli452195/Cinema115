@@ -1,8 +1,7 @@
 package model
 
-// AnimeExecutionBaseline is written only by confirmed activation, never by a
-// form save or an RSS poll. T0 and the initial identity set live in baseline
-// columns/tables; this snapshot pins the target and interpretation versions.
+// AnimeExecutionBaseline freezes the source execution target and parser versions.
+// It does not distinguish historical publications from later RSS items.
 type AnimeExecutionBaseline struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	Target        AnimeDownloadTarget `json:"target"`

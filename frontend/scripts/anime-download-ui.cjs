@@ -10,8 +10,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
   const now = Date.now(); await page.clock.install({ time: new Date(now) });
   const calls = [], receipts = new Map(), changes = {}, state = { status: 'enabled', revision: 2, failJobs: false, loseJob: true, losePause: true, empty: false }
-  const source = { id: 'source-a', role: 'main', position: 0, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: '10', groupName: '银色子弹字幕组', revision: 1, health: 'ok', checkedAt: now, binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 1, last: 12 }, chapterCorrespondence: { sourceEpisode: 1, chapterEpisode: 1 } }, rules: { schemaVersion: 1, resolution: '1080p', include: [], exclude: [], minimumEpisode: 1, initialMode: 'from_episode' } }
-  const sub = () => ({ id: 'sub-a', entryId: 'entry-a', status: state.status, revision: state.revision, firstEnabledAt: now - 300000, updatedAt: now, entry: { id: 'entry-a', bangumiId: '123', editionKey: 'original', title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } }, sources: [{ ...source, configuredState: 'enabled' }], form: { formSelections: [], previewRefs: [] }, readiness: { ready: true, issues: [] }, permittedActions: ['pause', 'resume', 'archive', 'unarchive', 'remove'].map(name => ({ name, allowed: name === 'pause' ? state.status === 'enabled' : name === 'resume' ? state.status === 'paused' : name === 'unarchive' ? state.status === 'archived' : state.status !== 'removed' })) })
+  const source = { id: 'source-a', role: 'main', position: 0, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: '10', groupName: '银色子弹字幕组', revision: 1, health: 'ok', checkedAt: now, binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 1, last: 12 }, chapterCorrespondence: { sourceEpisode: 1, chapterEpisode: 1 } }, rules: { schemaVersion: 1, resolution: '1080p', include: [], exclude: [], minimumEpisode: 1 } }
+  const sub = () => ({ id: 'sub-a', entryId: 'entry-a', status: state.status, revision: state.revision, firstEnabledAt: now - 300000, updatedAt: now, entry: { id: 'entry-a', bangumiId: '123', editionKey: 'original', title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } }, sources: [{ ...source, configuredState: 'enabled' }], form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] }, permittedActions: ['pause', 'resume', 'archive', 'unarchive', 'remove'].map(name => ({ name, allowed: name === 'pause' ? state.status === 'enabled' : name === 'resume' ? state.status === 'paused' : name === 'unarchive' ? state.status === 'archived' : state.status !== 'removed' })) })
   const jobs = Array.from({ length: 23 }, (_, i) => ({ id: `job-${i}`, title: `[银色子弹字幕组] 从零开始的异世界生活 - ${String(i + 1).padStart(2, '0')} [1080p HEVC 简繁内封]`, groupName: '银色子弹字幕组', revision: 1, downloadState: i === 0 ? 'unknown' : i === 1 || i === 2 || i === 3 ? 'completed' : 'accepted', fileState: i === 2 ? 'verified' : i === 3 ? 'needs_review' : 'pending', workflowState: i === 2 ? 'original_saved' : 'active', blockCode: i === 0 ? 'SUBMIT_UNCERTAIN' : i === 3 ? 'FILES_INCOMPLETE' : null, executionPath: `/动漫下载/anime-job-${i}`, directoryCid: '200', createdAt: now - 600000, updatedAt: now, observedAt: now - 100000, attemptedAt: now - 50000, nextRunAt: now + 200000, progress: null, files: i === 2 ? [{ id: '400', name: '03.mkv', kind: 'file', size: '12345' }] : [], permittedActions: { reconcile: i !== 2, retry: i === 3 } }))
   const items = () => state.empty ? [] : Array.from({ length: 13 }, (_, i) => ({ release: { id: `release-${i}`, title: `[银色子弹字幕组] 番剧 - ${i + 1} [1080p]`, parse: { episode: i + 1 } }, observation: {}, projection: { sourceEpisode: i + 1, chapterEpisode: i + 1 }, selectable: true, decision: 'matched', reasonCode: 'MATCHED_METADATA_ONLY' }))
   const previewPage = (number = 1, size = 50) => ({ items: items().slice((number - 1) * size, number * size), total: items().length, page: number, pageSize: size, selectedIds: items().map(item => item.release.id), pendingSelections: [], summary: { sourceRef: 'source-a', sourcePreviewId: 'preview-a', loadRevision: 1, matchedCount: items().length, reviewCount: 0, selectedCount: items().length, pendingSelectionCount: 0, loadedCount: items().length, rawCount: items().length, unloadedHistory: false, generatedAt: now, expiresAt: now + 900000 } })
@@ -26,14 +26,13 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       if (state.failJobs) { status = 503; data = { error: '模拟本地读取失败' } }
       else { const number = Number(url.searchParams.get('page') || 1); data = { items: jobs.slice((number - 1) * 20, number * 20), total: jobs.length, page: number, pageSize: 20, dataVersion: 'jobs' } }
     } else if (endpoint.endsWith('/settings')) data = { settings: { revision: 3 }, readiness: { ready: true } }
-    else if (endpoint.endsWith('/enable-preview')) data = { batchId: 'batch-a', sources: [previewPage().summary], issues: [], page: previewPage(), budget: { limit: 2000, remaining: 1987 } }
     else if (endpoint.endsWith('/previews/batch-a/releases')) data = previewPage(Number(url.searchParams.get('page')), Number(url.searchParams.get('pageSize')))
-    else if (/\/(pause|resume|archive|unarchive|remove|enable|reconcile|retry)$/.test(endpoint)) {
+    else if (/\/(pause|resume|archive|unarchive|remove|reconcile|retry)$/.test(endpoint)) {
       if (receipts.has(key)) { assert.deepEqual(receipts.get(key).body, body); data = receipts.get(key).receipt }
       else if (!endpoint.includes('/jobs/') && body.expectedRevision !== state.revision) { status = 409; data = { error: '配置版本已变化，请重载', code: 'REVISION_CONFLICT' } }
       else {
         const action = endpoint.split('/').pop(); changes[action] = (changes[action] || 0) + 1
-        if (!endpoint.includes('/jobs/')) { state.status = ({ pause: 'paused', resume: 'enabled', archive: 'archived', unarchive: 'paused', remove: 'removed', enable: 'enabled' })[action]; state.revision++ }
+        if (!endpoint.includes('/jobs/')) { state.status = ({ pause: 'paused', resume: 'enabled', archive: 'archived', unarchive: 'paused', remove: 'removed' })[action]; state.revision++ }
         data = { id: endpoint.includes('/jobs/') ? 'job-0' : 'sub-a', revision: endpoint.includes('/jobs/') ? 2 : state.revision, status: state.status }
         receipts.set(key, { body, receipt: data })
         if (action === 'reconcile' && state.loseJob) { state.loseJob = false; return route.abort() }
@@ -42,7 +41,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     }
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
   })
-  const dialog = page.getByRole('dialog'), go = async () => page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' })
+  const dialog = page.getByRole('dialog'), go = async () => { await page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' }); await page.getByRole('tab').nth(2).click() }
   try {
     await fs.mkdir('test-results', { recursive: true }); await go()
     await dialog.locator('[data-job-id="job-0"]').waitFor(); assert.equal(await dialog.locator('.as-job').count(), 20)
@@ -54,16 +53,17 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await dialog.getByText(/安排核对已记录/).waitFor(); assert.equal(changes.reconcile, 1)
     passed.push('任务核对未知回执沿用原请求，单行处理不锁订阅，未知任务无重提按钮')
     await dialog.getByRole('button', { name: '暂停订阅', exact: true }).click()
-    await dialog.getByText(/结果尚未确认，已保留原请求/).waitFor()
-    await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' })
-    await page.locator('[data-subscription-id="sub-a"]').click(); await dialog.getByRole('button', { name: '核对原操作', exact: true }).click()
+    await dialog.getByText(/保存结果尚未确认/).waitFor()
+    await page.keyboard.press('Escape'); assert.equal(await dialog.count(), 1)
+    await dialog.getByRole('button', { name: '核对原操作', exact: true }).click()
     await dialog.getByRole('button', { name: '恢复订阅', exact: true }).waitFor(); assert.equal(changes.pause, 1)
-    passed.push('暂停回执丢失后关闭重开仍能核对原操作，不增加提交次数')
+    passed.push('暂停回执丢失时先核对原操作，不增加提交次数')
     await dialog.getByRole('button', { name: '恢复订阅', exact: true }).click(); await dialog.getByRole('button', { name: '暂停订阅', exact: true }).waitFor()
     const next = dialog.getByRole('button', { name: '任务下一页', exact: true }); await next.focus(); await page.keyboard.press('Enter')
     await dialog.locator('[data-job-id="job-20"]').waitFor(); assert.equal(await next.evaluate(el => el === document.activeElement), true)
     await dialog.locator('[data-job-id="job-20"] > button').click()
     await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' }); await page.locator('[data-subscription-id="sub-a"]').click()
+    await page.getByRole('tab').nth(2).click()
     await dialog.locator('[data-job-id="job-20"]').waitFor(); assert.equal(await dialog.locator('[data-job-id="job-20"] > button').getAttribute('aria-expanded'), 'true')
     passed.push('任务分页与展开状态往返保留，末页键盘焦点不丢失')
     await dialog.getByRole('button', { name: '任务上一页' }).click(); await dialog.locator('[data-job-id="job-0"]').waitFor()
@@ -89,7 +89,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.setViewportSize({ width: 320, height: 740 }); await page.screenshot({ path: 'test-results/anime-download-320.png' })
     assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth), true)
     await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-download-dark.png' })
-    await dialog.getByRole('button', { name: '移除订阅', exact: true }).click(); await dialog.getByRole('button', { name: '确认移除', exact: true }).waitFor()
+    await dialog.getByRole('button', { name: '移除', exact: true }).click(); await dialog.getByRole('button', { name: '确认移除', exact: true }).waitFor()
     await page.keyboard.press('Escape'); assert.equal(await dialog.count(), 1); assert.equal(await dialog.getByRole('button', { name: '确认移除', exact: true }).count(), 0)
     passed.push('320px和暗色无横向溢出，移除原位确认支持Esc返回')
     state.status='enabled';state.revision++;await go()

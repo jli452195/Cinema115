@@ -13,7 +13,6 @@ export interface AnimeRules {
   include: string[]
   exclude: string[]
   minimumEpisode: number | null
-  initialMode: 'from_episode' | 'new_only' | 'selected_history'
   specMode?: 'profiles' | 'any' | ''
   specProfiles?: AnimeSpec[]
 }
@@ -43,7 +42,6 @@ export interface AnimeSourceSample {
   profilesTruncated: boolean; profileReviewCount?: number; completeness: string; observedAt: number | null; specVersion: number
 }
 export interface AnimePreviewRef { batchId: string; sourceRef: string; sourcePreviewId: string; loadRevision: number; sourceId?: string }
-export interface AnimeFormSelection { sourceRef: string; selectedReleaseIds: string[]; unresolvedReleaseIds: string[]; dismissedReleaseIds: string[] }
 export interface AnimePreviewSummary {
   sourceRef: string; sourcePreviewId: string; loadRevision: number
   generatedAt: number; expiresAt: number; expired: boolean
@@ -79,7 +77,6 @@ export interface AnimeSubscriptionView {
   readiness?: { ready: boolean; issues: string[] }
   entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string } }
   sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null })[]
-  form: { formSelections: AnimeFormSelection[]; previewRefs: AnimePreviewRef[] }
 }
 export interface AnimeDownloadJob {
 	organizationPlanned?: boolean

@@ -133,7 +133,7 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		}
 		readCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		input := AnimeSourceInput{Source: animefeed.NewSource(poll.Source.Provider, *poll.Source.ItemID, *poll.Source.GroupID), Kind: "rss"}
-		if poll.Initialize && poll.Source.Rules.InitialMode == "from_episode" {
+		if poll.Initialize {
 			input.Kind, input.Take = "history", 2000
 		}
 		page, err := r.Feeds.ReadSource(readCtx, budget, input)

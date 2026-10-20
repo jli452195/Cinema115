@@ -49,7 +49,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 	// Mikan-only helper's frozen clock, which could precede a later site read.
 	s.Previews.now = nil
 	settings := animeSaveReadySettings(t, s)
-	in.SaveMode, in.SettingsRevision, in.Config.Entry.ID = "paused", settings.Revision, entry.ID
+	in.SettingsRevision, in.Config.Entry.ID = settings.Revision, entry.ID
 	a := NewAnibtService(&anibtFake{})
 	a.spacing = 0
 	g := NewGardenService(&gardenFake{})
@@ -74,7 +74,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 			Ref: spec.ref, Role: "standby", Position: i, Status: "paused", RunWhenEnabled: true,
 			Provider: spec.provider, ItemID: bindingPtr(spec.item), GroupID: bindingPtr(spec.group), GroupName: bindingPtr("browser label"),
 			Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: spec.item, GroupID: spec.group}},
-			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(spec.minimum), Resolution: bindingPtr("1080p"), InitialMode: "from_episode"},
+			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(spec.minimum), Resolution: bindingPtr("1080p")},
 		}
 		if i == 0 {
 			source.Role = "main"
@@ -101,32 +101,12 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 	if len(batch.Sources) != 3 || batch.Budget().TotalRawCount != 7 {
 		t.Fatal("mixed-provider snapshots or shared budget lost", batch.Budget(), len(batch.Sources))
 	}
-	for i, source := range batch.Sources {
-		selected := ""
-		for _, item := range source.Items {
-			if item.Selectable {
-				selected = item.Release.ID
-				break
-			}
-		}
-		if selected == "" {
-			t.Fatal("source has no selectable fixture", source.Ref)
-		}
-		batch, err = s.Previews.Select(ctx, "admin", servicePreviewRef(batch, i), []string{selected}, nil)
-		if err != nil {
-			t.Fatal("select source", source.Ref, err)
-		}
-	}
-	for _, source := range batch.Sources {
-		in.Config.FormSelections = append(in.Config.FormSelections, model.AnimeFormSelection{SourceRef: source.Ref, SelectedReleaseIDs: source.SelectedIDs, DismissedReleaseIDs: source.DismissedIDs})
-		in.Config.PreviewRefs = append(in.Config.PreviewRefs, model.AnimeFormPreviewRef{BatchID: batch.ID, SourceRef: source.Ref, SourcePreviewID: source.ID, LoadRevision: source.LoadRevision})
-	}
-	receipt, err := s.SaveConfiguration(ctx, "admin", "stage_create_001", "", in)
+	receipt, err := s.SaveDefinition(ctx, "admin", "stage_create_001", "", in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
-	if err != nil || before.Naming == nil || len(before.Sources) != 3 || len(before.Form.PreviewRefs) != 3 || len(before.Form.FormSelections) != 3 {
+	if err != nil || before.Naming == nil || len(before.Sources) != 3 {
 		t.Fatalf("mixed configuration: %+v %v", before, err)
 	}
 	if err := db.Close(); err != nil {
@@ -153,14 +133,14 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 		t.Fatal("restart changed configuration", err)
 	}
 	restored, err := reopened.GetAnimePreview(ctx, "admin", batch.ID)
-	if err != nil || !reflect.DeepEqual(batch, restored) {
+	if err != nil || batch.ID != restored.ID || len(restored.Sources) != len(batch.Sources) {
 		t.Fatal("restart changed preview choices or lifetime", err)
 	}
-	if got, err := s.SaveConfiguration(ctx, "admin", "stage_create_001", "", in); err != nil || !reflect.DeepEqual(got, receipt) {
+	if got, err := s.SaveDefinition(ctx, "admin", "stage_create_001", "", in); err != nil || !reflect.DeepEqual(got, receipt) {
 		t.Fatal("restart lost idempotent receipt", got, err)
 	}
-	edit := AnimeSaveInput{SaveMode: "paused", ExpectedRevision: after.Revision, SettingsRevision: settings.Revision, Config: AnimeSaveConfig{
-		Entry: AnimeEntryRef{ID: after.EntryID}, FormSelections: after.Form.FormSelections, PreviewRefs: after.Form.PreviewRefs,
+	edit := AnimeSaveInput{ExpectedRevision: after.Revision, SettingsRevision: settings.Revision, Config: AnimeSaveConfig{
+		Entry:  AnimeEntryRef{ID: after.EntryID},
 		Naming: &model.AnimeNamingInput{TMDBID: after.Naming.Target.TMDBID, Season: 2, Fingerprint: after.Naming.Target.Fingerprint, Sources: after.Naming.Sources},
 	}}
 	for _, source := range after.Sources {
@@ -170,14 +150,14 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 		}
 		edit.Config.Sources = append(edit.Config.Sources, v)
 	}
-	if _, err := s.SaveConfiguration(ctx, "admin", "stage_edit_001", after.ID, edit); err != nil {
+	if _, err := s.SaveDefinition(ctx, "admin", "stage_edit_001", after.ID, edit); err != nil {
 		t.Fatal("offline edit of verified sources failed", err)
 	}
-	if _, err := s.SaveConfiguration(ctx, "admin", "stage_stale_001", after.ID, edit); !errors.Is(err, storage.ErrAnimeConflict) {
+	if _, err := s.SaveDefinition(ctx, "admin", "stage_stale_001", after.ID, edit); !errors.Is(err, storage.ErrAnimeConflict) {
 		t.Fatal("stale revision accepted after restart", err)
 	}
 	view, err := s.Subscription(ctx, after.ID)
-	if err != nil || view.Revision != 2 || !view.Readiness.Ready || view.ReleaseStats.SelectedCount != 0 || view.JobStats.TotalCount != 0 || view.FirstEnabledAt != nil {
+	if err != nil || view.Revision != 2 || !view.Readiness.Ready || view.ReleaseStats.SelectedCount != 0 || view.JobStats.TotalCount != 0 || view.FirstEnabledAt == nil {
 		t.Fatalf("configuration projected as executable work: %+v %v", view, err)
 	}
 	for _, source := range view.Sources {
@@ -189,7 +169,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 			rawEpisode, minimum = 1, 1
 		}
 		projection := view.Naming.Project(source.ID, model.AnimeReleaseParse{Kind: "episode", Episode: &rawEpisode}, *source.GroupName)
-		if projection.Status != "mapped" || *projection.Season != 2 || *projection.Episode != 1 || *source.Rules.MinimumEpisode != minimum || source.NextCheckAt != nil || source.ActiveBaselineID != nil || source.EffectiveState != "paused" {
+		if projection.Status != "mapped" || *projection.Season != 2 || *projection.Episode != 1 || *source.Rules.MinimumEpisode != minimum || source.NextCheckAt == nil || source.ActiveBaselineID != nil || source.EffectiveState != "enabled" {
 			t.Fatal("source numbering, minimum or execution boundary changed", source, projection)
 		}
 	}

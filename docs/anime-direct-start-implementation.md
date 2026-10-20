@@ -1,5 +1,7 @@
 # 动漫配置页直接开始订阅
 
+> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+
 2026-10-20。按用户最新要求，取消保存草稿、保存为暂停，以及详情页再次预览启用的流程。本记录优先于早期方案中的草稿与首次启用设计。
 
 ## 页面行为

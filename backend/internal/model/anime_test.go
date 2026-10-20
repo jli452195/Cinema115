@@ -8,7 +8,7 @@ import (
 func animeValue[T any](v T) *T { return &v }
 
 func validAnimeSource() AnimeSourceConfig {
-	return AnimeSourceConfig{Ref: "main", Provider: "mikan", Role: "main", Status: "paused", RunWhenEnabled: true, ItemID: animeValue("2259"), GroupID: animeValue("45"), GroupName: animeValue("字幕组"), Binding: AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &AnimeScope{Kind: "range", First: animeValue(25), Last: animeValue(36)}, ChapterCorrespondence: &AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: AnimeRules{SchemaVersion: 1, Resolution: animeValue("1080p"), Include: []string{}, Exclude: []string{}, MinimumEpisode: animeValue(30), InitialMode: "from_episode"}}
+	return AnimeSourceConfig{Ref: "main", Provider: "mikan", Role: "main", Status: "paused", RunWhenEnabled: true, ItemID: animeValue("2259"), GroupID: animeValue("45"), GroupName: animeValue("字幕组"), Binding: AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &AnimeScope{Kind: "range", First: animeValue(25), Last: animeValue(36)}, ChapterCorrespondence: &AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: AnimeRules{SchemaVersion: 1, Resolution: animeValue("1080p"), Include: []string{}, Exclude: []string{}, MinimumEpisode: animeValue(30)}}
 }
 
 func TestAnimeSourceRulesAreIndependentOfCorrespondence(t *testing.T) {

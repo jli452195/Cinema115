@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 52
+const schemaVersion = 53
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -77,7 +77,7 @@ func (s *Store) initialize(ctx context.Context) (resultErr error) {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&priorVersion); err != nil {
 		return err
 	}
-	if priorVersion >= 39 && priorVersion < 51 {
+	if priorVersion >= 39 && priorVersion < 53 {
 		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
 			return err
 		}
@@ -503,22 +503,9 @@ PRAGMA user_version=30;`); err != nil {
 ); PRAGMA user_version=38;`); err != nil {
 		return fmt.Errorf("创建缺集检测排除记录: %w", err)
 	}
-	if version < 51 {
-		if err := resetDevelopmentAnime(ctx, tx); err != nil {
+	if version < 53 {
+		if err := resetDevelopmentAnime(ctx, tx, version >= 51); err != nil {
 			return fmt.Errorf("重建动漫订阅测试存储: %w", err)
-		}
-	}
-	if version == 51 {
-		// Extend the existing operation journal, preserving v51 subscriptions
-		// and submit receipts. The development-data reset runs only below v51.
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE anime_drive_operations RENAME TO anime_drive_operations_v51`); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, animeDriveOperationsSchema); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_drive_operations SELECT * FROM anime_drive_operations_v51; DROP TABLE anime_drive_operations_v51`); err != nil {
-			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

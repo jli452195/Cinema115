@@ -7,10 +7,10 @@ import (
 )
 
 // The anime module has no production data. Reset only these owned tables once
-// when entering v51; never drop the database or touch other business tables.
+// when entering v53; never drop the database or touch other business tables.
 // initialize suspends FK enforcement on its dedicated connection because source
 // and baseline tables reference one another, and restores it on every exit.
-func resetDevelopmentAnime(ctx context.Context, tx *sql.Tx) error {
+func resetDevelopmentAnime(ctx context.Context, tx *sql.Tx, preserveSettings bool) error {
 	for _, table := range []string{
 		"anime_drive_operations", "anime_job_selections", "anime_download_jobs",
 		"anime_resource_claims", "anime_release_decisions", "anime_baseline_releases",
@@ -21,6 +21,9 @@ func resetDevelopmentAnime(ctx context.Context, tx *sql.Tx) error {
 		"legacy_anime_v38_releases", "legacy_anime_v38_transfers",
 		"legacy_anime_v38_download_claims", "legacy_anime_v38_subscriptions",
 	} {
+		if preserveSettings && table == "anime_settings" {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
 			return fmt.Errorf("drop development table %s: %w", table, err)
 		}

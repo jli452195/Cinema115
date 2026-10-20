@@ -43,11 +43,11 @@ func newDownloadClaimFixture(t *testing.T) *downloadClaimFixture {
 	c.Sources = append(c.Sources, backup)
 	sub := saveAnimeConfig(t, s, c)
 	ctx := context.Background()
-	// Public enable stays gated until lifecycle/scheduling integration. These
-	// disposable fixtures model its authoritative pending selections.
+	// These disposable fixtures isolate authoritative pending selections from
+	// the background discovery worker.
 	for _, source := range sub.Sources {
 		baseline := "baseline-" + source.ID
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,t0,confirmed_at,fingerprint,snapshot_json) VALUES(?,?,1,1,1,'confirmed','{}')`, baseline, source.ID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) VALUES(?,?,1,1,'{}')`, baseline, source.ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE anime_subscription_sources SET active_baseline_id=?,status='enabled' WHERE id=?`, baseline, source.ID); err != nil {
@@ -87,7 +87,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	}
 	release := releases[0]
 	d := animeDecision(source, release, "selected")
-	d.Snapshot.Selection = &model.AnimeSelectionBasis{Kind: "automatic", BaselineID: *source.ActiveBaselineID, SelectedAt: time.Now().UnixMilli(), Target: f.target, SubscriptionGeneration: f.sub.RunGeneration, SourceGeneration: source.RunGeneration}
+	d.Snapshot.Selection = &model.AnimeSelectionBasis{BaselineID: *source.ActiveBaselineID, SelectedAt: time.Now().UnixMilli(), Target: f.target, SubscriptionGeneration: f.sub.RunGeneration, SourceGeneration: source.RunGeneration}
 	d.Snapshot.RuleVersion, d.Snapshot.ParserVersion, d.Snapshot.TimeVersion = animepreview.RuleVersion, release.ParserVersion, release.TimeVersion
 	raw, err := animeJSON(d.Snapshot)
 	if err != nil {
@@ -427,8 +427,8 @@ func TestAnimeDownloadClaimDatabaseReopenAndIndependentUID(t *testing.T) {
 	assertDownloadCounts(t, reopened, 1, 2, 2, 2)
 }
 
-func TestAnimeDownloadClaimHistoryBasisAndMissingProof(t *testing.T) {
-	for _, mode := range []string{"history", "wrong baseline", "wrong history basis", "no proof"} {
+func TestAnimeDownloadClaimBaselineAndMissingProof(t *testing.T) {
+	for _, mode := range []string{"valid", "wrong baseline", "no proof"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newDownloadClaimFixture(t)
 			r, v := f.selectRelease(t, 0, "rel_dmhy_1", strings.Repeat("a", 40))
@@ -439,14 +439,8 @@ func TestAnimeDownloadClaimHistoryBasisAndMissingProof(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode != "no proof" {
-				d.Snapshot.Selection.Kind = "initial_history"
 				if mode == "wrong baseline" {
 					d.Snapshot.Selection.BaselineID = "different"
-				}
-				if mode != "wrong history basis" {
-					if _, err := f.store.db.ExecContext(ctx, `INSERT INTO anime_baseline_releases(baseline_id,release_id) VALUES(?,?)`, *source.ActiveBaselineID, r.ID); err != nil {
-						t.Fatal(err)
-					}
 				}
 				raw, _ := animeJSON(d.Snapshot)
 				if _, err := f.store.db.ExecContext(ctx, `UPDATE anime_release_decisions SET snapshot_json=? WHERE source_id=? AND release_id=?`, raw, source.ID, r.ID); err != nil {
@@ -456,7 +450,7 @@ func TestAnimeDownloadClaimHistoryBasisAndMissingProof(t *testing.T) {
 				v = animeresource.Verified{}
 			}
 			out, err := f.store.ClaimAnimeDownload(ctx, source.ID, r.ID, 1, v, f.target)
-			if mode == "history" {
+			if mode == "valid" {
 				if err != nil || !out.Created {
 					t.Fatal("confirmed history failed", err)
 				}

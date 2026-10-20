@@ -38,7 +38,6 @@ type Item struct {
 	Selectable              bool                    `json:"selectable"`
 	DefaultSelected         bool                    `json:"defaultSelected"`
 	ConfirmationFingerprint string                  `json:"confirmationFingerprint"`
-	Timing                  string                  `json:"timing"`
 }
 
 // Pending retains the old choice even when the cumulative window loses it.
@@ -57,22 +56,21 @@ type Changes struct {
 }
 
 type Source struct {
-	ID              string           `json:"previewId"`
-	Ref             string           `json:"sourceRef"`
-	SourceID        string           `json:"sourceId"`
-	SourceRevision  int64            `json:"sourceRevision"`
-	Fingerprint     string           `json:"fingerprint"`
-	LoadRevision    int64            `json:"loadRevision"`
-	T0              int64            `json:"t0"`
-	GeneratedAt     int64            `json:"generatedAt"`
-	ExpiresAt       int64            `json:"expiresAt"`
-	Page            mikan.SourcePage `json:"snapshot"`
-	InitialPostKeys []string         `json:"initialPostKeys"`
-	SelectedIDs     []string         `json:"selectedIds"`
-	DismissedIDs    []string         `json:"dismissedIds"`
-	Pending         []Pending        `json:"pendingSelections"`
-	Changes         Changes          `json:"selectionChanges"`
-	Items           []Item           `json:"items"`
+	ID             string           `json:"previewId"`
+	Ref            string           `json:"sourceRef"`
+	SourceID       string           `json:"sourceId"`
+	SourceRevision int64            `json:"sourceRevision"`
+	Fingerprint    string           `json:"fingerprint"`
+	LoadRevision   int64            `json:"loadRevision"`
+	T0             int64            `json:"t0"`
+	GeneratedAt    int64            `json:"generatedAt"`
+	ExpiresAt      int64            `json:"expiresAt"`
+	Page           mikan.SourcePage `json:"snapshot"`
+	SelectedIDs    []string         `json:"selectedIds"`
+	DismissedIDs   []string         `json:"dismissedIds"`
+	Pending        []Pending        `json:"pendingSelections"`
+	Changes        Changes          `json:"selectionChanges"`
+	Items          []Item           `json:"items"`
 }
 
 type Batch struct {
@@ -134,7 +132,7 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 		return nil
 	}
 	pass("scope")
-	if rules.MinimumEpisode == nil || rules.InitialMode == "" || rules.Resolution == nil {
+	if rules.MinimumEpisode == nil || rules.Resolution == nil {
 		stop("minimum", "needs_confirmation", "SOURCE_RULES_INCOMPLETE")
 		return nil
 	}
@@ -209,7 +207,7 @@ func BuildCandidates(c Config, ref string, page mikan.SourcePage, now int64) (So
 func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHistory bool) (Source, error) {
 	out := Source{Ref: ref, LoadRevision: 1, GeneratedAt: now, ExpiresAt: now + LifetimeMillis,
 		SelectedIDs: []string{}, DismissedIDs: []string{}, Pending: []Pending{}, Items: make([]Item, 0, len(page.Releases)),
-		InitialPostKeys: make([]string, 0, len(page.Releases)), Changes: emptyChanges()}
+		Changes: emptyChanges()}
 	var err error
 	c, err = Normalize(c)
 	if err != nil {
@@ -286,14 +284,13 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 		if err := r.Validate(); err != nil {
 			return out, fmt.Errorf("validate preview release: %w", err)
 		}
-		item := Item{Release: r, Observation: row, Publication: published, Timing: "initial_history"}
+		item := Item{Release: r, Observation: row, Publication: published}
 		if err := evaluate(config.Binding, config.Rules, &item); err != nil {
 			return out, err
 		}
 		out.Items = append(out.Items, item)
-		out.InitialPostKeys = append(out.InitialPostKeys, row.PostKey)
 	}
-	// RSS candidates are ranked by the repository after baseline/time and
+	// RSS candidates are ranked by the repository after current rule and
 	// durable authorization checks, so an ineligible revision cannot win.
 	if rankHistory && page.Kind == "history" {
 		PreferCurrentVersions(out.Items)
@@ -308,7 +305,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 		if err != nil {
 			return out, err
 		}
-		item.DefaultSelected = item.Selectable && config.Rules.InitialMode == "from_episode"
+		item.DefaultSelected = item.Selectable
 	}
 	if precision == 0 {
 		precision = 60000
@@ -365,11 +362,6 @@ func (s *Source) Reconcile(old Source) {
 			s.Changes.RetainedIDs = append(s.Changes.RetainedIDs, id)
 		}
 	}
-	initial := make(map[string]bool, len(old.InitialPostKeys))
-	for _, key := range old.InitialPostKeys {
-		initial[key] = true
-	}
-	s.InitialPostKeys = append([]string{}, old.InitialPostKeys...)
 	s.T0 = old.T0
 	for i := range s.Items {
 		item := &s.Items[i]
@@ -377,11 +369,7 @@ func (s *Source) Reconcile(old Source) {
 		if _, ok := previous[item.Release.ID]; !ok {
 			s.Changes.AddedIDs = append(s.Changes.AddedIDs, item.Release.ID)
 		}
-		if initial[item.Release.PostKey] {
-			item.Timing = "initial_history"
-			continue
-		}
-		item.Timing = ClassifyTime(item.Publication, s.T0, s.Page.ObservedAt.UnixMilli())
+
 	}
 	sort.Strings(s.SelectedIDs)
 	sort.Slice(s.Pending, func(i, j int) bool { return s.Pending[i].ReleaseID < s.Pending[j].ReleaseID })
@@ -390,18 +378,6 @@ func (s *Source) Reconcile(old Source) {
 	}
 }
 
-func ClassifyTime(p animeparse.Publication, t0, observed int64) string {
-	if p.Status != "known" || p.UnixMillis == nil || *p.UnixMillis > observed+5*60*1000 {
-		return "publication_needs_confirmation"
-	}
-	if *p.UnixMillis < t0 {
-		return "older_history_needs_confirmation"
-	}
-	return "post_preview_new"
-}
-
-// Select replaces the full loaded selection, independent of the displayed page.
-// Dismissed IDs may also explicitly resolve a pending, out-of-scope old choice.
 func (s *Source) Select(selected, dismissed []string, now int64) error {
 	if !s.ValidAt(now) {
 		return ErrExpired

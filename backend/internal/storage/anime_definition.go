@@ -14,9 +14,6 @@ import (
 // Retire stale metadata permissions without touching accepted drive operations.
 // Source revision/generation fences a worker that was already reading metadata.
 func invalidateAnimeSourceConfigurationTx(ctx context.Context, tx *sql.Tx, sourceID string, now int64) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE anime_source_baselines SET fingerprint='definition-pending:'||? WHERE id=(SELECT active_baseline_id FROM anime_subscription_sources WHERE id=?)`, sourceID, sourceID); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET checked_at=NULL,check_token=NULL,check_until=NULL,next_check_at=?,poll_failures=0,health=CASE WHEN health='unavailable' THEN 'unknown' ELSE health END WHERE id=? AND status<>'removed'`, now, sourceID); err != nil {
 		return fmt.Errorf("schedule anime definition: %w", err)
 	}
@@ -58,15 +55,6 @@ func prepareAnimeDefinitionBaselineTx(ctx context.Context, tx *sql.Tx, p *AnimeS
 		}
 	}
 	p.Baseline = model.AnimeExecutionBaseline{SchemaVersion: 1, Target: target, RuleVersion: animepreview.RuleVersion, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion}
-	if p.T0 <= 0 {
-		p.T0 = p.Source.CreatedAt
-		if p.Subscription.FirstEnabledAt != nil {
-			p.T0 = max(p.T0, *p.Subscription.FirstEnabledAt)
-		}
-		if p.T0 <= 0 {
-			p.T0 = now
-		}
-	}
 	id, err := newAnimeID()
 	if err != nil {
 		return err
@@ -75,13 +63,8 @@ func prepareAnimeDefinitionBaselineTx(ctx context.Context, tx *sql.Tx, p *AnimeS
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,t0,confirmed_at,fingerprint,snapshot_json) VALUES(?,?,?,?,?,?,?)`, id, p.Source.ID, p.Source.Revision, p.T0, now, "definition:"+p.Source.ID, raw); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) VALUES(?,?,?,?,?)`, id, p.Source.ID, p.Source.Revision, now, raw); err != nil {
 		return err
-	}
-	if p.Source.ActiveBaselineID != nil {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_baseline_releases(baseline_id,release_id) SELECT ?,release_id FROM anime_baseline_releases WHERE baseline_id=?`, id, p.Source.ActiveBaselineID); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET active_baseline_id=?,status='enabled' WHERE id=?`, id, p.Source.ID); err != nil {
 		return err

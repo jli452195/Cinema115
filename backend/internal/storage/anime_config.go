@@ -208,9 +208,6 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			source = model.AnimeSource{ID: id, SubscriptionID: in.ID, NamespaceID: ns, Health: "unknown", RunGeneration: 1, CreatedAt: now}
 		}
 		source.Role, source.Position, source.Status = input.Role, input.Position, input.Status
-		if runtime && source.ActiveBaselineID == nil {
-			source.Status = "paused"
-		}
 		source.RunWhenEnabled, source.Provider = input.RunWhenEnabled, input.Provider
 		source.ItemID, source.GroupID, source.GroupName = input.ItemID, input.GroupID, input.GroupName
 		source.Binding, source.Rules = input.Binding, input.Rules
@@ -262,36 +259,6 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	}
 	if err := validateAnimeSources(validationSources, validation.Status); err != nil {
 		return receipt, err
-	}
-	// Restore references to stable IDs; saved selections remain form data only.
-	// Copy the slice so ref normalization never mutates the caller's form.
-	in.Form.FormSelections = append([]model.AnimeFormSelection{}, in.Form.FormSelections...)
-	selectionSources := make(map[string]bool, len(in.Form.FormSelections))
-	for i := range in.Form.FormSelections {
-		f := &in.Form.FormSelections[i]
-		if id, ok := receipt.SourceIDs[f.SourceRef]; ok {
-			f.SourceRef = id
-		}
-		if _, ok := final[f.SourceRef]; !ok {
-			return receipt, ErrAnimeInvalid
-		}
-		if selectionSources[f.SourceRef] {
-			return receipt, ErrAnimeInvalid
-		}
-		selectionSources[f.SourceRef] = true
-	}
-	in.Form.PreviewRefs = append([]model.AnimeFormPreviewRef{}, in.Form.PreviewRefs...)
-	for i := range in.Form.PreviewRefs {
-		f := &in.Form.PreviewRefs[i]
-		if f.SourceID == "" {
-			f.SourceID = f.SourceRef
-			if id, ok := receipt.SourceIDs[f.SourceRef]; ok {
-				f.SourceID = id
-			}
-		}
-		if _, ok := final[f.SourceID]; !ok {
-			return receipt, ErrAnimeInvalid
-		}
 	}
 	if in.Naming != nil {
 		// Copy before converting temporary client references to stable source IDs.

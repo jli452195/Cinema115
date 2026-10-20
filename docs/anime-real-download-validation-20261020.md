@@ -1,5 +1,7 @@
 # 动漫订阅真实 115 下载与整理实测（2026-10-20）
 
+> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+
 本轮从用户指定的 `/anime/new?bangumiId=565701` 页面开始，实际使用已配置的主账号执行订阅、离线下载、标准改名、移动和任务临时目录回收。共完成 16 条单集资源；一次性验收确认 16 个文件的 ID、目标父目录及名称正确，16 个 `anime-<jobID>` 临时根目录均已回收。
 
 ## 实测范围

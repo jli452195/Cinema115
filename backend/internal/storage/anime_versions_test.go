@@ -85,7 +85,7 @@ func TestAnimeDiscoveryCurrentHighestAndNoFutureUpgradeAfterRestart(t *testing.T
 }
 
 func TestAnimeDiscoveryIneligibleHigherVersionCannotHideEligibleBase(t *testing.T) {
-	for _, mode := range []string{"filtered", "undated", "history", "already_dismissed"} {
+	for _, mode := range []string{"filtered", "already_dismissed"} {
 		t.Run(mode, func(t *testing.T) {
 			f, now := discoveryFixture(t)
 			poll := discoveryPoll(t, f.store, now)
@@ -95,10 +95,6 @@ func TestAnimeDiscoveryIneligibleHigherVersionCannotHideEligibleBase(t *testing.
 			case "filtered":
 				higher.Title += " unwanted"
 				poll.Source.Rules.Exclude = []string{"unwanted"}
-			case "undated":
-				higher.PublishedRaw = ""
-			case "history":
-				higher.PublishedRaw = time.UnixMilli(poll.T0 - 1).Format(time.RFC3339Nano)
 			case "already_dismissed":
 				preview, err := animepreview.Build(animePollConfig(poll), "poll", discoveryPage(poll, now, higher), now)
 				if err != nil {

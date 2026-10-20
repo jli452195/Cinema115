@@ -21,7 +21,7 @@ func config() Config {
 	return Config{Chapter: Chapter{BangumiID: ptr("123"), EditionKey: "original", DraftKey: "form-a"}, Settings: model.AnimeSettings{Revision: 1}, Sources: []model.AnimeSourceConfig{
 		{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: ptr("2259"), GroupID: ptr("45"), GroupName: ptr("字幕组"),
 			Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: ptr(25), Last: ptr(40)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}},
-			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: ptr(30), Resolution: ptr("1080p"), InitialMode: "from_episode"}},
+			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: ptr(30), Resolution: ptr("1080p")}},
 	}}
 }
 
@@ -128,26 +128,10 @@ func TestPreviewLiteralKeywordsAndUnknownResolution(t *testing.T) {
 	}
 }
 
-func TestPreviewModesChooseOnlyCurrentHighestVersion(t *testing.T) {
-	for _, mode := range []string{"from_episode", "new_only", "selected_history"} {
-		t.Run(mode, func(t *testing.T) {
-			c := config()
-			c.Sources[0].Rules.InitialMode = mode
-			s := build(t, c, page("[组] 动画 [30][1080p]", "[组] 动画 [30v2][1080p]"))
-			if len(s.Items) != 2 || s.Items[0].Selectable || !s.Items[1].Selectable || s.Items[0].ReasonCode != "RELEASE_VERSION_SUPERSEDED" {
-				t.Fatal("highest version not selected", s.Items)
-			}
-			want := 0
-			if mode == "from_episode" {
-				want = 1
-			}
-			if len(s.SelectedIDs) != want {
-				t.Fatal("initial mode", s.SelectedIDs)
-			}
-			if err := s.Select([]string{s.Items[1].Release.ID}, nil, s.GeneratedAt); err != nil {
-				t.Fatal(err)
-			}
-		})
+func TestPreviewChoosesOnlyCurrentHighestVersion(t *testing.T) {
+	s := build(t, config(), page("[group] Anime [30][1080p]", "[group] Anime [30v2][1080p]"))
+	if len(s.Items) != 2 || s.Items[0].Selectable || !s.Items[1].Selectable || s.Items[0].ReasonCode != "RELEASE_VERSION_SUPERSEDED" || len(s.SelectedIDs) != 1 {
+		t.Fatal("highest version not selected", s.Items)
 	}
 }
 
@@ -161,19 +145,7 @@ func TestPreviewCachedObservedTimeAndAbsoluteExpiry(t *testing.T) {
 	if !s.ValidAt(s.ExpiresAt-1) || s.ValidAt(s.ExpiresAt) || !errors.Is(s.Select(nil, nil, s.ExpiresAt), ErrExpired) {
 		t.Fatal("expiry boundary")
 	}
-	for _, test := range []struct {
-		p    animeparse.Publication
-		want string
-	}{
-		{animeparse.Publication{Status: "missing"}, "publication_needs_confirmation"},
-		{animeparse.Publication{Status: "known", UnixMillis: ptr(s.T0 - 1)}, "older_history_needs_confirmation"},
-		{animeparse.Publication{Status: "known", UnixMillis: ptr(s.T0)}, "post_preview_new"},
-		{animeparse.Publication{Status: "known", UnixMillis: ptr(observed.UnixMilli() + 300001)}, "publication_needs_confirmation"},
-	} {
-		if got := ClassifyTime(test.p, s.T0, observed.UnixMilli()); got != test.want {
-			t.Fatal(got, test.want)
-		}
-	}
+
 }
 
 func TestPreviewReconcileChangedMissingAndReturnedChoices(t *testing.T) {

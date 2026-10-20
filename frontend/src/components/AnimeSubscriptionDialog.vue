@@ -43,6 +43,7 @@ const scroll = new Map<string, number>()
 let top = 0
 function close() {
   if (childOpen.value || previewOpen.value || settingsOpen.value) return
+  if (confirmRemove.value) { confirmRemove.value = false; return }
   if (discard.value) { cancelDiscard(); return }
   if (pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) { feedback.value = '提交结果尚未确认，请先核对原请求。'; return }
   if (dirty.value) { discard.value = true; return }

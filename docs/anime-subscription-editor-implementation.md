@@ -1,5 +1,7 @@
 # 资源选择与订阅配置页面（P1-09）
 
+> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+
 实施日期：2026-10-18。依据：[任务表](anime-subscription-tasks.md)、[设计方案](anime-subscription-plan.md)、[管理员 API](anime-admin-api-implementation.md)。
 
 ## 2026-10-19 交互优化

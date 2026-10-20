@@ -12,8 +12,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await page.clock.install({ time: new Date(now) })
   let settings = { revision: 3, accountId: 'main', accountRevision: 2, uid: '123', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
   const naming = { schemaVersion: 1, target: { tmdbId: '335790', title: '黑暗召唤师在地下恋爱中', year: '2026', season: 1, groupId: '', groupName: 'TMDB 默认', fingerprint: 'a'.repeat(64), seasons: [{ number: 1, name: '第1季', episodeCount: 12, episodes: [{ id: '101', number: 1, name: '开始' }] }] }, sources: [{ sourceRef: 'source-a', segments: [{ first: 25, sourceBase: 25, targetSeason: 1, targetBase: 1 }], overrides: [] }] }
-  const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, initialMode: 'from_episode', minimumEpisode: 25, include: [], exclude: [] } }
-  const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { formSelections: [], previewRefs: [] }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
+  const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, minimumEpisode: 25, include: [], exclude: [] } }
+  const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
   const plan = job => ({ mode: 'standard', revision: 2, example: !job, cloudConflictChecked: false, items: job ? [
     { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: 'ready', reason: 'mapped' },
     { id: '301', kind: 'subtitle', originalPath: '/下载/anime-job/video.chs.ass', targetPath: '/旧整理/作品 (2026) {tmdb-335790}/Season 01/作品.S01E01.银色子弹.chs.ass', status: 'ready', reason: 'subtitle_matched', videoId: '300' },
@@ -65,39 +65,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' })
-    const detail = page.locator('.as-detail'), organization = page.locator('.as-organization')
-    await organization.locator('summary').waitFor()
-    assert.equal(calls.filter(c => c.endpoint.endsWith('/organization-preview')).length, 0)
-    await organization.locator('summary').focus(); await page.keyboard.press('Enter')
-    await organization.locator('dd').nth(1).filter({ hasText: '/整理' }).waitFor()
-    assert.equal(await organization.getByRole('radio').count(), 0)
-    assert.equal(await page.getByText('保存整理方式', { exact: true }).count(), 0)
-    passed.push('默认标准命名整理，无处理方式选项，预览仅主动点击读取')
-    await organization.getByRole('button', { name: '查看整理预览', exact: true }).click()
-    await organization.getByText('映射示例，未包含实际文件扩展名。').waitFor()
-    assert.ok((await organization.locator('.as-plan-item').innerText()).includes('S01E01.银色子弹'))
-    assert.equal(calls.some(c => /cloud-download/.test(c.endpoint)), false)
-    state.failPreview = true
-    await organization.getByRole('button', { name: '重新读取整理预览' }).click()
-    await organization.getByText(/模拟预览失败.*上次预览已保留/).waitFor()
-    assert.equal(await organization.locator('.as-plan-item').count(), 1); state.failPreview = false
-    passed.push('示例标明无实际扩展名，读取失败保留上次结果且不查询115')
-    await organization.getByRole('button', { name: '动漫存储设置' }).click()
-    await page.getByRole('button', { name: '选择整理目录' }).click()
-    const picker = page.getByRole('dialog', { name: '动漫整理目录2' })
-    await picker.getByRole('button', { name: '新整理', exact: true }).click()
-    await picker.getByRole('button', { name: '保存整理目录', exact: true }).click()
-    await picker.waitFor({ state: 'detached' })
-    await page.getByRole('button', { name: '核对原目录保存', exact: true }).click()
-    await page.getByText('目录已保存', { exact: true }).waitFor()
-    await page.getByRole('button', { name: '关闭弹窗', exact: true }).click()
-    await organization.locator('dd').nth(1).filter({ hasText: '/新整理' }).waitFor()
-    const saves = calls.filter(c => c.endpoint.endsWith('/settings/organize-directory'))
-    assert.equal(saves.length, 2); assert.equal(saves[0].key, saves[1].key); assert.deepEqual(saves[0].body, saves[1].body); assert.equal(state.writes, 1)
-    passed.push('目录保存回执丢失时在共用设置核对原PATCH，不替换key、版本或目标')
-    await organization.getByRole('button', { name: '查看整理预览', exact: true }).click()
-    await organization.getByText(/新整理\/黑暗召唤师/).waitFor()
-    passed.push('整理目录保存后旧预览失效，新预览显示新目标')
+    await page.getByRole('tab').nth(2).click()
     await page.locator('[data-job-id="job-a"] > button').click()
     const job = page.locator('[data-job-id="job-a"]')
     await job.getByRole('button', { name: '查看整理预览', exact: true }).click()
@@ -180,29 +148,6 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.screenshot({ path: 'test-results/anime-organization-job-320.png' })
     await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-organization-job-dark.png' })
     await page.evaluate(() => document.documentElement.classList.remove('dark')); await page.setViewportSize({ width: 1440, height: 1000 })
-    await organization.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-desktop.png' })
-    await page.setViewportSize({ width: 320, height: 740 }); await organization.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-320.png' })
-    assert.equal(await organization.evaluate(el => el.scrollWidth <= el.clientWidth), true)
-    await page.evaluate(() => document.documentElement.classList.add('dark')); await page.screenshot({ path: 'test-results/anime-organization-dark.png' })
-    passed.push('320px和暗色目录、连续英文长路径自然折行，无横向溢出')
-    await page.goto(origin + '/anime/new?bangumiId=123', { waitUntil: 'networkidle' })
-    await page.getByRole('region', { name: 'TMDB 命名目标' }).waitFor()
-    assert.equal(await page.getByText('下载后的处理方式', { exact: true }).count(), 0)
-    assert.equal(await page.locator('.ae-organize-modes').count(), 0)
-    await page.getByRole('region', { name: '共用存储目录' }).waitFor()
-    assert.equal(await page.locator('.anime-editor').evaluate(el => el.scrollWidth <= el.clientWidth), true)
-    await page.screenshot({ path: 'test-results/anime-organization-editor-320.png' })
-    passed.push('编辑页仅显示共用目录摘要和统一设置入口，无多余处理方式单选项')
-    await page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' })
-    await organization.locator('summary').click()
-    await organization.getByRole('button', { name: '动漫存储设置', exact: true }).click()
-    await page.getByRole('button', { name: '选择整理目录', exact: true }).click()
-    await page.getByRole('dialog', { name: '动漫整理目录2', exact: true }).waitFor()
-    assert.equal(await page.getByRole('dialog').count(), 3)
-    await page.evaluate(async () => document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/anime/subscriptions'))
-    await page.getByRole('dialog').waitFor({ state: 'detached' })
-    assert.equal(await page.evaluate(() => document.body.style.overflow), '')
-    passed.push('详情、共用设置和目录选择器三级弹窗路由离开后释放滚动锁')
     assert.equal(calls.some(c => /\/organization$|\/organize\/apply|\/rename|\/move/.test(c.endpoint)), false)
     assert.deepEqual(errors, []); console.log(JSON.stringify({ passed, apiCalls: calls.length, errors }, null, 2))
   } finally { await browser.close() }

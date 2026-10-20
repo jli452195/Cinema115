@@ -73,32 +73,12 @@ type AnimeRules struct {
 	Include        []string    `json:"include"`
 	Exclude        []string    `json:"exclude"`
 	MinimumEpisode *int        `json:"minimumEpisode"`
-	InitialMode    string      `json:"initialMode"`
 	SpecMode       string      `json:"specMode,omitempty"`
 	SpecProfiles   []AnimeSpec `json:"specProfiles,omitempty"`
 }
 
-// Form selections are input restoration only. Saving one cannot authorize work
-// or consume a preview/baseline. SourceRef may be a new source's client ref.
-type AnimeFormSelection struct {
-	SourceRef            string   `json:"sourceRef"`
-	SelectedReleaseIDs   []string `json:"selectedReleaseIds"`
-	UnresolvedReleaseIDs []string `json:"unresolvedReleaseIds"`
-	DismissedReleaseIDs  []string `json:"dismissedReleaseIds,omitempty"`
-}
-
-type AnimeFormPreviewRef struct {
-	BatchID         string `json:"batchId"`
-	SourceRef       string `json:"sourceRef"`
-	SourcePreviewID string `json:"sourcePreviewId"`
-	LoadRevision    int64  `json:"loadRevision"`
-	SourceID        string `json:"sourceId,omitempty"`
-}
-
 type AnimeForm struct {
-	SchemaVersion  int                   `json:"schemaVersion"`
-	FormSelections []AnimeFormSelection  `json:"formSelections"`
-	PreviewRefs    []AnimeFormPreviewRef `json:"previewRefs,omitempty"`
+	SchemaVersion int `json:"schemaVersion"`
 }
 
 type AnimeSubscription struct {

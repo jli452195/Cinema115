@@ -8,13 +8,13 @@ import (
 	"testing"
 
 	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
-	"strm115/backend/internal/storage"
 )
 
-func newAnimeStartService(t *testing.T) (*AnimeAdminService, *bindingMikanFake, AnimeStartInput) {
+func newAnimeDefinitionService(t *testing.T) (*AnimeAdminService, *bindingMikanFake, AnimeSaveInput) {
 	t.Helper()
 	f := newAnimeDownloadFixture(t)
 	s := f.service
@@ -36,8 +36,7 @@ func newAnimeStartService(t *testing.T) (*AnimeAdminService, *bindingMikanFake, 
 	c.Settings = settings
 	c.Chapter = animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}
 	c.Sources[0].RunWhenEnabled = true
-	preview, err := p.Generate(context.Background(), "admin", AnimePreviewInput{Config: c, SourceRef: "main"})
-	if err != nil {
+	if _, err := s.Bindings.CheckBinding(context.Background(), animeMikanTestBudget(t, nil), AnimeBindingInput{Entry: AnimeEntryRef{ID: entry.ID}, Source: mikan.Source{ItemID: *c.Sources[0].ItemID, GroupID: *c.Sources[0].GroupID}, Binding: c.Sources[0].Binding}); err != nil {
 		t.Fatal(err)
 	}
 	season := 2
@@ -45,9 +44,8 @@ func newAnimeStartService(t *testing.T) (*AnimeAdminService, *bindingMikanFake, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := AnimeStartInput{SettingsRevision: settings.Revision, Chapter: c.Chapter,
-		Config:  AnimeSaveConfig{Entry: AnimeEntryRef{ID: entry.ID}, Sources: c.Sources, Naming: &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}},
-		Sources: []storage.AnimeActivationSource{{AnimePreviewRef: servicePreviewRef(*preview.Batch, 0), SelectedIDs: []string{preview.Batch.Sources[0].Items[0].Release.ID}, DismissedIDs: []string{preview.Batch.Sources[0].Items[1].Release.ID}}}}
+	in := AnimeSaveInput{SettingsRevision: settings.Revision,
+		Config: AnimeSaveConfig{Entry: AnimeEntryRef{ID: entry.ID}, Sources: c.Sources, Naming: &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}}}
 	// Starting uses the directory snapshot; it must not list/read 115 again.
 	s.Directories = animeDownloadDirectoryFunc(func(context.Context, string, string) (p115.DriveDirectory, error) {
 		t.Fatal("start read 115")
@@ -56,20 +54,20 @@ func newAnimeStartService(t *testing.T) (*AnimeAdminService, *bindingMikanFake, 
 	return s, feed, in
 }
 
-func TestAnimeStartServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
-	s, feed, in := newAnimeStartService(t)
+func TestAnimeDefinitionServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
+	s, feed, in := newAnimeDefinitionService(t)
 	ctx := context.Background()
 	reads := feed.reads
 	before, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := s.StartSubscription(ctx, "admin", "service_start_01", "", in)
+	out, err := s.SaveDefinition(ctx, "admin", "service_start_01", "", in)
 	if err != nil || out.Status != "enabled" || feed.reads != reads {
 		t.Fatal(out, err, feed.reads, reads)
 	}
 	select {
-	case <-s.animeVerificationWakeSignal():
+	case <-s.animeDiscoveryWakeSignal():
 	default:
 		t.Fatal("committed start did not wake pending resource verification")
 	}
@@ -78,20 +76,20 @@ func TestAnimeStartServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
 		t.Fatal("start mutated caller input", err)
 	}
 	s.Naming.Metadata.(*animeNamingFake).offline = true
-	again, err := s.StartSubscription(ctx, "admin", "service_start_01", "", in)
+	again, err := s.SaveDefinition(ctx, "admin", "service_start_01", "", in)
 	if err != nil || !reflect.DeepEqual(out, again) || feed.reads != reads {
 		t.Fatal(again, err)
 	}
 	select {
-	case <-s.animeVerificationWakeSignal():
+	case <-s.animeDiscoveryWakeSignal():
 		t.Fatal("idempotent start replay created another notification")
 	default:
 	}
 }
 
-func TestAnimeStartServiceConcurrentSameKey(t *testing.T) {
-	s, _, in := newAnimeStartService(t)
-	s.Naming.Metadata = &animeStartConcurrentNaming{AnimeNamingMetadata: s.Naming.Metadata}
+func TestAnimeDefinitionServiceConcurrentSameKey(t *testing.T) {
+	s, _, in := newAnimeDefinitionService(t)
+	s.Naming.Metadata = &animeDefinitionConcurrentNaming{AnimeNamingMetadata: s.Naming.Metadata}
 	var wg sync.WaitGroup
 	results := make([]model.AnimeConfigReceipt, 2)
 	errs := make([]error, 2)
@@ -99,7 +97,7 @@ func TestAnimeStartServiceConcurrentSameKey(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = s.StartSubscription(context.Background(), "admin", "concurrent_start_01", "", in)
+			results[i], errs[i] = s.SaveDefinition(context.Background(), "admin", "concurrent_start_01", "", in)
 		}(i)
 	}
 	wg.Wait()
@@ -109,18 +107,18 @@ func TestAnimeStartServiceConcurrentSameKey(t *testing.T) {
 }
 
 // The metadata fake counts calls; serialize those counters in concurrent tests.
-type animeStartConcurrentNaming struct {
+type animeDefinitionConcurrentNaming struct {
 	AnimeNamingMetadata
 	mu sync.Mutex
 }
 
-func (f *animeStartConcurrentNaming) AnimeDetails(ctx context.Context, id int) (*tmdb.Detail, error) {
+func (f *animeDefinitionConcurrentNaming) AnimeDetails(ctx context.Context, id int) (*tmdb.Detail, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.AnimeNamingMetadata.AnimeDetails(ctx, id)
 }
 
-func (f *animeStartConcurrentNaming) AnimeSeason(ctx context.Context, id, season int) (*tmdb.SeasonDetail, error) {
+func (f *animeDefinitionConcurrentNaming) AnimeSeason(ctx context.Context, id, season int) (*tmdb.SeasonDetail, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.AnimeNamingMetadata.AnimeSeason(ctx, id, season)

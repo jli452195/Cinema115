@@ -76,7 +76,4 @@ func registerAnimeControl(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			c.JSON(200, v)
 		})
 	}
-	for _, path := range []string{"/subscriptions/:id/enable-preview", "/subscriptions/:id/enable"} {
-		r.POST(path, func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
-	}
 }

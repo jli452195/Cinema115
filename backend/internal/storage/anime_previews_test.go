@@ -73,7 +73,7 @@ func TestAnimePreviewPersistenceAndNoExecution(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(b, got) {
 		t.Fatal("snapshot changed on restart", err)
 	}
-	for _, table := range []string{"anime_source_baselines", "anime_baseline_releases", "anime_release_decisions", "anime_subscriptions"} {
+	for _, table := range []string{"anime_source_baselines", "anime_release_decisions", "anime_subscriptions"} {
 		var count int
 		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("preview authorized work", table, count, err)

@@ -27,11 +27,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     function makeSource(config, take, previous) {
       const items = state.empty ? [] : Array.from({ length: Math.min(take, 120) }, (_, i) => item(config.ref, i))
       const pending = previous && config.rules.minimumEpisode !== previous.config.rules.minimumEpisode ? [{ releaseId: previous.selected[0] || `${config.ref}-old`, reason: 'changed', previousItem: previous.items[0] }] : []
-      const selected = previous ? previous.selected.filter(id => items.some(item => item.release.id === id && item.selectable) && !pending.some(item => item.releaseId === id)) : config.rules.initialMode === 'from_episode' ? items.filter(item => item.selectable).map(item => item.release.id) : []
+      const selected = previous ? previous.selected.filter(id => items.some(item => item.release.id === id && item.selectable) && !pending.some(item => item.releaseId === id)) : items.filter(item => item.selectable).map(item => item.release.id)
       return { ref: config.ref, config, id: `preview-${config.ref}-${state.batch}`, rev: 1, take, items, selected, pending, expires: Date.now() + (state.expired ? -1000 : 900000) }
     }
     function summary(source) { return { sourceRef: source.ref, sourcePreviewId: source.id, loadRevision: source.rev, generatedAt: Date.now(), expiresAt: source.expires, expired: source.expires < Date.now(), rawCount: source.items.length, loadedCount: source.items.length, matchedCount: source.items.filter(i => i.selectable).length, reviewCount: source.items.filter(i => i.decision === 'needs_confirmation').length, selectedCount: source.selected.length, pendingSelectionCount: source.pending.length, completeness: source.take > 100 || state.empty ? 'visible_end' : 'partial', stopReason: source.config.provider === 'anibt' && source.take >= 100 ? 'source_limit' : source.take > 100 ? '' : 'more_available', loadedFirst: source.items.length ? 25 : null, loadedLast: source.items.length ? 25 + Math.floor((source.items.length - 1) / 2) : null, gapsWithinLoadedMatches: [{ first: 26, last: 26 }], unloadedHistory: source.take <= 100 && !state.empty } }
-    function previewPage(source, number = 1) { return { items: source.items.slice((number - 1) * 50, number * 50), localStates: Object.fromEntries(source.items.slice(0,5).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected'][i]])), page: number, pageSize: 50, total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
+    function previewPage(source, number = 1) { return { items: source.items.slice((number - 1) * 50, number * 50), localStates: Object.fromEntries(source.items.slice(0,9).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected','filtered','needs_confirmation','seen','dismissed'][i]])), page: number, pageSize: 50, total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
     function response(batch, target, issues = []) {
       const sources = [...batch.sources.values()], totalRawCount = sources.reduce((n, s) => n + s.items.length, 0)
       return { batchId: batch.id, budget: { totalRawCount, limit: 2000, remaining: 2000 - totalRawCount }, sources: sources.map(summary), issues, ...(batch.sources.has(target) ? { page: previewPage(batch.sources.get(target)) } : {}) }
@@ -141,7 +141,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         else {
           const ids = Object.fromEntries(body.config.sources.map(s => [s.ref, s.id || `source-${s.ref}`]))
           state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: state.saved?.status || 'enabled', firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } },
-            sources: body.config.sources.map(s => ({ ...s, id: ids[s.ref], revision: s.expectedRevision + 1, configuredState: s.status })), form: { formSelections: body.config.formSelections.map(s => ({ ...s, sourceRef: ids[s.sourceRef] })), previewRefs: body.config.previewRefs },
+            sources: body.config.sources.map(s => ({ ...s, id: ids[s.ref], revision: s.expectedRevision + 1, configuredState: s.status })), form: { schemaVersion: 1 },
             naming: body.config.naming ? {schemaVersion:1,target:structuredClone(state.namingTarget),sources:body.config.naming.sources.map(s=>({...s,sourceRef:ids[s.sourceRef]}))} : null }
           if (state.saveMode === 'unknown') { state.saveMode = ''; await route.abort(); return }
           if (state.saveMode === 'invalid') { state.saveMode = ''; data = {}; }
@@ -188,8 +188,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const saved = s.writes().find(c => c.method === 'POST' && c.endpoint === '/api/admin/anime/subscriptions')
     assert.ok(saved, 'save configuration without preview')
     assert.equal(saved.body.sources, undefined)
-    assert.deepEqual(saved.body.config.formSelections, [])
-    assert.deepEqual(saved.body.config.previewRefs, [])
+    assert.equal("formSelections" in saved.body.config, false)
+    assert.equal("previewRefs" in saved.body.config, false)
     assert.equal(s.calls.filter(c => /\/(start|selections)$/.test(c.endpoint)).length, 0)
     passed.push('new definition saves without preview or selected download grants')
 
@@ -206,13 +206,18 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await s.page.locator('.ae-preview-stats').waitFor()
     assert.equal(await s.page.locator('dialog[open]').count(), 2)
     assert.equal(await s.page.locator('.ae-preview input[type=checkbox]').count(),0)
-    assert.deepEqual(await s.page.locator('.ae-preview-table thead th').allTextContents(),['规则匹配','下载记录','RSS','字幕组','原标题','重命名不含扩展名','发布时间'])
+    assert.deepEqual(await s.page.locator('.ae-preview-table thead th').allTextContents(),['规则匹配','处理状态','RSS','字幕组','原标题','重命名不含扩展名','发布时间'])
     assert.equal(await s.page.locator('.ae-preview-table tbody tr').first().locator('td').count(),7)
     const firstRow=s.page.locator('.ae-preview-table tbody tr').first()
     assert.equal(await firstRow.locator('td').nth(0).innerText(),'符合')
     assert.equal(await firstRow.locator('td').nth(1).innerText(),'已整理')
     assert.match(await firstRow.locator('time').innerText(),/2026-10-20/)
-    assert.equal(await s.page.locator('.ae-preview-table tbody tr').nth(3).locator('td').nth(1).innerText(),'无记录','a filtered decision is not a download record')
+    assert.deepEqual(await s.page.locator('.ae-preview-table tbody .ae-sticky-state').allTextContents().then(values=>values.slice(3,10)),['已过滤','已选定','已过滤','需确认','待检查','已忽略','尚未处理'],'persisted decisions must not be hidden as missing download records')
+    await s.page.getByRole('combobox',{name:'显示',exact:true}).click()
+    await s.page.getByRole('option',{name:'有下载记录',exact:true}).click()
+    assert.equal(await s.page.locator('.ae-preview-table tbody tr').count(),4,'skip/filter decisions are excluded from download records')
+    await s.page.getByRole('combobox',{name:'显示',exact:true}).click()
+    await s.page.getByRole('option',{name:'全部发布',exact:true}).click()
     assert.equal(await s.page.locator('.ae-preview-boundary').count(),0)
     assert.match(await firstRow.locator('.ae-release-filename').innerText(),/S02E01/)
     assert.equal(await s.page.locator('.ae-release-meta').count(),0,'default rows omit secondary metadata')

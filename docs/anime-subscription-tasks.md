@@ -1,5 +1,7 @@
 # 动漫订阅实施任务表
 
+> Current lifecycle: [configuration and RSS](anime-subscription-dialog-plan.md). v53 clears obsolete development runtime data once; old activation/history-selection items below are implementation history.
+
 更新日期：2026-10-20。
 
 设计依据：[动漫订阅与 115 离线追踪方案](anime-subscription-plan.md)。本文件是实施进度的统一记录位置，完成一项、验证一项，再勾选一项。

@@ -59,6 +59,7 @@ func (f *gardenFake) Fetch(ctx context.Context, path string, _ int64) ([]byte, e
 }
 func TestGardenProviderPreviewAndSave(t *testing.T) {
 	s, m, _, in := animeAdminFixture(t)
+	in.SettingsRevision = animeSaveReadySettings(t, s).Revision
 	f := &gardenFake{}
 	a := NewGardenService(f)
 	a.spacing = 0
@@ -75,7 +76,7 @@ func TestGardenProviderPreviewAndSave(t *testing.T) {
 	source.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "623249", GroupID: "dmhy_f776"}
 	source.Rules.MinimumEpisode = bindingPtr(1)
 	ctx := context.Background()
-	out, e := s.SaveConfiguration(ctx, "admin", "garden_create_001", "", in)
+	out, e := s.SaveDefinition(ctx, "admin", "garden_create_001", "", in)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -122,8 +123,9 @@ func TestGardenProviderPreviewAndSave(t *testing.T) {
 	replacement.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}
 	in.ExpectedRevision = saved.Revision
 	in.Config.Sources = []model.AnimeSourceConfig{replacement}
+	in.Config.Naming.Sources[0].SourceRef = "replacement"
 	in.Config.RemovedSourceIDs = []model.AnimeSourceRemoval{{ID: old.ID, ExpectedRevision: old.Revision}}
-	if _, e = s.SaveConfiguration(ctx, "admin", "replace_garden_001", out.ID, in); e != nil {
+	if _, e = s.SaveDefinition(ctx, "admin", "replace_garden_001", out.ID, in); e != nil {
 		t.Fatal("cross-provider replacement", e)
 	}
 	updated, e := s.Store.GetAnimeSubscription(ctx, out.ID, true)

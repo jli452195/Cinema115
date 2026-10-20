@@ -176,7 +176,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		return out, ErrAnimeConflict
 	}
 	basis := d.Snapshot.Selection
-	if basis == nil || !model.ValidAnimeID(basis.BaselineID) || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 || basis.Kind != "initial_history" && basis.Kind != "automatic" {
+	if basis == nil || !model.ValidAnimeID(basis.BaselineID) || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 {
 		return out, ErrAnimeInvalid
 	}
 	if basis.Target != target || basis.SubscriptionGeneration != sub.RunGeneration || basis.SourceGeneration != source.RunGeneration {
@@ -187,13 +187,6 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		return out, fmt.Errorf("check anime selection baseline: %w", err)
 	}
 	if !baselineOK {
-		return out, ErrAnimeConflict
-	}
-	var initial bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_baseline_releases WHERE baseline_id=? AND release_id=?)`, basis.BaselineID, releaseID).Scan(&initial); err != nil {
-		return out, fmt.Errorf("check anime initial selection: %w", err)
-	}
-	if initial != (basis.Kind == "initial_history") {
 		return out, ErrAnimeConflict
 	}
 	release, err := scanAnimeRelease(tx.QueryRowContext(ctx, `SELECT `+animeReleaseColumns+` FROM anime_releases WHERE id=?`, releaseID))

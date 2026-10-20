@@ -137,14 +137,14 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 			continue
 		}
 		basis := d.Snapshot.Selection
-		if basis == nil || basis.Target != job.Snapshot.Target || basis.SourceGeneration != source.RunGeneration || basis.SubscriptionGeneration != sub.RunGeneration || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 || basis.Kind != "initial_history" && basis.Kind != "automatic" {
+		if basis == nil || basis.Target != job.Snapshot.Target || basis.SourceGeneration != source.RunGeneration || basis.SubscriptionGeneration != sub.RunGeneration || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 {
 			continue
 		}
-		var baseline, initial bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_source_baselines WHERE id=? AND source_id=? AND source_revision<=?),EXISTS(SELECT 1 FROM anime_baseline_releases WHERE baseline_id=? AND release_id=?)`, basis.BaselineID, source.ID, source.Revision, basis.BaselineID, selection.release).Scan(&baseline, &initial); err != nil {
+		var baseline bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_source_baselines WHERE id=? AND source_id=? AND source_revision<=?)`, basis.BaselineID, source.ID, source.Revision).Scan(&baseline); err != nil {
 			return err
 		}
-		if !baseline || initial != (basis.Kind == "initial_history") {
+		if !baseline {
 			continue
 		}
 		release, err := scanAnimeRelease(tx.QueryRowContext(ctx, `SELECT `+animeReleaseColumns+` FROM anime_releases WHERE id=?`, selection.release))

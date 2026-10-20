@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -26,7 +27,7 @@ func discoveryFixture(t *testing.T) (*downloadClaimFixture, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.db.Exec(`UPDATE anime_source_baselines SET t0=?,snapshot_json=?`, now-3600000, raw); err != nil {
+	if _, err := f.store.db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, raw); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=?`, now-1); err != nil {
@@ -55,25 +56,17 @@ func discoveryPage(p AnimeSourcePoll, now int64, rows ...animefeed.SourceRelease
 func TestAnimeDiscoveryBaselineAndIndependentDecisions(t *testing.T) {
 	f, now := discoveryFixture(t)
 	p := discoveryPoll(t, f.store, now)
-	rows := []animefeed.SourceRelease{discoveryRow("rel_initial", now), discoveryRow("rel_exact", p.T0), discoveryRow("rel_old", p.T0-1), discoveryRow("rel_future", now+360001), discoveryRow("rel_missing", now), discoveryRow("rel_filter", now)}
-	rows[4].PublishedRaw = ""
-	rows[5].Title = "[字幕组] 动画 - 30 [720p][AVC]"
-	initial, err := animepreview.Build(animePollConfig(p), "poll", discoveryPage(p, now, rows[0]), now)
-	if err != nil {
-		t.Fatal(err)
+	rows := []animefeed.SourceRelease{discoveryRow("rel_current", now), discoveryRow("rel_ancient", 1), discoveryRow("rel_future", now+360001), discoveryRow("rel_missing", now), discoveryRow("rel_filter", now)}
+	for i := range rows {
+		rows[i].Title = fmt.Sprintf("[group] Anime - %d [1080p][HEVC]", 30+i)
 	}
-	saved, err := f.store.SaveAnimeReleases(context.Background(), []model.AnimeRelease{initial.Items[0].Release})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.db.Exec(`INSERT INTO anime_baseline_releases(baseline_id,release_id) VALUES(?,?)`, p.Source.ActiveBaselineID, saved[0].ID); err != nil {
-		t.Fatal(err)
-	}
+	rows[3].PublishedRaw = ""
+	rows[4].Title = "[group] Anime - 34 [720p][AVC]"
 	stats, err := f.store.CompleteAnimeSourcePoll(context.Background(), p, discoveryPage(p, now, rows...), now)
-	if err != nil || stats.Observed != 6 || stats.Selected != 1 || stats.Review != 3 {
+	if err != nil || stats.Observed != 5 || stats.Selected != 4 || stats.Review != 0 {
 		t.Fatal(stats, err)
 	}
-	want := map[string]string{"rel_initial": "history_skipped", "rel_exact": "selected", "rel_old": "needs_confirmation", "rel_future": "needs_confirmation", "rel_missing": "needs_confirmation", "rel_filter": "filtered"}
+	want := map[string]string{"rel_current": "selected", "rel_ancient": "selected", "rel_future": "selected", "rel_missing": "selected", "rel_filter": "filtered"}
 	for key, disposition := range want {
 		var id string
 		if err := f.store.db.QueryRow(`SELECT id FROM anime_releases WHERE post_key=?`, key).Scan(&id); err != nil {
@@ -83,13 +76,9 @@ func TestAnimeDiscoveryBaselineAndIndependentDecisions(t *testing.T) {
 		if err != nil || d.Disposition != disposition {
 			t.Fatal(key, d.Disposition, err)
 		}
-		if disposition == "selected" && (d.Snapshot.Selection == nil || d.Snapshot.Selection.Kind != "automatic" || d.Snapshot.Selection.Target != f.target || d.Snapshot.Selection.BaselineID != *p.Source.ActiveBaselineID) {
+		if disposition == "selected" && (d.Snapshot.Selection == nil || d.Snapshot.Selection.Target != f.target || d.Snapshot.Selection.BaselineID != *p.Source.ActiveBaselineID) {
 			t.Fatal("missing execution basis", d)
 		}
-	}
-	var t0 int64
-	if err := f.store.db.QueryRow(`SELECT t0 FROM anime_source_baselines WHERE id=?`, p.Source.ActiveBaselineID).Scan(&t0); err != nil || t0 != p.T0 {
-		t.Fatal("baseline moved", t0, err)
 	}
 	// The other publisher has its own baseline and rules, even for the same
 	// post. No primary success, history set or episode result is inherited.
@@ -298,7 +287,7 @@ func TestAnimeDiscoveryFrozenChoicesAndPersistentVerification(t *testing.T) {
 }
 
 func TestAnimeDiscoveryPendingRetryAndExplicitDecisions(t *testing.T) {
-	for _, mode := range []string{"retry", "cancel", "review", "dismissed", "history_skipped", "filtered"} {
+	for _, mode := range []string{"retry", "cancel", "review", "dismissed", "filtered"} {
 		t.Run(mode, func(t *testing.T) {
 			f, now := discoveryFixture(t)
 			p := discoveryPoll(t, f.store, now)

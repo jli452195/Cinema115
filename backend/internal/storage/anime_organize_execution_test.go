@@ -209,35 +209,3 @@ func TestAnimeOrganizeCheckpointFailureRollsBackIntent(t *testing.T) {
 		t.Fatal("failed commit dispatched external permission", got, err)
 	}
 }
-
-func TestAnimeOrganizeV51UpgradePreservesCurrentData(t *testing.T) {
-	f, job := animeFilesStoreFixture(t)
-	ctx := context.Background()
-	before := animeMigrationRows(t, f.store.db, "anime_drive_operations")
-	// Use the actual v51 constraint, not just a downgraded PRAGMA.
-	if _, err := f.store.db.Exec(`ALTER TABLE anime_drive_operations RENAME TO anime_ops_new`); err != nil {
-		t.Fatal(err)
-	}
-	oldSchema := strings.Replace(animeDriveOperationsSchema, "CHECK(kind IN ('submit','organize'))", "CHECK(kind='submit')", 1)
-	if _, err := f.store.db.Exec(oldSchema + `; INSERT INTO anime_drive_operations SELECT * FROM anime_ops_new; DROP TABLE anime_ops_new; PRAGMA user_version=51`); err != nil {
-		t.Fatal(err)
-	}
-	var databasePath string
-	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&databasePath); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(ctx, databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	if after := animeMigrationRows(t, reopened.db, "anime_drive_operations"); !reflect.DeepEqual(before, after) {
-		t.Fatal("v51 receipts were cleared")
-	}
-	if _, err := reopened.GetAnimeDownloadJob(ctx, job.ID); err != nil {
-		t.Fatal("v51 current subscription/task cleared", err)
-	}
-}

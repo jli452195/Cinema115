@@ -60,6 +60,7 @@ func TestAnimeNamingRecommendationUsesSeasonDateAndKeepsSeriesYear(t *testing.T)
 }
 func TestAnimeNamingAtomicSaveReplayAndOfflineLocalEdit(t *testing.T) {
 	s, _, _, in := animeAdminFixture(t)
+	in.SettingsRevision = animeSaveReadySettings(t, s).Revision
 	f := &animeNamingFake{}
 	s.Naming = &AnimeNamingService{Metadata: f}
 	ctx := context.Background()
@@ -70,7 +71,7 @@ func TestAnimeNamingAtomicSaveReplayAndOfflineLocalEdit(t *testing.T) {
 	}
 	ref := in.Config.Sources[0].Ref
 	in.Config.Naming = &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: ref, Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}
-	r, err := s.SaveConfiguration(ctx, "admin", "naming_create_001", "", in)
+	r, err := s.SaveDefinition(ctx, "admin", "naming_create_001", "", in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestAnimeNamingAtomicSaveReplayAndOfflineLocalEdit(t *testing.T) {
 	}
 	f.offline = true
 	before := f.calls
-	if again, err := s.SaveConfiguration(ctx, "admin", "naming_create_001", "", in); err != nil || again.ID != r.ID || f.calls != before {
+	if again, err := s.SaveDefinition(ctx, "admin", "naming_create_001", "", in); err != nil || again.ID != r.ID || f.calls != before {
 		t.Fatal("replay re-read metadata", again, err)
 	}
 	in.Config.Entry = AnimeEntryRef{ID: saved.EntryID}
@@ -91,7 +92,7 @@ func TestAnimeNamingAtomicSaveReplayAndOfflineLocalEdit(t *testing.T) {
 	in.Config.Sources = []model.AnimeSourceConfig{animeHTTPFreeCompleteSource(saved.Sources[0])}
 	in.Config.Naming.Sources[0].SourceRef = saved.Sources[0].ID
 	in.Config.Naming.Sources[0].Segments[0].TargetBase = 2
-	if _, err := s.SaveConfiguration(ctx, "admin", "naming_edit_001", r.ID, in); err != nil {
+	if _, err := s.SaveDefinition(ctx, "admin", "naming_edit_001", r.ID, in); err != nil {
 		t.Fatal("verified snapshot unavailable offline", err)
 	}
 	updated, _ := s.Store.GetAnimeSubscription(ctx, r.ID, false)

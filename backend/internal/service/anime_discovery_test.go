@@ -40,10 +40,10 @@ func discoveryServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *Ani
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.Exec(`UPDATE anime_source_baselines SET t0=?,snapshot_json=?`, now-3600000, string(raw)); err != nil {
+	if _, err := db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, string(raw)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE anime_subscription_sources SET next_check_at=?`, now-1); err != nil {
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET checked_at=1,next_check_at=?`, now-1); err != nil {
 		t.Fatal(err)
 	}
 	r := &AnimeDiscoveryRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
@@ -108,11 +108,11 @@ func addDiscoveryServiceBackup(t *testing.T, db *sql.DB, source model.AnimeSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,t0,confirmed_at,fingerprint,snapshot_json) SELECT 'standby-baseline','standby-source',1,t0,confirmed_at,fingerprint,snapshot_json FROM anime_source_baselines WHERE source_id=?`, source.ID)
+	_, err = db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT 'standby-baseline','standby-source',1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',active_baseline_id='standby-baseline',next_check_at=? WHERE id='standby-source'`, now); err != nil {
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',checked_at=1,active_baseline_id='standby-baseline',next_check_at=? WHERE id='standby-source'`, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -153,7 +153,7 @@ func TestAnimeDiscoveryRunnerFailureIsolationAndHealthPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			main, err := f.service.Store.GetAnimeSource(context.Background(), src.ID)
-			if err != nil || main.Health != tc.health || main.ErrorCode == nil || *main.ErrorCode != tc.code || main.CheckedAt != nil {
+			if err != nil || main.Health != tc.health || main.ErrorCode == nil || *main.ErrorCode != tc.code || main.CheckedAt == nil || *main.CheckedAt != 1 {
 				t.Fatal(main, err)
 			}
 			backup, err := f.service.Store.GetAnimeSource(context.Background(), "standby-source")
@@ -315,7 +315,7 @@ func TestAnimeDiscoveryRunnerBoundsPollPassAndSkipsInactiveSources(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,t0,confirmed_at,fingerprint,snapshot_json) SELECT ?,?,1,t0,confirmed_at,fingerprint,snapshot_json FROM anime_source_baselines WHERE source_id=?`, id, id, src.ID); err != nil {
+		if _, err := db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT ?,?,1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, id, id, src.ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',active_baseline_id=?,next_check_at=? WHERE id=?`, id, now, id); err != nil {

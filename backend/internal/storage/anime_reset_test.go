@@ -51,7 +51,7 @@ func assertAnimeReset(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(names) != 18 {
+	if len(names) != 17 {
 		t.Fatal("incomplete current schema", len(names))
 	}
 	for _, name := range names {
@@ -191,5 +191,43 @@ func TestAnimeDevelopmentResetFailureIsAtomicAndRestoresForeignKeys(t *testing.T
 	}
 	if err := f.store.db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
 		t.Fatal(fk, err)
+	}
+}
+
+func TestAnimeDevelopmentResetV52PreservesSettingsAndRunsOnce(t *testing.T) {
+	f, _ := animeSubmitStoreFixture(t)
+	ctx := context.Background()
+	settings, err := f.store.GetAnimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := nonAnimeRows(t, f.store)
+	// Reproduce the retired execution schema, including its history member table.
+	if _, err := f.store.db.Exec(`CREATE TABLE anime_baseline_releases(baseline_id TEXT,release_id TEXT); INSERT INTO anime_baseline_releases VALUES('old','test'); PRAGMA user_version=52`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertAnimeReset(t, f.store)
+	got, err := f.store.GetAnimeSettings(ctx)
+	if err != nil || !reflect.DeepEqual(settings, got) {
+		t.Fatal("directory/account settings changed", err)
+	}
+	if !reflect.DeepEqual(before, nonAnimeRows(t, f.store)) {
+		t.Fatal("another feature changed")
+	}
+	var obsolete int
+	if err := f.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='anime_baseline_releases'`).Scan(&obsolete); err != nil || obsolete != 0 {
+		t.Fatal("retired table retained", obsolete, err)
+	}
+	entry := createAnimeEntry(t, f.store, animePtr("456"))
+	sub := saveAnimeConfig(t, f.store, animeConfig(entry.ID))
+	if err := f.store.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := f.store.GetAnimeSubscription(ctx, sub.ID, false)
+	if err != nil || !reflect.DeepEqual(sub, restored) {
+		t.Fatal("normal restart cleared current data", err)
 	}
 }

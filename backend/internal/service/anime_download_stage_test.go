@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 	"strm115/backend/internal/storage"
 )
 
-// This fixture uses real save/preview/enable/claim transactions, without SQL
+// This fixture uses real save/discovery/claim transactions, without SQL
 // manufacturing an enabled subscription or execution selection.
 func animeEnabledStage(t *testing.T) (*animeDownloadFixture, string, model.AnimeDownloadJob) {
 	t.Helper()
@@ -29,12 +28,33 @@ func animeEnabledStageWithConfig(t *testing.T, configure func(*animeDownloadFixt
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "garden", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("123"), GroupID: bindingPtr("dmhy_f45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(12)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: bindingPtr(1), InitialMode: "from_episode"}}}}
+	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "garden", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("123"), GroupID: bindingPtr("dmhy_f45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(12)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: bindingPtr(1)}}}}
 	row := animefeed.SourceRelease{PostKey: "rel_stage", Title: "[字幕组] 番剧 - 01 [1080p]", MagnetHint: "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)}
+	// Keep the generic download fixture valid for automatic initialization.
+	account, err := f.accounts.Primary("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.settings, err = f.service.SaveSettings(ctx, "admin", "stage_settings_01", AnimeSettingsInput{ExpectedRevision: f.settings.Revision, DownloadCID: *f.settings.DownloadCID, OrganizeCID: bindingPtr("900"), ExpectedPrimaryAccountID: account.ID, ExpectedPrimaryAccountRevision: int64(account.Revision)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if configure != nil {
 		configure(f, &c, &row)
 	}
-	r, err := f.service.Store.SaveAnimeSubscription(ctx, c, nil)
+	settings, err := f.service.Store.GetAnimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Status = "enabled"
+	for i := range c.Sources {
+		c.Sources[i].Status = "enabled"
+	}
+	key, err := animeRequestKey("admin", "fixture", "stage_save_01", c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.service.Store.SaveAnimeConfiguration(ctx, c, key, storage.AnimeConfigGuard{Entry: e, Settings: settings, RequireAccount: true, Runtime: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,35 +62,13 @@ func animeEnabledStageWithConfig(t *testing.T, configure func(*animeDownloadFixt
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := sub.Sources[0]
-	now := time.Now().UnixMilli()
-	page := animefeed.SourcePage{Kind: "history", Source: animefeed.NewSource("garden", "123", "dmhy_f45"), ObservedAt: time.UnixMilli(now - 1000), RawCount: 1, RequestedTake: 50, Completeness: "visible_end", Releases: []animefeed.SourceRelease{row}}
-	b, err := f.service.Store.CreateAnimePreview(ctx, "admin", storage.ActivationConfig(sub, e, f.settings), []storage.AnimePreviewSeed{{SourceRef: source.ID, Page: &page}}, now)
-	if err != nil {
+	now := time.Now().Add(time.Second)
+	discovery := &AnimeDiscoveryRunner{Admin: f.service, now: func() time.Time { return now }, Feeds: animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		return AnimeSourceResult{SourcePage: animefeed.SourcePage{Kind: in.Kind, Source: in.Source, ObservedAt: now, RawCount: 1, RequestedTake: in.Take, Completeness: "visible_end", Releases: []animefeed.SourceRelease{row}}}, nil
+	})}
+	if err := discovery.PollOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	in := AnimeEnableInput{ExpectedRevision: sub.Revision, SettingsRevision: f.settings.Revision, Sources: []storage.AnimeActivationSource{{AnimePreviewRef: servicePreviewRef(b, 0), SelectedIDs: b.Sources[0].SelectedIDs, DismissedIDs: []string{}}}}
-	var wg sync.WaitGroup
-	errs := make(chan error, 8)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := f.service.EnableSubscription(ctx, "admin", "stage_enable_01", sub.ID, in)
-			errs <- err
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal("concurrent activation", err)
-		}
-	}
-	discovery := &AnimeDiscoveryRunner{Admin: f.service, Feeds: animeRSSFunc(func(context.Context, *AnimeSourceBudget, AnimeSourceInput) (AnimeSourceResult, error) {
-		t.Error("verification fetched RSS")
-		return AnimeSourceResult{}, errors.New("unexpected")
-	})}
 	if err := discovery.VerifyOnce(ctx); err != nil {
 		t.Fatal(err)
 	}

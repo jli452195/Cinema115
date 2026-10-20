@@ -105,7 +105,7 @@ func (s *Store) GetAnimeRelease(ctx context.Context, id string) (model.AnimeRele
 
 func animeP1Disposition(disposition string) bool {
 	switch disposition {
-	case "seen", "history_skipped", "filtered", "needs_confirmation", "dismissed":
+	case "seen", "filtered", "needs_confirmation", "dismissed":
 		return true
 	}
 	return false

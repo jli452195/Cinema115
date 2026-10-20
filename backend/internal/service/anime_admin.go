@@ -75,40 +75,21 @@ type AnimeAdminService struct {
 }
 
 type AnimeSaveConfig struct {
-	Naming           *model.AnimeNamingInput     `json:"naming"`
-	Entry            AnimeEntryRef               `json:"entry"`
-	Sources          []model.AnimeSourceConfig   `json:"sources"`
-	RemovedSourceIDs []model.AnimeSourceRemoval  `json:"removedSourceIds"`
-	FormSelections   []model.AnimeFormSelection  `json:"formSelections"`
-	PreviewRefs      []model.AnimeFormPreviewRef `json:"previewRefs"`
+	Naming           *model.AnimeNamingInput    `json:"naming"`
+	Entry            AnimeEntryRef              `json:"entry"`
+	Sources          []model.AnimeSourceConfig  `json:"sources"`
+	RemovedSourceIDs []model.AnimeSourceRemoval `json:"removedSourceIds"`
 }
 type AnimeSaveInput struct {
 	Config           AnimeSaveConfig `json:"config"`
-	SaveMode         string          `json:"saveMode"`
 	ExpectedRevision int64           `json:"expectedRevision"`
 	SettingsRevision int64           `json:"settingsRevision"`
-}
-
-type AnimeStartInput struct {
-	Config           AnimeSaveConfig                 `json:"config"`
-	ExpectedRevision int64                           `json:"expectedRevision"`
-	SettingsRevision int64                           `json:"settingsRevision"`
-	Chapter          animepreview.Chapter            `json:"chapter"`
-	Sources          []storage.AnimeActivationSource `json:"sources"`
-}
-
-func (s *AnimeAdminService) StartSubscription(ctx context.Context, actor, key, id string, in AnimeStartInput) (model.AnimeConfigReceipt, error) {
-	return s.saveConfiguration(ctx, actor, key, id, AnimeSaveInput{Config: in.Config, ExpectedRevision: in.ExpectedRevision, SettingsRevision: in.SettingsRevision, SaveMode: "paused"}, &in)
 }
 
 // SaveDefinition persists a complete definition. RSS initialization and download
 // authorization belong to the background workers, never this HTTP request.
 func (s *AnimeAdminService) SaveDefinition(ctx context.Context, actor, key, id string, in AnimeSaveInput) (model.AnimeConfigReceipt, error) {
-	in.SaveMode = "paused" // Validation shape; runtime status is server-owned.
-	if len(in.Config.FormSelections) != 0 || len(in.Config.PreviewRefs) != 0 {
-		return model.AnimeConfigReceipt{}, storage.ErrAnimeInvalid
-	}
-	return s.saveConfiguration(ctx, actor, key, id, in, nil, true)
+	return s.saveConfiguration(ctx, actor, key, id, in)
 }
 
 func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWriteKey, error) {
@@ -121,10 +102,9 @@ func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWrite
 	return k, k.Validate()
 }
 
-// SaveConfiguration validates all local fields before upstream reads. A source
+// saveConfiguration validates all local fields before upstream reads. A source
 // omitted by PATCH is retained; only explicit removals can delete one.
-func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput, start *AnimeStartInput, definition ...bool) (out model.AnimeConfigReceipt, resultErr error) {
-	runtime := len(definition) != 0 && definition[0]
+func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput) (out model.AnimeConfigReceipt, resultErr error) {
 	ctx, finishTiming := s.observeAnimeStage(ctx, id, "subscription")
 	defer finishTiming()
 	// Deep-copy before canonicalization; caller form slices remain untouched.
@@ -151,47 +131,13 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if in.Config.RemovedSourceIDs == nil {
 		in.Config.RemovedSourceIDs = []model.AnimeSourceRemoval{}
 	}
-	if in.Config.FormSelections == nil {
-		in.Config.FormSelections = []model.AnimeFormSelection{}
-	}
-	if in.Config.PreviewRefs == nil {
-		in.Config.PreviewRefs = []model.AnimeFormPreviewRef{}
-	}
 	sort.Slice(in.Config.Sources, func(i, j int) bool { return in.Config.Sources[i].Ref < in.Config.Sources[j].Ref })
 	sort.Slice(in.Config.RemovedSourceIDs, func(i, j int) bool { return in.Config.RemovedSourceIDs[i].ID < in.Config.RemovedSourceIDs[j].ID })
-	for i := range in.Config.FormSelections {
-		f := &in.Config.FormSelections[i]
-		if f.SelectedReleaseIDs == nil {
-			f.SelectedReleaseIDs = []string{}
-		}
-		if f.UnresolvedReleaseIDs == nil {
-			f.UnresolvedReleaseIDs = []string{}
-		}
-		if f.DismissedReleaseIDs == nil {
-			f.DismissedReleaseIDs = []string{}
-		}
-		sort.Strings(f.SelectedReleaseIDs)
-		sort.Strings(f.UnresolvedReleaseIDs)
-		sort.Strings(f.DismissedReleaseIDs)
-	}
-	sort.Slice(in.Config.FormSelections, func(i, j int) bool {
-		return in.Config.FormSelections[i].SourceRef < in.Config.FormSelections[j].SourceRef
-	})
-	sort.Slice(in.Config.PreviewRefs, func(i, j int) bool { return in.Config.PreviewRefs[i].SourceRef < in.Config.PreviewRefs[j].SourceRef })
 	op := "POST /api/admin/anime/subscriptions"
 	if id != "" {
 		op = "PATCH /api/admin/anime/subscriptions/" + id
 	}
-	var body any = in
-	if start != nil {
-		op += "/start"
-		body = struct {
-			Config  AnimeSaveInput
-			Chapter animepreview.Chapter
-			Sources []storage.AnimeActivationSource
-		}{in, start.Chapter, start.Sources}
-	}
-	k, err := animeRequestKey(actor, op, key, body)
+	k, err := animeRequestKey(actor, op, key, in)
 	if err != nil {
 		return out, err
 	}
@@ -204,10 +150,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		return out, nil
 	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
-	if in.SaveMode == "enabled" {
-		return out, storage.ErrAnimeCapability
-	}
-	if in.SaveMode != "draft" && in.SaveMode != "paused" || (id == "") != (in.ExpectedRevision == 0) || id != "" && !model.ValidAnimeID(id) || in.ExpectedRevision < 0 || in.ExpectedRevision >= model.AnimeMaxRevision || in.SettingsRevision < 1 || in.SettingsRevision > model.AnimeMaxRevision || in.Config.Entry.validate() != nil {
+	if (id == "") != (in.ExpectedRevision == 0) || id != "" && !model.ValidAnimeID(id) || in.ExpectedRevision < 0 || in.ExpectedRevision >= model.AnimeMaxRevision || in.SettingsRevision < 1 || in.SettingsRevision > model.AnimeMaxRevision || in.Config.Entry.validate() != nil {
 		return out, storage.ErrAnimeInvalid
 	}
 	for _, v := range in.Config.Sources {
@@ -225,7 +168,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if settings.Revision != in.SettingsRevision {
 		return out, storage.ErrAnimeSettingsChanged
 	}
-	c := model.AnimeSubscriptionConfig{ID: id, EntryID: "pending", ExpectedRevision: in.ExpectedRevision, Status: in.SaveMode, Sources: in.Config.Sources, RemovedSources: in.Config.RemovedSourceIDs, Form: model.AnimeForm{SchemaVersion: 1, FormSelections: in.Config.FormSelections, PreviewRefs: in.Config.PreviewRefs}}
+	c := model.AnimeSubscriptionConfig{ID: id, EntryID: "pending", ExpectedRevision: in.ExpectedRevision, Status: "paused", Sources: in.Config.Sources, RemovedSources: in.Config.RemovedSourceIDs, Form: model.AnimeForm{SchemaVersion: 1}}
 	// Validate partial source structures first, so incomplete paused input gets
 	// CONFIG_INCOMPLETE while illegal enums/ranges remain INVALID_INPUT.
 	partial := c
@@ -237,22 +180,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if partial.Validate() != nil {
 		return out, storage.ErrAnimeInvalid
 	}
-	if start != nil {
-		if len(start.Sources) < 1 || len(start.Sources) > model.AnimeMaxSources {
-			return out, storage.ErrAnimeInvalid
-		}
-		for _, ref := range start.Sources {
-			if !model.ValidAnimeID(ref.BatchID) || !model.ValidAnimeID(ref.SourceRef) || !model.ValidAnimeID(ref.PreviewID) || ref.LoadRevision < 1 || ref.LoadRevision >= model.AnimeMaxRevision || ref.SelectedIDs == nil || ref.DismissedIDs == nil || len(ref.SelectedIDs)+len(ref.DismissedIDs) > 2000 {
-				return out, storage.ErrAnimeInvalid
-			}
-		}
-		for _, source := range c.Sources {
-			if source.Status != "paused" || source.ItemID == nil || source.GroupID == nil || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
-				return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"sources." + source.Ref}}
-			}
-		}
-	}
-	if start != nil || runtime {
+	{
 		if settings.OrganizeCID == nil || in.Config.Naming == nil {
 			return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"organization"}}
 		}
@@ -435,10 +363,10 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	for _, v := range final {
 		if v.Role == "main" {
 			mains++
-			if runtime && !v.RunWhenEnabled {
+			if !v.RunWhenEnabled {
 				issues = append(issues, "mainSource")
 			}
-			if in.SaveMode == "paused" && v.Status != "paused" && !(runtime && v.Status == "enabled") {
+			if v.Status != "paused" && v.Status != "enabled" {
 				issues = append(issues, "mainSource")
 			}
 		}
@@ -453,7 +381,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if mains > 1 {
 		return out, storage.ErrAnimeInvalid
 	}
-	if in.SaveMode == "paused" {
+	{
 		if mains != 1 {
 			issues = append(issues, "mainSource")
 		}
@@ -463,79 +391,33 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if len(issues) > 0 {
 		return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: issues}
 	}
-	// Preview references are restoration hints, including expired snapshots.
-	// They cannot be reused across administrators or unrelated forms.
-	for _, ref := range in.Config.PreviewRefs {
-		b, e := s.Store.GetAnimePreview(ctx, actor, ref.BatchID)
-		if e != nil {
-			return out, e
+	guard := storage.AnimeConfigGuard{Entry: entry, Settings: settings, RequireAccount: true, Runtime: true}
+	if id == "" {
+		c.Status = "enabled"
+	} else {
+		if old.Status != "enabled" && old.Status != "paused" {
+			return out, storage.ErrAnimeTransition
 		}
-		savedHint := false
-		for _, saved := range old.Form.PreviewRefs {
-			if saved == ref {
-				savedHint = true
-				break
-			}
-		}
-		if !savedHint && (b.Config.SubscriptionID != id || b.Config.Chapter.ID != "" && b.Config.Chapter.ID != entry.ID || b.Config.Chapter.EditionKey != entry.EditionKey || !animeEqualString(b.Config.Chapter.BangumiID, entry.BangumiID)) {
-			return out, storage.ErrAnimeInvalid
-		}
-		matched := false
-		for _, preview := range b.Sources {
-			if preview.ID == ref.SourcePreviewID && preview.Ref == ref.SourceRef && ref.LoadRevision <= preview.LoadRevision {
-				for _, source := range final {
-					if (ref.SourceID != "" && ref.SourceID == source.ID || ref.SourceID == "" && ref.SourceRef == source.Ref) && source.ItemID != nil && source.GroupID != nil && preview.Page.Source == (animefeed.NewSource(source.Provider, *source.ItemID, *source.GroupID)) {
-						matched = true
-					}
-				}
-			}
-		}
-		if !matched {
-			return out, storage.ErrAnimeInvalid
+		c.Status = old.Status
+	}
+	for i := range c.Sources {
+		if c.Sources[i].RunWhenEnabled {
+			c.Sources[i].Status = "enabled"
 		}
 	}
-	guard := storage.AnimeConfigGuard{Entry: entry, Settings: settings, RequireAccount: in.SaveMode == "paused"}
-	if runtime {
-		if id == "" {
-			c.Status = "enabled"
-		} else {
-			if old.Status != "enabled" && old.Status != "paused" {
-				return out, storage.ErrAnimeTransition
-			}
-			c.Status = old.Status
-		}
-		for i := range c.Sources {
-			if c.Sources[i].RunWhenEnabled {
-				c.Sources[i].Status = "enabled"
-			}
-		}
-		guard.Runtime = true
-		out, err = s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
-		if err == nil {
-			s.wakeAnimeDiscovery()
-		}
-		return out, err
+	guard.Runtime = true
+	out, err = s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
+	if err == nil {
+		s.wakeAnimeDiscovery()
 	}
-	if start != nil {
-		session, err := s.PrepareDownloadTarget(ctx, in.SettingsRevision)
-		if err != nil {
-			return out, err
-		}
-		expected := animepreview.Config{Chapter: start.Chapter, SubscriptionID: id, Revision: in.ExpectedRevision, Settings: settings, Sources: c.Sources}
-		out, err = s.Store.StartAnimeConfiguration(ctx, c, k, guard, expected, start.Sources, session.Target())
-		if err == nil {
-			s.wakeAnimeVerification()
-		}
-		return out, err
-	}
-	return s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
+	return out, err
 }
 
 func animeEqualString(a, b *string) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 func animeSourceConfig(v model.AnimeSource) model.AnimeSourceConfig {
-	return model.AnimeSourceConfig{ID: v.ID, Ref: v.ID, ExpectedRevision: v.Revision, Role: v.Role, Position: v.Position, Status: v.Status, RunWhenEnabled: v.RunWhenEnabled, Provider: v.Provider, ItemID: v.ItemID, GroupID: v.GroupID, GroupName: v.GroupName, Binding: v.Binding, Rules: v.Rules}
+	return model.AnimeSourceConfig{ID: v.ID, Ref: v.ID, ExpectedRevision: v.Revision, Role: v.Role, Position: v.Position, Status: "paused", RunWhenEnabled: v.RunWhenEnabled, Provider: v.Provider, ItemID: v.ItemID, GroupID: v.GroupID, GroupName: v.GroupName, Binding: v.Binding, Rules: v.Rules}
 }
 
 type AnimeReadiness struct {

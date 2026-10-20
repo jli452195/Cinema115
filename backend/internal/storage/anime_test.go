@@ -26,11 +26,11 @@ func createAnimeEntry(t *testing.T, s *Store, id *string) model.AnimeEntry {
 }
 
 func animeMainSource(ref, group string) model.AnimeSourceConfig {
-	return model.AnimeSourceConfig{Ref: ref, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: animePtr("2259"), GroupID: animePtr(group), GroupName: animePtr("字幕组" + group), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animePtr(25), Last: animePtr(36)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animePtr("1080p"), MinimumEpisode: animePtr(30), InitialMode: "from_episode", Include: []string{"HEVC"}, Exclude: []string{}}}
+	return model.AnimeSourceConfig{Ref: ref, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: animePtr("2259"), GroupID: animePtr(group), GroupName: animePtr("字幕组" + group), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animePtr(25), Last: animePtr(36)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animePtr("1080p"), MinimumEpisode: animePtr(30), Include: []string{"HEVC"}, Exclude: []string{}}}
 }
 
 func animeConfig(entryID string) model.AnimeSubscriptionConfig {
-	return model.AnimeSubscriptionConfig{EntryID: entryID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1, FormSelections: []model.AnimeFormSelection{}}, Sources: []model.AnimeSourceConfig{animeMainSource("main", "45")}}
+	return model.AnimeSubscriptionConfig{EntryID: entryID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{animeMainSource("main", "45")}}
 }
 
 func saveAnimeConfig(t *testing.T, s *Store, c model.AnimeSubscriptionConfig) model.AnimeSubscription {
@@ -164,7 +164,7 @@ func resetAnimeSchemaToV38(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(tables) != 18 {
+	if len(tables) != 17 {
 		t.Fatalf("current anime table count: %d", len(tables))
 	}
 	// Build a v38 fixture with the existing business schema and no anime tables.
@@ -224,17 +224,13 @@ func TestAnimeEntryIdentityAndLocalHistory(t *testing.T) {
 	}
 }
 
-func TestAnimeConfigIndependentSourcesAndFormOnlySelections(t *testing.T) {
+func TestAnimeConfigIndependentSources(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
 	e := createAnimeEntry(t, s, animePtr("123"))
 	c := animeConfig(e.ID)
 	c.Sources = append(c.Sources, model.AnimeSourceConfig{Ref: "backup", Role: "standby", Position: 1, Status: "draft", Provider: "mikan", Binding: model.AnimeBinding{SchemaVersion: 1}, Rules: model.AnimeRules{SchemaVersion: 1}})
-	c.Form.FormSelections = []model.AnimeFormSelection{{SourceRef: "main", SelectedReleaseIDs: []string{"pending-release"}}}
 	sub := saveAnimeConfig(t, s, c)
-	if c.Form.FormSelections[0].SourceRef != "main" {
-		t.Fatal("save mutated caller form")
-	}
 	if sub.Status != "paused" || sub.FirstEnabledAt != nil || len(sub.Sources) != 2 {
 		t.Fatal(sub)
 	}
@@ -242,10 +238,7 @@ func TestAnimeConfigIndependentSourcesAndFormOnlySelections(t *testing.T) {
 	if main.SourceKey == nil || *main.SourceKey != "mikan:2259:45" || main.NamespaceID == backup.NamespaceID || *main.Rules.MinimumEpisode != 30 || main.Binding.ChapterCorrespondence.SourceEpisode != 25 || backup.Rules.MinimumEpisode != nil {
 		t.Fatal("source identity/rules mixed", sub)
 	}
-	if sub.Form.FormSelections[0].SourceRef != main.ID {
-		t.Fatal("temporary ref not resolved")
-	}
-	for _, table := range []string{"anime_source_baselines", "anime_baseline_releases", "anime_release_decisions"} {
+	for _, table := range []string{"anime_source_baselines", "anime_release_decisions"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("form selection authorized work", table, count, err)

@@ -421,8 +421,6 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	registerAnimeNaming(r, s)
 	registerAnimeOrganization(r, s)
 	// Old preview-based activation cannot grant work through the public API.
-	r.POST("/subscriptions/start", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
-	r.POST("/subscriptions/:id/start", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 	r.POST("/subscriptions", func(c *gin.Context) { animeSaveDefinition(c, s, "") })
 	r.PATCH("/subscriptions/:id", func(c *gin.Context) {
 		if id, ok := animeID(c); ok {

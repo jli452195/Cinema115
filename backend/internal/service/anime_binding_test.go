@@ -397,7 +397,7 @@ func TestAnimeBindingSQLiteRetainsIndependentSourceConfiguration(t *testing.T) {
 			role = "standby"
 			minimum = 5
 		}
-		config.Sources = append(config.Sources, model.AnimeSourceConfig{Ref: role, Role: role, Position: i, Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: bindingPtr(check.Source.ItemID), GroupID: bindingPtr(check.Source.GroupID), GroupName: bindingPtr(check.Source.GroupName), Binding: check.Binding, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: &minimum, InitialMode: "from_episode"}})
+		config.Sources = append(config.Sources, model.AnimeSourceConfig{Ref: role, Role: role, Position: i, Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: bindingPtr(check.Source.ItemID), GroupID: bindingPtr(check.Source.GroupID), GroupName: bindingPtr(check.Source.GroupName), Binding: check.Binding, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: &minimum}})
 	}
 	receipt, err := db.SaveAnimeSubscription(ctx, config, nil)
 	if err != nil {

@@ -118,7 +118,7 @@ func (r AnimeRules) Validate(complete bool) error {
 	if r.SchemaVersion != AnimeSchemaVersion {
 		return fmt.Errorf("unsupported rules schema")
 	}
-	if complete && (r.Resolution == nil || r.MinimumEpisode == nil || r.InitialMode == "") {
+	if complete && (r.Resolution == nil || r.MinimumEpisode == nil) {
 		return fmt.Errorf("rules are incomplete")
 	}
 	if r.SpecMode != "" && r.SpecMode != "any" && r.SpecMode != "profiles" || len(r.SpecProfiles) > 12 || r.SpecMode != "profiles" && len(r.SpecProfiles) != 0 || complete && r.SpecMode == "profiles" && len(r.SpecProfiles) == 0 {
@@ -141,11 +141,6 @@ func (r AnimeRules) Validate(complete bool) error {
 	}
 	if r.MinimumEpisode != nil && !animeEpisode(*r.MinimumEpisode) {
 		return fmt.Errorf("invalid minimum episode")
-	}
-	switch r.InitialMode {
-	case "", "from_episode", "new_only", "selected_history":
-	default:
-		return fmt.Errorf("invalid initial mode")
 	}
 	for _, words := range [][]string{r.Include, r.Exclude} {
 		if len(words) > 10 {
@@ -206,7 +201,7 @@ func (c AnimeSubscriptionConfig) Validate() error {
 	if len(c.Sources) > AnimeMaxSources || len(c.RemovedSources) > AnimeMaxSources {
 		return fmt.Errorf("too many source changes")
 	}
-	if c.Form.SchemaVersion != AnimeSchemaVersion || len(c.Form.FormSelections) > AnimeMaxSources || len(c.Form.PreviewRefs) > AnimeMaxSources {
+	if c.Form.SchemaVersion != AnimeSchemaVersion {
 		return fmt.Errorf("invalid saved form")
 	}
 	refs := make(map[string]bool, len(c.Sources))
@@ -228,29 +223,6 @@ func (c AnimeSubscriptionConfig) Validate() error {
 			return fmt.Errorf("invalid source removal")
 		}
 		ids[s.ID] = true
-	}
-	selectionRefs := make(map[string]bool, len(c.Form.FormSelections))
-	for _, f := range c.Form.FormSelections {
-		if !ValidAnimeID(f.SourceRef) || selectionRefs[f.SourceRef] || len(f.SelectedReleaseIDs)+len(f.UnresolvedReleaseIDs)+len(f.DismissedReleaseIDs) > 2000 {
-			return fmt.Errorf("invalid form selection")
-		}
-		selectionRefs[f.SourceRef] = true
-		seen := make(map[string]bool, len(f.SelectedReleaseIDs)+len(f.UnresolvedReleaseIDs))
-		for _, list := range [][]string{f.SelectedReleaseIDs, f.UnresolvedReleaseIDs, f.DismissedReleaseIDs} {
-			for _, id := range list {
-				if !ValidAnimeID(id) || seen[id] {
-					return fmt.Errorf("invalid selected release")
-				}
-				seen[id] = true
-			}
-		}
-	}
-	previewSources := make(map[string]bool, len(c.Form.PreviewRefs))
-	for _, p := range c.Form.PreviewRefs {
-		if !ValidAnimeID(p.BatchID) || !ValidAnimeID(p.SourceRef) || !ValidAnimeID(p.SourcePreviewID) || p.SourceID != "" && !ValidAnimeID(p.SourceID) || p.LoadRevision < 1 || p.LoadRevision > AnimeMaxRevision || previewSources[p.SourceRef] {
-			return fmt.Errorf("invalid saved preview reference")
-		}
-		previewSources[p.SourceRef] = true
 	}
 	return nil
 }

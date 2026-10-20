@@ -95,7 +95,7 @@ func TestAnimeControlHTTPExecutionStaysGatedAndActionsAgree(t *testing.T) {
 	if v := f.call(t, "POST", base+"/pause", f.admin, "pause_draft_01", `{"expectedRevision":1}`, 409); v["code"] != "STATE_CONFLICT" {
 		t.Fatal(v)
 	}
-	for _, action := range []string{"enable", "resume", "check", "organize/apply"} {
+	for _, action := range []string{"resume", "check", "organize/apply"} {
 		if v := f.call(t, "POST", base+"/"+action, f.admin, "enable_gated", `{"expectedRevision":1}`, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
 			t.Fatal(v)
 		}

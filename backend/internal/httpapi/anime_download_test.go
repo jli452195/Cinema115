@@ -73,7 +73,7 @@ func TestAnimeDownloadHTTPDefinitionAuthReceiptAndLifecycle(t *testing.T) {
 	}
 	base := "/subscriptions/" + first["id"].(string)
 	for _, path := range []string{base + "/enable-preview", base + "/enable", "/subscriptions/start", base + "/start"} {
-		f.call(t, "POST", path, f.admin, "closed_enable_01", input, 409)
+		f.call(t, "POST", path, f.admin, "closed_enable_01", input, 404)
 	}
 	for _, action := range []string{"pause", "resume"} {
 		v := f.call(t, "GET", base, f.admin, "", nil, 200)

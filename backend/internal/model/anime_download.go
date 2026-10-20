@@ -2,11 +2,9 @@ package model
 
 import "strm115/backend/internal/animeresource"
 
-// AnimeSelectionBasis is recorded when execution is explicitly authorized,
-// separately from P1 form selections. Activation/discovery creates pending
-// choices before bounded resource verification; P1 saves cannot create them.
+// AnimeSelectionBasis records the background worker's execution authorization
+// against a fixed source generation and download target.
 type AnimeSelectionBasis struct {
-	Kind                   string              `json:"kind"` // initial_history or automatic
 	BaselineID             string              `json:"baselineId"`
 	SelectedAt             int64               `json:"selectedAt"`
 	Target                 AnimeDownloadTarget `json:"target"`

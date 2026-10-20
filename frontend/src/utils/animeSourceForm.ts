@@ -13,9 +13,9 @@ export interface SourceForm {
   correspondence: boolean; sourceEpisode: string; chapterEpisode: string
   specMode: '' | 'profiles' | 'any'; specProfiles: AnimeSpec[]
   sample?: AnimeSourceSample; sampleBusy: boolean; sampleError: string; sampleCooldown: number
-  resolution: '' | '720p' | '1080p' | '2160p' | 'any'; minimum: string; initialMode: 'from_episode' | 'new_only' | 'selected_history'; include: string; exclude: string
+  resolution: '' | '720p' | '1080p' | '2160p' | 'any'; minimum: string; include: string; exclude: string
   preview?: { ref: AnimePreviewRef; summary: AnimePreviewSummary; signature: string; take: number; page?: AnimePreviewPage; needsSync?: boolean }
-  selected: string[]; unresolved: string[]; recovery: string[]; dismissed: string[]; previewError: string; previewCooldown: number
+  previewError: string; previewCooldown: number
 }
 export function newAnimeSource(role: SourceForm['role'], keyword = '', provider: AnimeSourceProvider = 'mikan'): SourceForm {
   return { provider, ref: role === 'main' ? 'main' : animeRequestKey(), id: '', revision: 0, role, runWhenEnabled: true,
@@ -24,7 +24,7 @@ export function newAnimeSource(role: SourceForm['role'], keyword = '', provider:
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
     mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [],
     specMode: '', specProfiles: [], sampleBusy: false, sampleError: '', sampleCooldown: 0,
-    resolution: '', minimum: '1', initialMode: 'from_episode', include: '', exclude: '', selected: [], unresolved: [], recovery: [], dismissed: [], previewError: '', previewCooldown: 0 }
+    resolution: '', minimum: '1', include: '', exclude: '', previewError: '', previewCooldown: 0 }
 }
 function episode(value: string, label: string): number | null {
   if (!value.trim()) return null
@@ -63,7 +63,7 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
   return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: form.provider,
     itemId: form.itemId || null, groupId: form.groupId || null, groupName: form.groupName || null,
     binding: { schemaVersion: 1, confirmed, scope, chapterCorrespondence, ...(confirmed && form.review ? { review: form.review } : {}) },
-    rules: { schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, initialMode: form.initialMode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
+    rules: { schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
 }
 export function animeSourceReady(form: SourceForm) { try { return animeSourceConfig(form, 0).status === 'paused' } catch { return false } }
 export function animeBindingKey(form: SourceForm) {

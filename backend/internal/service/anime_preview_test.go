@@ -36,7 +36,7 @@ func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *sto
 	c := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{{
 		Ref: "main", Role: "main", Status: "paused", Provider: "mikan", ItemID: bindingPtr("2259"), GroupID: bindingPtr("45"), GroupName: bindingPtr("untrusted client name"),
 		Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(150)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}},
-		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(30), Resolution: bindingPtr("1080p"), InitialMode: "from_episode"},
+		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(30), Resolution: bindingPtr("1080p")},
 	}}}
 	at := time.Now().UTC().Truncate(time.Second).Add(-time.Second)
 	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
@@ -124,9 +124,7 @@ func TestAnimePreviewServiceLoadAndSelectAcrossPages(t *testing.T) {
 	if len(source.Items) != 53 || len(source.SelectedIDs) != 50 || len(source.Pending) != 0 {
 		t.Fatal("new releases silently added to initial choices", source.Summary(s.timestamp()))
 	}
-	if source.Items[52].Timing != "post_preview_new" {
-		t.Fatal("new release timing", source.Items[52])
-	}
+
 	selected := []string{source.Items[0].Release.ID, source.Items[52].Release.ID}
 	dismissed := make([]string, 0, 49)
 	for i := 1; i < 50; i++ {

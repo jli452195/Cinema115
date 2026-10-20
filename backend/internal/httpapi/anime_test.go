@@ -78,7 +78,7 @@ func (f *animeHTTPMikan) ReadSource(ctx context.Context, in mikan.SourceRequest)
 }
 func animeHTTPPtr[T any](v T) *T { return &v }
 func animeHTTPSource() model.AnimeSourceConfig {
-	return model.AnimeSourceConfig{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: animeHTTPPtr("2259"), GroupID: animeHTTPPtr("45"), GroupName: animeHTTPPtr("browser"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animeHTTPPtr(1), Last: animeHTTPPtr(100)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animeHTTPPtr("1080p"), MinimumEpisode: animeHTTPPtr(1), InitialMode: "from_episode"}}
+	return model.AnimeSourceConfig{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: animeHTTPPtr("2259"), GroupID: animeHTTPPtr("45"), GroupName: animeHTTPPtr("browser"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animeHTTPPtr(1), Last: animeHTTPPtr(100)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animeHTTPPtr("1080p"), MinimumEpisode: animeHTTPPtr(1)}}
 }
 
 type animeHTTPFixture struct {
@@ -137,6 +137,9 @@ func (f animeHTTPFixture) call(t *testing.T, method, path, token, key string, bo
 	f.r.ServeHTTP(w, req)
 	if w.Code != want {
 		t.Fatalf("%s %s got %d want %d: %s", method, path, w.Code, want, w.Body.String())
+	}
+	if want == 404 && w.Body.String() == "404 page not found" {
+		return nil // Retired routes are absent, rather than gated capabilities.
 	}
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("missing no-store")
@@ -214,8 +217,8 @@ func TestAnimeHTTPStrictBoundaryAndSafeErrors(t *testing.T) {
 
 func TestAnimeHTTPDefinitionsValidateBeforeReads(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
-	for _, mode := range []string{"draft", "paused", "enabled"} {
-		in := service.AnimeSaveInput{SaveMode: mode, SettingsRevision: 1}
+	{
+		in := service.AnimeSaveInput{SettingsRevision: 1}
 		for _, route := range []struct{ method, path string }{{"POST", "/subscriptions"}, {"PATCH", "/subscriptions/old-config"}} {
 			if v := f.call(t, route.method, route.path, f.admin, "obsolete_save_01", in, 400); v["code"] != "INVALID_INPUT" {
 				t.Fatal(v)

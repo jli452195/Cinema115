@@ -186,16 +186,15 @@ func checkAnimeResumeTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscrip
 			continue
 		}
 		var raw string
-		var fingerprint string
-		var revision, t0 int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_revision,t0,snapshot_json,fingerprint FROM anime_source_baselines WHERE id=? AND source_id=?`, *source.ActiveBaselineID, source.ID).Scan(&revision, &t0, &raw, &fingerprint); err != nil {
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT source_revision,snapshot_json FROM anime_source_baselines WHERE id=? AND source_id=?`, *source.ActiveBaselineID, source.ID).Scan(&revision, &raw); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrAnimeReconfirm
 			}
 			return err
 		}
 		var baseline model.AnimeExecutionBaseline
-		if decodeAnimeJSON(raw, &baseline) != nil || baseline.SchemaVersion != model.AnimeSchemaVersion || baseline.RuleVersion != animepreview.RuleVersion || baseline.ParserVersion != animeparse.ParserVersion || baseline.TimeVersion != animeparse.TimeVersion || revision != source.Revision && fingerprint != "definition-pending:"+source.ID || revision > source.Revision || t0 <= 0 {
+		if decodeAnimeJSON(raw, &baseline) != nil || baseline.SchemaVersion != model.AnimeSchemaVersion || baseline.RuleVersion != animepreview.RuleVersion || baseline.ParserVersion != animeparse.ParserVersion || baseline.TimeVersion != animeparse.TimeVersion || revision > source.Revision || revision < source.Revision && source.CheckedAt != nil {
 			return ErrAnimeReconfirm
 		}
 		if err := checkAnimeDownloadTargetTx(ctx, tx, baseline.Target, true); err != nil {

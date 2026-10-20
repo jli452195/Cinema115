@@ -12,7 +12,7 @@ import (
 )
 
 func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) {
-	s, feed, old := newAnimeStartService(t)
+	s, feed, old := newAnimeDefinitionService(t)
 	s.Previews = nil // Saving cannot depend on the UI preview service.
 	in := AnimeSaveInput{Config: old.Config, SettingsRevision: old.SettingsRevision}
 	reads := feed.reads
@@ -26,11 +26,19 @@ func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) 
 		t.Fatal("save created execution baseline", sub, err)
 	}
 	now := time.Now().Add(time.Second)
+	checks := 0
 	runner := AnimeDiscoveryRunner{Admin: s, now: func() time.Time { return now }, Feeds: animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, input AnimeSourceInput) (AnimeSourceResult, error) {
-		if input.Kind != "history" || input.Take != 2000 {
-			t.Fatal("first discovery did not read bounded history", input.Kind, input.Take)
+		if checks == 0 && (input.Kind != "history" || input.Take != 2000) || checks > 0 && input.Kind != "rss" {
+			t.Fatal("history must initialize once, then poll RSS", checks, input.Kind, input.Take)
 		}
 		page, err := feed.ReadSource(ctx, mikan.SourceRequest{Source: input.Source, Kind: input.Kind, Take: input.Take})
+		page.ObservedAt = now
+		if checks > 0 {
+			page.Completeness, page.StopReason = "partial", "rss_window"
+			page.Releases = append(page.Releases, mikan.SourceRelease{PostKey: "0000000000000000000000000000000000000003", Title: "[组] 动画 [32][1080p]", PublishedRaw: now.Add(-time.Second).Format(time.RFC3339Nano)})
+			page.RawCount++
+		}
+		checks++
 		return AnimeSourceResult{SourcePage: page}, err
 	})}
 	if err := runner.PollOnce(ctx); err != nil {
@@ -60,10 +68,26 @@ func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) 
 	if err != nil || again.ID != receipt.ID || again.Revision != receipt.Revision || feed.reads != reads+1 {
 		t.Fatal(again, err)
 	}
+	// A fresh worker has no in-memory initialization state. It must still
+	// resume the persisted RSS schedule and discover only the new episode.
+	runner = AnimeDiscoveryRunner{Admin: s, now: func() time.Time { return now }, Feeds: runner.Feeds}
+	now = now.Add(16 * time.Minute)
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	page, err = s.Store.ListAnimeReleases(ctx, storage.AnimeReleaseFilter{SourceID: after.Sources[0].ID, Page: 1, PageSize: 20})
+	if err != nil || len(page.Items) != 3 || checks != 2 {
+		t.Fatal("worker restart lost or repeated history", len(page.Items), checks, err)
+	}
+	for _, row := range page.Items {
+		if row.Decision.Disposition != "selected" || row.Decision.Generation != 1 {
+			t.Fatal("new release was missed or an existing selection repeated", row.Decision)
+		}
+	}
 }
 
 func TestAnimeDefinitionInitializationFailurePauseAndEdit(t *testing.T) {
-	s, _, old := newAnimeStartService(t)
+	s, _, old := newAnimeDefinitionService(t)
 	in := AnimeSaveInput{Config: old.Config, SettingsRevision: old.SettingsRevision}
 	ctx := context.Background()
 	receipt, err := s.SaveDefinition(ctx, "admin", "definition_failure_01", "", in)

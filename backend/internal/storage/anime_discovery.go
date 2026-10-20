@@ -23,10 +23,8 @@ type AnimeSourcePoll struct {
 	Entry        model.AnimeEntry
 	Token        string
 	Until        int64
-	T0           int64
 	Baseline     model.AnimeExecutionBaseline
 	IssueCode    string
-	Definition   bool
 	Initialize   bool
 }
 
@@ -106,8 +104,7 @@ func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSou
 	}
 	var raw string
 	var revision int64
-	var fingerprint string
-	err = tx.QueryRowContext(ctx, `SELECT t0,source_revision,snapshot_json,fingerprint FROM anime_source_baselines WHERE id=? AND source_id=?`, out.Source.ActiveBaselineID, id).Scan(&out.T0, &revision, &raw, &fingerprint)
+	err = tx.QueryRowContext(ctx, `SELECT source_revision,snapshot_json FROM anime_source_baselines WHERE id=? AND source_id=?`, out.Source.ActiveBaselineID, id).Scan(&revision, &raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, false, err
 	}
@@ -123,13 +120,11 @@ func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSou
 		if err != nil {
 			return out, false, err
 		}
-		fingerprint = "definition:"
 	}
-	out.Definition = len(fingerprint) >= 11 && fingerprint[:11] == "definition:"
-	out.Initialize = out.Definition && out.Source.CheckedAt == nil
+	out.Initialize = out.Source.CheckedAt == nil
 	if out.IssueCode != "" {
 		// The definition is retained while local target settings need repair.
-	} else if decodeAnimeJSON(raw, &out.Baseline) != nil || out.Baseline.SchemaVersion != model.AnimeSchemaVersion || out.Baseline.Target.Validate() != nil || out.T0 <= 0 || out.T0 > now || revision > out.Source.Revision || out.Baseline.RuleVersion != animepreview.RuleVersion || out.Baseline.ParserVersion != animeparse.ParserVersion || out.Baseline.TimeVersion != animeparse.TimeVersion || out.Source.Binding.Validate(true) != nil || out.Source.Rules.Validate(true) != nil {
+	} else if decodeAnimeJSON(raw, &out.Baseline) != nil || out.Baseline.SchemaVersion != model.AnimeSchemaVersion || out.Baseline.Target.Validate() != nil || revision != out.Source.Revision || out.Baseline.RuleVersion != animepreview.RuleVersion || out.Baseline.ParserVersion != animeparse.ParserVersion || out.Baseline.TimeVersion != animeparse.TimeVersion || out.Source.Binding.Validate(true) != nil || out.Source.Rules.Validate(true) != nil {
 		out.IssueCode = "BASELINE_RECONFIRM_REQUIRED"
 	} else if err := checkAnimeDownloadTargetTx(ctx, tx, out.Baseline.Target, true); err != nil {
 		if !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
@@ -175,10 +170,10 @@ func animePollConfig(p AnimeSourcePoll) animepreview.Config {
 }
 
 // CompleteAnimeSourcePoll commits observations, source-specific decisions and
-// next schedule atomically. It never refreshes T0 or expands initial history.
+// next schedule atomically. All publications use the same saved download rules.
 func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePoll, page animefeed.SourcePage, now int64) (AnimeDiscoveryStats, error) {
 	var stats AnimeDiscoveryStats
-	if poll.IssueCode != "" || page.Kind != "rss" && !(poll.Definition && page.Kind == "history") {
+	if poll.IssueCode != "" || page.Kind != "rss" && page.Kind != "history" {
 		return stats, ErrAnimeInvalid
 	}
 	parsed, err := animepreview.BuildCandidates(animePollConfig(poll), "poll", page, now)
@@ -223,7 +218,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		found := err == nil
 		// Neither a new window nor edited rules silently restore a previous
 		// exclusion, retry a selected resource or replace a frozen snapshot.
-		if found && old.Disposition != "seen" && (!poll.Definition || old.SourceRevision == poll.Source.Revision) {
+		if found && old.Disposition != "seen" && old.SourceRevision == poll.Source.Revision {
 			continue
 		}
 		committed, err := animeReleaseCommittedTx(ctx, tx, poll.Source.ID, r.ID)
@@ -240,27 +235,9 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		if generation >= model.AnimeMaxRevision {
 			return stats, ErrAnimeConflict
 		}
-		var initial bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_baseline_releases WHERE baseline_id=? AND release_id=?)`, poll.Source.ActiveBaselineID, r.ID).Scan(&initial); err != nil {
-			return stats, err
-		}
 		disposition, reason := item.Decision, item.ReasonCode
 		if disposition == "matched" {
 			disposition = "selected"
-		}
-		if poll.Definition && poll.Source.Rules.InitialMode == "from_episode" {
-			if item.Publication.Status == "future" || item.Publication.Status == "invalid" || item.Publication.Status == "conflict" {
-				disposition, reason = "needs_confirmation", "PUBLICATION_REVIEW_REQUIRED"
-			} else if animepreview.ClassifyTime(item.Publication, poll.T0, page.ObservedAt.UnixMilli()) != "post_preview_new" {
-				initial = true
-				if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO anime_baseline_releases(baseline_id,release_id) VALUES(?,?)`, poll.Source.ActiveBaselineID, r.ID); err != nil {
-					return stats, err
-				}
-			}
-		} else if initial {
-			disposition, reason = "history_skipped", "BASELINE_HISTORY"
-		} else if timing := animepreview.ClassifyTime(item.Publication, poll.T0, page.ObservedAt.UnixMilli()); timing != "post_preview_new" {
-			disposition, reason = "needs_confirmation", "PUBLICATION_REVIEW_REQUIRED"
 		}
 		if disposition == "selected" && frozen[animepreview.EpisodeEdition(r.Parse)] {
 			// A changed configuration may reauthorize this exact unsubmitted
@@ -269,7 +246,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 			if err != nil {
 				return stats, err
 			}
-			if !poll.Definition || !pending {
+			if !pending {
 				disposition, reason = "filtered", "RELEASE_EDITION_ALREADY_SELECTED"
 			}
 		}
@@ -278,8 +255,8 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		candidates = append(candidates, item)
 		generations[r.ID] = generation
 	}
-	// Only eligible, genuinely new candidates compete. A filtered or undated
-	// higher version cannot hide an otherwise eligible lower version.
+	// Only eligible, unprocessed candidates compete. A filtered higher version
+	// cannot hide an otherwise eligible lower version.
 	animepreview.PreferCurrentVersions(candidates)
 	for _, item := range candidates {
 		r, disposition, reason := item.Release, item.Decision, item.ReasonCode
@@ -291,15 +268,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		}
 		var next any
 		if disposition == "selected" {
-			kind := "automatic"
-			var initial bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_baseline_releases WHERE baseline_id=? AND release_id=?)`, poll.Source.ActiveBaselineID, r.ID).Scan(&initial); err != nil {
-				return stats, err
-			}
-			if initial {
-				kind = "initial_history"
-			}
-			snapshot.Selection = &model.AnimeSelectionBasis{Kind: kind, BaselineID: *poll.Source.ActiveBaselineID, SelectedAt: now, Target: poll.Baseline.Target, SubscriptionGeneration: poll.Subscription.RunGeneration, SourceGeneration: poll.Source.RunGeneration}
+			snapshot.Selection = &model.AnimeSelectionBasis{BaselineID: *poll.Source.ActiveBaselineID, SelectedAt: now, Target: poll.Baseline.Target, SubscriptionGeneration: poll.Subscription.RunGeneration, SourceGeneration: poll.Source.RunGeneration}
 			next = now
 			stats.Selected++
 		} else if disposition == "needs_confirmation" {
@@ -313,7 +282,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		if err != nil {
 			return AnimeDiscoveryStats{}, err
 		}
-		if poll.Definition && disposition == "selected" {
+		if disposition == "selected" {
 			if err := refreshAnimePendingJobTx(ctx, tx, poll, r, snapshot, now); err != nil {
 				return stats, err
 			}

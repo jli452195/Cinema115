@@ -30,7 +30,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value || !!local.value && ['archived', 'removed'].includes(local.value.status))
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', ]
+    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'include', 'exclude', ]
     return JSON.stringify({ naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -114,7 +114,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
             identityNumbering: saved.binding.chapterCorrespondence?.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1,
             correspondence: !!saved.binding.chapterCorrespondence && !(saved.binding.chapterCorrespondence.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1), sourceEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.sourceEpisode) : '', chapterEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.chapterEpisode) : '',
             specMode: saved.rules.specMode || '', specProfiles: saved.rules.specProfiles || [],
-            resolution: saved.rules.resolution || '', minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), initialMode: saved.rules.initialMode === 'new_only' ? 'new_only' : 'from_episode', include: (saved.rules.include || []).join(', '), exclude: (saved.rules.exclude || []).join(', ') })
+            resolution: saved.rules.resolution || '', minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), include: (saved.rules.include || []).join(', '), exclude: (saved.rules.exclude || []).join(', ') })
           form.confirmedFor = animeBindingKey(form)
           return form
         })
@@ -203,12 +203,12 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     const next: SourceForm = { ...candidate, ref: changed && source.id ? animeRequestKey() : source.ref,
       searchBusy: false, sampleBusy: false, id: changed ? '' : source.id, revision: changed ? 0 : source.revision,
       lockedItem: !changed && source.lockedItem, lockedGroup: !changed && source.lockedGroup }
-    if (!changed) Object.assign(next, { preview: source.preview, selected: source.selected, unresolved: source.unresolved, recovery: source.recovery, dismissed: source.dismissed })
+    if (!changed) Object.assign(next, { preview: source.preview })
     sources.value[position] = next; activeRef.value = next.ref
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', resolution: '', specMode: '', specProfiles: [], sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '1', initialMode: 'from_episode', include: '', exclude: '', preview: undefined, selected: [], unresolved: [], recovery: [], dismissed: [], previewError: '' })
+    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', resolution: '', specMode: '', specProfiles: [], sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '1', include: '', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)
@@ -252,7 +252,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       source.preview = { ref: { batchId: data.batchId, sourceRef: source.ref, sourcePreviewId: summary.sourcePreviewId, loadRevision: summary.loadRevision }, summary,
         signature: source === target ? signatureBefore : old!.signature, take: source === target ? take : old!.take, page: source === target ? data.page : old?.page }
       if (source !== target && source.preview.page) source.preview.page.summary = summary
-      if (source === target && data.page) { source.selected = [...data.page.selectedIds]; source.unresolved = data.page.pendingSelections.map(item => item.releaseId); source.recovery = source.recovery.filter(id => !source.selected.includes(id) && !source.unresolved.includes(id)); source.dismissed = source.dismissed.filter(id => !source.selected.includes(id) && !source.unresolved.includes(id)) }
     }
     const issue = data.issues.find(item => item.sourceRef === target.ref)
     if (issue) target.previewError = '来源读取未完成，已有预览和其他来源保留。请稍后重新预览。'
@@ -282,7 +281,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         installPreview(data, source, before, take)
       } else if (action === 'page') {
         const page = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${preview!.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=${options.page || 1}&pageSize=50`, { signal: lifetime.signal })
-        if (current === generation && signature(source) === before) { preview!.page = page; preview!.summary = page.summary; preview!.ref.loadRevision = page.summary.loadRevision; source.selected = [...page.selectedIds]; source.unresolved = page.pendingSelections.map(item => item.releaseId) }
+        if (current === generation && signature(source) === before) { preview!.page = page; preview!.summary = page.summary; preview!.ref.loadRevision = page.summary.loadRevision }
       } else {
         const nextTake = Math.min(2000, preview!.take + Math.min(50, budget.value.remaining))
         if (action === 'load' && (nextTake <= preview!.take || !preview!.summary.unloadedHistory)) throw new Error('已到本次历史读取边界')
@@ -306,7 +305,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (startIssue.value) throw new Error(startIssue.value)
       const body = { expectedRevision: local.value?.revision || 0, settingsRevision: settings.value.settings.revision,
         config: { naming: naming.input(), entry: entryRef(), sources: submittedSources.value.map(animeSourceConfig),
-          removedSourceIds: removed.value, formSelections: [], previewRefs: [] } }
+          removedSourceIds: removed.value } }
       pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}` : 'subscriptions', method: local.value ? 'PATCH' : 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
       await retrySave()
     } catch (reason) { feedback.value = animeConfigMessage(reason) }

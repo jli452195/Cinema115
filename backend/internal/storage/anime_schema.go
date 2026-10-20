@@ -1,7 +1,7 @@
 package storage
 
-// The current anime schema is created as one unit. Pre-v51 anime data was
-// development-only and is discarded once, as explicitly requested by the user.
+// The current anime schema is created as one unit; prototype runtime data is
+// discarded before first use, without compatibility with retired workflows.
 const animeSchema = `
 CREATE TABLE IF NOT EXISTS anime_settings (
  id INTEGER PRIMARY KEY CHECK(id=1),
@@ -89,8 +89,7 @@ CREATE TABLE IF NOT EXISTS anime_subscription_sources (
  updated_at INTEGER NOT NULL,
  CHECK(status IN ('draft','removed') OR
    (source_key IS NOT NULL AND item_id IS NOT NULL AND group_id IS NOT NULL
-    AND group_name IS NOT NULL AND length(group_name)>0)),
- CHECK(status<>'enabled' OR active_baseline_id IS NOT NULL)
+    AND group_name IS NOT NULL AND length(group_name)>0))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS anime_sources_main ON anime_subscription_sources(subscription_id)
@@ -167,23 +166,15 @@ CREATE TABLE IF NOT EXISTS anime_source_baselines (
  id TEXT PRIMARY KEY NOT NULL,
  source_id TEXT NOT NULL REFERENCES anime_subscription_sources(id),
  source_revision INTEGER NOT NULL CHECK(source_revision>0),
- t0 INTEGER NOT NULL,
- confirmed_at INTEGER NOT NULL,
- fingerprint TEXT NOT NULL,
+ created_at INTEGER NOT NULL,
  snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))
-);
-
-CREATE TABLE IF NOT EXISTS anime_baseline_releases (
- baseline_id TEXT NOT NULL REFERENCES anime_source_baselines(id),
- release_id TEXT NOT NULL REFERENCES anime_releases(id),
- PRIMARY KEY(baseline_id,release_id)
 );
 
 CREATE TABLE IF NOT EXISTS anime_release_decisions (
  source_id TEXT NOT NULL REFERENCES anime_subscription_sources(id),
  release_id TEXT NOT NULL REFERENCES anime_releases(id),
  disposition TEXT NOT NULL CHECK(disposition IN
-   ('seen','history_skipped','filtered','needs_confirmation','selected','linked','dismissed')),
+   ('seen','filtered','needs_confirmation','selected','linked','dismissed')),
  reason_code TEXT,
  source_revision INTEGER NOT NULL CHECK(source_revision>0),
  release_fingerprint TEXT NOT NULL,

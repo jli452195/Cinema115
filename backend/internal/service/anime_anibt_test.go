@@ -42,9 +42,13 @@ func (f *anibtFake) Fetch(ctx context.Context, path string, _ int64) ([]byte, er
 }
 func TestAnibtProviderPreviewAndSave(t *testing.T) {
 	s, m, _, in := animeAdminFixture(t)
+	in.SettingsRevision = animeSaveReadySettings(t, s).Revision
 	f := &anibtFake{}
 	a := NewAnibtService(f)
 	a.spacing = 0
+	// AniBT records real observation times, so the preview clock must keep
+	// advancing as well instead of using the fixture's frozen timestamp.
+	s.Previews.now = nil
 	s.Bindings.Anibt = a
 	source := &in.Config.Sources[0]
 	source.Provider = "anibt"
@@ -55,7 +59,7 @@ func TestAnibtProviderPreviewAndSave(t *testing.T) {
 	source.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "630160", GroupID: "lolihouse"}
 	source.Rules.MinimumEpisode = bindingPtr(1)
 	ctx := context.Background()
-	out, e := s.SaveConfiguration(ctx, "admin", "anibt_create_001", "", in)
+	out, e := s.SaveDefinition(ctx, "admin", "anibt_create_001", "", in)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -102,8 +106,9 @@ func TestAnibtProviderPreviewAndSave(t *testing.T) {
 	replacement.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}
 	in.ExpectedRevision = saved.Revision
 	in.Config.Sources = []model.AnimeSourceConfig{replacement}
+	in.Config.Naming.Sources[0].SourceRef = "replacement"
 	in.Config.RemovedSourceIDs = []model.AnimeSourceRemoval{{ID: old.ID, ExpectedRevision: old.Revision}}
-	if _, e = s.SaveConfiguration(ctx, "admin", "replace_anibt_001", out.ID, in); e != nil {
+	if _, e = s.SaveDefinition(ctx, "admin", "replace_anibt_001", out.ID, in); e != nil {
 		t.Fatal("cross-provider replacement", e)
 	}
 	updated, e := s.Store.GetAnimeSubscription(ctx, out.ID, true)

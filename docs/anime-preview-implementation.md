@@ -1,5 +1,7 @@
 # 筛选与首次历史预览（P1-06）
 
+> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+
 日期：2026-10-18。依据[首版规则](anime-first-release-rules.md)和[预览契约第6节](anime-subscription-contract.md)。本项只实现后端预览，管理员 API 在 P1-07 装配。
 
 ## 规则与解释
