@@ -59,7 +59,7 @@ func animeError(c *gin.Context, err error) {
 	case errors.Is(err, storage.ErrAnimeTransition):
 		status, code, message = 409, "STATE_CONFLICT", "当前订阅状态不支持此操作"
 	case errors.Is(err, storage.ErrAnimeReconfirm):
-		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请重新预览并核对订阅配置"
+		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请重新读取并保存订阅配置"
 	case errors.Is(err, storage.ErrAnimeDirectoryRequired):
 		status, code, message = 409, "DIRECTORY_REQUIRED", "请为当前主账号重新选择目录"
 	case errors.Is(err, storage.ErrAnimeCapability):
@@ -420,16 +420,15 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	registerAnimePreviews(r, s)
 	registerAnimeNaming(r, s)
 	registerAnimeOrganization(r, s)
-	r.POST("/subscriptions/start", func(c *gin.Context) { animeStart(c, s, "") })
-	r.POST("/subscriptions/:id/start", func(c *gin.Context) {
-		id, ok := animeID(c)
-		if ok {
-			animeStart(c, s, id)
+	// Old preview-based activation cannot grant work through the public API.
+	r.POST("/subscriptions/start", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
+	r.POST("/subscriptions/:id/start", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
+	r.POST("/subscriptions", func(c *gin.Context) { animeSaveDefinition(c, s, "") })
+	r.PATCH("/subscriptions/:id", func(c *gin.Context) {
+		if id, ok := animeID(c); ok {
+			animeSaveDefinition(c, s, id)
 		}
 	})
-	// Saving an unstarted subscription is no longer a public operation.
-	r.POST("/subscriptions", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
-	r.PATCH("/subscriptions/:id", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 	r.GET("/subscriptions", func(c *gin.Context) {
 		p, n, ok := animePage(c)
 		if !ok {
@@ -478,18 +477,14 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 	r.PUT("/subscriptions/:id/naming-mapping", func(c *gin.Context) { animeError(c, storage.ErrAnimeCapability) })
 }
 
-func animeStart(c *gin.Context, s *service.AnimeAdminService, id string) {
-	if !s.DownloadAvailable() {
-		animeError(c, storage.ErrAnimeCapability)
-		return
-	}
-	var in service.AnimeStartInput
+func animeSaveDefinition(c *gin.Context, s *service.AnimeAdminService, id string) {
+	var in service.AnimeSaveInput
 	if !animeBody(c, &in, true) {
 		return
 	}
-	v, e := s.StartSubscription(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), id, in)
-	if e != nil {
-		animeError(c, e)
+	v, err := s.SaveDefinition(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), id, in)
+	if err != nil {
+		animeError(c, err)
 		return
 	}
 	status := 200
@@ -498,6 +493,7 @@ func animeStart(c *gin.Context, s *service.AnimeAdminService, id string) {
 	}
 	c.JSON(status, v)
 }
+
 func validAnimeSearch(v string, n int) bool {
 	return utf8.ValidString(v) && utf8.RuneCountInString(v) >= 1 && utf8.RuneCountInString(v) <= n && !strings.ContainsFunc(v, unicode.IsControl)
 }

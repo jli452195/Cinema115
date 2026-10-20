@@ -70,6 +70,8 @@ type AnimeAdminService struct {
 	downloadWake         chan struct{}
 	verificationWakeOnce sync.Once
 	verificationWake     chan struct{}
+	discoveryWakeOnce    sync.Once
+	discoveryWake        chan struct{}
 }
 
 type AnimeSaveConfig struct {
@@ -99,6 +101,16 @@ func (s *AnimeAdminService) StartSubscription(ctx context.Context, actor, key, i
 	return s.saveConfiguration(ctx, actor, key, id, AnimeSaveInput{Config: in.Config, ExpectedRevision: in.ExpectedRevision, SettingsRevision: in.SettingsRevision, SaveMode: "paused"}, &in)
 }
 
+// SaveDefinition persists a complete definition. RSS initialization and download
+// authorization belong to the background workers, never this HTTP request.
+func (s *AnimeAdminService) SaveDefinition(ctx context.Context, actor, key, id string, in AnimeSaveInput) (model.AnimeConfigReceipt, error) {
+	in.SaveMode = "paused" // Validation shape; runtime status is server-owned.
+	if len(in.Config.FormSelections) != 0 || len(in.Config.PreviewRefs) != 0 {
+		return model.AnimeConfigReceipt{}, storage.ErrAnimeInvalid
+	}
+	return s.saveConfiguration(ctx, actor, key, id, in, nil, true)
+}
+
 func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWriteKey, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -111,7 +123,8 @@ func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWrite
 
 // SaveConfiguration validates all local fields before upstream reads. A source
 // omitted by PATCH is retained; only explicit removals can delete one.
-func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput, start *AnimeStartInput) (out model.AnimeConfigReceipt, resultErr error) {
+func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput, start *AnimeStartInput, definition ...bool) (out model.AnimeConfigReceipt, resultErr error) {
+	runtime := len(definition) != 0 && definition[0]
 	ctx, finishTiming := s.observeAnimeStage(ctx, id, "subscription")
 	defer finishTiming()
 	// Deep-copy before canonicalization; caller form slices remain untouched.
@@ -238,6 +251,8 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 				return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"sources." + source.Ref}}
 			}
 		}
+	}
+	if start != nil || runtime {
 		if settings.OrganizeCID == nil || in.Config.Naming == nil {
 			return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"organization"}}
 		}
@@ -420,7 +435,10 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	for _, v := range final {
 		if v.Role == "main" {
 			mains++
-			if in.SaveMode == "paused" && v.Status != "paused" {
+			if runtime && !v.RunWhenEnabled {
+				issues = append(issues, "mainSource")
+			}
+			if in.SaveMode == "paused" && v.Status != "paused" && !(runtime && v.Status == "enabled") {
 				issues = append(issues, "mainSource")
 			}
 		}
@@ -477,6 +495,27 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		}
 	}
 	guard := storage.AnimeConfigGuard{Entry: entry, Settings: settings, RequireAccount: in.SaveMode == "paused"}
+	if runtime {
+		if id == "" {
+			c.Status = "enabled"
+		} else {
+			if old.Status != "enabled" && old.Status != "paused" {
+				return out, storage.ErrAnimeTransition
+			}
+			c.Status = old.Status
+		}
+		for i := range c.Sources {
+			if c.Sources[i].RunWhenEnabled {
+				c.Sources[i].Status = "enabled"
+			}
+		}
+		guard.Runtime = true
+		out, err = s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
+		if err == nil {
+			s.wakeAnimeDiscovery()
+		}
+		return out, err
+	}
 	if start != nil {
 		session, err := s.PrepareDownloadTarget(ctx, in.SettingsRevision)
 		if err != nil {

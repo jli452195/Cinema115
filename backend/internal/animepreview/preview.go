@@ -197,6 +197,16 @@ func MatchesRelease(binding model.AnimeBinding, rules model.AnimeRules, release 
 // Build interprets one already verified single-group page. Release IDs are
 // attached by the repository later; post keys are not trusted BT identities.
 func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, error) {
+	return buildSource(c, ref, page, now, true)
+}
+
+// BuildCandidates leaves version ranking to discovery, which must first apply
+// publication boundaries and durable episode claims to the entire read window.
+func BuildCandidates(c Config, ref string, page mikan.SourcePage, now int64) (Source, error) {
+	return buildSource(c, ref, page, now, false)
+}
+
+func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHistory bool) (Source, error) {
 	out := Source{Ref: ref, LoadRevision: 1, GeneratedAt: now, ExpiresAt: now + LifetimeMillis,
 		SelectedIDs: []string{}, DismissedIDs: []string{}, Pending: []Pending{}, Items: make([]Item, 0, len(page.Releases)),
 		InitialPostKeys: make([]string, 0, len(page.Releases)), Changes: emptyChanges()}
@@ -285,7 +295,7 @@ func Build(c Config, ref string, page mikan.SourcePage, now int64) (Source, erro
 	}
 	// RSS candidates are ranked by the repository after baseline/time and
 	// durable authorization checks, so an ineligible revision cannot win.
-	if page.Kind == "history" {
+	if rankHistory && page.Kind == "history" {
 		PreferCurrentVersions(out.Items)
 	}
 	for i := range out.Items {

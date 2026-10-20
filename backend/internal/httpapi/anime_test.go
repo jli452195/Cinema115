@@ -212,12 +212,12 @@ func TestAnimeHTTPStrictBoundaryAndSafeErrors(t *testing.T) {
 	}
 }
 
-func TestAnimeHTTPUnstartedSavesClosedAndLocalReads(t *testing.T) {
+func TestAnimeHTTPDefinitionsValidateBeforeReads(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
 	for _, mode := range []string{"draft", "paused", "enabled"} {
 		in := service.AnimeSaveInput{SaveMode: mode, SettingsRevision: 1}
 		for _, route := range []struct{ method, path string }{{"POST", "/subscriptions"}, {"PATCH", "/subscriptions/old-config"}} {
-			if v := f.call(t, route.method, route.path, f.admin, "obsolete_save_01", in, 409); v["code"] != "CAPABILITY_UNAVAILABLE" {
+			if v := f.call(t, route.method, route.path, f.admin, "obsolete_save_01", in, 400); v["code"] != "INVALID_INPUT" {
 				t.Fatal(v)
 			}
 		}

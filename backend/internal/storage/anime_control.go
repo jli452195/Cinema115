@@ -171,22 +171,31 @@ func animeControlState(sub model.AnimeSubscription, action string) (string, erro
 func checkAnimeResumeTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscription, sources []model.AnimeSource) error {
 	active := 0
 	for _, source := range sources {
+		if source.Status == "paused" && source.RunWhenEnabled && source.ActiveBaselineID == nil && source.Binding.Validate(true) == nil && source.Rules.Validate(true) == nil {
+			active++
+			continue
+		}
 		if source.Status != "enabled" || !source.RunWhenEnabled {
 			continue
 		}
-		if source.ActiveBaselineID == nil || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
+		if source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
 			return ErrAnimeReconfirm
 		}
+		if source.ActiveBaselineID == nil {
+			active++
+			continue
+		}
 		var raw string
+		var fingerprint string
 		var revision, t0 int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_revision,t0,snapshot_json FROM anime_source_baselines WHERE id=? AND source_id=?`, *source.ActiveBaselineID, source.ID).Scan(&revision, &t0, &raw); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_revision,t0,snapshot_json,fingerprint FROM anime_source_baselines WHERE id=? AND source_id=?`, *source.ActiveBaselineID, source.ID).Scan(&revision, &t0, &raw, &fingerprint); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrAnimeReconfirm
 			}
 			return err
 		}
 		var baseline model.AnimeExecutionBaseline
-		if decodeAnimeJSON(raw, &baseline) != nil || baseline.SchemaVersion != model.AnimeSchemaVersion || baseline.RuleVersion != animepreview.RuleVersion || baseline.ParserVersion != animeparse.ParserVersion || baseline.TimeVersion != animeparse.TimeVersion || revision != source.Revision || t0 <= 0 {
+		if decodeAnimeJSON(raw, &baseline) != nil || baseline.SchemaVersion != model.AnimeSchemaVersion || baseline.RuleVersion != animepreview.RuleVersion || baseline.ParserVersion != animeparse.ParserVersion || baseline.TimeVersion != animeparse.TimeVersion || revision != source.Revision && fingerprint != "definition-pending:"+source.ID || revision > source.Revision || t0 <= 0 {
 			return ErrAnimeReconfirm
 		}
 		if err := checkAnimeDownloadTargetTx(ctx, tx, baseline.Target, true); err != nil {
@@ -236,6 +245,9 @@ func controlAnimeQueuedJobsTx(ctx context.Context, tx *sql.Tx, id string, resumi
 			return 0, err
 		}
 		if resuming {
+			if job.BlockCode != nil && *job.BlockCode == "CONFIGURATION_CHANGED" {
+				continue
+			}
 			return 0, ErrAnimeReconfirm
 		}
 		if job.FileState == "verified" {

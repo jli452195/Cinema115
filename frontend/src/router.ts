@@ -31,10 +31,7 @@ import GyingView from './views/GyingView.vue'
 import WoniuView from './views/WoniuView.vue'
 import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
-import AnimeDiscoveryView from './views/AnimeCatalogView.vue'
-import AnimeSubscriptionEditorView from './views/AnimeSubscriptionEditorView.vue'
-import AnimeNewSubscriptionView from './views/AnimeNewSubscriptionView.vue'
-import AnimeSubscriptionsView from './views/AnimeSubscriptionsView.vue'
+import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
@@ -50,13 +47,13 @@ export const router = createRouter({
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView },
-    { path: '/anime', name: 'anime-discovery', component: AnimeDiscoveryView, beforeEnter: to => {
+    { path: '/anime', name: 'anime-discovery', component: AnimeWorkspaceView, beforeEnter: to => {
       const query = animeRememberedQuery()
       if (!Object.keys(to.query).length && query) return { path: '/anime', query, replace: true }
     } },
-    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeNewSubscriptionView, meta: { managementSection: '/anime' } },
-    { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeSubscriptionEditorView, meta: { managementSection: '/anime' } },
-    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeSubscriptionsView, meta: { managementSection: '/anime' }, beforeEnter: to => {
+    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime' } },
+    { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeWorkspaceView, meta: { managementSection: '/anime' } },
+    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime' }, beforeEnter: to => {
       const location = animeSubscriptionLocation()
       if (!to.params.id && !Object.keys(to.query).length && location && (location.path !== to.path || Object.keys(location.query).length)) return { ...location, replace: true }
     } },
@@ -102,7 +99,7 @@ export const router = createRouter({
     // The missing view restores its per-view/page scroll after installing cached rows.
     if (to.name === 'emby-missing') return false
     // Anime installs cached rows before restoring each filter/page's scroll.
-    if (to.name === 'anime-discovery' || to.name === 'anime-subscriptions') return false
+    if (to.path === '/anime' || to.path.startsWith('/anime/')) return false
     // Changing only the selected date should not jump the update grid back to the top.
     if (to.name === 'updates' && from.name === 'updates') return false
     return savedPosition ?? (to.path === '/helper115' && to.hash === '#pool' ? { el: '#pool', top: 24 } : { top: 0 })

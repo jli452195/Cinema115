@@ -84,7 +84,8 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			return receipt, fmt.Errorf("find anime receipt: %w", err)
 		}
 	}
-	if in.Status == "enabled" {
+	runtime := guard != nil && guard.Runtime
+	if in.Status == "enabled" && !runtime {
 		return receipt, ErrAnimeCapability
 	}
 	if guard != nil {
@@ -95,11 +96,19 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		in.EntryID = entryID
 	}
 	for _, source := range in.Sources {
-		if source.Status == "enabled" {
+		if source.Status == "enabled" && !runtime {
 			return receipt, ErrAnimeCapability
 		}
 	}
-	if err := in.Validate(); err != nil {
+	validation := in
+	if runtime {
+		validation.Status = "paused"
+		validation.Sources = append([]model.AnimeSourceConfig{}, in.Sources...)
+		for i := range validation.Sources {
+			validation.Sources[i].Status = "paused"
+		}
+	}
+	if err := validation.Validate(); err != nil {
 		return receipt, fmt.Errorf("%w: %v", ErrAnimeInvalid, err)
 	}
 	var entryExists bool
@@ -110,6 +119,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		return receipt, ErrAnimeInvalid
 	}
 	oldSources := make(map[string]model.AnimeSource, model.AnimeMaxSources)
+	var oldNaming *model.AnimeNamingPlan
 	if in.ID != "" {
 		old, err := scanAnimeSubscription(tx.QueryRowContext(ctx, `SELECT `+animeSubscriptionColumns+` FROM anime_subscriptions WHERE id=?`, in.ID))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -127,9 +137,13 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		if old.EntryID != in.EntryID {
 			return receipt, ErrAnimeIdentity
 		}
-		if old.FirstEnabledAt != nil || old.Status != "draft" && old.Status != "paused" {
+		if !runtime && (old.FirstEnabledAt != nil || old.Status != "draft" && old.Status != "paused") {
 			return receipt, ErrAnimeCapability
 		}
+		if runtime && (old.Status != in.Status || old.Status != "enabled" && old.Status != "paused") {
+			return receipt, ErrAnimeTransition
+		}
+		oldNaming = old.Naming
 		sources, err := readAnimeSources(ctx, tx, in.ID, false)
 		if err != nil {
 			return receipt, err
@@ -178,7 +192,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			if !old.AcceptsIdentity(input.Provider, input.ItemID, input.GroupID) {
 				return receipt, ErrAnimeIdentity
 			}
-			if old.Status != "draft" && old.Status != "paused" || old.ActiveBaselineID != nil {
+			if !runtime && (old.Status != "draft" && old.Status != "paused" || old.ActiveBaselineID != nil) {
 				return receipt, ErrAnimeCapability
 			}
 			source = old
@@ -194,6 +208,9 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			source = model.AnimeSource{ID: id, SubscriptionID: in.ID, NamespaceID: ns, Health: "unknown", RunGeneration: 1, CreatedAt: now}
 		}
 		source.Role, source.Position, source.Status = input.Role, input.Position, input.Status
+		if runtime && source.ActiveBaselineID == nil {
+			source.Status = "paused"
+		}
 		source.RunWhenEnabled, source.Provider = input.RunWhenEnabled, input.Provider
 		source.ItemID, source.GroupID, source.GroupName = input.ItemID, input.GroupID, input.GroupName
 		source.Binding, source.Rules = input.Binding, input.Rules
@@ -202,7 +219,23 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			source.SourceKey = &key
 		}
 		old, exists := oldSources[source.ID]
-		if !exists || !sameAnimeSourceConfig(old, source) {
+		targetChanged := false
+		if runtime && exists && source.ActiveBaselineID != nil {
+			var raw string
+			if err := tx.QueryRowContext(ctx, `SELECT snapshot_json FROM anime_source_baselines WHERE id=?`, source.ActiveBaselineID).Scan(&raw); err != nil {
+				return receipt, err
+			}
+			var baseline model.AnimeExecutionBaseline
+			if decodeAnimeJSON(raw, &baseline) != nil || baseline.Target.Validate() != nil {
+				targetChanged = true
+			} else if err := checkAnimeDownloadTargetTx(ctx, tx, baseline.Target, true); err != nil {
+				if !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
+					return receipt, err
+				}
+				targetChanged = true
+			}
+		}
+		if !exists || !sameAnimeSourceConfig(old, source) || runtime && (animeSourceNamingChanged(oldNaming, in.Naming, source.ID, input.Ref) || targetChanged) {
 			if source.Revision >= model.AnimeMaxRevision || source.RunGeneration >= model.AnimeMaxRevision {
 				return receipt, ErrAnimeConflict
 			}
@@ -219,7 +252,15 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	for id, source := range final {
 		receipt.SourceRevisions[id] = source.Revision
 	}
-	if err := validateAnimeSources(final, in.Status); err != nil {
+	validationSources := final
+	if runtime {
+		validationSources = make(map[string]model.AnimeSource, len(final))
+		for id, source := range final {
+			source.Status = "paused"
+			validationSources[id] = source
+		}
+	}
+	if err := validateAnimeSources(validationSources, validation.Status); err != nil {
 		return receipt, err
 	}
 	// Restore references to stable IDs; saved selections remain form data only.
@@ -280,6 +321,8 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	var result sql.Result
 	if in.ExpectedRevision == 0 {
 		result, err = tx.ExecContext(ctx, `INSERT INTO anime_subscriptions(`+animeSubscriptionColumns+`) VALUES(?,?,?,1,1,NULL,?,?,?,?)`, in.ID, in.EntryID, in.Status, form, now, now, naming)
+	} else if runtime {
+		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET revision=revision+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, form, naming, now, in.ID, in.ExpectedRevision)
 	} else {
 		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,run_generation=run_generation+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, in.Status, form, naming, now, in.ID, in.ExpectedRevision)
 	}
@@ -305,6 +348,22 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		if err := writeAnimeSource(ctx, tx, source, oldSources[source.ID].Revision); err != nil {
 			return receipt, err
 		}
+		if runtime {
+			if err := invalidateAnimeSourceConfigurationTx(ctx, tx, source.ID, now); err != nil {
+				return receipt, err
+			}
+		}
+	}
+	if runtime {
+		for _, removal := range in.RemovedSources {
+			if err := invalidateAnimeSourceConfigurationTx(ctx, tx, removal.ID, now); err != nil {
+				return receipt, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_subscriptions SET first_enabled_at=COALESCE(first_enabled_at,?) WHERE id=?`, now, in.ID); err != nil {
+			return receipt, err
+		}
+		receipt.RequiresRepreview = false
 	}
 	if key != nil {
 		raw, err := animeJSON(receipt)
@@ -320,6 +379,31 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		}
 	}
 	return receipt, nil
+}
+
+func animeSourceNamingChanged(old, next *model.AnimeNamingPlan, id, ref string) bool {
+	if old == nil || next == nil {
+		return old != next
+	}
+	if !reflect.DeepEqual(old.Target, next.Target) {
+		return true
+	}
+	var a, b *model.AnimeSourceMapping
+	for i := range old.Sources {
+		if old.Sources[i].SourceRef == id {
+			value := old.Sources[i]
+			value.SourceRef = id
+			a = &value
+		}
+	}
+	for i := range next.Sources {
+		if next.Sources[i].SourceRef == ref || next.Sources[i].SourceRef == id {
+			value := next.Sources[i]
+			value.SourceRef = id
+			b = &value
+		}
+	}
+	return !reflect.DeepEqual(a, b)
 }
 
 func sameAnimeSourceConfig(a, b model.AnimeSource) bool {

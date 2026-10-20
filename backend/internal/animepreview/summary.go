@@ -62,13 +62,14 @@ func (s Source) Summary(now int64) Summary {
 }
 
 type Page struct {
-	Items       []Item    `json:"items"`
-	Total       int       `json:"total"`
-	Page        int       `json:"page"`
-	PageSize    int       `json:"pageSize"`
-	Summary     Summary   `json:"summary"`
-	SelectedIDs []string  `json:"selectedIds"`
-	Pending     []Pending `json:"pendingSelections"`
+	Items       []Item            `json:"items"`
+	Total       int               `json:"total"`
+	Page        int               `json:"page"`
+	PageSize    int               `json:"pageSize"`
+	Summary     Summary           `json:"summary"`
+	SelectedIDs []string          `json:"selectedIds"`
+	Pending     []Pending         `json:"pendingSelections"`
+	LocalStates map[string]string `json:"localStates,omitempty"`
 }
 
 func (s Source) Releases(page, size int, now int64) (Page, error) {
@@ -83,5 +84,5 @@ func (s Source) Releases(page, size int, now int64) (Page, error) {
 	}
 	start := min((page-1)*size, len(s.Items))
 	end := min(start+size, len(s.Items))
-	return Page{append([]Item{}, s.Items[start:end]...), len(s.Items), page, size, s.Summary(now), append([]string{}, s.SelectedIDs...), append([]Pending{}, s.Pending...)}, nil
+	return Page{Items: append([]Item{}, s.Items[start:end]...), Total: len(s.Items), Page: page, PageSize: size, Summary: s.Summary(now), SelectedIDs: append([]string{}, s.SelectedIDs...), Pending: append([]Pending{}, s.Pending...)}, nil
 }

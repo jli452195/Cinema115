@@ -52,13 +52,14 @@ export interface AnimePreviewSummary {
   gapsWithinLoadedMatches: { first: number; last: number }[]; unloadedHistory: boolean
 }
 export interface AnimePreviewItem {
-  release: { id: string; title: string; parse: { kind: string; episode: number | null; rawEpisode: string; resolution: string | null; versionLabel: string; spec?: AnimeSpec } }
+  release: { id: string; title: string; publishedAt?: number | null; parse: { kind: string; episode: number | null; rawEpisode: string; resolution: string | null; versionLabel: string; spec?: AnimeSpec } }
   observation: { title: string; url: string; sizeRaw: string }
   projection: { status: string; sourceEpisode: number | null; chapterEpisode: number | null }
   decision: string; reasonCode: string; selectable: boolean
 }
 export interface AnimePendingSelection { releaseId: string; reason: string; previousItem: AnimePreviewItem | null }
 export interface AnimePreviewPage {
+	localStates?: Record<string, string>
   items: AnimePreviewItem[]; total: number; page: number; pageSize: number; summary: AnimePreviewSummary
   selectedIds: string[]; pendingSelections: AnimePendingSelection[]
 }

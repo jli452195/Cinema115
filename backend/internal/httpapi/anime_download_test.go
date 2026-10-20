@@ -4,12 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
-	"strm115/backend/internal/storage"
 )
 
 type animeDownloadHTTPDirectory struct{}
@@ -18,7 +16,7 @@ func (animeDownloadHTTPDirectory) ReadDirectory(_ context.Context, cid, cookie s
 	return p115.DriveDirectory{CID: cid, Path: "/动漫"}, nil
 }
 
-func TestAnimeDownloadHTTPStartStrictAuthAndReceipt(t *testing.T) {
+func TestAnimeDownloadHTTPDefinitionAuthReceiptAndLifecycle(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
 	ctx := context.Background()
 	accounts, err := service.OpenP115AccountsSQLite(ctx, f.s.Store, t.TempDir(), "test-secret")
@@ -52,34 +50,29 @@ func TestAnimeDownloadHTTPStartStrictAuthAndReceipt(t *testing.T) {
 	source.GroupName = animeHTTPPtr("字幕组甲")
 	source.RunWhenEnabled = true
 	f.s.Naming = &service.AnimeNamingService{Metadata: animeStartHTTPNaming{}}
-	config := animepreview.Config{Chapter: animepreview.Chapter{ID: e.ID, EditionKey: e.EditionKey, Revision: e.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{source}}
-	previewInput := service.AnimePreviewInput{Config: config, SourceRef: source.Ref}
-	preview := f.call(t, "POST", "/subscriptions/preview", f.admin, "", previewInput, 200)
-	page := preview["page"].(map[string]any)
-	summary := page["summary"].(map[string]any)
-	selected := page["selectedIds"].([]any)
 	season := 1
 	target, err := f.s.Naming.Target(ctx, service.AnimeNamingTargetInput{TMDBID: "123", Season: &season}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := service.AnimeStartInput{Config: service.AnimeSaveConfig{Entry: service.AnimeEntryRef{ID: e.ID}, Sources: config.Sources, Naming: &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: source.Ref, Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 1}}}}}}, SettingsRevision: settings.Revision, Chapter: config.Chapter, Sources: []storage.AnimeActivationSource{{AnimePreviewRef: storage.AnimePreviewRef{BatchID: preview["batchId"].(string), SourceRef: source.Ref, PreviewID: summary["sourcePreviewId"].(string), LoadRevision: int64(summary["loadRevision"].(float64))}, SelectedIDs: []string{selected[0].(string)}, DismissedIDs: []string{}}}}
-	for _, path := range []string{"/subscriptions/start", "/subscriptions/missing/start"} {
+	input := service.AnimeSaveInput{Config: service.AnimeSaveConfig{Entry: service.AnimeEntryRef{ID: e.ID}, Sources: []model.AnimeSourceConfig{source}, Naming: &model.AnimeNamingInput{TMDBID: target.TMDBID, Season: season, Fingerprint: target.Fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: source.Ref, Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 1}}}}}}, SettingsRevision: settings.Revision}
+	for _, path := range []string{"/subscriptions"} {
 		f.call(t, "POST", path, "", "", `broken`, 401)
 		f.call(t, "POST", path, f.user, "", `broken`, 403)
 		f.call(t, "POST", path, f.admin, "invalid_body_01", `{"unexpected":1}`, 400)
 	}
 	reads := f.mikan.reads
-	first := f.call(t, "POST", "/subscriptions/start", f.admin, "http_start_01", input, 201)
-	if first["status"] != "enabled" || first["revision"] != float64(2) {
+	first := f.call(t, "POST", "/subscriptions", f.admin, "http_start_01", input, 201)
+	if first["status"] != "enabled" || first["revision"] != float64(1) {
 		t.Fatal(first)
 	}
-	again := f.call(t, "POST", "/subscriptions/start", f.admin, "http_start_01", input, 201)
+	reads = f.mikan.reads // Verified source metadata is allowed; RSS is not read.
+	again := f.call(t, "POST", "/subscriptions", f.admin, "http_start_01", input, 201)
 	if again["id"] != first["id"] || again["revision"] != first["revision"] || f.mikan.reads != reads {
 		t.Fatal("start or replay re-read RSS", again)
 	}
 	base := "/subscriptions/" + first["id"].(string)
-	for _, path := range []string{base + "/enable-preview", base + "/enable"} {
+	for _, path := range []string{base + "/enable-preview", base + "/enable", "/subscriptions/start", base + "/start"} {
 		f.call(t, "POST", path, f.admin, "closed_enable_01", input, 409)
 	}
 	for _, action := range []string{"pause", "resume"} {
@@ -87,7 +80,7 @@ func TestAnimeDownloadHTTPStartStrictAuthAndReceipt(t *testing.T) {
 		f.call(t, "POST", base+"/"+action, f.admin, "http_"+action, map[string]any{"expectedRevision": v["revision"]}, 200)
 	}
 	view := f.call(t, "GET", base, f.admin, "", nil, 200)
-	if view["releaseStats"].(map[string]any)["pendingVerificationCount"] != float64(1) {
+	if view["releaseStats"].(map[string]any)["pendingVerificationCount"] != float64(0) {
 		t.Fatal(view)
 	}
 	f.call(t, "GET", base+"/jobs", f.admin, "", nil, 200)

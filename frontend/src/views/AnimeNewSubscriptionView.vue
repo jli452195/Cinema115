@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import ManagementLayout from '../components/ManagementLayout.vue'
-import AnimeSubscriptionEditorView from './AnimeSubscriptionEditorView.vue'
+import AnimeFloatingDialog from '../components/AnimeFloatingDialog.vue'
+import AnimeSubscriptionDialog from '../components/AnimeSubscriptionDialog.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { requestMikanCatalogEntry } from '../composables/useAnimeCatalog'
 import { requestAnimeCatalogStatuses } from '../composables/useAnimeCatalogStatus'
@@ -14,8 +14,10 @@ import type { AnimeSourceProvider } from '../types/animeCatalog'
 import '../styles/animeSubscriptionEditor.css'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
+defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
 const route = useRoute(), router = useRouter(), ready = ref(false), error = ref('')
+const browser = window
+const sourceSeed = computed(() => { const initial = browser.history.state?.animeSource; return { provider: String(initial?.provider || route.query.source || ''), itemId: String(initial?.itemId || route.query.itemId || '') } })
 const returnTo = computed(() => animeReturnPath(route.query.returnTo || window.history.state?.animeReturnTo) || '/anime?source=mikan')
 let controller: AbortController | undefined
 function cancel() { controller?.abort(); controller = undefined }
@@ -48,11 +50,9 @@ onBeforeRouteLeave(cancel); onBeforeRouteUpdate(cancel); onBeforeUnmount(cancel)
 </script>
 
 <template>
-  <AnimeSubscriptionEditorView v-if="ready" :token="token" @logout="$emit('logout')" />
-  <ManagementLayout v-else title="配置动漫订阅" description="选择字幕组与规格，预览匹配结果。核对后直接开始订阅，下载完成后自动整理。" :parent="{ label: '动漫订阅', to: returnTo }" @logout="$emit('logout')">
-    <div class="anime-editor">
-      <div v-if="error" class="ae-load-error" role="status"><p>{{ error }}</p><button type="button" class="ae-button" @click="resolveEntry">重新读取</button><RouterLink :to="returnTo" class="ae-link">返回选番</RouterLink></div>
-      <p v-else class="ae-loading ae-entry-loading" role="status" aria-busy="true">正在读取番剧与订阅来源…</p>
-    </div>
-  </ManagementLayout>
+  <AnimeSubscriptionDialog v-if="ready" :token="token" :bangumi-id="String(route.query.bangumiId || '')" :seed="sourceSeed" @close="$emit('close')" @saved="$emit('saved', $event)" @open="$emit('open', $event)" />
+  <AnimeFloatingDialog v-else title="新增订阅" close-label="关闭新增订阅" size="config" @close="$emit('close')">
+    <div v-if="error" class="ae-load-error" role="status"><p>{{ error }}</p><button type="button" class="ae-button" @click="resolveEntry">重新读取</button></div>
+    <p v-else class="ae-loading" role="status" aria-busy="true">正在读取番剧与订阅来源…</p>
+  </AnimeFloatingDialog>
 </template>

@@ -68,6 +68,7 @@ type AnimeConfigGuard struct {
 	Entry          model.AnimeEntry
 	Settings       model.AnimeSettings
 	RequireAccount bool
+	Runtime        bool
 }
 
 func (s *Store) SaveAnimeConfiguration(ctx context.Context, in model.AnimeSubscriptionConfig, key AnimeWriteKey, guard AnimeConfigGuard) (model.AnimeConfigReceipt, error) {

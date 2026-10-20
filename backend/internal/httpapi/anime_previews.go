@@ -20,7 +20,7 @@ type animePreviewView struct {
 	DataVersion     string                      `json:"dataVersion"`
 }
 
-func animePreviewResponse(c *gin.Context, v service.AnimePreviewResult, ref string) {
+func animePreviewResponse(c *gin.Context, s *service.AnimeAdminService, v service.AnimePreviewResult, ref string) {
 	out := animePreviewView{Budget: v.Budget, Sources: v.Sources, Issues: v.Issues, SelectionNotice: v.SelectionNotice}
 	if v.Batch != nil {
 		out.BatchID, out.Fingerprint = v.Batch.ID, v.Batch.Fingerprint
@@ -37,6 +37,10 @@ func animePreviewResponse(c *gin.Context, v service.AnimePreviewResult, ref stri
 					}
 				}
 				out.Page = &p
+				if err := decorateAnimePreview(c, s, source.SourceID, &p); err != nil {
+					animeError(c, err)
+					return
+				}
 			}
 		}
 	}
@@ -66,7 +70,7 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, err)
 			return
 		}
-		animePreviewResponse(c, v, in.SourceRef)
+		animePreviewResponse(c, s, v, in.SourceRef)
 	})
 	r.POST("/previews/:id/load", func(c *gin.Context) {
 		id, ok := animeID(c)
@@ -91,7 +95,7 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, err)
 			return
 		}
-		animePreviewResponse(c, v, in.SourceRef)
+		animePreviewResponse(c, s, v, in.SourceRef)
 	})
 	r.GET("/previews/:id/releases", func(c *gin.Context) {
 		id, ok := animeID(c)
@@ -111,6 +115,19 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		if err != nil {
 			animeError(c, err)
 			return
+		}
+		batch, err := s.Store.GetAnimePreview(c.Request.Context(), animeActor(c), id)
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		for _, source := range batch.Sources {
+			if source.Ref == ref {
+				if err := decorateAnimePreview(c, s, source.SourceID, &v); err != nil {
+					animeError(c, err)
+					return
+				}
+			}
 		}
 		version, err := animepreview.Digest(v)
 		if err != nil {
@@ -151,8 +168,20 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		for _, source := range b.Sources {
 			v.Sources = append(v.Sources, source.Summary(time.Now().UTC().UnixMilli()))
 		}
-		animePreviewResponse(c, v, in.SourceRef)
+		animePreviewResponse(c, s, v, in.SourceRef)
 	})
+}
+
+func decorateAnimePreview(c *gin.Context, s *service.AnimeAdminService, sourceID string, page *animepreview.Page) error {
+	ids := make([]string, 0, len(page.Items))
+	for _, item := range page.Items {
+		ids = append(ids, item.Release.ID)
+	}
+	states, err := s.Store.AnimePreviewStates(c.Request.Context(), sourceID, ids)
+	if err == nil {
+		page.LocalStates = states
+	}
+	return err
 }
 func validAnimePreviewRef(ref, id string, rev int64) bool {
 	return model.ValidAnimeID(ref) && model.ValidAnimeID(id) && rev > 0 && rev <= model.AnimeMaxRevision

@@ -1,29 +1,30 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, onUnmounted, ref, useId } from 'vue'
+import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { IconX } from '@tabler/icons-vue'
-defineProps<{ title: string; closeLabel: string }>()
+import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
+defineProps<{ title: string; closeLabel: string; size?: 'config' | 'preview' }>()
 const emit = defineEmits<{ close: []; scroll: [top: number] }>()
 const dialog = ref<HTMLDialogElement>(), body = ref<HTMLElement>(), closeButton = ref<HTMLButtonElement>()
 const headingID = useId()
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-const previousOverflow = document.body.style.overflow
+let unlock: (() => void) | undefined
+const nested = ref(false)
 let backdropDown = false
 function backdrop(event: MouseEvent) { if (backdropDown && event.target === dialog.value) emit('close'); backdropDown = false }
-onMounted(() => { dialog.value?.showModal(); document.body.style.overflow = 'hidden'; closeButton.value?.focus({ preventScroll: true }) })
+onMounted(() => { nested.value = [...document.querySelectorAll('dialog[open]')].some(el => el !== dialog.value); unlock = lockAnimeDialogScroll(); dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true }) })
 onBeforeUnmount(() => {
   dialog.value?.close()
+  unlock?.()
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
-// Descendant dialogs finish restoring their locks before the outer dialog
-// restores the page's original overflow on a route change.
-onUnmounted(() => { document.body.style.overflow = previousOverflow })
 defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 'instant' }) })
 </script>
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" class="anime-floating floating-surface" :aria-labelledby="headingID" @cancel.prevent="emit('close')" @pointerdown="backdropDown = $event.target === dialog" @click="backdrop">
+    <dialog ref="dialog" class="anime-floating floating-surface" :class="[{ 'anime-floating-nested': nested }, size && `anime-floating-${size}`]" :aria-labelledby="headingID" @cancel.prevent="emit('close')" @pointerdown="backdropDown = $event.target === dialog" @click="backdrop">
       <header class="anime-floating-toolbar"><h2 :id="headingID">{{ title }}</h2><button ref="closeButton" type="button" :aria-label="closeLabel" @click="emit('close')"><IconX :size="20" aria-hidden="true" /></button></header>
+      <div v-if="$slots.header" class="anime-floating-header"><slot name="header" /></div>
       <div ref="body" class="anime-floating-body" @scroll="emit('scroll', ($event.target as HTMLElement).scrollTop)"><slot /></div>
       <div v-if="$slots.footer" class="anime-floating-footer"><slot name="footer" /></div>
     </dialog>
@@ -31,14 +32,21 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 </template>
 
 <style scoped>
-.anime-floating { width: min(760px, calc(100vw - 32px)); max-height: min(880px, calc(100dvh - 48px)); margin: auto; padding: 0; border-radius: 22px; color: var(--floating-surface-text); }
+.anime-floating { --scrollbar-track: transparent; --scrollbar-thumb: rgb(100 116 139 / .4); width: min(760px, calc(100vw - 32px)); max-height: min(880px, calc(100dvh - 48px)); margin: auto; padding: 0; overflow: clip; border-radius: 22px; color: var(--floating-surface-text); }
+:global(.dark) .anime-floating { --scrollbar-thumb: rgb(184 196 212 / .4); }
 .anime-floating[open] { display: flex; flex-direction: column; }
+.anime-floating-config { width: min(860px, calc(100vw - 32px)); }
+.anime-floating-preview { width: min(1600px, calc(100vw - 40px)); height: min(760px, calc(100dvh - 40px)); max-height: calc(100dvh - 40px); }
+.anime-floating-preview .anime-floating-body { display: flex; overflow: hidden; padding-bottom: 4px; }
+.anime-floating-nested::backdrop { background: rgb(15 23 42 / .16); backdrop-filter: none; }
+.anime-floating-header { flex: none; padding: 0 26px 12px; }
 .anime-floating-toolbar { display: flex; flex: none; min-height: 60px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px 4px 24px; }
 .anime-floating-toolbar h2 { font-size: 12px; color: var(--floating-surface-muted); }
 .anime-floating-toolbar button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; }
 .anime-floating-toolbar button:hover { background: rgb(148 163 184 / .12); }
-.anime-floating-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 26px 26px; }
+.anime-floating-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 26px 26px; }
 .anime-floating-footer { flex: none; padding: 12px 26px 20px; box-shadow: 0 -1px 0 rgb(148 163 184 / .12); }
-.anime-floating button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.anime-floating-preview .anime-floating-footer { padding-top: 6px; padding-bottom: max(12px, env(safe-area-inset-bottom)); box-shadow: none; }
+.anime-floating button:focus-visible { outline: 2px solid var(--ae-blue, #2563eb); outline-offset: 2px; }
 @media (max-width: 639px) { .anime-floating { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); border-radius: 18px; } .anime-floating-toolbar { padding-inline: 18px 10px; } .anime-floating-body { padding: 8px 18px 18px; } .anime-floating-footer { padding: 12px 18px max(16px, env(safe-area-inset-bottom)); } }
 </style>

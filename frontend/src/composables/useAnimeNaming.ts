@@ -113,5 +113,5 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     const key = `${t.tmdbId}:${t.groupId}:${t.season}:${extraSeasons(t.season).join(',')}`
     if (missing && !attemptedSeasons.has(key)) { attemptedSeasons.add(key); void load(t.tmdbId, t.season, t.groupId) }
   })
-  return { target, candidates, groups, busy, searching, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, suggest }
+  return { target, candidates, groups, busy, searching, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, suggest, wasManuallyChanged: () => manualTarget }
 }

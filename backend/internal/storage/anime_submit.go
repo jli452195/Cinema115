@@ -114,6 +114,15 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 		if err != nil {
 			return err
 		}
+		if job.DownloadState != "queued" && sub.Status == "enabled" {
+			submitted, err := animeJobSubmittedTx(ctx, tx, job.ID)
+			if err != nil {
+				return err
+			}
+			if submitted {
+				return nil
+			}
+		}
 		if source.Status != "enabled" || !source.RunWhenEnabled || sub.Status != "enabled" || sub.FirstEnabledAt == nil || sub.RunGeneration != snap.Source.SubscriptionGeneration || source.RunGeneration != snap.Source.SourceGeneration || source.Revision != snap.Source.SourceRevision || source.SubscriptionID != snap.Source.SubscriptionID || source.ActiveBaselineID == nil {
 			continue
 		}

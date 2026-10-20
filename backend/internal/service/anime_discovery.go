@@ -51,6 +51,17 @@ func (s *AnimeAdminService) wakeAnimeVerification() {
 	}
 }
 
+func (s *AnimeAdminService) animeDiscoveryWakeSignal() chan struct{} {
+	s.discoveryWakeOnce.Do(func() { s.discoveryWake = make(chan struct{}, 1) })
+	return s.discoveryWake
+}
+func (s *AnimeAdminService) wakeAnimeDiscovery() {
+	select {
+	case s.animeDiscoveryWakeSignal() <- struct{}{}:
+	default:
+	}
+}
+
 // Run owns both loops and waits for both on cancellation/error. A slow or broken
 // RSS source cannot consume the verifier's capacity. Each lane has one worker,
 // at most four operations per pass, and no detached request goroutines.
@@ -62,7 +73,7 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 	for _, lane := range []struct {
 		tick func(context.Context) error
 		wake <-chan struct{}
-	}{{r.PollOnce, nil}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}} {
+	}{{r.PollOnce, r.Admin.animeDiscoveryWakeSignal()}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}} {
 		lane := lane
 		group.Go(func() error {
 			interval := r.interval
@@ -121,7 +132,11 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 			return err
 		}
 		readCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		page, err := r.Feeds.ReadSource(readCtx, budget, AnimeSourceInput{Source: animefeed.NewSource(poll.Source.Provider, *poll.Source.ItemID, *poll.Source.GroupID), Kind: "rss"})
+		input := AnimeSourceInput{Source: animefeed.NewSource(poll.Source.Provider, *poll.Source.ItemID, *poll.Source.GroupID), Kind: "rss"}
+		if poll.Initialize && poll.Source.Rules.InitialMode == "from_episode" {
+			input.Kind, input.Take = "history", 2000
+		}
+		page, err := r.Feeds.ReadSource(readCtx, budget, input)
 		cancel()
 		readErr = err
 		if err == nil {

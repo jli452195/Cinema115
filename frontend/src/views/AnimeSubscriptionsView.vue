@@ -4,8 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
-import AnimeSubscriptionDialog from '../components/AnimeSubscriptionDialog.vue'
-import { portalToken, portalUser } from '../composables/usePortalAuth'
+import { portalUser } from '../composables/usePortalAuth'
 import { animeSubscriptionsVersion, animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { animeConfigMessage } from '../lib/anime-config-api'
@@ -22,12 +21,10 @@ const keyword = computed(() => typeof route.query.q === 'string' ? route.query.q
 const bangumiId = computed(() => /^[1-9]\d{0,11}$/.test(String(route.query.bangumiId)) ? String(route.query.bangumiId) : '')
 const returnTo = computed(() => animeReturnPath(route.query.returnTo))
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(1000000, Math.max(1, Number(route.query.page))) : 1)
-const detailID = computed(() => String(route.params.id || ''))
 const input = ref(keyword.value), inputError = ref('')
 const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}${bangumiId.value ? `&bangumiId=${bangumiId.value}` : ''}`)
 const result = ref<AnimeSubscriptionPage>(), loading = ref(false), error = ref(''), fetchedAt = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
-const selected = computed(() => result.value?.items.find(item => item.id === detailID.value))
 let controller: AbortController | undefined, disposed = false, refreshing = false, frame: number | undefined, interaction = 0
 function interacted() { interaction++ }
 function query(overrides: Record<string, string | undefined> = {}) {
@@ -48,14 +45,6 @@ function submitSearch() {
   void router.push({ path: '/anime/subscriptions', query: query({ q: value || undefined, page: undefined }) })
 }
 function openDetail(id: string) { void router.push({ path: `/anime/subscriptions/${encodeURIComponent(id)}`, query: query() }) }
-async function closeDetail() {
-  if (returnTo.value && window.history.state?.animeCatalogDirect === true) { await router.replace(returnTo.value); return }
-  const id = detailID.value
-  await router.replace({ path: '/anime/subscriptions', query: query() }); await nextTick()
-  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-subscription-id]'))
-  const target = cards.find(card => card.dataset.subscriptionId === id) || document.getElementById('subscription-keyword')
-  target?.focus({ preventScroll: true })
-}
 async function load(force = false, silent = false) {
   controller?.abort(); const active = new AbortController(); controller = active
   const key = dataKey.value, interactionBefore = interaction
@@ -71,17 +60,17 @@ async function load(force = false, silent = false) {
     if (disposed || active.signal.aborted || controller !== active) return
     result.value = data; fetchedAt.value = Date.now(); error.value = ''
     const last = Math.max(1, Math.ceil(data.total / 20))
-    if (page.value > last) { void router.replace({ path: detailID.value ? `/anime/subscriptions/${encodeURIComponent(detailID.value)}` : '/anime/subscriptions', query: query({ page: last > 1 ? String(last) : undefined }) }); return }
+    if (page.value > last) { void router.replace({ path: '/anime/subscriptions', query: query({ page: last > 1 ? String(last) : undefined }) }); return }
     if (!cached && !force && interactionBefore === interaction) void restorePosition(key)
   } catch (reason) { if (!disposed && !active.signal.aborted && controller === active && !(reason instanceof DOMException && reason.name === 'AbortError')) error.value = animeConfigMessage(reason) }
   finally { if (!disposed && controller === active) { loading.value = false; refreshing = false } }
 }
 watch(keyword, value => { input.value = value; inputError.value = '' })
 watch(animeSubscriptionsVersion, () => { if (props.token && portalUser.value?.role === 'admin') void load(true, true) })
-useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !detailID.value)
+useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !document.querySelector('dialog[open]'))
 watch([dataKey, () => props.token, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
 watch(() => route.fullPath, () => {
-  if (route.name === 'anime-subscriptions') rememberSubscriptionQuery(Object.fromEntries(Object.entries(query()).filter((entry): entry is [string, string] => typeof entry[1] === 'string')), detailID.value)
+  if (route.name === 'anime-subscriptions') rememberSubscriptionQuery(Object.fromEntries(Object.entries(query()).filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
 }, { immediate: true })
 onBeforeRouteUpdate(() => savePosition())
 onBeforeRouteLeave(() => savePosition())
@@ -108,6 +97,5 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
       <div v-else-if="!loading" class="anime-empty"><IconCalendar :size="32" aria-hidden="true" /><h3>{{ error ? '暂时无法读取订阅' : keyword || status ? '没有符合条件的订阅' : '从一部想追的番剧开始' }}</h3><p>{{ keyword || status ? '可以调整名称或订阅状态。' : '从 Bangumi 选择篇章，保存主 RSS 与备用来源。' }}</p><RouterLink v-if="!error" to="/anime" class="as-link">前往选番</RouterLink></div>
       <nav v-if="result && result.total > 0" class="anime-pagination" aria-label="订阅分页"><button type="button" :disabled="page <= 1 || loading" aria-label="订阅上一页" @click="changePage(page - 1)"><IconChevronLeft :size="18" aria-hidden="true" />上一页</button><span aria-live="polite">{{ page }} / {{ totalPages }}</span><button type="button" :disabled="page >= totalPages || loading" aria-label="订阅下一页" @click="changePage(page + 1)">下一页<IconChevronRight :size="18" aria-hidden="true" /></button></nav>
     </div>
-    <AnimeSubscriptionDialog v-if="detailID && token === portalToken && portalUser?.role === 'admin'" :key="`${portalUser.id}:${detailID}`" :token="token" :id="detailID" :initial="selected" :return-path="route.fullPath" @close="closeDetail" />
   </ManagementLayout>
 </template>

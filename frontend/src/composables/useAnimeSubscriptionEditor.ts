@@ -27,10 +27,10 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const samples = new Map<string, { data: AnimeSourceSample; until: number }>()
   const clock = window.setInterval(() => { now.value = Date.now() }, 10000)
   const active = computed(() => sources.value.find(source => source.ref === activeRef.value))
-  const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value)
+  const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value || !!local.value && ['archived', 'removed'].includes(local.value.status))
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', 'selected', 'unresolved', 'recovery', 'dismissed']
+    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'initialMode', 'include', 'exclude', ]
     return JSON.stringify({ naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -42,12 +42,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     try { if (!naming.input()) return '请选择 TMDB 命名目标' } catch (reason) { return animeConfigMessage(reason) }
     const incomplete = submittedSources.value.find(s => !animeSourceReady(s))
     if (incomplete) return `请完成${incomplete.role === 'main' ? '主 RSS' : '备用 RSS'}来源与规则`
-    const unresolved = submittedSources.value.find(s => s.runWhenEnabled && (s.recovery.length || s.unresolved.length))
-    if (unresolved) return '还有旧选择待核对，请重新选择或明确放弃'
     return ''
   })
-  const needsPreview = computed(() => submittedSources.value.some(s => s.runWhenEnabled && !validPreview(s)))
-  const selectedCount = computed(() => submittedSources.value.reduce((n, s) => n + (s.runWhenEnabled && validPreview(s) ? s.selected.length : 0), 0))
   function entryRef() { return local.value ? { id: local.value.entryId } : { ...(subject.value?.id ? { bangumiId: subject.value.id } : {}), editionKey: 'original' } }
   function chapter() { return local.value ? { id: local.value.entry.id, bangumiId: local.value.entry.bangumiId, editionKey: local.value.entry.editionKey, revision: local.value.entry.revision, draftKey: '' } : { id: '', bangumiId: subject.value?.id || null, editionKey: 'original', revision: 0, draftKey: draftKey.value } }
   function signature(source: SourceForm) {
@@ -107,9 +103,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (config.status === 'rejected') loadError.value = animeConfigMessage(config.reason)
     else if (subscriptionID.value) {
       const view = config.value as AnimeSubscriptionView
-      // Enabled configurations are not editable until their P2 lifecycle controls are implemented.
-      if (view.firstEnabledAt || !['draft', 'paused'].includes(view.status)) loadError.value = '订阅已开始，请在详情中管理暂停与恢复'
-      else {
+      {
         local.value = view
         subject.value = { id: view.entry.bangumiId || '', title: view.entry.title, coverUrl: view.entry.metadata?.coverUrl || '', date: view.entry.metadata?.airDate || '' }
         sources.value = view.sources.map(saved => {
@@ -120,10 +114,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
             identityNumbering: saved.binding.chapterCorrespondence?.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1,
             correspondence: !!saved.binding.chapterCorrespondence && !(saved.binding.chapterCorrespondence.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1), sourceEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.sourceEpisode) : '', chapterEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.chapterEpisode) : '',
             specMode: saved.rules.specMode || '', specProfiles: saved.rules.specProfiles || [],
-            resolution: saved.rules.resolution || '', minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), initialMode: saved.rules.initialMode || 'from_episode', include: (saved.rules.include || []).join(', '), exclude: (saved.rules.exclude || []).join(', ') })
+            resolution: saved.rules.resolution || '', minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), initialMode: saved.rules.initialMode === 'new_only' ? 'new_only' : 'from_episode', include: (saved.rules.include || []).join(', '), exclude: (saved.rules.exclude || []).join(', ') })
           form.confirmedFor = animeBindingKey(form)
-          const selection = view.form?.formSelections?.find(item => item.sourceRef === saved.id)
-          if (selection) { form.recovery = [...new Set([...selection.unresolvedReleaseIds, ...selection.selectedReleaseIds])]; form.dismissed = [...(selection.dismissedReleaseIds || [])] }
           return form
         })
       }
@@ -140,7 +132,17 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (!sources.value.length && !loadError.value) sources.value = [newAnimeSource('main', subject.value?.title)]
     naming.reset(local.value?.naming, !!local.value)
     activeRef.value = sources.value[0]?.ref || ''; loading.value = false; baseline.value = rawForm()
-    if (!local.value && !loadError.value) void naming.search(true)
+    if (!local.value && !loadError.value) {
+      const withoutNaming = () => {
+        const value = JSON.parse(rawForm()); delete value.naming
+        for (const source of value.sources) if (!source.mappingManual) { delete source.mappingSource; delete source.mappingTarget; delete source.mappingSeason }
+        return JSON.stringify(value)
+      }
+      const originalInputs = withoutNaming()
+      void naming.search(true).then(() => {
+        if (current === generation && !signal.aborted && !receipt.value && !naming.wasManuallyChanged() && originalInputs === withoutNaming()) baseline.value = rawForm()
+      })
+    }
   }
   async function reloadSettings() {
     if (locked.value || previewBusy.value) return
@@ -155,7 +157,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function removeSource(source: SourceForm) {
     if (locked.value || previewBusy.value) return
-    if ((source.itemId || source.id) && !window.confirm('移除此来源配置？其他字幕组和已保存的资源不会被删除。')) return
     if (source.id) removed.value.push({ id: source.id, expectedRevision: source.revision })
     searchControllers.get(source.ref)?.abort()
     sampleControllers.get(source.ref)?.abort()
@@ -257,7 +258,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (issue) target.previewError = '来源读取未完成，已有预览和其他来源保留。请稍后重新预览。'
     else if (!data.page) target.previewError = '本次未返回有效资源预览，请重新读取。'
   }
-  async function runPreview(source: SourceForm, action: 'generate' | 'load' | 'page' | 'select', options: { page?: number; selected?: string[]; dismissed?: string[] } = {}) {
+  async function runPreview(source: SourceForm, action: 'generate' | 'load' | 'page', options: { page?: number } = {}) {
     if (locked.value || previewBusy.value || !settings.value || source.previewCooldown > Date.now()) return
     source.previewError = ''; previewBusy.value = source.ref
     const before = signature(source), current = generation
@@ -270,88 +271,43 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         if (preview?.needsSync) {
           const latest = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${preview.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=1&pageSize=50`, { signal: lifetime.signal })
           if (current !== generation) return
-          if (latest.summary.loadRevision > preview.ref.loadRevision) {
-            const pending = new Set(latest.pendingSelections.map(item => item.releaseId))
-            source.dismissed = [...new Set([...source.dismissed, ...source.selected, ...source.unresolved])].filter(id => !latest.selectedIds.includes(id) && !pending.has(id))
-          }
           preview.ref.loadRevision = latest.summary.loadRevision; preview.page = latest; preview.summary = latest.summary
         }
         const take = preview?.take || 50
-        const rememberedDismissals = [...source.dismissed]
         const data = await animeConfigRequest<AnimePreviewResponse>(token.value, 'subscriptions/preview', { method: 'POST', signal: lifetime.signal, body: {
           config: { chapter: chapter(), subscriptionId: local.value?.id || '', revision: local.value?.revision || 0, settings: { revision: settings.value.settings.revision }, sources: configs },
           previewSourceRef: source.ref, take, refresh: false, previewRefs: previewRefs(source), ...(preview ? { previous: preview.ref } : {}),
         } })
         if (current !== generation) return
         installPreview(data, source, before, take)
-        // Restored exclusions are explicit input. A fresh scope must not silently select them again.
-        const excluded = data.page?.selectedIds.filter(id => rememberedDismissals.includes(id)) || []
-        if (excluded.length && source.preview) {
-          source.dismissed = rememberedDismissals
-          source.selected = source.selected.filter(id => !excluded.includes(id))
-          source.preview.needsSync = true; source.preview.signature = ''
-          const selected = await animeConfigRequest<AnimePreviewResponse>(token.value, `previews/${source.preview.ref.batchId}/selections`, { method: 'POST', signal: lifetime.signal, body: { sourceRef: source.ref, sourcePreviewId: source.preview.ref.sourcePreviewId, expectedLoadRevision: source.preview.ref.loadRevision, selectedReleaseIds: source.selected, dismissedReleaseIds: excluded } })
-          if (current === generation) installPreview(selected, source, before, take)
-        }
       } else if (action === 'page') {
         const page = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${preview!.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=${options.page || 1}&pageSize=50`, { signal: lifetime.signal })
         if (current === generation && signature(source) === before) { preview!.page = page; preview!.summary = page.summary; preview!.ref.loadRevision = page.summary.loadRevision; source.selected = [...page.selectedIds]; source.unresolved = page.pendingSelections.map(item => item.releaseId) }
       } else {
         const nextTake = Math.min(2000, preview!.take + Math.min(50, budget.value.remaining))
         if (action === 'load' && (nextTake <= preview!.take || !preview!.summary.unloadedHistory)) throw new Error('已到本次历史读取边界')
-        const pageBefore = preview!.page?.page || 1
-        const data = await animeConfigRequest<AnimePreviewResponse>(token.value, `previews/${preview!.ref.batchId}/${action === 'load' ? 'load' : 'selections'}`, { method: 'POST', signal: lifetime.signal, body: {
+        const data = await animeConfigRequest<AnimePreviewResponse>(token.value, `previews/${preview!.ref.batchId}/load`, { method: 'POST', signal: lifetime.signal, body: {
           sourceRef: source.ref, sourcePreviewId: preview!.ref.sourcePreviewId, expectedLoadRevision: preview!.ref.loadRevision,
-          ...(action === 'load' ? { nextTake } : { selectedReleaseIds: options.selected || [], dismissedReleaseIds: options.dismissed || [] }),
+          nextTake,
         } })
         if (current !== generation) return
-        installPreview(data, source, before, action === 'load' ? nextTake : preview!.take)
-        if (action === 'select' && signature(source) === before) {
-          source.dismissed = [...new Set([...source.dismissed, ...(options.dismissed || []), ...preview!.page!.selectedIds.filter(id => !source.selected.includes(id))])].filter(id => !source.selected.includes(id))
-          if (pageBefore > 1 && source.preview) {
-            const page = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${source.preview.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=${pageBefore}&pageSize=50`, { signal: lifetime.signal })
-            if (current === generation && signature(source) === before) source.preview.page = page
-          }
-        }
+        installPreview(data, source, before, nextTake)
       }
     } catch (reason) {
       if (current !== generation) return
       source.previewError = animeConfigMessage(reason); setCooldown(source, reason, 'preview')
-      if (source.preview && (['select', 'load'].includes(action) || reason instanceof AnimeConfigError && ['PREVIEW_EXPIRED', 'PREVIEW_CHANGED', 'REVISION_CONFLICT'].includes(reason.code))) { source.preview.needsSync = true; source.preview.signature = '' }
+      if (source.preview && (action === 'load' || reason instanceof AnimeConfigError && ['PREVIEW_EXPIRED', 'PREVIEW_CHANGED', 'REVISION_CONFLICT'].includes(reason.code))) { source.preview.needsSync = true; source.preview.signature = '' }
     } finally { if (current === generation) previewBusy.value = '' }
   }
-  function selectRelease(source: SourceForm, id: string, checked: boolean) {
-    void runPreview(source, 'select', { selected: checked ? [...new Set([...source.selected, id])] : source.selected.filter(item => item !== id), dismissed: checked ? [] : [id] })
-  }
-  function dismissPending(source: SourceForm, id: string) { void runPreview(source, 'select', { selected: source.selected, dismissed: [id] }) }
-  function dismissRecovery(source: SourceForm) { if (!locked.value && !previewBusy.value) source.recovery = [] }
-  async function start() {
-    if (naming.busy.value || naming.searching.value) return
-    if (locked.value || previewBusy.value || sources.value.some(source => source.searchBusy) || !settings.value) return
+  async function save() {
+    if (naming.busy.value || naming.searching.value || locked.value || previewBusy.value || !settings.value) return
     feedback.value = ''; duplicateID.value = ''; conflict.value = false
     try {
       if (startIssue.value) throw new Error(startIssue.value)
-      // The first click prepares only the missing/stale previews. Explicitly
-      // reviewed selections are submitted on the next click without re-reading RSS.
-      if (needsPreview.value) {
-        const originRef = activeRef.value
-        for (const source of submittedSources.value.filter(s => s.runWhenEnabled && !validPreview(s))) {
-          activeRef.value = source.ref
-          await runPreview(source, 'generate')
-          if (!validPreview(source)) return
-        }
-        activeRef.value = originRef
-        feedback.value = '请核对预览中的资源选择，然后点击开始订阅。'
-        return
-      }
-      const configs = submittedSources.value.map(animeSourceConfig)
-      const body = { expectedRevision: local.value?.revision || 0, settingsRevision: settings.value.settings.revision, chapter: chapter(),
-        // All unselected history is frozen as skipped. Old exclusion IDs may
-        // have disappeared from the current snapshot and need no write grant.
-        sources: submittedSources.value.filter(s => s.runWhenEnabled).map(s => ({ ...s.preview!.ref, selectedReleaseIds: [...s.selected], dismissedReleaseIds: [] })),
-        config: { naming: naming.input(), entry: entryRef(), sources: configs, removedSourceIds: removed.value,
-          formSelections: [], previewRefs: [] } }
-      pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}/start` : 'subscriptions/start', method: 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
+      const body = { expectedRevision: local.value?.revision || 0, settingsRevision: settings.value.settings.revision,
+        config: { naming: naming.input(), entry: entryRef(), sources: submittedSources.value.map(animeSourceConfig),
+          removedSourceIds: removed.value, formSelections: [], previewRefs: [] } }
+      pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}` : 'subscriptions', method: local.value ? 'PATCH' : 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
       await retrySave()
     } catch (reason) { feedback.value = animeConfigMessage(reason) }
   }
@@ -362,7 +318,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     try {
       const result = await animeConfigRequest<AnimeSaveReceipt>(token.value, pending.path, { ...pending, signal: lifetime.signal })
       if (current !== generation) return
-      if (!result.id || !Number.isSafeInteger(result.revision) || result.status !== 'enabled') throw new AnimeConfigError('订阅回执不完整，请重试原请求核对', '', 0, {}, true)
+      if (!result.id || !Number.isSafeInteger(result.revision) || !['enabled', 'paused'].includes(result.status)) throw new AnimeConfigError('订阅回执不完整，请重试原请求核对', '', 0, {}, true)
       invalidateAnimeSubscriptions(result.id)
       receipt.value = result; pendingSave.value = undefined; baseline.value = rawForm()
     } catch (reason) {
@@ -377,6 +333,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue, needsPreview, selectedCount,
-    initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, selectRelease, dismissPending, dismissRecovery, start, retrySave }
+  return { naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue,
+    initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, save, retrySave }
 }
