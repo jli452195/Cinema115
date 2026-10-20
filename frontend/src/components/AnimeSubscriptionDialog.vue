@@ -156,12 +156,11 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-identity p { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; font-size: 11px; color: var(--floating-surface-muted); }
 .ac-tabs { display: flex; gap: 6px; }
 .ac-tabs button { padding: 9px 18px; border-radius: 10px; font-size: 13px; color: var(--floating-surface-muted); }
-.ac-tabs button[aria-selected=true] { color: #0f766e; background: rgb(20 184 166 / .10); font-weight: 600; }
-:global(.dark) .ac-tabs button[aria-selected=true] { color: #5eead4; }
+.ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
+:global(.dark) .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
 .ac-tabs small { margin-left: 4px; opacity: .75; }
 .ac-editor { width: 100%; max-width: none; margin: 0; }
-.ac-editor :deep(.ae-naming-target) { margin-top: 0; padding: 0 0 18px; background: none; border: 0; }
-.ac-editor :deep(.ae-naming-heading h3 small) { display: block; margin: 5px 0 0; }
+.ac-editor :deep(.ae-naming-target) { margin: 0 0 12px; padding: 0 0 12px; background: none; border: 0; box-shadow: none; }
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
 .ac-episodes { margin: 0 0 22px; }
 .ac-storage { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--floating-surface-muted); }

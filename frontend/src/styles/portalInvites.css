@@ -15,8 +15,6 @@
   --invite-heading-color: #2563eb;
   --invite-violet-bg: #f0edff;
   --invite-violet-color: #6d47cb;
-  --invite-teal-bg: #e8f8f3;
-  --invite-teal-color: #137b60;
   --invite-result-bg: #f4f8ff;
   --invite-danger: #b91c1c;
   --invite-danger-bg: #fff0f0;
@@ -43,8 +41,6 @@
   --invite-heading-color: #93c5fd;
   --invite-violet-bg: #322b4b;
   --invite-violet-color: #c4b5fd;
-  --invite-teal-bg: #203c35;
-  --invite-teal-color: #6ee7b7;
   --invite-result-bg: #1c293b;
   --invite-danger: #fca5a5;
   --invite-danger-bg: #40282c;
@@ -71,7 +67,6 @@
 .invite-title-with-icon { display: flex; align-items: center; gap: 9px; }
 .invite-title-with-icon > svg { flex-shrink: 0; width: 28px; height: 28px; padding: 6px; border-radius: 9px; background: var(--invite-heading-bg); color: var(--invite-heading-color); }
 .invite-library-summary .invite-title-with-icon > svg { background: var(--invite-violet-bg); color: var(--invite-violet-color); }
-.invite-records .invite-title-with-icon > svg { background: var(--invite-teal-bg); color: var(--invite-teal-color); }
 .invite-muted { color: var(--invite-muted); }
 .invite-caption { font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
 .invite-button, .invite-icon-button { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 12px; background: transparent; color: var(--invite-muted); font-size: 13px; line-height: 20px; font-weight: 550; white-space: nowrap; transition: background-color 180ms, color 180ms, transform 180ms; -webkit-tap-highlight-color: transparent; }

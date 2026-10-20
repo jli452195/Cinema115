@@ -35,7 +35,8 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 .anime-floating { --scrollbar-track: transparent; --scrollbar-thumb: rgb(100 116 139 / .4); width: min(760px, calc(100vw - 32px)); max-height: min(880px, calc(100dvh - 48px)); margin: auto; padding: 0; overflow: clip; border-radius: 22px; color: var(--floating-surface-text); }
 :global(.dark) .anime-floating { --scrollbar-thumb: rgb(184 196 212 / .4); }
 .anime-floating[open] { display: flex; flex-direction: column; }
-.anime-floating-config { width: min(860px, calc(100vw - 32px)); }
+.anime-floating-config { width: min(860px, calc(100vw - 32px)); height: min(880px, calc(100dvh - 48px)); }
+.anime-floating-config .anime-floating-body { scrollbar-gutter: stable; }
 .anime-floating-preview { width: min(1600px, calc(100vw - 40px)); height: min(760px, calc(100dvh - 40px)); max-height: calc(100dvh - 40px); }
 .anime-floating-preview .anime-floating-body { display: flex; overflow: hidden; padding-bottom: 4px; }
 .anime-floating-nested::backdrop { background: rgb(15 23 42 / .16); backdrop-filter: none; }
@@ -48,5 +49,5 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 .anime-floating-footer { flex: none; padding: 12px 26px 20px; box-shadow: 0 -1px 0 rgb(148 163 184 / .12); }
 .anime-floating-preview .anime-floating-footer { padding-top: 6px; padding-bottom: max(12px, env(safe-area-inset-bottom)); box-shadow: none; }
 .anime-floating button:focus-visible { outline: 2px solid var(--ae-blue, #2563eb); outline-offset: 2px; }
-@media (max-width: 639px) { .anime-floating { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); border-radius: 18px; } .anime-floating-toolbar { padding-inline: 18px 10px; } .anime-floating-body { padding: 8px 18px 18px; } .anime-floating-footer { padding: 12px 18px max(16px, env(safe-area-inset-bottom)); } }
+@media (max-width: 639px) { .anime-floating { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); border-radius: 18px; } .anime-floating-config { height: calc(100dvh - 24px); } .anime-floating-toolbar { padding-inline: 18px 10px; } .anime-floating-body { padding: 8px 18px 18px; } .anime-floating-footer { padding: 12px 18px max(16px, env(safe-area-inset-bottom)); } }
 </style>

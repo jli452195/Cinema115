@@ -194,6 +194,26 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     passed.push('new definition saves without preview or selected download grants')
 
     await s.go('/anime/subscriptions/saved-subscription')
+    for (const viewport of [{width:1440,height:1080},{width:390,height:844},{width:900,height:450}]) {
+      await s.page.setViewportSize(viewport)
+      const geometry=()=>s.page.locator('dialog[open]').evaluate(el=>{
+        const rect=node=>{const {x,y,width,height}=node.getBoundingClientRect();return {x,y,width,height}}
+        return {shell:rect(el),tabs:rect(el.querySelector('.ac-tabs')),footer:rect(el.querySelector('.anime-floating-footer')),bodyWidth:el.querySelector('.anime-floating-body').clientWidth}
+      })
+      const initial=await geometry()
+      assert.ok(initial.shell.y>=0 && initial.shell.y+initial.shell.height<=viewport.height,'configuration fits viewport')
+      await s.page.locator('.anime-floating-body').evaluate(el=>{el.scrollTop=el.scrollHeight})
+      await wait(()=>s.page.locator('.anime-floating-body').evaluate(el=>el.scrollTop>0),'basic content scrolls internally')
+      const scrollTop=await s.page.locator('.anime-floating-body').evaluate(el=>el.scrollTop)
+      for (const tab of [/^备用 RSS/,/^下载记录$/,/^基本$/]) {
+        await s.page.getByRole('tab',{name:tab}).click()
+        const current=await geometry()
+        assert.deepEqual(current,initial,`tab switch keeps shell, tabs, footer and content width stable at ${viewport.width}x${viewport.height}`)
+      }
+      await wait(()=>s.page.locator('.anime-floating-body').evaluate((el,top)=>Math.abs(el.scrollTop-top)<1,scrollTop),'basic tab restores its scroll position')
+    }
+    await s.page.setViewportSize({width:1440,height:1080})
+    passed.push('desktop, phone and short-screen tab switches keep dialog geometry and restore scroll')
     const fixed=await s.page.locator('dialog[open] .anime-floating-footer').boundingBox()
     await s.page.locator('.anime-floating-body').evaluate(el=>{el.scrollTop=el.scrollHeight})
     const afterScroll=await s.page.locator('dialog[open] .anime-floating-footer').boundingBox()
@@ -330,11 +350,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await mobile.page.screenshot({path:'test-results/anime-dialog-confirm-light.png'})
     const light=await mobile.page.locator('.ac-confirm').evaluate(el=>({ink:getComputedStyle(el).color,bg:getComputedStyle(el).backgroundColor}))
     assert.deepEqual(light,{ink:'rgb(30, 41, 59)',bg:'rgb(255, 255, 255)'})
-    assert.equal(await mobile.page.locator('.ae-label').first().evaluate(el=>getComputedStyle(el).color),'rgb(30, 41, 59)')
+    assert.equal(await mobile.page.locator('.ae-target-season > .ae-label').evaluate(el=>getComputedStyle(el).color),'rgb(30, 41, 59)')
     await mobile.page.getByRole('button',{name:'继续编辑',exact:true}).click()
     assert.equal(await mobile.page.locator('input[placeholder="字幕组标题中的编号"]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)')
     await mobile.page.evaluate(()=>document.documentElement.classList.add('dark'))
-    assert.equal(await mobile.page.locator('.ae-label').first().evaluate(el=>getComputedStyle(el).color),'rgb(226, 232, 240)')
+    assert.equal(await mobile.page.locator('.ae-target-season > .ae-label').evaluate(el=>getComputedStyle(el).color),'rgb(226, 232, 240)')
     assert.equal(await mobile.page.locator('input[placeholder="字幕组标题中的编号"]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(32, 40, 50)')
     await mobile.page.getByRole('button',{name:'预览',exact:true}).click()
     await mobile.page.getByRole('combobox',{name:'显示',exact:true}).click()
