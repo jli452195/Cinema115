@@ -277,7 +277,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		}
 	}
 	var entry model.AnimeEntry
-	if bindingEntry.ID != "" || bindingEntry.BangumiID != nil {
+	if bindingEntry.ID != "" {
 		entry, _, err = s.Bindings.resolveEntry(ctx, bindingEntry, "")
 		if err != nil {
 			return out, err
@@ -308,7 +308,9 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 				return out, e
 			}
 			v.GroupName = &checked.Source.GroupName
-			entry = checked.Entry
+			if entry.Title == "" || v.Role == "main" {
+				entry = checked.Entry
+			}
 		} else if v.Status == "paused" {
 			return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"sources." + v.Ref + ".binding"}}
 		}

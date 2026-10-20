@@ -182,6 +182,30 @@ func (s *AnimeBindingService) resolveEntry(ctx context.Context, ref AnimeEntryRe
 	return entry, nil, nil
 }
 
+// Only server-read source metadata may replace a missing external subject.
+// Keeping its matching external hint preserves the local uniqueness key;
+// it does not claim that Bangumi still serves metadata for this identity.
+func animeEntryFromSource(ref AnimeEntryRef, source mikan.SourceEntry, missing bool) (model.AnimeEntry, error) {
+	if ref.validate() != nil || ref.ID != "" {
+		return model.AnimeEntry{}, ErrAnimeBindingInput
+	}
+	if ref.BangumiID != nil {
+		matched := false
+		for _, id := range source.BangumiIDs {
+			matched = matched || id == *ref.BangumiID
+		}
+		if !missing || !matched {
+			return model.AnimeEntry{}, ErrAnimeBindingInput
+		}
+	}
+	entry := model.AnimeEntry{BangumiID: ref.BangumiID, EditionKey: ref.EditionKey, Title: source.Title,
+		Metadata: model.AnimeMetadata{SchemaVersion: model.AnimeSchemaVersion, BangumiUnavailable: missing, CoverURL: source.CoverURL, AirDate: source.AirDate}}
+	if err := entry.Validate(); err != nil {
+		return model.AnimeEntry{}, fmt.Errorf("%w: %v", ErrAnimeBindingInput, err)
+	}
+	return entry, nil
+}
+
 type AnimeBindingInput struct {
 	Entry   AnimeEntryRef      `json:"entry"`
 	Source  mikan.Source       `json:"source"`
@@ -232,11 +256,13 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 	if err := budget.bindSource(in.Source); err != nil {
 		return out, err
 	}
+	missingSubject := false
 	if in.Entry.ID != "" || in.Entry.BangumiID != nil {
 		entry, meta, err := s.resolveEntry(ctx, in.Entry, "")
-		if err != nil {
+		if err != nil && !(in.Entry.ID == "" && errors.Is(err, bangumi.ErrNotFound)) {
 			return out, err
 		}
+		missingSubject = errors.Is(err, bangumi.ErrNotFound)
 		out.Entry, out.BangumiMeta = entry, meta
 	}
 	read, err := s.ReadEntry(ctx, budget, in.Source.Site(), in.Source.ItemID, false)
@@ -253,8 +279,8 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 	if groupName == "" {
 		return out, mikan.ErrSourceBinding
 	}
-	if in.Entry.ID == "" && in.Entry.BangumiID == nil {
-		entry, _, err := s.resolveEntry(ctx, in.Entry, read.Entry.Title)
+	if in.Entry.ID == "" && (in.Entry.BangumiID == nil || missingSubject) {
+		entry, err := animeEntryFromSource(in.Entry, read.Entry, missingSubject)
 		if err != nil {
 			return out, err
 		}

@@ -41,7 +41,7 @@ func parseSourceHTML(body []byte, in SourceRequest) (SourcePage, error) {
 		if result.Bangumi == nil || result.Bangumi.Title == "" {
 			return SourcePage{}, ErrParse
 		}
-		page.Entry = &SourceEntry{ID: in.Source.ItemID, Title: result.Bangumi.Title, Groups: result.Groups, BangumiIDs: result.BangumiIDs}
+		page.Entry = &SourceEntry{ID: in.Source.ItemID, Title: result.Bangumi.Title, CoverURL: result.Bangumi.CoverURL, Groups: result.Groups, BangumiIDs: result.BangumiIDs}
 		// Entry metadata confirms available groups. Its mixed-group resource
 		// rows are never used as a single-group preview or baseline.
 		return page, nil

@@ -106,8 +106,9 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button></div>
       <template v-else-if="subject">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
-          <AnimeNamingTarget :naming="editor.naming" :disabled="locked" />
-          <details v-if="subject.id" class="ae-advanced ac-episodes" @toggle="episodesOpen = ($event.target as HTMLDetailsElement).open"><summary>篇章集号<IconChevronDown :size="15" /></summary><AnimeChapterEpisodes v-if="episodesOpen" :token="token" :bangumi-id="subject.id" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" /></details>
+          <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
+          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked" />
+          <details v-if="subject.id && !subject.bangumiUnavailable" class="ae-advanced ac-episodes" @toggle="episodesOpen = ($event.target as HTMLDetailsElement).open"><summary>篇章集号<IconChevronDown :size="15" /></summary><AnimeChapterEpisodes v-if="episodesOpen" :token="token" :bangumi-id="subject.id" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" /></details>
           <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
@@ -163,6 +164,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-editor :deep(.ae-naming-target) { margin: 0 0 12px; padding: 0 0 12px; background: none; border: 0; box-shadow: none; }
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
 .ac-episodes { margin: 0 0 22px; }
+.ac-metadata-note { margin: 0 0 14px; }
 .ac-storage { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--floating-surface-muted); }
 .ac-storage > div { flex: 1; min-width: 0; font-size: 11px; }
 .ac-storage p { overflow-wrap: anywhere; line-height: 1.8; }

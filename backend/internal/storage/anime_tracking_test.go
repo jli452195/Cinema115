@@ -226,7 +226,13 @@ func TestAnimeStatusInitializingResultUsesOnlyBoundedEarlyChecks(t *testing.T) {
 			if err != nil || op.AuthorizedAt == nil {
 				t.Fatal(op, err)
 			}
-			when := *op.AuthorizedAt + 1
+			job, err = f.store.GetAnimeDownloadJob(ctx, job.ID)
+			if err != nil || job.NextRunAt == nil {
+				t.Fatal(job, err)
+			}
+			// The outcome write can occur more than one millisecond after dispatch.
+			// Start at its persisted due time rather than before it was scheduled.
+			when := *job.NextRunAt
 			for i := 0; i < 3; i++ {
 				poll := takeAnimeStatusPoll(t, f, when)
 				observation := animeStatusObservation(job, "", 100)

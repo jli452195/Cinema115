@@ -93,6 +93,8 @@ type Group struct {
 type SourceEntry struct {
 	ID            string   `json:"id"`
 	Title         string   `json:"title"`
+	CoverURL      string   `json:"coverUrl,omitempty"`
+	AirDate       string   `json:"airDate,omitempty"`
 	Groups        []Group  `json:"groups"`
 	BangumiIDs    []string `json:"bangumiIds"`
 	GroupsPartial bool     `json:"groupsPartial,omitempty"`

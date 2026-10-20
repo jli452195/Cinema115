@@ -33,6 +33,13 @@ export async function requestMikanCatalogEntry(token: string, id: string, signal
   return result.entry
 }
 export function catalogSnapshot(key: string) { return catalogs.get(key) }
+export function animeCatalogItemSnapshot(provider: string, id: string): { title: string; coverUrl: string; date: string } | undefined {
+  for (const catalog of [...catalogs.values()].reverse()) {
+    if (catalog.provider !== provider) continue
+    const item = catalog.items.find(item => item.id === id) || catalog.days.map(day => day.items.find(item => item.id === id)).find(item => !!item)
+    if (item) return { title: item.title, coverUrl: item.coverUrl, date: 'airDate' in item ? item.airDate : '' }
+  }
+}
 export function catalogQuery(provider: AnimeProviderID) { return { ...queries.get(provider) } }
 export function rememberCatalogQuery(provider: AnimeProviderID, query: Record<string, string>) { queries.set(provider, { ...query }) }
 export function catalogDraft(provider: AnimeProviderID) { return drafts.get(provider) }

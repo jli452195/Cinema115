@@ -2,8 +2,8 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { invalidateAnimeSubscriptions } from './useAnimeSubscriptionBrowser'
 import { useAnimeNaming } from './useAnimeNaming'
 import { portalUser } from './usePortalAuth'
-import { cachedAnime, requestAnime } from './useAnimeDiscovery'
-import { requestMikanCatalogEntry } from './useAnimeCatalog'
+import { AnimeDiscoveryError, cachedAnime, requestAnime } from './useAnimeDiscovery'
+import { animeCatalogItemSnapshot, requestMikanCatalogEntry } from './useAnimeCatalog'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
 import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSubjectResult } from '../types/anime'
@@ -12,7 +12,7 @@ import type { AnimePreviewPage, AnimePreviewResponse, AnimeSaveReceipt, AnimeSet
 interface PendingWrite { path: string; method: string; key: string; body: unknown }
 export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: Ref<string>, bangumiID: Ref<string>, seed?: Ref<{ provider: string; itemId: string }>) {
   const sources = ref<SourceForm[]>([]), activeRef = ref('main')
-  const subject = ref<{ id: string; title: string; coverUrl: string; date: string }>()
+  const subject = ref<{ id: string; title: string; coverUrl: string; date: string; bangumiUnavailable?: boolean; needsSource?: boolean }>()
   const local = ref<AnimeSubscriptionView>(), settings = ref<AnimeSettingsView>()
   const loading = ref(true), loadError = ref(''), feedback = ref(''), settingsError = ref('')
   const previewBusy = ref(''), saveBusy = ref(false), settingsBusy = ref(false)
@@ -36,6 +36,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
   const submittedSources = computed(() => sources.value.filter(s => s.role === 'main' || s.id || s.itemId || s.groupId))
   const startIssue = computed(() => {
+    if (subject.value?.needsSource) return '请先选择番剧来源'
     if (!settings.value?.readiness.ready || !settings.value.settings.organizeCid) return '请在设置中补齐下载与整理目录'
     if (!submittedSources.value.some(s => s.role === 'main' && s.runWhenEnabled)) return '请启用主 RSS'
     if (!naming.target.value) return '请选择 TMDB 命名目标'
@@ -44,8 +45,13 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (incomplete) return `请完成${incomplete.role === 'main' ? '主 RSS' : '备用 RSS'}来源与规则`
     return ''
   })
-  function entryRef() { return local.value ? { id: local.value.entryId } : { ...(subject.value?.id ? { bangumiId: subject.value.id } : {}), editionKey: 'original' } }
-  function chapter() { return local.value ? { id: local.value.entry.id, bangumiId: local.value.entry.bangumiId, editionKey: local.value.entry.editionKey, revision: local.value.entry.revision, draftKey: '' } : { id: '', bangumiId: subject.value?.id || null, editionKey: 'original', revision: 0, draftKey: draftKey.value } }
+  function entryRef(source = sources.value.find(s => s.role === 'main')): { id?: string; bangumiId?: string; editionKey?: string } {
+    if (local.value) return { id: local.value.entryId }
+    const id = subject.value?.id
+    const linked = !subject.value?.bangumiUnavailable || source?.entry?.bangumiIds.includes(id || '')
+    return { ...(id && linked ? { bangumiId: id } : {}), editionKey: 'original' }
+  }
+  function chapter() { return local.value ? { id: local.value.entry.id, bangumiId: local.value.entry.bangumiId, editionKey: local.value.entry.editionKey, revision: local.value.entry.revision, draftKey: '' } : { id: '', bangumiId: entryRef().bangumiId || null, editionKey: 'original', revision: 0, draftKey: draftKey.value } }
   function signature(source: SourceForm) {
     try {
       const { position: _p, role: _r, status: _s, runWhenEnabled: _e, groupName: _g, ...config } = animeSourceConfig(source, 0)
@@ -70,7 +76,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (!token.value || portalUser.value?.role !== 'admin') { loadError.value = '请使用管理员身份重新登录'; loading.value = false; return }
     const signal = lifetime.signal
     let seedIssue = ''
-    async function newConfiguration(): Promise<AnimeSubjectResult & { sourceEntry?: MikanEntry }> {
+    async function newConfiguration(): Promise<AnimeSubjectResult & { sourceEntry?: MikanEntry; bangumiUnavailable?: boolean; needsSource?: boolean }> {
       let sourceEntry: MikanEntry | undefined
       if (seed?.value.provider || seed?.value.itemId) {
         if (!['mikan', 'anibt', 'garden'].includes(seed.value.provider) || !/^[1-9]\d{0,11}$/.test(seed.value.itemId)) throw new Error('订阅站点或条目无效，请返回该站点重新选择')
@@ -80,17 +86,26 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
             : (await animeConfigRequest<{ entry: MikanEntry }>(token.value, `sources/${seed.value.provider}/${seed.value.itemId}`, { signal })).entry
           if (sourceEntry.id !== seed.value.itemId) throw new Error('来源条目不一致，请重新选择')
         } catch (reason) {
-          if (!bangumiID.value || signal.aborted) throw reason
+          if (!bangumiID.value || signal.aborted || reason instanceof AnimeConfigError && [401, 403].includes(reason.status)) throw reason
           seedIssue = '入口来源暂时无法读取，可在 RSS 中重新选择站点。'
         }
       }
       if (/^[1-9]\d*$/.test(bangumiID.value)) {
         const cached = cachedAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`)
-        const result = cached?.fresh ? cached.data : await requestAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`, `subjects/${bangumiID.value}`, token.value, signal)
-        return { ...result, sourceEntry }
+        try {
+          const result = cached?.fresh ? cached.data : await requestAnime<AnimeSubjectResult>(`subject:${bangumiID.value}`, `subjects/${bangumiID.value}`, token.value, signal)
+          return { ...result, sourceEntry }
+        } catch (reason) {
+          if (!(reason instanceof AnimeDiscoveryError && reason.status === 404 && reason.code === 'UPSTREAM_NOT_FOUND') || signal.aborted) throw reason
+          const card = sourceEntry && animeCatalogItemSnapshot(seed?.value.provider || '', sourceEntry.id)
+          return { sourceEntry, bangumiUnavailable: true, needsSource: !sourceEntry,
+            subject: { id: sourceEntry && !sourceEntry.bangumiIds.includes(bangumiID.value) ? '' : bangumiID.value, title: sourceEntry?.title || '选择番剧来源', originalTitle: '', coverUrl: sourceEntry?.coverUrl || card?.coverUrl || '', date: sourceEntry?.airDate || card?.date || '', weekday: null, url: '', synopsis: '', platform: '', episodes: null, totalEpisodes: null },
+            metadata: { fetchedAt: 0, expiresAt: 0, stale: false, dataVersion: '', issue: null } }
+        }
       }
       if (bangumiID.value || !sourceEntry) throw new Error('缺少有效番剧条目，请返回选番')
-      return { sourceEntry, subject: { id: '', title: sourceEntry.title, originalTitle: '', coverUrl: '', date: '', weekday: null, url: '', synopsis: '', platform: '', episodes: null, totalEpisodes: null }, metadata: { fetchedAt: 0, expiresAt: 0, stale: false, dataVersion: '', issue: null } }
+      const card = animeCatalogItemSnapshot(seed?.value.provider || '', sourceEntry.id)
+      return { sourceEntry, subject: { id: '', title: sourceEntry.title, originalTitle: '', coverUrl: sourceEntry.coverUrl || card?.coverUrl || '', date: sourceEntry.airDate || card?.date || '', weekday: null, url: '', synopsis: '', platform: '', episodes: null, totalEpisodes: null }, metadata: { fetchedAt: 0, expiresAt: 0, stale: false, dataVersion: '', issue: null } }
     }
     const configPromise = subscriptionID.value
       ? animeConfigRequest<AnimeSubscriptionView>(token.value, `subscriptions/${encodeURIComponent(subscriptionID.value)}`, { signal })
@@ -105,7 +120,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       const view = config.value as AnimeSubscriptionView
       {
         local.value = view
-        subject.value = { id: view.entry.bangumiId || '', title: view.entry.title, coverUrl: view.entry.metadata?.coverUrl || '', date: view.entry.metadata?.airDate || '' }
+        subject.value = { id: view.entry.bangumiId || '', title: view.entry.title, coverUrl: view.entry.metadata?.coverUrl || '', date: view.entry.metadata?.airDate || '', bangumiUnavailable: view.entry.metadata?.bangumiUnavailable }
         sources.value = view.sources.map(saved => {
           const form = newAnimeSource(saved.role, view.entry.title, saved.provider)
           Object.assign(form, { ref: saved.id, id: saved.id, revision: saved.revision, runWhenEnabled: saved.runWhenEnabled,
@@ -121,9 +136,9 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       }
     } else {
       feedback.value = seedIssue
-      const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry }
-      subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date }
-      sources.value = [newAnimeSource('main', data.subject.title, seed?.value.provider === 'garden' ? 'garden' : seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
+      const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry; bangumiUnavailable?: boolean; needsSource?: boolean }
+      subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date, bangumiUnavailable: data.bangumiUnavailable, needsSource: data.needsSource }
+      sources.value = [newAnimeSource('main', data.needsSource ? '' : data.subject.title, seed?.value.provider === 'garden' ? 'garden' : seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
       if (data.sourceEntry) {
         const form = sources.value[0]!
         form.itemId = data.sourceEntry.id; form.itemTitle = data.sourceEntry.title; form.entry = data.sourceEntry
@@ -132,7 +147,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     if (!sources.value.length && !loadError.value) sources.value = [newAnimeSource('main', subject.value?.title)]
     naming.reset(local.value?.naming, !!local.value)
     activeRef.value = sources.value[0]?.ref || ''; loading.value = false; baseline.value = rawForm()
-    if (!local.value && !loadError.value) {
+    if (!local.value && !loadError.value && !subject.value?.needsSource) {
       const withoutNaming = () => {
         const value = JSON.parse(rawForm()); delete value.naming
         for (const source of value.sources) if (!source.mappingManual) { delete source.mappingSource; delete source.mappingTarget; delete source.mappingSeason }
@@ -171,7 +186,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     searchControllers.get(source.ref)?.abort(); const controller = new AbortController(); searchControllers.set(source.ref, controller)
     source.searchBusy = true; source.searchError = ''
     try {
-      const result = await animeConfigRequest<MikanSearch>(token.value, `sources/${source.provider}/search`, { method: 'POST', body: { keyword, ...(subject.value?.id ? { bangumiId: subject.value.id } : {}) }, signal: AbortSignal.any([controller.signal, lifetime.signal]) })
+      const result = await animeConfigRequest<MikanSearch>(token.value, `sources/${source.provider}/search`, { method: 'POST', body: { keyword, ...(subject.value?.id && !subject.value.bangumiUnavailable ? { bangumiId: subject.value.id } : {}) }, signal: AbortSignal.any([controller.signal, lifetime.signal]) })
       if (!controller.signal.aborted) { source.search = result; source.searchedKeyword = keyword }
     } catch (reason) { if (!controller.signal.aborted) { source.searchError = animeConfigMessage(reason); setCooldown(source, reason, 'search') } }
     finally { if (searchControllers.get(source.ref) === controller) source.searchBusy = false }
@@ -205,6 +220,12 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       lockedItem: !changed && source.lockedItem, lockedGroup: !changed && source.lockedGroup }
     if (!changed) Object.assign(next, { preview: source.preview })
     sources.value[position] = next; activeRef.value = next.ref
+    if (!local.value && subject.value?.bangumiUnavailable && next.role === 'main' && next.entry) {
+      const refreshNaming = subject.value.needsSource || subject.value.title !== next.entry.title && !naming.wasManuallyChanged()
+      const card = animeCatalogItemSnapshot(next.provider, next.itemId)
+      subject.value = { ...subject.value, id: next.entry.bangumiIds.includes(bangumiID.value) ? bangumiID.value : '', title: next.entry.title, coverUrl: next.entry.coverUrl || card?.coverUrl || '', date: next.entry.airDate || card?.date || '', needsSource: false }
+      if (refreshNaming) { naming.reset(); void naming.search(true) }
+    }
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
@@ -216,7 +237,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function openSource(source: SourceForm) {
     if (source.itemId && !source.entry) void chooseEntry(source, source.itemId, source.itemTitle)
-    else if (!source.itemId && !source.search && !source.searchBusy) void search(source)
+    else if (!source.itemId && source.keyword.trim() && !source.search && !source.searchBusy) void search(source)
     if (source.groupId) void readSample(source)
   }
   async function readSample(source: SourceForm, retry = false) {
@@ -226,7 +247,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     sampleControllers.get(source.ref)?.abort(); const controller = new AbortController(); sampleControllers.set(source.ref, controller)
     source.sampleBusy = true; source.sampleError = ''; const current = generation
     try {
-      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(), source: { ...(source.provider !== 'mikan' ? { provider: source.provider } : {}), itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
+      const data = await animeConfigRequest<AnimeSourceSample>(token.value, 'source-bindings/preview', { method: 'POST', signal: AbortSignal.any([controller.signal, lifetime.signal]), body: { entry: entryRef(source), source: { ...(source.provider !== 'mikan' ? { provider: source.provider } : {}), itemId: source.itemId, groupId: source.groupId }, binding: { schemaVersion: 1, confirmed: false, scope: null, chapterCorrespondence: null } } })
       if (current !== generation || controller.signal.aborted || key !== `${source.provider}:${source.itemId}:${source.groupId}`) return
       if ((data.source.provider || 'mikan') !== source.provider || data.source.itemId !== source.itemId || data.source.groupId !== source.groupId || !Array.isArray(data.releases) || !Array.isArray(data.profiles)) throw new Error('来源样本无法核对，请重试读取')
       source.sample = data

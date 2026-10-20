@@ -26,6 +26,7 @@ var (
 	hashPattern       = regexp.MustCompile(`(?i)^[a-f0-9]{40}$`)
 	groupPattern      = regexp.MustCompile(`^[0-9]{1,12}$`)
 	resolutionPattern = regexp.MustCompile(`(?i)(?:\b(2160|1080|720|480)[pi]\b|(?:3840|1920|1280|640)[x×](2160|1080|720|480)\b|\b(4k)\b)`)
+	posterURLPattern  = regexp.MustCompile(`(?i)url\(\s*['"]?([^'"\s)]+)['"]?\s*\)`)
 )
 
 type Item struct {
@@ -227,6 +228,17 @@ func parseWithOptions(reader io.Reader, bangumiID, group string, take int, stric
 			}
 			if hasClass(n, "bangumi-title") {
 				result.Bangumi.Title = content(n)
+			}
+			if hasClass(n, "bangumi-poster") && result.Bangumi.CoverURL == "" {
+				result.Bangumi.CoverURL = coverLink(attr(n, "data-src"))
+				if result.Bangumi.CoverURL == "" {
+					result.Bangumi.CoverURL = coverLink(attr(n, "src"))
+				}
+				if result.Bangumi.CoverURL == "" {
+					if match := posterURLPattern.FindStringSubmatch(attr(n, "style")); len(match) == 2 {
+						result.Bangumi.CoverURL = coverLink(match[1])
+					}
+				}
 			}
 			if hasClass(n, "subgroup-text") {
 				currentGroup = attr(n, "id")

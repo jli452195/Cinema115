@@ -62,6 +62,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           const offset = Number(url.searchParams.get('offset') || 0), total = state.chapterCount ?? 8
           data = { total, offset, limit:100, maxItems:2000, stale:false, items:Array.from({length:Math.min(100,Math.max(total-offset,0))},(_,i)=>({id:String(1388677+offset+i),number:59+offset+i,chapterNumber:offset+i+1,title:`篇章集 ${offset+i+1}`,originalTitle:'',date:`2026-10-${String(offset+i+1).padStart(2,'0')}`})) }
         }
+      } else if (endpoint.includes('/discovery/subjects/') && state.subjectFailure) {
+        status = state.subjectFailure.status; data = { code: state.subjectFailure.code, error: '模拟 Bangumi 读取失败' }
       } else if (endpoint.includes('/discovery/subjects/')) {
         const id = endpoint.split('/').pop()
         data = { subject: { ...card(id), title: id === '456' ? '独立续篇' : card(id).title, synopsis: '独立的篇章资料。', totalEpisodes: 12, platform: 'TV' }, metadata: { expiresAt: Date.now() + 600000, stale: false } }
@@ -87,7 +89,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       else if (endpoint.endsWith('/sources/mikan/search')) {
         if (state.failSearch) { status = 429; data = { code: 'SOURCE_COOLDOWN', error: '模拟来源冷却', details: { retryAfterAt: Date.now() + 20000 } } }
         else data = { items: body.keyword === 'none' ? [] : [{ id: '300', title: '从零开始 第三季 字幕资源' }], truncated: false }
-      } else if (endpoint.endsWith('/sources/mikan/300')) data = { entry: { id: '300', title: '从零开始 第三季 字幕资源', groups: [{ id: '10', name: '字幕组甲' }, { id: '20', name: '字幕组乙' }], bangumiIds: ['123'] } }
+      } else if (endpoint.endsWith('/sources/mikan/300')) data = { entry: { id: '300', title: '从零开始 第三季 字幕资源', coverUrl: '/api/mikan/image/202601/poster.jpg', groups: [{ id: '10', name: '字幕组甲' }, { id: '20', name: '字幕组乙' }], bangumiIds: [state.sourceBangumiID || '123'] } }
       else if (endpoint.endsWith('/source-bindings/preview')) {
         if (state.sampleGate?.group === body.source.groupId) await state.sampleGate.ready
         if (state.failSample) { await route.fulfill({status: 502, contentType: 'application/json', body: JSON.stringify({code:'UPSTREAM_UNAVAILABLE',error:'模拟样本读取失败'})}); return }
@@ -143,6 +145,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: state.saved?.status || 'enabled', firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } },
             sources: body.config.sources.map(s => ({ ...s, id: ids[s.ref], revision: s.expectedRevision + 1, configuredState: s.status })), form: { schemaVersion: 1 },
             naming: body.config.naming ? {schemaVersion:1,target:structuredClone(state.namingTarget),sources:body.config.naming.sources.map(s=>({...s,sourceRef:ids[s.sourceRef]}))} : null }
+          if (state.subjectFailure?.status === 404) Object.assign(state.saved.entry, { bangumiId: body.config.entry.bangumiId || null, title: '从零开始 第三季 字幕资源', metadata: { bangumiUnavailable: true, coverUrl: '/api/mikan/image/202601/poster.jpg' } })
           if (state.saveMode === 'unknown') { state.saveMode = ''; await route.abort(); return }
           if (state.saveMode === 'invalid') { state.saveMode = ''; data = {}; }
           else data = { id: state.saved.id, entryId: 'entry-123', revision: state.saved.revision, status: state.saved.status, sourceIds: ids, sourceRevisions: Object.fromEntries(body.config.sources.map(s => [s.ref, s.expectedRevision + 1])), requiresRepreview: false }
@@ -176,6 +179,74 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
 
 
   try {
+    const missing = await session()
+    missing.state.subjectFailure = { status: 404, code: 'UPSTREAM_NOT_FOUND' }; missing.state.sourceBangumiID = '583313'
+    await missing.go('/anime/new?bangumiId=583313&source=mikan&itemId=300')
+    await missing.page.locator('.ac-metadata-note').waitFor()
+    assert.match(await missing.page.locator('.ac-identity h3').innerText(), /字幕资源/)
+    assert.equal(await missing.page.getByText('篇章集号', { exact: true }).count(), 0)
+    await wait(() => missing.page.locator('.ac-identity p').innerText().then(text => text.includes('TMDB')))
+    assert.ok(missing.calls.some(c => c.endpoint.endsWith('/naming/search') && c.body.keyword === '从零开始 第三季 字幕资源' && !c.body.bangumiId))
+    assert.ok(missing.calls.filter(c => c.endpoint.endsWith('/naming/target')).every(c => !c.body.bangumiId))
+    await missing.page.getByRole('button', { name: '选择资源', exact: true }).click()
+    await missing.page.getByRole('button', { name: /字幕组甲/ }).click()
+    await missing.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await missing.page.getByRole('button', { name: '使用此来源', exact: true }).click()
+    assert.equal(missing.calls.find(c => c.endpoint.endsWith('/source-bindings/preview')).body.entry.bangumiId, '583313')
+    await missing.page.getByRole('button', { name: '预览', exact: true }).click()
+    await missing.page.locator('.ae-preview-table').waitFor()
+    assert.equal(missing.calls.find(c => c.endpoint.endsWith('/subscriptions/preview')).body.config.chapter.bangumiId, '583313')
+    await missing.page.getByRole('button', { name: '返回配置', exact: true }).click()
+    await missing.page.getByRole('button', { name: '保存', exact: true }).click()
+    await wait(() => missing.page.locator('dialog[open]').count().then(n => n === 0))
+    assert.equal(missing.writes().at(-1).body.config.entry.bangumiId, '583313')
+    const externalReads = () => missing.calls.filter(c => c.endpoint.includes('/discovery/subjects/')).length
+    const beforeReopen = externalReads()
+    await missing.go('/anime/subscriptions/saved-subscription')
+    assert.equal(externalReads(), beforeReopen)
+    await missing.page.locator('.ac-metadata-note').waitFor()
+    passed.push('missing Bangumi uses verified source metadata, keyword naming, preview and save while retaining external identity; local reopen is independent')
+
+    const unseeded = await session()
+    unseeded.state.subjectFailure = { status: 404, code: 'UPSTREAM_NOT_FOUND' }; unseeded.state.sourceBangumiID = '583313'
+    await unseeded.go('/anime/new?bangumiId=583313')
+    assert.equal(await unseeded.page.locator('.ae-target').count(), 0)
+    assert.equal(unseeded.calls.filter(c => c.endpoint.endsWith('/naming/search')).length, 0)
+    await unseeded.page.getByRole('button', { name: '选择资源', exact: true }).click()
+    await unseeded.page.getByRole('searchbox', { name: '搜索蜜柑资源' }).fill('从零开始')
+    await unseeded.page.locator('dialog[open]').last().getByRole('button', { name: '搜索', exact: true }).click()
+    assert.ok(unseeded.calls.filter(c => c.endpoint.endsWith('/sources/mikan/search')).every(c => !c.body.bangumiId))
+    await unseeded.page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
+    await unseeded.page.getByRole('button', { name: /字幕组甲/ }).click()
+    await unseeded.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await unseeded.page.getByRole('button', { name: '使用此来源', exact: true }).click()
+    await wait(() => unseeded.page.locator('.ac-identity p').innerText().then(text => text.includes('TMDB')))
+    assert.match(await unseeded.page.locator('.ac-identity h3').innerText(), /字幕资源/)
+    passed.push('direct missing-Bangumi URL recovers through existing source picker before naming')
+
+    const unrelated = await session()
+    unrelated.state.subjectFailure = { status: 404, code: 'UPSTREAM_NOT_FOUND' }; unrelated.state.sourceBangumiID = '999999'
+    await unrelated.go('/anime/new?bangumiId=583313&source=mikan&itemId=300')
+    assert.doesNotMatch(await unrelated.page.locator('.ac-identity p').innerText(), /Bangumi/)
+    await unrelated.page.getByRole('button', { name: '选择资源', exact: true }).click()
+    await unrelated.page.getByRole('button', { name: /字幕组甲/ }).click()
+    await unrelated.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await unrelated.page.getByRole('button', { name: '使用此来源', exact: true }).click()
+    await unrelated.page.getByRole('button', { name: '保存', exact: true }).click()
+    await wait(() => unrelated.page.locator('dialog[open]').count().then(n => n === 0))
+    assert.equal(unrelated.writes().at(-1).body.config.entry.bangumiId, undefined)
+    assert.equal(unrelated.calls.find(c => c.endpoint.endsWith('/source-bindings/preview')).body.entry.bangumiId, undefined)
+    passed.push('unrelated source cannot claim the missing URL Bangumi identity in UI, samples or save')
+
+    for (const failure of [{ status: 429, code: 'SOURCE_COOLDOWN' }, { status: 403, code: 'FORBIDDEN' }, { status: 404, code: 'NOT_FOUND' }]) {
+      const transient = await session(); transient.state.subjectFailure = failure
+      await transient.page.goto(origin + '/anime/new?bangumiId=583313&source=mikan&itemId=300', { waitUntil: 'networkidle' })
+      await transient.page.locator('.ae-load-error').waitFor()
+      assert.equal(await transient.page.locator('.ac-metadata-note').count(), 0)
+      assert.equal(transient.calls.filter(c => c.endpoint.endsWith('/naming/search')).length, 0)
+    }
+    passed.push('rate limit, access denial and unrelated 404 do not activate metadata fallback')
+
     const s = await session()
     await s.go()
     assert.equal(await s.page.locator('dialog[open]').count(), 1)

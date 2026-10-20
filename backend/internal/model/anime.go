@@ -9,11 +9,12 @@ const (
 )
 
 type AnimeMetadata struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Synopsis      string `json:"synopsis"`
-	CoverURL      string `json:"coverUrl"`
-	AirDate       string `json:"airDate"`
-	TotalEpisodes *int   `json:"totalEpisodes"`
+	SchemaVersion      int    `json:"schemaVersion"`
+	BangumiUnavailable bool   `json:"bangumiUnavailable,omitempty"`
+	Synopsis           string `json:"synopsis"`
+	CoverURL           string `json:"coverUrl"`
+	AirDate            string `json:"airDate"`
+	TotalEpisodes      *int   `json:"totalEpisodes"`
 }
 
 type AnimeEntry struct {

@@ -33,7 +33,7 @@ export interface AnimeSettingsView {
   primaryAccount: { id: string; name: string; uid: string; revision: number } | null
   readiness: { ready: boolean; issues: string[] }
 }
-export interface MikanEntry { id: string; title: string; groups: { id: string; name: string; origin?: string; originName?: string; kind?: string }[]; groupsPartial?: boolean; bangumiIds: string[] }
+export interface MikanEntry { id: string; title: string; coverUrl?: string; airDate?: string; groups: { id: string; name: string; origin?: string; originName?: string; kind?: string }[]; groupsPartial?: boolean; bangumiIds: string[] }
 export interface MikanSearch { items: { id: string; title: string; coverUrl: string; url: string }[]; truncated: boolean }
 export interface AnimeSourceSample {
   source: { provider?: AnimeSourceProvider; itemId: string; groupId: string; title: string; groupName: string; expiresAt: number }
@@ -75,7 +75,7 @@ export interface AnimeSubscriptionView {
   jobStats?: { totalCount: number; queuedCount: number; downloadingCount: number; remoteCompletedCount: number; failedCount: number; needsReviewCount: number }
   completionStats?: { originalSavedCount: number; organizedCount: number }
   readiness?: { ready: boolean; issues: string[] }
-  entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string } }
+  entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string; bangumiUnavailable?: boolean } }
   sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null })[]
 }
 export interface AnimeDownloadJob {

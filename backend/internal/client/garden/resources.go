@@ -144,7 +144,7 @@ func validOriginHost(p, host string) bool {
 	return false
 }
 func Entry(subject Item, resources Resources) animefeed.SourceEntry {
-	out := animefeed.SourceEntry{ID: subject.ID, Title: subject.Title, BangumiIDs: []string{subject.BangumiID}, Groups: []animefeed.Group{}, GroupsPartial: !*resources.Pagination.Complete}
+	out := animefeed.SourceEntry{ID: subject.ID, Title: subject.Title, CoverURL: subject.CoverURL, AirDate: subject.AirDate, BangumiIDs: []string{subject.BangumiID}, Groups: []animefeed.Group{}, GroupsPartial: !*resources.Pagination.Complete}
 	seen := make(map[string]bool, len(resources.Rows))
 	for _, r := range resources.Rows {
 		g := groupFor(r)

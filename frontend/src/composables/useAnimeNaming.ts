@@ -39,7 +39,7 @@ export function sourceNaming(source: SourceForm, target: AnimeNamingTarget): Ani
   return { sourceRef: source.ref, segments, overrides }
 }
 
-export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; title: string } | undefined>, sources: Ref<SourceForm[]>, signal: () => AbortSignal, locked: Ref<boolean>) {
+export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; title: string; bangumiUnavailable?: boolean } | undefined>, sources: Ref<SourceForm[]>, signal: () => AbortSignal, locked: Ref<boolean>) {
   const target = ref<AnimeNamingTarget>(), candidates = ref<AnimeNamingCandidate[]>([]), groups = ref<{ id: string; name: string }[]>([])
   const busy = ref(false), error = ref(''), keyword = ref(''), searching = ref(false), mode = ref<'tmdb' | 'original'>('tmdb'), picker = ref(false)
   let sequence = 0, searchSequence = 0, controller = new AbortController(), manualTarget = false
@@ -72,7 +72,7 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     if (!automatic) manualTarget = true
     const current = ++sequence, lifetime = signal(); controller.abort(); controller = new AbortController(); busy.value = true; error.value = ''; mode.value = 'tmdb'
     try {
-      const data = await animeConfigRequest<AnimeNamingTarget>(token.value, 'naming/target', { method: 'POST', signal: AbortSignal.any([lifetime, controller.signal]), body: { tmdbId: id, groupId, ...(season != null ? { season, extraSeasons: extraSeasons(season) } : {}), ...(subject.value?.id && season == null ? { bangumiId: subject.value.id } : {}) } })
+      const data = await animeConfigRequest<AnimeNamingTarget>(token.value, 'naming/target', { method: 'POST', signal: AbortSignal.any([lifetime, controller.signal]), body: { tmdbId: id, groupId, ...(season != null ? { season, extraSeasons: extraSeasons(season) } : {}), ...(subject.value?.id && !subject.value.bangumiUnavailable && season == null ? { bangumiId: subject.value.id } : {}) } })
       if (current !== sequence || lifetime.aborted) return
       if (!data.fingerprint || !Array.isArray(data.seasons) || data.tmdbId !== id) throw new Error('TMDB 资料不完整，请重新读取')
       target.value = data; picker.value = false
@@ -85,7 +85,7 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     if (!automatic) manualTarget = true
     const current = sequence, searchID = ++searchSequence, lifetime = signal(); searching.value = true; error.value = ''
     try {
-      const data = await animeConfigRequest<{ items: AnimeNamingCandidate[]; recommendedId: string }>(token.value, 'naming/search', { method: 'POST', signal: lifetime, body: automatic && subject.value?.id ? { bangumiId: subject.value.id } : { keyword: keyword.value.trim() || subject.value?.title || '' } })
+      const data = await animeConfigRequest<{ items: AnimeNamingCandidate[]; recommendedId: string }>(token.value, 'naming/search', { method: 'POST', signal: lifetime, body: automatic && subject.value?.id && !subject.value.bangumiUnavailable ? { bangumiId: subject.value.id } : { keyword: keyword.value.trim() || subject.value?.title || '' } })
       if (current !== sequence || lifetime.aborted || automatic && manualTarget) return
       candidates.value = Array.isArray(data.items) ? data.items : []
       if (automatic && data.recommendedId) await load(data.recommendedId, undefined, '', true)

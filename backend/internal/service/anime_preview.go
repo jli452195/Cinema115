@@ -9,6 +9,7 @@ import (
 
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -132,12 +133,16 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 	if ref.ID == "" {
 		ref.BangumiID, ref.EditionKey = c.Chapter.BangumiID, c.Chapter.EditionKey
 	}
+	missingSubject := false
 	if ref.ID != "" || ref.BangumiID != nil {
 		entry, _, err := s.Bindings.resolveEntry(ctx, ref, "")
-		if err != nil {
+		missingSubject = ref.ID == "" && errors.Is(err, bangumi.ErrNotFound)
+		if err != nil && !missingSubject {
 			return out, err
 		}
-		c.Chapter.ID, c.Chapter.BangumiID, c.Chapter.EditionKey, c.Chapter.Revision = entry.ID, entry.BangumiID, entry.EditionKey, entry.Revision
+		if !missingSubject {
+			c.Chapter.ID, c.Chapter.BangumiID, c.Chapter.EditionKey, c.Chapter.Revision = entry.ID, entry.BangumiID, entry.EditionKey, entry.Revision
+		}
 	}
 	if err := s.Repository.CheckAnimePreviewConfig(ctx, c); err != nil {
 		return out, err
@@ -196,6 +201,15 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 	budget, err := NewAnimeSourceBudget(loaded)
 	if err != nil {
 		return out, err
+	}
+	if missingSubject {
+		read, err := s.Bindings.ReadEntry(ctx, budget, target.Provider, *target.ItemID, false)
+		if err != nil {
+			return out, err
+		}
+		if _, err := animeEntryFromSource(ref, read.Entry, true); err != nil {
+			return out, err
+		}
 	}
 	take := in.Take
 	if take == 0 {

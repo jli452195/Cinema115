@@ -38,3 +38,19 @@ func TestSourceEntryKeepsSubjectHintsWithoutMerging(t *testing.T) {
 		t.Fatalf("unbounded hints: %+v %v", page.Entry, err)
 	}
 }
+
+func TestSourceEntryPosterUsesExistingImageProxy(t *testing.T) {
+	for _, tc := range []struct{ poster, want string }{
+		{`<div class="bangumi-poster" style="background-image: url('/images/Bangumi/202601/2314ab8c.jpg?width=400&amp;height=560&amp;format=webp');"></div>`, "/api/mikan/image/202601/2314ab8c.jpg"},
+		{`<img class="bangumi-poster" data-src="/images/Bangumi/202601/2314ab8c.jpg" />`, "/api/mikan/image/202601/2314ab8c.jpg"},
+		{`<div class="bangumi-poster" style="background-image: url('https://evil.test/poster.jpg');"></div>`, ""},
+	} {
+		body := `<p class="bangumi-title">草莓哀歌</p>` + tc.poster + testPage("")
+		in := sourceRequest("entry", 0)
+		in.Source.GroupID = ""
+		page, err := parseSourceHTML([]byte(body), in)
+		if err != nil || page.Entry == nil || page.Entry.CoverURL != tc.want {
+			t.Fatalf("unexpected source poster: %+v %v", page.Entry, err)
+		}
+	}
+}

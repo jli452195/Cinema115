@@ -10,6 +10,9 @@ let generation = 0
 let lastQuery: Record<string, string> | undefined
 let cooldownTimer: ReturnType<typeof setTimeout> | undefined
 export const animeCooldownUntil = ref(0)
+export class AnimeDiscoveryError extends Error {
+  constructor(message: string, public code: string, public status: number) { super(message) }
+}
 
 watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
   generation++
@@ -72,7 +75,7 @@ export async function requestAnime<T>(key: string, path: string, token: string, 
   if (!response.ok || !data) {
     if (response.status === 401) clearPortalSession()
     if (data?.code === 'SOURCE_COOLDOWN') setCooldown(data.details?.retryAfterAt || Date.now() + Math.max(1, Number(response.headers.get('Retry-After')) || 30) * 1000)
-    throw new Error(data?.code === 'SOURCE_COOLDOWN' ? animeCooldownMessage() : data?.error || `读取失败（HTTP ${response.status}）`)
+    throw new AnimeDiscoveryError(data?.code === 'SOURCE_COOLDOWN' ? animeCooldownMessage() : data?.error || `读取失败（HTTP ${response.status}）`, data?.code || '', response.status)
   }
   const metadata: AnimeCacheMeta = data.metadata || data
   setCooldown(metadata.issue?.retryAfterAt)
