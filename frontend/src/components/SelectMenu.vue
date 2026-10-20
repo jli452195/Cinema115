@@ -4,14 +4,14 @@ import { IconChevronDown } from '@tabler/icons-vue'
 
 interface SelectOption { value: string; label: string }
 
-const props = defineProps<{ modelValue: string; options: SelectOption[]; disabled?: boolean; label: string; variant?: 'anime' }>()
+const props = defineProps<{ modelValue: string; options: SelectOption[]; disabled?: boolean; label: string; placeholder?: string; variant?: 'anime' }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string] }>()
 const root = ref<HTMLElement>(), button = ref<HTMLButtonElement>()
 const panel = ref<HTMLElement>(), panelStyle = ref<Record<string, string>>({})
 const open = ref(false), activeIndex = ref(0)
 const listboxID = `select-menu-${useId()}`
 const selectedIndex = computed(() => Math.max(0, props.options.findIndex(option => option.value === props.modelValue)))
-const selectedLabel = computed(() => props.options[selectedIndex.value]?.label ?? '')
+const selectedLabel = computed(() => props.options.find(option => option.value === props.modelValue)?.label ?? props.placeholder ?? props.options[0]?.label ?? '')
 
 async function show() {
   if (props.disabled || !props.options.length) return

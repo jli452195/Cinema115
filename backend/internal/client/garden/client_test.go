@@ -24,7 +24,7 @@ func fixture(t *testing.T, name string) []byte {
 }
 func TestNativeCatalogAndSubject(t *testing.T) {
 	c, e := ParseCatalog(fixture(t, "calendar.json"), "2026-10")
-	if e != nil || len(c.Days) != 7 || c.Days[0].Day != 1 || c.Days[0].Items[0].ID != "634587" || c.Days[0].Items[0].Title == c.Days[0].Items[0].OriginalTitle || !strings.HasPrefix(c.Days[0].Items[0].CoverURL, "/api/garden/image/") {
+	if e != nil || len(c.Days) != 11 || len(c.Items) != 16 || c.Days[0].Day != 1 || c.Days[0].Items[0].ID != "634587" || c.Days[0].Items[0].Title == c.Days[0].Items[0].OriginalTitle || !strings.HasPrefix(c.Days[0].Items[0].CoverURL, "/api/garden/image/") {
 		t.Fatal(c, e)
 	}
 	if _, e = ParseCatalog(fixture(t, "calendar.json"), "2026-07"); !errors.Is(e, ErrInvalid) {
@@ -52,6 +52,38 @@ func TestNativeCatalogAndSubject(t *testing.T) {
 	for _, season := range []string{"2026-02", "1999-10", "2026-10&x=1"} {
 		if _, e = CatalogPath(season, ""); e == nil {
 			t.Fatal("invalid season", season)
+		}
+	}
+}
+func TestCatalogExtraCategoriesAndArchive(t *testing.T) {
+	var wire map[string]any
+	if err := json.Unmarshal(fixture(t, "calendar.json"), &wire); err != nil {
+		t.Fatal(err)
+	}
+	data := wire["data"].(map[string]any)
+	// Subjects may be classified both by weekday and by format. The total is unique.
+	data["web"] = append(data["web"].([]any), data["calendar"].([]any)[0].([]any)[0])
+	body, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := ParseCatalog(body, "2026-10")
+	if err != nil || len(catalog.Items) != 16 {
+		t.Fatal(catalog, err)
+	}
+	wantDays := []int{8, 10, 11, 12}
+	for index, want := range wantDays {
+		if catalog.Days[7+index].Day != want {
+			t.Fatal(catalog.Days)
+		}
+	}
+	seasons, err := ParseCatalogSeasons([]byte(`{"ok":true,"data":[{"season":"2022-01","count":45},{"season":"2026-10","count":78}]}`))
+	if err != nil || len(seasons) != 2 || seasons[0] != "2022-01" {
+		t.Fatal(seasons, err)
+	}
+	for _, input := range []string{`{"ok":true,"data":[]}`, `{"ok":true,"data":[{"season":"2026-02"}]}`, `{"ok":true,"data":[{"season":"2026-10"},{"season":"2026-10"}]}`, `{"ok":false,"data":[{"season":"2026-10"}]}`} {
+		if _, err := ParseCatalogSeasons([]byte(input)); !errors.Is(err, ErrInvalid) {
+			t.Fatal(input, err)
 		}
 	}
 }

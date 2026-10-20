@@ -68,6 +68,7 @@ func NewMikanService(client MikanReader, logs *GenerationLogs) *MikanService {
 func cloneMikan(result mikan.Result) mikan.Result {
 	if result.Catalog != nil {
 		copy := *result.Catalog
+		copy.Seasons = append([]string{}, copy.Seasons...)
 		copy.Items = append([]mikan.CatalogItem{}, copy.Items...)
 		copy.Days = append([]mikan.CatalogDay{}, copy.Days...)
 		for i := range copy.Days {

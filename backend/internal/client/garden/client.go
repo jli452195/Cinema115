@@ -36,7 +36,7 @@ func (c *Client) Fetch(ctx context.Context, path string, limit int64) ([]byte, e
 		base, target = c.MetadataURL, strings.TrimPrefix(path, "/bgm")
 	}
 	u, err := url.Parse(target)
-	if err != nil || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || u.Host != "" || u.Fragment != "" || limit < 1 || limit > 4<<20 || !(u.Path == "/resources" || strings.HasPrefix(path, "/bgm/") && (u.Path == "/calendar" || u.Path == "/subjects" || strings.HasPrefix(u.Path, "/subject/"))) {
+	if err != nil || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || u.Host != "" || u.Fragment != "" || limit < 1 || limit > 4<<20 || !(u.Path == "/resources" || strings.HasPrefix(path, "/bgm/") && (u.Path == "/calendar" || u.Path == "/calendars" || u.Path == "/subjects" || strings.HasPrefix(u.Path, "/subject/"))) {
 		return nil, animefeed.ErrInput
 	}
 	h := *c.HTTP
@@ -206,6 +206,11 @@ func ParseCatalog(body []byte, season string) (Catalog, error) {
 	var v struct {
 		Seasons  []string          `json:"seasons"`
 		Calendar [][]nativeSubject `json:"calendar"`
+		Web      []nativeSubject   `json:"web"`
+		Korean   []nativeSubject   `json:"korean"`
+		Short    []nativeSubject   `json:"short"`
+		Motion   []nativeSubject   `json:"motion"`
+		Adult    []nativeSubject   `json:"adult"`
 	}
 	if err := decode(body, &v); err != nil {
 		return out, err
@@ -226,8 +231,52 @@ func ParseCatalog(body []byte, season string) (Catalog, error) {
 			}
 			seen[i.ID] = true
 			group.Items = append(group.Items, i)
+			out.Items = append(out.Items, i)
 		}
 		out.Days = append(out.Days, group)
+	}
+	for index, subjects := range [][]nativeSubject{v.Web, v.Korean, v.Short, v.Motion, v.Adult} {
+		if len(subjects) > 500 {
+			return out, ErrInvalid
+		}
+		group := Day{Day: index + 8, Items: make([]Item, 0, len(subjects))}
+		for _, subject := range subjects {
+			i, err := item(subject)
+			if err != nil {
+				return out, err
+			}
+			group.Items = append(group.Items, i)
+			if !seen[i.ID] {
+				seen[i.ID] = true
+				out.Items = append(out.Items, i)
+			}
+		}
+		if len(group.Items) > 0 {
+			out.Days = append(out.Days, group)
+		}
+	}
+	return out, nil
+}
+
+func ParseCatalogSeasons(body []byte) ([]string, error) {
+	var rows []struct {
+		Season string `json:"season"`
+		Count  int    `json:"count"`
+	}
+	if err := decode(body, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 || len(rows) > 404 {
+		return nil, ErrInvalid
+	}
+	out := make([]string, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if _, err := CatalogPath(row.Season, ""); err != nil || row.Count < 0 || seen[row.Season] {
+			return nil, ErrInvalid
+		}
+		seen[row.Season] = true
+		out = append(out, row.Season)
 	}
 	return out, nil
 }

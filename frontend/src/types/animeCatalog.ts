@@ -13,6 +13,9 @@ export interface MikanCatalog {
 }
 
 export type AnimeSourceProvider = AnimeProviderID
+export interface AnimeCatalogSeasons {
+ provider: AnimeProviderID; seasons: string[]; fetchedAt: number; expiresAt: number
+}
 export interface AnimeCatalogStatus {
  itemId: string
  bangumiId: string | null
@@ -24,7 +27,7 @@ export interface AnibtCatalogItem {
 }
 export interface AnibtCatalog {
  provider: 'anibt'; season: string; days: {day: number; items: AnibtCatalogItem[]}[]; items: AnibtCatalogItem[]
- total: number; truncated: boolean; fetchedAt: number; expiresAt: number
+ total: number; truncated: boolean; availableSeasons: string[]; fetchedAt: number; expiresAt: number
 }
 export interface GardenCatalogItem {
  id: string; bangumiId: string; title: string; originalTitle: string; coverUrl: string; platform: string; airDate: string

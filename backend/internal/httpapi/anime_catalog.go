@@ -28,6 +28,36 @@ func registerAnimeCatalog(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		c.JSON(200, gin.H{"items": out})
 	})
 	r.GET("/providers", func(c *gin.Context) { c.JSON(200, gin.H{"items": service.AnimeProviders()}) })
+	r.GET("/catalog/:provider/seasons", func(c *gin.Context) {
+		provider := c.Param("provider")
+		if provider != "mikan" && provider != "anibt" && provider != "garden" {
+			c.JSON(404, gin.H{"code": "PROVIDER_NOT_FOUND", "error": "该站点暂未接入"})
+			return
+		}
+		refresh := c.Query("refresh") == "true"
+		var out service.AnimeCatalogSeasons
+		var err error
+		switch {
+		case s.Bindings == nil:
+			c.JSON(503, gin.H{"code": "PROVIDER_NOT_READY", "error": "来源暂不可用"})
+			return
+		case provider == "mikan" && s.Bindings.Mikan != nil:
+			out, err = s.Bindings.Mikan.AnimeCatalogSeasons(c.Request.Context(), refresh)
+		case provider == "anibt" && s.Bindings.Anibt != nil:
+			out, err = s.Bindings.Anibt.CatalogSeasons(c.Request.Context(), refresh)
+		case provider == "garden" && s.Bindings.Garden != nil:
+			out, err = s.Bindings.Garden.CatalogSeasons(c.Request.Context(), refresh)
+		default:
+			c.JSON(503, gin.H{"code": "PROVIDER_NOT_READY", "error": "来源暂不可用"})
+			return
+		}
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, out)
+	})
 	r.POST("/catalog/:provider", func(c *gin.Context) {
 		provider := c.Param("provider")
 		if provider != "mikan" && provider != "anibt" && provider != "garden" {

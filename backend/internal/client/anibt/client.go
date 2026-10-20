@@ -177,12 +177,13 @@ type Day struct {
 	Items []Item `json:"items"`
 }
 type Catalog struct {
-	Provider  string `json:"provider"`
-	Season    string `json:"season"`
-	Days      []Day  `json:"days"`
-	Items     []Item `json:"items"`
-	Truncated bool   `json:"truncated"`
-	Total     int    `json:"total"`
+	Provider         string   `json:"provider"`
+	Season           string   `json:"season"`
+	Days             []Day    `json:"days"`
+	Items            []Item   `json:"items"`
+	Truncated        bool     `json:"truncated"`
+	Total            int      `json:"total"`
+	AvailableSeasons []string `json:"availableSeasons"`
 }
 type apiItem struct {
 	BgmID        int64    `json:"bgmId"`
@@ -204,14 +205,38 @@ func ParseCatalog(body []byte, season string) (Catalog, error) {
 			Weekday *int      `json:"weekday"`
 			Animes  []apiItem `json:"animes"`
 		} `json:"byWeekday"`
-		Total     int  `json:"total"`
-		Truncated bool `json:"truncated"`
+		Total            int      `json:"total"`
+		Truncated        bool     `json:"truncated"`
+		RequestedSeason  string   `json:"requestedSeason"`
+		AvailableSeasons []string `json:"availableSeasons"`
+		Scope            struct {
+			Kind   string `json:"kind"`
+			Season string `json:"season"`
+		} `json:"scope"`
 	}
 	if err := decode(body, &v); err != nil {
 		return out, err
 	}
 	if v.ByWeekday == nil || len(v.ByWeekday) > 8 || v.Total < 0 {
 		return out, ErrInvalid
+	}
+	if season != "" && (normalizeSeason(v.RequestedSeason) != season || v.Scope.Kind != "season" || normalizeSeason(v.Scope.Season) != season) {
+		return out, ErrInvalid
+	}
+	if len(v.AvailableSeasons) > 404 {
+		return out, ErrInvalid
+	}
+	out.AvailableSeasons = make([]string, 0, len(v.AvailableSeasons))
+	known := make(map[string]bool, len(v.AvailableSeasons))
+	for _, raw := range v.AvailableSeasons {
+		s := normalizeSeason(raw)
+		if s == "" {
+			return out, ErrInvalid
+		}
+		if !known[s] {
+			known[s] = true
+			out.AvailableSeasons = append(out.AvailableSeasons, s)
+		}
 	}
 	seen := make(map[int]bool, 8)
 	ids := make(map[int64]bool, 200)
@@ -244,7 +269,26 @@ func ParseCatalog(body []byte, season string) (Catalog, error) {
 		out.Days = append(out.Days, group)
 	}
 	out.Total, out.Truncated = v.Total, v.Truncated
+	if season != "" {
+		if out.Total < len(out.Items) {
+			return out, ErrInvalid
+		}
+		out.Truncated = out.Truncated || out.Total > len(out.Items)
+	}
 	return out, nil
+}
+
+func normalizeSeason(raw string) string {
+	parts := []rune(raw)
+	if len(parts) != 5 {
+		return ""
+	}
+	year, err := strconv.Atoi(string(parts[:4]))
+	month := map[rune]string{'冬': "01", '春': "04", '夏': "07", '秋': "10"}[parts[4]]
+	if err != nil || year < 2000 || year > 2100 || month == "" {
+		return ""
+	}
+	return string(parts[:4]) + "-" + month
 }
 func GroupsPath(id string) (string, error) {
 	if !animefeed.ValidItem(id) {

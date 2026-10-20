@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,9 +25,42 @@ type CatalogDay struct {
 }
 
 type Catalog struct {
-	Season string        `json:"season"`
-	Days   []CatalogDay  `json:"days"`
-	Items  []CatalogItem `json:"items"`
+	Seasons []string      `json:"-"`
+	Season  string        `json:"season"`
+	Days    []CatalogDay  `json:"days"`
+	Items   []CatalogItem `json:"items"`
+}
+
+// Read actual archive links, retaining gaps in old years.
+func (c *Client) CatalogSeasons(ctx context.Context) ([]string, error) {
+	body, err := c.readHTML(ctx, "/")
+	if err != nil {
+		return nil, err
+	}
+	return ParseCatalogSeasons(strings.NewReader(string(body)))
+}
+
+func ParseCatalogSeasons(reader io.Reader) ([]string, error) {
+	doc, err := html.Parse(reader)
+	if err != nil {
+		return nil, ErrParse
+	}
+	seen := make(map[string]bool, 64)
+	seasons := make([]string, 0, 64)
+	months := map[string]string{"冬": "01", "春": "04", "夏": "07", "秋": "10"}
+	walk(doc, func(n *html.Node) {
+		season := attr(n, "data-year") + "-" + months[attr(n, "data-season")]
+		if !ValidCatalogSeason(season) || seen[season] {
+			return
+		}
+		seen[season] = true
+		seasons = append(seasons, season)
+	})
+	if len(seasons) == 0 || len(seasons) > 404 {
+		return nil, ErrParse
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(seasons)))
+	return seasons, nil
 }
 
 func ValidCatalogSeason(season string) bool {

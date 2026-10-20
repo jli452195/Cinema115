@@ -11,12 +11,16 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const context = await browser.newContext({ viewport, serviceWorkers: 'block', ...options }); contexts.push(context)
     await context.addInitScript(() => { localStorage.setItem('admin_token','mock-token'); localStorage.setItem('cinema115-theme','light') })
     const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
-    const calls = [], state = { fail: false, links: ['624085'], empty: false, failEntry: false, slowEntry: '', entryRelease: undefined, statusEnabled: false, knownMikan: {}, saved: undefined, failStatus: false, slowStatus: false, statusRelease: undefined }
+    const calls = [], state = { fail: false, failSeasons: false, duplicate: false, mismatch: false, slowSeason: '', links: ['624085'], empty: false, failEntry: false, slowEntry: '', entryRelease: undefined, statusEnabled: false, knownMikan: {}, saved: undefined, failStatus: false, slowStatus: false, statusRelease: undefined }
     const item = id => ({ id: String(id), title: id === 4058 ? '乱世千金倪亚·利斯顿转生为娇弱千金的弑神武人华丽无双录' : `蜜柑番剧 ${id}`, coverUrl: `/api/mikan/image/202610/${id}.jpg`, updatedDate: '2026-10-16' })
     await page.route('**/api/**', async route => {
       const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON(); calls.push({ endpoint, body })
       let data = {}, status = 200
       if (endpoint === '/api/auth/me') data = { user: { id:'mock',username:'admin',role,disabled:false } }
+      else if (/\/catalog\/(mikan|anibt|garden)\/seasons$/.test(endpoint)) {
+        if(state.failSeasons){status=502;data={error:'archive unavailable'}}
+        else data={provider:endpoint.split('/').at(-2),seasons:['2026-10','2024-01','2012-04'],fetchedAt:Date.now(),expiresAt:Date.now()+600000}
+      }
       else if (endpoint.endsWith('/catalog-status')) {
         if (state.slowStatus) { state.slowStatus = false; await new Promise(resolve => { state.statusRelease = resolve }) }
         if (state.failStatus) { status = 503; data = { error: 'status unavailable' } }
@@ -30,7 +34,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       } else if (endpoint.endsWith('/catalog/garden')) {
         const native={id:'630160',bangumiId:'630160',title:'Garden 原生卡片',originalTitle:'Garden original',coverUrl:'',platform:'TV',airDate:'2026-10-18'}
         if(state.fail){status=502;data={error:'Garden unavailable'}}
-        else data={provider:'garden',season:body.season||'',days:Array.from({length:7},(_,i)=>({day:i+1,items:[{...native,id:String(630160+i),bangumiId:String(630160+i)}]})),items:body.keyword==='none'?[]:[native],truncated:body.keyword==='many',fetchedAt:Date.now(),expiresAt:Date.now()+600000}
+        else data={provider:'garden',season:body.season||'',days:[...Array.from({length:7},(_,i)=>({day:i+1,items:[{...native,id:String(630160+i),bangumiId:String(630160+i)}]})),{day:8,items:[native,{...native,id:'640000',bangumiId:'640000',title:'网络动画'}]}],items:body.keyword==='none'?[]:[native],truncated:body.keyword==='many',fetchedAt:Date.now(),expiresAt:Date.now()+600000}
       } else if (endpoint.endsWith('/catalog/anibt')) {
         if(state.fail){status=502;data={error:'模拟 AniBT 读取失败'}}
         else {
@@ -39,8 +43,9 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         }
       } else if (endpoint.endsWith('/catalog/mikan')) {
         if (body.keyword === 'slow') await new Promise(resolve => { state.release = resolve })
+        if (body.season === state.slowSeason) await new Promise(resolve => { state.seasonRelease = resolve })
         if (state.fail) { status = 502; data = { error: '模拟蜜柑读取失败' } }
-        else data = { provider:'mikan',season:body.season || '',fetchedAt:Date.now(),expiresAt:Date.now()+600000,days:Array.from({length:9},(_,n)=>({day:n+1,items:state.empty ? [] : Array.from({length: n ? 4 : 20},(_,i)=>item(4058+n*100+i))})),items:body.keyword==='none'?[]:Array.from({length:43},(_,i)=>item(8000+i)) }
+        else data = { provider:'mikan',season:state.mismatch?'2020-01':body.season || '',fetchedAt:Date.now(),expiresAt:Date.now()+600000,days:Array.from({length:9},(_,n)=>({day:n+1,items:state.empty ? [] : Array.from({length: n ? 4 : 20},(_,i)=>item(state.duplicate&&n===1&&i===0?4058:4058+n*100+i))})),items:body.keyword==='none'?[]:Array.from({length:43},(_,i)=>item(8000+i)) }
       } else if (/\/sources\/mikan\/\d+$/.test(endpoint)) {
         const id=endpoint.split('/').pop()
         if (state.slowEntry===id) await new Promise(resolve=>{state.entryRelease=resolve})
@@ -67,7 +72,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if (endpoint.includes('/notifications')) data={items:[],unread:0}
       await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{})
     })
-    const go = async (url='/anime?source=mikan&day=1') => { await page.goto(origin+url,{waitUntil:'networkidle'}) }
+    const go = async (url='/anime?source=mikan&season=2026-10&day=1') => { await page.goto(origin+url,{waitUntil:'networkidle'}) }
     const navigate = async url => page.evaluate(async url => document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(url),url)
     const search = async q => { await page.getByRole('searchbox',{name:'蜜柑番剧名称'}).fill(q); await page.getByRole('button',{name:'搜索',exact:true}).click() }
     return {page,state,calls,go,navigate,search,count:()=>calls.filter(c=>c.endpoint.endsWith('/catalog/mikan')).length}
@@ -167,9 +172,91 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(cross.calls.filter(c=>c.endpoint.endsWith('/subscriptions/preview')).length,0)
     passed.push('save without preview updates all three providers and opens existing subscription without upstream search')
 
+    const quarters=await session()
+    quarters.state.duplicate=true
+    await quarters.go('/anime?source=mikan&season=2024-01')
+    await quarters.page.getByRole('heading',{name:'2024 冬季收录51 部'}).waitFor()
+    assert.equal(await quarters.page.locator('.mikan-anime-card').count(),20)
+    await quarters.page.screenshot({path:'test-results/anime-quarter-desktop.png'})
+    await quarters.page.getByRole('combobox',{name:'蜜柑季度'}).click()
+    assert.equal(await quarters.page.getByRole('option').count(),3)
+    assert.equal(await quarters.page.getByRole('option',{name:'2012 春季'}).count(),1)
+    assert.equal(await quarters.page.getByRole('option',{name:'2012 冬季'}).count(),0,'do not invent archive gaps')
+    await quarters.page.keyboard.press('Escape')
+    await quarters.page.getByRole('button',{name:'季度下一页'}).click()
+    await quarters.page.locator('[data-mikan-id="4159"]').waitFor()
+    assert.equal(quarters.count(),1)
+    await quarters.navigate('/users');await quarters.navigate('/anime')
+    await quarters.page.locator('[data-mikan-id="4159"]').waitFor()
+    assert.equal(new URL(quarters.page.url()).searchParams.get('page'),'2')
+    assert.equal(quarters.count(),1)
+    await quarters.page.getByRole('combobox',{name:'蜜柑季度'}).click()
+    await quarters.page.getByRole('option',{name:'2026 秋季'}).click()
+    await quarters.page.getByRole('heading',{name:'2026 秋季收录51 部'}).waitFor()
+    assert.equal(new URL(quarters.page.url()).searchParams.get('day'),'all')
+    assert.equal(new URL(quarters.page.url()).searchParams.has('page'),false)
+    await quarters.page.getByRole('button',{name:/^周一/}).click()
+    assert.equal(quarters.count(),2,'weekday filtering must use the season response')
+    await quarters.search('independent')
+    const searchCall=quarters.calls.filter(c=>c.endpoint.endsWith('/catalog/mikan')).at(-1)
+    assert.equal(searchCall.body.mode,'search');assert.equal('season' in searchCall.body,false)
+    passed.push('verified quarter index, archive gaps, unique overview, local pagination and saved return state')
+
+    const extra=await session()
+    await extra.go('/anime?source=garden&season=2024-01')
+    await extra.page.getByRole('heading',{name:'2024 冬季收录8 部'}).waitFor()
+    await extra.page.getByRole('button',{name:'网络动画',exact:true}).click()
+    assert.equal(await extra.page.locator('.garden-anime-card').count(),2)
+    assert.equal(extra.calls.filter(c=>c.endpoint.endsWith('/catalog/garden')).length,1)
+    passed.push('Garden extra categories included in overview with cross-category deduplication')
+
+    const failures=await session()
+    failures.state.failSeasons=true
+    await failures.go('/anime?source=mikan&season=2024-01')
+    await failures.page.locator('[data-mikan-id="4058"]').waitFor()
+    await failures.page.getByRole('button',{name:'重试目录'}).waitFor()
+    failures.state.failSeasons=false
+    await failures.page.getByRole('button',{name:'重试目录'}).click()
+    await failures.page.getByRole('button',{name:'重试目录'}).waitFor({state:'detached'})
+    failures.state.fail=true
+    await failures.navigate('/anime?source=mikan&season=2012-04')
+    await failures.page.getByText('模拟蜜柑读取失败',{exact:true}).waitFor()
+    assert.equal(await failures.page.locator('.mikan-anime-card').count(),0)
+    assert.equal(new URL(failures.page.url()).searchParams.get('season'),'2012-04')
+    failures.state.fail=false;failures.state.empty=true
+    await failures.page.getByRole('button',{name:'重试',exact:true}).click()
+    await failures.page.getByRole('heading',{name:'当前分类暂无条目'}).waitFor()
+    assert.equal(new URL(failures.page.url()).searchParams.get('season'),'2012-04')
+    failures.state.empty=false;failures.state.mismatch=true
+    await failures.navigate('/anime?source=mikan&season=2023-01')
+    await failures.page.getByText('返回的季度与请求不符，请重试',{exact:true}).waitFor()
+    assert.equal(await failures.page.locator('.mikan-anime-card').count(),0)
+    await failures.page.getByRole('combobox',{name:'蜜柑季度'}).click()
+    assert.equal(await failures.page.getByRole('option',{name:'2023 冬季'}).count(),0)
+    await failures.page.keyboard.press('Escape')
+    passed.push('archive index failure independent of cards, empty/error seasons retained and mismatched responses rejected')
+
+    const race=await session()
+    race.state.slowSeason='2024-01'
+    await race.page.goto(origin+'/anime?source=mikan&season=2024-01',{waitUntil:'domcontentloaded'})
+    await race.page.waitForFunction(()=>document.querySelector('.anime-grid[aria-busy="true"]'))
+    await race.navigate('/anime?source=garden&season=2024-01')
+    await race.page.locator('.garden-anime-card').first().waitFor()
+    race.state.seasonRelease()
+    await race.page.waitForTimeout(80)
+    assert.equal(await race.page.locator('.mikan-anime-card').count(),0)
+    passed.push('late quarter response cannot overwrite a different provider')
+
     const mobile=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true})
     await mobile.go()
     assert.equal(await mobile.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await mobile.page.getByRole('combobox',{name:'蜜柑季度'}).click()
+    await mobile.page.getByRole('option',{name:'2024 冬季'}).tap()
+    await mobile.page.getByRole('heading',{name:'2024 冬季收录52 部'}).waitFor()
+    assert.equal(await mobile.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await mobile.page.screenshot({path:'test-results/anime-quarter-mobile.png'})
+    await mobile.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await mobile.page.screenshot({path:'test-results/anime-quarter-mobile-dark.png'})
     await mobile.page.locator('[data-mikan-id="4058"]').tap()
     await mobile.page.locator('.ac-identity').waitFor()
     assert.equal(await mobile.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)

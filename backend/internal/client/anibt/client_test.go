@@ -2,6 +2,7 @@ package anibt
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,47 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCatalogSeasonScopeAndCoverage(t *testing.T) {
+	body := fixture(t, "calendar.json")
+	catalog, err := ParseCatalog(body, "2026-10")
+	if err != nil || len(catalog.AvailableSeasons) != 8 || catalog.AvailableSeasons[0] != "2025-10" || catalog.Truncated {
+		t.Fatal(catalog, err)
+	}
+	for _, change := range []func(map[string]any){
+		func(v map[string]any) { delete(v, "scope") },
+		func(v map[string]any) { v["requestedSeason"] = "2026夏" },
+		func(v map[string]any) { v["scope"] = map[string]any{"kind": "season", "season": "2026夏"} },
+		func(v map[string]any) { v["availableSeasons"] = []string{"2026-02"} },
+		func(v map[string]any) { v["total"] = 0 },
+	} {
+		var wire map[string]any
+		if err := json.Unmarshal(body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		change(wire["data"].(map[string]any))
+		changed, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = ParseCatalog(changed, "2026-10"); !errors.Is(err, ErrInvalid) {
+			t.Fatal("unverified season accepted", err)
+		}
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["data"].(map[string]any)["total"] = 100
+	changed, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err = ParseCatalog(changed, "2026-10")
+	if err != nil || !catalog.Truncated || catalog.Total != 100 {
+		t.Fatal(catalog, err)
+	}
+}
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()

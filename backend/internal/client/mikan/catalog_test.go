@@ -6,9 +6,21 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestCatalogSeasonsPreservesArchiveGaps(t *testing.T) {
+	page := `<a data-year="2012" data-season="春"></a><a data-year="2013" data-season="秋"></a><a data-year="2026" data-season="&#x79CB;"></a><a data-year="2026" data-season="秋"></a><a data-year="1999" data-season="冬"></a>`
+	seasons, err := ParseCatalogSeasons(strings.NewReader(page))
+	if err != nil || !reflect.DeepEqual(seasons, []string{"2026-10", "2013-10", "2012-04"}) {
+		t.Fatal(seasons, err)
+	}
+	if _, err := ParseCatalogSeasons(strings.NewReader(`<html>captcha</html>`)); !errors.Is(err, ErrParse) {
+		t.Fatal("unrecognized page must not become an empty archive", err)
+	}
+}
 
 func catalogBlock(raw int, id string) string {
 	return fmt.Sprintf(`<div class="sk-bangumi" data-dayofweek="%d"><ul><li><span data-src="/images/Bangumi/202610/poster.jpg?width=400&amp;format=webp"></span><div class="an-info"><div class="date-text">2026/10/16 更新</div><a class="an-text" title="完整&amp;番名" href="/Home/Bangumi/%s">短名</a></div></li></ul></div>`, raw, id)

@@ -13,6 +13,36 @@ func (f *animeHTTPMikan) Catalog(_ context.Context, season, keyword string) (mik
 	return mikan.Catalog{Season: season, Days: []mikan.CatalogDay{{Day: 1, Items: []mikan.CatalogItem{{Bangumi: mikan.Bangumi{ID: "4063", Title: "蜜柑条目"}}}}}, Items: []mikan.CatalogItem{}}, f.err
 }
 
+func (f *animeHTTPMikan) CatalogSeasons(context.Context) ([]string, error) {
+	f.reads++
+	return []string{"2026-10", "2024-01", "2012-04"}, f.err
+}
+
+func TestAnimeCatalogSeasonsAdminReadOnlyAndCache(t *testing.T) {
+	f := newAnimeHTTPFixture(t)
+	f.call(t, "GET", "/catalog/mikan/seasons", "", "", nil, 401)
+	f.call(t, "GET", "/catalog/mikan/seasons", f.user, "", nil, 403)
+	f.call(t, "GET", "/catalog/other/seasons", f.admin, "", nil, 404)
+	for _, provider := range []string{"anibt", "garden"} {
+		f.call(t, "GET", "/catalog/"+provider+"/seasons", f.admin, "", nil, 503)
+	}
+	if f.mikan.reads != 0 || f.bgm.calls != 0 {
+		t.Fatal("unauthorized/unsupported read crossed provider boundary")
+	}
+	out := f.call(t, "GET", "/catalog/mikan/seasons", f.admin, "", nil, 200)
+	if out["provider"] != "mikan" || len(out["seasons"].([]any)) != 3 || f.mikan.reads != 1 {
+		t.Fatal(out)
+	}
+	f.call(t, "GET", "/catalog/mikan/seasons", f.admin, "", nil, 200)
+	if f.mikan.reads != 1 || f.bgm.calls != 0 {
+		t.Fatal("archive did not share cache")
+	}
+	list := f.call(t, "GET", "/subscriptions", f.admin, "", nil, 200)
+	if list["total"] != float64(0) {
+		t.Fatal("archive read created subscriptions", list)
+	}
+}
+
 func TestAnimeCatalogStatusIsLocalAndAdminOnly(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
 	f.call(t, "POST", "/catalog-status", "", "", `{"provider":"mikan","itemIds":["99"]}`, 401)
