@@ -8,6 +8,7 @@ export interface AnimeBinding {
 }
 export interface AnimeSpec { resolution?: string; languages?: string[]; subtitleMode?: string; codec?: string; container?: string; bitDepth?: string }
 export interface AnimeRules {
+	chapterFirstEpisode?: number | null
   schemaVersion: 1
   resolution: null | '720p' | '1080p' | '2160p' | 'any'
   include: string[]
@@ -67,6 +68,8 @@ export interface AnimePreviewResponse {
   sources: AnimePreviewSummary[]; issues: { sourceRef: string; code: string }[]; page?: AnimePreviewPage
 }
 export interface AnimeSubscriptionView {
+	form?: { schemaVersion: 1; autoArchive?: boolean; inactiveArchiveDays?: number; totalEpisodes?: number }
+	lifecycle?: { archiveReason?: 'complete' | 'inactive' | 'manual'; archivedAt?: number; quietSince?: number; completionIssue?: string }
   naming?: AnimeNamingPlan | null
   id: string; entryId: string; status: string; revision: number
   createdAt?: number; updatedAt?: number; dataVersion?: string
@@ -75,7 +78,7 @@ export interface AnimeSubscriptionView {
   jobStats?: { totalCount: number; queuedCount: number; downloadingCount: number; remoteCompletedCount: number; failedCount: number; needsReviewCount: number }
   completionStats?: { originalSavedCount: number; organizedCount: number }
   readiness?: { ready: boolean; issues: string[] }
-  entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string; bangumiUnavailable?: boolean } }
+  entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string; bangumiUnavailable?: boolean; totalEpisodes?: number | null } }
   sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null })[]
 }
 export interface AnimeDownloadJob {

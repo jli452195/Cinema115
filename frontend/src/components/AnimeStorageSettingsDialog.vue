@@ -6,14 +6,15 @@ import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import { useAnimeStorageSettings } from '../composables/useAnimeStorageSettings'
 import type { AnimeSettingsView } from '../types/animeSubscription'
 
-const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ close: []; loaded: [settings: AnimeSettingsView]; changed: [settings: AnimeSettingsView] }>()
+const props = defineProps<{ token: string; inline?: boolean }>()
+const emit = defineEmits<{ close: []; loaded: [settings: AnimeSettingsView]; changed: [settings: AnimeSettingsView]; blocked: [value: boolean] }>()
 const storage = useAnimeStorageSettings(props.token, settings => emit('changed', settings))
 const { settings, loading, readError, error, notice, pending, saving, locked } = storage
 const directoryKind = ref<'download' | 'organize'>('download'), directoryOpen = ref(false), feedback = ref<HTMLElement>()
 const previousOverflow = document.body.style.overflow
 const unavailable = computed(() => settings.value?.readiness.issues.includes('ACCOUNT_SNAPSHOT_CHANGED'))
 watch(settings, value => { if (value) emit('loaded', value) })
+watch([saving, pending], () => emit('blocked', saving.value || !!pending.value), { immediate: true })
 function openDirectory(kind: 'download' | 'organize') {
   if (locked.value || !settings.value?.primaryAccount) return
   directoryKind.value = kind; directoryOpen.value = true
@@ -34,11 +35,11 @@ async function confirmPending() {
 onMounted(() => { void storage.readSettings() })
 // Both native dialogs restore their own lock. A route change can unmount the
 // outer dialog first, so restore the original value after both children finish.
-onUnmounted(() => { document.body.style.overflow = previousOverflow })
+onUnmounted(() => { if (!props.inline) document.body.style.overflow = previousOverflow; emit('blocked', false) })
 </script>
 
 <template>
-  <P115ActionDialog title="动漫存储设置" :busy="saving" @close="emit('close')">
+  <component :is="inline ? 'section' : P115ActionDialog" v-bind="inline ? { 'aria-label': '下载与整理目录' } : { title: '动漫存储设置', busy: saving }" @close="emit('close')">
     <div class="anime-storage-settings" :aria-busy="loading || saving">
       <p class="storage-note">所有订阅共用，选择目录后立即保存。</p>
       <p v-if="loading && !settings" role="status" class="storage-note">正在读取目录设置…</p>
@@ -59,7 +60,7 @@ onUnmounted(() => { document.body.style.overflow = previousOverflow })
       </div>
       <p class="storage-note storage-footnote">修改只影响之后新建的任务，已有任务沿用原目录。</p>
     </div>
-  </P115ActionDialog>
+  </component>
   <P115DirectoryDialog v-if="directoryOpen && settings?.primaryAccount" :token="token" :account-id="settings.primaryAccount.id" :title="directoryKind === 'organize' ? '动漫整理目录2' : '动漫订阅下载目录'" description="使用主账号；下载目录与整理目录需分开。" :allow-create="false" :saving="saving" :save-error="error" :confirm-label="directoryKind === 'organize' ? '保存整理目录' : '保存此目录'" @close="directoryOpen = false" @select="saveDirectory($event.id)" />
 </template>
 

@@ -115,6 +115,9 @@ func (b AnimeBinding) Validate(complete bool) error {
 }
 
 func (r AnimeRules) Validate(complete bool) error {
+	if r.ChapterFirstEpisode != nil && !animeEpisode(*r.ChapterFirstEpisode) {
+		return fmt.Errorf("invalid chapter first episode")
+	}
 	if r.SchemaVersion != AnimeSchemaVersion {
 		return fmt.Errorf("unsupported rules schema")
 	}
@@ -187,6 +190,9 @@ func (s AnimeSourceConfig) Validate() error {
 }
 
 func (c AnimeSubscriptionConfig) Validate() error {
+	if c.Form.InactiveArchiveDays != nil && *c.Form.InactiveArchiveDays != 0 && (*c.Form.InactiveArchiveDays < 30 || *c.Form.InactiveArchiveDays > 365) || c.Form.TotalEpisodes != nil && !animeEpisode(*c.Form.TotalEpisodes) {
+		return fmt.Errorf("invalid archive policy")
+	}
 	if c.Naming != nil {
 		if err := c.Naming.Validate(); err != nil {
 			return err

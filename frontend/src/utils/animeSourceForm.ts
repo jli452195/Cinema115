@@ -3,6 +3,7 @@ import { animeRequestKey } from '../lib/anime-config-api'
 import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch, AnimeMappingSegment, AnimeMappingOverride } from '../types/animeSubscription'
 
 export interface SourceForm {
+  chapterFirst: string
   provider: AnimeSourceProvider; ref: string; id: string; revision: number; role: 'main' | 'standby'; runWhenEnabled: boolean
   itemId: string; itemTitle: string; groupId: string; groupName: string
   lockedItem: boolean; lockedGroup: boolean
@@ -18,7 +19,7 @@ export interface SourceForm {
   previewError: string; previewCooldown: number
 }
 export function newAnimeSource(role: SourceForm['role'], keyword = '', provider: AnimeSourceProvider = 'mikan'): SourceForm {
-  return { provider, ref: role === 'main' ? 'main' : animeRequestKey(), id: '', revision: 0, role, runWhenEnabled: true,
+  return { chapterFirst: '', provider, ref: role === 'main' ? 'main' : animeRequestKey(), id: '', revision: 0, role, runWhenEnabled: true,
     itemId: '', itemTitle: '', groupId: '', groupName: '', lockedItem: false, lockedGroup: false,
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
@@ -63,7 +64,7 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
   return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: form.provider,
     itemId: form.itemId || null, groupId: form.groupId || null, groupName: form.groupName || null,
     binding: { schemaVersion: 1, confirmed, scope, chapterCorrespondence, ...(confirmed && form.review ? { review: form.review } : {}) },
-    rules: { schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
+    rules: { ...(form.chapterFirst.trim() ? { chapterFirstEpisode: episode(form.chapterFirst, '篇章首集') } : {}), schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
 }
 export function animeSourceReady(form: SourceForm) { try { return animeSourceConfig(form, 0).status === 'paused' } catch { return false } }
 export function animeBindingKey(form: SourceForm) {

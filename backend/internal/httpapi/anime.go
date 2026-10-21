@@ -248,6 +248,26 @@ func RegisterAnime(admin *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		c.JSON(200, v)
 	})
+	r.GET("/rss-settings", func(c *gin.Context) {
+		v, err := s.Store.GetAnimeRSSSettings(c.Request.Context())
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
+	r.PATCH("/rss-settings", func(c *gin.Context) {
+		var in model.AnimeRSSSettings
+		if !animeBody(c, &in, false) {
+			return
+		}
+		v, err := s.SaveRSSSettings(c.Request.Context(), animeActor(c), c.GetHeader("Idempotency-Key"), in)
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
 	r.PATCH("/settings", func(c *gin.Context) {
 		var in service.AnimeSettingsInput
 		if !animeBody(c, &in, false) {

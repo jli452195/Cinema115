@@ -78,6 +78,22 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 		if _, err := tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,updated_at=? WHERE id=?`, next, now, id); err != nil {
 			return out, err
 		}
+		if action == "resume" || action == "unarchive" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM anime_subscription_archives WHERE subscription_id=?`, id); err != nil {
+				return out, err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM anime_source_activity WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`, id); err != nil {
+				return out, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET next_check_at=? WHERE subscription_id=? AND status='enabled' AND run_when_enabled=1 AND health<>'unavailable'`, now, id); err != nil {
+				return out, err
+			}
+		}
+		if action == "archive" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO anime_subscription_archives(subscription_id,reason,archived_at) VALUES(?,'manual',?) ON CONFLICT(subscription_id) DO UPDATE SET reason='manual',archived_at=excluded.archived_at`, id, now); err != nil {
+				return out, err
+			}
+		}
 		if action != "resume" {
 			// Keep RSS deadlines, cooldowns, successful observations and T0.
 			if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET check_token=NULL,check_until=NULL WHERE subscription_id=?`, id); err != nil {

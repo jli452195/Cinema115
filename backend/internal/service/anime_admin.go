@@ -75,6 +75,7 @@ type AnimeAdminService struct {
 }
 
 type AnimeSaveConfig struct {
+	Form             *model.AnimeForm           `json:"form,omitempty"`
 	Naming           *model.AnimeNamingInput    `json:"naming"`
 	Entry            AnimeEntryRef              `json:"entry"`
 	Sources          []model.AnimeSourceConfig  `json:"sources"`
@@ -169,6 +170,9 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		return out, storage.ErrAnimeSettingsChanged
 	}
 	c := model.AnimeSubscriptionConfig{ID: id, EntryID: "pending", ExpectedRevision: in.ExpectedRevision, Status: "paused", Sources: in.Config.Sources, RemovedSources: in.Config.RemovedSourceIDs, Form: model.AnimeForm{SchemaVersion: 1}}
+	if in.Config.Form != nil {
+		c.Form = *in.Config.Form
+	}
 	// Validate partial source structures first, so incomplete paused input gets
 	// CONFIG_INCOMPLETE while illegal enums/ranges remain INVALID_INPUT.
 	partial := c
@@ -219,6 +223,9 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		}
 		if old.Revision != in.ExpectedRevision {
 			return out, storage.ErrAnimeConflict
+		}
+		if in.Config.Form == nil {
+			c.Form = old.Form
 		}
 		if in.Config.Entry.ID != old.EntryID {
 			return out, storage.ErrAnimeIdentity

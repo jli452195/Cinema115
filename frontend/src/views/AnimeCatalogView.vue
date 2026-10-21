@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { IconBookmark, IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch, IconSettings, IconX } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
-import AnimeStorageSettingsDialog from '../components/AnimeStorageSettingsDialog.vue'
 import GardenAnimeCard from '../components/GardenAnimeCard.vue'
 import AnibtAnimeCard from '../components/AnibtAnimeCard.vue'
 import MikanAnimeCard from '../components/MikanAnimeCard.vue'
@@ -21,7 +20,6 @@ import '../styles/animeDiscovery.css'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-const settingsOpen = ref(false)
 const browserElement = ref<HTMLElement>(), viewportMinHeight = ref(0)
 const route = useRoute(), router = useRouter()
 function shanghaiDate() { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
@@ -208,7 +206,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); controller
 
 <template>
   <ManagementLayout title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
-    <template #actions><button type="button" class="anime-refresh" aria-label="动漫存储设置" @click="settingsOpen = true"><IconSettings :size="18" aria-hidden="true" /><span class="hidden sm:inline">设置</span></button><RouterLink to="/anime/subscriptions" class="anime-refresh"><IconBookmark :size="18" aria-hidden="true" />我的订阅</RouterLink><button type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+    <template #actions><RouterLink :to="{ path: '/anime/settings', query: { returnTo: route.fullPath } }" class="anime-refresh" aria-label="动漫订阅设置"><IconSettings :size="18" aria-hidden="true" /><span class="hidden sm:inline">设置</span></RouterLink><RouterLink to="/anime/subscriptions" class="anime-refresh"><IconBookmark :size="18" aria-hidden="true" />我的订阅</RouterLink><button type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
     <div ref="browserElement" class="anime-browser" :style="viewportMinHeight ? { minHeight: `${viewportMinHeight}px` } : undefined">
       <div class="catalog-providers" role="group" aria-label="选择订阅站点"><AnimeProviderButton v-for="site in animeProviders" :key="site.id" :provider="site.id" :name="site.name" :available="site.available" :selected="provider === site.id" @select="switchProvider(site.id)" /></div>
       <template v-if="available">
@@ -239,7 +237,6 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); controller
       </template>
       <div v-else class="anime-empty"><h3>该站点暂未接入</h3><p>请在上方明确选择可用站点。</p></div>
     </div>
-    <AnimeStorageSettingsDialog v-if="settingsOpen" :token="token" @close="settingsOpen = false" />
   </ManagementLayout>
 </template>
 

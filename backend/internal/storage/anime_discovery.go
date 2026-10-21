@@ -204,6 +204,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		return stats, err
 	}
 	candidates := make([]animepreview.Item, 0, len(releases))
+	newMatch := false
 	generations := make(map[string]int64, len(releases))
 	for i, r := range releases {
 		item := parsed.Items[i]
@@ -216,6 +217,9 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 			return stats, err
 		}
 		found := err == nil
+		if !found && item.Decision == "matched" {
+			newMatch = true
+		}
 		// Neither a new window nor edited rules silently restore a previous
 		// exclusion, retry a selected resource or replace a frozen snapshot.
 		if found && old.Disposition != "seen" && old.SourceRevision == poll.Source.Revision {
@@ -292,9 +296,24 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if err != nil {
 		return AnimeDiscoveryStats{}, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET health='ok',checked_at=?,next_check_at=?,retry_after=NULL,error_code=NULL,poll_failures=0,check_token=NULL,check_until=NULL,poll_snapshot_json=?,updated_at=? WHERE id=?`, now, now+int64(15*time.Minute/time.Millisecond)+animeDiscoveryJitter(poll.Source.ID), window, now, poll.Source.ID)
+	quiet, err := recordAnimeSourceActivityTx(ctx, tx, poll.Source, newMatch, now)
+	if err != nil {
+		return stats, err
+	}
+	settings, err := readAnimeRSSSettings(ctx, tx)
+	if err != nil {
+		return stats, err
+	}
+	interval := int64(settings.PollMinutes) * 60000
+	if now-quiet >= 30*animeDay {
+		interval = max(interval, animeDay)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET health='ok',checked_at=?,next_check_at=?,retry_after=NULL,error_code=NULL,poll_failures=0,check_token=NULL,check_until=NULL,poll_snapshot_json=?,updated_at=? WHERE id=?`, now, now+interval+animeDiscoveryJitter(poll.Source.ID), window, now, poll.Source.ID)
 	if err != nil {
 		return AnimeDiscoveryStats{}, err
+	}
+	if err := evaluateAnimeLifecycleTx(ctx, tx, poll.Subscription.ID, now); err != nil {
+		return stats, fmt.Errorf("evaluate anime lifecycle: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return AnimeDiscoveryStats{}, err
@@ -342,6 +361,11 @@ func (s *Store) FailAnimeSourcePoll(ctx context.Context, poll AnimeSourcePoll, c
 	_, err = tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET health=?,next_check_at=?,retry_after=?,error_code=?,poll_failures=?,check_token=NULL,check_until=NULL,updated_at=? WHERE id=?`, health, next, retry, code, failures, now, poll.Source.ID)
 	if err != nil {
 		return err
+	}
+	if code != "POLL_CANCELLED" {
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_source_activity SET quiet_since=? WHERE source_id=?`, now, poll.Source.ID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

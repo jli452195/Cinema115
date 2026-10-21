@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path"
 	"reflect"
 	"strings"
@@ -222,6 +223,11 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 		return empty, err
 	}
 	op.Progress, op.UpdatedAt = next, now
+	if workflow == "organized" {
+		if err := evaluateAnimeJobLifecycleTx(ctx, tx, op.JobID, now); err != nil {
+			return empty, fmt.Errorf("evaluate organized anime lifecycle: %w", err)
+		}
+	}
 	return op, tx.Commit()
 }
 

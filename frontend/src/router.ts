@@ -32,6 +32,7 @@ import WoniuView from './views/WoniuView.vue'
 import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
 import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
+import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
@@ -52,6 +53,7 @@ export const router = createRouter({
       if (!Object.keys(to.query).length && query) return { path: '/anime', query, replace: true }
     } },
     { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime' } },
+    { path: '/anime/settings', name: 'anime-settings', component: AnimeSettingsView, meta: { managementSection: '/anime' } },
     { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeWorkspaceView, meta: { managementSection: '/anime' } },
     { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime' }, beforeEnter: to => {
       const location = animeSubscriptionLocation()

@@ -8,7 +8,7 @@ import { portalUser } from '../composables/usePortalAuth'
 import { animeSubscriptionsVersion, animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { animeConfigMessage } from '../lib/anime-config-api'
-import { animeLocalTime, subscriptionCard, subscriptionStatus, subscriptionSummary } from '../utils/animeSubscriptionPresentation'
+import { animeLocalTime, subscriptionLifecycle, subscriptionCard, subscriptionStatus, subscriptionSummary } from '../utils/animeSubscriptionPresentation'
 import type { AnimeSubscriptionPage } from '../types/animeSubscription'
 import '../styles/animeDiscovery.css'
 import '../styles/animeSubscriptions.css'
@@ -92,7 +92,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
       <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在核对配置，当前内容仍可查看。</span></div>
       <div v-if="loading && !result" class="anime-grid" aria-label="正在读取订阅" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span></div></div>
       <div v-else-if="result?.items.length" class="anime-grid" aria-label="订阅列表" :aria-busy="loading">
-        <AnimeCard v-for="item in result.items" :key="item.id" :item="subscriptionCard(item)" :data-subscription-id="item.id" action-label="查看订阅配置" @select="openDetail(item.id)"><template #badge><span class="as-badge" :data-status="item.status">{{ subscriptionStatus(item.status) }}</span></template><template #meta><span class="as-card-meta" :title="subscriptionSummary(item)">{{ subscriptionSummary(item) }}</span></template></AnimeCard>
+        <AnimeCard v-for="item in result.items" :key="item.id" :item="subscriptionCard(item)" :data-subscription-id="item.id" action-label="查看订阅配置" @select="openDetail(item.id)"><template #badge><span class="as-badge" :data-status="item.status">{{ subscriptionStatus(item.status) }}</span></template><template #meta><span class="as-card-meta" :title="[subscriptionSummary(item), subscriptionLifecycle(item)].filter(Boolean).join('，')">{{ [subscriptionSummary(item), subscriptionLifecycle(item)].filter(Boolean).join('，') }}</span></template></AnimeCard>
       </div>
       <div v-else-if="!loading" class="anime-empty"><IconCalendar :size="32" aria-hidden="true" /><h3>{{ error ? '暂时无法读取订阅' : keyword || status ? '没有符合条件的订阅' : '从一部想追的番剧开始' }}</h3><p>{{ keyword || status ? '可以调整名称或订阅状态。' : '从 Bangumi 选择篇章，保存主 RSS 与备用来源。' }}</p><RouterLink v-if="!error" to="/anime" class="as-link">前往选番</RouterLink></div>
       <nav v-if="result && result.total > 0" class="anime-pagination" aria-label="订阅分页"><button type="button" :disabled="page <= 1 || loading" aria-label="订阅上一页" @click="changePage(page - 1)"><IconChevronLeft :size="18" aria-hidden="true" />上一页</button><span aria-live="polite">{{ page }} / {{ totalPages }}</span><button type="button" :disabled="page >= totalPages || loading" aria-label="订阅下一页" @click="changePage(page + 1)">下一页<IconChevronRight :size="18" aria-hidden="true" /></button></nav>

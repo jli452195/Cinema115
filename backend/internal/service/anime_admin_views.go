@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"time"
+
 	"strm115/backend/internal/animebinding"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
@@ -35,6 +37,7 @@ type AnimeCompletionStats struct {
 	OrganizedCount     int `json:"organizedCount"`
 }
 type AnimeSubscriptionView struct {
+	Lifecycle model.AnimeLifecycle `json:"lifecycle"`
 	model.AnimeSubscription
 	Sources          []AnimeSourceView    `json:"sources"`
 	Entry            model.AnimeEntry     `json:"entry"`
@@ -72,6 +75,10 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		return AnimeSubscriptionView{}, err
 	}
 	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
+	v.Lifecycle, err = s.Store.AnimeLifecycle(ctx, sub, e, time.Now().UnixMilli())
+	if err != nil {
+		return v, err
+	}
 	for _, action := range []string{"pause", "archive", "remove", "unarchive"} {
 		allowed := animeLocalControlAllowed(sub.Status, action)
 		reason := ""

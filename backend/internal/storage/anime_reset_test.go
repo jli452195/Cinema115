@@ -51,13 +51,13 @@ func assertAnimeReset(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(names) != 17 {
+	if len(names) != 20 {
 		t.Fatal("incomplete current schema", len(names))
 	}
 	for _, name := range names {
 		var n int
 		want := 0
-		if name == "anime_settings" {
+		if name == "anime_settings" || name == "anime_rss_settings" {
 			want = 1
 		}
 		if err := s.db.QueryRow(`SELECT count(*) FROM ` + name).Scan(&n); err != nil || n != want {

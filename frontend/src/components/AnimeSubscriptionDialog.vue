@@ -14,7 +14,7 @@ import { useAnimeSubscriptionEditor } from '../composables/useAnimeSubscriptionE
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeSourceSpecs } from '../utils/animeSourceForm'
-import { subscriptionStatus } from '../utils/animeSubscriptionPresentation'
+import { subscriptionLifecycle, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -110,6 +110,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked" />
           <details v-if="subject.id && !subject.bangumiUnavailable" class="ae-advanced ac-episodes" @toggle="episodesOpen = ($event.target as HTMLDetailsElement).open"><summary>篇章集号<IconChevronDown :size="15" /></summary><AnimeChapterEpisodes v-if="episodesOpen" :token="token" :bangumi-id="subject.id" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" /></details>
           <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
+          <details class="ae-advanced ac-archive"><summary>归档集数<IconChevronDown :size="15" aria-hidden="true" /></summary><div class="ac-archive-fields"><p class="ae-note">沿用动漫全局归档设置。总集数未知或篇章首集无法确认时，继续订阅。</p><label>篇章总集数<input v-model="editor.archiveTotal.value" type="text" inputmode="numeric" :placeholder="editor.defaultTotal.value ? `Bangumi：${editor.defaultTotal.value}` : '未知，请填写'" :disabled="locked" /></label><p class="ae-note">留空使用 Bangumi 总集数，与 TMDB 季总集数无关。</p><label v-for="source in sources.filter(s => s.runWhenEnabled)" :key="source.ref">{{ source.groupName || (source.role === 'main' ? '主 RSS' : '备用 RSS') }}篇章首集<input v-model="source.chapterFirst" type="text" inputmode="numeric" placeholder="对应发布集号" :disabled="locked" /></label><p class="ae-note">例如篇章第 1 集发布为第 25 话，填写 25。普通从 1 编号的简单映射可留空；补番起点仍沿用原配置。</p><p v-if="local && subscriptionLifecycle(local)" class="ae-note">{{ subscriptionLifecycle(local) }}</p></div></details>
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
         <div v-show="tab === 'backup'" id="anime-panel-backup" role="tabpanel" aria-labelledby="anime-tab-backup">
@@ -165,6 +166,10 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
 .ac-episodes { margin: 0 0 22px; }
 .ac-metadata-note { margin: 0 0 14px; }
+.ac-archive { margin-top: 16px; }
+.ac-archive-fields { display: grid; gap: 10px; margin-top: 12px; }
+.ac-archive-fields label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 12px; color: var(--floating-surface-muted); }
+.anime-editor .ac-archive-fields input { flex: none; width: 160px; min-height: 44px; padding: 8px 10px; border-radius: 8px; background: rgb(148 163 184 / .08); color: var(--ae-ink); border: 1px solid rgb(148 163 184 / .18); }
 .ac-storage { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--floating-surface-muted); }
 .ac-storage > div { flex: 1; min-width: 0; font-size: 11px; }
 .ac-storage p { overflow-wrap: anywhere; line-height: 1.8; }

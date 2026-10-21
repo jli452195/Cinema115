@@ -12,6 +12,7 @@ import (
 // and baseline tables reference one another, and restores it on every exit.
 func resetDevelopmentAnime(ctx context.Context, tx *sql.Tx, preserveSettings bool) error {
 	for _, table := range []string{
+		"anime_source_activity", "anime_subscription_archives", "anime_rss_settings",
 		"anime_drive_operations", "anime_job_selections", "anime_download_jobs",
 		"anime_resource_claims", "anime_release_decisions", "anime_baseline_releases",
 		"anime_preview_items", "anime_source_previews", "anime_preview_batches",

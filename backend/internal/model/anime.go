@@ -69,17 +69,21 @@ type AnimeSpec struct {
 }
 
 type AnimeRules struct {
-	SchemaVersion  int         `json:"schemaVersion"`
-	Resolution     *string     `json:"resolution"`
-	Include        []string    `json:"include"`
-	Exclude        []string    `json:"exclude"`
-	MinimumEpisode *int        `json:"minimumEpisode"`
-	SpecMode       string      `json:"specMode,omitempty"`
-	SpecProfiles   []AnimeSpec `json:"specProfiles,omitempty"`
+	ChapterFirstEpisode *int        `json:"chapterFirstEpisode,omitempty"`
+	SchemaVersion       int         `json:"schemaVersion"`
+	Resolution          *string     `json:"resolution"`
+	Include             []string    `json:"include"`
+	Exclude             []string    `json:"exclude"`
+	MinimumEpisode      *int        `json:"minimumEpisode"`
+	SpecMode            string      `json:"specMode,omitempty"`
+	SpecProfiles        []AnimeSpec `json:"specProfiles,omitempty"`
 }
 
 type AnimeForm struct {
-	SchemaVersion int `json:"schemaVersion"`
+	SchemaVersion       int   `json:"schemaVersion"`
+	AutoArchive         *bool `json:"autoArchive,omitempty"`
+	InactiveArchiveDays *int  `json:"inactiveArchiveDays,omitempty"`
+	TotalEpisodes       *int  `json:"totalEpisodes,omitempty"`
 }
 
 type AnimeSubscription struct {
