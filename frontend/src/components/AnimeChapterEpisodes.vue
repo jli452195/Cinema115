@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
-import { animeConfigMessage, animeConfigRequest } from '../lib/anime-config-api'
+import { animeConfigMessage } from '../lib/anime-config-api'
+import { cachedAnime, requestAnime } from '../composables/useAnimeDiscovery'
 import type { AnimeChapterEpisode, AnimeChapterEpisodes } from '../types/anime'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
 import { chapterEpisodeReferences, seasonEpisodeLabel, type ChapterEpisodeReference } from '../utils/animeChapterEpisodes'
 
-const props = defineProps<{ token: string; bangumiId: string; target?: AnimeNamingTarget; targetBusy: boolean }>()
+const props = defineProps<{ token: string; bangumiId: string; target?: AnimeNamingTarget; targetBusy: boolean; active?: boolean }>()
 const items = ref<AnimeChapterEpisode[]>([]), total = ref(0), limit = ref(100), maxItems = ref(2000)
 const loading = ref(false), loaded = ref(false), error = ref(''), expanded = ref(false), stale = ref(false)
 const listID = useId()
@@ -32,9 +33,23 @@ function description(row: ChapterEpisodeReference) {
 async function read(append = false) {
   if (!props.bangumiId || loading.value) return
   const current = generation, offset = append ? items.value.length : 0
+  const cacheKey = 'chapter-episodes:' + props.bangumiId + ':' + offset
+  const cached = cachedAnime<AnimeChapterEpisodes>(cacheKey)
+  if (cached) {
+    const data = cached.data
+    const valid = Array.isArray(data.items) && data.offset === offset && data.limit === 100 && Number.isInteger(data.total) && data.total >= offset + data.items.length && data.maxItems === 2000
+    const duplicate = append && data.items.some(item => items.value.some(old => old.id === item.id))
+    if (valid && !duplicate && (!append || cached.fresh && data.total === total.value)) {
+      items.value = append ? [...items.value, ...data.items] : data.items
+      total.value = data.total; limit.value = data.limit; maxItems.value = data.maxItems
+      stale.value = (append && stale.value) || !cached.fresh || data.stale
+      loaded.value = true
+      if (cached.fresh) { error.value = ''; return }
+    }
+  }
   loading.value = true; error.value = ''
   try {
-    const data = await animeConfigRequest<AnimeChapterEpisodes>(props.token, `discovery/subjects/${encodeURIComponent(props.bangumiId)}/episodes?offset=${offset}`, { signal: controller.signal })
+    const data = await requestAnime<AnimeChapterEpisodes>(cacheKey, 'subjects/' + encodeURIComponent(props.bangumiId) + '/episodes?offset=' + offset, props.token, controller.signal)
     if (current !== generation || controller.signal.aborted) return
     if (!Array.isArray(data.items) || data.offset !== offset || data.limit !== 100 || !Number.isInteger(data.total) || data.total < offset + data.items.length || data.maxItems !== 2000) throw new Error('集数资料不完整，请重新读取')
     if (append && (data.total !== total.value || data.items.some(item => items.value.some(old => old.id === item.id)))) throw new Error('集数列表已变化，请重新读取')
@@ -47,8 +62,11 @@ async function read(append = false) {
 watch(() => [props.token, props.bangumiId], () => {
   generation++; controller.abort(); controller = new AbortController()
   items.value = []; total.value = 0; loaded.value = false; expanded.value = false; stale.value = false; error.value = ''; loading.value = false
-  void read()
+  if (props.active !== false) void read()
 }, { immediate: true })
+watch(() => props.active, active => {
+  if (active && (!loaded.value || !cachedAnime('chapter-episodes:' + props.bangumiId + ':0')?.fresh)) void read()
+})
 onBeforeUnmount(() => { generation++; controller.abort() })
 </script>
 

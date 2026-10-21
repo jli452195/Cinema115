@@ -36,6 +36,27 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
   const submittedSources = computed(() => sources.value.filter(s => s.role === 'main' || s.id || s.itemId || s.groupId))
+  const archiveSuggestion = computed(() => {
+    const target = naming.target.value
+    if (defaultTotal.value || !target || target.groupId || target.season < 1) return null
+    const count = target.seasons.find(season => season.number === target.season)?.episodeCount
+    if (!count || !Number.isInteger(count) || count < 1 || count > 99999) return null
+    // A season is only a suggestion for ordinary whole-season numbering.
+    // Never silently substitute it for a chapter, offset or custom arrangement.
+    const enabled = submittedSources.value.filter(source => source.runWhenEnabled)
+    if (!enabled.length || enabled.some(source =>
+      source.mappingSource !== '1' || source.mappingTarget !== '1' || Number(source.mappingSeason || target.season) !== target.season ||
+      source.mappingSegments.length > 0 || source.mappingOverrides.length > 0 ||
+      !!source.mappingLast && Number(source.mappingLast) !== count ||
+      !!source.chapterFirst && Number(source.chapterFirst) !== 1 ||
+      source.correspondence && (source.sourceEpisode !== '1' || source.chapterEpisode !== '1') ||
+      source.scope === 'range' && (Number(source.first) !== 1 || Number(source.last) !== count)
+    )) return null
+    return count
+  })
+  function useTMDBTotal() {
+    if (!locked.value && !archiveTotal.value && !naming.busy.value && !naming.searching.value && archiveSuggestion.value) archiveTotal.value = String(archiveSuggestion.value)
+  }
   const startIssue = computed(() => {
     if (subject.value?.needsSource) return '请先选择番剧来源'
     if (!settings.value?.readiness.ready || !settings.value.settings.organizeCid) return '请在设置中补齐下载与整理目录'
@@ -332,7 +353,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (startIssue.value) throw new Error(startIssue.value)
       if (archiveTotal.value && !/^[1-9]\d{0,4}$/.test(archiveTotal.value)) throw new Error('篇章总集数请填写 1 至 99999 的整数，留空使用 Bangumi 数据')
       const body = { expectedRevision: local.value?.revision || 0, settingsRevision: settings.value.settings.revision,
-        config: { form: { ...local.value?.form, schemaVersion: 1, totalEpisodes: archiveTotal.value ? Number(archiveTotal.value) : undefined }, naming: naming.input(), entry: entryRef(), sources: submittedSources.value.map(animeSourceConfig),
+        config: { form: { ...local.value?.form, schemaVersion: 1, totalEpisodes: archiveTotal.value ? Number(archiveTotal.value) : null }, naming: naming.input(), entry: entryRef(), sources: submittedSources.value.map(animeSourceConfig),
           removedSourceIds: removed.value } }
       pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}` : 'subscriptions', method: local.value ? 'PATCH' : 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
       await retrySave()
@@ -360,6 +381,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { archiveTotal, defaultTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue,
+  return { archiveTotal, defaultTotal, archiveSuggestion, useTMDBTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue,
     initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, save, retrySave }
 }

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash } from '@tabler/icons-vue'
+import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import AnimeSourceForm from './AnimeSourceForm.vue'
 import AnimeNamingTarget from './AnimeNamingTarget.vue'
-import AnimeChapterEpisodes from './AnimeChapterEpisodes.vue'
+import AnimeChapterEpisodesPopover from './AnimeChapterEpisodesPopover.vue'
 import AnimeReleasePreview from './AnimeReleasePreview.vue'
 import SelectMenu from './SelectMenu.vue'
 import AnimeDownloadJobs from './AnimeDownloadJobs.vue'
@@ -26,7 +26,7 @@ const shell = ref<InstanceType<typeof AnimeFloatingDialog>>()
 const tab = ref<'basic' | 'backup' | 'jobs'>('basic'), previewOpen = ref(false), settingsOpen = ref(false), childOpen = ref(false), imageFailed = ref(false)
 const discard = ref(false), confirmRemove = ref(false), jobsVersion = ref(0)
 const reloadConfirm = ref(false)
-const episodesOpen = ref(false)
+const totalID = 'anime-archive-total-' + useId()
 const previewRef = ref(''), previewButton = ref<HTMLButtonElement>()
 const previewStates = reactive<Record<string, { filter: string; left: number; top: number }>>({})
 function previewState(ref: string) { return previewStates[ref] ||= { filter: 'all', left: 0, top: 0 } }
@@ -90,14 +90,19 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 <template>
   <AnimeFloatingDialog ref="shell" :title="id ? '修改订阅' : '新增订阅'" close-label="关闭订阅配置" size="config" @close="close" @scroll="top = $event">
     <template #header>
-      <div v-if="subject" class="ac-identity">
-        <div class="ac-poster"><img v-if="animeImageURL(subject.coverUrl) && !imageFailed" :src="animeImageURL(subject.coverUrl)" alt="" referrerpolicy="no-referrer" @error="imageFailed = true" /><IconPhotoOff v-else :size="22" aria-hidden="true" /></div>
-        <div><h3>{{ subject.title }}</h3><p><span v-if="subject.id">Bangumi {{ subject.id }}</span><span v-if="editor.naming.target.value">TMDB {{ editor.naming.target.value.tmdbId }}</span><span>{{ local ? subscriptionStatus(local.status) : '保存后启用' }}</span></p></div>
-      </div>
-      <div class="ac-tabs" role="tablist" aria-label="订阅配置">
-        <button id="anime-tab-basic" type="button" role="tab" :aria-selected="tab === 'basic'" aria-controls="anime-panel-basic" @click="tab = 'basic'">基本</button>
-        <button id="anime-tab-backup" type="button" role="tab" :aria-selected="tab === 'backup'" aria-controls="anime-panel-backup" @click="tab = 'backup'">备用 RSS <small>{{ backups.length }}</small></button>
-        <button v-if="id" id="anime-tab-jobs" type="button" role="tab" :aria-selected="tab === 'jobs'" aria-controls="anime-panel-jobs" @click="tab = 'jobs'">下载记录</button>
+      <div v-if="subject" class="ac-header-grid">
+        <div class="ac-identity">
+          <div class="ac-poster"><img v-if="animeImageURL(subject.coverUrl) && !imageFailed" :src="animeImageURL(subject.coverUrl)" alt="" referrerpolicy="no-referrer" @error="imageFailed = true" /><IconPhotoOff v-else :size="22" aria-hidden="true" /></div>
+          <div class="ac-identity-copy"><h3>{{ subject.title }}</h3><p><span v-if="subject.id">Bangumi {{ subject.id }}</span><span v-if="editor.naming.target.value">TMDB {{ editor.naming.target.value.tmdbId }}</span><span>{{ local ? subscriptionStatus(local.status) : '保存后启用' }}</span></p></div>
+        </div>
+        <div v-if="subject.id && !subject.bangumiUnavailable" class="ac-chapter-action">
+          <AnimeChapterEpisodesPopover :token="token" :bangumi-id="subject.id" :total="editor.defaultTotal.value" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" />
+        </div>
+        <div class="ac-tabs" role="tablist" aria-label="订阅配置">
+          <button id="anime-tab-basic" type="button" role="tab" :aria-selected="tab === 'basic'" aria-controls="anime-panel-basic" @click="tab = 'basic'">基本</button>
+          <button id="anime-tab-backup" type="button" role="tab" :aria-selected="tab === 'backup'" aria-controls="anime-panel-backup" @click="tab = 'backup'">备用 RSS <small>{{ backups.length }}</small></button>
+          <button v-if="id" id="anime-tab-jobs" type="button" role="tab" :aria-selected="tab === 'jobs'" aria-controls="anime-panel-jobs" @click="tab = 'jobs'">下载记录</button>
+        </div>
       </div>
     </template>
     <div class="anime-editor ac-editor">
@@ -107,10 +112,27 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
       <template v-else-if="subject">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
           <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
-          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked" />
-          <details v-if="subject.id && !subject.bangumiUnavailable" class="ae-advanced ac-episodes" @toggle="episodesOpen = ($event.target as HTMLDetailsElement).open"><summary>篇章集号<IconChevronDown :size="15" /></summary><AnimeChapterEpisodes v-if="episodesOpen" :token="token" :bangumi-id="subject.id" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" /></details>
+          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked">
+            <template #season-extra>
+              <div class="ac-total">
+                <label :for="totalID" class="ae-label">篇章总集数</label>
+                <div class="ac-total-input">
+                  <input :id="totalID" v-model="editor.archiveTotal.value" type="text" inputmode="numeric" maxlength="5" :placeholder="editor.defaultTotal.value ? String(editor.defaultTotal.value) : '未定'" :aria-describedby="totalID + '-hint'" :disabled="locked" />
+                  <button v-if="editor.archiveTotal.value" type="button" class="ae-icon" aria-label="清空手动总集数，恢复 Bangumi 数据" :disabled="locked" @click="editor.archiveTotal.value = ''"><IconX :size="15" aria-hidden="true" /></button>
+                </div>
+                <span class="ac-total-unit">集</span>
+              </div>
+            </template>
+            <template #season-note>
+              <div class="ac-total-note">
+                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '手动集数仅用于本订阅。' : editor.defaultTotal.value ? '留空使用 Bangumi 的 ' + editor.defaultTotal.value + ' 集。' : 'Bangumi 未提供总集数。' }}齐集后按全局设置自动归档。</p>
+                <button v-if="editor.archiveSuggestion.value" type="button" class="ae-link" :class="{ 'ac-total-suggestion-hidden': !!editor.archiveTotal.value }" :aria-hidden="!!editor.archiveTotal.value" :disabled="locked || !!editor.archiveTotal.value || editor.naming.busy.value || editor.naming.searching.value" @click="editor.useTMDBTotal">填入 TMDB 的 {{ editor.archiveSuggestion.value }} 集</button>
+              </div>
+            </template>
+          </AnimeNamingTarget>
+
           <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
-          <details class="ae-advanced ac-archive"><summary>归档集数<IconChevronDown :size="15" aria-hidden="true" /></summary><div class="ac-archive-fields"><p class="ae-note">沿用动漫全局归档设置。总集数未知或篇章首集无法确认时，继续订阅。</p><label>篇章总集数<input v-model="editor.archiveTotal.value" type="text" inputmode="numeric" :placeholder="editor.defaultTotal.value ? `Bangumi：${editor.defaultTotal.value}` : '未知，请填写'" :disabled="locked" /></label><p class="ae-note">留空使用 Bangumi 总集数，与 TMDB 季总集数无关。</p><label v-for="source in sources.filter(s => s.runWhenEnabled)" :key="source.ref">{{ source.groupName || (source.role === 'main' ? '主 RSS' : '备用 RSS') }}篇章首集<input v-model="source.chapterFirst" type="text" inputmode="numeric" placeholder="对应发布集号" :disabled="locked" /></label><p class="ae-note">例如篇章第 1 集发布为第 25 话，填写 25。普通从 1 编号的简单映射可留空；补番起点仍沿用原配置。</p><p v-if="local && subscriptionLifecycle(local)" class="ae-note">{{ subscriptionLifecycle(local) }}</p></div></details>
+          <details class="ae-advanced ac-archive"><summary>归档编号（高级）<IconChevronDown :size="15" aria-hidden="true" /></summary><div class="ac-archive-fields"><label v-for="source in sources.filter(s => s.runWhenEnabled)" :key="source.ref">{{ source.groupName || (source.role === 'main' ? '主 RSS' : '备用 RSS') }}篇章首集<input v-model="source.chapterFirst" type="text" inputmode="numeric" placeholder="对应发布集号" :disabled="locked" /></label><p class="ae-note">例如篇章第 1 集发布为第 25 话，填写 25。普通从 1 编号的简单映射可留空；补番起点仍沿用原配置。</p><p v-if="local && subscriptionLifecycle(local)" class="ae-note">{{ subscriptionLifecycle(local) }}</p></div></details>
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
         <div v-show="tab === 'backup'" id="anime-panel-backup" role="tabpanel" aria-labelledby="anime-tab-backup">
@@ -151,12 +173,15 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 </template>
 
 <style scoped>
-.ac-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.ac-header-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 8px 16px; }
+.ac-identity { display: flex; grid-column: 1; grid-row: 1; min-width: 0; align-items: center; gap: 14px; margin: 0; }
+.ac-identity-copy { flex: 1; min-width: 0; }
+.ac-chapter-action { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
 .ac-poster { flex: none; width: 46px; height: 64px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: rgb(148 163 184 / .12); }
 .ac-poster img { width: 100%; height: 100%; object-fit: cover; }
 .ac-identity h3 { font-size: 17px; font-weight: 600; line-height: 1.4; }
 .ac-identity p { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; font-size: 11px; color: var(--floating-surface-muted); }
-.ac-tabs { display: flex; gap: 6px; }
+.ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; min-height: 44px; gap: 6px; }
 .ac-tabs button { padding: 9px 18px; border-radius: 10px; font-size: 13px; color: var(--floating-surface-muted); }
 .ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
 :global(.dark) .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
@@ -164,8 +189,17 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-editor { width: 100%; max-width: none; margin: 0; }
 .ac-editor :deep(.ae-naming-target) { margin: 0 0 12px; padding: 0 0 12px; background: none; border: 0; box-shadow: none; }
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
-.ac-episodes { margin: 0 0 22px; }
 .ac-metadata-note { margin: 0 0 14px; }
+.ac-total { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ac-total > .ae-label, .ac-total-unit { flex: none; }
+.ac-total-unit { font-size: 12px; color: var(--ae-muted); }
+.ac-total-input { position: relative; width: 100px; flex: none; }
+.anime-editor .ac-total-input input { padding-right: 44px; font-variant-numeric: tabular-nums; }
+.ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: 44px; height: 44px; min-height: 44px; border-radius: 9px; }
+.ac-total-note { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 36px; margin-top: 4px; }
+.ac-total-note .ae-note { font-size: 11px; }
+.ac-total-note .ae-link { min-height: 44px; font-size: 11px; white-space: nowrap; }
+.ac-total-suggestion-hidden { visibility: hidden; }
 .ac-archive { margin-top: 16px; }
 .ac-archive-fields { display: grid; gap: 10px; margin-top: 12px; }
 .ac-archive-fields label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 12px; color: var(--floating-surface-muted); }
@@ -197,5 +231,5 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-preview :deep(.ae-preview > *) { flex-shrink: 0; }
 .ac-preview :deep(.ae-release-list) { flex: 1; min-height: 0; max-height: none; }
 .ac-preview-source { flex: 0 1 310px; min-width: 0; font-size: 12px; }
-@media(max-width: 639px) { .ac-footer { align-items: stretch; flex-direction: column; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; } .ac-tabs button { padding-inline: 12px; } .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; } }
+@media(max-width: 639px) { .ac-header-grid { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 8px; } .ac-identity { grid-column: 1 / -1; grid-row: 1; } .ac-chapter-action { grid-column: 2; grid-row: 2; } .ac-tabs { grid-column: 1; grid-row: 2; gap: 3px; } .ac-tabs button { padding-inline: 10px; } .ac-footer { align-items: stretch; flex-direction: column; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; } .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; } }
 </style>
