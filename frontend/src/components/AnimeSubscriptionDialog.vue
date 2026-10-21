@@ -28,15 +28,19 @@ const discard = ref(false), confirmRemove = ref(false), jobsVersion = ref(0)
 const reloadConfirm = ref(false)
 const totalID = 'anime-archive-total-' + useId()
 const previewRef = ref(''), previewButton = ref<HTMLButtonElement>()
+const deleteButton = ref<HTMLButtonElement>(), cancelDeleteButton = ref<HTMLButtonElement>()
 const previewStates = reactive<Record<string, { filter: string; left: number; top: number }>>({})
 function previewState(ref: string) { return previewStates[ref] ||= { filter: 'all', left: 0, top: 0 } }
 const previewSource = computed(() => sources.value.find(s => s.ref === previewRef.value) || active.value || sources.value[0])
 const previewSourceOptions = computed(() => sources.value.map(source => ({ value: source.ref, label: `${source.role === 'main' ? '主 RSS' : '备用 RSS'} · ${source.groupName || animeProviderName(source.provider)}` })))
 const main = computed(() => sources.value.find(s => s.role === 'main'))
 const backups = computed(() => sources.value.filter(s => s.role === 'standby'))
-const readonly = computed(() => !!local.value && ['archived', 'removed'].includes(local.value.status))
-const actions = useAnimeSubscriptionActions(props.token, props.id, async () => { confirmRemove.value = false; jobsVersion.value++; await editor.initialize() })
-const actionLocked = computed(() => locked.value || dirty.value || actions.locked.value)
+const actions = useAnimeSubscriptionActions(toRef(props, 'token'), props.id, async result => {
+  confirmRemove.value = false
+  if (result.status === 'removed') { leaving = true; emit('saved', result.id); return }
+  jobsVersion.value++; await editor.initialize()
+})
+const actionLocked = computed(() => locked.value || dirty.value || actions.locked.value || childOpen.value || !!previewBusy.value || editor.naming.busy.value || editor.naming.searching.value)
 let routeDecision: ((leave: boolean) => void) | undefined
 let leaving = false
 const scroll = new Map<string, number>()
@@ -62,7 +66,7 @@ function discardChanges() {
   if (reloadConfirm.value) { leaving = false; reloadConfirm.value = false; void editor.initialize(); return }
   if (routeDecision) { routeDecision(true); routeDecision = undefined } else emit('close')
 }
-function unload(event: BeforeUnloadEvent) { if (dirty.value || pendingSave.value || saveBusy.value) event.preventDefault() }
+function unload(event: BeforeUnloadEvent) { if (dirty.value || pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) event.preventDefault() }
 window.addEventListener('beforeunload', unload)
 onBeforeRouteLeave(guard)
 onBeforeRouteUpdate((to, from) => to.fullPath === from.fullPath ? true : guard())
@@ -70,9 +74,10 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', unload); rout
 watch(receipt, value => { if (value) { leaving = true; emit('saved', value.id) } })
 watch(tab, async (value, previous) => { scroll.set(previous, top); await nextTick(); shell.value?.scrollTo(scroll.get(value) || 0) })
 watch(() => subject.value?.coverUrl, () => { imageFailed.value = false })
+watch(confirmRemove, async value => { await nextTick(); (value ? cancelDeleteButton : deleteButton).value?.focus({ preventScroll: true }) })
 function addBackup() { editor.addSource() }
 function chooseBackup(id: string) { activeRef.value = activeRef.value === id ? '' : id }
-function control(action: string, label: string) { if (local.value) void actions.execute(`subscriptions/${local.value.id}/${action}`, { expectedRevision: local.value.revision }, label) }
+function control(action: string, label: string) { if (local.value && !actionLocked.value) void actions.execute(`subscriptions/${local.value.id}/${action}`, { expectedRevision: local.value.revision }, label) }
 const allowed = (action: string) => !!local.value?.permittedActions?.some(a => a.name === action && a.allowed)
 async function openPreview() {
   if (childOpen.value || settingsOpen.value || locked.value) return
@@ -110,6 +115,15 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
       <p v-if="loading" role="status" class="ae-loading">正在读取订阅配置…</p>
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button></div>
       <template v-else-if="subject">
+        <div v-if="local" class="as-actions ac-controls" aria-label="订阅管理" :title="dirty ? '保存修改后可操作订阅状态' : undefined">
+          <span class="ae-note">{{ subscriptionStatus(local.status) }}</span>
+          <button v-if="allowed('pause') && local.status === 'enabled'" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('pause', '暂停订阅')">暂停订阅</button>
+          <button v-if="allowed('resume') && ['paused', 'archived'].includes(local.status)" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('resume', '继续订阅')">继续订阅</button>
+          <button v-if="allowed('archive') && local.status !== 'archived'" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('archive', '归档订阅')">归档</button>
+          <button v-if="allowed('remove')" ref="deleteButton" type="button" class="ae-button ac-delete" :disabled="actionLocked || confirmRemove" @click="confirmRemove = true"><IconTrash :size="15" aria-hidden="true" />删除订阅</button>
+        </div>
+        <div v-if="confirmRemove" class="ac-confirm" role="alert"><p>永久删除此订阅及相关下载、整理记录，保留 115 网盘文件。再次订阅可能重复下载。</p><div><button ref="cancelDeleteButton" type="button" class="ae-button" :disabled="actions.loading.value" @click="confirmRemove = false">取消删除</button><button type="button" class="ae-button ae-danger" :disabled="actionLocked" @click="control('remove', '删除订阅')">确认删除</button></div></div>
+        <fieldset class="ac-panels" :disabled="actions.locked.value || confirmRemove">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
           <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
           <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked">
@@ -144,24 +158,14 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           </section>
         </div>
         <div v-if="tab === 'jobs' && local" id="anime-panel-jobs" role="tabpanel" aria-labelledby="anime-tab-jobs">
-          <div class="as-actions">
-            <button v-if="allowed('pause') && local.status === 'enabled'" type="button" class="ae-button" :disabled="actionLocked" @click="control('pause', '暂停订阅')">暂停订阅</button>
-            <button v-if="allowed('resume')" type="button" class="ae-button" :disabled="actionLocked" @click="control('resume', '恢复订阅')">恢复订阅</button>
-            <button v-if="allowed('archive') && local.status !== 'archived'" type="button" class="ae-button" :disabled="actionLocked" @click="control('archive', '归档订阅')">归档</button>
-            <button v-if="allowed('unarchive') && local.status === 'archived'" type="button" class="ae-button" :disabled="actionLocked" @click="control('unarchive', '取消归档')">取消归档</button>
-            <button v-if="allowed('remove') && local.status !== 'removed'" type="button" class="ae-button" :disabled="actionLocked" @click="confirmRemove = !confirmRemove"><IconTrash :size="15" />移除</button>
-          </div>
-          <p v-if="dirty" class="ae-note">有未保存的配置，保存后可操作订阅状态。</p>
-          <div v-if="confirmRemove" class="ac-confirm"><p>停止后续订阅并保留记录，不删除网盘文件。</p><button type="button" class="ae-button" :disabled="actionLocked" @click="control('remove', '移除订阅')">确认移除</button><button type="button" class="ae-button" @click="confirmRemove = false">取消</button></div>
-          <p v-if="actions.error.value || actions.notice.value" role="status" class="ae-note">{{ actions.error.value || actions.notice.value }}</p>
-          <button v-if="actions.pending.value" type="button" class="ae-button" :disabled="actions.loading.value" @click="actions.confirmPending">核对原操作</button>
           <AnimeDownloadJobs :key="local.id" :token="token" :id="local.id" :locked="actions.locked.value || saveBusy" :version="jobsVersion" />
         </div>
+        </fieldset>
       </template>
     </div>
     <template #footer>
-      <div v-if="feedback" class="ac-feedback" role="status"><p>{{ feedback }}</p><button v-if="pendingSave" type="button" class="ae-button" :disabled="saveBusy" @click="editor.retrySave">核对原保存请求</button><button v-if="duplicateID" type="button" class="ae-button" @click="emit('open', duplicateID)">打开已有订阅</button><button v-if="conflict" type="button" class="ae-button" :disabled="saveBusy" @click="reload">重载最新配置</button></div>
-      <div class="ac-footer"><p id="anime-save-hint">{{ readonly ? '已归档或移除的订阅保留执行记录。' : startIssue || (local?.status === 'paused' ? '仅保存配置，订阅保持暂停。' : '保存配置后，后台独立检查、下载并整理。') }}</p><div><button type="button" class="ae-button" :disabled="saveBusy || !!pendingSave" @click="close">取消</button><button ref="previewButton" type="button" class="ae-button" :disabled="locked || childOpen || !!previewBusy || !subject" @click="openPreview">预览</button><button type="button" class="ae-button ae-primary" aria-describedby="anime-save-hint" :disabled="locked || actions.locked.value || childOpen || !!previewBusy || !!startIssue || editor.naming.busy.value || editor.naming.searching.value" @click="editor.save">{{ saveBusy ? '保存中…' : '保存' }}</button></div></div>
+      <div v-if="feedback || actions.error.value || actions.notice.value || actions.pending.value" class="ac-feedback" role="status"><p>{{ feedback || actions.error.value || actions.notice.value }}</p><button v-if="pendingSave" type="button" class="ae-button" :disabled="saveBusy" @click="editor.retrySave">核对原保存请求</button><button v-if="actions.pending.value" type="button" class="ae-button" :disabled="actions.loading.value" @click="actions.confirmPending">核对原操作</button><button v-if="duplicateID" type="button" class="ae-button" @click="emit('open', duplicateID)">打开已有订阅</button><button v-if="conflict" type="button" class="ae-button" :disabled="saveBusy" @click="reload">重载最新配置</button></div>
+      <div class="ac-footer"><p id="anime-save-hint">{{ startIssue || (editor.resumesArchived.value ? '保存后继续订阅，新字幕组独立下载，原记录保留。' : local?.status === 'archived' ? '仅保存配置，订阅保持归档。添加并启用新字幕组可继续订阅。' : local?.status === 'paused' ? '仅保存配置，订阅保持暂停。' : '保存配置后，后台独立检查、下载并整理。') }}</p><div><button type="button" class="ae-button" :disabled="saveBusy || !!pendingSave" @click="close">取消</button><button ref="previewButton" type="button" class="ae-button" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !subject" @click="openPreview">预览</button><button type="button" class="ae-button ae-primary" aria-describedby="anime-save-hint" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !!startIssue || editor.naming.busy.value || editor.naming.searching.value" @click="editor.save">{{ saveBusy ? '保存中…' : editor.resumesArchived.value ? '保存并继续订阅' : '保存' }}</button></div></div>
     </template>
   </AnimeFloatingDialog>
   <AnimeFloatingDialog v-if="previewOpen" title="匹配与重命名预览" close-label="关闭预览，返回配置" size="preview" @close="closePreview">
@@ -182,11 +186,16 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-identity h3 { font-size: 17px; font-weight: 600; line-height: 1.4; }
 .ac-identity p { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; font-size: 11px; color: var(--floating-surface-muted); }
 .ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; min-height: 44px; gap: 6px; }
-.ac-tabs button { padding: 9px 18px; border-radius: 10px; font-size: 13px; color: var(--floating-surface-muted); }
+.ac-tabs button { padding: 9px 18px; border-radius: 10px; font-size: 13px; color: var(--floating-surface-muted); white-space: nowrap; }
 .ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
 :global(.dark) .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
 .ac-tabs small { margin-left: 4px; opacity: .75; }
 .ac-editor { width: 100%; max-width: none; margin: 0; }
+.ac-panels { min-width: 0; margin: 0; padding: 0; border: 0; }
+.ac-controls { align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.ac-controls > span { margin-right: auto; }
+.ac-delete { color: #b91c1c; }
+:global(.dark) .ac-delete { color: #fca5a5; }
 .ac-editor :deep(.ae-naming-target) { margin: 0 0 12px; padding: 0 0 12px; background: none; border: 0; box-shadow: none; }
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
 .ac-metadata-note { margin: 0 0 14px; }
@@ -231,5 +240,6 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-preview :deep(.ae-preview > *) { flex-shrink: 0; }
 .ac-preview :deep(.ae-release-list) { flex: 1; min-height: 0; max-height: none; }
 .ac-preview-source { flex: 0 1 310px; min-width: 0; font-size: 12px; }
-@media(max-width: 639px) { .ac-header-grid { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 8px; } .ac-identity { grid-column: 1 / -1; grid-row: 1; } .ac-chapter-action { grid-column: 2; grid-row: 2; } .ac-tabs { grid-column: 1; grid-row: 2; gap: 3px; } .ac-tabs button { padding-inline: 10px; } .ac-footer { align-items: stretch; flex-direction: column; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; } .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; } }
+@media(max-width: 639px) { .ac-header-grid { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 8px; } .ac-identity { grid-column: 1 / -1; grid-row: 1; } .ac-chapter-action { grid-column: 2; grid-row: 2; } .ac-tabs { grid-column: 1; grid-row: 2; gap: 3px; } .ac-tabs button { padding-inline: 6px; font-size: 12px; } .ac-tabs small { display: none; } .ac-footer { align-items: stretch; flex-direction: column; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; } .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; } }
+@media(max-width: 374px) { .ac-chapter-action :deep(.ac-chapter-reference-button > span) { display: none; } }
 </style>

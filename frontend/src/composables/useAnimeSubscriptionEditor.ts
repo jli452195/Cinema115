@@ -28,7 +28,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const samples = new Map<string, { data: AnimeSourceSample; until: number }>()
   const clock = window.setInterval(() => { now.value = Date.now() }, 10000)
   const active = computed(() => sources.value.find(source => source.ref === activeRef.value))
-  const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value || !!local.value && ['archived', 'removed'].includes(local.value.status))
+  const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value)
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
     const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'include', 'exclude', ]
@@ -36,6 +36,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
   const submittedSources = computed(() => sources.value.filter(s => s.role === 'main' || s.id || s.itemId || s.groupId))
+  const resumesArchived = computed(() => local.value?.status === 'archived' && submittedSources.value.some(source =>
+    source.runWhenEnabled && !local.value?.sources.some(prior => prior.id === source.id && prior.runWhenEnabled)))
   const archiveSuggestion = computed(() => {
     const target = naming.target.value
     if (defaultTotal.value || !target || target.groupId || target.season < 1) return null
@@ -366,7 +368,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     try {
       const result = await animeConfigRequest<AnimeSaveReceipt>(token.value, pending.path, { ...pending, signal: lifetime.signal })
       if (current !== generation) return
-      if (!result.id || !Number.isSafeInteger(result.revision) || !['enabled', 'paused'].includes(result.status)) throw new AnimeConfigError('订阅回执不完整，请重试原请求核对', '', 0, {}, true)
+      if (!result.id || !Number.isSafeInteger(result.revision) || !['enabled', 'paused', 'archived'].includes(result.status)) throw new AnimeConfigError('订阅回执不完整，请重试原请求核对', '', 0, {}, true)
       invalidateAnimeSubscriptions(result.id)
       receipt.value = result; pendingSave.value = undefined; baseline.value = rawForm()
     } catch (reason) {
@@ -381,6 +383,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { archiveTotal, defaultTotal, archiveSuggestion, useTMDBTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue,
+  return { archiveTotal, defaultTotal, archiveSuggestion, useTMDBTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue, resumesArchived,
     initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, save, retrySave }
 }

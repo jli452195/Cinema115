@@ -137,12 +137,26 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           if (state.loseSelection) { state.loseSelection = false; await route.abort(); return }
           data = response(batch, ref)
         } else { const next = makeSource(source.config, body.nextTake, source); next.rev = source.rev + 1; next.id = source.id; batch.sources.set(ref, next); data = response(batch, ref) }
+      } else if (/\/subscriptions\/[^/]+\/(remove|resume|pause|archive)$/.test(endpoint) && method === 'POST') {
+        state.actionReceipts ||= new Map()
+        if (state.actionMode === 'busy') { state.actionMode = ''; status = 409; data = { code: 'TASK_BUSY', error: '任务正在处理，请稍后重试删除' } }
+        else if (state.actionReceipts.has(call.key)) data = state.actionReceipts.get(call.key)
+        else {
+          assert.equal(body.expectedRevision, state.saved.revision)
+          const action = endpoint.split('/').at(-1)
+          data = { id: state.saved.id, revision: state.saved.revision + 1, status: ({ remove: 'removed', resume: 'enabled', pause: 'paused', archive: 'archived' })[action] }
+          state.actionReceipts.set(call.key, data)
+          if (action === 'remove') state.saved = undefined
+          else Object.assign(state.saved, { status: data.status, revision: data.revision })
+          if (state.actionMode === 'unknown') { state.actionMode = ''; await route.abort(); return }
+        }
       } else if ((endpoint.endsWith('/subscriptions') && method === 'POST') || (/\/subscriptions\/[^/]+$/.test(endpoint) && method === 'PATCH')) {
         if (state.saveMode === 'conflict') { status = 409; data = { error: '配置版本已变化，输入保留', code: 'REVISION_CONFLICT' } }
         else if (state.saveMode === 'duplicate') { status = 409; data = { error: '该篇章已有订阅配置', code: 'SUBSCRIPTION_EXISTS', details: { existingId: 'saved-subscription' } } }
         else {
           const ids = Object.fromEntries(body.config.sources.map(s => [s.ref, s.id || `source-${s.ref}`]))
-          state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: state.saved?.status || 'enabled', firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } },
+          const resumes = state.saved?.status === 'archived' && body.config.sources.some(source => source.runWhenEnabled && !state.saved.sources.some(prior => prior.id === source.id && prior.runWhenEnabled))
+          state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: resumes ? 'enabled' : state.saved?.status || 'enabled', permittedActions: ['pause', 'resume', 'archive', 'remove'].map(name => ({ name, allowed: true })), firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } },
             sources: body.config.sources.map(s => ({ ...s, id: ids[s.ref], revision: s.expectedRevision + 1, configuredState: s.status })), form: structuredClone(body.config.form || { schemaVersion: 1 }),
             naming: body.config.naming ? {schemaVersion:1,target:structuredClone(state.namingTarget),sources:body.config.naming.sources.map(s=>({...s,sourceRef:ids[s.sourceRef]}))} : null }
           if (state.subjectFailure?.status === 404) Object.assign(state.saved.entry, { bangumiId: body.config.entry.bangumiId || null, title: '从零开始 第三季 字幕资源', metadata: { bangumiUnavailable: true, coverUrl: '/api/mikan/image/202601/poster.jpg' } })
@@ -166,11 +180,12 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       assert.equal(await page.getByLabel('发布编号与篇章集号').count(), 0)
       await page.getByRole('button', { name: '使用此来源', exact: true }).click()
       await wait(() => page.locator('dialog[open]').count().then(n => n === 1))
-      assert.equal(await page.getByLabel('从第几话开始').inputValue(), '1', 'recent samples never change default minimum')
-      await page.getByLabel('从第几话开始').fill(first)
-      await page.locator('.ae-source-options summary').click()
-      await page.getByRole('checkbox', {name:'限定发布编号范围'}).check()
-      await page.getByLabel('范围起点', { exact: true }).fill(first); await page.getByLabel('范围终点', { exact: true }).fill(last)
+      const form = page.locator('.anime-source-form:visible')
+      assert.equal(await form.getByLabel('从第几话开始').inputValue(), '1', 'recent samples never change default minimum')
+      await form.getByLabel('从第几话开始').fill(first)
+      await form.locator('.ae-source-options summary').click()
+      await form.getByRole('checkbox', {name:'限定发布编号范围'}).check()
+      await form.getByLabel('范围起点', { exact: true }).fill(first); await form.getByLabel('范围终点', { exact: true }).fill(last)
     }
     async function preview() { await page.getByRole('button', { name: /^(生成预览|重新预览)$/ }).click(); await page.locator('.ae-preview-stats').waitFor(); await wait(async () => await page.locator('.ae-preview [aria-busy=true]').count() === 0 && !await page.getByRole('button', { name: '处理中…' }).count()) }
     const writes = () => calls.filter(c => c.key && c.endpoint.includes('/anime/'))
@@ -599,6 +614,54 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await touch.page.getByRole('option',{name:'主 RSS · 字幕组甲',exact:true}).tap()
     assert.equal(await touch.page.getByRole('listbox').count(),0)
     passed.push('shared custom dropdown supports keyboard, Escape, top layer, dark theme and touch')
+    const managed = await session()
+    managed.state.saved = structuredClone(s.state.saved)
+    managed.state.namingTarget = structuredClone(s.state.namingTarget)
+    managed.state.saved.sources = [managed.state.saved.sources.find(source => source.role === 'main')]
+    managed.state.saved.naming.sources = managed.state.saved.naming.sources.filter(mapping => mapping.sourceRef === managed.state.saved.sources[0].id)
+    managed.state.saved.status = 'archived'
+    managed.state.saved.permittedActions = ['pause', 'resume', 'archive', 'remove'].map(name => ({ name, allowed: true }))
+    await managed.go('/anime/subscriptions/saved-subscription')
+    const originalSource = managed.state.saved.sources[0].id
+    assert.ok(await managed.page.getByRole('button', { name: '继续订阅', exact: true }).isEnabled(), 'archiving must not lock lifecycle actions')
+    assert.ok(await managed.page.getByRole('button', { name: '删除订阅', exact: true }).isEnabled())
+    await managed.page.screenshot({ path: 'test-results/anime-archived-manage-desktop.png' })
+    await managed.page.getByLabel('篇章总集数', { exact: true }).fill('13')
+    await managed.page.getByRole('button', { name: '保存', exact: true }).click()
+    await wait(() => managed.page.locator('.ac-identity').count().then(n => !n))
+    assert.equal(managed.state.saved.status, 'archived', 'ordinary archived edits stay archived')
+    await managed.go('/anime/subscriptions/saved-subscription')
+    await managed.page.getByRole('tab', { name: /备用 RSS/ }).click()
+    await managed.page.getByRole('button', { name: '添加备用', exact: true }).click()
+    await managed.source('20')
+    await managed.page.getByRole('button', { name: '保存并继续订阅', exact: true }).click()
+    await wait(() => managed.page.locator('.ac-identity').count().then(n => !n))
+    assert.equal(managed.state.saved.status, 'enabled')
+    assert.equal(managed.state.saved.sources[0].id, originalSource, 'adding a group keeps original source identity')
+    assert.equal(managed.state.saved.sources.length, 2)
+    await managed.go('/anime/subscriptions/saved-subscription')
+    await managed.page.setViewportSize({ width: 390, height: 844 })
+    await managed.page.getByRole('button', { name: '删除订阅', exact: true }).click()
+    await managed.page.getByRole('button', { name: '取消删除', exact: true }).click()
+    assert.equal(managed.calls.filter(call => call.endpoint.endsWith('/remove')).length, 0)
+    await managed.page.getByRole('button', { name: '删除订阅', exact: true }).click()
+    await managed.page.screenshot({ path: 'test-results/anime-delete-mobile.png' })
+    assert.equal(await managed.page.getByLabel('篇章总集数', { exact: true }).isEnabled(), false, 'delete confirmation freezes configuration')
+    managed.state.actionMode = 'busy'
+    await managed.page.getByRole('button', { name: '确认删除', exact: true }).click()
+    await managed.page.getByText('任务正在处理，请稍后重试删除', { exact: true }).waitFor()
+    assert.ok(managed.state.saved, 'busy deletion preserves subscription')
+    managed.state.actionMode = 'unknown'
+    await managed.page.getByRole('button', { name: '确认删除', exact: true }).click()
+    await managed.page.getByRole('button', { name: '核对原操作' }).waitFor()
+    const firstDelete = managed.calls.filter(call => call.endpoint.endsWith('/remove')).at(-1)
+    await managed.page.getByRole('button', { name: '核对原操作' }).click()
+    await wait(() => managed.page.locator('.ac-identity').count().then(n => !n))
+    assert.equal(managed.calls.filter(call => call.endpoint.endsWith('/remove')).at(-1).key, firstDelete.key)
+    assert.equal(managed.state.saved, undefined)
+    assert.equal(await managed.page.getByRole('button', { name: '已移除', exact: true }).count(), 0)
+    assert.equal(managed.calls.filter(call => /p115|\/115\//.test(call.endpoint)).length, 0)
+    passed.push('archived edits, new group continuation, local delete cancellation/busy/lost receipt and no removed filter')
     assert.deepEqual(errors,[])
     console.log(JSON.stringify({passed,errors},null,2))
   } finally { await Promise.all(contexts.map(c=>c.close())); await browser.close() }

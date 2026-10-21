@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,6 +11,54 @@ import (
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
+
+func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
+	s, feed, in := newAnimeDefinitionService(t)
+	ctx := context.Background()
+	created, err := s.SaveDefinition(ctx, "admin", "archive_create_01", "", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := s.Store.GetAnimeSubscription(ctx, created.ID, false)
+	archived, err := s.Store.ControlAnimeSubscription(ctx, sub.ID, "archive", sub.Revision, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := animeSourceConfig(sub.Sources[0])
+	in.ExpectedRevision = archived.Revision
+	in.Config.Sources = []model.AnimeSourceConfig{main}
+	in.Config.Naming.Sources[0].SourceRef = main.ID
+	in.Config.Form = &model.AnimeForm{SchemaVersion: 1, TotalEpisodes: bindingPtr(12)}
+	reads := feed.reads
+	saved, err := s.SaveDefinition(ctx, "admin", "archive_edit_01", sub.ID, in)
+	if err != nil || saved.Status != "archived" || feed.reads != reads {
+		t.Fatal("ordinary edit resumed subscription or read RSS", saved, err)
+	}
+	unchanged, _ := s.Store.GetAnimeSource(ctx, main.ID)
+	if !reflect.DeepEqual(unchanged, sub.Sources[0]) {
+		t.Fatal("unchanged source lost execution state")
+	}
+	backup := main
+	backup.ID, backup.Ref, backup.ExpectedRevision, backup.Role, backup.Position = "", "extra", 0, "standby", 1
+	backup.GroupID = bindingPtr("28")
+	in.Config.Sources = append(in.Config.Sources, backup)
+	mapping := in.Config.Naming.Sources[0]
+	mapping.SourceRef = backup.Ref
+	in.Config.Naming.Sources = append(in.Config.Naming.Sources, mapping)
+	in.ExpectedRevision = saved.Revision
+	continued, err := s.SaveDefinition(ctx, "admin", "archive_new_group", sub.ID, in)
+	if err != nil || continued.Status != "enabled" {
+		t.Fatal("new group failed to resume atomically", continued, err)
+	}
+	current, _ := s.Store.GetAnimeSubscription(ctx, sub.ID, false)
+	if len(current.Sources) != 2 || current.Sources[0].ID != main.ID || current.Sources[1].ActiveBaselineID != nil {
+		t.Fatal("sources were replaced or initialized during save", current)
+	}
+	again, err := s.SaveDefinition(ctx, "admin", "archive_new_group", sub.ID, in)
+	if err != nil || !reflect.DeepEqual(again, continued) {
+		t.Fatal("save replay changed sources", again, err)
+	}
+}
 
 func TestAnimeDefinitionInitialReadUsesRealProviderAdapters(t *testing.T) {
 	for _, tc := range []struct {

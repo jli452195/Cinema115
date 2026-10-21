@@ -315,7 +315,7 @@ func (s *Store) ListAnimeSubscriptions(ctx context.Context, f AnimeSubscriptionF
 		return out, err
 	}
 	switch f.Status {
-	case "", "draft", "paused", "enabled", "archived", "removed":
+	case "", "draft", "paused", "enabled", "archived":
 	default:
 		return out, ErrAnimeInvalid
 	}

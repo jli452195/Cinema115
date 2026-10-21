@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strconv"
 	"strings"
+	"strm115/backend/internal/storage"
 	"testing"
 	"time"
 
@@ -101,7 +103,11 @@ func TestAnimeControlRunnerInFlightSubmitReceiptOrUnknown(t *testing.T) {
 				},
 				submit: func(context.Context, string, string, string) error {
 					submits++
-					serviceControlAnime(t, f.service, job.Snapshot.Source.SubscriptionID, "remove")
+					sub, _ := f.service.Store.GetAnimeSubscription(context.Background(), job.Snapshot.Source.SubscriptionID, false)
+					if _, err := f.service.ControlSubscription(context.Background(), "admin", "busy_delete_key", sub.ID, "remove", AnimeControlInput{ExpectedRevision: sub.Revision}); !errors.Is(err, storage.ErrAnimeDeleteBusy) {
+						t.Fatal("in-flight deletion accepted", err)
+					}
+					serviceControlAnime(t, f.service, job.Snapshot.Source.SubscriptionID, "pause")
 					if uncertain {
 						return context.DeadlineExceeded
 					}
@@ -150,7 +156,11 @@ func TestAnimeControlRunnerUnknownDirectoryReadThenCancel(t *testing.T) {
 	f.service.FileGateway = &animeFileGatewayStub{
 		create: func(context.Context, string, string, string) (string, error) {
 			creates++
-			serviceControlAnime(t, f.service, job.Snapshot.Source.SubscriptionID, "remove")
+			sub, _ := f.service.Store.GetAnimeSubscription(context.Background(), job.Snapshot.Source.SubscriptionID, false)
+			if _, err := f.service.ControlSubscription(context.Background(), "admin", "busy_delete_key", sub.ID, "remove", AnimeControlInput{ExpectedRevision: sub.Revision}); !errors.Is(err, storage.ErrAnimeDeleteBusy) {
+				t.Fatal("in-flight deletion accepted", err)
+			}
+			serviceControlAnime(t, f.service, job.Snapshot.Source.SubscriptionID, "pause")
 			return "", context.DeadlineExceeded
 		},
 		page: func(_ context.Context, cid string, offset int, cookie string) (p115.AnimeDrivePage, error) {
@@ -179,7 +189,7 @@ func TestAnimeControlRunnerUnknownDirectoryReadThenCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
-	if got.WorkflowState != "cancelled" || got.DirectoryCID == nil || creates != 1 || pages != 1 {
+	if got.WorkflowState != "active" || got.DirectoryCID == nil || got.BlockCode == nil || *got.BlockCode != "DOWNLOAD_PAUSED" || creates != 1 || pages != 1 {
 		t.Fatal("directory not resolved once", got, creates, pages)
 	}
 	now += 86400000
@@ -192,7 +202,7 @@ func TestAnimeControlRunnerUnknownDirectoryReadThenCancel(t *testing.T) {
 }
 
 func TestAnimeControlRunnerStopsAfterReadingFilesForStoppedSubscription(t *testing.T) {
-	for _, action := range []string{"pause", "archive", "remove"} {
+	for _, action := range []string{"pause", "archive"} {
 		t.Run(action, func(t *testing.T) {
 			f, _, job, runner, now := animeStatusFixture(t)
 			ctx := context.Background()
@@ -218,12 +228,6 @@ func TestAnimeControlRunnerStopsAfterReadingFilesForStoppedSubscription(t *testi
 			if statuses != 1 || pages != 2 {
 				t.Fatal("finished job still polled")
 			}
-			if action == "remove" {
-				page, err := f.service.SubscriptionJobs(ctx, job.Snapshot.Source.SubscriptionID, 1, 20)
-				if err != nil || page.Total != 1 || page.Items[0].WorkflowState != "original_saved" {
-					t.Fatal("removed job hidden", page, err)
-				}
-			}
 		})
 	}
 }
@@ -248,11 +252,11 @@ func TestAnimeControlServiceLocalOnlyAndIdempotency(t *testing.T) {
 	if _, err := f.service.ControlSubscription(ctx, "admin", "pause_replay", sub.ID, "pause", in); err == nil {
 		t.Fatal("changed request reused key")
 	}
-	for _, action := range []string{"resume", "archive", "unarchive", "remove"} {
+	for _, action := range []string{"resume", "archive", "unarchive"} {
 		serviceControlAnime(t, f.service, sub.ID, action)
 	}
 	got, err := f.service.DownloadJob(ctx, job.ID)
-	if err != nil || got.WorkflowState != "cancelled" {
+	if err != nil || got.WorkflowState != "active" {
 		t.Fatal(got, err)
 	}
 	raw, err := json.Marshal(got)
@@ -265,6 +269,19 @@ func TestAnimeControlServiceLocalOnlyAndIdempotency(t *testing.T) {
 	page, err := f.service.SubscriptionJobs(ctx, sub.ID, 1, 20)
 	if err != nil || page.Total != 1 {
 		t.Fatal(page, err)
+	}
+	current, _ := f.service.Store.GetAnimeSubscription(ctx, sub.ID, false)
+	removal := AnimeControlInput{ExpectedRevision: current.Revision}
+	deleted, err := f.service.ControlSubscription(ctx, "admin", "delete_replay", sub.ID, "remove", removal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := f.service.ControlSubscription(ctx, "admin", "delete_replay", sub.ID, "remove", removal)
+	if err != nil || !reflect.DeepEqual(deleted, replay) {
+		t.Fatal("deletion replay", replay, err)
+	}
+	if _, err := f.service.DownloadJob(ctx, job.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("deleted job visible", err)
 	}
 	if _, err := f.service.ControlSubscription(ctx, "admin", "invalid_action", sub.ID, "enable", in); err == nil {
 		t.Fatal("control bypassed first enable")

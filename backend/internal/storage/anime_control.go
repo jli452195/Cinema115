@@ -15,6 +15,7 @@ import (
 var (
 	ErrAnimeTransition = errors.New("anime subscription state does not allow this action")
 	ErrAnimeReconfirm  = errors.New("anime activation or updated preview is required")
+	ErrAnimeDeleteBusy = errors.New("anime subscription has an active download worker")
 )
 
 // Pause masks execution while preserving confirmed choices and their run
@@ -36,18 +37,7 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 	}
 	defer tx.Rollback()
 	if key != nil {
-		var digest, raw string
-		err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json FROM anime_request_keys WHERE actor_key=? AND operation=? AND request_key=?`, key.ActorKey, key.Operation, key.Key).Scan(&digest, &raw)
-		if err == nil {
-			if digest != key.Digest {
-				return out, ErrAnimeIdempotency
-			}
-			if err := decodeAnimeJSON(raw, &out); err != nil {
-				return out, fmt.Errorf("read anime control receipt: %w", err)
-			}
-			return out, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if found, err := readAnimeActionReceiptTx(ctx, tx, *key, &out); found || err != nil {
 			return out, err
 		}
 	}
@@ -57,6 +47,20 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 	}
 	if sub.Revision != expectedRevision {
 		return out, ErrAnimeConflict
+	}
+	if action == "remove" {
+		if err := deleteAnimeSubscriptionTx(ctx, tx, sub); err != nil {
+			return out, err
+		}
+		out.Status, out.Revision = "removed", sub.Revision+1
+		if key != nil {
+			// Keep only this minimal receipt so a lost deletion response is safe
+			// to replay. No subscription definition or execution history remains.
+			if err := writeAnimeActionReceiptTx(ctx, tx, *key, out, time.Now().UnixMilli()); err != nil {
+				return out, err
+			}
+		}
+		return out, tx.Commit()
 	}
 	next, err := animeControlState(sub, action)
 	if err != nil {
@@ -79,13 +83,7 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 			return out, err
 		}
 		if action == "resume" || action == "unarchive" {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM anime_subscription_archives WHERE subscription_id=?`, id); err != nil {
-				return out, err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM anime_source_activity WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`, id); err != nil {
-				return out, err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET next_check_at=? WHERE subscription_id=? AND status='enabled' AND run_when_enabled=1 AND health<>'unavailable'`, now, id); err != nil {
+			if err := resetAnimeSubscriptionActivityTx(ctx, tx, id, now); err != nil {
 				return out, err
 			}
 		}
@@ -107,14 +105,6 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 				return out, ErrAnimeConflict
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE anime_release_decisions SET lease_token=NULL,lease_until=NULL,generation=generation+1 WHERE disposition='selected' AND source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`, id); err != nil {
-				return out, err
-			}
-		}
-		if action == "remove" {
-			if _, err := tx.ExecContext(ctx, `UPDATE anime_job_selections SET status='withdrawn' WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`, id); err != nil {
-				return out, err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE anime_release_decisions SET disposition='dismissed',reason_code='SUBSCRIPTION_REMOVED',next_verify_at=NULL,updated_at=? WHERE disposition='selected' AND source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`, now, id); err != nil {
 				return out, err
 			}
 		}
@@ -141,11 +131,7 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 		return out, err
 	}
 	if key != nil {
-		raw, err := animeJSON(out)
-		if err != nil {
-			return out, err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_request_keys(actor_key,operation,request_key,request_digest,http_status,receipt_json,created_at) VALUES(?,?,?,?,200,?,?)`, key.ActorKey, key.Operation, key.Key, key.Digest, raw, now); err != nil {
+		if err := writeAnimeActionReceiptTx(ctx, tx, *key, out, now); err != nil {
 			return out, err
 		}
 	}
@@ -165,14 +151,12 @@ func animeControlState(sub model.AnimeSubscription, action string) (string, erro
 		if sub.Status != "removed" {
 			return "archived", nil
 		}
-	case "remove":
-		return "removed", nil
 	case "unarchive":
 		if sub.Status == "archived" || sub.Status == "paused" {
 			return "paused", nil
 		}
 	case "resume":
-		if sub.Status == "paused" || sub.Status == "enabled" {
+		if sub.Status == "paused" || sub.Status == "enabled" || sub.Status == "archived" {
 			if sub.FirstEnabledAt == nil {
 				return "", ErrAnimeReconfirm
 			}
@@ -182,6 +166,19 @@ func animeControlState(sub model.AnimeSubscription, action string) (string, erro
 		return "", ErrAnimeInvalid
 	}
 	return "", ErrAnimeTransition
+}
+
+func resetAnimeSubscriptionActivityTx(ctx context.Context, tx *sql.Tx, id string, now int64) error {
+	for _, query := range []string{
+		`DELETE FROM anime_subscription_archives WHERE subscription_id=?`,
+		`DELETE FROM anime_source_activity WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=?)`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET next_check_at=? WHERE subscription_id=? AND status='enabled' AND run_when_enabled=1 AND health<>'unavailable'`, now, id)
+	return err
 }
 
 func checkAnimeResumeTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscription, sources []model.AnimeSource) error {

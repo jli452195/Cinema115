@@ -58,6 +58,9 @@ func (s *Store) LookupAnimeReceipt(ctx context.Context, k AnimeWriteKey) (*Anime
 	if digest != k.Digest {
 		return nil, ErrAnimeIdempotency
 	}
+	if raw == animeDeletedReceipt {
+		return nil, sql.ErrNoRows
+	}
 	out.Body = json.RawMessage(raw)
 	return &out, nil
 }

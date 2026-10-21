@@ -6,6 +6,10 @@ import (
 	"errors"
 )
 
+// A technical idempotency marker, not a retained subscription or job record.
+// Lost pre-deletion creates must never recreate a subscription on replay.
+const animeDeletedReceipt = `{"deleted":true}`
+
 func readAnimeActionReceiptTx(ctx context.Context, tx *sql.Tx, key AnimeWriteKey, out any) (bool, error) {
 	var digest, raw string
 	err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json FROM anime_request_keys WHERE actor_key=? AND operation=? AND request_key=?`, key.ActorKey, key.Operation, key.Key).Scan(&digest, &raw)
@@ -17,6 +21,9 @@ func readAnimeActionReceiptTx(ctx context.Context, tx *sql.Tx, key AnimeWriteKey
 	}
 	if digest != key.Digest {
 		return false, ErrAnimeIdempotency
+	}
+	if raw == animeDeletedReceipt {
+		return false, sql.ErrNoRows
 	}
 	return true, decodeAnimeJSON(raw, out)
 }

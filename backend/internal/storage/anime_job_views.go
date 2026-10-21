@@ -7,8 +7,8 @@ import (
 	"strm115/backend/internal/model"
 )
 
-// ListAnimeDownloadJobs includes withdrawn selections and removed subscriptions.
-// History stays addressable without scanning the drive or recreating any job.
+// History remains available while its subscription exists, including archives.
+// Listing never scans the drive or recreates a job.
 func (s *Store) ListAnimeDownloadJobs(ctx context.Context, subscriptionID string, page, size int) (model.AnimeDownloadJobPage, error) {
 	out := model.AnimeDownloadJobPage{Items: []model.AnimeDownloadJob{}, Page: page, PageSize: size}
 	if !model.ValidAnimeID(subscriptionID) || page < 1 || page > 10000 || size < 1 || size > 100 {

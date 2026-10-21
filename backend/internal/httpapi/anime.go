@@ -58,6 +58,8 @@ func animeError(c *gin.Context, err error) {
 		status, code, message = 409, "IDEMPOTENCY_KEY_REUSED", "该请求标识已用于其他内容"
 	case errors.Is(err, storage.ErrAnimeTransition):
 		status, code, message = 409, "STATE_CONFLICT", "当前订阅状态不支持此操作"
+	case errors.Is(err, storage.ErrAnimeDeleteBusy):
+		status, code, message = 409, "TASK_BUSY", "任务正在处理，请稍后重试删除；115 文件将保留"
 	case errors.Is(err, storage.ErrAnimeReconfirm):
 		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请重新读取并保存订阅配置"
 	case errors.Is(err, storage.ErrAnimeDirectoryRequired):

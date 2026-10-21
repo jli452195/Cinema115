@@ -404,10 +404,24 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	if id == "" {
 		c.Status = "enabled"
 	} else {
-		if old.Status != "enabled" && old.Status != "paused" {
+		if old.Status != "enabled" && old.Status != "paused" && old.Status != "archived" {
 			return out, storage.ErrAnimeTransition
 		}
 		c.Status = old.Status
+		if old.Status == "archived" {
+			for _, source := range c.Sources {
+				if !source.RunWhenEnabled {
+					continue
+				}
+				wasEnabled := false
+				for _, prior := range old.Sources {
+					wasEnabled = wasEnabled || source.ID == prior.ID && prior.RunWhenEnabled
+				}
+				if !wasEnabled {
+					c.Status = "enabled"
+				}
+			}
+		}
 	}
 	for i := range c.Sources {
 		if c.Sources[i].RunWhenEnabled {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"strings"
@@ -103,7 +104,7 @@ func TestAnimeControlFencesOldRSSAndDiscoveryAfterFastResume(t *testing.T) {
 }
 
 func TestAnimeControlDispatchedSubmitKeepsReceiptAcrossStop(t *testing.T) {
-	for _, action := range []string{"pause", "archive", "remove"} {
+	for _, action := range []string{"pause", "archive"} {
 		t.Run(action, func(t *testing.T) {
 			f, job := animeSubmitStoreFixture(t)
 			ctx := context.Background()
@@ -137,60 +138,30 @@ func TestAnimeControlDispatchedSubmitKeepsReceiptAcrossStop(t *testing.T) {
 	}
 }
 
-func TestAnimeControlRemoveCancelsOnlyLocalIntentAndRetainsHistory(t *testing.T) {
-	f, job := animeSubmitStoreFixture(t)
-	ctx := context.Background()
-	op, err := f.store.PrepareAnimeSubmit(ctx, job.ID, job.Generation, f.target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt := controlAnime(t, f.store, f.sub.ID, "remove")
-	got, _ := f.store.GetAnimeDownloadJob(ctx, job.ID)
-	if receipt.CancelledJobs != 1 || got.WorkflowState != "cancelled" || got.DownloadState != "cancelled" {
-		t.Fatal(receipt, got)
-	}
-	if err := f.store.DispatchAnimeSubmit(ctx, op.ID); err == nil {
-		t.Fatal("removed intent dispatched")
-	}
-	page, err := f.store.ListAnimeDownloadJobs(ctx, f.sub.ID, 1, 20)
-	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != job.ID {
-		t.Fatal("history hidden", page, err)
-	}
-	if _, err := f.store.ControlAnimeSubscription(ctx, f.sub.ID, "resume", receipt.Revision, nil); !errors.Is(err, ErrAnimeTransition) {
-		t.Fatal("removed subscription resumed", err)
-	}
-	assertDownloadCounts(t, f.store, 1, 1, 1, 1)
-	var withdrawn int
-	if err := f.store.db.QueryRow(`SELECT count(*) FROM anime_job_selections WHERE status='withdrawn'`).Scan(&withdrawn); err != nil || withdrawn != 1 {
-		t.Fatal(withdrawn, err)
-	}
-}
-
-func TestAnimeControlDirectoryReceiptAfterRemoveThenLocalCancel(t *testing.T) {
+func TestAnimeControlDeleteWaitsForActiveWorker(t *testing.T) {
 	f, job := animeDirectoryStoreFixture(t)
 	ctx := context.Background()
-	now := time.Now().UnixMilli()
-	work := takeAnimeWork(t, f.store, now)
+	work := takeAnimeWork(t, f.store, time.Now().UnixMilli())
 	started, create, err := f.store.StartAnimeDirectory(ctx, job.ID, job.Generation, f.target, work.Token)
 	if err != nil || !create {
 		t.Fatal(create, err)
 	}
-	if receipt := controlAnime(t, f.store, f.sub.ID, "remove"); receipt.CancelledJobs != 0 {
-		t.Fatal("unknown directory cancelled", receipt)
+	if _, err := f.store.ControlAnimeSubscription(ctx, f.sub.ID, "remove", f.sub.Revision, nil); !errors.Is(err, ErrAnimeDeleteBusy) {
+		t.Fatal(err)
 	}
 	root := model.AnimeDriveEntry{ID: "200", ParentCID: job.ParentCID, Kind: "directory", Name: job.DirectoryName}
 	if err := f.store.FinishAnimeDirectory(ctx, started, &root, "", work.Token); err != nil {
-		t.Fatal("in-flight create receipt lost", err)
-	}
-	if _, err := f.store.PrepareAnimeSubmit(ctx, job.ID, job.Generation, f.target, work.Token); !errors.Is(err, ErrAnimeWriteUnauthorized) {
-		t.Fatal("remove allowed submit", err)
-	}
-	if err := f.store.CompleteAnimeDownloadWork(ctx, work, "DOWNLOAD_PAUSED", now+1); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := f.store.GetAnimeDownloadJob(ctx, job.ID)
-	if got.WorkflowState != "cancelled" || got.DirectoryCID == nil || *got.DirectoryCID != "200" {
-		t.Fatal(got)
+	if err := f.store.CompleteAnimeDownloadWork(ctx, work, "", time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	controlAnime(t, f.store, f.sub.ID, "remove")
+	if _, err := f.store.GetAnimeDownloadJob(ctx, job.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("deleted worker left a job", err)
+	}
+	if err := f.store.DispatchAnimeSubmit(ctx, "missing_operation", work.Token); err == nil {
+		t.Fatal("stale worker dispatched")
 	}
 }
 
@@ -230,13 +201,12 @@ func TestAnimeControlSharedResourceKeepsOtherSubscription(t *testing.T) {
 			if otherState == "paused" {
 				controlAnime(t, f.store, second.ID, "resume")
 			}
-			// A shared job appears exactly once in each subscription, including
-			// the removed one whose association has been withdrawn.
-			for _, id := range []string{f.sub.ID, second.ID} {
-				page, err := f.store.ListAnimeDownloadJobs(ctx, id, 1, 20)
-				if err != nil || page.Total != 1 || len(page.Items) != 1 {
-					t.Fatal(page, err)
-				}
+			if _, err := f.store.ListAnimeDownloadJobs(ctx, f.sub.ID, 1, 20); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatal("deleted history visible", err)
+			}
+			page, err := f.store.ListAnimeDownloadJobs(ctx, second.ID, 1, 20)
+			if err != nil || page.Total != 1 || len(page.Items) != 1 {
+				t.Fatal("other subscription lost history", page, err)
 			}
 		})
 	}
@@ -346,7 +316,6 @@ func TestAnimeControlCASIdempotencyAndReopen(t *testing.T) {
 func TestAnimeControlTransactionRollsBackAllEffects(t *testing.T) {
 	f, job := animeSubmitStoreFixture(t)
 	ctx := context.Background()
-	work := takeAnimeWork(t, f.store, time.Now().UnixMilli())
 	if _, err := f.store.db.Exec(`CREATE TRIGGER anime_control_fail BEFORE INSERT ON anime_request_keys BEGIN SELECT RAISE(ABORT,'injected control failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -362,9 +331,6 @@ func TestAnimeControlTransactionRollsBackAllEffects(t *testing.T) {
 	if !reflect.DeepEqual(got, job) {
 		t.Fatal("job partially committed", got, job)
 	}
-	if err := f.store.CheckAnimeDownloadWork(ctx, work); err != nil {
-		t.Fatal("rollback lost original lease", err)
-	}
 	var n int
 	if err := f.store.db.QueryRow(`SELECT count(*) FROM anime_job_selections WHERE status='authorized'`).Scan(&n); err != nil || n != 1 {
 		t.Fatal(n, err)
@@ -379,7 +345,6 @@ func TestAnimeControlCompletedJobNeverReopens(t *testing.T) {
 	before, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
 	controlAnime(t, f.store, f.sub.ID, "archive")
 	controlAnime(t, f.store, f.sub.ID, "unarchive")
-	controlAnime(t, f.store, f.sub.ID, "remove")
 	after, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("completed history changed", before, after)
@@ -396,12 +361,11 @@ func TestAnimeControlStateBoundariesAndNoOpRevision(t *testing.T) {
 		{"draft", "pause", "", ErrAnimeTransition},
 		{"draft", "resume", "", ErrAnimeTransition},
 		{"paused", "resume", "", ErrAnimeReconfirm},
-		{"archived", "resume", "", ErrAnimeTransition},
+		{"archived", "resume", "", ErrAnimeReconfirm},
 		{"removed", "unarchive", "", ErrAnimeTransition},
 		{"removed", "archive", "", ErrAnimeTransition},
 		{"paused", "pause", "paused", nil},
 		{"archived", "archive", "archived", nil},
-		{"removed", "remove", "removed", nil},
 		{"draft", "archive", "archived", nil},
 	} {
 		t.Run(tc.state+"_"+tc.action, func(t *testing.T) {

@@ -63,26 +63,15 @@ func TestAnimeControlHTTPLocalLifecycleReceiptAndHistory(t *testing.T) {
 	}
 	f.call(t, "POST", base+"/pause", f.admin, "paused_noop", `{"expectedRevision":3}`, 200)
 	f.call(t, "POST", base+"/remove", f.admin, "remove_key_01", `{"expectedRevision":3}`, 200)
-	if v := f.call(t, "GET", base, f.admin, "", nil, 200); v["status"] != "removed" {
-		t.Fatal(v)
-	}
-	for _, path := range []string{base + "/jobs", base + "/jobs?page=2&pageSize=1"} {
-		v := f.call(t, "GET", path, f.admin, "", nil, 200)
-		if v["total"] != float64(0) || len(v["items"].([]any)) != 0 {
-			t.Fatal(v)
-		}
-	}
-	f.call(t, "GET", "/jobs/missing_job", f.admin, "", nil, 404)
-	f.call(t, "GET", "/subscriptions/missing_subscription/jobs", f.admin, "", nil, 404)
+	f.call(t, "GET", base, f.admin, "", nil, 404)
+	f.call(t, "GET", base+"/jobs", f.admin, "", nil, 404)
+	f.call(t, "POST", base+"/remove", f.admin, "remove_key_01", `{"expectedRevision":3}`, 200)
+	f.call(t, "POST", base+"/archive", f.admin, "deleted_restore", `{"expectedRevision":4}`, 404)
 	if v := f.call(t, "GET", "/subscriptions", f.admin, "", nil, 200); v["total"] != float64(0) {
-		t.Fatal("removed item in default list", v)
+		t.Fatal("deleted item listed", v)
 	}
-	if v := f.call(t, "GET", "/subscriptions?status=removed", f.admin, "", nil, 200); v["total"] != float64(1) {
-		t.Fatal("removed history inaccessible", v)
-	}
-	if v := f.call(t, "POST", base+"/unarchive", f.admin, "removed_restore", `{"expectedRevision":4}`, 409); v["code"] != "STATE_CONFLICT" {
-		t.Fatal(v)
-	}
+	f.call(t, "GET", "/subscriptions?status=removed", f.admin, "", nil, 400)
+
 	if f.bgm.calls != 0 || f.mikan.reads != 0 {
 		t.Fatal("local lifecycle contacted upstream")
 	}

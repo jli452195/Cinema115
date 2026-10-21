@@ -87,7 +87,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		}
 		v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: action, Allowed: allowed, ReasonCode: reason})
 	}
-	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt != nil && sub.Status == "paused"})
+	v.PermittedActions = append(v.PermittedActions, AnimeAction{Name: "resume", Allowed: s.DownloadAvailable() && sub.FirstEnabledAt != nil && (sub.Status == "paused" || sub.Status == "archived")})
 	jobs, err := s.Store.AnimeJobCountsBySource(ctx, sub.ID)
 	if err != nil {
 		return v, err

@@ -75,6 +75,9 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			if digest != key.Digest {
 				return receipt, ErrAnimeIdempotency
 			}
+			if raw == animeDeletedReceipt {
+				return receipt, sql.ErrNoRows
+			}
 			if err := decodeAnimeJSON(raw, &receipt); err != nil {
 				return receipt, fmt.Errorf("read anime receipt: %w", err)
 			}
@@ -120,6 +123,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	}
 	oldSources := make(map[string]model.AnimeSource, model.AnimeMaxSources)
 	var oldNaming *model.AnimeNamingPlan
+	resumeArchived := false
 	if in.ID != "" {
 		old, err := scanAnimeSubscription(tx.QueryRowContext(ctx, `SELECT `+animeSubscriptionColumns+` FROM anime_subscriptions WHERE id=?`, in.ID))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -140,10 +144,11 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		if !runtime && (old.FirstEnabledAt != nil || old.Status != "draft" && old.Status != "paused") {
 			return receipt, ErrAnimeCapability
 		}
-		if runtime && (old.Status != in.Status || old.Status != "enabled" && old.Status != "paused") {
+		if runtime && !(old.Status == in.Status && (old.Status == "enabled" || old.Status == "paused" || old.Status == "archived") || old.Status == "archived" && in.Status == "enabled") {
 			return receipt, ErrAnimeTransition
 		}
 		oldNaming = old.Naming
+		resumeArchived = old.Status == "archived" && in.Status == "enabled"
 		sources, err := readAnimeSources(ctx, tx, in.ID, false)
 		if err != nil {
 			return receipt, err
@@ -289,7 +294,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	if in.ExpectedRevision == 0 {
 		result, err = tx.ExecContext(ctx, `INSERT INTO anime_subscriptions(`+animeSubscriptionColumns+`) VALUES(?,?,?,1,1,NULL,?,?,?,?)`, in.ID, in.EntryID, in.Status, form, now, now, naming)
 	} else if runtime {
-		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET revision=revision+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, form, naming, now, in.ID, in.ExpectedRevision)
+		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, in.Status, form, naming, now, in.ID, in.ExpectedRevision)
 	} else {
 		result, err = tx.ExecContext(ctx, `UPDATE anime_subscriptions SET status=?,revision=revision+1,run_generation=run_generation+1,form_json=?,naming_json=?,updated_at=? WHERE id=? AND revision=?`, in.Status, form, naming, now, in.ID, in.ExpectedRevision)
 	}
@@ -322,6 +327,14 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		}
 	}
 	if runtime {
+		if resumeArchived {
+			if err := resetAnimeSubscriptionActivityTx(ctx, tx, in.ID, now); err != nil {
+				return receipt, err
+			}
+			if _, err := controlAnimeQueuedJobsTx(ctx, tx, in.ID, true, now); err != nil {
+				return receipt, err
+			}
+		}
 		for _, removal := range in.RemovedSources {
 			if err := invalidateAnimeSourceConfigurationTx(ctx, tx, removal.ID, now); err != nil {
 				return receipt, err
