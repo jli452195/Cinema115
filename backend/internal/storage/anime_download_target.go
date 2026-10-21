@@ -8,6 +8,21 @@ import (
 	"strm115/backend/internal/model"
 )
 
+func animeTargetFromSettings(v model.AnimeSettings) (model.AnimeDownloadTarget, error) {
+	if v.AccountID == nil || v.AccountRevision == nil || v.UID == nil || v.DownloadCID == nil || v.DownloadPath == nil || v.OrganizeCID == nil {
+		return model.AnimeDownloadTarget{}, ErrAnimeDirectoryRequired
+	}
+	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: v.Revision, AccountID: *v.AccountID, AccountRevision: *v.AccountRevision, UID: *v.UID, ParentCID: *v.DownloadCID, ParentPath: *v.DownloadPath}
+	return target, target.Validate()
+}
+
+// The settings revision also advances for organization-only edits. Actual
+// download account, credentials and directory must stay fixed independently.
+func sameAnimeDownloadBinding(a, b model.AnimeDownloadTarget) bool {
+	a.SettingsRevision = b.SettingsRevision
+	return a == b
+}
+
 // CheckAnimeDownloadSettings validates a new task's target against one
 // consistent SQLite view of both settings and the explicit primary account.
 // Future job insertion must repeat checkAnimeDownloadTargetTx in its own

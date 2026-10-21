@@ -12,9 +12,11 @@ export interface SourceForm {
   mappingSource: string; mappingTarget: string; mappingSeason: string; mappingLast: string; mappingManual: boolean; mappingSegments: AnimeMappingSegment[]; mappingOverrides: AnimeMappingOverride[]
   confirmedFor: string; review?: AnimeBinding['review']; identityNumbering: boolean
   correspondence: boolean; sourceEpisode: string; chapterEpisode: string
-  specMode: '' | 'profiles' | 'any'; specProfiles: AnimeSpec[]
+  templateChosen: boolean; match: string; episodePattern: string; episodeGroup: string
+  health?: string; errorCode?: string | null
+  ruleError?: { field: string; message: string }
   sample?: AnimeSourceSample; sampleBusy: boolean; sampleError: string; sampleCooldown: number
-  resolution: '' | '720p' | '1080p' | '2160p' | 'any'; minimum: string; include: string; exclude: string
+  minimum: string; exclude: string
   preview?: { ref: AnimePreviewRef; summary: AnimePreviewSummary; signature: string; take: number; page?: AnimePreviewPage; needsSync?: boolean }
   previewError: string; previewCooldown: number
 }
@@ -24,17 +26,17 @@ export function newAnimeSource(role: SourceForm['role'], keyword = '', provider:
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
     mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [],
-    specMode: '', specProfiles: [], sampleBusy: false, sampleError: '', sampleCooldown: 0,
-    resolution: '', minimum: '1', include: '', exclude: '', previewError: '', previewCooldown: 0 }
+    templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', sampleBusy: false, sampleError: '', sampleCooldown: 0,
+    minimum: '1', exclude: '', previewError: '', previewCooldown: 0 }
 }
 function episode(value: string, label: string): number | null {
   if (!value.trim()) return null
   if (!/^[1-9]\d{0,4}$/.test(value.trim())) throw new Error(`${label}请填写 1 至 99999 的整数`)
   return Number(value.trim())
 }
-function words(value: string) {
-  const result = [...new Set(value.split(/[,，\n]/).map(word => word.trim().replace(/[A-Z]/g, s => s.toLowerCase())).filter(Boolean))]
-  if (result.length > 10 || result.some(word => Array.from(word).length > 64 || /[\u0000-\u001f\u007f]/.test(word))) throw new Error('包含/排除词各最多 10 个，每个最多 64 字，不能含控制字符')
+function patterns(value: string) {
+  const result = [...new Set(value.split(/\r?\n/).map(pattern => pattern.trim()).filter(Boolean))]
+  if (result.length > 20 || result.some(pattern => Array.from(pattern).length > 512 || /[\u0000-\u001f\u007f]/.test(pattern))) throw new Error('匹配和排除规则各最多 20 条，每条最多 512 字，不能含控制字符')
   return result
 }
 export function animeSourceConfig(form: SourceForm, position: number): AnimeSourceConfig {
@@ -59,12 +61,14 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
   } else if (form.scope !== 'feed' && form.identityNumbering) chapterCorrespondence = { sourceEpisode: 1, chapterEpisode: 1 }
   const minimumEpisode = episode(form.minimum, '补番起点')
   const confirmed = animeBindingConfirmed(form)
-  const specificationsReady = form.specMode === 'any' || form.specMode === 'profiles' && form.specProfiles.length > 0 || !form.specMode && !!form.resolution
-  const complete = !!(form.itemId && form.groupId && scope && confirmed && specificationsReady && minimumEpisode)
+  const complete = !!(form.itemId && form.groupId && scope && confirmed && minimumEpisode)
+  const episodePattern = form.episodePattern.trim()
+  if (Array.from(episodePattern).length > 2048) throw new Error('集号正则最多 2048 字')
+  if (episodePattern && !/^[1-9]\d{0,3}$/.test(form.episodeGroup)) throw new Error('捕获组序号请填写从 1 开始的整数')
   return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: form.provider,
     itemId: form.itemId || null, groupId: form.groupId || null, groupName: form.groupName || null,
     binding: { schemaVersion: 1, confirmed, scope, chapterCorrespondence, ...(confirmed && form.review ? { review: form.review } : {}) },
-    rules: { ...(form.chapterFirst.trim() ? { chapterFirstEpisode: episode(form.chapterFirst, '篇章首集') } : {}), schemaVersion: 1, resolution: form.specMode ? 'any' : form.resolution || null, minimumEpisode, include: words(form.include), exclude: words(form.exclude), specMode: form.specMode, specProfiles: form.specMode === 'profiles' ? form.specProfiles : [] } }
+    rules: { ...(form.chapterFirst.trim() ? { chapterFirstEpisode: episode(form.chapterFirst, '篇章首集') } : {}), schemaVersion: 1, minimumEpisode, match: patterns(form.match), exclude: patterns(form.exclude), ...(episodePattern ? { episodePattern, episodeGroup: Number(form.episodeGroup) } : {}) } }
 }
 export function animeSourceReady(form: SourceForm) { try { return animeSourceConfig(form, 0).status === 'paused' } catch { return false } }
 export function animeBindingKey(form: SourceForm) {
@@ -76,20 +80,19 @@ export function animeBindingConfirmed(form: SourceForm) { return form.confirmed 
 export function confirmAnimeSource(form: SourceForm) {
   if (!form.itemId || !form.groupId) throw new Error('请先选择资源与字幕组')
   if (!form.scope) form.scope = 'feed'
-  if (!form.specMode && !form.resolution || form.specMode === 'profiles' && !form.specProfiles.length) throw new Error('请选择至少一种规格，或明确选择全部规格')
+  if (!form.templateChosen) throw new Error('请选择一个匹配模板，或选择全部规格')
   // Validate inputs before recording the explicit review. This never supplies
   // a fictional free-text explanation to satisfy the old contract.
-  animeSourceConfig({ ...form, scope: 'feed', correspondence: false, identityNumbering: false, minimum: '1', include: '', exclude: '' }, 0)
+  animeSourceConfig({ ...form, scope: 'feed', correspondence: false, identityNumbering: false, minimum: '1', match: '', exclude: '' }, 0)
   form.evidence = ''; form.review = { method: 'source_review', itemId: form.itemId, groupId: form.groupId }
   form.confirmed = true; form.confirmedFor = animeBindingKey(form)
 }
-export function animeSpecKey(spec: AnimeSpec) { return JSON.stringify([spec.resolution || '', [...(spec.languages || [])].sort(), spec.subtitleMode || '', spec.codec || '', spec.container || '', spec.bitDepth || '']) }
 export function animeSpecLabel(spec?: AnimeSpec) {
   if (!spec) return ''
   const languages = [['zh-Hans', '简'], ['zh-Hant', '繁'], ['ja', '日'], ['en', '英']].filter(([key]) => spec.languages?.includes(key!)).map(([, label]) => label).join('')
   return [spec.resolution, languages, ({ hard: '内嵌', soft: '内封', external: '外挂' } as Record<string, string>)[spec.subtitleMode || ''], ({ h264: 'AVC', h265: 'HEVC', av1: 'AV1', vp9: 'VP9' } as Record<string, string>)[spec.codec || ''], spec.bitDepth ? `${spec.bitDepth}bit` : '', spec.container?.toUpperCase()].filter(Boolean).join(' ')
 }
-export function animeSourceSpecs(form: SourceForm) { return form.specMode === 'profiles' ? form.specProfiles.map(animeSpecLabel).join('、') || '尚未选择规格' : form.specMode === 'any' ? '全部规格' : form.resolution === 'any' ? '不限画质（原规则）' : form.resolution || '尚未选择规格' }
+export function animeSourceSpecs(form: SourceForm) { const count = form.match.split(/\r?\n/).filter(pattern => pattern.trim()).length; return count ? `${count} 条匹配正则` : '全部规格' }
 
 export function animeProviderName(provider: AnimeSourceProvider) { return provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑' }
 export function animeSourceURL(form: SourceForm) { return form.provider === 'garden' ? `https://animes.garden/subject/${encodeURIComponent(form.itemId)}` : form.provider === 'anibt' ? `https://anibt.net/anime/${encodeURIComponent(form.itemId)}` : `https://mikanani.me/Home/Bangumi/${encodeURIComponent(form.itemId)}` }

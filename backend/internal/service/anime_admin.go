@@ -123,7 +123,11 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		v.GroupName = nil // Never trust or fingerprint browser display metadata.
 		v.Rules, err = animepreview.NormalizeRules(v.Rules)
 		if err != nil {
-			return out, storage.ErrAnimeInvalid
+			var rule *model.AnimeRuleError
+			if errors.As(err, &rule) {
+				rule.SourceRef = v.Ref
+			}
+			return out, err
 		}
 	}
 	if in.Config.Sources == nil {

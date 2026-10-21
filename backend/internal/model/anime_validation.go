@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"strm115/backend/internal/client/animefeed"
 	"unicode/utf8"
@@ -114,6 +115,16 @@ func (b AnimeBinding) Validate(complete bool) error {
 	return nil
 }
 
+// AnimeRuleError identifies editable input without exposing internal errors.
+type AnimeRuleError struct {
+	SourceRef string
+	Field     string
+	Line      int
+	Message   string
+}
+
+func (e *AnimeRuleError) Error() string { return e.Message }
+
 func (r AnimeRules) Validate(complete bool) error {
 	if r.ChapterFirstEpisode != nil && !animeEpisode(*r.ChapterFirstEpisode) {
 		return fmt.Errorf("invalid chapter first episode")
@@ -121,42 +132,44 @@ func (r AnimeRules) Validate(complete bool) error {
 	if r.SchemaVersion != AnimeSchemaVersion {
 		return fmt.Errorf("unsupported rules schema")
 	}
-	if complete && (r.Resolution == nil || r.MinimumEpisode == nil) {
+	if complete && r.MinimumEpisode == nil {
 		return fmt.Errorf("rules are incomplete")
-	}
-	if r.SpecMode != "" && r.SpecMode != "any" && r.SpecMode != "profiles" || len(r.SpecProfiles) > 12 || r.SpecMode != "profiles" && len(r.SpecProfiles) != 0 || complete && r.SpecMode == "profiles" && len(r.SpecProfiles) == 0 {
-		return fmt.Errorf("invalid specification selection")
-	}
-	for _, spec := range r.SpecProfiles {
-		if err := spec.Validate(); err != nil {
-			return err
-		}
-		if spec.Empty() {
-			return fmt.Errorf("empty specification profile")
-		}
-	}
-	if r.Resolution != nil {
-		switch *r.Resolution {
-		case "720p", "1080p", "2160p", "any":
-		default:
-			return fmt.Errorf("invalid resolution")
-		}
 	}
 	if r.MinimumEpisode != nil && !animeEpisode(*r.MinimumEpisode) {
 		return fmt.Errorf("invalid minimum episode")
 	}
-	for _, words := range [][]string{r.Include, r.Exclude} {
-		if len(words) > 10 {
-			return fmt.Errorf("too many filter words")
+	for _, rule := range []struct {
+		field, label string
+		patterns     []string
+	}{{"match", "匹配正则", r.Match}, {"exclude", "排除正则", r.Exclude}} {
+		patterns := rule.patterns
+		if len(patterns) > 20 {
+			return &AnimeRuleError{Field: rule.field, Message: rule.label + "最多 20 条"}
 		}
-		seen := make(map[string]bool, len(words))
-		for _, word := range words {
-			if !animeText(word, 64, true) || seen[word] {
-				return fmt.Errorf("invalid/duplicate filter word")
+		for i, pattern := range patterns {
+			if !animeText(pattern, 512, true) {
+				return &AnimeRuleError{Field: rule.field, Line: i + 1, Message: fmt.Sprintf("%s第 %d 条最多 512 字，不能为空或包含控制字符", rule.label, i+1)}
 			}
-			seen[word] = true
+			if _, err := regexp.Compile(pattern); err != nil {
+				return &AnimeRuleError{Field: rule.field, Line: i + 1, Message: fmt.Sprintf("%s第 %d 条语法无效，请使用 Go/RE2 支持的表达式", rule.label, i+1)}
+			}
 		}
 	}
+	if r.EpisodePattern != "" {
+		if !animeText(r.EpisodePattern, 2048, true) {
+			return &AnimeRuleError{Field: "episodePattern", Message: "集号正则最多 2048 字，不能包含控制字符"}
+		}
+		re, err := regexp.Compile(r.EpisodePattern)
+		if err != nil {
+			return &AnimeRuleError{Field: "episodePattern", Message: "集号正则语法无效，请使用 Go/RE2 支持的表达式"}
+		}
+		if r.EpisodeGroup < 1 || r.EpisodeGroup > re.NumSubexp() {
+			return &AnimeRuleError{Field: "episodeGroup", Message: fmt.Sprintf("捕获组序号无效，当前集号正则有 %d 个捕获组", re.NumSubexp())}
+		}
+	} else if r.EpisodeGroup != 0 {
+		return &AnimeRuleError{Field: "episodeGroup", Message: "请先填写集号正则，再指定捕获组"}
+	}
+
 	return nil
 }
 

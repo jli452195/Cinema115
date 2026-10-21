@@ -199,28 +199,3 @@ func SpecLabel(spec model.AnimeSpec) string {
 	}
 	return strings.Join(parts, " ")
 }
-
-// MatchSpec requires every selected dimension. Missing required title metadata
-// is unknown, not a match; unselected dimensions never restrict future titles.
-func MatchSpec(profile, observed model.AnimeSpec) (matched, unknown bool) {
-	for _, pair := range [][2]string{{profile.Resolution, observed.Resolution}, {profile.SubtitleMode, observed.SubtitleMode}, {profile.Codec, observed.Codec}, {profile.Container, observed.Container}, {profile.BitDepth, observed.BitDepth}} {
-		if pair[0] == "" {
-			continue
-		}
-		if pair[1] == "" {
-			unknown = true
-			continue
-		}
-		if pair[0] != pair[1] {
-			return false, false
-		}
-	}
-	if len(profile.Languages) > 0 {
-		if len(observed.Languages) == 0 {
-			unknown = true
-		} else if !slices.Equal(NormalizeSpec(profile).Languages, NormalizeSpec(observed).Languages) {
-			return false, false
-		}
-	}
-	return !unknown, unknown
-}

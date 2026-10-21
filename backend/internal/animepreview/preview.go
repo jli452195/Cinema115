@@ -107,12 +107,25 @@ func (b Batch) Budget() Budget {
 func (s Source) ValidAt(now int64) bool { return now < s.ExpiresAt }
 
 func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) error {
+	compiled, err := animeparse.CompileRules(rules)
+	if err != nil {
+		return err
+	}
+	return evaluateCompiled(binding, rules, compiled, item)
+}
+
+func evaluateCompiled(binding model.AnimeBinding, rules model.AnimeRules, compiled animeparse.SourceRules, item *Item) error {
 	item.Steps = []Step{{Stage: "source", Result: "passed"}}
 	stop := func(stage, result, code string) {
 		item.Steps = append(item.Steps, Step{stage, result, code})
 		item.Decision, item.ReasonCode = result, code
 	}
 	pass := func(stage string) { item.Steps = append(item.Steps, Step{Stage: stage, Result: "passed"}) }
+	if code := compiled.Filter(item.Release.Title); code != "" {
+		stop("patterns", "filtered", code)
+		return nil
+	}
+	pass("patterns")
 	p, err := animebinding.Project(binding, item.Release.Parse)
 	if err != nil {
 		return err
@@ -132,7 +145,7 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 		return nil
 	}
 	pass("scope")
-	if rules.MinimumEpisode == nil || rules.Resolution == nil {
+	if rules.MinimumEpisode == nil {
 		stop("minimum", "needs_confirmation", "SOURCE_RULES_INCOMPLETE")
 		return nil
 	}
@@ -141,41 +154,6 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 		return nil
 	}
 	pass("minimum")
-	title := FoldASCII(item.Release.Title)
-	for _, word := range rules.Exclude {
-		if strings.Contains(title, word) {
-			stop("keywords", "filtered", "EXCLUDED_KEYWORD")
-			return nil
-		}
-	}
-	for _, word := range rules.Include {
-		if !strings.Contains(title, word) {
-			stop("keywords", "filtered", "REQUIRED_KEYWORD_MISSING")
-			return nil
-		}
-	}
-	pass("keywords")
-	if rules.SpecMode == "profiles" {
-		matched, unknown := false, false
-		for _, profile := range rules.SpecProfiles {
-			ok, missing := animeparse.MatchSpec(profile, item.Release.Parse.Spec)
-			matched, unknown = matched || ok, unknown || missing
-		}
-		if !matched {
-			if unknown {
-				stop("specification", "needs_confirmation", "TITLE_SPECIFICATION_UNKNOWN")
-			} else {
-				stop("specification", "filtered", "TITLE_SPECIFICATION_MISMATCH")
-			}
-			return nil
-		}
-	}
-	pass("specification")
-	if *rules.Resolution != "any" && (item.Release.Parse.Resolution == nil || *item.Release.Parse.Resolution != *rules.Resolution) {
-		stop("resolution", "filtered", "TITLE_RESOLUTION_MISMATCH")
-		return nil
-	}
-	pass("resolution")
 	// No info-hash has been verified in P1. This is not a download decision.
 	item.Steps = append(item.Steps, Step{Stage: "identity", Result: "needs_confirmation", ReasonCode: "HASH_NOT_VERIFIED"})
 	item.Decision, item.ReasonCode, item.Selectable = "matched", "MATCHED_METADATA_ONLY", true
@@ -241,6 +219,10 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 	// known dates the coarsest represented precision governs the source T0.
 	precision := int64(0)
 	seen := make(map[string]bool, len(page.Releases))
+	compiled, err := animeparse.CompileRules(config.Rules)
+	if err != nil {
+		return out, err
+	}
 	for _, row := range page.Releases {
 		if seen[row.PostKey] {
 			continue
@@ -256,7 +238,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 			return out, ErrInput
 		}
 		seen[row.PostKey] = true
-		parse, err := animeparse.Title(row.Title)
+		parse, err := compiled.Parse(row.Title)
 		if err != nil {
 			return out, fmt.Errorf("parse preview title: %w", err)
 		}
@@ -285,7 +267,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 			return out, fmt.Errorf("validate preview release: %w", err)
 		}
 		item := Item{Release: r, Observation: row, Publication: published}
-		if err := evaluate(config.Binding, config.Rules, &item); err != nil {
+		if err := evaluateCompiled(config.Binding, config.Rules, compiled, &item); err != nil {
 			return out, err
 		}
 		out.Items = append(out.Items, item)

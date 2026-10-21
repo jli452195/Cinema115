@@ -397,7 +397,7 @@ func TestAnimeBindingSQLiteRetainsIndependentSourceConfiguration(t *testing.T) {
 			role = "standby"
 			minimum = 5
 		}
-		config.Sources = append(config.Sources, model.AnimeSourceConfig{Ref: role, Role: role, Position: i, Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: bindingPtr(check.Source.ItemID), GroupID: bindingPtr(check.Source.GroupID), GroupName: bindingPtr(check.Source.GroupName), Binding: check.Binding, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: &minimum}})
+		config.Sources = append(config.Sources, model.AnimeSourceConfig{Ref: role, Role: role, Position: i, Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: bindingPtr(check.Source.ItemID), GroupID: bindingPtr(check.Source.GroupID), GroupName: bindingPtr(check.Source.GroupName), Binding: check.Binding, Rules: model.AnimeRules{SchemaVersion: 1, MinimumEpisode: &minimum}})
 	}
 	receipt, err := db.SaveAnimeSubscription(ctx, config, nil)
 	if err != nil {
@@ -410,7 +410,7 @@ func TestAnimeBindingSQLiteRetainsIndependentSourceConfiguration(t *testing.T) {
 	if len(got.Sources) != 2 || got.Sources[0].Binding.ChapterCorrespondence.SourceEpisode != 26 || *got.Sources[0].Rules.MinimumEpisode != 30 || got.Sources[1].Binding.ChapterCorrespondence.SourceEpisode != 1 || *got.Sources[1].Rules.MinimumEpisode != 5 || got.Sources[0].NamespaceID == got.Sources[1].NamespaceID {
 		t.Fatalf("source numbering/minimum merged: %+v", got.Sources)
 	}
-	if got.FirstEnabledAt != nil || got.Sources[0].ActiveBaselineID != nil || got.Sources[0].NextCheckAt != nil {
+	if got.FirstEnabledAt != nil || got.Sources[0].NextCheckAt != nil {
 		t.Fatal("configuration authorized execution")
 	}
 }

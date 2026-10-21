@@ -34,7 +34,7 @@ func newDownloadClaimFixture(t *testing.T) *downloadClaimFixture {
 	c.Sources[0].ItemID = animePtr("123")
 	c.Sources[0].GroupID = animePtr("dmhy_f45")
 	c.Sources[0].GroupName = animePtr("字幕组")
-	c.Sources[0].Rules.Include = []string{"hevc"}
+	c.Sources[0].Rules.Match = []string{"(?i)hevc"}
 	backup := c.Sources[0]
 	backup.Ref = "backup"
 	backup.Role = "standby"
@@ -46,11 +46,8 @@ func newDownloadClaimFixture(t *testing.T) *downloadClaimFixture {
 	// These disposable fixtures isolate authoritative pending selections from
 	// the background discovery worker.
 	for _, source := range sub.Sources {
-		baseline := "baseline-" + source.ID
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) VALUES(?,?,1,1,'{}')`, baseline, source.ID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE anime_subscription_sources SET active_baseline_id=?,status='enabled' WHERE id=?`, baseline, source.ID); err != nil {
+
+		if _, err := s.db.ExecContext(ctx, `UPDATE anime_subscription_sources SET status='enabled' WHERE id=?`, source.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -87,7 +84,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	}
 	release := releases[0]
 	d := animeDecision(source, release, "selected")
-	d.Snapshot.Selection = &model.AnimeSelectionBasis{BaselineID: *source.ActiveBaselineID, SelectedAt: time.Now().UnixMilli(), Target: f.target, SubscriptionGeneration: f.sub.RunGeneration, SourceGeneration: source.RunGeneration}
+	d.Snapshot.Selection = &model.AnimeSelectionBasis{SelectedAt: time.Now().UnixMilli(), Target: f.target, SubscriptionGeneration: f.sub.RunGeneration, SourceGeneration: source.RunGeneration}
 	d.Snapshot.RuleVersion, d.Snapshot.ParserVersion, d.Snapshot.TimeVersion = animepreview.RuleVersion, release.ParserVersion, release.TimeVersion
 	raw, err := animeJSON(d.Snapshot)
 	if err != nil {
@@ -273,7 +270,6 @@ func TestAnimeDownloadClaimRejectsStaleOrWithdrawnAuthorization(t *testing.T) {
 		`UPDATE anime_release_decisions SET generation=generation+1`,
 		`UPDATE anime_release_decisions SET disposition='seen'`,
 		`UPDATE anime_releases SET content_fingerprint='changed'`,
-		`UPDATE anime_releases SET parser_version=parser_version+1`,
 		`UPDATE anime_settings SET revision=revision+1,download_cid='999'`,
 		`UPDATE p115_accounts SET revision=revision+1`,
 	} {
@@ -427,8 +423,8 @@ func TestAnimeDownloadClaimDatabaseReopenAndIndependentUID(t *testing.T) {
 	assertDownloadCounts(t, reopened, 1, 2, 2, 2)
 }
 
-func TestAnimeDownloadClaimBaselineAndMissingProof(t *testing.T) {
-	for _, mode := range []string{"valid", "wrong baseline", "no proof"} {
+func TestAnimeDownloadClaimGenerationAndMissingProof(t *testing.T) {
+	for _, mode := range []string{"valid", "wrong generation", "no proof"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newDownloadClaimFixture(t)
 			r, v := f.selectRelease(t, 0, "rel_dmhy_1", strings.Repeat("a", 40))
@@ -439,8 +435,8 @@ func TestAnimeDownloadClaimBaselineAndMissingProof(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode != "no proof" {
-				if mode == "wrong baseline" {
-					d.Snapshot.Selection.BaselineID = "different"
+				if mode == "wrong generation" {
+					d.Snapshot.Selection.SourceGeneration++
 				}
 				raw, _ := animeJSON(d.Snapshot)
 				if _, err := f.store.db.ExecContext(ctx, `UPDATE anime_release_decisions SET snapshot_json=? WHERE source_id=? AND release_id=?`, raw, source.ID, r.ID); err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -14,7 +15,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const RuleVersion int64 = 2
+const RuleVersion int64 = 3
 const LifetimeMillis int64 = 15 * 60 * 1000
 
 var (
@@ -63,38 +64,27 @@ func FoldASCII(s string) string {
 }
 
 func NormalizeRules(r model.AnimeRules) (model.AnimeRules, error) {
-	normalize := func(words []string) []string {
-		seen := make(map[string]bool, len(words))
-		out := make([]string, 0, len(words))
-		for _, w := range words {
-			w = FoldASCII(strings.TrimSpace(w))
-			if w != "" && !seen[w] {
-				seen[w] = true
-				out = append(out, w)
+	normalize := func(patterns []string) []string {
+		out := make([]string, 0, len(patterns))
+		seen := make(map[string]bool, len(patterns))
+		for _, pattern := range patterns {
+			pattern = strings.TrimSpace(pattern)
+			if pattern != "" && !seen[pattern] {
+				seen[pattern] = true
+				out = append(out, pattern)
 			}
 		}
-		sort.Strings(out)
 		return out
 	}
-	r.Include, r.Exclude = normalize(r.Include), normalize(r.Exclude)
+	r.Match, r.Exclude = normalize(r.Match), normalize(r.Exclude)
+	r.EpisodePattern = strings.TrimSpace(r.EpisodePattern)
 	if err := r.Validate(false); err != nil {
-		return r, ErrInput
+		return r, fmt.Errorf("%w: %w", ErrInput, err)
 	}
-	profiles := make([]model.AnimeSpec, 0, len(r.SpecProfiles))
-	seen := make(map[string]bool, len(r.SpecProfiles))
-	for _, profile := range r.SpecProfiles {
-		profile = animeparse.NormalizeSpec(profile)
-		key := animeparse.SpecKey(profile)
-		if !seen[key] {
-			profiles = append(profiles, profile)
-			seen[key] = true
-		}
-	}
-	sort.Slice(profiles, func(i, j int) bool { return animeparse.SpecKey(profiles[i]) < animeparse.SpecKey(profiles[j]) })
-	r.SpecProfiles = profiles
-	if len(profiles) == 0 {
-		r.SpecProfiles = nil
-	}
+	// Report invalid expressions in the submitted order before canonicalizing
+	// the rule lists for fingerprints and persistence.
+	sort.Strings(r.Match)
+	sort.Strings(r.Exclude)
 	return r, nil
 }
 
@@ -130,7 +120,14 @@ func Normalize(c Config) (Config, error) {
 	for i := range c.Sources {
 		s := &c.Sources[i]
 		s.Rules, err = NormalizeRules(s.Rules)
-		if err != nil || s.Validate() != nil || refs[s.Ref] || s.ID != "" && ids[s.ID] {
+		if err != nil {
+			var rule *model.AnimeRuleError
+			if errors.As(err, &rule) {
+				rule.SourceRef = s.Ref
+			}
+			return c, err
+		}
+		if s.Validate() != nil || refs[s.Ref] || s.ID != "" && ids[s.ID] {
 			return c, ErrInput
 		}
 		refs[s.Ref], ids[s.ID] = true, true

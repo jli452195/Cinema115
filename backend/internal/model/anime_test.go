@@ -8,7 +8,7 @@ import (
 func animeValue[T any](v T) *T { return &v }
 
 func validAnimeSource() AnimeSourceConfig {
-	return AnimeSourceConfig{Ref: "main", Provider: "mikan", Role: "main", Status: "paused", RunWhenEnabled: true, ItemID: animeValue("2259"), GroupID: animeValue("45"), GroupName: animeValue("字幕组"), Binding: AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &AnimeScope{Kind: "range", First: animeValue(25), Last: animeValue(36)}, ChapterCorrespondence: &AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: AnimeRules{SchemaVersion: 1, Resolution: animeValue("1080p"), Include: []string{}, Exclude: []string{}, MinimumEpisode: animeValue(30)}}
+	return AnimeSourceConfig{Ref: "main", Provider: "mikan", Role: "main", Status: "paused", RunWhenEnabled: true, ItemID: animeValue("2259"), GroupID: animeValue("45"), GroupName: animeValue("字幕组"), Binding: AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &AnimeScope{Kind: "range", First: animeValue(25), Last: animeValue(36)}, ChapterCorrespondence: &AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: AnimeRules{SchemaVersion: 1, Match: []string{"(?i)1080p"}, Exclude: []string{}, MinimumEpisode: animeValue(30)}}
 }
 
 func TestAnimeSourceRulesAreIndependentOfCorrespondence(t *testing.T) {
@@ -23,16 +23,16 @@ func TestAnimeSourceRulesAreIndependentOfCorrespondence(t *testing.T) {
 		name   string
 		change func(*AnimeSourceConfig)
 	}{
-		{"unknown-resolution", func(s *AnimeSourceConfig) { s.Rules.Resolution = animeValue("4k") }},
+		{"invalid-regex", func(s *AnimeSourceConfig) { s.Rules.Match = []string{"["} }},
 		{"out-of-range", func(s *AnimeSourceConfig) { s.Rules.MinimumEpisode = animeValue(0) }},
 		{"reverse-scope", func(s *AnimeSourceConfig) { s.Binding.Scope.Last = animeValue(24) }},
 		{"unconfirmed", func(s *AnimeSourceConfig) { s.Binding.Confirmed = false }},
 		{"chapter-without-evidence", func(s *AnimeSourceConfig) { s.Binding.Scope = &AnimeScope{Kind: "confirmed_chapter"} }},
 		{"negative-chapter-range", func(s *AnimeSourceConfig) { s.Binding.ChapterCorrespondence.SourceEpisode = 30 }},
 		{"overflow-chapter-range", func(s *AnimeSourceConfig) { s.Binding.ChapterCorrespondence.ChapterEpisode = 99999 }},
-		{"missing-resolution", func(s *AnimeSourceConfig) { s.Rules.Resolution = nil }},
-		{"duplicate-words", func(s *AnimeSourceConfig) { s.Rules.Include = []string{"HEVC", "HEVC"} }},
-		{"long-unicode-word", func(s *AnimeSourceConfig) { s.Rules.Exclude = []string{strings.Repeat("字", 65)} }},
+		{"missing-minimum", func(s *AnimeSourceConfig) { s.Rules.MinimumEpisode = nil }},
+		{"too-many-patterns", func(s *AnimeSourceConfig) { s.Rules.Match = make([]string, 21) }},
+		{"long-unicode-pattern", func(s *AnimeSourceConfig) { s.Rules.Exclude = []string{strings.Repeat("字", 513)} }},
 		{"invalid-external-id", func(s *AnimeSourceConfig) { s.ItemID = animeValue("1e6") }},
 		{"zero-group", func(s *AnimeSourceConfig) { s.GroupID = animeValue("0") }},
 		{"enable-unavailable", func(s *AnimeSourceConfig) { s.Status = "enabled" }},
@@ -64,14 +64,13 @@ func TestAnimeJSONRejectsUnknownFieldsAndTrailingValues(t *testing.T) {
 	}
 }
 
-func TestAnimeSpecificationAndReviewValidation(t *testing.T) {
+func TestAnimeRegexAndReviewValidation(t *testing.T) {
 	valid := func() AnimeSourceConfig {
 		s := validAnimeSource()
 		s.Binding.Scope = &AnimeScope{Kind: "confirmed_chapter"}
 		s.Binding.Review = &AnimeSourceReview{Method: "source_review", ItemID: *s.ItemID, GroupID: *s.GroupID}
-		s.Rules.Resolution = animeValue("any")
-		s.Rules.SpecMode = "profiles"
-		s.Rules.SpecProfiles = []AnimeSpec{{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard"}}
+		s.Rules.Match = []string{`(?i)1080p`, `\d{1,3}`}
+		s.Rules.EpisodePattern, s.Rules.EpisodeGroup = `-\s*(\d+)`, 1
 		return s
 	}
 	if err := valid().Validate(); err != nil {
@@ -81,12 +80,12 @@ func TestAnimeSpecificationAndReviewValidation(t *testing.T) {
 		func(s *AnimeSourceConfig) { s.Binding.Review.ItemID = "999" },
 		func(s *AnimeSourceConfig) { s.Binding.Review.Method = "automatic" },
 		func(s *AnimeSourceConfig) { s.Binding.Confirmed = false },
-		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles = nil },
-		func(s *AnimeSourceConfig) { s.Rules.SpecMode = "any" },
-		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0] = AnimeSpec{} },
-		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0].Codec = "unknown" },
-		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles[0].Languages = []string{"zh-Hans", "zh-Hans"} },
-		func(s *AnimeSourceConfig) { s.Rules.SpecProfiles = make([]AnimeSpec, 13) },
+		func(s *AnimeSourceConfig) { s.Rules.Match = []string{`(?<=-)\d+`} },
+		func(s *AnimeSourceConfig) { s.Rules.Exclude = []string{"["} },
+		func(s *AnimeSourceConfig) { s.Rules.EpisodePattern = "[" },
+		func(s *AnimeSourceConfig) { s.Rules.EpisodeGroup = 2 },
+		func(s *AnimeSourceConfig) { s.Rules.EpisodeGroup = 0 },
+		func(s *AnimeSourceConfig) { s.Rules.EpisodePattern = "" },
 	} {
 		s := valid()
 		change(&s)
@@ -98,7 +97,7 @@ func TestAnimeSpecificationAndReviewValidation(t *testing.T) {
 	draft.Status = "draft"
 	draft.Binding.Confirmed = false
 	draft.Binding.Review = nil
-	draft.Rules.SpecProfiles = nil
+	draft.Rules.Match = nil
 	if err := draft.Validate(); err != nil {
 		t.Fatal("incomplete draft blocked", err)
 	}

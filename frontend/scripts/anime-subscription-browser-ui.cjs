@@ -20,7 +20,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
       entry: { id: `entry-${i}`, bangumiId: String(1000 + i), editionKey: 'original', title: i === 1 ? '从零开始的异世界生活 第三季 袭击篇' : `番剧订阅 ${i}`, originalTitle: `Original anime ${i}`, revision: 1, metadata: { coverUrl: card(i).coverUrl, airDate: '2026-10-01' } },
       sources: Array.from({ length: 3 }, (_, n) => ({ id: `source-${i}-${n}`, role: n ? 'standby' : 'main', position: n, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: String(10 + n), groupName: `字幕组${n ? `备用${n}` : '甲'}`, revision: 1, checkedAt: null,
         binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 25, last: 64 }, chapterCorrespondence: { sourceEpisode: 25, chapterEpisode: 1 } },
-        rules: { schemaVersion: 1, resolution: '1080p', include: ['简体'], exclude: [], minimumEpisode: 25 } })),
+        rules: { schemaVersion: 1, match: ['(?i)1080p', '简体'], exclude: [], minimumEpisode: 25 } })),
       form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] } })
     state.items = Array.from({ length: 43 }, (_, i) => make(i + 1))
     await page.route('https://anime-poster.test/**', route => {

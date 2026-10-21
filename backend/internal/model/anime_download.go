@@ -5,7 +5,6 @@ import "strm115/backend/internal/animeresource"
 // AnimeSelectionBasis records the background worker's execution authorization
 // against a fixed source generation and download target.
 type AnimeSelectionBasis struct {
-	BaselineID             string              `json:"baselineId"`
 	SelectedAt             int64               `json:"selectedAt"`
 	Target                 AnimeDownloadTarget `json:"target"`
 	SubscriptionGeneration int64               `json:"subscriptionGeneration"`

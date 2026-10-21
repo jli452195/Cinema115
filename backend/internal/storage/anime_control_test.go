@@ -63,7 +63,7 @@ func TestAnimeControlPauseResumePreservesConfirmedWork(t *testing.T) {
 		t.Fatal("changed confirmed execution generation")
 	}
 	for i, src := range sub.Sources {
-		if src.ActiveBaselineID == nil || *src.ActiveBaselineID != *f.sub.Sources[i].ActiveBaselineID || src.RunGeneration != f.sub.Sources[i].RunGeneration {
+		if src.RunGeneration != f.sub.Sources[i].RunGeneration {
 			t.Fatal("baseline replaced", src)
 		}
 	}
@@ -236,8 +236,8 @@ func TestAnimeControlResumeKeepsSourceIntentAndCooldown(t *testing.T) {
 	}
 }
 
-func TestAnimeControlResumeRejectsChangedBaselineOrTarget(t *testing.T) {
-	for _, query := range []string{`UPDATE anime_settings SET revision=revision+1,download_cid='999'`, `UPDATE anime_source_baselines SET snapshot_json='{}'`, `UPDATE anime_subscription_sources SET revision=revision+1`, `UPDATE p115_accounts SET cookie_enc=x''`} {
+func TestAnimeControlResumeRejectsInvalidRulesOrTarget(t *testing.T) {
+	for _, query := range []string{`UPDATE anime_settings SET organize_cid=NULL,organize_path=NULL`, `UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.match',json('["["]'))`, `UPDATE p115_accounts SET cookie_enc=x''`} {
 		t.Run(query, func(t *testing.T) {
 			f, _ := discoveryFixture(t)
 			if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET checked_at=1`); err != nil {
@@ -360,8 +360,8 @@ func TestAnimeControlStateBoundariesAndNoOpRevision(t *testing.T) {
 	}{
 		{"draft", "pause", "", ErrAnimeTransition},
 		{"draft", "resume", "", ErrAnimeTransition},
-		{"paused", "resume", "", ErrAnimeReconfirm},
-		{"archived", "resume", "", ErrAnimeReconfirm},
+		{"paused", "resume", "", ErrAnimeConfigurationRequired},
+		{"archived", "resume", "", ErrAnimeConfigurationRequired},
 		{"removed", "unarchive", "", ErrAnimeTransition},
 		{"removed", "archive", "", ErrAnimeTransition},
 		{"paused", "pause", "paused", nil},

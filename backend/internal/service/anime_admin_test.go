@@ -171,7 +171,7 @@ func animeHTTPFreeCompleteSource(prior model.AnimeSource) model.AnimeSourceConfi
 	v.GroupID = bindingPtr("45")
 	v.GroupName = bindingPtr("client label")
 	v.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(100)}}
-	v.Rules = model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("1080p"), MinimumEpisode: bindingPtr(1)}
+	v.Rules = model.AnimeRules{SchemaVersion: 1, Match: []string{"(?i)1080p"}, MinimumEpisode: bindingPtr(1)}
 	return v
 }
 

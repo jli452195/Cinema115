@@ -193,6 +193,13 @@ func (s *Store) SaveAnimeSettings(ctx context.Context, v model.AnimeSettings, ke
 		return model.AnimeSettings{}, err
 	}
 	v.Revision++
+	// Correcting the directory settings makes target-blocked feeds runnable
+	// again. Existing jobs keep their fixed account and directory snapshots.
+	if v.OrganizeCID != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET health='unknown',error_code=NULL,retry_after=NULL,next_check_at=?,check_token=NULL,check_until=NULL,poll_failures=0 WHERE error_code='DOWNLOAD_TARGET_CHANGED' AND status='enabled'`, time.Now().UnixMilli()); err != nil {
+			return model.AnimeSettings{}, fmt.Errorf("resume target-blocked anime feeds: %w", err)
+		}
+	}
 	raw, err = animeJSON(v)
 	if err != nil {
 		return model.AnimeSettings{}, err

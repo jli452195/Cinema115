@@ -36,7 +36,7 @@ func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *sto
 	c := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{{
 		Ref: "main", Role: "main", Status: "paused", Provider: "mikan", ItemID: bindingPtr("2259"), GroupID: bindingPtr("45"), GroupName: bindingPtr("untrusted client name"),
 		Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(150)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}},
-		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(30), Resolution: bindingPtr("1080p")},
+		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(30), Match: []string{"(?i)1080p"}},
 	}}}
 	at := time.Now().UTC().Truncate(time.Second).Add(-time.Second)
 	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {

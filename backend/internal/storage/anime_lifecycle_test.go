@@ -76,7 +76,7 @@ func TestAnimeInactivityRequiresAllHealthySourcesAndSettledWork(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "new source":
-				_, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET status='paused',active_baseline_id=NULL WHERE id=?`, sourceID)
+				_, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET status='enabled',health='unknown',checked_at=NULL WHERE id=?`, sourceID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -273,13 +273,9 @@ func TestAnimeRSSSettingsIndependentRevisionReplayAndValidation(t *testing.T) {
 	}
 }
 
-func TestAnimeLifecycleUpgradeFrom53RetainsSubscriptionsAndDirectories(t *testing.T) {
+func TestAnimeLifecycleDevelopmentRebuildPreservesDirectories(t *testing.T) {
 	f, _ := lifecycleFixture(t)
 	ctx := context.Background()
-	saved, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
-	if err != nil {
-		t.Fatal(err)
-	}
 	before, err := f.store.GetAnimeSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -302,13 +298,7 @@ func TestAnimeLifecycleUpgradeFrom53RetainsSubscriptionsAndDirectories(t *testin
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { s.Close() })
-		got, err := s.GetAnimeSubscription(ctx, f.sub.ID, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(got, saved) {
-			t.Fatal("upgrade changed subscription", got, saved)
-		}
+		assertAnimeReset(t, s)
 		after, err := s.GetAnimeSettings(ctx)
 		if err != nil || !reflect.DeepEqual(after, before) {
 			t.Fatal("upgrade changed directories", after, err)
@@ -323,13 +313,10 @@ func TestAnimeLifecycleUpgradeFrom53RetainsSubscriptionsAndDirectories(t *testin
 	}
 }
 
-func TestAnimeCompletionRequiresEachConfiguredSpecification(t *testing.T) {
+func TestAnimeCompletionUsesSourceRules(t *testing.T) {
 	f, now := lifecycleFixture(t)
-	ctx := context.Background()
 	source := &f.sub.Sources[0]
-	source.Rules.SpecMode = "profiles"
-	source.Rules.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p"}, {Resolution: "720p"}}
-	source.Rules.Resolution = animePtr("any")
+	source.Rules.Match = []string{`(?i)1080p`}
 	raw, err := animeJSON(source.Rules)
 	if err != nil {
 		t.Fatal(err)
@@ -340,30 +327,16 @@ func TestAnimeCompletionRequiresEachConfiguredSpecification(t *testing.T) {
 	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET run_when_enabled=0,status='paused' WHERE id=?`, f.sub.Sources[1].ID); err != nil {
 		t.Fatal(err)
 	}
-	for profile, resolution := range []string{"1080p", "720p"} {
-		for episode := 30; episode <= 36; episode++ {
-			r, v := f.selectTitle(t, 0, fmt.Sprintf("rel_profile_%d_%d", profile, episode), fmt.Sprintf("%040x", profile*100+episode), fmt.Sprintf("[字幕组] 测试 - %02d [%s][HEVC]", episode, resolution))
-			job := f.claim(t, 0, r, v).Job
-			if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified',workflow_state='organized' WHERE id=?`, job.ID); err != nil {
-				t.Fatal(err)
-			}
+	for episode := 30; episode <= 36; episode++ {
+		r, v := f.selectTitle(t, 0, fmt.Sprintf("rel_rule_%d", episode), fmt.Sprintf("%040x", episode), fmt.Sprintf("[group] Anime - %02d [1080p][HEVC]", episode))
+		job := f.claim(t, 0, r, v).Job
+		if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified',workflow_state='organized' WHERE id=?`, job.ID); err != nil {
+			t.Fatal(err)
 		}
 		sub := evaluateLifecycle(t, f, now)
-		if profile == 0 && sub.Status != "enabled" || profile == 1 && sub.Status != "archived" {
-			t.Fatal("specification coverage ignored", profile, sub.Status)
+		if episode < 36 && sub.Status != "enabled" || episode == 36 && sub.Status != "archived" {
+			t.Fatal("source coverage", episode, sub.Status)
 		}
-	}
-	entry, err := f.store.GetAnimeEntry(ctx, f.sub.EntryID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := f.store.AnimeLifecycle(ctx, sub, entry, now)
-	if err != nil || info.ArchiveReason != "complete" {
-		t.Fatal(info, err)
 	}
 }
 

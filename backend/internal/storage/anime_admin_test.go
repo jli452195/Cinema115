@@ -64,7 +64,7 @@ func TestAnimeAdminAtomicChapterAndReceipt(t *testing.T) {
 	if _, err := s.LookupAnimeReceipt(ctx, k); !errors.Is(err, ErrAnimeIdempotency) {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"anime_source_baselines", "anime_release_decisions"} {
+	for _, table := range []string{"anime_release_decisions"} {
 		var n int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil || n != 0 {
 			t.Fatal("configuration authorized execution", table, n, err)

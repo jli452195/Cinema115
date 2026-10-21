@@ -15,7 +15,7 @@ func animeDownloadTargetFixture(t *testing.T) (*Store, model.AnimeDownloadTarget
 	if err := s.SaveP115Accounts(ctx, P115AccountState{Accounts: []P115AccountRow{{ID: "main", Name: "主账号", UID: "123", Primary: true, Ownership: "admin", Revision: 2, Cookie: []byte("encrypted")}}}); err != nil {
 		t.Fatal(err)
 	}
-	settings := model.AnimeSettings{Revision: 1, AccountID: animePtr("main"), AccountRevision: animePtr(int64(2)), UID: animePtr("123"), DownloadCID: animePtr("100"), DownloadPath: animePtr("/动漫")}
+	settings := model.AnimeSettings{Revision: 1, AccountID: animePtr("main"), AccountRevision: animePtr(int64(2)), UID: animePtr("123"), OrganizeCID: animePtr("900"), OrganizePath: animePtr("/organized"), DownloadCID: animePtr("100"), DownloadPath: animePtr("/动漫")}
 	if _, err := s.SaveAnimeSettings(ctx, settings, animeAdminKey("target_settings")); err != nil {
 		t.Fatal(err)
 	}

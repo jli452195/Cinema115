@@ -57,8 +57,6 @@ func deleteAnimeSubscriptionTx(ctx context.Context, tx *sql.Tx, sub model.AnimeS
 		`DELETE FROM anime_job_selections WHERE source_id IN (` + sources + `)`,
 		`DELETE FROM anime_release_decisions WHERE source_id IN (` + sources + `)`,
 		`DELETE FROM anime_source_activity WHERE source_id IN (` + sources + `)`,
-		`UPDATE anime_subscription_sources SET active_baseline_id=NULL WHERE subscription_id=?`,
-		`DELETE FROM anime_source_baselines WHERE source_id IN (` + sources + `)`,
 		`DELETE FROM anime_subscription_archives WHERE subscription_id=?`,
 		`DELETE FROM anime_subscription_sources WHERE subscription_id=?`,
 		`DELETE FROM anime_subscriptions WHERE id=?`,

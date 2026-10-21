@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/model"
@@ -172,21 +171,14 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if err != nil {
 		return out, fmt.Errorf("read anime claim subscription: %w", err)
 	}
-	if sub.Status != "enabled" || sub.FirstEnabledAt == nil || source.Status != "enabled" || !source.RunWhenEnabled || source.ActiveBaselineID == nil || source.Revision != d.SourceRevision {
+	if sub.Status != "enabled" || sub.FirstEnabledAt == nil || source.Status != "enabled" || !source.RunWhenEnabled || source.Revision != d.SourceRevision {
 		return out, ErrAnimeConflict
 	}
 	basis := d.Snapshot.Selection
-	if basis == nil || !model.ValidAnimeID(basis.BaselineID) || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 {
+	if basis == nil || basis.SelectedAt <= 0 {
 		return out, ErrAnimeInvalid
 	}
-	if basis.Target != target || basis.SubscriptionGeneration != sub.RunGeneration || basis.SourceGeneration != source.RunGeneration {
-		return out, ErrAnimeConflict
-	}
-	var baselineOK bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_source_baselines WHERE id=? AND source_id=? AND source_revision<=?)`, basis.BaselineID, sourceID, source.Revision).Scan(&baselineOK); err != nil {
-		return out, fmt.Errorf("check anime selection baseline: %w", err)
-	}
-	if !baselineOK {
+	if !sameAnimeDownloadBinding(basis.Target, target) || basis.SubscriptionGeneration != sub.RunGeneration || basis.SourceGeneration != source.RunGeneration {
 		return out, ErrAnimeConflict
 	}
 	release, err := scanAnimeRelease(tx.QueryRowContext(ctx, `SELECT `+animeReleaseColumns+` FROM anime_releases WHERE id=?`, releaseID))
@@ -197,12 +189,12 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if release.Provider != source.Provider || evidence.Provider != release.Provider || evidence.PostKey != release.PostKey || evidence.ContentFingerprint != release.ContentFingerprint || d.ReleaseFingerprint != release.ContentFingerprint {
 		return out, ErrAnimeIdentity
 	}
-	if d.Snapshot.SchemaVersion != model.AnimeSchemaVersion || !reflect.DeepEqual(d.Snapshot.Binding, source.Binding) || !reflect.DeepEqual(d.Snapshot.Rules, source.Rules) || !reflect.DeepEqual(d.Snapshot.Parse, release.Parse) || d.Snapshot.Title != release.Title || source.ItemID == nil || source.GroupID == nil || source.GroupName == nil {
+	if d.Snapshot.SchemaVersion != model.AnimeSchemaVersion || !reflect.DeepEqual(d.Snapshot.Binding, source.Binding) || !reflect.DeepEqual(d.Snapshot.Rules, source.Rules) || d.Snapshot.Title != release.Title || source.ItemID == nil || source.GroupID == nil || source.GroupName == nil {
 		return out, ErrAnimeConflict
 	}
-	if d.Snapshot.RuleVersion != animepreview.RuleVersion || d.Snapshot.ParserVersion != release.ParserVersion || d.Snapshot.TimeVersion != release.TimeVersion || release.ParserVersion != animeparse.ParserVersion || release.TimeVersion != animeparse.TimeVersion {
-		return out, ErrAnimeConflict
-	}
+	// Interpretation belongs to the selected source, not the shared observation cache.
+	release.Parse = d.Snapshot.Parse
+	release.ParserVersion, release.TimeVersion = d.Snapshot.ParserVersion, d.Snapshot.TimeVersion
 	if source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
 		return out, ErrAnimeInvalid
 	}

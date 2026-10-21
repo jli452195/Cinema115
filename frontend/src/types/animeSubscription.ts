@@ -10,12 +10,11 @@ export interface AnimeSpec { resolution?: string; languages?: string[]; subtitle
 export interface AnimeRules {
 	chapterFirstEpisode?: number | null
   schemaVersion: 1
-  resolution: null | '720p' | '1080p' | '2160p' | 'any'
-  include: string[]
+  match: string[]
   exclude: string[]
   minimumEpisode: number | null
-  specMode?: 'profiles' | 'any' | ''
-  specProfiles?: AnimeSpec[]
+  episodePattern?: string
+  episodeGroup?: number
 }
 export interface AnimeSourceConfig {
   ref: string; id: string; expectedRevision: number
@@ -39,7 +38,7 @@ export interface MikanSearch { items: { id: string; title: string; coverUrl: str
 export interface AnimeSourceSample {
   source: { provider?: AnimeSourceProvider; itemId: string; groupId: string; title: string; groupName: string; expiresAt: number }
   releases: { postKey: string; title: string; parse: { episode: number | null; kind: string; spec: AnimeSpec }; specKey: string; sizeRaw: string; publishedRaw: string }[]
-  profiles: { key: string; label: string; spec: AnimeSpec; count: number }[]
+  profiles: { key: string; label: string; spec: AnimeSpec; match: string[]; count: number }[]
   profilesTruncated: boolean; profileReviewCount?: number; completeness: string; observedAt: number | null; specVersion: number
 }
 export interface AnimePreviewRef { batchId: string; sourceRef: string; sourcePreviewId: string; loadRevision: number; sourceId?: string }

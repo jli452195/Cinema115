@@ -34,23 +34,7 @@ func TestSpecificationPublisherMetadata(t *testing.T) {
 	}
 }
 
-func TestSpecificationMatchSelectedDimensions(t *testing.T) {
-	profile := model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard"}
-	tests := []struct {
-		observed       model.AnimeSpec
-		match, unknown bool
-	}{
-		{model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard", Codec: "h265", BitDepth: "10"}, true, false},
-		{model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hans"}}, false, true},
-		{model.AnimeSpec{Resolution: "720p"}, false, false},
-		{model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hans", "zh-Hant"}, SubtitleMode: "hard"}, false, false},
-	}
-	for _, tt := range tests {
-		m, u := MatchSpec(profile, tt.observed)
-		if m != tt.match || u != tt.unknown {
-			t.Fatalf("%+v: got %v %v", tt.observed, m, u)
-		}
-	}
+func TestSpecificationStableKeyDoesNotMutateInput(t *testing.T) {
 	a := model.AnimeSpec{Languages: []string{"zh-Hans", "ja"}}
 	b := model.AnimeSpec{Languages: []string{"ja", "zh-Hans"}}
 	if SpecKey(a) != SpecKey(b) || a.Languages[0] != "zh-Hans" {

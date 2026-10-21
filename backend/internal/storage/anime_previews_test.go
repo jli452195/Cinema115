@@ -73,7 +73,7 @@ func TestAnimePreviewPersistenceAndNoExecution(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(b, got) {
 		t.Fatal("snapshot changed on restart", err)
 	}
-	for _, table := range []string{"anime_source_baselines", "anime_release_decisions", "anime_subscriptions"} {
+	for _, table := range []string{"anime_release_decisions", "anime_subscriptions"} {
 		var count int
 		if err := reopened.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("preview authorized work", table, count, err)
@@ -242,7 +242,7 @@ func TestAnimePreviewVersionsAndIndependentSourceReuse(t *testing.T) {
 	ref := previewRef(b, 0)
 	standby := c.Sources[0]
 	standby.Ref, standby.Role, standby.Position, standby.GroupID = "backup", "standby", 1, animePtr("28")
-	standby.Rules.Include = []string{"different"}
+	standby.Rules.Match = []string{"different"}
 	c.Sources = append(c.Sources, standby)
 	if _, err := s.CreateAnimePreview(ctx, "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+1); err != nil {
 		t.Fatal("draft standby invalidated main", err)

@@ -12,7 +12,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await page.clock.install({ time: new Date(now) })
   let settings = { revision: 3, accountId: 'main', accountRevision: 2, uid: '123', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
   const naming = { schemaVersion: 1, target: { tmdbId: '335790', title: '黑暗召唤师在地下恋爱中', year: '2026', season: 1, groupId: '', groupName: 'TMDB 默认', fingerprint: 'a'.repeat(64), seasons: [{ number: 1, name: '第1季', episodeCount: 12, episodes: [{ id: '101', number: 1, name: '开始' }] }] }, sources: [{ sourceRef: 'source-a', segments: [{ first: 25, sourceBase: 25, targetSeason: 1, targetBase: 1 }], overrides: [] }] }
-  const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, minimumEpisode: 25, include: [], exclude: [] } }
+  const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, minimumEpisode: 25, match: [], exclude: [] } }
   const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
   const plan = job => ({ mode: 'standard', revision: 2, example: !job, cloudConflictChecked: false, items: job ? [
     { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: 'ready', reason: 'mapped' },
@@ -112,7 +112,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     state.jobRevision++; await refresh.click()
     const confirm = job.getByRole('button', { name: '核对原安排', exact: true })
     await confirm.focus(); await page.keyboard.press('Enter')
-    await job.getByText(/安排核对已记录/).waitFor()
+    await job.getByText('安排核对已完成，后台会沿用原任务处理。', { exact: true }).waitFor()
     const reconciles = calls.filter(c => c.endpoint.endsWith('/jobs/job-a/reconcile'))
     assert.equal(reconciles.length, 2); assert.equal(reconciles[0].key, reconciles[1].key)
     assert.deepEqual(reconciles[0].body, reconciles[1].body); assert.equal(state.reconcileWrites, 1)
@@ -124,7 +124,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await reconcile.focus(); await page.keyboard.press('Enter')
     await job.getByText('正在安排…', { exact: true }).waitFor()
     await refresh.focus(); releaseReconcile()
-    await job.getByText(/安排核对已记录/).waitFor(); state.reconcileGate = undefined
+    await job.getByText('安排核对已完成，后台会沿用原任务处理。', { exact: true }).waitFor(); state.reconcileGate = undefined
     assert.equal(await refresh.evaluate(el => el === document.activeElement), true, '异步反馈不抢走用户已移动的焦点')
     passed.push('等待核对回执时用户可继续键盘导航，异步完成不抢回焦点')
     for (const [phase, label] of [['working', '正在整理'], ['unknown', '整理结果待核对'], ['needs_review', '整理需要处理'], ['done', '已整理']]) {

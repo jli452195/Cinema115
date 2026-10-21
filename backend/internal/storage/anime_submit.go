@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
 )
@@ -103,7 +102,7 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 		if err := decodeAnimeJSON(selection.raw, &snap); err != nil {
 			return err
 		}
-		if snap.SchemaVersion != 1 || snap.Target != job.Snapshot.Target || snap.Protocol != "bt_v1" || snap.InfoHash != job.Snapshot.InfoHash || snap.Source.SourceID != selection.source || snap.Release.ID != selection.release || snap.Source.GroupName != job.Snapshot.Source.GroupName {
+		if snap.SchemaVersion != 1 || !sameAnimeDownloadBinding(snap.Target, job.Snapshot.Target) || snap.Protocol != "bt_v1" || snap.InfoHash != job.Snapshot.InfoHash || snap.Source.SourceID != selection.source || snap.Release.ID != selection.release || snap.Source.GroupName != job.Snapshot.Source.GroupName {
 			continue
 		}
 		source, err := scanAnimeSource(tx.QueryRowContext(ctx, `SELECT `+animeSourceColumns+` FROM anime_subscription_sources WHERE id=?`, selection.source))
@@ -123,7 +122,7 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 				return nil
 			}
 		}
-		if source.Status != "enabled" || !source.RunWhenEnabled || sub.Status != "enabled" || sub.FirstEnabledAt == nil || sub.RunGeneration != snap.Source.SubscriptionGeneration || source.RunGeneration != snap.Source.SourceGeneration || source.Revision != snap.Source.SourceRevision || source.SubscriptionID != snap.Source.SubscriptionID || source.ActiveBaselineID == nil {
+		if source.Status != "enabled" || !source.RunWhenEnabled || sub.Status != "enabled" || sub.FirstEnabledAt == nil || sub.RunGeneration != snap.Source.SubscriptionGeneration || source.RunGeneration != snap.Source.SourceGeneration || source.Revision != snap.Source.SourceRevision || source.SubscriptionID != snap.Source.SubscriptionID {
 			continue
 		}
 		if source.Provider != snap.Source.Provider || source.NamespaceID != snap.Source.NamespaceID || source.ItemID == nil || *source.ItemID != snap.Source.ItemID || source.GroupID == nil || *source.GroupID != snap.Source.GroupID || source.GroupName == nil || *source.GroupName != snap.Source.GroupName {
@@ -137,23 +136,17 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 			continue
 		}
 		basis := d.Snapshot.Selection
-		if basis == nil || basis.Target != job.Snapshot.Target || basis.SourceGeneration != source.RunGeneration || basis.SubscriptionGeneration != sub.RunGeneration || basis.BaselineID != *source.ActiveBaselineID || basis.SelectedAt <= 0 {
-			continue
-		}
-		var baseline bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_source_baselines WHERE id=? AND source_id=? AND source_revision<=?)`, basis.BaselineID, source.ID, source.Revision).Scan(&baseline); err != nil {
-			return err
-		}
-		if !baseline {
+		if basis == nil || !sameAnimeDownloadBinding(basis.Target, job.Snapshot.Target) || basis.SourceGeneration != source.RunGeneration || basis.SubscriptionGeneration != sub.RunGeneration || basis.SelectedAt <= 0 {
 			continue
 		}
 		release, err := scanAnimeRelease(tx.QueryRowContext(ctx, `SELECT `+animeReleaseColumns+` FROM anime_releases WHERE id=?`, selection.release))
 		if err != nil {
 			return err
 		}
-		if release.Provider != source.Provider || release.ContentFingerprint != snap.Release.ContentFingerprint || release.ContentFingerprint != d.ReleaseFingerprint || release.Title != d.Snapshot.Title || release.ParserVersion != animeparse.ParserVersion || release.TimeVersion != animeparse.TimeVersion || d.Snapshot.RuleVersion != animepreview.RuleVersion || d.Snapshot.ParserVersion != release.ParserVersion || d.Snapshot.TimeVersion != release.TimeVersion || !reflect.DeepEqual(source.Binding, d.Snapshot.Binding) || !reflect.DeepEqual(source.Rules, d.Snapshot.Rules) || !reflect.DeepEqual(release.Parse, d.Snapshot.Parse) {
+		if release.Provider != source.Provider || release.ContentFingerprint != snap.Release.ContentFingerprint || release.ContentFingerprint != d.ReleaseFingerprint || release.Title != d.Snapshot.Title || !reflect.DeepEqual(source.Binding, d.Snapshot.Binding) || !reflect.DeepEqual(source.Rules, d.Snapshot.Rules) {
 			continue
 		}
+		release.Parse = snap.Release.Parse
 		match, err := animepreview.MatchesRelease(source.Binding, source.Rules, release)
 		if err != nil {
 			return err

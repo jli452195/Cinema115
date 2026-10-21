@@ -78,7 +78,7 @@ func (f *animeHTTPMikan) ReadSource(ctx context.Context, in mikan.SourceRequest)
 }
 func animeHTTPPtr[T any](v T) *T { return &v }
 func animeHTTPSource() model.AnimeSourceConfig {
-	return model.AnimeSourceConfig{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: animeHTTPPtr("2259"), GroupID: animeHTTPPtr("45"), GroupName: animeHTTPPtr("browser"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animeHTTPPtr(1), Last: animeHTTPPtr(100)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animeHTTPPtr("1080p"), MinimumEpisode: animeHTTPPtr(1)}}
+	return model.AnimeSourceConfig{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: animeHTTPPtr("2259"), GroupID: animeHTTPPtr("45"), GroupName: animeHTTPPtr("browser"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animeHTTPPtr(1), Last: animeHTTPPtr(100)}}, Rules: model.AnimeRules{SchemaVersion: 1, Match: []string{"(?i)1080p"}, MinimumEpisode: animeHTTPPtr(1)}}
 }
 
 type animeHTTPFixture struct {
@@ -217,6 +217,25 @@ func TestAnimeHTTPStrictBoundaryAndSafeErrors(t *testing.T) {
 
 func TestAnimeHTTPDefinitionsValidateBeforeReads(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
+	for _, field := range []string{"match", "exclude", "episodePattern", "episodeGroup"} {
+		source := animeHTTPSource()
+		switch field {
+		case "match":
+			source.Rules.Match = []string{`(?<=-)\d+`}
+		case "exclude":
+			source.Rules.Exclude = []string{"["}
+		case "episodePattern":
+			source.Rules.EpisodePattern = "["
+		case "episodeGroup":
+			source.Rules.EpisodePattern, source.Rules.EpisodeGroup = `(\d+)`, 2
+		}
+		in := service.AnimeSaveInput{SettingsRevision: 1, Config: service.AnimeSaveConfig{Sources: []model.AnimeSourceConfig{source}}}
+		v := f.call(t, "POST", "/subscriptions", f.admin, "invalid_rule_"+field, in, 400)
+		details, ok := v["details"].(map[string]any)
+		if v["code"] != "SOURCE_RULE_INVALID" || !ok || details["field"] != field || details["sourceRef"] != "main" {
+			t.Fatal(v)
+		}
+	}
 	{
 		in := service.AnimeSaveInput{SettingsRevision: 1}
 		for _, route := range []struct{ method, path string }{{"POST", "/subscriptions"}, {"PATCH", "/subscriptions/old-config"}} {

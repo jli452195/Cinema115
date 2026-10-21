@@ -11,25 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/client/animefeed"
-	"strm115/backend/internal/model"
 )
 
 func discoveryFixture(t *testing.T) (*downloadClaimFixture, int64) {
 	t.Helper()
 	f := newDownloadClaimFixture(t)
 	now := time.Now().UnixMilli()
-	baseline := model.AnimeExecutionBaseline{SchemaVersion: 1, Target: f.target, RuleVersion: animepreview.RuleVersion, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion}
-	raw, err := animeJSON(baseline)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, raw); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=?`, now-1); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +42,7 @@ func discoveryPage(p AnimeSourcePoll, now int64, rows ...animefeed.SourceRelease
 	return animefeed.SourcePage{Kind: "rss", Source: animefeed.NewSource(p.Source.Provider, *p.Source.ItemID, *p.Source.GroupID), RawCount: len(rows), Releases: rows, ObservedAt: time.UnixMilli(now), Completeness: "partial", StopReason: "rss_window"}
 }
 
-func TestAnimeDiscoveryBaselineAndIndependentDecisions(t *testing.T) {
+func TestAnimeDiscoveryIndependentDecisions(t *testing.T) {
 	f, now := discoveryFixture(t)
 	p := discoveryPoll(t, f.store, now)
 	rows := []animefeed.SourceRelease{discoveryRow("rel_current", now), discoveryRow("rel_ancient", 1), discoveryRow("rel_future", now+360001), discoveryRow("rel_missing", now), discoveryRow("rel_filter", now)}
@@ -76,7 +65,7 @@ func TestAnimeDiscoveryBaselineAndIndependentDecisions(t *testing.T) {
 		if err != nil || d.Disposition != disposition {
 			t.Fatal(key, d.Disposition, err)
 		}
-		if disposition == "selected" && (d.Snapshot.Selection == nil || d.Snapshot.Selection.Target != f.target || d.Snapshot.Selection.BaselineID != *p.Source.ActiveBaselineID) {
+		if disposition == "selected" && (d.Snapshot.Selection == nil || d.Snapshot.Selection.Target != f.target) {
 			t.Fatal("missing execution basis", d)
 		}
 	}
@@ -340,11 +329,11 @@ func TestAnimeDiscoveryPendingRetryAndExplicitDecisions(t *testing.T) {
 	}
 }
 
-func TestAnimeDiscoveryRejectsInvalidBaselineWithoutRequest(t *testing.T) {
-	for _, mode := range []string{"legacy", "parser", "target"} {
+func TestAnimeDiscoveryRejectsMissingDirectoryWithoutRequest(t *testing.T) {
+	for _, mode := range []string{"target"} {
 		t.Run(mode, func(t *testing.T) {
 			f, now := discoveryFixture(t)
-			query := map[string]string{"legacy": `UPDATE anime_source_baselines SET snapshot_json='{}'`, "parser": `UPDATE anime_source_baselines SET snapshot_json=json_set(snapshot_json,'$.parserVersion',1)`, "target": `UPDATE anime_settings SET revision=revision+1,download_cid='999'`}[mode]
+			query := `UPDATE anime_settings SET organize_cid=NULL,organize_path=NULL`
 			if _, err := f.store.db.Exec(query); err != nil {
 				t.Fatal(err)
 			}

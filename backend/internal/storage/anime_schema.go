@@ -74,7 +74,6 @@ CREATE TABLE IF NOT EXISTS anime_subscription_sources (
  rules_json TEXT NOT NULL CHECK(json_valid(rules_json)),
  revision INTEGER NOT NULL CHECK(revision>0),
  run_generation INTEGER NOT NULL CHECK(run_generation>0),
- active_baseline_id TEXT REFERENCES anime_source_baselines(id) DEFERRABLE INITIALLY DEFERRED,
  health TEXT NOT NULL CHECK(health IN ('unknown','ok','error','cooldown','unavailable')),
  checked_at INTEGER,
  attempted_at INTEGER,
@@ -160,14 +159,6 @@ CREATE TABLE IF NOT EXISTS anime_preview_items (
  PRIMARY KEY(preview_id,release_id),
  UNIQUE(preview_id,ordinal),
  CHECK(default_selected<=selectable)
-);
-
-CREATE TABLE IF NOT EXISTS anime_source_baselines (
- id TEXT PRIMARY KEY NOT NULL,
- source_id TEXT NOT NULL REFERENCES anime_subscription_sources(id),
- source_revision INTEGER NOT NULL CHECK(source_revision>0),
- created_at INTEGER NOT NULL,
- snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))
 );
 
 CREATE TABLE IF NOT EXISTS anime_release_decisions (

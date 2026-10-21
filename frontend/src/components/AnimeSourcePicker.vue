@@ -2,8 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { IconArrowLeft, IconCheck, IconChevronDown, IconChevronRight, IconExternalLink, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
-import { animeProviderName, animeOriginLabel, animeSourceURL, animeBindingConfirmed, confirmAnimeSource, animeSpecKey, animeSpecLabel, type SourceForm } from '../utils/animeSourceForm'
-import type { AnimeSpec } from '../types/animeSubscription'
+import { animeProviderName, animeOriginLabel, animeSourceURL, animeBindingConfirmed, confirmAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; now: number }>()
 const emit = defineEmits<{ close: []; search: []; choose: [id: string, title: string]; group: []; sample: []; confirm: [] }>()
 const step = ref<'items' | 'groups' | 'rules'>(props.source.groupId ? 'rules' : props.source.itemId ? 'groups' : 'items')
@@ -14,11 +13,10 @@ let top = 0
 const prefix = computed(() => `source-picker-${props.source.ref}`)
 const partyLabel = computed(() => props.source.provider === 'garden' ? '发布方' : '字幕组')
 const sample = computed(() => props.source.sample)
-const profiles = computed(() => {
-  const options = [...(sample.value?.profiles || [])]
-  for (const spec of props.source.specProfiles) if (!options.some(option => animeSpecKey(option.spec) === animeSpecKey(spec))) options.push({ key: animeSpecKey(spec), spec, label: animeSpecLabel(spec), count: 0 })
-  return options
-})
+const profiles = computed(() => sample.value?.profiles || [])
+const originalRules = { identity: [props.source.provider, props.source.itemId, props.source.groupId].join(':'), chosen: props.source.templateChosen, match: props.source.match }
+const canRestoreRules = computed(() => originalRules.chosen && originalRules.identity === [props.source.provider, props.source.itemId, props.source.groupId].join(':') && originalRules.match !== props.source.match)
+function restoreRules() { props.source.templateChosen = true; props.source.match = originalRules.match; error.value = '' }
 async function go(value: typeof step.value) { positions[step.value] = top; step.value = value; error.value = ''; await nextTick(); shell.value?.scrollTo(positions[value]); heading.value?.focus({ preventScroll: true }) }
 watch(() => props.source.entry, entry => { if (entry && step.value === 'items') void go('groups') })
 function choose(id: string, title: string) { if (props.disabled || props.source.searchBusy) return; if (props.source.entry?.id === id) void go('groups'); else emit('choose', id, title) }
@@ -28,24 +26,15 @@ function group(id: string) {
   else emit('sample')
   void go('rules')
 }
-function selected(spec: AnimeSpec) { return props.source.specMode === 'profiles' && props.source.specProfiles.some(profile => animeSpecKey(profile) === animeSpecKey(spec)) }
-function toggle(spec: AnimeSpec, event: Event) {
-  const source = props.source, key = animeSpecKey(spec), wasSelected = selected(spec)
-  if (!wasSelected && source.specProfiles.length >= 12) {
-    error.value = '每个来源最多选择 12 种规格'; errorField.value = '[data-spec-option]'
-    if (event.target instanceof HTMLInputElement) event.target.checked = false
-    return
-  }
-  source.specMode = 'profiles'; source.resolution = 'any'
-  source.specProfiles = wasSelected ? source.specProfiles.filter(profile => animeSpecKey(profile) !== key) : [...source.specProfiles, JSON.parse(JSON.stringify(spec))]
-  error.value = ''
-}
-function allSpecifications() { const all = props.source.specMode !== 'any'; props.source.specMode = all ? 'any' : ''; props.source.specProfiles = []; props.source.resolution = all ? 'any' : ''; error.value = '' }
+function patternKey(patterns: string[]) { return JSON.stringify([...new Set(patterns.map(pattern => pattern.trim()).filter(Boolean))].sort()) }
+function selected(patterns: string[]) { return props.source.templateChosen && patternKey(props.source.match.split(/\r?\n/)) === patternKey(patterns) }
+const customRules = computed(() => props.source.templateChosen && !!props.source.match.trim() && !profiles.value.some(option => selected(option.match)))
+function chooseTemplate(patterns: string[]) { props.source.templateChosen = true; props.source.match = patterns.join('\n'); error.value = '' }
 async function confirm() {
   if (props.disabled || props.source.searchBusy || props.source.sampleBusy && !sample.value) return
   error.value = ''
   let target = ''
-  if (!props.source.specMode && !props.source.resolution || props.source.specMode === 'profiles' && !props.source.specProfiles.length) { error.value = '请选择至少一种规格，或明确选择全部规格'; target = '[data-spec-option]' }
+  if (!props.source.templateChosen) { error.value = '请选择一个匹配模板，或选择全部规格'; target = '[data-spec-option]' }
   else {
     try {
       confirmAnimeSource(props.source)
@@ -89,7 +78,20 @@ async function confirm() {
             <p v-if="source.sampleError" role="status" class="ae-error">{{ source.sampleError }}{{ sample ? '，保留上次成功样本。' : '' }}</p><p v-else-if="source.sampleBusy && !sample" role="status" class="ae-note">正在读取此{{ partyLabel }}的近期资源…</p>
             <template v-if="sample"><ul class="ae-recent-list"><li v-for="item in sample.releases.slice(0, 1)" :key="item.postKey"><p>{{ item.title }}</p><small>{{ item.parse.episode != null ? `发布第 ${item.parse.episode} 话` : '编号待核对' }}<span v-if="item.sizeRaw"> · {{ item.sizeRaw }}</span></small></li></ul><details v-if="sample.releases.length > 1" class="ae-advanced"><summary>其余 {{ sample.releases.length - 1 }} 条样本<IconChevronDown :size="15" /></summary><ul class="ae-recent-list"><li v-for="item in sample.releases.slice(1)" :key="item.postKey"><p>{{ item.title }}</p><small>{{ item.sizeRaw }}</small></li></ul></details><p v-if="!sample.releases.length" class="ae-note">来源读取成功，当前没有发布。可明确选择全部规格，订阅后等待更新。</p><p class="ae-note ae-sample-boundary">{{ sample.releases.length }} 条近期样本，仅代表已读窗口。规格依据标题声明。<span v-if="sample.observedAt">读取于 {{ new Date(sample.observedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}。</span></p></template>
           </section>
-          <section class="ae-specifications" aria-label="资源规格"><h4>保留哪些规格<small v-if="!source.specMode && !source.resolution" class="ae-section-state">请选择</small></h4><p class="ae-note">{{ !sample && source.sampleError ? '未能读取样本，可选择全部规格继续配置，或稍后重试。' : '可多选，同集不同版本分别保留。' }}</p><p v-if="source.sampleBusy && !sample" class="ae-note" role="status">正在分析近期发布规格…</p><div class="ae-spec-grid" :aria-busy="source.sampleBusy && !sample"><label v-for="option in profiles" :key="option.key" class="ae-spec-option" :class="{ selected: selected(option.spec) }"><input data-spec-option type="checkbox" :disabled="source.sampleBusy && !sample" :checked="selected(option.spec)" @change="toggle(option.spec, $event)" /><span><strong>{{ option.label }}</strong><small>{{ option.count ? `当前样本 ${option.count} 条` : '未在当前样本出现，保留原规则' }}</small></span></label><label class="ae-spec-option" :class="{ selected: source.specMode === 'any' }"><input data-spec-option type="checkbox" :disabled="source.sampleBusy && !sample" :checked="source.specMode === 'any'" @change="allSpecifications" /><span><strong>全部规格</strong><small>接收该组所有规格，可能包含同集多个版本</small></span></label></div><p v-if="error && errorField === '[data-spec-option]'" role="alert" class="ae-error">{{ error }}</p><p v-if="sample?.profileReviewCount" class="ae-note">{{ sample.profileReviewCount }} 条标题同时列出多种规格，未作为单独选项；可在匹配预览中核对。</p><p v-if="sample?.profilesTruncated" class="ae-note">样本规格较多，仅展示部分组合；不会自动扩大所选规则。</p><p v-if="!source.specMode && source.resolution" class="ae-note">当前保留原画质规则：{{ source.resolution === 'any' ? '不限画质' : source.resolution }}。可在上方选择更具体的规格。</p></section>
+          <section class="ae-specifications" aria-label="资源规格">
+            <h4>选择匹配模板<small v-if="!source.templateChosen" class="ae-section-state">请选择</small></h4>
+            <p class="ae-note">{{ !sample && source.sampleError ? '未能读取样本，可选择全部规格继续配置，或稍后重试。' : '套用模板会替换匹配正则；排除与集号规则保留。确认后可直接编辑正则。' }}</p>
+            <button v-if="canRestoreRules" type="button" class="ae-link" @click="restoreRules">恢复打开时的匹配规则</button>
+            <p v-if="source.sampleBusy && !sample" class="ae-note" role="status">正在分析近期发布规格…</p>
+            <div class="ae-spec-grid" :aria-busy="source.sampleBusy && !sample">
+              <label v-if="customRules" class="ae-spec-option selected"><input data-spec-option type="radio" :name="`${prefix}-template`" checked /><span><strong>保留当前匹配正则</strong><small>已自定义，可回到订阅继续编辑</small></span></label>
+              <label v-for="option in profiles" :key="option.key" class="ae-spec-option" :class="{ selected: selected(option.match) }"><input data-spec-option type="radio" :name="`${prefix}-template`" :disabled="source.sampleBusy && !sample" :checked="selected(option.match)" @change="chooseTemplate(option.match)" /><span><strong>{{ option.label }}</strong><small>当前样本 {{ option.count }} 条</small></span></label>
+              <label class="ae-spec-option" :class="{ selected: source.templateChosen && !source.match }"><input data-spec-option type="radio" :name="`${prefix}-template`" :disabled="source.sampleBusy && !sample" :checked="source.templateChosen && !source.match" @change="chooseTemplate([])" /><span><strong>全部规格</strong><small>接收该组所有规格，同集不同规格分别保留</small></span></label>
+            </div>
+            <p v-if="error && errorField === '[data-spec-option]'" role="alert" class="ae-error">{{ error }}</p>
+            <p v-if="sample?.profileReviewCount" class="ae-note">{{ sample.profileReviewCount }} 条标题同时列出多种规格，未作为单独选项；可在匹配预览中核对。</p>
+            <p v-if="sample?.profilesTruncated" class="ae-note">样本规格较多，仅展示部分组合；不会自动扩大所选规则。</p>
+          </section>
 
         </template>
       </fieldset>

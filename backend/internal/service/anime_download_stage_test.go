@@ -28,7 +28,7 @@ func animeEnabledStageWithConfig(t *testing.T, configure func(*animeDownloadFixt
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "garden", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("123"), GroupID: bindingPtr("dmhy_f45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(12)}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: bindingPtr(1)}}}}
+	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "garden", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("123"), GroupID: bindingPtr("dmhy_f45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(1), Last: bindingPtr(12)}}, Rules: model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(1)}}}}
 	row := animefeed.SourceRelease{PostKey: "rel_stage", Title: "[字幕组] 番剧 - 01 [1080p]", MagnetHint: "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)}
 	// Keep the generic download fixture valid for automatic initialization.
 	account, err := f.accounts.Primary("")

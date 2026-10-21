@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 55
+const schemaVersion = 56
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -77,7 +77,7 @@ func (s *Store) initialize(ctx context.Context) (resultErr error) {
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&priorVersion); err != nil {
 		return err
 	}
-	if priorVersion >= 39 && priorVersion < 53 {
+	if priorVersion >= 39 && priorVersion < 56 {
 		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
 			return err
 		}
@@ -503,18 +503,13 @@ PRAGMA user_version=30;`); err != nil {
 ); PRAGMA user_version=38;`); err != nil {
 		return fmt.Errorf("创建缺集检测排除记录: %w", err)
 	}
-	if version < 53 {
+	if version < 56 {
 		if err := resetDevelopmentAnime(ctx, tx, version >= 51); err != nil {
 			return fmt.Errorf("重建动漫订阅测试存储: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, animeLifecycleSchema); err != nil {
 		return fmt.Errorf("create anime lifecycle storage: %w", err)
-	}
-	if version < 55 {
-		if err := purgeRemovedAnimeSubscriptions(ctx, tx); err != nil {
-			return fmt.Errorf("清理已移除的动漫订阅: %w", err)
-		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)

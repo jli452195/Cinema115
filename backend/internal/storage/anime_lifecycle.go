@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
 )
@@ -85,7 +84,7 @@ func animeCompletionRange(sub model.AnimeSubscription, source model.AnimeSource,
 func activeAnimeSources(sub model.AnimeSubscription) []model.AnimeSource {
 	out := make([]model.AnimeSource, 0, len(sub.Sources))
 	for _, source := range sub.Sources {
-		if source.RunWhenEnabled && (source.Status == "enabled" || source.Status == "paused" && source.ActiveBaselineID == nil) {
+		if source.RunWhenEnabled && source.Status == "enabled" {
 			out = append(out, source)
 		}
 	}
@@ -127,7 +126,7 @@ func readAnimeLifecycle(ctx context.Context, q animeReader, sub model.AnimeSubsc
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return out, false, err
 		}
-		if source.Health != "ok" || source.CheckToken != nil || source.ActiveBaselineID == nil || revision != source.Revision || success <= 0 || now-success > 2*animeDay || since > now {
+		if source.Health != "ok" || source.CheckToken != nil || revision != source.Revision || success <= 0 || now-success > 2*animeDay || since > now {
 			healthy = false
 		}
 		quiet = max(quiet, since)
@@ -224,14 +223,7 @@ func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.Anim
 		if err != nil {
 			return false, err
 		}
-		profiles := source.Rules.SpecProfiles
-		if source.Rules.SpecMode != "profiles" {
-			profiles = []model.AnimeSpec{{}}
-		}
-		found := make([]map[int]bool, len(profiles))
-		for i := range found {
-			found[i] = make(map[int]bool, last-first+1)
-		}
+		found := make(map[int]bool, last-first+1)
 		for rows.Next() {
 			var raw string
 			var snapshot model.AnimeDownloadSnapshot
@@ -250,11 +242,7 @@ func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.Anim
 				return false, err
 			}
 			if matches && p.Kind == "episode" && p.Episode != nil && *p.Episode >= first && *p.Episode <= last {
-				for i, profile := range profiles {
-					if ok, _ := animeparse.MatchSpec(profile, p.Spec); ok {
-						found[i][*p.Episode] = true
-					}
-				}
+				found[*p.Episode] = true
 			}
 		}
 		readErr := rows.Err()
@@ -265,10 +253,8 @@ func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.Anim
 		if closeErr != nil {
 			return false, closeErr
 		}
-		for _, episodes := range found {
-			if len(episodes) != last-first+1 {
-				return false, nil
-			}
+		if len(found) != last-first+1 {
+			return false, nil
 		}
 	}
 	return true, nil

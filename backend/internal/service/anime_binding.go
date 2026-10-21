@@ -341,6 +341,7 @@ type AnimeBindingRelease struct {
 }
 
 type AnimeSpecOption struct {
+	Match []string        `json:"match"`
 	Key   string          `json:"key"`
 	Label string          `json:"label"`
 	Spec  model.AnimeSpec `json:"spec"`
@@ -397,7 +398,7 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 				out.Profiles[index].Count++
 			} else if len(out.Profiles) < 12 {
 				profileIndexes[key] = len(out.Profiles)
-				out.Profiles = append(out.Profiles, AnimeSpecOption{Key: key, Label: animeparse.SpecLabel(parsed.Spec), Spec: parsed.Spec, Count: 1})
+				out.Profiles = append(out.Profiles, AnimeSpecOption{Match: animeparse.SpecPatterns(parsed.Spec), Key: key, Label: animeparse.SpecLabel(parsed.Spec), Spec: parsed.Spec, Count: 1})
 			} else {
 				out.ProfilesTruncated = true
 			}

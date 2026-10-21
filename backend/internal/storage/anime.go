@@ -221,12 +221,12 @@ func scanAnimeSubscription(row animeScanner) (model.AnimeSubscription, error) {
 	return sub, nil
 }
 
-const animeSourceColumns = `id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,active_baseline_id,health,checked_at,attempted_at,check_token,next_check_at,retry_after,error_code,created_at,updated_at`
+const animeSourceColumns = `id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,health,checked_at,attempted_at,check_token,next_check_at,retry_after,error_code,created_at,updated_at`
 
 func scanAnimeSource(row animeScanner) (model.AnimeSource, error) {
 	var s model.AnimeSource
 	var binding, rules string
-	err := row.Scan(&s.ID, &s.SubscriptionID, &s.Role, &s.Position, &s.Status, &s.RunWhenEnabled, &s.Provider, &s.SourceKey, &s.ItemID, &s.GroupID, &s.GroupName, &s.NamespaceID, &binding, &rules, &s.Revision, &s.RunGeneration, &s.ActiveBaselineID, &s.Health, &s.CheckedAt, &s.AttemptedAt, &s.CheckToken, &s.NextCheckAt, &s.RetryAfter, &s.ErrorCode, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.SubscriptionID, &s.Role, &s.Position, &s.Status, &s.RunWhenEnabled, &s.Provider, &s.SourceKey, &s.ItemID, &s.GroupID, &s.GroupName, &s.NamespaceID, &binding, &rules, &s.Revision, &s.RunGeneration, &s.Health, &s.CheckedAt, &s.AttemptedAt, &s.CheckToken, &s.NextCheckAt, &s.RetryAfter, &s.ErrorCode, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return s, err
 	}

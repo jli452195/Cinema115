@@ -51,7 +51,7 @@ func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
 		t.Fatal("new group failed to resume atomically", continued, err)
 	}
 	current, _ := s.Store.GetAnimeSubscription(ctx, sub.ID, false)
-	if len(current.Sources) != 2 || current.Sources[0].ID != main.ID || current.Sources[1].ActiveBaselineID != nil {
+	if len(current.Sources) != 2 || current.Sources[0].ID != main.ID {
 		t.Fatal("sources were replaced or initialized during save", current)
 	}
 	again, err := s.SaveDefinition(ctx, "admin", "archive_new_group", sub.ID, in)
@@ -125,7 +125,7 @@ func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) 
 		t.Fatal("pure save failed or read RSS", receipt, err, feed.reads, reads)
 	}
 	sub, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
-	if err != nil || sub.FirstEnabledAt == nil || sub.Sources[0].ActiveBaselineID != nil {
+	if err != nil || sub.FirstEnabledAt == nil {
 		t.Fatal("save created execution baseline", sub, err)
 	}
 	now := time.Now().Add(time.Second)
@@ -148,7 +148,7 @@ func TestAnimeDefinitionSaveWithoutPreviewAndWorkerInitialization(t *testing.T) 
 		t.Fatal(err)
 	}
 	after, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
-	if err != nil || after.Sources[0].ActiveBaselineID == nil || after.Sources[0].CheckedAt == nil {
+	if err != nil || after.Sources[0].CheckedAt == nil {
 		t.Fatal("worker did not initialize", err)
 	}
 	page, err := s.Store.ListAnimeReleases(ctx, storage.AnimeReleaseFilter{SourceID: after.Sources[0].ID, Page: 1, PageSize: 20})

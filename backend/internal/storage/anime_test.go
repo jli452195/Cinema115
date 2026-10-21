@@ -26,7 +26,7 @@ func createAnimeEntry(t *testing.T, s *Store, id *string) model.AnimeEntry {
 }
 
 func animeMainSource(ref, group string) model.AnimeSourceConfig {
-	return model.AnimeSourceConfig{Ref: ref, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: animePtr("2259"), GroupID: animePtr(group), GroupName: animePtr("字幕组" + group), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animePtr(25), Last: animePtr(36)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: animePtr("1080p"), MinimumEpisode: animePtr(30), Include: []string{"HEVC"}, Exclude: []string{}}}
+	return model.AnimeSourceConfig{Ref: ref, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: "mikan", ItemID: animePtr("2259"), GroupID: animePtr(group), GroupName: animePtr("字幕组" + group), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: animePtr(25), Last: animePtr(36)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}}, Rules: model.AnimeRules{SchemaVersion: 1, Match: []string{"(?i)1080p"}, MinimumEpisode: animePtr(30), Exclude: []string{}}}
 }
 
 func animeConfig(entryID string) model.AnimeSubscriptionConfig {
@@ -164,7 +164,7 @@ func resetAnimeSchemaToV38(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(tables) != 20 {
+	if len(tables) != 19 {
 		t.Fatalf("current anime table count: %d", len(tables))
 	}
 	// Build a v38 fixture with the existing business schema and no anime tables.
@@ -238,7 +238,7 @@ func TestAnimeConfigIndependentSources(t *testing.T) {
 	if main.SourceKey == nil || *main.SourceKey != "mikan:2259:45" || main.NamespaceID == backup.NamespaceID || *main.Rules.MinimumEpisode != 30 || main.Binding.ChapterCorrespondence.SourceEpisode != 25 || backup.Rules.MinimumEpisode != nil {
 		t.Fatal("source identity/rules mixed", sub)
 	}
-	for _, table := range []string{"anime_source_baselines", "anime_release_decisions"} {
+	for _, table := range []string{"anime_release_decisions"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("form selection authorized work", table, count, err)
@@ -555,9 +555,8 @@ func TestAnimeStructuredRulesPersistWithoutRevisionChurn(t *testing.T) {
 	c := animeConfig(entry.ID)
 	c.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "confirmed_chapter"}
 	c.Sources[0].Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}
-	c.Sources[0].Rules.Resolution = animePtr("any")
-	c.Sources[0].Rules.SpecMode = "profiles"
-	c.Sources[0].Rules.SpecProfiles = []model.AnimeSpec{{Resolution: "1080p", Languages: []string{"ja", "zh-Hans"}, SubtitleMode: "hard"}, {Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard"}}
+	c.Sources[0].Rules.Match = []string{`(?i)1080p`, `\d{1,3}`}
+	c.Sources[0].Rules.EpisodePattern, c.Sources[0].Rules.EpisodeGroup = `-\s*(\d+)`, 1
 	saved := saveAnimeConfig(t, s, c)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

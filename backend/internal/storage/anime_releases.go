@@ -255,6 +255,10 @@ func (s *Store) ListAnimeReleases(ctx context.Context, f AnimeReleaseFilter) (An
 		if err != nil {
 			return out, fmt.Errorf("read anime release observation: %w", err)
 		}
+		// Shared rows hold post identity; episode interpretation is source-local.
+		snapshot := out.Items[i].Decision.Snapshot
+		out.Items[i].Release.Parse = snapshot.Parse
+		out.Items[i].Release.ParserVersion, out.Items[i].Release.TimeVersion = snapshot.ParserVersion, snapshot.TimeVersion
 	}
 	if err := tx.Commit(); err != nil {
 		return out, fmt.Errorf("finish anime release list: %w", err)

@@ -187,10 +187,7 @@ func TestAnimeDefinitionReauthorizesSameQueuedResourceAndKeepsOtherSources(t *te
 		t.Fatal(err)
 	}
 	// Give this test authoritative, initialized baselines.
-	raw, _ := animeJSON(model.AnimeExecutionBaseline{SchemaVersion: 1, Target: f.target, RuleVersion: 1, ParserVersion: job.Snapshot.Release.ParserVersion, TimeVersion: job.Snapshot.Release.TimeVersion})
-	if _, err := f.store.db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, raw); err != nil {
-		t.Fatal(err)
-	}
+
 	editAnimeDefinition(t, f, func(c *model.AnimeSubscriptionConfig) {
 		c.Sources = c.Sources[:1]
 		c.Sources[0].Rules.MinimumEpisode = animePtr(25)
@@ -309,7 +306,7 @@ func TestAnimeDefinitionAcceptedAndUnknownSnapshotsStayImmutable(t *testing.T) {
 			})
 			oldSource, _ := f.store.GetAnimeSource(context.Background(), job.Snapshot.Source.SourceID)
 			newSource, err := f.store.GetAnimeSource(context.Background(), out.SourceIDs["replacement"])
-			if err != nil || oldSource.Status != "removed" || oldSource.NamespaceID == newSource.NamespaceID || newSource.ActiveBaselineID != nil {
+			if err != nil || oldSource.Status != "removed" || oldSource.NamespaceID == newSource.NamespaceID {
 				t.Fatal("source replacement inherited old runtime", oldSource.Status, newSource.NamespaceID, err)
 			}
 			after, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)

@@ -107,7 +107,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           labels = specs.map((_, i) => `规格组合 ${i+1}`)
         }
         data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), specVersion: 1, profilesTruncated: false,
-          profiles: specs.map((spec, i) => ({ key: `spec-${i}`, label: labels[i], spec, count: 1 })),
+          profiles: specs.map((spec, i) => ({ match: [spec.resolution, ...(spec.languages || []), spec.subtitleMode || ''].filter(Boolean).map(v => '(?i)' + v), key: `spec-${i}`, label: labels[i], spec, count: 1 })),
           releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode || 25}] [${labels[i]}]`, parse: { episode: state.sampleEpisode || 25, spec }, sizeRaw: '650 MB' })) }
       }
       else if (endpoint.endsWith('/subscriptions/preview')) {
@@ -151,7 +151,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           if (state.actionMode === 'unknown') { state.actionMode = ''; await route.abort(); return }
         }
       } else if ((endpoint.endsWith('/subscriptions') && method === 'POST') || (/\/subscriptions\/[^/]+$/.test(endpoint) && method === 'PATCH')) {
-        if (state.saveMode === 'conflict') { status = 409; data = { error: '配置版本已变化，输入保留', code: 'REVISION_CONFLICT' } }
+        if (state.ruleFailure) { status = 400; data = { error: '匹配正则第 1 条语法无效，请使用 Go/RE2 支持的表达式', code: 'SOURCE_RULE_INVALID', details: { sourceRef: body.config.sources[0].ref, field: state.ruleFailure, line: 1 } } }
+        else if (state.saveMode === 'conflict') { status = 409; data = { error: '配置版本已变化，输入保留', code: 'REVISION_CONFLICT' } }
         else if (state.saveMode === 'duplicate') { status = 409; data = { error: '该篇章已有订阅配置', code: 'SUBSCRIPTION_EXISTS', details: { existingId: 'saved-subscription' } } }
         else {
           const ids = Object.fromEntries(body.config.sources.map(s => [s.ref, s.id || `source-${s.ref}`]))
@@ -175,7 +176,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await page.getByRole('button', { name: '选择资源', exact: true }).click()
       await page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
       await page.getByRole('button', { name: group === '10' ? /字幕组甲/ : /字幕组乙/ }).click()
-      await page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+      await page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
       assert.equal(await page.getByLabel('来源范围', { exact: true }).count(), 0)
       assert.equal(await page.getByLabel('发布编号与篇章集号').count(), 0)
       await page.getByRole('button', { name: '使用此来源', exact: true }).click()
@@ -183,7 +184,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       const form = page.locator('.anime-source-form:visible')
       assert.equal(await form.getByLabel('从第几话开始').inputValue(), '1', 'recent samples never change default minimum')
       await form.getByLabel('从第几话开始').fill(first)
-      await form.locator('.ae-source-options summary').click()
+      await form.locator('.ae-source-options summary').first().click()
       await form.getByRole('checkbox', {name:'限定发布编号范围'}).check()
       await form.getByLabel('范围起点', { exact: true }).fill(first); await form.getByLabel('范围终点', { exact: true }).fill(last)
     }
@@ -222,7 +223,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await missing.page.setViewportSize({ width: 1440, height: 1080 })
     await missing.page.getByRole('button', { name: '选择资源', exact: true }).click()
     await missing.page.getByRole('button', { name: /字幕组甲/ }).click()
-    await missing.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await missing.page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
     await missing.page.getByRole('button', { name: '使用此来源', exact: true }).click()
     assert.equal(missing.calls.find(c => c.endpoint.endsWith('/source-bindings/preview')).body.entry.bangumiId, '583313')
     await missing.page.getByLabel('发布第几话', { exact: true }).fill('25')
@@ -270,7 +271,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.ok(unseeded.calls.filter(c => c.endpoint.endsWith('/sources/mikan/search')).every(c => !c.body.bangumiId))
     await unseeded.page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
     await unseeded.page.getByRole('button', { name: /字幕组甲/ }).click()
-    await unseeded.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await unseeded.page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
     await unseeded.page.getByRole('button', { name: '使用此来源', exact: true }).click()
     await wait(() => unseeded.page.locator('.ac-identity p').innerText().then(text => text.includes('TMDB')))
     assert.match(await unseeded.page.locator('.ac-identity h3').innerText(), /字幕资源/)
@@ -282,7 +283,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.doesNotMatch(await unrelated.page.locator('.ac-identity p').innerText(), /Bangumi/)
     await unrelated.page.getByRole('button', { name: '选择资源', exact: true }).click()
     await unrelated.page.getByRole('button', { name: /字幕组甲/ }).click()
-    await unrelated.page.getByRole('checkbox', { name: /^1080p 简 内嵌/ }).check()
+    await unrelated.page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
     await unrelated.page.getByRole('button', { name: '使用此来源', exact: true }).click()
     await unrelated.page.getByRole('button', { name: '保存', exact: true }).click()
     await wait(() => unrelated.page.locator('dialog[open]').count().then(n => n === 0))
@@ -298,6 +299,56 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       assert.equal(transient.calls.filter(c => c.endpoint.endsWith('/naming/search')).length, 0)
     }
     passed.push('rate limit, access denial and unrelated 404 do not activate metadata fallback')
+
+    const regex = await session()
+    await regex.go(); await regex.source()
+    const match = regex.page.getByLabel('匹配正则（全部满足）', {exact:true})
+    const exclude = regex.page.getByLabel('排除正则（任一命中）', {exact:true})
+    const expression = '(?i)1080p\n第\\d{1,3}话'
+    await match.fill(expression)
+    await exclude.fill('(?i)sample\n(?i)720p')
+    await regex.page.getByRole('button',{name:'修改来源规则',exact:true}).click()
+    const picker = regex.page.locator('dialog[open]').last()
+    await picker.getByRole('radio',{name:/保留当前匹配正则/}).waitFor()
+    assert.equal(await picker.locator('input[type=radio]:checked').count(),1)
+    for (const theme of ['light','dark']) {
+      await regex.page.evaluate(theme=>document.documentElement.classList.toggle('dark',theme==='dark'),theme)
+      const geometry = await picker.locator('input[type=radio]').first().boundingBox()
+      assert.equal(geometry.width,17,'radio must not inherit text input width')
+      assert.equal(geometry.height,17,'radio must not inherit text input minimum height')
+      await regex.page.screenshot({path:`test-results/anime-regex-picker-${theme}.png`})
+    }
+    await picker.getByRole('radio',{name:/全部规格/}).check()
+    await picker.getByRole('button',{name:'恢复打开时的匹配规则',exact:true}).click()
+    assert.equal(await picker.getByRole('radio',{name:/保留当前匹配正则/}).isChecked(),true)
+    await picker.getByRole('button',{name:'更新来源规则',exact:true}).click()
+    assert.equal(await match.inputValue(),expression)
+    assert.equal(await exclude.inputValue(),'(?i)sample\n(?i)720p','template selection preserves exclusion rules')
+    await regex.page.getByText('自定义集号提取',{exact:true}).click()
+    await regex.page.getByLabel('集号正则',{exact:true}).fill('第(\\d{1,3})话')
+    await regex.page.getByLabel('捕获组序号',{exact:true}).fill('1')
+    await regex.page.setViewportSize({width:390,height:844})
+    await match.scrollIntoViewIfNeeded()
+    const matchBox = await match.boundingBox(), excludeBox = await exclude.boundingBox()
+    assert.equal(matchBox.x,excludeBox.x,'phone regex fields use the same column')
+    assert.ok(excludeBox.y>=matchBox.y+matchBox.height,'phone exclusion field follows the match field')
+    await regex.page.screenshot({path:'test-results/anime-regex-form-mobile-dark.png'})
+    assert.ok(await regex.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'regex fields fit phone viewport')
+    regex.state.ruleFailure='match'
+    await regex.page.getByRole('button',{name:'保存',exact:true}).click()
+    await wait(()=>match.getAttribute('aria-invalid').then(value=>value==='true'))
+    assert.equal(await match.evaluate(el=>el===document.activeElement),true,'server rule error focuses its source field')
+    await match.fill(expression)
+    regex.state.ruleFailure=''
+    await regex.page.getByRole('button',{name:'保存',exact:true}).click()
+    await wait(()=>regex.page.locator('dialog[open]').count().then(n=>n===0))
+    const rules=regex.state.saved.sources[0].rules
+    assert.deepEqual(rules.match,['(?i)1080p','第\\d{1,3}话'],'commas inside quantifiers never split expressions')
+    assert.deepEqual(rules.exclude,['(?i)sample','(?i)720p'])
+    assert.equal(rules.episodePattern,'第(\\d{1,3})话')
+    assert.equal(rules.episodeGroup,1)
+    assert.equal('specMode' in rules || 'specProfiles' in rules || 'include' in rules || 'resolution' in rules,false)
+    passed.push('per-RSS regex editing, comma preservation, custom capture, template restore, native radios, mobile/dark layout and server field errors')
 
     const s = await session()
     await s.go()

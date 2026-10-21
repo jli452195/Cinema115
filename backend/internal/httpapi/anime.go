@@ -33,7 +33,11 @@ func animeError(c *gin.Context, err error) {
 	var exists *storage.AnimeExistsError
 	var upstream *bangumi.UpstreamError
 	var sourceHTTP *mikan.ResponseError
+	var rule *model.AnimeRuleError
 	switch {
+	case errors.As(err, &rule):
+		status, code, message = 400, "SOURCE_RULE_INVALID", rule.Message
+		details["sourceRef"], details["field"], details["line"] = rule.SourceRef, rule.Field, rule.Line
 	case errors.Is(err, animefeed.ErrInput):
 		status, code, message = 400, "INVALID_INPUT", "站点、条目或字幕组参数不正确"
 	case errors.Is(err, garden.ErrInvalid):
@@ -60,8 +64,8 @@ func animeError(c *gin.Context, err error) {
 		status, code, message = 409, "STATE_CONFLICT", "当前订阅状态不支持此操作"
 	case errors.Is(err, storage.ErrAnimeDeleteBusy):
 		status, code, message = 409, "TASK_BUSY", "任务正在处理，请稍后重试删除；115 文件将保留"
-	case errors.Is(err, storage.ErrAnimeReconfirm):
-		status, code, message = 409, "BASELINE_RECONFIRM_REQUIRED", "请重新读取并保存订阅配置"
+	case errors.Is(err, storage.ErrAnimeConfigurationRequired):
+		status, code, message = 409, "CONFIGURATION_REQUIRED", "请重新读取并保存订阅配置"
 	case errors.Is(err, storage.ErrAnimeDirectoryRequired):
 		status, code, message = 409, "DIRECTORY_REQUIRED", "请为当前主账号重新选择目录"
 	case errors.Is(err, storage.ErrAnimeCapability):

@@ -197,7 +197,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			if !old.AcceptsIdentity(input.Provider, input.ItemID, input.GroupID) {
 				return receipt, ErrAnimeIdentity
 			}
-			if !runtime && (old.Status != "draft" && old.Status != "paused" || old.ActiveBaselineID != nil) {
+			if !runtime && (old.Status != "draft" && old.Status != "paused") {
 				return receipt, ErrAnimeCapability
 			}
 			source = old
@@ -213,6 +213,9 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			source = model.AnimeSource{ID: id, SubscriptionID: in.ID, NamespaceID: ns, Health: "unknown", RunGeneration: 1, CreatedAt: now}
 		}
 		source.Role, source.Position, source.Status = input.Role, input.Position, input.Status
+		if runtime {
+			source.Status = "enabled"
+		}
 		source.RunWhenEnabled, source.Provider = input.RunWhenEnabled, input.Provider
 		source.ItemID, source.GroupID, source.GroupName = input.ItemID, input.GroupID, input.GroupName
 		source.Binding, source.Rules = input.Binding, input.Rules
@@ -221,23 +224,7 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 			source.SourceKey = &key
 		}
 		old, exists := oldSources[source.ID]
-		targetChanged := false
-		if runtime && exists && source.ActiveBaselineID != nil {
-			var raw string
-			if err := tx.QueryRowContext(ctx, `SELECT snapshot_json FROM anime_source_baselines WHERE id=?`, source.ActiveBaselineID).Scan(&raw); err != nil {
-				return receipt, err
-			}
-			var baseline model.AnimeExecutionBaseline
-			if decodeAnimeJSON(raw, &baseline) != nil || baseline.Target.Validate() != nil {
-				targetChanged = true
-			} else if err := checkAnimeDownloadTargetTx(ctx, tx, baseline.Target, true); err != nil {
-				if !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
-					return receipt, err
-				}
-				targetChanged = true
-			}
-		}
-		if !exists || !sameAnimeSourceConfig(old, source) || runtime && (animeSourceNamingChanged(oldNaming, in.Naming, source.ID, input.Ref) || targetChanged) {
+		if !exists || !sameAnimeSourceConfig(old, source) || runtime && (animeSourceNamingChanged(oldNaming, in.Naming, source.ID, input.Ref)) {
 			if source.Revision >= model.AnimeMaxRevision || source.RunGeneration >= model.AnimeMaxRevision {
 				return receipt, ErrAnimeConflict
 			}
@@ -327,6 +314,9 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 		}
 	}
 	if runtime {
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET health='unknown',error_code=NULL,retry_after=NULL,next_check_at=?,check_token=NULL,check_until=NULL,poll_failures=0 WHERE subscription_id=? AND status='enabled' AND run_when_enabled=1 AND health='unavailable'`, now, in.ID); err != nil {
+			return receipt, fmt.Errorf("retry unavailable anime sources: %w", err)
+		}
 		if resumeArchived {
 			if err := resetAnimeSubscriptionActivityTx(ctx, tx, in.ID, now); err != nil {
 				return receipt, err

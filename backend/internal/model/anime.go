@@ -69,14 +69,13 @@ type AnimeSpec struct {
 }
 
 type AnimeRules struct {
-	ChapterFirstEpisode *int        `json:"chapterFirstEpisode,omitempty"`
-	SchemaVersion       int         `json:"schemaVersion"`
-	Resolution          *string     `json:"resolution"`
-	Include             []string    `json:"include"`
-	Exclude             []string    `json:"exclude"`
-	MinimumEpisode      *int        `json:"minimumEpisode"`
-	SpecMode            string      `json:"specMode,omitempty"`
-	SpecProfiles        []AnimeSpec `json:"specProfiles,omitempty"`
+	ChapterFirstEpisode *int     `json:"chapterFirstEpisode,omitempty"`
+	SchemaVersion       int      `json:"schemaVersion"`
+	Match               []string `json:"match"`
+	Exclude             []string `json:"exclude"`
+	MinimumEpisode      *int     `json:"minimumEpisode"`
+	EpisodePattern      string   `json:"episodePattern,omitempty"`
+	EpisodeGroup        int      `json:"episodeGroup,omitempty"`
 }
 
 type AnimeForm struct {
@@ -101,32 +100,31 @@ type AnimeSubscription struct {
 }
 
 type AnimeSource struct {
-	ID               string       `json:"id"`
-	SubscriptionID   string       `json:"subscriptionId"`
-	Role             string       `json:"role"`
-	Position         int          `json:"position"`
-	Status           string       `json:"configuredState"`
-	RunWhenEnabled   bool         `json:"runWhenEnabled"`
-	Provider         string       `json:"provider"`
-	SourceKey        *string      `json:"sourceKey"`
-	ItemID           *string      `json:"itemId"`
-	GroupID          *string      `json:"groupId"`
-	GroupName        *string      `json:"groupName"`
-	NamespaceID      string       `json:"namespaceId"`
-	Binding          AnimeBinding `json:"binding"`
-	Rules            AnimeRules   `json:"rules"`
-	Revision         int64        `json:"revision"`
-	RunGeneration    int64        `json:"runGeneration"`
-	ActiveBaselineID *string      `json:"activeBaselineId"`
-	Health           string       `json:"health"`
-	CheckedAt        *int64       `json:"checkedAt"`
-	AttemptedAt      *int64       `json:"attemptedAt"`
-	CheckToken       *string      `json:"checkToken"`
-	NextCheckAt      *int64       `json:"nextCheckAt"`
-	RetryAfter       *int64       `json:"retryAfter"`
-	ErrorCode        *string      `json:"errorCode"`
-	CreatedAt        int64        `json:"createdAt"`
-	UpdatedAt        int64        `json:"updatedAt"`
+	ID             string       `json:"id"`
+	SubscriptionID string       `json:"subscriptionId"`
+	Role           string       `json:"role"`
+	Position       int          `json:"position"`
+	Status         string       `json:"configuredState"`
+	RunWhenEnabled bool         `json:"runWhenEnabled"`
+	Provider       string       `json:"provider"`
+	SourceKey      *string      `json:"sourceKey"`
+	ItemID         *string      `json:"itemId"`
+	GroupID        *string      `json:"groupId"`
+	GroupName      *string      `json:"groupName"`
+	NamespaceID    string       `json:"namespaceId"`
+	Binding        AnimeBinding `json:"binding"`
+	Rules          AnimeRules   `json:"rules"`
+	Revision       int64        `json:"revision"`
+	RunGeneration  int64        `json:"runGeneration"`
+	Health         string       `json:"health"`
+	CheckedAt      *int64       `json:"checkedAt"`
+	AttemptedAt    *int64       `json:"attemptedAt"`
+	CheckToken     *string      `json:"checkToken"`
+	NextCheckAt    *int64       `json:"nextCheckAt"`
+	RetryAfter     *int64       `json:"retryAfter"`
+	ErrorCode      *string      `json:"errorCode"`
+	CreatedAt      int64        `json:"createdAt"`
+	UpdatedAt      int64        `json:"updatedAt"`
 }
 
 // AcceptsIdentity allows a draft's unset identity fields to be completed once.
@@ -136,7 +134,7 @@ func (s AnimeSource) AcceptsIdentity(provider string, itemID, groupID *string) b
 		if old != nil {
 			return next != nil && *old == *next
 		}
-		return next == nil || s.Status == "draft" && s.ActiveBaselineID == nil
+		return next == nil || s.Status == "draft"
 	}
 	return s.Provider == provider && accept(s.ItemID, itemID) && accept(s.GroupID, groupID)
 }

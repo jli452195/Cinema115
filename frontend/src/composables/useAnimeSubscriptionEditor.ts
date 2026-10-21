@@ -31,7 +31,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value)
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'resolution', 'specMode', 'specProfiles', 'minimum', 'include', 'exclude', ]
+    const keys: (keyof SourceForm)[] = ['provider', 'mappingSource', 'mappingTarget', 'mappingSeason', 'mappingLast', 'mappingManual', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'scope', 'first', 'last', 'evidence', 'confirmed', 'confirmedFor', 'review', 'identityNumbering', 'correspondence', 'sourceEpisode', 'chapterEpisode', 'templateChosen', 'match', 'episodePattern', 'episodeGroup', 'minimum', 'exclude', ]
     return JSON.stringify({ archiveTotal: archiveTotal.value, chapterStarts: sources.value.map(s => s.chapterFirst), naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -156,8 +156,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
             scope: saved.binding.scope?.kind || '', first: saved.binding.scope?.kind === 'range' ? String(saved.binding.scope.first) : '', last: saved.binding.scope?.kind === 'range' ? String(saved.binding.scope.last) : '', evidence: saved.binding.scope?.kind === 'confirmed_chapter' ? saved.binding.scope.evidence || '' : '', confirmed: saved.binding.confirmed, review: saved.binding.review,
             identityNumbering: saved.binding.chapterCorrespondence?.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1,
             correspondence: !!saved.binding.chapterCorrespondence && !(saved.binding.chapterCorrespondence.sourceEpisode === 1 && saved.binding.chapterCorrespondence.chapterEpisode === 1), sourceEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.sourceEpisode) : '', chapterEpisode: saved.binding.chapterCorrespondence ? String(saved.binding.chapterCorrespondence.chapterEpisode) : '',
-            specMode: saved.rules.specMode || '', specProfiles: saved.rules.specProfiles || [],
-            resolution: saved.rules.resolution || '', minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), include: (saved.rules.include || []).join(', '), exclude: (saved.rules.exclude || []).join(', ') })
+            templateChosen: true, match: (saved.rules.match || []).join('\n'), episodePattern: saved.rules.episodePattern || '', episodeGroup: String(saved.rules.episodeGroup || 1), health: saved.health, errorCode: saved.errorCode,
+            minimum: saved.rules.minimumEpisode == null ? '' : String(saved.rules.minimumEpisode), exclude: (saved.rules.exclude || []).join('\n') })
           form.confirmedFor = animeBindingKey(form)
           return form
         })
@@ -258,7 +258,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', resolution: '', specMode: '', specProfiles: [], sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, chapterFirst: '', minimum: '1', include: '', exclude: '', preview: undefined, previewError: '' })
+    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, chapterFirst: '', minimum: '1', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)
@@ -344,13 +344,14 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       }
     } catch (reason) {
       if (current !== generation) return
-      source.previewError = animeConfigMessage(reason); setCooldown(source, reason, 'preview')
+      source.previewError = animeConfigMessage(reason); applyRuleError(reason); setCooldown(source, reason, 'preview')
       if (source.preview && (action === 'load' || reason instanceof AnimeConfigError && ['PREVIEW_EXPIRED', 'PREVIEW_CHANGED', 'REVISION_CONFLICT'].includes(reason.code))) { source.preview.needsSync = true; source.preview.signature = '' }
     } finally { if (current === generation) previewBusy.value = '' }
   }
   async function save() {
     if (naming.busy.value || naming.searching.value || locked.value || previewBusy.value || !settings.value) return
     feedback.value = ''; duplicateID.value = ''; conflict.value = false
+    for (const source of sources.value) source.ruleError = undefined
     try {
       if (startIssue.value) throw new Error(startIssue.value)
       if (archiveTotal.value && !/^[1-9]\d{0,4}$/.test(archiveTotal.value)) throw new Error('篇章总集数请填写 1 至 99999 的整数，留空使用 Bangumi 数据')
@@ -360,6 +361,11 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       pendingSave.value = { path: local.value ? `subscriptions/${local.value.id}` : 'subscriptions', method: local.value ? 'PATCH' : 'POST', key: animeRequestKey(), body: JSON.parse(JSON.stringify(body)) }
       await retrySave()
     } catch (reason) { feedback.value = animeConfigMessage(reason) }
+  }
+  function applyRuleError(reason: unknown) {
+    if (!(reason instanceof AnimeConfigError) || reason.code !== 'SOURCE_RULE_INVALID') return
+    const source = sources.value.find(source => source.ref === reason.details.sourceRef)
+    if (source) { source.ruleError = { field: String(reason.details.field || ''), message: reason.message }; activeRef.value = source.ref }
   }
   async function retrySave() {
     const pending = pendingSave.value
@@ -374,6 +380,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     } catch (reason) {
       if (current !== generation) return
       feedback.value = animeConfigMessage(reason)
+      applyRuleError(reason)
       if (!(reason instanceof AnimeConfigError && reason.uncertain)) pendingSave.value = undefined
       if (reason instanceof AnimeConfigError) {
         if (reason.code === 'SUBSCRIPTION_EXISTS') duplicateID.value = String(reason.details.existingId || '')

@@ -73,6 +73,13 @@ onBeforeRouteUpdate((to, from) => to.fullPath === from.fullPath ? true : guard()
 onBeforeUnmount(() => { window.removeEventListener('beforeunload', unload); routeDecision?.(false) })
 watch(receipt, value => { if (value) { leaving = true; emit('saved', value.id) } })
 watch(tab, async (value, previous) => { scroll.set(previous, top); await nextTick(); shell.value?.scrollTo(scroll.get(value) || 0) })
+watch(() => active.value?.ruleError, async error => {
+  if (!error) return
+  tab.value = active.value?.role === 'standby' ? 'backup' : 'basic'
+  await nextTick()
+  const field = document.getElementById(`anime-source-${activeRef.value}-${error.field === 'episodePattern' ? 'episode-pattern' : error.field === 'episodeGroup' ? 'episode-group' : error.field}`)
+  field?.focus({ preventScroll: true }); field?.scrollIntoView({ block: 'center' })
+})
 watch(() => subject.value?.coverUrl, () => { imageFailed.value = false })
 watch(confirmRemove, async value => { await nextTick(); (value ? cancelDeleteButton : deleteButton).value?.focus({ preventScroll: true }) })
 function addBackup() { editor.addSource() }

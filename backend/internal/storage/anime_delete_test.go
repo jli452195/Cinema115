@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestAnimeDeleteUpgradePurgesOldTrashWithoutTouchingOtherSubscriptions(t *testing.T) {
+func TestAnimeDevelopmentV56RebuildPurgesTestSubscriptions(t *testing.T) {
 	f, job := animeSubmitStoreFixture(t)
 	ctx := context.Background()
 	entry := createAnimeEntry(t, f.store, nil)
@@ -23,7 +23,7 @@ func TestAnimeDeleteUpgradePurgesOldTrashWithoutTouchingOtherSubscriptions(t *te
 	if _, err := f.store.db.Exec(`UPDATE anime_subscriptions SET status='removed' WHERE id=?`, f.sub.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.db.Exec(`PRAGMA user_version=54`); err != nil {
+	if _, err := f.store.db.Exec(`PRAGMA user_version=55`); err != nil {
 		t.Fatal(err)
 	}
 	var path string
@@ -44,9 +44,8 @@ func TestAnimeDeleteUpgradePurgesOldTrashWithoutTouchingOtherSubscriptions(t *te
 		if _, err := store.GetAnimeDownloadJob(ctx, job.ID); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatal("old job survived", err)
 		}
-		retained, err := store.GetAnimeSubscription(ctx, other.ID, true)
-		if err != nil || !reflect.DeepEqual(retained, other) {
-			t.Fatal("unrelated subscription changed", retained, err)
+		if _, err := store.GetAnimeSubscription(ctx, other.ID, true); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal("development subscription survived", err)
 		}
 		retainedSettings, err := store.GetAnimeSettings(ctx)
 		if err != nil || !reflect.DeepEqual(retainedSettings, settings) {
@@ -86,7 +85,7 @@ func TestAnimeDeletePurgesOwnedRecordsAndReplaysOnlyReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"anime_subscriptions", "anime_subscription_sources", "anime_source_baselines", "anime_release_decisions", "anime_job_selections", "anime_download_jobs", "anime_drive_operations", "anime_resource_claims", "anime_entries", "anime_releases", "anime_resources", "anime_preview_items", "anime_source_previews", "anime_preview_batches", "anime_source_activity", "anime_subscription_archives"} {
+	for _, table := range []string{"anime_subscriptions", "anime_subscription_sources", "anime_release_decisions", "anime_job_selections", "anime_download_jobs", "anime_drive_operations", "anime_resource_claims", "anime_entries", "anime_releases", "anime_resources", "anime_preview_items", "anime_source_previews", "anime_preview_batches", "anime_source_activity", "anime_subscription_archives"} {
 		var count int
 		if err := f.store.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("owned records remain", table, count, err)

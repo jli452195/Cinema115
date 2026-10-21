@@ -74,7 +74,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 			Ref: spec.ref, Role: "standby", Position: i, Status: "paused", RunWhenEnabled: true,
 			Provider: spec.provider, ItemID: bindingPtr(spec.item), GroupID: bindingPtr(spec.group), GroupName: bindingPtr("browser label"),
 			Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: spec.item, GroupID: spec.group}},
-			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(spec.minimum), Resolution: bindingPtr("1080p")},
+			Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(spec.minimum), Match: []string{"(?i)1080p"}},
 		}
 		if i == 0 {
 			source.Role = "main"
@@ -169,7 +169,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 			rawEpisode, minimum = 1, 1
 		}
 		projection := view.Naming.Project(source.ID, model.AnimeReleaseParse{Kind: "episode", Episode: &rawEpisode}, *source.GroupName)
-		if projection.Status != "mapped" || *projection.Season != 2 || *projection.Episode != 1 || *source.Rules.MinimumEpisode != minimum || source.NextCheckAt == nil || source.ActiveBaselineID != nil || source.EffectiveState != "enabled" {
+		if projection.Status != "mapped" || *projection.Season != 2 || *projection.Episode != 1 || *source.Rules.MinimumEpisode != minimum || source.NextCheckAt == nil || source.EffectiveState != "enabled" {
 			t.Fatal("source numbering, minimum or execution boundary changed", source, projection)
 		}
 	}

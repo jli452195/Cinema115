@@ -7,15 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
 )
 
 var (
-	ErrAnimeTransition = errors.New("anime subscription state does not allow this action")
-	ErrAnimeReconfirm  = errors.New("anime activation or updated preview is required")
-	ErrAnimeDeleteBusy = errors.New("anime subscription has an active download worker")
+	ErrAnimeTransition            = errors.New("anime subscription state does not allow this action")
+	ErrAnimeConfigurationRequired = errors.New("anime subscription configuration is required")
+	ErrAnimeDeleteBusy            = errors.New("anime subscription has an active download worker")
 )
 
 // Pause masks execution while preserving confirmed choices and their run
@@ -71,8 +69,21 @@ func (s *Store) ControlAnimeSubscription(ctx context.Context, id, action string,
 		return out, err
 	}
 	if action == "resume" && next != sub.Status {
-		if err := checkAnimeResumeTx(ctx, tx, sub, sources); err != nil {
+		settings, err := readAnimeSettingsTx(ctx, tx)
+		if err != nil {
 			return out, err
+		}
+		target, err := animeTargetFromSettings(settings)
+		if err != nil {
+			return out, err
+		}
+		if err := checkAnimeDownloadTargetTx(ctx, tx, target, true); err != nil {
+			return out, err
+		}
+		for _, source := range sources {
+			if source.RunWhenEnabled && (source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil) {
+				return out, ErrAnimeInvalid
+			}
 		}
 	}
 	now := time.Now().UnixMilli()
@@ -158,7 +169,7 @@ func animeControlState(sub model.AnimeSubscription, action string) (string, erro
 	case "resume":
 		if sub.Status == "paused" || sub.Status == "enabled" || sub.Status == "archived" {
 			if sub.FirstEnabledAt == nil {
-				return "", ErrAnimeReconfirm
+				return "", ErrAnimeConfigurationRequired
 			}
 			return "enabled", nil
 		}
@@ -179,46 +190,6 @@ func resetAnimeSubscriptionActivityTx(ctx context.Context, tx *sql.Tx, id string
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET next_check_at=? WHERE subscription_id=? AND status='enabled' AND run_when_enabled=1 AND health<>'unavailable'`, now, id)
 	return err
-}
-
-func checkAnimeResumeTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscription, sources []model.AnimeSource) error {
-	active := 0
-	for _, source := range sources {
-		if source.Status == "paused" && source.RunWhenEnabled && source.ActiveBaselineID == nil && source.Binding.Validate(true) == nil && source.Rules.Validate(true) == nil {
-			active++
-			continue
-		}
-		if source.Status != "enabled" || !source.RunWhenEnabled {
-			continue
-		}
-		if source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
-			return ErrAnimeReconfirm
-		}
-		if source.ActiveBaselineID == nil {
-			active++
-			continue
-		}
-		var raw string
-		var revision int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_revision,snapshot_json FROM anime_source_baselines WHERE id=? AND source_id=?`, *source.ActiveBaselineID, source.ID).Scan(&revision, &raw); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrAnimeReconfirm
-			}
-			return err
-		}
-		var baseline model.AnimeExecutionBaseline
-		if decodeAnimeJSON(raw, &baseline) != nil || baseline.SchemaVersion != model.AnimeSchemaVersion || baseline.RuleVersion != animepreview.RuleVersion || baseline.ParserVersion != animeparse.ParserVersion || baseline.TimeVersion != animeparse.TimeVersion || revision > source.Revision || revision < source.Revision && source.CheckedAt != nil {
-			return ErrAnimeReconfirm
-		}
-		if err := checkAnimeDownloadTargetTx(ctx, tx, baseline.Target, true); err != nil {
-			return err
-		}
-		active++
-	}
-	if active == 0 || sub.FirstEnabledAt == nil {
-		return ErrAnimeReconfirm
-	}
-	return nil
 }
 
 func controlAnimeQueuedJobsTx(ctx context.Context, tx *sql.Tx, id string, resuming bool, now int64) (int, error) {
@@ -260,7 +231,7 @@ func controlAnimeQueuedJobsTx(ctx context.Context, tx *sql.Tx, id string, resumi
 			if job.BlockCode != nil && *job.BlockCode == "CONFIGURATION_CHANGED" {
 				continue
 			}
-			return 0, ErrAnimeReconfirm
+			return 0, ErrAnimeConfigurationRequired
 		}
 		if job.FileState == "verified" {
 			// Keep in-flight receipts and leases intact. Pause suppresses new

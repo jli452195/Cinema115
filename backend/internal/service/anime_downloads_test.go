@@ -32,7 +32,7 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("2259"), GroupID: bindingPtr("45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}, Rules: model.AnimeRules{SchemaVersion: 1, Resolution: bindingPtr("any"), MinimumEpisode: bindingPtr(1)}}}}
+	c := model.AnimeSubscriptionConfig{EntryID: e.ID, Status: "paused", Form: model.AnimeForm{SchemaVersion: 1}, Sources: []model.AnimeSourceConfig{{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", RunWhenEnabled: true, ItemID: bindingPtr("2259"), GroupID: bindingPtr("45"), GroupName: bindingPtr("字幕组"), Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}, Rules: model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(1)}}}}
 	receipt, err := f.service.Store.SaveAnimeSubscription(ctx, c, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -61,16 +61,14 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) VALUES('baseline',?,1,1,'{}')`, source.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `UPDATE anime_subscription_sources SET status='enabled',active_baseline_id='baseline' WHERE id=?`, source.ID); err != nil {
+
+	if _, err := db.ExecContext(ctx, `UPDATE anime_subscription_sources SET status='enabled' WHERE id=?`, source.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE anime_subscriptions SET status='enabled',first_enabled_at=1 WHERE id=?`, sub.ID); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := model.AnimeDecisionSnapshot{SchemaVersion: 1, Title: release.Title, Binding: source.Binding, Rules: source.Rules, Parse: release.Parse, RuleVersion: animepreview.RuleVersion, ParserVersion: release.ParserVersion, TimeVersion: release.TimeVersion, Selection: &model.AnimeSelectionBasis{BaselineID: "baseline", SelectedAt: time.Now().UnixMilli(), Target: session.Target(), SourceGeneration: source.RunGeneration, SubscriptionGeneration: sub.RunGeneration}}
+	snapshot := model.AnimeDecisionSnapshot{SchemaVersion: 1, Title: release.Title, Binding: source.Binding, Rules: source.Rules, Parse: release.Parse, RuleVersion: animepreview.RuleVersion, ParserVersion: release.ParserVersion, TimeVersion: release.TimeVersion, Selection: &model.AnimeSelectionBasis{SelectedAt: time.Now().UnixMilli(), Target: session.Target(), SourceGeneration: source.RunGeneration, SubscriptionGeneration: sub.RunGeneration}}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)

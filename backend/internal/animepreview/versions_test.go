@@ -23,10 +23,10 @@ func TestReleaseVersionRankingConservative(t *testing.T) {
 
 func TestPreviewVersionRankingOrderRulesSpecificationsAndPagination(t *testing.T) {
 	c := config()
-	c.Sources[0].Rules.Resolution = ptr("any")
+	c.Sources[0].Rules.Match = nil
 	c.Sources[0].Rules.Exclude = []string{"bad"}
 	s := build(t, c, page("[组] 动画 [30v2][1080p][HEVC]", "[组] 动画 [30][1080p][HEVC]", "[组] 动画 [30V3][1080p][HEVC]", "[组] 动画 [30v9][1080p][HEVC] bad", "[组] 动画 [30][720p][HEVC]", "[组] 动画 [31][1080p][HEVC] 修正版", "[组] 动画 [30v3][1080p][HEVC]"))
-	if len(s.SelectedIDs) != 2 || !s.Items[2].Selectable || !s.Items[4].Selectable || s.Items[3].ReasonCode != "EXCLUDED_KEYWORD" || s.Items[5].ReasonCode != "RELEASE_VERSION_UNCLEAR" || s.Items[6].ReasonCode != "RELEASE_VERSION_DUPLICATE" {
+	if len(s.SelectedIDs) != 2 || !s.Items[2].Selectable || !s.Items[4].Selectable || s.Items[3].ReasonCode != "EXCLUDED_PATTERN" || s.Items[5].ReasonCode != "RELEASE_VERSION_UNCLEAR" || s.Items[6].ReasonCode != "RELEASE_VERSION_DUPLICATE" {
 		t.Fatalf("wrong winners or rule precedence: %+v", s.Items)
 	}
 	first, _ := s.Releases(1, 2, s.GeneratedAt)
@@ -69,7 +69,7 @@ func TestPreviewVersionRankingOrderRulesSpecificationsAndPagination(t *testing.T
 
 func TestPreviewAmbiguousSpecificationCannotBypassVersionPolicy(t *testing.T) {
 	c := config()
-	c.Sources[0].Rules.Resolution = ptr("any")
+	c.Sources[0].Rules.Match = nil
 	s := build(t, c, page("[组] 动画 [30v2][1080p][HEVC][AVC]"))
 	if s.Items[0].Selectable || s.Items[0].ReasonCode != "RELEASE_EDITION_UNCLEAR" || len(s.SelectedIDs) != 0 {
 		t.Fatal("ambiguous codec bypassed edition grouping", s.Items)

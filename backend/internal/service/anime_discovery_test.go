@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
@@ -28,11 +25,9 @@ func (f animeRSSFunc) ReadSource(ctx context.Context, b *AnimeSourceBudget, in A
 
 func discoveryServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *AnimeDiscoveryRunner, model.AnimeSource, int64) {
 	t.Helper()
-	f, db, session, source, _, _ := animeClaimServiceFixture(t)
+	f, db, _, source, _, _ := animeClaimServiceFixture(t)
 	now := time.Now().UnixMilli()
-	baseline := model.AnimeExecutionBaseline{SchemaVersion: 1, Target: session.Target(), RuleVersion: animepreview.RuleVersion, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion}
-	raw, err := json.Marshal(baseline)
-	if err != nil {
+	if _, err := db.Exec(`UPDATE anime_settings SET organize_cid='900',organize_path='/organized'`); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{`DELETE FROM anime_release_decisions`, `DELETE FROM anime_releases`} {
@@ -40,9 +35,7 @@ func discoveryServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *Ani
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, string(raw)); err != nil {
-		t.Fatal(err)
-	}
+
 	if _, err := db.Exec(`UPDATE anime_subscription_sources SET checked_at=1,next_check_at=?`, now-1); err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +101,8 @@ func addDiscoveryServiceBackup(t *testing.T, db *sql.DB, source model.AnimeSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT 'standby-baseline','standby-source',1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, source.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',checked_at=1,active_baseline_id='standby-baseline',next_check_at=? WHERE id='standby-source'`, now); err != nil {
+
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',checked_at=1,next_check_at=? WHERE id='standby-source'`, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -317,10 +307,8 @@ func TestAnimeDiscoveryRunnerBoundsPollPassAndSkipsInactiveSources(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT ?,?,1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, id, id, src.ID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',active_baseline_id=?,next_check_at=? WHERE id=?`, id, now, id); err != nil {
+
+		if _, err := db.Exec(`UPDATE anime_subscription_sources SET status='enabled',next_check_at=? WHERE id=?`, now, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -381,7 +369,7 @@ func TestAnimeDiscoveryRunnerVerificationFailurePolicy(t *testing.T) {
 			if err := r.PollOnce(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			var calls int
+			calls := 0
 			f.service.Torrents = animeClaimTorrentFunc(func(context.Context, string, string, string) ([]byte, error) {
 				calls++
 				if mode == "temporary" {
@@ -433,17 +421,10 @@ func TestAnimeDiscoveryRunnerVerificationFailurePolicy(t *testing.T) {
 }
 
 func TestAnimeDiscoveryRunnerStalePollAndInvalidResponseIsolation(t *testing.T) {
-	for _, mode := range []string{"paused", "generation", "target", "invalid page", "invalid baseline"} {
+	for _, mode := range []string{"paused", "generation", "target", "invalid page"} {
 		t.Run(mode, func(t *testing.T) {
 			_, db, r, _, now := discoveryServiceFixture(t)
-			var calls int
-			if mode == "invalid baseline" {
-				if _, err := db.Exec(`UPDATE anime_source_baselines SET snapshot_json='{}'`); err != nil {
-					t.Fatal(err)
-				}
-			}
 			r.Feeds = animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
-				calls++
 				page := discoveryServicePage(in, now, 1)
 				query := map[string]string{"paused": `UPDATE anime_subscriptions SET status='paused'`, "generation": `UPDATE anime_subscription_sources SET run_generation=run_generation+1`, "target": `UPDATE anime_settings SET revision=revision+1,download_cid='999'`}[mode]
 				if query != "" {
@@ -462,9 +443,6 @@ func TestAnimeDiscoveryRunnerStalePollAndInvalidResponseIsolation(t *testing.T) 
 			var n int
 			if err := db.QueryRow(`SELECT count(*) FROM anime_releases`).Scan(&n); err != nil || n != 0 {
 				t.Fatal("stale/invalid observation committed", n, err)
-			}
-			if mode == "invalid baseline" && calls != 0 {
-				t.Fatal("unconfirmed baseline fetched", calls)
 			}
 		})
 	}
@@ -598,18 +576,13 @@ func TestAnimeDiscoveryCommitWakesVerifierWithoutAnotherRSSRead(t *testing.T) {
 func TestAnimeDiscoveryDrainsDueSourcesWithoutSchedulerSleep(t *testing.T) {
 	f, db, r, source, now := discoveryServiceFixture(t)
 	for i := 1; i <= 4; i++ {
-		id, baseline := fmt.Sprintf("%032x", i+100), fmt.Sprintf("%032x", i+200)
+		id := fmt.Sprintf("%032x", i+100)
 		group := fmt.Sprint(45 + i)
-		_, err := db.Exec(`INSERT INTO anime_subscription_sources(id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,active_baseline_id,health,checked_at,next_check_at,created_at,updated_at) SELECT ?,subscription_id,'standby',?,'enabled',1,provider,?,item_id,?,group_name,?,json_set(binding_json,'$.review.groupId',?),rules_json,1,1,NULL,'unknown',1,?,created_at,updated_at FROM anime_subscription_sources WHERE id=?`, id, i, "mikan:2259:"+group, group, id, group, now, source.ID)
+		_, err := db.Exec(`INSERT INTO anime_subscription_sources(id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,health,checked_at,next_check_at,created_at,updated_at) SELECT ?,subscription_id,'standby',?,'enabled',1,provider,?,item_id,?,group_name,?,json_set(binding_json,'$.review.groupId',?),rules_json,1,1,'unknown',1,?,created_at,updated_at FROM anime_subscription_sources WHERE id=?`, id, i, "mikan:2259:"+group, group, id, group, now, source.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) SELECT ?,?,1,created_at,snapshot_json FROM anime_source_baselines WHERE source_id=?`, baseline, id, source.ID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`UPDATE anime_subscription_sources SET active_baseline_id=? WHERE id=?`, baseline, id); err != nil {
-			t.Fatal(err)
-		}
+
 	}
 	// Consume any fixture notification: only the bounded batch's own wakeup
 	// can process the fifth source while the fallback timer is one hour long.

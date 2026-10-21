@@ -1,6 +1,6 @@
 # 动漫订阅数据与接口契约（P0-05）
 
-> Historical development record. Retired activation/history-selection flows and real test records were removed in v53. Current behavior: [configuration and RSS lifecycle](anime-subscription-dialog-plan.md).
+> 本文件为历史开发记录。当前以[配置与 RSS 生命周期](anime-subscription-dialog-plan.md)和[来源正则规则](anime-source-rules-refactor.md)为准。2026-10-22 的 v56 已清理开发期动漫运行数据及持久基线表，保留目录设置；下文旧基线、规格过滤和升级保留约定不再生效。
 
 2026-10-20 P3-07～08接入：自动标准命名、批量移动原文件已装配，`organize`能力按实际依赖开放。SQLite v52扩展既有操作日志的kind约束，保存单个任务的目录及逐文件进度，不新建注册表/队列；v51数据保留。成功不读回，未知仅按固定对象核对，完成不跟踪二次整理；用户已确认取消P3-10，历史文件应用接口不再计划接入，既有占位路由继续关闭。新任务DTO含 `organization:{state,total,renamed,moved,targetPath,updatedAt}`，状态为pending/working/unknown/needs_review/done。此注记优先于下文阶段性关闸说明，详见[整理执行实现](anime-organization-execution-implementation.md)。
 

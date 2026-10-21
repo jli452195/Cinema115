@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"reflect"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
@@ -23,7 +21,7 @@ type AnimeSourcePoll struct {
 	Entry        model.AnimeEntry
 	Token        string
 	Until        int64
-	Baseline     model.AnimeExecutionBaseline
+	Target       model.AnimeDownloadTarget
 	IssueCode    string
 	Initialize   bool
 }
@@ -42,7 +40,7 @@ func animeDiscoveryBackoff(failures int) int64 {
 	return int64(delays[min(max(failures, 1), len(delays))-1] / time.Millisecond)
 }
 
-const animePollEligible = `(s.status='enabled' OR (s.status='paused' AND s.active_baseline_id IS NULL)) AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL AND s.health<>'unavailable'`
+const animePollEligible = `s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL AND s.health<>'unavailable'`
 
 // ReserveAnimeSourcePoll gives one bounded metadata read permission. It is not
 // a download lease. No network runs inside this transaction. Unscheduled feeds
@@ -102,32 +100,17 @@ func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSou
 	if err != nil {
 		return out, false, err
 	}
-	var raw string
-	var revision int64
-	err = tx.QueryRowContext(ctx, `SELECT source_revision,snapshot_json FROM anime_source_baselines WHERE id=? AND source_id=?`, out.Source.ActiveBaselineID, id).Scan(&revision, &raw)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	out.Initialize = out.Source.CheckedAt == nil
+	settings, err := readAnimeSettingsTx(ctx, tx)
+	if err != nil {
 		return out, false, err
 	}
-	if out.Source.ActiveBaselineID == nil || revision < out.Source.Revision {
-		if err := prepareAnimeDefinitionBaselineTx(ctx, tx, &out, now); err != nil {
-			if !errors.Is(err, ErrAnimeDirectoryRequired) && !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
-				return out, false, err
-			}
-			out.IssueCode = "DOWNLOAD_TARGET_CHANGED"
-		}
-		revision = out.Source.Revision
-		raw, err = animeJSON(out.Baseline)
-		if err != nil {
-			return out, false, err
-		}
+	out.Target, err = animeTargetFromSettings(settings)
+	if err == nil {
+		err = checkAnimeDownloadTargetTx(ctx, tx, out.Target, true)
 	}
-	out.Initialize = out.Source.CheckedAt == nil
-	if out.IssueCode != "" {
-		// The definition is retained while local target settings need repair.
-	} else if decodeAnimeJSON(raw, &out.Baseline) != nil || out.Baseline.SchemaVersion != model.AnimeSchemaVersion || out.Baseline.Target.Validate() != nil || revision != out.Source.Revision || out.Baseline.RuleVersion != animepreview.RuleVersion || out.Baseline.ParserVersion != animeparse.ParserVersion || out.Baseline.TimeVersion != animeparse.TimeVersion || out.Source.Binding.Validate(true) != nil || out.Source.Rules.Validate(true) != nil {
-		out.IssueCode = "BASELINE_RECONFIRM_REQUIRED"
-	} else if err := checkAnimeDownloadTargetTx(ctx, tx, out.Baseline.Target, true); err != nil {
-		if !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
+	if err != nil {
+		if !errors.Is(err, ErrAnimeDirectoryRequired) && !errors.Is(err, ErrAnimeAccountChanged) && !errors.Is(err, ErrAnimeSettingsChanged) {
 			return out, false, err
 		}
 		out.IssueCode = "DOWNLOAD_TARGET_CHANGED"
@@ -151,7 +134,7 @@ func checkAnimeSourcePollTx(ctx context.Context, tx *sql.Tx, poll AnimeSourcePol
 		return ErrAnimeInvalid
 	}
 	var valid bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE s.id=? AND s.check_token=? AND s.check_until>? AND s.revision=? AND s.run_generation=? AND p.run_generation=? AND s.active_baseline_id IS ? AND `+animePollEligible+`)`, poll.Source.ID, poll.Token, now, poll.Source.Revision, poll.Source.RunGeneration, poll.Subscription.RunGeneration, poll.Source.ActiveBaselineID).Scan(&valid)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE s.id=? AND s.check_token=? AND s.check_until>? AND s.revision=? AND s.run_generation=? AND p.run_generation=? AND `+animePollEligible+`)`, poll.Source.ID, poll.Token, now, poll.Source.Revision, poll.Source.RunGeneration, poll.Subscription.RunGeneration).Scan(&valid)
 	if err != nil {
 		return err
 	}
@@ -163,7 +146,7 @@ func checkAnimeSourcePollTx(ctx context.Context, tx *sql.Tx, poll AnimeSourcePol
 
 func animePollConfig(p AnimeSourcePoll) animepreview.Config {
 	s := p.Source
-	t := p.Baseline.Target
+	t := p.Target
 	return animepreview.Config{Chapter: animepreview.Chapter{ID: p.Entry.ID, BangumiID: p.Entry.BangumiID, EditionKey: p.Entry.EditionKey, Revision: p.Entry.Revision}, SubscriptionID: p.Subscription.ID, Revision: p.Subscription.Revision,
 		Settings: model.AnimeSettings{Revision: t.SettingsRevision, AccountID: &t.AccountID, AccountRevision: &t.AccountRevision, UID: &t.UID, DownloadCID: &t.ParentCID, DownloadPath: &t.ParentPath},
 		Sources:  []model.AnimeSourceConfig{{Ref: "poll", ID: s.ID, ExpectedRevision: s.Revision, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: s.Provider, ItemID: s.ItemID, GroupID: s.GroupID, GroupName: s.GroupName, Binding: s.Binding, Rules: s.Rules}}}
@@ -188,7 +171,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if err := checkAnimeSourcePollTx(ctx, tx, poll, now); err != nil {
 		return stats, err
 	}
-	if err := checkAnimeDownloadTargetTx(ctx, tx, poll.Baseline.Target, true); err != nil {
+	if err := checkAnimeDownloadTargetTx(ctx, tx, poll.Target, true); err != nil {
 		return stats, err
 	}
 	input := make([]model.AnimeRelease, 0, len(parsed.Items))
@@ -209,9 +192,12 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	for i, r := range releases {
 		item := parsed.Items[i]
 		stats.Observed++
-		if r.ContentFingerprint != item.Release.ContentFingerprint || !reflect.DeepEqual(r.Parse, item.Release.Parse) {
+		if r.ContentFingerprint != item.Release.ContentFingerprint {
 			continue
 		}
+		// The shared post cache owns identity and content. Interpretation belongs
+		// to this source: another source may use a different episode expression.
+		r.Parse, r.ParserVersion, r.TimeVersion = item.Release.Parse, item.Release.ParserVersion, item.Release.TimeVersion
 		old, err := readAnimeReleaseDecision(ctx, tx, poll.Source.ID, r.ID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return stats, err
@@ -220,9 +206,11 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		if !found && item.Decision == "matched" {
 			newMatch = true
 		}
-		// Neither a new window nor edited rules silently restore a previous
-		// exclusion, retry a selected resource or replace a frozen snapshot.
-		if found && old.Disposition != "seen" && old.SourceRevision == poll.Source.Revision {
+		// An authorized selection is frozen. Unselected interpretations are only
+		// cached until the source rules or parsing engine changes.
+		if found && (old.Disposition == "dismissed" || old.SourceRevision == poll.Source.Revision && (old.Snapshot.Selection != nil ||
+			old.Disposition != "seen" && old.Snapshot.ParserVersion == r.ParserVersion &&
+				old.Snapshot.TimeVersion == r.TimeVersion && old.Snapshot.RuleVersion == animepreview.RuleVersion)) {
 			continue
 		}
 		committed, err := animeReleaseCommittedTx(ctx, tx, poll.Source.ID, r.ID)
@@ -272,7 +260,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		}
 		var next any
 		if disposition == "selected" {
-			snapshot.Selection = &model.AnimeSelectionBasis{BaselineID: *poll.Source.ActiveBaselineID, SelectedAt: now, Target: poll.Baseline.Target, SubscriptionGeneration: poll.Subscription.RunGeneration, SourceGeneration: poll.Source.RunGeneration}
+			snapshot.Selection = &model.AnimeSelectionBasis{SelectedAt: now, Target: poll.Target, SubscriptionGeneration: poll.Subscription.RunGeneration, SourceGeneration: poll.Source.RunGeneration}
 			next = now
 			stats.Selected++
 		} else if disposition == "needs_confirmation" {
@@ -323,7 +311,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 
 func (s *Store) FailAnimeSourcePoll(ctx context.Context, poll AnimeSourcePoll, code string, retryAt int64, unavailable bool, now int64) error {
 	switch code {
-	case "SOURCE_READ_FAILED", "SOURCE_READ_BUDGET", "SOURCE_RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_BINDING_CHANGED", "BASELINE_RECONFIRM_REQUIRED", "DOWNLOAD_TARGET_CHANGED", "POLL_CANCELLED", "SOURCE_RESPONSE_INVALID":
+	case "SOURCE_READ_FAILED", "SOURCE_READ_BUDGET", "SOURCE_RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_BINDING_CHANGED", "DOWNLOAD_TARGET_CHANGED", "POLL_CANCELLED", "SOURCE_RESPONSE_INVALID":
 	default:
 		return ErrAnimeInvalid
 	}

@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 )
@@ -31,21 +29,12 @@ func serviceControlAnime(t *testing.T, s *AnimeAdminService, id, action string) 
 	return receipt
 }
 
-func seedAnimeControlBaseline(t *testing.T, db *sql.DB, target model.AnimeDownloadTarget) {
-	t.Helper()
-	raw, err := json.Marshal(model.AnimeExecutionBaseline{SchemaVersion: 1, Target: target, RuleVersion: animepreview.RuleVersion, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE anime_source_baselines SET snapshot_json=?`, string(raw)); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestAnimeControlRunnerPauseResumeWithoutNewJobOrSubmit(t *testing.T) {
 	f, db, _, job := animeSubmitFixture(t)
 	ctx := context.Background()
-	seedAnimeControlBaseline(t, db, job.Snapshot.Target)
+	if _, err := db.Exec(`UPDATE anime_settings SET organize_cid='900',organize_path='/organized'`); err != nil {
+		t.Fatal(err)
+	}
 	lookups, submits := 0, 0
 	f.service.SubmitGateway = &animeSubmitGatewayStub{
 		inspect: func(context.Context, string, string) (p115.AnimeTaskObservation, error) {
@@ -234,8 +223,10 @@ func TestAnimeControlRunnerStopsAfterReadingFilesForStoppedSubscription(t *testi
 
 func TestAnimeControlServiceLocalOnlyAndIdempotency(t *testing.T) {
 	f, db, _, job := animeSubmitFixture(t)
+	if _, err := db.Exec(`UPDATE anime_settings SET organize_cid='900',organize_path='/organized'`); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
-	seedAnimeControlBaseline(t, db, job.Snapshot.Target)
 	forbidAnimeRecoveryDirectoryRead(t, f)
 	sub, _ := f.service.Store.GetAnimeSubscription(ctx, job.Snapshot.Source.SubscriptionID, true)
 	in := AnimeControlInput{ExpectedRevision: sub.Revision}

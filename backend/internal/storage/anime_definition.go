@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
 )
 
@@ -24,54 +22,6 @@ func invalidateAnimeSourceConfigurationTx(ctx context.Context, tx *sql.Tx, sourc
 	// its result. The next write still rechecks the current source generation.
 	_, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET block_code='CONFIGURATION_CHANGED',next_run_at=NULL,lease_token=NULL,lease_until=NULL,revision=revision+1,updated_at=? WHERE download_state='queued' AND workflow_state='active' AND EXISTS(SELECT 1 FROM anime_job_selections x WHERE x.job_id=anime_download_jobs.id AND x.source_id=?) AND COALESCE(json_extract(directory_operation_json,'$.state'),'') NOT IN ('dispatched','unknown') AND NOT EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=anime_download_jobs.id AND o.kind='submit' AND o.state IN ('dispatched','unknown','confirmed'))`, now, sourceID)
 	return err
-}
-
-func prepareAnimeDefinitionBaselineTx(ctx context.Context, tx *sql.Tx, p *AnimeSourcePoll, now int64) error {
-	v, err := readAnimeSettingsTx(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if v.AccountID == nil || v.AccountRevision == nil || v.UID == nil || v.DownloadCID == nil || v.DownloadPath == nil || v.OrganizeCID == nil {
-		return ErrAnimeDirectoryRequired
-	}
-	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: v.Revision, AccountID: *v.AccountID, AccountRevision: *v.AccountRevision, UID: *v.UID, ParentCID: *v.DownloadCID, ParentPath: *v.DownloadPath}
-	if target.Validate() != nil {
-		return ErrAnimeInvalid
-	}
-	// An organization-only settings edit must not move the fixed download
-	// authorization of this source or its unsubmitted chosen resource.
-	if p.Source.ActiveBaselineID != nil {
-		var previous model.AnimeExecutionBaseline
-		var raw string
-		if err := tx.QueryRowContext(ctx, `SELECT snapshot_json FROM anime_source_baselines WHERE id=?`, p.Source.ActiveBaselineID).Scan(&raw); err != nil {
-			return err
-		}
-		if decodeAnimeJSON(raw, &previous) == nil && previous.Target.Validate() == nil {
-			candidate := target
-			candidate.SettingsRevision = previous.Target.SettingsRevision
-			if candidate == previous.Target {
-				target = previous.Target
-			}
-		}
-	}
-	p.Baseline = model.AnimeExecutionBaseline{SchemaVersion: 1, Target: target, RuleVersion: animepreview.RuleVersion, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion}
-	id, err := newAnimeID()
-	if err != nil {
-		return err
-	}
-	raw, err := animeJSON(p.Baseline)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO anime_source_baselines(id,source_id,source_revision,created_at,snapshot_json) VALUES(?,?,?,?,?)`, id, p.Source.ID, p.Source.Revision, now, raw); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET active_baseline_id=?,status='enabled' WHERE id=?`, id, p.Source.ID); err != nil {
-		return err
-	}
-	p.Source.ActiveBaselineID = &id
-	p.Source.Status = "enabled"
-	return nil
 }
 
 func animeJobSubmittedTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
@@ -107,7 +57,7 @@ func refreshAnimePendingJobTx(ctx context.Context, tx *sql.Tx, p AnimeSourcePoll
 	if err != nil {
 		return err
 	}
-	if job.Snapshot.Source.SourceID != p.Source.ID || job.Snapshot.Target != p.Baseline.Target {
+	if job.Snapshot.Source.SourceID != p.Source.ID || !sameAnimeDownloadBinding(job.Snapshot.Target, p.Target) {
 		return nil
 	}
 	snapshot := job.Snapshot
