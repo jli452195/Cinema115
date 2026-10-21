@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 4
+const ParserVersion int64 = 5
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -39,6 +39,8 @@ var (
 	// one of them looks like a perfectly ordinary standalone bracket number.
 	ordinalEpisode = regexp.MustCompile(`(?i)[0-9]{1,2}(?:st|nd|rd|th)\s*-\s*(` + expression + `)`)
 	rangeEpisode   = regexp.MustCompile(number + numberJoin + number + `(?:` + numberJoin + number + `)*`)
+	titleRangeTail = regexp.MustCompile(`(?i)^\s*(?:[（(]\s*)?(?:19[0-9]{2}|20[0-9]{2}|21[0-9]{2})(?:$|[^0-9])|^\s*SEASON\s*[0-9]{1,3}(?:$|[^0-9])`)
+	titleFraction  = regexp.MustCompile(`^[1-9][0-9]?/[1-9][0-9]?$`)
 	batchWords     = regexp.MustCompile(`(?i)合集|全集|全\s*[0-9]+\s*[话話集]|\bbatch\b|\bcomplete\b`)
 	specialWords   = regexp.MustCompile(`(?i)(?:SPECIAL|SAMPLE|TRAILER|NCOP|NCED|OVA|OAD|SP|PV|CM|OP|ED)(?:\s*[-#]?\s*` + number + `)?|特别篇|特別篇|特典|番外|样片|樣片|总集篇|總集篇|先行预告|先行預告`)
 	qualityToken   = regexp.MustCompile(`(?i)[0-9]{3,4}[pi]|[48]k`)
@@ -137,7 +139,7 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 		}
 	}
 	for _, m := range rangeEpisode.FindAllStringIndex(title, -1) {
-		if leftBoundary(title, m[0]) && rightBoundary(title, m[1]) {
+		if leftBoundary(title, m[0]) && rightBoundary(title, m[1]) && rangeNumberingPosition(title, m[0], m[1]) {
 			add(m[0], m[1], "batch", true)
 		}
 	}
@@ -206,6 +208,44 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 		out.Episode = &n
 	}
 	return out, nil
+}
+
+// Exclude digits embedded in a named title field, rather than preferring the
+// last number. Explicit 第/EP/SxxExx/dash grammars above remain authoritative;
+// numeric bracket fields and other ranges retain their batch evidence.
+func rangeNumberingPosition(title string, start, end int) bool {
+	if start > 0 {
+		previous, _ := utf8.DecodeLastRuneInString(title[:start])
+		if unicode.IsLetter(previous) || unicode.IsDigit(previous) {
+			return false
+		}
+	}
+	// Pure numeric fields, including mixed packs, keep their range evidence.
+	// A compact fraction after a name in [Ranma 1/2] belongs to that name;
+	// [01/02] and [Show 01-12] must still block single-episode execution.
+	for _, b := range brackets.FindAllStringSubmatchIndex(title, -1) {
+		if start >= b[2] && end <= b[3] {
+			prefix := strings.TrimSpace(title[b[2]:start])
+			if prefix == "" {
+				return true
+			}
+			if strings.ContainsFunc(prefix, unicode.IsLetter) && titleFraction.MatchString(title[start:end]) {
+				return false
+			}
+		}
+	}
+	if metadataTail(title[end:]) {
+		return true
+	}
+	// Year/season text after a number belongs to the series-title portion,
+	// before the publisher's actual episode field. Other unlabelled ranges
+	// remain conservative batch evidence, even if their tail is unfamiliar.
+	if !titleRangeTail.MatchString(title[end:]) {
+		return true
+	}
+	prefix := strings.TrimSpace(title[:start])
+	previous, _ := utf8.DecodeLastRuneInString(prefix)
+	return !unicode.IsLetter(previous)
 }
 
 func kindRank(kind string) int {

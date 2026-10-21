@@ -333,3 +333,43 @@ func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
 		t.Fatal("a genuine episode range became a single episode", s.Items[2])
 	}
 }
+
+func TestPreviewRanmaPublisherOffsetAndCurrentVersion(t *testing.T) {
+	c := config()
+	source := &c.Sources[0]
+	source.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}
+	source.Rules.MinimumEpisode, source.Rules.Resolution = ptr(1), ptr("any")
+	p := page(
+		"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03v2 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]",
+		"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]",
+		"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 02 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]",
+		"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 01 [1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]",
+		"[ToonsHub] 乱马1/2 / Ranma 1-2 (2024) Season 3 - 01-12 [1080P][MKV]",
+	)
+	plan := model.AnimeNamingPlan{SchemaVersion: 1,
+		Target:  model.AnimeNamingTarget{TMDBID: "259140", Title: "乱马½", Year: "2024", Season: 1, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 1, Episodes: []model.AnimeNamingEpisode{{ID: "25", Number: 25}, {ID: "26", Number: 26}, {ID: "27", Number: 27}}}}},
+		Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 25}}}},
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s := build(t, c, p)
+	if len(s.SelectedIDs) != 3 || !s.Items[0].Selectable || s.Items[1].Selectable || s.Items[1].ReasonCode != "RELEASE_VERSION_SUPERSEDED" {
+		t.Fatal("current v2 must win once without losing other episodes", s.Items)
+	}
+	for i, episode := range []int{27, 27, 26, 25} {
+		naming := plan.Project("main", s.Items[i].Release.Parse, "ToonsHub")
+		want := fmt.Sprintf("乱马½ (2024) {tmdb-259140}/Season 01/乱马½.S01E%02d.ToonsHub", episode)
+		if naming.Status != "mapped" || naming.PathStem != want {
+			t.Fatal("publisher season changed the configured TMDB offset", naming)
+		}
+	}
+	if s.Items[4].Selectable || s.Items[4].Release.Parse.Kind != "batch" || plan.Project("main", s.Items[4].Release.Parse, "ToonsHub").Status != "unmapped" {
+		t.Fatal("a true range was selected or mapped as one episode", s.Items[4])
+	}
+	source.Rules.MinimumEpisode = ptr(2)
+	s = build(t, c, p)
+	if len(s.SelectedIDs) != 2 || s.Items[3].ReasonCode != "BELOW_SOURCE_MINIMUM" {
+		t.Fatal("naming offset must not change the publisher download minimum", s.Items)
+	}
+}

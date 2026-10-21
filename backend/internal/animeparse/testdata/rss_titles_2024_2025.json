@@ -1,0 +1,487 @@
+{
+  "observedDate": "2026-10-21",
+  "description": "Public RSS titles published in 2024 or 2025. Selected raw titles retain source links and original dates; expected numbering reviewed separately from title parsing. No torrent, image, subscription or 115 requests.",
+  "totalAudited": 774,
+  "cases": [
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/fed9da7c791587345cae9f3826cefb985c99acb8",
+      "published": "2024-12-22T16:01:58.705",
+      "title": "[喵萌奶茶屋&LoliHouse] 乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024) - 12 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕][END]",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/982347c7b972a05c375468b48bbd5fed39ee2752",
+      "published": "2024-12-22T15:40:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][12][1080p][繁日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/48ec4324c49adc95bbc777949f7acb7e81c76f96",
+      "published": "2024-12-22T15:40:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][12][1080p][简日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/fe21ddd1a097153a81b57849a8b3608457093497",
+      "published": "2024-12-16T22:28:19.622",
+      "title": "[喵萌奶茶屋&LoliHouse] 乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024) - 11 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]",
+      "kind": "episode",
+      "episode": 11,
+      "rawEpisode": "11",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/bf6fb0954f06f4d079b11ef7811968dc2545cf6c",
+      "published": "2024-10-13T15:48:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][02][1080p][简日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 2,
+      "rawEpisode": "02",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/24348697773f5c2b3223e8bfdbf0b3f1cbfb7337",
+      "published": "2024-10-06T15:29:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][01][1080p][简日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3466",
+      "link": "https://mikanani.me/Home/Episode/7b961962cc9d4551db778d46419e3ad0ea53d9b2",
+      "published": "2024-10-06T15:29:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][01][1080p][繁日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/cd6b62d215313a4c6d4e1df197299b78c1e18a50",
+      "published": "2025-12-21T18:37:30.156",
+      "title": "[喵萌奶茶屋&LoliHouse] 乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024) - 24 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕][END]",
+      "kind": "episode",
+      "episode": 24,
+      "rawEpisode": "24",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/bde394b1f1916da25b275ae7aadaff30fca20001",
+      "published": "2025-12-21T15:27:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][24][1080p][繁日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 24,
+      "rawEpisode": "24",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/ff8019482c78e24d10457da82a36091253318448",
+      "published": "2025-12-21T15:27:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][24][1080p][简日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 24,
+      "rawEpisode": "24",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/2bfe25939f10958ae394d4fee1e2d016b6116682",
+      "published": "2025-12-21T03:41:00",
+      "title": "乱马1/2「らんま1/2」Ranma1/2 2024年版 第2期 S02E12 1080p 日英双语-多国字幕",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/c35665f0bff8d71eed64b3855b4d3ae6bfab409b",
+      "published": "2025-10-06T11:43:00",
+      "title": "【喵萌奶茶屋】★10月新番★[乱马 1/2 2024年版 / Ranma ½ / Ranma 1/2 (2024)][13][1080p][繁日双语][招募翻译]",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/85ba98751223f433469a6ebf1d07cf15d3805c6a",
+      "published": "2025-10-05T02:19:00",
+      "title": "乱马1/2「らんま1/2」Ranma1/2 2024年版 第二季 S02E01 日英双语-多国字幕",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/5d27033821937999c4cac35325f4a7aa7d27eff3",
+      "published": "2025-10-05T02:18:00",
+      "title": "乱马1/2「らんま1/2」Ranma1/2 2024年版 第一季 S01E01~12 日英双语-多国字幕",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01~12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/97008bead4a2d301d5db30a8dbe68eaa0de5e7d5",
+      "published": "2025-10-17T16:36:00",
+      "title": "[DBD-Raws][乱马½ (2024) 第一季/Ranma ½ (2024) S1][01-12TV全集][1080P][BDRip][HEVC-10bit][简繁日双语外挂][FLAC][MKV](らんま½ (2024) S1)",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "全集",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/40c4450fd2fd6d2997ed1df18e853a14b44c6c07",
+      "published": "2025-03-03T11:46:14.52",
+      "title": "[Up to 21°C] 2.5 次元的诱惑 / 2.5-jigen no Ririsa - 07 (CR 1920x1080 AVC AAC MKV)",
+      "kind": "episode",
+      "episode": 7,
+      "rawEpisode": "07",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/74a4f554f0006a09128e73495cec8949175f718f",
+      "published": "2024-12-14T14:39:00",
+      "title": "[LoliHouse] 2.5次元的诱惑 / 2.5-jigen no Ririsa [01-24 合集][WebRip 1080p HEVC-10bit AAC][简繁内封字幕][Fin]",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01-24 / 合集",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/b472e0cac224d380662a908e26bcfbff711a8ee6",
+      "published": "2024-12-13T23:57:12.487",
+      "title": "[LoliHouse] 2.5次元的诱惑 / 2.5-jigen no Ririsa - 24 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕][END]",
+      "kind": "episode",
+      "episode": 24,
+      "rawEpisode": "24",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/ab9d3f3f60d3e2493c4c2606e7c7fa86e2776119",
+      "published": "2024-12-13T22:01:51.253",
+      "title": "[Up to 21°C] 2.5 次元的诱惑 / 2.5-jigen no Ririsa - 24 (ABEMA 1920x1080 AVC AAC MP4)",
+      "kind": "episode",
+      "episode": 24,
+      "rawEpisode": "24",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/3c4ddcdde61aa793b0d7244bebb7ce2e1aaefdd3",
+      "published": "2024-07-05T21:31:55.946",
+      "title": "[Up to 21°C] 2.5 次元的诱惑 / 2.5-jigen no Ririsa - 01 (CR 1920x1080 AVC AAC MKV)",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/f43648dca3c805adbb9a3fe6305cc03870e5d69a",
+      "published": "2024-07-05T21:31:16.951",
+      "title": "[ANi] 25 Dimensional Seduction /  2.5 次元的诱惑 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3394",
+      "link": "https://mikanani.me/Home/Episode/2afa82920a401492eb19616a2ca433118340d0da",
+      "published": "2024-07-05T21:31:05.209",
+      "title": "[Up to 21°C] 2.5次元的诱惑 / 2.5-jigen no Ririsa - 01 (B-Global 1920x1080 HEVC AAC MKV)",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/24e227d0676ce0b989bbe220d99f71f120d8eff6",
+      "published": "2025-06-10T19:11:49.932067",
+      "title": "[Prejudice-Studio] 胆大党 DAN DA DAN [01-12][Bilibili WEB-DL 1080P AVC 8bit AAC MP4][简体内嵌].",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01-12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/b1ca01093d3bd6556f653308ad888d9bd2e885eb",
+      "published": "2025-05-07T21:19:56.000265",
+      "title": "[H-Enc] 胆大党 / Dan Da Dan (BDRip 1080p HEVC FLAC)",
+      "kind": "unknown",
+      "episode": null,
+      "rawEpisode": "",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/df701215a6a8485b237ea7b047514d04b9a54763",
+      "published": "2025-03-15T14:24:01.112",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan - 12 END [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT)",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/de1afb50991cd7f6115acdc3caa47cd0df017f02",
+      "published": "2025-03-15T13:53:08.772",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan - 04 [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT V2)",
+      "kind": "episode",
+      "episode": 4,
+      "rawEpisode": "04",
+      "versionLabel": "V2"
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/a6b61f495e28abb47f3a372ca74eae6babd759e1",
+      "published": "2024-10-04T00:03:05.480318",
+      "title": "[ANi] DAN DA DAN /  胆大党 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/ed6edbccfbf3788cadfc8d484f56e43bb131ceb4",
+      "published": "2024-10-04T00:02:56.887",
+      "title": "[Up to 21°C] 胆大党 / Dandadan - 01 (ADN 1920x1080 AVC AAC MKV)",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/c01c5e94761a8f14e29c60c012ae6b9276eef6a2",
+      "published": "2024-10-04T00:01:24.704",
+      "title": "[Up to 21°C] 超自然武装当哒当 / Dandadan - 01 (B-Global 1920x1080 HEVC AAC MKV)",
+      "kind": "episode",
+      "episode": 1,
+      "rawEpisode": "01",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3436",
+      "link": "https://mikanani.me/Home/Episode/77565e4fe53b044a950fb6df1257bd2fbb0cabc8",
+      "published": "2025-01-20T05:11:00",
+      "title": "[胆大党][全12集][日语多字幕][WEB-MKV][2160P]",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "全12集",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/8a18f0f80382de7993eedfcf3d88c644ae4f560a",
+      "published": "2025-12-14T14:40:20.213",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan S2 - 12 END [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT)",
+      "kind": "episode",
+      "episode": 12,
+      "rawEpisode": "12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/07f6199aaa3a89f06278b974cd5311cb8847e230",
+      "published": "2025-12-06T23:36:00.911",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan S2 - 11 [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT)",
+      "kind": "episode",
+      "episode": 11,
+      "rawEpisode": "11",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/e7e7612de3f84071c86bfa0da4a3aa20f3ecd775",
+      "published": "2025-11-30T13:48:42.003",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan S2 - 10 [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT)",
+      "kind": "episode",
+      "episode": 10,
+      "rawEpisode": "10",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/6cd09c9ebe2fbc4fd290b13842329ad33e4ee9ba",
+      "published": "2025-11-26T10:36:44.452",
+      "title": "[jibaketa合成][代理商粤语]胆大党 / Dandadan S2 - 09 [粤日双语+内封繁体中文字幕](WEB 1920x1080 AVC AACx2 SRT MUSE CHT)",
+      "kind": "episode",
+      "episode": 9,
+      "rawEpisode": "09",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/ae5813bc62c61b5caaf66e30c2b52e189f24c8d3",
+      "published": "2025-07-04T00:01:30.59366",
+      "title": "[黒ネズミたち] 胆大党 第二季 / Dandadan 2nd Season - 13 (B-Global 1920x1080 HEVC AAC MKV)",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/655783bd81837ee6c3cf22b0f465e20be21b4e3f",
+      "published": "2025-07-04T00:01:09.161918",
+      "title": "[ANi] Dan Da Dan S02 /  胆大党 第二季 - 13 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/24c55163e9d1fd3f25abac9792c12a5b82208c6f",
+      "published": "2025-07-04T00:00:59.536616",
+      "title": "[黒ネズミたち] 胆大党 第二季 / Dandadan 2nd Season - 13 (Baha 1920x1080 AVC AAC MP4)",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/249bc30843710cf713a180d6a52edd1570a5ef30",
+      "published": "2025-10-01T02:39:00",
+      "title": "[沸班亚马制作组] 胆大党 第二季 - 01-12 [CR WebRip AI2160p HEVC-10bit OPUS][简繁内封字幕]",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01-12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/758918de42770ad5b99aff4d92eaa2081e6fb892",
+      "published": "2025-10-01T02:14:00",
+      "title": "[沸班亚马制作组] 胆大党 第二季 - 01-12 [CR WebRip 1080p HEVC-10bit OPUS][简繁内封字幕]",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01-12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3665",
+      "link": "https://mikanani.me/Home/Episode/5057c28f2c500f0fdab19825b134e239a7af9c64",
+      "published": "2025-09-29T22:59:00",
+      "title": "[沸班亚马制作组] 胆大党 第二季 - 01-12 [IQIYI WebRip 2160p HEVC-10bit OPUS][简繁内封字幕]",
+      "kind": "batch",
+      "episode": null,
+      "rawEpisode": "01-12",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/4c5cedd415a25e07601188375146b122143ce81e",
+      "published": "2025-04-08T11:56:22.181",
+      "title": "[千夏字幕组&喵萌奶茶屋&LoliHouse] 超超超超超喜欢你的100个女朋友 / Hyakkano - 17v2 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]",
+      "kind": "episode",
+      "episode": 17,
+      "rawEpisode": "17v2",
+      "versionLabel": "v2"
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/5d1cf4fdfe747d0069fde33fc74f1197c4b6b887",
+      "published": "2025-04-08T11:55:46.109",
+      "title": "[千夏字幕组&喵萌奶茶屋&LoliHouse] 超超超超超喜欢你的100个女朋友 / Hyakkano - 16v2 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]",
+      "kind": "episode",
+      "episode": 16,
+      "rawEpisode": "16v2",
+      "versionLabel": "v2"
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/80c605c1a9afb0f8df65757d9d5f9fa2b30b5392",
+      "published": "2025-04-06T19:45:00",
+      "title": "【喵萌奶茶屋&千夏字幕组】★01月新番★[超超超超超喜欢你的100个女朋友 / Hyakkano][17][1080p][繁日双语][v2][招募翻译]",
+      "kind": "episode",
+      "episode": 17,
+      "rawEpisode": "17",
+      "versionLabel": "v2"
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/a3d9ef91259502c58d558a9108bb6e9662f7e052",
+      "published": "2025-04-06T19:44:00",
+      "title": "【喵萌奶茶屋&千夏字幕组】★01月新番★[超超超超超喜欢你的100个女朋友 / Hyakkano][17][1080p][简日双语][v2][招募翻译]",
+      "kind": "episode",
+      "episode": 17,
+      "rawEpisode": "17",
+      "versionLabel": "v2"
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/c447c3ecc5f1233d9ed88fcc3c97c89351c51b42",
+      "published": "2025-01-12T22:01:56.614",
+      "title": "[Up to 21°C] 超超超超超喜欢你的100个女朋友 / Kimi no Koto ga Daidaidaidaidaisuki na 100-nin no Kanojo 2nd Season - 13 (B-Global 1920x1080 HEVC AAC MKV)",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/38b20d9ad1bfc21b8af02beaeda717d0c078059b",
+      "published": "2025-01-12T22:01:00.641433",
+      "title": "[ANi]  超超超超超喜欢你的 100 个女朋友 - 13 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3524",
+      "link": "https://mikanani.me/Home/Episode/e93633f2485e4050517eb65067cf502fa53ec064",
+      "published": "2025-01-12T22:00:48.217",
+      "title": "[Up to 21°C] 超超超超超喜欢你的 100 个女朋友 / Kimi no Koto ga Daidaidaidaidaisuki na 100-nin no Kanojo 2nd Season - 13 (Baha 1920x1080 AVC AAC MP4)",
+      "kind": "episode",
+      "episode": 13,
+      "rawEpisode": "13",
+      "versionLabel": ""
+    },
+    {
+      "feed": "https://mikanani.me/RSS/Bangumi?bangumiId=3741",
+      "link": "https://mikanani.me/Home/Episode/ac1a70afff20e21be17205c4430fe0353dcc73d0",
+      "published": "2025-12-14T01:09:00",
+      "title": "乱马1/2「らんま1/2」Ranma1/2 2024年版 第2期 S02E11 1080p 日英双语-多国字幕",
+      "kind": "episode",
+      "episode": 11,
+      "rawEpisode": "11",
+      "versionLabel": ""
+    }
+  ]
+}

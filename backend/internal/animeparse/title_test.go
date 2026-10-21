@@ -52,6 +52,74 @@ func TestTitleOrdinaryNumbering(t *testing.T) {
 	}
 }
 
+func TestTitleSeriesNumbersDoNotReplacePublisherEpisodes(t *testing.T) {
+	for _, tc := range []struct {
+		title, raw string
+		episode    int
+		version    string
+	}{
+		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03v2 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "03v2", 3, "v2"},
+		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "03", 3, ""},
+		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 02 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "02", 2, ""},
+		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 01 [1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "01", 1, ""},
+		{"[Group] [Ranma 1/2] [03] [1080p]", "03", 3, ""},
+		{"[Group] 乱马1/2 [03] [1080p]", "03", 3, ""},
+		{"[Group] らんま1/2 [03] [1080p]", "03", 3, ""},
+		{"[Group] Show 1-2 Season 3 - 03 [1080p]", "03", 3, ""},
+		{"[Group] Show 1/2 (2024) - 03 [1080p]", "03", 3, ""},
+		{"[Group] 2.5次元的诱惑 / 2.5-jigen no Ririsa - 03 [1080p]", "03", 3, ""},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			got, err := Title(tc.title)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != "episode" || got.Episode == nil || *got.Episode != tc.episode || got.RawEpisode != tc.raw || got.VersionLabel != tc.version {
+				t.Fatalf("series-name digits replaced the publisher episode: %+v", got)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTitleNumberedSeriesStillRetainPackAndAmbiguityEvidence(t *testing.T) {
+	for _, tc := range []struct{ title, kind string }{
+		{"[Group] [Ranma 1/2] [01-12] [1080p]", "batch"},
+		{"[Group] 乱马1/2 / Ranma 1-2 (2024) Season 3 - 01-12 [1080p]", "batch"},
+		{"[Group] 乱马1/2 / Ranma 1-2 (2024) - 03 [01-12] [1080p]", "batch"},
+		{"[Group] 乱马1/2 [01+02] [1080p]", "batch"},
+		{"[Group] 乱马1/2 [01/02] [1080p]", "batch"},
+		{"[Group] 乱马1/2 全12集 [1080p]", "batch"},
+		{"[绿茶字幕组] 靠死亡游戏混饭吃。 / Shibou Yuugi de Meshi wo Kuu [01-11修正合集][WebRip][1080p][简繁日内封]", "batch"},
+		{"[Group] Show 01-12 bonus [03][1080p]", "batch"},
+		{"[Group] Show [Show 01-12] [03][1080p]", "batch"},
+		{"01-12 Season 3 [03][1080p]", "batch"},
+		{"[Group] 01-12 Season 3 [03][1080p]", "batch"},
+		{"[Group] Show | 01-12 Season 3 [03][1080p]", "batch"},
+		{"[Group] 乱马1/2 [03][04][1080p]", "composite"},
+		{"[Group] 乱马1/2 [59][3rd - 09][1080p]", "composite"},
+		{"[Group] 乱马1/2 SP01 [1080p]", "special"},
+		{"[Group] 乱马1/2 [12.5][1080p]", "special"},
+		{"[Group] [Ranma 1/2] [1080p]", "unknown"},
+		{"[Group] 乱马1/2 / Ranma 1-2 (2024) Season 3 [1080p]", "unknown"},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			got, err := Title(tc.title)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != tc.kind || got.Episode != nil {
+				t.Fatalf("non-single release became executable: %+v", got)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestTitleUnsupportedAndAmbiguousNumbering(t *testing.T) {
 	for _, tc := range []struct{ title, kind, raw string }{
 		{"[组] 动画 [12.5] [1080p]", "special", "12.5"},
@@ -189,6 +257,45 @@ func TestTitleRealMikanSamples(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestTitleRealRSS2024And2025(t *testing.T) {
+	data, err := os.ReadFile("testdata/rss_titles_2024_2025.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Feed, Link, Published, Title, Kind, RawEpisode, VersionLabel string
+			Episode                                                      *int
+		}
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	feeds, years := make(map[string]bool), make(map[string]bool)
+	for _, tc := range fixture.Cases {
+		feeds[tc.Feed] = true
+		if len(tc.Published) < 4 || !strings.HasPrefix(tc.Link, "https://mikanani.me/Home/Episode/") {
+			t.Fatal("RSS provenance is missing", tc)
+		}
+		years[tc.Published[:4]] = true
+		t.Run(tc.Link, func(t *testing.T) {
+			got, err := Title(tc.Title)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != tc.Kind || got.RawEpisode != tc.RawEpisode || got.VersionLabel != tc.VersionLabel || (got.Episode == nil) != (tc.Episode == nil) || got.Episode != nil && *got.Episode != *tc.Episode {
+				t.Fatalf("unexpected numbering for public RSS title %q: %+v", tc.Title, got)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if len(feeds) != 6 || len(years) != 2 || !years["2024"] || !years["2025"] || len(fixture.Cases) < 40 {
+		t.Fatal("missing RSS/year/format coverage", feeds, years, len(fixture.Cases))
 	}
 }
 

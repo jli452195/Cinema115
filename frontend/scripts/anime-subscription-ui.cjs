@@ -445,6 +445,31 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await clean.page.getByRole('button',{name:'取消',exact:true}).click()
     await wait(()=>clean.page.locator('dialog[open]').count().then(n=>n===0))
     passed.push('automatic naming does not mark an untouched form as dirty')
+    const numbering=await session()
+    await numbering.go();await numbering.source()
+    await numbering.page.getByLabel('发布第几话',{exact:true}).fill('25')
+    await numbering.page.getByLabel('对应第几集',{exact:true}).fill('1')
+    numbering.state.previewTransform=(item,i)=> {
+      const kinds=['batch','unknown','special','composite'],raw=['01-11','','12.5','59 / 09']
+      if(i>=kinds.length)return item
+      return {...item,selectable:false,decision:'needs_confirmation',reasonCode:'EPISODE_NUMBER_UNRESOLVED',release:{...item.release,parse:{...item.release.parse,kind:kinds[i],episode:null,rawEpisode:raw[i]}}}
+    }
+    await numbering.page.getByRole('button',{name:'预览',exact:true}).click()
+    await numbering.page.locator('.ae-preview-table').waitFor()
+    const expectedNotes=['合集资源，暂不支持自动整理','未能识别单集编号','特殊集编号，需单独设置对应','编号含歧义，需确认集号']
+    for(const [i,note] of expectedNotes.entries()) {
+      const row=numbering.page.locator('.ae-preview-table tbody tr').nth(i)
+      assert.equal(await row.locator('.ae-rename-pending').innerText(),note)
+      assert.equal(await row.locator('.ae-sticky-rule .ae-status').getAttribute('title'),note)
+      assert.equal(await row.locator('.ae-release-filename').count(),0,'unresolved rows never fabricate a filename')
+    }
+    assert.match(await numbering.page.locator('.ae-preview-table tbody tr').nth(4).locator('.ae-release-filename').innerText(),/S02E03/,'recognized episodes still use the configured offset')
+    await numbering.page.getByRole('button',{name:'详细信息',exact:true}).click()
+    assert.deepEqual(await numbering.page.locator('.ae-release-reason').allTextContents().then(values=>values.slice(0,4)),expectedNotes)
+    await numbering.page.getByRole('button',{name:'返回配置',exact:true}).click()
+    assert.equal(await numbering.page.getByLabel('发布第几话',{exact:true}).inputValue(),'25')
+    assert.equal(numbering.writes().length,0,'explaining a parse issue cannot create downloads or save a subscription')
+    passed.push('preview distinguishes packs, unknown, special and ambiguous numbering without losing ordinary naming or editing state')
     await s.go('/anime/subscriptions/saved-subscription')
     await s.page.getByLabel('从第几话开始').fill('9')
     s.state.saveMode='conflict'
