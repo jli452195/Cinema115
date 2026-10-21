@@ -29,16 +29,17 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
           return { itemId, bangumiId: state.omitBangumi ? null : bangumiId, subscriptions: state.saved && bangumiId === '630160' ? [{ id: state.saved.id, status: state.saved.status }, ...(state.multiple ? [{id:'other-edition',status:'paused'}] : [])] : [] }
         }) }
       }
-      else if (endpoint.startsWith('/api/mikan/image/')) {
+      else if (/^\/api\/(mikan|anibt|garden)\/image\//.test(endpoint)) {
+        if (state.failImages) { await route.fulfill({status:404,body:''}); return }
         await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="336"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#405d85"/><stop offset="1" stop-color="#98b6ad"/></linearGradient></defs><path fill="url(#g)" d="M0 0h240v336H0z"/><circle cx="170" cy="120" r="80" fill="white" opacity=".18"/></svg>'}); return
       } else if (endpoint.endsWith('/catalog/garden')) {
-        const native={id:'630160',bangumiId:'630160',title:'Garden 原生卡片',originalTitle:'Garden original',coverUrl:'',platform:'TV',airDate:'2026-10-18'}
+        const native={id:'630160',bangumiId:'630160',title:'Garden 原生卡片',originalTitle:'Garden original',coverUrl:state.cardCovers?'/api/garden/image/630160/poster.jpeg':'',platform:'TV',airDate:'2026-10-18'}
         if(state.fail){status=502;data={error:'Garden unavailable'}}
         else data={provider:'garden',season:body.season||'',days:[...Array.from({length:7},(_,i)=>({day:i+1,items:[{...native,id:String(630160+i),bangumiId:String(630160+i)}]})),{day:8,items:[native,{...native,id:'640000',bangumiId:'640000',title:'网络动画'}]}],items:body.keyword==='none'?[]:[native],truncated:body.keyword==='many',fetchedAt:Date.now(),expiresAt:Date.now()+600000}
       } else if (endpoint.endsWith('/catalog/anibt')) {
         if(state.fail){status=502;data={error:'模拟 AniBT 读取失败'}}
         else {
-          const native={id:'630160',bangumiId:'630160',animeId:'native630160',title:'AniBT 原生卡片',originalTitle:'Native anime',coverUrl:'',format:'TV',rating:7.8,episodes:12,airingAt:1792407600,releaseCount:3,hasRelease:true}
+          const native={id:'630160',bangumiId:'630160',animeId:'native630160',title:'AniBT 原生卡片',originalTitle:'Native anime',coverUrl:state.cardCovers?'/api/anibt/image/mock630160/'+'a'.repeat(64)+'.webp':'',format:'TV',rating:7.8,episodes:12,airingAt:1792407600,releaseCount:3,hasRelease:true}
           data={provider:'anibt',season:body.season||'',days:[{day:1,items:[native]},{day:8,items:[{...native,id:'630161',bangumiId:'630161',title:'AniBT 未排播'}]}],items:body.keyword==='none'?[]:[native],truncated:body.keyword==='many',total:1,fetchedAt:Date.now(),expiresAt:Date.now()+600000}
         }
       } else if (endpoint.endsWith('/catalog/mikan')) {
@@ -298,6 +299,60 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await stable.page.goBack()
     await stable.page.waitForFunction(()=>Math.abs(window.scrollY-120)<1)
     passed.push('in-page date/provider filtering keeps header/scroll stable with old caches and empty results; external return and browser back restore progress')
+
+    const posters=await session()
+    posters.state.cardCovers=true;posters.state.statusEnabled=true;posters.state.saved={id:'poster-example',status:'enabled'};posters.state.multiple=true
+    await posters.go('/anime?source=anibt&season=2026-10&day=all')
+    const poster=posters.page.locator('.anibt-anime-card').first()
+    assert.equal(await poster.locator('.poster-card-sticker').count(),1)
+    assert.equal(await poster.locator('button,a').count(),0,'the card remains a single link without nested controls')
+    assert.equal(await poster.locator('img').getAttribute('loading'),'eager')
+    const dimensions=await poster.locator('.poster-card-cover').evaluate(el=>({w:el.clientWidth,h:el.clientHeight}))
+    assert.ok(Math.abs(dimensions.h/dimensions.w-1.5)<.02,'sleeve keeps a 2:3 cover')
+    const scrollBefore=await posters.page.evaluate(()=>window.scrollY)
+    const imageCallsBefore=posters.calls.filter(c=>c.endpoint.includes('/image/')).length
+    await poster.hover()
+    await posters.page.waitForTimeout(800)
+    const hoverStyle=await poster.evaluate(el=>{const c=getComputedStyle(el),m=new DOMMatrixReadOnly(c.transform),shine=getComputedStyle(el.querySelector('.poster-card-cover'),'::after');return {angle:Math.atan2(m.b,m.a)*180/Math.PI,y:m.f,shineX:new DOMMatrixReadOnly(shine.transform).m41,w:el.querySelector('.poster-card-cover').clientWidth,running:el.getAnimations({subtree:true}).filter(a=>a.playState==='running').length}})
+    assert.ok(Math.abs(hoverStyle.angle+.6)<.05 && Math.abs(hoverStyle.y+4)<.05,'hover lifts and gently tilts the whole sleeve')
+    assert.ok(hoverStyle.shineX>hoverStyle.w,'one sweep finishes beyond the cover')
+    assert.equal(hoverStyle.running,0,'hover has no continuous animation after the sweep')
+    assert.equal(await posters.page.evaluate(()=>window.scrollY),scrollBefore)
+    assert.equal(posters.calls.filter(c=>c.endpoint.includes('/image/')).length,imageCallsBefore,'hover must not refetch a cover')
+    await posters.page.mouse.move(0,0)
+    await posters.page.waitForTimeout(350)
+    assert.equal(await poster.evaluate(el=>getComputedStyle(el).transform),'none')
+    await posters.page.locator('.anime-grid').screenshot({path:'test-results/anime-poster-grid-desktop.png'})
+    await posters.page.setViewportSize({width:320,height:760})
+    await posters.page.waitForTimeout(100)
+    const overlay=await poster.evaluate(el=>{const time=el.querySelector('.poster-card-sticker').getBoundingClientRect(),format=el.querySelector('.poster-card-format').getBoundingClientRect(),badge=el.querySelector('.catalog-subscription-badge').getBoundingClientRect(),cover=el.querySelector('.poster-card-cover').getBoundingClientRect();return {overlap:time.bottom>badge.top || format.right>badge.left,inside:badge.right<=cover.right && format.left>=cover.left,columns:getComputedStyle(el.parentElement).gridTemplateColumns.split(' ').length}})
+    assert.equal(overlay.overlap,false,'narrow card must separate its time sticker, format and subscription badge')
+    assert.equal(overlay.inside,true)
+    assert.equal(overlay.columns,2,'320px keeps two readable columns')
+    assert.equal(await posters.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await posters.page.locator('.anime-grid').screenshot({path:'test-results/anime-poster-grid-mobile.png'})
+    await posters.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await posters.page.locator('.anime-grid').screenshot({path:'test-results/anime-poster-grid-mobile-dark.png'})
+    await posters.page.evaluate(()=>document.documentElement.classList.remove('dark'))
+    await posters.page.setViewportSize({width:1440,height:1000})
+    await posters.page.emulateMedia({reducedMotion:'reduce'})
+    await poster.hover()
+    assert.equal(await poster.evaluate(el=>getComputedStyle(el).transform),'none')
+    assert.equal(await poster.evaluate(el=>getComputedStyle(el.querySelector('.poster-card-cover'),'::after').transitionDuration),'0s')
+    posters.state.saved=undefined
+    await posters.navigate('/anime?source=mikan&season=2026-10&day=1')
+    const heights=await posters.page.locator('.anime-poster-card').evaluateAll(els=>els.slice(0,6).map(el=>el.getBoundingClientRect().height))
+    assert.ok(Math.max(...heights)-Math.min(...heights)<1,'long and short titles keep equal card heights')
+    await posters.page.locator('.mikan-anime-card').first().focus()
+    await posters.page.keyboard.press('Enter')
+    await posters.page.locator('.ac-identity').waitFor()
+    await posters.page.keyboard.press('Escape')
+    await posters.page.locator('dialog[open]').waitFor({state:'detached'})
+    posters.state.failImages=true
+    await posters.navigate('/anime?source=garden&season=2026-10&day=1')
+    await posters.page.waitForFunction(()=>document.querySelector('.garden-anime-card')&&!document.querySelector('.garden-anime-card img'))
+    assert.equal(await posters.page.locator('.garden-anime-card .poster-card-placeholder').count(),1,'failed image keeps the same card and dotted placeholder')
+    passed.push('reusable poster sleeves: native fields, fixed geometry, keyboard entry, failed cover, finite hover sweep and reduced motion without extra image requests')
 
     const mobile=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true})
     await mobile.go()

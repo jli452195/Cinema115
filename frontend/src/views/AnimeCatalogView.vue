@@ -228,8 +228,8 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); controller
         <AnimeCatalogCategories v-if="mode === 'calendar'" :entries="categoryEntries" :model-value="String(day)" :label="`${providerName}日历分类`" :today="season === currentSeason ? String(today) : undefined" @select="value => navigate({ day: value, page: undefined, item: undefined })" />
         <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? day === 'all' ? `${seasonLabel(season)}收录` : labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span></div>
         <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
-        <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton"><div></div><span></span></div></div>
-        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="item in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /><AnibtAnimeCard v-for="item in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /><MikanAnimeCard v-for="item in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" /></div>
+        <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span><span></span><span v-if="provider === 'anibt'"></span></div></div>
+        <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="(item, index) in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><AnibtAnimeCard v-for="(item, index) in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><MikanAnimeCard v-for="(item, index) in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /></div>
         <div v-else-if="!error" class="anime-empty"><component :is="mode === 'calendar' ? IconCalendar : IconSearch" :size="30" aria-hidden="true" /><h3>{{ mode === 'calendar' ? '当前分类暂无条目' : keyword ? `${providerName}未找到相关番剧` : `在${providerName}查找想追的番剧` }}</h3><p>{{ mode === 'calendar' ? '可以切换分类、季度，或搜索番剧名称。' : '试试原名、简称或更短的关键词。' }}</p></div>
         <p v-if="statusError" class="catalog-status-error" role="status">{{ statusError }}<button type="button" @click="loadStatuses(true)">重新核对</button></p>
         <p v-if="mode === 'search' && result?.provider === 'anibt' && result.truncated" class="anime-context">AniBT 最多返回 50 部搜索结果，请缩小关键词范围。</p>
@@ -244,7 +244,24 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); controller
 </template>
 
 <style scoped>
-.anime-browser { overflow-anchor: none; }
+.anime-browser { container: anime-catalog / inline-size; overflow-anchor: none; }
+.anime-browser .anime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
+.anime-grid > :nth-child(4n + 1) { --poster-tilt: -4deg; }
+.anime-grid > :nth-child(4n + 2) { --poster-tilt: 3deg; }
+.anime-grid > :nth-child(4n + 3) { --poster-tilt: -2deg; }
+.anime-grid > :nth-child(4n + 4) { --poster-tilt: 4deg; }
+.anime-skeleton { padding: 4px 4px 7px; border-radius: 14px; background: #fff; box-shadow: 0 0 0 1px rgb(148 163 184 / .2); }
+.anime-skeleton > div { border-radius: 10px; }
+.anime-skeleton > span { height: 18px; width: 85%; margin: 2px 4px 0; }
+.anime-skeleton > span:nth-child(2) { height: 36px; margin-top: 8px; }
+.anime-skeleton > span:nth-child(3) { width: 65%; }
+.anime-skeleton > span:nth-child(4) { margin-top: 6px; }
+.anime-skeleton > span:last-child { height: 18px; width: 55%; }
+.dark .anime-skeleton { background: rgb(var(--color-slate-800)); }
+@container anime-catalog (min-width: 480px) { .anime-browser .anime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container anime-catalog (min-width: 600px) { .anime-browser .anime-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 14px; } }
+@container anime-catalog (min-width: 960px) { .anime-browser .anime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 16px; } }
+@container anime-catalog (min-width: 1360px) { .anime-browser .anime-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
 .catalog-providers { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
 .catalog-search { max-width: 740px; }
 .catalog-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
