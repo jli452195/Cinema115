@@ -81,17 +81,26 @@ const anibtItems = computed(() => result.value?.provider === 'anibt' ? items.val
 const pages = computed(() => Math.max(1, Math.ceil(allItems.value.length / 20)))
 const subscriptionStates = ref<Record<string, AnimeCatalogStatus>>({}), statusError = ref('')
 let statusController: AbortController | undefined, statusPending = false
-async function loadStatuses(force = false) {
+let statusTimer: ReturnType<typeof setTimeout> | undefined
+function loadStatuses(force = false) {
+  clearTimeout(statusTimer); statusTimer = undefined
   statusController?.abort(); const active = new AbortController(); statusController = active
   statusPending = false
   subscriptionStates.value = animeCatalogStatusSnapshot(provider.value as AnimeProviderID, items.value.map(item => item.id)); statusError.value = ''
   if (!available.value || !items.value.length || !props.token || props.token !== portalToken.value || portalUser.value?.role !== 'admin') return
+  const source = provider.value as AnimeProviderID, ids = items.value.map(item => item.id), token = props.token
+  if (!force && ids.every(id => subscriptionStates.value[id])) return
   statusPending = true
-  try {
-    const states = await requestAnimeCatalogStatuses(props.token, provider.value as AnimeProviderID, items.value.map(item => item.id), active.signal, force)
-    if (!active.signal.aborted && statusController === active) subscriptionStates.value = states
-  } catch (reason) { if (!active.signal.aborted && statusController === active && !(reason instanceof DOMException && reason.name === 'AbortError')) statusError.value = '订阅状态暂时无法核对' }
-  finally { if (statusController === active) statusPending = false }
+  // Cards update immediately; rapid filter changes only check the final set.
+  statusTimer = setTimeout(async () => {
+    statusTimer = undefined
+    if (active.signal.aborted || disposed || statusController !== active) return
+    try {
+      const states = await requestAnimeCatalogStatuses(token, source, ids, active.signal, force)
+      if (!active.signal.aborted && !disposed && statusController === active) subscriptionStates.value = states
+    } catch (reason) { if (!active.signal.aborted && !disposed && statusController === active && !(reason instanceof DOMException && reason.name === 'AbortError')) statusError.value = '订阅状态暂时无法核对' }
+    finally { if (statusController === active) statusPending = false }
+  }, 150)
 }
 function seasonLabel(value: string) { return `${value.slice(0, 4)} ${({ '01': '冬', '04': '春', '07': '夏', '10': '秋' } as Record<string, string>)[value.slice(5)]}季` }
 const seasons = computed(() => {
@@ -201,7 +210,7 @@ watch(() => route.fullPath, () => {
 }, { immediate: true })
 onBeforeRouteUpdate(savePosition); onBeforeRouteLeave(savePosition)
 onMounted(() => { updateCalendarDate(); document.addEventListener('visibilitychange', recheckStatuses); window.addEventListener('focus', recheckStatuses); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interact, { passive: true }) })
-onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); controller?.abort(); seasonsController?.abort(); statusController?.abort(); document.removeEventListener('visibilitychange', recheckStatuses); window.removeEventListener('focus', recheckStatuses); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
+onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeout(statusTimer); controller?.abort(); seasonsController?.abort(); statusController?.abort(); document.removeEventListener('visibilitychange', recheckStatuses); window.removeEventListener('focus', recheckStatuses); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
 </script>
 
 <template>

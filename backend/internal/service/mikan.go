@@ -171,6 +171,10 @@ func (s *MikanService) search(ctx context.Context, query, group string, refresh 
 }
 
 func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool, read func(context.Context) (mikan.Result, error)) (mikanCache, bool, error) {
+	return s.cachedReadTTL(ctx, key, refresh, 0, read)
+}
+
+func (s *MikanService) cachedReadTTL(ctx context.Context, key string, refresh bool, ttl time.Duration, read func(context.Context) (mikan.Result, error)) (mikanCache, bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return mikanCache{}, false, err
@@ -202,11 +206,14 @@ func (s *MikanService) cachedRead(ctx context.Context, key string, refresh bool,
 		s.mu.Unlock()
 		result, err := s.fetch(ctx, read)
 		entry := mikanCache{result: result, fetched: time.Now()}
-		ttl := 10 * time.Minute
-		if result.Catalog == nil && len(result.Items) == 0 && len(result.Bangumis) == 0 {
-			ttl = time.Minute
+		cacheTTL := ttl
+		if cacheTTL <= 0 {
+			cacheTTL = 10 * time.Minute
+			if result.Catalog == nil && len(result.Items) == 0 && len(result.Bangumis) == 0 {
+				cacheTTL = time.Minute
+			}
 		}
-		entry.expires = entry.fetched.Add(ttl)
+		entry.expires = entry.fetched.Add(cacheTTL)
 		s.mu.Lock()
 		if err == nil {
 			for k, v := range s.cache {

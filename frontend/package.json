@@ -12,6 +12,7 @@
     "test:anime-subscription-browser-ui": "node scripts/anime-subscription-browser-ui.cjs",
     "test:anime-subscription-ui": "node scripts/anime-subscription-ui.cjs",
     "test:anime-discovery-ui": "node scripts/anime-catalog-ui.cjs",
+    "test:anime-navigation-ui": "node scripts/anime-navigation-ui.cjs",
     "test:account-menu-ui": "node scripts/account-menu-ui.cjs",
     "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",

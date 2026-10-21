@@ -35,7 +35,7 @@ import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
-import { ensurePortalSession, portalBrowseRoutes, portalToken } from './composables/usePortalAuth'
+import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
 export const router = createRouter({
@@ -109,11 +109,17 @@ export const router = createRouter({
 })
 
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
-router.beforeEach(async to => {
+router.beforeEach(async (to, from) => {
   if (to.meta.public) return
-  const user = await ensurePortalSession()
+  // Calendar filters stay local. Periodic verification and API authorization
+  // still apply; entering another page continues to verify the session.
+  const localCatalogNavigation = to.name === 'anime-discovery' && from.name === to.name && portalUser.value?.role === 'admin' && !portalAuthError.value
+  const user = localCatalogNavigation ? portalUser.value : await ensurePortalSession()
   const browsing = portalBrowseRoutes.has(String(to.name))
   if (!portalToken.value) return { path: browsing ? '/login' : '/admin/login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath }, replace: true }
+  // Keep the verified page when an awaited background probe failed quietly.
+  // Initial/hard failures must finish routing so App can mount its recovery UI.
+  if (!user && portalUser.value && !portalAuthError.value) return false
   if (user && user.role !== 'admin' && !browsing) return { path: '/', replace: true }
   if (['/', '/movie', '/tv'].includes(to.path) && typeof to.query.q === 'string' && to.query.q.trim()) {
     return { path: '/search', query: { q: to.query.q.trim(), scope: to.path === '/movie' ? 'movie' : 'tv' }, replace: true }

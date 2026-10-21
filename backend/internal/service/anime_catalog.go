@@ -25,6 +25,25 @@ type AnimeMikanCatalog struct {
 	ExpiresAt int64  `json:"expiresAt"`
 }
 
+var animeCatalogTimeZone = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func animeCatalogSeason(now time.Time) string {
+	now = now.In(animeCatalogTimeZone)
+	return now.Format("2006-") + [...]string{"01", "04", "07", "10"}[(int(now.Month())-1)/3]
+}
+
+// Catalogue freshness is independent of RSS polling. Future seasons keep the
+// current-season TTL because their listings may still be changing frequently.
+func animeCatalogTTL(season, keyword string, now time.Time) time.Duration {
+	if keyword != "" {
+		return 10 * time.Minute
+	}
+	if season != "" && season < animeCatalogSeason(now) {
+		return 24 * time.Hour
+	}
+	return time.Hour
+}
+
 // Calendar and scoped search share Mikan's gate, cooldown, bounded cache and
 // request coalescing with the existing RSS/group reads. No metadata-site calls.
 func (s *MikanService) AnimeCatalog(ctx context.Context, season, keyword string, refresh bool) (AnimeMikanCatalog, error) {
@@ -48,7 +67,7 @@ func (s *MikanService) AnimeCatalog(ctx context.Context, season, keyword string,
 	if !ok {
 		return out, mikan.ErrInput
 	}
-	entry, _, err := s.cachedRead(ctx, "catalog\x00"+season+"\x00"+keyword, refresh, func(ctx context.Context) (mikan.Result, error) {
+	entry, _, err := s.cachedReadTTL(ctx, "catalog\x00"+season+"\x00"+keyword, refresh, animeCatalogTTL(season, keyword, time.Now()), func(ctx context.Context) (mikan.Result, error) {
 		catalog, err := reader.Catalog(ctx, season, keyword)
 		if err != nil {
 			return mikan.Result{}, err

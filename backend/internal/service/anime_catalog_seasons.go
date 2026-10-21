@@ -26,7 +26,7 @@ func (s *MikanService) AnimeCatalogSeasons(ctx context.Context, refresh bool) (A
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	read, _, err := s.cachedRead(ctx, "catalog-seasons", refresh, func(ctx context.Context) (mikan.Result, error) {
+	read, _, err := s.cachedReadTTL(ctx, "catalog-seasons", refresh, time.Hour, func(ctx context.Context) (mikan.Result, error) {
 		seasons, err := reader.CatalogSeasons(ctx)
 		if err != nil {
 			return mikan.Result{}, err
@@ -40,15 +40,14 @@ func (s *MikanService) AnimeCatalogSeasons(ctx context.Context, refresh bool) (A
 }
 
 func (s *AnibtService) CatalogSeasons(ctx context.Context, refresh bool) (AnimeCatalogSeasons, error) {
-	now := time.Now()
-	season := now.Format("2006-") + []string{"01", "04", "07", "10"}[(int(now.Month())-1)/3]
+	season := animeCatalogSeason(time.Now())
 	path, err := anibt.CatalogPath(season, "")
 	if err != nil {
 		return AnimeCatalogSeasons{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	read, _, err := s.read(ctx, path, 10*time.Minute, refresh, nil, func(body []byte) error { _, err := anibt.ParseCatalog(body, season); return err })
+	read, _, err := s.read(ctx, path, time.Hour, refresh, nil, func(body []byte) error { _, err := anibt.ParseCatalog(body, season); return err })
 	if err != nil {
 		return AnimeCatalogSeasons{}, err
 	}

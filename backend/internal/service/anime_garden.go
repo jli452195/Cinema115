@@ -33,7 +33,7 @@ func (s *GardenService) Catalog(ctx context.Context, season, keyword string, ref
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	read, _, err := s.read(ctx, path, 10*time.Minute, refresh, nil, func(body []byte) error { _, err := garden.ParseCatalog(body, season); return err })
+	read, _, err := s.read(ctx, path, animeCatalogTTL(season, keyword, time.Now()), refresh, nil, func(body []byte) error { _, err := garden.ParseCatalog(body, season); return err })
 	if err != nil {
 		return out, err
 	}

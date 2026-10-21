@@ -50,7 +50,7 @@ func TestCatalogSeasonsSharedCacheIsolationAndFailures(t *testing.T) {
 		f := &archiveMikanReader{}
 		s := NewMikanService(f, nil)
 		first, err := s.AnimeCatalogSeasons(ctx, false)
-		if err != nil || len(first.Seasons) != 2 {
+		if err != nil || len(first.Seasons) != 2 || first.ExpiresAt-first.FetchedAt != time.Hour.Milliseconds() {
 			t.Fatal(first, err)
 		}
 		first.Seasons[0] = "changed"
@@ -92,7 +92,7 @@ func TestCatalogSeasonsSharedCacheIsolationAndFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		now := time.Now()
+		now := time.Now().In(animeCatalogTimeZone)
 		quarter := (int(now.Month()) - 1) / 3
 		season := fmt.Sprintf("%d-%s", now.Year(), []string{"01", "04", "07", "10"}[quarter])
 		label := fmt.Sprintf("%d%s", now.Year(), []string{"冬", "春", "夏", "秋"}[quarter])
@@ -100,7 +100,7 @@ func TestCatalogSeasonsSharedCacheIsolationAndFailures(t *testing.T) {
 		s := NewAnibtService(f)
 		s.spacing = 0
 		metadata, err := s.CatalogSeasons(ctx, false)
-		if err != nil || len(metadata.Seasons) == 0 {
+		if err != nil || len(metadata.Seasons) == 0 || metadata.ExpiresAt-metadata.FetchedAt != time.Hour.Milliseconds() {
 			t.Fatal(metadata, err)
 		}
 		metadata.Seasons[0] = "changed"

@@ -35,7 +35,7 @@ func (s *AnibtService) Catalog(ctx context.Context, season, keyword string, refr
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	read, _, err := s.read(ctx, path, 10*time.Minute, refresh, nil, func(body []byte) error { _, err := anibt.ParseCatalog(body, season); return err })
+	read, _, err := s.read(ctx, path, animeCatalogTTL(season, keyword, time.Now()), refresh, nil, func(body []byte) error { _, err := anibt.ParseCatalog(body, season); return err })
 	if err != nil {
 		return out, err
 	}

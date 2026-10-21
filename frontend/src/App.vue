@@ -49,7 +49,7 @@ watch([token, portalUser], ([value], [previousToken, previousUser]) => {
   }
 })
 onMounted(() => { void ensurePortalSession() })
-const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true) }, 60000)
+const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true, { background: true }) }, 60000)
 onBeforeUnmount(() => window.clearInterval(authTimer))
 </script>
 
