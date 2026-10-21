@@ -14,7 +14,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const page = await context.newPage(); page.setDefaultTimeout(10000)
     page.on('pageerror', e => errors.push(e.stack))
     page.on('dialog', dialog => dialog.accept())
-    const calls = [], state = { role, naming: true, primary: true, ready: true, empty: false, zeroMatch: false, failPreview: false, failSearch: false, expired: false, saveMode: '', settingsMode: '', loseSelection: false, conflict: false, batch: 0, batches: new Map(), saved: undefined,
+    const calls = [], state = { role, naming: true, primary: true, ready: true, empty: false, zeroMatch: false, failPreview: false, failSearch: false, expired: false, saveMode: '', settingsMode: '', loseSelection: false, conflict: false, batch: 0, batches: new Map(), saved: undefined, regularEpisodes: 12,
       settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载', organizeCid: '200', organizePath: '/动漫整理' } }
     const card = id => ({ id, title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', coverUrl: '', date: '2026-10-01', weekday: 1 })
     function item(ref, index) {
@@ -66,7 +66,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         status = state.subjectFailure.status; data = { code: state.subjectFailure.code, error: '模拟 Bangumi 读取失败' }
       } else if (endpoint.includes('/discovery/subjects/')) {
         const id = endpoint.split('/').pop()
-        data = { subject: { ...card(id), title: id === '456' ? '独立续篇' : card(id).title, synopsis: '独立的篇章资料。', totalEpisodes: 12, platform: 'TV' }, metadata: { expiresAt: Date.now() + 600000, stale: false } }
+        data = { subject: { ...card(id), title: id === '456' ? '独立续篇' : card(id).title, synopsis: '独立的篇章资料。', episodes: state.regularEpisodes, totalEpisodes: 14, platform: 'TV' }, metadata: { expiresAt: Date.now() + 600000, stale: false } }
         if (url.searchParams.has('includeRelations')) data.relations = { items: [{ ...card('456'), title: '独立续篇', relation: '续集' }], expiresAt: Date.now() + 600000 }
       } else if (endpoint.endsWith('/settings') && method === 'GET') {
         if (state.settingsReadFailure) { status = 503; data = { error: '模拟目录设置读取失败' } }
@@ -157,7 +157,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         else {
           const ids = Object.fromEntries(body.config.sources.map(s => [s.ref, s.id || `source-${s.ref}`]))
           const resumes = state.saved?.status === 'archived' && body.config.sources.some(source => source.runWhenEnabled && !state.saved.sources.some(prior => prior.id === source.id && prior.runWhenEnabled))
-          state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: resumes ? 'enabled' : state.saved?.status || 'enabled', permittedActions: ['pause', 'resume', 'archive', 'remove'].map(name => ({ name, allowed: true })), firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01' } },
+          state.saved = { id: 'saved-subscription', entryId: 'entry-123', status: resumes ? 'enabled' : state.saved?.status || 'enabled', permittedActions: ['pause', 'resume', 'archive', 'remove'].map(name => ({ name, allowed: true })), firstEnabledAt: Date.now(), revision: body.expectedRevision + 1, entry: { id: 'entry-123', bangumiId: '123', editionKey: 'original', title: card('123').title, originalTitle: '', revision: 1, metadata: { coverUrl: '', airDate: '2026-10-01', totalEpisodes: state.regularEpisodes || null } },
             sources: body.config.sources.map(s => ({ ...s, id: ids[s.ref], revision: s.expectedRevision + 1, configuredState: s.status })), form: structuredClone(body.config.form || { schemaVersion: 1 }),
             naming: body.config.naming ? {schemaVersion:1,target:structuredClone(state.namingTarget),sources:body.config.naming.sources.map(s=>({...s,sourceRef:ids[s.sourceRef]}))} : null }
           if (state.subjectFailure?.status === 404) Object.assign(state.saved.entry, { bangumiId: body.config.entry.bangumiId || null, title: '从零开始 第三季 字幕资源', metadata: { bangumiUnavailable: true, coverUrl: '/api/mikan/image/202601/poster.jpg' } })
@@ -195,6 +195,22 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
 
 
   try {
+    for (const count of [0, null]) {
+      const unknown = await session()
+      unknown.state.regularEpisodes = count
+      await unknown.go()
+      const total = unknown.page.getByLabel('篇章总集数', { exact: true })
+      assert.equal(await total.inputValue(), '')
+      assert.equal(await total.getAttribute('placeholder'), '未定', 'all-chapter count never replaces an unknown regular count')
+      assert.equal(await unknown.page.getByRole('button', { name: '查看篇章集数与 TMDB 映射' }).innerText(), '集数参考')
+      assert.match(await unknown.page.locator('.ac-total-note').innerText(), /Bangumi 未提供正片集数/)
+      await total.fill('12')
+      await unknown.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
+      assert.equal(await total.getAttribute('placeholder'), '未定')
+      assert.equal(unknown.calls.filter(call => call.endpoint.endsWith('/episodes')).length, 0, 'opening a form does not fetch episode lists to count chapters')
+    }
+    passed.push('unknown regular episode count stays undetermined despite 14 all-type chapters; manual clearing never falls back to OP/ED totals')
+
     const missing = await session()
     missing.state.subjectFailure = { status: 404, code: 'UPSTREAM_NOT_FOUND' }; missing.state.sourceBangumiID = '583313'
     await missing.go('/anime/new?bangumiId=583313&source=mikan&itemId=300')
@@ -408,6 +424,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const knownTotal = s.page.getByRole('textbox', { name: '篇章总集数', exact: true })
     assert.equal(await knownTotal.inputValue(), '')
     assert.equal(await knownTotal.getAttribute('placeholder'), '12', 'known Bangumi counts remain defaults rather than manual overrides')
+    assert.match(await s.page.getByRole('button', { name: '查看篇章集数与 TMDB 映射' }).innerText(), /12 集/)
+    assert.match(await s.page.locator('.ac-total-note').innerText(), /12 集正片/)
     assert.equal(await s.page.getByRole('button', { name: /填入 TMDB 的/ }).count(), 0)
     await knownTotal.fill('24')
     await s.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
@@ -422,12 +440,14 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const saved = s.writes().find(c => c.method === 'POST' && c.endpoint === '/api/admin/anime/subscriptions')
     assert.ok(saved, 'save configuration without preview')
     assert.equal(saved.body.sources, undefined)
+    assert.equal(saved.body.config.form.totalEpisodes, null, 'regular count is a default, not a manual override')
     assert.equal("formSelections" in saved.body.config, false)
     assert.equal("previewRefs" in saved.body.config, false)
     assert.equal(s.calls.filter(c => /\/(start|selections)$/.test(c.endpoint)).length, 0)
     passed.push('new definition saves without preview or selected download grants')
 
     await s.go('/anime/subscriptions/saved-subscription')
+    assert.equal(await s.page.getByLabel('篇章总集数', { exact: true }).getAttribute('placeholder'), '12', 'reopening uses the persisted regular count')
     for (const viewport of [{width:1440,height:1080},{width:390,height:844},{width:900,height:450}]) {
       await s.page.setViewportSize(viewport)
       const geometry=()=>s.page.locator('dialog[open]').evaluate(el=>{

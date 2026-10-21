@@ -166,8 +166,10 @@ func (s *AnimeBindingService) resolveEntry(ctx context.Context, ref AnimeEntryRe
 		id := result.Subject.ID
 		entry.BangumiID, entry.Title, entry.OriginalTitle = &id, result.Subject.Title, result.Subject.OriginalTitle
 		entry.Metadata.Synopsis, entry.Metadata.CoverURL, entry.Metadata.AirDate = result.Subject.Synopsis, result.Subject.CoverURL, result.Subject.Date
-		if result.Subject.TotalEpisodes != nil {
-			n := *result.Subject.TotalEpisodes
+		// Bangumi total_episodes also counts OP/ED and other non-regular
+		// chapters. Only eps may define the subscription's completion target.
+		if result.Subject.Episodes != nil && *result.Subject.Episodes > 0 {
+			n := *result.Subject.Episodes
 			entry.Metadata.TotalEpisodes = &n
 		}
 		if err := entry.Validate(); err != nil {

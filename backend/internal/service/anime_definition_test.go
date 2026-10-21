@@ -7,10 +7,59 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
+
+func TestAnimeDefinitionStoresRegularEpisodeCountForCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		regular  *int
+		override *int
+	}{
+		{"12 regular plus OP and ED", bindingPtr(12), nil},
+		{"unknown zero with 14 total chapters", bindingPtr(0), nil},
+		{"unknown absent with 14 total chapters", nil, nil},
+		{"manual override", bindingPtr(12), bindingPtr(10)},
+		{"manual total when regular count unknown", nil, bindingPtr(10)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _, in := animeAdminFixture(t)
+			ctx := context.Background()
+			in.SettingsRevision = animeSaveReadySettings(t, s).Revision
+			in.Config.Entry = AnimeEntryRef{BangumiID: bindingPtr("622288"), EditionKey: "original"}
+			in.Config.Form = &model.AnimeForm{SchemaVersion: 1, TotalEpisodes: tc.override}
+			s.Bindings.Subjects = &bindingSubjectsFake{result: &bangumi.SubjectResult{Subject: bangumi.Subject{
+				Card: bangumi.Card{ID: "622288", Title: "FX战士久留美"}, Episodes: tc.regular, TotalEpisodes: bindingPtr(14),
+			}}}
+			receipt, err := s.SaveDefinition(ctx, "admin", "regular_episode_count", "", in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sub, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, err := s.Store.GetAnimeEntry(ctx, sub.EntryID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want *int
+			if tc.regular != nil && *tc.regular > 0 {
+				want = tc.regular
+			}
+			if !reflect.DeepEqual(entry.Metadata.TotalEpisodes, want) || !reflect.DeepEqual(sub.Form.TotalEpisodes, tc.override) {
+				t.Fatal("all chapters replaced regular count or manual override", entry.Metadata.TotalEpisodes, sub.Form.TotalEpisodes)
+			}
+			lifecycle, err := s.Store.AnimeLifecycle(ctx, sub, entry, time.Now().UnixMilli())
+			if err != nil || (lifecycle.CompletionIssue == "TOTAL_UNKNOWN") != (want == nil && tc.override == nil) {
+				t.Fatal("archive count disagrees with stored default and override", lifecycle, err)
+			}
+		})
+	}
+}
 
 func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
 	s, feed, in := newAnimeDefinitionService(t)

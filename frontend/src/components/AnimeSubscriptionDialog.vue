@@ -146,7 +146,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
             </template>
             <template #season-note>
               <div class="ac-total-note">
-                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '手动集数仅用于本订阅。' : editor.defaultTotal.value ? '留空使用 Bangumi 的 ' + editor.defaultTotal.value + ' 集。' : 'Bangumi 未提供总集数。' }}齐集后按全局设置自动归档。</p>
+                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '手动集数仅用于本订阅。' : editor.defaultTotal.value ? '留空使用 Bangumi 的 ' + editor.defaultTotal.value + ' 集正片。' : 'Bangumi 未提供正片集数。' }}齐集后按全局设置自动归档。</p>
                 <button v-if="editor.archiveSuggestion.value" type="button" class="ae-link" :class="{ 'ac-total-suggestion-hidden': !!editor.archiveTotal.value }" :aria-hidden="!!editor.archiveTotal.value" :disabled="locked || !!editor.archiveTotal.value || editor.naming.busy.value || editor.naming.searching.value" @click="editor.useTMDBTotal">填入 TMDB 的 {{ editor.archiveSuggestion.value }} 集</button>
               </div>
             </template>

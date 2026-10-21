@@ -35,7 +35,7 @@ func (f *bindingSubjectsFake) Subject(ctx context.Context, id string) (bangumi.S
 	if f.result != nil {
 		return *f.result, f.err
 	}
-	return bangumi.SubjectResult{CacheMeta: bangumi.CacheMeta{FetchedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}, Subject: bangumi.Subject{Card: bangumi.Card{ID: id, Title: "测试篇章", OriginalTitle: "Original Title"}, Synopsis: "可信简介", TotalEpisodes: bindingPtr(13)}}, f.err
+	return bangumi.SubjectResult{CacheMeta: bangumi.CacheMeta{FetchedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}, Subject: bangumi.Subject{Card: bangumi.Card{ID: id, Title: "测试篇章", OriginalTitle: "Original Title"}, Synopsis: "可信简介", Episodes: bindingPtr(13), TotalEpisodes: bindingPtr(15)}}, f.err
 }
 
 type bindingMikanFake struct {

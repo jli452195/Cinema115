@@ -165,7 +165,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     } else {
       feedback.value = seedIssue
       const data = config.value as AnimeSubjectResult & { sourceEntry?: MikanEntry; bangumiUnavailable?: boolean; needsSource?: boolean }
-      defaultTotal.value = data.subject.totalEpisodes || null
+      defaultTotal.value = data.subject.episodes || null
       subject.value = { id: data.subject.id, title: data.subject.title, coverUrl: data.subject.coverUrl, date: data.subject.date, bangumiUnavailable: data.bangumiUnavailable, needsSource: data.needsSource }
       sources.value = [newAnimeSource('main', data.needsSource ? '' : data.subject.title, seed?.value.provider === 'garden' ? 'garden' : seed?.value.provider === 'anibt' ? 'anibt' : 'mikan')]
       if (data.sourceEntry) {

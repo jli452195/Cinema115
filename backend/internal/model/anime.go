@@ -14,7 +14,7 @@ type AnimeMetadata struct {
 	Synopsis           string `json:"synopsis"`
 	CoverURL           string `json:"coverUrl"`
 	AirDate            string `json:"airDate"`
-	TotalEpisodes      *int   `json:"totalEpisodes"`
+	TotalEpisodes      *int   `json:"totalEpisodes"` // Regular episode count for subscription completion, excluding OP/ED.
 }
 
 type AnimeEntry struct {

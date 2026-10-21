@@ -111,8 +111,8 @@ type Subject struct {
 	Card
 	Synopsis      string `json:"synopsis"`
 	Platform      string `json:"platform"`
-	Episodes      *int   `json:"episodes"`
-	TotalEpisodes *int   `json:"totalEpisodes"`
+	Episodes      *int   `json:"episodes"`      // eps: regular episodes; zero means unknown.
+	TotalEpisodes *int   `json:"totalEpisodes"` // All chapters, including OP/ED; not an archive target.
 }
 
 type SubjectResult struct {
