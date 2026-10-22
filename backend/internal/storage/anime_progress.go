@@ -32,37 +32,6 @@ func animeProgressRows(ctx context.Context, q animeReader, query, id string) ([]
 	return out, rows.Err()
 }
 
-// Reused by materialized progress and automatic completion: one source's
-// authorized snapshot owns its episode number, even for a shared torrent.
-func animeOrganizedEpisodes(ctx context.Context, raw []string, source model.AnimeSource) (map[int]bool, error) {
-	match, err := animepreview.CompileMatcher(source.Binding, source.Rules)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[int]bool, len(raw))
-	for _, row := range raw {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		var snapshot model.AnimeDownloadSnapshot
-		if err := decodeAnimeJSON(row, &snapshot); err != nil {
-			return nil, err
-		}
-		if !sameAnimeEpisodeRules(snapshot.Decision.Rules, source.Rules) {
-			continue
-		}
-		ok, err := match(snapshot.Release)
-		if err != nil {
-			return nil, err
-		}
-		p := snapshot.Release.Parse
-		if ok && p.Kind == "episode" && p.Episode != nil {
-			out[*p.Episode] = true
-		}
-	}
-	return out, nil
-}
-
 func sameAnimeEpisodeRules(a, b model.AnimeRules) bool {
 	return a.EpisodePattern == b.EpisodePattern && a.EpisodeGroup == b.EpisodeGroup
 }
@@ -79,10 +48,11 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	if sub.Form.TotalEpisodes != nil {
 		total = *sub.Form.TotalEpisodes
 	}
-	first, last, targetKnown := animeCompletionRange(source, total)
 	out.State = "ongoing"
-	published := false
-	match, err := animepreview.CompileMatcher(source.Binding, source.Rules)
+	first, zero := -1, 0
+	rules := source.Rules
+	rules.MinimumEpisode = &zero
+	match, err := animepreview.CompileMatcher(source.Binding, rules)
 	if err != nil {
 		return out, err
 	}
@@ -104,26 +74,44 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 			return out, err
 		}
 		if ok && d.Parse.Episode != nil {
-			published = true
+			if first < 0 || *d.Parse.Episode < first {
+				first = *d.Parse.Episode
+			}
 			out.PublishedThrough = max(out.PublishedThrough, *d.Parse.Episode)
 		}
 	}
-	found, err := animeOrganizedEpisodes(ctx, organized, source)
-	if err != nil {
-		return out, err
+	// Use the same compiled matcher for observed titles and organized receipts.
+	found := make(map[int]bool, len(organized))
+	for _, raw := range organized {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		var snapshot model.AnimeDownloadSnapshot
+		if err := decodeAnimeJSON(raw, &snapshot); err != nil {
+			return out, err
+		}
+		if !sameAnimeEpisodeRules(snapshot.Decision.Rules, source.Rules) {
+			continue
+		}
+		ok, err := match(snapshot.Release)
+		if err != nil {
+			return out, err
+		}
+		if p := snapshot.Release.Parse; ok && p.Kind == "episode" && p.Episode != nil {
+			found[*p.Episode] = true
+		}
 	}
 	for n := range found {
-		published = true
+		if first < 0 || n < first {
+			first = n
+		}
 		out.PublishedThrough = max(out.PublishedThrough, n)
 	}
 	if first < 0 {
-		out.State, out.OrganizedCount = "numbering_unknown", len(found)
 		return out, nil
 	}
+	first, last, targetKnown := animeCompletionRange(source, first, total)
 	out.FirstEpisode = first
-	if !published {
-		return out, nil
-	}
 	if targetKnown {
 		out.PublishedThrough = min(out.PublishedThrough, last)
 	}
@@ -142,6 +130,18 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		out.State = "missing"
 	}
 	return out, nil
+}
+
+func readAnimeSourceProgress(ctx context.Context, q animeReader, source model.AnimeSource, sub model.AnimeSubscription, entry model.AnimeEntry) (model.AnimeSourceProgress, error) {
+	observed, err := animeProgressRows(ctx, q, `SELECT snapshot_json FROM anime_release_decisions WHERE source_id=?`, source.ID)
+	if err != nil {
+		return model.AnimeSourceProgress{}, err
+	}
+	organized, err := animeProgressRows(ctx, q, animeOrganizedReleases, source.ID)
+	if err != nil {
+		return model.AnimeSourceProgress{}, err
+	}
+	return animeSourceProgress(ctx, source, sub, entry, observed, organized)
 }
 
 // RefreshAnimeSourceProgress processes at most one invalidated source. Read

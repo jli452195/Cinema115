@@ -61,10 +61,9 @@ func TestAnimeDefinitionStoresRegularEpisodeCountForCompletion(t *testing.T) {
 	}
 }
 
-func TestAnimeDefinitionDerivesOneSourceRangeWithoutRSSReads(t *testing.T) {
+func TestAnimeDefinitionSavesWithoutFirstEpisodeOrRSSReads(t *testing.T) {
 	s, feed, in := newAnimeDefinitionService(t)
 	in.Config.Form = &model.AnimeForm{SchemaVersion: 1, TotalEpisodes: bindingPtr(13)}
-	in.Config.Sources[0].Rules.ChapterFirstEpisode = bindingPtr(0)
 	in.Config.Sources[0].Rules.MinimumEpisode = bindingPtr(0)
 	// Client range values are not a second independent configuration.
 	in.Config.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(36)}
@@ -78,7 +77,7 @@ func TestAnimeDefinitionDerivesOneSourceRangeWithoutRSSReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := sub.Sources[0].Binding.Scope
-	if scope.Kind != "range" || *scope.First != 0 || *scope.Last != 12 || feed.reads != reads {
+	if scope.Kind != "feed" || scope.First != nil || scope.Last != nil || feed.reads != reads {
 		t.Fatal(scope, feed.reads, reads)
 	}
 }
@@ -112,6 +111,7 @@ func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
 	backup := main
 	backup.ID, backup.Ref, backup.ExpectedRevision, backup.Role, backup.Position = "", "extra", 0, "standby", 1
 	backup.GroupID = bindingPtr("28")
+	backup.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: *backup.ItemID, GroupID: *backup.GroupID}
 	in.Config.Sources = append(in.Config.Sources, backup)
 	mapping := in.Config.Naming.Sources[0]
 	mapping.SourceRef = backup.Ref

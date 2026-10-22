@@ -5,7 +5,7 @@ import { portalUser } from './usePortalAuth'
 import { AnimeDiscoveryError, cachedAnime, requestAnime } from './useAnimeDiscovery'
 import { animeCatalogItemSnapshot, requestMikanCatalogEntry } from './useAnimeCatalog'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
-import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, suggestAnimeFirstEpisode, type SourceForm } from '../utils/animeSourceForm'
+import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSubjectResult } from '../types/anime'
 import type { AnimePreviewResponse, AnimeSaveReceipt, AnimeSettingsView, AnimeSourceSample, AnimeSubscriptionView, MikanEntry, MikanSearch } from '../types/animeSubscription'
 
@@ -31,7 +31,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value)
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['provider', 'firstEpisode', 'mappingOffset', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'confirmed', 'confirmedFor', 'review', 'templateChosen', 'match', 'episodePattern', 'episodeGroup', 'minimum', 'exclude']
+    const keys: (keyof SourceForm)[] = ['provider', 'mappingOffset', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'confirmed', 'confirmedFor', 'review', 'templateChosen', 'match', 'episodePattern', 'episodeGroup', 'minimum', 'exclude']
     return JSON.stringify({ archiveTotal: archiveTotal.value, naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -39,7 +39,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const resumesArchived = computed(() => local.value?.status === 'archived' && submittedSources.value.some(source =>
     source.runWhenEnabled && !local.value?.sources.some(prior => prior.id === source.id && prior.runWhenEnabled)))
   const totalEpisodes = computed(() => archiveTotal.value ? Number(archiveTotal.value) : defaultTotal.value)
-  function sourceConfig(source: SourceForm, position: number) { return animeSourceConfig(source, position, totalEpisodes.value) }
+  function sourceConfig(source: SourceForm, position: number) { return animeSourceConfig(source, position) }
   const startIssue = computed(() => {
     if (subject.value?.needsSource) return '请先选择番剧来源'
     if (!settings.value?.readiness.ready || !settings.value.settings.organizeCid) return '请在设置中补齐下载与整理目录'
@@ -48,8 +48,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     try { if (!naming.input()) return '请选择 TMDB 命名目标' } catch (reason) { return animeConfigMessage(reason) }
     const incomplete = submittedSources.value.find(s => !animeSourceReady(s))
     if (incomplete) return `请完成${incomplete.role === 'main' ? '主 RSS' : '备用 RSS'}来源与规则`
-    if (submittedSources.value.some(s => !s.firstEpisode.trim())) return '请确认各 RSS 的订阅首话，可先预览发布编号'
-    if (totalEpisodes.value && submittedSources.value.some(s => Number(s.firstEpisode) + totalEpisodes.value! - 1 > 99999)) return '订阅范围不能超过第 99999 话'
     return ''
   })
   function entryRef(source = sources.value.find(s => s.role === 'main')): { id?: string; bangumiId?: string; editionKey?: string } {
@@ -134,7 +132,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
         sources.value = view.sources.map(saved => {
           const form = newAnimeSource(saved.role, view.entry.title, saved.provider)
           Object.assign(form, { ref: saved.id, id: saved.id, revision: saved.revision, runWhenEnabled: saved.runWhenEnabled,
-            firstEpisode: saved.rules.chapterFirstEpisode != null ? String(saved.rules.chapterFirstEpisode) : saved.binding.scope?.kind === 'range' ? String(saved.binding.scope.first) : '',
             itemId: saved.itemId || '', itemTitle: saved.itemId ? `${animeProviderName(saved.provider)}条目 ${saved.itemId}` : '', groupId: saved.groupId || '', groupName: saved.groupName || '', lockedItem: !!saved.itemId, lockedGroup: !!saved.groupId,
             confirmed: saved.binding.confirmed, review: saved.binding.review,
             templateChosen: true, match: (saved.rules.match || []).join('\n'), episodePattern: saved.rules.episodePattern || '', episodeGroup: String(saved.rules.episodeGroup || 1), health: saved.health, errorCode: saved.errorCode,
@@ -238,7 +235,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingOffset: '0', confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, firstEpisode: '', minimum: '0', exclude: '', preview: undefined, previewError: '' })
+    Object.assign(source, { mappingOffset: '0', confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '0', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)
@@ -252,7 +249,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   async function readSample(source: SourceForm, retry = false) {
     if (locked.value || !source.itemId || !source.groupId || source.sampleBusy || source.sampleCooldown > Date.now()) return
     const key = `${source.provider}:${source.itemId}:${source.groupId}`, cached = samples.get(key)
-    if (!retry && cached && cached.until > Date.now()) { source.sample = cached.data; suggestAnimeFirstEpisode(source); source.sampleError = ''; return }
+    if (!retry && cached && cached.until > Date.now()) { source.sample = cached.data; source.sampleError = ''; return }
     sampleControllers.get(source.ref)?.abort(); const controller = new AbortController(); sampleControllers.set(source.ref, controller)
     source.sampleBusy = true; source.sampleError = ''; const current = generation
     try {
@@ -260,7 +257,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (current !== generation || controller.signal.aborted || key !== `${source.provider}:${source.itemId}:${source.groupId}`) return
       if ((data.source.provider || 'mikan') !== source.provider || data.source.itemId !== source.itemId || data.source.groupId !== source.groupId || !Array.isArray(data.releases) || !Array.isArray(data.profiles)) throw new Error('来源样本无法核对，请重试读取')
       source.sample = data
-      suggestAnimeFirstEpisode(source)
       if (samples.size >= 15) samples.delete(samples.keys().next().value!)
       samples.set(key, { data, until: Math.min(Date.now() + 120000, data.source.expiresAt) })
     } catch (reason) {

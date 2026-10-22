@@ -127,9 +127,6 @@ type AnimeRuleError struct {
 func (e *AnimeRuleError) Error() string { return e.Message }
 
 func (r AnimeRules) Validate(complete bool) error {
-	if r.ChapterFirstEpisode != nil && !animeReleaseNumber(*r.ChapterFirstEpisode) {
-		return fmt.Errorf("invalid chapter first episode")
-	}
 	if r.SchemaVersion != AnimeSchemaVersion {
 		return fmt.Errorf("unsupported rules schema")
 	}

@@ -13,9 +13,11 @@ const config = computed(() => { try { return { value: props.target ? sourceNamin
 const examples = computed(() => {
   const mapping = config.value.value, target = props.target
   if (!mapping || !target) return []
-  const base = Number(props.source.firstEpisode || '1')
-  return [base, base + 1].filter(n => Number.isInteger(n) && n >= 0 && n <= 99999).map(n => {
-    const key = String(n), sourceLabel = `发布第 ${n} 话`
+  const releases = [...new Set(props.source.sample?.releases.filter(r => r.parse.kind === 'episode')
+    .map(r => r.parse.episode).filter((n): n is number => n != null && Number.isInteger(n) && n >= 0 && n <= 99999) || [])].sort((a, b) => a - b).slice(0, 2)
+  const base = Math.max(1, 1 - Number(props.source.mappingOffset || 0))
+  return (releases.length ? releases : [base, base + 1]).filter(n => Number.isInteger(n) && n >= 0 && n <= 99999).map(n => {
+    const key = String(n), sourceLabel = `发布第 ${n === 0 ? '00' : n} 话`
     const result = projectAnimeNaming(target, mapping, { kind: 'episode', rawEpisode: key, episode: n }, props.source.groupName)
     if (result.status !== 'mapped') return { key, sourceLabel, label: '无法按当前偏移命名' }
     const code = `S${String(result.season).padStart(2, '0')}E${String(result.episode).padStart(2, '0')}`

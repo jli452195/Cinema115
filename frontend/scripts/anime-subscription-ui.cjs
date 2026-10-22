@@ -108,7 +108,10 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         }
         data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), completeness: state.sampleCompleteness || 'visible_end', specVersion: 1, profilesTruncated: false,
           profiles: specs.map((spec, i) => ({ match: [spec.resolution, ...(spec.languages || []), spec.subtitleMode || ''].filter(Boolean).map(v => '(?i)' + v), key: `spec-${i}`, label: labels[i], spec, count: 1 })),
-          releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode ?? 25}] [${labels[i]}]`, parse: { kind: 'episode', episode: state.sampleEpisode ?? 25, spec }, sizeRaw: '650 MB' })) }
+          releases: state.empty ? [] : specs.map((spec, i) => {
+            const episode = state.sampleEpisodes?.[i] ?? state.sampleEpisode ?? 25
+            return { postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${episode}] [${labels[i]}]`, parse: { kind: 'episode', episode, spec }, sizeRaw: '650 MB' }
+          }) }
       }
       else if (endpoint.endsWith('/subscriptions/preview')) {
         const ref = body.previewSourceRef
@@ -162,7 +165,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
     async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card, .anibt-anime-card, .garden-anime-card' : '.ac-identity').first().waitFor() }
-    async function source(group = '10', first = '25') {
+    async function source(group = '10', minimum = '25') {
       await page.getByRole('button', { name: '选择资源', exact: true }).click()
       await page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
       await page.getByRole('button', { name: group === '10' ? /字幕组甲/ : /字幕组乙/ }).click()
@@ -172,10 +175,10 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await page.getByRole('button', { name: '使用此来源', exact: true }).click()
       await wait(() => page.locator('dialog[open]').count().then(n => n === 1))
       const form = page.locator('.anime-source-form:visible')
-      if (first !== null) await form.getByLabel('订阅首话', { exact: true }).fill(first)
       await form.getByText('自定义', { exact: true }).click()
       assert.equal(await form.getByLabel('从第几话开始').inputValue(), '0')
-      if (first !== null) await form.getByLabel('从第几话开始').fill(first)
+      if (minimum !== null) await form.getByLabel('从第几话开始').fill(minimum)
+      assert.equal(await form.getByLabel('订阅首话', { exact: true }).count(), 0)
     }
     async function minimum(value) {
       const input=page.getByLabel('从第几话开始')
@@ -208,15 +211,13 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const partial=await session()
     partial.state.sampleCompleteness='partial'
     await partial.go();await partial.source('10',null)
-    assert.equal(await partial.page.getByLabel('订阅首话',{exact:true}).inputValue(),'')
-    assert.equal(await partial.page.getByRole('button',{name:'保存',exact:true}).isEnabled(),false)
+    assert.equal(await partial.page.getByRole('button',{name:'保存',exact:true}).isEnabled(),true)
     await partial.page.getByRole('button',{name:'预览',exact:true}).click()
     await partial.page.locator('.ae-preview-table').waitFor()
     await partial.page.getByRole('button',{name:'返回配置',exact:true}).click()
-    await partial.page.getByLabel('订阅首话',{exact:true}).fill('25')
     assert.equal(await partial.page.getByRole('button',{name:'保存',exact:true}).isEnabled(),true)
     assert.equal(partial.writes().length,0)
-    passed.push('partial feed needs an explicit range but never blocks read-only preview')
+    passed.push('partial feed saves and previews without any first-episode confirmation')
     const noTarget=await session()
     noTarget.state.failNaming=true
     await noTarget.go();await noTarget.source()
@@ -251,7 +252,6 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await missing.page.getByRole('button', { name: /字幕组甲/ }).click()
     await missing.page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
     await missing.page.getByRole('button', { name: '使用此来源', exact: true }).click()
-    await missing.page.getByLabel('订阅首话', {exact:true}).fill('25')
     await missing.page.getByLabel('集数偏移', {exact:true}).fill('-24')
     await archiveTotal.fill('0')
     await missing.page.getByRole('button', { name: '保存', exact: true }).click()
@@ -444,10 +444,16 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await s.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
     assert.equal(await knownTotal.inputValue(), '')
     assert.equal(await knownTotal.getAttribute('placeholder'), '12')
+    s.state.sampleEpisodes = [25, 27, 25]
     await s.source()
+    assert.equal(await s.page.locator('.ae-mapping-examples p').count(), 2, 'examples deduplicate actual sample episodes')
+    assert.match(await s.page.locator('.ae-mapping-examples').innerText(), /发布第 27 话/)
+    assert.doesNotMatch(await s.page.locator('.ae-mapping-examples').innerText(), /发布第 26 话/, 'noncontiguous samples do not invent an episode')
     assert.equal(await s.page.getByRole('button',{name:/添加分段|添加单集例外/}).count(),0)
     assert.equal(await s.page.getByLabel('普通偏移到第几话结束（可留空）',{exact:true}).count(),0)
     const targetReads=s.calls.filter(c=>c.endpoint.endsWith('/naming/target')).length
+    await s.page.locator('.anime-floating-body').evaluate(el=>{el.scrollTop=0})
+    await s.page.screenshot({path:'test-results/anime-no-first-episode-desktop.png'})
     await s.page.getByLabel('集数偏移',{exact:true}).fill('')
     assert.match(await s.page.locator('.ae-mapping-examples').innerText(),/S02E25/,'empty offset means zero')
     await s.page.getByLabel('集数偏移',{exact:true}).fill('+1')
@@ -687,8 +693,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     zero.state.rowCount=67;zero.state.sampleEpisode=0
     zero.state.previewTransform=(item,i)=>i===0?({...item,release:{...item.release,title:'[Group] Mushoku Tensei S2 [00][1080p]',parse:{...item.release.parse,episode:0,rawEpisode:'00'}}}):item
     await zero.go();await zero.source()
+    assert.equal(await zero.page.locator('.ae-mapping-examples p').count(),1,'a single sample stays a single example')
+    assert.match(await zero.page.locator('.ae-mapping-examples').innerText(),/发布第 00 话/)
     await zero.minimum('0')
-    await zero.page.getByLabel('订阅首话',{exact:true}).fill('0')
     await zero.page.getByLabel('集数偏移',{exact:true}).fill('0')
     await zero.page.getByRole('button',{name:'预览',exact:true}).click()
     await zero.page.locator('.ae-preview-table').waitFor()
@@ -705,8 +712,8 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await wait(()=>zero.calls.some(c=>c.key&&c.endpoint.endsWith('/subscriptions')))
     const zeroSave=zero.calls.find(c=>c.key&&c.endpoint.endsWith('/subscriptions')).body.config
     assert.equal(zeroSave.sources[0].rules.minimumEpisode,0)
-    assert.equal(zeroSave.sources[0].rules.chapterFirstEpisode,0)
-    assert.deepEqual(zeroSave.sources[0].binding.scope,{kind:'range',first:0,last:11})
+    assert.equal('chapterFirstEpisode' in zeroSave.sources[0].rules,false)
+    assert.deepEqual(zeroSave.sources[0].binding.scope,{kind:'feed'})
     assert.equal(zeroSave.naming.sources[0].segments[0].first,0)
     assert.equal(zeroSave.naming.sources[0].segments[0].targetBase,0)
     passed.push('full 67-row preview, episode 00 naming and persistence, no load/page controls, reopening uses cached snapshot')

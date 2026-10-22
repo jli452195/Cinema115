@@ -144,10 +144,6 @@ func evaluateCompiled(binding model.AnimeBinding, rules model.AnimeRules, compil
 		stop("scope", result, p.ReasonCode)
 		return nil
 	}
-	if first := rules.ChapterFirstEpisode; first != nil && *item.Release.Parse.Episode < *first {
-		stop("scope", "filtered", "OUTSIDE_CHAPTER_SCOPE")
-		return nil
-	}
 	pass("scope")
 	if rules.MinimumEpisode == nil {
 		stop("minimum", "needs_confirmation", "SOURCE_RULES_INCOMPLETE")

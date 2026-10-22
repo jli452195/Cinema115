@@ -15,7 +15,7 @@ import (
 func chapterProgressModels(first, total int) (model.AnimeSubscription, model.AnimeSource, model.AnimeEntry) {
 	source := model.AnimeSource{ID: "source", CheckedAt: animePtr(int64(1)),
 		Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "4106", GroupID: "382"}},
-		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: animePtr(1), ChapterFirstEpisode: animePtr(first)}}
+		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: animePtr(0)}}
 	entry := model.AnimeEntry{Metadata: model.AnimeMetadata{AirDate: "2026-10-02", TotalEpisodes: animePtr(total)}}
 	sub := model.AnimeSubscription{Naming: organizationNaming(source.ID)}
 	sub.Naming.Target.Seasons[0].Episodes[0].Number = first
@@ -41,8 +41,12 @@ func TestAnimeSubscriptionRange(t *testing.T) {
 		{"minimum after end", animePtr(0), 13, 13, 13, 12, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source := model.AnimeSource{Rules: model.AnimeRules{ChapterFirstEpisode: tc.first, MinimumEpisode: animePtr(tc.minimum)}}
-			first, last, known := animeCompletionRange(source, tc.total)
+			source := model.AnimeSource{Rules: model.AnimeRules{MinimumEpisode: animePtr(tc.minimum)}}
+			observed := -1
+			if tc.first != nil {
+				observed = *tc.first
+			}
+			first, last, known := animeCompletionRange(source, observed, tc.total)
 			if first != tc.wantFirst || last != tc.wantLast || known != tc.known {
 				t.Fatal(first, last, known)
 			}
@@ -72,6 +76,12 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 	for _, feed := range feeds {
 		t.Run(feed.Name, func(t *testing.T) {
 			sub, source, entry := chapterProgressModels(feed.First, feed.Total)
+			first := -1
+			for _, row := range feed.Rows {
+				if row.Kind == "episode" && (first < 0 || row.Episode < first) {
+					first = row.Episode
+				}
+			}
 			observed, organized := make([]string, 0, len(feed.Rows)), make([]string, 0, len(feed.Rows))
 			episodes, published := make(map[int]bool), 0
 			for _, row := range feed.Rows {
@@ -90,7 +100,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 					t.Fatal(err)
 				}
 				organized = append(organized, data)
-				if row.Episode >= feed.First && row.Episode <= feed.First+feed.Total-1 {
+				if row.Kind == "episode" && row.Episode >= first && row.Episode <= first+feed.Total-1 {
 					episodes[row.Episode] = true
 					published = max(published, row.Episode)
 				}
@@ -112,19 +122,22 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 					count--
 				}
 				got, err := animeSourceProgress(context.Background(), source, sub, entry, observed, receipts)
-				missing, state := max(0, published-feed.First+1-count), "ongoing"
+				missing, state := 0, "ongoing"
+				if first >= 0 {
+					missing = max(0, published-first+1-count)
+				}
 				if missing > 0 {
 					state = "missing"
-				} else if published == feed.First+feed.Total-1 {
+				} else if first >= 0 && published == first+feed.Total-1 {
 					state = "complete"
 				}
-				if err != nil || got.State != state || got.FirstEpisode != feed.First || got.PublishedThrough != published || got.OrganizedCount != count || got.MissingCount != missing {
+				if err != nil || got.State != state || got.FirstEpisode != max(0, first) || got.PublishedThrough != published || got.OrganizedCount != count || got.MissingCount != missing {
 					t.Fatalf("oneMissing=%v: %+v, %v; want %s through=%d organized=%d missing=%d", missingOne, got, err, state, published, count, missing)
 				}
 			}
-			source.Rules.ChapterFirstEpisode = nil
-			if got, err := animeSourceProgress(context.Background(), source, sub, entry, observed, organized); err != nil || got.State != "numbering_unknown" || got.MissingCount != 0 {
-				t.Fatal("unknown chapter start must not guess RSS minimum or episode 1", got, err)
+			sub.Naming = nil
+			if got, err := animeSourceProgress(context.Background(), source, sub, entry, observed, organized); err != nil || got.FirstEpisode != max(0, first) {
+				t.Fatal("TMDB changed the observed numbering range", got, err)
 			}
 			if feed.Name == "mikan-rezero-dual" {
 				for _, pattern := range []string{`\[(\d+)\]\[3rd`, `\[3rd - (\d+)\]`} {
@@ -145,63 +158,35 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 }
 
 func TestAnimeContinuousChapterCompletionWaitsForEverySource(t *testing.T) {
-	for _, manual := range []bool{false, true} {
-		t.Run(map[bool]string{false: "explicit range", true: "range confirmation"}[manual], func(t *testing.T) {
-			f, now := lifecycleFixture(t)
-			if _, err := f.store.db.Exec(`UPDATE anime_settings SET organize_cid='900',organize_path='/organized'`); err != nil {
-				t.Fatal(err)
+	f, now := lifecycleFixture(t)
+	for _, source := range f.sub.Sources {
+		binding := model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: *source.ItemID, GroupID: *source.GroupID}}
+		b, _ := animeJSON(binding)
+		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=json_set(rules_json,'$.minimumEpisode',0) WHERE id=?`, b, source.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var err error
+	f.sub, err = f.store.GetAnimeSubscription(context.Background(), f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for group := 0; group < 2; group++ {
+		for n := 49; n <= 60; n++ {
+			if group == 1 && n == 55 {
+				continue
 			}
-			sub, source, entry := chapterProgressModels(49, 12)
-			sub.Naming.Sources = nil
-			for _, saved := range f.sub.Sources {
-				sub.Naming.Sources = append(sub.Naming.Sources, model.AnimeSourceMapping{SourceRef: saved.ID, Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetBase: 1, TargetSeason: 1}}})
-				binding, _ := animeJSON(source.Binding)
-				rules, _ := animeJSON(source.Rules)
-				if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, saved.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			naming, _ := animeJSON(sub.Naming)
-			if _, err := f.store.db.Exec(`UPDATE anime_subscriptions SET naming_json=? WHERE id=?`, naming, f.sub.ID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.airDate',?)`, entry.Metadata.AirDate); err != nil {
-				t.Fatal(err)
-			}
-			var err error
-			f.sub, err = f.store.GetAnimeSubscription(context.Background(), f.sub.ID, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for group := 0; group < 2; group++ {
-				for n := 49; n <= 60; n++ {
-					if group == 1 && n == 55 {
-						continue
-					}
-					progressEpisode(t, f, group, n, true)
-				}
-				if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
-					t.Fatal("unfinished standby chapter archived", got.Status)
-				}
-			}
-			if got := refreshProgress(t, f)[f.sub.Sources[1].ID]; got.FirstEpisode != 49 || got.MissingCount != 1 || got.Missing[0].First != 55 {
-				t.Fatal("continuous source lost episode 55", got)
-			}
-			progressEpisode(t, f, 1, 55, true)
-			if manual {
-				if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_remove(rules_json,'$.chapterFirstEpisode')`); err != nil {
-					t.Fatal(err)
-				}
-				if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
-					t.Fatal("ambiguous numbering auto-archived", got.Status)
-				}
-				if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.chapterFirstEpisode',49)`); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if got := evaluateLifecycle(t, f, now); got.Status != "archived" {
-				t.Fatal("49-60 organized by both sources failed to archive", got.Status)
-			}
-		})
+			progressEpisode(t, f, group, n, true)
+		}
+		if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
+			t.Fatal("unfinished RSS archived", got.Status)
+		}
+	}
+	if got := refreshProgress(t, f)[f.sub.Sources[1].ID]; got.FirstEpisode != 49 || got.MissingCount != 1 || got.Missing[0].First != 55 {
+		t.Fatal(got)
+	}
+	progressEpisode(t, f, 1, 55, true)
+	if got := evaluateLifecycle(t, f, now); got.Status != "archived" {
+		t.Fatal("continuous range did not archive", got.Status)
 	}
 }

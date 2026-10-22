@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 )
 
@@ -17,7 +18,6 @@ func progressFixture(t *testing.T) *downloadClaimFixture {
 		source.Binding.Scope.First, source.Binding.Scope.Last = animePtr(1), animePtr(12)
 		source.Binding.ChapterCorrespondence = &model.AnimeChapterCorrespondence{SourceEpisode: 1, ChapterEpisode: 1}
 		source.Rules.MinimumEpisode = animePtr(1)
-		source.Rules.ChapterFirstEpisode = animePtr(1)
 		binding, _ := animeJSON(source.Binding)
 		rules, _ := animeJSON(source.Rules)
 		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=?,checked_at=1 WHERE id=?`, binding, rules, source.ID); err != nil {
@@ -113,7 +113,7 @@ func TestAnimeZeroBasedSubscriptionProgressAndArchive(t *testing.T) {
 		source.Binding.Scope = &model.AnimeScope{Kind: "feed"}
 		source.Binding.ChapterCorrespondence = nil
 		source.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: *source.ItemID, GroupID: *source.GroupID}
-		source.Rules.ChapterFirstEpisode, source.Rules.MinimumEpisode = animePtr(0), animePtr(0)
+		source.Rules.MinimumEpisode = animePtr(0)
 		binding, _ := animeJSON(source.Binding)
 		rules, _ := animeJSON(source.Rules)
 		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, source.ID); err != nil {
@@ -138,6 +138,7 @@ func TestAnimeZeroBasedSubscriptionProgressAndArchive(t *testing.T) {
 		}
 	}
 	for group := 0; group < 2; group++ {
+		progressEpisode(t, f, group, 0, false)
 		for n := 0; n <= 12; n++ {
 			if group == 0 && n == 7 || group == 1 && n == 0 {
 				continue
@@ -167,18 +168,12 @@ func TestAnimeZeroBasedSubscriptionProgressAndArchive(t *testing.T) {
 	if got := evaluateLifecycle(t, f, now); got.Status != "archived" {
 		t.Fatal("00-12 did not archive", got.Status)
 	}
-	// Removing an unconfirmed range must preserve actual completion counts.
-	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_remove(rules_json,'$.chapterFirstEpisode') WHERE id=?`, main); err != nil {
-		t.Fatal(err)
-	}
-	if p := refreshProgress(t, f)[main]; p.State != "numbering_unknown" || p.OrganizedCount != 13 || p.PublishedThrough != 12 {
-		t.Fatal("unknown range hid organized episodes", p)
-	}
 }
 
 func TestAnimeSourceProgressInvalidationAndMinimum(t *testing.T) {
 	f := progressFixture(t)
 	id := f.sub.Sources[0].ID
+	progressEpisode(t, f, 0, 1, false)
 	jobID := progressEpisode(t, f, 0, 10, true)
 	refreshProgress(t, f)
 	// Ordinary status/progress polling doesn't dirty an unchanged result.
@@ -236,6 +231,7 @@ func TestAnimeSourceProgressContinuousNumbersAndRestart(t *testing.T) {
 	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, id); err != nil {
 		t.Fatal(err)
 	}
+	progressEpisode(t, f, 0, 25, false)
 	progressEpisode(t, f, 0, 28, true)
 	want := refreshProgress(t, f)[id]
 	if want.FirstEpisode != 27 || want.PublishedThrough != 28 || want.MissingCount != 1 || !reflect.DeepEqual(want.Missing, []model.AnimeEpisodeRange{{First: 27, Last: 27}}) {
@@ -325,8 +321,128 @@ func TestAnimeProgressRangeChangeInvalidatesCachedSummariesOnce(t *testing.T) {
 			t.Fatal("stale completion escaped invalidation", got, err)
 		}
 	}
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET checked_at=1`); err != nil {
+		t.Fatal(err)
+	}
 	if got := refreshProgress(t, f); !reflect.DeepEqual(got, want) {
 		t.Fatal("range refresh lost organized receipts", got, want)
+	}
+}
+
+func TestAnimeFirstEpisodeCleanupPreservesTasksAndCache(t *testing.T) {
+	f := progressFixture(t)
+	ctx := context.Background()
+	jobID := progressEpisode(t, f, 0, 1, true)
+	want := refreshProgress(t, f)
+	job, err := f.store.GetAnimeDownloadJob(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.chapterFirstEpisode',1)`,
+		`UPDATE anime_release_decisions SET snapshot_json=json_set(snapshot_json,'$.rules.chapterFirstEpisode',1)`,
+		`UPDATE anime_download_jobs SET snapshot_json=json_set(snapshot_json,'$.decision.rules.chapterFirstEpisode',1)`,
+		`UPDATE anime_job_selections SET snapshot_json=json_set(snapshot_json,'$.decision.rules.chapterFirstEpisode',1)`,
+		`UPDATE anime_source_progress SET computed_generation=generation,summary_json='{"state":"numbering_unknown"}'`,
+		`PRAGMA user_version=59`,
+	} {
+		if _, err := f.store.db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { f.store.Close() }()
+	got, err := f.store.GetAnimeDownloadJob(ctx, jobID)
+	if err != nil || !reflect.DeepEqual(got, job) {
+		t.Fatal("cleanup changed the frozen task", got, err)
+	}
+	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil || sub.Sources[0].Binding.Scope.Kind != "feed" {
+		t.Fatal("strict decoding or obsolete source range survived", sub, err)
+	}
+	// A changed source must refresh its ordinary RSS before reporting completion.
+	for _, source := range sub.Sources {
+		if source.CheckedAt != nil || source.Revision <= f.sub.Sources[0].Revision {
+			t.Fatal("cleanup reused stale source authorization", source)
+		}
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET checked_at=1`); err != nil {
+		t.Fatal(err)
+	}
+	if got := refreshProgress(t, f); !reflect.DeepEqual(got, want) {
+		t.Fatal("cleanup lost local receipts", got, want)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := f.store.RefreshAnimeSourceProgress(ctx); err != nil || changed {
+		t.Fatal("normal reopen reran field cleanup", changed, err)
+	}
+}
+
+func TestAnimeFirstEpisodeCleanupReauthorizesPendingWork(t *testing.T) {
+	f := progressFixture(t)
+	ctx := context.Background()
+	release, verified := f.selectTitle(t, 0, "rel_progress_0_2", fmt.Sprintf("%040x", 1002), "[group] Anime - 02 [1080p][HEVC]")
+	job := f.claim(t, 0, release, verified).Job
+	jobID := job.ID
+	for _, n := range []int{3, 13} {
+		progressEpisode(t, f, 0, n, false)
+	}
+	for _, query := range []string{
+		`UPDATE anime_release_decisions SET disposition='filtered',snapshot_json=json_remove(snapshot_json,'$.selection') WHERE json_extract(snapshot_json,'$.parse.episode')=13`,
+		`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.chapterFirstEpisode',1)`,
+		`UPDATE anime_subscription_sources SET status='paused' WHERE role='standby'`,
+		`PRAGMA user_version=59`,
+	} {
+		if _, err := f.store.db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store = reopened
+	defer f.store.Close()
+	blocked, err := f.store.GetAnimeDownloadJob(ctx, jobID)
+	if err != nil || blocked.BlockCode == nil || *blocked.BlockCode != "CONFIGURATION_CHANGED" {
+		t.Fatal("queued work kept old authorization", blocked, err)
+	}
+	now := time.Now().UnixMilli()
+	poll := discoveryPoll(t, f.store, now)
+	rows := make([]animefeed.SourceRelease, 0, 3)
+	for _, n := range []int{2, 3, 13} {
+		rows = append(rows, animefeed.SourceRelease{PostKey: fmt.Sprintf("rel_progress_0_%d", n), Title: fmt.Sprintf("[group] Anime - %02d [1080p][HEVC]", n), OriginalGUID: "shared-guid", MagnetHint: fmt.Sprintf("magnet:?xt=urn:btih:%040x", 1000+n)})
+	}
+	stats, err := f.store.CompleteAnimeSourcePoll(ctx, poll, discoveryPage(poll, now, rows...), now)
+	if err != nil || stats.Selected != 3 {
+		t.Fatal("old filtered or pending choices were not reevaluated", stats, err)
+	}
+	got, err := f.store.GetAnimeDownloadJob(ctx, jobID)
+	if err != nil || got.BlockCode != nil || got.Snapshot.Source.SourceRevision != poll.Source.Revision || got.Snapshot.InfoHash != job.Snapshot.InfoHash || got.Snapshot.Target != job.Snapshot.Target || got.ID != job.ID {
+		t.Fatal("pending task did not reuse its fixed resource and target", got, err)
 	}
 }
 

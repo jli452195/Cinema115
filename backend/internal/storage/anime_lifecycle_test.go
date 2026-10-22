@@ -129,6 +129,11 @@ func TestAnimeInactivityRequiresAllHealthySourcesAndSettledWork(t *testing.T) {
 func TestAnimeCompletionRequiresEveryEpisodeAndSubtitleGroup(t *testing.T) {
 	f, now := lifecycleFixture(t)
 	for group := 0; group < 2; group++ {
+		// The observed first release anchors the total even below the download minimum.
+		first, _ := f.selectTitle(t, group, fmt.Sprintf("rel_first_%d", group), fmt.Sprintf("%040x", 500+group), "[group] Anime - 25 [1080p][HEVC]")
+		if _, err := f.store.db.Exec(`UPDATE anime_release_decisions SET disposition='filtered' WHERE source_id=? AND release_id=?`, f.sub.Sources[group].ID, first.ID); err != nil {
+			t.Fatal(err)
+		}
 		for episode := 30; episode <= 36; episode++ {
 			if group == 1 && episode == 35 {
 				continue
@@ -196,21 +201,13 @@ func TestAnimeCompletionRequiresEveryEpisodeAndSubtitleGroup(t *testing.T) {
 	}
 }
 
-func TestAnimeCompletionRangeNeverInfersChapterFromTMDBSeasonLength(t *testing.T) {
-	source := animeMainSource("main", "45")
-	s := model.AnimeSource{ID: "source", Binding: source.Binding, Rules: source.Rules}
-	first, last, ok := animeCompletionRange(s, 12)
-	if !ok || first != 30 || last != 36 {
+func TestAnimeCompletionRangeUsesObservedNumbering(t *testing.T) {
+	s := model.AnimeSource{Rules: model.AnimeRules{MinimumEpisode: animePtr(30)}}
+	if first, last, ok := animeCompletionRange(s, 25, 12); !ok || first != 30 || last != 36 {
 		t.Fatal(first, last, ok)
 	}
-	s.Binding.ChapterCorrespondence = nil
-	s.Binding.Scope = &model.AnimeScope{Kind: "feed"}
-	if _, _, ok := animeCompletionRange(s, 12); ok {
-		t.Fatal("TMDB mapping was mistaken for chapter start")
-	}
-	s.Rules.ChapterFirstEpisode = animePtr(25)
-	if first, last, ok := animeCompletionRange(s, 12); !ok || first != 30 || last != 36 {
-		t.Fatal(first, last, ok)
+	if _, _, ok := animeCompletionRange(s, -1, 12); ok {
+		t.Fatal("no observed release invented a range")
 	}
 }
 
@@ -339,6 +336,10 @@ func TestAnimeLifecycleDevelopmentRebuildPreservesDirectories(t *testing.T) {
 
 func TestAnimeCompletionUsesSourceRules(t *testing.T) {
 	f, now := lifecycleFixture(t)
+	first, _ := f.selectTitle(t, 0, "rel_rule_first", strings.Repeat("f", 40), "[group] Anime - 25 [1080p][HEVC]")
+	if _, err := f.store.db.Exec(`UPDATE anime_release_decisions SET disposition='filtered' WHERE source_id=? AND release_id=?`, f.sub.Sources[0].ID, first.ID); err != nil {
+		t.Fatal(err)
+	}
 	source := &f.sub.Sources[0]
 	source.Rules.Match = []string{`(?i)1080p`}
 	raw, err := animeJSON(source.Rules)
@@ -378,7 +379,7 @@ func TestAnimeLastOrganizedCheckpointArchivesInSameTransaction(t *testing.T) {
 			}
 			continue
 		}
-		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.chapterFirstEpisode',30),health='ok' WHERE id=?`, source.ID); err != nil {
+		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET health='ok',checked_at=? WHERE id=?`, now, source.ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.store.db.Exec(`INSERT INTO anime_source_activity VALUES(?,?,?,?)`, source.ID, source.Revision, now, now); err != nil {

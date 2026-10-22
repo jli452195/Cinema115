@@ -69,13 +69,12 @@ type AnimeSpec struct {
 }
 
 type AnimeRules struct {
-	ChapterFirstEpisode *int     `json:"chapterFirstEpisode,omitempty"`
-	SchemaVersion       int      `json:"schemaVersion"`
-	Match               []string `json:"match"`
-	Exclude             []string `json:"exclude"`
-	MinimumEpisode      *int     `json:"minimumEpisode"`
-	EpisodePattern      string   `json:"episodePattern,omitempty"`
-	EpisodeGroup        int      `json:"episodeGroup,omitempty"`
+	SchemaVersion  int      `json:"schemaVersion"`
+	Match          []string `json:"match"`
+	Exclude        []string `json:"exclude"`
+	MinimumEpisode *int     `json:"minimumEpisode"`
+	EpisodePattern string   `json:"episodePattern,omitempty"`
+	EpisodeGroup   int      `json:"episodeGroup,omitempty"`
 }
 
 type AnimeForm struct {

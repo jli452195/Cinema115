@@ -8,18 +8,13 @@ import AnimeSourcePicker from './AnimeSourcePicker.vue'
 import AnimeSourceNaming from './AnimeSourceNaming.vue'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
 import { animeProviderName, animeOriginLabel, animeBindingConfirmed, type SourceForm } from '../utils/animeSourceForm'
-const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; previewBusy: boolean; now: number; namingTarget?: AnimeNamingTarget; totalEpisodes?: number | null }>()
+const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; previewBusy: boolean; now: number; namingTarget?: AnimeNamingTarget }>()
 const emit = defineEmits<{ search: [source: SourceForm]; choose: [source: SourceForm, id: string, title: string]; group: [source: SourceForm]; remove: []; open: [source: SourceForm]; sample: [source: SourceForm]; cancel: [source: SourceForm]; apply: [source: SourceForm]; childOpen: [open: boolean] }>()
 const editing = ref<SourceForm>()
 const confirmRemoval = ref(false)
 const prefix = computed(() => `anime-source-${props.source.ref}`)
 const confirmed = computed(() => animeBindingConfirmed(props.source))
 const sourceIssue = computed(() => props.source.health !== 'unavailable' ? '' : props.source.errorCode === 'DOWNLOAD_TARGET_CHANGED' ? 'RSS 暂停读取，请在目录设置中重新核对主账号与目录。' : 'RSS 暂时无法读取，请重新选择或核对该来源。')
-const range = computed(() => {
-  if (!/^(0|[1-9]\d{0,4})$/.test(props.source.firstEpisode)) return '请确认本订阅第一话的发布编号'
-  const first = Number(props.source.firstEpisode), total = props.totalEpisodes
-  return total && Number.isInteger(total) && total > 0 ? `发布 ${String(first).padStart(2, '0')}～${String(first + total - 1).padStart(2, '0')}，共 ${total} 集` : `从发布第 ${first} 话开始，总集数未定`
-})
 function close() { emit('childOpen', false); if (editing.value) emit('cancel', editing.value); editing.value = undefined }
 function open(provider = props.source.provider) {
   close()
@@ -57,12 +52,11 @@ onBeforeUnmount(close)
     <div v-else class="ae-choose-source"><IconRss :size="28" aria-hidden="true" /><div><h3>选择资源与字幕组</h3><p>先看最近发布，再选择想保留的规格。</p></div><button type="button" class="ae-button ae-primary" :disabled="disabled || previewBusy" @click="open()">选择资源</button></div>
     <fieldset v-if="source.groupId" :disabled="disabled || previewBusy" class="ae-fields ae-source-options">
       <legend class="sr-only">补番与过滤规则</legend>
-      <div class="ae-range"><div class="ae-field"><label :for="`${prefix}-first`" class="ae-label">订阅首话</label><input :id="`${prefix}-first`" v-model="source.firstEpisode" inputmode="numeric" placeholder="如 0、1、49" :aria-describedby="`${prefix}-range`" /></div><p :id="`${prefix}-range`" class="ae-note" aria-live="polite">{{ range }}</p></div>
       <div class="ae-pair ae-patterns"><div class="ae-field"><label :for="`${prefix}-match`" class="ae-label">匹配正则（全部满足）</label><textarea :id="`${prefix}-match`" v-model="source.match" :aria-invalid="source.ruleError?.field === 'match' || undefined" :aria-describedby="source.ruleError?.field === 'match' ? `${prefix}-rule-error` : undefined" @input="source.ruleError = undefined" rows="2" spellcheck="false" placeholder="每行一条，留空接收全部规格" /></div><div class="ae-field"><label :for="`${prefix}-exclude`" class="ae-label">排除正则（任一命中）</label><textarea :id="`${prefix}-exclude`" v-model="source.exclude" :aria-invalid="source.ruleError?.field === 'exclude' || undefined" :aria-describedby="source.ruleError?.field === 'exclude' ? `${prefix}-rule-error` : undefined" @input="source.ruleError = undefined" rows="2" spellcheck="false" placeholder="例如：(?i)720p" /></div></div>
       <p class="ae-note">每行一条；匹配全部满足，排除任一命中。忽略大小写可加 (?i)。</p>
       <AnimeSourceNaming :source="source" :target="namingTarget" :disabled="disabled || previewBusy">
         <template #custom>
-          <div class="ae-field"><label :for="`${prefix}-minimum`" class="ae-label">从第几话开始下载（含本话）</label><input :id="`${prefix}-minimum`" v-model="source.minimum" inputmode="numeric" /><p class="ae-note">按发布编号补番，不改变订阅范围。</p></div>
+          <div class="ae-field"><label :for="`${prefix}-minimum`" class="ae-label">从第几话开始下载（含本话）</label><input :id="`${prefix}-minimum`" v-model="source.minimum" inputmode="numeric" /></div>
           <div class="ae-pair"><div class="ae-field"><label :for="`${prefix}-episode-pattern`" class="ae-label">集号正则</label><input :id="`${prefix}-episode-pattern`" v-model="source.episodePattern" :aria-invalid="source.ruleError?.field === 'episodePattern' || undefined" @input="source.ruleError = undefined" spellcheck="false" placeholder="留空使用默认解析" /></div><div class="ae-field"><label :for="`${prefix}-episode-group`" class="ae-label">捕获组序号</label><input :id="`${prefix}-episode-group`" v-model="source.episodeGroup" @input="source.ruleError = undefined" inputmode="numeric" :disabled="!source.episodePattern.trim()" /></div></div>
         </template>
       </AnimeSourceNaming>

@@ -144,11 +144,11 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
                 <span class="ac-total-unit">集</span>
               </div>
               <div class="ac-total-note">
-                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '与订阅首话一起确定下载和归档范围。' : editor.defaultTotal.value ? '默认采用 Bangumi 的 ' + editor.defaultTotal.value + ' 集，可修改。' : '集数未定，可稍后补充。' }}</p>
+                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '用于判断是否已整理齐集。' : editor.defaultTotal.value ? '默认采用 Bangumi 的 ' + editor.defaultTotal.value + ' 集，可修改。' : '集数未定，可稍后补充。' }}</p>
               </div>
           </section>
 
-          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :total-episodes="editor.totalEpisodes.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
+          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
         <div v-show="tab === 'backup'" id="anime-panel-backup" role="tabpanel" aria-labelledby="anime-tab-backup">
@@ -156,7 +156,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           <p v-if="!backups.length" class="ac-empty">暂无备用 RSS，可添加其他字幕组的版本。</p>
           <section v-for="source in backups" :key="source.ref" class="ac-backup">
             <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
-            <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :total-episodes="editor.totalEpisodes.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
+            <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
           </section>
         </div>
         <div v-if="tab === 'jobs' && local" id="anime-panel-jobs" role="tabpanel" aria-labelledby="anime-tab-jobs">

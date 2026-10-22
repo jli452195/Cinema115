@@ -96,7 +96,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
           <template #badge>
             <span class="as-badge" :data-status="item.status">{{ subscriptionStatus(item.status) }}</span>
             <span class="as-source-pills">
-              <span v-for="source in item.sources" :key="source.id" class="as-source-pill" :data-state="source.progress?.state || 'unknown'" :title="sourceProgressDescription(source)">{{ source.groupName || '未命名字幕组' }}<span v-if="source.progress?.state === 'numbering_unknown'"> · 已整理 {{ source.progress.organizedCount }} 集，范围待确认</span></span>
+              <span v-for="source in item.sources" :key="source.id" class="as-source-pill" :data-state="source.progress?.state || 'unknown'" :title="sourceProgressDescription(source)">{{ source.groupName || '未命名字幕组' }}</span>
             </span>
           </template>
         </AnimeCard>

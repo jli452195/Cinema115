@@ -48,31 +48,15 @@ func recordAnimeSourceActivityTx(ctx context.Context, tx *sql.Tx, source model.A
 	return quiet, err
 }
 
-// One source-number range serves both gaps and completion. Zero is a valid
-// first episode; -1 means unset. TMDB naming never determines this range.
-func animeCompletionRange(source model.AnimeSource, total int) (int, int, bool) {
-	if source.Rules.MinimumEpisode == nil {
+// The first observed ordinary release anchors the total; the download minimum
+// excludes intentionally skipped episodes without shifting the completion end.
+func animeCompletionRange(source model.AnimeSource, first, total int) (int, int, bool) {
+	if first < 0 || source.Rules.MinimumEpisode == nil {
 		return -1, 0, false
 	}
-	first := source.Rules.ChapterFirstEpisode
-	if first == nil && source.Binding.Scope != nil && source.Binding.Scope.Kind == "range" {
-		first = source.Binding.Scope.First
-	}
-	if first == nil {
-		return -1, 0, false
-	}
-	last, lower := *first+total-1, max(*first, *source.Rules.MinimumEpisode)
+	last, lower := first+total-1, max(first, *source.Rules.MinimumEpisode)
 	if total < 1 || last > 99999 {
 		return lower, 0, false
-	}
-	if scope := source.Binding.Scope; scope != nil && scope.Kind == "range" {
-		if scope.First == nil || scope.Last == nil {
-			return lower, 0, false
-		}
-		if *scope.Last < last {
-			return max(lower, *scope.First), 0, false
-		}
-		lower = max(lower, *scope.First)
 	}
 	return lower, last, lower <= last
 }
@@ -127,11 +111,6 @@ func readAnimeLifecycle(ctx context.Context, q animeReader, sub model.AnimeSubsc
 			healthy = false
 		}
 		quiet = max(quiet, since)
-		if total > 0 {
-			if _, _, ok := animeCompletionRange(source, total); !ok {
-				out.CompletionIssue = "CHAPTER_START_UNKNOWN"
-			}
-		}
 	}
 	if healthy {
 		out.QuietSince = &quiet
@@ -202,30 +181,13 @@ func evaluateAnimeLifecycleTx(ctx context.Context, tx *sql.Tx, id string, now in
 }
 
 func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscription, entry model.AnimeEntry) (bool, error) {
-	total := 0
-	if entry.Metadata.TotalEpisodes != nil {
-		total = *entry.Metadata.TotalEpisodes
-	}
-	if sub.Form.TotalEpisodes != nil {
-		total = *sub.Form.TotalEpisodes
-	}
 	for _, source := range activeAnimeSources(sub) {
-		first, last, ok := animeCompletionRange(source, total)
-		if !ok {
+		progress, err := readAnimeSourceProgress(ctx, tx, source, sub, entry)
+		if err != nil {
+			return false, err
+		}
+		if progress.State != "complete" {
 			return false, nil
-		}
-		raw, err := animeProgressRows(ctx, tx, animeOrganizedReleases, source.ID)
-		if err != nil {
-			return false, err
-		}
-		found, err := animeOrganizedEpisodes(ctx, raw, source)
-		if err != nil {
-			return false, err
-		}
-		for n := first; n <= last; n++ {
-			if !found[n] {
-				return false, nil
-			}
 		}
 	}
 	return true, nil

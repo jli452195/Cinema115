@@ -8,7 +8,7 @@ type AnimeEpisodeRange struct {
 }
 
 type AnimeSourceProgress struct {
-	State            string              `json:"state"` // unknown, numbering_unknown, ongoing, missing, complete
+	State            string              `json:"state"` // unknown, ongoing, missing, complete
 	FirstEpisode     int                 `json:"firstEpisode"`
 	PublishedThrough int                 `json:"publishedThrough"`
 	OrganizedCount   int                 `json:"organizedCount"`

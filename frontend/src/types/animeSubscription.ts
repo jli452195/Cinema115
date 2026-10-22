@@ -8,7 +8,6 @@ export interface AnimeBinding {
 }
 export interface AnimeSpec { resolution?: string; languages?: string[]; subtitleMode?: string; codec?: string; container?: string; bitDepth?: string }
 export interface AnimeRules {
-	chapterFirstEpisode?: number | null
   schemaVersion: 1
   match: string[]
   exclude: string[]
@@ -81,7 +80,7 @@ export interface AnimeSubscriptionView {
   sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null; progress?: AnimeSourceProgress })[]
 }
 export interface AnimeSourceProgress {
-  state: 'unknown' | 'numbering_unknown' | 'ongoing' | 'missing' | 'complete'
+  state: 'unknown' | 'ongoing' | 'missing' | 'complete'
   firstEpisode: number; publishedThrough: number; organizedCount: number; missingCount: number
   missing?: { first: number; last: number }[]
 }
