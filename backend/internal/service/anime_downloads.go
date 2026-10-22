@@ -81,6 +81,9 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	result, err := s.Store.ClaimAnimeDownload(ctx, sourceID, releaseID, generation, verified, session.Target())
 	if err == nil {
 		s.wakeDownloads()
+		if result.Created && s.Logs != nil {
+			s.logAnime(result.Job.ID, "动漫任务 · "+result.Job.Snapshot.Source.GroupName, "INFO", "已加入下载队列："+result.Job.Snapshot.Release.Title)
+		}
 	}
 	return result, err
 }

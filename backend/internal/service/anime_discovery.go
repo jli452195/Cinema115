@@ -144,8 +144,7 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 }
 
 func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourcePoll) error {
-	ctx, finishTiming := r.Admin.observeAnimeStage(ctx, poll.Subscription.ID, "source")
-	defer finishTiming()
+	started := time.Now()
 	var readErr error
 	if poll.IssueCode == "" {
 		budget, err := NewAnimeSourceBudget(nil)
@@ -164,8 +163,10 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		cancel()
 		readErr = err
 		if err == nil {
-			_, readErr = r.Admin.Store.CompleteAnimeSourcePoll(ctx, poll, page.SourcePage, r.timestamp())
+			stats, err := r.Admin.Store.CompleteAnimeSourcePoll(ctx, poll, page.SourcePage, r.timestamp())
+			readErr = err
 			if readErr == nil {
+				r.Admin.logAnimeRSSResult(poll, page, stats, budget.Stats().Requests, time.Since(started))
 				r.Admin.wakeAnimeVerification()
 				return nil
 			}
@@ -195,6 +196,9 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 	err := r.Admin.Store.FailAnimeSourcePoll(writeCtx, poll, code, retry, unavailable, r.timestamp())
 	if errors.Is(err, storage.ErrAnimeConflict) {
 		return nil
+	}
+	if err == nil {
+		r.Admin.logAnimeRSSFailure(poll, code, retry, unavailable)
 	}
 	return err
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -24,6 +25,20 @@ func (s *AnimeAdminService) ControlSubscription(ctx context.Context, actor, key,
 	k, err := animeRequestKey(actor, "POST /api/admin/anime/subscriptions/"+id+"/"+action, key, in)
 	if err != nil {
 		return out, err
+	}
+	if s.Logs != nil {
+		prior, readErr := s.Store.GetAnimeSubscription(ctx, id, false)
+		if readErr == nil && prior.Revision == in.ExpectedRevision {
+			title := s.animeSubscriptionLogTitle(ctx, prior)
+			defer func() {
+				actionName := map[string]string{"pause": "暂停订阅", "resume": "恢复订阅", "archive": "归档订阅", "unarchive": "取消归档", "remove": "移除订阅"}[action]
+				if resultErr != nil {
+					s.logAnime(id, "动漫订阅", "WARNING", title+"："+actionName+"未完成；"+animeLogOperationError(resultErr))
+				} else if out.Revision > prior.Revision {
+					s.logAnime(id, "动漫订阅", "INFO", title+"："+actionName+"已完成")
+				}
+			}()
+		}
 	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
 	defer func() {

@@ -131,6 +131,21 @@ func (s *AnimeAdminService) JobAction(ctx context.Context, actor, key, id, actio
 	if err != nil {
 		return out, err
 	}
+	if s.Logs != nil && (action == "retry" || action == "reconcile") {
+		prior, readErr := s.Store.GetAnimeDownloadJob(ctx, id)
+		if readErr == nil && prior.Revision == in.ExpectedRevision {
+			defer func() {
+				message, level := "已安排任务核对", "INFO"
+				if action == "retry" {
+					message = "已安排任务重试"
+				}
+				if resultErr != nil {
+					message, level = "任务操作未完成；"+animeLogOperationError(resultErr), "WARNING"
+				}
+				s.logAnime(id, "动漫任务 · "+prior.Snapshot.Source.GroupName, level, message+"："+prior.Snapshot.Release.Title)
+			}()
+		}
+	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
 	defer func() {
 		if resultErr == nil {

@@ -436,6 +436,13 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	out, err = s.Store.SaveAnimeConfiguration(ctx, c, k, guard)
 	if err == nil {
 		s.wakeAnimeDiscovery()
+		if s.Logs != nil {
+			action := "订阅配置已保存"
+			if id == "" {
+				action = "已开始订阅"
+			}
+			s.logAnime(out.ID, "动漫订阅", "INFO", fmt.Sprintf("%s：%s；%d 条 RSS 来源", action, animeLogTitle(entry.Title), len(final)))
+		}
 	}
 	return out, err
 }
