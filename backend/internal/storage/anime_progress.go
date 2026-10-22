@@ -72,10 +72,6 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	if source.Rules.MinimumEpisode == nil || source.CheckedAt == nil || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
 		return out, nil
 	}
-	out.State, out.FirstEpisode = "ongoing", *source.Rules.MinimumEpisode
-	if scope := source.Binding.Scope; scope != nil && scope.First != nil && scope.Kind == "range" {
-		out.FirstEpisode = max(out.FirstEpisode, *scope.First)
-	}
 	total := 0
 	if entry.Metadata.TotalEpisodes != nil {
 		total = *entry.Metadata.TotalEpisodes
@@ -83,10 +79,12 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	if sub.Form.TotalEpisodes != nil {
 		total = *sub.Form.TotalEpisodes
 	}
-	first, last, targetKnown := animeCompletionRange(sub, source, total)
-	if targetKnown {
-		out.FirstEpisode = first
+	first, last, targetKnown := animeCompletionRange(sub, source, entry, total)
+	if first < 1 {
+		out.State = "numbering_unknown"
+		return out, nil
 	}
+	out.State, out.FirstEpisode = "ongoing", first
 	match, err := animepreview.CompileMatcher(source.Binding, source.Rules)
 	if err != nil {
 		return out, err

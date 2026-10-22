@@ -199,6 +199,59 @@ func TestAnimeSourceProgressContinuousNumbersAndRestart(t *testing.T) {
 	}
 }
 
+func TestAnimeSourceProgressChapterUpgradeInvalidatesOnce(t *testing.T) {
+	f := progressFixture(t)
+	id := f.sub.Sources[0].ID
+	progressEpisode(t, f, 0, 1, true)
+	want := refreshProgress(t, f)[id]
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce v57's trigger, which watched totals but not premiere dates.
+	if _, err := f.store.db.Exec(`DROP TRIGGER anime_progress_entry_update;
+CREATE TRIGGER anime_progress_entry_update AFTER UPDATE OF metadata_json ON anime_entries
+WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') BEGIN
+ UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE p.entry_id=NEW.id);
+END; PRAGMA user_version=57;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		var err error
+		f.store, err = Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.store.Close()
+		progress, err := f.store.AnimeSourceProgresses(ctx, []string{id}, true)
+		if err != nil || i == 0 && progress[id].State != "unknown" || i > 0 && !reflect.DeepEqual(progress[id], want) {
+			t.Fatal("upgrade invalidation or clean restart", i, progress, err)
+		}
+		if got := refreshProgress(t, f)[id]; !reflect.DeepEqual(got, want) {
+			t.Fatal("upgrade changed saved receipts or subscription", got)
+		}
+		for _, change := range []struct {
+			path, value string
+			invalidates bool
+		}{{"$.airDate", "2026-10-02", i == 0}, {"$.airDate", "2026-10-02", false}, {"$.synopsis", "description", false}} {
+			if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,?,?)`, change.path, change.value); err != nil {
+				t.Fatal(err)
+			}
+			if dirty, err := f.store.RefreshAnimeSourceProgress(ctx); err != nil || dirty != change.invalidates {
+				t.Fatal("metadata invalidation", change, dirty, err)
+			}
+			refreshProgress(t, f)
+		}
+		if err := f.store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestAnimeCompletedSourceStopsPollingIndependently(t *testing.T) {
 	f := progressFixture(t)
 	ctx, now := context.Background(), time.Now().UnixMilli()

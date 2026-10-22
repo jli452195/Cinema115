@@ -81,7 +81,7 @@ export interface AnimeSubscriptionView {
   sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null; progress?: AnimeSourceProgress })[]
 }
 export interface AnimeSourceProgress {
-  state: 'unknown' | 'ongoing' | 'missing' | 'complete'
+  state: 'unknown' | 'numbering_unknown' | 'ongoing' | 'missing' | 'complete'
   firstEpisode: number; publishedThrough: number; organizedCount: number; missingCount: number
   missing?: { first: number; last: number }[]
 }

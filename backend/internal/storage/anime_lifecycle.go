@@ -48,32 +48,67 @@ func recordAnimeSourceActivityTx(ctx context.Context, tx *sql.Tx, source model.A
 	return quiet, err
 }
 
-func animeCompletionRange(sub model.AnimeSubscription, source model.AnimeSource, total int) (int, int, bool) {
-	if total < 1 || source.Rules.MinimumEpisode == nil {
-		return 0, 0, false
-	}
-	first := 0
+// Naming offsets alone say nothing about a Bangumi chapter's first episode.
+// Infer only from a unique exact premiere date in the already saved snapshot;
+// partial RSS windows and season lengths are never chapter-start evidence.
+func animeChapterFirst(sub model.AnimeSubscription, source model.AnimeSource, entry model.AnimeEntry, total int) int {
 	if v := source.Rules.ChapterFirstEpisode; v != nil {
-		first = *v
+		return *v
 	} else if v := source.Binding.ChapterCorrespondence; v != nil {
-		first = v.SourceEpisode - v.ChapterEpisode + 1
+		return v.SourceEpisode - v.ChapterEpisode + 1
 	} else if scope := source.Binding.Scope; scope != nil && scope.Kind == "range" && scope.First != nil && scope.Last != nil && *scope.Last-*scope.First+1 == total {
-		first = *scope.First
-	} else if sub.Naming != nil {
-		for _, mapping := range sub.Naming.Sources {
-			if mapping.SourceRef == source.ID && len(mapping.Segments) == 1 && mapping.Segments[0].SourceBase == 1 && mapping.Segments[0].First == 1 {
-				first = 1
+		return *scope.First
+	}
+	if _, err := time.Parse("2006-01-02", entry.Metadata.AirDate); err != nil || sub.Naming == nil {
+		return 0
+	}
+	for _, mapping := range sub.Naming.Sources {
+		if mapping.SourceRef != source.ID || len(mapping.Segments) != 1 || len(mapping.Overrides) != 0 {
+			continue
+		}
+		segment, first, matches := mapping.Segments[0], 0, 0
+		for _, season := range sub.Naming.Target.Seasons {
+			if season.Number != segment.TargetSeason || season.Number == 0 {
+				continue
+			}
+			for _, episode := range season.Episodes {
+				if episode.Date == entry.Metadata.AirDate {
+					matches++
+					first = episode.Number - segment.TargetBase + segment.SourceBase
+				}
 			}
 		}
+		if matches == 1 && first >= segment.First && first <= 99999 && (segment.Last == nil || first <= *segment.Last) {
+			return first
+		}
 	}
-	last := first + total - 1
-	if first < 1 || last > 99999 {
+	return 0
+}
+
+func animeCompletionRange(sub model.AnimeSubscription, source model.AnimeSource, entry model.AnimeEntry, total int) (int, int, bool) {
+	if source.Rules.MinimumEpisode == nil {
 		return 0, 0, false
 	}
+	first := animeChapterFirst(sub, source, entry, total)
+	// An explicitly bounded source still defines a gap-checking lower bound,
+	// even when its range does not establish the entire chapter's length.
+	if first < 1 {
+		if scope := source.Binding.Scope; scope != nil && scope.Kind == "range" && scope.First != nil {
+			return max(*scope.First, *source.Rules.MinimumEpisode), 0, false
+		}
+		return 0, 0, false
+	}
+	last := first + total - 1
 	first = max(first, *source.Rules.MinimumEpisode)
+	if total < 1 || last > 99999 {
+		return first, 0, false
+	}
 	if scope := source.Binding.Scope; scope != nil && scope.Kind == "range" {
-		if scope.First == nil || scope.Last == nil || *scope.Last < last {
-			return 0, 0, false
+		if scope.First == nil || scope.Last == nil {
+			return first, 0, false
+		}
+		if *scope.Last < last {
+			return max(first, *scope.First), 0, false
 		}
 		first = max(first, *scope.First)
 	}
@@ -131,7 +166,7 @@ func readAnimeLifecycle(ctx context.Context, q animeReader, sub model.AnimeSubsc
 		}
 		quiet = max(quiet, since)
 		if total > 0 {
-			if _, _, ok := animeCompletionRange(sub, source, total); !ok {
+			if _, _, ok := animeCompletionRange(sub, source, entry, total); !ok {
 				out.CompletionIssue = "CHAPTER_START_UNKNOWN"
 			}
 		}
@@ -213,7 +248,7 @@ func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.Anim
 		total = *sub.Form.TotalEpisodes
 	}
 	for _, source := range activeAnimeSources(sub) {
-		first, last, ok := animeCompletionRange(sub, source, total)
+		first, last, ok := animeCompletionRange(sub, source, entry, total)
 		if !ok {
 			return false, nil
 		}

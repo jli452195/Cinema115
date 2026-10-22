@@ -24,7 +24,7 @@ WHEN OLD.form_json<>NEW.form_json OR OLD.naming_json<>NEW.naming_json BEGIN
  UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=NEW.id);
 END;
 CREATE TRIGGER IF NOT EXISTS anime_progress_entry_update AFTER UPDATE OF metadata_json ON anime_entries
-WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') BEGIN
+WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') OR json_extract(OLD.metadata_json,'$.airDate') IS NOT json_extract(NEW.metadata_json,'$.airDate') BEGIN
  UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE p.entry_id=NEW.id);
 END;
 CREATE TRIGGER IF NOT EXISTS anime_progress_decision_insert AFTER INSERT ON anime_release_decisions BEGIN

@@ -19,7 +19,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     const make = i => ({ id: `sub-${i}`, entryId: `entry-${i}`, status: i % 2 ? 'enabled' : 'paused', revision: 1, firstEnabledAt: Date.now()-60000, createdAt: Date.now(), updatedAt: Date.now(), dataVersion: 'local-v1',
       entry: { id: `entry-${i}`, bangumiId: String(1000 + i), editionKey: 'original', title: i === 1 ? '从零开始的异世界生活 第三季 袭击篇' : `番剧订阅 ${i}`, originalTitle: `Original anime ${i}`, revision: 1, metadata: { coverUrl: card(i).coverUrl, airDate: '2026-10-01' } },
       sources: Array.from({ length: 5 }, (_, n) => ({ id: `source-${i}-${n}`, role: n ? 'standby' : 'main', position: n, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: String(10 + n), groupName: n === 4 ? '很长很长的字幕组名称测试联合制作' : `字幕组${n ? `备用${n}` : '甲'}`, revision: 1, checkedAt: null,
-        progress: { state: ['missing','complete','ongoing','unknown','ongoing'][n], firstEpisode: 1, publishedThrough: 10, organizedCount: n === 0 ? 9 : 10, missingCount: n === 0 ? 1 : 0, ...(n === 0 ? { missing: [{ first: 7, last: 7 }] } : {}) },
+        progress: { state: ['missing','complete','ongoing','unknown','numbering_unknown'][n], firstEpisode: 1, publishedThrough: 10, organizedCount: n === 0 ? 9 : 10, missingCount: n === 0 ? 1 : 0, ...(n === 0 ? { missing: [{ first: 7, last: 7 }] } : {}) },
         binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 25, last: 64 }, chapterCorrespondence: { sourceEpisode: 25, chapterEpisode: 1 } },
         rules: { schemaVersion: 1, match: ['(?i)1080p', '简体'], exclude: [], minimumEpisode: 25 } })),
       form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] } })
@@ -77,7 +77,10 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     assert.equal(calls.some(c=>/\/subscriptions\//.test(c.endpoint)),false)
     const pills = page.locator('[data-subscription-id="sub-1"] .as-source-pill')
     assert.equal(await pills.count(), 5)
-    assert.deepEqual(await pills.evaluateAll(elements => elements.map(el => el.dataset.state)), ['missing','complete','ongoing','unknown','ongoing'])
+    assert.deepEqual(await pills.evaluateAll(elements => elements.map(el => el.dataset.state)), ['missing','complete','ongoing','unknown','numbering_unknown'])
+    assert.match(await pills.nth(3).getAttribute('title'), /状态待更新/)
+    assert.match(await pills.nth(4).getAttribute('title'), /编号待确认，请在“归档编号（高级）”设置篇章首集/)
+    assert.equal(await pills.nth(4).evaluate(el => getComputedStyle(el).backgroundColor), await pills.nth(3).evaluate(el => getComputedStyle(el).backgroundColor), 'uncertain numbering reuses the neutral pill')
     assert.match(await page.locator('[data-subscription-id="sub-1"]').getAttribute('aria-label'), /字幕组甲：缺 1 集/)
     const hostCard = page.locator('[data-subscription-id="sub-1"]')
     for (const dark of [false, true]) {
