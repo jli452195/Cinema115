@@ -13,7 +13,7 @@ func (s *Store) AnimePreviewStates(ctx context.Context, sourceID string, release
 	if sourceID == "" || len(releaseIDs) == 0 {
 		return out, nil
 	}
-	if len(releaseIDs) > 100 {
+	if len(releaseIDs) > 2000 {
 		return nil, ErrAnimeInvalid
 	}
 	raw, err := json.Marshal(releaseIDs)

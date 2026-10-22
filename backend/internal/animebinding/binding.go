@@ -39,7 +39,7 @@ func Project(binding model.AnimeBinding, parsed model.AnimeReleaseParse) (Projec
 	}
 	if c := binding.ChapterCorrespondence; c != nil {
 		chapter := n - c.SourceEpisode + c.ChapterEpisode
-		if chapter < 1 || chapter > 99999 {
+		if chapter < 0 || chapter > 99999 {
 			out.ReasonCode = "CHAPTER_NUMBER_UNRESOLVED"
 			return out, nil
 		}

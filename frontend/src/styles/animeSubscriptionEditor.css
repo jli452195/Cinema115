@@ -111,8 +111,6 @@
 .ae-no-record, .ae-rename-pending { color: var(--ae-muted); font-size: 12px; line-height: 1.8; }
 .ae-release-date { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ae-muted); }.ae-release-date time > span { display: block; }
 .ae-preview-empty { display: grid; min-height: 130px; justify-items: center; align-content: center; gap: 8px; padding: 20px 8px; color: var(--ae-muted); font-size: 12px; line-height: 1.9; text-align: center; }
-.ae-preview-footer { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }.ae-page-buttons { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--ae-muted); }
-.ae-preview-load { margin-left: auto; }
 .ae-pending { margin-top: 14px; font-size: 12px; color: var(--ae-muted); }.ae-pending summary { min-height: 44px; cursor: pointer; }.ae-pending > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px; background: var(--ae-inset); margin-bottom: 5px; border-radius: 10px; }.ae-pending > div > span { min-width: 0; overflow-wrap: anywhere; }.ae-pending small { display: block; margin-top: 5px; }.ae-pending button { flex: none; }
 .ae-save-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 0; color: var(--ae-muted); line-height: 1.9; }
 .ae-save-bar { position: sticky; bottom: 12px; z-index: 5; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 22px; padding: 16px 20px; border-radius: 16px; background: var(--ae-surface); box-shadow: 0 4px 24px rgb(15 23 42 / .10); }.ae-save-bar p { color: var(--ae-muted); font-size: 12px; line-height: 1.8; }.ae-save-bar p span { display: block; font-size: 11px; }.ae-save-bar > div { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -138,7 +136,6 @@
   .ae-preview-toolbar .ac-preview-source { flex-basis: 100%; }
   .ae-preview-toolbar .ae-preview-stats { margin-left: 0; }
   .ae-preview-destination { order: 4; flex-basis: 100%; }
-  .ae-preview-footer { gap: 5px; }
   .ae-pending > div { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 2px; }
   .ae-pending button { justify-self: start; }
   .ae-receipt { padding: 20px 16px; }

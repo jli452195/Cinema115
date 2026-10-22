@@ -7,7 +7,7 @@ import { animeCatalogItemSnapshot, requestMikanCatalogEntry } from './useAnimeCa
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
 import { animeProviderName, animeBindingKey, animeSourceConfig, animeSourceReady, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import type { AnimeSubjectResult } from '../types/anime'
-import type { AnimePreviewPage, AnimePreviewResponse, AnimeSaveReceipt, AnimeSettingsView, AnimeSourceSample, AnimeSubscriptionView, MikanEntry, MikanSearch } from '../types/animeSubscription'
+import type { AnimePreviewResponse, AnimeSaveReceipt, AnimeSettingsView, AnimeSourceSample, AnimeSubscriptionView, MikanEntry, MikanSearch } from '../types/animeSubscription'
 
 interface PendingWrite { path: string; method: string; key: string; body: unknown }
 export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: Ref<string>, bangumiID: Ref<string>, seed?: Ref<{ provider: string; itemId: string }>) {
@@ -19,7 +19,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const previewBusy = ref(''), saveBusy = ref(false), settingsBusy = ref(false)
   const pendingSave = ref<PendingWrite>(), receipt = ref<AnimeSaveReceipt>()
   const duplicateID = ref(''), conflict = ref(false)
-  const now = ref(Date.now()), budget = ref({ totalRawCount: 0, limit: 2000, remaining: 2000 })
+  const now = ref(Date.now())
   const removed = ref<{ id: string; expectedRevision: number }[]>([])
   const baseline = ref(''), draftKey = ref(animeRequestKey())
   let lifetime = new AbortController(), generation = 0
@@ -47,7 +47,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     // Never silently substitute it for a chapter, offset or custom arrangement.
     const enabled = submittedSources.value.filter(source => source.runWhenEnabled)
     if (!enabled.length || enabled.some(source =>
-      source.mappingSource !== '1' || source.mappingTarget !== '1' || Number(source.mappingSeason || target.season) !== target.season ||
+      !['0', '1'].includes(source.mappingSource) || source.mappingTarget !== source.mappingSource || Number(source.mappingSeason || target.season) !== target.season ||
       source.mappingSegments.length > 0 || source.mappingOverrides.length > 0 ||
       !!source.mappingLast && Number(source.mappingLast) !== count ||
       !!source.chapterFirst && Number(source.chapterFirst) !== 1 ||
@@ -82,7 +82,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       return JSON.stringify({ config, chapter: chapter(), settings: settings.value?.settings.revision, subscriptionID: local.value?.id || '' })
     } catch { return '' }
   }
-  function validPreview(source: SourceForm) { return !!source.preview && source.preview.signature === signature(source) && !source.preview.needsSync && !source.preview.summary.expired && source.preview.summary.expiresAt > Math.max(now.value, Date.now()) }
+  function validPreview(source: SourceForm) { return !!source.preview && source.preview.signature === signature(source) && !source.preview.summary.expired && source.preview.summary.expiresAt > Math.max(now.value, Date.now()) }
   function setCooldown(source: SourceForm, reason: unknown, kind: 'search' | 'preview') {
     if (reason instanceof AnimeConfigError && reason.status === 429) {
       const until = Number(reason.details.retryAfterAt) || Date.now() + 60000
@@ -258,7 +258,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, chapterFirst: '', minimum: '1', exclude: '', preview: undefined, previewError: '' })
+    Object.assign(source, { mappingSource: '0', mappingTarget: '0', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [], scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', review: undefined, identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '', templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, chapterFirst: '', minimum: '0', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)
@@ -290,9 +290,8 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     } finally { if (sampleControllers.get(source.ref) === controller) source.sampleBusy = false }
   }
   function previewRefs(except?: SourceForm) { return sources.value.filter(item => item !== except && validPreview(item)).map(item => item.preview!.ref) }
-  function installPreview(data: AnimePreviewResponse, target: SourceForm, signatureBefore: string, take: number) {
+  function installPreview(data: AnimePreviewResponse, target: SourceForm, signatureBefore: string) {
     now.value = Date.now()
-    budget.value = data.budget
     for (const summary of data.sources) {
       const source = sources.value.find(item => item.ref === summary.sourceRef)
       if (!source) continue
@@ -300,52 +299,28 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (source !== target && !validPreview(source)) continue
       const old = source.preview
       source.preview = { ref: { batchId: data.batchId, sourceRef: source.ref, sourcePreviewId: summary.sourcePreviewId, loadRevision: summary.loadRevision }, summary,
-        signature: source === target ? signatureBefore : old!.signature, take: source === target ? take : old!.take, page: source === target ? data.page : old?.page }
+        signature: source === target ? signatureBefore : old!.signature, page: source === target ? data.page : old?.page }
       if (source !== target && source.preview.page) source.preview.page.summary = summary
     }
     const issue = data.issues.find(item => item.sourceRef === target.ref)
     if (issue) target.previewError = '来源读取未完成，已有预览和其他来源保留。请稍后重新预览。'
     else if (!data.page) target.previewError = '本次未返回有效资源预览，请重新读取。'
   }
-  async function runPreview(source: SourceForm, action: 'generate' | 'load' | 'page', options: { page?: number } = {}) {
+  async function runPreview(source: SourceForm) {
     if (locked.value || previewBusy.value || !settings.value || source.previewCooldown > Date.now()) return
     source.previewError = ''; previewBusy.value = source.ref
     const before = signature(source), current = generation
     try {
-      const preview = source.preview
-      if (action !== 'generate' && !validPreview(source)) throw new Error('规则已更改或预览已过期，请重新预览')
-      if (action === 'generate') {
-        if (!animeSourceReady(source)) throw new Error('请先确认来源与规格，并填写补番起点')
-        const configs = submittedSources.value.map(animeSourceConfig)
-        if (preview?.needsSync) {
-          const latest = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${preview.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=1&pageSize=50`, { signal: lifetime.signal })
-          if (current !== generation) return
-          preview.ref.loadRevision = latest.summary.loadRevision; preview.page = latest; preview.summary = latest.summary
-        }
-        const take = preview?.take || 50
-        const data = await animeConfigRequest<AnimePreviewResponse>(token.value, 'subscriptions/preview', { method: 'POST', signal: lifetime.signal, body: {
-          config: { chapter: chapter(), subscriptionId: local.value?.id || '', revision: local.value?.revision || 0, settings: { revision: settings.value.settings.revision }, sources: configs },
-          previewSourceRef: source.ref, take, refresh: false, previewRefs: previewRefs(source), ...(preview ? { previous: preview.ref } : {}),
-        } })
-        if (current !== generation) return
-        installPreview(data, source, before, take)
-      } else if (action === 'page') {
-        const page = await animeConfigRequest<AnimePreviewPage>(token.value, `previews/${preview!.ref.batchId}/releases?sourceRef=${encodeURIComponent(source.ref)}&page=${options.page || 1}&pageSize=50`, { signal: lifetime.signal })
-        if (current === generation && signature(source) === before) { preview!.page = page; preview!.summary = page.summary; preview!.ref.loadRevision = page.summary.loadRevision }
-      } else {
-        const nextTake = Math.min(2000, preview!.take + Math.min(50, budget.value.remaining))
-        if (action === 'load' && (nextTake <= preview!.take || !preview!.summary.unloadedHistory)) throw new Error('已到本次历史读取边界')
-        const data = await animeConfigRequest<AnimePreviewResponse>(token.value, `previews/${preview!.ref.batchId}/load`, { method: 'POST', signal: lifetime.signal, body: {
-          sourceRef: source.ref, sourcePreviewId: preview!.ref.sourcePreviewId, expectedLoadRevision: preview!.ref.loadRevision,
-          nextTake,
-        } })
-        if (current !== generation) return
-        installPreview(data, source, before, nextTake)
-      }
+      if (!animeSourceReady(source)) throw new Error('请先确认来源与规则')
+      const data = await animeConfigRequest<AnimePreviewResponse>(token.value, 'subscriptions/preview', { method: 'POST', signal: lifetime.signal, body: {
+        config: { chapter: chapter(), subscriptionId: local.value?.id || '', revision: local.value?.revision || 0, settings: { revision: settings.value.settings.revision }, sources: submittedSources.value.map(animeSourceConfig) },
+        previewSourceRef: source.ref, refresh: false, previewRefs: previewRefs(source), ...(source.preview ? { previous: source.preview.ref } : {}),
+      } })
+      if (current === generation) installPreview(data, source, before)
     } catch (reason) {
       if (current !== generation) return
       source.previewError = animeConfigMessage(reason); applyRuleError(reason); setCooldown(source, reason, 'preview')
-      if (source.preview && (action === 'load' || reason instanceof AnimeConfigError && ['PREVIEW_EXPIRED', 'PREVIEW_CHANGED', 'REVISION_CONFLICT'].includes(reason.code))) { source.preview.needsSync = true; source.preview.signature = '' }
+      if (source.preview && reason instanceof AnimeConfigError && ['PREVIEW_EXPIRED', 'PREVIEW_CHANGED', 'REVISION_CONFLICT'].includes(reason.code)) source.preview = undefined
     } finally { if (current === generation) previewBusy.value = '' }
   }
   async function save() {
@@ -390,6 +365,6 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   watch([token, subscriptionID, bangumiID, () => seed?.value.provider, () => seed?.value.itemId, () => portalUser.value?.id, () => portalUser.value?.role], () => { void initialize() }, { immediate: true })
   onBeforeUnmount(() => { generation++; lifetime.abort(); searchControllers.forEach(c => c.abort()); sampleControllers.forEach(c => c.abort()); samples.clear(); window.clearInterval(clock) })
-  return { archiveTotal, defaultTotal, archiveSuggestion, useTMDBTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue, resumesArchived,
+  return { archiveTotal, defaultTotal, archiveSuggestion, useTMDBTotal, naming, sources, activeRef, active, subject, local, settings, loading, loadError, feedback, settingsError, previewBusy, saveBusy, settingsBusy, pendingSave, receipt, duplicateID, conflict, now, locked, dirty, startIssue, resumesArchived,
     initialize, reloadSettings, addSource, removeSource, cancelSourceEdit, applySource, search, chooseEntry, groupChanged, openSource, readSample, validPreview, signature, runPreview, save, retrySave }
 }

@@ -53,11 +53,20 @@ func TestAnimeOrganizationNamesAndUniqueSubtitles(t *testing.T) {
 	}
 }
 
+func TestAnimeOrganizationZeroWithoutTMDBEpisode(t *testing.T) {
+	job := planJob("[桜都字幕组] Mushoku Tensei S2 [00][1080p][简体内嵌].mkv", "[桜都字幕组] Mushoku Tensei S2 [00][1080p][简体内嵌].zh-Hans.ass")
+	job.Snapshot.Naming.Sources[0].Segments = []model.AnimeMappingSegment{{First: 0, SourceBase: 0, TargetSeason: 2, TargetBase: 0}}
+	p, err := Build(job)
+	if err != nil || p.Ready != 2 || p.NeedsReview != 0 || !strings.Contains(p.Items[0].TargetPath, "/Season 02/") || !strings.Contains(p.Items[0].TargetPath, ".S02E00.") || p.Items[1].VideoID != p.Items[0].ID {
+		t.Fatalf("zero episode or matching subtitle was blocked: %+v %v", p, err)
+	}
+}
+
 func TestAnimeOrganizationDoesNotGuessMultiVideoOrSpecial(t *testing.T) {
 	for _, tc := range []struct {
 		names         []string
 		ready, review int
-	}{{[]string{"video.mkv"}, 1, 0}, {[]string{"video.mkv", "other.mp4"}, 0, 2}, {[]string{"[组] 测试 - 37.mkv"}, 0, 1}, {[]string{"[组] 测试 - SP1.mkv"}, 0, 1}, {[]string{"[组] 测试 [01-12].mkv"}, 0, 1}, {[]string{"[组] 测试 [01][02].mkv"}, 0, 1}} {
+	}{{[]string{"video.mkv"}, 1, 0}, {[]string{"video.mkv", "other.mp4"}, 0, 2}, {[]string{"[组] 测试 - 37.mkv"}, 1, 0}, {[]string{"[组] 测试 - SP1.mkv"}, 0, 1}, {[]string{"[组] 测试 [01-12].mkv"}, 0, 1}, {[]string{"[组] 测试 [01][02].mkv"}, 0, 1}} {
 		p, err := Build(planJob(tc.names...))
 		if err != nil || p.Ready != tc.ready || p.NeedsReview != tc.review {
 			t.Fatalf("%v: %+v %v", tc.names, p, err)
@@ -170,11 +179,10 @@ func TestAnimeOrganizationSplitSeasonsAndExplicitSpecial(t *testing.T) {
 	if !strings.HasSuffix(p.Items[3].TargetPath, ".zh-Hans.ass") || p.Items[3].VideoID != "302" {
 		t.Fatal("special subtitle lost its explicit video", p.Items[3])
 	}
-	// A saved target snapshot may not yet include the next episode. Preserve
-	// its exact source and expose a review reason instead of inventing a target.
+	// TMDB episode metadata does not gate a configured naming offset.
 	job.Files.Entries[2].Name = "[组] 测试 - 14.mkv"
 	p, err = Build(job)
-	if err != nil || p.Items[1].Reason != "target_missing" || p.Items[1].TargetPath != "" || !strings.HasSuffix(p.Items[1].OriginalPath, "/[组] 测试 - 14.mkv") {
-		t.Fatalf("missing target was guessed: %+v %v", p, err)
+	if err != nil || p.Items[1].Reason != "mapped" || !strings.Contains(p.Items[1].TargetPath, "S02E02") || !strings.HasSuffix(p.Items[1].OriginalPath, "/[组] 测试 - 14.mkv") {
+		t.Fatalf("configured offset was blocked: %+v %v", p, err)
 	}
 }

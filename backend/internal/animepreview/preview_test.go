@@ -200,18 +200,12 @@ func TestPreviewWholeLoadedSelectionAndGaps(t *testing.T) {
 	p := page(titles...)
 	p.RequestedTake = 100
 	s := build(t, c, p)
-	second, err := s.Releases(2, 0, s.GeneratedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second.Items) != 29 || len(second.SelectedIDs) != 79 || second.Summary.Gaps[0] != (Gap{First: 60, Last: 60}) || *second.Summary.LoadedFirst != 30 {
+	second := s.Releases(s.GeneratedAt)
+	if len(second.Items) != 79 || len(second.SelectedIDs) != 79 || second.Summary.Gaps[0] != (Gap{First: 60, Last: 60}) || *second.Summary.LoadedFirst != 30 {
 		t.Fatal("paging/loaded gaps", second)
 	}
 	if err := s.Select([]string{s.Items[0].Release.ID, s.Items[78].Release.ID}, nil, s.GeneratedAt); err != nil {
 		t.Fatal("cross-page selection", err)
-	}
-	if _, err := s.Releases(0, 101, s.GeneratedAt); err == nil {
-		t.Fatal("oversize page")
 	}
 	if s.Page.RawCount != 79 || s.Summary(s.GeneratedAt).SelectedCount != 2 {
 		t.Fatal("selection truncated")

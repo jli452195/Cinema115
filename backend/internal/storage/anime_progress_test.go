@@ -106,6 +106,24 @@ func TestAnimeSourceProgressMissingEpisodeIsPerRSS(t *testing.T) {
 	}
 }
 
+func TestAnimeProgressZeroDoesNotExtendRegularTotal(t *testing.T) {
+	f := progressFixture(t)
+	source := &f.sub.Sources[0]
+	source.Binding.Scope.First, source.Rules.MinimumEpisode = animePtr(0), animePtr(0)
+	binding, _ := animeJSON(source.Binding)
+	rules, _ := animeJSON(source.Rules)
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	progressEpisode(t, f, 0, 0, true)
+	for n := 1; n <= 12; n++ {
+		progressEpisode(t, f, 0, n, true)
+	}
+	if got := refreshProgress(t, f)[source.ID]; got.State != "complete" || got.FirstEpisode != 1 || got.OrganizedCount != 12 || got.PublishedThrough != 12 || got.MissingCount != 0 {
+		t.Fatal("zero shifted regular chapter coverage", got)
+	}
+}
+
 func TestAnimeSourceProgressInvalidationAndMinimum(t *testing.T) {
 	f := progressFixture(t)
 	id := f.sub.Sources[0].ID

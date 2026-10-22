@@ -83,69 +83,6 @@ func TestAnimePreviewServiceCachedSnapshotAndServerMetadata(t *testing.T) {
 	}
 }
 
-func TestAnimePreviewServiceLoadAndSelectAcrossPages(t *testing.T) {
-	s, f, _, c, at := previewService(t)
-	ctx := context.Background()
-	phase := 0
-	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
-		p := animeMikanFakePage(in)
-		if in.Kind == "entry" {
-			return p, nil
-		}
-		p.ObservedAt = at.Add(time.Duration(phase) * time.Second)
-		p.Completeness, p.StopReason = "partial", "more_available"
-		count := 50
-		if phase > 0 {
-			count = 53
-			p.Completeness, p.StopReason = "visible_end", ""
-		}
-		p.RawCount = count
-		p.Releases = make([]mikan.SourceRelease, 0, count)
-		for i := 0; i < count; i++ {
-			published := at
-			if i >= 50 {
-				published = p.ObservedAt
-			}
-			p.Releases = append(p.Releases, mikan.SourceRelease{PostKey: fmt.Sprintf("%040x", i+1), Title: fmt.Sprintf("[组] 动画 [%d][1080p]", 30+i), PublishedRaw: published.Format(time.RFC3339)})
-		}
-		return p, nil
-	}
-	out, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	phase = 5
-	s.now = func() time.Time { return at.Add(7 * time.Second) }
-	loaded, err := s.Load(ctx, "admin-a", servicePreviewRef(*out.Batch, 0), 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := loaded.Batch.Sources[0]
-	if len(source.Items) != 53 || len(source.SelectedIDs) != 50 || len(source.Pending) != 0 {
-		t.Fatal("new releases silently added to initial choices", source.Summary(s.timestamp()))
-	}
-
-	selected := []string{source.Items[0].Release.ID, source.Items[52].Release.ID}
-	dismissed := make([]string, 0, 49)
-	for i := 1; i < 50; i++ {
-		dismissed = append(dismissed, source.Items[i].Release.ID)
-	}
-	updated, err := s.Select(ctx, "admin-a", servicePreviewRef(*loaded.Batch, 0), selected, dismissed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, err := s.Releases(ctx, "admin-a", updated.ID, "main", 2, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Items) != 3 || len(page.SelectedIDs) != 2 || len(page.Pending) != 0 || page.Summary.SelectedCount != 2 {
-		t.Fatal("paged choices", page)
-	}
-	if _, err := s.Load(ctx, "admin-a", servicePreviewRef(*out.Batch, 0), 150); !errors.Is(err, animepreview.ErrConflict) {
-		t.Fatal("stale loader accepted", err)
-	}
-}
-
 func TestAnimePreviewServiceReadFailureKeepsSuccess(t *testing.T) {
 	s, f, _, c, _ := previewService(t)
 	ctx := context.Background()
@@ -161,10 +98,6 @@ func TestAnimePreviewServiceReadFailureKeepsSuccess(t *testing.T) {
 		return read(ctx, in)
 	}
 	ref := servicePreviewRef(*out.Batch, 0)
-	failed, err := s.Load(ctx, "admin-a", ref, 100)
-	if err != nil || len(failed.Issues) != 1 || failed.Batch.Sources[0].LoadRevision != ref.LoadRevision || failed.Sources[0].SelectedCount != 2 {
-		t.Fatal("failed load erased choices", err, failed)
-	}
 	regenerated, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Previous: &ref, Refresh: true})
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +108,44 @@ func TestAnimePreviewServiceReadFailureKeepsSuccess(t *testing.T) {
 	_, err = s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Refresh: true})
 	if err == nil {
 		t.Fatal("failed initial read created successful empty preview")
+	}
+}
+
+func TestAnimePreviewServiceFullHistoryIncludesZero(t *testing.T) {
+	s, f, _, c, at := previewService(t)
+	c.Sources[0].Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}
+	c.Sources[0].Rules.MinimumEpisode = bindingPtr(0)
+	historyReads := 0
+	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+		p := animeMikanFakePage(in)
+		if in.Kind == "history" {
+			historyReads++
+			if in.Take != 2000 {
+				t.Fatalf("history window: %d", in.Take)
+			}
+			p.ObservedAt, p.RawCount, p.Completeness, p.StopReason = at, 67, "visible_end", ""
+			p.Releases = make([]mikan.SourceRelease, 67)
+			for i := range p.Releases {
+				title := fmt.Sprintf("[组] 动画 [%02d][1080p][简体内嵌]", i)
+				if i >= 65 {
+					title = "[桜都字幕组] 无职转生～到了异世界就拿出真本事～ S2 / Mushoku Tensei S2 [00v2][1080p][简体内嵌]"
+				}
+				p.Releases[i] = mikan.SourceRelease{PostKey: fmt.Sprintf("%040x", i+1), Title: title}
+			}
+		}
+		return p, nil
+	}
+	out, err := s.Generate(context.Background(), "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := out.Batch.Sources[0].Releases(s.timestamp())
+	if len(rows.Items) != 67 || rows.Summary.MatchedCount != 65 || rows.Items[0].Selectable || !rows.Items[65].Selectable || rows.Items[66].Selectable || rows.Items[65].Release.Parse.Episode == nil || *rows.Items[65].Release.Parse.Episode != 0 || historyReads != 1 {
+		t.Fatal("full snapshot or zero version selection", rows.Summary, historyReads)
+	}
+	ref := servicePreviewRef(*out.Batch, 0)
+	if _, err := s.Generate(context.Background(), "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Previous: &ref}); err != nil || historyReads != 1 {
+		t.Fatal("cached full history was read again", err, historyReads)
 	}
 }
 
@@ -223,11 +194,11 @@ func TestAnimePreviewServiceOwnershipExpiryAndVersionBeforeRead(t *testing.T) {
 	}
 	ref := servicePreviewRef(*out.Batch, 0)
 	calls := f.reads
-	if _, err := s.Load(ctx, "admin-b", ref, 100); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := s.Select(ctx, "admin-b", ref, nil, nil); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("actor leak", err)
 	}
 	s.now = func() time.Time { return at.Add(15*time.Minute + 2*time.Second) }
-	if _, err := s.Load(ctx, "admin-a", ref, 100); !errors.Is(err, animepreview.ErrExpired) {
+	if _, err := s.Select(ctx, "admin-a", ref, nil, nil); !errors.Is(err, animepreview.ErrExpired) {
 		t.Fatal("expiry boundary", err)
 	}
 	c.Settings.Revision++
@@ -239,34 +210,47 @@ func TestAnimePreviewServiceOwnershipExpiryAndVersionBeforeRead(t *testing.T) {
 	}
 }
 
-func TestAnimePreviewServiceSharedRawBudgetBeforeNetwork(t *testing.T) {
-	s, f, _, c, at := previewService(t)
-	ctx := context.Background()
-	backup := c.Sources[0]
-	backup.Ref, backup.Role, backup.Position, backup.GroupID = "backup", "standby", 1, bindingPtr("28")
-	c.Sources = append(c.Sources, backup)
-	read := f.read
-	f.read = func(ctx context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
-		p, err := read(ctx, in)
-		if in.Kind == "history" {
-			p.RawCount = 1990
-			p.Completeness, p.StopReason = "partial", "invalid_rows"
-			p.ObservedAt = at
-		}
-		return p, err
-	}
-	main, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Take: 2000})
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := f.reads
-	ref := servicePreviewRef(*main.Batch, 0)
-	out, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "backup", Reuse: []storage.AnimePreviewRef{ref}, Take: 50})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.reads != calls || out.Budget.TotalRawCount != 1990 || out.Budget.Remaining != 10 || out.Issues[0].Code != "PREVIEW_ROW_BUDGET" || len(out.Sources) != 1 {
-		t.Fatal("shared budget", out, f.reads, calls)
+func TestAnimePreviewServiceSharedRawBudget(t *testing.T) {
+	for _, count := range []int{1990, 2000} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			s, f, _, c, at := previewService(t)
+			ctx := context.Background()
+			backup := c.Sources[0]
+			backup.Ref, backup.Role, backup.Position, backup.GroupID = "backup", "standby", 1, bindingPtr("28")
+			c.Sources = append(c.Sources, backup)
+			read := f.read
+			f.read = func(ctx context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+				p, err := read(ctx, in)
+				if in.Kind == "history" {
+					p.RawCount = count
+					if in.Source.GroupID == "28" {
+						if in.Take != 2000-count {
+							t.Fatalf("wrong remaining window: %d", in.Take)
+						}
+						p.RawCount = in.Take
+					}
+					p.Completeness, p.StopReason, p.ObservedAt = "partial", "invalid_rows", at
+				}
+				return p, err
+			}
+			main, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := f.reads
+			ref := servicePreviewRef(*main.Batch, 0)
+			out, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "backup", Reuse: []storage.AnimePreviewRef{ref}})
+			if err != nil || out.Budget.TotalRawCount != 2000 || out.Budget.Remaining != 0 {
+				t.Fatal("shared budget", out, err)
+			}
+			if count == 2000 {
+				if f.reads != calls || len(out.Issues) != 1 || out.Issues[0].Code != "PREVIEW_ROW_BUDGET" || len(out.Sources) != 1 {
+					t.Fatal("exhausted budget read upstream", out, f.reads, calls)
+				}
+			} else if f.reads != calls+1 || len(out.Issues) != 0 || len(out.Sources) != 2 {
+				t.Fatal("remaining budget not used", out, f.reads, calls)
+			}
+		})
 	}
 }
 
@@ -288,7 +272,7 @@ func TestAnimePreviewServiceLateResponseCannotOverwriteChoices(t *testing.T) {
 		}
 		return read(ctx, in)
 	}
-	if _, err := s.Load(ctx, "admin-a", ref, 100); !errors.Is(err, animepreview.ErrConflict) {
+	if _, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Previous: &ref, Refresh: true}); !errors.Is(err, animepreview.ErrConflict) {
 		t.Fatal("late loader overwrote selection", err)
 	}
 	got, err := store.GetAnimePreview(ctx, "admin-a", ref.BatchID)

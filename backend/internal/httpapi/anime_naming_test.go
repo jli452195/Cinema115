@@ -53,7 +53,7 @@ func TestAnimeNamingReadOnlyRoutesAndAuthorization(t *testing.T) {
 	preview := f.call(t, "POST", "/naming/preview", f.admin, "", body, 200)
 	items := preview["items"].([]any)
 	first := items[0].(map[string]any)
-	if first["status"] != "mapped" || !strings.Contains(first["pathStem"].(string), ".S02E01.测试组") || items[1].(map[string]any)["status"] != "target_missing" || items[2].(map[string]any)["status"] != "unmapped" {
+	if first["status"] != "mapped" || !strings.Contains(first["pathStem"].(string), ".S02E01.测试组") || items[1].(map[string]any)["status"] != "mapped" || items[2].(map[string]any)["status"] != "unmapped" {
 		t.Fatal(preview)
 	}
 	in.Fingerprint = strings.Repeat("b", 64)

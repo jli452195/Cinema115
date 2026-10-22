@@ -214,6 +214,38 @@ func TestAnimeDownloadClaimIndependentGroupsButNeverReplacesEdition(t *testing.T
 	assertDownloadCounts(t, f.store, 2, 2, 2, 2)
 }
 
+func TestAnimeDownloadZeroHasIndependentClaimAndNoLaterRevision(t *testing.T) {
+	f := newDownloadClaimFixture(t)
+	for i := range f.sub.Sources {
+		source := &f.sub.Sources[i]
+		source.Binding.Scope.First = animePtr(0)
+		source.Binding.ChapterCorrespondence = &model.AnimeChapterCorrespondence{SourceEpisode: 1, ChapterEpisode: 1}
+		source.Rules.MinimumEpisode = animePtr(0)
+		binding, _ := animeJSON(source.Binding)
+		rules, _ := animeJSON(source.Rules)
+		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, source.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var jobs []string
+	for i, number := range []string{"00v2", "01"} {
+		r, v := f.selectTitle(t, 0, fmt.Sprintf("rel_zero_%d", i), fmt.Sprintf("%040x", i+1), "[group] Anime - "+number+" [1080p][HEVC]")
+		out := f.claim(t, 0, r, v)
+		if !out.Created {
+			t.Fatal("zero and one must have separate claims", out)
+		}
+		jobs = append(jobs, out.Job.ID)
+	}
+	if jobs[0] == jobs[1] {
+		t.Fatal("zero reused episode one")
+	}
+	r, v := f.selectTitle(t, 0, "rel_zero_v3", strings.Repeat("3", 40), "[group] Anime - 00v3 [1080p][HEVC]")
+	if _, err := f.store.ClaimAnimeDownload(context.Background(), f.sub.Sources[0].ID, r.ID, 1, v, f.target); !errors.Is(err, ErrAnimeConflict) {
+		t.Fatal("later zero revision created another download", err)
+	}
+	assertDownloadCounts(t, f.store, 2, 2, 2, 2)
+}
+
 func TestAnimeDownloadClaimNeverReopensKnownResource(t *testing.T) {
 	for _, state := range []string{"queued", "unknown", "failed", "cancelled", "original_saved"} {
 		t.Run(state, func(t *testing.T) {

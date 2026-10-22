@@ -25,13 +25,13 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       return state.previewTransform ? state.previewTransform(result, index) : result
     }
     function makeSource(config, take, previous) {
-      const items = state.empty ? [] : Array.from({ length: Math.min(take, 120) }, (_, i) => item(config.ref, i))
+      const items = state.empty ? [] : Array.from({ length: Math.min(take, state.rowCount ?? 120) }, (_, i) => item(config.ref, i))
       const pending = previous && config.rules.minimumEpisode !== previous.config.rules.minimumEpisode ? [{ releaseId: previous.selected[0] || `${config.ref}-old`, reason: 'changed', previousItem: previous.items[0] }] : []
       const selected = previous ? previous.selected.filter(id => items.some(item => item.release.id === id && item.selectable) && !pending.some(item => item.releaseId === id)) : items.filter(item => item.selectable).map(item => item.release.id)
       return { ref: config.ref, config, id: `preview-${config.ref}-${state.batch}`, rev: 1, take, items, selected, pending, expires: Date.now() + (state.expired ? -1000 : 900000) }
     }
     function summary(source) { return { sourceRef: source.ref, sourcePreviewId: source.id, loadRevision: source.rev, generatedAt: Date.now(), expiresAt: source.expires, expired: source.expires < Date.now(), rawCount: source.items.length, loadedCount: source.items.length, matchedCount: source.items.filter(i => i.selectable).length, reviewCount: source.items.filter(i => i.decision === 'needs_confirmation').length, selectedCount: source.selected.length, pendingSelectionCount: source.pending.length, completeness: source.take > 100 || state.empty ? 'visible_end' : 'partial', stopReason: source.config.provider === 'anibt' && source.take >= 100 ? 'source_limit' : source.take > 100 ? '' : 'more_available', loadedFirst: source.items.length ? 25 : null, loadedLast: source.items.length ? 25 + Math.floor((source.items.length - 1) / 2) : null, gapsWithinLoadedMatches: [{ first: 26, last: 26 }], unloadedHistory: source.take <= 100 && !state.empty } }
-    function previewPage(source, number = 1) { return { items: source.items.slice((number - 1) * 50, number * 50), localStates: Object.fromEntries(source.items.slice(0,9).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected','filtered','needs_confirmation','seen','dismissed'][i]])), page: number, pageSize: 50, total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
+    function previewPage(source) { return { items: source.items, localStates: Object.fromEntries(source.items.slice(0,9).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected','filtered','needs_confirmation','seen','dismissed'][i]])), total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
     function response(batch, target, issues = []) {
       const sources = [...batch.sources.values()], totalRawCount = sources.reduce((n, s) => n + s.items.length, 0)
       return { batchId: batch.id, budget: { totalRawCount, limit: 2000, remaining: 2000 - totalRawCount }, sources: sources.map(summary), issues, ...(batch.sources.has(target) ? { page: previewPage(batch.sources.get(target)) } : {}) }
@@ -108,7 +108,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         }
         data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), specVersion: 1, profilesTruncated: false,
           profiles: specs.map((spec, i) => ({ match: [spec.resolution, ...(spec.languages || []), spec.subtitleMode || ''].filter(Boolean).map(v => '(?i)' + v), key: `spec-${i}`, label: labels[i], spec, count: 1 })),
-          releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode || 25}] [${labels[i]}]`, parse: { episode: state.sampleEpisode || 25, spec }, sizeRaw: '650 MB' })) }
+          releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode ?? 25}] [${labels[i]}]`, parse: { episode: state.sampleEpisode ?? 25, spec }, sizeRaw: '650 MB' })) }
       }
       else if (endpoint.endsWith('/subscriptions/preview')) {
         const ref = body.previewSourceRef
@@ -124,19 +124,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           }
           const previous = body.previous ? state.batches.get(body.previous.batchId)?.sources.get(ref) : undefined
           if (body.previous) assert.equal(body.previous.loadRevision, previous.rev, 'previous CAS must be recovered before regeneration')
-          batch.sources.set(ref, makeSource(body.config.sources.find(s => s.ref === ref), body.take, previous))
+          batch.sources.set(ref, makeSource(body.config.sources.find(s => s.ref === ref), ({mikan:2000,anibt:100,garden:1000})[body.config.sources.find(s => s.ref === ref).provider], previous))
           state.batches.set(batch.id, batch); data = response(batch, ref)
         }
-      } else if (/\/previews\/[^/]+\/(releases|selections|load)$/.test(endpoint)) {
-        const parts = endpoint.split('/'), batch = state.batches.get(parts.at(-2)), action = parts.at(-1), ref = body?.sourceRef || url.searchParams.get('sourceRef'), source = batch?.sources.get(ref)
-        assert.ok(source, 'snapshot must exist')
-        if (action === 'releases') data = previewPage(source, Number(url.searchParams.get('page') || 1))
-        else if (source.rev !== body.expectedLoadRevision) { status = 409; data = { error: '预览版本已变化', code: 'REVISION_CONFLICT' } }
-        else if (action === 'selections') {
-          source.selected = [...body.selectedReleaseIds]; source.pending = source.pending.filter(item => !body.dismissedReleaseIds.includes(item.releaseId)); source.rev++
-          if (state.loseSelection) { state.loseSelection = false; await route.abort(); return }
-          data = response(batch, ref)
-        } else { const next = makeSource(source.config, body.nextTake, source); next.rev = source.rev + 1; next.id = source.id; batch.sources.set(ref, next); data = response(batch, ref) }
       } else if (/\/subscriptions\/[^/]+\/(remove|resume|pause|archive)$/.test(endpoint) && method === 'POST') {
         state.actionReceipts ||= new Map()
         if (state.actionMode === 'busy') { state.actionMode = ''; status = 409; data = { code: 'TASK_BUSY', error: '任务正在处理，请稍后重试删除' } }
@@ -182,7 +172,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await page.getByRole('button', { name: '使用此来源', exact: true }).click()
       await wait(() => page.locator('dialog[open]').count().then(n => n === 1))
       const form = page.locator('.anime-source-form:visible')
-      assert.equal(await form.getByLabel('从第几话开始').inputValue(), '1', 'recent samples never change default minimum')
+      assert.equal(await form.getByLabel('从第几话开始').inputValue(), '0', 'recent samples never change default minimum')
       await form.getByLabel('从第几话开始').fill(first)
       await form.locator('.ae-source-options summary').first().click()
       await form.getByRole('checkbox', {name:'限定发布编号范围'}).check()
@@ -479,6 +469,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await s.page.getByRole('button',{name:'预览',exact:true}).click()
     await s.page.locator('.ae-preview-stats').waitFor()
     assert.equal(await s.page.locator('dialog[open]').count(), 2)
+    assert.equal(await s.page.locator('.ae-preview-table tbody tr').count(),120,'all loaded history is visible without paging')
+    assert.equal(await s.page.getByRole('button',{name:/继续加载历史|资源上一页|资源下一页/}).count(),0)
+    assert.equal(s.calls.filter(c=>/\/previews\/.*\/(load|releases)$/.test(c.endpoint)).length,0,'no incremental or page requests')
     assert.equal(await s.page.locator('.ae-preview input[type=checkbox]').count(),0)
     assert.deepEqual(await s.page.locator('.ae-preview-table thead th').allTextContents(),['规则匹配','处理状态','RSS','字幕组','原标题','重命名不含扩展名','发布时间'])
     assert.equal(await s.page.locator('.ae-preview-table tbody tr').first().locator('td').count(),7)
@@ -640,6 +633,32 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await clean.page.getByRole('button',{name:'取消',exact:true}).click()
     await wait(()=>clean.page.locator('dialog[open]').count().then(n=>n===0))
     passed.push('automatic naming does not mark an untouched form as dirty')
+    const zero = await session()
+    zero.state.rowCount=67;zero.state.sampleEpisode=0
+    zero.state.previewTransform=(item,i)=>i===0?({...item,release:{...item.release,title:'[Group] Mushoku Tensei S2 [00][1080p]',parse:{...item.release.parse,episode:0,rawEpisode:'00'}}}):item
+    await zero.go();await zero.source()
+    await zero.page.getByLabel('从第几话开始').fill('0')
+    await zero.page.getByRole('checkbox',{name:'限定发布编号范围'}).uncheck()
+    await zero.page.getByLabel('发布第几话',{exact:true}).fill('0')
+    await zero.page.getByLabel('对应第几集',{exact:true}).fill('0')
+    await zero.page.getByRole('button',{name:'预览',exact:true}).click()
+    await zero.page.locator('.ae-preview-table').waitFor()
+    assert.equal(await zero.page.locator('.ae-preview-table tbody tr').count(),67)
+    assert.match(await zero.page.locator('.ae-release-filename').first().innerText(),/S02E00/,'00 names normally without TMDB episode zero')
+    assert.equal(await zero.page.getByRole('combobox',{name:'显示',exact:true}).innerText(),'全部发布')
+    await zero.page.getByRole('button',{name:'返回配置',exact:true}).click()
+    const readsBeforeReopen=zero.calls.length
+    await zero.page.getByRole('button',{name:'预览',exact:true}).click()
+    await zero.page.locator('.ae-preview-table').waitFor()
+    assert.equal(zero.calls.length,readsBeforeReopen,'valid full preview is reused on reopening')
+    await zero.page.getByRole('button',{name:'返回配置',exact:true}).click()
+    await zero.page.getByRole('button',{name:'保存',exact:true}).click()
+    await wait(()=>zero.calls.some(c=>c.key&&c.endpoint.endsWith('/subscriptions')))
+    const zeroSave=zero.calls.find(c=>c.key&&c.endpoint.endsWith('/subscriptions')).body.config
+    assert.equal(zeroSave.sources[0].rules.minimumEpisode,0)
+    assert.equal(zeroSave.naming.sources[0].segments[0].first,0)
+    assert.equal(zeroSave.naming.sources[0].segments[0].targetBase,0)
+    passed.push('full 67-row preview, episode 00 naming and persistence, no load/page controls, reopening uses cached snapshot')
     const numbering=await session()
     await numbering.go();await numbering.source()
     await numbering.page.getByLabel('发布第几话',{exact:true}).fill('25')

@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 5
+const ParserVersion int64 = 6
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -105,7 +105,7 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 				base := strings.TrimSpace(stripVersionSuffix(raw))
 				var err error
 				n, err = strconv.Atoi(base)
-				if err != nil || n < 1 || n > 99999 {
+				if err != nil || n < 0 || n > 99999 {
 					kind = "unknown"
 				} else if !strong && metadataNumber(n) {
 					return

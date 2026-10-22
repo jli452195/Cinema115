@@ -4,20 +4,20 @@ import type { SourceForm } from '../utils/animeSourceForm'
 import type { AnimeNamingCandidate, AnimeNamingInput, AnimeNamingPlan, AnimeNamingTarget, AnimeSourceMapping } from '../types/animeSubscription'
 
 export function sourceNaming(source: SourceForm, target: AnimeNamingTarget): AnimeSourceMapping {
-  const integer = (raw: string, label: string, zero = false) => {
-    if (!/^\d+$/.test(raw) || Number(raw) < (zero ? 0 : 1) || Number(raw) > (zero ? 1000 : 99999)) throw new Error(`${label}请填写有效整数`)
+  const integer = (raw: string, label: string, max = 99999) => {
+    if (!/^\d+$/.test(raw) || Number(raw) > max) throw new Error(`${label}请填写有效整数`)
     return Number(raw)
   }
   const segments = [...source.mappingSegments]
   if (source.mappingSource.trim()) {
     const base = integer(source.mappingSource, '发布编号'), end = source.mappingLast ? integer(source.mappingLast, '映射终点') : null
     if (end != null && end < base) throw new Error('映射终点不能小于发布基准')
-    segments.unshift({ first: base, last: end, sourceBase: base, targetBase: integer(source.mappingTarget, '目标集号'), targetSeason: integer(source.mappingSeason || String(target.season), '目标季', true) })
+    segments.unshift({ first: base, last: end, sourceBase: base, targetBase: integer(source.mappingTarget, '目标集号'), targetSeason: integer(source.mappingSeason || String(target.season), '目标季', 1000) })
   }
   const overrides = source.mappingOverrides.map(o => o.action === 'ignore' ? { ...o, targetSeason: 0, targetEpisode: 0 } : { ...o })
-  const valid = (n: number, min = 1, max = 99999) => Number.isInteger(n) && n >= min && n <= max
+  const valid = (n: number, min = 0, max = 99999) => Number.isInteger(n) && n >= min && n <= max
   for (const [i, s] of segments.entries()) {
-    if (!valid(s.first) || !valid(s.sourceBase) || !valid(s.targetBase) || !valid(s.targetSeason, 0, 1000) || s.last != null && (!valid(s.last) || s.last < s.first) || s.first - s.sourceBase + s.targetBase < 1 || s.last != null && s.last - s.sourceBase + s.targetBase > 99999) throw new Error(`分段 ${i + 1} 请填写有效编号与范围`)
+    if (!valid(s.first) || !valid(s.sourceBase) || !valid(s.targetBase) || !valid(s.targetSeason, 0, 1000) || s.last != null && (!valid(s.last) || s.last < s.first) || s.first - s.sourceBase + s.targetBase < 0 || s.last != null && s.last - s.sourceBase + s.targetBase > 99999) throw new Error(`分段 ${i + 1} 请填写有效编号与范围`)
     for (const p of segments.slice(0, i)) {
       if (s.first <= (p.last ?? 99999) && p.first <= (s.last ?? 99999)) throw new Error('分段范围重叠，请先限定上一段终点')
       if (p.targetSeason === s.targetSeason && s.first - s.sourceBase + s.targetBase <= (p.last ?? 99999) - p.sourceBase + p.targetBase && p.first - p.sourceBase + p.targetBase <= (s.last ?? 99999) - s.sourceBase + s.targetBase) throw new Error('同一来源的分段不能指向重复目标集')
@@ -26,7 +26,7 @@ export function sourceNaming(source: SourceForm, target: AnimeNamingTarget): Ani
   const keys = new Set<string>(), targets = new Set<string>()
   for (const o of overrides) {
     const key = `${o.rawKind}:${o.rawNumber}`, dest = `${o.targetSeason}:${o.targetEpisode}`
-    if (!o.rawNumber.trim() || /[\u0000-\u001f\u007f]/.test(o.rawNumber) || keys.has(key) || o.rawKind === 'episode' && (!/^[1-9]\d{0,4}$/.test(o.rawNumber))) throw new Error('请填写唯一且有效的例外原始编号')
+    if (!o.rawNumber.trim() || /[\u0000-\u001f\u007f]/.test(o.rawNumber) || keys.has(key) || o.rawKind === 'episode' && (!/^(0|[1-9]\d{0,4})$/.test(o.rawNumber))) throw new Error('请填写唯一且有效的例外原始编号')
     keys.add(key)
     if (o.action === 'ignore') continue
     if (!valid(o.targetSeason, 0, 1000) || !valid(o.targetEpisode) || targets.has(dest)) throw new Error('例外目标需填写有效季集，且不能重复')
@@ -50,7 +50,7 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     for (const source of sources.value) {
       const saved = plan?.sources.find(m => m.sourceRef === source.ref), first = saved?.segments[0]
       const primary = first?.first === first?.sourceBase ? first : undefined
-      if (saved) Object.assign(source, { mappingSource: primary ? String(primary.sourceBase) : '', mappingTarget: primary ? String(primary.targetBase) : '1', mappingSeason: primary ? String(primary.targetSeason) : '', mappingLast: primary?.last == null ? '' : String(primary.last), mappingManual: true, mappingSegments: saved.segments.slice(primary ? 1 : 0).map(s => ({ ...s })), mappingOverrides: (saved.overrides || []).map(o => ({ ...o })) })
+      if (saved) Object.assign(source, { mappingSource: primary ? String(primary.sourceBase) : '', mappingTarget: primary ? String(primary.targetBase) : '0', mappingSeason: primary ? String(primary.targetSeason) : '', mappingLast: primary?.last == null ? '' : String(primary.last), mappingManual: true, mappingSegments: saved.segments.slice(primary ? 1 : 0).map(s => ({ ...s })), mappingOverrides: (saved.overrides || []).map(o => ({ ...o })) })
     }
   }
   function original() { if (locked.value) return; sequence++; searchSequence++; controller.abort(); mode.value = 'original'; target.value = undefined; error.value = ''; busy.value = false; searching.value = false; manualTarget = true; picker.value = false }
@@ -61,8 +61,8 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     const numbers = source.sample?.releases.map(r => r.parse.episode).filter((n): n is number => n != null && Number.isInteger(n)) || []
     // A truncated window starting at 8 does not make episode 8 the first.
     // Large absolute numbers cannot establish a baseline without evidence.
-    source.mappingSource = count > 0 && numbers.length > 0 && Math.min(...numbers) > count ? '' : '1'
-    source.mappingTarget = '1'
+    source.mappingSource = count > 0 && numbers.length > 0 && Math.min(...numbers) > count ? '' : '0'
+    source.mappingTarget = '0'
   }
   function extraSeasons(season: number) {
     return [...new Set(sources.value.flatMap(source => [source.mappingSeason ? Number(source.mappingSeason) : season, ...source.mappingSegments.map(s => s.targetSeason), ...source.mappingOverrides.filter(o => o.action === 'map').map(o => o.targetSeason)]))].filter(n => Number.isInteger(n) && n >= 0 && n <= 1000 && n !== season)

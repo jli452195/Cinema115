@@ -80,12 +80,12 @@ func TestAnimeNamingPerSourceAndDownloadMinimum(t *testing.T) {
 		ref    string
 		n, ep  int
 		status string
-	}{{"main", 30, 6, "mapped"}, {"main", 24, 0, "unmapped"}, {"main", 37, 0, "unmapped"}, {"standby", 6, 6, "mapped"}, {"standby", 13, 13, "target_missing"}} {
+	}{{"main", 30, 6, "mapped"}, {"main", 24, 0, "unmapped"}, {"main", 37, 0, "unmapped"}, {"standby", 6, 6, "mapped"}, {"standby", 13, 13, "mapped"}} {
 		got := p.Project(tc.ref, AnimeReleaseParse{Kind: "episode", Episode: &tc.n}, "字幕组甲")
 		if got.Status != tc.status || got.Episode != nil && *got.Episode != tc.ep {
 			t.Fatalf("%+v: %+v", tc, got)
 		}
-		if got.Status == "mapped" && !strings.Contains(got.PathStem, ".S02E06.字幕组甲") {
+		if got.Status == "mapped" && got.PathStem != AnimeNamingPath(p.Target, 2, tc.ep, "字幕组甲", "") {
 			t.Fatal(got)
 		}
 	}

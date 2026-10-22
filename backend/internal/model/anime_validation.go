@@ -56,8 +56,9 @@ func animeText(s string, max int, required bool) bool {
 	return utf8.ValidString(s) && utf8.RuneCountInString(s) <= max && (!required || strings.TrimSpace(s) != "")
 }
 
-func animeEpisode(n int) bool    { return n >= 1 && n <= 99999 }
-func animeRevision(n int64) bool { return n >= 0 && n < AnimeMaxRevision }
+func animeEpisode(n int) bool       { return n >= 1 && n <= 99999 }
+func animeReleaseNumber(n int) bool { return n >= 0 && n <= 99999 }
+func animeRevision(n int64) bool    { return n >= 0 && n < AnimeMaxRevision }
 
 func (e AnimeEntry) Validate() error {
 	if e.ID != "" && !ValidAnimeID(e.ID) || !animeRevision(e.Revision) {
@@ -93,7 +94,7 @@ func (b AnimeBinding) Validate(complete bool) error {
 				return fmt.Errorf("invalid feed scope")
 			}
 		case "range":
-			if s.First == nil || s.Last == nil || !animeEpisode(*s.First) || !animeEpisode(*s.Last) || *s.First > *s.Last || s.Evidence != "" {
+			if s.First == nil || s.Last == nil || !animeReleaseNumber(*s.First) || !animeReleaseNumber(*s.Last) || *s.First > *s.Last || s.Evidence != "" {
 				return fmt.Errorf("invalid binding range")
 			}
 		case "confirmed_chapter":
@@ -104,11 +105,11 @@ func (b AnimeBinding) Validate(complete bool) error {
 			return fmt.Errorf("invalid binding scope")
 		}
 	}
-	if c := b.ChapterCorrespondence; c != nil && (!animeEpisode(c.SourceEpisode) || !animeEpisode(c.ChapterEpisode)) {
+	if c := b.ChapterCorrespondence; c != nil && (!animeReleaseNumber(c.SourceEpisode) || !animeReleaseNumber(c.ChapterEpisode)) {
 		return fmt.Errorf("invalid chapter correspondence")
 	}
 	if s, c := b.Scope, b.ChapterCorrespondence; s != nil && s.Kind == "range" && c != nil {
-		if !animeEpisode(*s.First-c.SourceEpisode+c.ChapterEpisode) || !animeEpisode(*s.Last-c.SourceEpisode+c.ChapterEpisode) {
+		if !animeReleaseNumber(*s.First-c.SourceEpisode+c.ChapterEpisode) || !animeReleaseNumber(*s.Last-c.SourceEpisode+c.ChapterEpisode) {
 			return fmt.Errorf("chapter correspondence exceeds valid numbering within scope")
 		}
 	}
@@ -135,7 +136,7 @@ func (r AnimeRules) Validate(complete bool) error {
 	if complete && r.MinimumEpisode == nil {
 		return fmt.Errorf("rules are incomplete")
 	}
-	if r.MinimumEpisode != nil && !animeEpisode(*r.MinimumEpisode) {
+	if r.MinimumEpisode != nil && !animeReleaseNumber(*r.MinimumEpisode) {
 		return fmt.Errorf("invalid minimum episode")
 	}
 	for _, rule := range []struct {
@@ -255,7 +256,7 @@ func (p AnimeReleaseParse) Validate() error {
 	default:
 		return fmt.Errorf("invalid parsed release kind")
 	}
-	if p.Episode != nil && (!animeEpisode(*p.Episode) || p.Kind != "episode") {
+	if p.Episode != nil && (!animeReleaseNumber(*p.Episode) || p.Kind != "episode") {
 		return fmt.Errorf("invalid parsed episode")
 	}
 	if !animeText(p.RawEpisode, 128, false) || !animeText(p.VersionLabel, 64, false) {

@@ -21,7 +21,7 @@ func TestReleaseVersionRankingConservative(t *testing.T) {
 	}
 }
 
-func TestPreviewVersionRankingOrderRulesSpecificationsAndPagination(t *testing.T) {
+func TestPreviewVersionRankingOrderRulesSpecificationsAndSnapshot(t *testing.T) {
 	c := config()
 	c.Sources[0].Rules.Match = nil
 	c.Sources[0].Rules.Exclude = []string{"bad"}
@@ -29,9 +29,9 @@ func TestPreviewVersionRankingOrderRulesSpecificationsAndPagination(t *testing.T
 	if len(s.SelectedIDs) != 2 || !s.Items[2].Selectable || !s.Items[4].Selectable || s.Items[3].ReasonCode != "EXCLUDED_PATTERN" || s.Items[5].ReasonCode != "RELEASE_VERSION_UNCLEAR" || s.Items[6].ReasonCode != "RELEASE_VERSION_DUPLICATE" {
 		t.Fatalf("wrong winners or rule precedence: %+v", s.Items)
 	}
-	first, _ := s.Releases(1, 2, s.GeneratedAt)
+	first := s.Releases(s.GeneratedAt)
 	if first.Items[0].Selectable || first.Items[1].Selectable {
-		t.Fatal("pagination promoted a lower version")
+		t.Fatal("snapshot promoted a lower version")
 	}
 	reversed := append([]Item{}, s.Items...)
 	// Re-evaluate only metadata-eligible copies before reversing the feed order.

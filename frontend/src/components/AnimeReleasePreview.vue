@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, watch, ref } from 'vue'
-import { IconRefresh, IconChevronLeft, IconChevronRight, IconListSearch, IconFolder } from '@tabler/icons-vue'
+import { IconRefresh, IconListSearch, IconFolder } from '@tabler/icons-vue'
 import { animeSourceReady, animeSpecLabel, type SourceForm } from '../utils/animeSourceForm'
 import { sourceNaming } from '../composables/useAnimeNaming'
 import { animeNamingFolder, projectAnimeNaming } from '../utils/animeNamingPreview'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
 import SelectMenu from './SelectMenu.vue'
-const props = defineProps<{ source: SourceForm; valid: boolean; busy: boolean; disabled: boolean; now: number; remaining: number; settingsAvailable: boolean; namingTarget?: AnimeNamingTarget; namingBusy: boolean; organizePath?: string | null; state?: { filter: string; left: number; top: number } }>()
-defineEmits<{ generate: []; load: []; page: [page: number] }>()
+const props = defineProps<{ source: SourceForm; valid: boolean; busy: boolean; disabled: boolean; now: number; settingsAvailable: boolean; namingTarget?: AnimeNamingTarget; namingBusy: boolean; organizePath?: string | null; state?: { filter: string; left: number; top: number } }>()
+defineEmits<{ generate: [] }>()
 const fallbackFilter = ref('all')
 const showDetails = ref(false), showExplanation = ref(false)
 const filterOptions = [{ value: 'all', label: '全部发布' }, { value: 'matched', label: '符合规则' }, { value: 'filtered', label: '已过滤' }, { value: 'review', label: '需确认' }, { value: 'processed', label: '有下载记录' }]
@@ -16,7 +16,6 @@ const list = ref<HTMLElement>()
 function rememberScroll() { if (props.state && list.value) { props.state.left = list.value.scrollLeft; props.state.top = list.value.scrollTop } }
 watch(list, () => { void nextTick(() => { if (list.value && props.state) list.value.scrollTo(props.state.left, props.state.top) }) })
 const page = computed(() => props.source.preview?.page)
-const pageCount = computed(() => page.value ? Math.max(1, Math.ceil(page.value.total / page.value.pageSize)) : 1)
 const summary = computed(() => props.source.preview?.summary)
 const mapping = computed(() => {
   if (!props.namingTarget) return { value: null, error: '' }
@@ -37,13 +36,10 @@ function numberingNote(parsed: { kind: string; episode: number | null }) {
 const rows = computed(() => (page.value?.items.filter(item => filter.value === 'matched' ? item.selectable : filter.value === 'filtered' ? item.decision === 'filtered' : filter.value === 'processed' ? !!executionStates[page.value?.localStates?.[item.release.id] || ''] : filter.value === 'review' ? item.decision === 'needs_confirmation' : true) || []).map(item => {
   const naming = props.namingTarget && !props.namingBusy && !mapping.value.error ? projectAnimeNaming(props.namingTarget, mapping.value.value, item.release.parse, props.source.groupName) : null
   const parts = naming?.pathStem?.split('/') || []
-  const code = naming?.season != null && naming.episode != null ? `S${String(naming.season).padStart(2, '0')}E${String(naming.episode).padStart(2, '0')}` : ''
-  const note = props.namingBusy ? '正在读取 TMDB 资料' : mapping.value.error ? '映射设置待修正' : naming?.status === 'ignored' ? '已设为不整理' : naming?.status === 'target_missing' ? `${code} 的 TMDB 资料待核对` : item.release.parse.kind !== 'episode' || item.release.parse.episode == null ? numberingNote(item.release.parse) : !props.namingTarget ? '选择 TMDB 后显示名称' : '未设置对应，保留原名'
+  const note = props.namingBusy ? '正在读取 TMDB 资料' : mapping.value.error ? '映射设置待修正' : naming?.status === 'ignored' ? '已设为不整理' : item.release.parse.kind !== 'episode' || item.release.parse.episode == null ? numberingNote(item.release.parse) : !props.namingTarget ? '选择 TMDB 后显示名称' : '未设置对应，保留原名'
   return { item, naming, filename: parts.at(-1) || '', seasonFolder: parts.at(-2) || '', note, localState: page.value?.localStates?.[item.release.id] || '', published: publication(item.release.publishedAt) }
 }))
 const stale = computed(() => !!props.source.preview && !props.valid)
-const disabledRows = computed(() => props.disabled || props.busy || !props.valid)
-const canLoad = computed(() => props.valid && !!summary.value?.unloadedHistory && props.remaining > 0 && props.source.preview!.take < 2000 && !['no_progress', 'budget_exhausted', 'source_limit'].includes(summary.value?.stopReason || ''))
 const reasons: Record<string, string> = { REQUIRED_PATTERN_MISSING: '未满足匹配正则', EXCLUDED_PATTERN: '命中排除正则', EPISODE_NUMBER_UNRESOLVED: '编号需确认', OUTSIDE_CHAPTER_SCOPE: '不在篇章范围', BELOW_SOURCE_MINIMUM: '低于补番起点', HASH_NOT_VERIFIED: '后台核验资源', SCOPE_UNCONFIRMED: '篇章范围未确认', SOURCE_RULES_INCOMPLETE: '规则尚未完整', RELEASE_VERSION_SUPERSEDED: '同集已有更高版本', RELEASE_VERSION_DUPLICATE: '同集同版本，已保留一条', RELEASE_VERSION_UNCLEAR: '修订版本需确认', RELEASE_EDITION_UNCLEAR: '资源规格冲突，需确认', RELEASE_EDITION_ALREADY_SELECTED: '此集已选定，不再换版' }
 function reasonText(code: string, selectable: boolean, decision: string, parsed: { kind: string; episode: number | null }) { return selectable ? '符合规则' : code === 'EPISODE_NUMBER_UNRESOLVED' ? numberingNote(parsed) : reasons[code] || (decision === 'needs_confirmation' ? '需人工确认' : '已过滤') }
 const executionStates: Record<string, string> = { organized: '已整理', original_saved: '已保存', completed: '下载完成', accepted: '已受理', downloading: '下载中', submitting: '提交中', unknown: '待核对', queued: '待提交', selected: '已选定', linked: '已关联', failed: '失败', blocked: '受阻', cancelled: '已停止' }
@@ -66,11 +62,11 @@ function publication(value?: number | null) {
     <template v-if="summary && page">
       <p v-if="mapping.error" class="ae-error" role="status">{{ mapping.error }}</p>
       <div class="ae-preview-tools"><SelectMenu v-model="filter" :options="filterOptions" label="显示" variant="anime" /><div class="ae-preview-destination"><IconFolder :size="16" aria-hidden="true" /><p :title="targetDirectory || '尚未配置'">{{ targetDirectory || '尚未配置整理目录' }}</p></div><button type="button" class="ae-preview-option" :aria-pressed="showDetails" @click="showDetails = !showDetails">详细信息</button><button type="button" class="ae-preview-option" :aria-expanded="showExplanation" :aria-controls="`preview-help-${source.ref}`" @click="showExplanation = !showExplanation">说明</button></div>
-      <div v-if="showExplanation" :id="`preview-help-${source.ref}`" class="ae-preview-boundary"><p>匹配与命名按当前表单预览；处理状态来自已保存的后台记录，不检查网盘当前位置。同集同规格只选当前最高版本，选定后不自动换版。名称预览不含扩展名。</p><p>{{ summary.stopReason === 'source_limit' ? source.provider === 'garden' ? 'Anime Garden 最多预览最近 1000 条。' : 'AniBT 仅提供最近 100 条。' : summary.unloadedHistory ? '当前为部分历史，可继续加载。' : '已到来源当前可见历史末尾，不代表整部动画发布完成。' }}{{ valid ? `约 ${Math.max(1, Math.ceil((summary.expiresAt - now) / 60000))} 分钟后过期。` : '待重新预览。' }}</p><p v-if="summary.loadedFirst != null">匹配编号 {{ summary.loadedFirst }} 至 {{ summary.loadedLast }}<span v-if="summary.gapsWithinLoadedMatches.length">；缺口：{{ summary.gapsWithinLoadedMatches.map(gap => gap.first === gap.last ? String(gap.first) : `${gap.first}–${gap.last}`).join('、') }}</span>。</p><p v-if="summary.stopReason === 'no_progress'">本次展开无进展，请稍后重新预览。</p></div>
+      <div v-if="showExplanation" :id="`preview-help-${source.ref}`" class="ae-preview-boundary"><p>匹配与命名按当前表单预览；处理状态来自已保存的后台记录，不检查网盘当前位置。同集同规格只选当前最高版本，选定后不自动换版。名称预览不含扩展名。</p><p>{{ summary.stopReason === 'source_limit' ? source.provider === 'garden' ? 'Anime Garden 最多预览最近 1000 条。' : 'AniBT 仅提供最近 100 条。' : summary.unloadedHistory ? '已读取本次可获取的历史，受来源或读取上限影响，可能不完整。' : '已到来源当前可见历史末尾，不代表整部动画发布完成。' }}{{ valid ? `约 ${Math.max(1, Math.ceil((summary.expiresAt - now) / 60000))} 分钟后过期。` : '待重新预览。' }}</p><p v-if="summary.loadedFirst != null">匹配编号 {{ summary.loadedFirst }} 至 {{ summary.loadedLast }}<span v-if="summary.gapsWithinLoadedMatches.length">；缺口：{{ summary.gapsWithinLoadedMatches.map(gap => gap.first === gap.last ? String(gap.first) : `${gap.first}–${gap.last}`).join('、') }}</span>。</p><p v-if="summary.stopReason === 'no_progress'">本次展开无进展，请稍后重新预览。</p></div>
       <p :id="`preview-scroll-${source.ref}`" class="sr-only">表格内可左右滚动，查看完整名称。</p>
-      <div ref="list" class="ae-release-list" role="region" tabindex="0" aria-label="本页资源列表" :aria-describedby="rows.length ? `preview-scroll-${source.ref}` : undefined" @scroll="rememberScroll">
+      <div ref="list" class="ae-release-list" role="region" tabindex="0" aria-label="资源列表" :aria-describedby="rows.length ? `preview-scroll-${source.ref}` : undefined" @scroll="rememberScroll">
         <p v-if="!page.total" class="ae-preview-empty">来源读取成功，当前没有发布。后台按保存的规则检查更新。</p>
-        <p v-else-if="!rows.length" class="ae-preview-empty">本页没有此类发布，可切换显示条件或翻页。</p>
+        <p v-else-if="!rows.length" class="ae-preview-empty">没有此类发布，可切换显示条件。</p>
         <table v-else class="ae-preview-table" role="table" aria-label="原标题与整理名称对照">
           <colgroup><col class="ae-rule-column" /><col class="ae-state-column" /><col class="ae-feed-column" /><col class="ae-group-column" /><col class="ae-title-column" /><col class="ae-name-column" /><col class="ae-date-column" /></colgroup>
           <thead role="rowgroup"><tr role="row"><th scope="col" class="ae-sticky-rule">规则匹配</th><th scope="col" class="ae-sticky-state">处理状态</th><th scope="col">RSS</th><th scope="col">字幕组</th><th scope="col">原标题</th><th scope="col">重命名<span class="ae-heading-note">不含扩展名</span></th><th scope="col">发布时间</th></tr></thead>
@@ -86,7 +82,6 @@ function publication(value?: number | null) {
         </table>
       </div>
       <div v-if="!summary.matchedCount && page.total" class="ae-inline-notice">当前已加载内容没有符合规则的资源。请核对规格、编号范围或补番起点，保存后由后台独立检查更新。</div>
-      <footer v-if="pageCount > 1 || canLoad" class="ae-preview-footer"><div v-if="pageCount > 1" class="ae-page-buttons"><button type="button" class="ae-icon" aria-label="资源上一页" :disabled="disabledRows || page.page <= 1" @click="$emit('page', page.page - 1)"><IconChevronLeft :size="18" /></button><span>{{ page.page }} / {{ pageCount }}</span><button type="button" class="ae-icon" aria-label="资源下一页" :disabled="disabledRows || page.page >= pageCount" @click="$emit('page', page.page + 1)"><IconChevronRight :size="18" /></button></div><button v-if="canLoad" type="button" class="ae-button ae-preview-load" :disabled="disabledRows" @click="$emit('load')">继续加载历史</button></footer>
     </template>
     <div v-else class="ae-preview-empty"><IconListSearch :size="30" aria-hidden="true" /><p>{{ animeSourceReady(source) ? '生成预览后核对匹配结果与历史边界。' : '先选择并确认此来源，再填写补番起点。' }}</p><p>预览只核对匹配与命名，保存无需先预览。</p></div>
   </section>

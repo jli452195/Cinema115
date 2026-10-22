@@ -24,7 +24,7 @@ func TestAnimeSourceRulesAreIndependentOfCorrespondence(t *testing.T) {
 		change func(*AnimeSourceConfig)
 	}{
 		{"invalid-regex", func(s *AnimeSourceConfig) { s.Rules.Match = []string{"["} }},
-		{"out-of-range", func(s *AnimeSourceConfig) { s.Rules.MinimumEpisode = animeValue(0) }},
+		{"out-of-range", func(s *AnimeSourceConfig) { s.Rules.MinimumEpisode = animeValue(-1) }},
 		{"reverse-scope", func(s *AnimeSourceConfig) { s.Binding.Scope.Last = animeValue(24) }},
 		{"unconfirmed", func(s *AnimeSourceConfig) { s.Binding.Confirmed = false }},
 		{"chapter-without-evidence", func(s *AnimeSourceConfig) { s.Binding.Scope = &AnimeScope{Kind: "confirmed_chapter"} }},

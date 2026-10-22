@@ -26,11 +26,7 @@ func animePreviewResponse(c *gin.Context, s *service.AnimeAdminService, v servic
 		out.BatchID, out.Fingerprint = v.Batch.ID, v.Batch.Fingerprint
 		for _, source := range v.Batch.Sources {
 			if source.Ref == ref {
-				p, err := source.Releases(1, 50, 0)
-				if err != nil {
-					animeError(c, err)
-					return
-				}
+				p := source.Releases(0)
 				for _, summary := range v.Sources {
 					if summary.SourceRef == ref {
 						p.Summary = summary
@@ -72,37 +68,8 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		animePreviewResponse(c, s, v, in.SourceRef)
 	})
-	r.POST("/previews/:id/load", func(c *gin.Context) {
-		id, ok := animeID(c)
-		if !ok {
-			return
-		}
-		var in struct {
-			SourceRef            string `json:"sourceRef"`
-			SourcePreviewID      string `json:"sourcePreviewId"`
-			ExpectedLoadRevision int64  `json:"expectedLoadRevision"`
-			NextTake             int    `json:"nextTake"`
-		}
-		if !animeBody(c, &in, false) {
-			return
-		}
-		if !validAnimePreviewRef(in.SourceRef, in.SourcePreviewID, in.ExpectedLoadRevision) {
-			animeError(c, storage.ErrAnimeInvalid)
-			return
-		}
-		v, err := s.Previews.Load(c.Request.Context(), animeActor(c), storage.AnimePreviewRef{BatchID: id, SourceRef: in.SourceRef, PreviewID: in.SourcePreviewID, LoadRevision: in.ExpectedLoadRevision}, in.NextTake)
-		if err != nil {
-			animeError(c, err)
-			return
-		}
-		animePreviewResponse(c, s, v, in.SourceRef)
-	})
 	r.GET("/previews/:id/releases", func(c *gin.Context) {
 		id, ok := animeID(c)
-		if !ok {
-			return
-		}
-		page, size, ok := animePage(c)
 		if !ok {
 			return
 		}
@@ -111,7 +78,7 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, storage.ErrAnimeInvalid)
 			return
 		}
-		v, err := s.Previews.Releases(c.Request.Context(), animeActor(c), id, ref, page, size)
+		v, err := s.Previews.Releases(c.Request.Context(), animeActor(c), id, ref)
 		if err != nil {
 			animeError(c, err)
 			return

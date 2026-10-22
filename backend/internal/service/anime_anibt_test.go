@@ -110,7 +110,7 @@ func TestAnibtProviderPreviewAndSave(t *testing.T) {
 		t.Fatal(e)
 	}
 	config := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
-	preview, e := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: config, SourceRef: "main", Take: 50})
+	preview, e := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: config, SourceRef: "main"})
 	if e != nil || preview.Batch == nil || len(preview.Batch.Sources) != 1 || len(preview.Batch.Sources[0].Items) != 3 {
 		t.Fatalf("stored AniBT preview: %+v %v", preview, e)
 	}

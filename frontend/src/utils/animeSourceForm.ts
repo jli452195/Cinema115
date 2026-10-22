@@ -17,7 +17,7 @@ export interface SourceForm {
   ruleError?: { field: string; message: string }
   sample?: AnimeSourceSample; sampleBusy: boolean; sampleError: string; sampleCooldown: number
   minimum: string; exclude: string
-  preview?: { ref: AnimePreviewRef; summary: AnimePreviewSummary; signature: string; take: number; page?: AnimePreviewPage; needsSync?: boolean }
+  preview?: { ref: AnimePreviewRef; summary: AnimePreviewSummary; signature: string; page?: AnimePreviewPage }
   previewError: string; previewCooldown: number
 }
 export function newAnimeSource(role: SourceForm['role'], keyword = '', provider: AnimeSourceProvider = 'mikan'): SourceForm {
@@ -25,13 +25,13 @@ export function newAnimeSource(role: SourceForm['role'], keyword = '', provider:
     itemId: '', itemTitle: '', groupId: '', groupName: '', lockedItem: false, lockedGroup: false,
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     scope: '', first: '', last: '', evidence: '', confirmed: false, confirmedFor: '', identityNumbering: false, correspondence: false, sourceEpisode: '', chapterEpisode: '',
-    mappingSource: '1', mappingTarget: '1', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [],
+    mappingSource: '0', mappingTarget: '0', mappingSeason: '', mappingLast: '', mappingManual: false, mappingSegments: [], mappingOverrides: [],
     templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', sampleBusy: false, sampleError: '', sampleCooldown: 0,
-    minimum: '1', exclude: '', previewError: '', previewCooldown: 0 }
+    minimum: '0', exclude: '', previewError: '', previewCooldown: 0 }
 }
-function episode(value: string, label: string): number | null {
+function episode(value: string, label: string, first = 0): number | null {
   if (!value.trim()) return null
-  if (!/^[1-9]\d{0,4}$/.test(value.trim())) throw new Error(`${label}请填写 1 至 99999 的整数`)
+  if (!/^(0|[1-9]\d{0,4})$/.test(value.trim()) || Number(value) < first) throw new Error(`${label}请填写 ${first} 至 99999 的整数`)
   return Number(value.trim())
 }
 function patterns(value: string) {
@@ -56,19 +56,19 @@ export function animeSourceConfig(form: SourceForm, position: number): AnimeSour
   if (form.scope !== 'feed' && form.correspondence) {
     const sourceEpisode = episode(form.sourceEpisode, '字幕组编号'), chapterEpisode = episode(form.chapterEpisode, '篇章编号')
     if (sourceEpisode === null || chapterEpisode === null) throw new Error('请完整填写编号对应，或关闭编号对应')
-    if (scope?.kind === 'range' && (scope.first - sourceEpisode + chapterEpisode < 1 || scope.last - sourceEpisode + chapterEpisode > 99999)) throw new Error('编号对应会超出篇章集号范围，请核对')
+    if (scope?.kind === 'range' && (scope.first - sourceEpisode + chapterEpisode < 0 || scope.last - sourceEpisode + chapterEpisode > 99999)) throw new Error('编号对应会超出篇章集号范围，请核对')
     chapterCorrespondence = { sourceEpisode, chapterEpisode }
   } else if (form.scope !== 'feed' && form.identityNumbering) chapterCorrespondence = { sourceEpisode: 1, chapterEpisode: 1 }
   const minimumEpisode = episode(form.minimum, '补番起点')
   const confirmed = animeBindingConfirmed(form)
-  const complete = !!(form.itemId && form.groupId && scope && confirmed && minimumEpisode)
+  const complete = !!(form.itemId && form.groupId && scope && confirmed && minimumEpisode !== null)
   const episodePattern = form.episodePattern.trim()
   if (Array.from(episodePattern).length > 2048) throw new Error('集号正则最多 2048 字')
   if (episodePattern && !/^[1-9]\d{0,3}$/.test(form.episodeGroup)) throw new Error('捕获组序号请填写从 1 开始的整数')
   return { ref: form.ref, id: form.id, expectedRevision: form.revision, role: form.role, position, status: complete ? 'paused' : 'draft', runWhenEnabled: form.runWhenEnabled, provider: form.provider,
     itemId: form.itemId || null, groupId: form.groupId || null, groupName: form.groupName || null,
     binding: { schemaVersion: 1, confirmed, scope, chapterCorrespondence, ...(confirmed && form.review ? { review: form.review } : {}) },
-    rules: { ...(form.chapterFirst.trim() ? { chapterFirstEpisode: episode(form.chapterFirst, '篇章首集') } : {}), schemaVersion: 1, minimumEpisode, match: patterns(form.match), exclude: patterns(form.exclude), ...(episodePattern ? { episodePattern, episodeGroup: Number(form.episodeGroup) } : {}) } }
+    rules: { ...(form.chapterFirst.trim() ? { chapterFirstEpisode: episode(form.chapterFirst, '篇章首集', 1) } : {}), schemaVersion: 1, minimumEpisode, match: patterns(form.match), exclude: patterns(form.exclude), ...(episodePattern ? { episodePattern, episodeGroup: Number(form.episodeGroup) } : {}) } }
 }
 export function animeSourceReady(form: SourceForm) { try { return animeSourceConfig(form, 0).status === 'paused' } catch { return false } }
 export function animeBindingKey(form: SourceForm) {

@@ -118,7 +118,7 @@ func (m AnimeSourceMapping) Validate() error {
 		return fmt.Errorf("too many naming rules")
 	}
 	for i, s := range m.Segments {
-		if !animeEpisode(s.First) || !animeEpisode(s.SourceBase) || !animeEpisode(s.TargetBase) || s.TargetSeason < 0 || s.TargetSeason > 1000 || s.Last != nil && (!animeEpisode(*s.Last) || *s.Last < s.First) || s.First-s.SourceBase+s.TargetBase < 1 {
+		if !animeReleaseNumber(s.First) || !animeReleaseNumber(s.SourceBase) || !animeReleaseNumber(s.TargetBase) || s.TargetSeason < 0 || s.TargetSeason > 1000 || s.Last != nil && (!animeReleaseNumber(*s.Last) || *s.Last < s.First) || s.First-s.SourceBase+s.TargetBase < 0 {
 			return fmt.Errorf("invalid naming segment")
 		}
 		end := 99999
@@ -151,7 +151,7 @@ func (m AnimeSourceMapping) Validate() error {
 		seen[key] = true
 		if o.RawKind == "episode" {
 			n, err := strconv.Atoi(o.RawNumber)
-			if err != nil || !animeEpisode(n) || strconv.Itoa(n) != o.RawNumber {
+			if err != nil || !animeReleaseNumber(n) || strconv.Itoa(n) != o.RawNumber {
 				return fmt.Errorf("invalid ordinary override number")
 			}
 		}
@@ -161,7 +161,7 @@ func (m AnimeSourceMapping) Validate() error {
 			}
 			continue
 		}
-		if o.TargetSeason < 0 || o.TargetSeason > 1000 || !animeEpisode(o.TargetEpisode) {
+		if o.TargetSeason < 0 || o.TargetSeason > 1000 || !animeReleaseNumber(o.TargetEpisode) {
 			return fmt.Errorf("invalid override target")
 		}
 		target := fmt.Sprintf("%d:%d", o.TargetSeason, o.TargetEpisode)
@@ -215,7 +215,7 @@ func (p AnimeNamingPlan) Validate() error {
 		numbers := make(map[int]bool, len(s.Episodes))
 		for _, e := range s.Episodes {
 			total++
-			if !ValidAnimeExternalID(e.ID) || !animeEpisode(e.Number) || numbers[e.Number] || !animeText(e.Name, 512, false) || !animeText(e.Date, 64, false) || total > 5000 {
+			if !ValidAnimeExternalID(e.ID) || !animeReleaseNumber(e.Number) || numbers[e.Number] || !animeText(e.Name, 512, false) || !animeText(e.Date, 64, false) || total > 5000 {
 				return fmt.Errorf("invalid naming episode")
 			}
 			numbers[e.Number] = true
@@ -228,7 +228,7 @@ func (p AnimeNamingPlan) Validate() error {
 }
 
 // Project never mutates source numbering, download minima, or other versions.
-// Specials require an explicit override; absent TMDB targets remain pending.
+// Specials require an explicit override; TMDB episode details only enrich names.
 func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, group string) AnimeNamingProjection {
 	out := AnimeNamingProjection{Status: "unmapped"}
 	var mapping *AnimeSourceMapping
@@ -265,22 +265,21 @@ func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, gro
 			}
 		}
 	}
-	if !found {
+	if !found || !animeReleaseNumber(episode) {
 		return out
 	}
 	out.Season = &season
 	out.Episode = &episode
-	out.Status = "target_missing"
+	out.Status = "mapped"
+	out.PathStem = AnimeNamingPath(p.Target, season, episode, group, "")
 	for _, s := range p.Target.Seasons {
 		if s.Number != season {
 			continue
 		}
 		for _, e := range s.Episodes {
 			if e.Number == episode {
-				out.Status = "mapped"
 				out.EpisodeID = e.ID
 				out.EpisodeName = e.Name
-				out.PathStem = AnimeNamingPath(p.Target, season, episode, group, "")
 				return out
 			}
 		}

@@ -83,25 +83,12 @@ func (s Source) Summary(now int64) Summary {
 type Page struct {
 	Items       []Item            `json:"items"`
 	Total       int               `json:"total"`
-	Page        int               `json:"page"`
-	PageSize    int               `json:"pageSize"`
 	Summary     Summary           `json:"summary"`
 	SelectedIDs []string          `json:"selectedIds"`
 	Pending     []Pending         `json:"pendingSelections"`
 	LocalStates map[string]string `json:"localStates,omitempty"`
 }
 
-func (s Source) Releases(page, size int, now int64) (Page, error) {
-	if page == 0 {
-		page = 1
-	}
-	if size == 0 {
-		size = 50
-	}
-	if page < 1 || page > 1000000 || size < 1 || size > 100 {
-		return Page{}, ErrInput
-	}
-	start := min((page-1)*size, len(s.Items))
-	end := min(start+size, len(s.Items))
-	return Page{Items: append([]Item{}, s.Items[start:end]...), Total: len(s.Items), Page: page, PageSize: size, Summary: s.Summary(now), SelectedIDs: append([]string{}, s.SelectedIDs...), Pending: append([]Pending{}, s.Pending...)}, nil
+func (s Source) Releases(now int64) Page {
+	return Page{Items: append([]Item{}, s.Items...), Total: len(s.Items), Summary: s.Summary(now), SelectedIDs: append([]string{}, s.SelectedIDs...), Pending: append([]Pending{}, s.Pending...)}
 }

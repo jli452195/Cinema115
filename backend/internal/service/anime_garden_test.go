@@ -127,8 +127,8 @@ func TestGardenProviderPreviewAndSave(t *testing.T) {
 		t.Fatal(e)
 	}
 	config := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
-	preview, e := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: config, SourceRef: "main", Take: 50})
-	if e != nil || preview.Batch == nil || len(preview.Batch.Sources) != 1 || len(preview.Batch.Sources[0].Items) != 2 {
+	preview, e := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: config, SourceRef: "main"})
+	if e != nil || preview.Batch == nil || len(preview.Batch.Sources) != 1 || len(preview.Batch.Sources[0].Items) != 2 || preview.Batch.Sources[0].Page.RequestedTake != 1000 {
 		t.Fatalf("stored Garden preview: %+v %v", preview, e)
 	}
 	if preview.Batch.Sources[0].Items[0].Release.Provider != "garden" {

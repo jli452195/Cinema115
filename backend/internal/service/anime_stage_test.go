@@ -88,7 +88,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 	var batch animepreview.Batch
 	refs := make([]storage.AnimePreviewRef, 0, 3)
 	for _, source := range in.Config.Sources {
-		out, err := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: c, SourceRef: source.Ref, Reuse: refs, Take: 50})
+		out, err := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: c, SourceRef: source.Ref, Reuse: refs})
 		if err != nil || out.Batch == nil || len(out.Issues) != 0 {
 			t.Fatalf("generate %s: %+v %v", source.Ref, out, err)
 		}

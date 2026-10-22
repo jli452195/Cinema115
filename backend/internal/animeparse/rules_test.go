@@ -21,10 +21,10 @@ func TestSourceRegexFilteringAndCustomEpisodes(t *testing.T) {
 		{"Anime ep=25 [720p]", "REQUIRED_PATTERN_MISSING", 25},
 		{"sample ep=25 [1080P]", "EXCLUDED_PATTERN", 25},
 		{"[batch] Anime ep=25 [1080P]", "EXCLUDED_PATTERN", 25},
-		{"Anime - 12 [1080P]", "", 0},
-		{"Anime ep=25 ep=26 [1080P]", "", 0},
-		{"Anime ep=0 [1080P]", "", 0},
-		{"Anime ep=100000 [1080P]", "", 0},
+		{"Anime - 12 [1080P]", "", -1},
+		{"Anime ep=25 ep=26 [1080P]", "", -1},
+		{"Anime ep=00 [1080P]", "", 0},
+		{"Anime ep=100000 [1080P]", "", -1},
 	} {
 		if got := rules.Filter(tc.title); got != tc.reason {
 			t.Fatalf("%s: %s", tc.title, got)
@@ -33,7 +33,7 @@ func TestSourceRegexFilteringAndCustomEpisodes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if tc.episode == 0 && parsed.Episode != nil || tc.episode != 0 && (parsed.Episode == nil || *parsed.Episode != tc.episode) {
+		if tc.episode < 0 && parsed.Episode != nil || tc.episode >= 0 && (parsed.Episode == nil || *parsed.Episode != tc.episode) {
 			t.Fatalf("%s: %+v", tc.title, parsed)
 		}
 	}

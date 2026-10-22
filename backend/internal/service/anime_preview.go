@@ -20,7 +20,6 @@ type animePreviewRepository interface {
 	CheckAnimePreviewConfig(context.Context, animepreview.Config) error
 	GetAnimePreview(context.Context, string, string) (animepreview.Batch, error)
 	CreateAnimePreview(context.Context, string, animepreview.Config, []storage.AnimePreviewSeed, int64) (animepreview.Batch, error)
-	LoadAnimePreview(context.Context, string, storage.AnimePreviewRef, mikan.SourcePage, int64) (animepreview.Batch, error)
 	SelectAnimePreview(context.Context, string, storage.AnimePreviewRef, []string, []string, int64) (animepreview.Batch, error)
 }
 
@@ -42,7 +41,6 @@ func (s *AnimePreviewService) timestamp() int64 {
 type AnimePreviewInput struct {
 	Config    animepreview.Config       `json:"config"`
 	SourceRef string                    `json:"previewSourceRef"`
-	Take      int                       `json:"take"`
 	Refresh   bool                      `json:"refresh"`
 	Reuse     []storage.AnimePreviewRef `json:"previewRefs"`
 	Previous  *storage.AnimePreviewRef  `json:"previous"`
@@ -99,7 +97,7 @@ func findAnimePreview(b animepreview.Batch, ref storage.AnimePreviewRef) (animep
 
 func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in AnimePreviewInput) (AnimePreviewResult, error) {
 	out := AnimePreviewResult{Budget: animepreview.Budget{Limit: 2000, Remaining: 2000}, Issues: []AnimePreviewIssue{}}
-	if s.Repository == nil || s.Bindings == nil || actor == "" || strings.TrimSpace(actor) != actor || len(actor) > 256 || len(in.Reuse) > 4 || in.Take < 0 || in.Take > 2000 {
+	if s.Repository == nil || s.Bindings == nil || actor == "" || strings.TrimSpace(actor) != actor || len(actor) > 256 || len(in.Reuse) > 4 {
 		return out, animepreview.ErrInput
 	}
 	settings, err := s.Repository.GetAnimeSettings(ctx)
@@ -211,11 +209,9 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 			return out, err
 		}
 	}
-	take := in.Take
-	if take == 0 {
-		take = 50
-	}
-	page, readErr := s.Bindings.ReadSource(ctx, budget, AnimeSourceInput{Source: animefeed.NewSource(target.Provider, *target.ItemID, *target.GroupID), Kind: "history", Take: take, Refresh: in.Refresh})
+	source := animefeed.NewSource(target.Provider, *target.ItemID, *target.GroupID)
+	take := max(1, min(animeSourceHistoryLimit(target.Provider), budget.allowance(source)))
+	page, readErr := s.Bindings.ReadSource(ctx, budget, AnimeSourceInput{Source: source, Kind: "history", Take: take, Refresh: in.Refresh})
 	if readErr == nil {
 		// GroupName is display metadata from the already verified entry cache.
 		metadata, err := s.Bindings.ReadEntry(ctx, budget, target.Provider, *target.ItemID, false)
@@ -259,60 +255,6 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 	return s.result(batch, out.Issues), nil
 }
 
-func (s *AnimePreviewService) Load(ctx context.Context, actor string, ref storage.AnimePreviewRef, nextTake int) (AnimePreviewResult, error) {
-	out := AnimePreviewResult{Issues: []AnimePreviewIssue{}}
-	if s.Repository == nil || s.Bindings == nil || nextTake < 1 || nextTake > 2000 {
-		return out, animepreview.ErrInput
-	}
-	batch, err := s.Repository.GetAnimePreview(ctx, actor, ref.BatchID)
-	if err != nil {
-		return out, err
-	}
-	out = s.result(batch, out.Issues)
-	source, err := findAnimePreview(batch, ref)
-	if err != nil {
-		return out, err
-	}
-	if !source.ValidAt(s.timestamp()) {
-		return out, animepreview.ErrExpired
-	}
-	fp, err := animepreview.SourceFingerprint(batch.Config, source.Ref)
-	if err != nil {
-		return out, err
-	}
-	if source.Fingerprint != fp {
-		return out, animepreview.ErrConflict
-	}
-	if nextTake <= source.Page.RequestedTake {
-		return out, animepreview.ErrInput
-	}
-	if err := s.Repository.CheckAnimePreviewConfig(ctx, batch.Config); err != nil {
-		return out, err
-	}
-	loaded := make(map[mikan.Source]int, len(batch.Sources))
-	for _, source := range batch.Sources {
-		loaded[source.Page.Source] = source.Page.RawCount
-	}
-	budget, err := NewAnimeSourceBudget(loaded)
-	if err != nil {
-		return out, err
-	}
-	previous := &AnimeSourceResult{SourcePage: source.Page}
-	page, err := s.Bindings.ReadSource(ctx, budget, AnimeSourceInput{Source: source.Page.Source, Kind: "history", Take: nextTake, Previous: previous})
-	if err != nil {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
-		}
-		out.Issues = append(out.Issues, animePreviewReadIssue(source.Ref, err))
-		return out, nil // Keep every previously successful source and choice.
-	}
-	updated, err := s.Repository.LoadAnimePreview(ctx, actor, ref, page.SourcePage, s.timestamp())
-	if err != nil {
-		return out, err
-	}
-	return s.result(updated, out.Issues), nil
-}
-
 func (s *AnimePreviewService) Select(ctx context.Context, actor string, ref storage.AnimePreviewRef, selected, dismissed []string) (animepreview.Batch, error) {
 	if s.Repository == nil {
 		return animepreview.Batch{}, animepreview.ErrInput
@@ -320,7 +262,7 @@ func (s *AnimePreviewService) Select(ctx context.Context, actor string, ref stor
 	return s.Repository.SelectAnimePreview(ctx, actor, ref, selected, dismissed, s.timestamp())
 }
 
-func (s *AnimePreviewService) Releases(ctx context.Context, actor, batchID, sourceRef string, page, size int) (animepreview.Page, error) {
+func (s *AnimePreviewService) Releases(ctx context.Context, actor, batchID, sourceRef string) (animepreview.Page, error) {
 	if s.Repository == nil {
 		return animepreview.Page{}, animepreview.ErrInput
 	}
@@ -330,7 +272,7 @@ func (s *AnimePreviewService) Releases(ctx context.Context, actor, batchID, sour
 	}
 	for _, source := range b.Sources {
 		if source.Ref == sourceRef {
-			return source.Releases(page, size, s.timestamp())
+			return source.Releases(s.timestamp()), nil
 		}
 	}
 	return animepreview.Page{}, animepreview.ErrInput

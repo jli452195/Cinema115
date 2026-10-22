@@ -76,7 +76,7 @@ func (r SourceRules) Parse(title string) (model.AnimeReleaseParse, error) {
 		}
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > 99999 {
+	if err != nil || n < 0 || n > 99999 {
 		return out, nil
 	}
 	out.Kind, out.Episode, out.RawEpisode = "episode", &n, raw

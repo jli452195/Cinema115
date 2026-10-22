@@ -166,7 +166,7 @@ func TestAnimeHTTPAuthBeforeAnyBusiness(t *testing.T) {
 			t.Fatal(v)
 		}
 	}
-	for _, path := range []string{"/subscriptions", "/subscriptions/preview", "/source-bindings/preview", "/discovery/search", "/previews/not-found/load", "/jobs/not-found/retry"} {
+	for _, path := range []string{"/subscriptions", "/subscriptions/preview", "/source-bindings/preview", "/discovery/search", "/jobs/not-found/retry"} {
 		f.call(t, "POST", path, "", "", `broken`, 401)
 		f.call(t, "POST", path, f.user, "", `broken`, 403)
 	}
@@ -286,12 +286,6 @@ func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {
 	if v := f.call(t, "POST", "/previews/"+batch+"/selections", f.admin, "", selectBody, 409); v["code"] != "REVISION_CONFLICT" {
 		t.Fatal(v)
 	}
-	load := gin.H{"sourceRef": "main", "sourcePreviewId": preview, "expectedLoadRevision": 2, "nextTake": 100}
-	loaded := f.call(t, "POST", "/previews/"+batch+"/load", f.admin, "", load, 200)
-	summary = loaded["sources"].([]any)[0].(map[string]any)
-	if summary["loadRevision"] != float64(3) || summary["selectedCount"] != float64(0) {
-		t.Fatal(loaded)
-	}
 	// Saved release rows from a different subscription cannot be read by
 	// passing their source ID to this subscription's endpoint.
 	entry, err := f.s.Store.SaveAnimeEntry(context.Background(), model.AnimeEntry{EditionKey: "original", Title: "test", Metadata: model.AnimeMetadata{SchemaVersion: 1}})
@@ -305,7 +299,7 @@ func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.call(t, "GET", "/subscriptions/"+sub.ID+"/releases?sourceId=foreign-source", f.admin, "", nil, 400)
-	if _, err := f.s.Previews.Releases(context.Background(), "other-admin", batch, "main", 1, 50); err == nil {
+	if _, err := f.s.Previews.Releases(context.Background(), "other-admin", batch, "main"); err == nil {
 		t.Fatal("preview crossed administrator boundary")
 	}
 	// Source ownership is checked before querying another subscription's rows.

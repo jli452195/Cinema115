@@ -2,7 +2,7 @@ import type { AnimeNamingTarget, AnimeSourceMapping } from '../types/animeSubscr
 
 export interface AnimeNamingParse { kind: string; episode: number | null; rawEpisode: string }
 export interface AnimeNamingProjection {
-  status: 'unmapped' | 'ignored' | 'target_missing' | 'mapped'
+  status: 'unmapped' | 'ignored' | 'mapped'
   season: number | null
   episode: number | null
   episodeId?: string
@@ -47,10 +47,10 @@ export function projectAnimeNaming(target: AnimeNamingTarget, mapping: AnimeSour
   if (!override && !segment) return empty
   const season = override?.targetSeason ?? segment!.targetSeason
   const episode = override?.targetEpisode ?? n! - segment!.sourceBase + segment!.targetBase
+  if (episode < 0 || episode > 99999) return empty
   const metadata = target.seasons.find(item => item.number === season)?.episodes?.find(item => item.number === episode)
-  if (!metadata) return { status: 'target_missing', season, episode }
   return {
-    status: 'mapped', season, episode, episodeId: metadata.id, episodeName: metadata.name,
+    status: 'mapped', season, episode, ...(metadata ? { episodeId: metadata.id, episodeName: metadata.name } : {}),
     pathStem: animeNamingPath(target, season, episode, group),
   }
 }

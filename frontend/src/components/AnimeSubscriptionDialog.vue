@@ -21,7 +21,7 @@ import '../styles/animeSubscriptions.css'
 const props = withDefaults(defineProps<{ token: string; id?: string; bangumiId?: string; seed?: { provider: string; itemId: string } }>(), { id: '', bangumiId: '' })
 const emit = defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
 const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), toRef(props, 'id'), toRef(props, 'bangumiId'), computed(() => props.seed || { provider: '', itemId: '' }))
-const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, pendingSave, receipt, duplicateID, conflict, now, budget, locked, dirty, startIssue } = editor
+const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, pendingSave, receipt, duplicateID, conflict, now, locked, dirty, startIssue } = editor
 const shell = ref<InstanceType<typeof AnimeFloatingDialog>>()
 const tab = ref<'basic' | 'backup' | 'jobs'>('basic'), previewOpen = ref(false), settingsOpen = ref(false), childOpen = ref(false), imageFailed = ref(false)
 const discard = ref(false), confirmRemove = ref(false), jobsVersion = ref(0)
@@ -92,10 +92,10 @@ async function openPreview() {
   previewOpen.value = true
   await nextTick()
   const source = previewSource.value
-  if (source && !editor.validPreview(source) && !previewBusy.value) await editor.runPreview(source, 'generate')
+  if (source && !editor.validPreview(source) && !previewBusy.value) await editor.runPreview(source)
 }
 function closePreview() { previewOpen.value = false; void nextTick(() => previewButton.value?.focus({ preventScroll: true })) }
-watch(previewRef, async () => { if (previewOpen.value && previewSource.value && !editor.validPreview(previewSource.value)) await editor.runPreview(previewSource.value, 'generate') })
+watch(previewRef, async () => { if (previewOpen.value && previewSource.value && !editor.validPreview(previewSource.value)) await editor.runPreview(previewSource.value) })
 async function reload() { if (dirty.value) { reloadConfirm.value = true; discard.value = true; shell.value?.scrollTo(0); return } await editor.initialize() }
 </script>
 
@@ -178,7 +178,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
   </AnimeFloatingDialog>
   <AnimeFloatingDialog v-if="previewOpen" title="匹配与重命名预览" close-label="关闭预览，返回配置" size="preview" @close="closePreview">
     <div class="anime-editor ac-preview">
-      <AnimeReleasePreview v-if="previewSource" :key="previewSource.ref" :source="previewSource" :state="previewState(previewSource.ref)" :valid="editor.validPreview(previewSource)" :busy="!!previewBusy" :disabled="locked" :now="now" :remaining="budget.remaining" :settings-available="!!settings" :naming-target="editor.naming.target.value" :naming-busy="editor.naming.busy.value" :organize-path="settings?.settings.organizePath" @generate="editor.runPreview(previewSource, 'generate')" @load="editor.runPreview(previewSource, 'load')" @page="editor.runPreview(previewSource, 'page', { page: $event })"><template #source><SelectMenu v-model="previewRef" :options="previewSourceOptions" :disabled="!!previewBusy" label="来源" variant="anime" class="ac-preview-source" /></template></AnimeReleasePreview>
+      <AnimeReleasePreview v-if="previewSource" :key="previewSource.ref" :source="previewSource" :state="previewState(previewSource.ref)" :valid="editor.validPreview(previewSource)" :busy="!!previewBusy" :disabled="locked" :now="now" :settings-available="!!settings" :naming-target="editor.naming.target.value" :naming-busy="editor.naming.busy.value" :organize-path="settings?.settings.organizePath" @generate="editor.runPreview(previewSource)"><template #source><SelectMenu v-model="previewRef" :options="previewSourceOptions" :disabled="!!previewBusy" label="来源" variant="anime" class="ac-preview-source" /></template></AnimeReleasePreview>
     </div><template #footer><div class="ac-preview-close"><span class="ae-note">预览只查看匹配和命名，不创建下载任务。</span><button type="button" class="ae-button" @click="closePreview">返回配置</button></div></template>
   </AnimeFloatingDialog>
   <AnimeStorageSettingsDialog v-if="settingsOpen" :token="token" @close="settingsOpen = false" @loaded="settings = $event; settingsError = ''" @changed="settings = $event; settingsError = ''" />

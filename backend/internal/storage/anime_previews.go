@@ -373,9 +373,8 @@ func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepre
 	return b, nil
 }
 
-// updateAnimePreview owns the read/CAS/replacement transaction. A late network
-// response cannot overwrite another window's choices or resurrect an expiry.
-func (s *Store) updateAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, page *mikan.SourcePage, selected, dismissed []string, now int64) (animepreview.Batch, error) {
+// SelectAnimePreview owns the selection CAS transaction across admin windows.
+func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, selected, dismissed []string, now int64) (animepreview.Batch, error) {
 	var b animepreview.Batch
 	if !validAnimeActor(actor) || !model.ValidAnimeID(ref.BatchID) || ref.LoadRevision < 1 || now <= 0 {
 		return b, animepreview.ErrInput
@@ -410,20 +409,7 @@ func (s *Store) updateAnimePreview(ctx context.Context, actor string, ref AnimeP
 		return b, err
 	}
 	source := old
-	if page != nil {
-		if page.Kind != "history" || page.RequestedTake <= old.Page.RequestedTake || page.ObservedAt.Before(old.Page.ObservedAt) {
-			return b, animepreview.ErrInput
-		}
-		source, err = animepreview.Build(b.Config, old.Ref, *page, now)
-		if err != nil {
-			return b, err
-		}
-		source.ID, source.GeneratedAt, source.ExpiresAt = old.ID, old.GeneratedAt, old.ExpiresAt
-		if err := attachAnimePreviewIDsTx(ctx, tx, &source); err != nil {
-			return b, err
-		}
-		source.Reconcile(old)
-	} else if err := source.Select(selected, dismissed, now); err != nil {
+	if err := source.Select(selected, dismissed, now); err != nil {
 		return b, err
 	}
 	source.LoadRevision = old.LoadRevision + 1
@@ -449,12 +435,4 @@ func (s *Store) updateAnimePreview(ctx context.Context, actor string, ref AnimeP
 		return b, animeDBError("commit update preview", err)
 	}
 	return b, nil
-}
-
-func (s *Store) LoadAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, page mikan.SourcePage, now int64) (animepreview.Batch, error) {
-	return s.updateAnimePreview(ctx, actor, ref, &page, nil, nil, now)
-}
-
-func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, selected, dismissed []string, now int64) (animepreview.Batch, error) {
-	return s.updateAnimePreview(ctx, actor, ref, nil, selected, dismissed, now)
 }
