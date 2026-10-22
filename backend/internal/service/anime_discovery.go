@@ -131,8 +131,10 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 		if !found {
 			return nil
 		}
-		if err := r.poll(ctx, poll); err != nil {
-			return err
+		if !poll.LocalOnly {
+			if err := r.poll(ctx, poll); err != nil {
+				return err
+			}
 		}
 	}
 	// Continue a bounded pass immediately when more feeds are due. The store
@@ -152,6 +154,9 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 		}
 		readCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		input := AnimeSourceInput{Source: animefeed.NewSource(poll.Source.Provider, *poll.Source.ItemID, *poll.Source.GroupID), Kind: "rss"}
+		if poll.Source.GroupName != nil {
+			input.confirmedGroupName = *poll.Source.GroupName
+		}
 		if poll.Initialize {
 			input.Kind, input.Take = "history", animeSourceHistoryLimit(poll.Source.Provider)
 		}

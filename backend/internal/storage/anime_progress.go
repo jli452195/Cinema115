@@ -12,6 +12,9 @@ import (
 
 const animeOrganizedReleases = `SELECT x.snapshot_json FROM anime_job_selections x JOIN anime_download_jobs j ON j.id=x.job_id WHERE x.source_id=? AND x.status='authorized' AND j.workflow_state='organized' AND NOT EXISTS(SELECT 1 FROM anime_download_jobs newer WHERE newer.claim_id=j.claim_id AND newer.attempt>j.attempt)`
 
+// Correlated with source alias s. Dirty summaries never suppress RSS reads.
+const animeSourceComplete = `EXISTS(SELECT 1 FROM anime_source_progress g WHERE g.source_id=s.id AND g.generation=g.computed_generation AND json_extract(g.summary_json,'$.state')='complete')`
+
 func animeProgressRows(ctx context.Context, q animeReader, query, id string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, query, id)
 	if err != nil {

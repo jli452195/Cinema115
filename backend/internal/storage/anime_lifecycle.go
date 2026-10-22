@@ -121,11 +121,12 @@ func readAnimeLifecycle(ctx context.Context, q animeReader, sub model.AnimeSubsc
 	quiet, healthy := int64(0), true
 	for _, source := range sources {
 		var since, success, revision int64
-		err := q.QueryRowContext(ctx, `SELECT source_revision,quiet_since,last_success_at FROM anime_source_activity WHERE source_id=?`, source.ID).Scan(&revision, &since, &success)
+		var complete bool
+		err := q.QueryRowContext(ctx, `SELECT a.source_revision,a.quiet_since,a.last_success_at,`+animeSourceComplete+` FROM anime_source_activity a JOIN anime_subscription_sources s ON s.id=a.source_id WHERE a.source_id=?`, source.ID).Scan(&revision, &since, &success, &complete)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return out, false, err
 		}
-		if source.Health != "ok" || source.CheckToken != nil || revision != source.Revision || success <= 0 || now-success > 2*animeDay || since > now {
+		if source.Health != "ok" || source.CheckToken != nil || revision != source.Revision || success <= 0 || !complete && now-success > 2*animeDay || since > now {
 			healthy = false
 		}
 		quiet = max(quiet, since)

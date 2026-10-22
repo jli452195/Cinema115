@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/model"
 )
@@ -196,4 +197,95 @@ func TestAnimeSourceProgressContinuousNumbersAndRestart(t *testing.T) {
 	if got := refreshProgress(t, f)[id]; !reflect.DeepEqual(got, want) {
 		t.Fatal("restart lost persisted progress", got)
 	}
+}
+
+func TestAnimeCompletedSourceStopsPollingIndependently(t *testing.T) {
+	f := progressFixture(t)
+	ctx, now := context.Background(), time.Now().UnixMilli()
+	main, other := f.sub.Sources[0].ID, f.sub.Sources[1].ID
+	for n := 1; n <= 12; n++ {
+		progressEpisode(t, f, 0, n, true)
+	}
+	progressEpisode(t, f, 1, 12, false)
+	refreshProgress(t, f)
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET health='ok',next_check_at=?`, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range f.sub.Sources {
+		if _, err := f.store.db.Exec(`INSERT INTO anime_source_activity VALUES(?,?,?,?)`, source.ID, source.Revision, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		poll := discoveryPoll(t, f.store, now)
+		if poll.Source.ID == main {
+			if !poll.LocalOnly {
+				t.Fatal("completed main source requested RSS")
+			}
+		} else if poll.Source.ID == other && !poll.LocalOnly {
+			if _, err := f.store.CompleteAnimeSourcePoll(ctx, poll, discoveryPage(poll, now), now); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			t.Fatal("unfinished standby stopped polling", poll.Source.ID, poll.LocalOnly)
+		}
+	}
+	assertStopped := func() {
+		t.Helper()
+		if poll, found, err := f.store.ReserveAnimeSourcePoll(ctx, now); err != nil || found {
+			t.Fatal("completed source still polled", poll.Source.ID, found, err)
+		}
+	}
+	assertStopped()
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.store.Close()
+	assertStopped()
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=? WHERE id=?`, now, main); err != nil {
+		t.Fatal(err)
+	}
+	if poll := discoveryPoll(t, f.store, now); !poll.LocalOnly || poll.Source.ID != main {
+		t.Fatal("restart lost completed coverage", poll.Source.ID, poll.LocalOnly)
+	}
+	// Resume clears activity. Check once to restore health instead of leaving
+	// the completed source unable to participate in eventual auto-archive.
+	if _, err := f.store.db.Exec(`DELETE FROM anime_source_activity WHERE source_id=?`, main); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=? WHERE id=?`, now, main); err != nil {
+		t.Fatal(err)
+	}
+	poll := discoveryPoll(t, f.store, now)
+	if poll.Source.ID != main || poll.LocalOnly {
+		t.Fatal("missing activity suppressed recovery", poll.Source.ID)
+	}
+	if _, err := f.store.CompleteAnimeSourcePoll(ctx, poll, discoveryPage(poll, now), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.minimumEpisode',2),next_check_at=? WHERE id=?`, now, main); err != nil {
+		t.Fatal(err)
+	}
+	poll = discoveryPoll(t, f.store, now)
+	if poll.Source.ID != main || poll.LocalOnly {
+		t.Fatal("dirty old completion suppressed new configuration", poll.Source.ID)
+	}
+	// Coverage can become complete while this poll is in flight. Its receipt
+	// must remain authorized, and clear the lease normally.
+	if got := refreshProgress(t, f)[main]; got.State != "complete" {
+		t.Fatal(got)
+	}
+	if _, err := f.store.CompleteAnimeSourcePoll(ctx, poll, discoveryPage(poll, now), now); err != nil {
+		t.Fatal("in-flight poll lost authorization on completion", err)
+	}
+	assertStopped()
 }

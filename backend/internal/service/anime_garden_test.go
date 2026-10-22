@@ -22,6 +22,24 @@ type gardenFake struct {
 	err   error
 }
 
+func TestGardenConfirmedSourceSkipsEntry(t *testing.T) {
+	f := &gardenFake{}
+	s := NewGardenService(f)
+	s.spacing = 0
+	in := AnimeSourceInput{Source: animefeed.NewSource("garden", "623249", "dmhy_f776"), Kind: "rss", confirmedGroupName: "天月動漫發佈組"}
+	for i := 0; i < 2; i++ {
+		budget := animeMikanTestBudget(t, nil)
+		page, err := s.ReadAnimeSource(context.Background(), budget, in)
+		if err != nil || len(page.Releases) == 0 || budget.Stats().Requests != 1-i || page.Cached != (i == 1) {
+			t.Fatal(page, budget.Stats(), err)
+		}
+	}
+	in.Source.GroupID = "dmhy_f777"
+	if _, err := s.ReadAnimeSource(context.Background(), animeMikanTestBudget(t, nil), in); err == nil || f.calls != 1 {
+		t.Fatal("cached response from a different publisher accepted", err, f.calls)
+	}
+}
+
 func (f *gardenFake) Fetch(ctx context.Context, path string, _ int64) ([]byte, error) {
 	f.mu.Lock()
 	f.calls++

@@ -129,6 +129,31 @@ func TestAnimeMikanValidZeroAndInvalidBinding(t *testing.T) {
 	}
 }
 
+func TestAnimeMikanConfirmedSourceSkipsEntry(t *testing.T) {
+	s, f := newAnimeMikanTestService()
+	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+		if in.Kind == "entry" {
+			t.Fatal("background read fetched the group list")
+		}
+		return animeMikanFakePage(in), nil
+	}
+	in := AnimeSourceInput{Source: mikan.Source{ItemID: "2259", GroupID: "45"}, Kind: "rss", confirmedGroupName: "字幕组甲"}
+	for i := 0; i < 2; i++ {
+		budget := animeMikanTestBudget(t, nil)
+		page, err := s.ReadAnimeSource(context.Background(), budget, in)
+		if err != nil || page.RawCount != 2 || budget.Stats().Requests != 1-i || page.Cached != (i == 1) {
+			t.Fatal(page, budget.Stats(), err)
+		}
+	}
+	f.read = func(context.Context, mikan.SourceRequest) (mikan.SourcePage, error) {
+		return mikan.SourcePage{}, mikan.ErrParse
+	}
+	in.Refresh = true
+	if _, err := s.ReadAnimeSource(context.Background(), animeMikanTestBudget(t, nil), in); !errors.Is(err, mikan.ErrParse) || f.calls.Load() != 2 {
+		t.Fatal("failed feed triggered metadata fallback", err, f.calls.Load())
+	}
+}
+
 func TestAnimeMikanBatchRawBudgetCheckedBeforeRead(t *testing.T) {
 	s, f := newAnimeMikanTestService()
 	ctx := context.Background()

@@ -46,6 +46,23 @@ func ValidGroup(provider, id string) bool {
 	return provider == "mikan" && ValidItem(id)
 }
 func (s Source) Valid() bool { return ValidItem(s.ItemID) && ValidGroup(s.Site(), s.GroupID) }
+
+// Group restores the filter metadata of an already verified publisher.
+func (s Source) Group(name string) (Group, error) {
+	if !s.Valid() || strings.TrimSpace(name) == "" || len(name) > 1024 {
+		return Group{}, ErrInput
+	}
+	g := Group{ID: s.GroupID, Name: name}
+	if s.Site() == "garden" {
+		parts := gardenGroup.FindStringSubmatch(s.GroupID)
+		g.Origin, g.Kind = parts[1], "fansub"
+		if parts[2] == "p" {
+			g.Kind = "publisher"
+		}
+	}
+	return g, nil
+}
+
 func (s Source) URL() string {
 	if !ValidItem(s.ItemID) {
 		return ""
@@ -69,15 +86,14 @@ func (s Source) RSSURL(groupName ...string) (string, error) {
 		return "https://anibt.net/rss/anime.xml?" + url.Values{"bgmId": {s.ItemID}, "groupSlug": {s.GroupID}}.Encode(), nil
 	}
 	if s.Site() == "garden" {
-		if len(groupName) != 1 || strings.TrimSpace(groupName[0]) == "" || len(groupName[0]) > 1024 {
+		if len(groupName) != 1 {
 			return "", ErrInput
 		}
-		parts := gardenGroup.FindStringSubmatch(s.GroupID)
-		key := "fansub"
-		if parts[2] == "p" {
-			key = "publisher"
+		group, err := s.Group(groupName[0])
+		if err != nil {
+			return "", err
 		}
-		return "https://api.animes.garden/feed.xml?" + url.Values{"subject": {s.ItemID}, "provider": {parts[1]}, key: {groupName[0]}, "duplicate": {"true"}}.Encode(), nil
+		return "https://api.animes.garden/feed.xml?" + url.Values{"subject": {s.ItemID}, "provider": {group.Origin}, group.Kind: {group.Name}, "duplicate": {"true"}}.Encode(), nil
 	}
 	return "https://mikanani.me/RSS/Bangumi?" + url.Values{"bangumiId": {s.ItemID}, "subgroupid": {s.GroupID}}.Encode(), nil
 }

@@ -61,7 +61,7 @@ func TestAnimeDiscoveryRunnerQueuesAndClaimsWithoutDriveWrites(t *testing.T) {
 	var reads atomic.Int32
 	r.Feeds = animeRSSFunc(func(ctx context.Context, b *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
 		reads.Add(1)
-		if in.Kind != "rss" || in.Take != 0 || in.Refresh || in.Previous != nil {
+		if in.Kind != "rss" || in.Take != 0 || in.Refresh || in.Previous != nil || in.confirmedGroupName != *source.GroupName {
 			t.Error("automatic poll expanded history/forced refresh")
 		}
 		return discoveryServicePage(in, now, 1), nil

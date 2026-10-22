@@ -118,19 +118,22 @@ func (s *GardenService) ReadAnimeSource(ctx context.Context, budget *AnimeSource
 	}
 	ctx, cancel := context.WithDeadline(ctx, budget.deadline)
 	defer cancel()
-	entry, err := s.ReadAnimeSourceEntry(ctx, budget, in.Source.ItemID, false)
-	if err != nil {
-		return out, err
-	}
-	var selected *animefeed.Group
-	for i := range entry.Entry.Groups {
-		if entry.Entry.Groups[i].ID == in.Source.GroupID {
-			selected = &entry.Entry.Groups[i]
-			break
+	selected, err := in.Source.Group(in.confirmedGroupName)
+	if in.confirmedGroupName == "" {
+		entry, readErr := s.ReadAnimeSourceEntry(ctx, budget, in.Source.ItemID, false)
+		if readErr != nil {
+			return out, readErr
+		}
+		err = mikan.ErrSourceBinding
+		for _, group := range entry.Entry.Groups {
+			if group.ID == in.Source.GroupID {
+				selected, err = group, nil
+				break
+			}
 		}
 	}
-	if selected == nil {
-		return out, mikan.ErrSourceBinding
+	if err != nil {
+		return out, err
 	}
 	take := in.Take
 	if in.Kind == "rss" {
@@ -139,7 +142,7 @@ func (s *GardenService) ReadAnimeSource(ctx context.Context, budget *AnimeSource
 	if take > budget.allowance(in.Source) {
 		return out, &mikan.LimitError{Kind: "rows"}
 	}
-	path, err := garden.ResourcesPath(in.Source.ItemID, take, selected)
+	path, err := garden.ResourcesPath(in.Source.ItemID, take, &selected)
 	if err != nil {
 		return out, err
 	}
@@ -148,13 +151,13 @@ func (s *GardenService) ReadAnimeSource(ctx context.Context, budget *AnimeSource
 	}
 	defer func() { <-budget.gate }()
 	read, cached, err := s.read(ctx, path, time.Minute, in.Refresh, budget, func(body []byte) error {
-		_, err := garden.ParseResources(body, in.Source.ItemID, take, selected)
+		_, err := garden.ParseResources(body, in.Source.ItemID, take, &selected)
 		return err
 	})
 	if err != nil {
 		return out, err
 	}
-	resources, err := garden.ParseResources(read.body, in.Source.ItemID, take, selected)
+	resources, err := garden.ParseResources(read.body, in.Source.ItemID, take, &selected)
 	if err != nil {
 		return out, err
 	}

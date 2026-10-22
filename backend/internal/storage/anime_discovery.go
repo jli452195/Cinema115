@@ -24,6 +24,7 @@ type AnimeSourcePoll struct {
 	Target       model.AnimeDownloadTarget
 	IssueCode    string
 	Initialize   bool
+	LocalOnly    bool // Complete coverage needs lifecycle checks, not another RSS read.
 }
 
 type AnimeDiscoveryStats struct{ Observed, Selected, Review int }
@@ -41,6 +42,9 @@ func animeDiscoveryBackoff(failures int) int64 {
 }
 
 const animePollEligible = `s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL AND s.health<>'unavailable'`
+
+// Keep recovery reads after resume/configuration changes or an unfinished poll.
+const animePollSettled = animeSourceComplete + ` AND s.health='ok' AND s.check_token IS NULL AND EXISTS(SELECT 1 FROM anime_source_activity a WHERE a.source_id=s.id AND a.source_revision=s.revision)`
 
 // ReserveAnimeSourcePoll gives one bounded metadata read permission. It is not
 // a download lease. No network runs inside this transaction. Unscheduled feeds
@@ -91,6 +95,22 @@ func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSou
 	out.Source, err = scanAnimeSource(tx.QueryRowContext(ctx, `SELECT `+animeSourceColumns+` FROM anime_subscription_sources WHERE id=?`, id))
 	if err != nil {
 		return out, false, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT `+animePollSettled+` FROM anime_subscription_sources s WHERE s.id=?`, id).Scan(&out.LocalOnly); err != nil {
+		return out, false, err
+	}
+	if out.LocalOnly {
+		settings, err := readAnimeRSSSettings(ctx, tx)
+		if err != nil {
+			return out, false, err
+		}
+		if err := evaluateAnimeLifecycleTx(ctx, tx, out.Source.SubscriptionID, now); err != nil {
+			return out, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET next_check_at=? WHERE id=?`, now+int64(settings.PollMinutes)*60000+animeDiscoveryJitter(id), id); err != nil {
+			return out, false, err
+		}
+		return out, true, tx.Commit()
 	}
 	out.Subscription, err = scanAnimeSubscription(tx.QueryRowContext(ctx, `SELECT `+animeSubscriptionColumns+` FROM anime_subscriptions WHERE id=?`, out.Source.SubscriptionID))
 	if err != nil {

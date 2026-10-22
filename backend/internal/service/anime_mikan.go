@@ -15,11 +15,12 @@ type animeMikanReader interface {
 }
 
 type AnimeSourceInput struct {
-	Source   mikan.Source
-	Kind     string // rss or history; entry verification is automatic
-	Take     int
-	Refresh  bool
-	Previous *AnimeSourceResult // Trusted prior snapshot, supplied by P1-06.
+	Source             mikan.Source
+	Kind               string // rss or history; entry verification is automatic
+	Take               int
+	Refresh            bool
+	Previous           *AnimeSourceResult // Trusted prior snapshot, supplied by P1-06.
+	confirmedGroupName string             // Only the runner supplies server-verified, persisted metadata.
 }
 
 type AnimeSourceResult struct {
@@ -81,24 +82,24 @@ func (s *MikanService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceB
 	if err := budget.bindSource(in.Source); err != nil {
 		return out, err
 	}
-	entry, _, err := s.animeMikanRead(ctx, budget, reader, mikan.SourceRequest{Kind: "entry", Source: mikan.Source{ItemID: in.Source.ItemID}, MaxRows: mikan.AnimeMaxRows}, false)
-	if err != nil {
-		return out, err
-	}
-	if !validAnimeMikanEntry(entry.page, in.Source.ItemID) {
-		return out, mikan.ErrParse
-	}
-	found := false
-	if entry.page.Entry != nil {
+	if in.confirmedGroupName == "" {
+		entry, _, err := s.animeMikanRead(ctx, budget, reader, mikan.SourceRequest{Kind: "entry", Source: mikan.Source{ItemID: in.Source.ItemID}, MaxRows: mikan.AnimeMaxRows}, false)
+		if err != nil {
+			return out, err
+		}
+		if !validAnimeMikanEntry(entry.page, in.Source.ItemID) {
+			return out, mikan.ErrParse
+		}
+		found := false
 		for _, group := range entry.page.Entry.Groups {
 			if group.ID == in.Source.GroupID {
 				found = true
 				break
 			}
 		}
-	}
-	if !found {
-		return out, mikan.ErrSourceBinding
+		if !found {
+			return out, mikan.ErrSourceBinding
+		}
 	}
 	page, cached, err := s.animeMikanRead(ctx, budget, reader, mikan.SourceRequest{Kind: in.Kind, Source: in.Source, Take: in.Take, MaxRows: allowance}, in.Refresh)
 	if err != nil {

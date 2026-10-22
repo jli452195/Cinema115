@@ -20,6 +20,24 @@ type anibtFake struct {
 	err   error
 }
 
+func TestAnibtConfirmedSourceSkipsEntry(t *testing.T) {
+	f := &anibtFake{}
+	s := NewAnibtService(f)
+	s.spacing = 0
+	in := AnimeSourceInput{Source: animefeed.NewSource("anibt", "630160", "lolihouse"), Kind: "rss", confirmedGroupName: "LoliHouse"}
+	for i := 0; i < 2; i++ {
+		budget := animeMikanTestBudget(t, nil)
+		page, err := s.ReadAnimeSource(context.Background(), budget, in)
+		if err != nil || len(page.Releases) != 3 || budget.Stats().Requests != 1-i || page.Cached != (i == 1) {
+			t.Fatal(page, budget.Stats(), err)
+		}
+	}
+	in.Source.GroupID = "other"
+	if _, err := s.ReadAnimeSource(context.Background(), animeMikanTestBudget(t, nil), in); !errors.Is(err, anibt.ErrInvalid) || f.calls != 2 {
+		t.Fatal("wrong publisher accepted or triggered discovery", err, f.calls)
+	}
+}
+
 func (f *anibtFake) Fetch(ctx context.Context, path string, _ int64) ([]byte, error) {
 	f.mu.Lock()
 	f.calls++

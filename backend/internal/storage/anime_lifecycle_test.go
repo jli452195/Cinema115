@@ -140,6 +140,14 @@ func TestAnimeCompletionRequiresEveryEpisodeAndSubtitleGroup(t *testing.T) {
 			}
 		}
 	}
+	if got := refreshProgress(t, f)[f.sub.Sources[0].ID]; got.State != "complete" {
+		t.Fatal("main source not complete", got)
+	}
+	// A completed source no longer polls; its old RSS success must not block
+	// the slower standby from archiving the subscription days later.
+	if _, err := f.store.db.Exec(`UPDATE anime_source_activity SET last_success_at=? WHERE source_id=?`, now-3*animeDay, f.sub.Sources[0].ID); err != nil {
+		t.Fatal(err)
+	}
 	if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
 		t.Fatal("hole in standby was counted complete", got.Status)
 	}
@@ -157,10 +165,28 @@ func TestAnimeCompletionRequiresEveryEpisodeAndSubtitleGroup(t *testing.T) {
 	if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
 		t.Fatal("completion switch ignored")
 	}
-	if _, err := f.store.db.Exec(`UPDATE anime_rss_settings SET auto_archive=1`); err != nil {
+	refreshProgress(t, f)
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=?`, now); err != nil {
 		t.Fatal(err)
 	}
-	sub := evaluateLifecycle(t, f, now)
+	if poll := discoveryPoll(t, f.store, now); !poll.LocalOnly {
+		t.Fatal("completed feed still requested RSS with auto-archive off")
+	}
+	settings, err := f.store.GetAnimeRSSSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoArchive = true
+	if _, err := f.store.SaveAnimeRSSSettings(context.Background(), settings, AnimeWriteKey{ActorKey: "admin", Operation: "rss-settings", Key: "completed-auto-archive", Digest: strings.Repeat("a", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	if poll := discoveryPoll(t, f.store, now); !poll.LocalOnly {
+		t.Fatal("enabling auto-archive required another RSS request")
+	}
+	sub, err := f.store.GetAnimeSubscription(context.Background(), f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if sub.Status != "archived" || sub.Revision != f.sub.Revision+1 {
 		t.Fatal(sub.Status, sub.Revision)
 	}

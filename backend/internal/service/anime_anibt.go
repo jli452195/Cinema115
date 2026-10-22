@@ -113,23 +113,25 @@ func (s *AnibtService) ReadAnimeSource(ctx context.Context, budget *AnimeSourceB
 	}
 	ctx, cancel := context.WithDeadline(ctx, budget.deadline)
 	defer cancel()
-	entry, err := s.ReadAnimeSourceEntry(ctx, budget, in.Source.ItemID, false)
-	if err != nil {
-		return out, err
-	}
 	total := -1
-	found := false
-	for _, group := range entry.Entry.Groups {
-		if group.ID == in.Source.GroupID {
-			found = true
-			if group.TotalReleases != nil {
-				total = *group.TotalReleases
-			}
-			break
+	if in.confirmedGroupName == "" {
+		entry, err := s.ReadAnimeSourceEntry(ctx, budget, in.Source.ItemID, false)
+		if err != nil {
+			return out, err
 		}
-	}
-	if !found {
-		return out, mikan.ErrSourceBinding
+		found := false
+		for _, group := range entry.Entry.Groups {
+			if group.ID == in.Source.GroupID {
+				found = true
+				if group.TotalReleases != nil {
+					total = *group.TotalReleases
+				}
+				break
+			}
+		}
+		if !found {
+			return out, mikan.ErrSourceBinding
+		}
 	}
 	take := in.Take
 	if in.Kind == "rss" {
