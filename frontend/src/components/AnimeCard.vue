@@ -4,21 +4,21 @@ import { IconPhotoOff } from '@tabler/icons-vue'
 import type { AnimeCardItem } from '../types/anime'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 
-const props = defineProps<{ item: AnimeCardItem; actionLabel?: string }>()
+const props = withDefaults(defineProps<{ item: AnimeCardItem; actionLabel?: string; hideMeta?: boolean; highlight?: boolean }>(), { highlight: true })
 defineEmits<{ select: [item: AnimeCardItem] }>()
 const failed = ref(false)
 watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false })
 </script>
 
 <template>
-  <button type="button" class="anime-card group" :aria-label="`${item.title}，${actionLabel || '查看篇章'}`" aria-haspopup="dialog" :data-anime-id="item.id" @click="$emit('select', item)">
-    <span class="anime-poster ambient-glow">
+  <button type="button" class="anime-card group" :class="{ 'anime-card-highlight': highlight }" :aria-label="`${item.title}，${actionLabel || '查看篇章'}`" aria-haspopup="dialog" :data-anime-id="item.id" @click="$emit('select', item)">
+    <span class="anime-poster" :class="{ 'ambient-glow': highlight }">
       <img v-if="animeImageURL(item.coverUrl) && !failed" :src="animeImageURL(item.coverUrl)" :alt="item.title" loading="lazy" decoding="async" referrerpolicy="no-referrer" @error="failed = true" />
       <span v-else class="anime-poster-empty"><IconPhotoOff :size="28" aria-hidden="true" /><span>暂无海报</span></span>
       <slot name="badge" />
     </span>
     <span class="anime-card-title" :title="item.title">{{ item.title }}</span>
-    <span class="anime-card-date"><slot name="meta">{{ item.date ? `${item.date} 首播` : '首播日期未收录' }}</slot></span>
+    <span v-if="!hideMeta" class="anime-card-date"><slot name="meta">{{ item.date ? `${item.date} 首播` : '首播日期未收录' }}</slot></span>
   </button>
 </template>
 
@@ -36,8 +36,8 @@ watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false }
 :global(.dark) .anime-poster { background: rgb(var(--color-slate-800)); }
 :global(.dark) .anime-card-title { color: rgb(var(--color-slate-100)); }
 :global(.dark) .anime-card-date, :global(.dark) .anime-poster-empty { color: rgb(var(--color-slate-400)); }
-@media (hover: hover) and (pointer: fine) { .anime-card:hover .anime-poster { box-shadow: 0 16px 28px -12px rgb(15 23 42 / .3); } .anime-card:hover .anime-card-title { color: #3b82f6; } }
-:global(.dark) .anime-card:hover .anime-card-title { color: #93c5fd; }
+@media (hover: hover) and (pointer: fine) { .anime-card:hover .anime-poster { box-shadow: 0 16px 28px -12px rgb(15 23 42 / .3); } .anime-card-highlight:hover .anime-card-title { color: #3b82f6; } }
+:global(.dark) .anime-card-highlight:hover .anime-card-title { color: #93c5fd; }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) { .anime-card:hover .anime-poster { transform: translateY(-3px); } }
 @media (prefers-reduced-motion: reduce) { .anime-poster { transition: none; } }
 </style>

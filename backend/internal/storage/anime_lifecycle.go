@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/model"
 )
 
@@ -217,44 +216,18 @@ func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.Anim
 		if !ok {
 			return false, nil
 		}
-		// Read the release authorized for THIS source, not the job's first
-		// publisher snapshot. One torrent may be shared by several sources.
-		rows, err := tx.QueryContext(ctx, `SELECT x.snapshot_json FROM anime_job_selections x JOIN anime_download_jobs j ON j.id=x.job_id WHERE x.source_id=? AND x.status='authorized' AND j.workflow_state='organized' AND NOT EXISTS(SELECT 1 FROM anime_download_jobs newer WHERE newer.claim_id=j.claim_id AND newer.attempt>j.attempt)`, source.ID)
+		raw, err := animeProgressRows(ctx, tx, animeOrganizedReleases, source.ID)
 		if err != nil {
 			return false, err
 		}
-		found := make(map[int]bool, last-first+1)
-		for rows.Next() {
-			var raw string
-			var snapshot model.AnimeDownloadSnapshot
-			if err := rows.Scan(&raw); err != nil {
-				rows.Close()
-				return false, err
-			}
-			if err := decodeAnimeJSON(raw, &snapshot); err != nil {
-				rows.Close()
-				return false, err
-			}
-			p := snapshot.Release.Parse
-			matches, err := animepreview.MatchesRelease(source.Binding, source.Rules, snapshot.Release)
-			if err != nil {
-				rows.Close()
-				return false, err
-			}
-			if matches && p.Kind == "episode" && p.Episode != nil && *p.Episode >= first && *p.Episode <= last {
-				found[*p.Episode] = true
-			}
+		found, err := animeOrganizedEpisodes(ctx, raw, source)
+		if err != nil {
+			return false, err
 		}
-		readErr := rows.Err()
-		closeErr := rows.Close()
-		if readErr != nil {
-			return false, readErr
-		}
-		if closeErr != nil {
-			return false, closeErr
-		}
-		if len(found) != last-first+1 {
-			return false, nil
+		for n := first; n <= last; n++ {
+			if !found[n] {
+				return false, nil
+			}
 		}
 	}
 	return true, nil

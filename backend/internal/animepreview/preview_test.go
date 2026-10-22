@@ -204,7 +204,7 @@ func TestPreviewWholeLoadedSelectionAndGaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Items) != 29 || len(second.SelectedIDs) != 79 || second.Summary.Gaps[0] != (Gap{60, 60}) || *second.Summary.LoadedFirst != 30 {
+	if len(second.Items) != 29 || len(second.SelectedIDs) != 79 || second.Summary.Gaps[0] != (Gap{First: 60, Last: 60}) || *second.Summary.LoadedFirst != 30 {
 		t.Fatal("paging/loaded gaps", second)
 	}
 	if err := s.Select([]string{s.Items[0].Release.ID, s.Items[78].Release.ID}, nil, s.GeneratedAt); err != nil {

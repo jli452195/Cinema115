@@ -85,7 +85,7 @@ func TestAnimeDeletePurgesOwnedRecordsAndReplaysOnlyReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"anime_subscriptions", "anime_subscription_sources", "anime_release_decisions", "anime_job_selections", "anime_download_jobs", "anime_drive_operations", "anime_resource_claims", "anime_entries", "anime_releases", "anime_resources", "anime_preview_items", "anime_source_previews", "anime_preview_batches", "anime_source_activity", "anime_subscription_archives"} {
+	for _, table := range []string{"anime_source_progress", "anime_subscriptions", "anime_subscription_sources", "anime_release_decisions", "anime_job_selections", "anime_download_jobs", "anime_drive_operations", "anime_resource_claims", "anime_entries", "anime_releases", "anime_resources", "anime_preview_items", "anime_source_previews", "anime_preview_batches", "anime_source_activity", "anime_subscription_archives"} {
 		var count int
 		if err := f.store.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
 			t.Fatal("owned records remain", table, count, err)

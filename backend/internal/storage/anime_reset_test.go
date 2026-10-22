@@ -51,7 +51,7 @@ func assertAnimeReset(t *testing.T, s *Store) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if len(names) != 19 {
+	if len(names) != 20 {
 		t.Fatal("incomplete current schema", len(names))
 	}
 	for _, name := range names {

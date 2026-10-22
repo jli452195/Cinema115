@@ -1,10 +1,33 @@
 package animepreview
 
-import "sort"
+import (
+	"sort"
+	"strm115/backend/internal/model"
+)
 
-type Gap struct {
-	First int `json:"first"`
-	Last  int `json:"last"`
+type Gap = model.AnimeEpisodeRange
+
+// EpisodeGaps works on distinct numbers and emits compact ranges, without
+// allocating an element for every missing episode.
+func EpisodeGaps(first, last int, episodes map[int]bool) []Gap {
+	numbers := make([]int, 0, len(episodes))
+	for n, present := range episodes {
+		if present && n >= first && n <= last {
+			numbers = append(numbers, n)
+		}
+	}
+	sort.Ints(numbers)
+	out := make([]Gap, 0)
+	for _, n := range numbers {
+		if n > first {
+			out = append(out, Gap{First: first, Last: n - 1})
+		}
+		first = n + 1
+	}
+	if first <= last {
+		out = append(out, Gap{First: first, Last: last})
+	}
+	return out
 }
 
 type Summary struct {
@@ -52,11 +75,7 @@ func (s Source) Summary(now int64) Summary {
 	if len(numbers) > 0 {
 		first, last := numbers[0], numbers[len(numbers)-1]
 		out.LoadedFirst, out.LoadedLast = &first, &last
-		for i := 1; i < len(numbers); i++ {
-			if numbers[i] > numbers[i-1]+1 {
-				out.Gaps = append(out.Gaps, Gap{numbers[i-1] + 1, numbers[i] - 1})
-			}
-		}
+		out.Gaps = EpisodeGaps(first, last, episodes)
 	}
 	return out
 }

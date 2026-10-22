@@ -353,15 +353,58 @@ func (s *Store) ListAnimeSubscriptions(ctx context.Context, f AnimeSubscriptionF
 	if err := rows.Close(); err != nil {
 		return out, fmt.Errorf("close anime list: %w", err)
 	}
-	// Close the parent rows before querying children on the single connection.
+	ids, indexes := make([]string, 0, len(out.Items)), make(map[string]int, len(out.Items))
 	for i := range out.Items {
-		out.Items[i].Sources, err = readAnimeSources(ctx, tx, out.Items[i].ID, false)
+		ids = append(ids, out.Items[i].ID)
+		indexes[out.Items[i].ID] = i
+		out.Items[i].Sources = []model.AnimeSource{}
+	}
+	rawIDs, err := animeJSON(ids)
+	if err != nil {
+		return out, err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT `+animeSourceColumns+` FROM anime_subscription_sources WHERE subscription_id IN (SELECT value FROM json_each(?)) AND status<>'removed' ORDER BY subscription_id,position,id`, rawIDs)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		source, err := scanAnimeSource(rows)
 		if err != nil {
 			return out, err
 		}
+		i := indexes[source.SubscriptionID]
+		out.Items[i].Sources = append(out.Items[i].Sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	if err := rows.Close(); err != nil {
+		return out, err
 	}
 	if err := tx.Commit(); err != nil {
 		return out, fmt.Errorf("finish anime list: %w", err)
 	}
 	return out, nil
+}
+
+func (s *Store) AnimeEntries(ctx context.Context, ids []string) (map[string]model.AnimeEntry, error) {
+	out := make(map[string]model.AnimeEntry, len(ids))
+	raw, err := animeJSON(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+animeEntryColumns+` FROM anime_entries WHERE id IN (SELECT value FROM json_each(?))`, raw)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		entry, err := scanAnimeEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[entry.ID] = entry
+	}
+	return out, rows.Err()
 }

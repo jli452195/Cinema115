@@ -53,20 +53,39 @@ type AnimeSubscriptionView struct {
 
 type AnimeSourceView struct {
 	model.AnimeSource
-	EffectiveState   string               `json:"effectiveState"`
-	BlockedBy        string               `json:"blockedBy"`
-	ReleaseStats     AnimeReleaseStats    `json:"releaseStats"`
-	JobStats         AnimeJobStats        `json:"jobStats"`
-	FileStats        AnimeFileStats       `json:"fileStats"`
-	CompletionStats  AnimeCompletionStats `json:"completionStats"`
-	PermittedActions []AnimeAction        `json:"permittedActions"`
+	Progress         model.AnimeSourceProgress `json:"progress"`
+	EffectiveState   string                    `json:"effectiveState"`
+	BlockedBy        string                    `json:"blockedBy"`
+	ReleaseStats     AnimeReleaseStats         `json:"releaseStats"`
+	JobStats         AnimeJobStats             `json:"jobStats"`
+	FileStats        AnimeFileStats            `json:"fileStats"`
+	CompletionStats  AnimeCompletionStats      `json:"completionStats"`
+	PermittedActions []AnimeAction             `json:"permittedActions"`
 }
 type AnimeSubscriptionList struct {
-	Items       []AnimeSubscriptionView `json:"items"`
+	Items       []AnimeSubscriptionCard `json:"items"`
 	Total       int                     `json:"total"`
 	Page        int                     `json:"page"`
 	PageSize    int                     `json:"pageSize"`
 	DataVersion string                  `json:"dataVersion"`
+}
+
+// Lists are a card projection; historical job/decision counts and episode
+// naming plans belong to the detail endpoint, not every page refresh.
+type AnimeSubscriptionCard struct {
+	ID      string            `json:"id"`
+	Status  string            `json:"status"`
+	Entry   model.AnimeEntry  `json:"entry"`
+	Sources []AnimeSourceCard `json:"sources"`
+}
+
+type AnimeSourceCard struct {
+	ID              string                    `json:"id"`
+	GroupName       *string                   `json:"groupName"`
+	Position        int                       `json:"position"`
+	ConfiguredState string                    `json:"configuredState"`
+	RunWhenEnabled  bool                      `json:"runWhenEnabled"`
+	Progress        model.AnimeSourceProgress `json:"progress"`
 }
 
 func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.AnimeSubscription, settings model.AnimeSettings) (AnimeSubscriptionView, error) {
@@ -97,6 +116,14 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 	if err != nil {
 		return v, err
 	}
+	ids := make([]string, 0, len(sub.Sources))
+	for _, source := range sub.Sources {
+		ids = append(ids, source.ID)
+	}
+	progress, err := s.Store.AnimeSourceProgresses(ctx, ids, true)
+	if err != nil {
+		return v, err
+	}
 	v.Sources = make([]AnimeSourceView, 0, len(sub.Sources))
 	main := false
 	for _, source := range sub.Sources {
@@ -105,7 +132,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		if source.RunWhenEnabled && (source.Status == "draft" || source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil) {
 			v.Readiness.Issues = append(v.Readiness.Issues, "ACTIVE_SOURCE_INCOMPLETE")
 		}
-		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"] + stats["linked"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["pending_verification"]}, PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
+		v.Sources = append(v.Sources, AnimeSourceView{AnimeSource: source, Progress: progress[source.ID], EffectiveState: effective, BlockedBy: blockedBy, ReleaseStats: AnimeReleaseStats{SelectedCount: stats["selected"] + stats["linked"], DismissedCount: stats["dismissed"], PendingVerificationCount: stats["pending_verification"]}, PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}}})
 		v.Sources[len(v.Sources)-1].JobStats, v.Sources[len(v.Sources)-1].FileStats, v.Sources[len(v.Sources)-1].CompletionStats = animeViewCounts(jobs[source.ID])
 		if source.Role == "main" {
 			main = true
@@ -166,15 +193,26 @@ func (s *AnimeAdminService) Subscriptions(ctx context.Context, f storage.AnimeSu
 	if err != nil {
 		return AnimeSubscriptionList{}, err
 	}
-	settings, err := s.Store.GetAnimeSettings(ctx)
+	entryIDs, sourceIDs := make([]string, 0, len(p.Items)), make([]string, 0, len(p.Items)*model.AnimeMaxSources)
+	for _, sub := range p.Items {
+		entryIDs = append(entryIDs, sub.EntryID)
+		for _, source := range sub.Sources {
+			sourceIDs = append(sourceIDs, source.ID)
+		}
+	}
+	entries, err := s.Store.AnimeEntries(ctx, entryIDs)
 	if err != nil {
 		return AnimeSubscriptionList{}, err
 	}
-	out := AnimeSubscriptionList{Total: p.Total, Page: p.Page, PageSize: p.PageSize, Items: make([]AnimeSubscriptionView, 0, len(p.Items))}
+	progress, err := s.Store.AnimeSourceProgresses(ctx, sourceIDs, false)
+	if err != nil {
+		return AnimeSubscriptionList{}, err
+	}
+	out := AnimeSubscriptionList{Total: p.Total, Page: p.Page, PageSize: p.PageSize, Items: make([]AnimeSubscriptionCard, 0, len(p.Items))}
 	for _, sub := range p.Items {
-		v, e := s.subscriptionView(ctx, sub, settings)
-		if e != nil {
-			return out, e
+		v := AnimeSubscriptionCard{ID: sub.ID, Status: sub.Status, Entry: entries[sub.EntryID], Sources: make([]AnimeSourceCard, 0, len(sub.Sources))}
+		for _, source := range sub.Sources {
+			v.Sources = append(v.Sources, AnimeSourceCard{ID: source.ID, GroupName: source.GroupName, Position: source.Position, ConfiguredState: source.Status, RunWhenEnabled: source.RunWhenEnabled, Progress: progress[source.ID]})
 		}
 		out.Items = append(out.Items, v)
 	}

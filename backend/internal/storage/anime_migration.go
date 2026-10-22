@@ -11,6 +11,7 @@ import (
 // initialize suspends FK enforcement on its dedicated connection because retired prototype tables have cyclic references, and restores it on every exit.
 func resetDevelopmentAnime(ctx context.Context, tx *sql.Tx, preserveSettings bool) error {
 	for _, table := range []string{
+		"anime_source_progress",
 		"anime_source_activity", "anime_subscription_archives", "anime_rss_settings",
 		"anime_drive_operations", "anime_job_selections", "anime_download_jobs",
 		"anime_resource_claims", "anime_release_decisions", "anime_baseline_releases",

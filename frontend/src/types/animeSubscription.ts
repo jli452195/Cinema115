@@ -78,8 +78,15 @@ export interface AnimeSubscriptionView {
   completionStats?: { originalSavedCount: number; organizedCount: number }
   readiness?: { ready: boolean; issues: string[] }
   entry: { id: string; bangumiId: string | null; editionKey: string; title: string; originalTitle: string; revision: number; metadata: { coverUrl: string; airDate: string; bangumiUnavailable?: boolean; totalEpisodes?: number | null } }
-  sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null })[]
+  sources: (Omit<AnimeSourceConfig, 'ref' | 'status' | 'expectedRevision'> & { revision: number; configuredState: string; effectiveState?: string; checkedAt?: number | null; health?: string; errorCode?: string | null; nextCheckAt?: number | null; progress?: AnimeSourceProgress })[]
 }
+export interface AnimeSourceProgress {
+  state: 'unknown' | 'ongoing' | 'missing' | 'complete'
+  firstEpisode: number; publishedThrough: number; organizedCount: number; missingCount: number
+  missing?: { first: number; last: number }[]
+}
+export type AnimeSourceCard = Pick<AnimeSubscriptionView['sources'][number], 'id' | 'groupName' | 'position' | 'configuredState' | 'runWhenEnabled' | 'progress'>
+export type AnimeSubscriptionCard = Pick<AnimeSubscriptionView, 'id' | 'status' | 'entry'> & { sources: AnimeSourceCard[] }
 export interface AnimeDownloadJob {
 	organizationPlanned?: boolean
   organization?: { state: string; total: number; renamed: number; moved: number; targetPath: string; updatedAt: number }
@@ -91,7 +98,7 @@ export interface AnimeDownloadJob {
   permittedActions: { reconcile: boolean; retry: boolean }
 }
 export interface AnimeDownloadPage { items: AnimeDownloadJob[]; total: number; page: number; pageSize: number; dataVersion: string }
-export interface AnimeSubscriptionPage { items: AnimeSubscriptionView[]; total: number; page: number; pageSize: number; dataVersion: string }
+export interface AnimeSubscriptionPage { items: AnimeSubscriptionCard[]; total: number; page: number; pageSize: number; dataVersion: string }
 export interface AnimeSaveReceipt { id: string; entryId: string; revision: number; status: string; sourceIds: Record<string, string>; sourceRevisions: Record<string, number>; requiresRepreview: boolean }
 
 export interface AnimeMappingSegment { first: number; last: number | null; sourceBase: number; targetSeason: number; targetBase: number }

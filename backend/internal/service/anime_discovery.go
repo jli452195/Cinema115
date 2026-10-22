@@ -19,8 +19,8 @@ type AnimeRSSReader interface {
 	ReadSource(context.Context, *AnimeSourceBudget, AnimeSourceInput) (AnimeSourceResult, error)
 }
 
-// AnimeDiscoveryRunner owns only bounded RSS discovery and resource metadata
-// verification. Download submission/status/files have separate later workers.
+// AnimeDiscoveryRunner owns bounded RSS discovery, resource verification and
+// local progress summaries. Download submission/status/files use other workers.
 type AnimeDiscoveryRunner struct {
 	Admin    *AnimeAdminService
 	Feeds    AnimeRSSReader
@@ -62,9 +62,8 @@ func (s *AnimeAdminService) wakeAnimeDiscovery() {
 	}
 }
 
-// Run owns both loops and waits for both on cancellation/error. A slow or broken
-// RSS source cannot consume the verifier's capacity. Each lane has one worker,
-// at most four operations per pass, and no detached request goroutines.
+// Run owns all lanes and joins them on cancellation/error. Slow RSS reads cannot
+// consume verifier or local summary capacity. Each lane has one bounded worker.
 func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 	if !r.valid() {
 		return storage.ErrAnimeInvalid
@@ -73,7 +72,7 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 	for _, lane := range []struct {
 		tick func(context.Context) error
 		wake <-chan struct{}
-	}{{r.PollOnce, r.Admin.animeDiscoveryWakeSignal()}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}} {
+	}{{r.PollOnce, r.Admin.animeDiscoveryWakeSignal()}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}, {r.progressOnce, nil}} {
 		lane := lane
 		group.Go(func() error {
 			interval := r.interval
@@ -100,6 +99,21 @@ func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 		})
 	}
 	return group.Wait()
+}
+
+// Local summaries share the existing runner's lifecycle, independently of slow
+// RSS/cloud reads. Coalesced invalidations are processed in bounded batches.
+func (r *AnimeDiscoveryRunner) progressOnce(ctx context.Context) error {
+	for i := 0; i < 8; i++ {
+		found, err := r.Admin.Store.RefreshAnimeSourceProgress(ctx)
+		if err != nil {
+			return fmt.Errorf("refresh anime source progress: %w", err)
+		}
+		if !found {
+			break
+		}
+	}
+	return nil
 }
 
 func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {

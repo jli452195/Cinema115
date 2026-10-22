@@ -14,7 +14,7 @@ import { useAnimeSubscriptionEditor } from '../composables/useAnimeSubscriptionE
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeSourceSpecs } from '../utils/animeSourceForm'
-import { subscriptionLifecycle, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
+import { sourceProgressDescription, subscriptionLifecycle, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -165,6 +165,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           </section>
         </div>
         <div v-if="tab === 'jobs' && local" id="anime-panel-jobs" role="tabpanel" aria-labelledby="anime-tab-jobs">
+          <p v-for="source in local.sources" :key="source.id" class="ae-note">{{ sourceProgressDescription(source) }}</p>
           <AnimeDownloadJobs :key="local.id" :token="token" :id="local.id" :locked="actions.locked.value || saveBusy" :version="jobsVersion" />
         </div>
         </fieldset>

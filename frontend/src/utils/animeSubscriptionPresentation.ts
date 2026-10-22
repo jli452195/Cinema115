@@ -1,17 +1,17 @@
 import type { AnimeCardItem } from '../types/anime'
-import type { AnimeSubscriptionView } from '../types/animeSubscription'
+import type { AnimeSourceCard, AnimeSubscriptionView } from '../types/animeSubscription'
 
 export function subscriptionStatus(status: string) {
   return ({ paused: '已暂停', enabled: '已启用', archived: '已归档' } as Record<string, string>)[status] || '未知状态'
 }
-export function subscriptionCard(view: AnimeSubscriptionView): AnimeCardItem {
+export function subscriptionCard(view: Pick<AnimeSubscriptionView, 'entry'>): AnimeCardItem {
   return { id: view.entry.bangumiId || view.entry.id, title: view.entry.title, originalTitle: view.entry.originalTitle,
     coverUrl: view.entry.metadata?.coverUrl || '', date: view.entry.metadata?.airDate || '', weekday: null, url: '' }
 }
-export function subscriptionSources(view: AnimeSubscriptionView) { return (view.sources || []).filter(s => s.configuredState !== 'removed').sort((a, b) => a.position - b.position) }
-export function subscriptionSummary(view: AnimeSubscriptionView) {
-  const sources = subscriptionSources(view), main = sources.find(s => s.role === 'main'), count = sources.filter(s => s.role === 'standby').length
-  return `主源：${main?.groupName || '待配置'}${count ? ` · 备用 ${count}` : ''}`
+export function sourceProgressDescription(source: Pick<AnimeSourceCard, 'groupName' | 'progress'>) {
+  const p = source.progress
+  const state = p?.state === 'complete' ? '已完成' : p?.state === 'ongoing' ? '进行中' : p?.state === 'missing' ? `缺 ${p.missingCount} 集${p.missing?.length ? `（${p.missing.map(gap => gap.first === gap.last ? `第 ${gap.first} 集` : `第 ${gap.first} 至 ${gap.last} 集`).join('、')}）` : ''}` : '状态待更新'
+  return `${source.groupName || '未命名字幕组'}：${state}`
 }
 export function subscriptionLifecycle(view: AnimeSubscriptionView, now = Date.now()) {
   const life = view.lifecycle

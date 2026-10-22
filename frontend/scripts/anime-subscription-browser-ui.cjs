@@ -18,7 +18,8 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     const meta = () => ({ fetchedAt: Date.now(), expiresAt: Date.now() + 600000, stale: false, dataVersion: 'metadata-v1' })
     const make = i => ({ id: `sub-${i}`, entryId: `entry-${i}`, status: i % 2 ? 'enabled' : 'paused', revision: 1, firstEnabledAt: Date.now()-60000, createdAt: Date.now(), updatedAt: Date.now(), dataVersion: 'local-v1',
       entry: { id: `entry-${i}`, bangumiId: String(1000 + i), editionKey: 'original', title: i === 1 ? '从零开始的异世界生活 第三季 袭击篇' : `番剧订阅 ${i}`, originalTitle: `Original anime ${i}`, revision: 1, metadata: { coverUrl: card(i).coverUrl, airDate: '2026-10-01' } },
-      sources: Array.from({ length: 3 }, (_, n) => ({ id: `source-${i}-${n}`, role: n ? 'standby' : 'main', position: n, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: String(10 + n), groupName: `字幕组${n ? `备用${n}` : '甲'}`, revision: 1, checkedAt: null,
+      sources: Array.from({ length: 5 }, (_, n) => ({ id: `source-${i}-${n}`, role: n ? 'standby' : 'main', position: n, configuredState: 'enabled', runWhenEnabled: true, provider: 'mikan', itemId: '300', groupId: String(10 + n), groupName: n === 4 ? '很长很长的字幕组名称测试联合制作' : `字幕组${n ? `备用${n}` : '甲'}`, revision: 1, checkedAt: null,
+        progress: { state: ['missing','complete','ongoing','unknown','ongoing'][n], firstEpisode: 1, publishedThrough: 10, organizedCount: n === 0 ? 9 : 10, missingCount: n === 0 ? 1 : 0, ...(n === 0 ? { missing: [{ first: 7, last: 7 }] } : {}) },
         binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'range', first: 25, last: 64 }, chapterCorrespondence: { sourceEpisode: 25, chapterEpisode: 1 } },
         rules: { schemaVersion: 1, match: ['(?i)1080p', '简体'], exclude: [], minimumEpisode: 25 } })),
       form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] } })
@@ -39,7 +40,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
         else {
           const q = url.searchParams.get('keyword') || '', filter = url.searchParams.get('status'), page = Number(url.searchParams.get('page') || 1)
           const items = state.items.filter(item => (!filter || item.status === filter) && (!q || item.entry.title.includes(q) || item.entry.originalTitle.includes(q)))
-          data = { items: items.slice((page - 1) * 20, page * 20), total: items.length, page, pageSize: 20, dataVersion: 'local-v1' }
+          data = { items: items.slice((page - 1) * 20, page * 20).map(({ id, status, entry, sources }) => ({ id, status, entry, sources: sources.map(({ id, groupName, position, configuredState, runWhenEnabled, progress: { missing, ...progress } }) => ({ id, groupName, position, configuredState, runWhenEnabled, progress })) })), total: items.length, page, pageSize: 20, dataVersion: 'local-v1' }
         }
       } else if (/\/subscriptions\/[^/]+$/.test(endpoint)) {
         const id = endpoint.split('/').pop(), item = state.items.find(s => s.id === id)
@@ -74,6 +75,22 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     assert.equal(await page.locator('[data-subscription-id]').count(),20)
     assert.equal(count('/subscriptions'),1)
     assert.equal(calls.some(c=>/\/subscriptions\//.test(c.endpoint)),false)
+    const pills = page.locator('[data-subscription-id="sub-1"] .as-source-pill')
+    assert.equal(await pills.count(), 5)
+    assert.deepEqual(await pills.evaluateAll(elements => elements.map(el => el.dataset.state)), ['missing','complete','ongoing','unknown','ongoing'])
+    assert.match(await page.locator('[data-subscription-id="sub-1"]').getAttribute('aria-label'), /字幕组甲：缺 1 集/)
+    const hostCard = page.locator('[data-subscription-id="sub-1"]')
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      await page.mouse.move(0, 0)
+      const color = await hostCard.locator('.anime-card-title').evaluate(el => getComputedStyle(el).color)
+      await hostCard.hover()
+      assert.equal(await hostCard.locator('.anime-card-title').evaluate(el => getComputedStyle(el).color), color, 'subscription title keeps its neutral color on hover')
+      assert.equal(await hostCard.locator('.ambient-glow').count(), 0, 'subscription poster has no blue ambient animation')
+    }
+    await page.evaluate(()=>document.documentElement.classList.remove('dark'))
+    await page.mouse.move(0,0)
+    await page.screenshot({ path:'test-results/anime-subscription-pills-desktop.png' })
     await page.getByRole('button',{name:'订阅下一页'}).click()
     await page.locator('[data-subscription-id="sub-21"]').waitFor()
     assert.ok(page.url().endsWith('?page=2'))
@@ -94,6 +111,8 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     const dialog=page.locator('dialog[open]')
     await dialog.getByRole('heading',{name:'番剧订阅 21',exact:true}).waitFor()
     assert.equal(count('/subscriptions'),before)
+    await dialog.getByRole('tab',{name:'下载记录',exact:true}).click()
+    await dialog.getByText('字幕组甲：缺 1 集（第 7 集）',{exact:true}).waitFor()
     await dialog.getByRole('tab',{name:/备用 RSS/}).click()
     await dialog.getByRole('button',{name:/字幕组备用1/}).click()
     assert.equal(await dialog.getByRole('button',{name:/字幕组备用1/}).getAttribute('aria-expanded'),'true')
@@ -160,6 +179,17 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
 
     const touch=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true})
     await touch.go()
+    const layout = await touch.page.locator('[data-subscription-id="sub-1"]').evaluate(el => {
+      const poster=el.querySelector('.anime-poster').getBoundingClientRect(), badge=el.querySelector('.as-badge').getBoundingClientRect()
+      return [...el.querySelectorAll('.as-source-pill')].every(p => { const b=p.getBoundingClientRect(); return b.x>=poster.x && b.right<=poster.right && b.top>badge.bottom && b.bottom<=poster.bottom })
+    })
+    assert.ok(layout,'five pills fit within a 320px poster without overlapping the scheduling badge')
+    await touch.page.screenshot({path:'test-results/anime-subscription-pills-mobile-light.png'})
+    await touch.page.emulateMedia({reducedMotion:'reduce'})
+    assert.equal(await touch.page.locator('.as-source-pill').first().evaluate(el=>getComputedStyle(el).transform),'none')
+    await touch.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await touch.page.screenshot({path:'test-results/anime-subscription-pills-mobile-dark.png'})
+    await touch.page.evaluate(()=>document.documentElement.classList.remove('dark'))
     await touch.page.locator('[data-subscription-id="sub-1"]').tap()
     const td=touch.page.locator('dialog[open]')
     await touch.page.locator('.ac-identity').waitFor()

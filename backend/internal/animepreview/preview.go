@@ -163,11 +163,27 @@ func evaluateCompiled(binding model.AnimeBinding, rules model.AnimeRules, compil
 // MatchesRelease reuses the preview's metadata rules at the execution boundary.
 // It does not grant a selection or verify the resource identity.
 func MatchesRelease(binding model.AnimeBinding, rules model.AnimeRules, release model.AnimeRelease) (bool, error) {
-	item := Item{Release: release}
-	if err := evaluate(binding, rules, &item); err != nil {
+	match, err := CompileMatcher(binding, rules)
+	if err != nil {
 		return false, err
 	}
-	return item.Selectable, nil
+	return match(release)
+}
+
+// CompileMatcher shares the execution rules without recompiling expressions
+// for each row of a local coverage check.
+func CompileMatcher(binding model.AnimeBinding, rules model.AnimeRules) (func(model.AnimeRelease) (bool, error), error) {
+	compiled, err := animeparse.CompileRules(rules)
+	if err != nil {
+		return nil, err
+	}
+	return func(release model.AnimeRelease) (bool, error) {
+		item := Item{Release: release}
+		if err := evaluateCompiled(binding, rules, compiled, &item); err != nil {
+			return false, err
+		}
+		return item.Selectable, nil
+	}, nil
 }
 
 // Build interprets one already verified single-group page. Release IDs are
