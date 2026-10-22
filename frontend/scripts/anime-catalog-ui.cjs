@@ -151,7 +151,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await cross.page.locator('.ac-identity').waitFor()
     await cross.page.getByRole('button',{name:'选择资源',exact:true}).click()
     await cross.page.getByRole('button',{name:/Kirara Fantasia/}).click()
-    await cross.page.getByRole('checkbox',{name:/^全部规格/}).check()
+    await cross.page.getByRole('radio',{name:/^全部规格/}).check()
     await cross.page.getByRole('button',{name:'使用此来源',exact:true}).click()
     await cross.page.getByRole('button',{name:'保存',exact:true}).click()
     await cross.page.locator('dialog[open]').waitFor({state:'detached'})

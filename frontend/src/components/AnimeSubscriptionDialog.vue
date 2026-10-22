@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import AnimeSourceForm from './AnimeSourceForm.vue'
+import AnimeProviderBrand from './AnimeProviderBrand.vue'
 import AnimeNamingTarget from './AnimeNamingTarget.vue'
 import AnimeChapterEpisodesPopover from './AnimeChapterEpisodesPopover.vue'
 import AnimeReleasePreview from './AnimeReleasePreview.vue'
@@ -13,7 +14,7 @@ import AnimeStorageSettingsDialog from './AnimeStorageSettingsDialog.vue'
 import { useAnimeSubscriptionEditor } from '../composables/useAnimeSubscriptionEditor'
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
-import { animeProviderName, animeSourceSpecs } from '../utils/animeSourceForm'
+import { animeProviderName, animeSourceSpecs, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import { sourceProgressDescription, subscriptionLifecycle, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
@@ -25,6 +26,7 @@ const { sources, activeRef, active, subject, settings, local, loading, loadError
 const shell = ref<InstanceType<typeof AnimeFloatingDialog>>()
 const tab = ref<'basic' | 'backup' | 'jobs'>('basic'), previewOpen = ref(false), settingsOpen = ref(false), childOpen = ref(false), imageFailed = ref(false)
 const discard = ref(false), confirmRemove = ref(false), jobsVersion = ref(0)
+const pendingBackup = ref<SourceForm>()
 const reloadConfirm = ref(false)
 const totalID = 'anime-archive-total-' + useId()
 const previewRef = ref(''), previewButton = ref<HTMLButtonElement>()
@@ -82,7 +84,8 @@ watch(() => active.value?.ruleError, async error => {
 })
 watch(() => subject.value?.coverUrl, () => { imageFailed.value = false })
 watch(confirmRemove, async value => { await nextTick(); (value ? cancelDeleteButton : deleteButton).value?.focus({ preventScroll: true }) })
-function addBackup() { editor.addSource() }
+function addBackup() { if (!locked.value && !previewBusy.value && !pendingBackup.value && sources.value.length < 5) pendingBackup.value = newAnimeSource('standby', subject.value?.title, main.value?.provider || 'mikan') }
+function confirmBackup(source: SourceForm) { editor.addSource(source); pendingBackup.value = undefined }
 function chooseBackup(id: string) { activeRef.value = activeRef.value === id ? '' : id }
 function control(action: string, label: string) { if (local.value && !actionLocked.value) void actions.execute(`subscriptions/${local.value.id}/${action}`, { expectedRevision: local.value.revision }, label) }
 const allowed = (action: string) => !!local.value?.permittedActions?.some(a => a.name === action && a.allowed)
@@ -107,9 +110,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           <div class="ac-poster"><img v-if="animeImageURL(subject.coverUrl) && !imageFailed" :src="animeImageURL(subject.coverUrl)" alt="" referrerpolicy="no-referrer" @error="imageFailed = true" /><IconPhotoOff v-else :size="22" aria-hidden="true" /></div>
           <div class="ac-identity-copy"><h3>{{ subject.title }}</h3><p><span v-if="subject.id">Bangumi {{ subject.id }}</span><span v-if="editor.naming.target.value">TMDB {{ editor.naming.target.value.tmdbId }}</span><span>{{ local ? subscriptionStatus(local.status) : '保存后启用' }}</span></p></div>
         </div>
-        <div v-if="subject.id && !subject.bangumiUnavailable" class="ac-chapter-action">
-          <AnimeChapterEpisodesPopover :token="token" :bangumi-id="subject.id" :total="editor.defaultTotal.value" :target="editor.naming.target.value" :target-busy="editor.naming.busy.value || editor.naming.searching.value" />
-        </div>
+        <div v-if="subject.id && !subject.bangumiUnavailable" class="ac-chapter-action"><AnimeChapterEpisodesPopover :token="token" :bangumi-id="subject.id" /></div>
         <div class="ac-tabs" role="tablist" aria-label="订阅配置">
           <button id="anime-tab-basic" type="button" role="tab" :aria-selected="tab === 'basic'" aria-controls="anime-panel-basic" @click="tab = 'basic'">基本</button>
           <button id="anime-tab-backup" type="button" role="tab" :aria-selected="tab === 'backup'" aria-controls="anime-panel-backup" @click="tab = 'backup'">备用 RSS <small>{{ backups.length }}</small></button>
@@ -123,7 +124,6 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button></div>
       <template v-else-if="subject">
         <div v-if="local" class="as-actions ac-controls" aria-label="订阅管理" :title="dirty ? '保存修改后可操作订阅状态' : undefined">
-          <span class="ae-note">{{ subscriptionStatus(local.status) }}</span>
           <button v-if="allowed('pause') && local.status === 'enabled'" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('pause', '暂停订阅')">暂停订阅</button>
           <button v-if="allowed('resume') && ['paused', 'archived'].includes(local.status)" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('resume', '继续订阅')">继续订阅</button>
           <button v-if="allowed('archive') && local.status !== 'archived'" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('archive', '归档订阅')">归档</button>
@@ -133,20 +133,21 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
         <fieldset class="ac-panels" :disabled="actions.locked.value || confirmRemove">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
           <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
-          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked" />
-          <section class="ac-total-section">
-              <div class="ac-total">
-                <label :for="totalID" class="ae-label">总集数</label>
-                <div class="ac-total-input">
-                  <input :id="totalID" v-model="editor.archiveTotal.value" type="text" inputmode="numeric" maxlength="5" :placeholder="editor.defaultTotal.value ? String(editor.defaultTotal.value) : '未定'" :aria-describedby="totalID + '-hint'" :disabled="locked" />
-                  <button v-if="editor.archiveTotal.value" type="button" class="ae-icon" aria-label="清空手动总集数，恢复 Bangumi 数据" :disabled="locked" @click="editor.archiveTotal.value = ''"><IconX :size="15" aria-hidden="true" /></button>
+          <AnimeNamingTarget :naming="editor.naming" :disabled="locked || !!subject.needsSource">
+            <template #parameters>
+              <section class="ac-total-section">
+                <div class="ac-total">
+                  <label :for="totalID" class="ae-label">总集数</label>
+                  <div class="ac-total-input">
+                    <input :id="totalID" v-model="editor.archiveTotal.value" type="text" inputmode="numeric" maxlength="5" :placeholder="editor.defaultTotal.value ? String(editor.defaultTotal.value) : '未定'" :aria-describedby="totalID + '-hint'" :disabled="locked" />
+                    <button v-if="editor.archiveTotal.value" type="button" class="ae-icon" aria-label="清空手动总集数，恢复 Bangumi 数据" :disabled="locked" @click="editor.archiveTotal.value = ''"><IconX :size="15" aria-hidden="true" /></button>
+                  </div>
+                  <span class="ac-total-unit">集</span>
                 </div>
-                <span class="ac-total-unit">集</span>
-              </div>
-              <div class="ac-total-note">
-                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '用于判断是否已整理齐集。' : editor.defaultTotal.value ? '默认采用 Bangumi 的 ' + editor.defaultTotal.value + ' 集，可修改。' : '集数未定，可稍后补充。' }}</p>
-              </div>
-          </section>
+                <p :id="totalID + '-hint'" class="ae-note ac-total-note">{{ editor.archiveTotal.value ? '用于判断是否已整理齐集。' : editor.defaultTotal.value ? 'Bangumi 默认 ' + editor.defaultTotal.value + ' 集' : '集数未定，可稍后补充。' }}</p>
+              </section>
+            </template>
+          </AnimeNamingTarget>
 
           <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
@@ -155,7 +156,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
           <div class="ac-backup-heading"><p class="ae-note">每个来源使用自己的编号映射，独立检查和下载。</p><button type="button" class="ae-button" :disabled="locked || !!previewBusy || sources.length >= 5" @click="addBackup"><IconPlus :size="16" />添加备用</button></div>
           <p v-if="!backups.length" class="ac-empty">暂无备用 RSS，可添加其他字幕组的版本。</p>
           <section v-for="source in backups" :key="source.ref" class="ac-backup">
-            <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
+            <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><AnimeProviderBrand v-if="source.groupId" :provider="source.provider" compact class="ae-source-brand" /><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
             <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
           </section>
         </div>
@@ -176,42 +177,62 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
       <AnimeReleasePreview v-if="previewSource" :key="previewSource.ref" :source="previewSource" :state="previewState(previewSource.ref)" :valid="editor.validPreview(previewSource)" :busy="!!previewBusy" :disabled="locked" :now="now" :settings-available="!!settings" :naming-target="editor.naming.target.value" :naming-busy="editor.naming.busy.value" :organize-path="settings?.settings.organizePath" @generate="editor.runPreview(previewSource)"><template #source><SelectMenu v-model="previewRef" :options="previewSourceOptions" :disabled="!!previewBusy" label="来源" variant="anime" class="ac-preview-source" /></template></AnimeReleasePreview>
     </div><template #footer><div class="ac-preview-close"><span class="ae-note">预览只查看匹配和命名，不创建下载任务。</span><button type="button" class="ae-button" @click="closePreview">返回配置</button></div></template>
   </AnimeFloatingDialog>
+  <AnimeSourceForm v-if="pendingBackup" :source="pendingBackup" selection-only :chapter-title="subject?.title || ''" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="confirmBackup" @child-open="childOpen = $event" @close="pendingBackup = undefined" />
   <AnimeStorageSettingsDialog v-if="settingsOpen" :token="token" @close="settingsOpen = false" @loaded="settings = $event; settingsError = ''" @changed="settings = $event; settingsError = ''" />
 </template>
 
 <style scoped>
-.ac-header-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 8px 16px; }
-.ac-identity { display: flex; grid-column: 1; grid-row: 1; min-width: 0; align-items: center; gap: 14px; margin: 0; }
+.ac-header-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 8px; }
+.ac-identity { display: flex; grid-column: 1 / -1; grid-row: 1; min-width: 0; align-items: center; gap: 14px; margin: 0; }
+.ac-chapter-action { grid-column: 2; grid-row: 2; justify-self: end; }
 .ac-identity-copy { flex: 1; min-width: 0; }
-.ac-chapter-action { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
-.ac-poster { flex: none; width: 46px; height: 64px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: rgb(148 163 184 / .12); }
+.ac-poster { flex: none; width: 36px; height: 50px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: rgb(148 163 184 / .12); }
 .ac-poster img { width: 100%; height: 100%; object-fit: cover; }
-.ac-identity h3 { font-size: 17px; font-weight: 600; line-height: 1.4; }
+.ac-identity h3 { font-size: 15px; font-weight: 600; line-height: 1.4; }
 .ac-identity p { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; font-size: 11px; color: var(--floating-surface-muted); }
-.ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; min-height: 44px; gap: 6px; }
-.ac-tabs button { padding: 9px 18px; border-radius: 10px; font-size: 13px; color: var(--floating-surface-muted); white-space: nowrap; }
+.ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; gap: 4px; }
+.ac-tabs button { min-height: var(--ae-control-height); padding: 5px 13px; border-radius: 8px; font-size: 12px; color: var(--floating-surface-muted); white-space: nowrap; }
 .ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
 :global(.dark) .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
 .ac-tabs small { margin-left: 4px; opacity: .75; }
 .ac-editor { width: 100%; max-width: none; margin: 0; }
 .ac-panels { min-width: 0; margin: 0; padding: 0; border: 0; }
-.ac-controls { align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.ac-controls > span { margin-right: auto; }
+.ac-controls { align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .ac-delete { color: #b91c1c; }
 :global(.dark) .ac-delete { color: #fca5a5; }
-.ac-editor :deep(.ae-naming-target) { margin: 0 0 12px; padding: 0 0 12px; background: none; border: 0; box-shadow: none; }
+.ac-editor :deep(.ae-naming-target) { margin: 0 0 16px; padding: 0; background: none; border: 0; box-shadow: none; }
+.ac-editor :deep(.ae-target-controls) { align-items: start; gap: 8px 18px; margin-top: 8px; }
+.ac-editor :deep(.ae-target-season) { gap: 8px; }
+.ac-editor :deep(.ae-target-season-menu) { width: 230px; }
+.ac-editor :deep(.ae-target-options) { margin-left: auto; }
+.ac-editor :deep(.anime-source-form) { padding: 0; }
+.ac-editor :deep(.anime-editor-section-heading) { align-items: center; margin-bottom: 6px; }
+.ac-editor :deep(.anime-editor-section-heading p) { margin-top: 2px; font-size: 11px; }
+.ac-editor :deep(.ae-source-summary) { padding: 10px 12px; border-radius: 10px; }
+.ac-editor :deep(.ae-summary-title) { display: flex; align-items: center; gap: 10px; }
+.ac-editor :deep(.ae-summary-title h3) { overflow-wrap: anywhere; }
+.ac-editor :deep(.ae-choose-source) { min-height: 76px; gap: 10px; padding: 12px; }
+.ac-editor :deep(.ae-fields) { gap: 10px; padding-top: 12px; }
+.ac-editor :deep(.ae-field) { gap: 5px; }
+.ac-editor :deep(.ae-pair) { gap: 12px; }
+.ac-editor :deep(.ae-patterns textarea) { min-height: 68px; line-height: 1.55; }
+.ac-editor :deep(.ae-offset) { display: flex; align-items: center; max-width: none; gap: 10px; }
+.ac-editor :deep(.ae-offset input) { width: 88px; font-variant-numeric: tabular-nums; }
+.ac-editor :deep(.ae-source-naming .ae-advanced) { margin-top: 4px; }
+.ac-editor :deep(.ae-minimum) { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ac-editor :deep(.ae-minimum input) { width: 88px; }
+.ac-editor :deep(.ae-parser-fields) { grid-template-columns: minmax(0, 1fr) 100px; margin-top: 0; }
 .ac-editor :deep(.ae-source-summary), .ac-editor :deep(.ae-choose-source) { background: rgb(148 163 184 / .06); }
 .ac-metadata-note { margin: 0 0 14px; }
 .ac-total { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ac-total > .ae-label, .ac-total-unit { flex: none; }
 .ac-total-unit { font-size: 12px; color: var(--ae-muted); }
-.ac-total-input { position: relative; width: 100px; flex: none; }
-.anime-editor .ac-total-input input { padding-right: 44px; font-variant-numeric: tabular-nums; }
-.ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: 44px; height: 44px; min-height: 44px; border-radius: 9px; }
-.ac-total-section { margin-bottom: 18px; }
-.ac-total-note { margin-top: 6px; }
-.ac-total-note .ae-note { font-size: 11px; }
-.ac-storage { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--floating-surface-muted); }
+.ac-total-input { position: relative; width: 98px; flex: none; }
+.anime-editor .ac-total-input input { --ae-control-padding: 6px var(--ae-control-height) 6px 10px; font-variant-numeric: tabular-nums; }
+.ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: var(--ae-control-height); height: var(--ae-control-height); min-height: var(--ae-control-height); }
+.ac-total-section { min-width: 0; }
+.ac-total-note { margin-top: 3px; font-size: 11px; }
+.ac-storage { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--floating-surface-muted); }
 .ac-storage > div { flex: 1; min-width: 0; font-size: 11px; }
 .ac-storage p { overflow-wrap: anywhere; line-height: 1.8; }
 .ac-storage span { margin-right: 10px; opacity: .75; }
@@ -220,7 +241,8 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-backup { margin-bottom: 12px; border-radius: 14px; background: rgb(148 163 184 / .05); }
 .ac-backup-row { width: 100%; text-align: left; padding: 15px; }
 .ac-backup-row > span:first-child { flex: 1; min-width: 0; }
-.ac-backup-row strong { display: block; font-size: 13px; font-weight: 500; }
+.ac-backup-row strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.ac-backup-row > svg, .ac-map { flex: none; }
 .ac-backup-row small { display: block; font-size: 11px; color: var(--floating-surface-muted); margin-top: 4px; }
 .ac-backup :deep(.anime-source-form) { padding: 3px 15px 18px; }
 .ac-map { font-size: 11px; color: var(--floating-surface-muted); }
@@ -238,6 +260,15 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-preview :deep(.ae-preview > *) { flex-shrink: 0; }
 .ac-preview :deep(.ae-release-list) { flex: 1; min-height: 0; max-height: none; }
 .ac-preview-source { flex: 0 1 310px; min-width: 0; font-size: 12px; }
-@media(max-width: 639px) { .ac-header-grid { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 8px; } .ac-identity { grid-column: 1 / -1; grid-row: 1; } .ac-chapter-action { grid-column: 2; grid-row: 2; } .ac-tabs { grid-column: 1; grid-row: 2; gap: 3px; } .ac-tabs button { padding-inline: 6px; font-size: 12px; } .ac-tabs small { display: none; } .ac-footer { align-items: stretch; flex-direction: column; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; } .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; } }
-@media(max-width: 374px) { .ac-chapter-action :deep(.ac-chapter-reference-button > span) { display: none; } }
+@media(max-width: 639px) {
+  .ac-tabs { gap: 3px; } .ac-tabs button { padding-inline: 10px; } .ac-tabs small { display: none; }
+  .ac-editor :deep(.ae-target-season) { flex-basis: 100%; flex-wrap: nowrap; }
+  .ac-editor :deep(.ae-target-season-menu) { width: auto; flex: 1; }
+  .ac-editor :deep(.ae-target-options) { margin-left: 0; }
+  .ac-editor :deep(.ae-patterns textarea) { min-height: 82px; }
+  .ac-editor :deep(.ae-summary-title) { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px 10px; }
+  .ac-footer { align-items: stretch; flex-direction: column; gap: 8px; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; }
+  .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; }
+}
+@media(max-width: 639px), (pointer: coarse) { .ac-total-input { width: 116px; } }
 </style>

@@ -27,8 +27,9 @@ watch(() => props.naming.target.value?.tmdbId, () => { advancedOpen.value = fals
       <div class="ae-target-identity"><span class="ae-label">整理目标</span><h3 v-if="naming.target.value">{{ naming.target.value.title }} <small v-if="naming.target.value.year">({{ naming.target.value.year }})</small></h3><p v-else class="ae-note">{{ naming.searching.value || naming.busy.value ? '正在匹配 TMDB 作品与目标季…' : '关联 TMDB 后，按对应季集标准命名整理。' }}</p></div>
       <button type="button" class="ae-button ae-target-change" :disabled="disabled || naming.busy.value" :aria-expanded="naming.picker.value" @click="naming.picker.value = !naming.picker.value"><IconAdjustmentsHorizontal :size="16" aria-hidden="true" />{{ naming.target.value ? '更换目标' : '关联 TMDB' }}</button>
     </div>
-    <div v-if="naming.target.value" class="ae-target-controls">
+    <div class="ae-target-controls">
       <div v-if="naming.target.value" class="ae-target-season"><span class="ae-label">目标季</span><SelectMenu class="ae-target-season-menu" :model-value="String(naming.target.value.season)" :options="seasonOptions" label="目标季" variant="anime" :disabled="disabled || naming.busy.value" @change="naming.load(naming.target.value!.tmdbId, Number($event), naming.target.value!.groupId)" /></div>
+      <slot name="parameters" />
       <button v-if="naming.target.value" :id="`${targetID}-options-button`" type="button" class="ae-button ae-target-options" :disabled="disabled || naming.busy.value" :aria-expanded="advancedOpen" :aria-controls="`${targetID}-options`" @click="toggleAdvanced"><span class="ae-target-group-name">{{ naming.target.value.groupId ? naming.target.value.groupName : '默认编排' }}</span><span>更多</span><IconChevronDown :size="15" :class="{ 'is-open': advancedOpen }" aria-hidden="true" /></button>
     </div>
     <div v-if="naming.target.value" v-show="advancedOpen" :id="`${targetID}-options`" class="ae-target-advanced" role="region" :aria-labelledby="`${targetID}-options-button`">

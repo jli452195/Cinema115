@@ -2,9 +2,11 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { IconArrowLeft, IconCheck, IconChevronDown, IconChevronRight, IconExternalLink, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
+import AnimeProviderButton from './AnimeProviderButton.vue'
+import { animeProviders, type AnimeSourceProvider } from '../types/animeCatalog'
 import { animeProviderName, animeOriginLabel, animeSourceURL, animeBindingConfirmed, confirmAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; now: number }>()
-const emit = defineEmits<{ close: []; search: []; choose: [id: string, title: string]; group: []; sample: []; confirm: [] }>()
+const emit = defineEmits<{ close: []; provider: [provider: AnimeSourceProvider]; search: []; choose: [id: string, title: string]; group: []; sample: []; confirm: [] }>()
 const step = ref<'items' | 'groups' | 'rules'>(props.source.groupId ? 'rules' : props.source.itemId ? 'groups' : 'items')
 const heading = ref<HTMLElement>(), body = ref<HTMLElement>(), error = ref(''), errorField = ref('')
 const shell = ref<InstanceType<typeof AnimeFloatingDialog>>()
@@ -52,6 +54,7 @@ async function confirm() {
 <template>
   <AnimeFloatingDialog ref="shell" :title="`选择${animeProviderName(source.provider)}来源`" close-label="关闭来源选择器" @close="$emit('close')" @scroll="top = $event">
     <div ref="body" class="anime-editor ae-picker">
+      <div class="ae-source-sites" role="group" aria-label="选择 RSS 站点"><AnimeProviderButton v-for="site in animeProviders" :key="site.id" :provider="site.id" :name="site.name" :available="site.available && !disabled" :selected="source.provider === site.id" compact @select="site.id !== source.provider && $emit('provider', site.id)" /></div>
       <nav class="ae-picker-nav" aria-label="来源选择步骤"><button v-if="step !== 'items' && !(step === 'rules' && source.lockedGroup)" type="button" class="ae-icon" :aria-label="step === 'rules' ? `返回${partyLabel}` : '返回资源条目'" :disabled="disabled" @click="go(step === 'rules' ? 'groups' : 'items')"><IconArrowLeft :size="18" /></button><div><p class="ae-note">{{ chapterTitle }}</p><h3 ref="heading" tabindex="-1">{{ step === 'items' ? '选择资源条目' : step === 'groups' ? (source.provider === 'garden' ? '选择发布方' : '选择字幕组') : '选择资源规格' }}</h3></div><span class="ae-note">{{ step === 'items' ? '1' : step === 'groups' ? '2' : '3' }} / 3</span></nav>
       <p v-if="source.searchError" class="ae-error" role="status">{{ source.searchError }}</p><p v-if="source.cooldown > now" class="ae-note">来源冷却中，请 {{ Math.ceil((source.cooldown - now) / 1000) }} 秒后重试。</p>
       <fieldset :disabled="disabled" :aria-busy="source.searchBusy" class="ae-picker-content">

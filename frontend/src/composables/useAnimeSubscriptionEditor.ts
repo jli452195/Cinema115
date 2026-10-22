@@ -172,9 +172,10 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     catch (reason) { if (current === generation) settingsError.value = animeConfigMessage(reason) }
     finally { if (current === generation) settingsBusy.value = false }
   }
-  function addSource() {
-    if (locked.value || previewBusy.value || sources.value.length >= 5) return
-    const source = newAnimeSource('standby', subject.value?.title, sources.value[0]?.provider || 'mikan'); sources.value.push(source); activeRef.value = source.ref
+  function addSource(source: SourceForm) {
+    if (locked.value || previewBusy.value || sources.value.length >= 5 || source.role !== 'standby' || !animeSourceReady(source)) return
+    cancelSourceEdit(source); source.searchBusy = false; source.sampleBusy = false
+    sources.value.push(source); activeRef.value = source.ref
   }
   function removeSource(source: SourceForm) {
     if (locked.value || previewBusy.value) return
@@ -213,6 +214,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function cancelSourceEdit(source: SourceForm) {
     searchControllers.get(source.ref)?.abort(); sampleControllers.get(source.ref)?.abort()
+    searchControllers.delete(source.ref); sampleControllers.delete(source.ref)
   }
   function applySource(source: SourceForm, candidate: SourceForm) {
     if (locked.value || previewBusy.value) return

@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { IconListNumbers, IconX } from '@tabler/icons-vue'
-import type { AnimeNamingTarget } from '../types/animeSubscription'
 import AnimeChapterEpisodes from './AnimeChapterEpisodes.vue'
 
-const props = defineProps<{ token: string; bangumiId: string; total?: number | null; target?: AnimeNamingTarget; targetBusy: boolean }>()
+const props = defineProps<{ token: string; bangumiId: string }>()
 const button = ref<HTMLButtonElement>(), panel = ref<HTMLElement>()
 const opened = ref(false), mounted = ref(false), restoreFocus = ref(false)
 const panelID = 'anime-chapter-map-' + useId()
@@ -89,14 +88,15 @@ onBeforeUnmount(() => {
     ref="button"
     type="button"
     class="ae-button ac-chapter-reference-button"
-    aria-label="查看篇章集数与 TMDB 映射"
+    aria-label="查看 Bangumi 逐集列表"
+    title="Bangumi 集数"
     aria-haspopup="dialog"
     :aria-expanded="opened"
     :aria-controls="mounted ? panelID : undefined"
     @click="toggle"
   >
     <IconListNumbers :size="16" aria-hidden="true" />
-    <span>集数参考<span v-if="total" class="ac-chapter-total"> · {{ total }} 集</span></span>
+    <span>Bangumi 集数</span>
   </button>
   <section
     v-if="mounted"
@@ -104,37 +104,34 @@ onBeforeUnmount(() => {
     ref="panel"
     popover="auto"
     role="dialog"
-    aria-label="篇章集数对应关系"
+    aria-label="Bangumi 逐集列表"
     class="floating-surface ac-chapter-popover"
     :style="panelStyle"
     @toggle="onToggle"
   >
     <header class="ac-chapter-popover-header">
-      <h3>篇章集数映射</h3>
-      <button type="button" class="ae-icon ac-chapter-popover-close" aria-label="关闭集数映射" @click="close(true)"><IconX :size="17" aria-hidden="true" /></button>
+      <h3>Bangumi 逐集列表</h3>
+      <button type="button" class="ae-icon ac-chapter-popover-close" aria-label="关闭 Bangumi 集数" @click="close(true)"><IconX :size="17" aria-hidden="true" /></button>
     </header>
-    <p class="ac-chapter-popover-hint">仅核对 Bangumi 与 TMDB 集号，不代表下载进度。</p>
-    <div class="ac-chapter-popover-body">
-      <AnimeChapterEpisodes :token="token" :bangumi-id="bangumiId" :target="target" :target-busy="targetBusy" :active="opened" />
+    <p class="ac-chapter-popover-hint">Bangumi 收录信息，仅供参考。</p>
+    <div class="ac-chapter-popover-body" tabindex="0" aria-label="滚动查看 Bangumi 集数">
+      <AnimeChapterEpisodes :token="token" :bangumi-id="bangumiId" :active="opened" />
     </div>
   </section>
 </template>
 
 <style scoped>
-.ac-chapter-reference-button { min-height: 40px; padding-inline: 11px; }
-.ac-chapter-total { font-variant-numeric: tabular-nums; }
+.ac-chapter-reference-button { min-height: var(--ae-control-height); flex: none; padding-inline: 9px; font-size: 12px; }
 .ac-chapter-popover[popover] { position: fixed; inset: auto; margin: 0; padding: 14px; overflow: clip; border-radius: 14px; color: var(--floating-surface-text); }
 .ac-chapter-popover:popover-open { display: flex; flex-direction: column; }
 .ac-chapter-popover-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ac-chapter-popover-header h3 { font-size: 13px; font-weight: 600; }
-.ac-chapter-popover-close { min-height: 36px; width: 36px; border-radius: 9px; }
+.ac-chapter-popover-close { min-height: var(--ae-control-height); width: var(--ae-control-height); border-radius: 9px; }
 .ac-chapter-popover-hint { flex: none; margin: 1px 0 10px; color: var(--floating-surface-muted); font-size: 11px; line-height: 1.7; }
 .ac-chapter-popover-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.ac-chapter-popover-body :deep(.ae-episode-actions .ae-link) { min-height: 40px; }
+.ac-chapter-popover-body:focus-visible { outline: 2px solid var(--ae-blue); outline-offset: 2px; }
 @media (max-width: 639px) {
-  .ac-chapter-reference-button { min-height: 44px; padding-inline: 8px; gap: 5px; font-size: 11px; }
-  .ac-chapter-total { display: none; }
   .ac-chapter-popover[popover] { padding: 12px; }
-  .ac-chapter-popover-close { width: 40px; min-height: 40px; }
 }
+@media (max-width: 479px) { .ac-chapter-reference-button { width: var(--ae-control-height); padding: 0; justify-content: center; } .ac-chapter-reference-button > span { display: none; } }
 </style>
