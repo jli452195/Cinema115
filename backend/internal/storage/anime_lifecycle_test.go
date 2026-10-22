@@ -199,19 +199,17 @@ func TestAnimeCompletionRequiresEveryEpisodeAndSubtitleGroup(t *testing.T) {
 func TestAnimeCompletionRangeNeverInfersChapterFromTMDBSeasonLength(t *testing.T) {
 	source := animeMainSource("main", "45")
 	s := model.AnimeSource{ID: "source", Binding: source.Binding, Rules: source.Rules}
-	sub := model.AnimeSubscription{}
-	first, last, ok := animeCompletionRange(sub, s, model.AnimeEntry{}, 12)
+	first, last, ok := animeCompletionRange(s, 12)
 	if !ok || first != 30 || last != 36 {
 		t.Fatal(first, last, ok)
 	}
 	s.Binding.ChapterCorrespondence = nil
 	s.Binding.Scope = &model.AnimeScope{Kind: "feed"}
-	sub.Naming = &model.AnimeNamingPlan{Sources: []model.AnimeSourceMapping{{SourceRef: s.ID, Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetBase: 1, TargetSeason: 2}}}}}
-	if _, _, ok := animeCompletionRange(sub, s, model.AnimeEntry{}, 12); ok {
+	if _, _, ok := animeCompletionRange(s, 12); ok {
 		t.Fatal("TMDB mapping was mistaken for chapter start")
 	}
 	s.Rules.ChapterFirstEpisode = animePtr(25)
-	if first, last, ok := animeCompletionRange(sub, s, model.AnimeEntry{}, 12); !ok || first != 30 || last != 36 {
+	if first, last, ok := animeCompletionRange(s, 12); !ok || first != 30 || last != 36 {
 		t.Fatal(first, last, ok)
 	}
 }

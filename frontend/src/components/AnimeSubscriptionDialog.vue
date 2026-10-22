@@ -133,35 +133,30 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
         <fieldset class="ac-panels" :disabled="actions.locked.value || confirmRemove">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
           <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
-          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked">
-            <template #season-extra>
+          <AnimeNamingTarget v-if="!subject.needsSource" :naming="editor.naming" :disabled="locked" />
+          <section class="ac-total-section">
               <div class="ac-total">
-                <label :for="totalID" class="ae-label">篇章总集数</label>
+                <label :for="totalID" class="ae-label">总集数</label>
                 <div class="ac-total-input">
                   <input :id="totalID" v-model="editor.archiveTotal.value" type="text" inputmode="numeric" maxlength="5" :placeholder="editor.defaultTotal.value ? String(editor.defaultTotal.value) : '未定'" :aria-describedby="totalID + '-hint'" :disabled="locked" />
                   <button v-if="editor.archiveTotal.value" type="button" class="ae-icon" aria-label="清空手动总集数，恢复 Bangumi 数据" :disabled="locked" @click="editor.archiveTotal.value = ''"><IconX :size="15" aria-hidden="true" /></button>
                 </div>
                 <span class="ac-total-unit">集</span>
               </div>
-            </template>
-            <template #season-note>
               <div class="ac-total-note">
-                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '手动集数仅用于本订阅。' : editor.defaultTotal.value ? '留空使用 Bangumi 的 ' + editor.defaultTotal.value + ' 集正片。' : 'Bangumi 未提供正片集数。' }}齐集后按全局设置自动归档。</p>
-                <button v-if="editor.archiveSuggestion.value" type="button" class="ae-link" :class="{ 'ac-total-suggestion-hidden': !!editor.archiveTotal.value }" :aria-hidden="!!editor.archiveTotal.value" :disabled="locked || !!editor.archiveTotal.value || editor.naming.busy.value || editor.naming.searching.value" @click="editor.useTMDBTotal">填入 TMDB 的 {{ editor.archiveSuggestion.value }} 集</button>
+                <p :id="totalID + '-hint'" class="ae-note">{{ editor.archiveTotal.value ? '与订阅首话一起确定下载和归档范围。' : editor.defaultTotal.value ? '默认采用 Bangumi 的 ' + editor.defaultTotal.value + ' 集，可修改。' : '集数未定，可稍后补充。' }}</p>
               </div>
-            </template>
-          </AnimeNamingTarget>
+          </section>
 
-          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
-          <details class="ae-advanced ac-archive"><summary>归档编号（高级）<IconChevronDown :size="15" aria-hidden="true" /></summary><div class="ac-archive-fields"><label v-for="source in sources.filter(s => s.runWhenEnabled)" :key="source.ref">{{ source.groupName || (source.role === 'main' ? '主 RSS' : '备用 RSS') }}篇章首集<input v-model="source.chapterFirst" type="text" inputmode="numeric" placeholder="对应发布集号" :disabled="locked" /></label><p class="ae-note">例如篇章第 1 集发布为第 25 话，填写 25。若提示编号待确认请在此指定；补番起点仍沿用原配置。</p><p v-if="local && subscriptionLifecycle(local)" class="ae-note">{{ subscriptionLifecycle(local) }}</p></div></details>
+          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :total-episodes="editor.totalEpisodes.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
         <div v-show="tab === 'backup'" id="anime-panel-backup" role="tabpanel" aria-labelledby="anime-tab-backup">
           <div class="ac-backup-heading"><p class="ae-note">每个来源使用自己的编号映射，独立检查和下载。</p><button type="button" class="ae-button" :disabled="locked || !!previewBusy || sources.length >= 5" @click="addBackup"><IconPlus :size="16" />添加备用</button></div>
           <p v-if="!backups.length" class="ac-empty">暂无备用 RSS，可添加其他字幕组的版本。</p>
           <section v-for="source in backups" :key="source.ref" class="ac-backup">
-            <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><span v-if="editor.naming.target.value" class="ac-map">发布 {{ source.mappingSource }} 对应 S{{ String(source.mappingSeason || editor.naming.target.value.season).padStart(2, '0') }}E{{ String(source.mappingTarget).padStart(2, '0') }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
-            <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
+            <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
+            <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :total-episodes="editor.totalEpisodes.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
           </section>
         </div>
         <div v-if="tab === 'jobs' && local" id="anime-panel-jobs" role="tabpanel" aria-labelledby="anime-tab-jobs">
@@ -213,14 +208,9 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
 .ac-total-input { position: relative; width: 100px; flex: none; }
 .anime-editor .ac-total-input input { padding-right: 44px; font-variant-numeric: tabular-nums; }
 .ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: 44px; height: 44px; min-height: 44px; border-radius: 9px; }
-.ac-total-note { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 36px; margin-top: 4px; }
+.ac-total-section { margin-bottom: 18px; }
+.ac-total-note { margin-top: 6px; }
 .ac-total-note .ae-note { font-size: 11px; }
-.ac-total-note .ae-link { min-height: 44px; font-size: 11px; white-space: nowrap; }
-.ac-total-suggestion-hidden { visibility: hidden; }
-.ac-archive { margin-top: 16px; }
-.ac-archive-fields { display: grid; gap: 10px; margin-top: 12px; }
-.ac-archive-fields label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 12px; color: var(--floating-surface-muted); }
-.anime-editor .ac-archive-fields input { flex: none; width: 160px; min-height: 44px; padding: 8px 10px; border-radius: 8px; background: rgb(148 163 184 / .08); color: var(--ae-ink); border: 1px solid rgb(148 163 184 / .18); }
 .ac-storage { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--floating-surface-muted); }
 .ac-storage > div { flex: 1; min-width: 0; font-size: 11px; }
 .ac-storage p { overflow-wrap: anywhere; line-height: 1.8; }

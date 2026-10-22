@@ -19,12 +19,14 @@ CREATE TRIGGER IF NOT EXISTS anime_progress_source_update AFTER UPDATE OF rules_
 WHEN OLD.rules_json<>NEW.rules_json OR OLD.binding_json<>NEW.binding_json OR (OLD.checked_at IS NULL)<>(NEW.checked_at IS NULL) BEGIN
  UPDATE anime_source_progress SET generation=generation+1 WHERE source_id=NEW.id;
 END;
-CREATE TRIGGER IF NOT EXISTS anime_progress_subscription_update AFTER UPDATE OF form_json,naming_json ON anime_subscriptions
-WHEN OLD.form_json<>NEW.form_json OR OLD.naming_json<>NEW.naming_json BEGIN
+DROP TRIGGER IF EXISTS anime_progress_subscription_update;
+CREATE TRIGGER anime_progress_subscription_update AFTER UPDATE OF form_json ON anime_subscriptions
+WHEN json_extract(OLD.form_json,'$.totalEpisodes') IS NOT json_extract(NEW.form_json,'$.totalEpisodes') BEGIN
  UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT id FROM anime_subscription_sources WHERE subscription_id=NEW.id);
 END;
-CREATE TRIGGER IF NOT EXISTS anime_progress_entry_update AFTER UPDATE OF metadata_json ON anime_entries
-WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') OR json_extract(OLD.metadata_json,'$.airDate') IS NOT json_extract(NEW.metadata_json,'$.airDate') BEGIN
+DROP TRIGGER IF EXISTS anime_progress_entry_update;
+CREATE TRIGGER anime_progress_entry_update AFTER UPDATE OF metadata_json ON anime_entries
+WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') BEGIN
  UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE p.entry_id=NEW.id);
 END;
 CREATE TRIGGER IF NOT EXISTS anime_progress_decision_insert AFTER INSERT ON anime_release_decisions BEGIN

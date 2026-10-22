@@ -61,6 +61,28 @@ func TestAnimeDefinitionStoresRegularEpisodeCountForCompletion(t *testing.T) {
 	}
 }
 
+func TestAnimeDefinitionDerivesOneSourceRangeWithoutRSSReads(t *testing.T) {
+	s, feed, in := newAnimeDefinitionService(t)
+	in.Config.Form = &model.AnimeForm{SchemaVersion: 1, TotalEpisodes: bindingPtr(13)}
+	in.Config.Sources[0].Rules.ChapterFirstEpisode = bindingPtr(0)
+	in.Config.Sources[0].Rules.MinimumEpisode = bindingPtr(0)
+	// Client range values are not a second independent configuration.
+	in.Config.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(36)}
+	reads := feed.reads
+	out, err := s.SaveDefinition(context.Background(), "admin", "source_range_00_12", "", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := s.Store.GetAnimeSubscription(context.Background(), out.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := sub.Sources[0].Binding.Scope
+	if scope.Kind != "range" || *scope.First != 0 || *scope.Last != 12 || feed.reads != reads {
+		t.Fatal(scope, feed.reads, reads)
+	}
+}
+
 func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
 	s, feed, in := newAnimeDefinitionService(t)
 	ctx := context.Background()

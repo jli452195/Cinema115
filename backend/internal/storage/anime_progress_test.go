@@ -17,6 +17,7 @@ func progressFixture(t *testing.T) *downloadClaimFixture {
 		source.Binding.Scope.First, source.Binding.Scope.Last = animePtr(1), animePtr(12)
 		source.Binding.ChapterCorrespondence = &model.AnimeChapterCorrespondence{SourceEpisode: 1, ChapterEpisode: 1}
 		source.Rules.MinimumEpisode = animePtr(1)
+		source.Rules.ChapterFirstEpisode = animePtr(1)
 		binding, _ := animeJSON(source.Binding)
 		rules, _ := animeJSON(source.Rules)
 		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=?,checked_at=1 WHERE id=?`, binding, rules, source.ID); err != nil {
@@ -106,21 +107,72 @@ func TestAnimeSourceProgressMissingEpisodeIsPerRSS(t *testing.T) {
 	}
 }
 
-func TestAnimeProgressZeroDoesNotExtendRegularTotal(t *testing.T) {
-	f := progressFixture(t)
-	source := &f.sub.Sources[0]
-	source.Binding.Scope.First, source.Rules.MinimumEpisode = animePtr(0), animePtr(0)
-	binding, _ := animeJSON(source.Binding)
-	rules, _ := animeJSON(source.Rules)
-	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, source.ID); err != nil {
+func TestAnimeZeroBasedSubscriptionProgressAndArchive(t *testing.T) {
+	f, now := lifecycleFixture(t)
+	for _, source := range f.sub.Sources {
+		source.Binding.Scope = &model.AnimeScope{Kind: "feed"}
+		source.Binding.ChapterCorrespondence = nil
+		source.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: *source.ItemID, GroupID: *source.GroupID}
+		source.Rules.ChapterFirstEpisode, source.Rules.MinimumEpisode = animePtr(0), animePtr(0)
+		binding, _ := animeJSON(source.Binding)
+		rules, _ := animeJSON(source.Rules)
+		if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET binding_json=?,rules_json=? WHERE id=?`, binding, rules, source.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.totalEpisodes',13,'$.airDate','2023-07-02')`); err != nil {
 		t.Fatal(err)
 	}
-	progressEpisode(t, f, 0, 0, true)
-	for n := 1; n <= 12; n++ {
-		progressEpisode(t, f, 0, n, true)
+	// The TMDB season is intentionally absent. It cannot affect coverage.
+	if _, err := f.store.db.Exec(`UPDATE anime_subscriptions SET naming_json='null'`); err != nil {
+		t.Fatal(err)
 	}
-	if got := refreshProgress(t, f)[source.ID]; got.State != "complete" || got.FirstEpisode != 1 || got.OrganizedCount != 12 || got.PublishedThrough != 12 || got.MissingCount != 0 {
-		t.Fatal("zero shifted regular chapter coverage", got)
+	var err error
+	f.sub, err = f.store.GetAnimeSubscription(context.Background(), f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range refreshProgress(t, f) {
+		if p.State != "ongoing" || p.MissingCount != 0 || p.OrganizedCount != 0 {
+			t.Fatal("no publication must not invent a missing episode zero", p)
+		}
+	}
+	for group := 0; group < 2; group++ {
+		for n := 0; n <= 12; n++ {
+			if group == 0 && n == 7 || group == 1 && n == 0 {
+				continue
+			}
+			progressEpisode(t, f, group, n, true)
+		}
+	}
+	main, other := f.sub.Sources[0].ID, f.sub.Sources[1].ID
+	progress := refreshProgress(t, f)
+	if p := progress[main]; p.State != "missing" || p.MissingCount != 1 || p.Missing[0].First != 7 {
+		t.Fatal(p)
+	}
+	if p := progress[other]; p.State != "missing" || p.MissingCount != 1 || p.Missing[0].First != 0 {
+		t.Fatal("missing zero was ignored", p)
+	}
+	progressEpisode(t, f, 0, 7, true)
+	if p := refreshProgress(t, f)[main]; p.State != "complete" || p.OrganizedCount != 13 {
+		t.Fatal(p)
+	}
+	if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {
+		t.Fatal("unfinished other group archived", got.Status)
+	}
+	progressEpisode(t, f, 1, 0, true)
+	if p := refreshProgress(t, f)[other]; p.State != "complete" || p.OrganizedCount != 13 {
+		t.Fatal(p)
+	}
+	if got := evaluateLifecycle(t, f, now); got.Status != "archived" {
+		t.Fatal("00-12 did not archive", got.Status)
+	}
+	// Removing an unconfirmed range must preserve actual completion counts.
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_remove(rules_json,'$.chapterFirstEpisode') WHERE id=?`, main); err != nil {
+		t.Fatal(err)
+	}
+	if p := refreshProgress(t, f)[main]; p.State != "numbering_unknown" || p.OrganizedCount != 13 || p.PublishedThrough != 12 {
+		t.Fatal("unknown range hid organized episodes", p)
 	}
 }
 
@@ -217,56 +269,64 @@ func TestAnimeSourceProgressContinuousNumbersAndRestart(t *testing.T) {
 	}
 }
 
-func TestAnimeSourceProgressChapterUpgradeInvalidatesOnce(t *testing.T) {
+func TestAnimeProgressIgnoresNamingAndDates(t *testing.T) {
 	f := progressFixture(t)
 	id := f.sub.Sources[0].ID
 	progressEpisode(t, f, 0, 1, true)
 	want := refreshProgress(t, f)[id]
-	var path string
-	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+	for _, query := range []string{
+		`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.airDate','1999-01-01')`,
+		`UPDATE anime_subscriptions SET naming_json='null'`,
+		`UPDATE anime_subscriptions SET form_json=json_set(form_json,'$.autoArchive',json('false'))`,
+	} {
+		if _, err := f.store.db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+		if dirty, err := f.store.RefreshAnimeSourceProgress(context.Background()); err != nil || dirty {
+			t.Fatal("naming metadata dirtied progress", dirty, err)
+		}
+		got, err := f.store.AnimeSourceProgresses(context.Background(), []string{id}, true)
+		if err != nil || !reflect.DeepEqual(got[id], want) {
+			t.Fatal(got, err)
+		}
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.totalEpisodes',13)`); err != nil {
 		t.Fatal(err)
 	}
-	// Reproduce v57's trigger, which watched totals but not premiere dates.
-	if _, err := f.store.db.Exec(`DROP TRIGGER anime_progress_entry_update;
-CREATE TRIGGER anime_progress_entry_update AFTER UPDATE OF metadata_json ON anime_entries
-WHEN json_extract(OLD.metadata_json,'$.totalEpisodes') IS NOT json_extract(NEW.metadata_json,'$.totalEpisodes') BEGIN
- UPDATE anime_source_progress SET generation=generation+1 WHERE source_id IN (SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE p.entry_id=NEW.id);
-END; PRAGMA user_version=57;`); err != nil {
+	if dirty, err := f.store.RefreshAnimeSourceProgress(context.Background()); err != nil || !dirty {
+		t.Fatal("subscription total must invalidate progress", dirty, err)
+	}
+}
+
+func TestAnimeProgressRangeChangeInvalidatesCachedSummariesOnce(t *testing.T) {
+	f := progressFixture(t)
+	ctx := context.Background()
+	progressEpisode(t, f, 0, 1, true)
+	want := refreshProgress(t, f)
+	if _, err := f.store.db.Exec(`UPDATE anime_source_progress SET summary_json='{"state":"complete"}'; PRAGMA user_version=58`); err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	for i := 0; i < 2; i++ {
-		var err error
-		f.store, err = Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
+	var err error
+	f.store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.store.Close()
+	for _, source := range f.sub.Sources {
+		got, err := f.store.AnimeSourceProgresses(ctx, []string{source.ID}, true)
+		if err != nil || got[source.ID].State != "unknown" {
+			t.Fatal("stale completion escaped invalidation", got, err)
 		}
-		defer f.store.Close()
-		progress, err := f.store.AnimeSourceProgresses(ctx, []string{id}, true)
-		if err != nil || i == 0 && progress[id].State != "unknown" || i > 0 && !reflect.DeepEqual(progress[id], want) {
-			t.Fatal("upgrade invalidation or clean restart", i, progress, err)
-		}
-		if got := refreshProgress(t, f)[id]; !reflect.DeepEqual(got, want) {
-			t.Fatal("upgrade changed saved receipts or subscription", got)
-		}
-		for _, change := range []struct {
-			path, value string
-			invalidates bool
-		}{{"$.airDate", "2026-10-02", i == 0}, {"$.airDate", "2026-10-02", false}, {"$.synopsis", "description", false}} {
-			if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,?,?)`, change.path, change.value); err != nil {
-				t.Fatal(err)
-			}
-			if dirty, err := f.store.RefreshAnimeSourceProgress(ctx); err != nil || dirty != change.invalidates {
-				t.Fatal("metadata invalidation", change, dirty, err)
-			}
-			refreshProgress(t, f)
-		}
-		if err := f.store.Close(); err != nil {
-			t.Fatal(err)
-		}
+	}
+	if got := refreshProgress(t, f); !reflect.DeepEqual(got, want) {
+		t.Fatal("range refresh lost organized receipts", got, want)
 	}
 }
 

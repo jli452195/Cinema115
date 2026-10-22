@@ -10,7 +10,7 @@ export function subscriptionCard(view: Pick<AnimeSubscriptionView, 'entry'>): An
 }
 export function sourceProgressDescription(source: Pick<AnimeSourceCard, 'groupName' | 'progress'>) {
   const p = source.progress
-  const state = p?.state === 'complete' ? '已完成' : p?.state === 'ongoing' ? '进行中' : p?.state === 'missing' ? `缺 ${p.missingCount} 集${p.missing?.length ? `（${p.missing.map(gap => gap.first === gap.last ? `第 ${gap.first} 集` : `第 ${gap.first} 至 ${gap.last} 集`).join('、')}）` : ''}` : p?.state === 'numbering_unknown' ? '编号待确认，请在“归档编号（高级）”设置篇章首集' : '状态待更新'
+  const state = p?.state === 'complete' ? '已完成' : p?.state === 'ongoing' ? '进行中' : p?.state === 'missing' ? `缺 ${p.missingCount} 集${p.missing?.length ? `（${p.missing.map(gap => gap.first === gap.last ? `第 ${gap.first} 集` : `第 ${gap.first} 至 ${gap.last} 集`).join('、')}）` : ''}` : p?.state === 'numbering_unknown' ? `已整理 ${p.organizedCount} 集，请确认订阅首话` : '状态待更新'
   return `${source.groupName || '未命名字幕组'}：${state}`
 }
 export function subscriptionLifecycle(view: AnimeSubscriptionView, now = Date.now()) {

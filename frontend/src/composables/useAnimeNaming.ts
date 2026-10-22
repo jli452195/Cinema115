@@ -9,10 +9,11 @@ export function sourceNaming(source: SourceForm, target: AnimeNamingTarget): Ani
     return Number(raw)
   }
   const segments = [...source.mappingSegments]
-  if (source.mappingSource.trim()) {
-    const base = integer(source.mappingSource, '发布编号'), end = source.mappingLast ? integer(source.mappingLast, '映射终点') : null
+  if (source.mappingOffset.trim()) {
+    if (!/^-?\d{1,5}$/.test(source.mappingOffset)) throw new Error('集数偏移请填写 -99999 至 99999 的整数')
+    const offset = Number(source.mappingOffset), base = Math.max(0, -offset), end = source.mappingLast ? integer(source.mappingLast, '映射终点') : null
     if (end != null && end < base) throw new Error('映射终点不能小于发布基准')
-    segments.unshift({ first: base, last: end, sourceBase: base, targetBase: integer(source.mappingTarget, '目标集号'), targetSeason: integer(source.mappingSeason || String(target.season), '目标季', 1000) })
+    segments.unshift({ first: base, last: end, sourceBase: base, targetBase: base + offset, targetSeason: target.season })
   }
   const overrides = source.mappingOverrides.map(o => o.action === 'ignore' ? { ...o, targetSeason: 0, targetEpisode: 0 } : { ...o })
   const valid = (n: number, min = 0, max = 99999) => Number.isInteger(n) && n >= min && n <= max
@@ -49,23 +50,13 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     mode.value = existing && !plan ? 'original' : 'tmdb'
     for (const source of sources.value) {
       const saved = plan?.sources.find(m => m.sourceRef === source.ref), first = saved?.segments[0]
-      const primary = first?.first === first?.sourceBase ? first : undefined
-      if (saved) Object.assign(source, { mappingSource: primary ? String(primary.sourceBase) : '', mappingTarget: primary ? String(primary.targetBase) : '0', mappingSeason: primary ? String(primary.targetSeason) : '', mappingLast: primary?.last == null ? '' : String(primary.last), mappingManual: true, mappingSegments: saved.segments.slice(primary ? 1 : 0).map(s => ({ ...s })), mappingOverrides: (saved.overrides || []).map(o => ({ ...o })) })
+      const primary = first?.first === first?.sourceBase && first?.targetSeason === plan?.target.season ? first : undefined
+      if (saved) Object.assign(source, { mappingOffset: primary ? String(primary.targetBase - primary.sourceBase) : '', mappingLast: primary?.last == null ? '' : String(primary.last), mappingSegments: saved.segments.slice(primary ? 1 : 0).map(s => ({ ...s })), mappingOverrides: (saved.overrides || []).map(o => ({ ...o })) })
     }
   }
   function original() { if (locked.value) return; sequence++; searchSequence++; controller.abort(); mode.value = 'original'; target.value = undefined; error.value = ''; busy.value = false; searching.value = false; manualTarget = true; picker.value = false }
-  function suggest(source: SourceForm) {
-    if (source.mappingManual || !target.value) return
-    source.mappingSeason = String(target.value.season)
-    const count = target.value.seasons.find(s => s.number === target.value!.season)?.episodeCount || 0
-    const numbers = source.sample?.releases.map(r => r.parse.episode).filter((n): n is number => n != null && Number.isInteger(n)) || []
-    // A truncated window starting at 8 does not make episode 8 the first.
-    // Large absolute numbers cannot establish a baseline without evidence.
-    source.mappingSource = count > 0 && numbers.length > 0 && Math.min(...numbers) > count ? '' : '0'
-    source.mappingTarget = '0'
-  }
   function extraSeasons(season: number) {
-    return [...new Set(sources.value.flatMap(source => [source.mappingSeason ? Number(source.mappingSeason) : season, ...source.mappingSegments.map(s => s.targetSeason), ...source.mappingOverrides.filter(o => o.action === 'map').map(o => o.targetSeason)]))].filter(n => Number.isInteger(n) && n >= 0 && n <= 1000 && n !== season)
+    return [...new Set(sources.value.flatMap(source => [...source.mappingSegments.map(s => s.targetSeason), ...source.mappingOverrides.filter(o => o.action === 'map').map(o => o.targetSeason)]))].filter(n => Number.isInteger(n) && n >= 0 && n <= 1000 && n !== season)
   }
   async function load(id: string, season?: number, groupId = '', automatic = false) {
     if (locked.value || automatic && manualTarget) return
@@ -76,7 +67,6 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
       if (current !== sequence || lifetime.aborted) return
       if (!data.fingerprint || !Array.isArray(data.seasons) || data.tmdbId !== id) throw new Error('TMDB 资料不完整，请重新读取')
       target.value = data; picker.value = false
-      for (const source of sources.value) suggest(source)
     } catch (reason) { if (current === sequence && !lifetime.aborted) error.value = animeConfigMessage(reason) }
     finally { if (current === sequence) busy.value = false }
   }
@@ -105,7 +95,6 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     return { tmdbId: t.tmdbId, groupId: t.groupId, season: t.season, fingerprint: t.fingerprint, loadedSeasons: t.seasons.filter(s => s.episodes != null).map(s => s.number), sources: sources.value.filter(s => s.groupId).map(s => sourceNaming(s, t)) }
   }
   const signature = computed(() => JSON.stringify({ mode: mode.value, target: target.value }))
-  watch(() => sources.value.map(s => s.sample), () => sources.value.forEach(suggest))
   watch(() => target.value ? `${target.value.tmdbId}:${target.value.groupId}:${extraSeasons(target.value.season).join(',')}:${busy.value}` : '', () => {
     const t = target.value
     if (!t || busy.value || locked.value) return
@@ -113,5 +102,5 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     const key = `${t.tmdbId}:${t.groupId}:${t.season}:${extraSeasons(t.season).join(',')}`
     if (missing && !attemptedSeasons.has(key)) { attemptedSeasons.add(key); void load(t.tmdbId, t.season, t.groupId) }
   })
-  return { target, candidates, groups, busy, searching, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, suggest, wasManuallyChanged: () => manualTarget }
+  return { target, candidates, groups, busy, searching, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, wasManuallyChanged: () => manualTarget }
 }

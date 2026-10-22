@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 58
+const schemaVersion = 59
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -511,17 +511,12 @@ PRAGMA user_version=30;`); err != nil {
 	if _, err := tx.ExecContext(ctx, animeLifecycleSchema); err != nil {
 		return fmt.Errorf("create anime lifecycle storage: %w", err)
 	}
-	if version < 58 {
-		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS anime_progress_entry_update`); err != nil {
-			return fmt.Errorf("update anime progress invalidation: %w", err)
-		}
-	}
 	if _, err := tx.ExecContext(ctx, animeProgressSchema); err != nil {
 		return fmt.Errorf("create anime source progress storage: %w", err)
 	}
-	if version < 58 {
-		if _, err := tx.ExecContext(ctx, `UPDATE anime_source_progress SET generation=generation+1`); err != nil {
-			return fmt.Errorf("invalidate anime chapter numbering summaries: %w", err)
+	if version < 59 {
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_source_progress SET generation=generation+1 WHERE generation=computed_generation`); err != nil {
+			return fmt.Errorf("invalidate anime progress ranges: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

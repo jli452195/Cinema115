@@ -79,12 +79,9 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	if sub.Form.TotalEpisodes != nil {
 		total = *sub.Form.TotalEpisodes
 	}
-	first, last, targetKnown := animeCompletionRange(sub, source, entry, total)
-	if first < 1 {
-		out.State = "numbering_unknown"
-		return out, nil
-	}
-	out.State, out.FirstEpisode = "ongoing", first
+	first, last, targetKnown := animeCompletionRange(source, total)
+	out.State = "ongoing"
+	published := false
 	match, err := animepreview.CompileMatcher(source.Binding, source.Rules)
 	if err != nil {
 		return out, err
@@ -107,6 +104,7 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 			return out, err
 		}
 		if ok && d.Parse.Episode != nil {
+			published = true
 			out.PublishedThrough = max(out.PublishedThrough, *d.Parse.Episode)
 		}
 	}
@@ -115,7 +113,16 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		return out, err
 	}
 	for n := range found {
+		published = true
 		out.PublishedThrough = max(out.PublishedThrough, n)
+	}
+	if first < 0 {
+		out.State, out.OrganizedCount = "numbering_unknown", len(found)
+		return out, nil
+	}
+	out.FirstEpisode = first
+	if !published {
+		return out, nil
 	}
 	if targetKnown {
 		out.PublishedThrough = min(out.PublishedThrough, last)

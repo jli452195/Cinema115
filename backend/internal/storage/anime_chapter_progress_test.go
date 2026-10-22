@@ -15,7 +15,7 @@ import (
 func chapterProgressModels(first, total int) (model.AnimeSubscription, model.AnimeSource, model.AnimeEntry) {
 	source := model.AnimeSource{ID: "source", CheckedAt: animePtr(int64(1)),
 		Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "4106", GroupID: "382"}},
-		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: animePtr(1)}}
+		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: animePtr(1), ChapterFirstEpisode: animePtr(first)}}
 	entry := model.AnimeEntry{Metadata: model.AnimeMetadata{AirDate: "2026-10-02", TotalEpisodes: animePtr(total)}}
 	sub := model.AnimeSubscription{Naming: organizationNaming(source.ID)}
 	sub.Naming.Target.Seasons[0].Episodes[0].Number = first
@@ -24,78 +24,27 @@ func chapterProgressModels(first, total int) (model.AnimeSubscription, model.Ani
 	return sub, source, entry
 }
 
-func TestAnimeChapterRangeUsesExplicitOrUniqueLocalEvidence(t *testing.T) {
-	for _, mode := range []string{"continuous", "ordinary", "source one to TMDB 49", "source 49 to TMDB one", "manual", "correspondence", "full range", "minimum", "unknown total", "partial range", "missing date", "partial date", "different date", "same day episodes", "special season", "multiple segments", "override", "missing target", "wrong source", "out of segment", "no naming", "overflow", "minimum past end"} {
-		t.Run(mode, func(t *testing.T) {
-			sub, source, entry := chapterProgressModels(49, 12)
-			segment := &sub.Naming.Sources[0].Segments[0]
-			wantFirst, wantLast, wantKnown := 49, 60, true
-			switch mode {
-			case "continuous":
-			case "ordinary":
-				sub.Naming.Target.Seasons[0].Episodes[0].Number = 1
-				wantFirst, wantLast = 1, 12
-			case "source one to TMDB 49":
-				segment.TargetBase = 49
-				wantFirst, wantLast = 1, 12
-			case "source 49 to TMDB one":
-				sub.Naming.Target.Seasons[0].Episodes[0].Number = 1
-				segment.SourceBase, segment.First = 49, 49
-			case "manual":
-				source.Rules.ChapterFirstEpisode = animePtr(25)
-				wantFirst, wantLast = 25, 36
-			case "correspondence":
-				source.Binding.ChapterCorrespondence = &model.AnimeChapterCorrespondence{SourceEpisode: 27, ChapterEpisode: 3}
-				wantFirst, wantLast = 25, 36
-			case "full range":
-				source.Binding.Scope = &model.AnimeScope{Kind: "range", First: animePtr(25), Last: animePtr(36)}
-				wantFirst, wantLast = 25, 36
-			case "minimum":
-				source.Rules.MinimumEpisode = animePtr(50)
-				wantFirst = 50
-			case "unknown total":
-				entry.Metadata.TotalEpisodes = animePtr(0)
-				wantLast, wantKnown = 0, false
-			case "partial range":
-				entry.Metadata.AirDate = ""
-				source.Binding.Scope = &model.AnimeScope{Kind: "range", First: animePtr(50), Last: animePtr(55)}
-				wantFirst, wantLast, wantKnown = 50, 0, false
-			case "overflow":
-				source.Rules.ChapterFirstEpisode = animePtr(99999)
-				wantFirst, wantLast, wantKnown = 99999, 0, false
-			case "minimum past end":
-				source.Rules.MinimumEpisode = animePtr(61)
-				wantFirst, wantKnown = 61, false
-			default:
-				wantFirst, wantLast, wantKnown = 0, 0, false
-				switch mode {
-				case "missing date":
-					entry.Metadata.AirDate = ""
-				case "partial date":
-					entry.Metadata.AirDate = "2026-10"
-				case "different date":
-					entry.Metadata.AirDate = "2026-10-03"
-				case "same day episodes":
-					sub.Naming.Target.Seasons[0].Episodes = append(sub.Naming.Target.Seasons[0].Episodes, model.AnimeNamingEpisode{Number: 50, Date: entry.Metadata.AirDate})
-				case "special season":
-					segment.TargetSeason, sub.Naming.Target.Seasons[0].Number = 0, 0
-				case "multiple segments":
-					sub.Naming.Sources[0].Segments = append(sub.Naming.Sources[0].Segments, *segment)
-				case "override":
-					sub.Naming.Sources[0].Overrides = []model.AnimeMappingOverride{{RawKind: "episode", RawNumber: "49", Action: "ignore"}}
-				case "missing target":
-					sub.Naming.Target.Seasons = nil
-				case "wrong source":
-					sub.Naming.Sources[0].SourceRef = "another-source"
-				case "out of segment":
-					segment.Last = animePtr(48)
-				case "no naming":
-					sub.Naming = nil
-				}
-			}
-			first, last, known := animeCompletionRange(sub, source, entry, *entry.Metadata.TotalEpisodes)
-			if first != wantFirst || last != wantLast || known != wantKnown {
-				t.Fatalf("range (%d,%d,%v), want (%d,%d,%v)", first, last, known, wantFirst, wantLast, wantKnown)
+func TestAnimeSubscriptionRange(t *testing.T) {
+	for _, tc := range []struct {
+		name                                string
+		first                               *int
+		total, minimum, wantFirst, wantLast int
+		known                               bool
+	}{
+		{"zero", animePtr(0), 13, 0, 0, 12, true},
+		{"ordinary", animePtr(1), 12, 0, 1, 12, true},
+		{"continuous", animePtr(49), 12, 0, 49, 60, true},
+		{"download minimum", animePtr(0), 13, 7, 7, 12, true},
+		{"unknown total", animePtr(49), 0, 0, 49, 0, false},
+		{"unknown first", nil, 13, 0, -1, 0, false},
+		{"overflow", animePtr(99999), 2, 0, 99999, 0, false},
+		{"minimum after end", animePtr(0), 13, 13, 13, 12, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := model.AnimeSource{Rules: model.AnimeRules{ChapterFirstEpisode: tc.first, MinimumEpisode: animePtr(tc.minimum)}}
+			first, last, known := animeCompletionRange(source, tc.total)
+			if first != tc.wantFirst || last != tc.wantLast || known != tc.known {
+				t.Fatal(first, last, known)
 			}
 		})
 	}
@@ -127,7 +76,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 			episodes, published := make(map[int]bool), 0
 			for _, row := range feed.Rows {
 				parsed, err := animeparse.Title(row.Title)
-				if err != nil || parsed.Kind != row.Kind || row.Episode == 0 && parsed.Episode != nil || row.Episode > 0 && (parsed.Episode == nil || *parsed.Episode != row.Episode) {
+				if err != nil || parsed.Kind != row.Kind || row.Kind == "episode" && (parsed.Episode == nil || *parsed.Episode != row.Episode) || row.Kind != "episode" && parsed.Episode != nil {
 					t.Fatalf("%s: %q: %+v, %v; want %s/%d", feed.URL, row.Title, parsed, err, row.Kind, row.Episode)
 				}
 				decision := model.AnimeDecisionSnapshot{Title: row.Title, Rules: source.Rules, Parse: parsed}
@@ -173,7 +122,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 					t.Fatalf("oneMissing=%v: %+v, %v; want %s through=%d organized=%d missing=%d", missingOne, got, err, state, published, count, missing)
 				}
 			}
-			entry.Metadata.AirDate = ""
+			source.Rules.ChapterFirstEpisode = nil
 			if got, err := animeSourceProgress(context.Background(), source, sub, entry, observed, organized); err != nil || got.State != "numbering_unknown" || got.MissingCount != 0 {
 				t.Fatal("unknown chapter start must not guess RSS minimum or episode 1", got, err)
 			}
@@ -197,7 +146,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 
 func TestAnimeContinuousChapterCompletionWaitsForEverySource(t *testing.T) {
 	for _, manual := range []bool{false, true} {
-		t.Run(map[bool]string{false: "local premiere evidence", true: "manual fallback"}[manual], func(t *testing.T) {
+		t.Run(map[bool]string{false: "explicit range", true: "range confirmation"}[manual], func(t *testing.T) {
 			f, now := lifecycleFixture(t)
 			if _, err := f.store.db.Exec(`UPDATE anime_settings SET organize_cid='900',organize_path='/organized'`); err != nil {
 				t.Fatal(err)
@@ -240,7 +189,7 @@ func TestAnimeContinuousChapterCompletionWaitsForEverySource(t *testing.T) {
 			}
 			progressEpisode(t, f, 1, 55, true)
 			if manual {
-				if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_remove(metadata_json,'$.airDate')`); err != nil {
+				if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_remove(rules_json,'$.chapterFirstEpisode')`); err != nil {
 					t.Fatal(err)
 				}
 				if got := evaluateLifecycle(t, f, now); got.Status != "enabled" {

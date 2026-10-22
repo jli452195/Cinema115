@@ -348,6 +348,26 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 		}
 	}
 	issues := make([]string, 0, model.AnimeMaxSources)
+	// The same explicit source-number range constrains selection and completion.
+	// Its end is derived from the subscription count, never from TMDB metadata.
+	total := entry.Metadata.TotalEpisodes
+	if c.Form.TotalEpisodes != nil {
+		total = c.Form.TotalEpisodes
+	}
+	for i := range c.Sources {
+		v := &c.Sources[i]
+		if first := v.Rules.ChapterFirstEpisode; first != nil {
+			v.Binding.Scope = &model.AnimeScope{Kind: "feed"}
+			if total != nil && *total > 0 {
+				last := *first + *total - 1
+				if last > 99999 {
+					return out, storage.ErrAnimeInvalid
+				}
+				v.Binding.Scope = &model.AnimeScope{Kind: "range", First: first, Last: &last}
+			}
+			v.Binding.ChapterCorrespondence = nil
+		}
+	}
 	for _, v := range c.Sources {
 		if v.Validate() != nil {
 			issues = append(issues, "sources."+v.Ref)

@@ -106,9 +106,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           specs.splice(0, specs.length, ...Array.from({length:13}, (_, i) => ({resolution:['720p','1080p','2160p'][i%3],languages:[i%2 ? 'zh-Hans' : 'zh-Hant'],subtitleMode:i%3 ? 'soft' : 'hard',codec:i<6 ? 'h264' : 'h265',container:i<12 ? 'mkv' : 'mp4'})))
           labels = specs.map((_, i) => `规格组合 ${i+1}`)
         }
-        data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), specVersion: 1, profilesTruncated: false,
+        data = { source: { ...body.source, expiresAt: Date.now() + 600000 }, observedAt: Date.now(), completeness: state.sampleCompleteness || 'visible_end', specVersion: 1, profilesTruncated: false,
           profiles: specs.map((spec, i) => ({ match: [spec.resolution, ...(spec.languages || []), spec.subtitleMode || ''].filter(Boolean).map(v => '(?i)' + v), key: `spec-${i}`, label: labels[i], spec, count: 1 })),
-          releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode ?? 25}] [${labels[i]}]`, parse: { episode: state.sampleEpisode ?? 25, spec }, sizeRaw: '650 MB' })) }
+          releases: state.empty ? [] : specs.map((spec, i) => ({ postKey: `sample-${i}`, title: `[${body.source.groupId === '10' ? '字幕组甲' : '字幕组乙'}] 从零开始的异世界生活 [${state.sampleEpisode ?? 25}] [${labels[i]}]`, parse: { kind: 'episode', episode: state.sampleEpisode ?? 25, spec }, sizeRaw: '650 MB' })) }
       }
       else if (endpoint.endsWith('/subscriptions/preview')) {
         const ref = body.previewSourceRef
@@ -162,7 +162,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
     async function go(suffix = '/anime/new?bangumiId=123') { await page.goto(origin + suffix, { waitUntil: 'networkidle' }); if (role === 'admin') await page.locator(suffix.startsWith('/anime?') ? '.mikan-anime-card, .anibt-anime-card, .garden-anime-card' : '.ac-identity').first().waitFor() }
-    async function source(group = '10', first = '25', last = '64') {
+    async function source(group = '10', first = '25') {
       await page.getByRole('button', { name: '选择资源', exact: true }).click()
       await page.getByRole('button', { name: /从零开始 第三季 字幕资源/ }).click()
       await page.getByRole('button', { name: group === '10' ? /字幕组甲/ : /字幕组乙/ }).click()
@@ -172,15 +172,19 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       await page.getByRole('button', { name: '使用此来源', exact: true }).click()
       await wait(() => page.locator('dialog[open]').count().then(n => n === 1))
       const form = page.locator('.anime-source-form:visible')
-      assert.equal(await form.getByLabel('从第几话开始').inputValue(), '0', 'recent samples never change default minimum')
-      await form.getByLabel('从第几话开始').fill(first)
-      await form.locator('.ae-source-options summary').first().click()
-      await form.getByRole('checkbox', {name:'限定发布编号范围'}).check()
-      await form.getByLabel('范围起点', { exact: true }).fill(first); await form.getByLabel('范围终点', { exact: true }).fill(last)
+      if (first !== null) await form.getByLabel('订阅首话', { exact: true }).fill(first)
+      await form.getByText('自定义', { exact: true }).click()
+      assert.equal(await form.getByLabel('从第几话开始').inputValue(), '0')
+      if (first !== null) await form.getByLabel('从第几话开始').fill(first)
+    }
+    async function minimum(value) {
+      const input=page.getByLabel('从第几话开始')
+      if (!await input.isVisible()) await page.locator('.anime-source-form:visible').getByText('自定义',{exact:true}).click()
+      await input.fill(value)
     }
     async function preview() { await page.getByRole('button', { name: /^(生成预览|重新预览)$/ }).click(); await page.locator('.ae-preview-stats').waitFor(); await wait(async () => await page.locator('.ae-preview [aria-busy=true]').count() === 0 && !await page.getByRole('button', { name: '处理中…' }).count()) }
     const writes = () => calls.filter(c => c.key && c.endpoint.includes('/anime/'))
-    return { page, context, state, calls, go, source, preview, writes }
+    return { page, context, state, calls, go, source, minimum, preview, writes }
   }
 
 
@@ -189,11 +193,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       const unknown = await session()
       unknown.state.regularEpisodes = count
       await unknown.go()
-      const total = unknown.page.getByLabel('篇章总集数', { exact: true })
+      const total = unknown.page.getByLabel('总集数', { exact: true })
       assert.equal(await total.inputValue(), '')
       assert.equal(await total.getAttribute('placeholder'), '未定', 'all-chapter count never replaces an unknown regular count')
       assert.equal(await unknown.page.getByRole('button', { name: '查看篇章集数与 TMDB 映射' }).innerText(), '集数参考')
-      assert.match(await unknown.page.locator('.ac-total-note').innerText(), /Bangumi 未提供正片集数/)
+      assert.match(await unknown.page.locator('.ac-total-note').innerText(), /集数未定/)
       await total.fill('12')
       await unknown.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
       assert.equal(await total.getAttribute('placeholder'), '未定')
@@ -201,6 +205,26 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     }
     passed.push('unknown regular episode count stays undetermined despite 14 all-type chapters; manual clearing never falls back to OP/ED totals')
 
+    const partial=await session()
+    partial.state.sampleCompleteness='partial'
+    await partial.go();await partial.source('10',null)
+    assert.equal(await partial.page.getByLabel('订阅首话',{exact:true}).inputValue(),'')
+    assert.equal(await partial.page.getByRole('button',{name:'保存',exact:true}).isEnabled(),false)
+    await partial.page.getByRole('button',{name:'预览',exact:true}).click()
+    await partial.page.locator('.ae-preview-table').waitFor()
+    await partial.page.getByRole('button',{name:'返回配置',exact:true}).click()
+    await partial.page.getByLabel('订阅首话',{exact:true}).fill('25')
+    assert.equal(await partial.page.getByRole('button',{name:'保存',exact:true}).isEnabled(),true)
+    assert.equal(partial.writes().length,0)
+    passed.push('partial feed needs an explicit range but never blocks read-only preview')
+    const noTarget=await session()
+    noTarget.state.failNaming=true
+    await noTarget.go();await noTarget.source()
+    assert.equal(await noTarget.page.getByLabel('集数偏移',{exact:true}).count(),0)
+    await noTarget.page.getByLabel('集号正则',{exact:true}).fill('第(\\d+)话')
+    assert.equal(await noTarget.page.getByLabel('从第几话开始').isVisible(),true)
+    assert.equal(noTarget.writes().length,0)
+    passed.push('download and parsing controls stay available when TMDB is unavailable')
     const missing = await session()
     missing.state.subjectFailure = { status: 404, code: 'UPSTREAM_NOT_FOUND' }; missing.state.sourceBangumiID = '583313'
     await missing.go('/anime/new?bangumiId=583313&source=mikan&itemId=300')
@@ -210,37 +234,28 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await wait(() => missing.page.locator('.ac-identity p').innerText().then(text => text.includes('TMDB')))
     assert.ok(missing.calls.some(c => c.endpoint.endsWith('/naming/search') && c.body.keyword === '从零开始 第三季 字幕资源' && !c.body.bangumiId))
     assert.ok(missing.calls.filter(c => c.endpoint.endsWith('/naming/target')).every(c => !c.body.bangumiId))
-    const archiveTotal = missing.page.getByRole('textbox', { name: '篇章总集数', exact: true })
+    const archiveTotal = missing.page.getByRole('textbox', { name: '总集数', exact: true })
     assert.equal(await archiveTotal.getAttribute('placeholder'), '未定')
     assert.equal(await archiveTotal.inputValue(), '', 'TMDB counts never silently become overrides')
     await missing.page.setViewportSize({ width: 390, height: 844 })
     const sourceBefore = await missing.page.getByRole('heading', { name: '主 RSS', exact: true }).boundingBox()
     const readsBeforeTotal = missing.calls.length
-    await missing.page.getByRole('button', { name: '填入 TMDB 的 13 集', exact: true }).click()
-    assert.equal(await archiveTotal.inputValue(), '13')
+    assert.equal(await missing.page.getByRole('button', { name: /填入 TMDB/ }).count(), 0)
+    await archiveTotal.fill('13')
     const sourceAfter = await missing.page.getByRole('heading', { name: '主 RSS', exact: true }).boundingBox()
-    assert.ok(Math.abs(sourceBefore.y - sourceAfter.y) < 1, 'filling a suggestion must not move the source section')
-    assert.equal(missing.calls.length, readsBeforeTotal, 'using an already loaded total performs no API reads')
-    assert.equal(await missing.page.locator('.ac-total').evaluate(el => { const rect = el.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth }), true, 'mobile total control stays inside the viewport')
-    await missing.page.screenshot({ path: 'test-results/anime-archive-total-mobile.png' })
+    assert.ok(Math.abs(sourceBefore.y-sourceAfter.y)<1)
+    assert.equal(missing.calls.length, readsBeforeTotal, 'editing totals does not request metadata')
     await missing.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
-    assert.equal(await archiveTotal.inputValue(), '')
-    assert.equal(await missing.page.getByRole('button', { name: '填入 TMDB 的 13 集', exact: true }).count(), 1)
-    await missing.page.setViewportSize({ width: 1440, height: 1080 })
+    assert.equal(await archiveTotal.inputValue(),'')
     await missing.page.getByRole('button', { name: '选择资源', exact: true }).click()
     await missing.page.getByRole('button', { name: /字幕组甲/ }).click()
     await missing.page.getByRole('radio', { name: /^1080p 简 内嵌/ }).check()
     await missing.page.getByRole('button', { name: '使用此来源', exact: true }).click()
-    assert.equal(missing.calls.find(c => c.endpoint.endsWith('/source-bindings/preview')).body.entry.bangumiId, '583313')
-    await missing.page.getByLabel('发布第几话', { exact: true }).fill('25')
-    assert.equal(await missing.page.getByRole('button', { name: '填入 TMDB 的 13 集', exact: true }).count(), 0, 'absolute numbering must not suggest a whole TMDB season')
-    await missing.page.getByLabel('发布第几话', { exact: true }).fill('1')
-    await missing.page.getByLabel('对应第几集', { exact: true }).fill('2')
-    assert.equal(await missing.page.getByRole('button', { name: '填入 TMDB 的 13 集', exact: true }).count(), 0, 'partial-season targets must not suggest a whole season')
-    await missing.page.getByLabel('对应第几集', { exact: true }).fill('1')
+    await missing.page.getByLabel('订阅首话', {exact:true}).fill('25')
+    await missing.page.getByLabel('集数偏移', {exact:true}).fill('-24')
     await archiveTotal.fill('0')
     await missing.page.getByRole('button', { name: '保存', exact: true }).click()
-    assert.match(await missing.page.locator('.ac-feedback').innerText(), /篇章总集数/)
+    assert.match(await missing.page.locator('.ac-feedback').innerText(), /总集数/)
     assert.equal(missing.writes().length, 0, 'invalid totals never reach the save API')
     await archiveTotal.fill('12')
     await missing.page.getByRole('button', { name: '预览', exact: true }).click()
@@ -263,7 +278,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(missing.writes().at(-1).body.config.form.totalEpisodes, null, 'clearing explicitly removes the stored override')
     await missing.go('/anime/subscriptions/saved-subscription')
     assert.equal(await archiveTotal.inputValue(), '')
-    passed.push('archive total supports explicit TMDB suggestions, manual persistence, clearing, validation, offset safety and stable mobile layout without extra reads')
+    passed.push('subscription totals are independent of TMDB, persist and clear without extra reads')
     passed.push('missing Bangumi uses verified source metadata, keyword naming, preview and save while retaining external identity; local reopen is independent')
 
     const unseeded = await session()
@@ -313,7 +328,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const expression = '(?i)1080p\n第\\d{1,3}话'
     await match.fill(expression)
     await exclude.fill('(?i)sample\n(?i)720p')
-    await regex.page.getByRole('button',{name:'修改来源规则',exact:true}).click()
+    await regex.page.getByRole('button',{name:'更换来源',exact:true}).click()
     const picker = regex.page.locator('dialog[open]').last()
     await picker.getByRole('radio',{name:/保留当前匹配正则/}).waitFor()
     assert.equal(await picker.locator('input[type=radio]:checked').count(),1)
@@ -330,7 +345,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await picker.getByRole('button',{name:'更新来源规则',exact:true}).click()
     assert.equal(await match.inputValue(),expression)
     assert.equal(await exclude.inputValue(),'(?i)sample\n(?i)720p','template selection preserves exclusion rules')
-    await regex.page.getByText('自定义集号提取',{exact:true}).click()
+    if (!await regex.page.locator('.ae-advanced').evaluate(el => el.open)) await regex.page.locator('.ae-advanced > summary').click()
     await regex.page.getByLabel('集号正则',{exact:true}).fill('第(\\d{1,3})话')
     await regex.page.getByLabel('捕获组序号',{exact:true}).fill('1')
     await regex.page.setViewportSize({width:390,height:844})
@@ -340,6 +355,14 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.ok(excludeBox.y>=matchBox.y+matchBox.height,'phone exclusion field follows the match field')
     await regex.page.screenshot({path:'test-results/anime-regex-form-mobile-dark.png'})
     assert.ok(await regex.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'regex fields fit phone viewport')
+    await regex.page.locator('.ae-advanced > summary').click()
+    regex.state.ruleFailure='episodePattern'
+    await regex.page.getByRole('button',{name:'保存',exact:true}).click()
+    const episodePattern = regex.page.getByLabel('集号正则',{exact:true})
+    await wait(()=>episodePattern.getAttribute('aria-invalid').then(value=>value==='true'))
+    assert.equal(await regex.page.locator('.ae-advanced').evaluate(el=>el.open),true,'capture error opens custom settings')
+    await episodePattern.fill('第(\\d{1,3})话')
+    assert.equal(await regex.page.locator('.ae-advanced').evaluate(el=>el.open),true,'correcting an error keeps custom settings open')
     regex.state.ruleFailure='match'
     await regex.page.getByRole('button',{name:'保存',exact:true}).click()
     await wait(()=>match.getAttribute('aria-invalid').then(value=>value==='true'))
@@ -411,19 +434,18 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await longEpisodes.page.getByRole('tab',{name:'备用 RSS 0',exact:true}).click()
     await longMap.waitFor({state:'detached'})
     passed.push('header episode reference loads on demand, reuses cache, stays above the dialog, keeps focus and scroll, and pages long series without moving the form')
-    const knownTotal = s.page.getByRole('textbox', { name: '篇章总集数', exact: true })
+    const knownTotal = s.page.getByRole('textbox', { name: '总集数', exact: true })
     assert.equal(await knownTotal.inputValue(), '')
     assert.equal(await knownTotal.getAttribute('placeholder'), '12', 'known Bangumi counts remain defaults rather than manual overrides')
     assert.match(await s.page.getByRole('button', { name: '查看篇章集数与 TMDB 映射' }).innerText(), /12 集/)
-    assert.match(await s.page.locator('.ac-total-note').innerText(), /12 集正片/)
+    assert.match(await s.page.locator('.ac-total-note').innerText(), /12 集/)
     assert.equal(await s.page.getByRole('button', { name: /填入 TMDB 的/ }).count(), 0)
     await knownTotal.fill('24')
     await s.page.getByRole('button', { name: '清空手动总集数，恢复 Bangumi 数据', exact: true }).click()
     assert.equal(await knownTotal.inputValue(), '')
     assert.equal(await knownTotal.getAttribute('placeholder'), '12')
     await s.source()
-    await s.page.getByLabel('发布第几话',{exact:true}).fill('25')
-    await s.page.getByLabel('对应第几集',{exact:true}).fill('1')
+    await s.page.getByLabel('集数偏移',{exact:true}).fill('-24')
     assert.equal(s.calls.filter(c => c.endpoint.endsWith('/subscriptions/preview')).length, 0)
     await s.page.getByRole('button', {name:'保存',exact:true}).click()
     await wait(() => s.page.locator('dialog[open]').count().then(n => n === 0), 'save should close modal')
@@ -437,7 +459,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     passed.push('new definition saves without preview or selected download grants')
 
     await s.go('/anime/subscriptions/saved-subscription')
-    assert.equal(await s.page.getByLabel('篇章总集数', { exact: true }).getAttribute('placeholder'), '12', 'reopening uses the persisted regular count')
+    assert.equal(await s.page.getByLabel('总集数', { exact: true }).getAttribute('placeholder'), '12', 'reopening uses the persisted regular count')
     for (const viewport of [{width:1440,height:1080},{width:390,height:844},{width:900,height:450}]) {
       await s.page.setViewportSize(viewport)
       const geometry=()=>s.page.locator('dialog[open]').evaluate(el=>{
@@ -464,7 +486,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(afterScroll.y,fixed.y,'footer stays fixed while form body scrolls')
     assert.equal(await s.page.locator('dialog[open]').evaluate(el=>getComputedStyle(el).overflow),'clip')
     assert.equal(await s.page.locator('dialog[open]').evaluate(el=>getComputedStyle(el).getPropertyValue('--scrollbar-track').trim()),'transparent')
-    await s.page.getByLabel('从第几话开始').fill('7')
+    await s.minimum('7')
     s.state.previewTransform=(item,i)=>i<2?({...item,release:{...item.release,title:`[完全无修版] 与暗黑召唤师秘密恋爱中 - 0${i+1} [简 / 繁] (1080p H.264 AAC2.0+DDP2.0 SRTx2) {ダークサモナーとデキている | I'm Dating a Dark Summoner | 黑暗召唤师在地下恋爱中}`}}):item
     await s.page.getByRole('button',{name:'预览',exact:true}).click()
     await s.page.locator('.ae-preview-stats').waitFor()
@@ -549,7 +571,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     s.state.saved.status='paused'
     await s.go('/anime/subscriptions/saved-subscription')
     assert.match(await s.page.locator('#anime-save-hint').innerText(),/暂停/)
-    await s.page.getByLabel('从第几话开始').fill('3')
+    await s.minimum('3')
     await s.page.getByRole('button',{name:'保存',exact:true}).click()
     await wait(()=>s.page.locator('dialog[open]').count().then(n=>n===0))
     assert.equal(s.state.saved.status,'paused')
@@ -570,6 +592,15 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
 
     const mobile=await session({width:390,height:844})
     await mobile.go();await mobile.source()
+    await mobile.page.locator('.ae-advanced > summary').click()
+    await mobile.page.locator('dialog[open] .anime-floating-body').evaluate(el=>{el.scrollTop=0})
+    await mobile.page.screenshot({path:'test-results/anime-config-simple-mobile.png'})
+    await mobile.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await mobile.page.screenshot({path:'test-results/anime-config-simple-mobile-dark.png'})
+    await mobile.page.setViewportSize({width:1440,height:1000})
+    await mobile.page.evaluate(()=>document.documentElement.classList.remove('dark'))
+    await mobile.page.screenshot({path:'test-results/anime-config-simple-desktop.png'})
+    await mobile.page.setViewportSize({width:390,height:844})
     const mobileMapButton=mobile.page.getByRole('button',{name:'查看篇章集数与 TMDB 映射',exact:true})
     const tabRect=await mobile.page.locator('.ac-tabs').boundingBox(), mapButtonRect=await mobileMapButton.boundingBox()
     assert.ok(mapButtonRect.y>=tabRect.y && mapButtonRect.y+mapButtonRect.height<=tabRect.y+tabRect.height,'phone places the mapping control beside tabs')
@@ -611,10 +642,10 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.deepEqual(light,{ink:'rgb(30, 41, 59)',bg:'rgb(255, 255, 255)'})
     assert.equal(await mobile.page.locator('.ae-target-season > .ae-label').evaluate(el=>getComputedStyle(el).color),'rgb(30, 41, 59)')
     await mobile.page.getByRole('button',{name:'继续编辑',exact:true}).click()
-    assert.equal(await mobile.page.locator('input[placeholder="字幕组标题中的编号"]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)')
+    assert.equal(await mobile.page.getByLabel('集数偏移',{exact:true}).evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)')
     await mobile.page.evaluate(()=>document.documentElement.classList.add('dark'))
     assert.equal(await mobile.page.locator('.ae-target-season > .ae-label').evaluate(el=>getComputedStyle(el).color),'rgb(226, 232, 240)')
-    assert.equal(await mobile.page.locator('input[placeholder="字幕组标题中的编号"]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(32, 40, 50)')
+    assert.equal(await mobile.page.getByLabel('集数偏移',{exact:true}).evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(32, 40, 50)')
     await mobile.page.getByRole('button',{name:'预览',exact:true}).click()
     await mobile.page.getByRole('combobox',{name:'显示',exact:true}).click()
     const darkMenu=await mobile.page.getByRole('listbox',{name:'显示',exact:true}).evaluate(el=>({ink:getComputedStyle(el).color,bg:getComputedStyle(el).backgroundColor}))
@@ -637,10 +668,9 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     zero.state.rowCount=67;zero.state.sampleEpisode=0
     zero.state.previewTransform=(item,i)=>i===0?({...item,release:{...item.release,title:'[Group] Mushoku Tensei S2 [00][1080p]',parse:{...item.release.parse,episode:0,rawEpisode:'00'}}}):item
     await zero.go();await zero.source()
-    await zero.page.getByLabel('从第几话开始').fill('0')
-    await zero.page.getByRole('checkbox',{name:'限定发布编号范围'}).uncheck()
-    await zero.page.getByLabel('发布第几话',{exact:true}).fill('0')
-    await zero.page.getByLabel('对应第几集',{exact:true}).fill('0')
+    await zero.minimum('0')
+    await zero.page.getByLabel('订阅首话',{exact:true}).fill('0')
+    await zero.page.getByLabel('集数偏移',{exact:true}).fill('0')
     await zero.page.getByRole('button',{name:'预览',exact:true}).click()
     await zero.page.locator('.ae-preview-table').waitFor()
     assert.equal(await zero.page.locator('.ae-preview-table tbody tr').count(),67)
@@ -656,13 +686,14 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await wait(()=>zero.calls.some(c=>c.key&&c.endpoint.endsWith('/subscriptions')))
     const zeroSave=zero.calls.find(c=>c.key&&c.endpoint.endsWith('/subscriptions')).body.config
     assert.equal(zeroSave.sources[0].rules.minimumEpisode,0)
+    assert.equal(zeroSave.sources[0].rules.chapterFirstEpisode,0)
+    assert.deepEqual(zeroSave.sources[0].binding.scope,{kind:'range',first:0,last:11})
     assert.equal(zeroSave.naming.sources[0].segments[0].first,0)
     assert.equal(zeroSave.naming.sources[0].segments[0].targetBase,0)
     passed.push('full 67-row preview, episode 00 naming and persistence, no load/page controls, reopening uses cached snapshot')
     const numbering=await session()
     await numbering.go();await numbering.source()
-    await numbering.page.getByLabel('发布第几话',{exact:true}).fill('25')
-    await numbering.page.getByLabel('对应第几集',{exact:true}).fill('1')
+    await numbering.page.getByLabel('集数偏移',{exact:true}).fill('-24')
     numbering.state.previewTransform=(item,i)=> {
       const kinds=['batch','unknown','special','composite'],raw=['01-11','','12.5','59 / 09']
       if(i>=kinds.length)return item
@@ -681,11 +712,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await numbering.page.getByRole('button',{name:'详细信息',exact:true}).click()
     assert.deepEqual(await numbering.page.locator('.ae-release-reason').allTextContents().then(values=>values.slice(0,4)),expectedNotes)
     await numbering.page.getByRole('button',{name:'返回配置',exact:true}).click()
-    assert.equal(await numbering.page.getByLabel('发布第几话',{exact:true}).inputValue(),'25')
+    assert.equal(await numbering.page.getByLabel('集数偏移',{exact:true}).inputValue(),'-24')
     assert.equal(numbering.writes().length,0,'explaining a parse issue cannot create downloads or save a subscription')
     passed.push('preview distinguishes packs, unknown, special and ambiguous numbering without losing ordinary naming or editing state')
     await s.go('/anime/subscriptions/saved-subscription')
-    await s.page.getByLabel('从第几话开始').fill('9')
+    await s.minimum('9')
     s.state.saveMode='conflict'
     await s.page.getByRole('button',{name:'保存',exact:true}).click()
     await s.page.getByRole('button',{name:'重载最新配置',exact:true}).click()
@@ -716,7 +747,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.ok(await managed.page.getByRole('button', { name: '继续订阅', exact: true }).isEnabled(), 'archiving must not lock lifecycle actions')
     assert.ok(await managed.page.getByRole('button', { name: '删除订阅', exact: true }).isEnabled())
     await managed.page.screenshot({ path: 'test-results/anime-archived-manage-desktop.png' })
-    await managed.page.getByLabel('篇章总集数', { exact: true }).fill('13')
+    await managed.page.getByLabel('总集数', { exact: true }).fill('13')
     await managed.page.getByRole('button', { name: '保存', exact: true }).click()
     await wait(() => managed.page.locator('.ac-identity').count().then(n => !n))
     assert.equal(managed.state.saved.status, 'archived', 'ordinary archived edits stay archived')
@@ -736,7 +767,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(managed.calls.filter(call => call.endpoint.endsWith('/remove')).length, 0)
     await managed.page.getByRole('button', { name: '删除订阅', exact: true }).click()
     await managed.page.screenshot({ path: 'test-results/anime-delete-mobile.png' })
-    assert.equal(await managed.page.getByLabel('篇章总集数', { exact: true }).isEnabled(), false, 'delete confirmation freezes configuration')
+    assert.equal(await managed.page.getByLabel('总集数', { exact: true }).isEnabled(), false, 'delete confirmation freezes configuration')
     managed.state.actionMode = 'busy'
     await managed.page.getByRole('button', { name: '确认删除', exact: true }).click()
     await managed.page.getByText('任务正在处理，请稍后重试删除', { exact: true }).waitFor()
