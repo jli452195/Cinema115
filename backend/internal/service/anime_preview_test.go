@@ -149,6 +149,52 @@ func TestAnimePreviewServiceFullHistoryIncludesZero(t *testing.T) {
 	}
 }
 
+func TestAnimePreviewServiceUncensoredReleasesRemainMatched(t *testing.T) {
+	s, f, _, c, at := previewService(t)
+	c.Sources[0].Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}
+	c.Sources[0].Rules = model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(0), Match: []string{
+		"(?i)1080p|1920[x×]1080", "(?i)简|簡|chs|sc|gb", "(?i)内嵌|內嵌|硬字幕|hardsub", "(?i)h[. ]?265|x265|hevc",
+	}}
+	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+		p := animeMikanFakePage(in)
+		if in.Kind == "history" {
+			p.ObservedAt, p.RawCount, p.Completeness, p.StopReason = at, 39, "visible_end", ""
+			p.Releases = make([]mikan.SourceRelease, 0, 39)
+			// The real Mikan feed 3060/611 has three subtitle specifications per
+			// episode; only 00–02 have the uncensored label that triggered this bug.
+			for episode := 0; episode <= 12; episode++ {
+				for _, subtitles := range []string{"简体内嵌", "繁体内嵌", "简繁内封"} {
+					title := fmt.Sprintf("[北宇治字幕组] 无职转生Ⅱ ～到了异世界就拿出真本事～/ Mushoku Tensei - Season 2 [%02d][WebRip][1080p][HEVC_AAC][%s]", episode, subtitles)
+					if episode <= 2 {
+						title += "[无修正]"
+					}
+					p.Releases = append(p.Releases, mikan.SourceRelease{PostKey: fmt.Sprintf("%040x", len(p.Releases)+1), Title: title})
+				}
+			}
+		}
+		return p, nil
+	}
+	out, err := s.Generate(context.Background(), "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := out.Batch.Sources[0].Releases(s.timestamp())
+	if len(rows.Items) != 39 || rows.Summary.MatchedCount != 13 || rows.Summary.ReviewCount != 0 || rows.Summary.SelectedCount != 13 {
+		t.Fatal("uncensored releases missing from matched preview", rows.Summary)
+	}
+	episodes := make(map[int]bool, 13)
+	for _, row := range rows.Items {
+		if row.Selectable && row.Release.Parse.Episode != nil {
+			episodes[*row.Release.Parse.Episode] = true
+		}
+	}
+	for episode := 0; episode <= 12; episode++ {
+		if !episodes[episode] {
+			t.Fatalf("episode %02d missing from matched preview", episode)
+		}
+	}
+}
+
 func TestAnimePreviewServicePartialFailureAndIndependentExpiry(t *testing.T) {
 	s, f, _, c, at := previewService(t)
 	ctx := context.Background()

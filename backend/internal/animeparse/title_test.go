@@ -228,6 +228,25 @@ func TestTitleVersionsAreIndependentReleases(t *testing.T) {
 	}
 }
 
+func TestTitleUncensoredIsNotARevision(t *testing.T) {
+	for _, tc := range []struct{ labels, want string }{
+		{"[无修正]", ""}, {"[無修正]", ""},
+		{"[v2][无修正]", "v2"}, {"[無修正][rev3]", "rev3"},
+		{"[无修正][修正版]", "修正版"}, {"[修正][無修正]", "修正"},
+		{"[无修正][重发]", "重发"}, {"[无修正][AV1]", ""},
+	} {
+		t.Run(tc.labels, func(t *testing.T) {
+			got, err := Title("[北宇治字幕组] 无职转生Ⅱ ～到了异世界就拿出真本事～/ Mushoku Tensei - Season 2 [00][WebRip][1080p][HEVC_AAC][简体内嵌]" + tc.labels)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != "episode" || got.Episode == nil || *got.Episode != 0 || got.VersionLabel != tc.want {
+				t.Fatalf("uncensored label changed numbering or revision: %+v", got)
+			}
+		})
+	}
+}
+
 func TestTitleRealMikanSamples(t *testing.T) {
 	data, err := os.ReadFile("testdata/mikan_titles.json")
 	if err != nil {

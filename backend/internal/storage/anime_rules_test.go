@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/model"
@@ -76,6 +77,7 @@ func TestAnimeDiscoveryReevaluatesOldInterpretationsAndFreezesSelections(t *test
 		t.Fatal(err)
 	}
 	row := discoveryRow("rel_upgrade", now)
+	row.Title += "[无修正]"
 	if _, err := f.store.CompleteAnimeSourcePoll(ctx, poll, discoveryPage(poll, now, row), now); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +90,8 @@ func TestAnimeDiscoveryReevaluatesOldInterpretationsAndFreezesSelections(t *test
 		t.Fatal(err)
 	}
 	d.Snapshot.Selection = nil
-	d.Snapshot.ParserVersion, d.Snapshot.RuleVersion = 1, 1
-	d.Snapshot.Parse = model.AnimeReleaseParse{SchemaVersion: 1, Kind: "unknown"}
+	d.Snapshot.ParserVersion = 6
+	d.Snapshot.Parse.VersionLabel = "修正"
 	raw, _ := animeJSON(d.Snapshot)
 	if _, err := f.store.db.Exec(`UPDATE anime_release_decisions SET disposition='needs_confirmation',snapshot_json=? WHERE source_id=?`, raw, poll.Source.ID); err != nil {
 		t.Fatal(err)
@@ -103,7 +105,7 @@ func TestAnimeDiscoveryReevaluatesOldInterpretationsAndFreezesSelections(t *test
 		t.Fatal("old parser interpretation never reconsidered", stats, err)
 	}
 	d, err = f.store.GetAnimeReleaseDecision(ctx, poll.Source.ID, r.ID)
-	if err != nil || d.Snapshot.RuleVersion != animepreview.RuleVersion {
+	if err != nil || d.Snapshot.RuleVersion != animepreview.RuleVersion || d.Snapshot.ParserVersion != animeparse.ParserVersion || d.Snapshot.Parse.VersionLabel != "" {
 		t.Fatal(d, err)
 	}
 	// Simulate a previously selected snapshot from an older engine. Upgrading

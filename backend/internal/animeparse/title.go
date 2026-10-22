@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 6
+const ParserVersion int64 = 7
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -44,7 +44,7 @@ var (
 	batchWords     = regexp.MustCompile(`(?i)合集|全集|全\s*[0-9]+\s*[话話集]|\bbatch\b|\bcomplete\b`)
 	specialWords   = regexp.MustCompile(`(?i)(?:SPECIAL|SAMPLE|TRAILER|NCOP|NCED|OVA|OAD|SP|PV|CM|OP|ED)(?:\s*[-#]?\s*` + number + `)?|特别篇|特別篇|特典|番外|样片|樣片|总集篇|總集篇|先行预告|先行預告`)
 	qualityToken   = regexp.MustCompile(`(?i)[0-9]{3,4}[pi]|[48]k`)
-	versionToken   = regexp.MustCompile(`(?i)v[0-9]{1,3}|rev[0-9]{1,3}|修正版|修正|重发|重發|修复版|修復版`)
+	versionToken   = regexp.MustCompile(`(?i)[无無]修正|v[0-9]{1,3}|rev[0-9]{1,3}|修正版|修正|重发|重發|修复版|修復版`)
 	decimalOrPart  = regexp.MustCompile(`(?i)\.[0-9]|[ab](?:\s*v[0-9]+)?$`)
 	joinedNumber   = regexp.MustCompile(`[-~～〜至到+&/、,]`)
 	bareTail       = regexp.MustCompile(`(?i)^(?:(?:\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）)|(?:[0-9]{3,4}[pi]|[48]k|GB|BIG5|CHS|CHT|SC|TC|简体|簡體|繁体|繁體|简繁|簡繁|HEVC|AVC|AV1|AAC|FLAC|MP4|MKV|WEB-DL|WEBRIP|BDRIP|END|FIN|完结|完結)(?:$|[\s_.]))`)
@@ -343,6 +343,10 @@ func version(title string) string {
 			continue
 		}
 		raw := title[m[0]:m[1]]
+		// Consume the whole uncensored label so its suffix is not a revision.
+		if raw == "无修正" || raw == "無修正" {
+			continue
+		}
 		key := strings.ToLower(raw)
 		if !seen[key] {
 			labels = append(labels, raw)
