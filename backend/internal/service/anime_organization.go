@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"path"
 	"time"
 
 	"strm115/backend/internal/animeorganize"
@@ -67,56 +66,6 @@ func (s *AnimeAdminService) SaveOrganizeDirectory(ctx context.Context, actor, ke
 	return s.Store.SaveAnimeSettings(ctx, out, k)
 }
 
-type AnimeOrganizationPreview struct {
-	Mode                 string               `json:"mode"`
-	Revision             int64                `json:"revision"`
-	SettingsRevision     int64                `json:"settingsRevision"`
-	TargetPath           string               `json:"targetPath"`
-	Items                []animeorganize.Item `json:"items"`
-	Example              bool                 `json:"example"`
-	CloudConflictChecked bool                 `json:"cloudConflictChecked"`
-}
-
-func (s *AnimeAdminService) OrganizationPreview(ctx context.Context, id string) (AnimeOrganizationPreview, error) {
-	out := AnimeOrganizationPreview{Mode: "original", Example: true, Items: []animeorganize.Item{}}
-	sub, err := s.Store.GetAnimeSubscription(ctx, id, false)
-	if err != nil {
-		return out, err
-	}
-	settings, err := s.Store.GetAnimeSettings(ctx)
-	if err != nil {
-		return out, err
-	}
-	out.Revision, out.SettingsRevision = sub.Revision, settings.Revision
-	if settings.OrganizePath != nil {
-		out.TargetPath = *settings.OrganizePath
-	}
-	if sub.Naming == nil {
-		return out, nil
-	}
-	out.Mode = "standard"
-	for _, source := range sub.Sources {
-		if source.GroupName == nil || source.Status == "removed" {
-			continue
-		}
-		for _, mapping := range sub.Naming.Sources {
-			if mapping.SourceRef != source.ID || len(mapping.Segments) == 0 {
-				continue
-			}
-			n := mapping.Segments[0].First
-			p := sub.Naming.Project(source.ID, model.AnimeReleaseParse{Kind: "episode", Episode: &n}, *source.GroupName)
-			item := animeorganize.Item{ID: source.ID, Kind: "example", OriginalPath: *source.GroupName, Status: "needs_review", Reason: p.Status}
-			if p.Status == "mapped" && out.TargetPath != "" {
-				item.TargetPath = path.Join(out.TargetPath, p.PathStem)
-				item.Status = "ready"
-			} else if p.Status == "mapped" {
-				item.Reason = "target_directory_required"
-			}
-			out.Items = append(out.Items, item)
-		}
-	}
-	return out, nil
-}
 func (s *AnimeAdminService) JobOrganizationPreview(ctx context.Context, id string) (animeorganize.Plan, error) {
 	job, err := s.DownloadJob(ctx, id)
 	if err != nil {

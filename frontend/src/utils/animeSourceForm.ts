@@ -1,6 +1,6 @@
 import type { AnimeSourceProvider } from '../types/animeCatalog'
 import { animeRequestKey } from '../lib/anime-config-api'
-import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch, AnimeMappingSegment, AnimeMappingOverride } from '../types/animeSubscription'
+import type { AnimeSourceConfig, AnimePreviewPage, AnimePreviewRef, AnimePreviewSummary, AnimeSourceSample, AnimeSpec, AnimeBinding, MikanEntry, MikanSearch } from '../types/animeSubscription'
 
 export interface SourceForm {
   firstEpisode: string
@@ -9,7 +9,7 @@ export interface SourceForm {
   lockedItem: boolean; lockedGroup: boolean
   keyword: string; searchedKeyword: string; search?: MikanSearch; entry?: MikanEntry; searchBusy: boolean; searchError: string; cooldown: number
   confirmed: boolean; confirmedFor: string; review?: AnimeBinding['review']
-  mappingOffset: string; mappingLast: string; mappingSegments: AnimeMappingSegment[]; mappingOverrides: AnimeMappingOverride[]
+  mappingOffset: string
   templateChosen: boolean; match: string; episodePattern: string; episodeGroup: string
   health?: string; errorCode?: string | null
   ruleError?: { field: string; message: string }
@@ -23,7 +23,7 @@ export function newAnimeSource(role: SourceForm['role'], keyword = '', provider:
     itemId: '', itemTitle: '', groupId: '', groupName: '', lockedItem: false, lockedGroup: false,
     keyword, searchedKeyword: '', searchBusy: false, searchError: '', cooldown: 0,
     confirmed: false, confirmedFor: '',
-    mappingOffset: '0', mappingLast: '', mappingSegments: [], mappingOverrides: [],
+    mappingOffset: '0',
     templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', sampleBusy: false, sampleError: '', sampleCooldown: 0,
     minimum: '0', exclude: '', previewError: '', previewCooldown: 0 }
 }

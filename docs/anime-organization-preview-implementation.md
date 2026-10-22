@@ -36,7 +36,7 @@
 | 接口 | 行为 |
 | --- | --- |
 | `PATCH /api/admin/anime/settings/organize-directory` | `{expectedRevision,cid}`；需要 Idempotency-Key；返回 `{id:"anime-settings",revision,settings}` |
-| `GET /api/admin/anime/subscriptions/:id/organization-preview` | 本地映射示例，无实际扩展名，使用当前已保存配置 |
+| `GET /api/admin/anime/subscriptions/:id/organization-preview` | R-22 已删除：无前端调用，配置弹窗与独立预览使用本地共享计算 |
 | `GET /api/admin/anime/jobs/:id/organization-preview` | 本地实际清单及冻结任务方案，不查询当前位置 |
 
 共用目录统一放在选番页右上角“设置”（“我的订阅”左侧）。编辑页只显示轻量目录摘要，并能原页打开同一个设置弹窗，不重建未保存表单；详情“整理计划”也复用此入口。弹窗按需读取本地设置，只有主动选择目录才浏览115，选定后立即保存，不增加总保存按钮。读取成功同步摘要和版本；目录保存结果未知时保留原方法、key、正文、账号及CID，关闭弹窗或切换路由后仍能核对原请求，确认前不允许另选目标。退出登录或身份变化清除前端待确认记录。

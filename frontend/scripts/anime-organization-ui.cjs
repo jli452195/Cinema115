@@ -14,12 +14,12 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const naming = { schemaVersion: 1, target: { tmdbId: '335790', title: '黑暗召唤师在地下恋爱中', year: '2026', season: 1, groupId: '', groupName: 'TMDB 默认', fingerprint: 'a'.repeat(64), seasons: [{ number: 1, name: '第1季', episodeCount: 12, episodes: [{ id: '101', number: 1, name: '开始' }] }] }, sources: [{ sourceRef: 'source-a', segments: [{ first: 25, sourceBase: 25, targetSeason: 1, targetBase: 1 }], overrides: [] }] }
   const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, minimumEpisode: 25, match: [], exclude: [] } }
   const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
-  const plan = job => ({ mode: 'standard', revision: 2, example: !job, cloudConflictChecked: false, items: job ? [
+  const plan = () => ({ mode: 'standard', revision: 2, cloudConflictChecked: false, items: [
     { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: 'ready', reason: 'mapped' },
     { id: '301', kind: 'subtitle', originalPath: '/下载/anime-job/video.chs.ass', targetPath: '/旧整理/作品 (2026) {tmdb-335790}/Season 01/作品.S01E01.银色子弹.chs.ass', status: 'ready', reason: 'subtitle_matched', videoId: '300' },
     { id: '302', kind: 'video', originalPath: '/下载/anime-job/other.mkv', targetPath: '/旧整理/重复.mkv', status: 'conflict', reason: 'duplicate_target' },
     { id: '303', kind: 'attachment', originalPath: '/下载/anime-job/readme.txt', targetPath: '', status: 'preserved', reason: 'attachment_preserved' }
-  ] : [{ id: 'source-a', kind: 'example', originalPath: '银色子弹', targetPath: `${settings.organizePath}/黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01.银色子弹`, status: 'ready', reason: 'mapped' }] })
+  ] })
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), endpoint = url.pathname, body = req.postDataJSON(), key = req.headers()['idempotency-key']
     calls.push({ endpoint, body, key, method: req.method() }); let data = {}, status = 200
@@ -48,7 +48,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     }
     else if (endpoint.endsWith('/organization-preview')) {
       if (state.failPreview) { status = 503; data = { error: '模拟预览失败' } }
-      else data = plan(endpoint.includes('/jobs/'))
+      else data = plan()
     } else if (endpoint.includes('/cloud-download/paths')) data = { directories: url.searchParams.get('cid') === '0' ? [{ id: '901', name: '新整理' }] : [], hasMore: false }
     else if (endpoint.endsWith('/settings/organize-directory')) {
       assert.equal(req.method(), 'PATCH')

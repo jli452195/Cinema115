@@ -18,18 +18,6 @@ func registerAnimeOrganization(r *gin.RouterGroup, s *service.AnimeAdminService)
 		}
 		c.JSON(200, gin.H{"id": "anime-settings", "revision": v.Revision, "settings": v})
 	})
-	r.GET("/subscriptions/:id/organization-preview", func(c *gin.Context) {
-		id, ok := animeID(c)
-		if !ok {
-			return
-		}
-		v, err := s.OrganizationPreview(c.Request.Context(), id)
-		if err != nil {
-			animeError(c, err)
-			return
-		}
-		c.JSON(200, v)
-	})
 	r.GET("/jobs/:id/organization-preview", func(c *gin.Context) {
 		id, ok := animeID(c)
 		if !ok {

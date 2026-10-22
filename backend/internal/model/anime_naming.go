@@ -14,12 +14,11 @@ import (
 // Metadata is a server-observed snapshot; source references become stable IDs
 // in the same transaction that saves the subscription and its sources.
 type AnimeNamingInput struct {
-	TMDBID        string               `json:"tmdbId"`
-	GroupID       string               `json:"groupId"`
-	Season        int                  `json:"season"`
-	Fingerprint   string               `json:"fingerprint"`
-	LoadedSeasons []int                `json:"loadedSeasons,omitempty"`
-	Sources       []AnimeSourceMapping `json:"sources"`
+	TMDBID      string               `json:"tmdbId"`
+	GroupID     string               `json:"groupId"`
+	Season      int                  `json:"season"`
+	Fingerprint string               `json:"fingerprint"`
+	Sources     []AnimeSourceMapping `json:"sources"`
 }
 type AnimeSourceMapping struct {
 	SourceRef string                 `json:"sourceRef"`
@@ -85,16 +84,6 @@ func (in AnimeNamingInput) Validate() error {
 	}
 	if _, err := hex.DecodeString(in.Fingerprint); err != nil {
 		return fmt.Errorf("invalid naming fingerprint")
-	}
-	if len(in.LoadedSeasons) > 13 {
-		return fmt.Errorf("too many loaded seasons")
-	}
-	loaded := make(map[int]bool, len(in.LoadedSeasons))
-	for _, n := range in.LoadedSeasons {
-		if n < 0 || n > 1000 || loaded[n] {
-			return fmt.Errorf("invalid loaded season")
-		}
-		loaded[n] = true
 	}
 	for _, c := range in.GroupID {
 		if !unicode.IsDigit(c) && !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {

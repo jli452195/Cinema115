@@ -31,7 +31,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   const locked = computed(() => saveBusy.value || settingsBusy.value || !!pendingSave.value || !!receipt.value || loading.value || !!loadError.value)
   const naming = useAnimeNaming(token, subject, sources, () => lifetime.signal, locked)
   function rawForm() {
-    const keys: (keyof SourceForm)[] = ['provider', 'firstEpisode', 'mappingOffset', 'mappingLast', 'mappingSegments', 'mappingOverrides', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'confirmed', 'confirmedFor', 'review', 'templateChosen', 'match', 'episodePattern', 'episodeGroup', 'minimum', 'exclude']
+    const keys: (keyof SourceForm)[] = ['provider', 'firstEpisode', 'mappingOffset', 'ref', 'id', 'role', 'runWhenEnabled', 'itemId', 'groupId', 'groupName', 'confirmed', 'confirmedFor', 'review', 'templateChosen', 'match', 'episodePattern', 'episodeGroup', 'minimum', 'exclude']
     return JSON.stringify({ archiveTotal: archiveTotal.value, naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
@@ -238,7 +238,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingOffset: '0', mappingLast: '', mappingSegments: [], mappingOverrides: [], confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, firstEpisode: '', minimum: '0', exclude: '', preview: undefined, previewError: '' })
+    Object.assign(source, { mappingOffset: '0', confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, firstEpisode: '', minimum: '0', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)

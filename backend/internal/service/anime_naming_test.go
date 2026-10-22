@@ -9,11 +9,13 @@ import (
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/storage"
 )
 
 type animeNamingFake struct {
 	offline bool
 	calls   int
+	seasons []int
 }
 
 func (f *animeNamingFake) Browse(_ context.Context, o tmdb.Options) (*tmdb.Page, error) {
@@ -29,6 +31,7 @@ func (f *animeNamingFake) AnimeDetails(context.Context, int) (*tmdb.Detail, erro
 }
 func (f *animeNamingFake) AnimeSeason(_ context.Context, _ int, n int) (*tmdb.SeasonDetail, error) {
 	f.calls++
+	f.seasons = append(f.seasons, n)
 	ep := make([]tmdb.Episode, 13)
 	for i := range ep {
 		ep[i] = tmdb.Episode{ID: n*100 + i + 1, Number: i + 1, Name: fmt.Sprint("第", i+1, "集"), Date: fmt.Sprintf("2026-10-%02d", i+1), SourceSeason: n, SourceNumber: i + 1}
@@ -127,16 +130,32 @@ func TestAnimeNamingDoesNotReadOrChangeGlobalNumbering(t *testing.T) {
 	}
 }
 
-func TestAnimeNamingRetainsLoadedSnapshotWhenUnusedSeasonRemoved(t *testing.T) {
-	s := &AnimeNamingService{Metadata: &animeNamingFake{}}
+func TestAnimeNamingReadsOnlySelectedSeasonAndRejectsRemovedOptions(t *testing.T) {
+	f := &animeNamingFake{}
+	s := &AnimeNamingService{Metadata: f}
 	season := 2
-	target, err := s.Target(context.Background(), AnimeNamingTargetInput{TMDBID: "117061", Season: &season, ExtraSeasons: []int{1}}, "")
+	target, err := s.Target(context.Background(), AnimeNamingTargetInput{TMDBID: "117061", Season: &season}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := model.AnimeNamingInput{TMDBID: target.TMDBID, Season: 2, Fingerprint: target.Fingerprint, LoadedSeasons: []int{1, 2}}
+	if f.calls != 2 || len(f.seasons) != 1 || f.seasons[0] != season || target.Seasons[0].Episodes != nil {
+		t.Fatal("loaded an unused season", f.calls, f.seasons, target)
+	}
+	in := model.AnimeNamingInput{TMDBID: target.TMDBID, Season: 2, Fingerprint: target.Fingerprint}
 	if _, err := s.Resolve(context.Background(), in, nil); err != nil {
-		t.Fatal("unused loaded season changed snapshot identity", err)
+		t.Fatal("selected season snapshot changed", err)
+	}
+	for _, mapping := range []model.AnimeSourceMapping{
+		{SourceRef: "main"},
+		{SourceRef: "main", Segments: []model.AnimeMappingSegment{{TargetSeason: 1}}},
+		{SourceRef: "main", Segments: []model.AnimeMappingSegment{{TargetSeason: 2, Last: bindingPtr(12)}}},
+		{SourceRef: "main", Segments: []model.AnimeMappingSegment{{TargetSeason: 2}}, Overrides: []model.AnimeMappingOverride{{RawKind: "special", RawNumber: "SP1", Action: "ignore"}}},
+	} {
+		in.Sources = []model.AnimeSourceMapping{mapping}
+		before := f.calls
+		if _, err := s.Resolve(context.Background(), in, nil); !errors.Is(err, storage.ErrAnimeInvalid) || f.calls != before {
+			t.Fatal("removed options made metadata requests", mapping, err, f.calls, before)
+		}
 	}
 }
 

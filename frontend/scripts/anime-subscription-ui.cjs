@@ -51,7 +51,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         if (state.targetGate) await state.targetGate
         const season = body.season ?? 2
         data = { tmdbId: body.tmdbId, title: '从零开始的异世界生活', year: '2016', groupId: body.groupId || '', groupName: body.groupId ? '独立编排' : 'TMDB 默认', season, fingerprint: 'a'.repeat(64),
-          seasons: [1, 2].map(n => ({ number: n, name: `第 ${n} 季`, date: n === 1 ? '2016-04-04' : '2026-10-01', episodeCount: 13, episodes: [season, ...(body.extraSeasons || [])].includes(n) ? Array.from({length:13}, (_,i) => ({id:String(n * 100+i+1),number:i+(body.groupId ? 9 : 1),name:`目标第 ${i+1} 集`,date:`${n===2?'2026-10':'2016-04'}-${String(i+1).padStart(2,'0')}`,sourceSeason:n,sourceNumber:i+1})) : null })) }
+          seasons: [1, 2].map(n => ({ number: n, name: `第 ${n} 季`, date: n === 1 ? '2016-04-04' : '2026-10-01', episodeCount: 13, episodes: n === season ? Array.from({length:13}, (_,i) => ({id:String(n * 100+i+1),number:i+(body.groupId ? 9 : 1),name:`目标第 ${i+1} 集`,date:`${n===2?'2026-10':'2016-04'}-${String(i+1).padStart(2,'0')}`,sourceSeason:n,sourceNumber:i+1})) : null })) }
         state.namingTarget = structuredClone(data)
       } else if (endpoint.includes('/naming/groups/')) data = { items: [{id:'group001',name:'独立编排'}] }
       else if (endpoint.endsWith('/catalog/mikan')) data = { provider: 'mikan', days: [{ day: 1, items: [{ id:'300',title:'从零开始 第三季 字幕资源',coverUrl:'',updatedDate:'' }] }], items: [], fetchedAt:Date.now(), expiresAt:Date.now()+600000 }
@@ -445,7 +445,24 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(await knownTotal.inputValue(), '')
     assert.equal(await knownTotal.getAttribute('placeholder'), '12')
     await s.source()
+    assert.equal(await s.page.getByRole('button',{name:/添加分段|添加单集例外/}).count(),0)
+    assert.equal(await s.page.getByLabel('普通偏移到第几话结束（可留空）',{exact:true}).count(),0)
+    const targetReads=s.calls.filter(c=>c.endpoint.endsWith('/naming/target')).length
+    await s.page.getByLabel('集数偏移',{exact:true}).fill('')
+    assert.match(await s.page.locator('.ae-mapping-examples').innerText(),/S02E25/,'empty offset means zero')
+    await s.page.getByLabel('集数偏移',{exact:true}).fill('+1')
+    assert.match(await s.page.locator('.ae-mapping-examples').innerText(),/S02E26/,'positive offset adds to release number')
     await s.page.getByLabel('集数偏移',{exact:true}).fill('-24')
+    assert.match(await s.page.locator('.ae-mapping-examples').innerText(),/S02E01/)
+    assert.equal(s.calls.filter(c=>c.endpoint.endsWith('/naming/target')).length,targetReads,'offset edits never fetch other seasons')
+    await s.page.locator('.anime-floating-body').evaluate(el=>{el.scrollTop=el.scrollHeight})
+    await s.page.screenshot({path:'test-results/anime-offset-custom-desktop.png'})
+    await s.page.setViewportSize({width:390,height:844})
+    await s.page.evaluate(()=>document.documentElement.classList.add('dark'))
+    await s.page.locator('.anime-floating-body').evaluate(el=>{el.scrollTop=el.scrollHeight})
+    await s.page.screenshot({path:'test-results/anime-offset-custom-mobile-dark.png'})
+    await s.page.setViewportSize({width:1440,height:1080})
+    await s.page.evaluate(()=>document.documentElement.classList.remove('dark'))
     assert.equal(s.calls.filter(c => c.endpoint.endsWith('/subscriptions/preview')).length, 0)
     await s.page.getByRole('button', {name:'保存',exact:true}).click()
     await wait(() => s.page.locator('dialog[open]').count().then(n => n === 0), 'save should close modal')
@@ -453,12 +470,14 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.ok(saved, 'save configuration without preview')
     assert.equal(saved.body.sources, undefined)
     assert.equal(saved.body.config.form.totalEpisodes, null, 'regular count is a default, not a manual override')
+    assert.deepEqual(saved.body.config.naming.sources[0],{sourceRef:'main',segments:[{first:24,last:null,sourceBase:24,targetBase:0,targetSeason:2}],overrides:[]})
     assert.equal("formSelections" in saved.body.config, false)
     assert.equal("previewRefs" in saved.body.config, false)
     assert.equal(s.calls.filter(c => /\/(start|selections)$/.test(c.endpoint)).length, 0)
     passed.push('new definition saves without preview or selected download grants')
 
     await s.go('/anime/subscriptions/saved-subscription')
+    assert.equal(await s.page.getByLabel('集数偏移',{exact:true}).inputValue(),'-24','saved offset restores without hidden mapping controls')
     assert.equal(await s.page.getByLabel('总集数', { exact: true }).getAttribute('placeholder'), '12', 'reopening uses the persisted regular count')
     for (const viewport of [{width:1440,height:1080},{width:390,height:844},{width:900,height:450}]) {
       await s.page.setViewportSize(viewport)
@@ -701,7 +720,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     }
     await numbering.page.getByRole('button',{name:'预览',exact:true}).click()
     await numbering.page.locator('.ae-preview-table').waitFor()
-    const expectedNotes=['合集资源，暂不支持自动整理','未能识别单集编号','特殊集编号，需单独设置对应','编号含歧义，需确认集号']
+    const expectedNotes=['合集资源，暂不支持自动整理','未能识别单集编号','特殊集资源，暂不支持自动整理','编号含歧义，需确认集号']
     for(const [i,note] of expectedNotes.entries()) {
       const row=numbering.page.locator('.ae-preview-table tbody tr').nth(i)
       assert.equal(await row.locator('.ae-rename-pending').innerText(),note)

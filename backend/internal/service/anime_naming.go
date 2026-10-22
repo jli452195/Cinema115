@@ -219,17 +219,16 @@ func (s *AnimeNamingService) Search(ctx context.Context, names ...string) (Anime
 }
 
 type AnimeNamingTargetInput struct {
-	TMDBID       string `json:"tmdbId"`
-	GroupID      string `json:"groupId"`
-	Season       *int   `json:"season"`
-	BangumiID    string `json:"bangumiId"`
-	ExtraSeasons []int  `json:"extraSeasons"`
+	TMDBID    string `json:"tmdbId"`
+	GroupID   string `json:"groupId"`
+	Season    *int   `json:"season"`
+	BangumiID string `json:"bangumiId"`
 }
 
 func (s *AnimeNamingService) Target(ctx context.Context, in AnimeNamingTargetInput, date string, names ...string) (model.AnimeNamingTarget, error) {
 	out := model.AnimeNamingTarget{}
 	id, err := strconv.Atoi(in.TMDBID)
-	if !model.ValidAnimeExternalID(in.TMDBID) || err != nil || id < 1 || len(in.ExtraSeasons) > 12 || in.Season != nil && (*in.Season < 0 || *in.Season > 1000) || in.GroupID != "" && !tmdb.ValidEpisodeGroupID(in.GroupID) {
+	if !model.ValidAnimeExternalID(in.TMDBID) || err != nil || id < 1 || in.Season != nil && (*in.Season < 0 || *in.Season > 1000) || in.GroupID != "" && !tmdb.ValidEpisodeGroupID(in.GroupID) {
 		return out, storage.ErrAnimeInvalid
 	}
 	if s == nil || s.Metadata == nil {
@@ -301,46 +300,38 @@ func (s *AnimeNamingService) Target(ctx context.Context, in AnimeNamingTargetInp
 			}
 		}
 	}
-	load := map[int]bool{out.Season: true}
-	for _, n := range in.ExtraSeasons {
-		if n < 0 || n > 1000 {
-			return out, storage.ErrAnimeInvalid
+	n := out.Season
+	found := false
+	for i := range out.Seasons {
+		if out.Seasons[i].Number != n {
+			continue
 		}
-		load[n] = true
+		found = true
+		var season *tmdb.SeasonDetail
+		if group != nil {
+			for j := range group.Seasons {
+				if group.Seasons[j].Number == n {
+					season = &group.Seasons[j]
+					break
+				}
+			}
+		} else {
+			season, err = s.Metadata.AnimeSeason(ctx, id, n)
+			if err != nil {
+				return out, err
+			}
+		}
+		if season == nil || len(season.Episodes) > 2000 {
+			return out, tmdb.ErrInput
+		}
+		episodes := make([]model.AnimeNamingEpisode, 0, len(season.Episodes))
+		for _, e := range season.Episodes {
+			episodes = append(episodes, model.AnimeNamingEpisode{ID: strconv.Itoa(e.ID), Number: e.Number, Name: e.Name, Date: e.Date, SourceSeason: e.SourceSeason, SourceNumber: e.SourceNumber})
+		}
+		out.Seasons[i].Episodes = episodes
 	}
-	for n := range load {
-		found := false
-		for i := range out.Seasons {
-			if out.Seasons[i].Number != n {
-				continue
-			}
-			found = true
-			var season *tmdb.SeasonDetail
-			if group != nil {
-				for j := range group.Seasons {
-					if group.Seasons[j].Number == n {
-						season = &group.Seasons[j]
-						break
-					}
-				}
-			} else {
-				season, err = s.Metadata.AnimeSeason(ctx, id, n)
-				if err != nil {
-					return out, err
-				}
-			}
-			if season == nil || len(season.Episodes) > 2000 {
-				return out, tmdb.ErrInput
-			}
-			episodes := make([]model.AnimeNamingEpisode, 0, len(season.Episodes))
-			for _, e := range season.Episodes {
-				episodes = append(episodes, model.AnimeNamingEpisode{ID: strconv.Itoa(e.ID), Number: e.Number, Name: e.Name, Date: e.Date, SourceSeason: e.SourceSeason, SourceNumber: e.SourceNumber})
-			}
-			out.Seasons[i].Episodes = episodes
-		}
-		if !found {
-			return out, tmdb.ErrNotFound
-		}
+	if !found {
+		return out, tmdb.ErrNotFound
 	}
 	payload, err := json.Marshal(out)
 	if err != nil {
@@ -357,46 +348,23 @@ func (s *AnimeNamingService) Resolve(ctx context.Context, in model.AnimeNamingIn
 	if err := in.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", storage.ErrAnimeInvalid, err)
 	}
-	extra := make([]int, 0, 12)
-	seen := map[int]bool{in.Season: true}
-	for _, n := range in.LoadedSeasons {
-		if !seen[n] {
-			extra = append(extra, n)
-			seen[n] = true
-		}
-	}
-	for _, m := range in.Sources {
-		for _, seg := range m.Segments {
-			if !seen[seg.TargetSeason] {
-				extra = append(extra, seg.TargetSeason)
-				seen[seg.TargetSeason] = true
-			}
-		}
-		for _, o := range m.Overrides {
-			if o.Action == "map" && !seen[o.TargetSeason] {
-				extra = append(extra, o.TargetSeason)
-				seen[o.TargetSeason] = true
-			}
+	// New configuration uses one selected season and a per-source offset.
+	// The richer persisted rules remain readable by already frozen tasks.
+	for _, mapping := range in.Sources {
+		if len(mapping.Segments) != 1 || len(mapping.Overrides) != 0 || mapping.Segments[0].TargetSeason != in.Season || mapping.Segments[0].Last != nil {
+			return nil, storage.ErrAnimeInvalid
 		}
 	}
 	// Reusing a previously verified snapshot keeps local edits possible when
 	// TMDB has disappeared. New seasons still require new metadata verification.
 	if old != nil && old.Target.TMDBID == in.TMDBID && old.Target.GroupID == in.GroupID && old.Target.Season == in.Season && old.Target.Fingerprint == in.Fingerprint {
-		complete := true
-		for n := range seen {
-			found := false
-			for _, v := range old.Target.Seasons {
-				if v.Number == n && v.Episodes != nil {
-					found = true
-				}
+		for _, season := range old.Target.Seasons {
+			if season.Number == in.Season && season.Episodes != nil {
+				return &model.AnimeNamingPlan{SchemaVersion: 1, Target: old.Target, Sources: in.Sources}, nil
 			}
-			complete = complete && found
-		}
-		if complete {
-			return &model.AnimeNamingPlan{SchemaVersion: 1, Target: old.Target, Sources: in.Sources}, nil
 		}
 	}
-	target, err := s.Target(ctx, AnimeNamingTargetInput{TMDBID: in.TMDBID, GroupID: in.GroupID, Season: &in.Season, ExtraSeasons: extra}, "")
+	target, err := s.Target(ctx, AnimeNamingTargetInput{TMDBID: in.TMDBID, GroupID: in.GroupID, Season: &in.Season}, "")
 	if err != nil {
 		return nil, err
 	}

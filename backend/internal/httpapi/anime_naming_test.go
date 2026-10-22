@@ -2,11 +2,9 @@ package httpapi
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/tmdb"
-	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
@@ -48,17 +46,8 @@ func TestAnimeNamingReadOnlyRoutesAndAuthorization(t *testing.T) {
 	if len(fingerprint) != 64 || target["year"] != "2021" {
 		t.Fatal(target)
 	}
-	in := model.AnimeNamingInput{TMDBID: "117061", Season: 2, Fingerprint: fingerprint, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}
-	body := map[string]any{"naming": in, "items": []map[string]string{{"sourceRef": "main", "title": "[组] 番剧 [25][1080p]", "groupName": "测试组"}, {"sourceRef": "main", "title": "[组] 番剧 [26][1080p]", "groupName": "测试组"}, {"sourceRef": "main", "title": "[组] 番剧 [12.5][1080p]", "groupName": "测试组"}}}
-	preview := f.call(t, "POST", "/naming/preview", f.admin, "", body, 200)
-	items := preview["items"].([]any)
-	first := items[0].(map[string]any)
-	if first["status"] != "mapped" || !strings.Contains(first["pathStem"].(string), ".S02E01.测试组") || items[1].(map[string]any)["status"] != "mapped" || items[2].(map[string]any)["status"] != "unmapped" {
-		t.Fatal(preview)
-	}
-	in.Fingerprint = strings.Repeat("b", 64)
-	body["naming"] = in
-	f.call(t, "POST", "/naming/preview", f.admin, "", body, 409)
+	f.call(t, "POST", "/naming/preview", f.admin, "", nil, 404)
+	f.call(t, "POST", "/naming/target", f.admin, "", map[string]any{"tmdbId": "117061", "extraSeasons": []int{1}}, 400)
 	f.call(t, "POST", "/naming/target", f.admin, "", map[string]any{"tmdbId": "117061", "season": 99}, 404)
 	f.call(t, "POST", "/naming/search", f.admin, "", map[string]any{"keyword": ""}, 400)
 	f.call(t, "GET", "/naming/groups/117061", f.admin, "", nil, 200)

@@ -28,7 +28,7 @@ const targetDirectory = computed(() => {
 })
 function numberingNote(parsed: { kind: string; episode: number | null }) {
   if (parsed.kind === 'batch') return '合集资源，暂不支持自动整理'
-  if (parsed.kind === 'special') return '特殊集编号，需单独设置对应'
+  if (parsed.kind === 'special') return '特殊集资源，暂不支持自动整理'
   if (parsed.kind === 'composite') return '编号含歧义，需确认集号'
   if (parsed.kind !== 'episode' || parsed.episode == null) return '未能识别单集编号'
   return '未设置对应，保留原名'
