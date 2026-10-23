@@ -157,6 +157,65 @@ func TestGardenCompletionNeedsDirectoryEvidence(t *testing.T) {
 	}
 }
 
+func TestGardenSingleFileTorrentWrapper(t *testing.T) {
+	for _, resultID := range []string{"801", "901"} {
+		t.Run(resultID, func(t *testing.T) {
+			s, drive, _, tracker, transport, in := gardenFixture(t)
+			const name = "[Group] Show [01].mkv"
+			transport.names = []string{name}
+			in.Files[0].ID = name
+			plan, err := s.Preview(context.Background(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := s.Start(plan.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := s.live[job.ID]
+			tracker.resultID = resultID
+			tracker.beforeRead = func() {
+				drive.dirs[p.job.Download.DirectoryID] = []p115.ShareFile{{ID: "801", Name: name, Directory: true}}
+				drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: name, Size: 1200}}
+			}
+			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" {
+				t.Fatal("verified single-file wrapper did not organize", done, err, p.job)
+			}
+			if tracker.calls != 1 || drive.renames != 1 || drive.moves != 1 || !strings.HasSuffix(p.job.Items[0].File.SourcePath, "/"+name+"/"+name) {
+				t.Fatal("wrapper added requests or lost actual source path", p.job)
+			}
+		})
+	}
+}
+
+func TestGardenSingleFileWrapperNeverGuessesOtherPaths(t *testing.T) {
+	for _, mode := range []string{"no-result", "foreign-result", "other-wrapper", "nested-wrapper", "other-file", "multiple-files"} {
+		t.Run(mode, func(t *testing.T) {
+			const name = "show.mkv"
+			job := OrganizeJob{Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: name}, SourcePath: "/" + name}}}}
+			files := []OrganizeFile{{ShareFile: p115.ShareFile{ID: "901", Name: name}, ParentID: "801", SourcePath: name + "/" + name, MediaType: "video"}}
+			resultID := "801"
+			switch mode {
+			case "no-result":
+				resultID = ""
+			case "foreign-result":
+				resultID = "999"
+			case "other-wrapper":
+				files[0].SourcePath = "other/" + name
+			case "nested-wrapper":
+				files[0].SourcePath = "nested/" + name + "/" + name
+			case "other-file":
+				files[0].Name = "other.mkv"
+			case "multiple-files":
+				files = append(files, files[0])
+			}
+			if err := bindGardenFiles(&job, files, resultID); err == nil || job.Items[0].File.ID != name {
+				t.Fatal("unverified wrapper guessed a file", mode, err, job)
+			}
+		})
+	}
+}
+
 func TestGardenCompletedTaskDoesNotRepollWhileOrganizerBusy(t *testing.T) {
 	s, drive, _, tracker, _, in := gardenFixture(t)
 	plan, err := s.Preview(context.Background(), in)
@@ -329,11 +388,11 @@ func TestGardenDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
 func TestGardenBindingRequiresExactPathsAndNeverPartiallyChangesPlan(t *testing.T) {
 	job := OrganizeJob{Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/a.mkv"}, SourcePath: "/show/a.mkv"}}, {File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/b.mkv"}, SourcePath: "/show/b.mkv"}}}}
 	files := []OrganizeFile{{ShareFile: p115.ShareFile{ID: "1", Name: "a.mkv"}, SourcePath: "show/a.mkv", MediaType: "video"}, {ShareFile: p115.ShareFile{ID: "2", Name: "b.mkv"}, SourcePath: "other/b.mkv", MediaType: "video"}}
-	if err := bindGardenFiles(&job, files); err == nil || job.Items[0].File.ID != "show/a.mkv" {
+	if err := bindGardenFiles(&job, files, ""); err == nil || job.Items[0].File.ID != "show/a.mkv" {
 		t.Fatal("guessed basename or partially rebound", err, job)
 	}
 	files[1].SourcePath = "show/b.mkv"
-	if err := bindGardenFiles(&job, files); err != nil || job.Items[0].File.ID != "1" {
+	if err := bindGardenFiles(&job, files, ""); err != nil || job.Items[0].File.ID != "1" {
 		t.Fatal(err, job)
 	}
 }

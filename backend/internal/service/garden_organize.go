@@ -44,6 +44,7 @@ type gardenPending struct {
 	resultID                  string
 	resuming                  bool
 	waitUntil                 time.Time
+	running                   bool // guarded by GardenOrganize.mu; other fields have one worker owner
 }
 
 type GardenOrganize struct {
@@ -212,36 +213,70 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 	return OrganizeJob{}, fmt.Errorf("%w：下载整理任务不存在或已不在最近记录中", ErrOrganizeInput)
 }
 
-func (s *GardenOrganize) Run(ctx context.Context) error {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+func (s *GardenOrganize) Run(ctx context.Context) (runErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	failures := make(chan error, 1)
+	defer func() {
+		cancel()
+		workers.Wait()
+		select {
+		case err := <-failures:
+			runErr = err
+		default:
+		}
+	}()
 	for {
+		s.mu.Lock()
+		for id, p := range s.live {
+			if p.running {
+				continue
+			}
+			p.running = true
+			workers.Add(1)
+			go func(id string, p *gardenPending) {
+				defer workers.Done()
+				if err := s.runPending(ctx, p); err != nil {
+					select {
+					case failures <- err:
+					default:
+					}
+					cancel() // A persistence failure stops every worker before further writes.
+				}
+				s.mu.Lock()
+				delete(s.live, id)
+				s.mu.Unlock()
+			}(id, p)
+		}
+		s.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
 		case <-s.wake:
 		}
-		s.mu.Lock()
-		pending := make([]*gardenPending, 0, len(s.live))
-		for _, p := range s.live {
-			if !time.Now().Before(p.next) {
-				pending = append(pending, p)
+	}
+}
+
+// At most four independent workers track downloads. Only the shared directory
+// reservation serializes organization; no worker holds it while polling/sleeping.
+func (s *GardenOrganize) runPending(ctx context.Context, p *gardenPending) error {
+	for {
+		if ctx.Err() != nil {
+			_, err := s.stop(p, "interrupted", "服务停止，任务已中断；请核对任务记录后继续")
+			return err
+		}
+		if delay := time.Until(p.next); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				continue
+			case <-timer.C:
 			}
 		}
-		s.mu.Unlock()
-		for _, p := range pending {
-			stepCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
-			done, err := s.advance(stepCtx, p)
-			cancel()
-			if err != nil {
-				return err
-			} // Persistence failure stops writes.
-			if done {
-				s.mu.Lock()
-				delete(s.live, p.job.ID)
-				s.mu.Unlock()
-			}
+		done, err := s.advance(ctx, p)
+		if err != nil || done {
+			return err
 		}
 	}
 }
@@ -257,52 +292,32 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 		job.Stats.StartedAt = time.Now()
 	}
 	ctx = withOrganizeStats(ctx, job)
+	if ctx.Err() != nil {
+		return s.stop(p, "interrupted", "服务停止，任务已中断；请核对任务记录后继续")
+	}
 	if p.waitUntil.IsZero() {
 		p.waitUntil = job.CreatedAt.Add(24 * time.Hour)
 	}
 	if time.Now().After(p.waitUntil) {
-		return s.stop(p, "interrupted", "等待离线超过 24 小时，已停止自动整理；文件保留在本次下载目录")
+		message := "等待离线超过 24 小时，已停止自动整理；文件保留在本次下载目录"
+		if p.ready {
+			message = "等待整理超过任务时限，已停止自动整理；文件保留在本次下载目录"
+		}
+		return s.stop(p, "interrupted", message)
 	}
 	if job.Status == "queued" {
-		job.Status, job.Message = "submitting", "正在创建独立下载目录并提交 115"
-		if err := o.checkpoint(job); err != nil {
-			return false, err
-		}
-		started := time.Now()
-		dir, err := o.drive.CreateDirectory(ctx, job.Download.ParentCID, "garden-"+job.ID, cookie)
-		job.Stats.DirectoryCreates++
-		job.Stats.MutationMS += time.Since(started).Milliseconds()
-		if err != nil {
-			return s.stop(p, "uncertain", "下载目录创建结果未确认，请核对云盘；未重复创建或提交")
-		}
-		if !organizeID(dir) || dir == "0" || dir == job.Download.ParentCID || dir == job.Config.TargetCID {
-			return s.stop(p, "blocked", "115 返回的下载目录无效，未提交离线")
-		}
-		job.Download.DirectoryID = dir
-		job.Config.SourceCID, job.Config.SourcePath = dir, path.Join(job.Download.ParentPath, "garden-"+job.ID)
-		if err = o.checkpoint(job); err != nil {
-			return false, err
-		}
-		children, err := o.list(ctx, job.Download.ParentCID, cookie)
-		if err != nil {
-			return s.stop(p, "blocked", "无法确认本次下载目录，未提交离线；请核对已创建的目录")
-		}
-		confirmed, err := organizeFindDirectory(children, "garden-"+job.ID)
-		if err != nil || confirmed != dir {
-			return s.stop(p, "blocked", "本次下载目录身份不一致，未提交离线")
-		}
-		_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: p.account.ID, TargetCID: dir, TargetPath: job.Config.SourcePath}, p.account, "magnet:?xt=urn:btih:"+job.Download.Hash)
-		if err != nil {
-			return s.stop(p, "uncertain", organizePublicError(fmt.Errorf("%s", CloudDownloadErrorMessage(err)), cookie)+"；下载目录已保留，请核对 115 任务")
-		}
-		job.Status, job.Message = "downloading", "115 离线中，完成后自动整理所选文件"
-		if err = o.checkpoint(job); err != nil {
-			return false, err
+		if done, err := s.submit(ctx, p); err != nil || done {
+			return done, err
 		}
 		// Check once immediately: instant downloads need no fixed waiting period.
 	}
 	if !p.ready {
-		observation, err := s.Reader.ReadAnimeTaskStatus(ctx, cookie, job.Download.Hash)
+		readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		observation, err := s.Reader.ReadAnimeTaskStatus(readCtx, cookie, job.Download.Hash)
+		cancel()
+		if ctx.Err() != nil {
+			return s.stop(p, "interrupted", "服务停止，任务已中断；请核对任务记录后继续")
+		}
 		p.attempts++
 		delays := []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
 		p.next = time.Now().Add(delays[min(p.attempts-1, len(delays)-1)])
@@ -339,6 +354,52 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 		p.ready = true
 		p.resultID = observation.ResultID
 	}
+	return s.organize(ctx, p)
+}
+
+func (s *GardenOrganize) submit(ctx context.Context, p *gardenPending) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	o, job, cookie := s.Organize, &p.job, p.account.Cookie
+	job.Status, job.Message = "submitting", "正在创建独立下载目录并提交 115"
+	if err := o.checkpoint(job); err != nil {
+		return false, err
+	}
+	started := time.Now()
+	dir, err := o.drive.CreateDirectory(ctx, job.Download.ParentCID, "garden-"+job.ID, cookie)
+	job.Stats.DirectoryCreates++
+	job.Stats.MutationMS += time.Since(started).Milliseconds()
+	if err != nil {
+		return s.stop(p, "uncertain", "下载目录创建结果未确认，请核对云盘；未重复创建或提交")
+	}
+	if !organizeID(dir) || dir == "0" || dir == job.Download.ParentCID || dir == job.Config.TargetCID {
+		return s.stop(p, "blocked", "115 返回的下载目录无效，未提交离线")
+	}
+	job.Download.DirectoryID = dir
+	job.Config.SourceCID, job.Config.SourcePath = dir, path.Join(job.Download.ParentPath, "garden-"+job.ID)
+	if err = o.checkpoint(job); err != nil {
+		return false, err
+	}
+	children, err := o.list(ctx, job.Download.ParentCID, cookie)
+	if err != nil {
+		return s.stop(p, "blocked", "无法确认本次下载目录，未提交离线；请核对已创建的目录")
+	}
+	confirmed, err := organizeFindDirectory(children, "garden-"+job.ID)
+	if err != nil || confirmed != dir {
+		return s.stop(p, "blocked", "本次下载目录身份不一致，未提交离线")
+	}
+	_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: p.account.ID, TargetCID: dir, TargetPath: job.Config.SourcePath}, p.account, "magnet:?xt=urn:btih:"+job.Download.Hash)
+	if err != nil {
+		return s.stop(p, "uncertain", organizePublicError(fmt.Errorf("%s", CloudDownloadErrorMessage(err)), cookie)+"；下载目录已保留，请核对 115 任务")
+	}
+	job.Status, job.Message = "downloading", "115 离线中，完成后自动整理所选文件"
+	return false, o.checkpoint(job)
+}
+
+func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	o, job, cookie := s.Organize, &p.job, p.account.Cookie
 	release, err := o.ReserveDirectoryWork()
 	if err != nil {
 		p.next = time.Now().Add(3 * time.Second)
@@ -351,14 +412,16 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 			o.OnCompleted(ctx, job.Config)
 		}
 	}()
-	files, dirs, err := s.downloadFiles(ctx, job, cookie)
+	scanCtx, cancelScan := context.WithTimeout(ctx, 90*time.Second)
+	files, dirs, err := s.downloadFiles(scanCtx, job, cookie)
+	cancelScan()
 	// The exact API can omit wp_path_id. Prove the returned object belongs to
 	// our staging directory using the scan already required for file binding.
 	if err == nil && p.resultID != "" && !slices.Contains(dirs, p.resultID) && !slices.ContainsFunc(files, func(f OrganizeFile) bool { return f.ID == p.resultID }) {
 		err = fmt.Errorf("115 离线结果不在本次下载目录中")
 	}
 	if err == nil {
-		err = bindGardenFiles(job, files)
+		err = bindGardenFiles(job, files, p.resultID)
 	}
 	if err != nil {
 		p.bindingAttempts++
@@ -430,7 +493,7 @@ func (s *GardenOrganize) downloadFiles(ctx context.Context, job *OrganizeJob, co
 	return files, dirs, err
 }
 
-func bindGardenFiles(job *OrganizeJob, files []OrganizeFile) error {
+func bindGardenFiles(job *OrganizeJob, files []OrganizeFile, resultID string) error {
 	index := make(map[string][]OrganizeFile, len(files))
 	for _, f := range files {
 		index[f.SourcePath] = append(index[f.SourcePath], f)
@@ -441,7 +504,17 @@ func bindGardenFiles(job *OrganizeJob, files []OrganizeFile) error {
 		// A restart after binding/preparing preserves cloud paths rather than
 		// website paths. Normalize either representation to the original relative path.
 		relative := strings.TrimPrefix(item.File.SourcePath, strings.TrimRight(job.Config.SourcePath, "/")+"/")
-		matches := index[strings.TrimPrefix(relative, "/")]
+		relative = strings.TrimPrefix(relative, "/")
+		matches := index[relative]
+		// 115 can wrap a single-file torrent in a directory with that exact
+		// filename. Accept only this one-level shape, with one actual file and
+		// a verified result ID; retain its actual cloud path for recovery.
+		if len(matches) == 0 && len(job.Items) == 1 && len(files) == 1 && resultID != "" {
+			f := files[0]
+			if relative == f.Name && f.SourcePath == path.Join(relative, relative) && (resultID == f.ID || resultID == f.ParentID) {
+				matches = files
+			}
+		}
 		if len(matches) != 1 || used[matches[0].ID] {
 			return fmt.Errorf("下载目录中无法唯一匹配原路径：%s", item.File.SourcePath)
 		}

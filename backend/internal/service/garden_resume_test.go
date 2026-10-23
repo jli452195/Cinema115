@@ -33,7 +33,7 @@ func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFake
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = bindGardenFiles(&p.job, files); err != nil {
+		if err = bindGardenFiles(&p.job, files, ""); err != nil {
 			t.Fatal(err)
 		}
 		p.job.Items[0].Status = "preparing"
