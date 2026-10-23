@@ -65,8 +65,6 @@ type animeOrganizationRun struct {
 }
 
 func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string) error {
-	ctx, finishTiming := s.observeAnimeStage(ctx, jobID, "organize")
-	defer finishTiming()
 	if s.OrganizationGateway == nil || s.FileGateway == nil {
 		return ErrAnimeOfflineUnavailable
 	}
@@ -87,6 +85,7 @@ func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session
 		}
 		r := animeOrganizationRun{service: s, session: session, job: job, op: op, listings: make(map[string][]model.AnimeDriveEntry, 8)}
 		if op.Progress.State == "needs_review" {
+			s.logAnimeJobIssue(job, op.Progress.Code)
 			return nil // Only an explicit reconcile action reopens this saved step.
 		}
 		// A persisted in-flight step is read-only, including after a restart.
@@ -111,6 +110,7 @@ func (r *animeOrganizationRun) save(ctx context.Context, p model.AnimeOrganizePr
 	defer stop()
 	op, err := r.service.Store.CheckpointAnimeOrganization(writeCtx, r.op, p, dispatch, r.session.leaseToken())
 	if err == nil {
+		r.service.logAnimeOrganizationResult(r.job, r.op.Progress, op.Progress)
 		r.op = op
 	}
 	return err

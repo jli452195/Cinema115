@@ -22,8 +22,6 @@ var ErrAnimeSubmitDirectory = errors.New("anime submit directory identity is unv
 // A durable dispatched/unknown operation is reconciled without another submit.
 // P2-07 must prepare and bind the resource subdirectory before the first call.
 func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDownloadSession, jobID string) (model.AnimeEnsureDownloadResult, error) {
-	ctx, finishTiming := s.observeAnimeStage(ctx, jobID, "submit")
-	defer finishTiming()
 	ctx, cancel := context.WithTimeout(ctx, CloudDownloadTimeout)
 	defer cancel()
 	var out model.AnimeEnsureDownloadResult
@@ -108,6 +106,7 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		job, jobErr := s.Store.GetAnimeDownloadJob(readCtx, jobID)
 		op, opErr := s.Store.GetAnimeSubmitOperation(readCtx, jobID)
 		if jobErr == nil && opErr == nil {
+			s.logAnimeJobResult(out.Job, job)
 			out.Job, out.Operation = job, op
 		}
 		if err == nil && jobErr != nil {

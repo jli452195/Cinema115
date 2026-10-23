@@ -55,5 +55,8 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 		// File collection or a concurrent cancellation already retired it.
 		return nil
 	}
+	if err == nil && code != "DOWNLOAD_PAUSED" {
+		r.Admin.logAnimeJobIssue(work.Job, code)
+	}
 	return err
 }

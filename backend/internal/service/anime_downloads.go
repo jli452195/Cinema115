@@ -82,7 +82,7 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	if err == nil {
 		s.wakeDownloads()
 		if result.Created && s.Logs != nil {
-			s.logAnime(result.Job.ID, "动漫任务 · "+result.Job.Snapshot.Source.GroupName, "INFO", "已加入下载队列："+result.Job.Snapshot.Release.Title)
+			s.logAnimeJob(result.Job, "INFO", "已加入下载队列")
 		}
 	}
 	return result, err

@@ -174,8 +174,6 @@ func (r *AnimeStatusRunner) continueReadyJob(ctx context.Context, jobID string) 
 }
 
 func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPoll) error {
-	ctx, finishTiming := r.Admin.observeAnimeStage(ctx, poll.Job.ID, "status")
-	defer finishTiming()
 	readCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	var observation *model.AnimeOfflineStatus
@@ -210,14 +208,16 @@ func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPo
 	// Only persistence outlives request cancellation, with a five-second bound.
 	writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
-	err := r.Admin.Store.CompleteAnimeStatusPoll(writeCtx, poll, observation, code, retryAt, r.timestamp())
+	current, err := r.Admin.Store.CompleteAnimeStatusPoll(writeCtx, poll, observation, code, retryAt, r.timestamp())
 	if errors.Is(err, storage.ErrAnimeAccountChanged) {
-		err = r.Admin.Store.CompleteAnimeStatusPoll(writeCtx, poll, nil, "DOWNLOAD_ACCOUNT_CHANGED", 0, r.timestamp())
+		current, err = r.Admin.Store.CompleteAnimeStatusPoll(writeCtx, poll, nil, "DOWNLOAD_ACCOUNT_CHANGED", 0, r.timestamp())
 	}
 	if errors.Is(err, storage.ErrAnimeConflict) {
 		return nil
 	}
-	finishTiming()
+	if err == nil {
+		r.Admin.logAnimeJobResult(poll.Job, current)
+	}
 	if err == nil && r.Admin.FileGateway != nil && observation != nil && observation.State == "completed" && ctx.Err() == nil {
 		session.work = nil // status receipt released its lease before collection
 		_, verifyErr := r.Admin.CollectDownloadedFiles(ctx, session, poll.Job.ID)

@@ -173,8 +173,6 @@ func (s *AnimeAdminService) readAnimeDirectory(ctx context.Context, session *Ani
 // Only the result's subdirectories need extra pages. Finished work is never
 // revisited, even when the user subsequently moves or renames its files.
 func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string) (model.AnimeDownloadJob, error) {
-	ctx, finishTiming := s.observeAnimeStage(ctx, jobID, "files")
-	defer finishTiming()
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	var out model.AnimeDownloadJob
@@ -221,6 +219,7 @@ func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session 
 		defer stop()
 		current, readErr := s.Store.GetAnimeDownloadJob(readCtx, jobID)
 		if readErr == nil {
+			s.logAnimeJobResult(out, current)
 			out = current
 		} else if err == nil {
 			err = readErr

@@ -36,7 +36,7 @@ func TestAnimeJobActionReceiptCASCooldownAndNoReissue(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal(found, err)
 	}
-	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, nil, "TASK_RATE_LIMITED", time.Now().UnixMilli()+600000, time.Now().UnixMilli()); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, nil, "TASK_RATE_LIMITED", time.Now().UnixMilli()+600000, time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	current, _ = f.store.GetAnimeDownloadJob(ctx, job.ID)

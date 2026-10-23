@@ -305,7 +305,7 @@ func TestAnimeRecoverySharesUIDLeaseIntervalAndRateLimitWithStatus(t *testing.T)
 	}
 	poll := takeAnimeStatusPoll(t, f, now+5001)
 	retryAt := now + 600000
-	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, nil, "TASK_RATE_LIMITED", retryAt, now+5002); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, nil, "TASK_RATE_LIMITED", retryAt, now+5002); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := f.store.ReserveAnimeDownloadWork(ctx, retryAt-1, nil); err != nil || found {

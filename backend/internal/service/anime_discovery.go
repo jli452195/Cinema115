@@ -144,7 +144,6 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 }
 
 func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourcePoll) error {
-	started := time.Now()
 	var readErr error
 	if poll.IssueCode == "" {
 		budget, err := NewAnimeSourceBudget(nil)
@@ -166,7 +165,7 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 			stats, err := r.Admin.Store.CompleteAnimeSourcePoll(ctx, poll, page.SourcePage, r.timestamp())
 			readErr = err
 			if readErr == nil {
-				r.Admin.logAnimeRSSResult(poll, page, stats, budget.Stats().Requests, time.Since(started))
+				r.Admin.logAnimeRSSResult(poll, page, stats)
 				r.Admin.wakeAnimeVerification()
 				return nil
 			}

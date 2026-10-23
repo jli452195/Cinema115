@@ -110,40 +110,40 @@ func animeStatusCodeValid(code string) bool {
 // CompleteAnimeStatusPoll only updates read observations/download state. It
 // never verifies files, changes workflow, touches submit permission or creates
 // a new job. CAS prevents late receipts reviving a cancelled/verified task.
-func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPoll, observation *model.AnimeOfflineStatus, code string, retryAt, now int64) error {
+func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPoll, observation *model.AnimeOfflineStatus, code string, retryAt, now int64) (model.AnimeDownloadJob, error) {
 	if !model.ValidAnimeID(poll.Job.ID) || !model.ValidAnimeID(poll.Token) || now <= 0 || retryAt < 0 || !animeStatusCodeValid(code) || observation != nil && (!observation.Valid() || code != "") || observation == nil && code == "" {
-		return ErrAnimeInvalid
+		return model.AnimeDownloadJob{}, ErrAnimeInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return model.AnimeDownloadJob{}, err
 	}
 	defer tx.Rollback()
 	var current bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_download_jobs j WHERE j.id=? AND j.generation=? AND j.revision=? AND j.lease_token=? AND j.lease_until=? AND j.lease_until>? AND `+animeStatusEligible+`)`, poll.Job.ID, poll.Job.Generation, poll.Job.Revision, poll.Token, poll.Until, now).Scan(&current); err != nil {
-		return err
+		return model.AnimeDownloadJob{}, err
 	}
 	if !current {
-		return ErrAnimeConflict
+		return model.AnimeDownloadJob{}, ErrAnimeConflict
 	}
 	job, err := scanAnimeDownloadJob(tx.QueryRowContext(ctx, `SELECT `+animeJobColumns+` FROM anime_download_jobs WHERE id=?`, poll.Job.ID))
 	if err != nil {
-		return err
+		return model.AnimeDownloadJob{}, err
 	}
 	request, err := animeSubmitRequest(job, job.Snapshot.Target)
 	if err != nil || request != poll.Operation.Request {
-		return ErrAnimeIdentity
+		return model.AnimeDownloadJob{}, ErrAnimeIdentity
 	}
 	op, err := scanAnimeSubmit(tx.QueryRowContext(ctx, `SELECT `+animeSubmitColumns+` FROM anime_drive_operations WHERE download_job_id=? AND kind='submit'`, job.ID))
 	if err != nil {
-		return err
+		return model.AnimeDownloadJob{}, err
 	}
 	if op.ID != poll.Operation.ID || op.Request != request || op.Result == nil || (op.Result.Kind != "matched" && op.Result.Kind != "accepted") || op.Result.TargetCID != request.DirectoryCID {
-		return ErrAnimeIdentity
+		return model.AnimeDownloadJob{}, ErrAnimeIdentity
 	}
 	if code != "DOWNLOAD_ACCOUNT_CHANGED" {
 		if err := checkAnimeSubmitIdentityTx(ctx, tx, job, request); err != nil {
-			return err
+			return model.AnimeDownloadJob{}, err
 		}
 	}
 	tracking := model.AnimeDownloadTracking{SchemaVersion: 1}
@@ -224,10 +224,25 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 	}
 	raw, err := animeJSON(tracking)
 	if err != nil {
-		return err
+		return model.AnimeDownloadJob{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET download_state=?,file_state=?,block_code=NULLIF(?,''),raw_status_json=?,result_object_id=?,result_object_kind=CASE WHEN ? IS NULL THEN result_object_kind ELSE COALESCE(result_object_kind,'unknown') END,next_run_at=?,lease_token=NULL,lease_until=NULL,revision=revision+1,updated_at=? WHERE id=?`, state, fileState, code, raw, resultID, resultID, next, now, job.ID); err != nil {
-		return fmt.Errorf("record anime status: %w", err)
+		return model.AnimeDownloadJob{}, fmt.Errorf("record anime status: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return model.AnimeDownloadJob{}, err
+	}
+	job.DownloadState, job.FileState = state, fileState
+	job.BlockCode = nil
+	if code != "" {
+		job.BlockCode = &code
+	}
+	job.Tracking, job.ResultObjectID, job.NextRunAt = &tracking, resultID, next
+	if resultID != nil && job.ResultObjectKind == nil {
+		kind := "unknown"
+		job.ResultObjectKind = &kind
+	}
+	job.Revision++
+	job.UpdatedAt = now
+	return job, nil
 }

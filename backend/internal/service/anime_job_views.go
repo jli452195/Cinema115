@@ -142,7 +142,7 @@ func (s *AnimeAdminService) JobAction(ctx context.Context, actor, key, id, actio
 				if resultErr != nil {
 					message, level = "任务操作未完成；"+animeLogOperationError(resultErr), "WARNING"
 				}
-				s.logAnime(id, "动漫任务 · "+prior.Snapshot.Source.GroupName, level, message+"："+prior.Snapshot.Release.Title)
+				s.logAnimeJob(prior, level, message)
 			}()
 		}
 	}

@@ -106,8 +106,6 @@ func animeRequestKey(actor, operation, key string, body any) (storage.AnimeWrite
 // saveConfiguration validates all local fields before upstream reads. A source
 // omitted by PATCH is retained; only explicit removals can delete one.
 func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, id string, in AnimeSaveInput) (out model.AnimeConfigReceipt, resultErr error) {
-	ctx, finishTiming := s.observeAnimeStage(ctx, id, "subscription")
-	defer finishTiming()
 	// Deep-copy before canonicalization; caller form slices remain untouched.
 	raw, err := json.Marshal(in)
 	if err != nil {

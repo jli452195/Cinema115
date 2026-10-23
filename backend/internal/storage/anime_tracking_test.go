@@ -133,7 +133,7 @@ func TestAnimeStatusConcurrentReservationAndDue(t *testing.T) {
 		t.Fatal("reservation not exclusive", count.Load())
 	}
 	observation := animeStatusObservation(job, "running", 52)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), winner, &observation, "", 0, now+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), winner, &observation, "", 0, now+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -152,7 +152,7 @@ func TestAnimeStatusCompletionIsNotFileVerification(t *testing.T) {
 	f, job, now := animeStatusStoreFixture(t)
 	poll := takeAnimeStatusPoll(t, f, now)
 	observation := animeStatusObservation(job, "finished", 100)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -163,7 +163,7 @@ func TestAnimeStatusCompletionIsNotFileVerification(t *testing.T) {
 	// new submit; P2-07 must still obtain the actual files.
 	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
 	missing := model.AnimeOfflineStatus{SchemaVersion: 1, Source: model.AnimeOfflineExact, State: "unknown"}
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &missing, "", 0, *got.NextRunAt+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &missing, "", 0, *got.NextRunAt+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -189,7 +189,7 @@ func TestAnimeStatusEarlyCompletionWithoutResultIDKeepsFastChecks(t *testing.T) 
 	poll := takeAnimeStatusPoll(t, f, now)
 	observation := animeStatusObservation(job, "finished", 100)
 	observation.ResultID = ""
-	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, now+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, now+1); err != nil {
 		t.Fatal(err)
 	}
 	got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
@@ -198,7 +198,7 @@ func TestAnimeStatusEarlyCompletionWithoutResultIDKeepsFastChecks(t *testing.T) 
 	}
 	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
 	observation.ResultID = "300"
-	if err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, *got.NextRunAt+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, *got.NextRunAt+1); err != nil {
 		t.Fatal(err)
 	}
 	got, err = f.store.GetAnimeDownloadJob(ctx, job.ID)
@@ -242,7 +242,7 @@ func TestAnimeStatusInitializingResultUsesOnlyBoundedEarlyChecks(t *testing.T) {
 				if readFailure {
 					remote, code = nil, "TASK_READ_FAILED"
 				}
-				if err := f.store.CompleteAnimeStatusPoll(ctx, poll, remote, code, 0, when); err != nil {
+				if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, remote, code, 0, when); err != nil {
 					t.Fatal(err)
 				}
 				got, err := f.store.GetAnimeDownloadJob(ctx, job.ID)
@@ -268,14 +268,14 @@ func TestAnimeStatusUnknownAndFailurePreserveLastSuccessfulRead(t *testing.T) {
 	f, job, now := animeStatusStoreFixture(t)
 	poll := takeAnimeStatusPoll(t, f, now)
 	observation := animeStatusObservation(job, "running", 100)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
 	for i := 0; i < 4; i++ {
 		when := *got.NextRunAt
 		poll = takeAnimeStatusPoll(t, f, when)
-		if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, nil, "TASK_READ_FAILED", 0, when+1); err != nil {
+		if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, nil, "TASK_READ_FAILED", 0, when+1); err != nil {
 			t.Fatal(err)
 		}
 		got, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -286,7 +286,7 @@ func TestAnimeStatusUnknownAndFailurePreserveLastSuccessfulRead(t *testing.T) {
 	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
 	unknown := animeStatusObservation(job, "", 100)
 	unknown.Malformed, unknown.State = true, "unknown"
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &unknown, "", 0, *got.NextRunAt+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &unknown, "", 0, *got.NextRunAt+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -295,7 +295,7 @@ func TestAnimeStatusUnknownAndFailurePreserveLastSuccessfulRead(t *testing.T) {
 	}
 	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
 	failed := animeStatusObservation(job, "failed", 45)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &failed, "", 0, *got.NextRunAt+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &failed, "", 0, *got.NextRunAt+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -327,7 +327,7 @@ func TestAnimeStatusIdentityConflictsStopWithoutReplacingEvidence(t *testing.T) 
 			if mode == "credential" {
 				remote = nil
 			}
-			if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, remote, code, 0, now+1); err != nil {
+			if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, remote, code, 0, now+1); err != nil {
 				t.Fatal(err)
 			}
 			got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
@@ -362,7 +362,7 @@ func TestAnimeStatusStaleReceiptsCannotReleaseNewReservation(t *testing.T) {
 			}
 			before := animeMigrationRows(t, f.store.db, "anime_download_jobs")
 			observation := animeStatusObservation(job, "finished", 100)
-			if err := f.store.CompleteAnimeStatusPoll(context.Background(), old, &observation, "", 0, when); !errors.Is(err, ErrAnimeConflict) {
+			if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), old, &observation, "", 0, when); !errors.Is(err, ErrAnimeConflict) {
 				t.Fatal("stale result accepted", err)
 			}
 			if after := animeMigrationRows(t, f.store.db, "anime_download_jobs"); !reflect.DeepEqual(before, after) {
@@ -380,8 +380,8 @@ func TestAnimeStatusReceiptRollbackAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	observation := animeStatusObservation(job, "finished", 100)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err == nil {
-		t.Fatal("write failure ignored")
+	if result, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err == nil || result.ID != "" {
+		t.Fatal("write failure returned a publishable result", result, err)
 	}
 	if after := animeMigrationRows(t, f.store.db, "anime_download_jobs"); !reflect.DeepEqual(before, after) {
 		t.Fatal("partial receipt escaped rollback")
@@ -389,10 +389,14 @@ func TestAnimeStatusReceiptRollbackAndRestart(t *testing.T) {
 	if _, err := f.store.db.Exec(`DROP TRIGGER reject_status`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1); err != nil {
+	committed, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &observation, "", 0, now+1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	want, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
+	if !reflect.DeepEqual(committed, want) {
+		t.Fatal("returned status differs from committed row", committed, want)
+	}
 	var path string
 	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
 		t.Fatal(err)
@@ -444,7 +448,7 @@ func TestAnimeStatusUIDBudgetAndSharedCooldown(t *testing.T) {
 			if mode == "access denied" {
 				code = "TASK_ACCESS_DENIED"
 			}
-			if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, nil, code, retry, now+1); err != nil {
+			if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, nil, code, retry, now+1); err != nil {
 				t.Fatal(err)
 			}
 			if _, found, err := f.store.ReserveAnimeStatusPoll(context.Background(), now+5000, nil); err != nil || found {
@@ -497,13 +501,13 @@ func TestAnimeStatusRegressedCompletedTaskRequiresReview(t *testing.T) {
 	f, job, now := animeStatusStoreFixture(t)
 	poll := takeAnimeStatusPoll(t, f, now)
 	completed := animeStatusObservation(job, "finished", 100)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &completed, "", 0, now+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &completed, "", 0, now+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := f.store.GetAnimeDownloadJob(context.Background(), job.ID)
 	poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
 	running := animeStatusObservation(job, "running", 1)
-	if err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &running, "", 0, *got.NextRunAt+1); err != nil {
+	if _, err := f.store.CompleteAnimeStatusPoll(context.Background(), poll, &running, "", 0, *got.NextRunAt+1); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
