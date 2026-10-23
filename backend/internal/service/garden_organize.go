@@ -42,6 +42,8 @@ type gardenPending struct {
 	attempts, bindingAttempts int
 	ready                     bool
 	resultID                  string
+	resuming                  bool
+	waitUntil                 time.Time
 }
 
 type GardenOrganize struct {
@@ -106,25 +108,9 @@ func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
 	if !ok || job.Download == nil {
 		return OrganizeJob{}, fmt.Errorf("%w：预览已过期，请重新确认", ErrOrganizeConflict)
 	}
-	a, err := o.account(job.Config.AccountID)
+	a, err := s.snapshotJob(job)
 	if err != nil {
 		return OrganizeJob{}, err
-	}
-	if a.Revision != job.Revision {
-		return OrganizeJob{}, fmt.Errorf("%w：账号凭据已变化，请重新预览", ErrOrganizeConflict)
-	}
-	if len(s.live) >= 4 {
-		return OrganizeJob{}, fmt.Errorf("%w：已有 4 个下载整理任务，请等待完成", ErrOrganizeConflict)
-	}
-	for _, p := range s.live {
-		if p.job.Download.Hash == job.Download.Hash {
-			return OrganizeJob{}, ErrCloudTaskBusy
-		}
-	}
-	for _, item := range job.Items {
-		if item.Conflict != "" {
-			return OrganizeJob{}, fmt.Errorf("%w：请先处理命名冲突", ErrOrganizeInput)
-		}
 	}
 	job = cloneOrganizeJob(job)
 	job.Status, job.UpdatedAt = "queued", time.Now()
@@ -141,6 +127,89 @@ func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
 	default:
 	}
 	return job, nil
+}
+
+// Called with s.mu held; both creation and explicit recovery pin credentials
+// and share the same concurrency/hash gate without making network requests.
+func (s *GardenOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
+	a, err := s.Organize.account(job.Config.AccountID)
+	if err != nil {
+		return a, err
+	}
+	if a.Revision != job.Revision {
+		return a, fmt.Errorf("%w：账号配置已变化，请重新确认账号和目录", ErrOrganizeConflict)
+	}
+	if len(s.live) >= 4 {
+		return a, fmt.Errorf("%w：已有 4 个下载整理任务，请等待完成", ErrOrganizeConflict)
+	}
+	for _, p := range s.live {
+		if p.job.Download.Hash == job.Download.Hash {
+			return a, ErrCloudTaskBusy
+		}
+	}
+	for _, item := range job.Items {
+		if item.Conflict != "" {
+			return a, fmt.Errorf("%w：请先处理命名冲突", ErrOrganizeInput)
+		}
+	}
+	return a, nil
+}
+
+func canResumeGarden(job OrganizeJob) bool {
+	d := job.Download
+	if job.Status != "interrupted" || d == nil || !organizeID(d.DirectoryID) || d.DirectoryID == "0" || job.Config.SourceCID != d.DirectoryID || job.Config.SourcePath != path.Join(d.ParentPath, "garden-"+job.ID) || d.DirectoryID == job.Config.TargetCID || len(job.Items) == 0 || job.Stats.RenameRequests != 0 || job.Stats.MoveRequests != 0 {
+		return false
+	}
+	for _, item := range job.Items {
+		// A persisted renaming/moving intent can precede an unknown outcome;
+		// zero completed files or zero recorded requests cannot prove safety.
+		if item.Status != "pending" && item.Status != "preparing" {
+			return false
+		}
+	}
+	return true
+}
+
+// Resume only rejoins tracking for an existing download. It never enters the
+// queued/submitting branch, including after a lost response or another restart.
+func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.Organize
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, saved := range o.doc.Jobs {
+		if saved.ID != id || saved.Download == nil {
+			continue
+		}
+		if s.live[id] != nil || saved.Status == "completed" {
+			return cloneOrganizeJob(saved), nil
+		}
+		if !canResumeGarden(saved) {
+			return OrganizeJob{}, fmt.Errorf("%w：此任务不能直接恢复，请核对文件后使用手动整理", ErrOrganizeConflict)
+		}
+		a, err := s.snapshotJob(saved)
+		if err != nil {
+			return OrganizeJob{}, err
+		}
+		job := cloneOrganizeJob(saved)
+		job.Status, job.UpdatedAt = "downloading", time.Now()
+		job.Message = "正在检查原 115 任务，确认后继续整理；不会重新提交离线"
+		job.Stats = OrganizeStats{}
+		doc := o.doc
+		doc.Jobs = append([]OrganizeJob{}, doc.Jobs...)
+		doc.Jobs[i] = job
+		if err = o.saveLocked(doc); err != nil {
+			return OrganizeJob{}, err
+		}
+		s.live[id] = &gardenPending{job: cloneOrganizeJob(job), account: a, resuming: true, waitUntil: time.Now().Add(24 * time.Hour)}
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
+		return job, nil
+	}
+	return OrganizeJob{}, fmt.Errorf("%w：下载整理任务不存在或已不在最近记录中", ErrOrganizeInput)
 }
 
 func (s *GardenOrganize) Run(ctx context.Context) error {
@@ -188,7 +257,10 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 		job.Stats.StartedAt = time.Now()
 	}
 	ctx = withOrganizeStats(ctx, job)
-	if time.Since(job.CreatedAt) > 24*time.Hour {
+	if p.waitUntil.IsZero() {
+		p.waitUntil = job.CreatedAt.Add(24 * time.Hour)
+	}
+	if time.Now().After(p.waitUntil) {
 		return s.stop(p, "interrupted", "等待离线超过 24 小时，已停止自动整理；文件保留在本次下载目录")
 	}
 	if job.Status == "queued" {
@@ -234,6 +306,13 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 		p.attempts++
 		delays := []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
 		p.next = time.Now().Add(delays[min(p.attempts-1, len(delays)-1)])
+		if p.resuming && (err != nil || !observation.Present) {
+			message := "未找到原 115 离线任务，请核对下载目录；未重新提交离线"
+			if err != nil {
+				message = "暂时无法查询原 115 任务，可稍后再次检查并继续；未重新提交离线"
+			}
+			return s.stop(p, "interrupted", message)
+		}
 		if err != nil || !observation.Present {
 			message := "暂未读到可确认的 115 任务状态，稍后再检查；不会重复提交离线"
 			if job.Message != message {
@@ -245,6 +324,7 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 		if !observation.Valid() || observation.InfoHash != job.Download.Hash || observation.TargetCID != "" && observation.TargetCID != job.Download.DirectoryID {
 			return s.stop(p, "blocked", "115 任务身份或下载目录不一致，已停止整理")
 		}
+		p.resuming = false
 		if observation.State == "failed" {
 			return s.stop(p, "blocked", "115 离线失败或已停止，文件与下载目录已保留")
 		}
@@ -358,7 +438,10 @@ func bindGardenFiles(job *OrganizeJob, files []OrganizeFile) error {
 	bound := make([]OrganizeItem, len(job.Items))
 	used := make(map[string]bool, len(job.Items))
 	for i, item := range job.Items {
-		matches := index[strings.TrimPrefix(item.File.SourcePath, "/")]
+		// A restart after binding/preparing preserves cloud paths rather than
+		// website paths. Normalize either representation to the original relative path.
+		relative := strings.TrimPrefix(item.File.SourcePath, strings.TrimRight(job.Config.SourcePath, "/")+"/")
+		matches := index[strings.TrimPrefix(relative, "/")]
 		if len(matches) != 1 || used[matches[0].ID] {
 			return fmt.Errorf("下载目录中无法唯一匹配原路径：%s", item.File.SourcePath)
 		}

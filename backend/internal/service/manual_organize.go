@@ -88,6 +88,7 @@ type OrganizeItem struct {
 }
 
 type OrganizeJob struct {
+	Resumable bool                `json:"resumable,omitempty"`
 	Download  *GardenDownload     `json:"download,omitempty"`
 	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
 	ID        string              `json:"id"`
@@ -160,6 +161,9 @@ func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive O
 		job := &s.doc.Jobs[i]
 		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
 			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查文件当前位置后重新扫描预览"
+			if canResumeGarden(*job) {
+				job.Message = "服务重启，任务已中断；可在详情中检查并继续，不会重新提交离线"
+			}
 		}
 	}
 	for i := range s.doc.CleanupJobs {
@@ -475,6 +479,7 @@ func (s *ManualOrganize) History() []OrganizeJob {
 	jobs := make([]OrganizeJob, len(s.doc.Jobs))
 	for i, job := range s.doc.Jobs {
 		jobs[i] = cloneOrganizeJob(job)
+		jobs[i].Resumable = canResumeGarden(job)
 		jobs[i].Items = append([]OrganizeItem{}, job.Items...)
 	}
 	return jobs

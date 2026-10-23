@@ -37,6 +37,7 @@ type gardenTrackerFake struct {
 	resultID    string
 	calls       int
 	missing     bool
+	downloading bool
 	err         error
 	beforeRead  func()
 }
@@ -55,7 +56,11 @@ func (f *gardenTrackerFake) ReadAnimeTaskStatus(_ context.Context, cookie, hash 
 	}
 	status := int64(1)
 	progress := 100.0
-	return model.AnimeOfflineStatus{SchemaVersion: 1, Source: model.AnimeOfflineExact, Present: true, InfoHash: hash, TargetCID: f.cid, ResultID: f.resultID, Status: &status, Progress: &progress, DisplayStatus: "completed", State: "completed"}, nil
+	out := model.AnimeOfflineStatus{SchemaVersion: 1, Source: model.AnimeOfflineExact, Present: true, InfoHash: hash, TargetCID: f.cid, ResultID: f.resultID, Status: &status, Progress: &progress, DisplayStatus: "completed", State: "completed"}
+	if f.downloading {
+		progress, out.DisplayStatus, out.State = 50, "downloading", "downloading"
+	}
+	return out, nil
 }
 
 func TestGardenInstantCompletionWithoutTargetCID(t *testing.T) {

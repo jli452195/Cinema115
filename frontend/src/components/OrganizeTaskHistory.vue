@@ -10,8 +10,9 @@ import { activePhase, historyLabels, historyTasks, historyTime, isActiveTask, re
 const props = defineProps<{
   jobs: OrganizeJob[]; cleanupJobs: OrganizeCleanup[]; subtitleJobs: SubtitleImport[]; accounts: P115Account[]
   tab: HistoryKind; ready: boolean; error: string; refreshing: boolean; refreshedAt: string; busy: boolean
+  resuming: string; resumeError?: { id: string; message: string }
 }>()
-const emit = defineEmits<{ 'update:tab': [value: HistoryKind]; refresh: []; source: [job: OrganizeJob]; subtitle: [job: OrganizeJob] }>()
+const emit = defineEmits<{ 'update:tab': [value: HistoryKind]; refresh: []; source: [job: OrganizeJob]; subtitle: [job: OrganizeJob]; resume: [job: OrganizeJob] }>()
 const limits = ref<Record<HistoryKind, number>>({ organize: 8, cleanup: 8, subtitle: 8 })
 const selected = ref<{ key: string; snapshot: HistoryTask }>()
 const completedElsewhere = ref<HistoryTask>()
@@ -40,6 +41,10 @@ const blockedReason = computed(() => {
 })
 const canSubtitle = computed(() => !!selectedTask.value?.organize?.items.some(item => item.status === 'done' && item.file.mediaType === 'video'))
 function openDetails(task: HistoryTask) { selected.value = { key: task.key, snapshot: task } }
+function resume() {
+  const job = selectedTask.value?.organize
+  if (job?.resumable && !blockedReason.value && !props.resuming) emit('resume', job)
+}
 async function act(action: 'source' | 'subtitle') {
   const job = selectedTask.value?.organize
   if (!job || blockedReason.value || isActiveTask(selectedTask.value!) || (action === 'subtitle' && !canSubtitle.value)) return
@@ -81,7 +86,7 @@ async function act(action: 'source' | 'subtitle') {
       <p v-if="!history.length" class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ activeTasks.some(task => task.kind === tab) ? '当前任务的进度显示在上方，结束后会归入记录。' : activeOtherKinds.length ? `当前没有${historyLabels[tab]}历史记录；${activeOtherKinds.join('、')}任务正在执行，请在对应标签查看。` : `暂无${historyLabels[tab]}记录，任务执行后会在这里显示结果。` }}</p>
       <div v-if="history.length" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400"><p>已显示 {{ visible.length }}/{{ history.length }} 条，最多保留最近 {{ tab === 'organize' ? 30 : 10 }} 条{{ historyLabels[tab] }}记录<span v-if="tab === 'organize'" class="block mt-1">文件数包含视频及字幕</span><span v-else-if="tab === 'cleanup'" class="block mt-1">按文件或目录条目计数</span></p><button v-if="visible.length < history.length" class="action" @click="limits[tab] += 8">显示更多</button></div>
     </div>
-    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :can-subtitle="canSubtitle" :history-error="error" :unavailable="unavailable" @close="selected = undefined" @source="act('source')" @subtitle="act('subtitle')" />
+    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :can-subtitle="canSubtitle" :history-error="error" :unavailable="unavailable" :resuming="resuming === selectedTask.organize?.id" :resume-error="resumeError && resumeError.id === selectedTask.organize?.id ? resumeError.message : ''" @close="selected = undefined" @source="act('source')" @subtitle="act('subtitle')" @resume="resume" />
   </section>
 </template>
 

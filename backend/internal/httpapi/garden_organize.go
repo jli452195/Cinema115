@@ -61,4 +61,19 @@ func RegisterGardenOrganize(admin *gin.RouterGroup, s *service.GardenOrganize) {
 		}
 		c.JSON(202, out)
 	})
+	r.POST("/resume", func(c *gin.Context) {
+		var in struct {
+			JobID string `json:"jobId"`
+		}
+		if c.ShouldBindJSON(&in) != nil || in.JobID == "" {
+			c.JSON(400, gin.H{"error": "任务参数无效"})
+			return
+		}
+		out, err := s.Resume(in.JobID)
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(202, out)
+	})
 }

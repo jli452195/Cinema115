@@ -17,6 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const file = i => ({ id: String(i), name: `閃靈二人組 - ${i}.rmvb`, sourcePath: `/来源/${'超长目录/'.repeat(20)}${i}.rmvb`, mediaType: i < 12 ? 'video' : 'subtitle', size: 100, directory: false })
     const makeJob = i => ({ id: `job-${i}`, title: i === 0 ? '部分完成作品' : i === 1 ? '转生贤者的异世界生活～获得第二职业并成为世界最强～'.repeat(3) : `已完成作品 ${i}`, config, status: i === 0 ? 'partial' : 'completed', createdAt: new Date(Date.UTC(2026, 9, 15, 12 - i)).toISOString(), items: Array.from({ length: 36 }, (_, n) => ({ file: file(n), targetPath: `/影视库/閃靈二人組/Season 01/${n}.rmvb`, status: 'done' })) })
     let jobs = Array.from({ length: 12 }, (_, i) => makeJob(i)), offline = true
+    let resumeMode = 'hold', releaseResume
     jobs[0].items = jobs[0].items.slice(0, 6).map((item, i) => ({ ...item, status: ['done', 'uncertain', 'renamed', 'pending', 'blocked', 'skipped'][i], message: i === 1 ? '结果未确认，请核实实际文件' : '' }))
     const cleanup = [{ id: 'clean', accountId: 'main', mode: 'empty', parentPath: '/来源/待整理', status: 'completed', createdAt: '2026-10-15T00:00:00Z', items: [{ id: 'folder', name: '空目录', path: '/来源/空目录', status: 'done' }] }]
     const subtitles = [{ id: 'sub', accountId: 'main', jobId: 'job-2', status: 'completed', createdAt: '2026-10-15T01:00:00Z', items: [0, 1].map(i => ({ localId: String(i), originalName: `${i}.srt`, video: file(i), targetPath: `/影视库/${i}.srt`, status: i ? 'skipped' : 'done' })) }]
@@ -29,6 +30,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else if (endpoint.endsWith('/manual-organize/config')) data = config
       else if (endpoint.endsWith('/manual-organize/files')) data = { files: [], count: 0 }
       else if (endpoint.endsWith('/subtitles/videos')) data = { videos: [{ ...file(0), parentId: '20', path: '/影视库/0.rmvb' }] }
+      else if (endpoint.endsWith('/garden-organize/resume')) {
+        if (resumeMode === 'hold') await new Promise(resolve => { releaseResume = resolve })
+        if (resumeMode === 'reject') { status = 409; data = { error: '账号配置已变化，请重新确认账号和目录' } }
+        else if (resumeMode === 'unknown') { status = 502; data = { error: '模拟响应丢失' } }
+        else {
+          const job = jobs.find(job => job.id === 'resume')
+          job.status = 'downloading'; job.resumable = false; job.message = '正在检查原 115 任务，确认后继续整理；不会重新提交离线'
+          data = job
+        }
+      }
       else if (/manual-organize\/(jobs|cleanup|subtitles)$/.test(endpoint)) {
         if (offline) { status = 502; data = { error: '模拟读取失败' } }
         else data = { jobs: endpoint.endsWith('/jobs') ? jobs : endpoint.endsWith('/cleanup') ? cleanup : subtitles }
@@ -144,6 +155,69 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     passed.push('retention removes a task without closing its snapshot; further actions remain disabled')
     assert.deepEqual(errors, [])
     assert.deepEqual(writes, [])
+
+    const resumeJob = { ...makeJob(30), id: 'resume', title: '可恢复的下载整理', status: 'interrupted', resumable: true, download: { directoryId: '999' } }
+    resumeJob.items = resumeJob.items.slice(0, 3).map(item => ({ ...item, status: 'pending' }))
+    jobs.unshift(resumeJob)
+    await page.clock.fastForward(10000)
+    await history.getByRole('button', { name: '查看可恢复的下载整理的详情' }).click()
+    dialog = page.getByRole('dialog', { name: resumeJob.title, exact: true })
+    let resumeButton = dialog.getByRole('button', { name: '检查并继续', exact: true })
+    assert.equal(await resumeButton.isEnabled(), true)
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      const footer = dialog.locator('footer')
+      assert.equal(await footer.evaluate(el => el.scrollWidth <= el.clientWidth), true, `320px recovery footer overflow, dark=${dark}`)
+      const box = await resumeButton.boundingBox()
+      assert(box.x >= 0 && box.x + box.width <= 321, 'recovery button outside mobile viewport')
+    }
+    await dialog.locator('.overscroll-contain').evaluate(el => { el.scrollTop = el.scrollHeight })
+    await resumeButton.click()
+    const checking = dialog.getByRole('button', { name: '检查中…', exact: true })
+    await page.waitForFunction(() => !!document.querySelector('button[aria-busy="true"]'))
+    assert.equal(await checking.isDisabled(), true)
+    await checking.evaluate(el => el.click())
+    await page.waitForTimeout(20)
+    assert.equal(writes.length, 1)
+    await page.keyboard.press('Escape')
+    assert.equal(await page.evaluate(() => document.body.style.overflow), '')
+    await history.getByRole('button', { name: '查看可恢复的下载整理的详情' }).click()
+    dialog = page.getByRole('dialog', { name: resumeJob.title, exact: true })
+    assert.equal(await dialog.getByRole('button', { name: '检查中…', exact: true }).isDisabled(), true)
+    resumeMode = 'reject'; releaseResume()
+    await dialog.getByText('账号配置已变化，请重新确认账号和目录', { exact: true }).waitFor()
+    const alertBounds = await dialog.getByText('账号配置已变化，请重新确认账号和目录', { exact: true }).boundingBox()
+    assert(alertBounds.y >= 0 && alertBounds.y + alertBounds.height <= 845, 'recovery error not scrolled into view')
+    resumeButton = dialog.getByRole('button', { name: '检查并继续', exact: true })
+    await page.waitForFunction(() => !document.querySelector('button[aria-busy="true"]'))
+    assert.equal(await resumeButton.isEnabled(), true)
+    passed.push('recovery stays in details; 320px light/dark footer; duplicate clicks blocked; closing and reopening retains pending state; server refusal visible')
+
+    offline = true; resumeMode = 'unknown'
+    await resumeButton.click()
+    await dialog.getByText(/恢复结果暂未确认/).waitFor()
+    await page.waitForFunction(() => !document.querySelector('button[aria-busy="true"]'))
+    assert.equal(await resumeButton.isDisabled(), true)
+    const writesBeforeRefresh = writes.length
+    await page.keyboard.press('Escape')
+    offline = false
+    await history.getByRole('button', { name: '刷新记录', exact: true }).click()
+    await history.getByRole('alert').waitFor({ state: 'detached' })
+    assert.equal(writes.length, writesBeforeRefresh, 'refresh replayed recovery')
+    await history.getByRole('button', { name: '查看可恢复的下载整理的详情' }).click()
+    dialog = page.getByRole('dialog', { name: resumeJob.title, exact: true })
+    resumeMode = 'success'
+    await dialog.getByRole('button', { name: '检查并继续', exact: true }).click()
+    await dialog.getByText('离线中，完成后整理', { exact: true }).waitFor()
+    await dialog.getByRole('button', { name: /检查中|检查并继续/ }).waitFor({ state: 'detached' })
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'focus escaped after recovery button disappeared')
+    resumeJob.status = 'completed'; resumeJob.items.forEach(item => { item.status = 'done' })
+    await page.clock.fastForward(2000)
+    await dialog.getByText('已完成', { exact: true }).first().waitFor()
+    assert.equal(await dialog.getByRole('button', { name: '检查并继续', exact: true }).count(), 0)
+    assert.deepEqual(writes, Array(3).fill('/api/admin/p115/garden-organize/resume'))
+    assert.deepEqual(errors, [])
+    passed.push('lost response is not automatically replayed; stale history blocks retry; refresh is read-only; recovery and completion update open details with active polling')
     console.log(JSON.stringify({ passed, errors, writes }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

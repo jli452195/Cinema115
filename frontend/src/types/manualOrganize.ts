@@ -44,6 +44,7 @@ export interface OrganizeItem {
   message?: string
 }
 export interface OrganizeJob {
+	resumable?: boolean
   download?: { hash: string; directoryId?: string }
   numbering?: NumberingInfo
   id: string

@@ -1,18 +1,29 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import P115SidePanel from './P115SidePanel.vue'
 import P115Icon from './P115Icon.vue'
 import { historyDuration, historyLabels, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
-const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; canSubtitle: boolean; historyError: string; unavailable: boolean }>()
-defineEmits<{ close: []; source: []; subtitle: [] }>()
+const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; canSubtitle: boolean; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
+defineEmits<{ close: []; source: []; subtitle: []; resume: [] }>()
 // This component is keyed by task identity, not the polling snapshot.
 const filter = ref(taskCounts(props.task).attention ? 'attention' : 'all')
 const feedback = ref('')
+const resumeButton = ref<HTMLButtonElement>(), closeButton = ref<HTMLButtonElement>(), resumeAlert = ref<HTMLElement>()
 const counts = computed(() => taskCounts(props.task))
 const items = computed(() => props.task.items.filter(item => filter.value !== 'attention' || needsAttention(item, props.task)))
 const stats = computed(() => props.task.organize?.stats)
+const resumable = computed(() => !!props.task.organize?.resumable)
 const folders = computed(() => [{ label: '来源目录', path: props.task.source }, { label: '目标目录', path: props.task.target }].filter(row => row.path))
+watch(() => props.resumeError, async message => {
+  if (message) { await nextTick(); resumeAlert.value?.scrollIntoView({ block: 'nearest' }) }
+})
+watch(() => props.resuming, async (current, previous) => {
+  if (current || !previous || resumable.value) return
+  const restore = document.activeElement === resumeButton.value || document.activeElement === document.body
+  await nextTick()
+  if (restore) closeButton.value?.focus({ preventScroll: true })
+})
 async function copy(value: string) {
   try {
     if (navigator.clipboard?.writeText) {
@@ -47,6 +58,7 @@ async function copy(value: string) {
       <p v-if="blockedReason" class="mt-2 text-xs text-amber-700 dark:text-amber-300">{{ blockedReason }}</p>
     </template>
     <div class="space-y-5">
+      <p v-if="resumeError" ref="resumeAlert" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ resumeError }}</p>
       <p v-if="historyError || unavailable" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ unavailable ? '此任务已不在最近记录中，当前显示打开时保留的快照。' : '记录刷新失败，当前结果可能已过期。请刷新记录后再执行操作。' }}</p>
       <section aria-label="任务摘要" class="space-y-3 text-sm">
         <h3 class="break-all text-sm font-semibold text-slate-900 dark:text-slate-100">{{ task.title }}</h3>
@@ -59,7 +71,7 @@ async function copy(value: string) {
       <div v-if="counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
         <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
         <p v-if="task.message" class="mt-1 break-all">{{ task.message }}</p>
-        <p>{{ task.kind === 'cleanup' ? '请先核实网盘实际内容，再重新预览剩余条目。' : '请核对原位置与目标位置的实际文件，再重新扫描或预览。' }}待核实条目不会自动重复执行。</p>
+        <p>{{ resumable ? '尚未开始改名或移动，可点击“检查并继续”恢复原任务，不会重新提交离线。' : task.kind === 'cleanup' ? '请先核实网盘实际内容，再重新预览剩余条目。待核实条目不会自动重复执行。' : '请核对原位置与目标位置的实际文件，再重新扫描或预览。待核实条目不会自动重复执行。' }}</p>
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
@@ -86,12 +98,13 @@ async function copy(value: string) {
         </ul>
       </section>
     </div>
-    <template #footer><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ feedback || '记录刷新不会关闭详情或改变当前筛选。' }}</p><button class="action" @click="$emit('close')">关闭详情</button></template>
+    <template #footer><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? '不会重新提交离线' : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></template>
   </P115SidePanel>
 </template>
 
 <style scoped>
-.action { @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800; }
+.action { @apply min-h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800; }
+.resume { @apply inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-500 dark:hover:bg-blue-600; }
 .filter { @apply rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800; }
 .filter[aria-pressed="true"] { @apply bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/50 dark:text-blue-300; }
 .badge { @apply rounded-md px-2 py-1 text-xs font-medium; }

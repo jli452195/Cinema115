@@ -75,6 +75,8 @@ const historyError = ref('')
 const historyReady = ref(false)
 const historyRefreshing = ref(false)
 const historyRefreshedAt = ref('')
+const historyResuming = ref('')
+const historyResumeError = ref<{ id: string; message: string }>()
 let timer: ReturnType<typeof setTimeout> | undefined
 let applying = false
 let historyRevision = 0
@@ -170,6 +172,26 @@ function viewHistorySource(job: OrganizeJob) {
 }
 function supplementSubtitles(job: OrganizeJob) {
   if (historyActionAllowed(job) && job.items.some(item => item.status === 'done' && item.file.mediaType === 'video')) subtitleJob.value = job
+}
+async function resumeGarden(job: OrganizeJob) {
+  if (!job.resumable || !historyActionAllowed(job) || historyResuming.value) return
+  historyResuming.value = job.id; historyResumeError.value = undefined; busy.value = '检查中断任务'
+  let uncertain = false
+  try {
+    const result = await p115Request<OrganizeJob>(props.token, 'garden-organize/resume', { method: 'POST', body: JSON.stringify({ jobId: job.id }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
+    jobs.value = jobs.value.map(old => old.id === result.id ? result : old)
+  } catch (reason) {
+    if (!lifecycle.signal.aborted) {
+      const status = (reason as { status?: number }).status
+      uncertain = !status || status >= 500
+      historyResumeError.value = { id: job.id, message: uncertain ? '恢复结果暂未确认，请刷新记录确认任务状态后重试；不会自动重新提交离线。' : message(reason) }
+    }
+  } finally {
+    await refreshHistory()
+    if (uncertain && jobs.value.some(current => current.id === job.id && ['downloading', 'running', 'completed'].includes(current.status))) historyResumeError.value = undefined
+    historyResuming.value = ''; busy.value = ''
+    schedulePoll()
+  }
 }
 async function showSource(job: OrganizeJob) {
   if (!accounts.value.some(account => account.id === job.config.accountId && account.configured)) throw new Error('此任务的账号已删除或未登录，请先配置凭据。')
@@ -296,7 +318,11 @@ async function refreshHistory() {
 }
 async function poll() {
   await refreshHistory()
-  if (!lifecycle.signal.aborted) timer = setTimeout(poll, active.value ? 2000 : 10000)
+  schedulePoll()
+}
+function schedulePoll() {
+  if (timer) clearTimeout(timer)
+  if (!lifecycle.signal.aborted) timer = setTimeout(poll, active.value || jobs.value.some(job => job.status === 'submitting' || job.status === 'downloading') ? 2000 : 10000)
 }
 watch(() => config.value.accountId, () => {
   if (applying) return
@@ -423,7 +449,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
         </div>
       </fieldset>
 
-      <OrganizeTaskHistory v-model:tab="historyTab" :jobs="jobs" :cleanup-jobs="cleanupJobs" :subtitle-jobs="subtitleJobs" :accounts="accounts" :ready="historyReady" :error="historyError" :refreshing="historyRefreshing" :refreshed-at="historyRefreshedAt" :busy="!!busy" @refresh="refreshHistory" @source="viewHistorySource" @subtitle="supplementSubtitles" />
+      <OrganizeTaskHistory v-model:tab="historyTab" :jobs="jobs" :cleanup-jobs="cleanupJobs" :subtitle-jobs="subtitleJobs" :accounts="accounts" :ready="historyReady" :error="historyError" :refreshing="historyRefreshing" :refreshed-at="historyRefreshedAt" :busy="!!busy" :resuming="historyResuming" :resume-error="historyResumeError" @refresh="refreshHistory" @source="viewHistorySource" @subtitle="supplementSubtitles" @resume="resumeGarden" />
     </div>
     <P115ActionDialog v-if="shareOpen" title="目录分享" @close="shareOpen = false">
       <p class="text-xs text-slate-500 dark:text-slate-400">分享范围由目录分享配置决定，请核对目标目录。</p>
