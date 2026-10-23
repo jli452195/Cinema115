@@ -36,7 +36,7 @@ func (c *Client) Fetch(ctx context.Context, path string, limit int64) ([]byte, e
 		base, target = c.MetadataURL, strings.TrimPrefix(path, "/bgm")
 	}
 	u, err := url.Parse(target)
-	if err != nil || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || u.Host != "" || u.Fragment != "" || limit < 1 || limit > 4<<20 || !(u.Path == "/resources" || strings.HasPrefix(path, "/bgm/") && (u.Path == "/calendar" || u.Path == "/calendars" || u.Path == "/subjects" || strings.HasPrefix(u.Path, "/subject/"))) {
+	if err != nil || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || u.Host != "" || u.Fragment != "" || limit < 1 || limit > 4<<20 || !(u.Path == "/resources" || validDetailPath(u.Path) || strings.HasPrefix(path, "/bgm/") && (u.Path == "/calendar" || u.Path == "/calendars" || u.Path == "/subjects" || strings.HasPrefix(u.Path, "/subject/"))) {
 		return nil, animefeed.ErrInput
 	}
 	h := *c.HTTP
@@ -298,4 +298,13 @@ func ParseSubject(body []byte, id string) (Item, error) {
 		return Item{}, ErrInvalid
 	}
 	return i, nil
+}
+
+func validDetailPath(p string) bool {
+	parts := strings.Split(p, "/")
+	if len(parts) != 4 || parts[1] != "detail" {
+		return false
+	}
+	expected, err := DetailPath(parts[2], parts[3])
+	return err == nil && expected == p
 }

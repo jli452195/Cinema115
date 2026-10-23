@@ -30,7 +30,7 @@ const itemLabels: Record<string, string> = {
   pending: '未处理', preparing: '检查目录', renaming: '重命名中', renamed: '已改名，尚未移动',
   moving: '移动中', done: '已完成', blocked: '已停止', uncertain: '结果待核实', skipped: '已跳过',
 }
-export function isActiveTask(task: HistoryTask) { return task.status === 'queued' || task.status === 'running' }
+export function isActiveTask(task: HistoryTask) { return ['queued', 'submitting', 'downloading', 'running'].includes(task.status) }
 export function needsAttention(item: HistoryItem, task: HistoryTask) {
   return item.status === 'uncertain' || item.status === 'blocked' || (!isActiveTask(task) && item.status !== 'done' && item.status !== 'skipped')
 }
@@ -47,6 +47,8 @@ export function taskCounts(task: HistoryTask) {
   return counts
 }
 export function taskStatus(task: HistoryTask) {
+  if (task.status === 'submitting') return '提交离线中'
+  if (task.status === 'downloading') return '离线中，完成后整理'
   if (task.status === 'queued') return '排队中'
   if (task.status === 'running') return { organize: '整理中', cleanup: '清理中', subtitle: '上传中' }[task.kind]
   if (task.status === 'completed') return taskCounts(task).skipped ? '已结束（有跳过）' : '已完成'

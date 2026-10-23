@@ -24,7 +24,7 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	}
 	s.pruneLocked()
 	job, ok := s.plans[id]
-	if !ok || job.Config.AccountID != accountID {
+	if !ok || job.Config.AccountID != accountID || job.Download != nil {
 		return OrganizeJob{}, fmt.Errorf("%w：预览已过期，请重新预览", ErrOrganizeConflict)
 	}
 	if a.Revision != job.Revision {
@@ -56,10 +56,7 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	job.Items = append([]OrganizeItem{}, job.Items...)
 	job.Status, job.UpdatedAt = "queued", time.Now()
 	doc := s.doc
-	doc.Jobs = append([]OrganizeJob{job}, doc.Jobs...)
-	if len(doc.Jobs) > 30 {
-		doc.Jobs = doc.Jobs[:30]
-	}
+	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
 	if err := s.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
@@ -87,7 +84,7 @@ func (s *ManualOrganize) checkpoint(job *OrganizeJob) error {
 	doc.Jobs = append([]OrganizeJob{}, s.doc.Jobs...)
 	for i := range doc.Jobs {
 		if doc.Jobs[i].ID == job.ID {
-			doc.Jobs[i] = *job
+			doc.Jobs[i] = cloneOrganizeJob(*job)
 			doc.Jobs[i].Items = append([]OrganizeItem{}, job.Items...)
 			if err := s.saveLocked(doc); err != nil {
 				return err

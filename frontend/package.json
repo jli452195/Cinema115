@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:garden-organize": "node --test tests/garden-organize.test.mjs",
+    "test:garden-organize-ui": "node scripts/garden-organize-ui.cjs",
     "test:anime-resource-search-ui": "node scripts/anime-resource-search-ui.cjs",
     "test:anime-naming": "node --test tests/anime-naming-preview.test.mjs",
     "test:anime-storage-ui": "node scripts/anime-settings-ui.cjs",

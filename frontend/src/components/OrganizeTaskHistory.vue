@@ -34,7 +34,7 @@ const accountName = computed(() => {
 const blockedReason = computed(() => {
   if (unavailable.value) return '此任务已不在最近记录中，请重新选择有效记录。'
   if (!props.ready || props.error) return '请刷新任务记录，确认最新状态后再执行操作。'
-  if (props.busy || activeTasks.value.length) return '请等待当前操作完成。'
+  if (props.busy || activeTasks.value.some(task => task.status !== 'downloading')) return '请等待当前操作完成。'
   if (!props.accounts.some(account => account.id === selectedTask.value?.accountId && account.configured)) return '此任务的账号已删除或未登录，请先配置凭据。'
   return ''
 })

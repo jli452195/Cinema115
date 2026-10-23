@@ -88,6 +88,7 @@ type OrganizeItem struct {
 }
 
 type OrganizeJob struct {
+	Download  *GardenDownload     `json:"download,omitempty"`
 	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
 	ID        string              `json:"id"`
 	Config    OrganizeConfig      `json:"config"`
@@ -157,7 +158,7 @@ func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive O
 	}
 	for i := range s.doc.Jobs {
 		job := &s.doc.Jobs[i]
-		if job.Status == "running" || job.Status == "queued" {
+		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
 			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查文件当前位置后重新扫描预览"
 		}
 	}
@@ -473,8 +474,29 @@ func (s *ManualOrganize) History() []OrganizeJob {
 	defer s.mu.Unlock()
 	jobs := make([]OrganizeJob, len(s.doc.Jobs))
 	for i, job := range s.doc.Jobs {
-		jobs[i] = job
+		jobs[i] = cloneOrganizeJob(job)
 		jobs[i].Items = append([]OrganizeItem{}, job.Items...)
 	}
 	return jobs
+}
+
+func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
+	job.Items = append([]OrganizeItem{}, job.Items...)
+	if job.Download != nil {
+		d := *job.Download
+		job.Download = &d
+	}
+	return job
+}
+
+// Retain active work even when ordinary/manual jobs fill the recent history.
+func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
+	out := make([]OrganizeJob, 0, len(jobs)+1)
+	out = append(out, job)
+	for _, old := range jobs {
+		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" {
+			out = append(out, old)
+		}
+	}
+	return out
 }

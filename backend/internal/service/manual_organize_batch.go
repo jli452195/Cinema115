@@ -43,13 +43,11 @@ func organizeBatches(items []OrganizeItem) []organizeBatch {
 
 func (s *ManualOrganize) runJob(ctx context.Context, job *OrganizeJob, cookie string) error {
 	batches := organizeBatches(job.Items)
-	job.Stats = OrganizeStats{BatchSize: p115.DriveMutationBatchLimit, BatchesTotal: len(batches), StartedAt: time.Now()}
-	ctx = context.WithValue(ctx, organizeStatsKey{}, &job.Stats)
-	ctx = p115.WithRequestTiming(ctx, func(t p115.RequestTiming) {
-		job.Stats.HTTPRequests += t.Requests
-		job.Stats.HTTPMS += t.HTTP.Milliseconds()
-		job.Stats.WaitMS += t.Wait.Milliseconds()
-	})
+	if organizeStatsFrom(ctx) != &job.Stats {
+		job.Stats = OrganizeStats{StartedAt: time.Now()}
+		ctx = withOrganizeStats(ctx, job)
+	}
+	job.Stats.BatchSize, job.Stats.BatchesTotal = p115.DriveMutationBatchLimit, len(batches)
 	job.Status = "running"
 	if err := s.checkpoint(job); err != nil {
 		return err

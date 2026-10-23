@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
 
 // Request phase durations include queue/cooldown waits. HTTPMS and WaitMS
@@ -31,4 +33,13 @@ type organizeStatsKey struct{}
 func organizeStatsFrom(ctx context.Context) *OrganizeStats {
 	stats, _ := ctx.Value(organizeStatsKey{}).(*OrganizeStats)
 	return stats
+}
+
+func withOrganizeStats(ctx context.Context, job *OrganizeJob) context.Context {
+	ctx = context.WithValue(ctx, organizeStatsKey{}, &job.Stats)
+	return p115.WithRequestTiming(ctx, func(t p115.RequestTiming) {
+		job.Stats.HTTPRequests += t.Requests
+		job.Stats.HTTPMS += t.HTTP.Milliseconds()
+		job.Stats.WaitMS += t.Wait.Milliseconds()
+	})
 }

@@ -44,6 +44,7 @@ export interface OrganizeItem {
   message?: string
 }
 export interface OrganizeJob {
+  download?: { hash: string; directoryId?: string }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig

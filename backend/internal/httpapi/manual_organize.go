@@ -22,19 +22,7 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	})
-	fail := func(c *gin.Context, err error) {
-		status := http.StatusBadGateway
-		if errors.Is(err, service.ErrOrganizeInput) || errors.Is(err, service.ErrGenerationInput) {
-			status = http.StatusBadRequest
-		}
-		if errors.Is(err, service.ErrOrganizeConflict) || errors.Is(err, service.ErrAccountMissing) {
-			status = http.StatusConflict
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			status = http.StatusGatewayTimeout
-		}
-		c.JSON(status, gin.H{"error": err.Error()})
-	}
+	fail := organizeError
 	registerOrganizeSubtitles(group, organizer, fail)
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, organizer.Config()) })
 	group.PUT("/config", func(c *gin.Context) {
@@ -149,4 +137,18 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		}
 		c.JSON(200, result)
 	})
+}
+
+func organizeError(c *gin.Context, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, service.ErrOrganizeInput) || errors.Is(err, service.ErrGenerationInput) {
+		status = http.StatusBadRequest
+	}
+	if errors.Is(err, service.ErrOrganizeConflict) || errors.Is(err, service.ErrAccountMissing) {
+		status = http.StatusConflict
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		status = http.StatusGatewayTimeout
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
+import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
 
 interface Directory { id: string; name: string }
 interface DirectoryPage { directories?: Directory[]; files?: (Directory & { directory: boolean })[]; count?: number; hasMore?: boolean; nextOffset?: number }
@@ -16,7 +17,7 @@ const error = ref('')
 const lifecycle = new AbortController()
 let loadGeneration = 0, loadController: AbortController | undefined
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-const previousOverflow = document.body.style.overflow
+let unlockScroll: (() => void) | undefined
 
 async function loadCID(cid: string) {
   const generation = ++loadGeneration
@@ -74,7 +75,7 @@ function select(create = false) {
 }
 
 onMounted(() => {
-  document.body.style.overflow = 'hidden'
+  unlockScroll = lockAnimeDialogScroll()
   dialog.value?.showModal()
   void openDirectory()
 })
@@ -82,7 +83,7 @@ onBeforeUnmount(() => {
   lifecycle.abort()
   loadController?.abort()
   dialog.value?.close()
-  document.body.style.overflow = previousOverflow
+  unlockScroll?.()
   if (previousFocus?.isConnected) previousFocus.focus()
 })
 </script>

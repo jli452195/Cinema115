@@ -163,7 +163,7 @@ async function executeCleanup() {
   }
 }
 function historyActionAllowed(job: OrganizeJob) {
-  return !busy.value && !active.value && historyReady.value && !historyError.value && job.status !== 'running' && job.status !== 'queued' && accounts.value.some(account => account.id === job.config.accountId && account.configured)
+  return !busy.value && !active.value && historyReady.value && !historyError.value && !['running', 'queued', 'submitting', 'downloading'].includes(job.status) && accounts.value.some(account => account.id === job.config.accountId && account.configured)
 }
 function viewHistorySource(job: OrganizeJob) {
   if (historyActionAllowed(job)) void work('查看源目录剩余内容', () => showSource(job))

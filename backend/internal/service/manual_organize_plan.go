@@ -14,13 +14,6 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
 		return OrganizeJob{}, ErrOrganizeInput
 	}
-	if input.Kind == "tv" {
-		var err error
-		ctx, err = pinNumbering(ctx, s.metadata, input.TMDBID)
-		if err != nil {
-			return OrganizeJob{}, err
-		}
-	}
 	s.mu.Lock()
 	s.pruneLocked()
 	scan, ok := s.scans[input.ScanID]
@@ -34,6 +27,29 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	}
 	if a.Revision != scan.Revision {
 		return OrganizeJob{}, fmt.Errorf("%w：账号配置已修改，请重新扫描", ErrOrganizeConflict)
+	}
+	job, err := s.buildPlan(ctx, scan, input)
+	if err != nil {
+		return OrganizeJob{}, err
+	}
+	if err := s.checkPlan(ctx, &job, a.Cookie, true); err != nil {
+		return OrganizeJob{}, err
+	}
+	return s.rememberPlan(job)
+}
+
+// buildPlan is shared by actual cloud scans and pre-download website lists.
+// It performs metadata/naming validation without touching 115.
+func (s *ManualOrganize) buildPlan(ctx context.Context, scan OrganizeScan, input OrganizePreviewInput) (OrganizeJob, error) {
+	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
+		return OrganizeJob{}, ErrOrganizeInput
+	}
+	if input.Kind == "tv" {
+		var err error
+		ctx, err = pinNumbering(ctx, s.metadata, input.TMDBID)
+		if err != nil {
+			return OrganizeJob{}, err
+		}
 	}
 	detail, err := s.metadata.Details(ctx, input.Kind, input.TMDBID)
 	if err != nil {
@@ -60,7 +76,7 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	if title == "" || len([]rune(folder)) > 180 {
 		return OrganizeJob{}, fmt.Errorf("%w：作品名称过长或为空", ErrOrganizeInput)
 	}
-	job := OrganizeJob{Config: scan.Config, Revision: a.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Folder: folder, Status: "preview", CreatedAt: time.Now(), Items: []OrganizeItem{}}
+	job := OrganizeJob{Config: scan.Config, Revision: scan.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Folder: folder, Status: "preview", CreatedAt: time.Now(), Items: []OrganizeItem{}}
 	job.Numbering = detail.Numbering
 	files := make(map[string]OrganizeFile, len(scan.Files))
 	for _, f := range scan.Files {
@@ -141,6 +157,10 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 			}
 		}
 	}
+	return job, nil
+}
+
+func (s *ManualOrganize) checkPlan(ctx context.Context, job *OrganizeJob, cookie string, checkSource bool) error {
 	// Cache complete listings only within this preview. Execution always reads
 	// them again before mutating; changes in other tools invalidate the plan.
 	cache := make(map[string][]p115.ShareFile)
@@ -148,7 +168,7 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 		if files, exists := cache[cid]; exists {
 			return files, nil
 		}
-		files, err := s.list(ctx, cid, a.Cookie)
+		files, err := s.list(ctx, cid, cookie)
 		if err == nil {
 			cache[cid] = files
 		}
@@ -158,11 +178,11 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 	for i := range job.Items {
 		item := &job.Items[i]
 		targetNames[strings.ToLower(item.TargetPath)] = append(targetNames[strings.ToLower(item.TargetPath)], i)
-		cid := scan.Config.TargetCID
+		cid := job.Config.TargetCID
 		for _, part := range strings.Split(item.Directory, "/") {
 			children, err := listing(cid)
 			if err != nil {
-				return OrganizeJob{}, err
+				return err
 			}
 			next, err := organizeFindDirectory(children, part)
 			if err != nil {
@@ -177,22 +197,24 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 		if item.Conflict == "" && cid != "" {
 			children, err := listing(cid)
 			if err != nil {
-				return OrganizeJob{}, err
+				return err
 			}
 			item.TargetCID = cid
 			if organizeCollision(children, item.Name, item.File.ID) {
 				item.Conflict = "目标已有同名条目，不能覆盖"
 			}
 		}
-		source, err := listing(item.File.ParentID)
-		if err != nil {
-			return OrganizeJob{}, err
-		}
-		if !organizeSourceMatches(source, item.File, item.File.Name) {
-			item.Conflict = "来源文件已变化，请重新扫描"
-		}
-		if item.Name != item.File.Name && organizeCollision(source, item.Name, item.File.ID) {
-			item.Conflict = "来源目录已有目标名称，无法安全重命名"
+		if checkSource {
+			source, err := listing(item.File.ParentID)
+			if err != nil {
+				return err
+			}
+			if !organizeSourceMatches(source, item.File, item.File.Name) {
+				item.Conflict = "来源文件已变化，请重新扫描"
+			}
+			if item.Name != item.File.Name && organizeCollision(source, item.Name, item.File.ID) {
+				item.Conflict = "来源目录已有目标名称，无法安全重命名"
+			}
 		}
 	}
 	for _, indexes := range targetNames {
@@ -202,6 +224,11 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 			}
 		}
 	}
+	return nil
+}
+
+func (s *ManualOrganize) rememberPlan(job OrganizeJob) (OrganizeJob, error) {
+	var err error
 	job.ID, err = organizeToken()
 	if err != nil {
 		return OrganizeJob{}, err

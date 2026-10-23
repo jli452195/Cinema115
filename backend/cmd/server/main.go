@@ -247,6 +247,8 @@ func main() {
 	}
 	animeAdmin.ReserveOrganization = manualOrganize.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
+	gardenOrganize := service.NewGardenOrganize(manualOrganize, animeBindings.Garden, cloudDownloads, cloudDownloadSettings, cloudClient)
+	httpapi.RegisterGardenOrganize(admin, gardenOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -458,6 +460,13 @@ func main() {
 	go func() {
 		defer workers.Done()
 		if err := animeDiscoveryRunner.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := gardenOrganize.Run(ctx); err != nil {
 			workerErrors <- err
 		}
 	}()
