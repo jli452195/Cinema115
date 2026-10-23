@@ -34,7 +34,7 @@ function updateCalendarDate() {
 }
 const mikanLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日', '剧场版', 'OVA']
 const labels = computed(() => provider.value === 'anibt' ? [...mikanLabels.slice(0, 7), '未排播'] : provider.value === 'garden' ? [...mikanLabels.slice(0, 7), '网络动画', '韩国动画', '短片', '动态漫画', '成人'] : mikanLabels)
-const provider = computed(() => typeof route.query.source === 'string' ? route.query.source : 'mikan')
+const provider = computed(() => typeof route.query.source === 'string' ? route.query.source : animeProviders[0].id)
 const available = computed(() => provider.value === 'mikan' || provider.value === 'anibt' || provider.value === 'garden')
 const providerName = computed(() => provider.value === 'anibt' ? 'AniBT' : provider.value === 'garden' ? 'Anime Garden' : '蜜柑')
 const keyword = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')

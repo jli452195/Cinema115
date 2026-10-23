@@ -18,7 +18,7 @@ defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
 const route = useRoute(), router = useRouter(), ready = ref(false), error = ref('')
 const browser = window
 const sourceSeed = computed(() => { const initial = browser.history.state?.animeSource; return { provider: String(initial?.provider || route.query.source || ''), itemId: String(initial?.itemId || route.query.itemId || '') } })
-const returnTo = computed(() => animeReturnPath(route.query.returnTo || window.history.state?.animeReturnTo) || '/anime?source=mikan')
+const returnTo = computed(() => animeReturnPath(route.query.returnTo || window.history.state?.animeReturnTo) || '/anime')
 let controller: AbortController | undefined
 function cancel() { controller?.abort(); controller = undefined }
 async function resolveEntry() {

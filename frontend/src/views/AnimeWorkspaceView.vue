@@ -16,7 +16,7 @@ const hostPath = computed(() => {
   if (!modal.value) return route.fullPath
   const target = animeReturnPath(route.query.returnTo || (isNew.value ? window.history.state?.animeReturnTo : undefined))
   if (target && (router.resolve(target).path === '/anime' || router.resolve(target).path === '/anime/subscriptions')) return target
-  if (isNew.value) return '/anime?source=mikan'
+  if (isNew.value) return '/anime'
   return router.resolve({ path: '/anime/subscriptions', query: { status: route.query.status, q: route.query.q, page: route.query.page, bangumiId: route.query.bangumiId } }).fullPath
 })
 const host = computed(() => router.resolve(hostPath.value) as RouteLocationNormalizedLoaded)
