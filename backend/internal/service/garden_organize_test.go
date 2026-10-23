@@ -260,23 +260,36 @@ func gardenFixture(t *testing.T) (*GardenOrganize, *organizeFakeDrive, *cloudAdd
 	return s, drive, adder, tracker, transport, in
 }
 
-func TestGardenFilesStandardSeasonEpisodes(t *testing.T) {
-	s, _, _, _, transport, in := gardenFixture(t)
-	transport.names = make([]string, 150)
-	for i := range transport.names {
-		transport.names[i] = fmt.Sprintf("Kiniro.No.Gasshuberu.S01.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1/Kiniro.No.Gasshuberu.S01E%02d.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1.mkv", i+1)
-	}
-	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files.Files) != len(transport.names) || len(files.EndEpisodes) != 0 {
-		t.Fatal("single-episode files changed", len(files.Files), files.EndEpisodes)
-	}
-	for i, file := range files.Files {
-		if file.ID != transport.names[i] || file.Season != 1 || file.Episode != i+1 {
-			t.Fatalf("file %d lost its standard episode: %+v", i+1, file)
-		}
+func TestGardenFilesStandardEpisodeFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name, format string
+		count        int
+	}{
+		{"season-episode", "Kiniro.No.Gasshuberu.S01.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1/Kiniro.No.Gasshuberu.S01E%02d.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1.mkv", 150},
+		{"underscore-episode", "[Omar Hidan] Mujin_Wakusei_Survive_(1080p)/[Omar Hidan] Mujin Wakusei Survive_Episode_%02d_(HD_1080p-AAC)[RAW].mkv", 52},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, drive, adder, tracker, transport, in := gardenFixture(t)
+			transport.names = make([]string, tc.count)
+			for i := range transport.names {
+				transport.names[i] = fmt.Sprintf(tc.format, i+1)
+			}
+			files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files.Files) != len(transport.names) || len(files.EndEpisodes) != 0 {
+				t.Fatal("single-episode files changed", len(files.Files), files.EndEpisodes)
+			}
+			for i, file := range files.Files {
+				if file.ID != transport.names[i] || file.Season != 1 || file.Episode != i+1 {
+					t.Fatalf("file %d lost its standard episode: %+v", i+1, file)
+				}
+			}
+			if adder.url != "" || tracker.calls != 0 || drive.creates != 0 || drive.renames != 0 || drive.moves != 0 || len(drive.listCalls) != 0 {
+				t.Fatal("file parsing performed drive operations")
+			}
+		})
 	}
 }
 

@@ -60,6 +60,13 @@ type OrganizeScan struct {
 	Revision  uint64         `json:"-"`
 }
 
+type OrganizeScanInput struct {
+	AccountID  string `json:"accountId"`
+	ParentID   string `json:"parentId"`
+	ParentPath string `json:"parentPath"`
+	EntryID    string `json:"entryId"`
+}
+
 type OrganizeSelection struct {
 	ID         string `json:"id"`
 	Season     int    `json:"season"`
@@ -352,22 +359,25 @@ func organizeMedia(name string) string {
 	return ""
 }
 
-func (s *ManualOrganize) Scan(ctx context.Context, accountID, parentID, entryID string) (OrganizeScan, error) {
+func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (OrganizeScan, error) {
 	c := s.Config()
-	if accountID != c.AccountID || parentID != c.SourceCID || entryID == "0" || !organizeID(entryID) {
-		return OrganizeScan{}, fmt.Errorf("%w：请保存来源目录后选择文件或文件夹", ErrOrganizeInput)
+	if input.AccountID != c.AccountID || !organizeID(input.ParentID) || !organizePath(input.ParentPath) || input.EntryID == "0" || !organizeID(input.EntryID) || !organizeID(c.TargetCID) || !organizePath(c.TargetPath) {
+		return OrganizeScan{}, fmt.Errorf("%w：请选择有效来源，并保存目标目录设置", ErrOrganizeInput)
 	}
-	a, err := s.account(accountID)
+	// Browsing a job's source or a subdirectory changes only this scan's
+	// snapshot. The saved defaults and their target directory stay separate.
+	c.SourceCID, c.SourcePath = input.ParentID, path.Clean(input.ParentPath)
+	a, err := s.account(input.AccountID)
 	if err != nil {
 		return OrganizeScan{}, err
 	}
-	files, err := s.list(ctx, parentID, a.Cookie)
+	files, err := s.list(ctx, input.ParentID, a.Cookie)
 	if err != nil {
 		return OrganizeScan{}, err
 	}
 	var root *p115.ShareFile
 	for i := range files {
-		if files[i].ID == entryID {
+		if files[i].ID == input.EntryID {
 			root = &files[i]
 			break
 		}
@@ -417,7 +427,7 @@ func (s *ManualOrganize) Scan(ctx context.Context, accountID, parentID, entryID 
 		result.Files = append(result.Files, item)
 		return nil
 	}
-	if err := walk(*root, parentID, c.SourcePath, 0); err != nil {
+	if err := walk(*root, input.ParentID, c.SourcePath, 0); err != nil {
 		return OrganizeScan{}, err
 	}
 	// A selected single video may have companion subtitles in the same folder.
@@ -425,16 +435,16 @@ func (s *ManualOrganize) Scan(ctx context.Context, accountID, parentID, entryID 
 		siblings := make([]OrganizeFile, 0, len(files))
 		for _, file := range files {
 			if !file.Directory {
-				siblings = append(siblings, OrganizeFile{ShareFile: file, ParentID: parentID, MediaType: organizeMedia(file.Name)})
+				siblings = append(siblings, OrganizeFile{ShareFile: file, ParentID: input.ParentID, MediaType: organizeMedia(file.Name)})
 			}
 		}
 		for _, file := range files {
 			if !file.Directory && organizeMedia(file.Name) == "subtitle" {
-				owner, _ := organizeSubtitleOwner(OrganizeFile{ShareFile: file, ParentID: parentID}, siblings)
+				owner, _ := organizeSubtitleOwner(OrganizeFile{ShareFile: file, ParentID: input.ParentID}, siblings)
 				if owner != root.ID {
 					continue
 				}
-				if err := walk(file, parentID, c.SourcePath, 0); err != nil {
+				if err := walk(file, input.ParentID, c.SourcePath, 0); err != nil {
 					return OrganizeScan{}, err
 				}
 			}

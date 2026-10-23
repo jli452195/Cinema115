@@ -27,6 +27,7 @@ const lifecycle = new AbortController()
 const accounts = ref<P115Account[]>([])
 const accountsLoaded = ref(false)
 const config = ref<OrganizeConfig>({ accountId: '', sourceCID: '', sourcePath: '', targetCID: '', targetPath: '' })
+const currentSource = ref({ id: '', path: '' })
 const busy = ref('')
 const error = ref('')
 const notice = ref('')
@@ -84,7 +85,7 @@ let historyRevision = 0
 const accountReady = computed(() => accounts.value.some(a => a.primary && a.id === config.value.accountId && a.configured))
 const configured = computed(() => accountReady.value && !!config.value.sourceCID && !!config.value.targetCID)
 const active = computed(() => jobs.value.some(j => j.status === 'queued' || j.status === 'running') || cleanupJobs.value.some(j => j.status === 'running') || subtitleJobs.value.some(j => j.status === 'running'))
-const cleanupBlocked = computed(() => !historyReady.value || !!historyError.value || active.value || !accountReady.value || !config.value.sourceCID)
+const cleanupBlocked = computed(() => !historyReady.value || !!historyError.value || active.value || !accountReady.value || !currentSource.value.id)
 const allPageSelected = computed(() => files.value.length > 0 && files.value.every(file => deleteIDs.value.includes(file.id)))
 const selectedRows = computed(() => rows.value.filter(row => row.selected))
 const conflicts = computed(() => preview.value?.items.filter(item => item.conflict).length ?? 0)
@@ -136,13 +137,24 @@ async function save() {
 }
 async function browse(nextOffset = 0) {
   deleteIDs.value = []; cleanupPlan.value = undefined
-  const data = await request<{ files: DriveFile[]; count: number }>(`files?accountId=${encodeURIComponent(config.value.accountId)}&cid=${config.value.sourceCID}&offset=${nextOffset}`)
+  const data = await request<{ files: DriveFile[]; count: number }>(`files?accountId=${encodeURIComponent(config.value.accountId)}&cid=${currentSource.value.id}&offset=${nextOffset}`)
   files.value = data.files; offset.value = nextOffset; count.value = data.count
+}
+function setCurrentSource(value: { id: string; path: string }) {
+  currentSource.value = { ...value }
+  clearSelection()
+  files.value = []; count.value = 0; offset.value = 0
+  deleteIDs.value = []; cleanupPlan.value = undefined; cleanupOpen.value = false
+}
+async function returnToSource() {
+  breadcrumbs.value = []
+  setCurrentSource({ id: config.value.sourceCID, path: config.value.sourcePath })
+  await browse()
 }
 function togglePageSelection() { deleteIDs.value = allPageSelected.value ? [] : files.value.map(file => file.id) }
 async function previewCleanup(mode: 'selected' | 'empty', ids = deleteIDs.value) {
   cleanupPlan.value = undefined
-  const plan = await request<OrganizeCleanup>('cleanup/preview', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: config.value.sourceCID, parentPath: config.value.sourcePath, mode, ids: mode === 'empty' ? [] : ids }) }, 190000)
+  const plan = await request<OrganizeCleanup>('cleanup/preview', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: currentSource.value.id, parentPath: currentSource.value.path, mode, ids: mode === 'empty' ? [] : ids }) }, 190000)
   if (!plan.items.length) { notice.value = '当前目录下没有可清理的空文件夹。'; return }
   cleanupPlan.value = plan
 }
@@ -194,46 +206,39 @@ async function resumeGarden(job: OrganizeJob) {
   }
 }
 async function showSource(job: OrganizeJob) {
-  if (!accounts.value.some(account => account.id === job.config.accountId && account.configured)) throw new Error('此任务的账号已删除或未登录，请先配置凭据。')
-  applying = true
-  config.value = { ...job.config }
-  applying = false
-  breadcrumbs.value = []; files.value = []; count.value = 0
-  clearSelection()
+  if (!accountReady.value || job.config.accountId !== config.value.accountId) throw new Error('此任务不属于当前主账号，请重新选择来源目录。')
+  breadcrumbs.value = []
+  setCurrentSource({ id: job.config.sourceCID, path: job.config.sourcePath })
   await browse()
   sourcePanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 function selectDirectory(value: { id: string; path: string }) {
   if (directoryDialog.value === 'source') {
     config.value.sourceCID = value.id; config.value.sourcePath = value.path
-    breadcrumbs.value = []; files.value = []; count.value = 0
     void work('读取文件', () => browse())
   } else { config.value.targetCID = value.id; config.value.targetPath = value.path }
   directoryDialog.value = ''
 }
 async function enter(file: DriveFile) {
-  const previous = { id: config.value.sourceCID, path: config.value.sourcePath }
-  config.value.sourceCID = file.id
-  config.value.sourcePath = `${previous.path.replace(/\/$/, '')}/${file.name}`
+  const previous = { ...currentSource.value }
   breadcrumbs.value.push(previous)
-  files.value = []; count.value = 0
+  setCurrentSource({ id: file.id, path: `${previous.path.replace(/\/$/, '')}/${file.name}` })
   await browse()
 }
 async function goBack() {
   const previous = breadcrumbs.value.pop(); if (!previous) return
-  config.value.sourceCID = previous.id; config.value.sourcePath = previous.path
-  files.value = []; count.value = 0
+  setCurrentSource(previous)
   await browse()
 }
 async function scan(file: DriveFile) {
-  const entryKey = `${config.value.accountId}/${config.value.sourceCID}/${file.id}`
+  if (configDirty.value) throw new Error('请先保存目录设置，再扫描内容。')
+  const entryKey = `${config.value.accountId}/${currentSource.value.id}/${file.id}`
   const sameEntry = entryKey === scannedEntryKey
   clearSelection(!sameEntry)
-  await save()
-  const data = await request<{ id: string; files: OrganizeFile[] }>('scan', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: config.value.sourceCID, entryId: file.id }) }, 190000)
+  const data = await request<{ id: string; files: OrganizeFile[] }>('scan', { method: 'POST', body: JSON.stringify({ accountId: config.value.accountId, parentId: currentSource.value.id, parentPath: currentSource.value.path, entryId: file.id }) }, 190000)
   scanId.value = data.id; selectedName.value = file.name
   scannedEntryKey = entryKey
-  selectionRoot.value = file.directory ? `${config.value.sourcePath.replace(/\/$/, '')}/${file.name}` : config.value.sourcePath
+  selectionRoot.value = file.directory ? `${currentSource.value.path.replace(/\/$/, '')}/${file.name}` : currentSource.value.path
   rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: '' }))
   if (!sameEntry) query.value = file.directory ? file.name : file.name.replace(/\.[^.]+$/, '')
   if (rows.value.length) await scrollToStep(media.value ? 3 : 2)
@@ -286,7 +291,7 @@ function numberEpisodes() {
 }
 async function makePreview() {
   if (!media.value) return
-  await save()
+  if (configDirty.value) throw new Error('请先保存目录设置，再扫描预览。')
   preview.value = await request<OrganizeJob>(`preview?accountId=${encodeURIComponent(config.value.accountId)}`, { method: 'POST', body: JSON.stringify({ scanId: scanId.value, kind: media.value.kind, tmdbId: media.value.id, numberingRevision: media.value.numbering?.revision || 0, subtitles: subtitles.value, files: selectedRows.value.map(row => ({ id: row.id, season: Number(row.season), episode: Number(row.episode), endEpisode: Number(row.endEpisode), suffix: row.suffix })) }) }, 190000)
   onlyConflicts.value = false
   await scrollToStep(4)
@@ -330,6 +335,10 @@ watch(() => config.value.accountId, () => {
   directoryDialog.value = ''; files.value = []; count.value = 0; breadcrumbs.value = []
 }, { flush: 'sync' })
 watch(config, () => { if (!applying) { clearSelection(); deleteIDs.value = []; cleanupPlan.value = undefined } }, { deep: true, flush: 'sync' })
+watch(() => [config.value.accountId, config.value.sourceCID, config.value.sourcePath], () => {
+  breadcrumbs.value = []
+  setCurrentSource({ id: config.value.sourceCID, path: config.value.sourcePath })
+}, { flush: 'sync' })
 watch([rows, media, subtitles], () => {
   preview.value = undefined
   if (activeStep.value === 4) activeStep.value = scanId.value && media.value ? 3 : 1
@@ -354,7 +363,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
     <div class="space-y-6">
       <fieldset :disabled="!!busy" class="min-w-0 space-y-5">
         <section class="panel">
-          <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="heading">整理位置</h2><span class="text-xs" :class="configDirty ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'">{{ configDirty ? '扫描或预览时保存目录设置' : '目录设置已保存' }}</span></div>
+          <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="heading">整理位置</h2><span class="text-xs" :class="configDirty ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'">{{ configDirty ? '目录设置未保存' : '目录设置已保存' }}</span></div>
           <P115PrimaryStatus v-if="accountsLoaded" :accounts="accounts" class="mt-4" />
           <div class="mt-3 grid gap-3 sm:grid-cols-2">
             <div><label class="label" for="organize-source">来源目录</label><button id="organize-source" type="button" class="directory" :disabled="!accountReady" @click="directoryDialog = 'source'">{{ config.sourcePath || '选择待整理目录' }}</button></div>
@@ -378,8 +387,8 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
             <button v-if="media" class="min-w-0 max-w-full break-words text-left text-blue-600 dark:text-blue-400" @click="scrollToStep(2)">{{ media.title }} · {{ media.date?.slice(0, 4) }} · 更换作品</button>
           </div>
           <section v-show="activeStep === 1" ref="sourcePanel" tabindex="-1" aria-label="选择待整理内容" class="panel">
-            <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="heading">选择待整理内容</h2><div class="flex gap-2"><button class="secondary" :disabled="cleanupBlocked" @click="deleteIDs = []; cleanupOpen = true">清理网盘</button><button class="secondary" :disabled="!config.sourceCID || !accountReady" @click="work('读取文件', () => browse())">刷新</button></div></div>
-            <div class="my-4 flex items-center gap-3"><button v-if="breadcrumbs.length" class="text-sm text-blue-600" @click="work('读取文件', goBack)">返回上级</button><p class="min-w-0 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ config.sourcePath || '先选择来源目录' }}</p></div>
+            <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="heading">选择待整理内容</h2><div class="flex gap-2"><button class="secondary" :disabled="cleanupBlocked" @click="deleteIDs = []; cleanupOpen = true">清理网盘</button><button class="secondary" :disabled="!currentSource.id || !accountReady" @click="work('读取文件', () => browse())">刷新</button></div></div>
+            <div class="my-4 flex flex-wrap items-center gap-3"><button v-if="breadcrumbs.length" class="text-sm text-blue-600" @click="work('读取文件', goBack)">返回上级</button><button v-if="currentSource.id && currentSource.id !== config.sourceCID && config.sourceCID" class="text-sm text-blue-600" @click="work('读取文件', returnToSource)">返回来源目录</button><p class="min-w-0 break-all text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ currentSource.path ? `当前位置：${currentSource.path}` : '先选择来源目录' }}</p></div>
             <p class="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">每次整理一部作品。进入目录查看内容，或直接扫描整个文件夹。</p>
             <div class="max-h-[420px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               <div v-for="file in files" :key="file.id" class="flex flex-wrap items-center gap-2 py-3">
@@ -388,13 +397,14 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
                 <span v-else class="min-w-0 flex-1 break-all text-sm text-slate-700 dark:text-slate-300">{{ file.name }}</span>
                 <div class="ml-auto flex w-full shrink-0 justify-end gap-2 sm:w-auto">
                   <button v-if="file.directory" class="secondary" :aria-label="`进入目录 ${file.name}`" @click="work('读取文件', () => enter(file))">进入目录</button>
-                  <button class="primary" :disabled="!configured || active" @click="work('扫描所选内容', () => scan(file))">{{ file.directory ? '扫描此目录' : '扫描文件' }}</button>
+                  <button class="primary" :disabled="!configured || configDirty || active" @click="work('扫描所选内容', () => scan(file))">{{ file.directory ? '扫描此目录' : '扫描文件' }}</button>
                 </div>
               </div>
-              <p v-if="!files.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ config.sourceCID ? '当前目录没有文件' : '选择目录后显示网盘内容' }}</p>
+              <p v-if="!files.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ currentSource.id ? '当前目录没有文件' : '选择目录后显示网盘内容' }}</p>
             </div>
             <div v-if="count > 100" class="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"><button class="secondary" :disabled="offset === 0" @click="work('读取文件', () => browse(Math.max(0, offset - 100)))">上一页</button><span>{{ offset + 1 }}–{{ offset + files.length }} / {{ count }}</span><button class="secondary" :disabled="offset + files.length >= count" @click="work('读取文件', () => browse(offset + files.length))">下一页</button></div>
             <p v-if="!configured && accountReady" class="mt-3 text-sm text-amber-700 dark:text-amber-400">先选择来源目录和目标目录，再扫描内容。</p>
+            <p v-else-if="configDirty" class="mt-3 text-xs text-slate-500 dark:text-slate-400">请先保存上方目录设置，再扫描内容。</p>
             <div v-if="scanId" class="action-bar"><span class="text-xs text-slate-500">已保留上次扫描，可继续校正。</span><button class="primary" @click="scrollToStep(media ? 3 : 2)">继续整理</button></div>
           </section>
 
@@ -456,7 +466,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
       <DirectoryShareButton :token="token" :disabled="!historyReady || active || !!busy || !!historyError" :disabled-reason="historyError ? '整理状态读取失败，请刷新任务记录' : '请等待当前整理操作完成后再分享'" />
     </P115ActionDialog>
     <P115ActionDialog v-if="cleanupOpen" title="清理网盘" :busy="!!busy" @close="cleanupOpen = false; deleteIDs = []">
-      <p class="break-all text-xs text-slate-500 dark:text-slate-400">{{ config.sourcePath }}</p>
+      <p class="break-all text-xs text-slate-500 dark:text-slate-400">{{ currentSource.path }}</p>
       <p class="text-sm">选择要移入 115 回收站的内容，下一步会核对删除范围。</p>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <p v-if="notice" role="status" class="text-sm text-blue-600">{{ notice }}</p>

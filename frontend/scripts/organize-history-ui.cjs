@@ -17,6 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const file = i => ({ id: String(i), name: `閃靈二人組 - ${i}.rmvb`, sourcePath: `/来源/${'超长目录/'.repeat(20)}${i}.rmvb`, mediaType: i < 12 ? 'video' : 'subtitle', size: 100, directory: false })
     const makeJob = i => ({ id: `job-${i}`, title: i === 0 ? '部分完成作品' : i === 1 ? '转生贤者的异世界生活～获得第二职业并成为世界最强～'.repeat(3) : `已完成作品 ${i}`, config, status: i === 0 ? 'partial' : 'completed', createdAt: new Date(Date.UTC(2026, 9, 15, 12 - i)).toISOString(), items: Array.from({ length: 36 }, (_, n) => ({ file: file(n), targetPath: `/影视库/閃靈二人組/Season 01/${n}.rmvb`, status: 'done' })) })
     let jobs = Array.from({ length: 12 }, (_, i) => makeJob(i)), offline = true
+    jobs[0].config = { ...config, sourceCID: '40', sourcePath: '/历史/garden-job', targetCID: '80', targetPath: '/旧目标' }
     let resumeMode = 'hold', releaseResume
     jobs[0].items = jobs[0].items.slice(0, 6).map((item, i) => ({ ...item, status: ['done', 'uncertain', 'renamed', 'pending', 'blocked', 'skipped'][i], message: i === 1 ? '结果未确认，请核实实际文件' : '' }))
     const cleanup = [{ id: 'clean', accountId: 'main', mode: 'empty', parentPath: '/来源/待整理', status: 'completed', createdAt: '2026-10-15T00:00:00Z', items: [{ id: 'folder', name: '空目录', path: '/来源/空目录', status: 'done' }] }]
@@ -28,7 +29,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
       else if (endpoint.endsWith('/accounts')) data = { accounts: [{ id: 'main', name: '主账号', primary: true, configured: true }] }
       else if (endpoint.endsWith('/manual-organize/config')) data = config
-      else if (endpoint.endsWith('/manual-organize/files')) data = { files: [], count: 0 }
+      else if (endpoint.endsWith('/manual-organize/files')) data = { files: [{ id: '30', name: '待整理', directory: true }], count: 1 }
+      else if (endpoint.endsWith('/manual-organize/scan')) {
+        const input = request.postDataJSON()
+        assert.equal(input.parentId, '40')
+        assert.equal(input.parentPath, '/历史/garden-job')
+        data = { id: 'scan-ui', files: [{ ...file(1), parentId: '30', sourcePath: `${input.parentPath}/待整理/Example.S01E01.mkv`, season: 1, episode: 1, suffix: '' }] }
+      }
       else if (endpoint.endsWith('/subtitles/videos')) data = { videos: [{ ...file(0), parentId: '20', path: '/影视库/0.rmvb' }] }
       else if (endpoint.endsWith('/garden-organize/resume')) {
         if (resumeMode === 'hold') await new Promise(resolve => { releaseResume = resolve })
@@ -102,6 +109,30 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await detailButton.evaluate(el => document.activeElement === el), true)
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')
     passed.push('stale data disables actions; drawer-to-subtitle transition restores focus and scroll lock')
+
+    await detailButton.click()
+    dialog = page.getByRole('dialog', { name: '部分完成作品', exact: true })
+    await dialog.getByRole('button', { name: '查看源目录剩余内容', exact: true }).click()
+    const source = page.getByRole('region', { name: '选择待整理内容', exact: true })
+    await source.getByText('当前位置：/历史/garden-job', { exact: true }).waitFor()
+    assert.equal(await page.locator('#organize-source').innerText(), config.sourcePath)
+    assert.equal(await page.locator('#organize-target').innerText(), config.targetPath)
+    assert.equal(await page.getByRole('button', { name: '保存目录设置', exact: true }).count(), 0)
+    await source.getByRole('button', { name: '扫描此目录', exact: true }).click()
+    await page.getByText(/已扫描：待整理/).waitFor()
+    await page.getByRole('navigation', { name: '整理步骤' }).getByRole('button', { name: /选择内容$/ }).click()
+    assert.equal(await page.locator('#organize-source').innerText(), config.sourcePath)
+    assert.deepEqual(writes, ['/api/admin/p115/manual-organize/scan'])
+    writes.length = 0
+    await source.getByRole('button', { name: '返回来源目录', exact: true }).click()
+    await source.getByText(`当前位置：${config.sourcePath}`, { exact: true }).waitFor()
+    await source.getByRole('button', { name: '进入目录 待整理', exact: true }).click()
+    await source.getByText(`当前位置：${config.sourcePath}/待整理`, { exact: true }).waitFor()
+    assert.equal(await page.locator('#organize-source').innerText(), config.sourcePath)
+    await source.getByRole('button', { name: '返回上级', exact: true }).click()
+    await source.getByText(`当前位置：${config.sourcePath}`, { exact: true }).waitFor()
+    assert.deepEqual(writes, [])
+    passed.push('history source, scan and nested navigation leave default source and target unchanged; no config writes')
 
     await history.getByRole('button', { name: /^字幕 / }).click()
     await history.getByRole('button', { name: /的详情$/ }).click()

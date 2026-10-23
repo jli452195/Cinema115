@@ -47,7 +47,7 @@ async function harness(t) {
   globalThis.fetch = async (url, init = {}) => {
     const pathname = new URL(url, 'http://test').pathname
     const body = init.body ? JSON.parse(init.body) : undefined
-    requests.push({ pathname, method: init.method || 'GET', body })
+    requests.push({ pathname, method: init.method || 'GET', body, search: new URL(url, 'http://test').searchParams })
     let data
     if (pathname.endsWith('/accounts')) data = { accounts: [{ id: 'main', primary: true, configured: true }] }
     else if (pathname.endsWith('/config')) data = init.method === 'PUT' ? { ok: true } : { ...config }
@@ -148,7 +148,7 @@ test('editing invalidates preview, conflicts prevent execution, valid submission
   assert.equal(h.requests.filter(r => r.pathname.endsWith('/jobs') && r.method === 'POST').length, 1)
 })
 
-test('changing directories discards the previous scan and saves the new scope before scanning', async t => {
+test('changing default directories invalidates the scan and requires an explicit save', async t => {
   const { state: s, requests } = await harness(t)
   await s.scan(entry)
   await s.choose(media)
@@ -160,12 +160,70 @@ test('changing directories discards the previous scan and saves the new scope be
   assert.equal(s.preview, undefined)
   assert.equal(s.media, undefined)
   assert.equal(s.configDirty, true)
+  await assert.rejects(s.scan(entry), /请先保存目录设置/)
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0)
+  await s.save()
   await s.scan(entry)
   assert.equal(s.configDirty, false)
   const saved = requests.find(r => r.method === 'PUT')
   assert.equal(saved.body.targetCID, '99')
   assert.equal(saved.body.accountId, 'main')
   assert(requests.indexOf(saved) < requests.findLastIndex(r => r.pathname.endsWith('/scan')))
+})
+
+test('browsing and scanning nested directories leave saved defaults unchanged', async t => {
+  const { state: s, requests } = await harness(t)
+  await s.scan(entry)
+  await s.choose(media)
+  await s.makePreview()
+  await s.enter(entry)
+  assert.equal(s.preview, undefined)
+  assert.equal(s.scanId, '')
+  assert.deepEqual(s.currentSource, { id: '30', path: '/incoming/Example.S02' })
+  assert.deepEqual(s.config, config)
+  assert.equal(s.configDirty, false)
+  assert.equal(requests.findLast(r => r.pathname.endsWith('/files')).search.get('cid'), '30')
+  await s.scan(video('31', 1))
+  assert.deepEqual(requests.findLast(r => r.pathname.endsWith('/scan')).body, { accountId: 'main', parentId: '30', parentPath: '/incoming/Example.S02', entryId: '31' })
+  await s.choose(media)
+  await s.makePreview()
+  assert.equal(requests.some(r => r.method === 'PUT'), false)
+  await s.goBack()
+  assert.deepEqual(s.currentSource, { id: '10', path: '/incoming' })
+  assert.equal(s.scanId, '')
+  assert.equal(s.preview, undefined)
+  assert.deepEqual(s.breadcrumbs, [])
+})
+
+test('history source, cleanup and return navigation keep defaults and target separate', async t => {
+  const { state: s, requests } = await harness(t)
+  const job = { config: { accountId: 'main', sourceCID: '40', sourcePath: '/history/garden-job', targetCID: '80', targetPath: '/old-library' } }
+  await s.showSource(job)
+  assert.deepEqual(s.config, config)
+  assert.deepEqual(s.currentSource, { id: '40', path: '/history/garden-job' })
+  assert.equal(s.configDirty, false)
+  assert.equal(requests.findLast(r => r.pathname.endsWith('/files')).search.get('cid'), '40')
+  await s.scan(entry)
+  await s.choose(media)
+  await s.makePreview()
+  assert.equal(s.selectionRoot, '/history/garden-job/Example.S02')
+  s.deleteIDs = ['30']
+  await s.previewCleanup('selected')
+  const cleanup = requests.findLast(r => r.pathname.endsWith('/cleanup/preview')).body
+  assert.equal(cleanup.parentId, '40')
+  assert.equal(cleanup.parentPath, '/history/garden-job')
+  s.cleanupOpen = true
+  await s.returnToSource()
+  assert.deepEqual(s.currentSource, { id: '10', path: '/incoming' })
+  assert.equal(s.cleanupPlan, undefined)
+  assert.equal(s.cleanupOpen, false)
+  assert.deepEqual(s.deleteIDs, [])
+  assert.equal(s.preview, undefined)
+  assert.equal(requests.some(r => r.method === 'PUT'), false)
+  const reads = requests.length
+  await assert.rejects(s.showSource({ config: { ...job.config, accountId: 'old-main' } }), /当前主账号/)
+  assert.equal(requests.length, reads)
+  assert.deepEqual(s.config, config)
 })
 
 test('failed history refresh blocks execution without losing preview', async t => {

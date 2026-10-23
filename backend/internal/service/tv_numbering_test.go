@@ -252,7 +252,7 @@ func TestNumberingOrganizeValidatesGroupAndInvalidatesOldPreview(t *testing.T) {
 	if plan.Numbering == nil || plan.Numbering.Revision != 1 {
 		t.Fatal(plan.Numbering)
 	}
-	scan, err := s.Scan(context.Background(), account, "10", "30")
+	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
 	if err != nil {
 		t.Fatal(err)
 	}

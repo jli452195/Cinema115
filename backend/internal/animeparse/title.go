@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 8
+const ParserVersion int64 = 9
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -31,7 +31,7 @@ var (
 	bracketNumber  = regexp.MustCompile(`(?i)^\s*(` + expression + `)(?:\s*(?:END|FIN|完|完结|完結))*\s*$`)
 	chineseNumber  = regexp.MustCompile(`第\s*(` + expression + `)\s*[话話集回]`)
 	seasonEpisode  = regexp.MustCompile(`(?i)S[0-9]{1,2}\s*E(` + expression + `)`)
-	labeledEpisode = regexp.MustCompile(`(?i)(?:EPISODE|EP|E)\s*#?\s*(` + expression + `)`)
+	labeledEpisode = regexp.MustCompile(`(?i)(?:EPISODE|EP|E)[\s_]*#?[\s_]*(` + expression + `)`)
 	dashedEpisode  = regexp.MustCompile(`(?:^|[\s|：:])-\s*(` + expression + `)`)
 	bareEpisode    = regexp.MustCompile(`(?:^|[\s_])(` + expression + `)`)
 	seasonMetadata = regexp.MustCompile(`(?i)SEASON\s*[0-9]{1,3}`)

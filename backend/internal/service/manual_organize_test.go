@@ -171,7 +171,7 @@ func newOrganizeTest(t *testing.T) (*ManualOrganize, *organizeFakeDrive, string,
 }
 func organizeTestPreview(t *testing.T, s *ManualOrganize, account string, selections []OrganizeSelection) OrganizeJob {
 	t.Helper()
-	scan, err := s.Scan(context.Background(), account, "10", "30")
+	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestManualOrganizeMovieTVAndSubtitles(t *testing.T) {
 	}
 
 	s2, _, id2, _ := newOrganizeTest(t)
-	scan, err := s2.Scan(context.Background(), id2, "10", "30")
+	scan, err := s2.Scan(context.Background(), OrganizeScanInput{AccountID: id2, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestManualOrganizeTimeoutReadbackAndRestart(t *testing.T) {
 
 func TestManualOrganizeRejectForgedFilesAndEpisodes(t *testing.T) {
 	s, _, id, _ := newOrganizeTest(t)
-	scan, err := s.Scan(context.Background(), id, "10", "30")
+	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: id, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestManualOrganizeRejectForgedFilesAndEpisodes(t *testing.T) {
 	if err := s.SaveConfig(config); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Scan(context.Background(), id, "10", "30"); err == nil {
+	if _, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: id, ParentID: "10", ParentPath: "/来源", EntryID: "30"}); err == nil {
 		t.Fatal("不能将目标放在所选目录内")
 	}
 }
@@ -465,7 +465,7 @@ func TestManualOrganizeScansDefaultVideoFormats(t *testing.T) {
 	for i, ext := range extensions {
 		drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: fmt.Sprint(200 + i), Name: "视频." + strings.ToUpper(ext), Size: 100})
 	}
-	scan, err := s.Scan(context.Background(), id, "10", "30")
+	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: id, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,16 +489,11 @@ func TestManualOrganizeRMVBWithSubtitles(t *testing.T) {
 					{ID: "102", Name: "閃靈二人組 - 01.zh-CN.srt", Size: 10},
 					{ID: "104", Name: "readme.txt", Size: 1},
 				}
-				parent, entry := "10", "30"
+				parent, parentPath, entry := "10", "/来源", "30"
 				if single {
-					config := s.Config()
-					config.SourceCID, config.SourcePath = "30", "/来源/待整理"
-					if err := s.SaveConfig(config); err != nil {
-						t.Fatal(err)
-					}
-					parent, entry = "30", "101"
+					parent, parentPath, entry = "30", "/来源/待整理", "101"
 				}
-				scan, err := s.Scan(context.Background(), id, parent, entry)
+				scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: id, ParentID: parent, ParentPath: parentPath, EntryID: entry})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -527,19 +522,67 @@ func TestManualOrganizeRMVBWithSubtitles(t *testing.T) {
 
 func TestManualOrganizeSingleVideoAndAmbiguousSubtitles(t *testing.T) {
 	s, drive, id, _ := newOrganizeTest(t)
-	config := s.Config()
-	config.SourceCID, config.SourcePath = "30", "/来源/待整理"
-	if err := s.SaveConfig(config); err != nil {
-		t.Fatal(err)
-	}
-	scan, err := s.Scan(context.Background(), id, "30", "101")
+	input := OrganizeScanInput{AccountID: id, ParentID: "30", ParentPath: "/来源/待整理", EntryID: "101"}
+	scan, err := s.Scan(context.Background(), input)
 	if err != nil || len(scan.Files) != 2 || scan.Files[1].ID != "102" {
 		t.Fatal("单文件应只带上匹配字幕", scan, err)
 	}
 	drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: "105", Name: "Wrong.S01E01.1080p.mp4", Size: 100})
-	scan, err = s.Scan(context.Background(), id, "30", "101")
+	scan, err = s.Scan(context.Background(), input)
 	if err != nil || len(scan.Files) != 1 {
 		t.Fatal("同名视频扩展名不同时不能猜测字幕所属", scan, err)
+	}
+}
+
+func TestManualOrganizeScanScopeDoesNotChangeDefaults(t *testing.T) {
+	for _, tc := range []struct{ name, parent, path, entry string }{
+		{"subdirectory", "30", "/来源/待整理", "101"},
+		{"history-source", "40", "/旧任务", "30"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, drive, account, store := newOrganizeTest(t)
+			drive.dirs["40"] = []p115.ShareFile{{ID: "30", Name: "待整理", Directory: true}}
+			defaults, stored := s.Config(), store.Value()
+			scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: tc.parent, ParentPath: tc.path, EntryID: tc.entry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Subtitles: true, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scan.Config.SourceCID != tc.parent || scan.Config.SourcePath != tc.path || plan.Config != scan.Config || plan.Config.TargetCID != defaults.TargetCID || !strings.HasPrefix(plan.Items[0].File.SourcePath, tc.path+"/") {
+				t.Fatal("scan lost its current source or saved target", scan, plan)
+			}
+			if s.Config() != defaults || store.Value() != stored || drive.creates+drive.renames+drive.moves != 0 {
+				t.Fatal("scan or preview changed defaults or drive files")
+			}
+			job := organizeTestRun(t, s, account, plan)
+			if job.Status != "completed" || s.Config() != defaults || job.Config != scan.Config {
+				t.Fatal("execution changed defaults or lost the scan snapshot", job)
+			}
+		})
+	}
+}
+
+func TestManualOrganizeRejectInvalidScanScope(t *testing.T) {
+	for _, tc := range []struct{ account, parent, path, entry string }{
+		{"", "30", "/来源/待整理", "101"},
+		{"other", "30", "/来源/待整理", "101"},
+		{"main", "-1", "/来源/待整理", "101"},
+		{"main", "30", "", "101"},
+		{"main", "30", "relative", "101"},
+		{"main", "30", "/bad\npath", "101"},
+		{"main", "30", "/来源/待整理", "0"},
+	} {
+		s, drive, account, _ := newOrganizeTest(t)
+		if tc.account == "main" {
+			tc.account = account
+		}
+		_, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: tc.account, ParentID: tc.parent, ParentPath: tc.path, EntryID: tc.entry})
+		if !errors.Is(err, ErrOrganizeInput) || len(drive.listCalls) != 0 {
+			t.Fatal("invalid scan scope reached the drive", tc, err, drive.listCalls)
+		}
 	}
 }
 

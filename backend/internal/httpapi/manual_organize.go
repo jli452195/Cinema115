@@ -53,18 +53,14 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		c.JSON(200, page)
 	})
 	group.POST("/scan", func(c *gin.Context) {
-		var input struct {
-			AccountID string `json:"accountId"`
-			ParentID  string `json:"parentId"`
-			EntryID   string `json:"entryId"`
-		}
+		var input service.OrganizeScanInput
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "扫描参数无效"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Minute)
 		defer cancel()
-		result, err := organizer.Scan(ctx, input.AccountID, input.ParentID, input.EntryID)
+		result, err := organizer.Scan(ctx, input)
 		if err != nil {
 			fail(c, err)
 			return
