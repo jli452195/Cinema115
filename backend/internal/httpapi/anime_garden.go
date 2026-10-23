@@ -17,6 +17,18 @@ func registerAnimeGarden(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		return true
 	}
+	r.POST("/resources/garden/search", func(c *gin.Context) {
+		var in service.GardenSearchInput
+		if !animeBody(c, &in, false) || !ready(c) {
+			return
+		}
+		out, err := s.Bindings.Garden.SearchResources(c.Request.Context(), in)
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
 	r.POST("/sources/garden/search", func(c *gin.Context) {
 		var in struct {
 			Keyword   string  `json:"keyword"`

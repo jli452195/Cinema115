@@ -11,14 +11,18 @@ import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
 import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
+import AnimeProviderBrand from './AnimeProviderBrand.vue'
+import { searchGardenResources } from '../lib/garden-search'
 
-const props = defineProps<{ token: string; title: string; originalTitle: string; themeColors?: Record<string, string> }>()
+const props = withDefaults(defineProps<{ token: string; title: string; originalTitle: string; provider?: 'mikan' | 'garden'; themeColors?: Record<string, string> }>(), { provider: 'mikan' })
 const emit = defineEmits<{ close: [] }>()
-interface Item { id: string; title: string; size: string; updatedAt: string; magnet: string; url: string; torrentUrl: string; resolution: string; groupId?: string }
-interface Group { id: string; name: string }
+const isGarden = computed(() => props.provider === 'garden')
+const providerName = computed(() => isGarden.value ? 'Garden' : '蜜柑')
+interface Item { id: string; title: string; size: string; updatedAt: string; magnet: string; url: string; torrentUrl: string; resolution: string; groupId?: string; originName?: string; publisher?: string; fansub?: string }
+interface Group { id: string; name: string; origin?: string; originName?: string; kind?: string }
 interface Bangumi { id: string; title: string; coverUrl: string; url: string }
 interface Expansion { groupId: string; take: number }
-interface Result { items: Item[]; groups: Group[]; bangumis?: Bangumi[]; bangumi?: Bangumi; more?: Expansion[]; query: string; group: string; cached: boolean; fetchedAt: string; expiresAt: string; attempts: { query: string; count: number; cached: boolean }[] }
+interface Result { items: Item[]; groups: Group[]; bangumis?: Bangumi[]; bangumi?: Bangumi; more?: Expansion[]; query: string; group: string; cached: boolean; fetchedAt: string; expiresAt: string; attempts: { query: string; count: number; cached: boolean }[]; page?: number; hasMore?: boolean }
 const dialog = ref<HTMLDialogElement>()
 const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
@@ -88,7 +92,7 @@ function allowReselectAfterCheck() {
 }
 function closeDialog() { batch.stop(); emit('close') }
 const resolutions = computed(() => ['全部', ...['2160P', '1080P', '720P', '480P', '未知'].filter(value => result.value?.items.some(item => item.resolution === value))])
-const groupOptions = computed(() => [{ value: '', label: '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: item.name }))])
+const groupOptions = computed(() => [{ value: '', label: isGarden.value ? '全部发布方' : '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: isGarden.value ? `${item.name} · ${item.originName} · ${item.kind === 'fansub' ? '字幕组' : '发布者'}` : item.name }))])
 const resolutionOptions = computed(() => resolutions.value.map(value => ({ value, label: value === '全部' ? '全部分辨率' : value })))
 const filtered = computed(() => {
   if (busy.value && retainedItems.value) return retainedItems.value
@@ -96,6 +100,12 @@ const filtered = computed(() => {
   return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
 })
 const siteURL = computed(() => {
+  if (isGarden.value) {
+    const params = new URLSearchParams({ search: result.value?.query || query.value })
+    const selected = groups.value.find(item => item.id === group.value)
+    if (selected?.origin) { params.set('provider', selected.origin); params.set(selected.kind || 'publisher', selected.name) }
+    return `https://animes.garden/resources/1?${params}`
+  }
   if (selectedBangumi.value) return selectedBangumi.value.url
   const params = new URLSearchParams({ searchstr: result.value?.query || query.value })
   if (result.value?.group) params.set('subgroupid', result.value.group)
@@ -104,6 +114,7 @@ const siteURL = computed(() => {
 watch([filter, resolution], () => { visible.value = 50 }, { flush: 'sync' })
 
 async function search(refresh = false, selectedGroup = '') {
+  if (isGarden.value) { await searchGarden(refresh, selectedGroup); return }
   if (interactionBusy.value || !query.value.trim()) return
   const previousGroup = group.value
   const previousBangumi = selectedBangumi.value
@@ -140,13 +151,39 @@ async function search(refresh = false, selectedGroup = '') {
     if (!lifecycle.signal.aborted) error.value = e instanceof Error && e.name === 'TimeoutError' ? '蜜柑搜索超时，请稍后重试' : e instanceof Error ? e.message : '蜜柑搜索失败，请稍后重试'
   } finally { busy.value = false; retainedItems.value = undefined }
 }
+async function searchGarden(refresh = false, selectedGroup = '', page = 1) {
+  if (interactionBusy.value || page === 1 && !query.value.trim()) return
+  const q = page > 1 ? result.value?.query || query.value.trim() : query.value.trim()
+  const selected = groups.value.find(item => item.id === selectedGroup)
+  const previousVisible = Math.min(visible.value, filtered.value.length)
+  let appended = false
+  retainedItems.value = filtered.value; busy.value = true; error.value = ''; loadingMessage.value = '正在搜索 Garden…'
+  try {
+    const data = await searchGardenResources(props.token, { query: q, fallback: q === props.title.trim() && !selectedGroup && page === 1 ? props.originalTitle : '', group: selectedGroup, groupName: selected?.name || '', page, refresh }, lifecycle.signal)
+    if (lifecycle.signal.aborted) return
+    result.value = page > 1 && result.value ? { ...data, items: [...new Map([...result.value.items, ...data.items].map(item => [item.id, item])).values()] } : data
+    if (!selectedGroup) groups.value = page > 1 ? [...new Map([...groups.value, ...data.groups].map(item => [item.id, item])).values()] : data.groups
+    query.value = data.query; group.value = selectedGroup
+    if (page > 1) { visible.value += 50; appended = true }
+    else { visible.value = 50; resolution.value = '全部'; filter.value = ''; await resetResultPosition() }
+  } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : 'Garden 搜索失败，请重试' }
+  finally {
+    busy.value = false; retainedItems.value = undefined
+    if (appended && !lifecycle.signal.aborted) {
+      await nextTick()
+      dialog.value?.querySelectorAll<HTMLElement>('.mikan-resource')[previousVisible]?.querySelector<HTMLElement>('button, a')?.focus({ preventScroll: true })
+    }
+  }
+}
 function selectGroup(value: string) {
   if (interactionBusy.value) return
+  if (isGarden.value) { void searchGarden(false, value); return }
   if (selectedBangumi.value) { group.value = value; visible.value = 50 }
   else void search(false, value)
 }
 function useTitle(value: string) { if (interactionBusy.value) return; query.value = value; void search() }
 function refreshCurrent() {
+  if (isGarden.value) { void searchGarden(true, group.value); return }
   retryCovers()
   if (selectedBangumi.value) void loadBangumi(selectedBangumi.value, true)
   else void search(true, group.value)
@@ -306,23 +343,23 @@ onBeforeUnmount(() => {
     <dialog ref="dialog" :style="dialogStyle" aria-labelledby="mikan-search-title" aria-describedby="mikan-work-title" class="mikan-dialog media-search-dialog" :class="{ 'mikan-short-viewport': shortViewport }" @cancel.prevent="closeDialog">
       <div class="mikan-layout">
         <header class="mikan-header" data-mikan-brand>
-          <div class="mikan-brand" aria-hidden="true"><img :src="mikanMascot" alt="" width="400" height="400" draggable="false" /></div>
+          <div v-if="!isGarden" class="mikan-brand" aria-hidden="true"><img :src="mikanMascot" alt="" width="400" height="400" draggable="false" /></div>
           <div class="mikan-heading">
-            <h2 id="mikan-search-title"><span class="sr-only">蜜柑搜索</span><img :src="mikanWordmark" alt="" width="117" height="29" draggable="false" /></h2>
+            <h2 id="mikan-search-title"><span class="sr-only">{{ providerName }}搜索</span><AnimeProviderBrand v-if="isGarden" provider="garden" /><img v-else :src="mikanWordmark" alt="" width="117" height="29" draggable="false" /></h2>
             <p id="mikan-work-title" :title="title" data-mikan-brand-title>{{ title }}</p>
           </div>
-          <button autofocus type="button" :aria-label="batchRunning ? '停止提交并关闭蜜柑搜索' : '关闭蜜柑搜索'" class="mikan-icon-button" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+          <button autofocus type="button" :aria-label="batchRunning ? `停止提交并关闭${providerName}搜索` : `关闭${providerName}搜索`" class="mikan-icon-button" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
         <div ref="scrollBody" class="mikan-body">
           <form class="mikan-search-form" @submit.prevent="search()">
-            <input v-model="query" aria-label="蜜柑搜索词" maxlength="200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
+            <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
             <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
             <button type="button" :disabled="interactionBusy || (!selectedBangumi && !query.trim())" aria-label="强制刷新" title="强制刷新，重新读取原站资源" class="mikan-tool-button mikan-refresh-button" @click="refreshCurrent"><svg aria-hidden="true" :class="{ 'mikan-loading-spinner': busy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg><span>强制刷新</span></button>
           </form>
           <div class="mikan-search-tools">
             <button type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(title)">用中文标题</button>
             <button v-if="originalTitle && originalTitle !== title" type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(originalTitle)">用原名</button>
-            <a :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-tool-button mikan-site-link"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg>{{ selectedBangumi ? '番剧原页' : '蜜柑原站' }}</a>
+            <a :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-tool-button mikan-site-link"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg>{{ selectedBangumi ? '番剧原页' : `${providerName}原站` }}</a>
           </div>
           <section v-if="bangumis.length" class="mikan-item-picker" aria-label="蜜柑相关番剧">
             <div class="mikan-picker-heading">
@@ -350,24 +387,27 @@ onBeforeUnmount(() => {
               <svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg>
               <span>{{ loadingMessage }}</span>
             </p>
-            <p v-else-if="error" role="alert" class="mikan-load-error">{{ error }}</p>
+            <div v-else-if="error" class="mikan-initial-error">
+              <div role="alert"><strong>搜索暂时失败</strong><p class="mikan-load-error">{{ error }}</p></div>
+              <button type="button" :disabled="!query.trim()" class="mikan-button mikan-outlined-button" @click="search(true)">重新搜索</button>
+            </div>
           </div>
           <p v-if="result && !selectedBangumi && result.attempts.length > 1" role="status" class="mikan-search-note">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
           <div v-if="result" ref="filterAnchor" class="mikan-filter-anchor search-filter-anchor" aria-hidden="true"></div>
-          <section v-if="result" aria-label="蜜柑结果筛选" class="mikan-filter-controls search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }">
+          <section v-if="result" :aria-label="`${providerName}结果筛选`" class="mikan-filter-controls search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }">
             <div class="mikan-filter-row">
-              <span class="mikan-filter-label" aria-hidden="true">字幕组</span>
-              <MikanFilterSelect :model-value="group" :options="groupOptions" label="蜜柑字幕组" :disabled="interactionBusy" @update:model-value="selectGroup" />
+              <span class="mikan-filter-label" aria-hidden="true">{{ isGarden ? '发布方' : '字幕组' }}</span>
+              <MikanFilterSelect :model-value="group" :options="groupOptions" :label="`${providerName}${isGarden ? '发布方' : '字幕组'}`" :disabled="interactionBusy" @update:model-value="selectGroup" />
             </div>
             <div class="mikan-filter-row">
               <span class="mikan-filter-label" aria-hidden="true">分辨率</span>
-              <MikanFilterSelect v-model="resolution" :options="resolutionOptions" label="蜜柑分辨率" :disabled="interactionBusy" />
+              <MikanFilterSelect v-model="resolution" :options="resolutionOptions" :label="`${providerName}分辨率`" :disabled="interactionBusy" />
             </div>
-            <input v-model="filter" aria-label="筛选蜜柑结果" placeholder="结果内筛选：合集 / 第二季 / 简繁…" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
+            <input v-model="filter" :aria-label="`筛选${providerName}结果`" :placeholder="isGarden ? '已加载结果内筛选：合集 / 第二季 / 简繁…' : '结果内筛选：合集 / 第二季 / 简繁…'" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
           </section>
           <template v-if="result">
             <div class="mikan-result-summary">
-              <p>匹配 {{ filtered.length }} / {{ selectedBangumi ? '已加载' : '已获取' }} {{ result.items.length }} 条<span v-if="result.more?.length">，仅筛选已加载资源</span></p>
+              <p>匹配 {{ filtered.length }} / {{ selectedBangumi || isGarden ? '已加载' : '已获取' }} {{ result.items.length }} 条<span v-if="isGarden || result.more?.length">，仅筛选已加载资源</span></p>
               <p v-if="busy" role="status" class="mikan-loading" :title="loadingMessage"><svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg><span>更新中，暂显旧结果</span></p>
               <details v-else-if="error" role="alert" class="mikan-load-error mikan-error-details"><summary><span>更新失败，已保留原结果</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg></summary><p>{{ error }}</p></details>
               <button type="button" class="mikan-tool-button mikan-batch-entry" :disabled="interactionBusy" :aria-pressed="batchMode" @click="batchMode ? batch.exit() : batchMode = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5" /><path d="M13 7h8M13 17h8m-17 0 2 2 4-5" /></svg>{{ batchMode ? '退出选择' : '批量选择' }}</button>
@@ -376,9 +416,9 @@ onBeforeUnmount(() => {
               <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
               <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空</button>
             </div>
-            <p v-if="!result.items.length" class="mikan-empty">{{ selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
+            <p v-if="!result.items.length" class="mikan-empty">{{ isGarden ? 'Garden 未找到资源，可修改片名、尝试原名或调整来源及发布方。' : selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
             <p v-else-if="!filtered.length" class="mikan-empty">没有符合筛选条件的资源，请调整关键词或分辨率。</p>
-            <ul class="mikan-resource-list" aria-label="蜜柑资源列表">
+            <ul class="mikan-resource-list" :aria-label="`${providerName}资源列表`">
               <li v-for="item in filtered.slice(0, visible)" :key="item.id" class="mikan-resource" :class="{ 'mikan-selectable': batchMode, 'mikan-resource-selected': batchMode && batchSelected.has(magnetKey(item.magnet)) }" @click="selectCard(item, $event)">
                 <label v-if="batchMode" class="mikan-resource-checkbox" @click.stop><input type="checkbox" :checked="batchSelected.has(magnetKey(item.magnet))" :disabled="interactionBusy || !canSelect(item)" :aria-label="`选择资源：${item.title}`" @change="toggleResource(item)" /><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" /><path v-if="batchSelected.has(magnetKey(item.magnet))" d="m7 12 3 3 7-7" /></svg></label>
                 <div class="mikan-resource-main">
@@ -386,9 +426,9 @@ onBeforeUnmount(() => {
                     <h4>{{ item.title }}</h4>
                     <button type="button" class="mikan-copy-button" @click="copy(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg>{{ copied === item.id ? '已复制' : '复制磁力' }}</button>
                   </div>
-                  <div class="mikan-resource-meta"><span class="mikan-resolution">{{ item.resolution }}</span><span>{{ item.size }}</span><span :title="'原站时间：' + item.updatedAt">{{ item.updatedAt }}</span></div>
+                  <div class="mikan-resource-meta"><span class="mikan-resolution">{{ item.resolution }}</span><span>{{ item.size }}</span><span :title="'原站时间：' + item.updatedAt">{{ item.updatedAt }}</span><template v-if="isGarden"><span>{{ item.originName }}</span><span :title="`发布者：${item.publisher}`">{{ item.fansub || item.publisher }}</span></template></div>
                   <div class="mikan-resource-actions">
-                    <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" aria-label="查看蜜柑原帖"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">查看原帖</span><span class="mikan-action-label-mobile">原帖</span></a>
+                    <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : '查看蜜柑原帖'"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
                     <a v-if="item.torrentUrl" :href="item.torrentUrl" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" aria-label="下载种子"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" /></svg><span class="mikan-action-label-desktop">下载种子</span><span class="mikan-action-label-mobile">种子</span></a>
                     <button type="button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
                   </div>
@@ -399,6 +439,7 @@ onBeforeUnmount(() => {
               </li>
             </ul>
             <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>
+            <div v-if="isGarden && result.hasMore && filtered.length <= visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy" @click="searchGarden(false, group, (result.page || 1) + 1)">读取更多搜索结果</button><p v-if="error" role="status" class="mikan-load-error">{{ error }}</p></div>
             <section v-if="selectedBangumi && expansions.length" aria-label="加载更多番剧资源" class="mikan-expansions">
               <p>部分字幕组还有更多资源，可继续读取。</p>
               <div>
@@ -414,7 +455,7 @@ onBeforeUnmount(() => {
           <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="closeDialog">前往配置</RouterLink></p>
           <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
         </footer>
-        <footer v-else class="mikan-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '蜜柑', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
+        <footer v-else class="mikan-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: isGarden ? 'ALL' : '蜜柑', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>
@@ -478,6 +519,9 @@ onBeforeUnmount(() => {
 .mikan-all-items { width: 160px; padding: 12px; }
 .mikan-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
 .mikan-initial-feedback { margin-top: 12px; }
+.mikan-initial-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border-radius: 16px; background: var(--search-dialog-secondary-background); }
+.mikan-initial-error > div { flex: 1; min-width: min(100%, 180px); overflow-wrap: anywhere; }
+.mikan-initial-error strong { display: block; margin-bottom: 4px; color: var(--search-dialog-text); font-size: 13px; font-weight: 600; }
 .mikan-loading { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--search-dialog-primary); font-size: 12px; line-height: 18px; }
 .mikan-loading-spinner { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; animation: mikan-spin 1s linear infinite; }
 .mikan-load-error { margin: 0; color: var(--mikan-error); font-size: 12px; line-height: 18px; }

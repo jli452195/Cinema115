@@ -53,3 +53,30 @@ func TestGardenAdminRoutingAndErrors(t *testing.T) {
 	a.err = garden.ErrUnavailable
 	f.call(t, "POST", "/catalog/garden", f.admin, "", `{"mode":"search","keyword":"new"}`, 502)
 }
+
+type animeHTTPGardenSearch struct{ calls int }
+
+func (f *animeHTTPGardenSearch) Fetch(_ context.Context, _ string, _ int64) ([]byte, error) {
+	f.calls++
+	return []byte(`{"status":"OK","resources":[],"pagination":{"page":1,"pageSize":100,"complete":true},"filter":{"search":["old"]}}`), nil
+}
+func TestGardenResourceSearchAdminBoundary(t *testing.T) {
+	f := newAnimeHTTPFixture(t)
+	a := &animeHTTPGardenSearch{}
+	f.s.Bindings.Garden = service.NewGardenService(a)
+	f.call(t, "POST", "/resources/garden/search", "", "", `{"query":"old"}`, 401)
+	f.call(t, "POST", "/resources/garden/search", f.user, "", `{"query":"old"}`, 403)
+	f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old","page":101}`, 400)
+	f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old","provider":"unknown"}`, 400)
+	if a.calls != 0 {
+		t.Fatal("unauthorized or invalid request reached upstream")
+	}
+	out := f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old"}`, 200)
+	if out["query"] != "old" || out["hasMore"] != false || a.calls != 1 || f.mikan.reads != 0 || f.bgm.calls != 0 {
+		t.Fatal(out, a.calls)
+	}
+	f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old"}`, 200)
+	if a.calls != 1 {
+		t.Fatal("search cache not reused")
+	}
+}

@@ -6,7 +6,7 @@ import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import BotSearchDialog from '../components/BotSearchDialog.vue'
 import GyingSearchDialog from '../components/GyingSearchDialog.vue'
 import WoniuSearchDialog from '../components/WoniuSearchDialog.vue'
-import MikanSearchDialog from '../components/MikanSearchDialog.vue'
+import AnimeResourceSearchDialog from '../components/AnimeResourceSearchDialog.vue'
 import RE0SearchDialog from '../components/RE0SearchDialog.vue'
 import FollowButton from '../components/FollowButton.vue'
 import SearchPill from '../components/SearchPill.vue'
@@ -28,6 +28,7 @@ import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import tmdbLogo from '../assets/tmdb.svg'
 import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
+import gardenLogo from '../assets/anime-providers/garden.svg'
 import re0Logo from '../assets/re0/logo-re0-square.webp'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
@@ -43,6 +44,7 @@ const botSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
 const woniuSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
+const gardenSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
 const numberingOpen = ref(false)
 const numberingNotice = ref('')
@@ -51,6 +53,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   searchConfigured.value = { re0: false, bot: false, gying: false, woniu: false }
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
   woniuSearchOpen.value = false
+  mikanSearchOpen.value = false; gardenSearchOpen.value = false
   if (!admin || !token) return
   const controller = new AbortController()
   onCleanup(() => controller.abort())
@@ -69,7 +72,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   void check('woniu', woniuRequest<WoniuConfigView>(token, 'config', signal))
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
-watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; re0SearchOpen.value = false })
+watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError, refresh: refreshEmbyMedia, lastReadSucceeded: embyReadSucceeded } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
@@ -85,8 +88,8 @@ interface Detail extends CacheInfo {
 const detail = ref<Detail | null>(null)
 const { mediaColorStyle, readPosterColors } = useMediaColors(() => tmdbImageURL(detail.value?.posterUrl || ''))
 // 动画类型包含日漫、国漫及动画电影，不按国家限制入口。
-const canSearchMikan = computed(() => isPortalAdmin.value && !!detail.value?.genres?.some(genre => genre.id === 16))
-watch(canSearchMikan, allowed => { if (!allowed) mikanSearchOpen.value = false })
+const canSearchAnimeResources = computed(() => isPortalAdmin.value && !!detail.value?.genres?.some(genre => genre.id === 16))
+watch(canSearchAnimeResources, allowed => { if (!allowed) { mikanSearchOpen.value = false; gardenSearchOpen.value = false } })
 const loading = ref(true)
 const error = ref('')
 const failedImages = ref(new Set<string>())
@@ -257,7 +260,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
     <WoniuSearchDialog v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
-    <MikanSearchDialog v-if="canSearchMikan && mikanSearchOpen && detail" :token="token" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false" />
+    <AnimeResourceSearchDialog v-if="canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen) && detail" :key="gardenSearchOpen ? 'garden' : 'mikan'" :provider="gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false" />
     <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
@@ -319,12 +322,16 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     <span class="detail-muted">搜索</span>
                   </span>
                 </SearchPill>
-                <SearchPill v-if="canSearchMikan" @click="mikanSearchOpen = true">
+                <SearchPill v-if="canSearchAnimeResources" @click="mikanSearchOpen = true">
                   <img :src="mikanMascot" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
                   <span class="flex items-center gap-0.5">
                     <span class="font-semibold">Mikan</span>
                     <span class="detail-muted">搜索</span>
                   </span>
+                </SearchPill>
+                <SearchPill v-if="canSearchAnimeResources" @click="gardenSearchOpen = true">
+                  <img :src="gardenLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
+                  <span>Garden 搜索</span>
                 </SearchPill>
                 <SearchPill v-if="isPortalAdmin && searchConfigured.woniu" @click="woniuSearchOpen = true">
                   <img :src="woniuLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />

@@ -52,6 +52,7 @@ type Resources struct {
 		Provider   string   `json:"provider"`
 		Fansubs    []string `json:"fansubs"`
 		Publishers []string `json:"publishers"`
+		Search     []string `json:"search"`
 	} `json:"filter"`
 }
 
@@ -87,36 +88,19 @@ func groupFor(r Resource) animefeed.Group {
 	}
 	return animefeed.Group{ID: r.Provider + "_" + prefix + strconv.FormatInt(p.ID, 10), Name: p.Name, Origin: r.Provider, OriginName: originNames[r.Provider], Kind: kind}
 }
-func ParseResources(body []byte, id string, take int, group *animefeed.Group) (Resources, error) {
+func parseResources(body []byte, page, take int) (Resources, error) {
 	var v Resources
-	if json.Unmarshal(body, &v) != nil || v.Status != "OK" || v.Rows == nil || len(v.Rows) > take || v.Pagination.Page != 1 || v.Pagination.Size != take || v.Pagination.Complete == nil || len(v.Filter.Subjects) != 1 || strconv.FormatInt(v.Filter.Subjects[0], 10) != id {
-		return v, ErrInvalid
-	}
-	if group != nil && (v.Filter.Provider != group.Origin || group.Kind == "fansub" && (len(v.Filter.Fansubs) != 1 || v.Filter.Fansubs[0] != group.Name) || group.Kind == "publisher" && (len(v.Filter.Publishers) != 1 || v.Filter.Publishers[0] != group.Name)) {
+	if json.Unmarshal(body, &v) != nil || v.Status != "OK" || v.Rows == nil || len(v.Rows) > take || v.Pagination.Page != page || v.Pagination.Size != take || v.Pagination.Complete == nil {
 		return v, ErrInvalid
 	}
 	seen := make(map[string]bool, len(v.Rows))
 	for _, r := range v.Rows {
 		key := r.Provider + ":" + r.ProviderID
-		if r.ID < 1 || originNames[r.Provider] == "" || !originID.MatchString(r.ProviderID) || r.SubjectID != v.Filter.Subjects[0] || strings.TrimSpace(r.Title) == "" || len([]rune(r.Title)) > 1024 || r.Size < 0 || seen[key] || !validPerson(r.Publisher) || r.Fansub != nil && !validPerson(*r.Fansub) {
+		if r.ID < 1 || originNames[r.Provider] == "" || !originID.MatchString(r.ProviderID) || r.SubjectID < 0 || strings.TrimSpace(r.Title) == "" || len([]rune(r.Title)) > 1024 || r.Size < 0 || seen[key] || !validPerson(r.Publisher) || r.Fansub != nil && !validPerson(*r.Fansub) {
 			return v, ErrInvalid
 		}
 		if _, err := time.Parse(time.RFC3339Nano, r.CreatedAt); err != nil {
 			return v, ErrInvalid
-		}
-		if group != nil {
-			person, prefix := r.Publisher, "p"
-			if group.Kind == "fansub" {
-				if r.Fansub == nil {
-					return v, ErrInvalid
-				}
-				person, prefix = *r.Fansub, "f"
-			}
-			// A publisher may post both attributed and unattributed releases.
-			// Its explicit filter remains valid when a row also has a fansub.
-			if r.Provider+"_"+prefix+strconv.FormatInt(person.ID, 10) != group.ID {
-				return v, ErrInvalid
-			}
 		}
 		u, err := url.Parse(r.Href)
 		if err != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || !validOriginHost(r.Provider, u.Host) {
@@ -129,6 +113,45 @@ func ParseResources(body []byte, id string, take int, group *animefeed.Group) (R
 		seen[key] = true
 	}
 	return v, nil
+}
+
+// Subscription reads retain their stricter subject and publisher identity checks.
+func ParseResources(body []byte, id string, take int, group *animefeed.Group) (Resources, error) {
+	v, err := parseResources(body, 1, take)
+	if err != nil || len(v.Filter.Subjects) != 1 || strconv.FormatInt(v.Filter.Subjects[0], 10) != id {
+		return v, ErrInvalid
+	}
+	if err := validateResourceGroup(v, group); err != nil {
+		return v, err
+	}
+	for _, r := range v.Rows {
+		if r.SubjectID != v.Filter.Subjects[0] {
+			return v, ErrInvalid
+		}
+	}
+	return v, nil
+}
+
+func validateResourceGroup(v Resources, group *animefeed.Group) error {
+	if group == nil {
+		return nil
+	}
+	if v.Filter.Provider != group.Origin || group.Kind == "fansub" && (len(v.Filter.Fansubs) != 1 || v.Filter.Fansubs[0] != group.Name) || group.Kind == "publisher" && (len(v.Filter.Publishers) != 1 || v.Filter.Publishers[0] != group.Name) {
+		return ErrInvalid
+	}
+	for _, r := range v.Rows {
+		person, prefix := r.Publisher, "p"
+		if group.Kind == "fansub" {
+			if r.Fansub == nil {
+				return ErrInvalid
+			}
+			person, prefix = *r.Fansub, "f"
+		}
+		if r.Provider+"_"+prefix+strconv.FormatInt(person.ID, 10) != group.ID {
+			return ErrInvalid
+		}
+	}
+	return nil
 }
 func validOriginHost(p, host string) bool {
 	switch p {
