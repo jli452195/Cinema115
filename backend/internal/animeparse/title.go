@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-const ParserVersion int64 = 7
+const ParserVersion int64 = 8
 
 var ErrInput = errors.New("invalid anime parser input")
 
@@ -63,6 +63,14 @@ func Title(title string) (model.AnimeReleaseParse, error) {
 	out := model.AnimeReleaseParse{SchemaVersion: model.AnimeSchemaVersion, Kind: "unknown"}
 	if !validText(title, 1024) || strings.TrimSpace(title) == "" {
 		return out, ErrInput
+	}
+	// A dot before a complete resolution token is a filename separator,
+	// not a decimal episode (S01E01.1080p). Preserve offsets and genuine
+	// fractional numbering such as S01E12.5.1080p.
+	for _, span := range qualityToken.FindAllStringIndex(title, -1) {
+		if span[0] > 0 && title[span[0]-1] == '.' && (span[1] == len(title) || !asciiAlnum(title[span[1]])) {
+			title = title[:span[0]-1] + " " + title[span[0]:]
+		}
 	}
 	out.Resolution = resolution(title)
 	out.Spec, out.SpecAmbiguous = specification(title)

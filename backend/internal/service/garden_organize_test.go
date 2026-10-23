@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,26 @@ func gardenFixture(t *testing.T) (*GardenOrganize, *organizeFakeDrive, *cloudAdd
 	s := NewGardenOrganize(o, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
 	in := GardenOrganizeInput{GardenResourceInput: GardenResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1, Suffix: "Group"}}}
 	return s, drive, adder, tracker, transport, in
+}
+
+func TestGardenFilesStandardSeasonEpisodes(t *testing.T) {
+	s, _, _, _, transport, in := gardenFixture(t)
+	transport.names = make([]string, 150)
+	for i := range transport.names {
+		transport.names[i] = fmt.Sprintf("Kiniro.No.Gasshuberu.S01.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1/Kiniro.No.Gasshuberu.S01E%02d.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1.mkv", i+1)
+	}
+	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files.Files) != len(transport.names) || len(files.EndEpisodes) != 0 {
+		t.Fatal("single-episode files changed", len(files.Files), files.EndEpisodes)
+	}
+	for i, file := range files.Files {
+		if file.ID != transport.names[i] || file.Season != 1 || file.Episode != i+1 {
+			t.Fatalf("file %d lost its standard episode: %+v", i+1, file)
+		}
+	}
 }
 
 func TestGardenFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {

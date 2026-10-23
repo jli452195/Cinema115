@@ -34,6 +34,12 @@ func TestTitleOrdinaryNumbering(t *testing.T) {
 		{"[Group] Show 第2026话 [1080p]", "2026", 2026, ""},
 		{"[Group] Show [2026] [01][1080p]", "01", 1, ""},
 		{"[Group] Show S01E01.mkv", "01", 1, ""},
+		{"Kiniro.No.Gasshuberu.S01E01.1080p.AMZN.WEB-DL.DDP2.0.H.264-Yatogam1", "01", 1, ""},
+		{"Show.S02E009.720p.WEB-DL", "009", 9, ""},
+		{"Show.S01E100.1080p.10bit.mkv", "100", 100, ""},
+		{"Show.S01E150.2160p.x265.mkv", "150", 150, ""},
+		{"Show.S01E00.4K.mkv", "00", 0, ""},
+		{"Show.EP01v2.1080p.mkv", "01v2", 1, "v2"},
 		{"[ANi] Tantei wa Mō Shindeiru / 侦探已经，死了。 Season 2 - 02 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", "02", 2, ""},
 		{"[ANi] 侦探已经，死了。 Season 2 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", "01", 1, ""},
 		{"[Group] Show season 02 - 03 [1080p]", "03", 3, ""},
@@ -139,6 +145,10 @@ func TestTitleUnsupportedAndAmbiguousNumbering(t *testing.T) {
 		{"[组] 动画 第01-第03话 [1080p]", "batch", "01-第03"},
 		{"[组] 动画 EP01-EP02 [1080p]", "batch", "01-EP02"},
 		{"[组] 动画 S02E01-E03 [1080p]", "batch", "01-E03"},
+		{"Show.S01E12.5.1080p.mkv", "special", "12.5"},
+		{"Show.S01E01.720.mkv", "special", "01.720"},
+		{"Show.S01E01-E03.1080p.mkv", "batch", "01-E03"},
+		{"[59] Show.S03E09.1080p.mkv", "composite", "59 / 09"},
 		{"[组] 动画 [01+02] [1080p]", "batch", "01+02"},
 		{"[组] 动画 [01/02] [1080p]", "batch", "01/02"},
 		{"[组] 动画 [01][全集][1080p]", "batch", "01 / 全集"},
@@ -183,6 +193,9 @@ func TestTitleDoesNotGuessFromMetadata(t *testing.T) {
 		"[组] Show - 07C [1080p]",
 		"[Group] Show Season 02 [1080p]",
 		"[Group] Show Season 2 [1080p]",
+		"Show.S01.1080p.DDP2.0.H.264.mkv",
+		"Show.S01E01.1080pFake.mkv",
+		"Show.S01E01.1080.mkv",
 	} {
 		got, err := Title(title)
 		if err != nil {
