@@ -84,8 +84,9 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 		Path []struct {
 			CID json.Number `json:"cid"`
 		} `json:"path"`
-		Count json.Number `json:"count"`
-		Data  []struct {
+		Count  json.Number `json:"count"`
+		Offset json.Number `json:"offset"`
+		Data   []struct {
 			FID  json.Number `json:"fid"`
 			CID  json.Number `json:"cid"`
 			Name string      `json:"n"`
@@ -108,6 +109,12 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 		return nil, fmt.Errorf("115 返回无效的网盘条目数")
 	}
 	page := &SharePage{Count: count, Offset: offset, Files: make([]ShareFile, 0, len(response.Data))}
+	if response.Offset != "" {
+		page.Offset, err = strconv.Atoi(response.Offset.String())
+		if err != nil || page.Offset < 0 {
+			return nil, fmt.Errorf("115 返回无效的网盘分页偏移")
+		}
+	}
 	for _, item := range response.Data {
 		id := item.FID.String()
 		dir := id == "" || id == "0"

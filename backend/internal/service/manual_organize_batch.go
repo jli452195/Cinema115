@@ -146,6 +146,18 @@ func (s *ManualOrganize) stopBatch(job *OrganizeJob, batch organizeBatch, messag
 	return false, s.checkpoint(job)
 }
 
+func (s *ManualOrganize) listBatchResult(ctx context.Context, job *OrganizeJob, batch organizeBatch, cid, cookie string) ([]p115.ShareFile, error) {
+	return s.listUntil(ctx, cid, cookie, func(files []p115.ShareFile) bool {
+		for _, i := range batch.indexes {
+			item := &job.Items[i]
+			if !organizeSourceMatches(files, item.File, item.Name) || organizeCollision(files, item.Name, item.File.ID) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch organizeBatch, directories map[string]string, cookie string) (bool, error) {
 	source, err := s.list(ctx, batch.source, cookie)
 	if err != nil {
@@ -202,7 +214,7 @@ func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch o
 		job.Stats.MutationMS += time.Since(started).Milliseconds()
 		// Never infer full success/failure from the batch envelope. A timeout
 		// or error can follow partial success, so reconcile every planned ID.
-		files, readErr := s.list(ctx, batch.source, cookie)
+		files, readErr := s.listBatchResult(ctx, job, batch, batch.source, cookie)
 		confirmed := true
 		for _, i := range batch.indexes {
 			item := &job.Items[i]
@@ -260,7 +272,7 @@ func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch o
 	writeErr := s.drive.MoveEntriesBatch(ctx, ids, cid, cookie)
 	job.Stats.MoveRequests++
 	job.Stats.MutationMS += time.Since(started).Milliseconds()
-	files, readErr := s.list(ctx, cid, cookie)
+	files, readErr := s.listBatchResult(ctx, job, batch, cid, cookie)
 	confirmed := true
 	for _, i := range batch.indexes {
 		item := &job.Items[i]

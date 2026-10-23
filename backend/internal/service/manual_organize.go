@@ -20,6 +20,7 @@ import (
 
 var ErrOrganizeInput = errors.New("手动整理参数无效")
 var ErrOrganizeConflict = errors.New("整理状态已变化")
+var errOrganizePagination = errors.New("115 目录分页尚未稳定")
 
 type OrganizeDrive interface {
 	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
@@ -269,6 +270,31 @@ func (s *ManualOrganize) Browse(ctx context.Context, accountID, cid string, offs
 // Exhaust pagination before checking names; an incomplete directory must never
 // be treated as evidence that a destination is free.
 func (s *ManualOrganize) list(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
+	return s.listUntil(ctx, cid, cookie, nil)
+}
+
+// A successful write can precede visibility of its results in directory reads.
+// After bounded read retries, return the last valid snapshot so callers retain
+// per-file confirmed/uncertain outcomes rather than replaying the write.
+func (s *ManualOrganize) listUntil(ctx context.Context, cid, cookie string, visible func([]p115.ShareFile) bool) ([]p115.ShareFile, error) {
+	for attempt := 0; ; attempt++ {
+		files, err := s.listOnce(ctx, cid, cookie)
+		if attempt >= 2 || err != nil && !errors.Is(err, errOrganizePagination) || err == nil && (visible == nil || visible(files)) {
+			return files, err
+		}
+		// Discard the entire inconsistent snapshot. Only reads are repeated;
+		// rename/move requests are never replayed by directory reconciliation.
+		timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *ManualOrganize) listOnce(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
 	files := make([]p115.ShareFile, 0)
 	seen := make(map[string]bool)
 	total := -1
@@ -282,13 +308,16 @@ func (s *ManualOrganize) list(ctx context.Context, cid, cookie string) ([]p115.S
 		if err != nil {
 			return nil, fmt.Errorf("读取网盘目录: %w", &organizeSafeError{err: err, message: organizePublicError(err, cookie)})
 		}
-		if page == nil || page.Offset != offset || page.Count < offset+len(page.Files) || (total >= 0 && page.Count != total) {
-			return nil, fmt.Errorf("115 目录分页发生变化，请刷新重试")
+		if page == nil {
+			return nil, fmt.Errorf("%w：目录 %s，偏移 %d，返回空分页", errOrganizePagination, cid, offset)
+		}
+		if page.Offset != offset || page.Count < offset+len(page.Files) || (total >= 0 && page.Count != total) {
+			return nil, fmt.Errorf("%w：目录 %s，请求偏移 %d，返回偏移 %d，本页 %d 项，总数 %d，前页总数 %d", errOrganizePagination, cid, offset, page.Offset, len(page.Files), page.Count, total)
 		}
 		total = page.Count
 		for _, file := range page.Files {
 			if seen[file.ID] {
-				return nil, fmt.Errorf("115 目录分页重复，请刷新重试")
+				return nil, fmt.Errorf("%w：目录 %s，偏移 %d，条目 %s 重复", errOrganizePagination, cid, offset, file.ID)
 			}
 			seen[file.ID] = true
 			files = append(files, file)
@@ -297,7 +326,10 @@ func (s *ManualOrganize) list(ctx context.Context, cid, cookie string) ([]p115.S
 		if offset >= page.Count {
 			return files, nil
 		}
-		if len(page.Files) == 0 || offset >= 20000 {
+		if len(page.Files) == 0 {
+			return nil, fmt.Errorf("%w：目录 %s，偏移 %d，总数 %d，但本页为空", errOrganizePagination, cid, offset, page.Count)
+		}
+		if offset >= 20000 {
 			return nil, fmt.Errorf("目录过大或分页不完整，请选择较小目录")
 		}
 	}

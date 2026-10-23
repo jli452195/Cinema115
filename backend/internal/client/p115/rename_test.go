@@ -53,3 +53,30 @@ func TestDriveFilesRejectsRedirectedDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestDriveFilesPreservesUpstreamOffset(t *testing.T) {
+	for _, offset := range []string{`0`, `"100"`, `-1`, `"invalid"`, `null`} {
+		t.Run(offset, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"state":true,"cid":"123","count":150,"offset":` + offset + `,"data":[]}`))
+			}))
+			defer server.Close()
+			client := newTestShareClient()
+			client.WebURL = server.URL
+			page, err := client.DriveFiles(context.Background(), "123", 100, "fixed-cookie")
+			if offset == `-1` || offset == `"invalid"` {
+				if err == nil {
+					t.Fatal("invalid upstream offset accepted")
+				}
+				return
+			}
+			want := 100
+			if offset == `0` {
+				want = 0
+			}
+			if err != nil || page.Offset != want {
+				t.Fatal("upstream offset replaced with requested offset", page, err)
+			}
+		})
+	}
+}
