@@ -4,7 +4,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
-  const passed = [], errors = [], writes = []
+  const passed = [], errors = [], writes = [], reads = []
   try {
     await fs.mkdir('test-results', { recursive: true })
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
@@ -18,16 +18,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const makeJob = i => ({ id: `job-${i}`, title: i === 0 ? '部分完成作品' : i === 1 ? '转生贤者的异世界生活～获得第二职业并成为世界最强～'.repeat(3) : `已完成作品 ${i}`, config, status: i === 0 ? 'partial' : 'completed', createdAt: new Date(Date.UTC(2026, 9, 15, 12 - i)).toISOString(), items: Array.from({ length: 36 }, (_, n) => ({ file: file(n), targetPath: `/影视库/閃靈二人組/Season 01/${n}.rmvb`, status: 'done' })) })
     let jobs = Array.from({ length: 12 }, (_, i) => makeJob(i)), offline = true
     jobs[0].config = { ...config, sourceCID: '40', sourcePath: '/历史/garden-job', targetCID: '80', targetPath: '/旧目标' }
-    let resumeMode = 'hold', releaseResume
+    let resumeMode = 'hold', releaseResume, accountsFail = false
     jobs[0].items = jobs[0].items.slice(0, 6).map((item, i) => ({ ...item, status: ['done', 'uncertain', 'renamed', 'pending', 'blocked', 'skipped'][i], message: i === 1 ? '结果未确认，请核实实际文件' : '' }))
     const cleanup = [{ id: 'clean', accountId: 'main', mode: 'empty', parentPath: '/来源/待整理', status: 'completed', createdAt: '2026-10-15T00:00:00Z', items: [{ id: 'folder', name: '空目录', path: '/来源/空目录', status: 'done' }] }]
     const subtitles = [{ id: 'sub', accountId: 'main', jobId: 'job-2', status: 'completed', createdAt: '2026-10-15T01:00:00Z', items: [0, 1].map(i => ({ localId: String(i), originalName: `${i}.srt`, video: file(i), targetPath: `/影视库/${i}.srt`, status: i ? 'skipped' : 'done' })) }]
     await page.route('**/api/**', async route => {
       const request = route.request(), endpoint = new URL(request.url()).pathname
       if (request.method() !== 'GET') writes.push(endpoint)
+      else reads.push(endpoint)
       let data = {}, status = 200
       if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
-      else if (endpoint.endsWith('/accounts')) data = { accounts: [{ id: 'main', name: '主账号', primary: true, configured: true }] }
+      else if (endpoint.endsWith('/accounts')) {
+        if (accountsFail) { status = 502; data = { error: '模拟账号读取失败' } }
+        else data = { accounts: [{ id: 'main', name: '主账号', primary: true, configured: true }] }
+      }
       else if (endpoint.endsWith('/manual-organize/config')) data = config
       else if (endpoint.endsWith('/manual-organize/files')) data = { files: [{ id: '30', name: '待整理', directory: true }], count: 1 }
       else if (endpoint.endsWith('/manual-organize/scan')) {
@@ -47,6 +51,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           data = job
         }
       }
+      else if (endpoint.endsWith('/garden-organize/jobs')) {
+        if (offline) { status = 502; data = { error: '模拟读取失败' } }
+        else data = { jobs: jobs.filter(job => job.download) }
+      }
       else if (/manual-organize\/(jobs|cleanup|subtitles)$/.test(endpoint)) {
         if (offline) { status = 502; data = { error: '模拟读取失败' } }
         else data = { jobs: endpoint.endsWith('/jobs') ? jobs : endpoint.endsWith('/cleanup') ? cleanup : subtitles }
@@ -55,7 +63,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.goto(origin + '/115/manual-organize', { waitUntil: 'networkidle' })
-    const history = page.getByRole('region', { name: '任务记录', exact: true })
+    let history = page.getByRole('region', { name: '任务记录', exact: true })
     await history.getByRole('alert').waitFor()
     assert.match(await history.innerText(), /任务记录加载失败/)
     offline = false
@@ -190,11 +198,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const resumeJob = { ...makeJob(30), id: 'resume', title: '可恢复的下载整理', status: 'interrupted', resumable: true, download: { directoryId: '999' } }
     resumeJob.items = resumeJob.items.slice(0, 3).map(item => ({ ...item, status: 'pending' }))
     jobs.unshift(resumeJob)
-    await page.clock.fastForward(10000)
+    accountsFail = true
+    await page.goto(origin + '/115/download-organize', { waitUntil: 'networkidle' })
+    history = page.getByRole('region', { name: '任务记录', exact: true })
+    await history.getByRole('alert').filter({ hasText: '模拟账号读取失败' }).waitFor()
+    accountsFail = false
+    await history.getByRole('button', { name: '刷新记录', exact: true }).click()
+    await history.getByRole('button', { name: '查看可恢复的下载整理的详情' }).waitFor()
+    assert.equal(await history.getByRole('group', { name: '记录类型' }).count(), 0)
+    assert.equal(await history.locator('li').count(), 1)
     await history.getByRole('button', { name: '查看可恢复的下载整理的详情' }).click()
     dialog = page.getByRole('dialog', { name: resumeJob.title, exact: true })
+    assert.equal(await dialog.getByRole('button', { name: '查看源目录剩余内容', exact: true }).count(), 0)
+    assert.equal(await dialog.getByRole('button', { name: '补充字幕', exact: true }).count(), 0)
     let resumeButton = dialog.getByRole('button', { name: '检查并继续', exact: true })
     assert.equal(await resumeButton.isEnabled(), true)
+    passed.push('download workflow has its own page and history; failed account loading retries through refresh; manual actions and redundant categories hidden')
     for (const dark of [false, true]) {
       await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
       const footer = dialog.locator('footer')
@@ -246,7 +265,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.clock.fastForward(2000)
     await dialog.getByText('已完成', { exact: true }).first().waitFor()
     assert.equal(await dialog.getByRole('button', { name: '检查并继续', exact: true }).count(), 0)
+    assert.equal(await history.locator('li').count(), 1)
     assert.deepEqual(writes, Array(3).fill('/api/admin/p115/garden-organize/resume'))
+    const countReads = () => reads.filter(endpoint => endpoint.endsWith('/garden-organize/jobs')).length
+    const readsBeforeHidden = countReads()
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')) })
+    await page.clock.fastForward(60000)
+    assert.equal(countReads(), readsBeforeHidden, 'hidden page kept polling')
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')) })
+    await page.waitForResponse(response => response.url().includes('/garden-organize/jobs'))
+    assert.equal(countReads(), readsBeforeHidden + 1, 'return to foreground duplicated refresh')
+    passed.push('hidden page stops polling; returning performs one local history read')
     assert.deepEqual(errors, [])
     passed.push('lost response is not automatically replayed; stale history blocks retry; refresh is read-only; recovery and completion update open details with active polling')
     console.log(JSON.stringify({ passed, errors, writes }, null, 2))

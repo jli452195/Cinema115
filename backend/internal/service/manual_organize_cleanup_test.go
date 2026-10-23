@@ -84,7 +84,7 @@ func TestManualOrganizeCleanupSelectedAndReplay(t *testing.T) {
 	if strings.Contains(store.data, "secret-cookie") || strings.Contains(store.data, "UID=") {
 		t.Fatal("credentials persisted")
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, d, nil)
+	restarted, err := newManualOrganizeTest(store, s.accounts, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestManualOrganizeCleanupRestartInterruptsWithoutReplaying(t *testing.T) {
 	if err := s.cleanupCheckpoint(&plan); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, d, nil)
+	restarted, err := newManualOrganizeTest(store, s.accounts, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

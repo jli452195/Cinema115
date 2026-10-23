@@ -40,7 +40,7 @@ func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input Or
 
 // buildPlan is shared by actual cloud scans and pre-download website lists.
 // It performs metadata/naming validation without touching 115.
-func (s *ManualOrganize) buildPlan(ctx context.Context, scan OrganizeScan, input OrganizePreviewInput) (OrganizeJob, error) {
+func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input OrganizePreviewInput) (OrganizeJob, error) {
 	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
 		return OrganizeJob{}, ErrOrganizeInput
 	}
@@ -160,7 +160,7 @@ func (s *ManualOrganize) buildPlan(ctx context.Context, scan OrganizeScan, input
 	return job, nil
 }
 
-func (s *ManualOrganize) checkPlan(ctx context.Context, job *OrganizeJob, cookie string, checkSource bool) error {
+func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie string, checkSource bool) error {
 	// Cache complete listings only within this preview. Execution always reads
 	// them again before mutating; changes in other tools invalidate the plan.
 	cache := make(map[string][]p115.ShareFile)
@@ -227,7 +227,7 @@ func (s *ManualOrganize) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 	return nil
 }
 
-func (s *ManualOrganize) rememberPlan(job OrganizeJob) (OrganizeJob, error) {
+func (s *OrganizeEngine) rememberPlan(job OrganizeJob) (OrganizeJob, error) {
 	var err error
 	job.ID, err = organizeToken()
 	if err != nil {

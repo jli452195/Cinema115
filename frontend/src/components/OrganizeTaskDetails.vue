@@ -4,7 +4,7 @@ import P115SidePanel from './P115SidePanel.vue'
 import P115Icon from './P115Icon.vue'
 import { historyDuration, historyLabels, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
-const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; canSubtitle: boolean; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
+const props = defineProps<{ manualActions?: boolean; task: HistoryTask; accountName: string; blockedReason: string; canSubtitle: boolean; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
 defineEmits<{ close: []; source: []; subtitle: []; resume: [] }>()
 // This component is keyed by task identity, not the polling snapshot.
 const filter = ref(taskCounts(props.task).attention ? 'attention' : 'all')
@@ -19,10 +19,10 @@ watch(() => props.resumeError, async message => {
   if (message) { await nextTick(); resumeAlert.value?.scrollIntoView({ block: 'nearest' }) }
 })
 watch(() => props.resuming, async (current, previous) => {
-  if (current || !previous || resumable.value) return
+  if (current || !previous) return
   const restore = document.activeElement === resumeButton.value || document.activeElement === document.body
   await nextTick()
-  if (restore) closeButton.value?.focus({ preventScroll: true })
+  if (restore) (resumable.value ? resumeButton.value : closeButton.value)?.focus({ preventScroll: true })
 })
 async function copy(value: string) {
   try {
@@ -50,7 +50,7 @@ async function copy(value: string) {
 
 <template>
   <P115SidePanel :title="task.title" :description="`${historyLabels[task.kind]}任务详情`" wide @close="$emit('close')">
-    <template v-if="task.organize && !isActiveTask(task)" #actions>
+    <template v-if="manualActions !== false && task.organize && !isActiveTask(task)" #actions>
       <div class="flex flex-wrap gap-2">
         <button class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('source')">查看源目录剩余内容</button>
         <button v-if="canSubtitle" class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('subtitle')">补充字幕</button>
@@ -71,7 +71,7 @@ async function copy(value: string) {
       <div v-if="counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
         <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
         <p v-if="task.message" class="mt-1 break-all">{{ task.message }}</p>
-        <p>{{ resumable ? '尚未开始改名或移动，可点击“检查并继续”恢复原任务，不会重新提交离线。' : task.kind === 'cleanup' ? '请先核实网盘实际内容，再重新预览剩余条目。待核实条目不会自动重复执行。' : '请核对原位置与目标位置的实际文件，再重新扫描或预览。待核实条目不会自动重复执行。' }}</p>
+        <p>{{ resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : task.kind === 'cleanup' ? '请先核实网盘实际内容，再重新预览剩余条目。待核实条目不会自动重复执行。' : '请核对原位置与目标位置的实际文件，再重新扫描或预览。待核实条目不会自动重复执行。' }}</p>
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
@@ -98,7 +98,7 @@ async function copy(value: string) {
         </ul>
       </section>
     </div>
-    <template #footer><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? '不会重新提交离线' : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></template>
+    <template #footer><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? (task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></template>
   </P115SidePanel>
 </template>
 

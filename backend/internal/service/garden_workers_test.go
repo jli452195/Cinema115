@@ -130,7 +130,7 @@ func gardenWait(t *testing.T, condition func() bool) {
 }
 
 func gardenJobState(s *GardenOrganize, id string) string {
-	for _, job := range s.Organize.History() {
+	for _, job := range s.History() {
 		if job.ID == id {
 			return job.Status
 		}
@@ -225,7 +225,7 @@ func TestGardenWorkersIsolateSlowStatusAndSubmission(t *testing.T) {
 				want = "uncertain" // A canceled write must never become retryable automatically.
 			}
 			if gardenJobState(s, jobs[0].ID) != want || drive.moves != 1 {
-				t.Fatal("canceled task replayed work or lost its outcome", s.Organize.History())
+				t.Fatal("canceled task replayed work or lost its outcome", s.History())
 			}
 		})
 	}
@@ -417,9 +417,12 @@ func TestGardenWorkersCancelDuringWriteRetainsUncertainResult(t *testing.T) {
 			return false
 		}
 	})
-	job := s.Organize.History()[0]
-	if *runErr != nil || job.Status != "partial" || job.Items[0].Status != "uncertain" || job.Resumable || job.Stats.RenameRequests != 1 || job.Stats.MoveRequests != 0 {
-		t.Fatal("unknown write outcome became replayable", *runErr, job)
+	job := s.History()[0]
+	if *runErr != nil || job.Status != "partial" || job.Items[0].Status != "uncertain" || !job.Resumable || job.Stats.RenameRequests != 1 || job.Stats.MoveRequests != 0 {
+		t.Fatal("unknown outcome must be retained for explicit identity-checked continuation", *runErr, job)
+	}
+	if drive.renames != 0 || drive.moves != 0 {
+		t.Fatal("cancelled write was automatically replayed")
 	}
 	if release, err := s.Organize.ReserveDirectoryWork(); err != nil {
 		t.Fatal("directory reservation leaked", err)

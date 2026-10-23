@@ -129,6 +129,14 @@ func (f *organizeFakeDrive) MoveEntriesBatch(_ context.Context, ids []string, ci
 
 type organizeFakeMetadata struct{}
 
+func newManualOrganizeTest(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*ManualOrganize, error) {
+	engine, err := NewOrganizeEngine(store, accounts, drive, metadata)
+	if err != nil {
+		return nil, err
+	}
+	return NewManualOrganize(engine), nil
+}
+
 func (organizeFakeMetadata) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
 	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "测试作品", Date: "2024-01-01"}}, nil
 }
@@ -160,7 +168,7 @@ func newOrganizeTest(t *testing.T) (*ManualOrganize, *organizeFakeDrive, string,
 		"30": {{ID: "101", Name: "Wrong.S01E01.1080p.mkv", Size: 100}, {ID: "102", Name: "Wrong.S01E01.1080p.zh-CN.srt", Size: 10}, {ID: "103", Name: "Wrong.S01E02.1080p.mkv", Size: 200}, {ID: "104", Name: "readme.txt", Size: 1}},
 	}}
 	store := &failingAccountStore{}
-	s, err := NewManualOrganize(store, accounts, drive, organizeFakeMetadata{})
+	s, err := newManualOrganizeTest(store, accounts, drive, organizeFakeMetadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +254,7 @@ func TestManualOrganizeMovieTVAndSubtitles(t *testing.T) {
 	if _, err := s.Start(id, plan.ID); err != nil || drive.moves != 1 {
 		t.Fatal("重复提交不得重复执行", err)
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, drive, organizeFakeMetadata{})
+	restarted, err := newManualOrganizeTest(store, s.accounts, drive, organizeFakeMetadata{})
 	if err != nil || restarted.History()[0].Status != "completed" || restarted.Config().AccountID != id {
 		t.Fatal("配置或记录未持久化", err)
 	}
@@ -396,7 +404,7 @@ func TestManualOrganizeTimeoutReadbackAndRestart(t *testing.T) {
 	if _, err := s.Start(id, plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, drive, organizeFakeMetadata{})
+	restarted, err := newManualOrganizeTest(store, s.accounts, drive, organizeFakeMetadata{})
 	if err != nil {
 		t.Fatal(err)
 	}

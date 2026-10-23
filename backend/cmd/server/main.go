@@ -241,13 +241,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	manualOrganize, err := service.NewManualOrganize(organizeStore, accounts, p115.NewShareClient(), tmdbService)
+	organizeEngine, err := service.NewOrganizeEngine(organizeStore, accounts, p115.NewShareClient(), tmdbService)
 	if err != nil {
 		log.Fatal(err)
 	}
-	animeAdmin.ReserveOrganization = manualOrganize.ReserveDirectoryWork
+	manualOrganize := service.NewManualOrganize(organizeEngine)
+	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
-	gardenOrganize := service.NewGardenOrganize(manualOrganize, animeBindings.Garden, cloudDownloads, cloudDownloadSettings, cloudClient)
+	gardenOrganize := service.NewGardenOrganize(organizeEngine, animeBindings.Garden, cloudDownloads, cloudDownloadSettings, cloudClient)
 	httpapi.RegisterGardenOrganize(admin, gardenOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
@@ -283,8 +284,8 @@ func main() {
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
 	folderMonitors.SetSharedSettings(automation.Value)
 	folderMonitors.Tasks = shareTasks
-	folderMonitors.ReserveWork = manualOrganize.ReserveDirectoryWork
-	manualOrganize.OnCompleted = func(ctx context.Context, config service.OrganizeConfig) {
+	folderMonitors.ReserveWork = organizeEngine.ReserveDirectoryWork
+	organizeEngine.OnCompleted = func(ctx context.Context, config service.OrganizeConfig) {
 		if err := folderMonitors.NotifyOrganized(ctx, config.AccountID); err != nil && ctx.Err() == nil {
 			generationLogs.Append("STRM", "目录监控", "目录监控", "ERROR", "整理完成后安排目录检查失败："+err.Error())
 		}
@@ -473,7 +474,7 @@ func main() {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		if err := manualOrganize.Run(ctx); err != nil {
+		if err := organizeEngine.Run(ctx); err != nil {
 			workerErrors <- err
 		}
 	}()

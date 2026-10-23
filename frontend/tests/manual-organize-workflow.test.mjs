@@ -41,7 +41,7 @@ const media = { id: 100, title: 'Example', kind: 'tv', date: '2024-01-01', seaso
 
 async function harness(t) {
   const requests = [], jobs = []
-  let conflict = false, historyFailure = false, scanFailure = false, detailFailure = false
+  let conflict = false, historyFailure = false, scanFailure = false, detailFailure = false, resumeLost = false
   let selectedMedia = structuredClone(media)
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init = {}) => {
@@ -68,6 +68,10 @@ async function harness(t) {
     } else if (pathname.endsWith('/jobs') && init.method === 'POST') {
       data = { id: 'job-1', title: 'Example', config, status: 'queued', items: [], createdAt: '2026-10-01T00:00:00Z' }
       jobs.push(data)
+    } else if (pathname.endsWith('/manual-organize/resume')) {
+      data = jobs.find(job => job.id === body.jobId)
+      data.status = 'queued'; data.resumable = false
+      if (resumeLost) return Response.json({ error: '模拟响应丢失' }, { status: 502 })
     } else if (/\/(jobs|cleanup|subtitles)$/.test(pathname)) {
       if (historyFailure) return Response.json({ error: '记录读取失败' }, { status: 502 })
       data = { jobs: pathname.endsWith('/jobs') ? jobs : [] }
@@ -81,8 +85,24 @@ async function harness(t) {
   for (let i = 0; i < 40 && (state.busy || !state.historyReady); i++) await new Promise(resolve => setImmediate(resolve))
   assert.equal(state.busy, '')
   assert.equal(state.historyReady, true)
-  return { state, requests, conflict: value => { conflict = value }, historyFailure: value => { historyFailure = value }, scanFailure: value => { scanFailure = value }, detailFailure: value => { detailFailure = value }, metadata: value => { selectedMedia = structuredClone(value) } }
+  return { state, requests, conflict: value => { conflict = value }, historyFailure: value => { historyFailure = value }, scanFailure: value => { scanFailure = value }, detailFailure: value => { detailFailure = value }, historyJobs: value => { jobs.splice(0, jobs.length, ...value) }, resumeLost: value => { resumeLost = value }, metadata: value => { selectedMedia = structuredClone(value) } }
 }
+
+test('manual continuation stays in the original record and reconciles a lost queued response', async t => {
+  const h = await harness(t), s = h.state
+  const job = { id: 'original', config: { ...config }, title: 'Example', status: 'partial', resumable: true, createdAt: '2026-10-01T00:00:00Z', items: [{ file: video('31', 1), status: 'done' }, { file: video('32', 2), status: 'uncertain' }] }
+  h.historyJobs([job])
+  await s.refreshHistory()
+  h.resumeLost(true)
+  await s.resumeTask(job)
+  assert.equal(s.jobs.length, 1)
+  assert.equal(s.jobs[0].id, job.id)
+  assert.equal(s.jobs[0].createdAt, job.createdAt)
+  assert.equal(s.jobs[0].items[0].status, 'done')
+  assert.equal(s.jobs[0].status, 'queued')
+  assert.equal(s.historyResumeError, undefined)
+  assert.deepEqual(h.requests.filter(request => request.method !== 'GET').map(request => request.pathname), ['/api/admin/p115/manual-organize/resume'])
+})
 
 test('scan search terms strip video extensions and preserve dotted directory names', async t => {
   const { state: s } = await harness(t)

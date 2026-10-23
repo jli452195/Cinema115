@@ -255,7 +255,7 @@ func gardenFixture(t *testing.T) (*GardenOrganize, *organizeFakeDrive, *cloudAdd
 	adder := &cloudAdderStub{}
 	settings := &CloudDownloadSettings{value: cloudDownloadDocument{CloudDownloadConfig: CloudDownloadConfig{AccountID: account, TargetCID: "10", TargetPath: "/来源"}}}
 	tracker := &gardenTrackerFake{}
-	s := NewGardenOrganize(o, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
+	s := NewGardenOrganize(o.OrganizeEngine, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
 	in := GardenOrganizeInput{GardenResourceInput: GardenResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1, Suffix: "Group"}}}
 	return s, drive, adder, tracker, transport, in
 }
@@ -346,14 +346,14 @@ func TestGardenDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
 	if adder.url != "" || drive.creates != 0 {
 		t.Fatal("preparation submitted or created a folder")
 	}
-	if _, err = s.Organize.Start(in.AccountID, preview.ID); err == nil {
+	if _, err = NewManualOrganize(s.Organize).Start(in.AccountID, preview.ID); err == nil {
 		t.Fatal("ordinary organizer accepted a website plan")
 	}
 	job, err := s.Start(preview.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Start(preview.ID); err != nil || len(s.live) != 1 || len(s.Organize.History()) != 1 {
+	if _, err = s.Start(preview.ID); err != nil || len(s.live) != 1 || len(s.History()) != 1 {
 		t.Fatal("start not idempotent", err)
 	}
 	p := s.live[job.ID]
@@ -473,8 +473,8 @@ func TestGardenPreviewConflictsUnsupportedAndRestart(t *testing.T) {
 	if _, err = s.Start(preview.ID); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManualOrganize(s.Organize.store, s.Organize.accounts, s.Organize.drive, s.Organize.metadata)
-	if err != nil || restarted.History()[0].Status != "interrupted" {
+	restarted, err := newManualOrganizeTest(s.Organize.store, s.Organize.accounts, s.Organize.drive, s.Organize.metadata)
+	if err != nil || restarted.history(true)[0].Status != "interrupted" {
 		t.Fatal("restart silently rebound work", err)
 	}
 	transport.incomplete = true

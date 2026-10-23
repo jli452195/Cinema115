@@ -22,6 +22,9 @@ func organizeBatches(items []OrganizeItem) []organizeBatch {
 	positions := make(map[key]int)
 	groups := make([]organizeBatch, 0)
 	for i, item := range items {
+		if item.Status == "done" {
+			continue
+		}
 		k := key{item.File.ParentID, item.Directory}
 		position, ok := positions[k]
 		if !ok {
@@ -41,13 +44,15 @@ func organizeBatches(items []OrganizeItem) []organizeBatch {
 	return batches
 }
 
-func (s *ManualOrganize) runJob(ctx context.Context, job *OrganizeJob, cookie string) error {
+func (s *OrganizeEngine) runJob(ctx context.Context, job *OrganizeJob, cookie string) error {
 	batches := organizeBatches(job.Items)
 	if organizeStatsFrom(ctx) != &job.Stats {
-		job.Stats = OrganizeStats{StartedAt: time.Now()}
+		if job.Stats.StartedAt.IsZero() {
+			job.Stats.StartedAt = time.Now()
+		}
 		ctx = withOrganizeStats(ctx, job)
 	}
-	job.Stats.BatchSize, job.Stats.BatchesTotal = p115.DriveMutationBatchLimit, len(batches)
+	job.Stats.BatchSize, job.Stats.BatchesTotal = p115.DriveMutationBatchLimit, job.Stats.BatchesCompleted+len(batches)
 	job.Status = "running"
 	if err := s.checkpoint(job); err != nil {
 		return err
@@ -57,7 +62,7 @@ func (s *ManualOrganize) runJob(ctx context.Context, job *OrganizeJob, cookie st
 	directories := map[string]string{"": job.Config.TargetCID}
 	for _, batch := range batches {
 		if ctx.Err() != nil {
-			job.Status, job.Message = "interrupted", "任务已中断，请核对文件当前位置后重新扫描"
+			job.Status, job.Message = "interrupted", "任务已中断，可在原任务详情中检查并继续"
 			return s.checkpoint(job)
 		}
 		for _, i := range batch.indexes {
@@ -85,7 +90,7 @@ func (s *ManualOrganize) runJob(ctx context.Context, job *OrganizeJob, cookie st
 
 // Directory creation is covered by the persisted preparing intent. Resolve
 // each path prefix only once and verify each newly created directory by ID.
-func (s *ManualOrganize) resolveDirectory(ctx context.Context, directory string, directories map[string]string, cookie string) (string, error) {
+func (s *OrganizeEngine) resolveDirectory(ctx context.Context, directory string, directories map[string]string, cookie string, create bool) (string, error) {
 	cid, prefix := directories[""], ""
 	for _, part := range strings.Split(directory, "/") {
 		if prefix == "" {
@@ -106,6 +111,9 @@ func (s *ManualOrganize) resolveDirectory(ctx context.Context, directory string,
 			return "", err
 		}
 		if next == "" {
+			if !create {
+				return "", fmt.Errorf("原定目标目录不存在，未创建替代目录")
+			}
 			started := time.Now()
 			next, err = s.drive.CreateDirectory(ctx, cid, part, cookie)
 			if stats := organizeStatsFrom(ctx); stats != nil {
@@ -132,7 +140,7 @@ func (s *ManualOrganize) resolveDirectory(ctx context.Context, directory string,
 
 // stopBatch preserves done/renamed/uncertain states instead of assigning a
 // batch response to every row. Other batches remain pending and are not run.
-func (s *ManualOrganize) stopBatch(job *OrganizeJob, batch organizeBatch, message string) (bool, error) {
+func (s *OrganizeEngine) stopBatch(job *OrganizeJob, batch organizeBatch, message string) (bool, error) {
 	for _, i := range batch.indexes {
 		item := &job.Items[i]
 		if item.Status == "preparing" {
@@ -142,11 +150,11 @@ func (s *ManualOrganize) stopBatch(job *OrganizeJob, batch organizeBatch, messag
 			item.Message = "已完成命名，尚未移动；请核对来源目录"
 		}
 	}
-	job.Status, job.Message = "partial", message+"；后续批次未执行，请核对记录后重新扫描"
+	job.Status, job.Message = "partial", message+"；后续批次未执行，可在原任务详情中检查并继续"
 	return false, s.checkpoint(job)
 }
 
-func (s *ManualOrganize) listBatchResult(ctx context.Context, job *OrganizeJob, batch organizeBatch, cid, cookie string) ([]p115.ShareFile, error) {
+func (s *OrganizeEngine) listBatchResult(ctx context.Context, job *OrganizeJob, batch organizeBatch, cid, cookie string) ([]p115.ShareFile, error) {
 	return s.listUntil(ctx, cid, cookie, func(files []p115.ShareFile) bool {
 		for _, i := range batch.indexes {
 			item := &job.Items[i]
@@ -158,29 +166,31 @@ func (s *ManualOrganize) listBatchResult(ctx context.Context, job *OrganizeJob, 
 	})
 }
 
-func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch organizeBatch, directories map[string]string, cookie string) (bool, error) {
+func (s *OrganizeEngine) runBatch(ctx context.Context, job *OrganizeJob, batch organizeBatch, directories map[string]string, cookie string) (bool, error) {
 	source, err := s.list(ctx, batch.source, cookie)
 	if err != nil {
 		return s.stopBatch(job, batch, organizePublicError(err, cookie))
 	}
-	// Validate every row before changing anything in this batch. Even two
-	// planned files cannot temporarily rename onto one another's source names.
-	seenNames := make(map[string]bool, len(batch.indexes))
+	// A previous write may have succeeded before its response/checkpoint was
+	// lost. Accept only the same file ID, size and original or planned name.
+	create := true
 	for _, i := range batch.indexes {
 		item := &job.Items[i]
-		if !organizeSourceMatches(source, item.File, item.File.Name) {
+		if slicesContainFile(source, item.File.ID) && !organizeSourceMatches(source, item.File, item.File.Name) && !organizeSourceMatches(source, item.File, item.Name) {
 			return s.stopBatch(job, batch, "来源文件已变化："+item.File.Name)
 		}
-		if organizeCollision(source, item.Name, item.File.ID) || seenNames[strings.ToLower(item.Name)] {
-			return s.stopBatch(job, batch, "来源目录重命名将产生同名文件："+item.Name)
+		if item.TargetCID != "" || !slicesContainFile(source, item.File.ID) {
+			create = false
 		}
-		seenNames[strings.ToLower(item.Name)] = true
 	}
-	cid, err := s.resolveDirectory(ctx, batch.directory, directories, cookie)
+	cid, err := s.resolveDirectory(ctx, batch.directory, directories, cookie, create)
 	if err != nil {
 		return s.stopBatch(job, batch, organizePublicError(err, cookie))
 	}
 	for _, i := range batch.indexes {
+		if job.Items[i].TargetCID != "" && job.Items[i].TargetCID != cid {
+			return s.stopBatch(job, batch, "原定目标目录已变化，未改用新的目录")
+		}
 		job.Items[i].TargetCID = cid
 	}
 	target := source
@@ -190,16 +200,38 @@ func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch o
 			return s.stopBatch(job, batch, organizePublicError(err, cookie))
 		}
 	}
+	remaining := make([]int, 0, len(batch.indexes))
+	seenNames := make(map[string]bool, len(batch.indexes))
 	for _, i := range batch.indexes {
 		item := &job.Items[i]
 		if organizeCollision(target, item.Name, item.File.ID) {
 			return s.stopBatch(job, batch, "目标已有同名条目："+item.Name)
 		}
+		if organizeSourceMatches(target, item.File, item.Name) {
+			if cid != batch.source && slicesContainFile(source, item.File.ID) {
+				return s.stopBatch(job, batch, "来源与目标同时返回同一文件，稍后再检查："+item.Name)
+			}
+			item.Status, item.Message = "done", "已核实原文件位于目标目录"
+			continue
+		}
+		if !organizeSourceMatches(source, item.File, item.File.Name) && !organizeSourceMatches(source, item.File, item.Name) {
+			return s.stopBatch(job, batch, "来源与原定目标中无法确认文件："+item.File.Name)
+		}
+		if organizeCollision(source, item.Name, item.File.ID) || seenNames[strings.ToLower(item.Name)] {
+			return s.stopBatch(job, batch, "来源目录重命名将产生同名文件："+item.Name)
+		}
+		seenNames[strings.ToLower(item.Name)] = true
+		item.Message = ""
+		remaining = append(remaining, i)
+	}
+	batch.indexes = remaining
+	if len(remaining) == 0 {
+		return true, nil
 	}
 	renames := make([]p115.RenameTarget, 0, len(batch.indexes))
 	for _, i := range batch.indexes {
 		item := &job.Items[i]
-		if item.Name != item.File.Name {
+		if !organizeSourceMatches(source, item.File, item.Name) {
 			renames = append(renames, p115.RenameTarget{ID: item.File.ID, Name: item.Name})
 			item.Status = "renaming"
 		}
@@ -290,4 +322,13 @@ func (s *ManualOrganize) runBatch(ctx context.Context, job *OrganizeJob, batch o
 		return s.stopBatch(job, batch, "本批移动未全部确认")
 	}
 	return true, nil
+}
+
+func slicesContainFile(files []p115.ShareFile, id string) bool {
+	for _, file := range files {
+		if file.ID == id {
+			return true
+		}
+	}
+	return false
 }

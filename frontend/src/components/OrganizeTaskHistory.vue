@@ -10,6 +10,7 @@ import { activePhase, historyLabels, historyTasks, historyTime, isActiveTask, re
 const props = defineProps<{
   jobs: OrganizeJob[]; cleanupJobs: OrganizeCleanup[]; subtitleJobs: SubtitleImport[]; accounts: P115Account[]
   tab: HistoryKind; ready: boolean; error: string; refreshing: boolean; refreshedAt: string; busy: boolean
+  organizeOnly?: boolean
   resuming: string; resumeError?: { id: string; message: string }
 }>()
 const emit = defineEmits<{ 'update:tab': [value: HistoryKind]; refresh: []; source: [job: OrganizeJob]; subtitle: [job: OrganizeJob]; resume: [job: OrganizeJob] }>()
@@ -35,7 +36,7 @@ const accountName = computed(() => {
 const blockedReason = computed(() => {
   if (unavailable.value) return '此任务已不在最近记录中，请重新选择有效记录。'
   if (!props.ready || props.error) return '请刷新任务记录，确认最新状态后再执行操作。'
-  if (props.busy || activeTasks.value.some(task => task.status !== 'downloading')) return '请等待当前操作完成。'
+  if (props.busy || !props.organizeOnly && activeTasks.value.some(task => task.status !== 'downloading')) return '请等待当前操作完成。'
   if (!props.accounts.some(account => account.id === selectedTask.value?.accountId && account.configured)) return '此任务的账号已删除或未登录，请先配置凭据。'
   return ''
 })
@@ -71,7 +72,7 @@ async function act(action: 'source' | 'subtitle') {
     </div>
 
     <p v-if="completedElsewhere" role="status" class="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">{{ historyLabels[completedElsewhere.kind] }}任务{{ taskStatus(completedElsewhere) }}，记录已归入对应分类。<button class="detail" @click="$emit('update:tab', completedElsewhere.kind)">查看{{ historyLabels[completedElsewhere.kind] }}记录</button></p>
-    <div class="my-4 flex flex-wrap gap-1" role="group" aria-label="记录类型"><button v-for="kind in (['organize', 'cleanup', 'subtitle'] as const)" :key="kind" class="filter" :aria-pressed="tab === kind" @click="$emit('update:tab', kind)">{{ historyLabels[kind] }} <span class="ml-1 tabular-nums">{{ tasks.filter(task => task.kind === kind).length }}</span></button></div>
+    <div v-if="!organizeOnly" class="my-4 flex flex-wrap gap-1" role="group" aria-label="记录类型"><button v-for="kind in (['organize', 'cleanup', 'subtitle'] as const)" :key="kind" class="filter" :aria-pressed="tab === kind" @click="$emit('update:tab', kind)">{{ historyLabels[kind] }} <span class="ml-1 tabular-nums">{{ tasks.filter(task => task.kind === kind).length }}</span></button></div>
     <div v-if="ready" :aria-label="`${historyLabels[tab]}历史记录`">
       <div v-if="visible.length" class="hidden grid-cols-[minmax(0,1fr)_8rem_minmax(10rem,12rem)_7.5rem_3.5rem] gap-3 border-b border-slate-200 px-2 pb-2 text-xs text-slate-500 lg:grid dark:border-slate-700 dark:text-slate-400"><span>作品 / 任务</span><span>状态</span><span>{{ tab === 'cleanup' ? '条目结果' : '文件结果' }}</span><span>创建时间</span><span class="text-right">操作</span></div>
       <ul class="divide-y divide-slate-100 dark:divide-slate-800">
@@ -86,7 +87,7 @@ async function act(action: 'source' | 'subtitle') {
       <p v-if="!history.length" class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ activeTasks.some(task => task.kind === tab) ? '当前任务的进度显示在上方，结束后会归入记录。' : activeOtherKinds.length ? `当前没有${historyLabels[tab]}历史记录；${activeOtherKinds.join('、')}任务正在执行，请在对应标签查看。` : `暂无${historyLabels[tab]}记录，任务执行后会在这里显示结果。` }}</p>
       <div v-if="history.length" class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400"><p>已显示 {{ visible.length }}/{{ history.length }} 条，最多保留最近 {{ tab === 'organize' ? 30 : 10 }} 条{{ historyLabels[tab] }}记录<span v-if="tab === 'organize'" class="block mt-1">文件数包含视频及字幕</span><span v-else-if="tab === 'cleanup'" class="block mt-1">按文件或目录条目计数</span></p><button v-if="visible.length < history.length" class="action" @click="limits[tab] += 8">显示更多</button></div>
     </div>
-    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :can-subtitle="canSubtitle" :history-error="error" :unavailable="unavailable" :resuming="resuming === selectedTask.organize?.id" :resume-error="resumeError && resumeError.id === selectedTask.organize?.id ? resumeError.message : ''" @close="selected = undefined" @source="act('source')" @subtitle="act('subtitle')" @resume="resume" />
+    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :can-subtitle="canSubtitle" :manual-actions="!organizeOnly" :history-error="error" :unavailable="unavailable" :resuming="resuming === selectedTask.organize?.id" :resume-error="resumeError && resumeError.id === selectedTask.organize?.id ? resumeError.message : ''" @close="selected = undefined" @source="act('source')" @subtitle="act('subtitle')" @resume="resume" />
   </section>
 </template>
 

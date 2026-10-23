@@ -64,7 +64,7 @@ const { mode: batchMode, running: batchRunning, selected: batchSelected, notice:
 const interactionBusy = computed(() => busy.value || batchRunning.value)
 const previousFocus = document.activeElement as HTMLElement | null
 let unlockScroll: (() => void) | undefined
-const submissions = ref<Record<string, BatchStatus>>({})
+const submissions = ref<Record<string, BatchStatus & { organize?: boolean }>>({})
 const singleSubmitting = computed(() => Object.values(submissions.value).some(state => state.busy))
 function submission(item: Item) { return batch.statuses.value[magnetKey(item.magnet)] || submissions.value[magnetKey(item.magnet)] }
 function canSelect(item: Item) { return batch.eligible(item) && !submission(item)?.success && !submission(item)?.busy && !submission(item)?.uncertain }
@@ -116,12 +116,12 @@ async function openOrganize(item: Item, event: MouseEvent) {
   finally { if (!lifecycle.signal.aborted) preparingItem.value = '' }
 }
 function organizeUncertain() {
-  if (organizeResource.value) submissions.value[magnetKey(organizeResource.value.magnet)] = { uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
+  if (organizeResource.value) submissions.value[magnetKey(organizeResource.value.magnet)] = { organize: true, uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
 }
 function organized(job: OrganizeJob) {
   if (!organizeResource.value) return
   const key = magnetKey(organizeResource.value.magnet)
-  submissions.value[key] = { success: true, message: `已创建下载整理任务：${job.title}。可在手动整理的任务记录查看进度。` }
+  submissions.value[key] = { organize: true, success: true, message: `已创建下载整理任务：${job.title}。可在下载整理的任务记录查看进度。` }
   batchSelected.value.delete(key)
 }
 function closeDialog() { if (organizeResource.value) return; batch.stop(); emit('close') }
@@ -477,7 +477,7 @@ onBeforeUnmount(() => {
                 <p v-if="preparingItem === item.id" role="status" class="mikan-notice garden-prepare-notice">读取 Garden 文件清单…</p>
                 <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
                 <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
-                <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" to="/115/cloud-download" @click="closeDialog">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
+                <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
               </li>
             </ul>
             <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>

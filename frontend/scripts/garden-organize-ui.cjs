@@ -27,8 +27,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
       else if (endpoint.endsWith('/garden-organize/files')) data = body.providerId === '2' ? { files: [], endEpisodes: {}, reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, endEpisodes: { [files[0].id]: 28 } }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
-      else if (endpoint.endsWith('/manual-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/动漫' }
-      else if (/manual-organize\/(jobs|cleanup|subtitles)$/.test(endpoint)) data = { jobs: [] }
+      else if (endpoint.endsWith('/garden-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/动漫' }
+      else if (endpoint.endsWith('/garden-organize/jobs') && req.method() === 'GET') data = { jobs: [] }
       else if (endpoint.endsWith('/cloud-download/paths')) data = { directories: [{ id: '30', name: '自选目录' }], hasMore: false }
       else if (endpoint.endsWith('/garden-organize/preview')) data = { id: 'one-plan', title: '百变之星', status: 'preview', items: body.files.map(f => ({ file: files.find(x => x.id === f.id), name: 'mapped.mkv', conflict: conflict ? '目标同名' : '' })) }
       else if (endpoint.endsWith('/garden-organize/jobs')) {
@@ -168,8 +168,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await panel.waitFor()
     await page.locator('[data-organize-file]').first().getByRole('checkbox').click()
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()
-    await page.getByRole('link', { name: '查看整理任务记录', exact: true }).click()
-    await page.waitForURL('**/115/manual-organize')
+    await page.getByRole('link', { name: '查看下载整理任务', exact: true }).click()
+    await page.waitForURL('**/115/download-organize')
     await searchDialog.waitFor({ state: 'detached' })
     assert.equal(await page.locator('dialog[open]').count(), 0)
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')
@@ -183,7 +183,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.getByRole('dialog', { name: '选择本次整理目录', exact: true }).waitFor()
     assert.equal(await page.locator('dialog[open]').count(), 3)
     await page.goForward()
-    await page.waitForURL('**/115/manual-organize')
+    await page.waitForURL('**/115/download-organize')
     await searchDialog.waitFor({ state: 'detached' })
     assert.equal(await page.locator('dialog[open]').count(), 0)
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')

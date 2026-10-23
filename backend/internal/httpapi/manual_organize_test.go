@@ -12,6 +12,73 @@ import (
 	"strm115/backend/internal/service"
 )
 
+func newHTTPManualOrganize(store interface {
+	Value() string
+	Save(string) error
+}, accounts *service.P115Accounts, drive service.OrganizeDrive, metadata service.OrganizeMetadata) (*service.ManualOrganize, error) {
+	engine, err := service.NewOrganizeEngine(store, accounts, drive, metadata)
+	if err != nil {
+		return nil, err
+	}
+	return service.NewManualOrganize(engine), nil
+}
+
+func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
+	router, accounts, accountID := setupAccountsAPI(t, nil, nil)
+	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "organize.enc"), "test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := accounts.Get(accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := service.OrganizeConfig{AccountID: accountID, SourceCID: "10", SourcePath: "/source", TargetCID: "20", TargetPath: "/manual"}
+	manualJob := service.OrganizeJob{ID: "manual", Config: config, Revision: a.Revision, Status: "interrupted", Items: []service.OrganizeItem{{File: service.OrganizeFile{ShareFile: p115.ShareFile{ID: "101", Name: "file.mkv", Size: 1}, ParentID: "10", SourcePath: "/source/file.mkv"}, Directory: "Show", Name: "show.mkv", Status: "pending"}}}
+	downloadJob := manualJob
+	downloadJob.ID = "download"
+	downloadJob.Download = &service.GardenDownload{Hash: strings.Repeat("a", 40), DirectoryID: "10", ParentCID: "0", ParentPath: "/"}
+	raw, err := json.Marshal(map[string]any{"version": 1, "config": config, "downloadTarget": service.CloudDownloadConfig{AccountID: accountID, TargetCID: "30", TargetPath: "/download-target"}, "jobs": []service.OrganizeJob{manualJob, downloadJob}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := service.NewOrganizeEngine(store, accounts, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RegisterManualOrganize(router.Group("/api/admin"), service.NewManualOrganize(engine))
+	RegisterGardenOrganize(router.Group("/api/admin"), service.NewGardenOrganize(engine, nil, nil, nil, nil))
+	for _, workflow := range []string{"manual-organize", "garden-organize"} {
+		response := accountRequest(t, router, "GET", "/"+workflow+"/jobs", "", 200)
+		if response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("task response must not be cached")
+		}
+		var data struct {
+			Jobs []service.OrganizeJob `json:"jobs"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		if len(data.Jobs) != 1 || (data.Jobs[0].Download != nil) != (workflow == "garden-organize") {
+			t.Fatal("workflow history leaked", workflow, data.Jobs)
+		}
+		if strings.Contains(response.Body.String(), a.Cookie) {
+			t.Fatal("history exposed credentials")
+		}
+	}
+	response := accountRequest(t, router, "GET", "/garden-organize/config", "", 200)
+	if !strings.Contains(response.Body.String(), "download-target") || strings.Contains(response.Body.String(), "sourceCID") {
+		t.Fatal("download target depends on manual configuration")
+	}
+	accountRequest(t, router, "POST", "/manual-organize/resume", `{"jobId":"download"}`, 400)
+	accountRequest(t, router, "POST", "/garden-organize/resume", `{"jobId":"manual"}`, 400)
+	accountRequest(t, router, "POST", "/manual-organize/resume", `{}`, 400)
+	accountRequest(t, router, "POST", "/garden-organize/resume", `{}`, 400)
+}
+
 func TestManualOrganizeCleanupAPIConfirmationAndReplay(t *testing.T) {
 	router, accounts, accountID := setupAccountsAPI(t, nil, nil)
 	a, err := accounts.Get(accountID)
@@ -56,7 +123,7 @@ func TestManualOrganizeCleanupAPIConfirmationAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	organizer, err := service.NewManualOrganize(store, accounts, client, nil)
+	organizer, err := newHTTPManualOrganize(store, accounts, client, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +169,7 @@ func TestManualOrganizeAPIRequiresExplicitAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	organizer, err := service.NewManualOrganize(store, accounts, p115.NewShareClient(), nil)
+	organizer, err := newHTTPManualOrganize(store, accounts, p115.NewShareClient(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

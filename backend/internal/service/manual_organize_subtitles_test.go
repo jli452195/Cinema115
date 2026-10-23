@@ -83,7 +83,7 @@ func TestManualOrganizeSubtitleImportUsesCurrentNameAndReplay(t *testing.T) {
 	if strings.Contains(store.data, "secret-cookie") || strings.Contains(store.data, "hello") {
 		t.Fatal("credentials or subtitle payload persisted")
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, d, nil)
+	restarted, err := newManualOrganizeTest(store, s.accounts, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestManualOrganizeSubtitleSnapshotMutualExclusionAndRestart(t *testing.T) {
 	if err := s.subtitleCheckpoint(result); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManualOrganize(store, s.accounts, d, nil)
+	restarted, err := newManualOrganizeTest(store, s.accounts, d, nil)
 	if err != nil || restarted.SubtitleHistory()[0].Status != "interrupted" {
 		t.Fatalf("restart: %v", err)
 	}

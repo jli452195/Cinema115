@@ -43,12 +43,13 @@ type gardenPending struct {
 	ready                     bool
 	resultID                  string
 	resuming                  bool
+	continuing                bool
 	waitUntil                 time.Time
 	running                   bool // guarded by GardenOrganize.mu; other fields have one worker owner
 }
 
 type GardenOrganize struct {
-	Organize  *ManualOrganize
+	Organize  *OrganizeEngine
 	Garden    *GardenService
 	Downloads *CloudDownloadService
 	Settings  *CloudDownloadSettings
@@ -58,8 +59,21 @@ type GardenOrganize struct {
 	wake      chan struct{}
 }
 
-func NewGardenOrganize(o *ManualOrganize, g *GardenService, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader gardenStatusReader) *GardenOrganize {
+func NewGardenOrganize(o *OrganizeEngine, g *GardenService, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader gardenStatusReader) *GardenOrganize {
 	return &GardenOrganize{Organize: o, Garden: g, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*gardenPending), wake: make(chan struct{}, 1)}
+}
+
+func (s *GardenOrganize) History() []OrganizeJob { return s.Organize.history(true) }
+
+func (s *GardenOrganize) Target() CloudDownloadConfig {
+	o := s.Organize
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	c := o.doc.DownloadTarget
+	if id := o.accounts.PrimaryID(); c.AccountID != id {
+		return CloudDownloadConfig{AccountID: id}
+	}
+	return c
 }
 
 func (s *GardenOrganize) Preview(ctx context.Context, in GardenOrganizeInput) (OrganizeJob, error) {
@@ -118,6 +132,7 @@ func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
 	job.Message = "等待提交 115，整条磁力下载后仅整理所选文件"
 	doc := o.doc
 	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
+	doc.DownloadTarget = CloudDownloadConfig{AccountID: job.Config.AccountID, TargetCID: job.Config.TargetCID, TargetPath: job.Config.TargetPath}
 	if err = o.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
@@ -186,8 +201,9 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 		if s.live[id] != nil || saved.Status == "completed" {
 			return cloneOrganizeJob(saved), nil
 		}
-		if !canResumeGarden(saved) {
-			return OrganizeJob{}, fmt.Errorf("%w：此任务不能直接恢复，请核对文件后使用手动整理", ErrOrganizeConflict)
+		continuing := canContinueOrganize(saved)
+		if !continuing && !canResumeGarden(saved) {
+			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
 		}
 		a, err := s.snapshotJob(saved)
 		if err != nil {
@@ -195,15 +211,18 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 		}
 		job := cloneOrganizeJob(saved)
 		job.Status, job.UpdatedAt = "downloading", time.Now()
+		job.Stats.StartedAt = time.Now().Add(-time.Duration(job.Stats.ElapsedMS) * time.Millisecond)
 		job.Message = "正在检查原 115 任务，确认后继续整理；不会重新提交离线"
-		job.Stats = OrganizeStats{}
+		if continuing {
+			job.Status, job.Message = "running", "正在检查原任务剩余文件，确认后继续整理；不会重新下载"
+		}
 		doc := o.doc
 		doc.Jobs = append([]OrganizeJob{}, doc.Jobs...)
 		doc.Jobs[i] = job
 		if err = o.saveLocked(doc); err != nil {
 			return OrganizeJob{}, err
 		}
-		s.live[id] = &gardenPending{job: cloneOrganizeJob(job), account: a, resuming: true, waitUntil: time.Now().Add(24 * time.Hour)}
+		s.live[id] = &gardenPending{job: cloneOrganizeJob(job), account: a, resuming: !continuing, continuing: continuing, ready: continuing, waitUntil: time.Now().Add(24 * time.Hour)}
 		select {
 		case s.wake <- struct{}{}:
 		default:
@@ -413,14 +432,18 @@ func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, 
 		}
 	}()
 	scanCtx, cancelScan := context.WithTimeout(ctx, 90*time.Second)
-	files, dirs, err := s.downloadFiles(scanCtx, job, cookie)
+	var files []OrganizeFile
+	var dirs []string
+	if !p.continuing {
+		files, dirs, err = s.downloadFiles(scanCtx, job, cookie)
+	}
 	cancelScan()
 	// The exact API can omit wp_path_id. Prove the returned object belongs to
 	// our staging directory using the scan already required for file binding.
 	if err == nil && p.resultID != "" && !slices.Contains(dirs, p.resultID) && !slices.ContainsFunc(files, func(f OrganizeFile) bool { return f.ID == p.resultID }) {
 		err = fmt.Errorf("115 离线结果不在本次下载目录中")
 	}
-	if err == nil {
+	if err == nil && !p.continuing {
 		err = bindGardenFiles(job, files, p.resultID)
 	}
 	if err != nil {
@@ -429,7 +452,7 @@ func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, 
 			p.next = time.Now().Add(10 * time.Second)
 			return false, nil
 		}
-		return s.stop(p, "blocked", organizePublicError(err, cookie)+"；未执行重命名或移动，请在手动整理中检查下载目录")
+		return s.stop(p, "blocked", organizePublicError(err, cookie)+"；未执行重命名或移动，请检查本次下载目录")
 	}
 	// runBatch revalidates source identities and destination collisions just
 	// before writes; another whole-plan scan would only duplicate those reads.
@@ -438,6 +461,9 @@ func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, 
 	}
 	if job.Status == "completed" {
 		job.Message = "所选文件已整理；未选文件保留在下载目录"
+		if p.continuing {
+			_, dirs, _ = s.downloadFiles(ctx, job, cookie)
+		}
 		// Remove only directories observed empty, deepest first, never leftovers.
 		if recycle, ok := o.drive.(organizeRecycleDrive); ok {
 			for i := len(dirs) - 1; i >= 0; i-- {

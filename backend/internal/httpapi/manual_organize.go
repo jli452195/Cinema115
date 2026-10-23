@@ -99,6 +99,21 @@ func RegisterManualOrganize(admin *gin.RouterGroup, organizer *service.ManualOrg
 		c.JSON(http.StatusAccepted, result)
 	})
 	group.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": organizer.History()}) })
+	group.POST("/resume", func(c *gin.Context) {
+		var in struct {
+			JobID string `json:"jobId"`
+		}
+		if c.ShouldBindJSON(&in) != nil || in.JobID == "" {
+			c.JSON(400, gin.H{"error": "任务参数无效"})
+			return
+		}
+		out, err := organizer.Resume(in.JobID)
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(202, out)
+	})
 	group.GET("/cleanup", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": organizer.CleanupHistory()}) })
 	group.POST("/cleanup/preview", func(c *gin.Context) {
 		var input service.OrganizeCleanupInput

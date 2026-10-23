@@ -7,7 +7,7 @@ import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import SelectMenu from './SelectMenu.vue'
 import { p115Request } from '../lib/p115-api'
-import type { OrganizeConfig, OrganizeFile, OrganizeJob, OrganizeRow } from '../types/manualOrganize'
+import type { OrganizeFile, OrganizeJob, OrganizeRow } from '../types/manualOrganize'
 import { applyGardenMapping, gardenTargetName, type GardenMappingSource } from '../utils/gardenOrganize'
 import { directoryGroups } from '../utils/organizeSelection'
 
@@ -57,7 +57,7 @@ async function loadConfig() {
   try {
     const [cloud, organize] = await Promise.all([
       p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', { signal: signal() }),
-      p115Request<OrganizeConfig>(props.token, 'manual-organize/config', { signal: signal() }).catch(() => null),
+      p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'garden-organize/config', { signal: signal() }),
     ])
     if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在 115 云下载中配置主账号的下载目录')
     accountId.value = cloud.accountId; downloadPath.value = cloud.targetPath
@@ -108,7 +108,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <p class="resource-title">{{ resource.title }}</p>
     <template v-if="job">
       <p role="status" class="notice">后台将下载整条磁力，并按本次映射整理 {{ job.items.length }} 个视频。关闭弹窗后继续执行。</p>
-      <RouterLink to="/115/manual-organize" class="task-link">查看整理任务记录</RouterLink>
+      <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
     </template>
     <template v-else>
       <p class="scope-note">整条磁力下载，只整理所选视频；其余文件保留在下载目录。</p>

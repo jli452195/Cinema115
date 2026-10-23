@@ -16,6 +16,8 @@ func RegisterGardenOrganize(admin *gin.RouterGroup, s *service.GardenOrganize) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 		c.Next()
 	})
+	r.GET("/config", func(c *gin.Context) { c.JSON(200, s.Target()) })
+	r.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": s.History()}) })
 	r.POST("/files", func(c *gin.Context) {
 		var in service.GardenResourceInput
 		if c.ShouldBindJSON(&in) != nil {

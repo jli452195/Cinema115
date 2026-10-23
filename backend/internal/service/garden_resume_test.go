@@ -45,11 +45,11 @@ func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFake
 	if err = s.Organize.checkpoint(&p.job); err != nil {
 		t.Fatal(err)
 	}
-	o, err := NewManualOrganize(s.Organize.store, s.Organize.accounts, drive, nil)
+	o, err := newManualOrganizeTest(s.Organize.store, s.Organize.accounts, drive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s = NewGardenOrganize(o, nil, s.Downloads, s.Settings, tracker)
+	s = NewGardenOrganize(o.OrganizeEngine, nil, s.Downloads, s.Settings, tracker)
 	*adder = cloudAdderStub{}
 	tracker.calls, tracker.resultID = 0, "801" // Real completed responses can omit target CID.
 	return s, drive, adder, tracker, job.ID
@@ -59,11 +59,11 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 	for _, bound := range []bool{false, true} {
 		t.Run(map[bool]string{false: "website-paths", true: "bound-cloud-paths"}[bound], func(t *testing.T) {
 			s, drive, adder, tracker, id := interruptedGarden(t, bound)
-			if !s.Organize.History()[0].Resumable {
+			if !s.History()[0].Resumable {
 				t.Fatal("eligible task not exposed to history")
 			}
 			job, err := s.Resume(id)
-			if err != nil || job.Status != "downloading" || len(s.Organize.History()) != 1 {
+			if err != nil || job.Status != map[bool]string{false: "downloading", true: "running"}[bound] || len(s.History()) != 1 {
 				t.Fatal("resume did not reuse record", job, err)
 			}
 			if _, err = s.Resume(id); err != nil || len(s.live) != 1 || tracker.calls != 0 {
@@ -79,17 +79,17 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" {
 				t.Fatal("recovery did not complete", done, err, p.job)
 			}
-			if adder.cookie != "" || adder.url != "" || adder.deleted != "" || drive.creates != 3 || tracker.calls != 1 || tracker.cookie != cookie {
+			if adder.cookie != "" || adder.url != "" || adder.deleted != "" || drive.creates != 3 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] || !bound && tracker.cookie != cookie {
 				t.Fatal("recovery resubmitted, recreated staging, or rebound account", adder, drive.creates, tracker.calls)
 			}
 			if len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "902" || drive.renames != 1 || drive.moves != 1 {
 				t.Fatal("selection or remaining files changed", drive.dirs["801"])
 			}
 			delete(s.live, id)
-			if job, err = s.Resume(id); err != nil || job.Status != "completed" || len(s.live) != 0 || tracker.calls != 1 {
+			if job, err = s.Resume(id); err != nil || job.Status != "completed" || len(s.live) != 0 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {
 				t.Fatal("completed recovery replayed", err)
 			}
-			if s.Organize.History()[0].Resumable || strings.Contains(s.Organize.store.Value(), cookie) {
+			if s.History()[0].Resumable || strings.Contains(s.Organize.store.Value(), cookie) {
 				t.Fatal("invalid history or persisted credential")
 			}
 		})
@@ -142,7 +142,7 @@ func TestGardenResumeReadFailureStopsWithoutSubmitting(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := s.live[id]
-			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "interrupted" || !s.Organize.History()[0].Resumable {
+			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "interrupted" || !s.History()[0].Resumable {
 				t.Fatal("unconfirmed recovery should remain manually retryable", done, err, p.job.Status)
 			}
 			if adder.cookie != "" || drive.creates != 1 || drive.renames != 0 || drive.moves != 0 || tracker.calls != 1 {

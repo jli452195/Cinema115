@@ -269,7 +269,7 @@ func TestManualOrganizeBatchDurableIntentBeforeWrites(t *testing.T) {
 			if drive.moves != 0 || (stage == "renaming" && drive.renames != 0) {
 				t.Fatal("未持久化意图就发出了写请求")
 			}
-			restarted, err := NewManualOrganize(store, s.accounts, drive, organizeFakeMetadata{})
+			restarted, err := newManualOrganizeTest(store, s.accounts, drive, organizeFakeMetadata{})
 			if err != nil {
 				t.Fatal(err)
 			}

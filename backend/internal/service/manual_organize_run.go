@@ -16,7 +16,7 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, job := range s.doc.Jobs {
-		if job.ID == id && job.Config.AccountID == accountID {
+		if job.ID == id && job.Config.AccountID == accountID && job.Download == nil {
 			result := job
 			result.Items = append([]OrganizeItem{}, job.Items...)
 			return result, nil
@@ -71,7 +71,7 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	return job, nil
 }
 
-func (s *ManualOrganize) checkpoint(job *OrganizeJob) error {
+func (s *OrganizeEngine) checkpoint(job *OrganizeJob) error {
 	started := time.Now()
 	job.UpdatedAt = time.Now()
 	job.Stats.Checkpoints++
@@ -102,7 +102,7 @@ func (s *ManualOrganize) checkpoint(job *OrganizeJob) error {
 
 // Run is owned and joined by the server's worker group. Config changes after
 // Start cannot change the account, cookie, paths or names of the pending job.
-func (s *ManualOrganize) Run(ctx context.Context) error {
+func (s *OrganizeEngine) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():

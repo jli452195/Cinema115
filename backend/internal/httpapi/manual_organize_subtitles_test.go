@@ -50,7 +50,7 @@ func TestManualOrganizeSubtitleSourceBinaryAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	drive := &subtitleSourceAPIDrive{subtitleAPIDrive: &subtitleAPIDrive{files: []p115.ShareFile{video, archive}}}
-	organizer, err := service.NewManualOrganize(store, accounts, drive, nil)
+	organizer, err := newHTTPManualOrganize(store, accounts, drive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestManualOrganizeSubtitleMultipartAboveJSONLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	drive := &subtitleAPIDrive{files: []p115.ShareFile{video}}
-	s, err := service.NewManualOrganize(store, accounts, drive, nil)
+	s, err := newHTTPManualOrganize(store, accounts, drive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

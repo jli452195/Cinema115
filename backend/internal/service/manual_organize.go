@@ -115,11 +115,12 @@ type OrganizeJob struct {
 }
 
 type organizeDocument struct {
-	Version      int               `json:"version"`
-	Config       OrganizeConfig    `json:"config"`
-	Jobs         []OrganizeJob     `json:"jobs"`
-	CleanupJobs  []OrganizeCleanup `json:"cleanupJobs,omitempty"`
-	SubtitleJobs []SubtitleImport  `json:"subtitleJobs,omitempty"`
+	Version        int                 `json:"version"`
+	Config         OrganizeConfig      `json:"config"`
+	DownloadTarget CloudDownloadConfig `json:"downloadTarget"`
+	Jobs           []OrganizeJob       `json:"jobs"`
+	CleanupJobs    []OrganizeCleanup   `json:"cleanupJobs,omitempty"`
+	SubtitleJobs   []SubtitleImport    `json:"subtitleJobs,omitempty"`
 }
 
 type organizePending struct {
@@ -129,21 +130,26 @@ type organizePending struct {
 
 // Only the live worker keeps a credential snapshot. Neither plans nor history
 // contain credentials. A restart interrupts work instead of rebinding accounts.
-type ManualOrganize struct {
+type OrganizeEngine struct {
 	// Set at startup; called after successful persistence and releasing the writer.
-	OnCompleted         func(context.Context, OrganizeConfig)
-	mu                  sync.Mutex
-	store               accountSecretStore
-	doc                 organizeDocument
-	accounts            *P115Accounts
-	drive               OrganizeDrive
-	metadata            OrganizeMetadata
+	OnCompleted func(context.Context, OrganizeConfig)
+	mu          sync.Mutex
+	store       accountSecretStore
+	doc         organizeDocument
+	accounts    *P115Accounts
+	drive       OrganizeDrive
+	metadata    OrganizeMetadata
+	plans       map[string]OrganizeJob
+	pending     *organizePending
+	wake        chan struct{}
+	cleaning    bool
+}
+
+// Manual-only scans and import previews never belong to download organization.
+type ManualOrganize struct {
+	*OrganizeEngine
 	scans               map[string]OrganizeScan
-	plans               map[string]OrganizeJob
-	pending             *organizePending
-	wake                chan struct{}
 	cleanupPlans        map[string]OrganizeCleanup
-	cleaning            bool
 	subtitlePlans       map[string]SubtitleImport
 	subtitleSources     map[string]subtitleSourcePlan
 	subtitleSourceReads int
@@ -151,26 +157,30 @@ type ManualOrganize struct {
 
 // ReserveDirectoryWork shares the same reservation as organize/cleanup/upload.
 // The caller must release it when its bounded directory operation finishes.
-func (s *ManualOrganize) ReserveDirectoryWork() (func(), error) {
+func (s *OrganizeEngine) ReserveDirectoryWork() (func(), error) {
 	if err := s.reserveCleanup(); err != nil {
 		return nil, err
 	}
 	return s.releaseCleanup, nil
 }
 
-func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*ManualOrganize, error) {
-	s := &ManualOrganize{store: store, accounts: accounts, drive: drive, metadata: metadata, scans: make(map[string]OrganizeScan), plans: make(map[string]OrganizeJob), wake: make(chan struct{}, 1), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
+func NewManualOrganize(engine *OrganizeEngine) *ManualOrganize {
+	return &ManualOrganize{OrganizeEngine: engine, scans: make(map[string]OrganizeScan)}
+}
+
+func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*OrganizeEngine, error) {
+	s := &OrganizeEngine{store: store, accounts: accounts, drive: drive, metadata: metadata, plans: make(map[string]OrganizeJob), wake: make(chan struct{}, 1), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
 	if store.Value() != "" {
 		if err := json.Unmarshal([]byte(store.Value()), &s.doc); err != nil || s.doc.Version != 1 {
-			return nil, fmt.Errorf("手动整理配置无法解析")
+			return nil, fmt.Errorf("整理任务存储无法解析")
 		}
 	}
 	for i := range s.doc.Jobs {
 		job := &s.doc.Jobs[i]
 		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
-			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查文件当前位置后重新扫描预览"
-			if canResumeGarden(*job) {
-				job.Message = "服务重启，任务已中断；可在详情中检查并继续，不会重新提交离线"
+			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查任务详情"
+			if canContinueOrganize(*job) || canResumeGarden(*job) {
+				job.Message = "服务重启，任务已中断；可在原任务详情中检查并继续"
 			}
 		}
 	}
@@ -192,7 +202,7 @@ func NewManualOrganize(store accountSecretStore, accounts *P115Accounts, drive O
 	return s, nil
 }
 
-func (s *ManualOrganize) saveLocked(doc organizeDocument) error {
+func (s *OrganizeEngine) saveLocked(doc organizeDocument) error {
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("编码整理记录: %w", err)
@@ -245,9 +255,9 @@ func organizeToken() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-func (s *ManualOrganize) account(id string) (P115Account, error) {
+func (s *OrganizeEngine) account(id string) (P115Account, error) {
 	if id == "" {
-		return P115Account{}, fmt.Errorf("%w：请先选择手动整理使用的 115 账号", ErrOrganizeInput)
+		return P115Account{}, fmt.Errorf("%w：请先配置整理使用的主账号", ErrOrganizeInput)
 	}
 	a, err := s.accounts.Primary(id)
 	if err != nil {
@@ -259,7 +269,7 @@ func (s *ManualOrganize) account(id string) (P115Account, error) {
 	return a, nil
 }
 
-func (s *ManualOrganize) Browse(ctx context.Context, accountID, cid string, offset int) (*p115.SharePage, error) {
+func (s *OrganizeEngine) Browse(ctx context.Context, accountID, cid string, offset int) (*p115.SharePage, error) {
 	if !organizeID(cid) || offset < 0 {
 		return nil, ErrOrganizeInput
 	}
@@ -276,14 +286,14 @@ func (s *ManualOrganize) Browse(ctx context.Context, accountID, cid string, offs
 
 // Exhaust pagination before checking names; an incomplete directory must never
 // be treated as evidence that a destination is free.
-func (s *ManualOrganize) list(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
+func (s *OrganizeEngine) list(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
 	return s.listUntil(ctx, cid, cookie, nil)
 }
 
 // A successful write can precede visibility of its results in directory reads.
 // After bounded read retries, return the last valid snapshot so callers retain
 // per-file confirmed/uncertain outcomes rather than replaying the write.
-func (s *ManualOrganize) listUntil(ctx context.Context, cid, cookie string, visible func([]p115.ShareFile) bool) ([]p115.ShareFile, error) {
+func (s *OrganizeEngine) listUntil(ctx context.Context, cid, cookie string, visible func([]p115.ShareFile) bool) ([]p115.ShareFile, error) {
 	for attempt := 0; ; attempt++ {
 		files, err := s.listOnce(ctx, cid, cookie)
 		if attempt >= 2 || err != nil && !errors.Is(err, errOrganizePagination) || err == nil && (visible == nil || visible(files)) {
@@ -301,7 +311,7 @@ func (s *ManualOrganize) listUntil(ctx context.Context, cid, cookie string, visi
 	}
 }
 
-func (s *ManualOrganize) listOnce(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
+func (s *OrganizeEngine) listOnce(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
 	files := make([]p115.ShareFile, 0)
 	seen := make(map[string]bool)
 	total := -1
@@ -493,11 +503,15 @@ func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile) (string, stri
 }
 
 func (s *ManualOrganize) pruneLocked() {
+	s.OrganizeEngine.pruneLocked()
 	for id, scan := range s.scans {
 		if time.Now().After(scan.ExpiresAt) {
 			delete(s.scans, id)
 		}
 	}
+}
+
+func (s *OrganizeEngine) pruneLocked() {
 	for id, plan := range s.plans {
 		if time.Since(plan.CreatedAt) > 30*time.Minute {
 			delete(s.plans, id)
@@ -515,14 +529,19 @@ func organizeName(name string) string {
 	return strings.Trim(name, " .")
 }
 
-func (s *ManualOrganize) History() []OrganizeJob {
+func (s *ManualOrganize) History() []OrganizeJob { return s.history(false) }
+
+func (s *OrganizeEngine) history(download bool) []OrganizeJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	jobs := make([]OrganizeJob, len(s.doc.Jobs))
-	for i, job := range s.doc.Jobs {
-		jobs[i] = cloneOrganizeJob(job)
-		jobs[i].Resumable = canResumeGarden(job)
-		jobs[i].Items = append([]OrganizeItem{}, job.Items...)
+	jobs := make([]OrganizeJob, 0, len(s.doc.Jobs))
+	for _, job := range s.doc.Jobs {
+		if (job.Download != nil) != download {
+			continue
+		}
+		copy := cloneOrganizeJob(job)
+		copy.Resumable = canContinueOrganize(job) || download && canResumeGarden(job)
+		jobs = append(jobs, copy)
 	}
 	return jobs
 }
@@ -540,9 +559,12 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
 	out := make([]OrganizeJob, 0, len(jobs)+1)
 	out = append(out, job)
+	counts := map[bool]int{job.Download != nil: 1}
 	for _, old := range jobs {
-		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" {
+		download := old.Download != nil
+		if counts[download] < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" {
 			out = append(out, old)
+			counts[download]++
 		}
 	}
 	return out

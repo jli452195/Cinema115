@@ -49,7 +49,7 @@ type OrganizeCleanup struct {
 	Items      []OrganizeCleanupItem `json:"items"`
 }
 
-func (s *ManualOrganize) reserveCleanup() error {
+func (s *OrganizeEngine) reserveCleanup() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending != nil || s.cleaning {
@@ -59,7 +59,7 @@ func (s *ManualOrganize) reserveCleanup() error {
 	return nil
 }
 
-func (s *ManualOrganize) releaseCleanup() {
+func (s *OrganizeEngine) releaseCleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cleaning = false
