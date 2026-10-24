@@ -314,7 +314,10 @@ func TestDownloadFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 	if byName["百变之星.2003.E027-E28.1080p.BDrip.mkv"].Episode != 27 || byName["百变之星.2003.E027-E28.1080p.BDrip.mkv"].EndEpisode != 28 {
 		t.Fatal("range lost", files)
 	}
-	for _, name := range []string{"百变之星.2006.E53.OVA02.V2.1080p.mkv", "[Group] Show [SP01].mkv", "NCOP.E27-E28.mkv", "no-number.mkv"} {
+	if file := byName["[Group] Show [SP01].mkv"]; file.Season != 0 || file.Episode != 1 {
+		t.Fatal("explicit SP numbering lost", file)
+	}
+	for _, name := range []string{"百变之星.2006.E53.OVA02.V2.1080p.mkv", "NCOP.E27-E28.mkv", "no-number.mkv"} {
 		if byName[name].Episode != 0 {
 			t.Fatal("special guessed", name)
 		}

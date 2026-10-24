@@ -58,8 +58,9 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 		{"Show/Show [2024-2025].mkv", 1, 0, 0},
 		{"Show/Show [1080p][x265].mkv", 1, 0, 0},
 		{"Show/Show [01-02] [25].mkv", 1, 0, 0},
-		{"Show/Show [SP01].mkv", 1, 0, 0},
-		{"Show/SP/Show E01-E02.mkv", 1, 0, 0},
+		{"Show/Show [SP01].mkv", 0, 1, 0},
+		{"Show/[DBD制作组][尸鬼][SP][01][1080P][BDRip][AVC][简体内嵌][FLAC].mkv", 0, 1, 0},
+		{"Show/SP/Show E01-E02.mkv", 0, 1, 2},
 		{"Show/NCOP.E01-E02.mkv", 1, 0, 0},
 		{"Show/[Show][menu][01][1080P].mkv", 1, 0, 0},
 		{"Show/[Show][Mini anime][01][1080P].mkv", 1, 0, 0},
@@ -108,6 +109,126 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 			if file.ID == "" || file.Season != tc.season || file.Episode != tc.episode || file.EndEpisode != tc.end {
 				t.Errorf("%s %q: got S%dE%d-%d; want S%dE%d-%d", entry, tc.name, file.Season, file.Episode, file.EndEpisode, tc.season, tc.episode, tc.end)
 			}
+		}
+	}
+}
+
+func TestOrganizeSpecialNumbering(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		season, episode, end int
+	}{
+		{"Show SP01.mkv", 0, 1, 0},
+		{"Show sp02.mkv", 0, 2, 0},
+		{"Show [sP03].mkv", 0, 3, 0},
+		{"Show SP1.mkv", 0, 1, 0},
+		{"Show SP-04v2.mkv", 0, 4, 0},
+		{"Show [SP][05].mkv", 0, 5, 0},
+		{"Show [SP] [06v3][1080p].mkv", 0, 6, 0},
+		{"Show 【SP】【07】.mkv", 0, 7, 0},
+		{"Show SP01-SP02.mkv", 0, 1, 2},
+		{"SP/Show [01].mkv", 0, 1, 0},
+		{"[sp]/Show - 02.mkv", 0, 2, 0},
+		{"SP/Show.S00E03.mkv", 0, 3, 0},
+		{"SP/Show.S01E03.mkv", 1, 0, 0},
+		{"Show.S01E03 [SP].mkv", 1, 0, 0},
+		{"Show [SP].mkv", 1, 0, 0},
+		{"SP/Show.mkv", 1, 0, 0},
+		{"Show [SP][1080p][x265].mkv", 1, 0, 0},
+		{"Show SP01.5.mkv", 1, 0, 0},
+		{"Show [SP01A].mkv", 1, 0, 0},
+		{"Show [SP01][02].mkv", 1, 0, 0},
+		{"Show [SP][01][02].mkv", 1, 0, 0},
+		{"Show SP00.mkv", 1, 0, 0},
+		{"Show SP10001.mkv", 1, 0, 0},
+		{"Show SP01-03+05.mkv", 1, 0, 0},
+		{"NCOP/Show SP01.mkv", 1, 0, 0},
+		{"SP/Show NCED01.mkv", 1, 0, 0},
+		{"Show SP01 NCOP.mkv", 1, 0, 0},
+		{"Show OVA01.mkv", 1, 0, 0},
+		{"Show [menu][01].mkv", 1, 0, 0},
+		{"Show 【menu】【SP01】.mkv", 1, 0, 0},
+		{"Show （NCOP）（SP01）.mkv", 1, 0, 0},
+		{"[01-22TV全集+SP]/Show [22].mkv", 1, 22, 0},
+		{"SPY x FAMILY [01].mkv", 1, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := OrganizeFile{ShareFile: p115.ShareFile{Name: path.Base(tc.name)}, SourcePath: tc.name, MediaType: "video", Season: 1}
+			organizeFileNumbering(&file)
+			if file.Season != tc.season || file.Episode != tc.episode || file.EndEpisode != tc.end {
+				t.Fatalf("got S%dE%d-%d; want S%dE%d-%d", file.Season, file.Episode, file.EndEpisode, tc.season, tc.episode, tc.end)
+			}
+		})
+	}
+}
+
+func TestOrganizeSpecialScanPreviewAndExecution(t *testing.T) {
+	s, drive, account, _ := newOrganizeTest(t)
+	metadata := &organizeReferenceMetadata{}
+	s.metadata = metadata
+	const stem = "[DBD制作组][尸鬼][SP][01][1080P][BDRip][AVC][简体内嵌][FLAC]"
+	drive.dirs["30"] = []p115.ShareFile{{ID: "101", Name: "Show [22].mkv", Size: 100}, {ID: "90", Name: "SP", Directory: true}}
+	drive.dirs["90"] = []p115.ShareFile{
+		{ID: "201", Name: stem + ".mkv", Size: 100},
+		{ID: "202", Name: stem + ".chs.ass", Size: 10},
+		{ID: "203", Name: "Show sp02.mkv", Size: 100},
+	}
+	ctx := context.Background()
+	scan, err := s.Scan(ctx, OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
+	if err != nil || len(scan.Files) != 4 || drive.listCalls["90"] != 1 {
+		t.Fatal("SP scan added reads or lost files", scan, drive.listCalls, err)
+	}
+	input := OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 36581, Subtitles: true}
+	namingInput := MediaNamingInput{Kind: input.Kind, TMDBID: input.TMDBID, Subtitles: organizeSubtitles(scan.Files)}
+	want := map[string]string{"101": "S01E22", "201": "S00E01", "202": "S00E01", "203": "S00E02"}
+	for _, file := range scan.Files {
+		if file.MediaType != "video" {
+			continue
+		}
+		if fmt.Sprintf("S%02dE%02d", file.Season, file.Episode) != want[file.ID] {
+			t.Fatal("scan lost the source's explicit numbering", file)
+		}
+		selection := OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}
+		input.Files = append(input.Files, selection)
+		namingInput.Files = append(namingInput.Files, MediaNamingFile{OrganizeSelection: selection, Name: file.Name, NamingValues: file.NamingValues})
+	}
+	preview, err := (MediaNaming{Templates: s.templates, Metadata: s.metadata}).Preview(ctx, namingInput)
+	if err != nil || len(preview.Items) != 4 {
+		t.Fatal("SP naming preview", preview, err)
+	}
+	plan, err := s.Preview(ctx, account, input)
+	if err != nil || len(plan.Items) != 4 {
+		t.Fatal("SP organize plan", plan, err)
+	}
+	names := make(map[string]string, len(preview.Items))
+	for _, item := range preview.Items {
+		if item.Result == nil || !strings.Contains(item.Result.Name, "."+want[item.ID]+".") {
+			t.Fatal("SP preview or subtitle numbering", item)
+		}
+		names[item.ID] = item.Result.Name
+	}
+	for _, item := range plan.Items {
+		season := "Season 00"
+		if item.File.ID == "101" {
+			season = "Season 01"
+		}
+		if item.Name != names[item.File.ID] || path.Base(item.Directory) != season {
+			t.Fatal("preview and SP plan differ", item)
+		}
+	}
+	// The inferred season is editable and does not require TMDB season details.
+	input.Files[1].Season, input.Files[1].Episode = 2, 13
+	override, err := s.buildPlan(ctx, scan, input)
+	if err != nil || !strings.Contains(override.Items[1].Name, ".S02E13.") || metadata.seasonCalls != 0 {
+		t.Fatal("manual SP correction was blocked", override, err, metadata.seasonCalls)
+	}
+	finished := organizeTestRun(t, s, account, plan)
+	if finished.Status != "completed" || len(finished.Items) != 4 {
+		t.Fatal("SP execution", finished)
+	}
+	for _, item := range finished.Items {
+		if item.Name != names[item.File.ID] {
+			t.Fatal("execution changed SP or companion naming", item)
 		}
 	}
 }
