@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
@@ -46,7 +47,23 @@ func TestAnimeNamingReadOnlyRoutesAndAuthorization(t *testing.T) {
 	if len(fingerprint) != 64 || target["year"] != "2021" {
 		t.Fatal(target)
 	}
-	f.call(t, "POST", "/naming/preview", f.admin, "", nil, 404)
+	mapping := model.AnimeSourceMapping{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 0, SourceBase: 0, TargetSeason: 2, TargetBase: 0}}}
+	body := map[string]any{"target": target, "mapping": mapping, "group": "字幕组", "items": []map[string]any{{"id": "release", "title": "动画 - 13 [1080p][SC_TC]", "parse": map[string]any{"kind": "episode", "episode": 13, "rawEpisode": "13"}}}}
+	for _, token := range []string{"", f.user} {
+		status := 401
+		if token != "" {
+			status = 403
+		}
+		f.call(t, "POST", "/naming/preview", token, "", body, status)
+	}
+	// This route needs no live TMDB provider and cannot save preview metadata.
+	f.s.Naming.Metadata = nil
+	preview := f.call(t, "POST", "/naming/preview", f.admin, "", body, 200)
+	if len(preview["items"].([]any)) != 1 {
+		t.Fatal(preview)
+	}
+	f.s.Naming.Metadata = animeHTTPNaming{}
+	f.call(t, "POST", "/naming/preview", f.admin, "", nil, 400)
 	f.call(t, "POST", "/naming/target", f.admin, "", map[string]any{"tmdbId": "117061", "extraSeasons": []int{1}}, 400)
 	f.call(t, "POST", "/naming/target", f.admin, "", map[string]any{"tmdbId": "117061", "season": 99}, 404)
 	f.call(t, "POST", "/naming/search", f.admin, "", map[string]any{"keyword": ""}, 400)

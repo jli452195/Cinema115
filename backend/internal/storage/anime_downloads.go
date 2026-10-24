@@ -11,6 +11,7 @@ import (
 	"strm115/backend/internal/animepreview"
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 )
 
 var (
@@ -251,7 +252,11 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		if err != nil {
 			return out, err
 		}
-		snapshot.Organization, err = model.FreezeAnimeOrganization(sub.Naming, settings, sub.Revision, target)
+		template, err := readNamingTemplate(ctx, tx, naming.TV)
+		if err != nil {
+			return out, err
+		}
+		snapshot.Organization, err = model.FreezeAnimeOrganization(sub.Naming, settings, sub.Revision, target, template)
 		if err != nil {
 			return out, ErrAnimeDirectoryRequired
 		}

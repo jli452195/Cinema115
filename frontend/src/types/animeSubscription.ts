@@ -104,11 +104,11 @@ export interface AnimeMappingSegment { first: number; last: number | null; sourc
 export interface AnimeMappingOverride { rawKind: 'episode' | 'special' | 'composite'; rawNumber: string; action: 'map' | 'ignore'; targetSeason: number; targetEpisode: number }
 export interface AnimeSourceMapping { sourceRef: string; segments: AnimeMappingSegment[]; overrides: AnimeMappingOverride[] }
 export interface AnimeNamingTarget {
-  tmdbId: string; title: string; year: string; groupId: string; groupName: string; season: number; fingerprint: string
+  tmdbId: string; title: string; originalTitle?: string; englishTitle?: string; year: string; groupId: string; groupName: string; season: number; fingerprint: string
   seasons: { number: number; name: string; date: string; episodeCount: number; episodes: { id: string; number: number; name: string; date?: string; sourceSeason: number; sourceNumber: number }[] | null }[]
 }
 export interface AnimeNamingInput { tmdbId: string; groupId: string; season: number; fingerprint: string; sources: AnimeSourceMapping[] }
 export interface AnimeNamingPlan { schemaVersion: 1; target: AnimeNamingTarget; sources: AnimeSourceMapping[] }
-export interface AnimeOrganizationItem { id: string; kind: string; originalPath: string; targetPath: string; status: string; reason: string; videoId?: string }
+export interface AnimeOrganizationItem { id: string; kind: string; originalPath: string; targetPath: string; status: string; reason: string; error?: string; videoId?: string }
 export interface AnimeOrganizationPreview { mode: string; revision: number; items: AnimeOrganizationItem[]; cloudConflictChecked: boolean; ready?: number; needsReview?: number }
 export interface AnimeNamingCandidate { id: number; title: string; originalTitle: string; date: string }

@@ -168,7 +168,7 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 		case "garden":
 			rawEpisode, minimum = 1, 1
 		}
-		projection := view.Naming.Project(source.ID, model.AnimeReleaseParse{Kind: "episode", Episode: &rawEpisode}, *source.GroupName)
+		projection := view.Naming.Project(source.ID, model.AnimeReleaseParse{Kind: "episode", Episode: &rawEpisode})
 		if projection.Status != "mapped" || *projection.Season != 2 || *projection.Episode != 1 || *source.Rules.MinimumEpisode != minimum || source.NextCheckAt == nil || source.EffectiveState != "enabled" {
 			t.Fatal("source numbering, minimum or execution boundary changed", source, projection)
 		}

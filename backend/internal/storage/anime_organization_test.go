@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"strm115/backend/internal/model"
+	medianaming "strm115/backend/internal/naming"
 )
 
 func organizationNaming(ref string) *model.AnimeNamingPlan {
@@ -17,6 +18,12 @@ func organizationNaming(ref string) *model.AnimeNamingPlan {
 func TestAnimeOrganizationClaimFreezesTargetAndLeavesExistingTaskUntouched(t *testing.T) {
 	f := newDownloadClaimFixture(t)
 	ctx := context.Background()
+	template, _ := medianaming.Default(medianaming.TV)
+	template.Directories = nil
+	saved, err := f.store.SaveNamingTemplate(ctx, template, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	naming := organizationNaming(f.sub.Sources[0].ID)
 	raw, err := animeJSON(naming)
 	if err != nil {
@@ -33,9 +40,35 @@ func TestAnimeOrganizationClaimFreezesTargetAndLeavesExistingTaskUntouched(t *te
 	}
 	r, v := f.selectRelease(t, 0, "rel_dmhy_1", strings.Repeat("a", 40))
 	first := f.claim(t, 0, r, v)
-	if first.Job.Snapshot.Organization == nil || first.Job.Snapshot.Organization.Target.ParentCID != "900" || first.Job.Snapshot.Organization.PlanRevision != 2 || first.Job.Snapshot.Naming.Target.TMDBID != "335790" {
+	if first.Job.Snapshot.Organization == nil || first.Job.Snapshot.Organization.Naming.Revision != saved.Revision || len(first.Job.Snapshot.Organization.Naming.Template.Directories) != 0 || first.Job.Snapshot.Organization.Target.ParentCID != "900" || first.Job.Snapshot.Organization.PlanRevision != 2 || first.Job.Snapshot.Naming.Target.TMDBID != "335790" {
 		t.Fatal(first.Job.Snapshot)
 	}
+	// A global template edit affects new tasks, not queued tasks or their refresh.
+	template.Filename[0].Prefix = "new-"
+	if _, err := f.store.SaveNamingTemplate(ctx, template, saved.Revision); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poll := AnimeSourcePoll{Subscription: sub, Source: sub.Sources[0], Target: f.target}
+	if err := refreshAnimePendingJobTx(ctx, tx, poll, first.Job.Snapshot.Release, first.Job.Snapshot.Decision, first.Job.UpdatedAt); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := f.store.GetAnimeDownloadJob(ctx, first.Job.ID)
+	if err != nil || !reflect.DeepEqual(refreshed.Snapshot.Organization.Naming, first.Job.Snapshot.Organization.Naming) {
+		t.Fatal("queued refresh changed template", err)
+	}
+	first.Job = refreshed
 	// A duplicate resource still links its original plan even when directory 2
 	// has since been cleared. It cannot create another write or new target.
 	naming.Target.Title = "新作品"
@@ -59,7 +92,7 @@ func TestAnimeOrganizationClaimFreezesTargetAndLeavesExistingTaskUntouched(t *te
 		t.Fatal(err)
 	}
 	second := f.claim(t, 0, r2, v2)
-	if !second.Created || second.Job.Snapshot.Organization.Target.ParentCID != "901" || second.Job.Snapshot.Naming.Target.Title != "新作品" {
+	if !second.Created || second.Job.Snapshot.Organization.Naming.Revision != saved.Revision+1 || second.Job.Snapshot.Organization.Target.ParentCID != "901" || second.Job.Snapshot.Naming.Target.Title != "新作品" {
 		t.Fatal(second.Job.Snapshot)
 	}
 	old, err := f.store.GetAnimeDownloadJob(ctx, first.Job.ID)

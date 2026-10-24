@@ -3,11 +3,9 @@ package model
 import (
 	"encoding/hex"
 	"fmt"
-	"path"
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Naming is subscription-owned configuration, never the site's TV numbering.
@@ -55,14 +53,16 @@ type AnimeNamingSeason struct {
 	Episodes     []AnimeNamingEpisode `json:"episodes"`
 }
 type AnimeNamingTarget struct {
-	TMDBID      string              `json:"tmdbId"`
-	Title       string              `json:"title"`
-	Year        string              `json:"year"`
-	GroupID     string              `json:"groupId"`
-	GroupName   string              `json:"groupName"`
-	Season      int                 `json:"season"`
-	Seasons     []AnimeNamingSeason `json:"seasons"`
-	Fingerprint string              `json:"fingerprint"`
+	TMDBID        string              `json:"tmdbId"`
+	Title         string              `json:"title"`
+	OriginalTitle string              `json:"originalTitle,omitempty"`
+	EnglishTitle  string              `json:"englishTitle,omitempty"`
+	Year          string              `json:"year"`
+	GroupID       string              `json:"groupId"`
+	GroupName     string              `json:"groupName"`
+	Season        int                 `json:"season"`
+	Seasons       []AnimeNamingSeason `json:"seasons"`
+	Fingerprint   string              `json:"fingerprint"`
 }
 type AnimeNamingPlan struct {
 	SchemaVersion int                  `json:"schemaVersion"`
@@ -75,7 +75,6 @@ type AnimeNamingProjection struct {
 	Episode     *int   `json:"episode"`
 	EpisodeID   string `json:"episodeId,omitempty"`
 	EpisodeName string `json:"episodeName,omitempty"`
-	PathStem    string `json:"pathStem,omitempty"`
 }
 
 func (in AnimeNamingInput) Validate() error {
@@ -186,7 +185,7 @@ func (m AnimeSourceMapping) Validate() error {
 	return nil
 }
 func (p AnimeNamingPlan) Validate() error {
-	if p.SchemaVersion != 1 || !animeText(p.Target.Title, 512, true) || len(p.Target.Year) != 4 || len(p.Target.Seasons) > 1001 {
+	if p.SchemaVersion != 1 || !animeText(p.Target.Title, 512, true) || !animeText(p.Target.OriginalTitle, 512, false) || !animeText(p.Target.EnglishTitle, 512, false) || len(p.Target.Year) != 4 || len(p.Target.Seasons) > 1001 {
 		return fmt.Errorf("invalid naming snapshot")
 	}
 	for _, r := range p.Target.Year {
@@ -218,7 +217,7 @@ func (p AnimeNamingPlan) Validate() error {
 
 // Project never mutates source numbering, download minima, or other versions.
 // Specials require an explicit override; TMDB episode details only enrich names.
-func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, group string) AnimeNamingProjection {
+func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse) AnimeNamingProjection {
 	out := AnimeNamingProjection{Status: "unmapped"}
 	var mapping *AnimeSourceMapping
 	for i := range p.Sources {
@@ -260,7 +259,6 @@ func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, gro
 	out.Season = &season
 	out.Episode = &episode
 	out.Status = "mapped"
-	out.PathStem = AnimeNamingPath(p.Target, season, episode, group, "")
 	for _, s := range p.Target.Seasons {
 		if s.Number != season {
 			continue
@@ -274,43 +272,4 @@ func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse, gro
 		}
 	}
 	return out
-}
-
-// AnimeNamingPath is shared by release previews and file organization. A preview
-// has no extension yet; the actual file reserves its extension's byte length.
-func AnimeNamingPath(target AnimeNamingTarget, season, episode int, group, ext string) string {
-	title := AnimeFilenamePart(target.Title)
-	folder := AnimeNamingFolder(target)
-	suffix := fmt.Sprintf(".S%02dE%02d.%s", season, episode, truncateAnimeFilename(AnimeFilenamePart(group), 80))
-	stem := truncateAnimeFilename(title, 200-len(suffix)-len(ext)) + suffix
-	return path.Join(folder, fmt.Sprintf("Season %02d", season), stem+ext)
-}
-
-func AnimeNamingFolder(target AnimeNamingTarget) string {
-	return fmt.Sprintf("%s (%s) {tmdb-%s}", truncateAnimeFilename(AnimeFilenamePart(target.Title), 180), target.Year, target.TMDBID)
-}
-
-func truncateAnimeFilename(value string, max int) string {
-	for len(value) > max && len(value) > 0 {
-		_, n := utf8.DecodeLastRuneInString(value)
-		value = value[:len(value)-n]
-	}
-	return strings.TrimRight(value, ". ")
-}
-func AnimeFilenamePart(v string) string {
-	v = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || strings.ContainsRune(`<>:"/\|?*`, r) {
-			return '_'
-		}
-		return r
-	}, v)
-	v = strings.Trim(strings.TrimSpace(v), ". ")
-	if v == "" {
-		return "未命名"
-	}
-	r := []rune(v)
-	if len(r) > 120 {
-		v = string(r[:120])
-	}
-	return v
 }

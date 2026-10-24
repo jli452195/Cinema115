@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 )
 
 func planJob(names ...string) model.AnimeDownloadJob {
@@ -24,7 +25,8 @@ func planJob(names ...string) model.AnimeDownloadJob {
 	job.Snapshot.Target = target
 	job.Snapshot.Source = model.AnimeDownloadSource{SourceID: "main", GroupName: "银色子弹"}
 	job.Snapshot.Release.Parse = model.AnimeReleaseParse{Kind: "episode", Episode: &n}
-	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 7, Target: organized}
+	template, _ := naming.Default(naming.TV)
+	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{Naming: naming.Snapshot{Template: template}, SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 7, Target: organized}
 	job.Snapshot.Naming = &model.AnimeNamingPlan{SchemaVersion: 1, Target: model.AnimeNamingTarget{TMDBID: "335790", Title: "黑暗召唤师在地下恋爱中", Year: "2026", Season: 1, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 1, Episodes: episodes}}}, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 1, TargetBase: 1}}}}}
 	job.Files = &model.AnimeFileManifest{SchemaVersion: 1, UID: job.UID, ResultID: result, CollectedAt: 1, Entries: []model.AnimeDriveEntry{{ID: cid, ParentCID: job.ParentCID, Name: job.DirectoryName, Kind: "directory"}}}
 	for i, name := range names {
@@ -34,13 +36,13 @@ func planJob(names ...string) model.AnimeDownloadJob {
 }
 
 func TestAnimeOrganizationNamesAndUniqueSubtitles(t *testing.T) {
-	job := planJob("[组] 测试 - 25.MKV", "[组] 测试 - 25.zh-Hans.forced.ASS", "[组] 测试 - 25.readme.srt", "readme.txt")
+	job := planJob("[组] 测试 - 25.MKV", "[组] 测试 - 25.zh-Hans.forced.ass", "[组] 测试 - 25.readme.srt", "readme.txt")
 	p, err := Build(job)
 	if err != nil || p.Ready != 2 || p.NeedsReview != 1 || p.CloudConflictChecked || p.Revision != 7 {
 		t.Fatalf("%+v %v", p, err)
 	}
-	want := "/整理/黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01.银色子弹.MKV"
-	if p.Items[0].TargetPath != want || p.Items[1].TargetPath != strings.TrimSuffix(want, ".MKV")+".zh-Hans.forced.ASS" || p.Items[1].VideoID != "300" || p.Items[2].Reason != "subtitle_unmatched" || p.Items[3].Status != "preserved" {
+	want := "/整理/黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01-银色子弹.mkv"
+	if p.Items[0].TargetPath != want || p.Items[1].TargetPath != strings.TrimSuffix(want, ".mkv")+".zh-Hans.forced.ass" || p.Items[1].VideoID != "300" || p.Items[2].Reason != "subtitle_unmatched" || p.Items[3].Status != "preserved" {
 		t.Fatalf("%+v", p.Items)
 	}
 	if p.Items[0].OriginalPath != "/下载/anime-task/[组] 测试 - 25.MKV" {
@@ -71,6 +73,20 @@ func TestAnimeOrganizationDoesNotGuessMultiVideoOrSpecial(t *testing.T) {
 		if err != nil || p.Ready != tc.ready || p.NeedsReview != tc.review {
 			t.Fatalf("%v: %+v %v", tc.names, p, err)
 		}
+	}
+}
+
+func TestAnimeOrganizationFileQualityOverridesSingleReleaseHint(t *testing.T) {
+	job := planJob("[组] 测试 - 25 [1080p].mkv")
+	job.Snapshot.Release.Title = "[组] 测试 - 25 [720p]"
+	p, err := Build(job)
+	if err != nil || p.Ready != 1 || !strings.Contains(p.Items[0].TargetPath, ".1080p-") || strings.Contains(p.Items[0].TargetPath, "720p") {
+		t.Fatalf("release hint overrode file quality: %+v %v", p, err)
+	}
+	job.Files.Entries[1].Name = "[组] 测试 - 25 [1080p][2160p].mkv"
+	p, err = Build(job)
+	if err != nil || p.Ready != 1 || strings.Contains(p.Items[0].TargetPath, "p-") {
+		t.Fatalf("conflicting file qualities were guessed from release: %+v %v", p, err)
 	}
 }
 
@@ -112,6 +128,15 @@ func TestAnimeOrganizationCleansAndBoundsUTF8Names(t *testing.T) {
 	job.Snapshot.Naming.Target.Title = strings.Repeat("动", 160) + "/<>:"
 	job.Snapshot.Source.GroupName = strings.Repeat("字", 100) + "/<>:"
 	p, err := Build(job)
+	if err != nil || p.Ready != 0 || p.Items[0].Reason != "naming_invalid" || p.Items[0].Error == "" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if p.Items[0].TargetPath != "" {
+		t.Fatal("oversized names must not be silently truncated")
+	}
+	job.Snapshot.Naming.Target.Title = "作品/名称"
+	job.Snapshot.Source.GroupName = "字幕组"
+	p, err = Build(job)
 	if err != nil || p.Ready != 2 {
 		t.Fatalf("%+v %v", p, err)
 	}
@@ -135,6 +160,8 @@ func TestAnimeOrganizationRejectsBrokenSnapshotAndManifest(t *testing.T) {
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Target.UID = "999" },
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Target.ParentCID = j.ParentCID },
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Naming = nil },
+		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Naming.Template.Kind = naming.Movie },
+		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Naming.Revision = -1 },
 		func(j *model.AnimeDownloadJob) { j.Files.Entries[1].ParentCID = "999" },
 		func(j *model.AnimeDownloadJob) { j.Files.Entries[1].Name = "../video.mkv" },
 	} {

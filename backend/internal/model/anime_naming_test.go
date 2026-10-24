@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAnimeNamingFrontendContract(t *testing.T) {
+func TestAnimeNamingProjectionContract(t *testing.T) {
 	data, err := os.ReadFile("testdata/anime_naming_preview.json")
 	if err != nil {
 		t.Fatal(err)
@@ -19,13 +19,8 @@ func TestAnimeNamingFrontendContract(t *testing.T) {
 			Name      string                `json:"name"`
 			SourceRef string                `json:"sourceRef"`
 			Parse     AnimeReleaseParse     `json:"parse"`
-			Group     string                `json:"group"`
 			Expected  AnimeNamingProjection `json:"expected"`
 		} `json:"cases"`
-		FilenameCases []struct {
-			Input    string `json:"input"`
-			Expected string `json:"expected"`
-		} `json:"filenameCases"`
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
@@ -35,31 +30,11 @@ func TestAnimeNamingFrontendContract(t *testing.T) {
 	}
 	for _, example := range fixture.Cases {
 		t.Run(example.Name, func(t *testing.T) {
-			got := fixture.Plan.Project(example.SourceRef, example.Parse, example.Group)
+			got := fixture.Plan.Project(example.SourceRef, example.Parse)
 			if !reflect.DeepEqual(got, example.Expected) {
 				t.Fatalf("got %+v; want %+v", got, example.Expected)
 			}
 		})
-	}
-	for _, example := range fixture.FilenameCases {
-		if got := AnimeFilenamePart(example.Input); got != example.Expected {
-			t.Fatalf("clean %q: got %q; want %q", example.Input, got, example.Expected)
-		}
-	}
-	target := fixture.Plan.Target
-	target.Title = strings.Repeat("界", 100)
-	folder := strings.Repeat("界", 60) + " (2026) {tmdb-335790}"
-	for _, example := range []struct {
-		ext    string
-		length int
-	}{{"", 38}, {".mkv", 36}} {
-		want := folder + "/Season 01/" + strings.Repeat("界", example.length) + ".S01E01." + strings.Repeat("组", 26) + example.ext
-		if got := AnimeNamingPath(target, 1, 1, strings.Repeat("组", 40), example.ext); got != want {
-			t.Fatalf("byte-limited name: got %q; want %q", got, want)
-		}
-	}
-	if got := AnimeFilenamePart(strings.Repeat("𠮷", 121)); got != strings.Repeat("𠮷", 120) {
-		t.Fatal("Unicode rune limit differs from frontend")
 	}
 }
 
@@ -81,19 +56,16 @@ func TestAnimeNamingPerSourceAndDownloadMinimum(t *testing.T) {
 		n, ep  int
 		status string
 	}{{"main", 30, 6, "mapped"}, {"main", 24, 0, "unmapped"}, {"main", 37, 0, "unmapped"}, {"standby", 6, 6, "mapped"}, {"standby", 13, 13, "mapped"}} {
-		got := p.Project(tc.ref, AnimeReleaseParse{Kind: "episode", Episode: &tc.n}, "字幕组甲")
+		got := p.Project(tc.ref, AnimeReleaseParse{Kind: "episode", Episode: &tc.n})
 		if got.Status != tc.status || got.Episode != nil && *got.Episode != tc.ep {
 			t.Fatalf("%+v: %+v", tc, got)
 		}
-		if got.Status == "mapped" && got.PathStem != AnimeNamingPath(p.Target, 2, tc.ep, "字幕组甲", "") {
-			t.Fatal(got)
-		}
 	}
-	if got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"}, "组"); got.Status != "unmapped" {
+	if got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"}); got.Status != "unmapped" {
 		t.Fatal(got)
 	}
 	p.Sources[0].Overrides = []AnimeMappingOverride{{RawKind: "special", RawNumber: "12.5", Action: "map", TargetSeason: 0, TargetEpisode: 1}}
-	got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"}, "组")
+	got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"})
 	if got.Status != "mapped" || *got.Season != 0 {
 		t.Fatal(got)
 	}
@@ -130,7 +102,7 @@ func TestAnimeNamingOrdinaryOverrideNormalizesPaddingAndVersion(t *testing.T) {
 	p.Sources[0].Overrides = []AnimeMappingOverride{{RawKind: "episode", RawNumber: "25", Action: "ignore"}}
 	for _, raw := range []string{"25", "025", "25v2"} {
 		n := 25
-		if got := p.Project("main", AnimeReleaseParse{Kind: "episode", RawEpisode: raw, Episode: &n}, "组"); got.Status != "ignored" {
+		if got := p.Project("main", AnimeReleaseParse{Kind: "episode", RawEpisode: raw, Episode: &n}); got.Status != "ignored" {
 			t.Fatal(raw, got)
 		}
 	}

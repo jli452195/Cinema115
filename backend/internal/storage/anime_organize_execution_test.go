@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 )
 
 func animeOrganizeStoreFixture(t *testing.T) (*downloadClaimFixture, model.AnimeDownloadJob) {
@@ -18,7 +19,8 @@ func animeOrganizeStoreFixture(t *testing.T) (*downloadClaimFixture, model.Anime
 	job.Snapshot.Naming.Sources[0].Segments[0] = model.AnimeMappingSegment{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 1}
 	target := job.Snapshot.Target
 	target.ParentCID, target.ParentPath = "900", "/整理"
-	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: target}
+	template, _ := naming.Default(naming.TV)
+	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{Naming: naming.Snapshot{Template: template}, SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: target}
 	raw, _ := animeJSON(job.Snapshot)
 	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET snapshot_json=? WHERE id=?`, raw, job.ID); err != nil {
 		t.Fatal(err)

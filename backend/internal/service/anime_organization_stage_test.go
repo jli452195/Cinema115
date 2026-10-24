@@ -11,6 +11,7 @@ import (
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 	"strm115/backend/internal/storage"
 )
 
@@ -44,7 +45,7 @@ func (d *animeOrganizationStageDrive) MoveAnimeEntries(ctx context.Context, ids 
 }
 
 func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
-	for _, failure := range []string{"none", "mkdir", "rename", "move", "move_without_effect"} {
+	for _, failure := range []string{"none", "root", "mkdir", "rename", "move", "move_without_effect"} {
 		t.Run(failure, func(t *testing.T) {
 			ctx := context.Background()
 			f, _, job := animeEnabledStageWithConfig(t, func(f *animeDownloadFixture, c *model.AnimeSubscriptionConfig, row *animefeed.SourceRelease) {
@@ -53,6 +54,13 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 				f.settings = settings
+				if failure == "root" {
+					template, _ := naming.Default(naming.TV)
+					template.Directories = nil
+					if _, err := f.service.Store.SaveNamingTemplate(ctx, template, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
 				c.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(36)}
 				c.Sources[0].Rules.MinimumEpisode = bindingPtr(30)
 				c.Naming = &model.AnimeNamingPlan{SchemaVersion: 1, Target: model.AnimeNamingTarget{TMDBID: "335790", Title: "黑暗召唤师在地下恋爱中", Year: "2026", Season: 2, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 2, Episodes: []model.AnimeNamingEpisode{{ID: "1006", Number: 6}}}}}, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 2, TargetBase: 1}}}}}
@@ -70,7 +78,8 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 				"900": {},
 				"200": {{ID: "400", ParentCID: "200", Kind: "file", Name: "30.MKV", Size: 1000}, {ID: "401", ParentCID: "200", Kind: "file", Name: "30.zh-Hans.forced.ASS", Size: 10}, {ID: "402", ParentCID: "200", Kind: "file", Name: "readme.txt", Size: 20}},
 			}}, moveRejected: failure == "move_without_effect"}
-			if failure != "none" && !d.moveRejected {
+			successful := failure == "none" || failure == "root"
+			if !successful && !d.moveRejected {
 				d.lost = failure
 			}
 			inspects, submits, statuses := 0, 0, 0
@@ -116,10 +125,10 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 			if current.FileState != "verified" || statuses != 1 || submits != 1 || inspects != 1 {
 				t.Fatal("download did not advance with one completion read", current, statuses, submits, inspects)
 			}
-			if failure == "none" && current.WorkflowState != "organized" {
+			if successful && current.WorkflowState != "organized" {
 				t.Fatal("successful stages still required another scheduler pass", current)
 			}
-			if failure != "none" {
+			if !successful {
 				op, err := f.service.Store.GetAnimeOrganization(ctx, job.ID)
 				if err != nil || op.Progress.State != "unknown" || op.Progress.Step == nil {
 					t.Fatal("lost receipt was not retained", op, err)
@@ -186,18 +195,22 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 			if err != nil || current.WorkflowState != "organized" || view.Organization.State != "done" || view.Organization.Moved != 2 || view.PermittedActions.Reconcile || view.PermittedActions.Retry {
 				t.Fatal("same task did not finish", view, err)
 			}
-			wantStem := "黑暗召唤师在地下恋爱中.S02E06.字幕组"
-			gotNames := make([]string, 0, len(d.entries["902"]))
-			for _, entry := range d.entries["902"] {
+			wantStem := "黑暗召唤师在地下恋爱中.S02E06.1080p-字幕组"
+			destination, creates := "902", 2
+			if failure == "root" {
+				destination, creates = "900", 0
+			}
+			gotNames := make([]string, 0, len(d.entries[destination]))
+			for _, entry := range d.entries[destination] {
 				gotNames = append(gotNames, entry.Name)
 			}
-			if !reflect.DeepEqual(gotNames, []string{wantStem + ".MKV", wantStem + ".zh-Hans.forced.ASS"}) || len(d.entries["200"]) != 1 || d.entries["200"][0].ID != "402" {
+			if !reflect.DeepEqual(gotNames, []string{wantStem + ".mkv", wantStem + ".zh-Hans.forced.ass"}) || len(d.entries["200"]) != 1 || d.entries["200"][0].ID != "402" {
 				t.Fatal("incorrect offset, subtitle pairing or original-file move", d.entries)
 			}
-			if d.downloadCreates != 1 || inspects != 1 || submits != 1 || statuses != 1 || d.creates != 2 || d.renames != 1 || d.moves != 1 {
+			if d.downloadCreates != 1 || inspects != 1 || submits != 1 || statuses != 1 || d.creates != creates || d.renames != 1 || d.moves != 1 {
 				t.Fatal("a successful step was repeated", d, inspects, submits, statuses)
 			}
-			wantReads := map[string]int{"none": 2, "mkdir": 4, "rename": 4, "move": 3}[failure]
+			wantReads := map[string]int{"none": 2, "root": 2, "mkdir": 4, "rename": 4, "move": 3}[failure]
 			if d.reads != wantReads {
 				t.Fatal("unexpected directory read count", d.reads, wantReads)
 			}

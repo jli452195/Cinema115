@@ -336,13 +336,12 @@ func TestPreviewRanmaPublisherOffsetAndCurrentVersion(t *testing.T) {
 		t.Fatal("current v2 must win once without losing other episodes", s.Items)
 	}
 	for i, episode := range []int{27, 27, 26, 25} {
-		naming := plan.Project("main", s.Items[i].Release.Parse, "ToonsHub")
-		want := fmt.Sprintf("乱马½ (2024) {tmdb-259140}/Season 01/乱马½.S01E%02d.ToonsHub", episode)
-		if naming.Status != "mapped" || naming.PathStem != want {
+		naming := plan.Project("main", s.Items[i].Release.Parse)
+		if naming.Status != "mapped" || naming.Season == nil || *naming.Season != 1 || naming.Episode == nil || *naming.Episode != episode {
 			t.Fatal("publisher season changed the configured TMDB offset", naming)
 		}
 	}
-	if s.Items[4].Selectable || s.Items[4].Release.Parse.Kind != "batch" || plan.Project("main", s.Items[4].Release.Parse, "ToonsHub").Status != "unmapped" {
+	if s.Items[4].Selectable || s.Items[4].Release.Parse.Kind != "batch" || plan.Project("main", s.Items[4].Release.Parse).Status != "unmapped" {
 		t.Fatal("a true range was selected or mapped as one episode", s.Items[4])
 	}
 	source.Rules.MinimumEpisode = ptr(2)

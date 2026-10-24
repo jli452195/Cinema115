@@ -15,6 +15,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 	"strm115/backend/internal/storage"
 )
 
@@ -144,7 +145,8 @@ func animeOrganizeFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *AnimeD
 	job.Snapshot.Naming = &model.AnimeNamingPlan{SchemaVersion: 1, Target: model.AnimeNamingTarget{TMDBID: "335790", Title: "黑暗召唤师在地下恋爱中", Year: "2026", Season: 1, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 1, Episodes: []model.AnimeNamingEpisode{{ID: "1001", Number: 1}}}}}, Sources: []model.AnimeSourceMapping{{SourceRef: job.Snapshot.Source.SourceID, Segments: []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 1, TargetBase: 1}}}}}
 	target := job.Snapshot.Target
 	target.ParentCID, target.ParentPath = "900", "/整理"
-	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: target}
+	template, _ := naming.Default(naming.TV)
+	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{Naming: naming.Snapshot{Template: template}, SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: target}
 	raw, _ := json.Marshal(job.Snapshot)
 	if _, err := db.Exec(`UPDATE anime_download_jobs SET snapshot_json=? WHERE id=?`, string(raw), job.ID); err != nil {
 		t.Fatal(err)
@@ -321,7 +323,7 @@ func TestAnimeOrganizeConflictStopsBeforeRenaming(t *testing.T) {
 	f, _, session, job, d := animeOrganizeFixture(t)
 	d.entries["900"] = []model.AnimeDriveEntry{{ID: "901", ParentCID: "900", Kind: "directory", Name: "黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}"}}
 	d.entries["901"] = []model.AnimeDriveEntry{{ID: "902", ParentCID: "901", Kind: "directory", Name: "Season 01"}}
-	d.entries["902"] = []model.AnimeDriveEntry{{ID: "999", ParentCID: "902", Kind: "file", Name: "黑暗召唤师在地下恋爱中.S01E01." + job.Snapshot.Source.GroupName + ".mkv", Size: 99}}
+	d.entries["902"] = []model.AnimeDriveEntry{{ID: "999", ParentCID: "902", Kind: "file", Name: "黑暗召唤师在地下恋爱中.S01E01.1080p-" + job.Snapshot.Source.GroupName + ".mkv", Size: 99}}
 	op := organizeTestCall(t, f, session, job.ID)
 	if op.Progress.Code != "ORGANIZE_TARGET_CONFLICT" || d.renames != 0 || d.moves != 0 || d.creates != 0 || d.reads != 3 {
 		t.Fatal(op.Progress, d)

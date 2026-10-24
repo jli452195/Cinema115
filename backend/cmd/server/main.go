@@ -122,7 +122,7 @@ func main() {
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	cloudClient := p115.NewCloudClient()
 	downloadCoordinator := &service.CloudDownloadCoordinator{}
-	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator}
+	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService, Templates: database}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator}
 	httpapi.RegisterAnime(admin, animeAdmin)
 	animeDiscoveryRunner := &service.AnimeDiscoveryRunner{Admin: animeAdmin, Feeds: animeBindings}
 	animeAdmin.StatusGateway = cloudClient

@@ -12,6 +12,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	medianaming "strm115/backend/internal/naming"
 	"strm115/backend/internal/storage"
 )
 
@@ -183,7 +184,8 @@ func TestAnimeFilesCompletionSavesManifestAndStopsAllOfflinePolling(t *testing.T
 			f, db, job, runner, now := animeStatusFixture(t)
 			if naming {
 				job.Snapshot.Naming = &model.AnimeNamingPlan{SchemaVersion: 1}
-				job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: job.Snapshot.Target}
+				template, _ := medianaming.Default(medianaming.TV)
+				job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{Naming: medianaming.Snapshot{Template: template}, SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 1, Target: job.Snapshot.Target}
 				job.Snapshot.Organization.Target.ParentCID = "900"
 				job.Snapshot.Organization.Target.ParentPath = "/整理"
 				raw, _ := json.Marshal(job.Snapshot)

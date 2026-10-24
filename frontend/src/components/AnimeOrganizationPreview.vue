@@ -13,7 +13,7 @@ async function read() {
   catch (reason) { if (!controller.signal.aborted) error.value = animeConfigMessage(reason) }
   finally { loading.value = false }
 }
-const labels: Record<string, string> = { mapped: '可按计划整理', subtitle_matched: '字幕已配对', unmapped: '编号尚未映射', ignored: '按规则保留', subtitle_unmatched: '字幕未找到唯一对应视频', video_needs_review: '先确认对应视频', attachment_preserved: '附件保留原处', duplicate_target: '目标路径重复，不覆盖', name_too_long: '名称过长，需要调整' }
+const labels: Record<string, string> = { mapped: '可按计划整理', subtitle_matched: '字幕已配对', unmapped: '编号尚未映射', ignored: '按规则保留', subtitle_unmatched: '字幕未找到唯一对应视频', video_needs_review: '先确认对应视频', attachment_preserved: '附件保留原处', duplicate_target: '目标路径重复，不覆盖', name_too_long: '名称过长，需要调整', naming_invalid: '命名不符合模板，请调整' }
 onBeforeUnmount(() => controller.abort())
 </script>
 <template>
@@ -25,7 +25,7 @@ onBeforeUnmount(() => controller.abort())
       <p class="as-muted">这里仅展示命名计划，实际执行结果见任务记录。执行时检查同名冲突，不覆盖文件。</p>
       <p v-if="!result.items.length" class="as-muted">{{ result.mode === 'original' ? '尚未保存整理计划，请先补齐 TMDB 命名目标。' : '还没有可用的文件清单。' }}</p>
       <article v-for="item in result.items" :key="item.id" class="as-plan-item" :data-plan-status="item.status">
-        <span class="as-plan-status">{{ labels[item.reason] || '需要确认' }}</span>
+        <span class="as-plan-status">{{ item.error || labels[item.reason] || '需要确认' }}</span>
         <p><small>任务保存的原路径</small>{{ item.originalPath }}</p>
         <template v-if="item.targetPath"><IconArrowDown :size="14" aria-hidden="true" /><p><small>目标路径</small>{{ item.targetPath }}</p></template>
       </article>

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 )
 
 // Retire stale metadata permissions without touching accepted drive operations.
@@ -68,7 +69,17 @@ func refreshAnimePendingJobTx(ctx context.Context, tx *sql.Tx, p AnimeSourcePoll
 	if err != nil {
 		return err
 	}
-	snapshot.Organization, err = model.FreezeAnimeOrganization(p.Subscription.Naming, settings, p.Subscription.Revision, snapshot.Target)
+	// A queued task keeps its template even when the source is reauthorized.
+	template := naming.Snapshot{}
+	if snapshot.Organization != nil {
+		template = snapshot.Organization.Naming
+	} else if p.Subscription.Naming != nil {
+		template, err = readNamingTemplate(ctx, tx, naming.TV)
+		if err != nil {
+			return err
+		}
+	}
+	snapshot.Organization, err = model.FreezeAnimeOrganization(p.Subscription.Naming, settings, p.Subscription.Revision, snapshot.Target, template)
 	if err != nil {
 		return err
 	}

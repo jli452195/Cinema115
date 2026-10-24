@@ -87,29 +87,39 @@ func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected 
 		return preparedMediaNaming{}, fmt.Errorf("命名模板或作品信息无效")
 	}
 	p := preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer}
-	if source, ok := s.Metadata.(interface {
-		EnglishTitle(context.Context, string, int) (string, error)
-	}); ok {
-		layers := append([][]naming.Block{snapshot.Template.Filename}, snapshot.Template.Directories...)
-		for _, layer := range layers {
-			for _, block := range layer {
-				if block.Field == naming.EnglishTitle {
-					// Optional enrichment must not block organizing on an outage.
-					lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-					p.english, err = source.EnglishTitle(lookupCtx, kind, id)
-					cancel()
-					if ctx.Err() != nil {
-						return preparedMediaNaming{}, ctx.Err()
-					}
-					if err != nil {
-						p.english = ""
-					}
-					return p, nil
-				}
-			}
-		}
+	p.english, err = optionalNamingEnglish(ctx, s.Metadata, snapshot.Template, kind, id)
+	if err != nil {
+		return preparedMediaNaming{}, err
 	}
 	return p, nil
+}
+
+func optionalNamingEnglish(ctx context.Context, metadata any, template naming.Template, kind string, id int) (string, error) {
+	source, ok := metadata.(interface {
+		EnglishTitle(context.Context, string, int) (string, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	layers := append([][]naming.Block{template.Filename}, template.Directories...)
+	for _, layer := range layers {
+		for _, block := range layer {
+			if block.Field != naming.EnglishTitle {
+				continue
+			}
+			lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			english, err := source.EnglishTitle(lookupCtx, kind, id)
+			cancel()
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			if err != nil {
+				return "", nil
+			}
+			return english, nil
+		}
+	}
+	return "", nil
 }
 
 func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error) {

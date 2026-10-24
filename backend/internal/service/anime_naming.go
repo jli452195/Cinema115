@@ -16,6 +16,7 @@ import (
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 	"strm115/backend/internal/storage"
 )
 
@@ -28,7 +29,10 @@ type AnimeNamingMetadata interface {
 	AnimeGroups(context.Context, int) ([]tmdb.EpisodeGroupSummary, error)
 	AnimeGroup(context.Context, int, string) (*tmdb.EpisodeGroup, error)
 }
-type AnimeNamingService struct{ Metadata AnimeNamingMetadata }
+type AnimeNamingService struct {
+	Metadata  AnimeNamingMetadata
+	Templates NamingTemplates
+}
 
 // These readers share the existing metadata cache, bypassing global numbering
 // selection. They never call SaveNumbering or publish other-business events.
@@ -243,7 +247,7 @@ func (s *AnimeNamingService) Target(ctx context.Context, in AnimeNamingTargetInp
 	if detail == nil || detail.ID != id || len(detail.Date) < 4 || detail.Title == "" {
 		return out, tmdb.ErrInput
 	}
-	out = model.AnimeNamingTarget{TMDBID: in.TMDBID, Title: detail.Title, Year: detail.Date[:4], GroupID: in.GroupID, GroupName: "TMDB 默认", Seasons: []model.AnimeNamingSeason{}}
+	out = model.AnimeNamingTarget{TMDBID: in.TMDBID, Title: detail.Title, OriginalTitle: detail.OriginalTitle, Year: detail.Date[:4], GroupID: in.GroupID, GroupName: "TMDB 默认", Seasons: []model.AnimeNamingSeason{}}
 	var group *tmdb.EpisodeGroup
 	if in.GroupID != "" {
 		group, err = s.Metadata.AnimeGroup(ctx, id, in.GroupID)
@@ -341,6 +345,17 @@ func (s *AnimeNamingService) Target(ctx context.Context, in AnimeNamingTargetInp
 	out.Fingerprint = hex.EncodeToString(digest[:])
 	if err := (model.AnimeNamingPlan{SchemaVersion: 1, Target: out}).Validate(); err != nil {
 		return out, fmt.Errorf("invalid TMDB naming metadata: %w", tmdb.ErrInput)
+	}
+	// Optional titles do not participate in the mapping fingerprint.
+	if s.Templates != nil {
+		template, err := s.Templates.NamingTemplate(ctx, naming.TV)
+		if err != nil {
+			return out, err
+		}
+		out.EnglishTitle, err = optionalNamingEnglish(ctx, s.Metadata, template.Template, "tv", id)
+		if err != nil {
+			return out, err
+		}
 	}
 	return out, nil
 }

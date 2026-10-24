@@ -377,7 +377,7 @@ func validAnimeOrganizeStep(req model.AnimeOrganizeRequest, p model.AnimeOrganiz
 	if !model.ValidAnimeExternalID(step.CID) && step.CID != "0" {
 		return false
 	}
-	dirs := map[string]string{"": req.Target.ParentCID}
+	dirs := map[string]string{"": req.Target.ParentCID, ".": req.Target.ParentCID}
 	for _, d := range p.Directories {
 		dirs[d.Path] = d.CID
 	}

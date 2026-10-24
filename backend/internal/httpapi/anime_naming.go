@@ -13,6 +13,18 @@ import (
 )
 
 func registerAnimeNaming(r *gin.RouterGroup, s *service.AnimeAdminService) {
+	r.POST("/naming/preview", func(c *gin.Context) {
+		var in service.AnimeNamingPreviewInput
+		if !animeBody(c, &in, true) {
+			return
+		}
+		v, err := service.PreviewAnimeNaming(c.Request.Context(), s.Store, in)
+		if err != nil {
+			animeError(c, err)
+			return
+		}
+		c.JSON(200, v)
+	})
 	r.POST("/naming/search", func(c *gin.Context) {
 		var in struct {
 			Keyword   string `json:"keyword"`

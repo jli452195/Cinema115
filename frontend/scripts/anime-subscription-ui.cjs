@@ -43,6 +43,18 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: state.role, disabled: false } }
       else if (endpoint.endsWith('/catalog-status')) data = { items: body.itemIds.map(itemId => ({ itemId, bangumiId: null, subscriptions: [] })) }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
+      else if (endpoint.endsWith('/naming/preview')) {
+        if (state.namingPreviewGate) await state.namingPreviewGate
+        if (state.failNamingPreview) { status=503; data={error:'模拟命名读取失败'} }
+        else data={naming:{revision:3,template:{kind:'tv',directories:[],filename:[]}},items:body.items.map((item,index)=>{
+          const rule=body.mapping.segments[0], ep=item.parse.episode
+          if(item.parse.kind!=='episode'||ep==null||ep<rule.first) return {id:item.id,status:'unmapped'}
+          if(state.namingRowError&&index===0) return {id:item.id,status:'mapped',error:'文件名超过 240 字节'}
+          const stem=`${body.target.title}.S${String(rule.targetSeason).padStart(2,'0')}E${String(ep-rule.sourceBase+rule.targetBase).padStart(2,'0')}-[简繁]-${body.group}`
+          const directory=state.namingRoot?'':`公共目录/第 ${rule.targetSeason} 季`
+          return {id:item.id,status:'mapped',episodeName:'目标集名',result:{directory,stem,name:stem,extension:'',relativePath:directory?`${directory}/${stem}`:stem}}
+        })}
+      }
       else if (endpoint.endsWith('/naming/search')) {
         if (state.namingGate) await state.namingGate
         if (state.failNaming) { status = 503; data = { error: 'TMDB 暂不可用' } }
@@ -546,14 +558,36 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(await firstRow.locator('td').nth(1).innerText(),'已整理')
     assert.match(await firstRow.locator('time').innerText(),/2026-10-20/)
     assert.deepEqual(await s.page.locator('.ae-preview-table tbody .ae-sticky-state').allTextContents().then(values=>values.slice(3,10)),['已过滤','已选定','已过滤','需确认','待检查','已忽略','尚未处理'],'persisted decisions must not be hidden as missing download records')
+    await firstRow.locator('.ae-release-filename').waitFor()
+    const namingCalls=s.calls.filter(c=>c.endpoint.endsWith('/naming/preview')).length
     await s.page.getByRole('combobox',{name:'显示',exact:true}).click()
     await s.page.getByRole('option',{name:'有下载记录',exact:true}).click()
     assert.equal(await s.page.locator('.ae-preview-table tbody tr').count(),4,'skip/filter decisions are excluded from download records')
     await s.page.getByRole('combobox',{name:'显示',exact:true}).click()
     await s.page.getByRole('option',{name:'全部发布',exact:true}).click()
     assert.equal(await s.page.locator('.ae-preview-boundary').count(),0)
+    assert.equal(s.calls.filter(c=>c.endpoint.endsWith('/naming/preview')).length,namingCalls,'display filters do not request naming again')
+    await firstRow.locator('.ae-release-filename').waitFor()
     assert.match(await firstRow.locator('.ae-release-filename').innerText(),/S02E01/)
     assert.equal(await s.page.locator('.ae-release-meta').count(),0,'default rows omit secondary metadata')
+    const rssCalls=s.calls.filter(c=>/\/previews(?:\/|$)/.test(c.endpoint)).length
+    s.state.failNamingPreview=true
+    await s.page.getByRole('button',{name:'重新预览',exact:true}).click()
+    await s.page.getByRole('button',{name:'重试命名',exact:true}).waitFor()
+    assert.ok(await s.page.locator('.ae-release-original').count()>0,'naming failure preserves original rows')
+    const rssAfterRefresh=s.calls.filter(c=>/\/previews(?:\/|$)/.test(c.endpoint)).length
+    assert.ok(rssAfterRefresh>=rssCalls)
+    s.state.failNamingPreview=false; s.state.namingRowError=true; s.state.namingRoot=true
+    await s.page.getByRole('button',{name:'重试命名',exact:true}).click()
+    await s.page.locator('.ae-release-renamed').nth(1).locator('.ae-release-filename').waitFor()
+    assert.match(await firstRow.locator('.ae-rename-pending').innerText(),/240/,'single invalid name does not hide other rows')
+    assert.equal(s.calls.filter(c=>/\/previews(?:\/|$)/.test(c.endpoint)).length,rssAfterRefresh,'naming retry does not read RSS again')
+    s.state.namingRowError=false
+    await s.page.getByRole('button',{name:'重新预览',exact:true}).click()
+    await firstRow.locator('.ae-release-filename').waitFor()
+    assert.match(await firstRow.locator('.ae-release-filename').getAttribute('title'),/^\/动漫整理\/.*S02E01/,'zero-directory template still exposes the full destination')
+    passed.push('shared template preview: one batch, local filters, isolated row errors, retry without RSS or drive reads, and root destination')
+
     const rowHeight=await firstRow.evaluate(el=>el.getBoundingClientRect().height)
     assert.ok(rowHeight<=100,`complete multilingual title fits a compact row: ${rowHeight}`)
     const shellGeometry=await s.page.locator('dialog[open]').last().evaluate(el=>({height:el.getBoundingClientRect().height,scroll:el.querySelector('.anime-floating-body').scrollHeight,body:el.querySelector('.anime-floating-body').clientHeight}))
@@ -705,6 +739,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     await zero.page.getByRole('button',{name:'预览',exact:true}).click()
     await zero.page.locator('.ae-preview-table').waitFor()
     assert.equal(await zero.page.locator('.ae-preview-table tbody tr').count(),67)
+    await zero.page.locator('.ae-release-filename').first().waitFor()
     assert.match(await zero.page.locator('.ae-release-filename').first().innerText(),/S02E00/,'00 names normally without TMDB episode zero')
     assert.equal(await zero.page.getByRole('combobox',{name:'显示',exact:true}).innerText(),'全部发布')
     await zero.page.getByRole('button',{name:'返回配置',exact:true}).click()
@@ -739,6 +774,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       assert.equal(await row.locator('.ae-sticky-rule .ae-status').getAttribute('title'),note)
       assert.equal(await row.locator('.ae-release-filename').count(),0,'unresolved rows never fabricate a filename')
     }
+    await numbering.page.locator('.ae-preview-table tbody tr').nth(4).locator('.ae-release-filename').waitFor()
     assert.match(await numbering.page.locator('.ae-preview-table tbody tr').nth(4).locator('.ae-release-filename').innerText(),/S02E03/,'recognized episodes still use the configured offset')
     await numbering.page.getByRole('button',{name:'详细信息',exact:true}).click()
     assert.deepEqual(await numbering.page.locator('.ae-release-reason').allTextContents().then(values=>values.slice(0,4)),expectedNotes)

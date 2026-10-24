@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"strm115/backend/internal/animeparse"
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 )
 
 type Item struct {
@@ -17,6 +19,7 @@ type Item struct {
 	TargetPath   string `json:"targetPath"`
 	Status       string `json:"status"`
 	Reason       string `json:"reason"`
+	Error        string `json:"error,omitempty"`
 	VideoID      string `json:"videoId,omitempty"`
 }
 type Plan struct {
@@ -29,9 +32,6 @@ type Plan struct {
 }
 
 func base(v string) string { return strings.TrimSuffix(v, path.Ext(v)) }
-func targetName(n model.AnimeNamingPlan, p model.AnimeNamingProjection, group, ext string) string {
-	return model.AnimeNamingPath(n.Target, *p.Season, *p.Episode, group, ext)
-}
 func isVideo(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg":
@@ -79,6 +79,10 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 	if o.Validate(job.Snapshot.Target) != nil || job.Snapshot.Naming == nil || job.Snapshot.Naming.Validate() != nil {
 		return out, fmt.Errorf("invalid frozen organization plan")
 	}
+	renderer, err := naming.Compile(o.Naming.Template)
+	if err != nil {
+		return out, fmt.Errorf("compile frozen naming template: %w", err)
+	}
 	out.Mode, out.Revision = "standard", o.PlanRevision
 	if job.Files == nil {
 		return out, nil
@@ -88,10 +92,13 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 	}
 	entries := make(map[string]model.AnimeDriveEntry, len(job.Files.Entries))
 	videoCount := 0
+	directoryVideos := make(map[string]int, len(job.Files.Entries))
+	rendered := make(map[string]naming.Result, len(job.Files.Entries))
 	for _, e := range job.Files.Entries {
 		entries[e.ID] = e
 		if e.Kind == "file" && isVideo(path.Ext(e.Name)) {
 			videoCount++
+			directoryVideos[e.ParentCID]++
 		}
 	}
 	rootPath := strings.TrimRight(job.Snapshot.Target.ParentPath, "/") + "/" + job.DirectoryName
@@ -120,11 +127,25 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		if err == nil && parsed.Kind == "unknown" && parsed.RawEpisode == "" && videoCount == 1 {
 			parsed = job.Snapshot.Release.Parse
 		}
-		projection := job.Snapshot.Naming.Project(job.Snapshot.Source.SourceID, parsed, job.Snapshot.Source.GroupName)
+		projection := job.Snapshot.Naming.Project(job.Snapshot.Source.SourceID, parsed)
 		item.Reason = projection.Status
 		if projection.Status == "mapped" {
-			item.TargetPath = path.Join(o.Target.ParentPath, targetName(*job.Snapshot.Naming, projection, job.Snapshot.Source.GroupName, path.Ext(e.Name)))
-			item.Status, item.Reason = "ready", "mapped"
+			hint := model.AnimeSpec{}
+			if videoCount == 1 {
+				hint = mediafacts.Specification(job.Snapshot.Release.Title)
+			}
+			values := mediafacts.Values(e.Name, hint, job.Snapshot.Source.GroupName)
+			if directoryVideos[e.ParentCID] == 1 {
+				mediafacts.InheritSubtitles(values, entries[e.ParentCID].Name)
+			}
+			result, err := Render(renderer, job.Snapshot.Naming.Target, projection, e.Name, false, values)
+			if err != nil {
+				item.Reason, item.Error = "naming_invalid", err.Error()
+			} else {
+				rendered[e.ID] = result
+				item.TargetPath = path.Join(o.Target.ParentPath, result.RelativePath)
+				item.Status, item.Reason = "ready", "mapped"
+			}
 		} else if projection.Status == "ignored" {
 			item.Status = "preserved"
 		}
@@ -156,8 +177,13 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 				v := out.Items[matched]
 				item.VideoID = v.ID
 				if v.Status == "ready" {
-					item.TargetPath = base(v.TargetPath) + suffix + path.Ext(e.Name)
-					item.Status, item.Reason = "ready", "subtitle_matched"
+					result, err := naming.Companion(rendered[v.ID], suffix, e.Name)
+					if err != nil {
+						item.Reason, item.Error = "naming_invalid", err.Error()
+					} else {
+						item.TargetPath = path.Join(o.Target.ParentPath, result.RelativePath)
+						item.Status, item.Reason = "ready", "subtitle_matched"
+					}
 				} else {
 					item.Reason = "video_needs_review"
 				}
