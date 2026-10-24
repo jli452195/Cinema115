@@ -10,20 +10,20 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 )
 
-func previewConfig(t *testing.T, s *Store) animepreview.Config {
+func previewConfig(t *testing.T, s *Store) preview.Config {
 	t.Helper()
 	entry := createAnimeEntry(t, s, animePtr("123"))
 	settings, err := s.GetAnimeSettings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: animeConfig(entry.ID).Sources}
-	c, err = animepreview.Normalize(c)
+	c := preview.Config{Chapter: preview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: animeConfig(entry.ID).Sources}
+	c, err = preview.Normalize(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func previewPage(n int, at int64) mikan.SourcePage {
 	return p
 }
 
-func createPreview(t *testing.T, s *Store, c animepreview.Config, p mikan.SourcePage, now int64) animepreview.Batch {
+func createPreview(t *testing.T, s *Store, c preview.Config, p mikan.SourcePage, now int64) preview.Batch {
 	t.Helper()
 	b, err := s.CreateAnimePreview(context.Background(), "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Page: &p}}, now)
 	if err != nil {
@@ -47,7 +47,7 @@ func createPreview(t *testing.T, s *Store, c animepreview.Config, p mikan.Source
 	return b
 }
 
-func previewRef(b animepreview.Batch, index int) AnimePreviewRef {
+func previewRef(b preview.Batch, index int) AnimePreviewRef {
 	source := b.Sources[index]
 	return AnimePreviewRef{BatchID: b.ID, SourceRef: source.Ref, PreviewID: source.ID, LoadRevision: source.LoadRevision}
 }
@@ -107,7 +107,7 @@ func TestAnimePreviewCASSelection(t *testing.T) {
 	for err := range results {
 		if err == nil {
 			success++
-		} else if errors.Is(err, animepreview.ErrConflict) {
+		} else if errors.Is(err, preview.ErrConflict) {
 			conflict++
 		} else {
 			t.Fatal(err)
@@ -136,17 +136,17 @@ func TestAnimePreviewExpiryReuseAndScope(t *testing.T) {
 	if reused.Sources[0].GeneratedAt != now || reused.Sources[0].ExpiresAt != now+900000 || reused.Sources[0].Page.ObservedAt.UnixMilli() != now-120000 {
 		t.Fatal("reuse refreshed clocks")
 	}
-	if _, err := s.SelectAnimePreview(ctx, "admin-a", ref, nil, nil, now+900000); !errors.Is(err, animepreview.ErrExpired) {
+	if _, err := s.SelectAnimePreview(ctx, "admin-a", ref, nil, nil, now+900000); !errors.Is(err, preview.ErrExpired) {
 		t.Fatal("exact expiry accepted", err)
 	}
-	if _, err := s.CreateAnimePreview(ctx, "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+900000); !errors.Is(err, animepreview.ErrExpired) {
+	if _, err := s.CreateAnimePreview(ctx, "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+900000); !errors.Is(err, preview.ErrExpired) {
 		t.Fatal("expired reuse", err)
 	}
 	other := c
 	other.Chapter.DraftKey = "other"
 	other.Chapter.ID = ""
 	other.Chapter.Revision = 0
-	if _, err := s.CreateAnimePreview(ctx, "admin-a", other, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+1); !errors.Is(err, animepreview.ErrInput) {
+	if _, err := s.CreateAnimePreview(ctx, "admin-a", other, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+1); !errors.Is(err, preview.ErrInput) {
 		t.Fatal("cross-chapter reuse", err)
 	}
 	// Expired data is still readable for form recovery.
@@ -172,10 +172,10 @@ func TestAnimePreviewRegenerateRetainsUnresolvedSelections(t *testing.T) {
 	if len(source.Pending) != 2 || len(source.SelectedIDs) != 1 || source.T0 != old.Sources[0].T0 || source.GeneratedAt == old.Sources[0].GeneratedAt {
 		t.Fatal("re-preview intent", source)
 	}
-	if _, err := s.SelectAnimePreview(ctx, "admin-a", previewRef(next, 0), []string{old.Sources[0].Items[2].Release.ID}, nil, now+2000); !errors.Is(err, animepreview.ErrInput) {
+	if _, err := s.SelectAnimePreview(ctx, "admin-a", previewRef(next, 0), []string{old.Sources[0].Items[2].Release.ID}, nil, now+2000); !errors.Is(err, preview.ErrInput) {
 		t.Fatal("ghost accepted", err)
 	}
-	if !errors.Is(source.ValidateSelection(now+2000), animepreview.ErrReview) {
+	if !errors.Is(source.ValidateSelection(now+2000), preview.ErrReview) {
 		t.Fatal("unresolved source accepted")
 	}
 }
@@ -229,13 +229,13 @@ func TestAnimePreviewVersionsAndIndependentSourceReuse(t *testing.T) {
 		t.Fatal("draft standby invalidated main", err)
 	}
 	c.Sources[0].Rules.MinimumEpisode = animePtr(31)
-	if _, err := s.CreateAnimePreview(ctx, "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+1); !errors.Is(err, animepreview.ErrConflict) {
+	if _, err := s.CreateAnimePreview(ctx, "admin-a", c, []AnimePreviewSeed{{SourceRef: "main", Previous: &ref}}, now+1); !errors.Is(err, preview.ErrConflict) {
 		t.Fatal("changed rules reused", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE anime_settings SET revision=revision+1 WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SelectAnimePreview(ctx, "admin-a", ref, nil, nil, now+2); !errors.Is(err, animepreview.ErrConflict) {
+	if _, err := s.SelectAnimePreview(ctx, "admin-a", ref, nil, nil, now+2); !errors.Is(err, preview.ErrConflict) {
 		t.Fatal("stale directory settings accepted", err)
 	}
 }

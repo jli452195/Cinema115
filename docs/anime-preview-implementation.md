@@ -6,7 +6,7 @@
 
 ## 规则与解释
 
-新增纯计算包 `internal/animepreview`，复用已有编号、时间解析与逐源篇章投影。处理顺序为实际来源/组、编号、篇章范围、持续下限、排除/包含词、标题画质、资源身份提示。保存经过的各步与最先阻止匹配的原因；未识别编号与范围待确认独立于被过滤项。
+新增纯计算包 `internal/anime/preview`，复用已有编号、时间解析与逐源篇章投影。处理顺序为实际来源/组、编号、篇章范围、持续下限、排除/包含词、标题画质、资源身份提示。保存经过的各步与最先阻止匹配的原因；未识别编号与范围待确认独立于被过滤项。
 
 每条 RSS 独立使用自己的规则和编号基准。起始下限包含本集，不改变编号基准；例如25→篇章1、从30补，仍显示篇章6。同集不同原帖、画质及v2分别列出，不按集号或GUID合并。原帖标识不是已验证的 BT Hash，匹配项明确保留 `HASH_NOT_VERIFIED` 提示。
 
@@ -53,8 +53,8 @@ SQLite版本40在预览批次、单源预览各补一个JSON快照字段，保�
 检查命令：
 
 ```powershell
-go test ./internal/animepreview ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
-go vet ./internal/animepreview ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
+go test ./internal/anime/preview ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
+go vet ./internal/anime/preview ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
 go test ./... -run '^$'
 py -3 docs/examples/anime-contract/validate.py
 ```

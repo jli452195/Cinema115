@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"time"
 
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/anime/preview"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
 )
@@ -24,27 +24,27 @@ const animeJobColumns = `id,claim_id,attempt,account_id,account_revision,uid,set
 
 // FindAnimeVerifiedRelease reuses only an exact, committed observation proof.
 // New content or a new verifier version cannot inherit an old post's identity.
-func (s *Store) FindAnimeVerifiedRelease(ctx context.Context, releaseID, fingerprint string) (animeresource.Verified, bool, error) {
+func (s *Store) FindAnimeVerifiedRelease(ctx context.Context, releaseID, fingerprint string) (btresource.Verified, bool, error) {
 	if !model.ValidAnimeID(releaseID) || len(fingerprint) != 67 {
-		return animeresource.Verified{}, false, ErrAnimeInvalid
+		return btresource.Verified{}, false, ErrAnimeInvalid
 	}
 	var raw, hash string
 	var verifiedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT js.snapshot_json,r.info_hash,r.verified_at FROM anime_releases rel JOIN anime_resources r ON r.id=rel.resource_id JOIN anime_job_selections js ON js.release_id=rel.id WHERE rel.id=? AND rel.content_fingerprint=? AND json_extract(js.snapshot_json,'$.evidence.contentFingerprint')=? AND json_extract(js.snapshot_json,'$.verificationVersion')=? ORDER BY js.created_at LIMIT 1`, releaseID, fingerprint, fingerprint, animeresource.VerificationVersion).Scan(&raw, &hash, &verifiedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT js.snapshot_json,r.info_hash,r.verified_at FROM anime_releases rel JOIN anime_resources r ON r.id=rel.resource_id JOIN anime_job_selections js ON js.release_id=rel.id WHERE rel.id=? AND rel.content_fingerprint=? AND json_extract(js.snapshot_json,'$.evidence.contentFingerprint')=? AND json_extract(js.snapshot_json,'$.verificationVersion')=? ORDER BY js.created_at LIMIT 1`, releaseID, fingerprint, fingerprint, btresource.VerificationVersion).Scan(&raw, &hash, &verifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return animeresource.Verified{}, false, nil
+		return btresource.Verified{}, false, nil
 	}
 	if err != nil {
-		return animeresource.Verified{}, false, fmt.Errorf("read anime verification cache: %w", err)
+		return btresource.Verified{}, false, fmt.Errorf("read anime verification cache: %w", err)
 	}
 	var snapshot model.AnimeDownloadSnapshot
 	if err := decodeAnimeJSON(raw, &snapshot); err != nil {
-		return animeresource.Verified{}, false, fmt.Errorf("decode anime verification cache: %w", err)
+		return btresource.Verified{}, false, fmt.Errorf("decode anime verification cache: %w", err)
 	}
 	if snapshot.Protocol != "bt_v1" || snapshot.InfoHash != hash || snapshot.Release.ID != releaseID || snapshot.Release.ContentFingerprint != fingerprint {
-		return animeresource.Verified{}, false, ErrAnimeIdentity
+		return btresource.Verified{}, false, ErrAnimeIdentity
 	}
-	v, err := animeresource.Restore(hash, snapshot.VerificationVersion, verifiedAt, snapshot.Evidence)
+	v, err := btresource.Restore(hash, snapshot.VerificationVersion, verifiedAt, snapshot.Evidence)
 	return v, err == nil, err
 }
 
@@ -126,7 +126,7 @@ func readAnimeReleaseDecision(ctx context.Context, r animeReader, sourceID, rele
 // ClaimAnimeDownload consumes only an authoritative pending execution choice,
 // never a P1 form selection. Verification must come from the controlled source
 // observation. No network operation or automatic retry takes place here.
-func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID string, decisionGeneration int64, verified animeresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
+func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID string, decisionGeneration int64, verified btresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
 	var out model.AnimeDownloadClaimResult
 	if !model.ValidAnimeID(sourceID) || !model.ValidAnimeID(releaseID) || decisionGeneration < 1 || decisionGeneration >= model.AnimeMaxRevision || !verified.Valid() || target.Validate() != nil {
 		return out, ErrAnimeInvalid
@@ -146,7 +146,7 @@ func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID stri
 	return out, nil
 }
 
-func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID string, generation int64, verified animeresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
+func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID string, generation int64, verified btresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
 	var out model.AnimeDownloadClaimResult
 	if err := checkAnimeDownloadTargetTx(ctx, tx, target, true); err != nil {
 		return out, err
@@ -199,7 +199,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
 		return out, ErrAnimeInvalid
 	}
-	match, err := animepreview.MatchesRelease(source.Binding, source.Rules, release)
+	match, err := preview.MatchesRelease(source.Binding, source.Rules, release)
 	if err != nil {
 		return out, fmt.Errorf("check anime selected rules: %w", err)
 	}
@@ -243,7 +243,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		out.Created = true
 	}
 	snapshot := model.AnimeDownloadSnapshot{
-		SchemaVersion: model.AnimeSchemaVersion, Target: target, Protocol: "bt_v1", InfoHash: verified.Hash(), VerificationVersion: animeresource.VerificationVersion,
+		SchemaVersion: model.AnimeSchemaVersion, Target: target, Protocol: "bt_v1", InfoHash: verified.Hash(), VerificationVersion: btresource.VerificationVersion,
 		Evidence: evidence, Release: release, Decision: d.Snapshot, Naming: sub.Naming,
 		Source: model.AnimeDownloadSource{SubscriptionID: sub.ID, SubscriptionRevision: sub.Revision, SubscriptionGeneration: sub.RunGeneration, SourceID: source.ID, SourceRevision: source.Revision, SourceGeneration: source.RunGeneration, Provider: source.Provider, ItemID: *source.ItemID, GroupID: *source.GroupID, GroupName: *source.GroupName, NamespaceID: source.NamespaceID},
 	}
@@ -311,7 +311,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	return out, nil
 }
 
-func saveAnimeVerifiedResourceTx(ctx context.Context, tx *sql.Tx, verified animeresource.Verified) (string, error) {
+func saveAnimeVerifiedResourceTx(ctx context.Context, tx *sql.Tx, verified btresource.Verified) (string, error) {
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM anime_resources WHERE protocol='bt_v1' AND info_hash=?`, verified.Hash()).Scan(&id)
 	if err == nil {
@@ -328,7 +328,7 @@ func saveAnimeVerifiedResourceTx(ctx context.Context, tx *sql.Tx, verified anime
 	if err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO anime_resources(id,protocol,info_hash,verification_version,verified_at,evidence_json) VALUES(?,'bt_v1',?,?,?,?)`, id, verified.Hash(), animeresource.VerificationVersion, verified.VerifiedAt(), raw); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO anime_resources(id,protocol,info_hash,verification_version,verified_at,evidence_json) VALUES(?,'bt_v1',?,?,?,?)`, id, verified.Hash(), btresource.VerificationVersion, verified.VerifiedAt(), raw); err != nil {
 		return "", animeDBError("save anime verified identity", err)
 	}
 	return id, nil

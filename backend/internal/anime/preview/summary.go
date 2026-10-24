@@ -1,4 +1,4 @@
-package animepreview
+package preview
 
 import (
 	"sort"

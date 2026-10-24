@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/anime/preview"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/model"
 )
 
@@ -122,7 +122,7 @@ func TestAnimeDefinitionBackfillsFilteredResourcesWithoutRepeatingOrganized(t *t
 	row.Title = "[字幕组] 动画 - 31 [1080p][HEVC]"
 	row.MagnetHint = "magnet:?xt=urn:btih:" + strings.Repeat("b", 40)
 	page := discoveryPage(old, now, row)
-	parsed, err := animepreview.BuildCandidates(animePollConfig(old), "poll", page, now)
+	parsed, err := preview.BuildCandidates(animePollConfig(old), "poll", page, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestAnimeDefinitionBackfillsFilteredResourcesWithoutRepeatingOrganized(t *t
 	if err != nil || !reflect.DeepEqual(beforeDecision, afterDecision) {
 		t.Fatal("organized resource was selected again", err)
 	}
-	verified, err = animeresource.Verify(ctx, "garden", row, nil)
+	verified, err = btresource.Verify(ctx, "garden", row, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

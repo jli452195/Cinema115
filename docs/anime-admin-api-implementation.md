@@ -88,8 +88,8 @@ Codex 后端自审修正了不完整草稿无法首次补全来源、保存后�
 
 ```powershell
 cd backend
-go test ./internal/animepreview ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi -count=1
-go vet ./internal/animepreview ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi
+go test ./internal/anime/preview ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi -count=1
+go vet ./internal/anime/preview ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi
 go test ./... -run '^$'
 cd ..
 py -3 docs/examples/anime-contract/validate.py

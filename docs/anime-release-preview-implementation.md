@@ -33,7 +33,7 @@
 - 整理页面原有 13 组回归通过。UI 测试全量拦截业务 API，没有保存真实订阅或写入真实网盘。
 - 新版本专项连续三轮通过，覆盖排序与分页独立、关键词优先、同修订号重复、无数字修订、规格冲突、旧预览选择保护、直接请求低版本回滚、SQLite 关闭重开后不换版、失败不解锁、来源/规格独立。
 - 服务完整模拟链路验证 V1/V2/V3 同时出现仅取 V3 种子一次；后续 V4 种子读取不增加，任务保持一个，115 操作记录始终零。
-- `go test` 覆盖 animeparse、animepreview、model、animeorganize、storage、service、httpapi；相关包 `go vet`、`go build ./...`、前端类型检查与 `npm run build` 通过。原有构建包体积提示保留；未运行 race。
+- `go test` 覆盖 animeparse、anime/preview、model、anime/organize、storage、service、httpapi；相关包 `go vet`、`go build ./...`、前端类型检查与 `npm run build` 通过。原有构建包体积提示保留；未运行 race。
 - Gemini CLI 参与布局及版本规则交互讨论；最终前端代码复审会话 `4526a1e4-e6d4-404d-856f-0092400fa3ec` PASS。横滚实际 PNG 审查会话 `4eb9561d-069f-4ab2-ab9e-4025243fb71e`、最终版本截图复核会话 `0953b89e-6499-4ca7-ac75-2ff544aefb8f` 均 PASS。后端由 Codex 独立设计及审查。截图由浏览器专项重生成至 `frontend/test-results/anime-rename-*.png`。
 
 范围仅为预览和版本选择规则；没有实际 115 下载/整理样本，本轮不打卡 P4，核心进度仍 44/46。

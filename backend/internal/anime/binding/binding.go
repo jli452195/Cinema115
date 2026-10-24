@@ -1,6 +1,6 @@
-// Package animebinding evaluates one explicitly confirmed publisher numbering
+// Package binding evaluates one explicitly confirmed publisher numbering
 // space. It does not infer chapter identity or share numbering between feeds.
-package animebinding
+package binding
 
 import "strm115/backend/internal/model"
 

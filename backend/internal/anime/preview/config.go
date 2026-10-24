@@ -1,5 +1,5 @@
-// Package animepreview implements non-executing, immutable release previews.
-package animepreview
+// Package preview implements non-executing, immutable release previews.
+package preview
 
 import (
 	"crypto/sha256"

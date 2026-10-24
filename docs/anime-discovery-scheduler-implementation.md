@@ -78,8 +78,8 @@ SQLite v47→v48 增加来源的 `poll_failures/check_until/poll_snapshot_json`�
 
 ```text
 go test ./internal/service ./internal/storage -run '^TestAnimeDiscovery' -count=5
-go test ./internal/animeparse ./internal/animepreview ./internal/animeresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
-go vet ./internal/animeparse ./internal/animepreview ./internal/animeresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
+go test ./internal/animeparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
+go vet ./internal/animeparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
 go build ./...
 ```
 

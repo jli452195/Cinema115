@@ -1,5 +1,9 @@
 # 动漫订阅与 115 离线追踪方案
 
+2026-10-25 后端模块边界调整：订阅专属的集数映射、资源预览和整理计划分别收拢到 `internal/anime/binding`、`internal/anime/preview`、`internal/anime/organize`，保留独立子包及原有依赖方向。共用资源核验由 `animeresource` 更名为 `internal/btresource`，继续供订阅、蜜柑、Garden 和其他下载整理入口直接使用；种子文件清单和 InfoHash 的解析内核仍为 `internal/utils/torrentmeta`。`internal/animeparse` 已被手动整理和下载入口复用，继续独立；`internal/mediafacts` 与 `internal/naming` 继续提供共用标签和命名模板。本轮为包结构及引用调整，订阅服务与数据库事务仍分别位于 `service`、`storage`，后续收拢业务链路时另行划分；未新增转发层、兼容包或网络请求。
+
+本轮验证：全量后端测试 `go test ./... -timeout 240s`、静态检查 `go vet ./...` 与服务端构建均通过；逐文件核对 53 个 Go 文件，仅涉及包名、引用、包注释和一处避免遮蔽包名的参数更名。旧目录已移除，文档中的包路径、链接及验证命令同步更新。
+
 2026-10-20 清理修订：整理计划内的视频与匹配字幕全部移动成功后，直接将本任务保存的 `anime-<jobID>` 目录及残留附件移入 115 回收站，不增加空目录扫描或成功读回，正常仅新增一次删除请求。部分移动或移动回执未确认时不删除；清理未知回执不重发，已完成历史任务不补扫。此要求优先于下文旧的保留附件、空目录描述，见[资源目录清理](anime-resource-directory-cleanup.md)。
 
 2026-10-20 流程修订：已取消保存草稿、保存为暂停及详情页二次预览启用。配置页核对资源后直接开始订阅，配置、历史选择和启用同事务完成，失败不留下半成品；运行后仍可暂停与恢复。本修订优先于下文旧草稿/首次启用方案，见[直接开始订阅实现](anime-direct-start-implementation.md)。

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/naming"
@@ -36,7 +36,7 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 	// Keep source and magnet validation even when no upstream read is needed.
 	switch in.Source {
 	case "mikan":
-		_, err = animeresource.TorrentURL("mikan", in.ProviderID, in.TorrentURL)
+		_, err = btresource.TorrentURL("mikan", in.ProviderID, in.TorrentURL)
 		if in.Provider != "" {
 			err = ErrOrganizeInput
 		}
@@ -48,7 +48,7 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 	default:
 		err = ErrOrganizeInput
 	}
-	hash, hashErr := animeresource.MagnetHash(in.Magnet)
+	hash, hashErr := btresource.MagnetHash(in.Magnet)
 	if err != nil || hashErr != nil {
 		return DownloadFiles{}, fmt.Errorf("%w：资源来源或磁力无效", ErrOrganizeInput)
 	}

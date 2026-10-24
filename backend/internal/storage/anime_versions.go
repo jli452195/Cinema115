@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 )
 
@@ -27,7 +27,7 @@ func animeAuthorizedEditionsTx(ctx context.Context, tx *sql.Tx, sourceID string)
 		if err := decodeAnimeJSON(raw, &snapshot); err != nil {
 			return nil, fmt.Errorf("decode anime edition authorization: %w", err)
 		}
-		if key := animepreview.EpisodeEdition(snapshot.Parse); key != "" {
+		if key := preview.EpisodeEdition(snapshot.Parse); key != "" {
 			editions[key] = true
 		}
 	}
@@ -40,7 +40,7 @@ func animeAuthorizedEditionsTx(ctx context.Context, tx *sql.Tx, sourceID string)
 // A direct claimant still cannot replace an established edition. Repeated posts
 // for the exact verified torrent may link its existing job, without new writes.
 func checkAnimeClaimedEditionTx(ctx context.Context, tx *sql.Tx, sourceID string, release model.AnimeRelease, hash string) error {
-	key := animepreview.EpisodeEdition(release.Parse)
+	key := preview.EpisodeEdition(release.Parse)
 	if key == "" {
 		return nil
 	}
@@ -58,7 +58,7 @@ func checkAnimeClaimedEditionTx(ctx context.Context, tx *sql.Tx, sourceID string
 		if err := decodeAnimeJSON(raw, &snapshot); err != nil {
 			return fmt.Errorf("decode anime claimed edition: %w", err)
 		}
-		if animepreview.EpisodeEdition(snapshot.Parse) == key && existingHash != hash {
+		if preview.EpisodeEdition(snapshot.Parse) == key && existingHash != hash {
 			return ErrAnimeConflict
 		}
 	}

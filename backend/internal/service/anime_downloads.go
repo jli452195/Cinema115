@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -51,7 +51,7 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	if err != nil {
 		return empty, err
 	}
-	fp, err := animeresource.Fingerprint(observation)
+	fp, err := btresource.Fingerprint(observation)
 	if err != nil || observation.PostKey != release.PostKey || fp != release.ContentFingerprint || fp != d.ReleaseFingerprint {
 		return empty, storage.ErrAnimeIdentity
 	}
@@ -62,18 +62,18 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	if !cached {
 		reader := s.Torrents
 		if reader == nil {
-			reader = &animeresource.HTTPReader{}
+			reader = &btresource.HTTPReader{}
 		}
-		verified, err = animeresource.Verify(ctx, release.Provider, observation, reader)
+		verified, err = btresource.Verify(ctx, release.Provider, observation, reader)
 	}
 	if err != nil {
 		// Do not retain arbitrary dependency errors which might echo request data.
-		for _, safe := range []error{context.Canceled, context.DeadlineExceeded, animeresource.ErrInvalid, animeresource.ErrUnsupported, animeresource.ErrConflict} {
+		for _, safe := range []error{context.Canceled, context.DeadlineExceeded, btresource.ErrInvalid, btresource.ErrUnsupported, btresource.ErrConflict} {
 			if errors.Is(err, safe) {
 				return empty, safe
 			}
 		}
-		return empty, animeresource.ErrRead
+		return empty, btresource.ErrRead
 	}
 	if err := session.Validate(ctx); err != nil {
 		return empty, err

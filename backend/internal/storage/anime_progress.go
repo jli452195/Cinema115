@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 )
 
@@ -52,7 +52,7 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	first, zero := -1, 0
 	rules := source.Rules
 	rules.MinimumEpisode = &zero
-	match, err := animepreview.CompileMatcher(source.Binding, rules)
+	match, err := preview.CompileMatcher(source.Binding, rules)
 	if err != nil {
 		return out, err
 	}
@@ -120,7 +120,7 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 			out.OrganizedCount++
 		}
 	}
-	out.Missing = animepreview.EpisodeGaps(out.FirstEpisode, out.PublishedThrough, found)
+	out.Missing = preview.EpisodeGaps(out.FirstEpisode, out.PublishedThrough, found)
 	for _, gap := range out.Missing {
 		out.MissingCount += gap.Last - gap.First + 1
 	}

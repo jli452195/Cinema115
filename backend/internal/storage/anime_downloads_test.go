@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 )
@@ -61,11 +61,11 @@ func newDownloadClaimFixture(t *testing.T) *downloadClaimFixture {
 	return &downloadClaimFixture{store: s, target: target, sub: sub}
 }
 
-func (f *downloadClaimFixture) selectRelease(t *testing.T, index int, post, hash string) (model.AnimeRelease, animeresource.Verified) {
+func (f *downloadClaimFixture) selectRelease(t *testing.T, index int, post, hash string) (model.AnimeRelease, btresource.Verified) {
 	return f.selectTitle(t, index, post, hash, "[字幕组] 测试 - 30 [1080p][HEVC]")
 }
 
-func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, title string) (model.AnimeRelease, animeresource.Verified) {
+func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, title string) (model.AnimeRelease, btresource.Verified) {
 	t.Helper()
 	ctx := context.Background()
 	source := f.sub.Sources[index]
@@ -74,7 +74,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fp, err := animeresource.Fingerprint(row)
+	fp, err := btresource.Fingerprint(row)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	release := releases[0]
 	d := animeDecision(source, release, "selected")
 	d.Snapshot.Selection = &model.AnimeSelectionBasis{SelectedAt: time.Now().UnixMilli(), Target: f.target, SubscriptionGeneration: f.sub.RunGeneration, SourceGeneration: source.RunGeneration}
-	d.Snapshot.RuleVersion, d.Snapshot.ParserVersion, d.Snapshot.TimeVersion = animepreview.RuleVersion, release.ParserVersion, release.TimeVersion
+	d.Snapshot.RuleVersion, d.Snapshot.ParserVersion, d.Snapshot.TimeVersion = preview.RuleVersion, release.ParserVersion, release.TimeVersion
 	raw, err := animeJSON(d.Snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -93,14 +93,14 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	if _, err := f.store.db.ExecContext(ctx, `INSERT INTO anime_release_decisions(source_id,release_id,disposition,source_revision,release_fingerprint,snapshot_json,generation,updated_at) VALUES(?,?,'selected',?,?,?,1,1) ON CONFLICT(source_id,release_id) DO NOTHING`, source.ID, release.ID, source.Revision, release.ContentFingerprint, raw); err != nil {
 		t.Fatal(err)
 	}
-	v, err := animeresource.Verify(ctx, "garden", row, nil)
+	v, err := btresource.Verify(ctx, "garden", row, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return release, v
 }
 
-func (f *downloadClaimFixture) claim(t *testing.T, index int, r model.AnimeRelease, v animeresource.Verified) model.AnimeDownloadClaimResult {
+func (f *downloadClaimFixture) claim(t *testing.T, index int, r model.AnimeRelease, v btresource.Verified) model.AnimeDownloadClaimResult {
 	t.Helper()
 	source := f.sub.Sources[index]
 	d, err := f.store.GetAnimeReleaseDecision(context.Background(), source.ID, r.ID)
@@ -475,7 +475,7 @@ func TestAnimeDownloadClaimGenerationAndMissingProof(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				v = animeresource.Verified{}
+				v = btresource.Verified{}
 			}
 			out, err := f.store.ClaimAnimeDownload(ctx, source.ID, r.ID, 1, v, f.target)
 			if mode == "valid" {

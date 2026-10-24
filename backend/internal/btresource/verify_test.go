@@ -1,4 +1,4 @@
-package animeresource
+package btresource
 
 import (
 	"context"

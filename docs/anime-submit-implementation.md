@@ -71,8 +71,8 @@ SQLite 由 v46 升至 v47。每个下载任务有唯一 `submit:<jobID>` 操作�
 
 ```text
 go test ./internal/client/p115 ./internal/service ./internal/storage -run 'Test(AnimeEnsure|AnimeSubmit|AnimeTaskObservation|AnimeOffline)' -count=5
-go test ./internal/animeresource ./internal/animepreview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115 ./internal/bot
-go vet ./internal/animeresource ./internal/animepreview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115 ./internal/bot
+go test ./internal/btresource ./internal/anime/preview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115 ./internal/bot
+go vet ./internal/btresource ./internal/anime/preview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115 ./internal/bot
 go build ./...
 ```
 

@@ -8,7 +8,7 @@ import (
 	"hash/fnv"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 )
@@ -164,10 +164,10 @@ func checkAnimeSourcePollTx(ctx context.Context, tx *sql.Tx, poll AnimeSourcePol
 	return nil
 }
 
-func animePollConfig(p AnimeSourcePoll) animepreview.Config {
+func animePollConfig(p AnimeSourcePoll) preview.Config {
 	s := p.Source
 	t := p.Target
-	return animepreview.Config{Chapter: animepreview.Chapter{ID: p.Entry.ID, BangumiID: p.Entry.BangumiID, EditionKey: p.Entry.EditionKey, Revision: p.Entry.Revision}, SubscriptionID: p.Subscription.ID, Revision: p.Subscription.Revision,
+	return preview.Config{Chapter: preview.Chapter{ID: p.Entry.ID, BangumiID: p.Entry.BangumiID, EditionKey: p.Entry.EditionKey, Revision: p.Entry.Revision}, SubscriptionID: p.Subscription.ID, Revision: p.Subscription.Revision,
 		Settings: model.AnimeSettings{Revision: t.SettingsRevision, AccountID: &t.AccountID, AccountRevision: &t.AccountRevision, UID: &t.UID, DownloadCID: &t.ParentCID, DownloadPath: &t.ParentPath},
 		Sources:  []model.AnimeSourceConfig{{Ref: "poll", ID: s.ID, ExpectedRevision: s.Revision, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: s.Provider, ItemID: s.ItemID, GroupID: s.GroupID, GroupName: s.GroupName, Binding: s.Binding, Rules: s.Rules}}}
 }
@@ -179,7 +179,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if poll.IssueCode != "" || page.Kind != "rss" && page.Kind != "history" {
 		return stats, ErrAnimeInvalid
 	}
-	parsed, err := animepreview.BuildCandidates(animePollConfig(poll), "poll", page, now)
+	parsed, err := preview.BuildCandidates(animePollConfig(poll), "poll", page, now)
 	if err != nil {
 		return stats, fmt.Errorf("%w: interpret anime RSS: %w", ErrAnimeInvalid, err)
 	}
@@ -206,7 +206,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if err != nil {
 		return stats, err
 	}
-	candidates := make([]animepreview.Item, 0, len(releases))
+	candidates := make([]preview.Item, 0, len(releases))
 	newMatch := false
 	generations := make(map[string]int64, len(releases))
 	for i, r := range releases {
@@ -230,7 +230,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		// cached until the source rules or parsing engine changes.
 		if found && (old.Disposition == "dismissed" || old.SourceRevision == poll.Source.Revision && (old.Snapshot.Selection != nil ||
 			old.Disposition != "seen" && old.Snapshot.ParserVersion == r.ParserVersion &&
-				old.Snapshot.TimeVersion == r.TimeVersion && old.Snapshot.RuleVersion == animepreview.RuleVersion)) {
+				old.Snapshot.TimeVersion == r.TimeVersion && old.Snapshot.RuleVersion == preview.RuleVersion)) {
 			continue
 		}
 		committed, err := animeReleaseCommittedTx(ctx, tx, poll.Source.ID, r.ID)
@@ -251,7 +251,7 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		if disposition == "matched" {
 			disposition = "selected"
 		}
-		if disposition == "selected" && frozen[animepreview.EpisodeEdition(r.Parse)] {
+		if disposition == "selected" && frozen[preview.EpisodeEdition(r.Parse)] {
 			// A changed configuration may reauthorize this exact unsubmitted
 			// release, but never replace its already chosen revision.
 			pending, err := animeReleasePendingJobTx(ctx, tx, poll.Source.ID, r.ID)
@@ -269,11 +269,11 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	}
 	// Only eligible, unprocessed candidates compete. A filtered higher version
 	// cannot hide an otherwise eligible lower version.
-	animepreview.PreferCurrentVersions(candidates)
+	preview.PreferCurrentVersions(candidates)
 	for _, item := range candidates {
 		r, disposition, reason := item.Release, item.Decision, item.ReasonCode
 		generation := generations[r.ID]
-		snapshot := model.AnimeDecisionSnapshot{SchemaVersion: model.AnimeSchemaVersion, Title: r.Title, Binding: poll.Source.Binding, Rules: poll.Source.Rules, Parse: r.Parse, RuleVersion: animepreview.RuleVersion, ParserVersion: r.ParserVersion, TimeVersion: r.TimeVersion}
+		snapshot := model.AnimeDecisionSnapshot{SchemaVersion: model.AnimeSchemaVersion, Title: r.Title, Binding: poll.Source.Binding, Rules: poll.Source.Rules, Parse: r.Parse, RuleVersion: preview.RuleVersion, ParserVersion: r.ParserVersion, TimeVersion: r.TimeVersion}
 		observation, err := animeJSON(item.Observation)
 		if err != nil {
 			return stats, err

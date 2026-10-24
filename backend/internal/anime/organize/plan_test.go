@@ -1,4 +1,4 @@
-package animeorganize
+package organize
 
 import (
 	"fmt"

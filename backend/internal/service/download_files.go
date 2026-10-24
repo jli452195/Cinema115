@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/utils/torrentmeta"
@@ -54,7 +54,7 @@ type DownloadResources struct {
 	mikan *animeSiteCache
 }
 
-func NewDownloadResources(g *GardenService, m *MikanService, reader animeresource.TorrentReader) *DownloadResources {
+func NewDownloadResources(g *GardenService, m *MikanService, reader btresource.TorrentReader) *DownloadResources {
 	return &DownloadResources{Garden: g, mikan: newAnimeSiteCache(mikanTorrentTransport{site: m, reader: reader}, "mikan")}
 }
 
@@ -63,7 +63,7 @@ func (s *DownloadResources) Files(ctx context.Context, in DownloadResourceInput)
 		return s.Garden.Files(ctx, in)
 	}
 	if in.Source == "gying" {
-		hash, err := animeresource.MagnetHash(in.Magnet)
+		hash, err := btresource.MagnetHash(in.Magnet)
 		if err != nil || in.TorrentURL != "" || s.Gying == nil {
 			return DownloadFiles{}, ErrOrganizeInput
 		}
@@ -76,11 +76,11 @@ func (s *DownloadResources) Files(ctx context.Context, in DownloadResourceInput)
 	if in.Source != "mikan" || in.Provider != "" {
 		return DownloadFiles{}, ErrOrganizeInput
 	}
-	endpoint, err := animeresource.TorrentURL("mikan", in.ProviderID, in.TorrentURL)
+	endpoint, err := btresource.TorrentURL("mikan", in.ProviderID, in.TorrentURL)
 	if err != nil {
 		return DownloadFiles{}, fmt.Errorf("%w：蜜柑种子地址无效", ErrOrganizeInput)
 	}
-	hash, err := animeresource.MagnetHash(in.Magnet)
+	hash, err := btresource.MagnetHash(in.Magnet)
 	if err != nil {
 		return DownloadFiles{}, fmt.Errorf("%w：磁力身份无效", ErrOrganizeInput)
 	}
@@ -125,7 +125,7 @@ func downloadTorrentFiles(body []byte, hash string) (DownloadFiles, error) {
 
 type mikanTorrentTransport struct {
 	site   *MikanService
-	reader animeresource.TorrentReader
+	reader btresource.TorrentReader
 }
 
 func (t mikanTorrentTransport) Fetch(ctx context.Context, endpoint string, _ int64) (body []byte, err error) {

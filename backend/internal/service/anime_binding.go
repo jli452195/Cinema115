@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"strm115/backend/internal/animebinding"
+	"strm115/backend/internal/anime/binding"
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
@@ -226,21 +226,21 @@ type AnimeVerifiedSource struct {
 }
 
 type AnimeBindingCheck struct {
-	Entry        model.AnimeEntry          `json:"entry"`
-	BangumiMeta  *bangumi.CacheMeta        `json:"bangumiMeta"`
-	Source       AnimeVerifiedSource       `json:"source"`
-	Binding      model.AnimeBinding        `json:"binding"`
-	Ready        bool                      `json:"ready"`
-	Issues       []string                  `json:"issues"`
-	Notes        []string                  `json:"notes"`
-	RangePreview []animebinding.Projection `json:"rangePreview"`
+	Entry        model.AnimeEntry     `json:"entry"`
+	BangumiMeta  *bangumi.CacheMeta   `json:"bangumiMeta"`
+	Source       AnimeVerifiedSource  `json:"source"`
+	Binding      model.AnimeBinding   `json:"binding"`
+	Ready        bool                 `json:"ready"`
+	Issues       []string             `json:"issues"`
+	Notes        []string             `json:"notes"`
+	RangePreview []binding.Projection `json:"rangePreview"`
 }
 
 // CheckBinding verifies actual item/group membership and explicit scope. It
 // intentionally needs no RSS success, download directory, or TMDB metadata.
 // The returned confirmation is input restoration, not an activation token.
 func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSourceBudget, in AnimeBindingInput) (AnimeBindingCheck, error) {
-	out := AnimeBindingCheck{Issues: []string{}, Notes: []string{}, RangePreview: []animebinding.Projection{}}
+	out := AnimeBindingCheck{Issues: []string{}, Notes: []string{}, RangePreview: []binding.Projection{}}
 	if budget == nil || !in.Source.Valid() || in.Entry.validate() != nil {
 		return out, ErrAnimeBindingInput
 	}
@@ -321,7 +321,7 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 			if len(out.RangePreview) > 0 && *out.RangePreview[0].SourceEpisode == n {
 				continue
 			}
-			projection, err := animebinding.Project(out.Binding, model.AnimeReleaseParse{SchemaVersion: model.AnimeSchemaVersion, Kind: "episode", Episode: &n})
+			projection, err := binding.Project(out.Binding, model.AnimeReleaseParse{SchemaVersion: model.AnimeSchemaVersion, Kind: "episode", Episode: &n})
 			if err != nil {
 				return out, fmt.Errorf("project anime source range: %w", err)
 			}
@@ -336,7 +336,7 @@ type AnimeBindingRelease struct {
 	Title         string                  `json:"title"`
 	Parse         model.AnimeReleaseParse `json:"parse"`
 	ParserVersion int64                   `json:"parserVersion"`
-	Projection    animebinding.Projection `json:"projection"`
+	Projection    binding.Projection      `json:"projection"`
 	SpecKey       string                  `json:"specKey"`
 	SizeRaw       string                  `json:"sizeRaw"`
 	PublishedRaw  string                  `json:"publishedRaw"`
@@ -387,7 +387,7 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 		if err != nil {
 			return out, fmt.Errorf("parse anime binding example: %w", err)
 		}
-		projection, err := animebinding.Project(check.Binding, parsed)
+		projection, err := binding.Project(check.Binding, parsed)
 		if err != nil {
 			return out, fmt.Errorf("project anime binding example: %w", err)
 		}

@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
@@ -74,11 +74,11 @@ func animeError(c *gin.Context, err error) {
 		status, code, message = 409, "ACCOUNT_SNAPSHOT_CHANGED", "主账号已变化，请重新核对目录"
 	case errors.Is(err, storage.ErrAnimeSettingsChanged):
 		status, code, message = 409, "DIRECTORY_BINDING_CHANGED", "功能目录配置已变化，请重新读取配置"
-	case errors.Is(err, storage.ErrAnimeConflict), errors.Is(err, animepreview.ErrConflict):
+	case errors.Is(err, storage.ErrAnimeConflict), errors.Is(err, preview.ErrConflict):
 		status, code, message = 409, "REVISION_CONFLICT", "配置版本已变化，请保留输入并读取新版本"
-	case errors.Is(err, animepreview.ErrExpired):
+	case errors.Is(err, preview.ErrExpired):
 		status, code, message = 409, "PREVIEW_EXPIRED", "预览已过期，请重新生成，已选输入保留"
-	case errors.Is(err, animepreview.ErrReview):
+	case errors.Is(err, preview.ErrReview):
 		status, code, message = 409, "PREVIEW_CHANGED", "预览选择需要重新核对"
 	case errors.As(err, &exists):
 		status, code, message = 409, "SUBSCRIPTION_EXISTS", "该篇章已有订阅配置"
@@ -90,7 +90,7 @@ func animeError(c *gin.Context, err error) {
 		}
 	case errors.Is(err, storage.ErrAnimeExists):
 		status, code, message = 409, "SOURCE_EXISTS", "配置存在重复来源"
-	case errors.Is(err, storage.ErrAnimeIdentity), errors.Is(err, storage.ErrAnimeInvalid), errors.Is(err, animepreview.ErrInput), errors.Is(err, service.ErrAnimeBindingInput), errors.Is(err, bangumi.ErrInput), errors.Is(err, mikan.ErrInput):
+	case errors.Is(err, storage.ErrAnimeIdentity), errors.Is(err, storage.ErrAnimeInvalid), errors.Is(err, preview.ErrInput), errors.Is(err, service.ErrAnimeBindingInput), errors.Is(err, bangumi.ErrInput), errors.Is(err, mikan.ErrInput):
 		status, code, message = 400, "INVALID_INPUT", "参数格式或取值不正确"
 	case errors.Is(err, sql.ErrNoRows):
 		status, code, message = 404, "NOT_FOUND", "本地配置或预览不存在"

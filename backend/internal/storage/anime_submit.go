@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 )
 
@@ -147,7 +147,7 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 			continue
 		}
 		release.Parse = snap.Release.Parse
-		match, err := animepreview.MatchesRelease(source.Binding, source.Rules, release)
+		match, err := preview.MatchesRelease(source.Binding, source.Rules, release)
 		if err != nil {
 			return err
 		}

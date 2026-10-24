@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"strm115/backend/internal/animeorganize"
+	"strm115/backend/internal/anime/organize"
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
@@ -55,7 +55,7 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	for i, file := range in.Items[:3] {
 		projection := plan.Project("main", file.Parse)
 		realName := file.Title + ".MKV"
-		result, err := animeorganize.Render(renderer, target, projection, realName, false, mediafacts.Values(realName, model.AnimeSpec{}, in.Group))
+		result, err := organize.Render(renderer, target, projection, realName, false, mediafacts.Values(realName, model.AnimeSpec{}, in.Group))
 		if err != nil || result.Stem != preview.Items[i].Result.Stem || result.Extension != ".mkv" {
 			t.Fatalf("preview differs from file: %+v %v", result, err)
 		}

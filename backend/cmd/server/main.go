@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/bot"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/garden"
@@ -251,7 +251,7 @@ func main() {
 	manualOrganize := service.NewManualOrganize(organizeEngine)
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
-	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &animeresource.HTTPReader{})
+	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
 	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/storage"
@@ -115,7 +115,7 @@ func TestAnimeMissingSubjectReleasePreview(t *testing.T) {
 	s, source, _, config, _ := previewService(t)
 	s.Bindings.Subjects.(*bindingSubjectsFake).err = bangumi.ErrNotFound
 	source.read = missingSubjectSource(source.read)
-	config.Chapter = animepreview.Chapter{BangumiID: bindingPtr("583313"), EditionKey: "original", DraftKey: strings.Repeat("a", 32)}
+	config.Chapter = preview.Chapter{BangumiID: bindingPtr("583313"), EditionKey: "original", DraftKey: strings.Repeat("a", 32)}
 	result, err := s.Generate(context.Background(), "admin", AnimePreviewInput{Config: config, SourceRef: "main"})
 	if err != nil || result.Batch == nil || len(result.Sources) != 1 || result.Sources[0].MatchedCount != 2 || source.reads != 2 || result.Batch.Config.Chapter.BangumiID == nil || *result.Batch.Config.Chapter.BangumiID != "583313" {
 		t.Fatalf("missing subject blocked preview or added requests: %+v %v (%d reads)", result, err, source.reads)

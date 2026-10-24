@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"strm115/backend/internal/animeorganize"
+	"strm115/backend/internal/anime/organize"
 	"strm115/backend/internal/model"
 )
 
@@ -68,7 +68,7 @@ func (s *Store) PrepareAnimeOrganization(ctx context.Context, expected model.Ani
 	if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err != nil {
 		return empty, err
 	}
-	plan, err := animeorganize.Build(job)
+	plan, err := organize.Build(job)
 	if err != nil {
 		return empty, err
 	}

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 )
 
@@ -236,7 +236,7 @@ func TestAnimeDiscoveryFrozenChoicesAndPersistentVerification(t *testing.T) {
 	if err != nil || !found || !reflect.DeepEqual(newWork.Observation, work.Observation) || newWork.Decision.Generation <= work.Decision.Generation {
 		t.Fatal("pending work lost", newWork, found, err)
 	}
-	v, err := animeresource.Verify(context.Background(), "garden", newWork.Observation, nil)
+	v, err := btresource.Verify(context.Background(), "garden", newWork.Observation, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestAnimeDiscoveryCommittedClaimReceiptRecovery(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal(found, err)
 	}
-	v, err := animeresource.Verify(context.Background(), "garden", work.Observation, nil)
+	v, err := btresource.Verify(context.Background(), "garden", work.Observation, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 )
@@ -96,7 +96,7 @@ func TestAnimeDiscoveryIneligibleHigherVersionCannotHideEligibleBase(t *testing.
 				higher.Title += " unwanted"
 				poll.Source.Rules.Exclude = []string{"unwanted"}
 			case "already_dismissed":
-				preview, err := animepreview.Build(animePollConfig(poll), "poll", discoveryPage(poll, now, higher), now)
+				preview, err := preview.Build(animePollConfig(poll), "poll", discoveryPage(poll, now, higher), now)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
@@ -33,36 +33,36 @@ func validAnimeActor(actor string) bool {
 	return strings.TrimSpace(actor) == actor && actor != "" && len(actor) <= 256
 }
 
-func validateAnimePreviewConfigTx(ctx context.Context, tx *sql.Tx, c animepreview.Config) error {
+func validateAnimePreviewConfigTx(ctx context.Context, tx *sql.Tx, c preview.Config) error {
 	var settings model.AnimeSettings
 	if err := tx.QueryRowContext(ctx, `SELECT revision,account_id,account_revision,uid,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&settings.Revision, &settings.AccountID, &settings.AccountRevision, &settings.UID, &settings.DownloadCID, &settings.DownloadPath, &settings.OrganizeCID, &settings.OrganizePath); err != nil {
 		return fmt.Errorf("read preview settings: %w", err)
 	}
 	if !reflect.DeepEqual(settings, c.Settings) {
-		return animepreview.ErrConflict
+		return preview.ErrConflict
 	}
 	if c.Chapter.ID != "" {
 		entry, err := scanAnimeEntry(tx.QueryRowContext(ctx, `SELECT `+animeEntryColumns+` FROM anime_entries WHERE id=?`, c.Chapter.ID))
 		if errors.Is(err, sql.ErrNoRows) {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 		if err != nil {
 			return fmt.Errorf("read preview chapter: %w", err)
 		}
 		if entry.Revision != c.Chapter.Revision || entry.EditionKey != c.Chapter.EditionKey || !sameAnimeString(entry.BangumiID, c.Chapter.BangumiID) {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 	}
 	if c.SubscriptionID != "" {
 		sub, err := scanAnimeSubscription(tx.QueryRowContext(ctx, `SELECT `+animeSubscriptionColumns+` FROM anime_subscriptions WHERE id=?`, c.SubscriptionID))
 		if errors.Is(err, sql.ErrNoRows) {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 		if err != nil {
 			return fmt.Errorf("read preview subscription: %w", err)
 		}
 		if sub.Revision != c.Revision || sub.EntryID != c.Chapter.ID || sub.Status == "removed" {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 	}
 	for _, config := range c.Sources {
@@ -71,14 +71,14 @@ func validateAnimePreviewConfigTx(ctx context.Context, tx *sql.Tx, c animeprevie
 		}
 		source, err := scanAnimeSource(tx.QueryRowContext(ctx, `SELECT `+animeSourceColumns+` FROM anime_subscription_sources WHERE id=?`, config.ID))
 		if errors.Is(err, sql.ErrNoRows) {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 		if err != nil {
 			return fmt.Errorf("read preview source: %w", err)
 		}
 		if source.SubscriptionID != c.SubscriptionID || source.Revision != config.ExpectedRevision || source.Status == "removed" ||
 			!source.AcceptsIdentity(config.Provider, config.ItemID, config.GroupID) {
-			return animepreview.ErrConflict
+			return preview.ErrConflict
 		}
 	}
 	return nil
@@ -86,7 +86,7 @@ func validateAnimePreviewConfigTx(ctx context.Context, tx *sql.Tx, c animeprevie
 
 // CheckAnimePreviewConfig performs local version checks before upstream I/O;
 // every mutation repeats them inside its final transaction.
-func (s *Store) CheckAnimePreviewConfig(ctx context.Context, c animepreview.Config) error {
+func (s *Store) CheckAnimePreviewConfig(ctx context.Context, c preview.Config) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return fmt.Errorf("begin preview checks: %w", err)
@@ -98,8 +98,8 @@ func (s *Store) CheckAnimePreviewConfig(ctx context.Context, c animepreview.Conf
 	return tx.Commit()
 }
 
-func readAnimePreviewTx(ctx context.Context, tx *sql.Tx, actor, id string) (animepreview.Batch, error) {
-	var b animepreview.Batch
+func readAnimePreviewTx(ctx context.Context, tx *sql.Tx, actor, id string) (preview.Batch, error) {
+	var b preview.Batch
 	var raw string
 	err := tx.QueryRowContext(ctx, `SELECT id,actor_key,config_fingerprint,created_at,snapshot_json FROM anime_preview_batches WHERE id=? AND actor_key=?`, id, actor).Scan(&b.ID, &b.Actor, &b.Fingerprint, &b.CreatedAt, &raw)
 	if err != nil {
@@ -112,9 +112,9 @@ func readAnimePreviewTx(ctx context.Context, tx *sql.Tx, actor, id string) (anim
 	if err != nil {
 		return b, fmt.Errorf("read preview sources: %w", err)
 	}
-	b.Sources = make([]animepreview.Source, 0, model.AnimeMaxSources)
+	b.Sources = make([]preview.Source, 0, model.AnimeMaxSources)
 	for rows.Next() {
-		var source animepreview.Source
+		var source preview.Source
 		if err := rows.Scan(&raw); err != nil {
 			rows.Close()
 			return b, err
@@ -138,9 +138,9 @@ func readAnimePreviewTx(ctx context.Context, tx *sql.Tx, actor, id string) (anim
 		if err != nil {
 			return b, fmt.Errorf("read preview items: %w", err)
 		}
-		source.Items = make([]animepreview.Item, 0, len(source.Page.Releases))
+		source.Items = make([]preview.Item, 0, len(source.Page.Releases))
 		for items.Next() {
-			var item animepreview.Item
+			var item preview.Item
 			if err := items.Scan(&raw); err != nil {
 				items.Close()
 				return b, err
@@ -163,13 +163,13 @@ func readAnimePreviewTx(ctx context.Context, tx *sql.Tx, actor, id string) (anim
 	return b, nil
 }
 
-func (s *Store) GetAnimePreview(ctx context.Context, actor, id string) (animepreview.Batch, error) {
+func (s *Store) GetAnimePreview(ctx context.Context, actor, id string) (preview.Batch, error) {
 	if !validAnimeActor(actor) || !model.ValidAnimeID(id) {
-		return animepreview.Batch{}, animepreview.ErrInput
+		return preview.Batch{}, preview.ErrInput
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return animepreview.Batch{}, fmt.Errorf("begin read preview: %w", err)
+		return preview.Batch{}, fmt.Errorf("begin read preview: %w", err)
 	}
 	defer tx.Rollback()
 	b, err := readAnimePreviewTx(ctx, tx, actor, id)
@@ -182,22 +182,22 @@ func (s *Store) GetAnimePreview(ctx context.Context, actor, id string) (animepre
 	return b, nil
 }
 
-func previewReferencedSource(b animepreview.Batch, ref AnimePreviewRef) (animepreview.Source, error) {
+func previewReferencedSource(b preview.Batch, ref AnimePreviewRef) (preview.Source, error) {
 	if b.ID != ref.BatchID {
-		return animepreview.Source{}, animepreview.ErrInput
+		return preview.Source{}, preview.ErrInput
 	}
 	for _, source := range b.Sources {
 		if source.Ref == ref.SourceRef && source.ID == ref.PreviewID {
 			if source.LoadRevision != ref.LoadRevision {
-				return source, animepreview.ErrConflict
+				return source, preview.ErrConflict
 			}
 			return source, nil
 		}
 	}
-	return animepreview.Source{}, animepreview.ErrInput
+	return preview.Source{}, preview.ErrInput
 }
 
-func attachAnimePreviewIDsTx(ctx context.Context, tx *sql.Tx, source *animepreview.Source) error {
+func attachAnimePreviewIDsTx(ctx context.Context, tx *sql.Tx, source *preview.Source) error {
 	releases := make([]model.AnimeRelease, len(source.Items))
 	for i, item := range source.Items {
 		releases[i] = item.Release
@@ -215,7 +215,7 @@ func attachAnimePreviewIDsTx(ctx context.Context, tx *sql.Tx, source *animeprevi
 	return nil
 }
 
-func writeAnimePreviewSourceTx(ctx context.Context, tx *sql.Tx, batchID string, source animepreview.Source, insert bool) error {
+func writeAnimePreviewSourceTx(ctx context.Context, tx *sql.Tx, batchID string, source preview.Source, insert bool) error {
 	snapshot := source
 	snapshot.Items = nil
 	raw, err := animeJSON(snapshot)
@@ -253,12 +253,12 @@ func writeAnimePreviewSourceTx(ctx context.Context, tx *sql.Tx, batchID string, 
 	return nil
 }
 
-func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepreview.Config, seeds []AnimePreviewSeed, now int64) (animepreview.Batch, error) {
-	var b animepreview.Batch
+func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c preview.Config, seeds []AnimePreviewSeed, now int64) (preview.Batch, error) {
+	var b preview.Batch
 	if !validAnimeActor(actor) || now <= 0 || len(seeds) < 1 || len(seeds) > model.AnimeMaxSources {
-		return b, animepreview.ErrInput
+		return b, preview.ErrInput
 	}
-	c, err := animepreview.Normalize(c)
+	c, err := preview.Normalize(c)
 	if err != nil {
 		return b, err
 	}
@@ -270,36 +270,36 @@ func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepre
 	if err := validateAnimePreviewConfigTx(ctx, tx, c); err != nil {
 		return b, err
 	}
-	b = animepreview.Batch{Actor: actor, Config: c, CreatedAt: now, Sources: make([]animepreview.Source, 0, len(seeds))}
+	b = preview.Batch{Actor: actor, Config: c, CreatedAt: now, Sources: make([]preview.Source, 0, len(seeds))}
 	b.ID, err = newAnimeID()
 	if err != nil {
 		return b, err
 	}
-	b.Fingerprint, err = animepreview.ConfigFingerprint(c)
+	b.Fingerprint, err = preview.ConfigFingerprint(c)
 	if err != nil {
 		return b, err
 	}
 	seen := make(map[string]bool, len(seeds))
 	for _, seed := range seeds {
 		if seen[seed.SourceRef] {
-			return b, animepreview.ErrInput
+			return b, preview.ErrInput
 		}
 		seen[seed.SourceRef] = true
-		var old, source animepreview.Source
+		var old, source preview.Source
 		if seed.Previous != nil {
 			previous, err := readAnimePreviewTx(ctx, tx, actor, seed.Previous.BatchID)
 			if err != nil {
 				return b, err
 			}
-			if !animepreview.SameScope(c, previous.Config) {
-				return b, animepreview.ErrInput
+			if !preview.SameScope(c, previous.Config) {
+				return b, preview.ErrInput
 			}
 			old, err = previewReferencedSource(previous, *seed.Previous)
 			if err != nil {
 				return b, err
 			}
 			if old.Ref != seed.SourceRef {
-				return b, animepreview.ErrInput
+				return b, preview.ErrInput
 			}
 			// A different feed is a new source, never an inherited T0/choice.
 			var feed mikan.Source
@@ -309,26 +309,26 @@ func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepre
 				}
 			}
 			if old.Page.Source != feed {
-				return b, animepreview.ErrInput
+				return b, preview.ErrInput
 			}
 		}
 		if seed.Page == nil {
 			if seed.Previous == nil {
-				return b, animepreview.ErrInput
+				return b, preview.ErrInput
 			}
-			fp, err := animepreview.SourceFingerprint(c, seed.SourceRef)
+			fp, err := preview.SourceFingerprint(c, seed.SourceRef)
 			if err != nil {
 				return b, err
 			}
 			if fp != old.Fingerprint {
-				return b, animepreview.ErrConflict
+				return b, preview.ErrConflict
 			}
 			if !old.ValidAt(now) {
-				return b, animepreview.ErrExpired
+				return b, preview.ErrExpired
 			}
 			source = old // Preserve absolute expiry, observedAt, T0 and selections.
 		} else {
-			source, err = animepreview.Build(c, seed.SourceRef, *seed.Page, now)
+			source, err = preview.Build(c, seed.SourceRef, *seed.Page, now)
 			if err != nil {
 				return b, err
 			}
@@ -374,10 +374,10 @@ func (s *Store) CreateAnimePreview(ctx context.Context, actor string, c animepre
 }
 
 // SelectAnimePreview owns the selection CAS transaction across admin windows.
-func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, selected, dismissed []string, now int64) (animepreview.Batch, error) {
-	var b animepreview.Batch
+func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimePreviewRef, selected, dismissed []string, now int64) (preview.Batch, error) {
+	var b preview.Batch
 	if !validAnimeActor(actor) || !model.ValidAnimeID(ref.BatchID) || ref.LoadRevision < 1 || now <= 0 {
-		return b, animepreview.ErrInput
+		return b, preview.ErrInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -393,17 +393,17 @@ func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimeP
 		return b, err
 	}
 	if !old.ValidAt(now) {
-		return b, animepreview.ErrExpired
+		return b, preview.ErrExpired
 	}
-	fp, err := animepreview.SourceFingerprint(b.Config, old.Ref)
+	fp, err := preview.SourceFingerprint(b.Config, old.Ref)
 	if err != nil {
 		return b, err
 	}
 	if old.Fingerprint != fp {
-		return b, animepreview.ErrConflict
+		return b, preview.ErrConflict
 	}
 	if old.LoadRevision >= model.AnimeMaxRevision {
-		return b, animepreview.ErrConflict
+		return b, preview.ErrConflict
 	}
 	if err := validateAnimePreviewConfigTx(ctx, tx, b.Config); err != nil {
 		return b, err
@@ -426,7 +426,7 @@ func (s *Store) SelectAnimePreview(ctx context.Context, actor string, ref AnimeP
 		return b, fmt.Errorf("compare preview revision: %w", err)
 	}
 	if err := animeChanged(result); err != nil {
-		return b, animepreview.ErrConflict
+		return b, preview.ErrConflict
 	}
 	if err := writeAnimePreviewSourceTx(ctx, tx, b.ID, source, false); err != nil {
 		return b, err

@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/gying"
 )
 
 func gyingOrganizeFixture(t *testing.T, body []byte, source DownloadResourceInput) (*GyingService, DownloadResourceInput, *atomic.Int32) {
 	t.Helper()
-	hash, _ := animeresource.MagnetHash(source.Magnet)
+	hash, _ := btresource.MagnetHash(source.Magnet)
 	source.Source, source.Provider, source.ProviderID, source.TorrentURL = "gying", "tv", "Show", ""
 	reads := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func gyingOrganizeFixture(t *testing.T, body []byte, source DownloadResourceInpu
 func TestGyingTorrentCacheConcurrentIdentityAndConfiguration(t *testing.T) {
 	body, source := mikanOrganizeTorrent(t)
 	s, source, reads := gyingOrganizeFixture(t, body, source)
-	hash, _ := animeresource.MagnetHash(source.Magnet)
+	hash, _ := btresource.MagnetHash(source.Magnet)
 	var workers sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		workers.Add(1)
@@ -84,7 +84,7 @@ func TestGyingTorrentCacheConcurrentIdentityAndConfiguration(t *testing.T) {
 
 func TestGyingTorrentInvalidResponsesDoNotPoisonCache(t *testing.T) {
 	valid, source := mikanOrganizeTorrent(t)
-	hash, _ := animeresource.MagnetHash(source.Magnet)
+	hash, _ := btresource.MagnetHash(source.Magnet)
 	for _, body := range [][]byte{[]byte("<html>expired</html>"), valid} {
 		s, _, _ := gyingOrganizeFixture(t, body, source)
 		expected := hash

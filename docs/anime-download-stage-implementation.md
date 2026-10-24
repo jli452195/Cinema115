@@ -92,7 +92,7 @@ POST /api/admin/anime/subscriptions/:id/enable-preview
 
 ```text
 go test ./internal/storage ./internal/service ./internal/httpapi -run '^TestAnime(Activation|JobAction|DownloadStage|DownloadHTTP)' -count=5
-go test ./internal/storage ./internal/service ./internal/httpapi ./internal/animeparse ./internal/animepreview ./internal/animeresource ./internal/animebinding ./internal/client/p115 ./internal/client/mikan ./internal/client/animefeed ./internal/client/anibt ./internal/client/garden
+go test ./internal/storage ./internal/service ./internal/httpapi ./internal/animeparse ./internal/anime/preview ./internal/btresource ./internal/anime/binding ./internal/client/p115 ./internal/client/mikan ./internal/client/animefeed ./internal/client/anibt ./internal/client/garden
 go vet <同上12包>
 go build ./...
 npm run test:anime-subscription-ui           # 28组

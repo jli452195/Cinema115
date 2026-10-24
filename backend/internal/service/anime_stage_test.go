@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -84,8 +84,8 @@ func TestAnimeStageMixedProvidersSaveAndRestart(t *testing.T) {
 		}
 		in.Config.Naming.Sources = append(in.Config.Naming.Sources, model.AnimeSourceMapping{SourceRef: spec.ref, Segments: []model.AnimeMappingSegment{{First: spec.minimum, SourceBase: spec.minimum, TargetSeason: 2, TargetBase: 1}}})
 	}
-	c := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
-	var batch animepreview.Batch
+	c := preview.Config{Chapter: preview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
+	var batch preview.Batch
 	refs := make([]storage.AnimePreviewRef, 0, 3)
 	for _, source := range in.Config.Sources {
 		out, err := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: c, SourceRef: source.Ref, Reuse: refs})

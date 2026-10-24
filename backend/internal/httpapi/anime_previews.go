@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
@@ -13,10 +13,10 @@ type animePreviewView struct {
 	SelectionNotice string                      `json:"selectionNotice,omitempty"`
 	BatchID         string                      `json:"batchId"`
 	Fingerprint     string                      `json:"fingerprint"`
-	Budget          animepreview.Budget         `json:"budget"`
-	Sources         []animepreview.Summary      `json:"sources"`
+	Budget          preview.Budget              `json:"budget"`
+	Sources         []preview.Summary           `json:"sources"`
 	Issues          []service.AnimePreviewIssue `json:"issues"`
-	Page            *animepreview.Page          `json:"page,omitempty"`
+	Page            *preview.Page               `json:"page,omitempty"`
 	DataVersion     string                      `json:"dataVersion"`
 }
 
@@ -40,7 +40,7 @@ func animePreviewResponse(c *gin.Context, s *service.AnimeAdminService, v servic
 			}
 		}
 	}
-	version, err := animepreview.Digest(out)
+	version, err := preview.Digest(out)
 	if err != nil {
 		animeError(c, err)
 		return
@@ -96,13 +96,13 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 				}
 			}
 		}
-		version, err := animepreview.Digest(v)
+		version, err := preview.Digest(v)
 		if err != nil {
 			animeError(c, err)
 			return
 		}
 		c.JSON(200, struct {
-			animepreview.Page
+			preview.Page
 			DataVersion string `json:"dataVersion"`
 		}{v, version})
 	})
@@ -131,7 +131,7 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, err)
 			return
 		}
-		v := service.AnimePreviewResult{Batch: &b, Budget: b.Budget(), Sources: []animepreview.Summary{}, Issues: []service.AnimePreviewIssue{}}
+		v := service.AnimePreviewResult{Batch: &b, Budget: b.Budget(), Sources: []preview.Summary{}, Issues: []service.AnimePreviewIssue{}}
 		for _, source := range b.Sources {
 			v.Sources = append(v.Sources, source.Summary(time.Now().UTC().UnixMilli()))
 		}
@@ -139,7 +139,7 @@ func registerAnimePreviews(r *gin.RouterGroup, s *service.AnimeAdminService) {
 	})
 }
 
-func decorateAnimePreview(c *gin.Context, s *service.AnimeAdminService, sourceID string, page *animepreview.Page) error {
+func decorateAnimePreview(c *gin.Context, s *service.AnimeAdminService, sourceID string, page *preview.Page) error {
 	ids := make([]string, 0, len(page.Items))
 	for _, item := range page.Items {
 		ids = append(ids, item.Release.ID)

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"strm115/backend/internal/animeorganize"
+	"strm115/backend/internal/anime/organize"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
@@ -70,7 +70,7 @@ func PreviewAnimeNaming(ctx context.Context, templates NamingTemplates, in Anime
 		projection := plan.Project(in.Mapping.SourceRef, item.Parse)
 		row := AnimeNamingPreviewItem{ID: item.ID, AnimeNamingProjection: projection}
 		if projection.Status == "mapped" {
-			result, err := animeorganize.Render(renderer, in.Target, projection, item.Title, true, mediafacts.Values(item.Title, model.AnimeSpec{}, in.Group))
+			result, err := organize.Render(renderer, in.Target, projection, item.Title, true, mediafacts.Values(item.Title, model.AnimeSpec{}, in.Group))
 			if err != nil {
 				row.Error = err.Error()
 			} else {

@@ -1,4 +1,4 @@
-package animebinding
+package binding
 
 import (
 	"testing"

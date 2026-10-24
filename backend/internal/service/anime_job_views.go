@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -116,7 +116,7 @@ func (s *AnimeAdminService) JobPageView(ctx context.Context, id string, page, si
 		}
 		out.Items = append(out.Items, v)
 	}
-	out.DataVersion, err = animepreview.Digest(out)
+	out.DataVersion, err = preview.Digest(out)
 	return out, err
 }
 func (s *AnimeAdminService) JobView(ctx context.Context, id string) (AnimeJobView, error) {

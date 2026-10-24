@@ -13,7 +13,7 @@
 
 ## 标准命名
 
-纯计算包 `internal/animeorganize` 只读取任务已保存的文件清单与快照，没有网络 I/O。
+纯计算包 `internal/anime/organize` 只读取任务已保存的文件清单与快照，没有网络 I/O。
 
 ```text
 整理目录2/

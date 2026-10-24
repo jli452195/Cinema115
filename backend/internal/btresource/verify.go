@@ -1,6 +1,6 @@
-// Package animeresource verifies BT v1 identities from server-observed releases.
+// Package btresource verifies BT v1 identities for subscriptions and resource downloads.
 // Post keys, torrent filenames, RSS GUIDs and file SHA1 are never info-hashes.
-package animeresource
+package btresource
 
 import (
 	"context"

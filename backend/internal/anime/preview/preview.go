@@ -1,4 +1,4 @@
-package animepreview
+package preview
 
 import (
 	"encoding/hex"
@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"strm115/backend/internal/animebinding"
+	"strm115/backend/internal/anime/binding"
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
@@ -28,16 +28,16 @@ type Step struct {
 }
 
 type Item struct {
-	Release                 model.AnimeRelease      `json:"release"`
-	Observation             mikan.SourceRelease     `json:"observation"`
-	Publication             animeparse.Publication  `json:"publication"`
-	Projection              animebinding.Projection `json:"projection"`
-	Steps                   []Step                  `json:"steps"`
-	Decision                string                  `json:"decision"`
-	ReasonCode              string                  `json:"reasonCode"`
-	Selectable              bool                    `json:"selectable"`
-	DefaultSelected         bool                    `json:"defaultSelected"`
-	ConfirmationFingerprint string                  `json:"confirmationFingerprint"`
+	Release                 model.AnimeRelease     `json:"release"`
+	Observation             mikan.SourceRelease    `json:"observation"`
+	Publication             animeparse.Publication `json:"publication"`
+	Projection              binding.Projection     `json:"projection"`
+	Steps                   []Step                 `json:"steps"`
+	Decision                string                 `json:"decision"`
+	ReasonCode              string                 `json:"reasonCode"`
+	Selectable              bool                   `json:"selectable"`
+	DefaultSelected         bool                   `json:"defaultSelected"`
+	ConfirmationFingerprint string                 `json:"confirmationFingerprint"`
 }
 
 // Pending retains the old choice even when the cumulative window loses it.
@@ -114,7 +114,7 @@ func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) er
 	return evaluateCompiled(binding, rules, compiled, item)
 }
 
-func evaluateCompiled(binding model.AnimeBinding, rules model.AnimeRules, compiled animeparse.SourceRules, item *Item) error {
+func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, compiled animeparse.SourceRules, item *Item) error {
 	item.Steps = []Step{{Stage: "source", Result: "passed"}}
 	stop := func(stage, result, code string) {
 		item.Steps = append(item.Steps, Step{stage, result, code})
@@ -126,7 +126,7 @@ func evaluateCompiled(binding model.AnimeBinding, rules model.AnimeRules, compil
 		return nil
 	}
 	pass("patterns")
-	p, err := animebinding.Project(binding, item.Release.Parse)
+	p, err := binding.Project(sourceBinding, item.Release.Parse)
 	if err != nil {
 		return err
 	}
@@ -297,7 +297,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 		item := &out.Items[i]
 		item.ConfirmationFingerprint, err = Digest(struct {
 			Source, Content string
-			Projection      animebinding.Projection
+			Projection      binding.Projection
 			Selectable      bool
 		}{fp, item.Release.ContentFingerprint, item.Projection, item.Selectable})
 		if err != nil {

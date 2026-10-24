@@ -1,6 +1,6 @@
 package model
 
-import "strm115/backend/internal/animeresource"
+import "strm115/backend/internal/btresource"
 
 // AnimeSelectionBasis records the background worker's execution authorization
 // against a fixed source generation and download target.
@@ -31,7 +31,7 @@ type AnimeDownloadSnapshot struct {
 	Protocol            string                     `json:"protocol"`
 	InfoHash            string                     `json:"infoHash"`
 	VerificationVersion int                        `json:"verificationVersion"`
-	Evidence            animeresource.Evidence     `json:"evidence"`
+	Evidence            btresource.Evidence        `json:"evidence"`
 	Source              AnimeDownloadSource        `json:"source"`
 	Release             AnimeRelease               `json:"release"`
 	Decision            AnimeDecisionSnapshot      `json:"decision"`

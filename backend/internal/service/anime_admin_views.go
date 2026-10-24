@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"strm115/backend/internal/animebinding"
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/binding"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -154,7 +154,7 @@ func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.Anim
 		v.ReleaseStats.DismissedCount += stats["dismissed"]
 		v.ReleaseStats.PendingVerificationCount += stats["pending_verification"]
 	}
-	v.DataVersion, err = animepreview.Digest(v)
+	v.DataVersion, err = preview.Digest(v)
 	return v, err
 }
 
@@ -216,15 +216,15 @@ func (s *AnimeAdminService) Subscriptions(ctx context.Context, f storage.AnimeSu
 		}
 		out.Items = append(out.Items, v)
 	}
-	out.DataVersion, err = animepreview.Digest(out)
+	out.DataVersion, err = preview.Digest(out)
 	return out, err
 }
 
 type AnimeReleaseView struct {
 	model.AnimeReleaseRecord
-	Numbering     animebinding.Projection `json:"numbering"`
-	IdentityState string                  `json:"identityState"`
-	Tasks         []string                `json:"tasks"`
+	Numbering     binding.Projection `json:"numbering"`
+	IdentityState string             `json:"identityState"`
+	Tasks         []string           `json:"tasks"`
 }
 type AnimeReleaseList struct {
 	Items       []AnimeReleaseView `json:"items"`
@@ -254,13 +254,13 @@ func (s *AnimeAdminService) Releases(ctx context.Context, id string, f storage.A
 	}
 	out := AnimeReleaseList{Items: make([]AnimeReleaseView, 0, len(p.Items)), Total: p.Total, Page: p.Page, PageSize: p.PageSize}
 	for _, record := range p.Items {
-		n, e := animebinding.Project(record.Decision.Snapshot.Binding, record.Decision.Snapshot.Parse)
+		n, e := binding.Project(record.Decision.Snapshot.Binding, record.Decision.Snapshot.Parse)
 		if e != nil {
 			return out, e
 		}
 		out.Items = append(out.Items, AnimeReleaseView{AnimeReleaseRecord: record, Numbering: n, IdentityState: "unverified", Tasks: []string{}})
 	}
-	out.DataVersion, err = animepreview.Digest(out)
+	out.DataVersion, err = preview.Digest(out)
 	return out, err
 }
 

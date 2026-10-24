@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/model"
@@ -126,7 +126,7 @@ func TestGardenProviderPreviewAndSave(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	config := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
+	config := preview.Config{Chapter: preview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: in.Config.Sources}
 	preview, e := s.Previews.Generate(ctx, "admin", AnimePreviewInput{Config: config, SourceRef: "main"})
 	if e != nil || preview.Batch == nil || len(preview.Batch.Sources) != 1 || len(preview.Batch.Sources[0].Items) != 2 || preview.Batch.Sources[0].Page.RequestedTake != 1000 {
 		t.Fatalf("stored Garden preview: %+v %v", preview, e)

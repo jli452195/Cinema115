@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
@@ -34,7 +34,7 @@ func newAnimeDefinitionService(t *testing.T) (*AnimeAdminService, *bindingMikanF
 		t.Fatal(err)
 	}
 	c.Settings = settings
-	c.Chapter = animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}
+	c.Chapter = preview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}
 	c.Sources[0].RunWhenEnabled = true
 	if _, err := s.Bindings.CheckBinding(context.Background(), animeMikanTestBudget(t, nil), AnimeBindingInput{Entry: AnimeEntryRef{ID: entry.ID}, Source: mikan.Source{ItemID: *c.Sources[0].ItemID, GroupID: *c.Sources[0].GroupID}, Binding: c.Sources[0].Binding}); err != nil {
 		t.Fatal(err)

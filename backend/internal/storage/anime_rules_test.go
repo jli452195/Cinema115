@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/model"
 )
 
@@ -26,7 +26,7 @@ func TestAnimeSourceCustomParseIsIndependentOfSharedPostCache(t *testing.T) {
 	}
 	row := discoveryRow("rel_shared_custom", now)
 	row.Title += " e=31"
-	verified, err := animeresource.Verify(ctx, "garden", row, nil)
+	verified, err := btresource.Verify(ctx, "garden", row, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestAnimeDiscoveryReevaluatesOldInterpretationsAndFreezesSelections(t *test
 		t.Fatal("old parser interpretation never reconsidered", stats, err)
 	}
 	d, err = f.store.GetAnimeReleaseDecision(ctx, poll.Source.ID, r.ID)
-	if err != nil || d.Snapshot.RuleVersion != animepreview.RuleVersion || d.Snapshot.ParserVersion != animeparse.ParserVersion || d.Snapshot.Parse.VersionLabel != "" {
+	if err != nil || d.Snapshot.RuleVersion != preview.RuleVersion || d.Snapshot.ParserVersion != animeparse.ParserVersion || d.Snapshot.Parse.VersionLabel != "" {
 		t.Fatal(d, err)
 	}
 	// Simulate a previously selected snapshot from an older engine. Upgrading

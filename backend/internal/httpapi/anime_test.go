@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
@@ -268,7 +268,7 @@ func TestAnimeHTTPDefinitionsValidateBeforeReads(t *testing.T) {
 
 func TestAnimeHTTPPreviewProjectionOwnershipAndSelectionCAS(t *testing.T) {
 	f := newAnimeHTTPFixture(t)
-	in := service.AnimePreviewInput{SourceRef: "main", Config: animepreview.Config{Chapter: animepreview.Chapter{BangumiID: animeHTTPPtr("123"), EditionKey: "original", DraftKey: "draft-one"}, Settings: model.AnimeSettings{Revision: 1}, Sources: []model.AnimeSourceConfig{animeHTTPSource()}}}
+	in := service.AnimePreviewInput{SourceRef: "main", Config: preview.Config{Chapter: preview.Chapter{BangumiID: animeHTTPPtr("123"), EditionKey: "original", DraftKey: "draft-one"}, Settings: model.AnimeSettings{Revision: 1}, Sources: []model.AnimeSourceConfig{animeHTTPSource()}}}
 	v := f.call(t, "POST", "/subscriptions/preview", f.admin, "", in, 200)
 	if _, ok := v["batch"]; ok {
 		t.Fatal("internal complete batch leaked")

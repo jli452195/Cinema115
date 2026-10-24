@@ -10,7 +10,7 @@
 
 ## 资源身份与请求边界
 
-[animeresource](../backend/internal/animeresource/verify.go) 使用白名单证据保存来源、原帖键、内容指纹、核验方法与种子正文 SHA-256，不存 Cookie、原始网页、任意请求头或带参数的下载 URL。
+[btresource](../backend/internal/btresource/verify.go) 使用白名单证据保存来源、原帖键、内容指纹、核验方法与种子正文 SHA-256，不存 Cookie、原始网页、任意请求头或带参数的下载 URL。
 
 | 来源 | 核验方式 |
 | --- | --- |
@@ -20,15 +20,15 @@
 
 Garden 的磁力提供来源声明的资源身份，不代表已下载种子或核实实际文件。蜜柑/AniBT 若同时带磁力，其 Hash 必须与种子相符；冲突保留待处理。纯 BT v2、混合 v2、ED2K 和其他协议不进入首版动漫下载。
 
-[元数据读取](../backend/internal/animeresource/http.go) 不接受任意主机、HTTP、端口、userinfo、查询参数或编码路径，不跟随重定向、不使用 CookieJar；最长 20 秒、正文最多 4 MiB。上游异常不回显原始请求或正文。
+[元数据读取](../backend/internal/btresource/http.go) 不接受任意主机、HTTP、端口、userinfo、查询参数或编码路径，不跟随重定向、不使用 CookieJar；最长 20 秒、正文最多 4 MiB。上游异常不回显原始请求或正文。
 
-[种子解析](../backend/internal/animeresource/torrent.go) 哈希原始 info 字节，不重新编码；拒绝重复/乱序键、非法整数、尾随内容、过深结构与过多节点，并核对 BT v1 文件长度、piece length 和 pieces 数量。深度上限 32，节点上限 32768；验证码 HTML 不能成为有效种子。
+[种子解析](../backend/internal/btresource/torrent.go) 哈希原始 info 字节，不重新编码；拒绝重复/乱序键、非法整数、尾随内容、过深结构与过多节点，并核对 BT v1 文件长度、piece length 和 pieces 数量。深度上限 32，节点上限 32768；验证码 HTML 不能成为有效种子。
 
 ### 2026-10-24：种子解析内核替换
 
 解析移至纯工具包 [torrentmeta](../backend/internal/utils/torrentmeta/torrent.go)，使用 `github.com/anacrolix/torrent/metainfo v1.56.1`，保持项目 Go 1.22 要求。`Parse([]byte)` 一次返回原始 info 的 InfoHash、根名称、单/多文件标记及有序文件清单；文件大小使用 `int64`，多文件路径相对根目录，单文件路径为文件名。显式 UTF-8 名称优先，不清洗路径、不筛选视频/字幕/ISO，也不执行下载或整理。
 
-现有 `animeresource.TorrentHash` 仅适配新工具及原有错误类别，旧解码树已删除。库没有深度/节点限制，且允许部分类型转换，因此保留无元数据树的编码边界检查及必需字段类型检查；4 MiB、32 层、32768 节点和 BT v1 分片一致性限制保持。另拒绝路径穿越、绝对路径、重复文件路径及总大小溢出。纯 v2 和混合种子仍返回不支持。
+现有 `btresource.TorrentHash` 仅适配新工具及原有错误类别，旧解码树已删除。库没有深度/节点限制，且允许部分类型转换，因此保留无元数据树的编码边界检查及必需字段类型检查；4 MiB、32 层、32768 节点和 BT v1 分片一致性限制保持。另拒绝路径穿越、绝对路径、重复文件路径及总大小溢出。纯 v2 和混合种子仍返回不支持。
 
 验证包含单文件、合集、字幕、零字节附件、精确大整数大小、UTF-8 别名、原始哈希及异常输入回归。读取依赖库自带真实样本，Sintel 11 文件合集、Debian 和 Arch Linux 单文件种子的哈希/文件顺序/路径/大小均一致；真实 v2/混合样本被拒绝。短时模糊测试最终版本约 79 万次输入通过；150 集加 150 字幕的本机解析基准约 1 ms/次（只测解析，不含网络）。临时验收程序已删除。
 
@@ -77,10 +77,10 @@ P1 的表单勾选和非执行解释不能授权此入口。待执行选择由�
 执行命令（目录为 `backend`）：
 
 ```text
-go test ./internal/animeresource ./internal/animepreview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115
-go test ./internal/animeresource ./internal/storage ./internal/service -run 'Test(Torrent|Magnet|Verify|RestoreVerified|AnimeDownloadClaim|AnimeDownloadMigration|AnimeDownloadVerification|AnimeClaimDownload)' -count=5
-go test ./internal/animeresource -run '^$' -fuzz '^FuzzTorrentHash$' -fuzztime=5s -parallel=2
-go vet ./internal/animeresource ./internal/animepreview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115
+go test ./internal/btresource ./internal/anime/preview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115
+go test ./internal/btresource ./internal/storage ./internal/service -run 'Test(Torrent|Magnet|Verify|RestoreVerified|AnimeDownloadClaim|AnimeDownloadMigration|AnimeDownloadVerification|AnimeClaimDownload)' -count=5
+go test ./internal/btresource -run '^$' -fuzz '^FuzzTorrentHash$' -fuzztime=5s -parallel=2
+go vet ./internal/btresource ./internal/anime/preview ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/p115
 go build ./...
 ```
 

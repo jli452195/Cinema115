@@ -32,7 +32,7 @@
 
 ## 编号投影与持久化边界
 
-新增独立纯计算包 `internal/animebinding`。`Project(binding, parse)` 输出 `in_scope/out_of_scope/needs_confirmation`、原始来源整数及可选篇章序号，保留原始标题和解析结果供解释。计算只使用该来源明确保存的基准：
+新增独立纯计算包 `internal/anime/binding`。`Project(binding, parse)` 输出 `in_scope/out_of_scope/needs_confirmation`、原始来源整数及可选篇章序号，保留原始标题和解析结果供解释。计算只使用该来源明确保存的基准：
 
 ```text
 篇章序号 = 来源集号 - 对应基准的来源集号 + 对应基准的篇章序号
@@ -55,8 +55,8 @@
 检查通过：
 
 ```powershell
-go test ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
-go vet ./internal/animebinding ./internal/animeparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
+go test ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
+go vet ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
 go test ./... -run '^$'
 ```
 

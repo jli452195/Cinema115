@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/anime/preview"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/p115"
@@ -56,7 +56,7 @@ type AnimeAdminService struct {
 	Accounts             animePrimaryAccounts
 	Directories          animeDirectories
 	Naming               *AnimeNamingService
-	Torrents             animeresource.TorrentReader
+	Torrents             btresource.TorrentReader
 	Offline              CloudTaskReader
 	SubmitGateway        AnimeOfflineGateway
 	StatusGateway        AnimeStatusReader
@@ -119,7 +119,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	for i := range in.Config.Sources {
 		v := &in.Config.Sources[i]
 		v.GroupName = nil // Never trust or fingerprint browser display metadata.
-		v.Rules, err = animepreview.NormalizeRules(v.Rules)
+		v.Rules, err = preview.NormalizeRules(v.Rules)
 		if err != nil {
 			var rule *model.AnimeRuleError
 			if errors.As(err, &rule) {

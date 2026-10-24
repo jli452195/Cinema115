@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/anime/preview"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
@@ -172,13 +172,13 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 			if errors.Is(readErr, storage.ErrAnimeConflict) {
 				return nil
 			}
-			if ctx.Err() == nil && !errors.Is(readErr, storage.ErrAnimeInvalid) && !errors.Is(readErr, animepreview.ErrInput) && !errors.Is(readErr, storage.ErrAnimeSettingsChanged) && !errors.Is(readErr, storage.ErrAnimeAccountChanged) {
+			if ctx.Err() == nil && !errors.Is(readErr, storage.ErrAnimeInvalid) && !errors.Is(readErr, preview.ErrInput) && !errors.Is(readErr, storage.ErrAnimeSettingsChanged) && !errors.Is(readErr, storage.ErrAnimeAccountChanged) {
 				return fmt.Errorf("commit anime RSS observations: %w", readErr)
 			}
 		}
 	}
 	code, retry, unavailable := animeDiscoveryReadFailure(readErr)
-	if errors.Is(readErr, animepreview.ErrInput) || errors.Is(readErr, animefeed.ErrInput) || errors.Is(readErr, mikan.ErrInput) || errors.Is(readErr, storage.ErrAnimeInvalid) {
+	if errors.Is(readErr, preview.ErrInput) || errors.Is(readErr, animefeed.ErrInput) || errors.Is(readErr, mikan.ErrInput) || errors.Is(readErr, storage.ErrAnimeInvalid) {
 		code = "SOURCE_RESPONSE_INVALID"
 	}
 	if poll.IssueCode != "" {
@@ -291,7 +291,7 @@ func (r *AnimeDiscoveryRunner) verify(ctx context.Context, work storage.AnimeDis
 		if err == nil {
 			code = ""
 		}
-		if errors.Is(err, animeresource.ErrRead) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, ErrAnimeDirectoryRead) {
+		if errors.Is(err, btresource.ErrRead) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, ErrAnimeDirectoryRead) {
 			code, retryable = "RESOURCE_READ_FAILED", true
 		}
 		if errors.Is(err, storage.ErrAnimeAccountChanged) || errors.Is(err, storage.ErrAnimeSettingsChanged) || errors.Is(err, storage.ErrAnimeDirectoryRequired) {
@@ -316,7 +316,7 @@ func (r *AnimeDiscoveryRunner) verify(ctx context.Context, work storage.AnimeDis
 }
 
 func animeDiscoveryReviewError(err error) bool {
-	for _, known := range []error{storage.ErrAnimeConflict, storage.ErrAnimeInvalid, storage.ErrAnimeIdentity, storage.ErrAnimeSelectionWithdrawn, storage.ErrAnimeResourceTarget, storage.ErrAnimeResourceSource, animeresource.ErrInvalid, animeresource.ErrUnsupported, animeresource.ErrConflict} {
+	for _, known := range []error{storage.ErrAnimeConflict, storage.ErrAnimeInvalid, storage.ErrAnimeIdentity, storage.ErrAnimeSelectionWithdrawn, storage.ErrAnimeResourceTarget, storage.ErrAnimeResourceSource, btresource.ErrInvalid, btresource.ErrUnsupported, btresource.ErrConflict} {
 		if errors.Is(err, known) {
 			return true
 		}

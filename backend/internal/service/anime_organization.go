@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"strm115/backend/internal/animeorganize"
+	"strm115/backend/internal/anime/organize"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -66,10 +66,10 @@ func (s *AnimeAdminService) SaveOrganizeDirectory(ctx context.Context, actor, ke
 	return s.Store.SaveAnimeSettings(ctx, out, k)
 }
 
-func (s *AnimeAdminService) JobOrganizationPreview(ctx context.Context, id string) (animeorganize.Plan, error) {
+func (s *AnimeAdminService) JobOrganizationPreview(ctx context.Context, id string) (organize.Plan, error) {
 	job, err := s.DownloadJob(ctx, id)
 	if err != nil {
-		return animeorganize.Plan{}, err
+		return organize.Plan{}, err
 	}
-	return animeorganize.Build(job)
+	return organize.Build(job)
 }

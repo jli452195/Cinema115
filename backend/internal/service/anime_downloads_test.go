@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/animepreview"
-	"strm115/backend/internal/animeresource"
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -47,7 +47,7 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	if err != nil {
 		t.Fatal(err)
 	}
-	fp, err := animeresource.Fingerprint(row)
+	fp, err := btresource.Fingerprint(row)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	if _, err := db.ExecContext(ctx, `UPDATE anime_subscriptions SET status='enabled',first_enabled_at=1 WHERE id=?`, sub.ID); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := model.AnimeDecisionSnapshot{SchemaVersion: 1, Title: release.Title, Binding: source.Binding, Rules: source.Rules, Parse: release.Parse, RuleVersion: animepreview.RuleVersion, ParserVersion: release.ParserVersion, TimeVersion: release.TimeVersion, Selection: &model.AnimeSelectionBasis{SelectedAt: time.Now().UnixMilli(), Target: session.Target(), SourceGeneration: source.RunGeneration, SubscriptionGeneration: sub.RunGeneration}}
+	snapshot := model.AnimeDecisionSnapshot{SchemaVersion: 1, Title: release.Title, Binding: source.Binding, Rules: source.Rules, Parse: release.Parse, RuleVersion: preview.RuleVersion, ParserVersion: release.ParserVersion, TimeVersion: release.TimeVersion, Selection: &model.AnimeSelectionBasis{SelectedAt: time.Now().UnixMilli(), Target: session.Target(), SourceGeneration: source.RunGeneration, SubscriptionGeneration: sub.RunGeneration}}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestAnimeClaimDownloadUpstreamErrorsAreSafe(t *testing.T) {
 		return nil, errors.New("upstream echoed " + animeDownloadTestCookie)
 	})
 	_, err := f.service.ClaimDownload(context.Background(), session, source.ID, release.ID, 1, row)
-	if !errors.Is(err, animeresource.ErrRead) || strings.Contains(err.Error(), "SEID") {
+	if !errors.Is(err, btresource.ErrRead) || strings.Contains(err.Error(), "SEID") {
 		t.Fatal("unsafe upstream error", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

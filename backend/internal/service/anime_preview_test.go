@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animepreview"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
 
-func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *storage.Store, animepreview.Config, time.Time) {
+func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *storage.Store, preview.Config, time.Time) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "preview.sqlite"))
@@ -33,7 +33,7 @@ func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *sto
 	}
 	bindings, f, _ := bindingTestService()
 	bindings.Entries = store
-	c := animepreview.Config{Chapter: animepreview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{{
+	c := preview.Config{Chapter: preview.Chapter{ID: entry.ID, BangumiID: entry.BangumiID, EditionKey: entry.EditionKey, Revision: entry.Revision}, Settings: settings, Sources: []model.AnimeSourceConfig{{
 		Ref: "main", Role: "main", Status: "paused", Provider: "mikan", ItemID: bindingPtr("2259"), GroupID: bindingPtr("45"), GroupName: bindingPtr("untrusted client name"),
 		Binding: model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "range", First: bindingPtr(25), Last: bindingPtr(150)}, ChapterCorrespondence: &model.AnimeChapterCorrespondence{SourceEpisode: 25, ChapterEpisode: 1}},
 		Rules:   model.AnimeRules{SchemaVersion: 1, MinimumEpisode: bindingPtr(30), Match: []string{"(?i)1080p"}},
@@ -54,7 +54,7 @@ func previewService(t *testing.T) (*AnimePreviewService, *bindingMikanFake, *sto
 	return s, f, store, c, at
 }
 
-func servicePreviewRef(b animepreview.Batch, index int) storage.AnimePreviewRef {
+func servicePreviewRef(b preview.Batch, index int) storage.AnimePreviewRef {
 	s := b.Sources[index]
 	return storage.AnimePreviewRef{BatchID: b.ID, SourceRef: s.Ref, PreviewID: s.ID, LoadRevision: s.LoadRevision}
 }
@@ -244,11 +244,11 @@ func TestAnimePreviewServiceOwnershipExpiryAndVersionBeforeRead(t *testing.T) {
 		t.Fatal("actor leak", err)
 	}
 	s.now = func() time.Time { return at.Add(15*time.Minute + 2*time.Second) }
-	if _, err := s.Select(ctx, "admin-a", ref, nil, nil); !errors.Is(err, animepreview.ErrExpired) {
+	if _, err := s.Select(ctx, "admin-a", ref, nil, nil); !errors.Is(err, preview.ErrExpired) {
 		t.Fatal("expiry boundary", err)
 	}
 	c.Settings.Revision++
-	if _, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"}); !errors.Is(err, animepreview.ErrConflict) {
+	if _, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"}); !errors.Is(err, preview.ErrConflict) {
 		t.Fatal("settings stale accepted", err)
 	}
 	if f.reads != calls {
@@ -318,7 +318,7 @@ func TestAnimePreviewServiceLateResponseCannotOverwriteChoices(t *testing.T) {
 		}
 		return read(ctx, in)
 	}
-	if _, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Previous: &ref, Refresh: true}); !errors.Is(err, animepreview.ErrConflict) {
+	if _, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main", Previous: &ref, Refresh: true}); !errors.Is(err, preview.ErrConflict) {
 		t.Fatal("late loader overwrote selection", err)
 	}
 	got, err := store.GetAnimePreview(ctx, "admin-a", ref.BatchID)

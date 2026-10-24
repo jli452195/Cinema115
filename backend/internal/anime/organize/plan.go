@@ -1,5 +1,5 @@
-// Package animeorganize plans names using saved facts only. It performs no I/O.
-package animeorganize
+// Package organize plans names using saved facts only. It performs no I/O.
+package organize
 
 import (
 	"fmt"
