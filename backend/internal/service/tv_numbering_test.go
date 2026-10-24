@@ -243,7 +243,7 @@ func TestNumberingFollowAndResourceMatchUseTwelveEpisodes(t *testing.T) {
 		t.Fatal(batch, err)
 	}
 }
-func TestNumberingOrganizeValidatesGroupAndInvalidatesOldPreview(t *testing.T) {
+func TestNumberingOrganizeAllowsUnlistedEpisodesAndInvalidatesOldPreview(t *testing.T) {
 	metadata, _, _ := numberingFixture(t)
 	s, _, account, _ := newOrganizeTest(t)
 	s.metadata = metadata
@@ -256,8 +256,9 @@ func TestNumberingOrganizeValidatesGroupAndInvalidatesOldPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}}}); !errors.Is(err, ErrOrganizeInput) {
-		t.Fatal(err)
+	unlisted, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 13, EndEpisode: 14}}})
+	if err != nil || len(unlisted.Items) != 1 || !strings.Contains(unlisted.Items[0].Name, "S01E13-E14") {
+		t.Fatal("TMDB numbering must remain advisory", unlisted, err)
 	}
 	if _, err = metadata.SaveNumbering(context.Background(), 42, SaveNumberingInput{Revision: 1}); err != nil {
 		t.Fatal(err)

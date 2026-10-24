@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { IconChevronDown, IconFolder } from '@tabler/icons-vue'
 import GardenOrganizeDialog from './GardenOrganizeDialog.vue'
-import type { OrganizeFile, OrganizeJob } from '../types/manualOrganize'
+import type { OrganizeFile, OrganizeJob, OrganizeSubtitle } from '../types/manualOrganize'
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -95,7 +95,7 @@ function allowReselectAfterCheck() {
   for (const [key, state] of Object.entries(submissions.value)) if (state.uncertain) delete submissions.value[key]
 }
 const organizeResource = ref<Item>()
-const organizeFiles = ref<{ files: OrganizeFile[]; endEpisodes: Record<string, number> }>({ files: [], endEpisodes: {} })
+const organizeFiles = ref<{ files: OrganizeFile[]; subtitles?: OrganizeSubtitle[] }>({ files: [] })
 const preparingItem = ref('')
 const prepareNotices = ref<Record<string, string>>({})
 async function openOrganize(item: Item, event: MouseEvent) {
@@ -107,7 +107,7 @@ async function openOrganize(item: Item, event: MouseEvent) {
   delete prepareNotices.value[item.id]
   try {
     const [provider, providerId] = item.id.split(':')
-    const data = await p115Request<{ files: OrganizeFile[]; endEpisodes: Record<string, number>; reason?: string }>(props.token, 'garden-organize/files', { method: 'POST', body: JSON.stringify({ provider, providerId, magnet: item.magnet }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
+    const data = await p115Request<{ files: OrganizeFile[]; reason?: string }>(props.token, 'garden-organize/files', { method: 'POST', body: JSON.stringify({ provider, providerId, magnet: item.magnet }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
     if (!data.files.length) { prepareNotices.value[item.id] = data.reason || 'Garden 没有提供可整理的文件清单，可使用普通离线'; return }
     organizeFiles.value = data
     returnFocus?.focus({ preventScroll: true })
@@ -501,7 +501,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <GardenOrganizeDialog v-if="organizeResource" :token="token" :resource="organizeResource" :files="organizeFiles.files" :end-episodes="organizeFiles.endEpisodes" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeResource = undefined" @submitted="organized" @uncertain="organizeUncertain" />
+  <GardenOrganizeDialog v-if="organizeResource" :token="token" :resource="organizeResource" :files="organizeFiles.files" :subtitles="organizeFiles.subtitles" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeResource = undefined" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
 
 <style scoped>

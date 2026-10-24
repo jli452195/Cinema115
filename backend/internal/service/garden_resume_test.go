@@ -12,7 +12,8 @@ import (
 
 func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFakeDrive, *cloudAdderStub, *gardenTrackerFake, string) {
 	t.Helper()
-	s, drive, adder, tracker, _, in := gardenFixture(t)
+	s, drive, adder, tracker, transport, in := gardenFixture(t)
+	transport.names = append(transport.names, "show/[Group] Show [01].zh-CN.ass")
 	plan, err := s.Preview(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +28,7 @@ func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFake
 	}
 	dir := p.job.Download.DirectoryID
 	drive.dirs[dir] = []p115.ShareFile{{ID: "801", Name: "show", Directory: true}}
-	drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: "[Group] Show [01].mkv", Size: 1200}, {ID: "902", Name: "[Group] Show [02].mkv", Size: 1300}}
+	drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: "[Group] Show [01].mkv", Size: 1200}, {ID: "902", Name: "[Group] Show [02].mkv", Size: 1300}, {ID: "903", Name: "[Group] Show [01].zh-CN.ass", Size: 100}}
 	if bound {
 		files, _, err := s.downloadFiles(context.Background(), &p.job, p.account.Cookie)
 		if err != nil {
@@ -84,6 +85,9 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 			}
 			if len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "902" || drive.renames != 1 || drive.moves != 1 {
 				t.Fatal("selection or remaining files changed", drive.dirs["801"])
+			}
+			if len(p.job.Items) != 2 || p.job.Items[1].File.ID != "903" || p.job.Items[1].Status != "done" || p.job.Items[1].Name != "测试作品 - S01E01 - Group.zh-CN.ass" {
+				t.Fatal("resume lost companion subtitle identity or naming", p.job.Items)
 			}
 			delete(s.live, id)
 			if job, err = s.Resume(id); err != nil || job.Status != "completed" || len(s.live) != 0 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {

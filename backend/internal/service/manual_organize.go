@@ -31,7 +31,6 @@ type OrganizeDrive interface {
 
 type OrganizeMetadata interface {
 	Details(context.Context, string, int) (*tmdb.Detail, error)
-	Season(context.Context, int, int) (*tmdb.SeasonDetail, error)
 }
 
 type OrganizeConfig struct {
@@ -49,6 +48,7 @@ type OrganizeFile struct {
 	MediaType  string `json:"mediaType"`
 	Season     int    `json:"season"`
 	Episode    int    `json:"episode"`
+	EndEpisode int    `json:"endEpisode,omitempty"`
 	Suffix     string `json:"suffix"`
 }
 
@@ -352,8 +352,6 @@ func (s *OrganizeEngine) listOnce(ctx context.Context, cid, cookie string) ([]p1
 	}
 }
 
-var organizeEpisode = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:E|[- ]E?\d)`)
-var organizeSingleEpisode = regexp.MustCompile(`(?i)S(\d{1,3})E(\d{1,4})(?:\D|$)`)
 var organizeQuality = regexp.MustCompile(`(?i)(?:2160p|1080p|720p|480p|4k|remux|bluray|blu-ray|web-dl|webrip|hdtv|x265|x264|h[.]?265|h[.]?264|hevc|hdr10\+?|hdr|dovi)`)
 var organizeVideoExtensions = extensionSet("", DefaultVideoExtensions)
 
@@ -429,10 +427,7 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 			return fmt.Errorf("%w：单次最多 1000 个媒体文件，请缩小选择范围", ErrOrganizeInput)
 		}
 		item := OrganizeFile{ShareFile: f, ParentID: parent, SourcePath: path.Join(prefix, f.Name), MediaType: media, Season: 1}
-		if match := organizeSingleEpisode.FindStringSubmatch(f.Name); match != nil && !organizeEpisode.MatchString(f.Name) {
-			item.Season, _ = strconv.Atoi(match[1])
-			item.Episode, _ = strconv.Atoi(match[2])
-		}
+		organizeFileNumbering(&item)
 		item.Suffix = strings.Join(organizeQuality.FindAllString(f.Name, -1), " ")
 		result.Files = append(result.Files, item)
 		return nil
@@ -479,6 +474,29 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 	}
 	s.scans[result.ID] = result
 	return result, nil
+}
+
+type OrganizeSubtitle struct {
+	File    OrganizeFile `json:"file"`
+	VideoID string       `json:"videoId,omitempty"`
+	Tail    string       `json:"tail,omitempty"`
+}
+
+// Keep associations based on the complete list, independent of video selection.
+// Tail is already filename-safe so both preview clients and execution append it verbatim.
+func organizeSubtitles(files []OrganizeFile) []OrganizeSubtitle {
+	subtitles := make([]OrganizeSubtitle, 0)
+	for _, file := range files {
+		if file.MediaType != "subtitle" {
+			continue
+		}
+		owner, tail := organizeSubtitleOwner(file, files)
+		if tail = organizeName(tail); tail != "" {
+			tail = "." + tail
+		}
+		subtitles = append(subtitles, OrganizeSubtitle{File: file, VideoID: owner, Tail: tail})
+	}
+	return subtitles
 }
 
 func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile) (string, string) {

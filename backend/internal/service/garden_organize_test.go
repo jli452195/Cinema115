@@ -278,11 +278,11 @@ func TestGardenFilesStandardEpisodeFormats(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(files.Files) != len(transport.names) || len(files.EndEpisodes) != 0 {
-				t.Fatal("single-episode files changed", len(files.Files), files.EndEpisodes)
+			if len(files.Files) != len(transport.names) {
+				t.Fatal("single-episode files changed", len(files.Files))
 			}
 			for i, file := range files.Files {
-				if file.ID != transport.names[i] || file.Season != 1 || file.Episode != i+1 {
+				if file.ID != transport.names[i] || file.Season != 1 || file.Episode != i+1 || file.EndEpisode != 0 {
 					t.Fatalf("file %d lost its standard episode: %+v", i+1, file)
 				}
 			}
@@ -311,7 +311,7 @@ func TestGardenFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 	for _, f := range files.Files {
 		byName[f.Name] = f
 	}
-	if byName["百变之星.2003.E027-E28.1080p.BDrip.mkv"].Episode != 27 || files.EndEpisodes[transport.names[0]] != 28 {
+	if byName["百变之星.2003.E027-E28.1080p.BDrip.mkv"].Episode != 27 || byName["百变之星.2003.E027-E28.1080p.BDrip.mkv"].EndEpisode != 28 {
 		t.Fatal("range lost", files)
 	}
 	for _, name := range []string{"百变之星.2006.E53.OVA02.V2.1080p.mkv", "[Group] Show [SP01].mkv", "NCOP.E27-E28.mkv", "no-number.mkv"} {
@@ -399,7 +399,7 @@ func TestGardenDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
 }
 
 func TestGardenBindingRequiresExactPathsAndNeverPartiallyChangesPlan(t *testing.T) {
-	job := OrganizeJob{Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/a.mkv"}, SourcePath: "/show/a.mkv"}}, {File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/b.mkv"}, SourcePath: "/show/b.mkv"}}}}
+	job := OrganizeJob{Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/a.mkv"}, SourcePath: "/show/a.mkv", MediaType: "video"}}, {File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/b.mkv"}, SourcePath: "/show/b.mkv", MediaType: "video"}}}}
 	files := []OrganizeFile{{ShareFile: p115.ShareFile{ID: "1", Name: "a.mkv"}, SourcePath: "show/a.mkv", MediaType: "video"}, {ShareFile: p115.ShareFile{ID: "2", Name: "b.mkv"}, SourcePath: "other/b.mkv", MediaType: "video"}}
 	if err := bindGardenFiles(&job, files, ""); err == nil || job.Items[0].File.ID != "show/a.mkv" {
 		t.Fatal("guessed basename or partially rebound", err, job)
@@ -407,6 +407,128 @@ func TestGardenBindingRequiresExactPathsAndNeverPartiallyChangesPlan(t *testing.
 	files[1].SourcePath = "show/b.mkv"
 	if err := bindGardenFiles(&job, files, ""); err != nil || job.Items[0].File.ID != "1" {
 		t.Fatal(err, job)
+	}
+}
+
+func TestGardenCompanionSubtitlesShareVideoBatch(t *testing.T) {
+	s, drive, _, tracker, transport, in := gardenFixture(t)
+	const stem = "[Group] Show [01-02]"
+	transport.names = []string{"show/" + stem + ".mkv", "show/" + stem + ".zh-CN.ASS", "show/" + stem + ".zh-TW.default.srt", "show/" + stem + ".en.idx", "show/" + stem + ".en.sub", "show/unmatched.ass", "show/subtitles.zip", "show/Show [03].mkv", "show/Show [03].ass"}
+	in.Files = []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 13, EndEpisode: 14, Suffix: "Group"}}
+	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	if err != nil || len(files.Files) != 2 || len(files.Subtitles) != 6 {
+		t.Fatal("subtitle manifest lost files", files, err)
+	}
+	plan, err := s.Preview(context.Background(), in)
+	if err != nil || len(plan.Items) != 5 {
+		t.Fatal("selected video must include its four companions only", plan, err)
+	}
+	if len(transport.paths) != 1 || len(drive.listCalls) != 1 || drive.renames+drive.moves+drive.creates != 0 {
+		t.Fatal("preview added network requests or writes", transport.paths, drive.listCalls)
+	}
+	for _, item := range plan.Items {
+		if !strings.HasPrefix(item.Name, "测试作品 - S01E13-E14 - Group.") || item.Directory != plan.Items[0].Directory || item.Conflict != "" {
+			t.Fatal("subtitle naming/directory differs from its video", item)
+		}
+	}
+	job, err := s.Start(plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := s.live[job.ID]
+	tracker.resultID = "801"
+	tracker.beforeRead = func() {
+		drive.dirs[p.job.Download.DirectoryID] = []p115.ShareFile{{ID: "801", Name: "show", Directory: true}}
+		for i, name := range transport.names {
+			drive.dirs["801"] = append(drive.dirs["801"], p115.ShareFile{ID: fmt.Sprint(901 + i), Name: strings.TrimPrefix(name, "show/"), Size: 100})
+		}
+	}
+	if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" {
+		t.Fatal("companion organization failed", done, err, p.job)
+	}
+	if tracker.calls != 1 || drive.renames != 1 || drive.moves != 1 || len(drive.moveBatches[0]) != 5 || drive.listCalls["801"] != 3 {
+		t.Fatal("subtitles must share the existing reads and writes", tracker.calls, drive.listCalls, drive.moveBatches)
+	}
+	if len(drive.dirs["801"]) != 4 || len(drive.dirs[p.job.Items[0].TargetCID]) != 5 {
+		t.Fatal("unmatched/unselected/archived files were touched", drive.dirs)
+	}
+	for i, item := range p.job.Items {
+		if item.Status != "done" || item.Name != plan.Items[i].Name || !organizeID(item.File.ID) {
+			t.Fatal("preview and actual subtitle identity/naming differ", item)
+		}
+	}
+	if _, err := s.Start(plan.ID); err != nil || drive.moves != 1 {
+		t.Fatal("lost response replayed subtitle writes", err)
+	}
+}
+
+func TestGardenSubtitlesNeverGuessDirectoriesOrExcludedOwners(t *testing.T) {
+	s, _, _, _, transport, in := gardenFixture(t)
+	transport.names = []string{"show/a.mkv", "show/a.extended.mkv", "show/a.extended.zh.ass", "subtitles/a.srt", "show/b.mkv", "show/b.mp4", "show/b.ass", "show/a.zh*CN.srt", "show/a.zh?CN.srt"}
+	in.Files = []OrganizeSelection{{ID: "show/a.mkv", Season: 1, Episode: 1}}
+	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := make(map[string]string, len(files.Subtitles))
+	for _, sub := range files.Subtitles {
+		owners[sub.File.ID] = sub.VideoID
+	}
+	if owners["subtitles/a.srt"] != "" || owners["show/b.ass"] != "" || owners["show/a.extended.zh.ass"] != "show/a.extended.mkv" {
+		t.Fatal("guessed ambiguous or cross-directory owner", owners)
+	}
+	plan, err := s.Preview(context.Background(), in)
+	if err != nil || len(plan.Items) != 3 || plan.Items[0].Conflict != "" || plan.Items[1].Conflict == "" || plan.Items[2].Conflict == "" {
+		t.Fatal("unselected longest-prefix owner was reassigned or subtitle collision missed", plan, err)
+	}
+	if _, err := s.Start(plan.ID); err == nil {
+		t.Fatal("conflicting subtitles must prevent starting")
+	}
+	in.Files = []OrganizeSelection{{ID: "show/a.extended.mkv", Season: 2, Episode: 3, Suffix: "BD"}}
+	plan, err = s.Preview(context.Background(), in)
+	if err != nil || len(plan.Items) != 2 || plan.Items[1].Name != "测试作品 - S02E03 - BD.zh.ass" {
+		t.Fatal("changing video selection did not update subtitle plan", plan, err)
+	}
+}
+
+func TestGardenMissingOrWrongSubtitleStopsBeforeAnyWrites(t *testing.T) {
+	for _, mode := range []string{"missing", "wrong-directory", "wrong-type"} {
+		t.Run(mode, func(t *testing.T) {
+			s, drive, _, tracker, transport, in := gardenFixture(t)
+			transport.names = append(transport.names, "show/[Group] Show [01].ass")
+			plan, err := s.Preview(context.Background(), in)
+			if err != nil || len(plan.Items) != 2 {
+				t.Fatal(plan, err)
+			}
+			job, err := s.Start(plan.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := s.live[job.ID]
+			if _, err := s.advance(context.Background(), p); err != nil {
+				t.Fatal(err)
+			}
+			tracker.cid = p.job.Download.DirectoryID
+			drive.dirs[tracker.cid] = []p115.ShareFile{{ID: "801", Name: "show", Directory: true}}
+			drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: "[Group] Show [01].mkv", Size: 100}}
+			if mode != "missing" {
+				drive.dirs["801"] = append(drive.dirs["801"], p115.ShareFile{ID: "902", Name: "[Group] Show [01].ass", Directory: mode == "wrong-type"})
+				if mode == "wrong-directory" {
+					drive.dirs["801"][1].Name = "other.ass"
+				}
+				if mode == "wrong-type" {
+					drive.dirs["902"] = []p115.ShareFile{}
+				}
+			}
+			for i := 0; i < 3; i++ {
+				if _, err := s.advance(context.Background(), p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if p.job.Status != "blocked" || drive.moves+drive.renames != 0 || p.job.Items[0].File.ID != plan.Items[0].File.ID {
+				t.Fatal("missing subtitle partially bound or mutated video", p.job)
+			}
+		})
 	}
 }
 

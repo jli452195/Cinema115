@@ -83,7 +83,6 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 		files[f.ID] = f
 	}
 	seen := make(map[string]bool, len(input.Files))
-	episodes := make(map[int]map[int]bool)
 	for _, selection := range input.Files {
 		f, exists := files[selection.ID]
 		if !exists || f.MediaType != "video" || seen[f.ID] {
@@ -95,27 +94,9 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			if selection.Season < 0 || selection.Season > 1000 || selection.Episode < 1 || selection.Episode > 10000 || (selection.EndEpisode != 0 && (selection.EndEpisode < selection.Episode || selection.EndEpisode > 10000)) {
 				return OrganizeJob{}, fmt.Errorf("%w：请为每个视频填写有效季集号", ErrOrganizeInput)
 			}
-			if episodes[selection.Season] == nil {
-				season, err := s.metadata.Season(ctx, input.TMDBID, selection.Season)
-				if err != nil {
-					return OrganizeJob{}, fmt.Errorf("读取 TMDB 季信息: %w", err)
-				}
-				if season == nil {
-					return OrganizeJob{}, fmt.Errorf("TMDB 未返回季信息")
-				}
-				episodes[selection.Season] = make(map[int]bool, len(season.Episodes))
-				for _, ep := range season.Episodes {
-					episodes[selection.Season][ep.Number] = true
-				}
-			}
 			end := selection.EndEpisode
 			if end == 0 {
 				end = selection.Episode
-			}
-			for ep := selection.Episode; ep <= end; ep++ {
-				if !episodes[selection.Season][ep] {
-					return OrganizeJob{}, fmt.Errorf("%w：TMDB 中不存在 S%02dE%02d，请校正季集", ErrOrganizeInput, selection.Season, ep)
-				}
 			}
 			name = fmt.Sprintf("%s - S%02dE%02d", title, selection.Season, selection.Episode)
 			if end > selection.Episode {
@@ -133,28 +114,20 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 		job.Items = append(job.Items, OrganizeItem{File: f, Directory: directory, Name: name, TargetPath: path.Join(scan.Config.TargetPath, directory, name), Status: "pending"})
 	}
 	if input.Subtitles {
-		videos := append([]OrganizeItem{}, job.Items...)
-		for _, sub := range scan.Files {
-			if sub.MediaType != "subtitle" {
+		videos := make(map[string]OrganizeItem, len(job.Items))
+		for _, item := range job.Items {
+			videos[item.File.ID] = item
+		}
+		for _, sub := range organizeSubtitles(scan.Files) {
+			video, selected := videos[sub.VideoID]
+			if !selected {
 				continue
 			}
-			// Match against all scanned videos so excluding a video cannot cause
-			// its subtitles to be attached to another, shorter prefix.
-			bestID, tail := organizeSubtitleOwner(sub, scan.Files)
-			for _, video := range videos {
-				if video.File.ID != bestID {
-					continue
-				}
-				name := strings.TrimSuffix(video.Name, path.Ext(video.Name))
-				if tail != "" {
-					name += "." + organizeName(tail)
-				}
-				name += strings.ToLower(path.Ext(sub.Name))
-				if len([]rune(name)) > 200 {
-					return OrganizeJob{}, fmt.Errorf("%w：字幕文件名过长", ErrOrganizeInput)
-				}
-				job.Items = append(job.Items, OrganizeItem{File: sub, Directory: video.Directory, Name: name, TargetPath: path.Join(scan.Config.TargetPath, video.Directory, name), Status: "pending"})
+			name := strings.TrimSuffix(video.Name, path.Ext(video.Name)) + sub.Tail + strings.ToLower(path.Ext(sub.File.Name))
+			if len([]rune(name)) > 200 {
+				return OrganizeJob{}, fmt.Errorf("%w：字幕文件名过长", ErrOrganizeInput)
 			}
+			job.Items = append(job.Items, OrganizeItem{File: sub.File, Directory: video.Directory, Name: name, TargetPath: path.Join(scan.Config.TargetPath, video.Directory, name), Status: "pending"})
 		}
 	}
 	return job, nil

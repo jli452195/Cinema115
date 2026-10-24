@@ -7,11 +7,9 @@ import (
 	"path"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/p115"
 )
@@ -23,10 +21,10 @@ type GardenResourceInput struct {
 }
 
 type GardenFiles struct {
-	Hash        string         `json:"hash"`
-	Files       []OrganizeFile `json:"files"`
-	EndEpisodes map[string]int `json:"endEpisodes"`
-	Reason      string         `json:"reason,omitempty"`
+	Hash      string             `json:"hash"`
+	Files     []OrganizeFile     `json:"files"`
+	Subtitles []OrganizeSubtitle `json:"subtitles"`
+	Reason    string             `json:"reason,omitempty"`
 }
 
 // Files is lazy: search never fetches resource details. Verified lists share the
@@ -73,41 +71,29 @@ func (s *GardenService) Files(ctx context.Context, in GardenResourceInput) (Gard
 	if err != nil || actual.Protocol != "magnet" || actual.Hash != resource.Hash {
 		return GardenFiles{}, garden.ErrInvalid
 	}
-	out := GardenFiles{Hash: resource.Hash, Files: []OrganizeFile{}, EndEpisodes: map[string]int{}}
+	out := GardenFiles{Hash: resource.Hash, Files: []OrganizeFile{}, Subtitles: []OrganizeSubtitle{}}
 	if d.IsDeleted || d.Detail.HasMoreFiles {
 		out.Reason = "Garden 没有提供完整文件清单，可使用普通离线"
 		return out, nil
 	}
+	media := make([]OrganizeFile, 0, len(d.Detail.Files))
 	for _, file := range d.Detail.Files {
-		if strings.EqualFold(path.Ext(file.Name), ".iso") || organizeMedia(file.Name) != "video" {
+		kind := organizeMedia(file.Name)
+		if strings.EqualFold(path.Ext(file.Name), ".iso") || (kind != "video" && kind != "subtitle") {
 			continue
 		}
-		if len(out.Files) >= 1000 {
-			return GardenFiles{}, fmt.Errorf("%w：视频超过 1000 个，请使用普通离线", ErrOrganizeInput)
+		if len(media) >= 5000 || kind == "video" && len(out.Files) >= 1000 {
+			return GardenFiles{}, fmt.Errorf("%w：视频超过 1000 个或媒体文件超过 5000 个，请使用普通离线", ErrOrganizeInput)
 		}
-		f := OrganizeFile{ShareFile: p115.ShareFile{ID: file.Name, Name: path.Base(file.Name)}, SourcePath: "/" + file.Name, MediaType: "video", Season: 1}
-		parsed, _ := animeparse.Title(strings.TrimSuffix(f.Name, path.Ext(f.Name)))
-		special := gardenSpecialFile.MatchString(f.Name) || gardenSpecialFile.MatchString(path.Base(path.Dir(file.Name)))
-		if parsed.Kind == "episode" && parsed.Episode != nil && *parsed.Episode > 0 && *parsed.Episode <= 10000 {
-			f.Episode = *parsed.Episode
+		f := OrganizeFile{ShareFile: p115.ShareFile{ID: file.Name, Name: path.Base(file.Name)}, ParentID: path.Dir(file.Name), SourcePath: "/" + file.Name, MediaType: kind, Season: 1}
+		if kind == "video" {
+			organizeFileNumbering(&f)
+			out.Files = append(out.Files, f)
 		}
-		// A clearly labelled E027-E28 is one file, not two download entries.
-		if !special {
-			if m := gardenFileRange.FindStringSubmatch(f.Name); m != nil {
-				start, _ := strconv.Atoi(m[1])
-				end, _ := strconv.Atoi(m[2])
-				if start > 0 && end > start && end <= 10000 {
-					f.Episode = start
-					out.EndEpisodes[f.ID] = end
-				}
-			}
-		}
-		if special {
-			f.Episode = 0
-			delete(out.EndEpisodes, f.ID)
-		}
-		out.Files = append(out.Files, f)
+		media = append(media, f)
 	}
+	out.Subtitles = organizeSubtitles(media)
+	sort.Slice(out.Subtitles, func(i, j int) bool { return gardenNaturalLess(out.Subtitles[i].File.ID, out.Subtitles[j].File.ID) })
 	sort.Slice(out.Files, func(i, j int) bool { return gardenNaturalLess(out.Files[i].ID, out.Files[j].ID) })
 	if len(out.Files) == 0 {
 		out.Reason = "清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）"
@@ -115,8 +101,6 @@ func (s *GardenService) Files(ctx context.Context, in GardenResourceInput) (Gard
 	return out, nil
 }
 
-var gardenFileRange = regexp.MustCompile(`(?i)(?:\b|[._])E(\d{1,4})\s*[-+]\s*E?(\d{1,4})(?:\D|$)`)
-var gardenSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[ ._(\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE)(?:[0-9]|$|[\] ._)\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
 var gardenNumbers = regexp.MustCompile(`[0-9]+|[^0-9]+`)
 
 func gardenNaturalLess(a, b string) bool {

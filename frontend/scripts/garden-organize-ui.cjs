@@ -13,10 +13,15 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     page.on('pageerror', e => errors.push(e.message))
     let loseResponse = true, conflict = false, holdJob = false, releaseJob
     const files = [
-      { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27 },
+      { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
       { id: 'show/E030.mkv', name: 'E030.mkv', sourcePath: '/show/E030.mkv', episode: 30 },
       { id: 'show/OVA.mkv', name: 'OVA.mkv', sourcePath: '/show/OVA.mkv', episode: 0 },
     ].map(f => ({ ...f, directory: false, parentId: '', size: 0, mediaType: 'video', season: 1, suffix: '' }))
+    const subtitles = [
+      { file: { id: 'show/E027-E28.zh-CN.ass', name: 'E027-E28.zh-CN.ass', sourcePath: '/show/E027-E28.zh-CN.ass' }, videoId: files[0].id, tail: '.zh-CN' },
+      { file: { id: 'show/E027-E28.zh-TW.default.srt', name: 'E027-E28.zh-TW.default.srt', sourcePath: '/show/E027-E28.zh-TW.default.srt' }, videoId: files[0].id, tail: '.zh-TW.default' },
+      { file: { id: 'subtitles/unmatched.ass', name: 'unmatched.ass', sourcePath: '/subtitles/unmatched.ass' } },
+    ]
     const resource = n => ({ provider: 'dmhy', providerId: String(n), title: `测试合集 ${n} [1080p]`, size: 1024 ** 3, createdAt: '2026-10-23T00:00:00Z', magnet: `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`, publisher: { id: 2, name: '测试组' } })
     await page.route('**/api/**', async route => {
       const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON()
@@ -25,12 +30,12 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if (endpoint.endsWith('/accounts')) data = { accounts: [] }
       else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: [{ id: 16, name: '动画' }], countries: ['JP'], cast: [], seasons: [{ number: 1, name: '第 1 季', episodeCount: 26 }, { number: 2, name: '第 2 季', episodeCount: 25 }], collection: null }
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
-      else if (endpoint.endsWith('/garden-organize/files')) data = body.providerId === '2' ? { files: [], endEpisodes: {}, reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, endEpisodes: { [files[0].id]: 28 } }
+      else if (endpoint.endsWith('/garden-organize/files')) data = body.providerId === '2' ? { files: [], reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, subtitles }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
       else if (endpoint.endsWith('/garden-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/动漫' }
       else if (endpoint.endsWith('/garden-organize/jobs') && req.method() === 'GET') data = { jobs: [] }
       else if (endpoint.endsWith('/cloud-download/paths')) data = { directories: [{ id: '30', name: '自选目录' }], hasMore: false }
-      else if (endpoint.endsWith('/garden-organize/preview')) data = { id: 'one-plan', title: '百变之星', status: 'preview', items: body.files.map(f => ({ file: files.find(x => x.id === f.id), name: 'mapped.mkv', conflict: conflict ? '目标同名' : '' })) }
+      else if (endpoint.endsWith('/garden-organize/preview')) data = { id: 'one-plan', title: '百变之星', status: 'preview', items: [...body.files.map(f => ({ file: files.find(x => x.id === f.id), name: 'mapped.mkv' })), ...subtitles.filter(sub => body.files.some(f => f.id === sub.videoId)).map(sub => ({ file: sub.file, name: 'mapped.ass', conflict: conflict ? '字幕目标同名' : '' }))] }
       else if (endpoint.endsWith('/garden-organize/jobs')) {
         if (holdJob) await new Promise(resolve => { releaseJob = resolve })
         if (loseResponse) { loseResponse = false; status = 502; data = { error: '模拟回执丢失' } }
@@ -63,7 +68,16 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isDisabled(), true)
     const first = page.locator('[data-organize-file]').nth(0), second = page.locator('[data-organize-file]').nth(1)
+    const subtitleToggle = first.locator('.subtitle-details > summary')
+    await subtitleToggle.focus(); await page.keyboard.press('Enter')
+    assert.equal(await first.getByRole('checkbox').isChecked(), false)
+    await first.getByText('随视频选择，当前保留原位').first().waitFor()
     await first.getByRole('checkbox').click(); await second.getByRole('checkbox').click()
+    await page.getByText('已选 2 个视频，关联 2 个字幕', { exact: true }).waitFor()
+    await first.getByRole('checkbox').click()
+    await page.getByText('已选 1 个视频', { exact: true }).waitFor()
+    await first.getByRole('checkbox').click()
+    assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isEnabled(), true)
     await page.getByRole('combobox', { name: '目标季', exact: true }).click()
     await page.getByRole('option').filter({ hasText: '第 2 季' }).click()
     await page.getByRole('spinbutton', { name: '发布起始集', exact: true }).fill('27')
@@ -72,12 +86,20 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(await first.getByRole('spinbutton', { name: 'E027-E28.mkv 结束集', exact: true }).inputValue(), '2')
     assert.equal(await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).inputValue(), '4')
     await first.getByText('整理后：百变之星 - S02E01-E02 - 测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('整理后：百变之星 - S02E01-E02 - 测试组.zh-TW.default.srt', { exact: true }).waitFor()
+    await first.getByRole('textbox', { name: 'E027-E28.mkv 版本标记', exact: true }).fill('BD')
+    await first.getByText('整理后：百变之星 - S02E01-E02 - BD.zh-CN.ass', { exact: true }).waitFor()
+    await first.getByRole('textbox', { name: 'E027-E28.mkv 版本标记', exact: true }).fill('测试组')
+    assert.equal(await first.locator('.subtitle-details').getAttribute('open'), '')
+    assert.equal(count('/garden-organize/preview'), 0)
+    await page.getByText('1 个字幕未能唯一匹配，保留原位', { exact: true }).click()
+    await page.getByText('/subtitles/unmatched.ass', { exact: true }).waitFor()
     if (process.env.CINEMA_UI_SHOTS) { await fs.mkdir(process.env.CINEMA_UI_SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, 'garden-organize-desktop.png') }) }
     await page.getByRole('button', { name: '撤销', exact: true }).click()
     assert.equal(await first.getByRole('spinbutton', { name: 'E027-E28.mkv 集', exact: true }).inputValue(), '27')
     await page.getByRole('button', { name: '应用偏移（2 项）', exact: true }).click()
     assert.equal(await page.locator('[data-organize-file]').nth(2).getByRole('checkbox').isChecked(), false)
-    passed.push('lazy metadata, no downloads during preparation, range/gap offset and undo, specials unselected')
+    passed.push('lazy metadata, range/gap offset and undo, companion selection/naming and keyboard expansion without requests')
     await page.getByRole('button', { name: '选择目录', exact: true }).click()
     await page.getByRole('dialog', { name: '选择本次整理目录', exact: true }).waitFor()
     assert.equal(await page.locator('dialog[open]').count(), 3)
@@ -89,9 +111,16 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.getByRole('button', { name: '选择目录', exact: true }).click()
     await page.getByRole('button', { name: '选择此目录', exact: true }).click()
     conflict = true
+    await subtitleToggle.click()
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '命名或目标目录存在冲突' }).waitFor()
+    await first.getByRole('alert').filter({ hasText: '字幕目标同名' }).first().waitFor()
+    assert.equal(await first.locator('.subtitle-details').getAttribute('open'), '')
     assert.equal(count('/garden-organize/jobs'), 0)
+    await subtitleToggle.click()
+    await first.getByRole('textbox', { name: 'E027-E28.mkv 版本标记', exact: true }).fill('BD')
+    assert.equal(await first.locator('.subtitle-details').getAttribute('open'), null)
+    await first.getByRole('textbox', { name: 'E027-E28.mkv 版本标记', exact: true }).fill('测试组')
     conflict = false
     holdJob = true
     const jobRequest = page.waitForRequest('**/garden-organize/jobs')
@@ -133,6 +162,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       const third = list.locator(':scope > li').nth(2)
       await third.locator('summary').click(); await third.getByRole('button', { name: '下载并整理', exact: true }).click()
       await panel.waitFor()
+      const mobileFirst = page.locator('[data-organize-file]').first()
+      await mobileFirst.getByRole('checkbox').click()
+      await mobileFirst.locator('.subtitle-details > summary').click()
+      await mobileFirst.getByText('整理后：百变之星 - S01E27-E28 - 测试组.zh-TW.default.srt', { exact: true }).waitFor()
       assert.equal(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       assert.equal(await organizeDialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       if (process.env.CINEMA_UI_SHOTS) await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, `garden-organize-mobile-${theme}.png`) })

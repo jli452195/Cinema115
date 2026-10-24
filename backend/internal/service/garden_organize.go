@@ -93,7 +93,10 @@ func (s *GardenOrganize) Preview(ctx context.Context, in GardenOrganizeInput) (O
 		return OrganizeJob{}, fmt.Errorf("%w：%s", ErrOrganizeInput, files.Reason)
 	}
 	c := OrganizeConfig{AccountID: a.ID, SourceCID: download.TargetCID, SourcePath: download.TargetPath, TargetCID: in.TargetCID, TargetPath: in.TargetPath}
-	job, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files.Files}, OrganizePreviewInput{Kind: in.Kind, TMDBID: in.TMDBID, Files: in.Files})
+	for _, sub := range files.Subtitles {
+		files.Files = append(files.Files, sub.File)
+	}
+	job, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files.Files}, OrganizePreviewInput{Kind: in.Kind, TMDBID: in.TMDBID, Files: in.Files, Subtitles: true})
 	if err != nil {
 		return OrganizeJob{}, err
 	}
@@ -545,8 +548,8 @@ func bindGardenFiles(job *OrganizeJob, files []OrganizeFile, resultID string) er
 			return fmt.Errorf("下载目录中无法唯一匹配原路径：%s", item.File.SourcePath)
 		}
 		f := matches[0]
-		if f.Directory || f.MediaType != "video" || strings.EqualFold(path.Ext(f.Name), ".iso") {
-			return fmt.Errorf("实际文件不是支持的视频：%s", f.Name)
+		if f.Directory || (f.MediaType != "video" && f.MediaType != "subtitle") || f.MediaType != item.File.MediaType || strings.EqualFold(path.Ext(f.Name), ".iso") {
+			return fmt.Errorf("实际文件类型与整理计划不符：%s", f.Name)
 		}
 		used[f.ID] = true
 		f.SourcePath = path.Join(job.Config.SourcePath, f.SourcePath)

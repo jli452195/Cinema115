@@ -7,13 +7,14 @@ import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import SelectMenu from './SelectMenu.vue'
 import { p115Request } from '../lib/p115-api'
-import type { OrganizeFile, OrganizeJob, OrganizeRow } from '../types/manualOrganize'
-import { applyGardenMapping, gardenTargetName, type GardenMappingSource } from '../utils/gardenOrganize'
+import type { OrganizeFile, OrganizeJob, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
+import { applyOrganizeMapping, organizeTargetName, organizeSubtitleName } from '../utils/organizeNaming'
 import { directoryGroups } from '../utils/organizeSelection'
 
 const props = defineProps<{
   token: string; resource: { id: string; title: string; magnet: string; fansub?: string; publisher?: string }
-  files: OrganizeFile[]; endEpisodes: Record<string, number>
+  files: OrganizeFile[]
+  subtitles?: OrganizeSubtitle[]
   tmdbId: number; kind: 'movie' | 'tv'; title: string; date: string
   seasons: { number: number; name: string; episodeCount: number }[]
   themeColors?: Record<string, string>
@@ -25,13 +26,20 @@ const batchOpen = ref(window.matchMedia('(min-width: 640px)').matches)
 const editDisabled = computed(() => busy.value || loading.value || confirming.value)
 const directoryOpen = ref(false), accountId = ref(''), targetCID = ref(''), targetPath = ref(''), downloadPath = ref('')
 const season = ref(String(props.seasons.find(s => s.number > 0)?.number ?? 1)), sourceStart = ref(1), targetStart = ref(1)
-const sources: Record<string, GardenMappingSource> = Object.fromEntries(props.files.map(file => [file.id, { episode: file.episode, endEpisode: props.endEpisodes[file.id] || 0 }]))
-const rows = ref<OrganizeRow[]>(props.files.map(file => ({ ...file, selected: false, endEpisode: props.endEpisodes[file.id] || '', suffix: props.resource.fansub || props.resource.publisher || '' })))
+const sources = Object.fromEntries(props.files.map(file => [file.id, file]))
+const rows = ref<OrganizeRow[]>(props.files.map(file => ({ ...file, selected: false, endEpisode: file.endEpisode || '', suffix: props.resource.fansub || props.resource.publisher || '' })))
 const selected = computed(() => rows.value.filter(row => row.selected))
 const seasonOptions = computed(() => props.seasons.map(s => ({ value: String(s.number), label: `${s.name || (s.number ? `第 ${s.number} 季` : '特别篇')} · ${s.episodeCount} 集` })))
-const targetNames = computed(() => Object.fromEntries(rows.value.map(row => [row.id, gardenTargetName(row, props.title, props.date, props.kind)])))
+const targetNames = computed(() => Object.fromEntries(rows.value.map(row => [row.id, organizeTargetName(row, props.title, props.date, props.kind)])))
+const subtitlesByVideo = computed(() => {
+  const groups: Record<string, OrganizeSubtitle[]> = {}
+  for (const sub of props.subtitles || []) if (sub.videoId) (groups[sub.videoId] ||= []).push(sub)
+  return groups
+})
+const unmatchedSubtitles = computed(() => (props.subtitles || []).filter(sub => !sub.videoId))
+const selectedSubtitleCount = computed(() => selected.value.reduce((count, row) => count + (subtitlesByVideo.value[row.id]?.length || 0), 0))
 const invalid = computed(() => selected.value.some(row => props.kind === 'tv' && (targetNames.value[row.id] === '请填写目标季集' || row.episode > 10000 || Number(row.endEpisode) > 10000 || row.season > 1000)))
-const undo = ref<ReturnType<typeof applyGardenMapping>>([])
+const undo = ref<ReturnType<typeof applyOrganizeMapping>>([])
 const conflicts = ref<Record<string, string>>({})
 const previewId = ref('')
 const job = ref<OrganizeJob>()
@@ -43,7 +51,7 @@ let previewKey = ''
 function mapFiles(sequential = false) {
   error.value = ''; notice.value = ''; conflicts.value = {}
   try {
-    undo.value = applyGardenMapping(directoryGroups(rows.value, '/').flatMap(group => group.rows), sources, Number(season.value), sourceStart.value, targetStart.value, sequential)
+    undo.value = applyOrganizeMapping(directoryGroups(rows.value, '/').flatMap(group => group.rows), sources, Number(season.value), sourceStart.value, targetStart.value, sequential)
     const skipped = selected.value.length - undo.value.length
     notice.value = `已更新 ${undo.value.length} 项${skipped ? `，跳过 ${skipped} 项无发布编号的文件，可在行内填写目标季集` : !sequential ? '，保留发布编号的缺号和连集范围' : ''}`
   } catch (e) { error.value = e instanceof Error ? e.message : '编号设置无效' }
@@ -107,11 +115,11 @@ onBeforeUnmount(() => lifecycle.abort())
   <section class="garden-organize" aria-label="下载并整理映射" :aria-busy="busy || loading">
     <p class="resource-title">{{ resource.title }}</p>
     <template v-if="job">
-      <p role="status" class="notice">后台将下载整条磁力，并按本次映射整理 {{ job.items.length }} 个视频。关闭弹窗后继续执行。</p>
+      <p role="status" class="notice">后台将下载整条磁力，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。关闭弹窗后继续执行。</p>
       <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
     </template>
     <template v-else>
-      <p class="scope-note">整条磁力下载，只整理所选视频；其余文件保留在下载目录。</p>
+      <p class="scope-note">整条磁力下载，整理所选视频及已关联的字幕；其余文件保留在下载目录。</p>
       <div class="reference"><strong>{{ title }}</strong><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>
       <div class="directory-bar"><div><span>整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong><small v-if="downloadPath">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true"><IconFolder :size="16" aria-hidden="true" />选择目录</button></div>
       <div v-if="kind === 'tv'" class="batch-editor"><button type="button" class="batch-toggle" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">批量编号 <IconChevronDown :size="14" aria-hidden="true" :class="{ 'rotate-180': batchOpen }" /></button><div v-show="batchOpen" class="mapping-bar">
@@ -123,13 +131,29 @@ onBeforeUnmount(() => lifecycle.abort())
         <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
       </div></div>
       <p v-if="notice" role="status" class="notice">{{ notice }}</p>
-      <OrganizeFileSelection :rows="rows" root-path="/" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="conflicts" compact />
+      <OrganizeFileSelection :rows="rows" root-path="/" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="conflicts" compact>
+        <template #row-details="{ row }">
+          <details v-if="subtitlesByVideo[row.id]?.length" class="subtitle-details" :open="row.selected && subtitlesByVideo[row.id]!.some(sub => conflicts[sub.file.id])" @click.stop @mousedown.stop>
+            <summary><IconChevronDown :size="13" aria-hidden="true" />关联字幕（{{ subtitlesByVideo[row.id]!.length }}）<span v-if="!row.selected">未选择</span></summary>
+            <div v-for="sub in subtitlesByVideo[row.id]" :key="sub.file.id" class="subtitle-file">
+              <p>{{ sub.file.name }}</p>
+              <p v-if="row.selected" class="subtitle-target">整理后：{{ organizeSubtitleName(targetNames[row.id]!, sub) }}</p>
+              <p v-else>随视频选择，当前保留原位</p>
+              <p v-if="row.selected && conflicts[sub.file.id]" role="alert" class="error">{{ conflicts[sub.file.id] }}</p>
+            </div>
+          </details>
+        </template>
+      </OrganizeFileSelection>
+      <details v-if="unmatchedSubtitles.length" class="subtitle-details">
+        <summary><IconChevronDown :size="13" aria-hidden="true" />{{ unmatchedSubtitles.length }} 个字幕未能唯一匹配，保留原位</summary>
+        <p v-for="sub in unmatchedSubtitles" :key="sub.file.id" class="subtitle-file">{{ sub.file.sourcePath }}</p>
+      </details>
       <p class="scope-note">请先选中需要整理的文件并核对季集；批量编号仅影响当前所选文件，其他修改会保留。</p>
     </template>
     <p v-if="error" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/cloud-download">前往云下载设置</RouterLink></p>
     <p v-if="loading" role="status" class="notice">读取目录配置…</p>
   </section>
-    <template v-if="!job" #footer><div class="submit-bar"><span>已选 {{ selected.length }} 个视频<span v-if="invalid">，请补全季集</span></span><button type="button" class="primary" :disabled="busy || loading || !accountId || !targetCID || !selected.length || invalid" @click="start">{{ busy ? '正在确认并创建任务…' : confirming ? '确认任务状态' : '下载并自动整理' }}</button></div></template>
+    <template v-if="!job" #footer><div class="submit-bar"><span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><span v-if="invalid">，请补全季集</span></span><button type="button" class="primary" :disabled="busy || loading || !accountId || !targetCID || !selected.length || invalid" @click="start">{{ busy ? '正在确认并创建任务…' : confirming ? '确认任务状态' : '下载并自动整理' }}</button></div></template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
 </template>
@@ -139,6 +163,9 @@ onBeforeUnmount(() => lifecycle.abort())
 .resource-title { @apply break-all text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }
 .scope-note { @apply text-xs leading-5 text-slate-500 dark:text-slate-400; }
+.subtitle-details { @apply mt-1 min-w-0 text-xs leading-5 text-slate-500 dark:text-slate-400; }
+.subtitle-details summary { @apply flex cursor-pointer list-none items-center gap-1 py-1; }.subtitle-details summary::-webkit-details-marker { display: none; }.subtitle-details[open]>summary>svg { transform: rotate(180deg); }
+.subtitle-file { @apply mb-2 min-w-0 break-all pl-2; }.subtitle-target { @apply text-slate-700 dark:text-slate-200; }
 .directory-bar { @apply flex items-center gap-3 rounded-xl bg-slate-100/80 p-3 dark:bg-slate-800/70; }.directory-bar>div { @apply flex min-w-0 flex-1 flex-col gap-1 text-xs; }.directory-bar strong { @apply break-all text-sm font-medium; }.directory-bar small { @apply break-all text-slate-500 dark:text-slate-400; }
 .mapping-bar { @apply flex flex-wrap items-center gap-2 text-xs; }.mapping-bar label { @apply flex items-center gap-1; }.mapping-bar input { @apply w-16 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; }.season-select { @apply w-40; }
 .batch-toggle { @apply mb-2 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300; }

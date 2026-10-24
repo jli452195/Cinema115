@@ -14,6 +14,7 @@ import P115ActionDialog from '../components/P115ActionDialog.vue'
 import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
 import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
 import { directoryGroups } from '../utils/organizeSelection'
+import { applyOrganizeMapping } from '../utils/organizeNaming'
 import type { SubtitleImport } from '../types/subtitleImport'
 import { p115Request } from '../lib/p115-api'
 import { tmdbImageURL } from '../utils/tmdbImage'
@@ -239,7 +240,7 @@ async function scan(file: DriveFile) {
   scanId.value = data.id; selectedName.value = file.name
   scannedEntryKey = entryKey
   selectionRoot.value = file.directory ? `${currentSource.value.path.replace(/\/$/, '')}/${file.name}` : currentSource.value.path
-  rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: '' }))
+  rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: f.endEpisode || '' }))
   if (!sameEntry) query.value = file.directory ? file.name : file.name.replace(/\.[^.]+$/, '')
   if (rows.value.length) await scrollToStep(media.value ? 3 : 2)
   notice.value = rows.value.length ? `已扫描 ${rows.value.length} 个视频，${media.value ? '已保留作品及季选择，请核对文件。' : '请指定 TMDB 作品。'}` : '所选条目中没有支持的视频文件。'
@@ -286,8 +287,12 @@ async function search(page = 1) {
   if (!data.items.length) notice.value = '没有找到作品，可换一个片名或直接输入 TMDB ID。'
 }
 function numberEpisodes() {
-  let number = Number(startEpisode.value)
-  for (const group of directoryGroups(rows.value, selectionRoot.value)) for (const row of group.rows) if (row.selected) { row.season = Number(batchSeason.value); row.episode = number++; row.endEpisode = '' }
+  error.value = ''
+  try {
+    const ordered = directoryGroups(rows.value, selectionRoot.value).flatMap(group => group.rows)
+    applyOrganizeMapping(ordered, {}, Number(batchSeason.value), 1, Number(startEpisode.value), true)
+    notice.value = '已按当前顺序连续编号，保留连集跨度。'
+  } catch (e) { error.value = e instanceof Error ? e.message : '编号设置无效' }
 }
 async function makePreview() {
   if (!media.value) return

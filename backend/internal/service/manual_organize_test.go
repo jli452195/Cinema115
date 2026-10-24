@@ -140,13 +140,6 @@ func newManualOrganizeTest(store accountSecretStore, accounts *P115Accounts, dri
 func (organizeFakeMetadata) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
 	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "测试作品", Date: "2024-01-01"}}, nil
 }
-func (organizeFakeMetadata) Season(_ context.Context, id, season int) (*tmdb.SeasonDetail, error) {
-	if season != 0 && season != 1 {
-		return nil, tmdb.ErrNotFound
-	}
-	return &tmdb.SeasonDetail{Number: season, Episodes: []tmdb.Episode{{Number: 1}, {Number: 2}, {Number: 3}}}, nil
-}
-
 func newOrganizeTest(t *testing.T) (*ManualOrganize, *organizeFakeDrive, string, *failingAccountStore) {
 	t.Helper()
 	accounts, err := newP115Accounts(&failingAccountStore{}, "")
@@ -419,7 +412,7 @@ func TestManualOrganizeRejectForgedFilesAndEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, selection := range []OrganizeSelection{{ID: "999", Season: 1, Episode: 1}, {ID: "101", Season: 1, Episode: 0}, {ID: "101", Season: 1, Episode: 99}, {ID: "101", Season: 1, Episode: 2, EndEpisode: 1}} {
+	for _, selection := range []OrganizeSelection{{ID: "999", Season: 1, Episode: 1}, {ID: "101", Season: 1, Episode: 0}, {ID: "101", Season: 1, Episode: 10001}, {ID: "101", Season: -1, Episode: 1}, {ID: "101", Season: 1001, Episode: 1}, {ID: "101", Season: 1, Episode: 2, EndEpisode: 1}, {ID: "101", Season: 1, Episode: 1, EndEpisode: 10001}} {
 		if _, err := s.Preview(context.Background(), id, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{selection}}); err == nil {
 			t.Fatal("接受了非法文件或季集", selection)
 		}
