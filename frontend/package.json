@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",
     "test:garden-organize-ui": "node scripts/download-organize-ui.cjs",

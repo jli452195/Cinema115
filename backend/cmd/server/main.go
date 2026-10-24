@@ -103,6 +103,7 @@ func main() {
 	admin.Use(httpapi.PortalAuthenticated(auth), httpapi.PortalAdminOnly())
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
 	httpapi.RegisterPortalInvites(admin, auth)
+	httpapi.RegisterNamingTemplates(admin, database)
 	catalog := r.Group("/api/catalog")
 	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)

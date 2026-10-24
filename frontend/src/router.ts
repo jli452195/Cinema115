@@ -34,6 +34,7 @@ import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
 import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
+import NamingSettingsView from './views/NamingSettingsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
@@ -64,6 +65,7 @@ export const router = createRouter({
     { path: '/users', name: 'users-category', component: HomeView, props: { category: 'users' }, meta: { categoryPage: true } },
     { path: '/users/list', name: 'user-management', component: EmbyUsersView },
     { path: '/users/invites', name: 'user-invites', component: PortalSettingsView },
+    { path: '/settings/naming', name: 'naming-settings', component: NamingSettingsView },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },
     { path: '/movie', name: 'movie', component: DashboardView, props: { kind: 'movie' } },
