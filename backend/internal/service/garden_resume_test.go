@@ -10,7 +10,7 @@ import (
 	"strm115/backend/internal/client/p115"
 )
 
-func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFakeDrive, *cloudAdderStub, *gardenTrackerFake, string) {
+func interruptedGarden(t *testing.T, bound bool) (*DownloadOrganize, *organizeFakeDrive, *cloudAdderStub, *gardenTrackerFake, string) {
 	t.Helper()
 	s, drive, adder, tracker, transport, in := gardenFixture(t)
 	transport.names = append(transport.names, "show/[Group] Show [01].zh-CN.ass")
@@ -34,7 +34,7 @@ func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFake
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = bindGardenFiles(&p.job, files, ""); err != nil {
+		if err = bindDownloadFiles(&p.job, files, ""); err != nil {
 			t.Fatal(err)
 		}
 		p.job.Items[0].Status = "preparing"
@@ -50,7 +50,7 @@ func interruptedGarden(t *testing.T, bound bool) (*GardenOrganize, *organizeFake
 	if err != nil {
 		t.Fatal(err)
 	}
-	s = NewGardenOrganize(o.OrganizeEngine, nil, s.Downloads, s.Settings, tracker)
+	s = NewDownloadOrganize(o.OrganizeEngine, nil, s.Downloads, s.Settings, tracker)
 	*adder = cloudAdderStub{}
 	tracker.calls, tracker.resultID = 0, "801" // Real completed responses can omit target CID.
 	return s, drive, adder, tracker, job.ID
@@ -120,7 +120,7 @@ func TestGardenResumeRefusesFileWriteIntentAndInvalidState(t *testing.T) {
 			case "persistence-failure":
 				s.Organize.store.(*failingAccountStore).err = errors.New("disk full")
 			case "other-live-hash":
-				s.live["other"] = &gardenPending{job: cloneOrganizeJob(*job)}
+				s.live["other"] = &downloadPending{job: cloneOrganizeJob(*job)}
 			default:
 				job.Items[0].Status = state
 			}

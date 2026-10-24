@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
@@ -248,8 +249,9 @@ func main() {
 	manualOrganize := service.NewManualOrganize(organizeEngine)
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
-	gardenOrganize := service.NewGardenOrganize(organizeEngine, animeBindings.Garden, cloudDownloads, cloudDownloadSettings, cloudClient)
-	httpapi.RegisterGardenOrganize(admin, gardenOrganize)
+	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &animeresource.HTTPReader{})
+	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
+	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -467,7 +469,7 @@ func main() {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		if err := gardenOrganize.Run(ctx); err != nil {
+		if err := downloadOrganize.Run(ctx); err != nil {
 			workerErrors <- err
 		}
 	}()

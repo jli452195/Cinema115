@@ -9,8 +9,8 @@ import (
 	"strm115/backend/internal/service"
 )
 
-func RegisterGardenOrganize(admin *gin.RouterGroup, s *service.GardenOrganize) {
-	r := admin.Group("/p115/garden-organize")
+func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganize) {
+	r := admin.Group("/p115/download-organize")
 	r.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
@@ -19,14 +19,14 @@ func RegisterGardenOrganize(admin *gin.RouterGroup, s *service.GardenOrganize) {
 	r.GET("/config", func(c *gin.Context) { c.JSON(200, s.Target()) })
 	r.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": s.History()}) })
 	r.POST("/files", func(c *gin.Context) {
-		var in service.GardenResourceInput
+		var in service.DownloadResourceInput
 		if c.ShouldBindJSON(&in) != nil {
 			c.JSON(400, gin.H{"error": "资源参数无效"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 		defer cancel()
-		out, err := s.Garden.Files(ctx, in)
+		out, err := s.Resources.Files(ctx, in)
 		if err != nil {
 			organizeError(c, err)
 			return
@@ -34,7 +34,7 @@ func RegisterGardenOrganize(admin *gin.RouterGroup, s *service.GardenOrganize) {
 		c.JSON(200, out)
 	})
 	r.POST("/preview", func(c *gin.Context) {
-		var in service.GardenOrganizeInput
+		var in service.DownloadOrganizeInput
 		if c.ShouldBindJSON(&in) != nil {
 			c.JSON(400, gin.H{"error": "整理映射无效"})
 			return

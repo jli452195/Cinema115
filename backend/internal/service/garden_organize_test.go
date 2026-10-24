@@ -209,7 +209,7 @@ func TestGardenSingleFileWrapperNeverGuessesOtherPaths(t *testing.T) {
 			case "multiple-files":
 				files = append(files, files[0])
 			}
-			if err := bindGardenFiles(&job, files, resultID); err == nil || job.Items[0].File.ID != name {
+			if err := bindDownloadFiles(&job, files, resultID); err == nil || job.Items[0].File.ID != name {
 				t.Fatal("unverified wrapper guessed a file", mode, err, job)
 			}
 		})
@@ -247,7 +247,7 @@ func TestGardenCompletedTaskDoesNotRepollWhileOrganizerBusy(t *testing.T) {
 	}
 }
 
-func gardenFixture(t *testing.T) (*GardenOrganize, *organizeFakeDrive, *cloudAdderStub, *gardenTrackerFake, *gardenDetailFake, GardenOrganizeInput) {
+func gardenFixture(t *testing.T) (*DownloadOrganize, *organizeFakeDrive, *cloudAdderStub, *gardenTrackerFake, *gardenDetailFake, DownloadOrganizeInput) {
 	o, drive, account, _ := newOrganizeTest(t)
 	transport := &gardenDetailFake{names: []string{"show/[Group] Show [01].mkv", "show/[Group] Show [02].mkv", "show/[Group] Show [SP01].mkv", "show/subtitles.zip", "show/disc.iso"}}
 	g := NewGardenService(transport)
@@ -255,12 +255,12 @@ func gardenFixture(t *testing.T) (*GardenOrganize, *organizeFakeDrive, *cloudAdd
 	adder := &cloudAdderStub{}
 	settings := &CloudDownloadSettings{value: cloudDownloadDocument{CloudDownloadConfig: CloudDownloadConfig{AccountID: account, TargetCID: "10", TargetPath: "/来源"}}}
 	tracker := &gardenTrackerFake{}
-	s := NewGardenOrganize(o.OrganizeEngine, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
-	in := GardenOrganizeInput{GardenResourceInput: GardenResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1, Suffix: "Group"}}}
+	s := NewDownloadOrganize(o.OrganizeEngine, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
+	in := DownloadOrganizeInput{DownloadResourceInput: DownloadResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1, Suffix: "Group"}}}
 	return s, drive, adder, tracker, transport, in
 }
 
-func TestGardenFilesStandardEpisodeFormats(t *testing.T) {
+func TestDownloadFilesStandardEpisodeFormats(t *testing.T) {
 	for _, tc := range []struct {
 		name, format string
 		count        int
@@ -274,7 +274,7 @@ func TestGardenFilesStandardEpisodeFormats(t *testing.T) {
 			for i := range transport.names {
 				transport.names[i] = fmt.Sprintf(tc.format, i+1)
 			}
-			files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+			files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,7 +293,7 @@ func TestGardenFilesStandardEpisodeFormats(t *testing.T) {
 	}
 }
 
-func TestGardenFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
+func TestDownloadFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 	s, _, _, _, transport, in := gardenFixture(t)
 	transport.names = []string{
 		"show/百变之星.2003.E027-E28.1080p.BDrip.mkv",
@@ -303,7 +303,7 @@ func TestGardenFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 		"show/カレイドスター 新たなる翼 第01話.mp4", "show/NCOP.E27-E28.mkv",
 		"show/no-number.mkv", "show/disc.iso", "show/subtitles.zip",
 	}
-	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil || len(files.Files) != 8 {
 		t.Fatal(files, err)
 	}
@@ -322,21 +322,21 @@ func TestGardenFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 	if files.Files[0].Name != "[Group] Show [2].mkv" || byName["カレイドスター 新たなる翼 第01話.mp4"].Episode != 1 {
 		t.Fatal("natural order/publisher numbers", files)
 	}
-	alias := in.GardenResourceInput
+	alias := in.DownloadResourceInput
 	alias.Provider = "mikan"
 	alias.ProviderID = "different"
 	alias.Magnet = "magnet:?xt=urn:btih:V5J3OTP64WVQKYW2BYQ4COA772JUVQD2"
-	if _, err = s.Garden.Files(context.Background(), alias); err != nil || len(transport.paths) != 1 {
+	if _, err = s.Resources.Files(context.Background(), alias); err != nil || len(transport.paths) != 1 {
 		t.Fatal("BTIH cache alias missed", err, transport.paths)
 	}
-	wrong := in.GardenResourceInput
+	wrong := in.DownloadResourceInput
 	wrong.Magnet = "magnet:?xt=urn:btih:0000000000000000000000000000000000000000"
-	if _, err = s.Garden.Files(context.Background(), wrong); err == nil {
+	if _, err = s.Resources.Files(context.Background(), wrong); err == nil {
 		t.Fatal("resource identity mismatch accepted")
 	}
 }
 
-func TestGardenDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
+func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
 	s, drive, adder, tracker, _, in := gardenFixture(t)
 	ctx := context.Background()
 	preview, err := s.Preview(ctx, in)
@@ -401,11 +401,11 @@ func TestGardenDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
 func TestGardenBindingRequiresExactPathsAndNeverPartiallyChangesPlan(t *testing.T) {
 	job := OrganizeJob{Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/a.mkv"}, SourcePath: "/show/a.mkv", MediaType: "video"}}, {File: OrganizeFile{ShareFile: p115.ShareFile{ID: "show/b.mkv"}, SourcePath: "/show/b.mkv", MediaType: "video"}}}}
 	files := []OrganizeFile{{ShareFile: p115.ShareFile{ID: "1", Name: "a.mkv"}, SourcePath: "show/a.mkv", MediaType: "video"}, {ShareFile: p115.ShareFile{ID: "2", Name: "b.mkv"}, SourcePath: "other/b.mkv", MediaType: "video"}}
-	if err := bindGardenFiles(&job, files, ""); err == nil || job.Items[0].File.ID != "show/a.mkv" {
+	if err := bindDownloadFiles(&job, files, ""); err == nil || job.Items[0].File.ID != "show/a.mkv" {
 		t.Fatal("guessed basename or partially rebound", err, job)
 	}
 	files[1].SourcePath = "show/b.mkv"
-	if err := bindGardenFiles(&job, files, ""); err != nil || job.Items[0].File.ID != "1" {
+	if err := bindDownloadFiles(&job, files, ""); err != nil || job.Items[0].File.ID != "1" {
 		t.Fatal(err, job)
 	}
 }
@@ -415,7 +415,7 @@ func TestGardenCompanionSubtitlesShareVideoBatch(t *testing.T) {
 	const stem = "[Group] Show [01-02]"
 	transport.names = []string{"show/" + stem + ".mkv", "show/" + stem + ".zh-CN.ASS", "show/" + stem + ".zh-TW.default.srt", "show/" + stem + ".en.idx", "show/" + stem + ".en.sub", "show/unmatched.ass", "show/subtitles.zip", "show/Show [03].mkv", "show/Show [03].ass"}
 	in.Files = []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 13, EndEpisode: 14, Suffix: "Group"}}
-	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil || len(files.Files) != 2 || len(files.Subtitles) != 6 {
 		t.Fatal("subtitle manifest lost files", files, err)
 	}
@@ -466,7 +466,7 @@ func TestGardenSubtitlesNeverGuessDirectoriesOrExcludedOwners(t *testing.T) {
 	s, _, _, _, transport, in := gardenFixture(t)
 	transport.names = []string{"show/a.mkv", "show/a.extended.mkv", "show/a.extended.zh.ass", "subtitles/a.srt", "show/b.mkv", "show/b.mp4", "show/b.ass", "show/a.zh*CN.srt", "show/a.zh?CN.srt"}
 	in.Files = []OrganizeSelection{{ID: "show/a.mkv", Season: 1, Episode: 1}}
-	files, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,9 +600,10 @@ func TestGardenPreviewConflictsUnsupportedAndRestart(t *testing.T) {
 		t.Fatal("restart silently rebound work", err)
 	}
 	transport.incomplete = true
-	s.Garden = NewGardenService(transport)
-	s.Garden.spacing = 0
-	if files, err := s.Garden.Files(context.Background(), in.GardenResourceInput); err != nil || len(files.Files) != 0 || files.Reason == "" {
+	g := NewGardenService(transport)
+	g.spacing = 0
+	s.Resources = g
+	if files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput); err != nil || len(files.Files) != 0 || files.Reason == "" {
 		t.Fatal("partial list accepted", files, err)
 	}
 }

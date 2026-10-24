@@ -41,7 +41,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         data = { id: 'scan-ui', files: [{ ...file(1), parentId: '30', sourcePath: `${input.parentPath}/待整理/Example.S01E01.mkv`, season: 1, episode: 1, suffix: '' }] }
       }
       else if (endpoint.endsWith('/subtitles/videos')) data = { videos: [{ ...file(0), parentId: '20', path: '/影视库/0.rmvb' }] }
-      else if (endpoint.endsWith('/garden-organize/resume')) {
+      else if (endpoint.endsWith('/download-organize/resume')) {
         if (resumeMode === 'hold') await new Promise(resolve => { releaseResume = resolve })
         if (resumeMode === 'reject') { status = 409; data = { error: '账号配置已变化，请重新确认账号和目录' } }
         else if (resumeMode === 'unknown') { status = 502; data = { error: '模拟响应丢失' } }
@@ -51,7 +51,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           data = job
         }
       }
-      else if (endpoint.endsWith('/garden-organize/jobs')) {
+      else if (endpoint.endsWith('/download-organize/jobs')) {
         if (offline) { status = 502; data = { error: '模拟读取失败' } }
         else data = { jobs: jobs.filter(job => job.download) }
       }
@@ -266,14 +266,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await dialog.getByText('已完成', { exact: true }).first().waitFor()
     assert.equal(await dialog.getByRole('button', { name: '检查并继续', exact: true }).count(), 0)
     assert.equal(await history.locator('li').count(), 1)
-    assert.deepEqual(writes, Array(3).fill('/api/admin/p115/garden-organize/resume'))
-    const countReads = () => reads.filter(endpoint => endpoint.endsWith('/garden-organize/jobs')).length
+    assert.deepEqual(writes, Array(3).fill('/api/admin/p115/download-organize/resume'))
+    const countReads = () => reads.filter(endpoint => endpoint.endsWith('/download-organize/jobs')).length
     const readsBeforeHidden = countReads()
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')) })
     await page.clock.fastForward(60000)
     assert.equal(countReads(), readsBeforeHidden, 'hidden page kept polling')
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')) })
-    await page.waitForResponse(response => response.url().includes('/garden-organize/jobs'))
+    await page.waitForResponse(response => response.url().includes('/download-organize/jobs'))
     assert.equal(countReads(), readsBeforeHidden + 1, 'return to foreground duplicated refresh')
     passed.push('hidden page stops polling; returning performs one local history read')
     assert.deepEqual(errors, [])

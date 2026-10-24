@@ -97,7 +97,7 @@ type OrganizeItem struct {
 
 type OrganizeJob struct {
 	Resumable bool                `json:"resumable,omitempty"`
-	Download  *GardenDownload     `json:"download,omitempty"`
+	Download  *ResourceDownload   `json:"download,omitempty"`
 	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
 	ID        string              `json:"id"`
 	Config    OrganizeConfig      `json:"config"`
@@ -179,7 +179,7 @@ func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive O
 		job := &s.doc.Jobs[i]
 		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
 			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查任务详情"
-			if canContinueOrganize(*job) || canResumeGarden(*job) {
+			if canContinueOrganize(*job) || canResumeDownload(*job) {
 				job.Message = "服务重启，任务已中断；可在原任务详情中检查并继续"
 			}
 		}
@@ -558,7 +558,7 @@ func (s *OrganizeEngine) history(download bool) []OrganizeJob {
 			continue
 		}
 		copy := cloneOrganizeJob(job)
-		copy.Resumable = canContinueOrganize(job) || download && canResumeGarden(job)
+		copy.Resumable = canContinueOrganize(job) || download && canResumeDownload(job)
 		jobs = append(jobs, copy)
 	}
 	return jobs

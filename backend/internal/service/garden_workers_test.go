@@ -72,7 +72,7 @@ func (d *gardenWorkerDrive) MoveEntriesBatch(ctx context.Context, ids []string, 
 	return d.organizeFakeDrive.MoveEntriesBatch(ctx, ids, cid, cookie)
 }
 
-func gardenWorkerFixture(t *testing.T, count int) (*GardenOrganize, *gardenWorkerDrive, []OrganizeJob) {
+func gardenWorkerFixture(t *testing.T, count int) (*DownloadOrganize, *gardenWorkerDrive, []OrganizeJob) {
 	t.Helper()
 	s, drive, _, _, _, in := gardenFixture(t)
 	plan, err := s.Preview(context.Background(), in)
@@ -95,7 +95,7 @@ func gardenWorkerFixture(t *testing.T, count int) (*GardenOrganize, *gardenWorke
 		drive.dirs[job.Config.SourceCID] = []p115.ShareFile{{ID: fmt.Sprint(300 + i), Name: "show", Directory: true}}
 		drive.dirs[fmt.Sprint(300+i)] = []p115.ShareFile{{ID: fmt.Sprint(400 + i), Name: "[Group] Show [01].mkv", Size: 1200}}
 		jobs[i] = cloneOrganizeJob(job)
-		s.live[job.ID] = &gardenPending{job: job, account: account}
+		s.live[job.ID] = &downloadPending{job: job, account: account}
 	}
 	doc := s.Organize.doc
 	doc.Jobs = jobs
@@ -129,7 +129,7 @@ func gardenWait(t *testing.T, condition func() bool) {
 	}
 }
 
-func gardenJobState(s *GardenOrganize, id string) string {
+func gardenJobState(s *DownloadOrganize, id string) string {
 	for _, job := range s.History() {
 		if job.ID == id {
 			return job.Status
@@ -138,7 +138,7 @@ func gardenJobState(s *GardenOrganize, id string) string {
 	return ""
 }
 
-func gardenRunTest(t *testing.T, s *GardenOrganize) (context.CancelFunc, <-chan struct{}, *error) {
+func gardenRunTest(t *testing.T, s *DownloadOrganize) (context.CancelFunc, <-chan struct{}, *error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -267,7 +267,7 @@ func TestGardenWorkersSlowOrganizationKeepsTrackingAndCapacity(t *testing.T) {
 			}
 			return gardenWorkerStatus(job, "completed"), nil
 		}
-		return gardenWorkerStatus(OrganizeJob{Download: &GardenDownload{Hash: hash}}, "downloading"), nil
+		return gardenWorkerStatus(OrganizeJob{Download: &ResourceDownload{Hash: hash}}, "downloading"), nil
 	})
 	cancel, done, runErr := gardenRunTest(t, s)
 	gardenWait(t, func() bool {

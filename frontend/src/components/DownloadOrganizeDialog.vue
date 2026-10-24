@@ -7,12 +7,13 @@ import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import SelectMenu from './SelectMenu.vue'
 import { p115Request } from '../lib/p115-api'
-import type { OrganizeFile, OrganizeJob, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
+import type { DownloadResourceInput, OrganizeFile, OrganizeJob, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
 import { applyOrganizeMapping, organizeTargetName, organizeSubtitleName } from '../utils/organizeNaming'
 import { directoryGroups } from '../utils/organizeSelection'
 
 const props = defineProps<{
   token: string; resource: { id: string; title: string; magnet: string; fansub?: string; publisher?: string }
+  source: DownloadResourceInput
   files: OrganizeFile[]
   subtitles?: OrganizeSubtitle[]
   tmdbId: number; kind: 'movie' | 'tv'; title: string; date: string
@@ -65,7 +66,7 @@ async function loadConfig() {
   try {
     const [cloud, organize] = await Promise.all([
       p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', { signal: signal() }),
-      p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'garden-organize/config', { signal: signal() }),
+      p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'download-organize/config', { signal: signal() }),
     ])
     if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在 115 云下载中配置主账号的下载目录')
     accountId.value = cloud.accountId; downloadPath.value = cloud.targetPath
@@ -80,15 +81,14 @@ async function start() {
   try {
     const key = snapshotKey.value
     if (!previewId.value || previewKey !== key) {
-      const [provider, providerId] = props.resource.id.split(':')
-      const preview = await p115Request<OrganizeJob>(props.token, 'garden-organize/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ provider, providerId, magnet: props.resource.magnet, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value, files: JSON.parse(key).files }) })
+      const preview = await p115Request<OrganizeJob>(props.token, 'download-organize/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...props.source, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value, files: JSON.parse(key).files }) })
       conflicts.value = Object.fromEntries(preview.items.filter(item => item.conflict).map(item => [item.file.id, item.conflict!]))
       if (Object.keys(conflicts.value).length) throw new Error('命名或目标目录存在冲突，请调整标出的文件')
       previewId.value = preview.id; previewKey = key
     }
     // Reuse the ID after a lost response; the server persists before submitting.
     creationAttempt = true
-    job.value = await p115Request<OrganizeJob>(props.token, 'garden-organize/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
+    job.value = await p115Request<OrganizeJob>(props.token, 'download-organize/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
     confirming.value = false
     emit('submitted', job.value)
   } catch (e) {
@@ -112,7 +112,7 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <template>
   <AnimeFloatingDialog :title="job ? '任务已创建' : '下载并整理'" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
-  <section class="garden-organize" aria-label="下载并整理映射" :aria-busy="busy || loading">
+  <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading">
     <p class="resource-title">{{ resource.title }}</p>
     <template v-if="job">
       <p role="status" class="notice">后台将下载整条磁力，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。关闭弹窗后继续执行。</p>
@@ -159,7 +159,7 @@ onBeforeUnmount(() => lifecycle.abort())
 </template>
 
 <style scoped>
-.garden-organize { @apply min-w-0 space-y-3 text-slate-700 dark:text-slate-200; }
+.download-organize { @apply min-w-0 space-y-3 text-slate-700 dark:text-slate-200; }
 .resource-title { @apply break-all text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }
 .scope-note { @apply text-xs leading-5 text-slate-500 dark:text-slate-400; }

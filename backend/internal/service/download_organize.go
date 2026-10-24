@@ -12,17 +12,17 @@ import (
 	"strm115/backend/internal/model"
 )
 
-// GardenDownload is a one-off naming preset, independent of RSS subscriptions.
-// Credentials only live in gardenPending and never enter plans/history.
-type GardenDownload struct {
+// ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
+// Credentials only live in downloadPending and never enter plans/history.
+type ResourceDownload struct {
 	Hash        string `json:"hash"`
 	ParentCID   string `json:"parentCID"`
 	ParentPath  string `json:"parentPath"`
 	DirectoryID string `json:"directoryId,omitempty"`
 }
 
-type GardenOrganizeInput struct {
-	GardenResourceInput
+type DownloadOrganizeInput struct {
+	DownloadResourceInput
 	Kind       string              `json:"kind"`
 	TMDBID     int                 `json:"tmdbId"`
 	AccountID  string              `json:"accountId"`
@@ -31,11 +31,11 @@ type GardenOrganizeInput struct {
 	Files      []OrganizeSelection `json:"files"`
 }
 
-type gardenStatusReader interface {
+type downloadStatusReader interface {
 	ReadAnimeTaskStatus(context.Context, string, string) (model.AnimeOfflineStatus, error)
 }
 
-type gardenPending struct {
+type downloadPending struct {
 	job                       OrganizeJob
 	account                   P115Account
 	next                      time.Time
@@ -45,27 +45,27 @@ type gardenPending struct {
 	resuming                  bool
 	continuing                bool
 	waitUntil                 time.Time
-	running                   bool // guarded by GardenOrganize.mu; other fields have one worker owner
+	running                   bool // guarded by DownloadOrganize.mu; other fields have one worker owner
 }
 
-type GardenOrganize struct {
+type DownloadOrganize struct {
 	Organize  *OrganizeEngine
-	Garden    *GardenService
+	Resources downloadResourceReader
 	Downloads *CloudDownloadService
 	Settings  *CloudDownloadSettings
-	Reader    gardenStatusReader
+	Reader    downloadStatusReader
 	mu        sync.Mutex
-	live      map[string]*gardenPending
+	live      map[string]*downloadPending
 	wake      chan struct{}
 }
 
-func NewGardenOrganize(o *OrganizeEngine, g *GardenService, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader gardenStatusReader) *GardenOrganize {
-	return &GardenOrganize{Organize: o, Garden: g, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*gardenPending), wake: make(chan struct{}, 1)}
+func NewDownloadOrganize(o *OrganizeEngine, resources downloadResourceReader, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader downloadStatusReader) *DownloadOrganize {
+	return &DownloadOrganize{Organize: o, Resources: resources, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*downloadPending), wake: make(chan struct{}, 1)}
 }
 
-func (s *GardenOrganize) History() []OrganizeJob { return s.Organize.history(true) }
+func (s *DownloadOrganize) History() []OrganizeJob { return s.Organize.history(true) }
 
-func (s *GardenOrganize) Target() CloudDownloadConfig {
+func (s *DownloadOrganize) Target() CloudDownloadConfig {
 	o := s.Organize
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -76,7 +76,7 @@ func (s *GardenOrganize) Target() CloudDownloadConfig {
 	return c
 }
 
-func (s *GardenOrganize) Preview(ctx context.Context, in GardenOrganizeInput) (OrganizeJob, error) {
+func (s *DownloadOrganize) Preview(ctx context.Context, in DownloadOrganizeInput) (OrganizeJob, error) {
 	download := s.Settings.View()
 	if in.AccountID != download.AccountID || !organizeID(in.TargetCID) || !organizePath(in.TargetPath) {
 		return OrganizeJob{}, fmt.Errorf("%w：请选择当前主账号的整理目录", ErrOrganizeInput)
@@ -85,7 +85,7 @@ func (s *GardenOrganize) Preview(ctx context.Context, in GardenOrganizeInput) (O
 	if err != nil {
 		return OrganizeJob{}, err
 	}
-	files, err := s.Garden.Files(ctx, in.GardenResourceInput)
+	files, err := s.Resources.Files(ctx, in.DownloadResourceInput)
 	if err != nil {
 		return OrganizeJob{}, err
 	}
@@ -104,13 +104,13 @@ func (s *GardenOrganize) Preview(ctx context.Context, in GardenOrganizeInput) (O
 		return OrganizeJob{}, err
 	}
 	// Website IDs are paths, not cloud file IDs. Actual IDs are bound only after download.
-	job.Download = &GardenDownload{Hash: files.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath}
+	job.Download = &ResourceDownload{Hash: files.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath}
 	return s.Organize.rememberPlan(job)
 }
 
 // Start persists before waking the server-owned worker. The preview ID is the
 // idempotency key, so a lost HTTP response cannot submit the magnet twice.
-func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
+func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	o := s.Organize
@@ -139,7 +139,7 @@ func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
 	if err = o.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
-	s.live[id] = &gardenPending{job: cloneOrganizeJob(job), account: a}
+	s.live[id] = &downloadPending{job: cloneOrganizeJob(job), account: a}
 	delete(o.plans, id)
 	select {
 	case s.wake <- struct{}{}:
@@ -150,7 +150,7 @@ func (s *GardenOrganize) Start(id string) (OrganizeJob, error) {
 
 // Called with s.mu held; both creation and explicit recovery pin credentials
 // and share the same concurrency/hash gate without making network requests.
-func (s *GardenOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
+func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 	a, err := s.Organize.account(job.Config.AccountID)
 	if err != nil {
 		return a, err
@@ -174,7 +174,7 @@ func (s *GardenOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 	return a, nil
 }
 
-func canResumeGarden(job OrganizeJob) bool {
+func canResumeDownload(job OrganizeJob) bool {
 	d := job.Download
 	if job.Status != "interrupted" || d == nil || !organizeID(d.DirectoryID) || d.DirectoryID == "0" || job.Config.SourceCID != d.DirectoryID || job.Config.SourcePath != path.Join(d.ParentPath, "garden-"+job.ID) || d.DirectoryID == job.Config.TargetCID || len(job.Items) == 0 || job.Stats.RenameRequests != 0 || job.Stats.MoveRequests != 0 {
 		return false
@@ -191,7 +191,7 @@ func canResumeGarden(job OrganizeJob) bool {
 
 // Resume only rejoins tracking for an existing download. It never enters the
 // queued/submitting branch, including after a lost response or another restart.
-func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
+func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	o := s.Organize
@@ -205,7 +205,7 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 			return cloneOrganizeJob(saved), nil
 		}
 		continuing := canContinueOrganize(saved)
-		if !continuing && !canResumeGarden(saved) {
+		if !continuing && !canResumeDownload(saved) {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
 		}
 		a, err := s.snapshotJob(saved)
@@ -225,7 +225,7 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 		if err = o.saveLocked(doc); err != nil {
 			return OrganizeJob{}, err
 		}
-		s.live[id] = &gardenPending{job: cloneOrganizeJob(job), account: a, resuming: !continuing, continuing: continuing, ready: continuing, waitUntil: time.Now().Add(24 * time.Hour)}
+		s.live[id] = &downloadPending{job: cloneOrganizeJob(job), account: a, resuming: !continuing, continuing: continuing, ready: continuing, waitUntil: time.Now().Add(24 * time.Hour)}
 		select {
 		case s.wake <- struct{}{}:
 		default:
@@ -235,7 +235,7 @@ func (s *GardenOrganize) Resume(id string) (OrganizeJob, error) {
 	return OrganizeJob{}, fmt.Errorf("%w：下载整理任务不存在或已不在最近记录中", ErrOrganizeInput)
 }
 
-func (s *GardenOrganize) Run(ctx context.Context) (runErr error) {
+func (s *DownloadOrganize) Run(ctx context.Context) (runErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	failures := make(chan error, 1)
@@ -256,7 +256,7 @@ func (s *GardenOrganize) Run(ctx context.Context) (runErr error) {
 			}
 			p.running = true
 			workers.Add(1)
-			go func(id string, p *gardenPending) {
+			go func(id string, p *downloadPending) {
 				defer workers.Done()
 				if err := s.runPending(ctx, p); err != nil {
 					select {
@@ -281,7 +281,7 @@ func (s *GardenOrganize) Run(ctx context.Context) (runErr error) {
 
 // At most four independent workers track downloads. Only the shared directory
 // reservation serializes organization; no worker holds it while polling/sleeping.
-func (s *GardenOrganize) runPending(ctx context.Context, p *gardenPending) error {
+func (s *DownloadOrganize) runPending(ctx context.Context, p *downloadPending) error {
 	for {
 		if ctx.Err() != nil {
 			_, err := s.stop(p, "interrupted", "服务停止，任务已中断；请核对任务记录后继续")
@@ -303,12 +303,12 @@ func (s *GardenOrganize) runPending(ctx context.Context, p *gardenPending) error
 	}
 }
 
-func (s *GardenOrganize) stop(p *gardenPending, status, message string) (bool, error) {
+func (s *DownloadOrganize) stop(p *downloadPending, status, message string) (bool, error) {
 	p.job.Status, p.job.Message = status, message
 	return true, s.Organize.checkpoint(&p.job)
 }
 
-func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, error) {
+func (s *DownloadOrganize) advance(ctx context.Context, p *downloadPending) (bool, error) {
 	o, job, cookie := s.Organize, &p.job, p.account.Cookie
 	if job.Stats.StartedAt.IsZero() {
 		job.Stats.StartedAt = time.Now()
@@ -379,7 +379,7 @@ func (s *GardenOrganize) advance(ctx context.Context, p *gardenPending) (bool, e
 	return s.organize(ctx, p)
 }
 
-func (s *GardenOrganize) submit(ctx context.Context, p *gardenPending) (bool, error) {
+func (s *DownloadOrganize) submit(ctx context.Context, p *downloadPending) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	o, job, cookie := s.Organize, &p.job, p.account.Cookie
@@ -418,7 +418,7 @@ func (s *GardenOrganize) submit(ctx context.Context, p *gardenPending) (bool, er
 	return false, o.checkpoint(job)
 }
 
-func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, error) {
+func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	o, job, cookie := s.Organize, &p.job, p.account.Cookie
@@ -447,7 +447,7 @@ func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, 
 		err = fmt.Errorf("115 离线结果不在本次下载目录中")
 	}
 	if err == nil && !p.continuing {
-		err = bindGardenFiles(job, files, p.resultID)
+		err = bindDownloadFiles(job, files, p.resultID)
 	}
 	if err != nil {
 		p.bindingAttempts++
@@ -489,7 +489,7 @@ func (s *GardenOrganize) organize(ctx context.Context, p *gardenPending) (bool, 
 	return true, nil
 }
 
-func (s *GardenOrganize) downloadFiles(ctx context.Context, job *OrganizeJob, cookie string) ([]OrganizeFile, []string, error) {
+func (s *DownloadOrganize) downloadFiles(ctx context.Context, job *OrganizeJob, cookie string) ([]OrganizeFile, []string, error) {
 	files := make([]OrganizeFile, 0, len(job.Items))
 	dirs := make([]string, 0, 16)
 	seen := make(map[string]bool)
@@ -522,7 +522,7 @@ func (s *GardenOrganize) downloadFiles(ctx context.Context, job *OrganizeJob, co
 	return files, dirs, err
 }
 
-func bindGardenFiles(job *OrganizeJob, files []OrganizeFile, resultID string) error {
+func bindDownloadFiles(job *OrganizeJob, files []OrganizeFile, resultID string) error {
 	index := make(map[string][]OrganizeFile, len(files))
 	for _, f := range files {
 		index[f.SourcePath] = append(index[f.SourcePath], f)

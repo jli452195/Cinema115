@@ -29,7 +29,7 @@ async function refresh() {
   refreshing.value = true
   try {
     const [data, accountData] = await Promise.all([
-      request<{ jobs: OrganizeJob[] }>('garden-organize/jobs', { signal: read.signal }),
+      request<{ jobs: OrganizeJob[] }>('download-organize/jobs', { signal: read.signal }),
       accountsLoaded ? undefined : request<{ accounts: P115Account[] }>('accounts', { signal: read.signal }),
     ])
     if (lifecycle.signal.aborted || read.signal.aborted || current !== revision) return
@@ -50,7 +50,7 @@ async function resume(job: OrganizeJob) {
   historyRead?.abort()
   let uncertain = false
   try {
-    const result = await request<OrganizeJob>('garden-organize/resume', { method: 'POST', body: JSON.stringify({ jobId: job.id }) })
+    const result = await request<OrganizeJob>('download-organize/resume', { method: 'POST', body: JSON.stringify({ jobId: job.id }) })
     jobs.value = jobs.value.map(old => old.id === result.id ? result : old)
   } catch (reason) {
     if (!lifecycle.signal.aborted) {

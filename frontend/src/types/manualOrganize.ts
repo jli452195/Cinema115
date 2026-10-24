@@ -1,4 +1,12 @@
 import type { NumberingInfo } from './tvNumbering'
+export interface DownloadResourceInput {
+  source: 'mikan' | 'garden'
+  provider?: string
+  providerId: string
+  magnet: string
+  torrentUrl?: string
+}
+export interface DownloadFiles { files: OrganizeFile[]; subtitles?: OrganizeSubtitle[]; reason?: string }
 export interface OrganizeConfig {
   accountId: string
   sourceCID: string

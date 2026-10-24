@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { IconChevronDown, IconFolder } from '@tabler/icons-vue'
-import GardenOrganizeDialog from './GardenOrganizeDialog.vue'
-import type { OrganizeFile, OrganizeJob, OrganizeSubtitle } from '../types/manualOrganize'
+import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
+import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
+import type { DownloadFiles, DownloadResourceInput, OrganizeJob } from '../types/manualOrganize'
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -39,6 +39,7 @@ const group = ref('')
 const groups = ref<Group[]>([])
 const result = ref<Result>()
 const busy = ref(false)
+const preparingItem = ref('')
 const retainedItems = ref<Item[]>()
 const loadingMessage = ref('')
 const error = ref('')
@@ -61,7 +62,7 @@ const expansions = computed(() => (result.value?.more || []).filter(item => !gro
 const lifecycle = new AbortController()
 const batch = useCloudDownloadBatch(props.token, lifecycle.signal)
 const { mode: batchMode, running: batchRunning, selected: batchSelected, notice: batchNotice, count: batchCount } = batch
-const interactionBusy = computed(() => busy.value || batchRunning.value)
+const interactionBusy = computed(() => busy.value || batchRunning.value || !!preparingItem.value)
 const previousFocus = document.activeElement as HTMLElement | null
 let unlockScroll: (() => void) | undefined
 const submissions = ref<Record<string, BatchStatus & { organize?: boolean }>>({})
@@ -95,25 +96,36 @@ function allowReselectAfterCheck() {
   for (const [key, state] of Object.entries(submissions.value)) if (state.uncertain) delete submissions.value[key]
 }
 const organizeResource = ref<Item>()
-const organizeFiles = ref<{ files: OrganizeFile[]; subtitles?: OrganizeSubtitle[] }>({ files: [] })
-const preparingItem = ref('')
+const organizeFiles = ref<DownloadFiles>({ files: [] })
 const prepareNotices = ref<Record<string, string>>({})
+function organizeSource(item: Item): DownloadResourceInput {
+  if (!isGarden.value) return { source: 'mikan', providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
+  const [provider, providerId] = item.id.split(':')
+  return { source: 'garden', provider, providerId: providerId || '', magnet: item.magnet }
+}
 async function openOrganize(item: Item, event: MouseEvent) {
-  if (organizeResource.value || preparingItem.value || interactionBusy.value || !props.tmdbId) return
-  const returnFocus = (event.currentTarget as HTMLElement).closest('.garden-download-actions')?.querySelector('summary')
-  ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
-  returnFocus?.focus({ preventScroll: true })
+  if (organizeResource.value || interactionBusy.value || singleSubmitting.value || !props.tmdbId || submission(item)?.success || submission(item)?.uncertain) return
+  const returnFocus = event.currentTarget as HTMLElement
+  returnFocus.focus({ preventScroll: true })
   preparingItem.value = item.id
   delete prepareNotices.value[item.id]
   try {
-    const [provider, providerId] = item.id.split(':')
-    const data = await p115Request<{ files: OrganizeFile[]; reason?: string }>(props.token, 'garden-organize/files', { method: 'POST', body: JSON.stringify({ provider, providerId, magnet: item.magnet }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
-    if (!data.files.length) { prepareNotices.value[item.id] = data.reason || 'Garden 没有提供可整理的文件清单，可使用普通离线'; return }
+    const data = await p115Request<DownloadFiles>(props.token, 'download-organize/files', { method: 'POST', body: JSON.stringify(organizeSource(item)), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
+    if (!data.files.length) { prepareNotices.value[item.id] = data.reason || '没有可整理的文件清单，可使用普通离线'; return }
     organizeFiles.value = data
+    preparingItem.value = ''
+    await nextTick()
+    if (lifecycle.signal.aborted) return
     returnFocus?.focus({ preventScroll: true })
-    organizeResource.value = item
+    organizeResource.value = { ...item, fansub: item.fansub || groups.value.find(group => group.id === item.groupId)?.name }
   } catch (e) { if (!lifecycle.signal.aborted) prepareNotices.value[item.id] = e instanceof Error ? e.message : '读取文件清单失败，可使用普通离线' }
-  finally { if (!lifecycle.signal.aborted) preparingItem.value = '' }
+  finally {
+    if (!lifecycle.signal.aborted) {
+      preparingItem.value = ''
+      await nextTick()
+      if (!organizeResource.value && returnFocus.isConnected && document.activeElement === document.body) returnFocus.focus({ preventScroll: true })
+    }
+  }
 }
 function organizeUncertain() {
   if (organizeResource.value) submissions.value[magnetKey(organizeResource.value.magnet)] = { organize: true, uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
@@ -463,18 +475,12 @@ onBeforeUnmount(() => {
                   <div class="mikan-resource-meta"><span class="mikan-resolution">{{ item.resolution }}</span><span>{{ item.size }}</span><span :title="'原站时间：' + item.updatedAt">{{ item.updatedAt }}</span><template v-if="isGarden"><span>{{ item.originName }}</span><span :title="`发布者：${item.publisher}`">{{ item.fansub || item.publisher }}</span></template></div>
                   <div class="mikan-resource-actions">
                     <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : '查看蜜柑原帖'"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
-                    <a v-if="item.torrentUrl" :href="item.torrentUrl" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" aria-label="下载种子"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" /></svg><span class="mikan-action-label-desktop">下载种子</span><span class="mikan-action-label-mobile">种子</span></a>
-                    <div class="garden-download-actions">
+                    <button v-if="tmdbId && !batchMode && (isGarden || item.torrentUrl)" type="button" class="mikan-button mikan-outlined-button" aria-label="115 整理" :aria-busy="preparingItem === item.id" :disabled="interactionBusy || singleSubmitting || submission(item)?.success || submission(item)?.uncertain" @click="openOrganize(item, $event)"><component :is="preparingItem === item.id ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': preparingItem === item.id }" /><span class="mikan-action-label-desktop">{{ preparingItem === item.id ? '解析中…' : '115 整理' }}</span><span class="mikan-action-label-mobile">{{ preparingItem === item.id ? '解析…' : '整理' }}</span></button>
                     <button type="button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
-                      <details v-if="isGarden && tmdbId && !batchMode" class="garden-download-menu" @keydown.esc.stop="($event.currentTarget as HTMLDetailsElement).open = false">
-                        <summary :aria-label="`更多下载操作 ${item.title}`" class="mikan-button mikan-primary-button"><IconChevronDown :size="16" aria-hidden="true" /></summary>
-                        <div><button type="button" :disabled="!!preparingItem || interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="openOrganize(item, $event)"><IconFolder :size="16" aria-hidden="true" />下载并整理</button></div>
-                      </details>
-                    </div>
                   </div>
                 </div>
                 <div v-if="copyError === item.id" role="alert" class="mikan-notice mikan-warning"><p>浏览器未允许复制，请手动复制下方磁力：</p><textarea :value="item.magnet" readonly aria-label="手动复制磁力" @focus="($event.target as HTMLTextAreaElement).select()" /></div>
-                <p v-if="preparingItem === item.id" role="status" class="mikan-notice garden-prepare-notice">读取 Garden 文件清单…</p>
+                <p v-if="preparingItem === item.id" role="status" class="mikan-notice garden-prepare-notice">{{ isGarden ? '读取 Garden 文件清单…' : '正在解析蜜柑种子清单…' }}</p>
                 <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
                 <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
                 <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
@@ -501,21 +507,10 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <GardenOrganizeDialog v-if="organizeResource" :token="token" :resource="organizeResource" :files="organizeFiles.files" :subtitles="organizeFiles.subtitles" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeResource = undefined" @submitted="organized" @uncertain="organizeUncertain" />
+  <DownloadOrganizeDialog v-if="organizeResource" :token="token" :resource="organizeResource" :source="organizeSource(organizeResource)" :files="organizeFiles.files" :subtitles="organizeFiles.subtitles" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeResource = undefined" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
 
 <style scoped>
-.garden-download-actions { display: inline-flex; align-items: stretch; }
-.garden-download-actions:has(details)>button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.garden-download-menu { position: relative; }
-.garden-download-menu summary { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid rgb(255 255 255 / .2); padding-inline: 8px; list-style: none; cursor: pointer; height: 100%; }
-.garden-download-menu summary::-webkit-details-marker { display: none; }
-.garden-download-menu>div { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: max-content; border-radius: 10px; padding: 4px; box-shadow: 0 6px 24px rgb(0 0 0 / .16); background: var(--search-dialog-bg, white); }
-.garden-download-menu>div button { display: flex; align-items: center; gap: 8px; border-radius: 7px; padding: 10px 14px; font-size: 12px; color: #334155; background: #f8fafc; }
-:global(.dark) .garden-download-menu>div { background: #1e293b; }
-:global(.dark) .garden-download-menu>div button { background: #334155; color: #e2e8f0; }
-.garden-download-menu>div button:hover { color: #2563eb; background: #eff6ff; }
-.garden-download-menu>div button:disabled { opacity: .45; }
 .garden-prepare-notice { color: var(--search-dialog-muted, #64748b); }
 
 .mikan-dialog {
@@ -693,8 +688,8 @@ onBeforeUnmount(() => {
   .mikan-batch-count > span { font-size: 10px; line-height: 16px; }
   .mikan-batch-actions .mikan-button { padding-inline: 10px; font-size: 11px; white-space: nowrap; }
   .mikan-copy-button { min-height: 48px; }
-  .mikan-resource-actions { justify-content: stretch; }
-  .mikan-resource-actions > :is(a, button) { flex: 1; min-width: 0; padding-inline: 6px; font-size: 11px; }
+  .mikan-resource-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .mikan-resource-actions > :is(a, button) { min-width: 0; padding-inline: 6px; font-size: 11px; }
   .mikan-resource-actions > :is(a, button) > span { white-space: nowrap; }
   .mikan-footer { padding: 4px 16px 8px; font-size: 10px; line-height: 16px; }
   .mikan-cover-retry { min-height: 32px; }

@@ -70,7 +70,7 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 			drive.dirs[fmt.Sprint(i+100)] = []p115.ShareFile{{ID: "900", Name: path.Base(tc.name), Size: 100}}
 		}
 	}
-	gardenFiles, err := s.Garden.Files(context.Background(), in.GardenResourceInput)
+	gardenFiles, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil {
 		t.Fatal(err)
 	}
