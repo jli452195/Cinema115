@@ -220,7 +220,11 @@ func Default(kind Kind) (Template, error) {
 		template.Filename = append(template.Filename, year)
 	}
 	for _, field := range []Field{Resolution, Source, Platform, VideoCodec, BitDepth, DynamicRange, FrameRate, AudioCodec, Channels, AudioEffect, Languages, SubtitleMode, Edition} {
-		template.Filename = append(template.Filename, Block{Field: field, Separator: "."})
+		block := Block{Field: field, Separator: "."}
+		if field == Languages {
+			block.Prefix, block.Suffix = "[", "]"
+		}
+		template.Filename = append(template.Filename, block)
 	}
 	template.Filename = append(template.Filename, Block{Field: ReleaseGroup, Separator: "-"}, Block{Field: Custom, Separator: "-"})
 	return template, nil

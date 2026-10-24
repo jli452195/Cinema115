@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/naming"
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
@@ -277,6 +279,62 @@ func TestDownloadBatchSpecsUseEachFileAndSingleTitleTagsAsFallback(t *testing.T)
 	files, err = s.Files(context.Background(), in)
 	if err != nil || files.Specs[files.Files[0].ID].Resolution != "" || files.Specs[files.Files[1].ID].Fansub != "" {
 		t.Fatal("pack title was copied onto every video", err, files.Specs)
+	}
+}
+
+func TestDownloadSubtitleNamingScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name, title, file, languages string
+		peer                         bool
+	}{
+		{"explicit file", "[简繁内封]", "Show/Show.S01E01.[简体].mkv", "简体", false},
+		{"directory", "", "Movie[国英多音轨+简繁英字幕]/Movie.mkv", "简繁英", false},
+		{"directory before post", "Movie[简繁英内封]", "Movie[CHS]/Movie.mkv", "简体", false},
+		{"post title", "Movie[国英多音轨+简繁英字幕]", "Movie/Movie.mkv", "简繁英", false},
+		{"size is not GB subtitles", "", "Movie/Movie.[20 GB].mkv", "", false},
+		{"mixed directory", "Movie[简繁英字幕]", "Movie[简繁英字幕]/Movie.mkv", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, drive, _, _, _, input := gardenFixture(t)
+			reads := 0
+			s.Resources = downloadReaderFunc(func(context.Context, DownloadResourceInput) (DownloadFiles, error) {
+				reads++
+				files := []torrentmeta.File{{Path: tc.file, Size: 100}}
+				if tc.peer {
+					files = append(files, torrentmeta.File{Path: path.Join(path.Dir(tc.file), "Other.mkv"), Size: 100})
+				}
+				return organizeResourceFiles(gardenTestHash, files)
+			})
+			input.DownloadResourceInput = DownloadResourceInput{Source: "gying", Title: tc.title}
+			files, err := s.Files(context.Background(), input.DownloadResourceInput)
+			if err != nil || len(files.Files) == 0 || reads != 1 || len(drive.listCalls) != 0 {
+				t.Fatal("subtitle naming added I/O", files, err, reads, drive.listCalls)
+			}
+			for _, file := range files.Files {
+				if file.NamingValues[naming.Languages] != tc.languages || file.NamingValues[naming.SubtitleMode] != "" {
+					t.Fatal("wrong subtitle scope or inferred subtitle mode", file.NamingValues)
+				}
+			}
+			input.Files = nil
+			for i, file := range files.Files {
+				input.Files = append(input.Files, OrganizeSelection{ID: file.ID, Season: 1, Episode: i + 1})
+			}
+			input.ManifestID = files.ManifestID
+			cached, err := s.Preview(context.Background(), input)
+			if err != nil || reads != 1 {
+				t.Fatal("cached preview refetched resource", cached, err, reads)
+			}
+			input.ManifestID = ""
+			fresh, err := s.Preview(context.Background(), input)
+			if err != nil || len(cached.Items) != len(fresh.Items) || reads != 2 {
+				t.Fatal("uncached preview", fresh, err, reads)
+			}
+			for i, item := range cached.Items {
+				if item.Name != fresh.Items[i].Name || item.Directory != fresh.Items[i].Directory {
+					t.Fatal("manifest changed subtitle naming", item, fresh.Items[i])
+				}
+			}
+		})
 	}
 }
 

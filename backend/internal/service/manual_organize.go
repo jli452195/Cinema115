@@ -439,12 +439,22 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 	if err := walk(*root, input.ParentID, c.SourcePath, 0); err != nil {
 		return OrganizeScan{}, err
 	}
+	if root.Directory {
+		mediaDirectorySubtitleValues(result.Files)
+	}
 	// A selected single video may have companion subtitles in the same folder.
 	if !root.Directory && organizeMedia(root.Name) == "video" {
 		siblings := make([]OrganizeFile, 0, len(files))
 		for _, file := range files {
 			if !file.Directory {
-				siblings = append(siblings, OrganizeFile{ShareFile: file, ParentID: input.ParentID, MediaType: organizeMedia(file.Name)})
+				siblings = append(siblings, OrganizeFile{ShareFile: file, ParentID: input.ParentID, SourcePath: path.Join(c.SourcePath, file.Name), MediaType: organizeMedia(file.Name)})
+			}
+		}
+		mediaDirectorySubtitleValues(siblings)
+		for _, file := range siblings {
+			if file.ID == root.ID {
+				result.Files[0].NamingValues = file.NamingValues
+				break
 			}
 		}
 		for _, file := range files {

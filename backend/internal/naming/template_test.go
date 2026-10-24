@@ -46,7 +46,7 @@ func TestDefaultNames(t *testing.T) {
 			naming.DynamicRange: "DV HDR10", naming.FrameRate: "24fps", naming.AudioCodec: "TrueHD",
 			naming.Channels: "7.1", naming.AudioEffect: "Atmos", naming.Languages: "简繁", naming.SubtitleMode: "外挂",
 			naming.Edition: "导演剪辑版", naming.ReleaseGroup: "Group", naming.Custom: "Remux",
-		}, OriginalName: "original.MKV"}, "电影 (2026) {tmdb-123}/电影 (2026).2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.TrueHD.7.1.Atmos.简繁.外挂.导演剪辑版-Group-Remux.mkv"},
+		}, OriginalName: "original.MKV"}, "电影 (2026) {tmdb-123}/电影 (2026).2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.TrueHD.7.1.Atmos.[简繁].外挂.导演剪辑版-Group-Remux.mkv"},
 		{"movie without metadata or specifications", naming.Movie, naming.Data{Values: map[naming.Field]string{
 			naming.Title: "电影",
 		}, OriginalName: "original.mp4"}, "电影/电影.mp4"},

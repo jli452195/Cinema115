@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"strm115/backend/internal/animeparse"
 )
 
 // Prepared manifests retain verified file identities while a user edits a large
@@ -50,32 +48,7 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 	if err != nil || len(out.Files) == 0 {
 		return out, err
 	}
-	// A single video's post title can fill missing cosmetic tags. For a pack,
-	// only each file's metadata applies; the pack title cannot describe all rows.
-	if len(out.Files) == 1 && !out.Files[0].TitleOnly && in.Title != "" {
-		spec := out.Specs[out.Files[0].ID]
-		title := animeparse.Specification(in.Title)
-		if spec.Resolution == "" {
-			spec.Resolution = title.Resolution
-		}
-		if len(spec.Languages) == 0 {
-			spec.Languages = title.Languages
-		}
-		if spec.Fansub == "" {
-			spec.Fansub = downloadFansub(in.Title)
-		}
-		if out.Specs == nil {
-			out.Specs = make(map[string]DownloadFileSpec, 1)
-		}
-		out.Specs[out.Files[0].ID] = spec
-	}
-	for i := range out.Files {
-		spec := out.Specs[out.Files[i].ID]
-		if spec.Fansub == "" {
-			spec.Fansub = strings.TrimSpace(in.Fansub)
-		}
-		out.Files[i].NamingValues = mediaFileValues(out.Files[i].Name, spec)
-	}
+	prepareDownloadNaming(&out, in)
 	body, err := json.Marshal(out)
 	if err != nil {
 		return DownloadFiles{}, fmt.Errorf("缓存资源清单: %w", err)
@@ -112,9 +85,49 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 	return out, nil
 }
 
+// Keep naming facts identical with or without an already-confirmed manifest.
+func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput) {
+	for i := range out.Files {
+		spec := out.Specs[out.Files[i].ID]
+		if spec.Fansub == "" {
+			spec.Fansub = strings.TrimSpace(in.Fansub)
+		}
+		out.Files[i].NamingValues = mediaFileValues(out.Files[i].Name, spec)
+	}
+	mediaDirectorySubtitleValues(out.Files)
+	// A single video's post title can fill missing cosmetic tags. For a pack,
+	// only each file's metadata applies; the pack title cannot describe all rows.
+	if len(out.Files) == 1 && !out.Files[0].TitleOnly && in.Title != "" {
+		spec := out.Specs[out.Files[0].ID]
+		title := resourceSearchSpec(in.Title)
+		if spec.Resolution == "" {
+			spec.Resolution = title.Resolution
+		}
+		if len(spec.Languages) == 0 {
+			spec.Languages = title.Languages
+		}
+		if spec.Fansub == "" {
+			spec.Fansub = downloadFansub(in.Title)
+		}
+		if out.Specs == nil {
+			out.Specs = make(map[string]DownloadFileSpec, 1)
+		}
+		out.Specs[out.Files[0].ID] = spec
+		for field, value := range mediaFileValues(out.Files[0].Name, spec) {
+			if out.Files[0].NamingValues[field] == "" {
+				out.Files[0].NamingValues[field] = value
+			}
+		}
+	}
+}
+
 func (s *DownloadOrganize) manifest(ctx context.Context, in DownloadOrganizeInput) (DownloadFiles, error) {
 	if in.ManifestID == "" {
-		return s.resourceFiles(ctx, in.DownloadResourceInput)
+		out, err := s.resourceFiles(ctx, in.DownloadResourceInput)
+		if err == nil {
+			prepareDownloadNaming(&out, in.DownloadResourceInput)
+		}
+		return out, err
 	}
 	if err := ctx.Err(); err != nil {
 		return DownloadFiles{}, err
@@ -173,13 +186,6 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		downloads = append(downloads, &ResourceDownload{Hash: manifest.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath})
 		prefix := manifest.Hash + "/"
 		add := func(file OrganizeFile) {
-			if file.NamingValues == nil && file.MediaType == "video" {
-				spec := manifest.Specs[file.ID]
-				if spec.Fansub == "" {
-					spec.Fansub = strings.TrimSpace(resource.Fansub)
-				}
-				file.NamingValues = mediaFileValues(file.Name, spec)
-			}
 			key := prefix + file.ID
 			originals[key], owners[key] = file, index
 			file.ID, file.ParentID, file.SourcePath = key, prefix+file.ParentID, "/"+prefix+strings.TrimPrefix(file.SourcePath, "/")

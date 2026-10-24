@@ -1,7 +1,9 @@
 package service
 
 import (
+	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"strm115/backend/internal/naming"
@@ -18,26 +20,17 @@ func mediaFileValues(name string, hint DownloadFileSpec) map[naming.Field]string
 	if hint.Resolution == "" {
 		hint.Resolution = search.Resolution
 	}
-	if len(hint.Languages) == 0 {
+	if len(search.Languages) > 0 {
 		hint.Languages = search.Languages
 	}
-	if hint.SubtitleMode == "" {
+	if search.SubtitleMode != "" {
 		hint.SubtitleMode = search.SubtitleMode
 	}
 	if hint.Fansub == "" {
 		hint.Fansub = downloadFansub(name)
 	}
 	values := map[naming.Field]string{naming.Resolution: hint.Resolution, naming.ReleaseGroup: hint.Fansub}
-	languages := make([]string, 0, len(hint.Languages))
-	for _, pair := range [][2]string{{"zh-Hans", "简体"}, {"zh-Hant", "繁体"}, {"ja", "日语"}, {"en", "英语"}} {
-		for _, language := range hint.Languages {
-			if pair[0] == language {
-				languages = append(languages, pair[1])
-				break
-			}
-		}
-	}
-	values[naming.Languages] = strings.Join(languages, "+")
+	values[naming.Languages] = mediaSubtitleLanguages(hint.Languages)
 	values[naming.SubtitleMode] = map[string]string{"hard": "内嵌", "soft": "内封", "external": "外挂"}[hint.SubtitleMode]
 	tags := make(map[naming.Field][]string, 10)
 	name = mediaJoinedChannels.ReplaceAllString(name, "$1 $2")
@@ -106,4 +99,52 @@ func mediaFileValues(name string, hint DownloadFileSpec) map[naming.Field]string
 		}
 	}
 	return values
+}
+
+func mediaSubtitleLanguages(languages []string) string {
+	var label strings.Builder
+	single := ""
+	count := 0
+	for _, language := range [][3]string{{"zh-Hans", "简", "简体"}, {"zh-Hant", "繁", "繁体"}, {"ja", "日", "日语"}, {"en", "英", "英语"}} {
+		if slices.Contains(languages, language[0]) {
+			label.WriteString(language[1])
+			single = language[2]
+			count++
+		}
+	}
+	if count == 1 {
+		return single
+	}
+	return label.String()
+}
+
+// Only an already-enumerated directory containing one video may supply missing
+// subtitle facts. Never copy a pack's labels to several videos or search ancestors.
+func mediaDirectorySubtitleValues(files []OrganizeFile) {
+	counts := make(map[string]int, len(files))
+	for _, file := range files {
+		if file.MediaType == "video" {
+			counts[file.ParentID]++
+		}
+	}
+	for i := range files {
+		file := &files[i]
+		if file.MediaType != "video" || file.TitleOnly || counts[file.ParentID] != 1 {
+			continue
+		}
+		if file.NamingValues == nil {
+			file.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
+		}
+		if file.NamingValues[naming.Languages] != "" {
+			continue
+		}
+		parent := mediaFileValues(path.Base(path.Dir(file.SourcePath)), DownloadFileSpec{})
+		if parent[naming.Languages] == "" {
+			continue
+		}
+		file.NamingValues[naming.Languages] = parent[naming.Languages]
+		if file.NamingValues[naming.SubtitleMode] == "" {
+			file.NamingValues[naming.SubtitleMode] = parent[naming.SubtitleMode]
+		}
+	}
 }

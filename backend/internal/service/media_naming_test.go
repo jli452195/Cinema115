@@ -12,6 +12,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
 	"strm115/backend/internal/utils/torrentmeta"
 )
@@ -67,6 +68,114 @@ func TestMediaNamingFileFacts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMediaNamingSubtitleTags(t *testing.T) {
+	for _, tc := range []struct {
+		name, languages, mode string
+	}{
+		{"[Nix-Raws] VERTEX FORCE S01E01 [CR WEB-DL 1080p AVC AAC][SC_TC].mkv", "简繁", ""},
+		{"xxxx - [简体] GB .mkv", "简体", ""},
+		{"Show - 01 GB.mkv", "简体", ""},
+		{"Show [01][GB][CHS][SC][简体].mkv", "简体", ""},
+		{"Show [01][BIG5][CHT][TC][繁體].mkv", "繁体", ""},
+		{"Show [01][简繁日内封].mkv", "简繁日", "内封"},
+		{"Show [01][简日双语外挂].mkv", "简日", "外挂"},
+		{"Show [01][CHS&CHT][ENG].mkv", "简繁英", ""},
+		{"Show [01][繁体内嵌].mp4", "繁体", "内嵌"},
+		{"Movie [ENG].mkv", "英语", ""},
+		{"Movie [JPN].mkv", "日语", ""},
+		{"海洋奇缘2[国英多音轨+简繁英字幕].2024.mkv", "简繁英", ""},
+		{"海洋奇缘2[国英多音轨].2024.mkv", "", ""},
+		{"Movie.2024.[20GB].mkv", "", ""},
+		{"Movie.2024.[20 GB].mkv", "", ""},
+		{"Show [01][20 GB][CHT].mkv", "繁体", ""},
+		{"[简繁字幕组] 每日字幕故事 [01][1080p].mkv", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mediaFileValues(tc.name, DownloadFileSpec{})
+			if got[naming.Languages] != tc.languages || got[naming.SubtitleMode] != tc.mode {
+				t.Fatalf("subtitle facts = %q / %q, want %q / %q", got[naming.Languages], got[naming.SubtitleMode], tc.languages, tc.mode)
+			}
+		})
+	}
+	// Standard codes stay independent of display order and duplicate aliases.
+	hint := DownloadFileSpec{AnimeSpec: model.AnimeSpec{Languages: []string{"en", "zh-Hant", "zh-Hans", "zh-Hans"}, SubtitleMode: "soft"}}
+	if got := mediaFileValues("Movie.mkv", hint); got[naming.Languages] != "简繁英" {
+		t.Fatal("duplicate/reordered languages changed the label", got)
+	}
+	if got := mediaFileValues("Movie [简体内嵌].mkv", hint); got[naming.Languages] != "简体" || got[naming.SubtitleMode] != "内嵌" {
+		t.Fatal("source hints overrode explicit file tags", got)
+	}
+}
+
+func TestMediaNamingDirectorySubtitleScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, directory, filename, languages, mode string
+		peer                                       bool
+	}{
+		{"single film", "/海洋奇缘2[国英多音轨+简繁英字幕]", "Moana.2.2024.mkv", "简繁英", "", false},
+		{"explicit directory mode", "/Movie[简繁英内封]", "Movie.mkv", "简繁英", "内封", false},
+		{"mixed files", "/Movie[简繁英内封]", "Movie.mkv", "", "", true},
+		{"file language wins", "/Movie[简繁英内封]", "Movie[CHS].mkv", "简体", "", false},
+		{"file mode wins", "/Movie[简繁内封]", "Movie[内嵌].mp4", "简繁", "内嵌", false},
+		{"no ancestor inheritance", "/Movie[简繁英内封]/1080p", "Movie.mkv", "", "", false},
+		{"audio only", "/Movie[国英多音轨]", "Movie.mkv", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := OrganizeFile{ShareFile: shareFile("one", tc.filename), ParentID: "parent", SourcePath: path.Join(tc.directory, tc.filename), MediaType: "video"}
+			files := []OrganizeFile{file, {ShareFile: shareFile("sub", "Movie.ass"), ParentID: "parent", MediaType: "subtitle"}}
+			if tc.peer {
+				files = append(files, OrganizeFile{ShareFile: shareFile("two", "Other.mkv"), ParentID: "parent", MediaType: "video"})
+			}
+			mediaDirectorySubtitleValues(files)
+			got := files[0].NamingValues
+			if got[naming.Languages] != tc.languages || got[naming.SubtitleMode] != tc.mode {
+				t.Fatalf("directory fallback = %+v, want %q / %q", got, tc.languages, tc.mode)
+			}
+		})
+	}
+}
+
+func TestManualNamingSubtitlePreviewMatchesExecution(t *testing.T) {
+	s, drive, account, _ := newOrganizeTest(t)
+	drive.dirs["10"][0].Name = "海洋奇缘2[HDR+杜比视界双版本][国英多音轨+简繁英字幕]"
+	drive.dirs["30"] = []p115.ShareFile{{ID: "101", Name: "Moana.2.2024.V2.Bluray.2160p.Atmos.TrueHD7.1.DoVi.HDR.x265.10bit-DreamHD.mkv", Size: 100}}
+	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
+	if err != nil || len(scan.Files) != 1 || drive.listCalls["10"] != 1 || drive.listCalls["30"] != 1 {
+		t.Fatal("directory tags added drive reads", scan, err, drive.listCalls)
+	}
+	file := scan.Files[0]
+	selection := OrganizeSelection{ID: file.ID}
+	preview, err := (MediaNaming{Templates: s.templates, Metadata: s.metadata}).Preview(context.Background(), MediaNamingInput{Kind: "movie", TMDBID: 42, Files: []MediaNamingFile{{OrganizeSelection: selection, Name: file.Name, NamingValues: file.NamingValues}}})
+	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil {
+		t.Fatal("naming preview", preview, err)
+	}
+	want := "测试作品 (2024).2160p.BluRay.HEVC.10bit.DV HDR.TRUEHD.7.1.Atmos.[简繁英].mkv"
+	plan, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{selection}})
+	if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != want || preview.Items[0].Result.Name != want {
+		t.Fatal("subtitle naming differs between preview and plan", preview, plan, err)
+	}
+	finished := organizeTestRun(t, s, account, plan)
+	if finished.Status != "completed" || finished.Items[0].Name != want {
+		t.Fatal("execution changed the agreed subtitle label", finished)
+	}
+}
+
+func TestManualNamingSingleSelectionUsesAllSiblings(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		s, drive, account, _ := newOrganizeTest(t)
+		drive.dirs["30"] = []p115.ShareFile{{ID: "101", Name: "Movie.mkv", Size: 100}}
+		want := "简繁英"
+		if mixed {
+			drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: "103", Name: "Other.mkv", Size: 100})
+			want = ""
+		}
+		scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "30", ParentPath: "/来源/Movie[简繁英字幕]", EntryID: "101"})
+		if err != nil || len(scan.Files) != 1 || scan.Files[0].NamingValues[naming.Languages] != want || drive.listCalls["30"] != 1 {
+			t.Fatal("selecting one file misrepresented its directory or added reads", mixed, scan, err, drive.listCalls)
+		}
 	}
 }
 

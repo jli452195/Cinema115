@@ -6,9 +6,10 @@ import (
 
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/mikan"
+	"strm115/backend/internal/model"
 )
 
-// Search-only hints never change RSS specification identity or download rules.
+// Local display/filter facts never change RSS specification identity or rules.
 type ResourceSearchSpec struct {
 	Resolution   string   `json:"resolution,omitempty"`
 	Languages    []string `json:"languages,omitempty"`
@@ -17,16 +18,23 @@ type ResourceSearchSpec struct {
 
 var (
 	resourceCompoundSubtitles = regexp.MustCompile(`(?:(?:内封|內封|内嵌|內嵌|外挂|外掛|双语|雙語|多语|多語|字幕)){2,}`)
+	resourceSizeTags          = regexp.MustCompile(`(?i)[\[【(（]\s*[0-9]+(?:\.[0-9]+)?\s*GB\s*[\]】)）]`)
 	resourceQuality           = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:[0-9]{3,4}\s*[x×]\s*(480|576|720|1080|1440|2160|4320)([pi])?|(480|576|720|1080|1440|2160|4320)([pi])|([48])k)`)
 )
 
 func resourceSearchSpec(title string) ResourceSearchSpec {
+	parsed := resourceSpecification(title)
+	return ResourceSearchSpec{Resolution: resourceSearchResolution(title), Languages: parsed.Languages, SubtitleMode: parsed.SubtitleMode}
+}
+
+func resourceSpecification(title string) model.AnimeSpec {
 	parsed := animeparse.Specification(title)
 	// Reuse language boundaries without altering RSS profiles or subtitle modes.
-	if normalized := resourceCompoundSubtitles.ReplaceAllString(title, "字幕"); normalized != title {
+	normalized := resourceSizeTags.ReplaceAllString(resourceCompoundSubtitles.ReplaceAllString(title, "字幕"), " ")
+	if normalized != title {
 		parsed.Languages = animeparse.Specification(normalized).Languages
 	}
-	return ResourceSearchSpec{Resolution: resourceSearchResolution(title), Languages: parsed.Languages, SubtitleMode: parsed.SubtitleMode}
+	return parsed
 }
 
 func resourceSearchResolution(title string) string {

@@ -14,7 +14,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   const year = { field: 'year', separator: ' ', prefix: '(', suffix: ')' }
   return [kind, { kind, directories: [[{ field: 'title' }, year, { field: 'tmdbId', separator: ' ', prefix: '{tmdb-', suffix: '}' }], ...(kind === 'tv' ? [[{ field: 'season', prefix: 'Season ', pad: 2 }]] : [])], filename: [
     { field: 'title' }, kind === 'tv' ? { field: 'seasonEpisode', separator: '.' } : year,
-    ...['resolution', 'source', 'platform', 'videoCodec', 'bitDepth', 'dynamicRange', 'frameRate', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.' })),
+    ...['resolution', 'source', 'platform', 'videoCodec', 'bitDepth', 'dynamicRange', 'frameRate', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
     { field: 'releaseGroup', separator: '-' }, { field: 'custom', separator: '-' },
   ] }]
 }))
@@ -39,7 +39,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
       if (gate) await gate
       if (rejected) { status = 400; data = { error: '无效命名模板：模板字段无效' } }
       else {
-        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.DDP.5.1.Atmos.简繁.外挂.特别版-字幕组-收藏版`
+        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.DDP.5.1.Atmos.[简繁].外挂.特别版-字幕组-收藏版`
         data = { items: [{ result: { directory: '示例作品 (2026) {tmdb-123456}', stem, extension: '.mkv', name: `${stem}.mkv`, relativePath: `示例作品 (2026) {tmdb-123456}/${tv ? 'Season 01/' : ''}${stem}.mkv [预览${number}]` } }] }
       }
     } else if (/^\/api\/admin\/naming\/(movie|tv)$/.test(endpoint)) {
