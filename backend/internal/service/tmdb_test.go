@@ -23,6 +23,59 @@ type cacheTMDBFake struct {
 	release     chan struct{}
 }
 
+type englishTMDBFake struct {
+	cacheTMDBFake
+	englishCalls atomic.Int32
+	englishError error
+}
+
+func (f *englishTMDBFake) EnglishTitle(_ context.Context, kind string, _ int) (string, error) {
+	f.englishCalls.Add(1)
+	if f.englishError != nil {
+		return "", f.englishError
+	}
+	if kind == "movie" {
+		return "Movie", nil
+	}
+	return "", nil
+}
+
+func TestEnglishTitleCachePersistsIncludingMissingTranslation(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "media.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source := &englishTMDBFake{}
+	for _, kind := range []string{"movie", "tv"} {
+		want := ""
+		if kind == "movie" {
+			want = "Movie"
+		}
+		for i := 0; i < 3; i++ {
+			// New service instances must reuse the same disk cache, even empty.
+			title, err := NewTMDBService(source, db).EnglishTitle(ctx, kind, 42)
+			if err != nil || title != want {
+				t.Fatal(title, err)
+			}
+		}
+	}
+	if source.englishCalls.Load() != 2 {
+		t.Fatalf("expected one lookup per work: %d", source.englishCalls.Load())
+	}
+	s := NewTMDBService(source, db)
+	s.now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
+	if title, err := s.EnglishTitle(ctx, "movie", 42); err != nil || title != "Movie" || source.englishCalls.Load() != 3 {
+		t.Fatal("expired title was not refreshed", title, err)
+	}
+	source.englishError = errors.New("upstream unavailable")
+	s.now = func() time.Time { return time.Now().Add(62 * 24 * time.Hour) }
+	if title, err := s.EnglishTitle(ctx, "movie", 42); err != nil || title != "Movie" || source.englishCalls.Load() != 4 {
+		t.Fatal("refresh failure discarded a known title", title, err)
+	}
+}
+
 func (f *cacheTMDBFake) Genres(context.Context, string) ([]tmdb.Genre, error)     { return nil, nil }
 func (f *cacheTMDBFake) Browse(context.Context, tmdb.Options) (*tmdb.Page, error) { return nil, nil }
 func (f *cacheTMDBFake) SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error) {

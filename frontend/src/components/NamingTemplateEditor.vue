@@ -125,7 +125,7 @@ function chipKey(event: KeyboardEvent, layer: number, field: string) {
         </div>
       </section>
       <button type="button" class="nt-add-layer" :disabled="disabled || model.directories.length >= 4" @click="addDirectory"><IconPlus :size="16" aria-hidden="true" />添加目录层<span>{{ model.directories.length }}/4</span></button>
-      <p class="nt-hint">扩展名跟随原文件。字段为空时，前后缀与分隔符一并省略。</p>
+      <p class="nt-hint">扩展名跟随原文件。英文名、原语种名缺失时使用作品名；其他空字段连同前后缀、分隔符省略。文件名可不含作品名，剧集须保留季集编号。</p>
     </div>
     <aside class="nt-library" aria-label="命名字段库">
       <header><h2>字段库</h2><p>添加到<span>{{ activeLayer.label }}</span></p></header>

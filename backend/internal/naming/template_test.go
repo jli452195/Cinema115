@@ -154,6 +154,39 @@ func TestSafeNamesAndByteLimits(t *testing.T) {
 	}
 }
 
+func TestOptionalTitlesAndTitleFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		kind   naming.Kind
+		blocks []naming.Block
+		values map[naming.Field]string
+		want   string
+	}{
+		{"episode only", naming.TV, []naming.Block{{Field: naming.SeasonEpisode}}, nil, "S01E13.mkv"},
+		{"movie without title", naming.Movie, []naming.Block{{Field: naming.TMDBID, Prefix: "tmdb-"}}, map[naming.Field]string{naming.TMDBID: "42"}, "tmdb-42.mkv"},
+		{"English title missing", naming.Movie, []naming.Block{{Field: naming.EnglishTitle}}, map[naming.Field]string{naming.Title: "作品"}, "作品.mkv"},
+		{"original title blank", naming.Movie, []naming.Block{{Field: naming.OriginalTitle}}, map[naming.Field]string{naming.Title: "作品", naming.OriginalTitle: "  "}, "作品.mkv"},
+		{"English title present", naming.Movie, []naming.Block{{Field: naming.EnglishTitle}}, map[naming.Field]string{naming.Title: "作品", naming.EnglishTitle: "English"}, "English.mkv"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			renderer := compile(t, naming.Template{Kind: tc.kind, Filename: tc.blocks})
+			data := naming.Data{Values: tc.values, OriginalName: "original.mkv"}
+			if tc.kind == naming.TV {
+				data.Season, data.Episode = integer(1), integer(13)
+			}
+			got, err := renderer.Render(data)
+			if err != nil || got.Name != tc.want {
+				t.Fatalf("got %+v, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	// Optional specifications can name a file, but cannot produce an empty stem.
+	renderer := compile(t, naming.Template{Kind: naming.Movie, Filename: []naming.Block{{Field: naming.Resolution, Prefix: "[", Suffix: "]"}}})
+	if _, err := renderer.Render(naming.Data{OriginalName: "original.mkv"}); !errors.Is(err, naming.ErrInput) {
+		t.Fatal("empty name accepted", err)
+	}
+}
+
 func TestRejectInvalidTemplates(t *testing.T) {
 	for _, example := range []struct {
 		name   string
@@ -166,7 +199,6 @@ func TestRejectInvalidTemplates(t *testing.T) {
 		{"too many blocks", func(p *naming.Template) { p.Filename = make([]naming.Block, 33) }},
 		{"unknown field", func(p *naming.Template) { p.Filename[0].Field = "unsupported" }},
 		{"extension is not editable", func(p *naming.Template) { p.Filename[0].Field = "extension" }},
-		{"missing identity", func(p *naming.Template) { p.Filename = []naming.Block{{Field: naming.Resolution}} }},
 		{"duplicate field", func(p *naming.Template) { p.Filename = append(p.Filename, p.Filename[0]) }},
 		{"tv field in movie", func(p *naming.Template) { p.Filename = append(p.Filename, naming.Block{Field: naming.EpisodeTitle}) }},
 		{"padding text", func(p *naming.Template) { p.Filename[0].Pad = 2 }},
@@ -203,7 +235,6 @@ func TestRejectInvalidData(t *testing.T) {
 		name   string
 		change func(*naming.Data)
 	}{
-		{"missing title", func(d *naming.Data) { delete(d.Values, naming.Title) }},
 		{"missing season", func(d *naming.Data) { d.Season = nil }},
 		{"missing episode", func(d *naming.Data) { d.Episode = nil }},
 		{"negative season", func(d *naming.Data) { d.Season = integer(-1) }},

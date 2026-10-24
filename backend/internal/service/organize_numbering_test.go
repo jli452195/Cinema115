@@ -61,6 +61,8 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 		{"Show/Show [SP01].mkv", 1, 0, 0},
 		{"Show/SP/Show E01-E02.mkv", 1, 0, 0},
 		{"Show/NCOP.E01-E02.mkv", 1, 0, 0},
+		{"Show/[Show][menu][01][1080P].mkv", 1, 0, 0},
+		{"Show/[Show][Mini anime][01][1080P].mkv", 1, 0, 0},
 	}
 	for episode := 1; episode <= 52; episode++ {
 		cases = append(cases, example{fmt.Sprintf("陰陽大戰記/陰陽大戰記-%02d.wmv", episode), 1, episode, 0})
@@ -106,6 +108,27 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 			if file.ID == "" || file.Season != tc.season || file.Episode != tc.episode || file.EndEpisode != tc.end {
 				t.Errorf("%s %q: got S%dE%d-%d; want S%dE%d-%d", entry, tc.name, file.Season, file.Episode, file.EndEpisode, tc.season, tc.episode, tc.end)
 			}
+		}
+	}
+}
+
+func TestOrganizeNumberingPackTitlesDoNotMarkAllChildrenAsExtras(t *testing.T) {
+	for _, tc := range []struct {
+		parent, name string
+		episode      int
+	}{
+		{"[DBD-Raws][葬送的芙莉莲][01-28TV全集+特典映像]", "[DBD-Raws][Sousou no Frieren][01][1080P][BDRip][HEVC-10bit][FLACx2].mkv", 1},
+		{"Show + 特典", "Show.S01E02.mkv", 2},
+		{"SP", "Show.S01E02.mkv", 0},
+		{"[SP]", "Show.S01E02.mkv", 0},
+		{"特典映像", "Show [02].mkv", 0},
+		{"menu", "Show [02].mkv", 0},
+		{"Mini anime", "Show [02].mkv", 0},
+	} {
+		file := OrganizeFile{ShareFile: p115.ShareFile{Name: tc.name}, MediaType: "video", SourcePath: path.Join(tc.parent, tc.name), Season: 1}
+		organizeFileNumbering(&file)
+		if file.Episode != tc.episode {
+			t.Errorf("%s/%s: got %d, want %d", tc.parent, tc.name, file.Episode, tc.episode)
 		}
 	}
 }

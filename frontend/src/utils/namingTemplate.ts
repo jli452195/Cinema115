@@ -14,10 +14,11 @@ export function namingSignature(template: NamingTemplate) {
 
 export function namingSample(kind: NamingKind, sample: string): NamingData {
   const values: Record<string, string> = {
-    title: kind === 'movie' ? '示例电影' : '示例剧集', originalTitle: 'Original Title', englishTitle: 'Example Title',
+    title: kind === 'movie' ? '示例电影' : '示例剧集',
     year: '2026', tmdbId: '123456',
   }
   if (sample !== 'minimal') Object.assign(values, {
+    originalTitle: 'Original Title', englishTitle: 'Example Title',
     resolution: '2160p', source: 'WEB-DL', platform: 'NF', videoCodec: 'HEVC', bitDepth: '10bit',
     dynamicRange: 'DV HDR10', frameRate: '24fps', audioCodec: 'DDP', channels: '5.1', audioEffect: 'Atmos',
     languages: '简繁', subtitleMode: '外挂', releaseGroup: '字幕组', edition: '特别版', custom: '收藏版',

@@ -3,13 +3,17 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/utils/torrentmeta"
 )
 
 type mediaNamingTemplates struct {
@@ -25,6 +29,21 @@ func (s *mediaNamingTemplates) NamingTemplate(ctx context.Context, _ naming.Kind
 }
 
 type mediaNamingMetadata struct{ calls int }
+
+type mediaNamingEnglishMetadata struct {
+	mediaNamingMetadata
+	englishCalls int
+	value        string
+	err          error
+}
+
+func (s *mediaNamingEnglishMetadata) EnglishTitle(ctx context.Context, _ string, _ int) (string, error) {
+	s.englishCalls++
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 4*time.Second {
+		return "", errors.New("optional enrichment needs a bounded deadline")
+	}
+	return s.value, s.err
+}
 
 func (s *mediaNamingMetadata) Details(ctx context.Context, kind string, id int) (*tmdb.Detail, error) {
 	s.calls++
@@ -46,6 +65,47 @@ func TestMediaNamingFileFacts(t *testing.T) {
 				if got[field] != want {
 					t.Errorf("%s = %q, want %q", field, got[field], want)
 				}
+			}
+		})
+	}
+}
+
+func TestMediaNamingEnglishTitleEnrichment(t *testing.T) {
+	for _, tc := range []struct {
+		name, english, want string
+		failure             bool
+	}{
+		{"English available", "Rising Impact", "Rising Impact", false},
+		{"missing translation", "", "作品.名称", false},
+		{"upstream unavailable", "", "作品.名称", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			template, _ := naming.Default(naming.TV)
+			template.Directories[0][0].Field = naming.EnglishTitle
+			template.Filename[0].Field = naming.EnglishTitle
+			templates := &mediaNamingTemplates{record: naming.Snapshot{Template: template}}
+			metadata := &mediaNamingEnglishMetadata{value: tc.english}
+			if tc.failure {
+				metadata.err = errors.New("network unavailable")
+			}
+			s := MediaNaming{Templates: templates, Metadata: metadata}
+			input := MediaNamingInput{Kind: "tv", TMDBID: 42, Files: []MediaNamingFile{
+				{OrganizeSelection: OrganizeSelection{ID: "one", Season: 1, Episode: 1}, Name: "Show.S01E01.mkv", NamingValues: map[naming.Field]string{naming.EnglishTitle: "untrusted"}},
+				{OrganizeSelection: OrganizeSelection{ID: "two", Season: 1, Episode: 13}, Name: "Show.S01E13.mkv"},
+			}}
+			preview, err := s.Preview(context.Background(), input)
+			if err != nil || metadata.englishCalls != 1 || metadata.calls != 1 {
+				t.Fatalf("batch reads: %d/%d, %v", metadata.calls, metadata.englishCalls, err)
+			}
+			for _, item := range preview.Items {
+				if item.Result == nil || !strings.HasPrefix(item.Result.Name, tc.want+".S01E") || !strings.HasPrefix(item.Result.Directory, tc.want+" (2026)") {
+					t.Fatalf("wrong title: %+v", item)
+				}
+			}
+			// The default template must not make an English metadata request.
+			templates.record.Template, _ = naming.Default(naming.TV)
+			if _, err := s.Preview(context.Background(), input); err != nil || metadata.englishCalls != 1 {
+				t.Fatal("unused English title caused a request", err)
 			}
 		})
 	}
@@ -123,6 +183,7 @@ func TestManualNamingSnapshotRootAndRestart(t *testing.T) {
 	s, drive, account, store := newOrganizeTest(t)
 	template, _ := naming.Default(naming.TV)
 	template.Directories = nil
+	template.Filename = []naming.Block{{Field: naming.SeasonEpisode}}
 	templates := &mediaNamingTemplates{record: naming.Snapshot{Revision: 2, Template: template}}
 	s.templates = templates
 	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 13, EndEpisode: 14, Suffix: "v3"}})
@@ -151,6 +212,79 @@ func TestManualNamingSnapshotRootAndRestart(t *testing.T) {
 	}
 	if reflect.DeepEqual(finished.Naming.Template, templates.record.Template) {
 		t.Fatal("executed latest template")
+	}
+}
+
+func TestTitlelessNamingStillRejectsTargetCollisions(t *testing.T) {
+	s, drive, account, _ := newOrganizeTest(t)
+	s.templates = &mediaNamingTemplates{record: naming.Snapshot{Template: naming.Template{Kind: naming.TV, Filename: []naming.Block{{Field: naming.SeasonEpisode}}}}}
+	drive.dirs["20"] = []p115.ShareFile{{ID: "existing", Name: "S01E01.mkv", Size: 100}}
+	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}, {ID: "103", Season: 1, Episode: 1}})
+	for _, item := range plan.Items {
+		if item.File.MediaType == "video" && item.Conflict == "" {
+			t.Fatal("same-name target accepted", item)
+		}
+	}
+	if _, err := s.Start(account, plan.ID); err == nil || drive.renames+drive.moves+drive.creates != 0 {
+		t.Fatal("conflicting titleless plan executed", err)
+	}
+}
+
+// Public DBD-Raws filenames sampled from the real Frieren torrent. This isolated
+// regression runs normalization through both preview and plan without cloud I/O.
+func TestNamingPackWithExtrasAndCompanionSubtitles(t *testing.T) {
+	root := "[DBD-Raws][葬送的芙莉莲][01-28TV全集+特典映像][1080P][BDRip][HEVC-10bit][简繁日双语外挂][FLAC][MKV]"
+	files := make([]torrentmeta.File, 0, 86)
+	for episode := 1; episode <= 28; episode++ {
+		stem := fmt.Sprintf("[DBD-Raws][Sousou no Frieren][%02d][1080P][BDRip][HEVC-10bit][FLAC]", episode)
+		for _, ext := range []string{".mkv", ".scjp.ass", ".tcjp.ass"} {
+			files = append(files, torrentmeta.File{Path: path.Join(root, stem+ext), Size: 100})
+		}
+	}
+	for _, category := range []string{"menu", "Mini anime"} {
+		files = append(files, torrentmeta.File{Path: path.Join(root, category, "Show [01].mkv"), Size: 100})
+	}
+	resources, err := organizeResourceFiles(strings.Repeat("a", 40), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, _ := naming.Default(naming.TV)
+	template.Filename[0].Field = naming.EnglishTitle
+	templates := &mediaNamingTemplates{record: naming.Snapshot{Template: template}}
+	metadata := &mediaNamingEnglishMetadata{value: "Frieren: Beyond Journey's End"}
+	input := MediaNamingInput{Kind: "tv", TMDBID: 209867, Subtitles: resources.Subtitles}
+	scan := OrganizeScan{Files: append([]OrganizeFile{}, resources.Files...)}
+	selections := make([]OrganizeSelection, 0, 28)
+	for _, file := range resources.Files {
+		if file.Episode == 0 {
+			continue
+		}
+		selection := OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}
+		selections = append(selections, selection)
+		input.Files = append(input.Files, MediaNamingFile{OrganizeSelection: selection, Name: file.Name})
+	}
+	for _, sub := range resources.Subtitles {
+		scan.Files = append(scan.Files, sub.File)
+	}
+	preview, err := (MediaNaming{Templates: templates, Metadata: metadata}).Preview(context.Background(), input)
+	if err != nil || len(selections) != 28 || len(preview.Items) != 84 {
+		t.Fatalf("selection/preview: %d/%d, %v", len(selections), len(preview.Items), err)
+	}
+	plan, err := (&OrganizeEngine{templates: templates, metadata: metadata}).buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: input.Kind, TMDBID: input.TMDBID, Files: selections, Subtitles: true})
+	if err != nil || len(plan.Items) != 84 {
+		t.Fatal("plan", len(plan.Items), err)
+	}
+	byID := make(map[string]naming.Result, len(preview.Items))
+	for _, item := range preview.Items {
+		if item.Result == nil {
+			t.Fatal(item.Error)
+		}
+		byID[item.ID] = *item.Result
+	}
+	for _, item := range plan.Items {
+		if item.Name != byID[item.File.ID].Name || item.Directory != byID[item.File.ID].Directory {
+			t.Fatal("preview and plan differ", item)
+		}
 	}
 }
 

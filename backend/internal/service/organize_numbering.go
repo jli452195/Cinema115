@@ -13,12 +13,14 @@ var organizeFileRange = regexp.MustCompile(`(?i)^(\d{1,4})\s*([-~～〜至到+&]
 var organizeFileSeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})\s*E`)
 var organizeCompactEpisode = regexp.MustCompile(`(?i)-(\d{1,4}(?:v\d{1,3})?)$`)
 var organizeSceneYear = regexp.MustCompile(`(?i)(S\d{1,2}\s*E\d{1,4}(?:\s*[-~～〜至到+&]\s*E?\d{1,4})?)\.(19\d{2}|20\d{2}|21\d{2})($|[ ._\-])`)
-var organizeSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[ ._(\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE)(?:[0-9]|$|[\] ._)\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
+var organizeSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[ ._(\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE|MENU|MINI[ ._-]*ANIME|TOKUTEN)(?:[0-9]|$|[\] ._)\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
+var organizeSpecialDirectory = regexp.MustCompile(`(?i)^(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE|MENU|MINI[ ._-]*ANIME|TOKUTEN|特典(?:映像)?|番外|特别篇|特別篇|菜单|菜單)(?:[ ._-]?[0-9]{1,4})?$`)
 
 // Only a video's own numbering is evidence. Parent pack ranges never number
 // its children; labelled extras and ambiguous expressions remain editable.
 func organizeFileNumbering(file *OrganizeFile) {
-	if file.MediaType != "video" || organizeSpecialFile.MatchString(file.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(file.SourcePath))) {
+	directory := strings.Trim(path.Base(path.Dir(file.SourcePath)), " ._-[]【】()（）")
+	if file.MediaType != "video" || organizeSpecialFile.MatchString(file.Name) || organizeSpecialDirectory.MatchString(directory) {
 		return
 	}
 	name := strings.TrimSuffix(file.Name, path.Ext(file.Name))

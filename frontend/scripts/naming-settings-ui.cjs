@@ -37,7 +37,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     } else if (endpoint === '/api/admin/naming/preview') {
       const number = ++state.preview, gate = state.previewGate, rejected = state.rejectPreview
       if (gate) await gate
-      if (rejected) { status = 400; data = { error: '无效命名模板：文件名缺少作品名称' } }
+      if (rejected) { status = 400; data = { error: '无效命名模板：模板字段无效' } }
       else {
         const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.DDP.5.1.Atmos.简繁.外挂.特别版-字幕组-收藏版`
         data = { items: [{ result: { directory: '示例作品 (2026) {tmdb-123456}', stem, extension: '.mkv', name: `${stem}.mkv`, relativePath: `示例作品 (2026) {tmdb-123456}/${tv ? 'Season 01/' : ''}${stem}.mkv [预览${number}]` } }] }
@@ -110,7 +110,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     passed.push('字段点击添加、桌面拖动、按钮和键盘排序与删除，扩展名固定，保存仅更新当前类型')
 
     await title().click(); state.rejectPreview = true; await page.getByRole('button', { name: '移除字段', exact: true }).click()
-    await page.getByText('无效命名模板：文件名缺少作品名称', { exact: true }).waitFor(); assert.equal(await save.isDisabled(), true)
+    await page.getByText('无效命名模板：模板字段无效', { exact: true }).waitFor(); assert.equal(await save.isDisabled(), true)
     state.rejectPreview = false; await page.getByRole('button', { name: '添加作品名称到文件名', exact: true }).click(); await settled()
     state.conflict = true; await save.click(); await page.getByText('模板已在其他页面修改，请重新读取后保存', { exact: true }).waitFor()
     assert.equal(await save.isEnabled(), true)

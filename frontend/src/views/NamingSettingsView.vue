@@ -24,7 +24,7 @@ const locked = computed(() => loading.value || saving.value || !!pending.value)
 const dirty = (value: NamingKind) => !!settings.value && namingSignature(drafts.value[value]) !== namingSignature(settings.value.records[value].template)
 const anyDirty = computed(() => dirty('movie') || dirty('tv'))
 const sample = ref('full'), preview = ref<NamingResult>(), previewError = ref(''), previewing = ref(false), templateValid = ref(false)
-const sampleOptions = computed(() => [{ value: 'full', label: '完整规格示例' }, { value: 'minimal', label: '缺少规格示例' }, ...(kind.value === 'tv' ? [{ value: 'range', label: '连集示例' }] : [])])
+const sampleOptions = computed(() => [{ value: 'full', label: '完整规格示例' }, { value: 'minimal', label: '缺少规格与外文名' }, ...(kind.value === 'tv' ? [{ value: 'range', label: '连集示例' }] : [])])
 const dialog = ref<'leave' | 'reload' | 'reset' | ''>('')
 let lifecycle = new AbortController(), previewController = new AbortController(), sequence = 0, readSequence = 0
 let previewTimer: ReturnType<typeof setTimeout> | undefined, leaveDecision: ((value: boolean) => void) | undefined

@@ -153,10 +153,6 @@ func definition(id Field) (FieldDefinition, bool) {
 	return FieldDefinition{}, false
 }
 
-func identity(field Field) bool {
-	return field == Title || field == OriginalTitle || field == EnglishTitle || field == OriginalName
-}
-
 func Compile(template Template) (*Renderer, error) {
 	if template.Kind != Movie && template.Kind != TV {
 		return nil, fmt.Errorf("%w：未知作品类型", ErrTemplate)
@@ -172,13 +168,12 @@ func Compile(template Template) (*Renderer, error) {
 	if err := validateLayer(template.Kind, template.Filename); err != nil {
 		return nil, fmt.Errorf("文件名: %w", err)
 	}
-	hasIdentity, hasEpisode := false, false
+	hasEpisode := false
 	for _, block := range template.Filename {
-		hasIdentity = hasIdentity || identity(block.Field)
 		hasEpisode = hasEpisode || block.Field == SeasonEpisode
 	}
-	if !hasIdentity || template.Kind == TV && !hasEpisode {
-		return nil, fmt.Errorf("%w：文件名须包含作品名称或原文件名，剧集还须包含季集编号", ErrTemplate)
+	if template.Kind == TV && !hasEpisode {
+		return nil, fmt.Errorf("%w：剧集文件名须包含季集编号", ErrTemplate)
 	}
 	return &Renderer{template: template.Clone()}, nil
 }

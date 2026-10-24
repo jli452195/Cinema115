@@ -69,7 +69,7 @@ func (r *Renderer) Render(data Data) (Result, error) {
 	}
 	directories := make([]string, 0, len(r.template.Directories))
 	for i, layer := range r.template.Directories {
-		name, _ := renderLayer(layer, data)
+		name := renderLayer(layer, data)
 		if name == "" { // An entirely unknown optional directory adds no path level.
 			continue
 		}
@@ -78,9 +78,9 @@ func (r *Renderer) Render(data Data) (Result, error) {
 		}
 		directories = append(directories, name)
 	}
-	stem, hasIdentity := renderLayer(r.template.Filename, data)
-	if stem == "" || !hasIdentity {
-		return Result{}, fmt.Errorf("%w：文件名缺少可用作品名称或原文件名", ErrInput)
+	stem := renderLayer(r.template.Filename, data)
+	if stem == "" {
+		return Result{}, fmt.Errorf("%w：文件名为空，请补充模板字段或文件信息", ErrInput)
 	}
 	if len(stem)+len(extension) > maxComponentBytes {
 		return Result{}, fmt.Errorf("%w：文件名超过 %d 字节，请缩短模板或字段", ErrInput, maxComponentBytes)
@@ -120,9 +120,8 @@ func validateData(kind Kind, data Data) error {
 	return nil
 }
 
-func renderLayer(layer []Block, data Data) (string, bool) {
+func renderLayer(layer []Block, data Data) string {
 	var out strings.Builder
-	hasIdentity := false
 	for _, block := range layer {
 		value := cleanText(fieldValue(block, data))
 		if value == "" {
@@ -134,13 +133,12 @@ func renderLayer(layer []Block, data Data) (string, bool) {
 		out.WriteString(block.Prefix)
 		out.WriteString(value)
 		out.WriteString(block.Suffix)
-		hasIdentity = hasIdentity || identity(block.Field)
 	}
 	name := strings.Trim(strings.TrimSpace(out.String()), ". ")
 	if reservedName(name) {
 		name = "_" + name
 	}
-	return name, hasIdentity
+	return name
 }
 
 func fieldValue(block Block, data Data) string {
@@ -160,6 +158,11 @@ func fieldValue(block Block, data Data) string {
 			return data.OriginalName
 		}
 		return strings.TrimSuffix(data.OriginalName, path.Ext(data.OriginalName))
+	case EnglishTitle, OriginalTitle:
+		if value := strings.TrimSpace(data.Values[block.Field]); value != "" {
+			return value
+		}
+		return data.Values[Title]
 	default:
 		return data.Values[block.Field]
 	}

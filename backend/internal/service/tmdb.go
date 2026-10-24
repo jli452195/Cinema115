@@ -229,6 +229,36 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 	}
 	return value, nil
 }
+
+// English titles are optional naming facts. Reuse the persistent cache and
+// request coalescing, including successful lookups with no English translation.
+func (s *TMDBService) EnglishTitle(ctx context.Context, kind string, id int) (string, error) {
+	if (kind != "tv" && kind != "movie") || id < 1 {
+		return "", tmdb.ErrInput
+	}
+	source, ok := s.source.(interface {
+		EnglishTitle(context.Context, string, int) (string, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	load := func(ctx context.Context) (any, error) {
+		return source.EnglishTitle(ctx, kind, id)
+	}
+	key, ttl := "english-title:v2:"+kind+":"+strconv.Itoa(id), 30*24*time.Hour
+	value, info, err := cachedTMDB[string](ctx, s, key, ttl, load)
+	if err != nil {
+		return "", err
+	}
+	if info.CacheStale {
+		// Retain known facts if refreshing optional metadata fails.
+		if updated, _, err := cachedTMDB[string](tmdb.WithFresh(ctx), s, key, ttl, load); err == nil {
+			value = updated
+		}
+	}
+	return *value, nil
+}
+
 func (s *TMDBService) Season(ctx context.Context, id, number int) (*tmdb.SeasonDetail, error) {
 	if id < 1 || number < 0 || number > 10000 {
 		return nil, tmdb.ErrInput

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/naming"
@@ -50,6 +51,7 @@ type preparedMediaNaming struct {
 	snapshot naming.Snapshot
 	detail   *tmdb.Detail
 	renderer *naming.Renderer
+	english  string
 }
 
 func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected *int64) (preparedMediaNaming, error) {
@@ -84,7 +86,30 @@ func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected 
 	if detail == nil || detail.ID != id || detail.Kind != kind || detail.Title == "" || snapshot.Template.Kind != naming.Kind(kind) {
 		return preparedMediaNaming{}, fmt.Errorf("命名模板或作品信息无效")
 	}
-	return preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer}, nil
+	p := preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer}
+	if source, ok := s.Metadata.(interface {
+		EnglishTitle(context.Context, string, int) (string, error)
+	}); ok {
+		layers := append([][]naming.Block{snapshot.Template.Filename}, snapshot.Template.Directories...)
+		for _, layer := range layers {
+			for _, block := range layer {
+				if block.Field == naming.EnglishTitle {
+					// Optional enrichment must not block organizing on an outage.
+					lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+					p.english, err = source.EnglishTitle(lookupCtx, kind, id)
+					cancel()
+					if ctx.Err() != nil {
+						return preparedMediaNaming{}, ctx.Err()
+					}
+					if err != nil {
+						p.english = ""
+					}
+					return p, nil
+				}
+			}
+		}
+	}
+	return p, nil
 }
 
 func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error) {
@@ -99,6 +124,7 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 		values[field] = value
 	}
 	values[naming.Title], values[naming.OriginalTitle] = p.detail.Title, p.detail.OriginalTitle
+	values[naming.EnglishTitle] = p.english
 	values[naming.TMDBID] = strconv.Itoa(p.detail.ID)
 	values[naming.Year] = ""
 	if len(p.detail.Date) >= 4 {
