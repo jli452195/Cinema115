@@ -119,13 +119,13 @@ const organizeEntries = ref<DownloadOrganizeResource[]>([])
 const organizingBatch = ref(false), organizeHiddenCount = ref(0)
 const prepareNotices = ref<Record<string, string>>({})
 function organizeSource(item: Item): DownloadResourceInput {
-  if (!isGarden.value) return { source: 'mikan', title: item.title, providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
+  const fansub = item.fansub || groups.value.find(group => (!isGarden.value || group.kind === 'fansub') && (group.id === item.groupId || item.title.startsWith(`[${group.name}]`) || item.title.startsWith(`【${group.name}】`)))?.name
+  if (!isGarden.value) return { source: 'mikan', title: item.title, fansub, providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
   const [provider, providerId] = item.id.split(':')
-  return { source: 'garden', title: item.title, provider, providerId: providerId || '', magnet: item.magnet }
+  return { source: 'garden', title: item.title, fansub, provider, providerId: providerId || '', magnet: item.magnet }
 }
 function organizeEntry(item: Item, files?: DownloadFiles): DownloadOrganizeResource {
-  const fansub = item.fansub || groups.value.find(group => group.id === item.groupId || item.title.startsWith(`[${group.name}]`) || item.title.startsWith(`【${group.name}】`))?.name
-  return { resource: { ...item, fansub }, source: organizeSource(item), files }
+  return { resource: item, source: organizeSource(item), files }
 }
 function openBatchOrganize(event: MouseEvent) {
   if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !props.tmdbId || !batchCount.value) return

@@ -5,6 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 const source = process.argv[2] || 'garden', isMikan = source === 'mikan'
 const hash = n => n.toString(16).padStart(40, '0')
+const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试作品', '2024')
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const passed = [], errors = [], calls = []
@@ -31,6 +32,7 @@ const hash = n => n.toString(16).padStart(40, '0')
         if (n === fail) { status = 502; data = { error: '模拟种子读取失败' } }
         else {
           const f = titleMode && n !== 2 ? { ...file(n), id: 'title', name: body.title, sourcePath: '/title', parentId: '.', titleOnly: true, size: 0 } : file(n)
+          f.namingValues = { resolution: n === 2 ? '720p' : '1080p', languages: n === 2 ? '繁体' : '简体', releaseGroup: '测试字幕组' }
           data = { manifestId: `manifest-${n}`, hash: hash(n), files: [f], subtitles: [], specs: { [f.id]: { resolution: n === 2 ? '720p' : '1080p', languages: [n === 2 ? 'zh-Hant' : 'zh-Hans'] } } }
         }
       } else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
@@ -39,11 +41,12 @@ const hash = n => n.toString(16).padStart(40, '0')
         return route.fulfill({ contentType: 'application/x-ndjson', body: events.map(event => JSON.stringify(event)).join('\n') + '\n' })
       }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/目标' }
-      else if (endpoint.endsWith('/download-organize/batch/preview')) data = { id: 'batch-plan', jobs: body.resources.map((r, i) => ({ id: `job-${i}`, download: { hash: r.magnet.slice(-40) }, items: r.files.map(f => ({ file: { id: f.id }, name: 'mapped.mkv' })) })) }
+      else if (endpoint.endsWith('/naming/media-preview')) data = naming.preview(body)
+      else if (endpoint.endsWith('/download-organize/batch/preview')) data = { id: 'batch-plan', jobs: body.resources.map((r, i) => ({ id: `job-${i}`, download: { hash: r.magnet.slice(-40) }, ...naming.plan(r.files, `${r.magnet.slice(-40)}:`) })) }
       else if (endpoint.endsWith('/download-organize/batch/jobs')) {
         if (lost) { lost = false; status = 502; data = { error: '回执丢失' } }
         else data = { id: 'batch-plan', jobs: [{ id: 'one', items: [], status: 'queued' }] }
-      } else if (endpoint.endsWith('/download-organize/preview')) data = { id: 'single-plan', download: { hash: body.magnet.slice(-40) }, items: body.files.map(f => ({ file: { id: f.id }, name: 'expected' })) }
+      } else if (endpoint.endsWith('/download-organize/preview')) data = { id: 'single-plan', download: { hash: body.magnet.slice(-40) }, ...naming.plan(body.files) }
       else if (endpoint.endsWith('/download-organize/jobs')) data = req.method() === 'POST' ? { id: 'single-job', items: [], status: 'queued' } : { jobs: [] }
       if (endpoint.endsWith('/mikan/search') || endpoint.endsWith('/resources/garden/search')) data.specs = Object.fromEntries(Array.from({ length: total }, (_, i) => [isMikan ? hash(i + 1) : `dmhy:${i + 1}`, { resolution: i === 1 ? '720p' : '1080p', languages: i === 2 ? ['zh-Hans', 'zh-Hant', 'ja'] : [i === 1 ? 'zh-Hant' : 'zh-Hans'], subtitleMode: i === 2 ? 'external' : 'soft' }]))
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
@@ -120,21 +123,17 @@ const hash = n => n.toString(16).padStart(40, '0')
     fail = 0
     await page.getByRole('button', { name: '重试解析', exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 4)
-    await editor.getByLabel('字幕语言', { exact: true }).uncheck()
-    await editor.getByLabel('字幕语言', { exact: true }).check()
     const names = await editor.locator('[data-organize-file]').getByRole('textbox').evaluateAll(inputs => inputs.map(input => input.value))
-    assert.deepEqual(names, ['测试字幕组 - 简体 - 1080p', '测试字幕组 - 繁体 - 720p', '测试字幕组 - 简体 - 1080p', '测试字幕组 - 简体 - 1080p'])
+    assert.deepEqual(names, ['人工修正', '', '', ''])
+    await editor.getByRole('link', { name: '公共命名模板', exact: true }).waitFor()
+    assert.equal(await editor.getByLabel('字幕语言', { exact: true }).count(), 0)
+    await editor.locator('[data-organize-file]').first().getByRole('textbox').fill('')
+    await editor.getByRole('alert').filter({ hasText: '2 个文件目标重名' }).first().waitFor()
     // Resource 3 is the same version of episode 1; remove only from this editor.
     await editor.locator('.resource-status > summary').click()
     await editor.locator('.resource-status-list > div').nth(2).getByRole('button', { name: /^移除资源/ }).click()
     assert.equal(await editor.locator('[data-organize-file]').count(), 3)
-    await editor.getByLabel('字幕语言', { exact: true }).uncheck()
-    await editor.getByLabel('分辨率', { exact: true }).uncheck()
-    await editor.getByRole('alert').filter({ hasText: '2 个文件目标重名' }).first().waitFor()
-    assert.equal(await submit().isDisabled(), true)
-    await editor.getByLabel('字幕语言', { exact: true }).check()
-    await editor.getByLabel('分辨率', { exact: true }).check()
-    assert.equal(await submit().isEnabled(), true)
+    await editor.locator('[data-organize-file]').first().getByText('整理后：测试作品.S01E01.1080p.简体-测试字幕组.mkv', { exact: true }).waitFor()
     const requests = count('/download-organize/files')
     await submit().click()
     await page.getByRole('button', { name: '确认任务状态', exact: true }).click()
@@ -167,7 +166,7 @@ const hash = n => n.toString(16).padStart(40, '0')
     assert.equal(await editor.getByRole('button', { name: /^展开或折叠/ }).count(), 1)
     const titleRow = editor.locator('[data-organize-file]').first()
     assert.equal(await titleRow.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
-    assert.ok((await titleRow.textContent()).includes('预计命名：测试作品 - S01E01'))
+    await titleRow.getByText('预计命名：测试作品.S01E01.1080p.简体-测试字幕组', { exact: true }).waitFor()
     assert.equal((await titleRow.textContent()).includes('.mkv'), false)
     await editor.getByLabel('筛选整理文件名', { exact: true }).fill('[测试字幕组]')
     assert.equal(await editor.locator('[data-organize-file]').count(), 60)

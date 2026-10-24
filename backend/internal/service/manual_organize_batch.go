@@ -92,6 +92,9 @@ func (s *OrganizeEngine) runJob(ctx context.Context, job *OrganizeJob, cookie st
 // each path prefix only once and verify each newly created directory by ID.
 func (s *OrganizeEngine) resolveDirectory(ctx context.Context, directory string, directories map[string]string, cookie string, create bool) (string, error) {
 	cid, prefix := directories[""], ""
+	if directory == "" {
+		return cid, nil
+	}
 	for _, part := range strings.Split(directory, "/") {
 		if prefix == "" {
 			prefix = part

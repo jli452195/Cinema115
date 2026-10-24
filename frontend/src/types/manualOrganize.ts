@@ -1,6 +1,8 @@
 import type { NumberingInfo } from './tvNumbering'
+import type { NamingRecord } from './naming'
 export interface DownloadResourceInput {
   title?: string
+  fansub?: string
   source: 'mikan' | 'garden' | 'gying'
   provider?: string
   providerId: string
@@ -41,6 +43,7 @@ export interface OrganizeCleanup {
   items: OrganizeCleanupItem[]
 }
 export interface OrganizeFile extends DriveFile {
+  namingValues?: Record<string, string>
   titleOnly?: boolean
   parentId: string
   sourcePath: string
@@ -53,6 +56,7 @@ export interface OrganizeFile extends DriveFile {
 export interface OrganizeRow extends Omit<OrganizeFile, 'endEpisode'> { selected: boolean; endEpisode: number | '' }
 export interface OrganizeSubtitle { file: OrganizeFile; videoId?: string; tail?: string }
 export interface OrganizeItem {
+  stem?: string
   file: OrganizeFile
   directory: string
   name: string
@@ -63,6 +67,7 @@ export interface OrganizeItem {
   message?: string
 }
 export interface OrganizeJob {
+	naming?: NamingRecord
 	resumable?: boolean
   download?: { hash: string; directoryId?: string }
   numbering?: NumberingInfo

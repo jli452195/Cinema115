@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/naming"
 )
 
 var ErrOrganizeInput = errors.New("手动整理参数无效")
@@ -43,14 +43,15 @@ type OrganizeConfig struct {
 
 type OrganizeFile struct {
 	p115.ShareFile
-	TitleOnly  bool   `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
-	ParentID   string `json:"parentId"`
-	SourcePath string `json:"sourcePath"`
-	MediaType  string `json:"mediaType"`
-	Season     int    `json:"season"`
-	Episode    int    `json:"episode"`
-	EndEpisode int    `json:"endEpisode,omitempty"`
-	Suffix     string `json:"suffix"`
+	TitleOnly    bool                    `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
+	ParentID     string                  `json:"parentId"`
+	SourcePath   string                  `json:"sourcePath"`
+	MediaType    string                  `json:"mediaType"`
+	Season       int                     `json:"season"`
+	Episode      int                     `json:"episode"`
+	EndEpisode   int                     `json:"endEpisode,omitempty"`
+	Suffix       string                  `json:"suffix"`
+	NamingValues map[naming.Field]string `json:"namingValues,omitempty"`
 }
 
 type OrganizeScan struct {
@@ -77,6 +78,7 @@ type OrganizeSelection struct {
 }
 
 type OrganizePreviewInput struct {
+	NamingRevision    *int64              `json:"namingRevision,omitempty"`
 	NumberingRevision *int64              `json:"numberingRevision,omitempty"`
 	ScanID            string              `json:"scanId"`
 	Kind              string              `json:"kind"`
@@ -89,6 +91,7 @@ type OrganizeItem struct {
 	File       OrganizeFile `json:"file"`
 	Directory  string       `json:"directory"`
 	Name       string       `json:"name"`
+	Stem       string       `json:"stem,omitempty"`
 	TargetPath string       `json:"targetPath"`
 	TargetCID  string       `json:"targetCID,omitempty"`
 	Conflict   string       `json:"conflict,omitempty"`
@@ -97,6 +100,7 @@ type OrganizeItem struct {
 }
 
 type OrganizeJob struct {
+	Naming    *naming.Snapshot    `json:"naming,omitempty"`
 	Resumable bool                `json:"resumable,omitempty"`
 	Download  *ResourceDownload   `json:"download,omitempty"`
 	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
@@ -106,7 +110,6 @@ type OrganizeJob struct {
 	Kind      string              `json:"kind"`
 	TMDBID    int                 `json:"tmdbId"`
 	Title     string              `json:"title"`
-	Folder    string              `json:"folder"`
 	CreatedAt time.Time           `json:"createdAt"`
 	UpdatedAt time.Time           `json:"updatedAt"`
 	Status    string              `json:"status"`
@@ -140,6 +143,7 @@ type OrganizeEngine struct {
 	accounts    *P115Accounts
 	drive       OrganizeDrive
 	metadata    OrganizeMetadata
+	templates   NamingTemplates
 	plans       map[string]OrganizeJob
 	pending     *organizePending
 	wake        chan struct{}
@@ -169,8 +173,8 @@ func NewManualOrganize(engine *OrganizeEngine) *ManualOrganize {
 	return &ManualOrganize{OrganizeEngine: engine, scans: make(map[string]OrganizeScan)}
 }
 
-func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*OrganizeEngine, error) {
-	s := &OrganizeEngine{store: store, accounts: accounts, drive: drive, metadata: metadata, plans: make(map[string]OrganizeJob), wake: make(chan struct{}, 1), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
+func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata, templates NamingTemplates) (*OrganizeEngine, error) {
+	s := &OrganizeEngine{store: store, accounts: accounts, drive: drive, metadata: metadata, templates: templates, plans: make(map[string]OrganizeJob), wake: make(chan struct{}, 1), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
 	if store.Value() != "" {
 		if err := json.Unmarshal([]byte(store.Value()), &s.doc); err != nil || s.doc.Version != 1 {
 			return nil, fmt.Errorf("整理任务存储无法解析")
@@ -353,7 +357,6 @@ func (s *OrganizeEngine) listOnce(ctx context.Context, cid, cookie string) ([]p1
 	}
 }
 
-var organizeQuality = regexp.MustCompile(`(?i)(?:2160p|1080p|720p|480p|4k|remux|bluray|blu-ray|web-dl|webrip|hdtv|x265|x264|h[.]?265|h[.]?264|hevc|hdr10\+?|hdr|dovi)`)
 var organizeVideoExtensions = extensionSet("", DefaultVideoExtensions)
 
 func organizeMedia(name string) string {
@@ -429,7 +432,7 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 		}
 		item := OrganizeFile{ShareFile: f, ParentID: parent, SourcePath: path.Join(prefix, f.Name), MediaType: media, Season: 1}
 		organizeFileNumbering(&item)
-		item.Suffix = strings.Join(organizeQuality.FindAllString(f.Name, -1), " ")
+		item.NamingValues = mediaFileValues(f.Name, DownloadFileSpec{})
 		result.Files = append(result.Files, item)
 		return nil
 	}
@@ -567,6 +570,11 @@ func (s *OrganizeEngine) history(download bool) []OrganizeJob {
 
 func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	job.Items = append([]OrganizeItem{}, job.Items...)
+	if job.Naming != nil {
+		snapshot := *job.Naming
+		snapshot.Template = snapshot.Template.Clone()
+		job.Naming = &snapshot
+	}
 	if job.Download != nil {
 		d := *job.Download
 		job.Download = &d

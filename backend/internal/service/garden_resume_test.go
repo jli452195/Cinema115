@@ -86,7 +86,7 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 			if len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "902" || drive.renames != 1 || drive.moves != 1 {
 				t.Fatal("selection or remaining files changed", drive.dirs["801"])
 			}
-			if len(p.job.Items) != 2 || p.job.Items[1].File.ID != "903" || p.job.Items[1].Status != "done" || p.job.Items[1].Name != "测试作品 - S01E01 - Group.zh-CN.ass" {
+			if len(p.job.Items) != 2 || p.job.Items[1].File.ID != "903" || p.job.Items[1].Status != "done" || p.job.Items[1].Name != "测试作品.S01E01-Group.zh-CN.ass" {
 				t.Fatal("resume lost companion subtitle identity or naming", p.job.Items)
 			}
 			delete(s.live, id)

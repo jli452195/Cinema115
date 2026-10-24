@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/naming"
 )
 
 func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input OrganizePreviewInput) (OrganizeJob, error) {
@@ -44,20 +45,11 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
 		return OrganizeJob{}, ErrOrganizeInput
 	}
-	if input.Kind == "tv" {
-		var err error
-		ctx, err = pinNumbering(ctx, s.metadata, input.TMDBID)
-		if err != nil {
-			return OrganizeJob{}, err
-		}
-	}
-	detail, err := s.metadata.Details(ctx, input.Kind, input.TMDBID)
+	p, err := (MediaNaming{Templates: s.templates, Metadata: s.metadata}).prepare(ctx, input.Kind, input.TMDBID, input.NamingRevision)
 	if err != nil {
-		return OrganizeJob{}, fmt.Errorf("读取 TMDB 作品: %w", err)
+		return OrganizeJob{}, err
 	}
-	if detail == nil || detail.ID != input.TMDBID || detail.Kind != input.Kind || detail.Title == "" {
-		return OrganizeJob{}, fmt.Errorf("TMDB 返回了无效的作品信息")
-	}
+	detail := p.detail
 	if input.NumberingRevision != nil {
 		revision := int64(0)
 		if detail.Numbering != nil {
@@ -67,16 +59,7 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			return OrganizeJob{}, fmt.Errorf("%w：季集方案已变化，请重新选择作品并预览", ErrOrganizeConflict)
 		}
 	}
-	title := organizeName(detail.Title)
-	base := title
-	if len(detail.Date) >= 4 {
-		base += " (" + detail.Date[:4] + ")"
-	}
-	folder := fmt.Sprintf("%s {tmdb-%d}", base, input.TMDBID)
-	if title == "" || len([]rune(folder)) > 180 {
-		return OrganizeJob{}, fmt.Errorf("%w：作品名称过长或为空", ErrOrganizeInput)
-	}
-	job := OrganizeJob{Config: scan.Config, Revision: scan.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Folder: folder, Status: "preview", CreatedAt: time.Now(), Items: []OrganizeItem{}}
+	job := OrganizeJob{Naming: &p.snapshot, Config: scan.Config, Revision: scan.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, len(input.Files))}
 	job.Numbering = detail.Numbering
 	files := make(map[string]OrganizeFile, len(scan.Files))
 	for _, f := range scan.Files {
@@ -89,31 +72,11 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			return OrganizeJob{}, fmt.Errorf("%w：请从扫描结果选择视频，每个文件只能出现一次", ErrOrganizeInput)
 		}
 		seen[f.ID] = true
-		name, directory := base, folder
-		if input.Kind == "tv" {
-			if selection.Season < 0 || selection.Season > 1000 || selection.Episode < 1 || selection.Episode > 10000 || (selection.EndEpisode != 0 && (selection.EndEpisode < selection.Episode || selection.EndEpisode > 10000)) {
-				return OrganizeJob{}, fmt.Errorf("%w：请为每个视频填写有效季集号", ErrOrganizeInput)
-			}
-			end := selection.EndEpisode
-			if end == 0 {
-				end = selection.Episode
-			}
-			name = fmt.Sprintf("%s - S%02dE%02d", title, selection.Season, selection.Episode)
-			if end > selection.Episode {
-				name += fmt.Sprintf("-E%02d", end)
-			}
-			directory = path.Join(folder, fmt.Sprintf("Season %02d", selection.Season))
+		result, err := p.render(MediaNamingFile{OrganizeSelection: selection, Name: f.Name, TitleOnly: f.TitleOnly, NamingValues: f.NamingValues})
+		if err != nil {
+			return OrganizeJob{}, fmt.Errorf("%w：%s：%w", ErrOrganizeInput, f.Name, err)
 		}
-		if suffix := organizeName(strings.TrimSpace(selection.Suffix)); suffix != "" {
-			name += " - " + suffix
-		}
-		if !f.TitleOnly {
-			name += strings.ToLower(path.Ext(f.Name))
-		}
-		if len([]rune(name)) > 200 {
-			return OrganizeJob{}, fmt.Errorf("%w：目标文件名过长，请缩短版本标记", ErrOrganizeInput)
-		}
-		job.Items = append(job.Items, OrganizeItem{File: f, Directory: directory, Name: name, TargetPath: path.Join(scan.Config.TargetPath, directory, name), Status: "pending"})
+		job.Items = append(job.Items, OrganizeItem{File: f, Directory: result.Directory, Stem: result.Stem, Name: result.Name, TargetPath: path.Join(scan.Config.TargetPath, result.RelativePath), Status: "pending"})
 	}
 	if input.Subtitles {
 		videos := make(map[string]OrganizeItem, len(job.Items))
@@ -125,11 +88,11 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			if !selected {
 				continue
 			}
-			name := strings.TrimSuffix(video.Name, path.Ext(video.Name)) + sub.Tail + strings.ToLower(path.Ext(sub.File.Name))
-			if len([]rune(name)) > 200 {
-				return OrganizeJob{}, fmt.Errorf("%w：字幕文件名过长", ErrOrganizeInput)
+			result, err := naming.Companion(naming.Result{Directory: video.Directory, Stem: video.Stem}, sub.Tail, sub.File.Name)
+			if err != nil {
+				return OrganizeJob{}, fmt.Errorf("%w：%w", ErrOrganizeInput, err)
 			}
-			job.Items = append(job.Items, OrganizeItem{File: sub.File, Directory: video.Directory, Name: name, TargetPath: path.Join(scan.Config.TargetPath, video.Directory, name), Status: "pending"})
+			job.Items = append(job.Items, OrganizeItem{File: sub.File, Directory: result.Directory, Stem: result.Stem, Name: result.Name, TargetPath: path.Join(scan.Config.TargetPath, result.RelativePath), Status: "pending"})
 		}
 	}
 	return job, nil
@@ -155,6 +118,9 @@ func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 		targetNames[strings.ToLower(item.TargetPath)] = append(targetNames[strings.ToLower(item.TargetPath)], i)
 		cid := job.Config.TargetCID
 		for _, part := range strings.Split(item.Directory, "/") {
+			if part == "" {
+				continue
+			}
 			children, err := listing(cid)
 			if err != nil {
 				return err
@@ -201,7 +167,7 @@ func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 	for _, indexes := range targetNames {
 		if len(indexes) > 1 {
 			for _, i := range indexes {
-				job.Items[i].Conflict = "本次多个文件的目标同名，请调整版本标记或季集号"
+				job.Items[i].Conflict = "本次多个文件的目标同名，请调整自定义标记或季集号"
 			}
 		}
 	}
@@ -227,7 +193,7 @@ func (s *OrganizeEngine) rememberPlan(job OrganizeJob) (OrganizeJob, error) {
 		}
 		delete(s.plans, oldest)
 	}
-	s.plans[job.ID] = job
+	s.plans[job.ID] = cloneOrganizeJob(job)
 	return job, nil
 }
 

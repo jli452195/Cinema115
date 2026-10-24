@@ -138,7 +138,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController.abort(); clearTimeo
         </section>
       </template>
       <div class="ns-feedback" role="status" aria-live="polite"><p v-if="error">{{ error }}</p><p v-else-if="notice">{{ notice }}</p><p v-else-if="settings">{{ dirty(kind) ? '当前模板有未保存的修改' : '当前模板已保存' }}</p><div class="ns-feedback-actions"><button v-if="pending" type="button" class="ns-button" :disabled="saving" @click="confirmSave">确认保存结果</button><button v-else-if="!loading" type="button" class="ns-reload" @click="reload"><IconRefresh :size="13" aria-hidden="true" />重新读取{{ settings ? '当前模板' : '设置' }}</button></div></div>
-      <p class="ns-stage">本阶段提供模板配置与预览，现有整理任务将在后续步骤接入。</p>
+      <p class="ns-stage">手动整理、下载整理使用已保存的模板；已创建的任务保持原命名。动漫订阅将在后续步骤接入。</p>
     </div>
     <P115ActionDialog v-if="dialog" :title="dialog === 'leave' ? '放弃未保存的模板修改？' : dialog === 'reload' ? `重新读取${kindLabel}模板？` : `恢复${kindLabel}默认模板？`" @close="decide(false)"><p>{{ dialog === 'leave' ? '电影或剧集模板仍有未保存的修改，离开后将丢弃这些修改。' : dialog === 'reload' ? '当前类型的未保存修改会被替换，另一类型的编辑内容将保留。' : '仅替换当前类型的编辑内容，保存后才会更新服务端模板。' }}</p><template #footer><button type="button" class="ns-button" @click="decide(false)">继续编辑</button><button type="button" class="ns-button ns-save" @click="decide(true)">{{ dialog === 'leave' ? '放弃修改并离开' : dialog === 'reload' ? '重新读取' : '恢复默认' }}</button></template></P115ActionDialog>
   </ManagementLayout>

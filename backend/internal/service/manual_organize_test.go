@@ -11,6 +11,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/naming"
 )
 
 type organizeFakeDrive struct {
@@ -128,9 +129,15 @@ func (f *organizeFakeDrive) MoveEntriesBatch(_ context.Context, ids []string, ci
 }
 
 type organizeFakeMetadata struct{}
+type organizeDefaultTemplates struct{}
+
+func (organizeDefaultTemplates) NamingTemplate(_ context.Context, kind naming.Kind) (naming.Snapshot, error) {
+	template, err := naming.Default(kind)
+	return naming.Snapshot{Template: template}, err
+}
 
 func newManualOrganizeTest(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata) (*ManualOrganize, error) {
-	engine, err := NewOrganizeEngine(store, accounts, drive, metadata)
+	engine, err := NewOrganizeEngine(store, accounts, drive, metadata, organizeDefaultTemplates{})
 	if err != nil {
 		return nil, err
 	}
@@ -227,11 +234,11 @@ func TestManualOrganizeCompletionNotifiesAfterReleasingWriter(t *testing.T) {
 func TestManualOrganizeMovieTVAndSubtitles(t *testing.T) {
 	s, drive, id, store := newOrganizeTest(t)
 	drive.pageSize = 1 // Includes all pages when scanning and checking collisions.
-	plan := organizeTestPreview(t, s, id, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1, Suffix: "1080p"}, {ID: "103", Season: 1, Episode: 2, Suffix: "1080p"}})
+	plan := organizeTestPreview(t, s, id, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}, {ID: "103", Season: 1, Episode: 2}})
 	if drive.renames+drive.moves+drive.creates != 0 {
 		t.Fatal("预览不能修改网盘")
 	}
-	if len(plan.Items) != 3 || plan.Items[2].Name != "测试作品 - S01E01 - 1080p.zh-CN.srt" {
+	if len(plan.Items) != 3 || plan.Items[2].Name != "测试作品.S01E01.1080p.zh-CN.srt" {
 		t.Fatalf("字幕未正确匹配: %+v", plan.Items)
 	}
 	job := organizeTestRun(t, s, id, plan)
@@ -257,8 +264,8 @@ func TestManualOrganizeMovieTVAndSubtitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	movie, err := s2.Preview(context.Background(), id2, OrganizePreviewInput{ScanID: scan.ID, Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{{ID: "101", Suffix: "1080p"}}})
-	if err != nil || movie.Items[0].TargetPath != "/目标/测试作品 (2024) {tmdb-42}/测试作品 (2024) - 1080p.mkv" {
+	movie, err := s2.Preview(context.Background(), id2, OrganizePreviewInput{ScanID: scan.ID, Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{{ID: "101"}}})
+	if err != nil || movie.Items[0].TargetPath != "/目标/测试作品 (2024) {tmdb-42}/测试作品 (2024).1080p.mkv" {
 		t.Fatal(movie, err)
 	}
 }
@@ -344,7 +351,7 @@ func TestManualOrganizeConflictsAndStaleSource(t *testing.T) {
 	t.Run("destination added after preview", func(t *testing.T) {
 		s, drive, id, _ := newOrganizeTest(t)
 		plan := organizeTestPreview(t, s, id, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}})
-		drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: plan.Folder, Directory: true}}
+		drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: strings.Split(plan.Items[0].Directory, "/")[0], Directory: true}}
 		drive.dirs["40"] = []p115.ShareFile{{ID: "50", Name: "Season 01", Directory: true}}
 		drive.dirs["50"] = []p115.ShareFile{{ID: "60", Name: plan.Items[0].Name}}
 		job := organizeTestRun(t, s, id, plan)
@@ -505,7 +512,7 @@ func TestManualOrganizeRMVBWithSubtitles(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(plan.Items) != 2 || plan.Items[0].Name != "测试作品 - S01E01.rmvb" || plan.Items[1].Name != "测试作品 - S01E01.zh-CN.srt" {
+				if len(plan.Items) != 2 || plan.Items[0].Name != "测试作品.S01E01.rmvb" || plan.Items[1].Name != "测试作品.S01E01.zh-CN.srt" {
 					t.Fatalf("RMVB 或字幕命名错误: %+v", plan.Items)
 				}
 				job := organizeTestRun(t, s, id, plan)

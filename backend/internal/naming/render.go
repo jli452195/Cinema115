@@ -30,6 +30,29 @@ type Result struct {
 	RelativePath string `json:"relativePath"`
 }
 
+// Companion keeps the complete rendered stem, including its dots. A title-only
+// preview must never have its last release tag mistaken for an extension.
+func Companion(video Result, tail, originalName string) (Result, error) {
+	components := []string{video.Stem}
+	if video.Directory != "" {
+		components = append(components, strings.Split(video.Directory, "/")...)
+	}
+	for _, component := range components {
+		if component == "" || component != cleanText(component) || unsafeText(component) || reservedName(component) || len(component) > maxComponentBytes || !utf8.ValidString(component) {
+			return Result{}, fmt.Errorf("%w：视频命名结果无效", ErrInput)
+		}
+	}
+	extension := strings.ToLower(path.Ext(originalName))
+	if unsafeText(tail) || !utf8.ValidString(tail) || !utf8.ValidString(originalName) || strings.ContainsAny(originalName, `/\`) || !validExtension(extension) || extension == "" {
+		return Result{}, fmt.Errorf("%w：字幕名称或后缀无效", ErrInput)
+	}
+	name := video.Stem + tail + extension
+	if len(name) > maxComponentBytes {
+		return Result{}, fmt.Errorf("%w：字幕文件名超过 %d 字节", ErrInput, maxComponentBytes)
+	}
+	return Result{Directory: video.Directory, Stem: video.Stem + tail, Extension: extension, Name: name, RelativePath: path.Join(video.Directory, name)}, nil
+}
+
 func (r *Renderer) Render(data Data) (Result, error) {
 	if r == nil || r.template.Kind == "" {
 		return Result{}, fmt.Errorf("%w：请先编译模板", ErrTemplate)

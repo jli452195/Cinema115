@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import DirectoryShareButton from '../components/DirectoryShareButton.vue'
 import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
@@ -255,7 +256,7 @@ async function choose(item: MediaCardItem) {
   media.value = await tmdb(`detail/${item.kind}/${item.id}`)
   batchSeason.value = media.value?.seasons?.find(s => s.number > 0)?.number ?? 1
   await scrollToStep(3)
-  notice.value = `已选择《${media.value?.title}》，请核对文件${media.value?.kind === 'tv' ? '与季集编号' : '与版本标记'}。`
+  notice.value = `已选择《${media.value?.title}》，请核对文件${media.value?.kind === 'tv' ? '与季集编号' : '与自定义标记'}。`
 }
 async function numberingSaved() {
   numberingOpen.value = false
@@ -435,6 +436,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 
         <section v-if="scanId" v-show="activeStep === 3" ref="editPanel" tabindex="-1" aria-label="校正文件与命名" class="panel">
           <h2 class="heading">校正文件与命名</h2>
+          <RouterLink :to="{ path: '/settings/naming', query: media?.kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener" class="mt-2 inline-block text-xs text-blue-600 dark:text-blue-400">编辑公共命名模板</RouterLink>
           <div v-if="media?.kind === 'tv'" class="mt-3 flex flex-wrap items-center gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">季集方案：{{ numberingLabel(media.numbering) }}</span><button type="button" class="text-blue-600 disabled:opacity-50 dark:text-blue-400" :disabled="!!busy || active" @click="numberingOpen = true">设置全站季集方案</button></div>
           <p class="mt-2 break-all text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
           <div class="my-4 flex flex-wrap items-center gap-3 text-sm">
@@ -453,6 +455,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 
         <section v-if="preview" v-show="activeStep === 4" ref="previewPanel" tabindex="-1" aria-label="确认整理预览" class="panel">
           <h2 class="heading">确认整理预览</h2>
+          <p v-if="preview.naming" class="mt-2 text-xs text-slate-500 dark:text-slate-400">公共命名模板 · 版本 {{ preview.naming.revision }}，本次任务将固定使用此预览。</p>
           <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ preview.title }} · {{ preview.items.length }} 个文件（含字幕）<span v-if="conflicts" class="text-red-600"> · {{ conflicts }} 项冲突</span></p>
           <p v-if="preview.numbering" class="mt-2 text-xs text-slate-500 dark:text-slate-400">本次季集方案：{{ numberingLabel(preview.numbering) }}</p>
           <div class="my-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center dark:bg-slate-950"><p><strong class="block text-xl">{{ previewVideos }}</strong><span class="text-xs text-slate-500">视频</span></p><p><strong class="block text-xl">{{ previewSubtitles }}</strong><span class="text-xs text-slate-500">字幕</span></p><p><strong class="block text-xl" :class="conflicts ? 'text-red-600' : 'text-emerald-600'">{{ conflicts }}</strong><span class="text-xs text-slate-500">冲突</span></p></div>

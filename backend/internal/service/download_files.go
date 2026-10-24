@@ -18,7 +18,8 @@ import (
 )
 
 type DownloadResourceInput struct {
-	Title      string `json:"title,omitempty"` // Display metadata only; never a file identity.
+	Title      string `json:"title,omitempty"`  // Display metadata only; never a file identity.
+	Fansub     string `json:"fansub,omitempty"` // Known source group; cosmetic fallback only.
 	Source     string `json:"source"`
 	Provider   string `json:"provider"`
 	ProviderID string `json:"providerId"`

@@ -100,6 +100,20 @@ type Template struct {
 	Filename    []Block   `json:"filename"`
 }
 
+// Snapshot is the saved rule pinned by a plan; it contains no storage target.
+type Snapshot struct {
+	Revision int64    `json:"revision"`
+	Template Template `json:"template"`
+}
+
+func (t Template) Clone() Template {
+	out := Template{Kind: t.Kind, Filename: slices.Clone(t.Filename), Directories: make([][]Block, len(t.Directories))}
+	for i, layer := range t.Directories {
+		out.Directories[i] = slices.Clone(layer)
+	}
+	return out
+}
+
 var (
 	ErrTemplate = errors.New("无效命名模板")
 	ErrInput    = errors.New("无效命名数据")
@@ -166,11 +180,7 @@ func Compile(template Template) (*Renderer, error) {
 	if !hasIdentity || template.Kind == TV && !hasEpisode {
 		return nil, fmt.Errorf("%w：文件名须包含作品名称或原文件名，剧集还须包含季集编号", ErrTemplate)
 	}
-	copy := Template{Kind: template.Kind, Filename: slices.Clone(template.Filename), Directories: make([][]Block, len(template.Directories))}
-	for i, layer := range template.Directories {
-		copy.Directories[i] = slices.Clone(layer)
-	}
-	return &Renderer{template: copy}, nil
+	return &Renderer{template: template.Clone()}, nil
 }
 
 func validateLayer(kind Kind, layer []Block) error {

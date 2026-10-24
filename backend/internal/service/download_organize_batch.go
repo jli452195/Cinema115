@@ -43,7 +43,7 @@ func newDownloadPending(job OrganizeJob, account P115Account) *downloadPending {
 }
 
 func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) (DownloadFiles, error) {
-	if len(in.Title)+len(in.Magnet)+len(in.TorrentURL)+len(in.Source)+len(in.Provider)+len(in.ProviderID) > 16<<10 {
+	if len(in.Title)+len(in.Fansub)+len(in.Magnet)+len(in.TorrentURL)+len(in.Source)+len(in.Provider)+len(in.ProviderID) > 16<<10 {
 		return DownloadFiles{}, ErrOrganizeInput
 	}
 	out, err := s.resourceFiles(ctx, in)
@@ -68,6 +68,13 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 			out.Specs = make(map[string]DownloadFileSpec, 1)
 		}
 		out.Specs[out.Files[0].ID] = spec
+	}
+	for i := range out.Files {
+		spec := out.Specs[out.Files[i].ID]
+		if spec.Fansub == "" {
+			spec.Fansub = strings.TrimSpace(in.Fansub)
+		}
+		out.Files[i].NamingValues = mediaFileValues(out.Files[i].Name, spec)
 	}
 	body, err := json.Marshal(out)
 	if err != nil {
@@ -166,6 +173,13 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		downloads = append(downloads, &ResourceDownload{Hash: manifest.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath})
 		prefix := manifest.Hash + "/"
 		add := func(file OrganizeFile) {
+			if file.NamingValues == nil && file.MediaType == "video" {
+				spec := manifest.Specs[file.ID]
+				if spec.Fansub == "" {
+					spec.Fansub = strings.TrimSpace(resource.Fansub)
+				}
+				file.NamingValues = mediaFileValues(file.Name, spec)
+			}
 			key := prefix + file.ID
 			originals[key], owners[key] = file, index
 			file.ID, file.ParentID, file.SourcePath = key, prefix+file.ParentID, "/"+prefix+strings.TrimPrefix(file.SourcePath, "/")
@@ -185,7 +199,7 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 			selections = append(selections, selection)
 		}
 	}
-	combined, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files}, OrganizePreviewInput{Kind: common.Kind, TMDBID: common.TMDBID, Files: selections, Subtitles: true})
+	combined, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files}, OrganizePreviewInput{NamingRevision: common.NamingRevision, Kind: common.Kind, TMDBID: common.TMDBID, Files: selections, Subtitles: true})
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +216,7 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 	for _, indexes := range targets {
 		if len(indexes) > 1 {
 			for _, i := range indexes {
-				combined.Items[i].Conflict = "本次多个文件目标同名，请调整版本标记或季集号"
+				combined.Items[i].Conflict = "本次多个文件目标同名，请调整自定义标记或季集号"
 			}
 		}
 	}

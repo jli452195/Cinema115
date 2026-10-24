@@ -97,9 +97,9 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32, Suffix: "字幕组.v3"}}
+			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32, Suffix: "v3"}}
 			plan, err := s.Preview(context.Background(), in)
-			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品 - S02E32 - 字幕组.v3" {
+			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.简体-字幕组-v3" {
 				t.Fatal("title-only plan guessed an extension or discarded mapping", plan, err)
 			}
 			job, err := s.Start(plan.ID)
@@ -107,7 +107,7 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 				t.Fatal(err)
 			}
 			if source == "garden" {
-				engine, err := NewOrganizeEngine(s.Organize.store, s.Organize.accounts, drive, s.Organize.metadata)
+				engine, err := NewOrganizeEngine(s.Organize.store, s.Organize.accounts, drive, s.Organize.metadata, s.Organize.templates)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -252,7 +252,7 @@ func TestDownloadTitleConflictsWithKnownExtensionsAndQueuedNames(t *testing.T) {
 	// Existing .mkv files are visible to title-only previews before the actual
 	// extension is known, without any extra directory read.
 	in.Files[0].ID = "title"
-	drive.dirs["20"] = []p115.ShareFile{{ID: "21", Name: first.Folder, Directory: true}}
+	drive.dirs["20"] = []p115.ShareFile{{ID: "21", Name: strings.Split(first.Items[0].Directory, "/")[0], Directory: true}}
 	drive.dirs["21"] = []p115.ShareFile{{ID: "22", Name: "Season 01", Directory: true}}
 	drive.dirs["22"] = []p115.ShareFile{{ID: "23", Name: first.Items[0].Name + ".mkv"}}
 	plan, err := s.Preview(context.Background(), in)

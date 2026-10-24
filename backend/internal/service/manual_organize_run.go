@@ -17,9 +17,7 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 	defer s.mu.Unlock()
 	for _, job := range s.doc.Jobs {
 		if job.ID == id && job.Config.AccountID == accountID && job.Download == nil {
-			result := job
-			result.Items = append([]OrganizeItem{}, job.Items...)
-			return result, nil
+			return cloneOrganizeJob(job), nil
 		}
 	}
 	s.pruneLocked()
@@ -53,22 +51,21 @@ func (s *ManualOrganize) Start(accountID, id string) (OrganizeJob, error) {
 			return OrganizeJob{}, fmt.Errorf("%w：请先处理预览中的冲突", ErrOrganizeConflict)
 		}
 	}
-	job.Items = append([]OrganizeItem{}, job.Items...)
+	job = cloneOrganizeJob(job)
 	job.Status, job.UpdatedAt = "queued", time.Now()
 	doc := s.doc
 	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
 	if err := s.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
-	workerJob := job
-	workerJob.Items = append([]OrganizeItem{}, job.Items...)
+	workerJob := cloneOrganizeJob(job)
 	s.pending = &organizePending{job: workerJob, cookie: a.Cookie}
 	delete(s.plans, id)
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	return job, nil
+	return cloneOrganizeJob(job), nil
 }
 
 func (s *OrganizeEngine) checkpoint(job *OrganizeJob) error {

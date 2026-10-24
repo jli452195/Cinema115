@@ -85,7 +85,7 @@ func TestDownloadBatchPreparedManifestsNamespaceAndAtomicAcceptance(t *testing.T
 	}
 	// A fresh service returns the persisted batch, without requiring previews
 	// or replaying any submissions. Unstarted items can explicitly rejoin.
-	engine, err := NewOrganizeEngine(store, s.Organize.accounts, drive, m)
+	engine, err := NewOrganizeEngine(store, s.Organize.accounts, drive, m, s.Organize.templates)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,8 +9,10 @@ import SelectMenu from './SelectMenu.vue'
 import { p115Request } from '../lib/p115-api'
 import type { DownloadBatchResult, DownloadOrganizeResource, OrganizeJob, OrganizeSubtitle } from '../types/manualOrganize'
 import { useDownloadOrganizeFiles } from '../composables/useDownloadOrganizeFiles'
-import { applyOrganizeMapping, organizeTargetName, organizeSubtitleName } from '../utils/organizeNaming'
+import { applyOrganizeMapping } from '../utils/organizeNaming'
+import { useMediaNamingPreview } from '../composables/useMediaNamingPreview'
 import { directoryGroups } from '../utils/organizeSelection'
+import type { NamingResult } from '../types/naming'
 
 const props = defineProps<{
   token: string; entries: DownloadOrganizeResource[]; hiddenCount?: number; batch?: boolean
@@ -21,7 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; submitted: [keys: string[]]; uncertain: [keys: string[]] }>()
 const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
-const { rows, subtitles, sources, fields, parsing, active, unresolved, readyCount, states, selectedKeys } = preparation
+const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states, selectedKeys } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
 const confirming = ref(false)
 const errorElement = ref<HTMLElement>()
@@ -33,7 +35,18 @@ const season = ref(String(props.seasons.find(s => s.number > 0)?.number ?? 1)), 
 const selected = computed(() => rows.value.filter(row => row.selected))
 const titleOnlyCount = computed(() => rows.value.filter(row => row.titleOnly).length)
 const seasonOptions = computed(() => props.seasons.map(s => ({ value: String(s.number), label: `${s.name || (s.number ? `第 ${s.number} 季` : '特别篇')} · ${s.episodeCount} 集` })))
-const targetNames = computed(() => Object.fromEntries(rows.value.map(row => [row.id, organizeTargetName(row, props.title, props.date, props.kind)])))
+const job = ref<OrganizeJob>()
+const namingNumber = (value: unknown) => Number.isInteger(Number(value)) ? Number(value) : -1
+const namingPreview = useMediaNamingPreview(props.token, () => rows.value.length && !parsing.value && !job.value ? {
+  kind: props.kind, tmdbId: props.tmdbId,
+  files: rows.value.map(row => ({ id: row.id, name: row.name, titleOnly: row.titleOnly, namingValues: row.namingValues, season: namingNumber(row.season), episode: namingNumber(row.episode), endEpisode: namingNumber(row.endEpisode), suffix: row.suffix })),
+  subtitles: subtitles.value.filter(sub => sub.videoId).map(sub => ({ file: { id: sub.file.id, name: sub.file.name }, videoId: sub.videoId, tail: sub.tail })),
+} : undefined, lifecycle.signal)
+type PlannedName = Pick<NamingResult, 'directory' | 'stem' | 'name'>
+const planKey = ref(''), planResults = ref<Record<string, PlannedName>>({})
+const results = computed(() => planKey.value === snapshotKey.value ? { ...namingPreview.results.value, ...planResults.value } : namingPreview.results.value)
+const targetNames = computed(() => Object.fromEntries(rows.value.map(row => [row.id, namingPreview.errors.value[row.id] ? '' : results.value[row.id]?.name || '等待命名预览'])))
+const subtitleName = (sub: OrganizeSubtitle) => results.value[sub.file.id]?.name || '等待命名预览'
 const subtitlesByVideo = computed(() => {
   const groups: Record<string, OrganizeSubtitle[]> = {}
   for (const sub of subtitles.value) if (sub.videoId) (groups[sub.videoId] ||= []).push(sub)
@@ -41,27 +54,30 @@ const subtitlesByVideo = computed(() => {
 })
 const unmatchedSubtitles = computed(() => subtitles.value.filter(sub => !sub.videoId))
 const selectedSubtitleCount = computed(() => selected.value.reduce((count, row) => count + (subtitlesByVideo.value[row.id]?.length || 0), 0))
-const invalid = computed(() => selected.value.some(row => props.kind === 'tv' && (targetNames.value[row.id] === '请填写目标季集' || row.episode > 10000 || Number(row.endEpisode) > 10000 || row.season > 1000)))
+const invalid = computed(() => selected.value.some(row => !results.value[row.id] || !!namingPreview.errors.value[row.id] || (subtitlesByVideo.value[row.id] || []).some(sub => !results.value[sub.file.id] || !!namingPreview.errors.value[sub.file.id])))
 const undo = ref<ReturnType<typeof applyOrganizeMapping>>([])
 const conflicts = ref<Record<string, string>>({})
 const localConflicts = computed(() => {
   const targets = new Map<string, string[]>(), out: Record<string, string> = {}
   for (const row of selected.value) {
-    const names = [{ id: row.id, name: targetNames.value[row.id] }, ...(subtitlesByVideo.value[row.id] || []).map(sub => ({ id: sub.file.id, name: organizeSubtitleName(targetNames.value[row.id]!, sub) }))]
+    const names = [{ id: row.id, result: results.value[row.id] }, ...(subtitlesByVideo.value[row.id] || []).map(sub => ({ id: sub.file.id, result: results.value[sub.file.id] }))]
     for (const file of names) {
-      const name = file.id === row.id && !row.titleOnly ? file.name.replace(/\.[^.]+$/, '') : file.name
-      const key = `${props.kind === 'tv' ? row.season : ''}/${name}`.toLocaleLowerCase()
+      if (!file.result) continue
+      const key = `${file.result.directory}/${file.id === row.id ? file.result.stem : file.result.name}`.toLowerCase()
       const ids = targets.get(key) || []; ids.push(file.id); targets.set(key, ids)
     }
   }
-  for (const ids of targets.values()) if (ids.length > 1) for (const id of ids) out[id] = '本次多个文件目标同名，请保留区分信息或修改版本标记'
+  for (const ids of targets.values()) if (ids.length > 1) for (const id of ids) out[id] = '本次多个文件目标同名，请保留区分信息或修改自定义标记'
   return out
 })
-const displayedConflicts = computed(() => ({ ...conflicts.value, ...localConflicts.value }))
+const displayedConflicts = computed(() => {
+  const selectedIDs = selected.value.flatMap(row => [row.id, ...(subtitlesByVideo.value[row.id] || []).map(sub => sub.file.id)])
+  return { ...conflicts.value, ...localConflicts.value, ...Object.fromEntries(selectedIDs.filter(id => namingPreview.errors.value[id]).map(id => [id, namingPreview.errors.value[id]!])) }
+})
 const previewId = ref('')
-const job = ref<OrganizeJob>()
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(130000)])
-const snapshotKey = computed(() => JSON.stringify({ targetCID: targetCID.value, targetPath: targetPath.value, resources: preparation.resourceSelections() }))
+const snapshotKey = computed(() => JSON.stringify({ naming: namingPreview.value.value, targetCID: targetCID.value, targetPath: targetPath.value, resources: preparation.resourceSelections() }))
+watch(snapshotKey, () => { conflicts.value = {} }, { flush: 'sync' })
 let previewKey = ''
 
 function mapFiles(sequential = false) {
@@ -90,20 +106,35 @@ async function loadConfig() {
   finally { if (!lifecycle.signal.aborted) loading.value = false }
 }
 async function start() {
-  if (busy.value || loading.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || Object.keys(localConflicts.value).length || !targetCID.value || !accountId.value || job.value) return
+  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || Object.keys(localConflicts.value).length || !targetCID.value || !accountId.value || job.value) return
   busy.value = true; error.value = ''; notice.value = ''
   let creationAttempt = false
   try {
     const key = snapshotKey.value
     if (!previewId.value || previewKey !== key) {
-      const payload = { tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
+      const payload = { namingRevision: namingPreview.value.value?.naming.revision, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
       const resources = preparation.resourceSelections()
       const previews = props.batch
         ? (await p115Request<DownloadBatchResult>(props.token, 'download-organize/batch/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...payload, resources }) }))
         : { id: '', jobs: [await p115Request<OrganizeJob>(props.token, 'download-organize/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...payload, ...resources[0] }) })] }
       conflicts.value = Object.fromEntries(previews.jobs.flatMap(preview => preview.items.filter(item => item.conflict).map(item => [props.batch ? `${preview.download!.hash}:${item.file.id}` : item.file.id, item.conflict!])))
       if (Object.keys(conflicts.value).length) throw new Error('命名或目标目录存在冲突，请调整标出的文件')
+      const official: Record<string, PlannedName> = {}
+      for (const preview of previews.jobs) {
+        if (preview.naming?.revision !== payload.namingRevision) throw Object.assign(new Error('任务命名模板与预览不一致，请刷新命名预览'), { status: 409 })
+        for (const item of preview.items) {
+          const id = props.batch ? `${preview.download!.hash}:${item.file.id}` : item.file.id
+          if (!results.value[id] || !item.stem || typeof item.directory !== 'string' || !item.name || official[id]) throw new Error('任务命名预览结果不完整，请重试')
+          official[id] = { directory: item.directory, stem: item.stem, name: item.name }
+        }
+      }
+      const expected = selected.value.flatMap(row => [row.id, ...(subtitlesByVideo.value[row.id] || []).map(sub => sub.file.id)])
+      if (expected.some(id => !official[id]) || Object.keys(official).length !== expected.length) throw new Error('任务文件与所选文件不一致，请重新预览')
+      const changed = expected.some(id => official[id]!.name !== results.value[id]!.name || official[id]!.directory !== results.value[id]!.directory)
       previewId.value = props.batch ? previews.id : previews.jobs[0]!.id; previewKey = key
+      if (!previewId.value) throw new Error('任务预览缺少编号，请重试')
+      planResults.value = official; planKey.value = key
+      if (changed) { notice.value = '最终命名有变化，已更新下方预览，请核对后再次确认。'; return }
     }
     // Reuse the ID after a lost response; the server persists before submitting.
     creationAttempt = true
@@ -122,6 +153,7 @@ async function start() {
       } else {
         confirming.value = false
         if (creationAttempt) previewId.value = ''
+        if (!creationAttempt && status === 409) { previewId.value = ''; namingPreview.refresh() }
         error.value = e instanceof Error ? e.message : '提交失败，请重试'
       }
     }
@@ -146,7 +178,6 @@ onBeforeUnmount(() => lifecycle.abort())
       <div class="reference"><strong>{{ title }}</strong><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>
       <div class="directory-bar"><div><span>整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong><small v-if="downloadPath">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true"><IconFolder :size="16" aria-hidden="true" />选择目录</button></div>
       <template v-if="batch">
-        <div class="name-fields"><span>文件名保留</span><label v-for="option in ([['fansub', '字幕组'], ['language', '字幕语言'], ['resolution', '分辨率']] as const)" :key="option[0]"><input v-model="fields[option[0]]" type="checkbox" :disabled="editDisabled" @change="preparation.applyNames(); conflicts = {}" />{{ option[1] }}</label><small>更改选项会更新所选文件的版本标记。</small></div>
         <div class="resource-progress"><span role="status">已解析 {{ readyCount }} / {{ active.length }} 项资源<span v-if="unresolved.length && !parsing">，{{ unresolved.length }} 项待处理</span></span><button v-if="parsing" class="secondary" @click="preparation.pause">停止解析</button><button v-else-if="states.some(state => state.status === 'waiting')" class="secondary" :disabled="editDisabled" @click="preparation.parse">继续解析</button></div>
         <details class="resource-status"><summary>查看全部已选资源</summary><div class="resource-status-list"><div v-for="state in states.filter(state => state.status !== 'removed')" :key="state.key"><p>{{ state.resource.title }}<small>{{ state.status === 'ready' ? state.files?.files.some(file => file.titleOnly) ? '按标题识别' : '已读取文件清单' : state.status === 'loading' ? '识别中' : state.status === 'error' ? state.error : '待识别' }}</small></p><button class="secondary" :disabled="editDisabled" :aria-label="`移除资源 ${state.resource.title}`" @click="preparation.remove(state.key)">移除</button></div></div></details>
         <div v-for="state in states.filter(state => state.status === 'error')" :key="state.key" class="resource-error"><p role="alert">{{ state.resource.title }}：{{ state.error }}</p><button class="secondary" :disabled="editDisabled || parsing" @click="preparation.retry(state.key)">重试解析</button><button class="secondary" :disabled="editDisabled" @click="preparation.remove(state.key)">移除本次整理</button><span>可关闭弹窗后普通离线，失败项不会自动提交。</span></div>
@@ -160,14 +191,16 @@ onBeforeUnmount(() => lifecycle.abort())
         <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
       </div></div>
       <p v-if="notice" role="status" class="notice">{{ notice }}</p>
-      <p v-if="Object.keys(localConflicts).length" role="alert" class="error">有 {{ Object.keys(localConflicts).length }} 个文件目标重名，请保留区分信息或修改版本标记。</p>
+      <p v-if="Object.keys(localConflicts).length" role="alert" class="error">有 {{ Object.keys(localConflicts).length }} 个文件目标重名，请保留区分信息或修改自定义标记。</p>
+      <div class="naming-summary"><RouterLink :to="{ path: '/settings/naming', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh">刷新命名</button></div>
       <OrganizeFileSelection :rows="rows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="displayedConflicts" compact>
         <template #row-details="{ row }">
+          <p v-if="results[row.id]?.directory" class="scope-note break-all">目录：{{ results[row.id]!.directory }}</p>
           <details v-if="subtitlesByVideo[row.id]?.length" class="subtitle-details" :open="row.selected && subtitlesByVideo[row.id]!.some(sub => displayedConflicts[sub.file.id])" @click.stop @mousedown.stop>
             <summary><IconChevronDown :size="13" aria-hidden="true" />关联字幕（{{ subtitlesByVideo[row.id]!.length }}）<span v-if="!row.selected">未选择</span></summary>
             <div v-for="sub in subtitlesByVideo[row.id]" :key="sub.file.id" class="subtitle-file">
               <p>{{ sub.file.name }}</p>
-              <p v-if="row.selected" class="subtitle-target">整理后：{{ organizeSubtitleName(targetNames[row.id]!, sub) }}</p>
+              <p v-if="row.selected && !namingPreview.errors.value[sub.file.id]" class="subtitle-target">整理后：{{ subtitleName(sub) }}</p>
               <p v-else>随视频选择，当前保留原位</p>
               <p v-if="row.selected && displayedConflicts[sub.file.id]" role="alert" class="error">{{ displayedConflicts[sub.file.id] }}</p>
             </div>
@@ -183,17 +216,17 @@ onBeforeUnmount(() => lifecycle.abort())
     <p v-if="error" ref="errorElement" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/cloud-download">前往云下载设置</RouterLink></p>
     <p v-if="loading" role="status" class="notice">读取目录配置…</p>
   </section>
-    <template v-if="!job" #footer><div class="submit-bar"><span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><span v-if="invalid">，请补全季集</span></span><button type="button" class="primary" :disabled="busy || loading || parsing || !!unresolved.length || !accountId || !targetCID || !selected.length || invalid || !!Object.keys(localConflicts).length" @click="start">{{ busy ? '正在确认并创建任务…' : confirming ? '确认任务状态' : '下载并自动整理' }}</button></div></template>
+    <template v-if="!job" #footer><div class="submit-bar"><span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><span v-if="invalid && namingPreview.ready.value">，请检查命名错误</span></span><button type="button" class="primary" :disabled="busy || loading || !confirming && !namingPreview.ready.value || parsing || !!unresolved.length || !accountId || !targetCID || !selected.length || invalid || !!Object.keys(localConflicts).length" @click="start">{{ busy ? '正在确认并创建任务…' : confirming ? '确认任务状态' : planKey === snapshotKey ? '确认下载并整理' : '下载并自动整理' }}</button></div></template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
 </template>
 
 <style scoped>
 .download-organize { @apply min-w-0 space-y-3 text-slate-700 dark:text-slate-200; }
+.naming-summary { @apply flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400; }.naming-summary a { @apply text-blue-600 dark:text-blue-400; }.naming-summary button { @apply ml-auto; }
 .resource-title { @apply break-all text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }
 .scope-note { @apply text-xs leading-5 text-slate-500 dark:text-slate-400; }
-.name-fields { @apply flex flex-wrap items-center gap-3 text-xs; }.name-fields label { @apply flex items-center gap-1.5; }.name-fields input { accent-color: #2563eb; }.name-fields small { @apply text-slate-500 dark:text-slate-400; }
 .resource-progress { @apply flex items-center justify-between gap-2 text-xs; }.resource-status { @apply text-xs; }.resource-status summary { @apply cursor-pointer py-1; }.resource-status-list { @apply max-h-40 overflow-auto overscroll-contain; }.resource-status-list>div { @apply flex items-center gap-2 py-2; }.resource-status-list p { @apply min-w-0 flex-1 break-all; }.resource-status-list small { @apply block text-slate-500 dark:text-slate-400; }.resource-error { @apply flex flex-wrap items-center gap-2 text-xs; }.resource-error p { @apply w-full break-all text-red-600 dark:text-red-400; }.resource-error>span { @apply text-slate-500 dark:text-slate-400; }
 .subtitle-details { @apply mt-1 min-w-0 text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .subtitle-details summary { @apply flex cursor-pointer list-none items-center gap-1 py-1; }.subtitle-details summary::-webkit-details-marker { display: none; }.subtitle-details[open]>summary>svg { transform: rotate(180deg); }

@@ -26,7 +26,7 @@ func RegisterNamingTemplates(admin *gin.RouterGroup, store *storage.Store) {
 		c.Next()
 	})
 	group.GET("", func(c *gin.Context) {
-		records := make(map[naming.Kind]storage.NamingTemplateRecord, 2)
+		records := make(map[naming.Kind]naming.Snapshot, 2)
 		defaults := make(map[naming.Kind]naming.Template, 2)
 		catalog := make(map[naming.Kind][]naming.FieldDefinition, 2)
 		for _, kind := range []naming.Kind{naming.Movie, naming.TV} {

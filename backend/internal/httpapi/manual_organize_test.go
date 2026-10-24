@@ -1,22 +1,31 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"strm115/backend/internal/naming"
 	"testing"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
+type httpNamingTemplates struct{}
+
+func (httpNamingTemplates) NamingTemplate(_ context.Context, kind naming.Kind) (naming.Snapshot, error) {
+	template, err := naming.Default(kind)
+	return naming.Snapshot{Template: template}, err
+}
+
 func newHTTPManualOrganize(store interface {
 	Value() string
 	Save(string) error
 }, accounts *service.P115Accounts, drive service.OrganizeDrive, metadata service.OrganizeMetadata) (*service.ManualOrganize, error) {
-	engine, err := service.NewOrganizeEngine(store, accounts, drive, metadata)
+	engine, err := service.NewOrganizeEngine(store, accounts, drive, metadata, httpNamingTemplates{})
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +54,7 @@ func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
 	if err := store.Save(string(raw)); err != nil {
 		t.Fatal(err)
 	}
-	engine, err := service.NewOrganizeEngine(store, accounts, nil, nil)
+	engine, err := service.NewOrganizeEngine(store, accounts, nil, nil, httpNamingTemplates{})
 	if err != nil {
 		t.Fatal(err)
 	}

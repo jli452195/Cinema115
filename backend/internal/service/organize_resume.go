@@ -20,7 +20,7 @@ func canContinueOrganize(job OrganizeJob) bool {
 		if job.Download != nil && !strings.HasPrefix(item.File.SourcePath, strings.TrimRight(job.Config.SourcePath, "/")+"/") {
 			return false
 		}
-		if item.Directory == "" || path.IsAbs(item.Directory) || path.Clean(item.Directory) != item.Directory || strings.HasPrefix(item.Directory, "..") {
+		if item.Directory != "" && (path.IsAbs(item.Directory) || path.Clean(item.Directory) != item.Directory || strings.HasPrefix(item.Directory, "..")) {
 			return false
 		}
 	}

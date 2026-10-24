@@ -24,6 +24,7 @@ type ResourceDownload struct {
 }
 
 type DownloadOrganizeInput struct {
+	NamingRevision *int64 `json:"namingRevision,omitempty"`
 	DownloadResourceInput
 	ManifestID string              `json:"manifestId,omitempty"`
 	Kind       string              `json:"kind"`
@@ -128,7 +129,7 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	return job, nil
+	return cloneOrganizeJob(job), nil
 }
 
 // Called with s.mu held; both creation and explicit recovery pin credentials
@@ -150,7 +151,7 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 		}
 		for _, item := range job.Items {
 			if slices.Contains(p.targets, downloadTargetKey(item)) {
-				return a, fmt.Errorf("%w：队列中已有相同目标名称，请调整版本标记", ErrOrganizeConflict)
+				return a, fmt.Errorf("%w：队列中已有相同目标名称，请调整自定义标记", ErrOrganizeConflict)
 			}
 		}
 	}

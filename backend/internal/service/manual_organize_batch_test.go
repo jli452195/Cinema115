@@ -22,15 +22,16 @@ func organizeBatchFixture(t *testing.T, count int) (*ManualOrganize, *organizeFa
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := OrganizeJob{ID: "batch-plan", Config: s.Config(), Revision: account.Revision, Kind: "tv", TMDBID: 42, Title: "测试作品", Folder: "测试作品 (2024) {tmdb-42}", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
+	const folder = "测试作品 (2024) {tmdb-42}"
+	job := OrganizeJob{ID: "batch-plan", Config: s.Config(), Revision: account.Revision, Kind: "tv", TMDBID: 42, Title: "测试作品", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
 	drive.dirs["30"] = make([]p115.ShareFile, 0, count)
-	drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: job.Folder, Directory: true}}
+	drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: folder, Directory: true}}
 	drive.dirs["40"] = []p115.ShareFile{{ID: "50", Name: "Season 01", Directory: true}}
 	drive.dirs["50"] = []p115.ShareFile{}
 	for i := 0; i < count; i++ {
 		file := p115.ShareFile{ID: fmt.Sprint(10000 + i), Name: fmt.Sprintf("Wrong.S01E%03d.mkv", i+1), Size: int64(100 + i)}
 		drive.dirs["30"] = append(drive.dirs["30"], file)
-		item := OrganizeItem{File: OrganizeFile{ShareFile: file, ParentID: "30", SourcePath: path.Join("/来源/待整理", file.Name)}, Directory: path.Join(job.Folder, "Season 01"), Name: fmt.Sprintf("测试作品 - S01E%03d.mkv", i+1), Status: "pending"}
+		item := OrganizeItem{File: OrganizeFile{ShareFile: file, ParentID: "30", SourcePath: path.Join("/来源/待整理", file.Name)}, Directory: path.Join(folder, "Season 01"), Name: fmt.Sprintf("测试作品 - S01E%03d.mkv", i+1), Status: "pending"}
 		item.TargetPath = path.Join(job.Config.TargetPath, item.Directory, item.Name)
 		job.Items = append(job.Items, item)
 	}
@@ -294,7 +295,7 @@ func TestManualOrganizeBatchGroupsSourceAndDestination(t *testing.T) {
 	}
 	drive.dirs["30"] = drive.dirs["30"][:4]
 	for _, i := range []int{2, 3, 6, 7} {
-		plan.Items[i].Directory = path.Join(plan.Folder, "Season 02")
+		plan.Items[i].Directory = path.Join(path.Dir(plan.Items[i].Directory), "Season 02")
 	}
 	s.plans[plan.ID] = plan
 	job := organizeTestRun(t, s, id, plan)

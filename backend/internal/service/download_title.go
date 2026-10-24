@@ -13,6 +13,7 @@ import (
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/naming"
 )
 
 var errDownloadTitleReview = errors.New("单集内容需要确认")
@@ -106,14 +107,17 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 		if sub.VideoID != video.ID {
 			continue
 		}
-		name := strings.TrimSuffix(intent.Name, path.Ext(intent.Name)) + sub.Tail + strings.ToLower(path.Ext(sub.File.Name))
+		result, err := naming.Companion(naming.Result{Directory: intent.Directory, Stem: intent.Stem}, sub.Tail, sub.File.Name)
+		if err != nil {
+			return fmt.Errorf("%w：%w", errDownloadTitleReview, err)
+		}
 		sub.File.SourcePath = path.Join(job.Config.SourcePath, sub.File.SourcePath)
-		items = append(items, OrganizeItem{File: sub.File, Directory: intent.Directory, Name: name, TargetPath: path.Join(job.Config.TargetPath, intent.Directory, name), Status: "pending"})
+		items = append(items, OrganizeItem{File: sub.File, Directory: result.Directory, Stem: result.Stem, Name: result.Name, TargetPath: path.Join(job.Config.TargetPath, result.RelativePath), Status: "pending"})
 	}
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
 		key := strings.ToLower(item.TargetPath)
-		if seen[key] || len([]rune(item.Name)) > 200 {
+		if seen[key] || len(item.Name) > 240 {
 			return fmt.Errorf("%w：实际文件整理后重名或名称过长，请核对后手动整理", errDownloadTitleReview)
 		}
 		seen[key] = true

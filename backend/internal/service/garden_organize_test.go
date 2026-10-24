@@ -427,7 +427,7 @@ func TestGardenCompanionSubtitlesShareVideoBatch(t *testing.T) {
 		t.Fatal("preview added network requests or writes", transport.paths, drive.listCalls)
 	}
 	for _, item := range plan.Items {
-		if !strings.HasPrefix(item.Name, "测试作品 - S01E13-E14 - Group.") || item.Directory != plan.Items[0].Directory || item.Conflict != "" {
+		if !strings.HasPrefix(item.Name, "测试作品.S01E13-E14-Group.") || item.Directory != plan.Items[0].Directory || item.Conflict != "" {
 			t.Fatal("subtitle naming/directory differs from its video", item)
 		}
 	}
@@ -486,7 +486,7 @@ func TestGardenSubtitlesNeverGuessDirectoriesOrExcludedOwners(t *testing.T) {
 	}
 	in.Files = []OrganizeSelection{{ID: "show/a.extended.mkv", Season: 2, Episode: 3, Suffix: "BD"}}
 	plan, err = s.Preview(context.Background(), in)
-	if err != nil || len(plan.Items) != 2 || plan.Items[1].Name != "测试作品 - S02E03 - BD.zh.ass" {
+	if err != nil || len(plan.Items) != 2 || plan.Items[1].Name != "测试作品.S02E03-BD.zh.ass" {
 		t.Fatal("changing video selection did not update subtitle plan", plan, err)
 	}
 }

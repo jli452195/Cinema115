@@ -107,6 +107,7 @@ func main() {
 	catalog := r.Group("/api/catalog")
 	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
+	httpapi.RegisterMediaNaming(admin, service.MediaNaming{Templates: database, Metadata: tmdbService})
 	httpapi.RegisterTMDB(admin, tmdbService)
 	httpapi.RegisterTVNumbering(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
@@ -243,7 +244,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	organizeEngine, err := service.NewOrganizeEngine(organizeStore, accounts, p115.NewShareClient(), tmdbService)
+	organizeEngine, err := service.NewOrganizeEngine(organizeStore, accounts, p115.NewShareClient(), tmdbService, database)
 	if err != nil {
 		log.Fatal(err)
 	}

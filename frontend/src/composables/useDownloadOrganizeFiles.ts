@@ -1,38 +1,30 @@
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 import { magnetKey } from '../lib/cloud-download-batch'
-import { downloadSuffix } from '../utils/downloadNaming'
-import type { DownloadFileSpec, DownloadFiles, DownloadOrganizeResource, OrganizeFile, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
+import type { DownloadFiles, DownloadOrganizeResource, OrganizeFile, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
 
 export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganizeResource[], multiple: boolean, lifecycle: AbortSignal) {
   const states = ref(entries.map(entry => ({ ...entry, key: magnetKey(entry.resource.magnet), status: 'waiting', error: '' })))
   const rows = ref<OrganizeRow[]>([]), subtitles = ref<OrganizeSubtitle[]>([])
-  const sources: Record<string, OrganizeFile> = {}, specs: Record<string, DownloadFileSpec> = {}
+  const sources: Record<string, OrganizeFile> = {}
   const owners = new Map<string, { key: string; id: string }>()
-  const fields = reactive({ fansub: true, language: true, resolution: true })
   const parsing = ref(false)
   let controller: AbortController | undefined
   const active = computed(() => states.value.filter(state => state.status !== 'removed'))
   const unresolved = computed(() => active.value.filter(state => state.status !== 'ready'))
   const readyCount = computed(() => active.value.length - unresolved.value.length)
-  function suffix(id: string) {
-    const entry = states.value.find(state => state.key === owners.get(id)?.key)
-    return downloadSuffix(specs[id] || {}, entry?.resource.fansub || '', fields)
-  }
   function append(entry: typeof states.value[number], data: DownloadFiles) {
     const key = (id: string) => multiple ? `${entry.key}:${id}` : id
     for (const file of data.files) {
       const id = key(file.id)
       owners.set(id, { key: entry.key, id: file.id })
       sources[id] = file
-      specs[id] = data.specs?.[file.id] || {}
-      rows.value.push({ ...file, id, selected: multiple || !!file.titleOnly, endEpisode: file.endEpisode || '', suffix: multiple ? suffix(id) : entry.resource.fansub || entry.resource.publisher || '' })
+      rows.value.push({ ...file, id, selected: multiple || !!file.titleOnly, endEpisode: file.endEpisode || '', suffix: '' })
     }
     subtitles.value.push(...(data.subtitles || []).map(sub => ({ ...sub, file: { ...sub.file, id: key(sub.file.id) }, videoId: sub.videoId ? key(sub.videoId) : undefined })))
     entry.files = data
     entry.status = 'ready'
   }
-  function applyNames() { for (const row of rows.value) if (row.selected) row.suffix = suffix(row.id) }
   function remove(key: string) {
     const entry = states.value.find(state => state.key === key)
     if (!entry) return
@@ -78,5 +70,5 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
   const selectedKeys = computed(() => [...new Set(rows.value.filter(row => row.selected).map(row => owners.get(row.id)!.key))])
   for (const entry of states.value) if (entry.files) append(entry, entry.files)
   onBeforeUnmount(pause)
-  return { states, rows, subtitles, sources, fields, parsing, active, unresolved, readyCount, selectedKeys, owners, applyNames, remove, pause, parse, retry, resourceSelections }
+  return { states, rows, subtitles, sources, parsing, active, unresolved, readyCount, selectedKeys, owners, remove, pause, parse, retry, resourceSelections }
 }

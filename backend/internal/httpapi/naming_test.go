@@ -9,9 +9,17 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
+
+type mediaNamingHTTPMetadata struct{}
+
+func (mediaNamingHTTPMetadata) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
+	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品", Date: "2026-01-01"}}, nil
+}
 
 func TestNamingTemplateHTTP(t *testing.T) {
 	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "naming.db"))
@@ -23,6 +31,7 @@ func TestNamingTemplateHTTP(t *testing.T) {
 	r := gin.New()
 	RegisterPortalAuth(r, auth)
 	RegisterNamingTemplates(r.Group("/api/admin", PortalAuthenticated(auth), PortalAdminOnly()), db)
+	RegisterMediaNaming(r.Group("/api/admin", PortalAuthenticated(auth), PortalAdminOnly()), service.MediaNaming{Templates: db, Metadata: mediaNamingHTTPMetadata{}})
 	call := func(method, endpoint, token, body string, want int) map[string]json.RawMessage {
 		t.Helper()
 		req := httptest.NewRequest(method, endpoint, strings.NewReader(body))
@@ -49,7 +58,7 @@ func TestNamingTemplateHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, route := range []struct{ method, endpoint, body string }{
-		{"GET", "/api/admin/naming", ""}, {"PUT", "/api/admin/naming/movie", `{}`}, {"POST", "/api/admin/naming/preview", `{}`},
+		{"GET", "/api/admin/naming", ""}, {"PUT", "/api/admin/naming/movie", `{}`}, {"POST", "/api/admin/naming/preview", `{}`}, {"POST", "/api/admin/naming/media-preview", `{}`},
 	} {
 		call(route.method, route.endpoint, "", route.body, 401)
 		call(route.method, route.endpoint, user, route.body, 403)
@@ -90,6 +99,13 @@ func TestNamingTemplateHTTP(t *testing.T) {
 	call("POST", "/api/admin/naming/preview", token, `{"template":`+string(encoded)+`,"items":[`+strings.Repeat(`{},`, 50)+`{}]}`, 400)
 	call("POST", "/api/admin/naming/preview", token, `{"template":`+string(encoded)+`,"items":[{}],"extra":true}`, 400)
 	call("POST", "/api/admin/naming/preview", token, strings.Repeat(" ", 256<<10)+`{}`, 400)
+	mediaPreview := call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[{"id":"one","name":"Show.1080p.MKV","season":1,"episode":13,"endEpisode":14},{"id":"invalid","name":"Unknown.mkv"}]}`, 200)
+	if err := json.Unmarshal(mediaPreview["items"], &items); err != nil || len(items) != 2 || items[0].Result.Name != "作品.S01E13-E14.1080p.mkv" || items[1].Error == "" {
+		t.Fatal("media preview", string(mediaPreview["items"]), err)
+	}
+	call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[],"extra":true}`, 400)
+	call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[`+strings.Repeat(`{},`, 1000)+`{}]}`, 400)
+	call("POST", "/api/admin/naming/media-preview", token, strings.Repeat(" ", 1<<20)+`{}`, 400)
 	current, err := db.NamingTemplate(context.Background(), naming.TV)
 	if err != nil || current.Revision != 1 || current.Template.Filename[0].Prefix != "" {
 		t.Fatalf("preview mutated saved settings: %+v, %v", current, err)
