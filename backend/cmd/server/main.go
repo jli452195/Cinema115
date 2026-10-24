@@ -250,6 +250,7 @@ func main() {
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &animeresource.HTTPReader{})
+	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
 	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {

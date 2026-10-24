@@ -19,6 +19,7 @@ export interface ResourceLink {
   size?: string
   seeds?: number
   updatedAt?: string
+  hasTorrent?: boolean
 }
 export interface ResourceSearchItem {
   id: string

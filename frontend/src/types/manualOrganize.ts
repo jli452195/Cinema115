@@ -1,7 +1,7 @@
 import type { NumberingInfo } from './tvNumbering'
 export interface DownloadResourceInput {
   title?: string
-  source: 'mikan' | 'garden'
+  source: 'mikan' | 'garden' | 'gying'
   provider?: string
   providerId: string
   magnet: string

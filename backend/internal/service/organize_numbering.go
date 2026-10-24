@@ -12,6 +12,7 @@ import (
 var organizeFileRange = regexp.MustCompile(`(?i)^(\d{1,4})\s*([-~～〜至到+&])\s*E?(\d{1,4})$`)
 var organizeFileSeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})\s*E`)
 var organizeCompactEpisode = regexp.MustCompile(`(?i)-(\d{1,4}(?:v\d{1,3})?)$`)
+var organizeSceneYear = regexp.MustCompile(`(?i)(S\d{1,2}\s*E\d{1,4}(?:\s*[-~～〜至到+&]\s*E?\d{1,4})?)\.(19\d{2}|20\d{2}|21\d{2})($|[ ._\-])`)
 var organizeSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[ ._(\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE)(?:[0-9]|$|[\] ._)\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
 
 // Only a video's own numbering is evidence. Parent pack ranges never number
@@ -24,6 +25,9 @@ func organizeFileNumbering(file *OrganizeFile) {
 	// File-only normalization: title-01 uses the existing dash grammar while
 	// retaining its metadata, range and ambiguity checks. RSS parsing is unchanged.
 	name = organizeCompactEpisode.ReplaceAllString(name, " - ${1}")
+	// A four-digit year after SxxExx is filename metadata, not a fractional
+	// episode. Keep genuine decimals and conflicting numbering for review.
+	name = organizeSceneYear.ReplaceAllString(name, "${1} ${2}${3}")
 	parsed, err := animeparse.Title(name)
 	if err != nil {
 		return

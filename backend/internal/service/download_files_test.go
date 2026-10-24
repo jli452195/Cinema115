@@ -37,10 +37,17 @@ func mikanOrganizeTorrent(t *testing.T) ([]byte, DownloadResourceInput) {
 	return body, DownloadResourceInput{Source: "mikan", ProviderID: post, TorrentURL: "https://mikanani.me/Download/20261024/" + post + ".torrent", Magnet: "magnet:?xt=urn:btih:" + hex.EncodeToString(hash[:])}
 }
 
-func TestMikanOrganizeFilesAndWorkerReuse(t *testing.T) {
+func TestTorrentOrganizeFilesAndWorkerReuse(t *testing.T) {
+	for _, site := range []string{"mikan", "gying"} {
+		t.Run(site, func(t *testing.T) { testTorrentOrganizeFilesAndWorkerReuse(t, site) })
+	}
+}
+
+func testTorrentOrganizeFilesAndWorkerReuse(t *testing.T, site string) {
 	body, source := mikanOrganizeTorrent(t)
 	s, drive, adder, tracker, _, in := gardenFixture(t)
 	reads := 0
+	readCount := func() int { return reads }
 	s.Resources = NewDownloadResources(nil, NewMikanService(nil, nil), animeClaimTorrentFunc(func(_ context.Context, provider, post, url string) ([]byte, error) {
 		reads++
 		if provider != "mikan" || post != source.ProviderID || url != source.TorrentURL {
@@ -48,6 +55,13 @@ func TestMikanOrganizeFilesAndWorkerReuse(t *testing.T) {
 		}
 		return body, nil
 	}))
+	if site == "gying" {
+		var gyingSite *GyingService
+		var gyingReads *atomic.Int32
+		gyingSite, source, gyingReads = gyingOrganizeFixture(t, body, source)
+		s.Resources.(*DownloadResources).Gying = gyingSite
+		readCount = func() int { return int(gyingReads.Load()) }
+	}
 	files, err := s.Resources.Files(context.Background(), source)
 	if err != nil || len(files.Files) != 2 || len(files.Subtitles) != 1 || files.Files[0].Episode != 1 || files.Files[0].Size != 1200 || files.Files[0].ID != "show/[Group] Show [01].mkv" || files.Subtitles[0].VideoID != files.Files[0].ID {
 		t.Fatal("torrent paths, sizes, ordering or subtitles lost", files, err)
@@ -60,8 +74,8 @@ func TestMikanOrganizeFilesAndWorkerReuse(t *testing.T) {
 	// Mutating a response must not corrupt the cached metadata used by preview.
 	files.Files[0].ID = "tampered.mkv"
 	plan, err := s.Preview(context.Background(), in)
-	if err != nil || len(plan.Items) != 2 || reads != 1 || !strings.HasSuffix(source.Magnet, plan.Download.Hash) {
-		t.Fatal("preview did not reuse verified metadata", plan, reads, err)
+	if err != nil || len(plan.Items) != 2 || readCount() != 1 || !strings.HasSuffix(source.Magnet, plan.Download.Hash) {
+		t.Fatal("preview did not reuse verified metadata", plan, readCount(), err)
 	}
 	job, err := s.Start(plan.ID)
 	if err != nil {
@@ -78,12 +92,12 @@ func TestMikanOrganizeFilesAndWorkerReuse(t *testing.T) {
 		}
 	}
 	if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" {
-		t.Fatal("shared worker did not complete Mikan organization", p.job, done, err)
+		t.Fatal("shared worker did not complete torrent organization", p.job, done, err)
 	}
-	if reads != 1 || tracker.calls != 1 || adder.url != source.Magnet || len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "903" {
-		t.Fatal("duplicate reads/submission or unselected file moved", reads, tracker.calls, adder.url, drive.dirs)
+	if readCount() != 1 || tracker.calls != 1 || adder.url != source.Magnet || len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "903" {
+		t.Fatal("duplicate reads/submission or unselected file moved", readCount(), tracker.calls, adder.url, drive.dirs)
 	}
-	if _, err := s.Start(plan.ID); err != nil || reads != 1 {
+	if _, err := s.Start(plan.ID); err != nil || readCount() != 1 {
 		t.Fatal("idempotent retry failed", err)
 	}
 }

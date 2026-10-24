@@ -45,10 +45,13 @@ type downloadResourceReader interface {
 }
 
 // DownloadResources isolates site reads from the download/organize worker.
-// Both sites retain separate caches/gates; only file normalization is shared.
+// Sites retain separate sessions/caches/gates; only file normalization is shared.
 type DownloadResources struct {
 	Garden *GardenService
-	mikan  *animeSiteCache
+	Gying  interface {
+		ReadTorrent(context.Context, string, string, string) ([]byte, error)
+	}
+	mikan *animeSiteCache
 }
 
 func NewDownloadResources(g *GardenService, m *MikanService, reader animeresource.TorrentReader) *DownloadResources {
@@ -58,6 +61,17 @@ func NewDownloadResources(g *GardenService, m *MikanService, reader animeresourc
 func (s *DownloadResources) Files(ctx context.Context, in DownloadResourceInput) (DownloadFiles, error) {
 	if in.Source == "garden" && s.Garden != nil && in.TorrentURL == "" {
 		return s.Garden.Files(ctx, in)
+	}
+	if in.Source == "gying" {
+		hash, err := animeresource.MagnetHash(in.Magnet)
+		if err != nil || in.TorrentURL != "" || s.Gying == nil {
+			return DownloadFiles{}, ErrOrganizeInput
+		}
+		body, err := s.Gying.ReadTorrent(ctx, in.Provider, in.ProviderID, hash)
+		if err != nil {
+			return DownloadFiles{}, err
+		}
+		return downloadTorrentFiles(body, hash)
 	}
 	if in.Source != "mikan" || in.Provider != "" {
 		return DownloadFiles{}, ErrOrganizeInput
@@ -80,14 +94,26 @@ func (s *DownloadResources) Files(ctx context.Context, in DownloadResourceInput)
 		}
 		return DownloadFiles{}, fmt.Errorf("读取蜜柑种子清单: %w", err)
 	}
-	meta, err := torrentmeta.Parse(read.body)
+	return downloadTorrentFiles(read.body, hash)
+}
+
+func parseDownloadTorrent(body []byte, hash string) (torrentmeta.Metadata, error) {
+	meta, err := torrentmeta.Parse(body)
 	if err != nil {
-		return DownloadFiles{}, fmt.Errorf("解析蜜柑种子清单: %w", err)
+		return meta, fmt.Errorf("%w：种子没有可用的 BT v1 清单，可使用普通离线", ErrOrganizeInput)
 	}
 	// Recheck each caller, including cache hits and coalesced requests. A filename
 	// or claimed magnet never replaces the identity of the actual info bytes.
 	if meta.InfoHash != hash {
-		return DownloadFiles{}, fmt.Errorf("%w：种子与磁力身份不一致，请核对原帖", ErrOrganizeInput)
+		return meta, fmt.Errorf("%w：种子与磁力身份不一致，请核对原帖", ErrOrganizeInput)
+	}
+	return meta, nil
+}
+
+func downloadTorrentFiles(body []byte, hash string) (DownloadFiles, error) {
+	meta, err := parseDownloadTorrent(body, hash)
+	if err != nil {
+		return DownloadFiles{}, err
 	}
 	if meta.MultiFile {
 		for i := range meta.Files {

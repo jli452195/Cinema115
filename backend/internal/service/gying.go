@@ -93,6 +93,7 @@ type GyingService struct {
 	doc         gyingDocument
 	client      *gying.Client
 	searchCache map[string]gyingSearchCacheEntry
+	torrents    *animeSiteCache // Guarded by opMu; reset with the site configuration.
 }
 
 func NewGyingService(store *SessionStore) (*GyingService, error) {
@@ -467,4 +468,5 @@ func (s *GyingService) cacheSearchLocked(key string, result gying.SearchResponse
 // 调用方持有 opMu。
 func (s *GyingService) clearSearchCacheLocked() {
 	s.searchCache = make(map[string]gyingSearchCacheEntry, gyingSearchCacheLimit)
+	s.torrents = nil
 }

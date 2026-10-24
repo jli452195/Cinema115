@@ -2,6 +2,11 @@
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
+import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
+import type { DownloadFiles, DownloadOrganizeResource, DownloadResourceInput } from '../types/manualOrganize'
+import { magnetKey } from '../lib/cloud-download-batch'
+import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
@@ -14,7 +19,7 @@ import { normalize115Share } from '../utils/shareLink'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
 
-const props = defineProps<{ source: 'gying' | 'woniu'; token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string; themeColors?: Record<string, string> }>()
+const props = defineProps<{ source: 'gying' | 'woniu'; token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string; date?: string; seasons?: { number: number; name: string; episodeCount: number }[]; themeColors?: Record<string, string> }>()
 const sourceLabel = props.source === 'woniu' ? '蜗牛' : '观影'
 const sourceLogo = props.source === 'woniu' ? woniuLogo : gyingLogo
 const settingsPath = '/' + props.source
@@ -41,7 +46,7 @@ type LoadPhase = '' | 'config' | 'search' | 'more'
 const phase = ref<LoadPhase>('')
 const lifecycle = new AbortController()
 const shareRuns = useShareSTRMRun(props.token, lifecycle.signal, { scope: `${props.source}/${props.kind}/${props.tmdbId}` })
-const busy = computed(() => phase.value !== '' || shareRuns.preparing.value > 0)
+const busy = computed(() => phase.value !== '' || shareRuns.preparing.value > 0 || !!preparingOrganize.value || organizeEntries.value.length > 0)
 const elapsedSeconds = ref(0)
 const error = ref('')
 const moreError = ref('')
@@ -56,12 +61,12 @@ function coverSource(item: GyingSearchItem) {
   return /^\/api\/gying\/image\/(mv|tv|ac|zy)\/[A-Za-z0-9]{1,64}\.webp$/.test(source) ? source : ''
 }
 type CloudDownloadConfig = { accountId: string; targetCID: string; targetPath: string }
-type CloudDownloadStatus = { success: boolean; message: string; needsConfig?: boolean; uncertain?: boolean }
+type CloudDownloadStatus = { success: boolean; message: string; needsConfig?: boolean; uncertain?: boolean; organize?: boolean }
 const cloudSubmitting = ref<Record<string, boolean>>({})
 const cloudStatuses = ref<Record<string, CloudDownloadStatus>>({})
 let progressTimer: number | undefined
 const previousFocus = document.activeElement as HTMLElement | null
-const previousOverflow = document.body.style.overflow
+let unlockScroll: (() => void) | undefined
 const mediaLabels: Record<string, string> = { movie: '电影', tv: '剧集', anime: '动漫', other: '其他' }
 const defaultResourceOrder = ['magnet', 'aliyun', 'quark', 'baidu', 'xunlei', 'mobile', '115', '123', 'guangya', 'uc', 'tianyi', 'other']
 const magnetSubTypeOrder = ['720P', '中字720P', '1080P', '中字1080P', '4K', '中字4K', '原盘', '未知']
@@ -91,7 +96,58 @@ function restoreShareRuns() { void shareRuns.restore(allShareResources()) }
 function shareSTRM(item: GyingSearchItem, link: GyingResourceLink) { void shareRuns.submit(shareResource(item, link)) }
 function stopShareRun() { void shareRuns.stop() }
 function canCloudDownload(link: GyingResourceLink) { return link.type === 'magnet' && link.category === 'torrent' }
-function cloudResourceID(item: GyingSearchItem, link: GyingResourceLink) { return `${item.id}\u0000${link.url}` }
+function cloudResourceID(item: GyingSearchItem, link: GyingResourceLink) { return magnetKey(link.url) || `${item.id}\u0000${link.url}` }
+const organizeEntries = ref<DownloadOrganizeResource[]>([])
+const preparingOrganize = ref('')
+const organizeNotices = ref<Record<string, string>>({})
+let organizeTrigger: HTMLElement | undefined
+function canOrganize(link: GyingResourceLink) { return props.source === 'gying' && !!link.hasTorrent && canCloudDownload(link) && Number(props.tmdbId) > 0 }
+function downloadBlocked(item: GyingSearchItem, link: GyingResourceLink) {
+  const id = cloudResourceID(item, link), status = cloudStatuses.value[id]
+  return busy.value || cloudSubmitting.value[id] || status?.success || status?.uncertain
+}
+async function openOrganize(item: GyingSearchItem, link: GyingResourceLink, event: MouseEvent) {
+  if (!canOrganize(link) || downloadBlocked(item, link)) return
+  const id = cloudResourceID(item, link)
+  organizeTrigger = event.currentTarget as HTMLElement
+  organizeTrigger.focus({ preventScroll: true })
+  preparingOrganize.value = id
+  delete organizeNotices.value[id]
+  delete cloudStatuses.value[id]
+  const [provider, providerId] = item.id.split(':')
+  const source: DownloadResourceInput = { source: 'gying', title: link.workTitle || item.title, provider, providerId: providerId || '', magnet: link.url }
+  try {
+    const files = await p115Request<DownloadFiles>(props.token, 'download-organize/files', { method: 'POST', body: JSON.stringify(source), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
+    if (!files.files.length) { organizeNotices.value[id] = files.reason || '没有可整理的视频，可使用普通离线'; return }
+    preparingOrganize.value = ''
+    await nextTick()
+    if (lifecycle.signal.aborted) return
+    organizeTrigger.focus({ preventScroll: true })
+    organizeEntries.value = [{ resource: { id, title: source.title!, magnet: link.url }, source, files }]
+  } catch (e) {
+    if (!lifecycle.signal.aborted) {
+      const message = requestErrorMessage(e, '读取种子清单').replace(/。+$/, '')
+      organizeNotices.value[id] = message.includes('普通离线') ? message : `${message}。可使用普通离线。`
+    }
+  } finally {
+    preparingOrganize.value = ''
+    if (!organizeEntries.value.length && !lifecycle.signal.aborted) {
+      await nextTick()
+      if (document.activeElement === document.body) organizeTrigger?.focus({ preventScroll: true })
+    }
+  }
+}
+function organized(keys: string[], uncertain = false) {
+  for (const key of keys) cloudStatuses.value[key] = { success: !uncertain, uncertain, organize: true, message: uncertain ? '任务创建结果待核对，请查看整理任务记录。' : '已创建下载整理任务，可在整理任务记录查看进度。' }
+}
+async function closeOrganize() {
+  organizeEntries.value = []
+  await nextTick()
+  if (lifecycle.signal.aborted || !organizeTrigger?.isConnected) return
+  const target = organizeTrigger.matches(':disabled') ? organizeTrigger.closest('[data-resource-row]')?.querySelector<HTMLElement>('[data-gy-action="open"]') : organizeTrigger
+  target?.focus({ preventScroll: true })
+}
+function closeDialog() { if (!organizeEntries.value.length) emit('close') }
 function cloudErrorNeedsConfig(reason: unknown) {
   const message = reason instanceof Error ? reason.message : ''
   return /请先.*(?:选择|配置)|尚未登录|账号.*不存在|配置|凭据/.test(message)
@@ -99,11 +155,12 @@ function cloudErrorNeedsConfig(reason: unknown) {
 async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
   if (!canCloudDownload(link)) return
   const id = cloudResourceID(item, link)
-  if (cloudSubmitting.value[id]) return
+  if (downloadBlocked(item, link)) return
   cloudSubmitting.value = { ...cloudSubmitting.value, [id]: true }
   const clearedStatuses = { ...cloudStatuses.value }
   delete clearedStatuses[id]
   cloudStatuses.value = clearedStatuses
+  delete organizeNotices.value[id]
   try {
     // 提交前读取云下载明确绑定的账号和目录，弹窗不改写配置。
     const config = await p115Request<CloudDownloadConfig>(props.token, 'cloud-download/config', {
@@ -334,7 +391,7 @@ onMounted(async () => {
   window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   window.addEventListener('resize', syncVisualViewport)
   try {
-    document.body.style.overflow = 'hidden'
+    unlockScroll = lockAnimeDialogScroll()
     if (!dialog.value) throw new Error(sourceLabel + '搜索弹窗初始化失败')
     if (!dialog.value.open) dialog.value.showModal()
   } catch (e) {
@@ -351,14 +408,14 @@ onBeforeUnmount(() => {
   lifecycle.abort()
   finishPhase()
   if (dialog.value?.open) dialog.value.close()
-  document.body.style.overflow = previousOverflow
+  unlockScroll?.()
   previousFocus?.focus()
 })
 </script>
 
 <template>
   <Teleport to="body">
-    <dialog :data-search-source="source" ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog media-search-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="emit('close')">
+    <dialog :data-search-source="source" ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog media-search-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="closeDialog">
       <div class="gy-layout">
         <header class="gy-header">
           <div class="gy-brand" :class="{ 'gy-woniu-brand': source === 'woniu' }"><img :src="sourceLogo" alt="" width="34" height="34" /></div>
@@ -369,7 +426,7 @@ onBeforeUnmount(() => {
               <span v-if="result" class="gy-search-caption" :class="{ 'gy-cached-caption': result.cached && phase !== 'search' && !error }">{{ phase === 'search' ? '搜索中' : error ? '上次结果' : result.cached ? '已复用缓存' : methodLabel(result.matchedBy) + '搜索' }}</span>
             </div>
           </div>
-          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" class="gy-icon-button" @click="emit('close')">
+          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" class="gy-icon-button" @click="closeDialog">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
           </button>
         </header>
@@ -494,14 +551,18 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                       </div>
-                      <div class="gy-actions">
+                      <div class="gy-actions" :class="{ 'gy-actions-organize': canOrganize(link) }">
                         <a :href="link.url" target="_blank" rel="noopener noreferrer" data-gy-action="open" class="gy-button gy-outlined-button">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
                           {{ link.category === 'torrent' ? '打开' : '打开分享' }}
                         </a>
-                        <button v-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="phase !== '' || cloudSubmitting[cloudResourceID(item, link)] || cloudStatuses[cloudResourceID(item, link)]?.success || cloudStatuses[cloudResourceID(item, link)]?.uncertain" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
+                        <button v-if="canOrganize(link)" type="button" data-gy-action="organize" :disabled="downloadBlocked(item, link)" :aria-busy="preparingOrganize === cloudResourceID(item, link)" class="gy-button gy-outlined-button" @click="openOrganize(item, link, $event)">
+                          <component :is="preparingOrganize === cloudResourceID(item, link) ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'gy-spinning': preparingOrganize === cloudResourceID(item, link) }" />
+                          {{ preparingOrganize === cloudResourceID(item, link) ? '解析中…' : '115 整理' }}
+                        </button>
+                        <button v-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="downloadBlocked(item, link)" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18H6a4 4 0 0 1-.7-7.94 7 7 0 0 1 13.4 0A4 4 0 0 1 18 18h-1M12 12v9m-4-4 4 4 4-4" /></svg>
-                          {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : '115 云下载' }}
+                          {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : organizeNotices[cloudResourceID(item, link)] ? '普通离线' : '115 云下载' }}
                         </button>
                         <button v-if="canShareSTRM(link)" type="button" data-gy-action="strm" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="gy-button gy-primary-button" @click="shareSTRM(item, link)">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
@@ -514,7 +575,8 @@ onBeforeUnmount(() => {
                       <textarea :value="link.url + (link.password ? '  提取码：' + link.password : '')" readonly aria-label="手动复制资源链接" @focus="($event.target as HTMLTextAreaElement).select()" />
                     </div>
                     <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
-                    <p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'gy-success' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig" to="/115/cloud-download" @click="emit('close')">前往配置</RouterLink></p>
+                    <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-error">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
+                    <p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'gy-success' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig || cloudStatuses[cloudResourceID(item, link)]?.organize" :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : '前往配置' }}</RouterLink></p>
                     <p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'gy-success' : 'gy-info'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p>
                   </li>
                 </ul>
@@ -536,6 +598,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
+  <DownloadOrganizeDialog v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => organized(keys, true)" />
 </template>
 
 <style scoped>
@@ -734,6 +797,7 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-film-details summary { min-height: 48px; }
   .gy-resource { padding: 16px; border-radius: 18px; }
   .gy-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gy-actions-organize > [data-gy-action="open"] { grid-column: 1 / -1; }
   .gy-actions > :only-child { grid-column: 1 / -1; }
   .gy-copy-button { min-height: 48px; }
   .gy-footer { padding: 8px 16px 12px; font-size: 10px; line-height: 16px; }

@@ -24,6 +24,9 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 	if err := ctx.Err(); err != nil {
 		return DownloadFiles{}, err
 	}
+	if in.Source == "gying" {
+		return s.Resources.Files(ctx, in)
+	}
 	parsed, err := animeparse.Title(in.Title)
 	mixedQuality := parsed.Resolution != nil && *parsed.Resolution == "unknown" && len(downloadTitleQuality.FindAllString(in.Title, 2)) > 1
 	if err != nil || parsed.Kind != "episode" || parsed.Episode == nil || *parsed.Episode < 1 || *parsed.Episode > 10000 || parsed.SpecAmbiguous || mixedQuality || organizeSpecialFile.MatchString(in.Title) {

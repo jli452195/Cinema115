@@ -103,6 +103,8 @@ type ResourceLink struct {
 	Size         string `json:"size,omitempty"`
 	Seeds        *int   `json:"seeds,omitempty"`
 	UpdatedAt    string `json:"updatedAt,omitempty"`
+	HasTorrent   bool   `json:"hasTorrent,omitempty"`
+	TorrentPath  string `json:"-"` // Short-lived, session-bound URL; never expose or persist.
 }
 
 type SearchResponse struct {
@@ -148,12 +150,15 @@ type detailData struct {
 }
 
 type downlistData struct {
+	Hex  string `json:"hex"`
 	Type struct {
 		Labels []string `json:"a"`
 		Codes  []string `json:"b"`
 	} `json:"type"`
 	List struct {
 		Hash          []string   `json:"m"`
+		ID            []string   `json:"u"`
+		Kind          []int      `json:"k"`
 		Title         []string   `json:"t"`
 		Size          []string   `json:"s"`
 		Seeds         seedCounts `json:"e"`
@@ -640,6 +645,12 @@ func detailLinks(detail detailData) []ResourceLink {
 		}
 		seen[key] = struct{}{}
 		link := ResourceLink{Category: "torrent", Type: "magnet", TypeLabel: "磁力", SubTypeLabel: "未知", URL: "magnet:?xt=urn:btih:" + hash}
+		if i < len(detail.Downlist.List.ID) && i < len(detail.Downlist.List.Kind) && detail.Downlist.List.Kind[i] == 0 {
+			candidate := "/dbt/" + detail.Downlist.List.ID[i] + "/" + detail.Downlist.Hex
+			if torrentPathPattern.MatchString(candidate) {
+				link.HasTorrent, link.TorrentPath = true, candidate
+			}
+		}
 		// list.p contains category codes matching type.b; list.k is not a
 		// category index. The parallel type.a array provides display labels.
 		if i < len(detail.Downlist.List.CategoryCodes) {
