@@ -17,7 +17,7 @@
 | 三站与持久缓存 | `TestAnibtProviderPreviewAndSave`、`TestGardenProviderPreviewAndSave`、`TestAnimeCatalogProvidersPersistObservedLinksWithoutExtraReads`、`TestAnimeCatalogCrossSiteStatusSurvivesUpgradeAndRestart` | 本站读取与来源身份保留，跨站状态仅用已核实关联，升级和重启保留配置，无逐卡补抓 |
 | API 与阶段边界 | `TestAnimeHTTPAuthBeforeAnyBusiness`、`TestAnimeHTTPStrictBoundaryAndSafeErrors`、`TestAnimeHTTPConfigReceiptAndLocalReads`、`TestAnimeCatalogStatusIsLocalAndAdminOnly` | 鉴权先行、严格输入、安全错误及本地读取有效；启用、下载重试和整理仍由服务端拒绝 |
 
-上述测试分布在 `backend/internal/animeparse`、`anime/binding`、`anime/preview`、`model`、`storage`、`service`、`httpapi` 与相关客户端包，不仅是对文档样例的静态核对。
+上述测试分布在 `backend/internal/releaseparse`、`anime/binding`、`anime/preview`、`model`、`storage`、`service`、`httpapi` 与相关客户端包，不仅是对文档样例的静态核对。
 
 ## 新增组合回归
 
@@ -44,9 +44,9 @@
 ```powershell
 cd backend
 
-go test ./internal/animeparse ./internal/anime/binding ./internal/anime/preview ./internal/client/animefeed ./internal/client/bangumi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/tmdb ./internal/client/imagecache ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi -count=1
+go test ./internal/releaseparse ./internal/anime/binding ./internal/anime/preview ./internal/client/animefeed ./internal/client/bangumi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/tmdb ./internal/client/imagecache ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi -count=1
 
-go vet ./internal/animeparse ./internal/anime/binding ./internal/anime/preview ./internal/client/animefeed ./internal/client/bangumi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/tmdb ./internal/client/imagecache ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi
+go vet ./internal/releaseparse ./internal/anime/binding ./internal/anime/preview ./internal/client/animefeed ./internal/client/bangumi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/tmdb ./internal/client/imagecache ./internal/client/p115 ./internal/model ./internal/storage ./internal/service ./internal/httpapi
 
 go build ./...
 
@@ -54,7 +54,7 @@ go test ./internal/service -run '^(TestAnimeStageMixedProvidersSaveAndRestart|Te
 
 go test ./internal/storage -run '^(TestAnimePreviewCASSelectionAndLoad|TestAnimeConfigCASAndIdempotency)$' -count=20
 
-go test ./internal/animeparse -run '^$' -fuzz '^FuzzTitleInvariants$' -fuzztime=5s -parallel=2
+go test ./internal/releaseparse -run '^$' -fuzz '^FuzzTitleInvariants$' -fuzztime=5s -parallel=2
 
 cd ..
 py -3 -X utf8 docs/examples/anime-contract/validate.py
@@ -73,6 +73,6 @@ git diff --check
 
 用户截图补充了既有测试未覆盖的 ANi 标题 `Season 2 - 01/02`。实际分别是第 1、2 话，旧解析器将季号纳入 `2 - 01/02` 的合集范围，预览因此显示“编号需确认”。修复保留词边界完整的 `Season N` 为元数据、独立解析后面的集号，并升级 `ParserVersion=4`；不从发布季号覆盖已配置的 TMDB 目标季，不放宽合集或复合编号的确认要求。详见[解析修复记录](anime-release-parser-implementation.md)。
 
-修复前用截图两条标题复现失败；修复后新增 11 条解析样例及 1 项 AniBT 规格匹配预览回归通过，确认普通第 1、2 话可选、真实 `01-12` 合集仍需确认。重新执行 animeparse、anime/binding、anime/preview、model、storage、service、httpapi 七个包的完整测试、对应 vet 和 `go build ./...` 均通过（service 95.9 秒、HTTP 35.8 秒）；5 秒标题模糊测试通过，共 26429 次输入。
+修复前用截图两条标题复现失败；修复后新增 11 条解析样例及 1 项 AniBT 规格匹配预览回归通过，确认普通第 1、2 话可选、真实 `01-12` 合集仍需确认。重新执行 releaseparse、anime/binding、anime/preview、model、storage、service、httpapi 七个包的完整测试、对应 vet 和 `go build ./...` 均通过（service 95.9 秒、HTTP 35.8 秒）；5 秒标题模糊测试通过，共 26429 次输入。
 
 仅调整后端解析和回归测试，无 UI、数据库迁移、真实订阅或下载写入。已有预览快照不原地变更，点击“重新预览”后按新规则生成结果。该修复不增加任务数量，下一项仍为 P1-12。

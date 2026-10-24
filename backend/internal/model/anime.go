@@ -1,5 +1,7 @@
 package model
 
+import "strm115/backend/internal/releaseparse"
+
 // Anime models belong exclusively to subscription/download/organization.
 // No playback account, credential, or media-server object is persisted here.
 const (
@@ -55,17 +57,6 @@ type AnimeSourceReview struct {
 	Method  string `json:"method"`
 	ItemID  string `json:"itemId"`
 	GroupID string `json:"groupId"`
-}
-
-// AnimeSpec describes title-declared properties, never verified file tracks.
-// Empty dimensions are unconstrained in a profile and unknown on a release.
-type AnimeSpec struct {
-	Resolution   string   `json:"resolution,omitempty"`
-	Languages    []string `json:"languages,omitempty"`
-	SubtitleMode string   `json:"subtitleMode,omitempty"`
-	Codec        string   `json:"codec,omitempty"`
-	Container    string   `json:"container,omitempty"`
-	BitDepth     string   `json:"bitDepth,omitempty"`
 }
 
 type AnimeRules struct {
@@ -182,30 +173,19 @@ type AnimeConfigReceipt struct {
 	RequiresRepreview bool              `json:"requiresRepreview"`
 }
 
-type AnimeReleaseParse struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Kind          string    `json:"kind"`
-	RawEpisode    string    `json:"rawEpisode"`
-	Episode       *int      `json:"episode"`
-	Resolution    *string   `json:"resolution"`
-	VersionLabel  string    `json:"versionLabel"`
-	Spec          AnimeSpec `json:"spec"`
-	SpecAmbiguous bool      `json:"specAmbiguous,omitempty"`
-}
-
 type AnimeRelease struct {
-	ID                 string            `json:"id"`
-	Provider           string            `json:"provider"`
-	PostKey            string            `json:"postKey"`
-	OriginalGUID       *string           `json:"originalGuid"`
-	Title              string            `json:"title"`
-	PublishedRaw       *string           `json:"publishedRaw"`
-	PublishedAt        *int64            `json:"publishedAt"`
-	TimeVersion        int64             `json:"timeVersion"`
-	Parse              AnimeReleaseParse `json:"parse"`
-	ParserVersion      int64             `json:"parserVersion"`
-	ContentFingerprint string            `json:"contentFingerprint"`
-	ObservedAt         int64             `json:"observedAt"`
+	ID                 string              `json:"id"`
+	Provider           string              `json:"provider"`
+	PostKey            string              `json:"postKey"`
+	OriginalGUID       *string             `json:"originalGuid"`
+	Title              string              `json:"title"`
+	PublishedRaw       *string             `json:"publishedRaw"`
+	PublishedAt        *int64              `json:"publishedAt"`
+	TimeVersion        int64               `json:"timeVersion"`
+	Parse              releaseparse.Result `json:"parse"`
+	ParserVersion      int64               `json:"parserVersion"`
+	ContentFingerprint string              `json:"contentFingerprint"`
+	ObservedAt         int64               `json:"observedAt"`
 }
 
 // P1 explanations omit Selection and cannot authorize downloads. P2 execution
@@ -215,7 +195,7 @@ type AnimeDecisionSnapshot struct {
 	Title         string               `json:"title"`
 	Binding       AnimeBinding         `json:"binding"`
 	Rules         AnimeRules           `json:"rules"`
-	Parse         AnimeReleaseParse    `json:"parse"`
+	Parse         releaseparse.Result  `json:"parse"`
 	Selection     *AnimeSelectionBasis `json:"selection,omitempty"`
 	RuleVersion   int64                `json:"ruleVersion,omitempty"`
 	ParserVersion int64                `json:"parserVersion,omitempty"`

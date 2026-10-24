@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 func animePtr[T any](v T) *T { return &v }
@@ -401,7 +402,7 @@ func TestAnimeConfigRollbackIdentityAndSourceLimit(t *testing.T) {
 }
 
 func animeObservation(post string) model.AnimeRelease {
-	return model.AnimeRelease{Provider: "mikan", PostKey: post, OriginalGUID: animePtr("shared-guid"), Title: "[字幕组] 测试 第30话 1080p", TimeVersion: 1, ParserVersion: 1, Parse: model.AnimeReleaseParse{SchemaVersion: 1, Kind: "episode", RawEpisode: "30", Episode: animePtr(30), Resolution: animePtr("1080p")}, ContentFingerprint: "fingerprint-" + post, ObservedAt: time.Now().UTC().UnixMilli()}
+	return model.AnimeRelease{Provider: "mikan", PostKey: post, OriginalGUID: animePtr("shared-guid"), Title: "[字幕组] 测试 第30话 1080p", TimeVersion: 1, ParserVersion: 1, Parse: releaseparse.Result{SchemaVersion: 1, Kind: "episode", RawEpisode: "30", Episode: animePtr(30), Resolution: animePtr("1080p")}, ContentFingerprint: "fingerprint-" + post, ObservedAt: time.Now().UTC().UnixMilli()}
 }
 
 func animeDecision(source model.AnimeSource, release model.AnimeRelease, disposition string) model.AnimeReleaseDecision {

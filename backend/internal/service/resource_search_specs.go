@@ -3,13 +3,13 @@ package service
 import (
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/mediafacts"
-	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 type ResourceSearchSpec = mediafacts.SearchSpec
 
-func resourceSearchSpec(title string) ResourceSearchSpec { return mediafacts.Search(title) }
-func resourceSpecification(title string) model.AnimeSpec { return mediafacts.Specification(title) }
+func resourceSearchSpec(title string) ResourceSearchSpec   { return mediafacts.Search(title) }
+func resourceSpecification(title string) releaseparse.Spec { return mediafacts.Specification(title) }
 
 func mikanResourceSpecs(items []mikan.Item) map[string]ResourceSearchSpec {
 	specs := make(map[string]ResourceSearchSpec, len(items))

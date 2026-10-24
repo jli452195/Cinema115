@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"strm115/backend/internal/releaseparse"
 )
 
 func TestAnimeNamingProjectionContract(t *testing.T) {
@@ -18,7 +20,7 @@ func TestAnimeNamingProjectionContract(t *testing.T) {
 		Cases []struct {
 			Name      string                `json:"name"`
 			SourceRef string                `json:"sourceRef"`
-			Parse     AnimeReleaseParse     `json:"parse"`
+			Parse     releaseparse.Result   `json:"parse"`
 			Expected  AnimeNamingProjection `json:"expected"`
 		} `json:"cases"`
 	}
@@ -56,16 +58,16 @@ func TestAnimeNamingPerSourceAndDownloadMinimum(t *testing.T) {
 		n, ep  int
 		status string
 	}{{"main", 30, 6, "mapped"}, {"main", 24, 0, "unmapped"}, {"main", 37, 0, "unmapped"}, {"standby", 6, 6, "mapped"}, {"standby", 13, 13, "mapped"}} {
-		got := p.Project(tc.ref, AnimeReleaseParse{Kind: "episode", Episode: &tc.n})
+		got := p.Project(tc.ref, releaseparse.Result{Kind: "episode", Episode: &tc.n})
 		if got.Status != tc.status || got.Episode != nil && *got.Episode != tc.ep {
 			t.Fatalf("%+v: %+v", tc, got)
 		}
 	}
-	if got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"}); got.Status != "unmapped" {
+	if got := p.Project("main", releaseparse.Result{Kind: "special", RawEpisode: "12.5"}); got.Status != "unmapped" {
 		t.Fatal(got)
 	}
 	p.Sources[0].Overrides = []AnimeMappingOverride{{RawKind: "special", RawNumber: "12.5", Action: "map", TargetSeason: 0, TargetEpisode: 1}}
-	got := p.Project("main", AnimeReleaseParse{Kind: "special", RawEpisode: "12.5"})
+	got := p.Project("main", releaseparse.Result{Kind: "special", RawEpisode: "12.5"})
 	if got.Status != "mapped" || *got.Season != 0 {
 		t.Fatal(got)
 	}
@@ -102,7 +104,7 @@ func TestAnimeNamingOrdinaryOverrideNormalizesPaddingAndVersion(t *testing.T) {
 	p.Sources[0].Overrides = []AnimeMappingOverride{{RawKind: "episode", RawNumber: "25", Action: "ignore"}}
 	for _, raw := range []string{"25", "025", "25v2"} {
 		n := 25
-		if got := p.Project("main", AnimeReleaseParse{Kind: "episode", RawEpisode: raw, Episode: &n}); got.Status != "ignored" {
+		if got := p.Project("main", releaseparse.Result{Kind: "episode", RawEpisode: raw, Episode: &n}); got.Status != "ignored" {
 			t.Fatal(raw, got)
 		}
 	}

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"strm115/backend/internal/anime/preview"
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 type downloadClaimFixture struct {
@@ -70,7 +70,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	ctx := context.Background()
 	source := f.sub.Sources[index]
 	row := animefeed.SourceRelease{PostKey: post, Title: title, OriginalGUID: "shared-guid", MagnetHint: "magnet:?xt=urn:btih:" + hash}
-	parsed, err := animeparse.Title(row.Title)
+	parsed, err := releaseparse.Title(row.Title)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func (f *downloadClaimFixture) selectTitle(t *testing.T, index int, post, hash, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	releases, err := f.store.SaveAnimeReleases(ctx, []model.AnimeRelease{{Provider: "garden", PostKey: post, Title: row.Title, OriginalGUID: animePtr(row.OriginalGUID), Parse: parsed, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion, ContentFingerprint: fp, ObservedAt: time.Now().UnixMilli()}})
+	releases, err := f.store.SaveAnimeReleases(ctx, []model.AnimeRelease{{Provider: "garden", PostKey: post, Title: row.Title, OriginalGUID: animePtr(row.OriginalGUID), Parse: parsed, ParserVersion: releaseparse.ParserVersion, TimeVersion: preview.TimeVersion, ContentFingerprint: fp, ObservedAt: time.Now().UnixMilli()}})
 	if err != nil {
 		t.Fatal(err)
 	}

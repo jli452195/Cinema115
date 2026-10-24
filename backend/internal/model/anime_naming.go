@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"strm115/backend/internal/releaseparse"
 )
 
 // Naming is subscription-owned configuration, never the site's TV numbering.
@@ -217,7 +219,7 @@ func (p AnimeNamingPlan) Validate() error {
 
 // Project never mutates source numbering, download minima, or other versions.
 // Specials require an explicit override; TMDB episode details only enrich names.
-func (p AnimeNamingPlan) Project(sourceRef string, parsed AnimeReleaseParse) AnimeNamingProjection {
+func (p AnimeNamingPlan) Project(sourceRef string, parsed releaseparse.Result) AnimeNamingProjection {
 	out := AnimeNamingProjection{Status: "unmapped"}
 	var mapping *AnimeSourceMapping
 	for i := range p.Sources {

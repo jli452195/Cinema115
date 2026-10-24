@@ -3,8 +3,8 @@ package binding
 import (
 	"testing"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 func bindingValue[T any](v T) *T { return &v }
@@ -31,7 +31,7 @@ func TestProjectConfirmedRange(t *testing.T) {
 		{"[组] 动画 [2026][1080p]", "needs_confirmation", "EPISODE_NUMBER_UNRESOLVED", 0, 0},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
-			parsed, err := animeparse.Title(tc.title)
+			parsed, err := releaseparse.Title(tc.title)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -47,7 +47,7 @@ func TestProjectConfirmedRange(t *testing.T) {
 }
 
 func TestProjectNeverInfersCorrespondence(t *testing.T) {
-	parsed, err := animeparse.Title("[组] 动画 [30]")
+	parsed, err := releaseparse.Title("[组] 动画 [30]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestProjectPerPublisherNumbering(t *testing.T) {
 		binding model.AnimeBinding
 		title   string
 	}{{a, "[组甲] 动画 [30]"}, {b, "[组乙] 动画 [05v2]"}, {b, "[组乙] 动画 [05]"}} {
-		p, err := animeparse.Title(tc.title)
+		p, err := releaseparse.Title(tc.title)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestProjectPerPublisherNumbering(t *testing.T) {
 func TestProjectManualChapterScope(t *testing.T) {
 	b := testBinding()
 	b.Scope = &model.AnimeScope{Kind: "confirmed_chapter", Evidence: "已人工核对发行版本及篇章"}
-	p, err := animeparse.Title("[组] 动画 [01]")
+	p, err := releaseparse.Title("[组] 动画 [01]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestProjectManualChapterScope(t *testing.T) {
 }
 
 func TestProjectRejectsInvalidData(t *testing.T) {
-	p := model.AnimeReleaseParse{SchemaVersion: 1, Kind: "episode", Episode: bindingValue(26)}
+	p := releaseparse.Result{SchemaVersion: 1, Kind: "episode", Episode: bindingValue(26)}
 	for _, change := range []func(*model.AnimeBinding){
 		func(b *model.AnimeBinding) { b.Scope.First = nil },
 		func(b *model.AnimeBinding) { b.Scope.Last = bindingValue(0) },
@@ -121,7 +121,7 @@ func TestProjectRejectsInvalidData(t *testing.T) {
 			t.Fatal("invalid binding accepted")
 		}
 	}
-	if _, err := Project(testBinding(), model.AnimeReleaseParse{SchemaVersion: 1, Kind: "special", Episode: bindingValue(26)}); err == nil {
+	if _, err := Project(testBinding(), releaseparse.Result{SchemaVersion: 1, Kind: "special", Episode: bindingValue(26)}); err == nil {
 		t.Fatal("invalid parse accepted")
 	}
 	// The stored DTO currently allows this incomplete parse. Never dereference

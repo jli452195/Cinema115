@@ -3,8 +3,8 @@ package mediafacts
 import (
 	"regexp"
 	"strings"
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/model"
+
+	"strm115/backend/internal/releaseparse"
 )
 
 type SearchSpec struct {
@@ -24,12 +24,12 @@ func Search(title string) SearchSpec {
 	return SearchSpec{Resolution: resolution(title), Languages: parsed.Languages, SubtitleMode: parsed.SubtitleMode}
 }
 
-func Specification(title string) model.AnimeSpec {
-	parsed := animeparse.Specification(title)
+func Specification(title string) releaseparse.Spec {
+	parsed := releaseparse.Specification(title)
 	// Reuse language boundaries without altering RSS profiles or subtitle modes.
 	normalized := resourceSizeTags.ReplaceAllString(resourceCompoundSubtitles.ReplaceAllString(title, "字幕"), " ")
 	if normalized != title {
-		parsed.Languages = animeparse.Specification(normalized).Languages
+		parsed.Languages = releaseparse.Specification(normalized).Languages
 	}
 	return parsed
 }

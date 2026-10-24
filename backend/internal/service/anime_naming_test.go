@@ -9,6 +9,7 @@ import (
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/storage"
 )
 
@@ -100,7 +101,7 @@ func TestAnimeNamingAtomicSaveReplayAndOfflineLocalEdit(t *testing.T) {
 	}
 	updated, _ := s.Store.GetAnimeSubscription(ctx, r.ID, false)
 	n := 30
-	projection := updated.Naming.Project(saved.Sources[0].ID, model.AnimeReleaseParse{Kind: "episode", Episode: &n})
+	projection := updated.Naming.Project(saved.Sources[0].ID, releaseparse.Result{Kind: "episode", Episode: &n})
 	if projection.Status != "mapped" || *projection.Episode != 7 || f.calls != before {
 		t.Fatal(projection, f.calls, before)
 	}

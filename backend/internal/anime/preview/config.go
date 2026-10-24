@@ -11,8 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 const RuleVersion int64 = 3
@@ -157,7 +157,7 @@ func Normalize(c Config) (Config, error) {
 
 type engineVersions struct{ Parser, Time, Rule, VersionPolicy int64 }
 
-var engines = engineVersions{animeparse.ParserVersion, animeparse.TimeVersion, RuleVersion, VersionPolicyVersion}
+var engines = engineVersions{releaseparse.ParserVersion, TimeVersion, RuleVersion, VersionPolicyVersion}
 
 func ConfigFingerprint(c Config) (string, error) {
 	var err error

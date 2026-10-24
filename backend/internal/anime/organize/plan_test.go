@@ -9,6 +9,7 @@ import (
 
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 )
 
 func planJob(names ...string) model.AnimeDownloadJob {
@@ -24,7 +25,7 @@ func planJob(names ...string) model.AnimeDownloadJob {
 	job := model.AnimeDownloadJob{UID: "123", ParentCID: "100", DirectoryCID: &cid, ResultObjectID: &result, DirectoryName: "anime-task"}
 	job.Snapshot.Target = target
 	job.Snapshot.Source = model.AnimeDownloadSource{SourceID: "main", GroupName: "银色子弹"}
-	job.Snapshot.Release.Parse = model.AnimeReleaseParse{Kind: "episode", Episode: &n}
+	job.Snapshot.Release.Parse = releaseparse.Result{Kind: "episode", Episode: &n}
 	template, _ := naming.Default(naming.TV)
 	job.Snapshot.Organization = &model.AnimeOrganizationSnapshot{Naming: naming.Snapshot{Template: template}, SchemaVersion: 1, PolicyVersion: 1, PlanRevision: 7, Target: organized}
 	job.Snapshot.Naming = &model.AnimeNamingPlan{SchemaVersion: 1, Target: model.AnimeNamingTarget{TMDBID: "335790", Title: "黑暗召唤师在地下恋爱中", Year: "2026", Season: 1, Fingerprint: strings.Repeat("a", 64), Seasons: []model.AnimeNamingSeason{{Number: 1, Episodes: episodes}}}, Sources: []model.AnimeSourceMapping{{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 25, SourceBase: 25, TargetSeason: 1, TargetBase: 1}}}}}

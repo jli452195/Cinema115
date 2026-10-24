@@ -55,8 +55,8 @@
 检查通过：
 
 ```powershell
-go test ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
-go vet ./internal/anime/binding ./internal/animeparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
+go test ./internal/anime/binding ./internal/releaseparse ./internal/client/mikan ./internal/client/bangumi ./internal/model ./internal/storage ./internal/service -count=1
+go vet ./internal/anime/binding ./internal/releaseparse ./internal/client/mikan ./internal/model ./internal/storage ./internal/service
 go test ./... -run '^$'
 ```
 

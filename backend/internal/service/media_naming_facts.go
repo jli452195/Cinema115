@@ -11,7 +11,7 @@ func mediaFileValues(name string, hint DownloadFileSpec) map[naming.Field]string
 	if hint.Fansub == "" {
 		hint.Fansub = downloadFansub(name)
 	}
-	return mediafacts.Values(name, hint.AnimeSpec, hint.Fansub)
+	return mediafacts.Values(name, hint.Spec, hint.Fansub)
 }
 
 // Only an already-enumerated directory containing one video may supply missing

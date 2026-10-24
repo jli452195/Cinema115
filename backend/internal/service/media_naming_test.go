@@ -12,8 +12,9 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
-	"strm115/backend/internal/model"
+
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
@@ -107,7 +108,7 @@ func TestMediaNamingSubtitleTags(t *testing.T) {
 		})
 	}
 	// Standard codes stay independent of display order and duplicate aliases.
-	hint := DownloadFileSpec{AnimeSpec: model.AnimeSpec{Languages: []string{"en", "zh-Hant", "zh-Hans", "zh-Hans"}, SubtitleMode: "soft"}}
+	hint := DownloadFileSpec{Spec: releaseparse.Spec{Languages: []string{"en", "zh-Hant", "zh-Hans", "zh-Hans"}, SubtitleMode: "soft"}}
 	if got := mediaFileValues("Movie.mkv", hint); got[naming.Languages] != "简繁英" {
 		t.Fatal("duplicate/reordered languages changed the label", got)
 	}

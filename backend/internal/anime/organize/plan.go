@@ -6,10 +6,10 @@ import (
 	"path"
 	"strings"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 )
 
 type Item struct {
@@ -121,7 +121,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			continue
 		}
 		item := Item{ID: e.ID, Kind: "video", OriginalPath: original(e), Status: "needs_review", Reason: "unmapped"}
-		parsed, err := animeparse.Title(e.Name)
+		parsed, err := releaseparse.Title(e.Name)
 		// A single unnamed video may use its trusted release title. Explicit
 		// batch/composite/SP evidence must never be replaced by that fallback.
 		if err == nil && parsed.Kind == "unknown" && parsed.RawEpisode == "" && videoCount == 1 {
@@ -130,7 +130,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		projection := job.Snapshot.Naming.Project(job.Snapshot.Source.SourceID, parsed)
 		item.Reason = projection.Status
 		if projection.Status == "mapped" {
-			hint := model.AnimeSpec{}
+			hint := releaseparse.Spec{}
 			if videoCount == 1 {
 				hint = mediafacts.Specification(job.Snapshot.Release.Title)
 			}

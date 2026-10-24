@@ -1,4 +1,4 @@
-package animeparse
+package releaseparse
 
 import (
 	"encoding/json"

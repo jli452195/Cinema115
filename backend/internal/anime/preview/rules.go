@@ -1,10 +1,11 @@
-package animeparse
+package preview
 
 import (
 	"regexp"
 	"strconv"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 // SourceRules is compiled once per feed/preview, shared by all its rows.
@@ -56,8 +57,8 @@ func (r SourceRules) Filter(title string) string {
 
 // Parse overrides only the source's episode interpretation. A custom rule that
 // fails or matches multiple times never falls back to a different episode.
-func (r SourceRules) Parse(title string) (model.AnimeReleaseParse, error) {
-	out, err := Title(title)
+func (r SourceRules) Parse(title string) (releaseparse.Result, error) {
+	out, err := releaseparse.Title(title)
 	if err != nil || r.episode == nil {
 		return out, err
 	}
@@ -85,7 +86,7 @@ func (r SourceRules) Parse(title string) (model.AnimeReleaseParse, error) {
 
 // SpecPatterns creates editable starter rules; a parsed profile is a picker
 // suggestion, not a second persisted filtering system.
-func SpecPatterns(s model.AnimeSpec) []string {
+func SpecPatterns(s releaseparse.Spec) []string {
 	out := make([]string, 0, 10)
 	add := func(pattern string) {
 		if pattern != "" {

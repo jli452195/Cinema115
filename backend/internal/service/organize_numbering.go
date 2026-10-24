@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"strm115/backend/internal/animeparse"
+	"strm115/backend/internal/releaseparse"
 )
 
 var organizeFileRange = regexp.MustCompile(`(?i)^(\d{1,4})\s*([-~～〜至到+&])\s*E?(\d{1,4})$`)
@@ -52,7 +52,7 @@ func organizeFileNumbering(file *OrganizeFile) {
 	// A four-digit year after SxxExx is filename metadata, not a fractional
 	// episode. Keep genuine decimals and conflicting numbering for review.
 	name = organizeSceneYear.ReplaceAllString(name, "${1} ${2}${3}")
-	parsed, err := animeparse.Title(name)
+	parsed, err := releaseparse.Title(name)
 	if err != nil {
 		return
 	}

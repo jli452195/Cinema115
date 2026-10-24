@@ -2,7 +2,10 @@
 // space. It does not infer chapter identity or share numbering between feeds.
 package binding
 
-import "strm115/backend/internal/model"
+import (
+	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
+)
 
 type Projection struct {
 	Status         string `json:"status"` // in_scope, out_of_scope, needs_confirmation
@@ -13,7 +16,7 @@ type Projection struct {
 
 // Project preserves source numbering. A correspondence is display metadata,
 // independent of a download minimum or any optional TMDB naming mapping.
-func Project(binding model.AnimeBinding, parsed model.AnimeReleaseParse) (Projection, error) {
+func Project(binding model.AnimeBinding, parsed releaseparse.Result) (Projection, error) {
 	out := Projection{Status: "needs_confirmation", ReasonCode: "SOURCE_BINDING_UNCONFIRMED"}
 	if err := binding.Validate(false); err != nil {
 		return out, err

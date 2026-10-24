@@ -1,4 +1,4 @@
-package animeparse
+package releaseparse
 
 import (
 	"crypto/sha256"
@@ -9,8 +9,6 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"strm115/backend/internal/model"
 )
 
 const SpecVersion int64 = 2
@@ -29,13 +27,13 @@ var (
 
 // Specification only interprets bracket metadata and the suffix following an
 // explicit episode. A character in the series name is not a language tag.
-func Specification(title string) model.AnimeSpec {
+func Specification(title string) Spec {
 	spec, _ := specification(title)
 	return spec
 }
 
-func specification(title string) (model.AnimeSpec, bool) {
-	out := model.AnimeSpec{}
+func specification(title string) (Spec, bool) {
+	out := Spec{}
 	if q := resolution(title); q != nil && *q != "unknown" {
 		out.Resolution = *q
 	}
@@ -159,19 +157,19 @@ func specification(title string) (model.AnimeSpec, bool) {
 	return out, len(codecs) > 1 || len(containers) > 1 || len(depths) > 1 || len(modes) > 1
 }
 
-func NormalizeSpec(spec model.AnimeSpec) model.AnimeSpec {
+func NormalizeSpec(spec Spec) Spec {
 	spec.Languages = append([]string(nil), spec.Languages...)
 	slices.Sort(spec.Languages)
 	return spec
 }
 
-func SpecKey(spec model.AnimeSpec) string {
+func SpecKey(spec Spec) string {
 	data, _ := json.Marshal(NormalizeSpec(spec)) // Fixed scalar model has no failing marshaler.
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:12])
 }
 
-func SpecLabel(spec model.AnimeSpec) string {
+func SpecLabel(spec Spec) string {
 	parts := make([]string, 0, 6)
 	if spec.Resolution != "" {
 		parts = append(parts, spec.Resolution)

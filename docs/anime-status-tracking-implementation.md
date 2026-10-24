@@ -77,8 +77,8 @@ P2-08复用同一任务租约接入写入阶段恢复；执行最多九十秒，
 
 ```text
 go test ./internal/client/p115 ./internal/storage ./internal/service -run '^TestAnimeStatus' -count=5
-go test ./internal/animeparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
-go vet ./internal/animeparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
+go test ./internal/releaseparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
+go vet ./internal/releaseparse ./internal/anime/preview ./internal/btresource ./internal/model ./internal/storage ./internal/service ./internal/httpapi ./internal/client/mikan ./internal/client/anibt ./internal/client/garden ./internal/client/p115 ./internal/bot
 go build ./...
 ```
 

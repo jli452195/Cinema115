@@ -1,25 +1,24 @@
-package animeparse
+package releaseparse
 
 import (
 	"encoding/json"
 	"os"
 	"reflect"
-	"strm115/backend/internal/model"
 	"testing"
 )
 
 func TestSpecificationPublisherMetadata(t *testing.T) {
 	tests := []struct {
 		title string
-		want  model.AnimeSpec
+		want  Spec
 	}{
-		{"[绿茶字幕组] 每日动画 [01][1080p][简体内嵌][HEVC 10bit][MKV]", model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard", Codec: "h265", BitDepth: "10", Container: "mkv"}},
-		{"[绿茶字幕组] 每日动画 [01][1080p][繁體內嵌][H.264][MP4]", model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard", Codec: "h264", Container: "mp4"}},
-		{"[绿茶字幕组] 每日动画 [01] [1920x1080] 简繁日内封 HEVC 10bit MKV", model.AnimeSpec{Resolution: "1080p", Languages: []string{"ja", "zh-Hans", "zh-Hant"}, SubtitleMode: "soft", Codec: "h265", BitDepth: "10", Container: "mkv"}},
-		{"[组] 每日动画 [01][CHS&CHT][x265][12bit]", model.AnimeSpec{Languages: []string{"zh-Hans", "zh-Hant"}, Codec: "h265", BitDepth: "12"}},
-		{"[每日动画][01][1080p]", model.AnimeSpec{Resolution: "1080p"}},
-		{"[简繁字幕组] 动画 [01]", model.AnimeSpec{}},
-		{"[组] 动画 [01][AVC HEVC][MP4 MKV][内嵌 外挂][1080p 720p]", model.AnimeSpec{}},
+		{"[绿茶字幕组] 每日动画 [01][1080p][简体内嵌][HEVC 10bit][MKV]", Spec{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard", Codec: "h265", BitDepth: "10", Container: "mkv"}},
+		{"[绿茶字幕组] 每日动画 [01][1080p][繁體內嵌][H.264][MP4]", Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard", Codec: "h264", Container: "mp4"}},
+		{"[绿茶字幕组] 每日动画 [01] [1920x1080] 简繁日内封 HEVC 10bit MKV", Spec{Resolution: "1080p", Languages: []string{"ja", "zh-Hans", "zh-Hant"}, SubtitleMode: "soft", Codec: "h265", BitDepth: "10", Container: "mkv"}},
+		{"[组] 每日动画 [01][CHS&CHT][x265][12bit]", Spec{Languages: []string{"zh-Hans", "zh-Hant"}, Codec: "h265", BitDepth: "12"}},
+		{"[每日动画][01][1080p]", Spec{Resolution: "1080p"}},
+		{"[简繁字幕组] 动画 [01]", Spec{}},
+		{"[组] 动画 [01][AVC HEVC][MP4 MKV][内嵌 外挂][1080p 720p]", Spec{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.title, func(t *testing.T) {
@@ -35,8 +34,8 @@ func TestSpecificationPublisherMetadata(t *testing.T) {
 }
 
 func TestSpecificationStableKeyDoesNotMutateInput(t *testing.T) {
-	a := model.AnimeSpec{Languages: []string{"zh-Hans", "ja"}}
-	b := model.AnimeSpec{Languages: []string{"ja", "zh-Hans"}}
+	a := Spec{Languages: []string{"zh-Hans", "ja"}}
+	b := Spec{Languages: []string{"ja", "zh-Hans"}}
 	if SpecKey(a) != SpecKey(b) || a.Languages[0] != "zh-Hans" {
 		t.Fatal("normalization mutated caller or changed semantic key")
 	}

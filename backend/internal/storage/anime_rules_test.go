@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"strm115/backend/internal/anime/preview"
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 func TestAnimeSourceCustomParseIsIndependentOfSharedPostCache(t *testing.T) {
@@ -105,7 +105,7 @@ func TestAnimeDiscoveryReevaluatesOldInterpretationsAndFreezesSelections(t *test
 		t.Fatal("old parser interpretation never reconsidered", stats, err)
 	}
 	d, err = f.store.GetAnimeReleaseDecision(ctx, poll.Source.ID, r.ID)
-	if err != nil || d.Snapshot.RuleVersion != preview.RuleVersion || d.Snapshot.ParserVersion != animeparse.ParserVersion || d.Snapshot.Parse.VersionLabel != "" {
+	if err != nil || d.Snapshot.RuleVersion != preview.RuleVersion || d.Snapshot.ParserVersion != releaseparse.ParserVersion || d.Snapshot.Parse.VersionLabel != "" {
 		t.Fatal(d, err)
 	}
 	// Simulate a previously selected snapshot from an older engine. Upgrading
@@ -146,7 +146,7 @@ func TestAnimeClaimAndQueuedSubmitUseFrozenParseAfterEngineUpgrade(t *testing.T)
 	if _, err := f.store.db.Exec(`UPDATE anime_release_decisions SET snapshot_json=? WHERE source_id=?`, raw, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	unknown, _ := animeJSON(model.AnimeReleaseParse{SchemaVersion: 1, Kind: "unknown"})
+	unknown, _ := animeJSON(releaseparse.Result{SchemaVersion: 1, Kind: "unknown"})
 	if _, err := f.store.db.Exec(`UPDATE anime_releases SET parser_version=99,parse_json=? WHERE id=?`, unknown, r.ID); err != nil {
 		t.Fatal(err)
 	}

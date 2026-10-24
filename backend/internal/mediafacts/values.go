@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 )
 
 var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
@@ -16,7 +16,7 @@ var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aa
 
 // Only explicit filename/source tags are used. Unknown and conflicting scalar
 // tags stay empty; this is unrelated to RSS matching and never reads streams.
-func Values(name string, hint model.AnimeSpec, group string) map[naming.Field]string {
+func Values(name string, hint releaseparse.Spec, group string) map[naming.Field]string {
 	search := Search(name)
 	if search.Resolution != "" || resourceQuality.MatchString(name) {
 		hint.Resolution = search.Resolution
@@ -121,7 +121,7 @@ func InheritSubtitles(values map[naming.Field]string, directory string) {
 	if values[naming.Languages] != "" {
 		return
 	}
-	parent := Values(directory, model.AnimeSpec{}, "")
+	parent := Values(directory, releaseparse.Spec{}, "")
 	if parent[naming.Languages] == "" {
 		return
 	}

@@ -244,31 +244,6 @@ func (c AnimeSubscriptionConfig) Validate() error {
 	return nil
 }
 
-func (p AnimeReleaseParse) Validate() error {
-	if p.SchemaVersion != AnimeSchemaVersion {
-		return fmt.Errorf("unsupported parse schema")
-	}
-	switch p.Kind {
-	case "unknown", "episode", "special", "batch", "composite":
-	default:
-		return fmt.Errorf("invalid parsed release kind")
-	}
-	if p.Episode != nil && (!animeReleaseNumber(*p.Episode) || p.Kind != "episode") {
-		return fmt.Errorf("invalid parsed episode")
-	}
-	if !animeText(p.RawEpisode, 128, false) || !animeText(p.VersionLabel, 64, false) {
-		return fmt.Errorf("invalid parse text")
-	}
-	if p.Resolution != nil {
-		switch *p.Resolution {
-		case "720p", "1080p", "2160p", "unknown":
-		default:
-			return fmt.Errorf("invalid parsed resolution")
-		}
-	}
-	return p.Spec.Validate()
-}
-
 func (r AnimeRelease) Validate() error {
 	if r.ID != "" && !ValidAnimeID(r.ID) || !animefeed.ValidProvider(r.Provider) || !ValidAnimeID(r.PostKey) || !animeText(r.Title, 1024, true) || !animeText(r.ContentFingerprint, 128, true) {
 		return fmt.Errorf("invalid release identity/content")

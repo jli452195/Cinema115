@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/storage"
 )
 
@@ -165,7 +165,7 @@ func TestAnimeBindingPreviewExplainsActualPublisherRows(t *testing.T) {
 		t.Fatalf("unexpected preview: %+v %v", got, err)
 	}
 	for i, want := range []string{"in_scope", "in_scope", "in_scope", "out_of_scope", "needs_confirmation", "needs_confirmation"} {
-		if got.Releases[i].Projection.Status != want || got.Releases[i].ParserVersion != animeparse.ParserVersion {
+		if got.Releases[i].Projection.Status != want || got.Releases[i].ParserVersion != releaseparse.ParserVersion {
 			t.Fatalf("row %d: %+v", i, got.Releases[i])
 		}
 	}
@@ -428,7 +428,7 @@ func TestAnimeBindingStructuredReviewAndUnconfirmedSamples(t *testing.T) {
 		return p, nil
 	}
 	got, err := s.PreviewBinding(context.Background(), animeMikanTestBudget(t, nil), in)
-	if err != nil || got.Ready || len(got.Profiles) != 2 || got.SpecVersion != animeparse.SpecVersion || got.Binding.Confirmed {
+	if err != nil || got.Ready || len(got.Profiles) != 2 || got.SpecVersion != releaseparse.SpecVersion || got.Binding.Confirmed {
 		t.Fatal("sample read required confirmation or lost profiles", got, err)
 	}
 	in.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "confirmed_chapter"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: in.Source.ItemID, GroupID: in.Source.GroupID}}
@@ -453,7 +453,7 @@ func TestAnimeBindingStructuredReviewAndUnconfirmedSamples(t *testing.T) {
 }
 
 func TestAnimeBindingSilverBulletSpecificationOptions(t *testing.T) {
-	data, err := os.ReadFile("../animeparse/testdata/silver_bullet_titles.json")
+	data, err := os.ReadFile("../releaseparse/testdata/silver_bullet_titles.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,11 +1,14 @@
-package animeparse
+package preview
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 	_ "time/tzdata" // Keep the source timezone independent of the host OS.
+	"unicode"
+	"unicode/utf8"
 )
 
 const TimeVersion int64 = 1
@@ -24,6 +27,7 @@ type Publication struct {
 }
 
 var (
+	errPublicationInput   = errors.New("invalid anime publication input")
 	shanghai, shanghaiErr = time.LoadLocation("Asia/Shanghai")
 	dateFraction          = regexp.MustCompile(`:[0-9]{2}[.,]([0-9]+)`)
 	dateOffset            = regexp.MustCompile(`[+-]([0-9]{2}):?([0-9]{2})$`)
@@ -41,8 +45,8 @@ type parsedTime struct {
 // not overwrite an RSS date with a subsequent HTML minute timestamp.
 func Published(raw, alternate string, observedAt time.Time) (Publication, error) {
 	out := Publication{Raw: raw, AlternateRaw: alternate, Status: "missing", Version: TimeVersion}
-	if !validText(raw, 2048) || !validText(alternate, 2048) || observedAt.IsZero() || observedAt.UnixMilli() <= 0 || observedAt.Year() > 9999 {
-		return out, ErrInput
+	if !validPublicationText(raw) || !validPublicationText(alternate) || observedAt.IsZero() || observedAt.UnixMilli() <= 0 || observedAt.Year() > 9999 {
+		return out, errPublicationInput
 	}
 	if shanghaiErr != nil {
 		return out, fmt.Errorf("load anime publisher timezone: %w", shanghaiErr)
@@ -128,4 +132,11 @@ func timePrecision(raw string, minute bool) int64 {
 		}
 	}
 	return 1000
+}
+
+func validPublicationText(s string) bool {
+	if len(s) > 2048*utf8.UTFMax || !utf8.ValidString(s) || utf8.RuneCountInString(s) > 2048 {
+		return false
+	}
+	return !strings.ContainsFunc(s, unicode.IsControl)
 }

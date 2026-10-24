@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"strm115/backend/internal/anime/organize"
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 )
 
 func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
@@ -28,7 +28,7 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	}
 	in := AnimeNamingPreviewInput{Target: target, Mapping: mapping, Group: "Nix-Raws"}
 	for i, title := range titles {
-		parsed, err := animeparse.Title(title)
+		parsed, err := releaseparse.Title(title)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	for i, file := range in.Items[:3] {
 		projection := plan.Project("main", file.Parse)
 		realName := file.Title + ".MKV"
-		result, err := organize.Render(renderer, target, projection, realName, false, mediafacts.Values(realName, model.AnimeSpec{}, in.Group))
+		result, err := organize.Render(renderer, target, projection, realName, false, mediafacts.Values(realName, releaseparse.Spec{}, in.Group))
 		if err != nil || result.Stem != preview.Items[i].Result.Stem || result.Extension != ".mkv" {
 			t.Fatalf("preview differs from file: %+v %v", result, err)
 		}

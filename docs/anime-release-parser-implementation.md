@@ -2,14 +2,18 @@
 
 日期：2026-10-18。
 
+2026-10-25 模块边界调整：通用标题、规格与结果校验归入 `internal/releaseparse`，仅依赖标准库，直接定义 `Result`、`Spec` 与独立的 `SchemaVersion = 1`。订阅专用的 `CompileRules`、`SpecPatterns`、`Published`、`Publication` 和 `TimeVersion` 归入 `internal/anime/preview`，对应测试一同移动。旧解析包和旧模型类型已删除，不保留兼容别名或转发入口。解析算法、结果 JSON 字段、`ParserVersion = 9`、`SpecVersion = 2`、`TimeVersion = 1`、规则版本及配置指纹保持原值；SP 默认季集仍由整理层决定，不新增网络请求。
+
+本次验收：公共解析、model、mediafacts 与动漫子包测试通过；service 的 `Anime|Organize|Naming|Download|Garden|Mikan|Gying|Resource|Torrent` 专项回归通过。新增结果 JSON 和下载规格扁平 JSON 的往返契约测试，三份真实标题样本仅移动目录，标题与规格算法归一化对比一致；依赖检查确认公共解析仅引用标准库。`go vet ./...`、服务端构建及差异格式检查通过。全量复测中 storage、HTTP 和其他包通过，service 两轮分别遇到 Windows 临时 SQLite 文件清理占用、既有 `Test302TakeoverLifecycle` 临时端口监听失败；前者单独连续 5 次通过，后者单独复测通过，未将末次全量复测标记为全部通过。本次未修改这些测试的调度、数据库关闭或播放监听逻辑。
+
 依据：[首版规则](anime-first-release-rules.md)、[蜜柑公开样本](anime-mikan-api.md)及[数据契约](anime-subscription-contract.md)。
 
 ## 实现范围
 
-新增独立纯解析包 `backend/internal/animeparse`。不依赖 Emby、TMDB、其他追更服务、网络或数据库，不请求种子、图片或 115。P1-03 负责获取原始元数据，本项解释这些元数据；篇章归属、偏移、筛选、预览和写入仍由后续任务接入。
+新增独立纯解析包 `backend/internal/releaseparse`。不依赖 Emby、TMDB、其他追更服务、网络或数据库，不请求种子、图片或 115。P1-03 负责获取原始元数据，本项解释这些元数据；篇章归属、偏移、筛选、预览和写入仍由后续任务接入。
 
-- `Title(title)` 返回现有 `model.AnimeReleaseParse`，对应 `ParserVersion = 1`。调用方保存发布时须同时保存完整原标题及该版本；JSON schema 版本与解析器版本分别维护。
-- `Published(raw, alternate, observedAt)` 返回原始日期、同次观察的备用日期、状态、UTC Unix 毫秒、来源精度、时区解释和 `TimeVersion = 1`。读取时刻必须来自可信快照，不在解析器内调用当前时间。
+- `Title(title)` 返回 `releaseparse.Result`，首版对应 `ParserVersion = 1`。调用方保存发布时须同时保存完整原标题及该版本；JSON schema 版本与解析器版本分别维护。
+- `preview.Published(raw, alternate, observedAt)` 返回原始日期、同次观察的备用日期、状态、UTC Unix 毫秒、来源精度、时区解释和 `TimeVersion = 1`。读取时刻必须来自可信快照，不在解析器内调用当前时间。
 - 未改动现有模型、JSON schema、SQLite 表或启动迁移。本步未装配业务 API、发布写入或页面，不创建任何下载决定。
 
 ## 集号与资源标签
@@ -51,9 +55,9 @@
 验证命令：
 
 ```powershell
-go test ./internal/animeparse ./internal/model ./internal/storage ./internal/client/mikan ./internal/client/bangumi -count=1
-go test ./internal/animeparse -run '^$' -fuzz '^FuzzTitleInvariants$' -fuzztime=15s -parallel=2
-go vet ./internal/animeparse ./internal/model ./internal/storage
+go test ./internal/releaseparse ./internal/anime/preview ./internal/model ./internal/storage ./internal/client/mikan ./internal/client/bangumi -count=1
+go test ./internal/releaseparse -run '^$' -fuzz '^FuzzTitleInvariants$' -fuzztime=15s -parallel=2
+go vet ./internal/releaseparse ./internal/anime/preview ./internal/model ./internal/storage
 go test ./... -run '^$'
 ```
 
@@ -94,7 +98,7 @@ go test ./... -run '^$'
 
 合计 774 条，2024 年 377 条、2025 年 397 条。83 条误判单集恢复为普通集；另 1 条真实合集仅清除了片名中的干扰证据，仍为合集；690 条完整解析结果逐字段相同。新结果为普通单集 751 条、真实合集 21 条、无可靠编号 2 条；未把后两类放行为单集。此验证覆盖本次实际可读窗口，不宣称上游完整历史或任意字幕组格式均受支持。
 
-从中保留 48 条原始标题、来源 RSS、原帖链接及发布日期于 `backend/internal/animeparse/testdata/rss_titles_2024_2025.json`，作为可离线运行的长期回归样本；原始整页和临时比对程序不提交。另补充截图、特殊集、真实范围、复合编号、缺少编号的边界测试，以及实际匹配到版本择优和命名投影的集成测试：`03v2` 胜过 `03`，`01/02/03 → S01E25/26/27`，下载起点仍按发布编号判断。
+从中保留 48 条原始标题、来源 RSS、原帖链接及发布日期于 `backend/internal/releaseparse/testdata/rss_titles_2024_2025.json`，作为可离线运行的长期回归样本；原始整页和临时比对程序不提交。另补充截图、特殊集、真实范围、复合编号、缺少编号的边界测试，以及实际匹配到版本择优和命名投影的集成测试：`03v2` 胜过 `03`，`01/02/03 → S01E25/26/27`，下载起点仍按发布编号判断。
 
 `ParserVersion` 升为 5。既有预览保持不可变，后端更新后点击“重新预览”采用新规则。沿用原有执行版本校验：旧版本已保存订阅需要保存一次配置以更新执行基准，不自动改写已授权任务、文件或已完成记录；本次不增加数据迁移或兼容层。
 

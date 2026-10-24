@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 )
 
 var errDownloadTitleReview = errors.New("单集内容需要确认")
@@ -28,7 +28,7 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 	if in.Source == "gying" {
 		return s.Resources.Files(ctx, in)
 	}
-	parsed, err := animeparse.Title(in.Title)
+	parsed, err := releaseparse.Title(in.Title)
 	mixedQuality := parsed.Resolution != nil && *parsed.Resolution == "unknown" && len(downloadTitleQuality.FindAllString(in.Title, 2)) > 1
 	if err != nil || parsed.Kind != "episode" || parsed.Episode == nil || *parsed.Episode < 1 || *parsed.Episode > 10000 || parsed.SpecAmbiguous || mixedQuality || organizeSpecialFile.MatchString(in.Title) {
 		return s.Resources.Files(ctx, in)
@@ -57,7 +57,7 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 		f.Season, _ = strconv.Atoi(m[1])
 	}
 	parsed.Spec.Languages = resourceSearchSpec(in.Title).Languages
-	return DownloadFiles{Hash: hash, Files: []OrganizeFile{f}, Subtitles: []OrganizeSubtitle{}, Specs: map[string]DownloadFileSpec{f.ID: {AnimeSpec: parsed.Spec, Fansub: downloadFansub(in.Title)}}}, nil
+	return DownloadFiles{Hash: hash, Files: []OrganizeFile{f}, Subtitles: []OrganizeSubtitle{}, Specs: map[string]DownloadFileSpec{f.ID: {Spec: parsed.Spec, Fansub: downloadFansub(in.Title)}}}, nil
 }
 
 func downloadTargetKey(item OrganizeItem) string {
@@ -90,7 +90,7 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 	}
 	video.Season = 1
 	organizeFileNumbering(&video)
-	parsed, err := animeparse.Title(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
+	parsed, err := releaseparse.Title(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
 	unmapped := video.Episode == 0 && (parsed.Kind != "unknown" || parsed.RawEpisode != "")
 	wrongEpisode := video.Episode > 0 && video.Episode != intent.File.Episode
 	if err != nil || organizeSpecialFile.MatchString(video.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(video.SourcePath))) || video.EndEpisode != 0 || unmapped || wrongEpisode {

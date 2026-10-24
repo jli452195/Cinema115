@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"strm115/backend/internal/anime/preview"
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/storage"
 )
 
@@ -43,7 +43,7 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	}
 	source := sub.Sources[0]
 	row := animefeed.SourceRelease{PostKey: strings.Repeat("a", 40), Title: "[字幕组] 测试 - 01 [1080p]", TorrentURL: "https://mikanani.me/Download/20261019/" + strings.Repeat("a", 40) + ".torrent"}
-	parsed, err := animeparse.Title(row.Title)
+	parsed, err := releaseparse.Title(row.Title)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	if err != nil {
 		t.Fatal(err)
 	}
-	releases, err := f.service.Store.SaveAnimeReleases(ctx, []model.AnimeRelease{{Provider: "mikan", PostKey: row.PostKey, Title: row.Title, Parse: parsed, ParserVersion: animeparse.ParserVersion, TimeVersion: animeparse.TimeVersion, ContentFingerprint: fp, ObservedAt: time.Now().UnixMilli()}})
+	releases, err := f.service.Store.SaveAnimeReleases(ctx, []model.AnimeRelease{{Provider: "mikan", PostKey: row.PostKey, Title: row.Title, Parse: parsed, ParserVersion: releaseparse.ParserVersion, TimeVersion: preview.TimeVersion, ContentFingerprint: fp, ObservedAt: time.Now().UnixMilli()}})
 	if err != nil {
 		t.Fatal(err)
 	}

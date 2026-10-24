@@ -1,6 +1,6 @@
-// Package animeparse interprets publisher metadata without network access,
+// Package releaseparse interprets release titles and filenames without network access,
 // source binding, TMDB numbering, selection, or download side effects.
-package animeparse
+package releaseparse
 
 import (
 	"errors"
@@ -10,13 +10,11 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"strm115/backend/internal/model"
 )
 
 const ParserVersion int64 = 9
 
-var ErrInput = errors.New("invalid anime parser input")
+var ErrInput = errors.New("invalid release parser input")
 
 // These grammars deliberately require publisher numbering syntax. An arbitrary
 // number in a series name, codec, CRC, size, year or season is not an episode.
@@ -59,8 +57,8 @@ type candidate struct {
 // Title returns only an unambiguous ordinary integer as Episode. RawEpisode
 // retains the publisher's actual notation; special/batch/composite/unknown
 // results never carry an executable ordinary episode number.
-func Title(title string) (model.AnimeReleaseParse, error) {
-	out := model.AnimeReleaseParse{SchemaVersion: model.AnimeSchemaVersion, Kind: "unknown"}
+func Title(title string) (Result, error) {
+	out := Result{SchemaVersion: SchemaVersion, Kind: "unknown"}
 	if !validText(title, 1024) || strings.TrimSpace(title) == "" {
 		return out, ErrInput
 	}

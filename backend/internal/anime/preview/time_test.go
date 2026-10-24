@@ -1,4 +1,4 @@
-package animeparse
+package preview
 
 import (
 	"errors"
@@ -119,7 +119,7 @@ func TestPublishedInputLimits(t *testing.T) {
 		{strings.Repeat("a", 2049), "", now}, {"", strings.Repeat("a", 2049), now},
 		{"bad\x00", "", now}, {"", string([]byte{0xff}), now},
 	} {
-		if _, err := Published(tc.raw, tc.alt, tc.at); !errors.Is(err, ErrInput) {
+		if _, err := Published(tc.raw, tc.alt, tc.at); !errors.Is(err, errPublicationInput) {
 			t.Fatalf("invalid publication input accepted: %v", err)
 		}
 	}

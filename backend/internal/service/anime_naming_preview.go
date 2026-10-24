@@ -9,6 +9,7 @@ import (
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/storage"
 )
 
@@ -20,9 +21,9 @@ type AnimeNamingPreviewInput struct {
 }
 
 type AnimeNamingPreviewFile struct {
-	ID    string                  `json:"id"`
-	Title string                  `json:"title"`
-	Parse model.AnimeReleaseParse `json:"parse"`
+	ID    string              `json:"id"`
+	Title string              `json:"title"`
+	Parse releaseparse.Result `json:"parse"`
 }
 
 type AnimeNamingPreviewItem struct {
@@ -70,7 +71,7 @@ func PreviewAnimeNaming(ctx context.Context, templates NamingTemplates, in Anime
 		projection := plan.Project(in.Mapping.SourceRef, item.Parse)
 		row := AnimeNamingPreviewItem{ID: item.ID, AnimeNamingProjection: projection}
 		if projection.Status == "mapped" {
-			result, err := organize.Render(renderer, in.Target, projection, item.Title, true, mediafacts.Values(item.Title, model.AnimeSpec{}, in.Group))
+			result, err := organize.Render(renderer, in.Target, projection, item.Title, true, mediafacts.Values(item.Title, releaseparse.Spec{}, in.Group))
 			if err != nil {
 				row.Error = err.Error()
 			} else {

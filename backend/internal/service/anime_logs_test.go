@@ -8,6 +8,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/storage"
 )
 
@@ -113,7 +114,7 @@ func TestAnimeLogsScrubDynamicMetadataWithoutTiming(t *testing.T) {
 	poll := storage.AnimeSourcePoll{Source: model.AnimeSource{Provider: "anibt", GroupName: bindingPtr("字幕组\nCookie: private-cookie")}, Subscription: model.AnimeSubscription{ID: strings.Repeat("a", 32)}, Entry: model.AnimeEntry{Title: "动画 https://private.invalid/path?token=private-token"}}
 	s.logAnimeRSSResult(poll, AnimeSourceResult{Cached: true}, storage.AnimeDiscoveryStats{})
 	s.logAnimeRSSFailure(poll, "SOURCE_BINDING_CHANGED", 0, true)
-	job := model.AnimeDownloadJob{ID: "local-job", Snapshot: model.AnimeDownloadSnapshot{Source: model.AnimeDownloadSource{Provider: "anibt", GroupName: *poll.Source.GroupName}, Decision: model.AnimeDecisionSnapshot{Title: poll.Entry.Title, Parse: model.AnimeReleaseParse{Kind: "episode", Episode: bindingPtr(0)}}}}
+	job := model.AnimeDownloadJob{ID: "local-job", Snapshot: model.AnimeDownloadSnapshot{Source: model.AnimeDownloadSource{Provider: "anibt", GroupName: *poll.Source.GroupName}, Decision: model.AnimeDecisionSnapshot{Title: poll.Entry.Title, Parse: releaseparse.Result{Kind: "episode", Episode: bindingPtr(0)}}}}
 	s.logAnimeJob(job, "INFO", "整理完成")
 	entries := s.Logs.Snapshot("ALL")
 	if len(entries) != 3 || !strings.Contains(entries[0].Message, "第00集：整理完成") || !strings.Contains(entries[1].Message, "已停止自动轮询") || !strings.Contains(entries[2].Message, "暂无新资源") {

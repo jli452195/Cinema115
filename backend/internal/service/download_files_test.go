@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,8 +14,27 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent/bencode"
+
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/releaseparse"
 )
+
+func TestDownloadFileSpecJSONContract(t *testing.T) {
+	// Resource specs are flattened in the API consumed by the shared picker.
+	const raw = `{"resolution":"1080p","languages":["zh-Hans","zh-Hant"],"subtitleMode":"soft","codec":"h265","container":"mkv","bitDepth":"10","fansub":"Group"}`
+	var got DownloadFileSpec
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := DownloadFileSpec{Spec: releaseparse.Spec{Resolution: "1080p", Languages: []string{"zh-Hans", "zh-Hant"}, SubtitleMode: "soft", Codec: "h265", Container: "mkv", BitDepth: "10"}, Fansub: "Group"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resource specs did not decode into the shared type: %+v", got)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil || string(encoded) != raw {
+		t.Fatalf("resource spec JSON changed: %s, %v", encoded, err)
+	}
+}
 
 func mikanOrganizeTorrent(t *testing.T) ([]byte, DownloadResourceInput) {
 	t.Helper()

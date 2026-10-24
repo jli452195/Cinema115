@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -287,7 +287,7 @@ func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
 	source.Provider, source.ItemID, source.GroupID = "anibt", ptr("393010"), ptr("ani")
 	source.Binding = model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "393010", GroupID: "ani"}}
 	source.Rules.MinimumEpisode = ptr(1)
-	source.Rules.Match = animeparse.SpecPatterns(model.AnimeSpec{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"})
+	source.Rules.Match = SpecPatterns(releaseparse.Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"})
 	p := page(
 		"[ANi] Tantei wa Mō Shindeiru / 侦探已经，死了。 Season 2 - 02 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
 		"[ANi] 侦探已经，死了。 Season 2 - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
@@ -303,7 +303,7 @@ func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
 	}
 	for i, episode := range []int{2, 1} {
 		item := s.Items[i]
-		if !item.Selectable || item.Decision != "matched" || item.Release.Parse.Episode == nil || *item.Release.Parse.Episode != episode || item.Release.ParserVersion != animeparse.ParserVersion {
+		if !item.Selectable || item.Decision != "matched" || item.Release.Parse.Episode == nil || *item.Release.Parse.Episode != episode || item.Release.ParserVersion != releaseparse.ParserVersion {
 			t.Fatal("season number replaced the publisher episode", item)
 		}
 	}

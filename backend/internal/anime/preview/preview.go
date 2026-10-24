@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"strm115/backend/internal/anime/binding"
-	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 func hexPostKey(key string) ([]byte, error) {
@@ -28,16 +28,16 @@ type Step struct {
 }
 
 type Item struct {
-	Release                 model.AnimeRelease     `json:"release"`
-	Observation             mikan.SourceRelease    `json:"observation"`
-	Publication             animeparse.Publication `json:"publication"`
-	Projection              binding.Projection     `json:"projection"`
-	Steps                   []Step                 `json:"steps"`
-	Decision                string                 `json:"decision"`
-	ReasonCode              string                 `json:"reasonCode"`
-	Selectable              bool                   `json:"selectable"`
-	DefaultSelected         bool                   `json:"defaultSelected"`
-	ConfirmationFingerprint string                 `json:"confirmationFingerprint"`
+	Release                 model.AnimeRelease  `json:"release"`
+	Observation             mikan.SourceRelease `json:"observation"`
+	Publication             Publication         `json:"publication"`
+	Projection              binding.Projection  `json:"projection"`
+	Steps                   []Step              `json:"steps"`
+	Decision                string              `json:"decision"`
+	ReasonCode              string              `json:"reasonCode"`
+	Selectable              bool                `json:"selectable"`
+	DefaultSelected         bool                `json:"defaultSelected"`
+	ConfirmationFingerprint string              `json:"confirmationFingerprint"`
 }
 
 // Pending retains the old choice even when the cumulative window loses it.
@@ -107,14 +107,14 @@ func (b Batch) Budget() Budget {
 func (s Source) ValidAt(now int64) bool { return now < s.ExpiresAt }
 
 func evaluate(binding model.AnimeBinding, rules model.AnimeRules, item *Item) error {
-	compiled, err := animeparse.CompileRules(rules)
+	compiled, err := CompileRules(rules)
 	if err != nil {
 		return err
 	}
 	return evaluateCompiled(binding, rules, compiled, item)
 }
 
-func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, compiled animeparse.SourceRules, item *Item) error {
+func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, compiled SourceRules, item *Item) error {
 	item.Steps = []Step{{Stage: "source", Result: "passed"}}
 	stop := func(stage, result, code string) {
 		item.Steps = append(item.Steps, Step{stage, result, code})
@@ -173,7 +173,7 @@ func MatchesRelease(binding model.AnimeBinding, rules model.AnimeRules, release 
 // CompileMatcher shares the execution rules without recompiling expressions
 // for each row of a local coverage check.
 func CompileMatcher(binding model.AnimeBinding, rules model.AnimeRules) (func(model.AnimeRelease) (bool, error), error) {
-	compiled, err := animeparse.CompileRules(rules)
+	compiled, err := CompileRules(rules)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 	// known dates the coarsest represented precision governs the source T0.
 	precision := int64(0)
 	seen := make(map[string]bool, len(page.Releases))
-	compiled, err := animeparse.CompileRules(config.Rules)
+	compiled, err := CompileRules(config.Rules)
 	if err != nil {
 		return out, err
 	}
@@ -258,7 +258,7 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 		if err != nil {
 			return out, fmt.Errorf("parse preview title: %w", err)
 		}
-		published, err := animeparse.Published(row.PublishedRaw, row.AlternatePublishedRaw, page.ObservedAt)
+		published, err := Published(row.PublishedRaw, row.AlternatePublishedRaw, page.ObservedAt)
 		if err != nil {
 			return out, fmt.Errorf("parse preview publication: %w", err)
 		}
@@ -269,8 +269,8 @@ func buildSource(c Config, ref string, page mikan.SourcePage, now int64, rankHis
 		if err != nil {
 			return out, err
 		}
-		r := model.AnimeRelease{Provider: page.Source.Site(), PostKey: row.PostKey, Title: row.Title, TimeVersion: animeparse.TimeVersion,
-			PublishedAt: published.UnixMillis, Parse: parse, ParserVersion: animeparse.ParserVersion, ContentFingerprint: content, ObservedAt: page.ObservedAt.UnixMilli()}
+		r := model.AnimeRelease{Provider: page.Source.Site(), PostKey: row.PostKey, Title: row.Title, TimeVersion: TimeVersion,
+			PublishedAt: published.UnixMillis, Parse: parse, ParserVersion: releaseparse.ParserVersion, ContentFingerprint: content, ObservedAt: page.ObservedAt.UnixMilli()}
 		if row.OriginalGUID != "" {
 			value := row.OriginalGUID
 			r.OriginalGUID = &value

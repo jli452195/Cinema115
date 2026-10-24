@@ -6,8 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"strm115/backend/internal/animeparse"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 // Only numbering metadata is synthetic. Feed fixtures below retain actual
@@ -85,7 +86,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 			observed, organized := make([]string, 0, len(feed.Rows)), make([]string, 0, len(feed.Rows))
 			episodes, published := make(map[int]bool), 0
 			for _, row := range feed.Rows {
-				parsed, err := animeparse.Title(row.Title)
+				parsed, err := releaseparse.Title(row.Title)
 				if err != nil || parsed.Kind != row.Kind || row.Kind == "episode" && (parsed.Episode == nil || *parsed.Episode != row.Episode) || row.Kind != "episode" && parsed.Episode != nil {
 					t.Fatalf("%s: %q: %+v, %v; want %s/%d", feed.URL, row.Title, parsed, err, row.Kind, row.Episode)
 				}
@@ -141,7 +142,7 @@ func TestAnimeSourceProgressRealThreeSiteFeeds(t *testing.T) {
 			}
 			if feed.Name == "mikan-rezero-dual" {
 				for _, pattern := range []string{`\[(\d+)\]\[3rd`, `\[3rd - (\d+)\]`} {
-					rules, err := animeparse.CompileRules(model.AnimeRules{EpisodePattern: pattern, EpisodeGroup: 1})
+					rules, err := preview.CompileRules(model.AnimeRules{EpisodePattern: pattern, EpisodeGroup: 1})
 					if err != nil {
 						t.Fatal(err)
 					}

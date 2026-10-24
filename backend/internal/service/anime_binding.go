@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	"strm115/backend/internal/anime/binding"
-	"strm115/backend/internal/animeparse"
+	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 var ErrAnimeBindingInput = errors.New("动漫篇章或来源确认参数无效")
@@ -321,7 +322,7 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 			if len(out.RangePreview) > 0 && *out.RangePreview[0].SourceEpisode == n {
 				continue
 			}
-			projection, err := binding.Project(out.Binding, model.AnimeReleaseParse{SchemaVersion: model.AnimeSchemaVersion, Kind: "episode", Episode: &n})
+			projection, err := binding.Project(out.Binding, releaseparse.Result{SchemaVersion: releaseparse.SchemaVersion, Kind: "episode", Episode: &n})
 			if err != nil {
 				return out, fmt.Errorf("project anime source range: %w", err)
 			}
@@ -332,22 +333,22 @@ func (s *AnimeBindingService) CheckBinding(ctx context.Context, budget *AnimeSou
 }
 
 type AnimeBindingRelease struct {
-	PostKey       string                  `json:"postKey"`
-	Title         string                  `json:"title"`
-	Parse         model.AnimeReleaseParse `json:"parse"`
-	ParserVersion int64                   `json:"parserVersion"`
-	Projection    binding.Projection      `json:"projection"`
-	SpecKey       string                  `json:"specKey"`
-	SizeRaw       string                  `json:"sizeRaw"`
-	PublishedRaw  string                  `json:"publishedRaw"`
+	PostKey       string              `json:"postKey"`
+	Title         string              `json:"title"`
+	Parse         releaseparse.Result `json:"parse"`
+	ParserVersion int64               `json:"parserVersion"`
+	Projection    binding.Projection  `json:"projection"`
+	SpecKey       string              `json:"specKey"`
+	SizeRaw       string              `json:"sizeRaw"`
+	PublishedRaw  string              `json:"publishedRaw"`
 }
 
 type AnimeSpecOption struct {
-	Match []string        `json:"match"`
-	Key   string          `json:"key"`
-	Label string          `json:"label"`
-	Spec  model.AnimeSpec `json:"spec"`
-	Count int             `json:"count"`
+	Match []string          `json:"match"`
+	Key   string            `json:"key"`
+	Label string            `json:"label"`
+	Spec  releaseparse.Spec `json:"spec"`
+	Count int               `json:"count"`
 }
 
 type AnimeBindingPreview struct {
@@ -365,7 +366,7 @@ type AnimeBindingPreview struct {
 // PreviewBinding optionally follows metadata confirmation with one bounded
 // single-group RSS read. It explains scope/numbering only, never selects rows.
 func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeSourceBudget, in AnimeBindingInput) (AnimeBindingPreview, error) {
-	out := AnimeBindingPreview{Releases: []AnimeBindingRelease{}, Profiles: []AnimeSpecOption{}, SpecVersion: animeparse.SpecVersion}
+	out := AnimeBindingPreview{Releases: []AnimeBindingRelease{}, Profiles: []AnimeSpecOption{}, SpecVersion: releaseparse.SpecVersion}
 	check, err := s.CheckBinding(ctx, budget, in)
 	out.AnimeBindingCheck = check
 	if err != nil {
@@ -383,7 +384,7 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		parsed, err := animeparse.Title(release.Title)
+		parsed, err := releaseparse.Title(release.Title)
 		if err != nil {
 			return out, fmt.Errorf("parse anime binding example: %w", err)
 		}
@@ -391,7 +392,7 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 		if err != nil {
 			return out, fmt.Errorf("project anime binding example: %w", err)
 		}
-		key := animeparse.SpecKey(parsed.Spec)
+		key := releaseparse.SpecKey(parsed.Spec)
 		if parsed.SpecAmbiguous {
 			out.ProfileReviewCount++
 		}
@@ -400,12 +401,12 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 				out.Profiles[index].Count++
 			} else if len(out.Profiles) < 12 {
 				profileIndexes[key] = len(out.Profiles)
-				out.Profiles = append(out.Profiles, AnimeSpecOption{Match: animeparse.SpecPatterns(parsed.Spec), Key: key, Label: animeparse.SpecLabel(parsed.Spec), Spec: parsed.Spec, Count: 1})
+				out.Profiles = append(out.Profiles, AnimeSpecOption{Match: preview.SpecPatterns(parsed.Spec), Key: key, Label: releaseparse.SpecLabel(parsed.Spec), Spec: parsed.Spec, Count: 1})
 			} else {
 				out.ProfilesTruncated = true
 			}
 		}
-		out.Releases = append(out.Releases, AnimeBindingRelease{PostKey: release.PostKey, Title: release.Title, Parse: parsed, ParserVersion: animeparse.ParserVersion, Projection: projection, SpecKey: key, SizeRaw: release.SizeRaw, PublishedRaw: release.PublishedRaw})
+		out.Releases = append(out.Releases, AnimeBindingRelease{PostKey: release.PostKey, Title: release.Title, Parse: parsed, ParserVersion: releaseparse.ParserVersion, Projection: projection, SpecKey: key, SizeRaw: release.SizeRaw, PublishedRaw: release.PublishedRaw})
 	}
 	return out, nil
 }

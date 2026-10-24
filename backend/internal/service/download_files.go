@@ -12,7 +12,7 @@ import (
 
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/p115"
-	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
@@ -27,7 +27,7 @@ type DownloadResourceInput struct {
 }
 
 type DownloadFileSpec struct {
-	model.AnimeSpec
+	releaseparse.Spec
 	Fansub string `json:"fansub,omitempty"`
 }
 
@@ -154,7 +154,7 @@ func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles
 		f := OrganizeFile{ShareFile: p115.ShareFile{ID: file.Path, Name: path.Base(file.Path), Size: file.Size}, ParentID: path.Dir(file.Path), SourcePath: "/" + file.Path, MediaType: kind, Season: 1}
 		if kind == "video" {
 			organizeFileNumbering(&f)
-			out.Specs[f.ID] = DownloadFileSpec{AnimeSpec: resourceSpecification(f.Name), Fansub: downloadFansub(f.Name)}
+			out.Specs[f.ID] = DownloadFileSpec{Spec: resourceSpecification(f.Name), Fansub: downloadFansub(f.Name)}
 			out.Files = append(out.Files, f)
 		}
 		media = append(media, f)

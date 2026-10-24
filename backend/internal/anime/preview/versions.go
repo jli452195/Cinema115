@@ -4,8 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"strm115/backend/internal/animeparse"
-	"strm115/backend/internal/model"
+	"strm115/backend/internal/releaseparse"
 )
 
 // VersionPolicyVersion is part of preview fingerprints, independently of the
@@ -14,11 +13,11 @@ const VersionPolicyVersion int64 = 1
 
 // EpisodeEdition is scoped by the caller to one source/publisher. Specifications
 // remain distinct: a different language, resolution or codec is not an upgrade.
-func EpisodeEdition(parsed model.AnimeReleaseParse) string {
+func EpisodeEdition(parsed releaseparse.Result) string {
 	if parsed.Kind != "episode" || parsed.Episode == nil || parsed.SpecAmbiguous {
 		return ""
 	}
-	return strconv.Itoa(*parsed.Episode) + ":" + animeparse.SpecKey(parsed.Spec)
+	return strconv.Itoa(*parsed.Episode) + ":" + releaseparse.SpecKey(parsed.Spec)
 }
 
 // ReleaseVersion never guesses an unnumbered correction's revision. Multiple
