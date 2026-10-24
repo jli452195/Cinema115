@@ -39,7 +39,8 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 .anime-floating[open] { display: flex; flex-direction: column; }
 .anime-floating-config { width: min(820px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); }
 .anime-floating-config .anime-floating-body { scrollbar-gutter: stable; }
-.anime-floating-organize { width: min(1040px, calc(100vw - 32px)); }
+.anime-floating-organize { width: min(1040px, calc(100vw - 32px)); height: min(880px, calc(100dvh - 48px)); }
+.anime-floating-organize .anime-floating-body { scrollbar-gutter: stable; }
 .anime-floating-preview { width: min(1600px, calc(100vw - 40px)); height: min(760px, calc(100dvh - 40px)); max-height: calc(100dvh - 40px); }
 .anime-floating-preview .anime-floating-body { display: flex; overflow: hidden; padding-bottom: 4px; }
 .anime-floating-nested::backdrop { background: rgb(15 23 42 / .16); backdrop-filter: none; }
@@ -55,4 +56,5 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 .anime-floating button:focus-visible { outline: 2px solid var(--ae-blue, #2563eb); outline-offset: 2px; }
 @media (max-width: 639px) { .anime-floating { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); border-radius: 18px; } .anime-floating-config { height: calc(100dvh - 24px); } .anime-floating-toolbar { padding-inline: 18px 10px; } .anime-floating-body { padding: 8px 18px 18px; } .anime-floating-footer { padding: 12px 18px max(16px, env(safe-area-inset-bottom)); } }
 @media (max-width: 639px), (pointer: coarse) { .anime-floating { --ae-control-height: 44px; --ae-control-font: 16px; --ae-control-padding: 8px 10px; } }
+@media (max-width: 639px) { .anime-floating-organize { height: calc(100dvh - 24px); } }
 </style>

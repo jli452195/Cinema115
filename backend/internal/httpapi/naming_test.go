@@ -99,8 +99,8 @@ func TestNamingTemplateHTTP(t *testing.T) {
 	call("POST", "/api/admin/naming/preview", token, `{"template":`+string(encoded)+`,"items":[`+strings.Repeat(`{},`, 50)+`{}]}`, 400)
 	call("POST", "/api/admin/naming/preview", token, `{"template":`+string(encoded)+`,"items":[{}],"extra":true}`, 400)
 	call("POST", "/api/admin/naming/preview", token, strings.Repeat(" ", 256<<10)+`{}`, 400)
-	mediaPreview := call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[{"id":"one","name":"Show.1080p.MKV","season":1,"episode":13,"endEpisode":14},{"id":"invalid","name":"Unknown.mkv"}]}`, 200)
-	if err := json.Unmarshal(mediaPreview["items"], &items); err != nil || len(items) != 2 || items[0].Result.Name != "作品.S01E13-E14.1080p.mkv" || items[1].Error == "" {
+	mediaPreview := call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[{"id":"one","name":"Show.S01E13-E14.1080p.MKV","season":1,"episode":13},{"id":"invalid","name":"Unknown.mkv"}]}`, 200)
+	if err := json.Unmarshal(mediaPreview["items"], &items); err != nil || len(items) != 2 || items[0].Result.Name != "作品.S01E13.1080p.mkv" || items[1].Error == "" {
 		t.Fatal("media preview", string(mediaPreview["items"]), err)
 	}
 	call("POST", "/api/admin/naming/media-preview", token, `{"kind":"tv","tmdbId":42,"files":[],"extra":true}`, 400)

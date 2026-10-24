@@ -50,7 +50,6 @@ type OrganizeFile struct {
 	Season       int                     `json:"season"`
 	Episode      int                     `json:"episode"`
 	EndEpisode   int                     `json:"endEpisode,omitempty"`
-	Suffix       string                  `json:"suffix"`
 	NamingValues map[naming.Field]string `json:"namingValues,omitempty"`
 }
 
@@ -70,11 +69,9 @@ type OrganizeScanInput struct {
 }
 
 type OrganizeSelection struct {
-	ID         string `json:"id"`
-	Season     int    `json:"season"`
-	Episode    int    `json:"episode"`
-	EndEpisode int    `json:"endEpisode"`
-	Suffix     string `json:"suffix"`
+	ID      string `json:"id"`
+	Season  int    `json:"season"`
+	Episode int    `json:"episode"`
 }
 
 type OrganizePreviewInput struct {

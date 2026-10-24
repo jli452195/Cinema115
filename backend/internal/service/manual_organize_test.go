@@ -419,7 +419,7 @@ func TestManualOrganizeRejectForgedFilesAndEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, selection := range []OrganizeSelection{{ID: "999", Season: 1, Episode: 1}, {ID: "101", Season: 1, Episode: 0}, {ID: "101", Season: 1, Episode: 10001}, {ID: "101", Season: -1, Episode: 1}, {ID: "101", Season: 1001, Episode: 1}, {ID: "101", Season: 1, Episode: 2, EndEpisode: 1}, {ID: "101", Season: 1, Episode: 1, EndEpisode: 10001}} {
+	for _, selection := range []OrganizeSelection{{ID: "999", Season: 1, Episode: 1}, {ID: "101", Season: 1, Episode: 0}, {ID: "101", Season: 1, Episode: 10001}, {ID: "101", Season: -1, Episode: 1}, {ID: "101", Season: 1001, Episode: 1}} {
 		if _, err := s.Preview(context.Background(), id, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{selection}}); err == nil {
 			t.Fatal("接受了非法文件或季集", selection)
 		}

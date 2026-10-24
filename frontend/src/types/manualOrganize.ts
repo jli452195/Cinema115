@@ -51,9 +51,8 @@ export interface OrganizeFile extends DriveFile {
   season: number
   episode: number
   endEpisode?: number
-  suffix: string
 }
-export interface OrganizeRow extends Omit<OrganizeFile, 'endEpisode'> { selected: boolean; endEpisode: number | '' }
+export interface OrganizeRow extends OrganizeFile { selected: boolean; episodeSpan: number }
 export interface OrganizeSubtitle { file: OrganizeFile; videoId?: string; tail?: string }
 export interface OrganizeItem {
   stem?: string

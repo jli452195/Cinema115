@@ -269,7 +269,7 @@ func TestOrganizePreviewsAcceptManualNumberingWithoutSeasonRequests(t *testing.T
 	metadata := &organizeReferenceMetadata{}
 	s.Organize.metadata = metadata
 	manual := NewManualOrganize(s.Organize)
-	for _, selection := range []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}, {ID: "101", Season: 1, Episode: 12, EndEpisode: 13}, {ID: "101", Season: 9, Episode: 99}} {
+	for _, selection := range []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}, {ID: "101", Season: 1, Episode: 12}, {ID: "101", Season: 9, Episode: 99}} {
 		job := organizeTestPreview(t, manual, in.AccountID, []OrganizeSelection{selection})
 		if !strings.Contains(job.Items[0].Name, fmt.Sprintf("S%02dE%02d", selection.Season, selection.Episode)) {
 			t.Fatal("manual numbering changed", job)

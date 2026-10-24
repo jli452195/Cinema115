@@ -16,7 +16,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     page.on('pageerror', e => errors.push(e.message))
     let total = 4, held = 2, release, fail = 3, lost = true, titleMode = false, duplicate = false
     const resource = n => ({ provider: 'dmhy', providerId: String(n), title: `[测试字幕组] 作品 - ${titleMode && n === 2 ? '06-12' : n < 4 ? '01' : String(n).padStart(2, '0')} [${n === 2 ? '720p' : '1080p'}][${n === 2 ? '繁体' : '简体'}]`, magnet: `magnet:?xt=urn:btih:${hash(duplicate && n === 4 ? 3 : n)}`, size: 1024, createdAt: '2026-10-24T00:00:00Z', publisher: { id: 2, name: '测试字幕组' }, fansub: { id: 2, name: '测试字幕组' } })
-    const file = n => ({ id: 'same/Show.mkv', name: 'Show.mkv', sourcePath: '/same/Show.mkv', parentId: 'same', directory: false, size: 1200, mediaType: 'video', season: 1, episode: n < 4 ? 1 : n, suffix: '' })
+    const file = n => ({ id: 'same/Show.mkv', name: 'Show.mkv', sourcePath: '/same/Show.mkv', parentId: 'same', directory: false, size: 1200, mediaType: 'video', season: 1, episode: n < 4 ? 1 : n })
     await page.route('**/api/**', async route => {
       const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON()
       calls.push({ endpoint, body })
@@ -110,7 +110,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.waitFor()
     await editor.getByText('批量整理 4 项资源，包含外层筛选隐藏的 1 项', { exact: true }).waitFor()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 1)
-    await editor.locator('[data-organize-file]').first().getByRole('textbox').fill('人工修正')
+    await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).fill('9')
     // Editing already prepared files is possible while the next request waits.
     await page.getByRole('button', { name: '停止解析', exact: true }).click()
     await page.getByRole('button', { name: '继续解析', exact: true }).waitFor()
@@ -119,15 +119,16 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.getByRole('alert').filter({ hasText: '模拟种子读取失败' }).waitFor()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 3)
     assert.equal(await submit().isDisabled(), true)
-    assert.equal(await editor.locator('[data-organize-file]').first().getByRole('textbox').inputValue(), '人工修正')
+    assert.equal(await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).inputValue(), '9')
     fail = 0
     await page.getByRole('button', { name: '重试解析', exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 4)
-    const names = await editor.locator('[data-organize-file]').getByRole('textbox').evaluateAll(inputs => inputs.map(input => input.value))
-    assert.deepEqual(names, ['人工修正', '', '', ''])
+    const episodes = await editor.locator('[data-organize-file]').getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).evaluateAll(inputs => inputs.map(input => input.value))
+    assert.deepEqual(episodes, ['9', '1', '4', '1'])
+    assert.equal(await editor.getByRole('textbox', { name: /自定义标记/ }).count(), 0)
     await editor.getByRole('link', { name: '公共命名模板', exact: true }).waitFor()
     assert.equal(await editor.getByLabel('字幕语言', { exact: true }).count(), 0)
-    await editor.locator('[data-organize-file]').first().getByRole('textbox').fill('')
+    await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).fill('1')
     await editor.getByRole('alert').filter({ hasText: '2 个文件目标重名' }).first().waitFor()
     // Resource 3 is the same version of episode 1; remove only from this editor.
     await editor.locator('.resource-status > summary').click()
@@ -149,7 +150,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await closeEditor()
     await page.getByRole('textbox', { name: isMikan ? '筛选蜜柑结果' : '筛选Garden结果' }).fill('')
     await page.getByRole('button', { name: '批量整理（1）', exact: true }).waitFor()
-    passed.push('hidden selections, progressive edit, pause/continue, failed parse retry, per-file tags, collisions, editor-only removal and atomic idempotent submit')
+    passed.push('hidden selections, progressive edit, pause/continue, failed parse retry, per-file numbering, collisions, editor-only removal and atomic idempotent submit')
     // A larger batch must be parsed exactly once, then sent in one request.
     await page.keyboard.press('Escape'); await search.waitFor({ state: 'detached' })
     total = 61; titleMode = true
@@ -180,6 +181,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       const footer = await editor.locator('.anime-floating-footer').boundingBox()
       assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
       await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
+      assert.equal(await editor.evaluate(el => {
+        const body = el.querySelector('.anime-floating-body')
+        return Math.abs(el.querySelector('.sticky').getBoundingClientRect().top - body.getBoundingClientRect().top - parseFloat(getComputedStyle(body).paddingTop)) <= 1
+      }), true)
+      assert.equal(await editor.evaluate(el => Math.abs(el.querySelector('.directory-heading-sticky').getBoundingClientRect().top - el.querySelector('.sticky').getBoundingClientRect().bottom) <= 1), true)
       await submit().click()
       await page.getByText('任务已创建', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files') - before, 61)
@@ -267,6 +273,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await search.getByRole('button', { name: '115 整理', exact: true }).first().click()
     await editor.waitFor()
     assert.equal(await editor.locator('[data-organize-file]').getByRole('checkbox').isChecked(), true)
+    await editor.locator('.organize-help > summary').click()
     await editor.getByText(/1 项单集按标题预览命名/).waitFor()
     assert.equal(await editor.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
     await submit().click()

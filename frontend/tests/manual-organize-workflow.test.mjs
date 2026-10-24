@@ -93,24 +93,24 @@ test('manual scanning and sequential numbering preserve joined spans through pre
   h.scanFiles([{ ...video('31', 1), endEpisode: 2 }, { ...video('32', 3), endEpisode: 4 }])
   await s.scan(entry)
   await s.choose(media)
-  assert.deepEqual(s.rows.map(r => [r.episode, r.endEpisode]), [[1, 2], [3, 4]])
+  assert.deepEqual(s.rows.map(r => [r.episode, r.episodeSpan]), [[1, 2], [3, 2]])
   s.numberEpisodes()
-  assert.deepEqual(s.rows.map(r => [r.episode, r.endEpisode]), [[1, 2], [3, 4]])
+  assert.deepEqual(s.rows.map(r => [r.episode, r.episodeSpan]), [[1, 2], [3, 2]])
   s.startEpisode = 12
   s.numberEpisodes()
   s.numberEpisodes()
-  assert.deepEqual(s.rows.map(r => [r.episode, r.endEpisode]), [[12, 13], [14, 15]])
+  assert.deepEqual(s.rows.map(r => [r.episode, r.episodeSpan]), [[12, 2], [14, 2]])
   await s.makePreview()
-  assert.deepEqual(h.requests.findLast(r => r.pathname.endsWith('/preview')).body.files.map(f => [f.episode, f.endEpisode]), [[12, 13], [14, 15]])
+  assert.deepEqual(h.requests.findLast(r => r.pathname.endsWith('/preview')).body.files.map(f => [f.episode, f.endEpisode]), [[12, undefined], [14, undefined]])
   s.startEpisode = 10000
   s.numberEpisodes()
   assert.ok(s.error)
-  assert.deepEqual(s.rows.map(r => [r.episode, r.endEpisode]), [[12, 13], [14, 15]])
+  assert.deepEqual(s.rows.map(r => [r.episode, r.episodeSpan]), [[12, 2], [14, 2]])
   s.startEpisode = 1
-  s.rows[1].endEpisode = 13
+  s.rows[1].episodeSpan = 0
   s.numberEpisodes()
   assert.ok(s.error)
-  assert.deepEqual(s.rows.map(r => [r.episode, r.endEpisode]), [[12, 13], [14, 13]])
+  assert.deepEqual(s.rows.map(r => [r.episode, r.episodeSpan]), [[12, 2], [14, 0]])
 })
 
 test('manual continuation stays in the original record and reconciles a lost queued response', async t => {
@@ -153,12 +153,12 @@ test('step navigation keeps edits and does not allow unavailable steps', async t
   s.batchSeason = 2
   s.startEpisode = 5
   s.numberEpisodes()
-  s.rows[0].suffix = '4K'
+  s.rows[0].season = 3
   await s.scrollToStep(1)
   await s.scrollToStep(2)
   await s.scrollToStep(3)
-  assert.deepEqual(s.rows.map(row => [row.season, row.episode]), [[2, 5], [2, 6]])
-  assert.equal(s.rows[0].suffix, '4K')
+  assert.deepEqual(s.rows.map(row => [row.season, row.episode]), [[3, 5], [2, 6]])
+  assert.equal(s.rows[0].season, 3)
   assert.equal(s.media.id, 100)
   assert.equal(requests.filter(r => r.method === 'PUT').length, 0)
 })
@@ -171,7 +171,7 @@ test('editing invalidates preview, conflicts prevent execution, valid submission
   assert.equal(s.activeStep, 4)
   await s.scrollToStep(3)
   assert.equal(s.preview.id, 'preview-1')
-  s.rows[0].suffix = '1080p'
+  s.rows[0].season = 3
   assert.equal(s.preview, undefined)
   await s.scrollToStep(4)
   assert.equal(s.activeStep, 3)
@@ -318,13 +318,13 @@ test('saving global numbering invalidates organizer preview, preserves edits and
   const h = await harness(t), s = h.state
   await s.scan(entry)
   await s.choose(media)
-  s.rows[0].suffix = '4K'
+  s.rows[0].season = 3
   await s.makePreview()
   h.metadata({ ...media, numbering: { groupId: 'group12', name: 'Season', type: 6, revision: 2 }, seasons: [{ number: 2, episodeCount: 12, name: 'Season 2' }] })
   await s.numberingSaved()
   assert.equal(s.activeStep, 3)
   assert.equal(s.preview, undefined)
-  assert.equal(s.rows[0].suffix, '4K')
+  assert.equal(s.rows[0].season, 3)
   assert.equal(s.media.numbering.revision, 2)
   await s.makePreview()
   assert.equal(h.requests.findLast(r => r.pathname.endsWith('/preview')).body.numberingRevision, 2)

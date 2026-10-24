@@ -97,9 +97,9 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32, Suffix: "v3"}}
+			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32}}
 			plan, err := s.Preview(context.Background(), in)
-			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[简体]-字幕组-v3" {
+			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[简体]-字幕组" {
 				t.Fatal("title-only plan guessed an extension or discarded mapping", plan, err)
 			}
 			job, err := s.Start(plan.ID)
@@ -218,7 +218,7 @@ func TestDownloadTitleAmbiguityStopsOnlyItsOwnJobWithoutRetryReads(t *testing.T)
 func TestDownloadTitleConflictsWithKnownExtensionsAndQueuedNames(t *testing.T) {
 	s, drive, _, _, _, in := gardenFixture(t)
 	in.DownloadResourceInput = titleResource("garden", "Show [12]")
-	in.Files = []OrganizeSelection{{ID: "title", Season: 1, Episode: 12, Suffix: "Group"}}
+	in.Files = []OrganizeSelection{{ID: "title", Season: 1, Episode: 12}}
 	first, err := s.Preview(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)

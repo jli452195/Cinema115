@@ -256,7 +256,7 @@ func gardenFixture(t *testing.T) (*DownloadOrganize, *organizeFakeDrive, *cloudA
 	settings := &CloudDownloadSettings{value: cloudDownloadDocument{CloudDownloadConfig: CloudDownloadConfig{AccountID: account, TargetCID: "10", TargetPath: "/来源"}}}
 	tracker := &gardenTrackerFake{}
 	s := NewDownloadOrganize(o.OrganizeEngine, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
-	in := DownloadOrganizeInput{DownloadResourceInput: DownloadResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1, Suffix: "Group"}}}
+	in := DownloadOrganizeInput{DownloadResourceInput: DownloadResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1}}}
 	return s, drive, adder, tracker, transport, in
 }
 
@@ -417,7 +417,7 @@ func TestGardenCompanionSubtitlesShareVideoBatch(t *testing.T) {
 	s, drive, _, tracker, transport, in := gardenFixture(t)
 	const stem = "[Group] Show [01-02]"
 	transport.names = []string{"show/" + stem + ".mkv", "show/" + stem + ".zh-CN.ASS", "show/" + stem + ".zh-TW.default.srt", "show/" + stem + ".en.idx", "show/" + stem + ".en.sub", "show/unmatched.ass", "show/subtitles.zip", "show/Show [03].mkv", "show/Show [03].ass"}
-	in.Files = []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 13, EndEpisode: 14, Suffix: "Group"}}
+	in.Files = []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 13}}
 	files, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil || len(files.Files) != 2 || len(files.Subtitles) != 6 {
 		t.Fatal("subtitle manifest lost files", files, err)
@@ -430,7 +430,7 @@ func TestGardenCompanionSubtitlesShareVideoBatch(t *testing.T) {
 		t.Fatal("preview added network requests or writes", transport.paths, drive.listCalls)
 	}
 	for _, item := range plan.Items {
-		if !strings.HasPrefix(item.Name, "测试作品.S01E13-E14-Group.") || item.Directory != plan.Items[0].Directory || item.Conflict != "" {
+		if !strings.HasPrefix(item.Name, "测试作品.S01E13.") || item.Directory != plan.Items[0].Directory || item.Conflict != "" {
 			t.Fatal("subtitle naming/directory differs from its video", item)
 		}
 	}
@@ -487,9 +487,9 @@ func TestGardenSubtitlesNeverGuessDirectoriesOrExcludedOwners(t *testing.T) {
 	if _, err := s.Start(plan.ID); err == nil {
 		t.Fatal("conflicting subtitles must prevent starting")
 	}
-	in.Files = []OrganizeSelection{{ID: "show/a.extended.mkv", Season: 2, Episode: 3, Suffix: "BD"}}
+	in.Files = []OrganizeSelection{{ID: "show/a.extended.mkv", Season: 2, Episode: 3}}
 	plan, err = s.Preview(context.Background(), in)
-	if err != nil || len(plan.Items) != 2 || plan.Items[1].Name != "测试作品.S02E03-BD.zh.ass" {
+	if err != nil || len(plan.Items) != 2 || plan.Items[1].Name != "测试作品.S02E03.zh.ass" {
 		t.Fatal("changing video selection did not update subtitle plan", plan, err)
 	}
 }
@@ -582,7 +582,7 @@ func TestGardenFailuresDoNotResubmitOrRename(t *testing.T) {
 
 func TestGardenPreviewConflictsUnsupportedAndRestart(t *testing.T) {
 	s, _, _, _, transport, in := gardenFixture(t)
-	in.Files = append(in.Files, OrganizeSelection{ID: transport.names[1], Season: 1, Episode: 1, Suffix: "Group"})
+	in.Files = append(in.Files, OrganizeSelection{ID: transport.names[1], Season: 1, Episode: 1})
 	preview, err := s.Preview(context.Background(), in)
 	if err != nil || preview.Items[0].Conflict == "" || preview.Items[1].Conflict == "" {
 		t.Fatal("duplicate target missed", preview, err)

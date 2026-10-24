@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"strm115/backend/internal/client/tmdb"
@@ -123,7 +122,7 @@ func optionalNamingEnglish(ctx context.Context, metadata any, template naming.Te
 }
 
 func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error) {
-	if p.snapshot.Template.Kind == naming.TV && (file.Season < 0 || file.Season > 1000 || file.Episode < 1 || file.Episode > 10000 || file.EndEpisode != 0 && (file.EndEpisode < file.Episode || file.EndEpisode > 10000)) {
+	if p.snapshot.Template.Kind == naming.TV && (file.Season < 0 || file.Season > 1000 || file.Episode < 1 || file.Episode > 10000) {
 		return naming.Result{}, fmt.Errorf("%w：请填写有效目标季集", ErrOrganizeInput)
 	}
 	values := make(map[naming.Field]string, len(file.NamingValues)+5)
@@ -140,13 +139,11 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 	if len(p.detail.Date) >= 4 {
 		values[naming.Year] = p.detail.Date[:4]
 	}
-	values[naming.Custom] = strings.TrimSpace(file.Suffix)
 	data := naming.Data{Values: values, OriginalName: file.Name, TitleOnly: file.TitleOnly}
 	if p.snapshot.Template.Kind == naming.TV {
+		// Combined episodes keep their span for numbering, but name the file
+		// after its starting episode (S01E01-02 becomes S01E01).
 		data.Season, data.Episode = &file.Season, &file.Episode
-		if file.EndEpisode != 0 {
-			data.EndEpisode = &file.EndEpisode
-		}
 	}
 	return p.renderer.Render(data)
 }

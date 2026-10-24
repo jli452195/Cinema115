@@ -48,7 +48,7 @@ func downloadBatchFixture(t *testing.T, count int) (*DownloadOrganize, *organize
 		if err != nil {
 			t.Fatal(err)
 		}
-		input.Resources[i] = DownloadOrganizeInput{DownloadResourceInput: source, ManifestID: files.ManifestID, Files: []OrganizeSelection{{ID: files.Files[0].ID, Season: 1, Episode: i + 1, Suffix: "Group"}}}
+		input.Resources[i] = DownloadOrganizeInput{DownloadResourceInput: source, ManifestID: files.ManifestID, Files: []OrganizeSelection{{ID: files.Files[0].ID, Season: 1, Episode: i + 1}}}
 	}
 	return s, drive, input, calls
 }
@@ -117,7 +117,8 @@ func TestDownloadBatchRejectsCrossResourceConflictsAndAllowsVersions(t *testing.
 	if _, err = s.StartBatch(preview.ID); !errors.Is(err, ErrOrganizeInput) || len(s.live) != 0 || drive.creates != 0 {
 		t.Fatal("conflicting batch caused side effects", err)
 	}
-	input.Resources[1].Files[0].Suffix = "OtherGroup - 繁体 - 720p"
+	input.Resources[1].Fansub = "OtherGroup"
+	input.Resources[1].ManifestID = ""
 	preview, err = s.PreviewBatch(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +127,7 @@ func TestDownloadBatchRejectsCrossResourceConflictsAndAllowsVersions(t *testing.
 		t.Fatal("different versions of one episode should coexist", err)
 	}
 	// A later batch cannot reserve a target already held by queued work.
-	input.Resources[1].Files[0].Suffix = "Group"
+	input.Resources[1].Fansub = ""
 	input.Resources = input.Resources[1:]
 	input.Resources[0].DownloadResourceInput.Magnet = fmt.Sprintf("magnet:?xt=urn:btih:%040x", 3)
 	files, err := s.Files(context.Background(), input.Resources[0].DownloadResourceInput)

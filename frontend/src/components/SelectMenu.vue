@@ -4,7 +4,7 @@ import { IconChevronDown } from '@tabler/icons-vue'
 
 interface SelectOption { value: string; label: string }
 
-const props = defineProps<{ modelValue: string; options: SelectOption[]; disabled?: boolean; label: string; placeholder?: string; variant?: 'anime' }>()
+const props = defineProps<{ modelValue: string; options: SelectOption[]; disabled?: boolean; label: string; placeholder?: string; variant?: 'anime'; menuMinWidth?: number }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string] }>()
 const root = ref<HTMLElement>(), button = ref<HTMLButtonElement>()
 const panel = ref<HTMLElement>(), panelStyle = ref<Record<string, string>>({})
@@ -20,7 +20,7 @@ async function show() {
   await nextTick()
   if (!open.value || !panel.value || !button.value) return
   const rect = button.value.getBoundingClientRect(), gap = 6, inset = 8
-  const width = Math.min(Math.max(rect.width, 160), innerWidth - inset * 2)
+  const width = Math.min(Math.max(rect.width, props.menuMinWidth || 160), innerWidth - inset * 2)
   const below = innerHeight - rect.bottom - gap - inset, above = rect.top - gap - inset
   const upward = below < Math.min(props.options.length * 44 + 8, 200) && above > below
   const maxHeight = Math.max(44, Math.min(264, upward ? above : below))
@@ -142,7 +142,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
 .select-menu-option { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; border-radius: 8px; text-align: left; color: var(--ae-muted, #475569); font-size: 13px; line-height: 1.6; cursor: pointer; }
 .select-menu-option.active { background: var(--ae-inset, #edf1f6); }
 .select-menu-option.selected { color: var(--ae-blue, #2563eb); font-weight: 600; }
-.select-menu-label { white-space: normal; overflow-wrap: anywhere; }
+.select-menu-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 639px) { .select-menu-option { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .transition-transform { transition: none; } }
 </style>

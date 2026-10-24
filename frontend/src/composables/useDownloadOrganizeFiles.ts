@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 import { magnetKey } from '../lib/cloud-download-batch'
+import { organizeFileRow } from '../utils/organizeNaming'
 import type { DownloadFiles, DownloadOrganizeResource, OrganizeFile, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
 
 export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganizeResource[], multiple: boolean, lifecycle: AbortSignal) {
@@ -19,7 +20,7 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
       const id = key(file.id)
       owners.set(id, { key: entry.key, id: file.id })
       sources[id] = file
-      rows.value.push({ ...file, id, selected: multiple || !!file.titleOnly, endEpisode: file.endEpisode || '', suffix: '' })
+      rows.value.push(organizeFileRow({ ...file, id }, multiple || !!file.titleOnly))
     }
     subtitles.value.push(...(data.subtitles || []).map(sub => ({ ...sub, file: { ...sub.file, id: key(sub.file.id) }, videoId: sub.videoId ? key(sub.videoId) : undefined })))
     entry.files = data
@@ -65,7 +66,7 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
     if (entry?.status === 'error') { entry.status = 'waiting'; entry.files = undefined; void parse() }
   }
   function resourceSelections() {
-    return active.value.map(entry => ({ ...entry.source, manifestId: entry.files?.manifestId, files: rows.value.filter(row => row.selected && owners.get(row.id)?.key === entry.key).map(row => ({ id: owners.get(row.id)!.id, season: row.season, episode: row.episode, endEpisode: Number(row.endEpisode) || 0, suffix: row.suffix })) })).filter(entry => entry.files.length)
+    return active.value.map(entry => ({ ...entry.source, manifestId: entry.files?.manifestId, files: rows.value.filter(row => row.selected && owners.get(row.id)?.key === entry.key).map(row => ({ id: owners.get(row.id)!.id, season: row.season, episode: row.episode })) })).filter(entry => entry.files.length)
   }
   const selectedKeys = computed(() => [...new Set(rows.value.filter(row => row.selected).map(row => owners.get(row.id)!.key))])
   for (const entry of states.value) if (entry.files) append(entry, entry.files)

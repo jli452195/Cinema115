@@ -4,7 +4,7 @@ import type { NamingKind, NamingRecord, NamingResult } from '../types/naming'
 
 interface MediaNamingInput {
   kind: NamingKind; tmdbId: number
-  files: { id: string; name: string; season: number; episode: number; endEpisode: number; suffix: string; titleOnly?: boolean; namingValues?: Record<string, string> }[]
+  files: { id: string; name: string; season: number; episode: number; titleOnly?: boolean; namingValues?: Record<string, string> }[]
   subtitles: { file: { id: string; name: string }; videoId?: string; tail?: string }[]
 }
 interface MediaNamingPreview { naming: NamingRecord; items: { id: string; result?: NamingResult; error?: string }[] }

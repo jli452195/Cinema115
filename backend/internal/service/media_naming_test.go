@@ -235,7 +235,7 @@ func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	metadata := &mediaNamingMetadata{}
 	s := MediaNaming{Templates: templates, Metadata: metadata}
 	input := MediaNamingInput{Kind: "tv", TMDBID: 42, Files: []MediaNamingFile{
-		{OrganizeSelection: OrganizeSelection{ID: "one", Season: 1, Episode: 13, EndEpisode: 14, Suffix: "v3"}, Name: "Show.720p.MKV"},
+		{OrganizeSelection: OrganizeSelection{ID: "one", Season: 1, Episode: 13}, Name: "Show.S01E13-E14.720p.MKV"},
 		{OrganizeSelection: OrganizeSelection{ID: "two", Season: 0, Episode: 2}, Name: "Show.1080p.mp4"},
 		{OrganizeSelection: OrganizeSelection{ID: "bad", Season: 1}, Name: "Unknown.mkv"},
 	}, Subtitles: []OrganizeSubtitle{{File: OrganizeFile{ShareFile: shareFile("sub", "Show.zh-TW.default.ASS")}, VideoID: "one", Tail: ".zh-TW.default"}}}
@@ -243,7 +243,7 @@ func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if templates.calls != 1 || metadata.calls != 1 || len(preview.Items) != 4 || preview.Items[0].Result.Name != "Original.S01E13-E14.720p.v3.mkv" || preview.Items[1].Result.Name != "Original.S00E02.1080p.mp4" || preview.Items[2].Error == "" || preview.Items[3].Result.Name != "Original.S01E13-E14.720p.v3.zh-TW.default.ass" {
+	if templates.calls != 1 || metadata.calls != 1 || len(preview.Items) != 4 || preview.Items[0].Result.Name != "Original.S01E13.720p.mkv" || preview.Items[1].Result.Name != "Original.S00E02.1080p.mp4" || preview.Items[2].Error == "" || preview.Items[3].Result.Name != "Original.S01E13.720p.zh-TW.default.ass" {
 		t.Fatalf("preview: %+v; reads %d/%d", preview.Items, templates.calls, metadata.calls)
 	}
 	// No TMDB episode-count ceiling and no cloud dependency in this service.
@@ -251,7 +251,7 @@ func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	files := make([]OrganizeFile, 0, 2)
 	selections := make([]OrganizeSelection, 0, 2)
 	for _, file := range input.Files[:2] {
-		files = append(files, OrganizeFile{ShareFile: shareFile(file.ID, file.Name), MediaType: "video"})
+		files = append(files, OrganizeFile{ShareFile: shareFile(file.ID, file.Name), MediaType: "video", Episode: 13, EndEpisode: 14})
 		selections = append(selections, file.OrganizeSelection)
 	}
 	plan, err := engine.buildPlan(context.Background(), OrganizeScan{Files: files}, OrganizePreviewInput{Kind: "tv", TMDBID: 42, Files: selections})
@@ -302,7 +302,7 @@ func TestManualNamingSnapshotRootAndRestart(t *testing.T) {
 	template.Filename = []naming.Block{{Field: naming.SeasonEpisode}}
 	templates := &mediaNamingTemplates{record: naming.Snapshot{Revision: 2, Template: template}}
 	s.templates = templates
-	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 13, EndEpisode: 14, Suffix: "v3"}})
+	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}})
 	want := plan.Items[0].Name
 	plan.Naming.Template.Filename[0].Prefix = "client-tamper"
 	templates.record.Revision++

@@ -14,8 +14,8 @@ import SelectMenu from '../components/SelectMenu.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
 import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
-import { directoryGroups } from '../utils/organizeSelection'
-import { applyOrganizeMapping } from '../utils/organizeNaming'
+import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
+import { applyOrganizeMapping, organizeFileRow } from '../utils/organizeNaming'
 import type { SubtitleImport } from '../types/subtitleImport'
 import { p115Request } from '../lib/p115-api'
 import { tmdbImageURL } from '../utils/tmdbImage'
@@ -241,7 +241,7 @@ async function scan(file: DriveFile) {
   scanId.value = data.id; selectedName.value = file.name
   scannedEntryKey = entryKey
   selectionRoot.value = file.directory ? `${currentSource.value.path.replace(/\/$/, '')}/${file.name}` : currentSource.value.path
-  rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => ({ ...f, selected: !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name), endEpisode: f.endEpisode || '' }))
+  rows.value = data.files.filter(f => f.mediaType === 'video').sort((a, b) => a.sourcePath.localeCompare(b.sourcePath, 'zh-CN', { numeric: true })).map(f => organizeFileRow(f, !/(?:^|[. _-])(sample|trailer)(?:[. _-]|$)/i.test(f.name)))
   if (!sameEntry) query.value = file.directory ? file.name : file.name.replace(/\.[^.]+$/, '')
   if (rows.value.length) await scrollToStep(media.value ? 3 : 2)
   notice.value = rows.value.length ? `已扫描 ${rows.value.length} 个视频，${media.value ? '已保留作品及季选择，请核对文件。' : '请指定 TMDB 作品。'}` : '所选条目中没有支持的视频文件。'
@@ -256,7 +256,7 @@ async function choose(item: MediaCardItem) {
   media.value = await tmdb(`detail/${item.kind}/${item.id}`)
   batchSeason.value = media.value?.seasons?.find(s => s.number > 0)?.number ?? 1
   await scrollToStep(3)
-  notice.value = `已选择《${media.value?.title}》，请核对文件${media.value?.kind === 'tv' ? '与季集编号' : '与自定义标记'}。`
+  notice.value = `已选择《${media.value?.title}》，请核对文件${media.value?.kind === 'tv' ? '与季集编号' : ''}。`
 }
 async function numberingSaved() {
   numberingOpen.value = false
@@ -290,7 +290,7 @@ async function search(page = 1) {
 function numberEpisodes() {
   error.value = ''
   try {
-    const ordered = directoryGroups(rows.value, selectionRoot.value).flatMap(group => group.rows)
+    const ordered = directoryFileRows(directoryGroups(rows.value, selectionRoot.value)[0]!)
     applyOrganizeMapping(ordered, {}, Number(batchSeason.value), 1, Number(startEpisode.value), true)
     notice.value = '已按当前顺序连续编号，保留连集跨度。'
   } catch (e) { error.value = e instanceof Error ? e.message : '编号设置无效' }
@@ -298,7 +298,7 @@ function numberEpisodes() {
 async function makePreview() {
   if (!media.value) return
   if (configDirty.value) throw new Error('请先保存目录设置，再扫描预览。')
-  preview.value = await request<OrganizeJob>(`preview?accountId=${encodeURIComponent(config.value.accountId)}`, { method: 'POST', body: JSON.stringify({ scanId: scanId.value, kind: media.value.kind, tmdbId: media.value.id, numberingRevision: media.value.numbering?.revision || 0, subtitles: subtitles.value, files: selectedRows.value.map(row => ({ id: row.id, season: Number(row.season), episode: Number(row.episode), endEpisode: Number(row.endEpisode), suffix: row.suffix })) }) }, 190000)
+  preview.value = await request<OrganizeJob>(`preview?accountId=${encodeURIComponent(config.value.accountId)}`, { method: 'POST', body: JSON.stringify({ scanId: scanId.value, kind: media.value.kind, tmdbId: media.value.id, numberingRevision: media.value.numbering?.revision || 0, subtitles: subtitles.value, files: selectedRows.value.map(row => ({ id: row.id, season: Number(row.season), episode: Number(row.episode) })) }) }, 190000)
   onlyConflicts.value = false
   await scrollToStep(4)
   notice.value = conflicts.value ? '存在冲突，请调整选择或命名后重新预览。' : '请核对下方原路径和目标路径，确认后执行。'
