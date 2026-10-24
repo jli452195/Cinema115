@@ -21,6 +21,7 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
   }
   function toggle(item: BatchResource) {
     if (running.value) return
+    notice.value = ''
     const key = magnetKey(item.magnet)
     if (selected.value.has(key)) { selected.value.delete(key); return }
     if (!eligible(item)) return
@@ -29,6 +30,7 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
   }
   function selectAll(items: BatchResource[]) {
     if (running.value) return
+    notice.value = ''
     const available = [...new Map(items.filter(eligible).map(item => [magnetKey(item.magnet), item])).values()]
     if (available.length && available.every(item => selected.value.has(magnetKey(item.magnet)))) {
       for (const item of available) selected.value.delete(magnetKey(item.magnet))
@@ -41,7 +43,7 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
       selected.value.set(key, { ...item })
     }
   }
-  function clear() { if (!running.value) selected.value.clear() }
+  function clear() { if (!running.value) { selected.value.clear(); notice.value = '' } }
   function exit() { if (!running.value) { clear(); mode.value = false; notice.value = '' } }
   function stop() { controller?.abort() }
   function allowReselectAfterCheck() {

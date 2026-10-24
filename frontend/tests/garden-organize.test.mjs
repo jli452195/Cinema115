@@ -11,7 +11,7 @@ async function importUtility(name) {
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 }
 const { downloadSuffix } = await importUtility('downloadNaming')
-const { matchesResourceSpec, resourceSpecOptions, resourceSpecFields } = await importUtility('resourceSpecFilters')
+const { matchesResourceSpec, resourceSpecOptions, resourceChineseLanguage } = await importUtility('resourceSpecFilters')
 const row = (id, episode, endEpisode = '') => ({ id, name: `file${id}.mkv`, selected: true, season: 1, episode, endEpisode, suffix: 'Group' })
 
 test('batch naming retains each file tags, missing metadata stays empty and explicit switches remove only their field', () => {
@@ -23,16 +23,22 @@ test('batch naming retains each file tags, missing metadata stays empty and expl
   assert.equal(downloadSuffix({ resolution: '1080p' }, 'B', { fansub: false, language: false, resolution: false }), '')
 })
 
-test('resource filters compose, dual-language files match both and missing hints are never guessed', () => {
-  const all = { codec: '', bitDepth: '', bitrate: '', languages: '', subtitleMode: '' }
-  const spec = { codec: 'h265', languages: ['zh-Hans', 'zh-Hant'], bitrate: '5 Mbps' }
-  assert.ok(matchesResourceSpec(spec, { ...all, codec: 'h265', languages: 'zh-Hant' }))
-  assert.equal(matchesResourceSpec(spec, { ...all, codec: 'h264' }), false)
-  assert.ok(matchesResourceSpec(undefined, { ...all, bitrate: 'unknown' }))
-  assert.equal(matchesResourceSpec(undefined, { ...all, languages: 'zh-Hans' }), false)
-  const field = resourceSpecFields.find(field => field.key === 'languages')
-  assert.deepEqual(resourceSpecOptions([spec, undefined], field, '').map(o => o.value), ['', 'unknown', 'zh-Hans', 'zh-Hant'])
-  assert.ok(resourceSpecOptions([spec], field, 'en').some(option => option.value === 'en'))
+test('specification filters partition Chinese, combine groups and retain unknown rows when no filter is active', () => {
+  const empty = { resolution: [], language: [], external: false }
+  const spec = { resolution: '1080p', languages: ['ja', 'zh-Hans', 'zh-Hant'], subtitleMode: 'external' }
+  assert.equal(resourceChineseLanguage(spec), 'both')
+  assert.equal(resourceChineseLanguage({ languages: ['ja', 'zh-Hans'] }), 'simplified')
+  assert.equal(resourceChineseLanguage({ languages: ['ja', 'zh-Hant'] }), 'traditional')
+  assert.equal(resourceChineseLanguage({ languages: ['ja'] }), '')
+  assert.ok(matchesResourceSpec(spec, empty))
+  assert.ok(matchesResourceSpec(undefined, empty))
+  assert.ok(matchesResourceSpec(spec, { resolution: ['720p', '1080p'], language: ['simplified', 'both'], external: true }))
+  assert.equal(matchesResourceSpec(spec, { ...empty, language: ['simplified'] }), false)
+  assert.equal(matchesResourceSpec(spec, { ...empty, resolution: ['720p'], external: true }), false)
+  assert.equal(matchesResourceSpec(undefined, { ...empty, external: true }), false)
+  assert.equal(matchesResourceSpec({ subtitleMode: 'soft' }, { ...empty, external: true }), false)
+  assert.deepEqual(resourceSpecOptions([undefined, {}]), [])
+  assert.deepEqual(resourceSpecOptions([spec, spec]).map(option => option.label), ['1080P', '简繁', '外挂字幕'])
 })
 
 test('offset preserves publisher gaps and joined ranges; explicit sequential mapping preserves width', () => {

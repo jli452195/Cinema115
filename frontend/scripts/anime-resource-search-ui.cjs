@@ -34,6 +34,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if(endpoint.includes('/emby/media/')) data={media:{state:'unknown',items:[]},baseUrl:'',serverId:''}
       else if(endpoint.includes('/recommendations')) data={items:[],page:1,totalPages:1}
       else if(endpoint.includes('/follows/')) data={subscribed:false,libraryState:'unknown'}
+      if(endpoint.endsWith('/resources/garden/search') && data.items) data.specs=Object.fromEntries(data.items.map(resource=>[`${resource.provider}:${resource.providerId}`,{resolution:resource.title.includes('1440x1080')?'1080p':resource.id%2?'1080p':'720p',languages:['zh-Hans','zh-Hant']}]))
+      if(endpoint.endsWith('/mikan/search')) data.specs={mikan:{resolution:'1080p'}}
       await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{})
     })
     const count = () => calls.filter(c=>c.endpoint.endsWith('/resources/garden/search')).length

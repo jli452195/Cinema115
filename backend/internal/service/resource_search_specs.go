@@ -2,42 +2,59 @@ package service
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 
 	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/client/mikan"
-	"strm115/backend/internal/model"
 )
 
 // Search-only hints never change RSS specification identity or download rules.
 type ResourceSearchSpec struct {
-	model.AnimeSpec
-	Bitrate string `json:"bitrate,omitempty"`
+	Resolution   string   `json:"resolution,omitempty"`
+	Languages    []string `json:"languages,omitempty"`
+	SubtitleMode string   `json:"subtitleMode,omitempty"`
 }
 
-// Only explicitly marked bit rates count. File size, resolution and MB/s
-// (bytes per second) are not evidence of a video's bit rate.
-var resourceBitrate = regexp.MustCompile(`(?:^|[^a-zA-Z0-9.])([0-9]{1,6}(?:\.[0-9]{1,3})?)\s*([mMkK])b(?:[pP][sS]|/[sS])\b`)
+var (
+	resourceCompoundSubtitles = regexp.MustCompile(`(?:(?:内封|內封|内嵌|內嵌|外挂|外掛|双语|雙語|多语|多語|字幕)){2,}`)
+	resourceQuality           = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:[0-9]{3,4}\s*[x×]\s*(480|576|720|1080|1440|2160|4320)([pi])?|(480|576|720|1080|1440|2160|4320)([pi])|([48])k)`)
+)
 
 func resourceSearchSpec(title string) ResourceSearchSpec {
-	spec := ResourceSearchSpec{AnimeSpec: animeparse.Specification(title)}
-	rates := make(map[string]bool)
-	for _, match := range resourceBitrate.FindAllStringSubmatch(title, -1) {
-		rate, _ := strconv.ParseFloat(match[1], 64)
-		if strings.EqualFold(match[2], "k") {
-			rate /= 1000
-		}
-		if rate > 0 {
-			rates[strconv.FormatFloat(rate, 'f', -1, 64)+" Mbps"] = true
-		}
+	parsed := animeparse.Specification(title)
+	// Reuse language boundaries without altering RSS profiles or subtitle modes.
+	if normalized := resourceCompoundSubtitles.ReplaceAllString(title, "字幕"); normalized != title {
+		parsed.Languages = animeparse.Specification(normalized).Languages
 	}
-	if len(rates) == 1 {
-		for rate := range rates {
-			spec.Bitrate = rate
+	return ResourceSearchSpec{Resolution: resourceSearchResolution(title), Languages: parsed.Languages, SubtitleMode: parsed.SubtitleMode}
+}
+
+func resourceSearchResolution(title string) string {
+	quality := ""
+	for _, index := range resourceQuality.FindAllStringSubmatchIndex(title, -1) {
+		if end := index[1]; end < len(title) && (title[end] >= 'a' && title[end] <= 'z' || title[end] >= 'A' && title[end] <= 'Z' || title[end] >= '0' && title[end] <= '9') {
+			continue
 		}
+		part := func(group int) string {
+			if index[group*2] < 0 {
+				return ""
+			}
+			return strings.ToLower(title[index[group*2]:index[group*2+1]])
+		}
+		value := part(1) + part(2)
+		if part(1) != "" && part(2) == "" {
+			value += "p"
+		} else if part(3) != "" {
+			value = part(3) + part(4)
+		} else if part(5) != "" {
+			value = map[string]string{"4": "2160p", "8": "4320p"}[part(5)]
+		}
+		if quality != "" && quality != value {
+			return ""
+		}
+		quality = value
 	}
-	return spec
+	return quality
 }
 
 func mikanResourceSpecs(items []mikan.Item) map[string]ResourceSearchSpec {

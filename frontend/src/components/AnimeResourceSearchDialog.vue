@@ -6,8 +6,7 @@ import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
-import SelectMenu from './SelectMenu.vue'
-import { matchesResourceSpec, resourceSpecFields, resourceSpecOptions, type ResourceSearchSpec, type ResourceSpecSelection } from '../utils/resourceSpecFilters'
+import { matchesResourceSpec, resourceSpecOptions, type ResourceSearchSpec, type ResourceSpecSelection, type ResourceSpecOption } from '../utils/resourceSpecFilters'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
 import { useCloudDownloadBatch, type BatchStatus } from '../composables/useCloudDownloadBatch'
@@ -47,11 +46,12 @@ const loadingMessage = ref('')
 const error = ref('')
 const filter = ref('')
 const resolution = ref('全部')
-const specFilters = reactive<ResourceSpecSelection>({ codec: '', bitDepth: '', bitrate: '', languages: '', subtitleMode: '' })
-const specControls = computed(() => resourceSpecFields.map(field => ({ ...field, options: resourceSpecOptions((result.value?.items || []).map(item => item.spec), field, specFilters[field.key]) })))
-function resetSpecFilters() { for (const field of resourceSpecFields) specFilters[field.key] = '' }
+const specFilters = reactive<ResourceSpecSelection>({ resolution: [], language: [], external: false })
+const specOptions = computed(() => resourceSpecOptions((result.value?.items || []).map(item => item.spec)))
+const specActive = computed(() => !!(specFilters.resolution.length || specFilters.language.length || specFilters.external))
+function resetSpecFilters() { specFilters.resolution = []; specFilters.language = []; specFilters.external = false }
 function withSpecs(data: Result & { specs?: Record<string, ResourceSearchSpec> }): Result {
-  return { ...data, items: data.items.map(item => ({ ...item, spec: data.specs?.[item.id] })) }
+  return { ...data, items: data.items.map(item => { const spec = data.specs?.[item.id]; return { ...item, spec, resolution: spec?.resolution?.toUpperCase() || '未知' } }) }
 }
 const visible = ref(50)
 const copied = ref('')
@@ -83,7 +83,19 @@ const hiddenSelectionCount = computed(() => {
   const shown = new Set(filtered.value.map(item => magnetKey(item.magnet)))
   return [...batchSelected.value.keys()].filter(key => !shown.has(key)).length
 })
-function toggleResource(item: Item) { if (!interactionBusy.value && canSelect(item)) batch.toggle(item) }
+function toggleResource(item: Item) {
+  if (interactionBusy.value || !canSelect(item)) return
+  batch.toggle(item)
+}
+function specChecked(option: ResourceSpecOption) { return option.group === 'external' ? specFilters.external : specFilters[option.group].includes(option.value) }
+function toggleSpecOption(option: ResourceSpecOption) {
+  if (interactionBusy.value) return
+  if (option.group === 'external') specFilters.external = !specFilters.external
+  else {
+    const values = specFilters[option.group]
+    specFilters[option.group] = values.includes(option.value) ? values.filter(value => value !== option.value) : [...values, option.value]
+  }
+}
 function selectCard(item: Item, event: MouseEvent) {
   if (!batchMode.value || (event.target as HTMLElement).closest('button, a, input, textarea, label, summary')) return
   toggleResource(item)
@@ -159,13 +171,13 @@ function organized(keys: string[]) {
   }
 }
 function closeDialog() { if (organizeEntries.value.length) return; batch.stop(); emit('close') }
-const resolutions = computed(() => ['全部', ...['2160P', '1080P', '720P', '480P', '未知'].filter(value => result.value?.items.some(item => item.resolution === value))])
+const resolutions = computed(() => ['全部', ...[...new Set(result.value?.items.map(item => item.resolution))].sort((a, b) => b.localeCompare(a, 'en', { numeric: true }))])
 const groupOptions = computed(() => [{ value: '', label: isGarden.value ? '全部发布方' : '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: isGarden.value ? `${item.name} · ${item.originName} · ${item.kind === 'fansub' ? '字幕组' : '发布者'}` : item.name }))])
 const resolutionOptions = computed(() => resolutions.value.map(value => ({ value, label: value === '全部' ? '全部分辨率' : value })))
 const filtered = computed(() => {
   if (busy.value && retainedItems.value) return retainedItems.value
   const words = filter.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
-  return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (resolution.value === '全部' || item.resolution === resolution.value) && (!batchMode.value || matchesResourceSpec(item.spec, specFilters)) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
+  return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (batchMode.value ? matchesResourceSpec(item.spec, specFilters) : resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
 })
 const siteURL = computed(() => {
   if (isGarden.value) {
@@ -486,11 +498,12 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="batchMode" class="mikan-selection-tools">
               <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
-              <div class="mikan-spec-filters" role="group" aria-label="批量资源规格筛选">
-                <SelectMenu v-model="resolution" :options="resolutionOptions" label="批量分辨率" variant="anime" class="mikan-spec-select" :disabled="interactionBusy"><template #trigger="slot"><span>分辨率：{{ resolution === '全部' ? '全部' : slot.label }}</span></template></SelectMenu>
-                <SelectMenu v-for="field in specControls" :key="field.key" v-model="specFilters[field.key]" :options="field.options" :label="`批量${field.label}`" variant="anime" class="mikan-spec-select" :disabled="interactionBusy"><template #trigger="slot"><span>{{ field.label }}：{{ specFilters[field.key] ? slot.label : '全部' }}</span></template></SelectMenu>
+              <div v-if="specOptions.length" class="mikan-spec-options" role="group" aria-label="资源规格筛选">
+                <span class="mikan-spec-label">筛选</span>
+                <label v-for="option in specOptions" :key="`${option.group}:${option.value}`" class="mikan-spec-chip"><input type="checkbox" :aria-label="`筛选${option.label}`" :checked="specChecked(option)" :disabled="interactionBusy" @change="toggleSpecOption(option)" /><span>{{ option.label }}</span></label>
+                <button type="button" class="mikan-tool-button" aria-label="重置规格筛选" :disabled="interactionBusy || !specActive" @click="resetSpecFilters">重置</button>
               </div>
-              <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空</button>
+              <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空选择</button>
             </div>
             <p v-if="!result.items.length" class="mikan-empty">{{ isGarden ? 'Garden 未找到资源，可修改片名、尝试原名或调整来源及发布方。' : selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
             <p v-else-if="!filtered.length" class="mikan-empty">没有符合筛选条件的资源，请调整关键词或规格筛选。</p>
@@ -527,8 +540,8 @@ onBeforeUnmount(() => {
           </template>
         </div>
         <footer v-if="batchMode" class="mikan-batch-footer" aria-label="批量云下载操作">
-          <div class="mikan-batch-count" tabindex="-1"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
-          <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="openBatchOrganize"><IconFolder :size="16" aria-hidden="true" />批量整理（{{ batchCount }}）</button><button type="button" class="mikan-button mikan-primary-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg>提交到 115（{{ batchCount }}）</button></template></div>
+          <div class="mikan-batch-count" tabindex="-1" aria-live="polite" aria-atomic="true"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
+          <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="openBatchOrganize"><IconFolder :size="16" aria-hidden="true" />批量整理（{{ batchCount }}）</button><button type="button" class="mikan-button mikan-primary-button" :aria-label="`提交到 115（${batchCount}）`" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><span class="mikan-action-label-desktop">提交到 115（{{ batchCount }}）</span><span class="mikan-action-label-mobile">云下载（{{ batchCount }}）</span></button></template></div>
           <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
           <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="closeDialog">前往配置</RouterLink></p>
           <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
@@ -633,12 +646,13 @@ onBeforeUnmount(() => {
 .mikan-resource-checkbox:has(input:disabled) { opacity: .45; cursor: default; }
 .mikan-resource-checkbox:has(input:focus-visible) { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; border-radius: 12px; }
 .mikan-selection-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 4px; }
-.mikan-spec-filters { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; overscroll-behavior: contain; padding: 4px; scrollbar-width: thin; --ae-surface: #f8fafc; --ae-ink: var(--search-dialog-text); --ae-muted: var(--search-dialog-muted); --ae-blue: var(--search-dialog-primary); --ae-inset: var(--search-dialog-secondary-background); }
-.dark .mikan-spec-filters { --ae-surface: #1e293b; }
-.mikan-spec-select { flex: 0 0 auto; min-width: 0; }
-.mikan-spec-select :deep(.select-menu-trigger) { min-height: 36px; padding: 6px 9px; gap: 6px; border: 0; border-radius: 10px; font-size: 11px; }
-.mikan-spec-select :deep(.select-menu-trigger span) { white-space: nowrap; }
-.mikan-spec-select :deep(.select-menu-trigger[aria-expanded=true]) { background: var(--search-dialog-action-background); }
+.mikan-spec-options { display: flex; flex: 1; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px 6px; }
+.mikan-spec-label { color: var(--search-dialog-muted); font-size: 11px; }
+.mikan-spec-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 8px; border-radius: 10px; background: var(--search-dialog-card); color: var(--search-dialog-muted); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.mikan-spec-chip input { width: 14px; height: 14px; accent-color: var(--search-dialog-primary); }
+.mikan-spec-chip:has(input:checked) { background: var(--search-dialog-action-background); color: var(--search-dialog-on-tonal); }
+.mikan-spec-chip:has(input:focus-visible) { outline: 2px solid var(--search-dialog-primary); outline-offset: 1px; }
+.mikan-spec-chip:has(input:disabled) { opacity: .5; cursor: default; }
 .mikan-select-all { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--search-dialog-text); font-size: 12px; cursor: pointer; }
 .mikan-select-all input { width: 18px; height: 18px; accent-color: var(--search-dialog-primary); }
 .mikan-select-all small { color: var(--search-dialog-muted); font-size: 11px; }
@@ -720,8 +734,8 @@ onBeforeUnmount(() => {
   .mikan-resource-checkbox { top: 8px; left: 8px; width: 48px; height: 48px; }
   .mikan-selection-tools .mikan-select-all { min-height: 48px; }
   .mikan-selection-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-  .mikan-spec-filters { grid-column: 1 / -1; grid-row: 2; }
-  .mikan-spec-select :deep(.select-menu-trigger) { min-height: 44px; }
+  .mikan-spec-options { grid-column: 1 / -1; grid-row: 2; }
+  .mikan-spec-chip { min-height: 44px; }
   .mikan-batch-footer { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 12px; gap: 4px 8px; }
   .mikan-batch-actions .mikan-button { flex: 1; }
   .mikan-batch-count strong { font-size: 12px; }
