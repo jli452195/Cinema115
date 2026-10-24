@@ -10,7 +10,7 @@ import (
 	"strm115/backend/internal/naming"
 )
 
-var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
+var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
 var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "")
 var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aac|flac|opus)([12567]\.1|2\.0)`)
 
@@ -44,7 +44,7 @@ func Values(name string, hint model.AnimeSpec, group string) map[naming.Field]st
 		case "webdl", "webrip", "bluray", "bdrip", "remux", "hdtv", "dvdrip":
 			field = naming.Source
 			value = map[string]string{"webdl": "WEB-DL", "webrip": "WEBRip", "bluray": "BluRay", "bdrip": "BDRip", "remux": "REMUX", "hdtv": "HDTV", "dvdrip": "DVDRip"}[key]
-		case "nf", "netflix", "amzn", "dsnp", "atvp", "hmax":
+		case "nf", "netflix", "amzn", "dsnp", "atvp", "hmax", "bilibili":
 			field = naming.Platform
 			value = strings.ToUpper(key)
 			if key == "netflix" {

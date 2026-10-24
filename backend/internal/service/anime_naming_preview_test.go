@@ -23,7 +23,7 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	titles := []string{
 		"[Nix-Raws] VERTEX FORCE S01E01 [CR WEB-DL 1080p AVC AAC][SC_TC]",
 		"[字幕组] 动画 - 00 [1080p][简体] GB",
-		"[字幕组] 动画 - 13 [720p][简日双语内嵌]",
+		"[字幕组] 动画 - 13 [bilibili WebRip 720p][简日双语内嵌]",
 		"[字幕组] 动画 [01-12]",
 	}
 	in := AnimeNamingPreviewInput{Target: target, Mapping: mapping, Group: "Nix-Raws"}
@@ -44,7 +44,7 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	if got := preview.Items[1].Result; got == nil || !strings.Contains(got.Name, "S01E00.1080p.[简体]") {
 		t.Fatal(got)
 	}
-	if got := preview.Items[2].Result; got == nil || !strings.Contains(got.Name, "S01E13.720p.[简日].内嵌") {
+	if got := preview.Items[2].Result; got == nil || !strings.Contains(got.Name, "S01E13.720p.WEBRip.BILIBILI.[简日].内嵌") {
 		t.Fatal(got)
 	}
 	if preview.Items[3].Status != "unmapped" || preview.Items[3].Result != nil {

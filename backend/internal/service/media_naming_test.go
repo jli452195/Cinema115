@@ -57,6 +57,12 @@ func TestMediaNamingFileFacts(t *testing.T) {
 		want map[naming.Field]string
 	}{
 		{"Movie.2160p.NF.WEB-DL.HEVC.10bit.DV.HDR10.DDP5.1.Atmos.23.976fps.mkv", map[naming.Field]string{naming.Resolution: "2160p", naming.Platform: "NF", naming.Source: "WEB-DL", naming.VideoCodec: "HEVC", naming.BitDepth: "10bit", naming.DynamicRange: "DV HDR10", naming.AudioCodec: "DDP", naming.Channels: "5.1", naming.AudioEffect: "Atmos", naming.FrameRate: "23.976fps"}},
+		{"[沸班亚马制作组] 青之箱 第二季 - 03 [BILIBILI WebRip 2160p H265 Veryslow EAC3][简繁内封字幕].mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEBRip", naming.Resolution: "2160p", naming.VideoCodec: "HEVC", naming.AudioCodec: "DDP", naming.Languages: "简繁", naming.SubtitleMode: "内封"}},
+		{"Show.bilibili.WEB-DL.mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEB-DL"}},
+		{"Show.[BiLiBiLi][BILIBILI].mkv", map[naming.Field]string{naming.Platform: "BILIBILI"}},
+		{"Show.NotBILIBILI.BILIBILIPlus.BILIBILI2.mkv", map[naming.Field]string{naming.Platform: ""}},
+		{"Show.BILIBILI.NF.mkv", map[naming.Field]string{naming.Platform: ""}},
+		{"Show.Netflix.NF.mkv", map[naming.Field]string{naming.Platform: "NF"}},
 		{"Show.1080p.720p.H264.HEVC.SDR.HDR10.AAC.FLAC.mkv", map[naming.Field]string{naming.Resolution: "", naming.VideoCodec: "", naming.DynamicRange: "", naming.AudioCodec: ""}},
 		{"Simply.Unknown.mkv", map[naming.Field]string{naming.Resolution: "", naming.VideoCodec: "", naming.BitDepth: "", naming.DynamicRange: "", naming.ReleaseGroup: ""}},
 	} {
