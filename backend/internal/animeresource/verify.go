@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/utils/torrentmeta"
 )
 
 const VerificationVersion = 1
-const MaxTorrentBytes = 4 << 20
+const MaxTorrentBytes = torrentmeta.MaxBytes
 
 var (
 	ErrInvalid     = errors.New("invalid anime resource identity")

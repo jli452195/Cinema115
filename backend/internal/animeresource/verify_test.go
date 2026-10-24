@@ -57,6 +57,17 @@ func TestTorrentHashRejectsMalformedAndUnsupported(t *testing.T) {
 	}
 }
 
+func TestTorrentHashPreservesErrorKinds(t *testing.T) {
+	body, _ := testTorrent()
+	v2 := strings.Replace(string(body), "4:name", "12:meta versioni2e4:name", 1)
+	if _, err := TorrentHash([]byte(v2)); !errors.Is(err, ErrUnsupported) {
+		t.Fatal("unsupported protocol error lost", err)
+	}
+	if _, err := TorrentHash(nil); !errors.Is(err, ErrInvalid) {
+		t.Fatal("invalid metadata error lost", err)
+	}
+}
+
 func TestMagnetHashCanonicalAndUnambiguous(t *testing.T) {
 	_, hash := testTorrent()
 	bytes, _ := hex.DecodeString(hash)
@@ -84,7 +95,11 @@ func TestVerifyActualTorrentNotURLFilenameOrGUID(t *testing.T) {
 	body, hash := testTorrent()
 	post := strings.Repeat("a", 40)
 	row := animefeed.SourceRelease{PostKey: post, Title: "episode", OriginalGUID: strings.Repeat("b", 40), TorrentURL: "https://mikanani.me/Download/20261019/" + post + ".torrent"}
-	reader := torrentFunc(func(context.Context, string, string, string) ([]byte, error) { return body, nil })
+	reads := 0
+	reader := torrentFunc(func(context.Context, string, string, string) ([]byte, error) {
+		reads++
+		return body, nil
+	})
 	v, err := Verify(context.Background(), "mikan", row, reader)
 	if err != nil || !v.Valid() || v.Hash() != hash || v.Hash() == row.PostKey || v.Evidence().Method != "torrent_info" || v.Evidence().MetadataSHA256 == "" {
 		t.Fatal("filename/GUID used as hash", err)
@@ -100,6 +115,9 @@ func TestVerifyActualTorrentNotURLFilenameOrGUID(t *testing.T) {
 	row.PostKey, row.TorrentURL, row.MagnetHint = "rel_dmhy_123", "", "magnet:?xt=urn:btih:"+hash
 	if v, err := Verify(context.Background(), "garden", row, nil); err != nil || v.Hash() != hash || v.Evidence().Method != "source_magnet" {
 		t.Fatal(err)
+	}
+	if reads != 3 {
+		t.Fatal("verification must read each Mikan/AniBT torrent only once", reads)
 	}
 }
 
