@@ -77,6 +77,10 @@ func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
 	accountRequest(t, router, "POST", "/download-organize/resume", `{"jobId":"manual"}`, 400)
 	accountRequest(t, router, "POST", "/manual-organize/resume", `{}`, 400)
 	accountRequest(t, router, "POST", "/download-organize/resume", `{}`, 400)
+	accountRequest(t, router, "POST", "/download-organize/batch/preview", `{"resources":[]}`, 400)
+	accountRequest(t, router, "POST", "/download-organize/batch/preview", `{"resources":"invalid"}`, 400)
+	accountRequest(t, router, "POST", "/download-organize/batch/jobs", `{}`, 400)
+	accountRequest(t, router, "POST", "/download-organize/batch/jobs", `{"previewId":"missing"}`, 409)
 }
 
 func TestManualOrganizeCleanupAPIConfirmationAndReplay(t *testing.T) {

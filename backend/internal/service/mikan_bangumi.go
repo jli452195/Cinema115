@@ -62,6 +62,7 @@ func (s *MikanService) Bangumi(ctx context.Context, input MikanBangumiInput) (ou
 		log("DEBUG", "从缓存或同一正在执行的请求返回，未重复访问蜜柑")
 	}
 	output.Result = cloneMikan(entry.result)
+	output.Specs = mikanResourceSpecs(output.Items)
 	output.Group, output.Cached = input.Group, cached
 	output.Attempts = []MikanAttempt{}
 	output.FetchedAt, output.ExpiresAt = entry.fetched, entry.expires

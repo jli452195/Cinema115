@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -15,6 +16,7 @@ import (
 // ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
 // Credentials only live in downloadPending and never enter plans/history.
 type ResourceDownload struct {
+	BatchID     string `json:"batchId,omitempty"`
 	Hash        string `json:"hash"`
 	ParentCID   string `json:"parentCID"`
 	ParentPath  string `json:"parentPath"`
@@ -23,6 +25,7 @@ type ResourceDownload struct {
 
 type DownloadOrganizeInput struct {
 	DownloadResourceInput
+	ManifestID string              `json:"manifestId,omitempty"`
 	Kind       string              `json:"kind"`
 	TMDBID     int                 `json:"tmdbId"`
 	AccountID  string              `json:"accountId"`
@@ -45,7 +48,8 @@ type downloadPending struct {
 	resuming                  bool
 	continuing                bool
 	waitUntil                 time.Time
-	running                   bool // guarded by DownloadOrganize.mu; other fields have one worker owner
+	running                   bool     // guarded by DownloadOrganize.mu; other fields have one worker owner
+	targets                   []string // immutable reservations, independent of worker-mutated items
 }
 
 type DownloadOrganize struct {
@@ -57,10 +61,13 @@ type DownloadOrganize struct {
 	mu        sync.Mutex
 	live      map[string]*downloadPending
 	wake      chan struct{}
+	steps     chan struct{}
+	manifests map[string]downloadManifest
+	batches   map[string]downloadBatch
 }
 
 func NewDownloadOrganize(o *OrganizeEngine, resources downloadResourceReader, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader downloadStatusReader) *DownloadOrganize {
-	return &DownloadOrganize{Organize: o, Resources: resources, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*downloadPending), wake: make(chan struct{}, 1)}
+	return &DownloadOrganize{Organize: o, Resources: resources, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*downloadPending), wake: make(chan struct{}, 1), steps: make(chan struct{}, 4), manifests: make(map[string]downloadManifest), batches: make(map[string]downloadBatch)}
 }
 
 func (s *DownloadOrganize) History() []OrganizeJob { return s.Organize.history(true) }
@@ -77,35 +84,11 @@ func (s *DownloadOrganize) Target() CloudDownloadConfig {
 }
 
 func (s *DownloadOrganize) Preview(ctx context.Context, in DownloadOrganizeInput) (OrganizeJob, error) {
-	download := s.Settings.View()
-	if in.AccountID != download.AccountID || !organizeID(in.TargetCID) || !organizePath(in.TargetPath) {
-		return OrganizeJob{}, fmt.Errorf("%w：请选择当前主账号的整理目录", ErrOrganizeInput)
-	}
-	a, err := s.Downloads.snapshot(download)
+	jobs, err := s.previewResources(ctx, in, []DownloadOrganizeInput{in})
 	if err != nil {
 		return OrganizeJob{}, err
 	}
-	files, err := s.Resources.Files(ctx, in.DownloadResourceInput)
-	if err != nil {
-		return OrganizeJob{}, err
-	}
-	if len(files.Files) == 0 {
-		return OrganizeJob{}, fmt.Errorf("%w：%s", ErrOrganizeInput, files.Reason)
-	}
-	c := OrganizeConfig{AccountID: a.ID, SourceCID: download.TargetCID, SourcePath: download.TargetPath, TargetCID: in.TargetCID, TargetPath: in.TargetPath}
-	for _, sub := range files.Subtitles {
-		files.Files = append(files.Files, sub.File)
-	}
-	job, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files.Files}, OrganizePreviewInput{Kind: in.Kind, TMDBID: in.TMDBID, Files: in.Files, Subtitles: true})
-	if err != nil {
-		return OrganizeJob{}, err
-	}
-	if err = s.Organize.checkPlan(ctx, &job, a.Cookie, false); err != nil {
-		return OrganizeJob{}, err
-	}
-	// Website IDs are paths, not cloud file IDs. Actual IDs are bound only after download.
-	job.Download = &ResourceDownload{Hash: files.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath}
-	return s.Organize.rememberPlan(job)
+	return s.Organize.rememberPlan(jobs[0])
 }
 
 // Start persists before waking the server-owned worker. The preview ID is the
@@ -139,7 +122,7 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	if err = o.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
-	s.live[id] = &downloadPending{job: cloneOrganizeJob(job), account: a}
+	s.live[id] = newDownloadPending(job, a)
 	delete(o.plans, id)
 	select {
 	case s.wake <- struct{}{}:
@@ -158,12 +141,17 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 	if a.Revision != job.Revision {
 		return a, fmt.Errorf("%w：账号配置已变化，请重新确认账号和目录", ErrOrganizeConflict)
 	}
-	if len(s.live) >= 4 {
-		return a, fmt.Errorf("%w：已有 4 个下载整理任务，请等待完成", ErrOrganizeConflict)
+	if len(s.live) >= 100 {
+		return a, fmt.Errorf("%w：下载整理队列已满（100 项），请等待完成", ErrOrganizeConflict)
 	}
 	for _, p := range s.live {
 		if p.job.Download.Hash == job.Download.Hash {
 			return a, ErrCloudTaskBusy
+		}
+		for _, item := range job.Items {
+			if slices.Contains(p.targets, downloadTargetKey(item)) {
+				return a, fmt.Errorf("%w：队列中已有相同目标名称，请调整版本标记", ErrOrganizeConflict)
+			}
 		}
 	}
 	for _, item := range job.Items {
@@ -175,6 +163,9 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 }
 
 func canResumeDownload(job OrganizeJob) bool {
+	if canQueueDownload(job) {
+		return true
+	}
 	d := job.Download
 	if job.Status != "interrupted" || d == nil || !organizeID(d.DirectoryID) || d.DirectoryID == "0" || job.Config.SourceCID != d.DirectoryID || job.Config.SourcePath != path.Join(d.ParentPath, "garden-"+job.ID) || d.DirectoryID == job.Config.TargetCID || len(job.Items) == 0 || job.Stats.RenameRequests != 0 || job.Stats.MoveRequests != 0 {
 		return false
@@ -189,8 +180,23 @@ func canResumeDownload(job OrganizeJob) bool {
 	return true
 }
 
-// Resume only rejoins tracking for an existing download. It never enters the
-// queued/submitting branch, including after a lost response or another restart.
+// A queued intent with no worker start or external write can be explicitly
+// rejoined after restart. A submitting/unknown write never qualifies.
+func canQueueDownload(job OrganizeJob) bool {
+	d := job.Download
+	if job.Status != "interrupted" || d == nil || d.DirectoryID != "" || !job.Stats.StartedAt.IsZero() || job.Stats.DirectoryCreates != 0 || len(job.Items) == 0 || job.Config.SourceCID != d.ParentCID || job.Config.SourcePath != d.ParentPath {
+		return false
+	}
+	for _, item := range job.Items {
+		if item.Status != "pending" {
+			return false
+		}
+	}
+	return true
+}
+
+// Resume rejoins original tracking or an explicitly unstarted queued intent.
+// Unknown external writes never enter the submission branch.
 func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -205,6 +211,7 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 			return cloneOrganizeJob(saved), nil
 		}
 		continuing := canContinueOrganize(saved)
+		queued := canQueueDownload(saved)
 		if !continuing && !canResumeDownload(saved) {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
 		}
@@ -219,13 +226,19 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		if continuing {
 			job.Status, job.Message = "running", "正在检查原任务剩余文件，确认后继续整理；不会重新下载"
 		}
+		if queued {
+			job.Status, job.Message = "queued", "原任务尚未开始，已重新加入下载整理队列"
+			job.Stats.StartedAt = time.Time{}
+		}
 		doc := o.doc
 		doc.Jobs = append([]OrganizeJob{}, doc.Jobs...)
 		doc.Jobs[i] = job
 		if err = o.saveLocked(doc); err != nil {
 			return OrganizeJob{}, err
 		}
-		s.live[id] = &downloadPending{job: cloneOrganizeJob(job), account: a, resuming: !continuing, continuing: continuing, ready: continuing, waitUntil: time.Now().Add(24 * time.Hour)}
+		pending := newDownloadPending(job, a)
+		pending.resuming, pending.continuing, pending.ready, pending.waitUntil = !continuing && !queued, continuing, continuing, time.Now().Add(24*time.Hour)
+		s.live[id] = pending
 		select {
 		case s.wake <- struct{}{}:
 		default:
@@ -279,8 +292,8 @@ func (s *DownloadOrganize) Run(ctx context.Context) (runErr error) {
 	}
 }
 
-// At most four independent workers track downloads. Only the shared directory
-// reservation serializes organization; no worker holds it while polling/sleeping.
+// At most 100 tracked tasks share four execution slots. Backoff sleeps never
+// occupy a slot; ready resources progress without waiting for the whole batch.
 func (s *DownloadOrganize) runPending(ctx context.Context, p *downloadPending) error {
 	for {
 		if ctx.Err() != nil {
@@ -296,7 +309,13 @@ func (s *DownloadOrganize) runPending(ctx context.Context, p *downloadPending) e
 			case <-timer.C:
 			}
 		}
+		select {
+		case s.steps <- struct{}{}:
+		case <-ctx.Done():
+			continue
+		}
 		done, err := s.advance(ctx, p)
+		<-s.steps
 		if err != nil || done {
 			return err
 		}
@@ -451,7 +470,7 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 	}
 	if err != nil {
 		p.bindingAttempts++
-		if p.bindingAttempts < 3 {
+		if p.bindingAttempts < 3 && !errors.Is(err, errDownloadTitleReview) {
 			p.next = time.Now().Add(10 * time.Second)
 			return false, nil
 		}
@@ -523,6 +542,9 @@ func (s *DownloadOrganize) downloadFiles(ctx context.Context, job *OrganizeJob, 
 }
 
 func bindDownloadFiles(job *OrganizeJob, files []OrganizeFile, resultID string) error {
+	if len(job.Items) == 1 && job.Items[0].File.TitleOnly {
+		return bindTitleDownload(job, files)
+	}
 	index := make(map[string][]OrganizeFile, len(files))
 	for _, f := range files {
 		index[f.SourcePath] = append(index[f.SourcePath], f)

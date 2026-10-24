@@ -10,7 +10,7 @@ export function organizeTargetName(row: OrganizeRow, title: string, date: string
   if (kind === 'movie') { if (date.length >= 4) name += ` (${date.slice(0, 4)})` }
   else name += ` - S${pad(row.season)}E${pad(row.episode)}${Number(row.endEpisode) > row.episode ? `-E${pad(Number(row.endEpisode))}` : ''}`
   if (cleanName(row.suffix.trim())) name += ` - ${cleanName(row.suffix.trim())}`
-  return name + (row.name.match(/\.[^.]+$/)?.[0].toLowerCase() || '')
+  return name + (row.titleOnly ? '' : row.name.match(/\.[^.]+$/)?.[0].toLowerCase() || '')
 }
 
 export function organizeSubtitleName(videoName: string, subtitle: OrganizeSubtitle) {

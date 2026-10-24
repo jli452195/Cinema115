@@ -43,6 +43,7 @@ type OrganizeConfig struct {
 
 type OrganizeFile struct {
 	p115.ShareFile
+	TitleOnly  bool   `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
 	ParentID   string `json:"parentId"`
 	SourcePath string `json:"sourcePath"`
 	MediaType  string `json:"mediaType"`

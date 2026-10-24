@@ -26,12 +26,42 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 		defer cancel()
-		out, err := s.Resources.Files(ctx, in)
+		out, err := s.Files(ctx, in)
 		if err != nil {
 			organizeError(c, err)
 			return
 		}
 		c.JSON(200, out)
+	})
+	r.POST("/batch/preview", func(c *gin.Context) {
+		var in service.DownloadBatchInput
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(400, gin.H{"error": "批量整理参数无效"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+		defer cancel()
+		out, err := s.PreviewBatch(ctx, in)
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	r.POST("/batch/jobs", func(c *gin.Context) {
+		var in struct {
+			PreviewID string `json:"previewId"`
+		}
+		if c.ShouldBindJSON(&in) != nil || in.PreviewID == "" {
+			c.JSON(400, gin.H{"error": "批量任务参数无效"})
+			return
+		}
+		out, err := s.StartBatch(in.PreviewID)
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(202, out)
 	})
 	r.POST("/preview", func(c *gin.Context) {
 		var in service.DownloadOrganizeInput

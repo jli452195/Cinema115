@@ -7,6 +7,7 @@
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",
     "test:garden-organize-ui": "node scripts/download-organize-ui.cjs",
     "test:mikan-organize-ui": "node scripts/download-organize-ui.cjs mikan",
+    "test:download-organize-batch-ui": "node scripts/download-organize-batch-ui.cjs && node scripts/download-organize-batch-ui.cjs mikan",
     "test:anime-resource-search-ui": "node scripts/anime-resource-search-ui.cjs",
     "test:anime-naming": "node --test tests/anime-naming-preview.test.mjs",
     "test:anime-storage-ui": "node scripts/anime-settings-ui.cjs",

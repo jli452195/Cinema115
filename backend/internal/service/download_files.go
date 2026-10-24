@@ -10,12 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"strm115/backend/internal/animeparse"
 	"strm115/backend/internal/animeresource"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
 type DownloadResourceInput struct {
+	Title      string `json:"title,omitempty"` // Display metadata only; never a file identity.
 	Source     string `json:"source"`
 	Provider   string `json:"provider"`
 	ProviderID string `json:"providerId"`
@@ -23,11 +26,18 @@ type DownloadResourceInput struct {
 	TorrentURL string `json:"torrentUrl"`
 }
 
+type DownloadFileSpec struct {
+	model.AnimeSpec
+	Fansub string `json:"fansub,omitempty"`
+}
+
 type DownloadFiles struct {
-	Hash      string             `json:"hash"`
-	Files     []OrganizeFile     `json:"files"`
-	Subtitles []OrganizeSubtitle `json:"subtitles"`
-	Reason    string             `json:"reason,omitempty"`
+	ManifestID string                      `json:"manifestId,omitempty"`
+	Specs      map[string]DownloadFileSpec `json:"specs,omitempty"`
+	Hash       string                      `json:"hash"`
+	Files      []OrganizeFile              `json:"files"`
+	Subtitles  []OrganizeSubtitle          `json:"subtitles"`
+	Reason     string                      `json:"reason,omitempty"`
 }
 
 type downloadResourceReader interface {
@@ -105,7 +115,7 @@ func (t mikanTorrentTransport) Fetch(ctx context.Context, endpoint string, _ int
 }
 
 func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles, error) {
-	out := DownloadFiles{Hash: hash, Files: []OrganizeFile{}, Subtitles: []OrganizeSubtitle{}}
+	out := DownloadFiles{Hash: hash, Files: []OrganizeFile{}, Subtitles: []OrganizeSubtitle{}, Specs: make(map[string]DownloadFileSpec)}
 	media := make([]OrganizeFile, 0, len(files))
 	for _, file := range files {
 		kind := organizeMedia(file.Path)
@@ -118,6 +128,7 @@ func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles
 		f := OrganizeFile{ShareFile: p115.ShareFile{ID: file.Path, Name: path.Base(file.Path), Size: file.Size}, ParentID: path.Dir(file.Path), SourcePath: "/" + file.Path, MediaType: kind, Season: 1}
 		if kind == "video" {
 			organizeFileNumbering(&f)
+			out.Specs[f.ID] = DownloadFileSpec{AnimeSpec: animeparse.Specification(f.Name), Fansub: downloadFansub(f.Name)}
 			out.Files = append(out.Files, f)
 		}
 		media = append(media, f)
@@ -129,6 +140,16 @@ func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles
 		out.Reason = "清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）"
 	}
 	return out, nil
+}
+
+func downloadFansub(title string) string {
+	_, tags := resourceTitleTags(title)
+	for _, tag := range tags {
+		if strings.Contains(tag, "字幕组") || strings.Contains(tag, "字幕組") || strings.Contains(tag, "字幕社") {
+			return tag
+		}
+	}
+	return ""
 }
 
 var resourceNumbers = regexp.MustCompile(`[0-9]+|[^0-9]+`)

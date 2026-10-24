@@ -1,12 +1,20 @@
 import type { NumberingInfo } from './tvNumbering'
 export interface DownloadResourceInput {
+  title?: string
   source: 'mikan' | 'garden'
   provider?: string
   providerId: string
   magnet: string
   torrentUrl?: string
 }
-export interface DownloadFiles { files: OrganizeFile[]; subtitles?: OrganizeSubtitle[]; reason?: string }
+export interface DownloadFileSpec { resolution?: string; languages?: string[]; fansub?: string }
+export interface DownloadFiles { manifestId?: string; files: OrganizeFile[]; subtitles?: OrganizeSubtitle[]; specs?: Record<string, DownloadFileSpec>; reason?: string }
+export interface DownloadOrganizeResource {
+  resource: { id: string; title: string; magnet: string; fansub?: string; publisher?: string }
+  source: DownloadResourceInput
+  files?: DownloadFiles
+}
+export interface DownloadBatchResult { id: string; jobs: OrganizeJob[] }
 export interface OrganizeConfig {
   accountId: string
   sourceCID: string
@@ -33,6 +41,7 @@ export interface OrganizeCleanup {
   items: OrganizeCleanupItem[]
 }
 export interface OrganizeFile extends DriveFile {
+  titleOnly?: boolean
   parentId: string
   sourcePath: string
   mediaType: string

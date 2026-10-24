@@ -288,11 +288,14 @@ func TestGardenWorkersSlowOrganizationKeepsTrackingAndCapacity(t *testing.T) {
 	gardenWait(t, func() bool { return gardenJobState(s, next.ID) == "downloading" })
 	sixth := cloneOrganizeJob(next)
 	sixth.ID, sixth.Download.Hash = "00000000000000000000000000000006", fmt.Sprintf("%040x", 6)
+	for i := range sixth.Items {
+		sixth.Items[i].TargetPath += "-sixth"
+	}
 	s.Organize.mu.Lock()
 	s.Organize.plans[sixth.ID] = sixth
 	s.Organize.mu.Unlock()
-	if _, err := s.Start(sixth.ID); err == nil {
-		t.Fatal("more than four live tasks were accepted")
+	if _, err := s.Start(sixth.ID); err != nil {
+		t.Fatal("queued work should be accepted beyond four active steps", err)
 	}
 	if renaming.Load() != 1 {
 		t.Fatal("multiple tasks entered directory mutation together", renaming.Load())

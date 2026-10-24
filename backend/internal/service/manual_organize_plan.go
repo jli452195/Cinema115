@@ -107,7 +107,9 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 		if suffix := organizeName(strings.TrimSpace(selection.Suffix)); suffix != "" {
 			name += " - " + suffix
 		}
-		name += strings.ToLower(path.Ext(f.Name))
+		if !f.TitleOnly {
+			name += strings.ToLower(path.Ext(f.Name))
+		}
 		if len([]rune(name)) > 200 {
 			return OrganizeJob{}, fmt.Errorf("%w：目标文件名过长，请缩短版本标记", ErrOrganizeInput)
 		}
@@ -173,7 +175,13 @@ func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 				return err
 			}
 			item.TargetCID = cid
-			if organizeCollision(children, item.Name, item.File.ID) {
+			collision := organizeCollision(children, item.Name, item.File.ID)
+			if item.File.TitleOnly {
+				for _, child := range children {
+					collision = collision || !child.Directory && strings.EqualFold(strings.TrimSuffix(child.Name, path.Ext(child.Name)), item.Name)
+				}
+			}
+			if collision {
 				item.Conflict = "目标已有同名条目，不能覆盖"
 			}
 		}

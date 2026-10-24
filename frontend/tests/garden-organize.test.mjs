@@ -5,7 +5,35 @@ import ts from 'typescript'
 const source = await readFile(new URL('../src/utils/organizeNaming.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
 const { applyOrganizeMapping, organizeTargetName, organizeSubtitleName } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+async function importUtility(name) {
+  const source = await readFile(new URL(`../src/utils/${name}.ts`, import.meta.url), 'utf8')
+  const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+}
+const { downloadSuffix } = await importUtility('downloadNaming')
+const { matchesResourceSpec, resourceSpecOptions, resourceSpecFields } = await importUtility('resourceSpecFilters')
 const row = (id, episode, endEpisode = '') => ({ id, name: `file${id}.mkv`, selected: true, season: 1, episode, endEpisode, suffix: 'Group' })
+
+test('batch naming retains each file tags, missing metadata stays empty and explicit switches remove only their field', () => {
+  const fields = { fansub: true, language: true, resolution: true }
+  assert.equal(downloadSuffix({ resolution: '720p', languages: ['zh-Hant'], fansub: 'A' }, 'B', fields), 'A - 繁体 - 720p')
+  assert.equal(downloadSuffix({ resolution: '1080p', languages: ['ja', 'zh-Hans'] }, 'B', fields), 'B - 简体+日语 - 1080p')
+  assert.equal(downloadSuffix({}, '', fields), '')
+  assert.equal(downloadSuffix({ resolution: '1080p', languages: ['zh-Hans'] }, 'B', { ...fields, language: false }), 'B - 1080p')
+  assert.equal(downloadSuffix({ resolution: '1080p' }, 'B', { fansub: false, language: false, resolution: false }), '')
+})
+
+test('resource filters compose, dual-language files match both and missing hints are never guessed', () => {
+  const all = { codec: '', bitDepth: '', bitrate: '', languages: '', subtitleMode: '' }
+  const spec = { codec: 'h265', languages: ['zh-Hans', 'zh-Hant'], bitrate: '5 Mbps' }
+  assert.ok(matchesResourceSpec(spec, { ...all, codec: 'h265', languages: 'zh-Hant' }))
+  assert.equal(matchesResourceSpec(spec, { ...all, codec: 'h264' }), false)
+  assert.ok(matchesResourceSpec(undefined, { ...all, bitrate: 'unknown' }))
+  assert.equal(matchesResourceSpec(undefined, { ...all, languages: 'zh-Hans' }), false)
+  const field = resourceSpecFields.find(field => field.key === 'languages')
+  assert.deepEqual(resourceSpecOptions([spec, undefined], field, '').map(o => o.value), ['', 'unknown', 'zh-Hans', 'zh-Hant'])
+  assert.ok(resourceSpecOptions([spec], field, 'en').some(option => option.value === 'en'))
+})
 
 test('offset preserves publisher gaps and joined ranges; explicit sequential mapping preserves width', () => {
   const rows = [row('a', 27, 28), row('b', 30), row('unknown', 0)]
@@ -33,6 +61,7 @@ test('target preview preserves range, file extension and group, unknown remains 
   assert.equal(organizeTargetName(row('a', 1, 2), '测试作品', '2024-01-01', 'tv'), '测试作品 - S01E01-E02 - Group.mkv')
   assert.equal(organizeTargetName(row('a', 0), '测试作品', '', 'tv'), '请填写目标季集')
   assert.equal(organizeTargetName(row('a', 1), '电影:名', '2024-01-01', 'movie'), '电影_名 (2024) - Group.mkv')
+  assert.equal(organizeTargetName({ ...row('a', 12), titleOnly: true, name: '[Group] Show [12 END][1080P].v2' }, '测试作品', '', 'tv'), '测试作品 - S01E12 - Group')
 })
 
 test('companion naming follows edited video ranges and keeps complete language/default tags', () => {

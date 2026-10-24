@@ -31,12 +31,13 @@ type MikanAttempt struct {
 }
 type MikanResult struct {
 	mikan.Result
-	Query     string         `json:"query"`
-	Group     string         `json:"group"`
-	Attempts  []MikanAttempt `json:"attempts"`
-	Cached    bool           `json:"cached"`
-	FetchedAt time.Time      `json:"fetchedAt"`
-	ExpiresAt time.Time      `json:"expiresAt"`
+	Specs     map[string]ResourceSearchSpec `json:"specs"`
+	Query     string                        `json:"query"`
+	Group     string                        `json:"group"`
+	Attempts  []MikanAttempt                `json:"attempts"`
+	Cached    bool                          `json:"cached"`
+	FetchedAt time.Time                     `json:"fetchedAt"`
+	ExpiresAt time.Time                     `json:"expiresAt"`
 }
 type mikanCache struct {
 	result           mikan.Result
@@ -147,6 +148,7 @@ func (s *MikanService) Search(ctx context.Context, input MikanInput) (output Mik
 		}
 		output.Attempts = append(output.Attempts, MikanAttempt{q, len(entry.result.Items), cached})
 		output.Result = cloneMikan(entry.result)
+		output.Specs = mikanResourceSpecs(output.Items)
 		// 原名兜底不能覆盖中文搜索已找到的番剧入口。
 		for _, card := range entry.result.Bangumis {
 			if !seenCards[card.ID] {

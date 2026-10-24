@@ -4,7 +4,7 @@ import { IconChevronDown, IconChevronRight } from '@tabler/icons-vue'
 import type { OrganizeRow } from '../types/manualOrganize'
 import { directoryGroups, inDirectory, parentDirectory, rowExcluded, setRangeSelection } from '../utils/organizeSelection'
 
-const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; targetNames?: Record<string, string>; conflicts?: Record<string, string> }>()
+const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; targetNames?: Record<string, string>; conflicts?: Record<string, string> }>()
 const search = ref('')
 const onlySelected = ref(false)
 const excluded = ref<string[]>([])
@@ -12,10 +12,10 @@ const collapsed = ref<string[]>([])
 const anchor = ref('')
 const expandedPaths = ref<string[]>([])
 const bulkOpen = ref(false)
-const groups = computed(() => directoryGroups(props.rows, props.rootPath))
+const groups = computed(() => props.flat ? [{ path: props.rootPath, label: '所选文件', rows: props.rows, descendants: props.rows }] : directoryGroups(props.rows, props.rootPath))
 const available = computed(() => props.rows.filter(row => !rowExcluded(row, excluded.value)))
 const selected = computed(() => available.value.filter(row => row.selected))
-const matches = (row: OrganizeRow) => row.sourcePath.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()) && (!onlySelected.value || row.selected)
+const matches = (row: OrganizeRow) => (row.titleOnly ? row.name : row.sourcePath).toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()) && (!onlySelected.value || row.selected)
 const filtered = computed(() => available.value.filter(matches))
 const displayedGroups = computed(() => groups.value.filter(group => (!props.compact || group.path !== props.rootPath || group.rows.length > 0) && !collapsed.value.some(root => root !== group.path && inDirectory(group.path, root)) && !excluded.value.some(root => inDirectory(group.path, root)) && group.descendants.some(row => !rowExcluded(row, excluded.value) && matches(row))))
 const visibleRows = computed(() => displayedGroups.value.flatMap(group => collapsed.value.includes(group.path) ? [] : group.rows.filter(matches)))
@@ -89,7 +89,7 @@ watch([search, onlySelected], () => { anchor.value = '' })
           <p class="my-2 text-slate-500 dark:text-slate-400">仅本次整理排除，文件保留原位。恢复后保持未勾选。</p>
           <div class="max-h-32 overflow-y-auto"><div v-for="directory in excluded" :key="directory" class="mt-2 flex items-center gap-2"><span class="min-w-0 flex-1 break-all">{{ directory }}</span><button class="secondary shrink-0" :disabled="disabled" :aria-label="`恢复目录 ${directory}`" @click="restore(directory)">恢复</button></div></div>
         </details>
-        <div class="file-columns hidden items-center gap-3 pt-1 text-xs text-slate-500 dark:text-slate-400 lg:grid" :class="tv ? 'tv-columns' : 'movie-columns'"><span>选择 / 原文件</span><template v-if="tv"><span>季</span><span>集</span><span>结束集</span></template><span>版本标记（可修改）</span></div>
+        <div class="file-columns hidden items-center gap-3 pt-1 text-xs text-slate-500 dark:text-slate-400 lg:grid" :class="tv ? 'tv-columns' : 'movie-columns'"><span>选择 / {{ rows.some(row => row.titleOnly) ? '资源或原文件' : '原文件' }}</span><template v-if="tv"><span>季</span><span>集</span><span>结束集</span></template><span>版本标记（可修改）</span></div>
       </div>
       <section v-for="group in displayedGroups" :key="group.path" class="border-b border-slate-200 dark:border-slate-700 last:border-b-0">
         <div class="flex flex-wrap items-center gap-2 bg-slate-50 dark:bg-slate-950 px-3 py-2">
@@ -102,8 +102,8 @@ watch([search, onlySelected], () => { anchor.value = '' })
           <div v-for="row in group.rows.filter(matches)" :key="row.id" :data-organize-file="row.id" class="file-columns cursor-pointer gap-x-3 gap-y-2 px-3 py-2 hover:bg-blue-50/60 dark:hover:bg-blue-950/40 lg:grid lg:items-center" :class="[row.selected ? 'bg-blue-50/40 dark:bg-blue-950/20' : 'bg-white dark:bg-slate-900', tv ? 'tv-columns' : 'movie-columns']" @click="clickRow(row, $event)" @mousedown="event => { if (event.shiftKey && !(event.target as HTMLElement).closest('input')) event.preventDefault() }">
             <div class="flex min-w-0 items-start gap-3">
               <input type="checkbox" :checked="row.selected" :aria-label="`选择 ${row.name}`" :disabled="disabled" class="mt-1 h-4 w-4 shrink-0" @click.stop="toggleRow(row, $event)" />
-              <div class="min-w-0 flex-1"><button class="w-full break-all text-left text-sm leading-5 text-slate-800 dark:text-slate-200 lg:text-xs" :disabled="disabled" :aria-pressed="row.selected" @click.stop="toggleRow(row, $event)">{{ row.name }}</button><p v-if="targetNames?.[row.id]" class="mt-1 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">整理后：{{ targetNames[row.id] }}</p><p v-if="conflicts?.[row.id]" role="alert" class="mt-1 break-all text-xs text-red-600 dark:text-red-400">{{ conflicts[row.id] }}</p><slot name="row-details" :row="row" /></div>
-              <button class="shrink-0 text-xs text-blue-600 dark:text-blue-400" :aria-expanded="expandedPaths.includes(row.id)" :aria-label="`查看完整路径 ${row.name}`" @click.stop="expandedPaths = toggleList(expandedPaths, row.id)">路径</button>
+              <div class="min-w-0 flex-1"><button class="w-full break-all text-left text-sm leading-5 text-slate-800 dark:text-slate-200 lg:text-xs" :disabled="disabled" :aria-pressed="row.selected" @click.stop="toggleRow(row, $event)">{{ row.name }}</button><p v-if="targetNames?.[row.id]" class="mt-1 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">{{ row.titleOnly ? '预计命名' : '整理后' }}：{{ targetNames[row.id] }}</p><p v-if="conflicts?.[row.id]" role="alert" class="mt-1 break-all text-xs text-red-600 dark:text-red-400">{{ conflicts[row.id] }}</p><slot name="row-details" :row="row" /></div>
+              <button v-if="!row.titleOnly" class="shrink-0 text-xs text-blue-600 dark:text-blue-400" :aria-expanded="expandedPaths.includes(row.id)" :aria-label="`查看完整路径 ${row.name}`" @click.stop="expandedPaths = toggleList(expandedPaths, row.id)">路径</button>
             </div>
             <div class="ml-7 mt-2 flex flex-wrap gap-2 lg:contents" @click.stop>
               <template v-if="tv">

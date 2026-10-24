@@ -29,6 +29,16 @@ test('active intermediate stages are processing, not failed or completed', () =>
   assert.equal(itemStatus(job.items[2], job), '操作中断，需核实结果')
 })
 
+test('title-only history keeps the expected target without exposing an invented source path', () => {
+  const job = { id: 'single', title: '作品', status: 'downloading', createdAt: '2026-10-24T00:00:00Z', config: { accountId: 'main', sourcePath: '/staging', targetPath: '/out' }, items: [{ file: { id: 'title', name: '作品 [12 END]', sourcePath: '/title', mediaType: 'video', titleOnly: true }, targetPath: '/out/作品 - S01E12', status: 'pending' }] }
+  const expected = historyTasks([job], [], [])[0].items[0]
+  assert.equal(expected.source, '')
+  assert.equal(expected.target, '/out/作品 - S01E12')
+  assert.equal(expected.titleOnly, true)
+  Object.assign(job.items[0].file, { id: '901', sourcePath: '/staging/video.mkv', titleOnly: false })
+  assert.equal(historyTasks([job], [], [])[0].items[0].source, '/staging/video.mkv')
+})
+
 test('skipped subtitles never count as uploaded or cause a false failure warning', () => {
   const job = task(['done', 'done', 'skipped'], 'completed', 'subtitle')
   assert.equal(resultSummary(job), '已上传 2/3 · 跳过 1')

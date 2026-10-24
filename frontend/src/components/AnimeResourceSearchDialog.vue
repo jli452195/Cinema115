@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
-import type { DownloadFiles, DownloadResourceInput, OrganizeJob } from '../types/manualOrganize'
+import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/manualOrganize'
 import { copyText } from '../utils/clipboard'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
+import SelectMenu from './SelectMenu.vue'
+import { matchesResourceSpec, resourceSpecFields, resourceSpecOptions, type ResourceSearchSpec, type ResourceSpecSelection } from '../utils/resourceSpecFilters'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
 import { useCloudDownloadBatch, type BatchStatus } from '../composables/useCloudDownloadBatch'
@@ -22,7 +24,7 @@ const props = withDefaults(defineProps<{ token: string; title: string; originalT
 const emit = defineEmits<{ close: [] }>()
 const isGarden = computed(() => props.provider === 'garden')
 const providerName = computed(() => isGarden.value ? 'Garden' : '蜜柑')
-interface Item { id: string; title: string; size: string; updatedAt: string; magnet: string; url: string; torrentUrl: string; resolution: string; groupId?: string; originName?: string; publisher?: string; fansub?: string }
+interface Item { id: string; title: string; size: string; updatedAt: string; magnet: string; url: string; torrentUrl: string; resolution: string; spec?: ResourceSearchSpec; groupId?: string; originName?: string; publisher?: string; fansub?: string }
 interface Group { id: string; name: string; origin?: string; originName?: string; kind?: string }
 interface Bangumi { id: string; title: string; coverUrl: string; url: string }
 interface Expansion { groupId: string; take: number }
@@ -45,13 +47,19 @@ const loadingMessage = ref('')
 const error = ref('')
 const filter = ref('')
 const resolution = ref('全部')
+const specFilters = reactive<ResourceSpecSelection>({ codec: '', bitDepth: '', bitrate: '', languages: '', subtitleMode: '' })
+const specControls = computed(() => resourceSpecFields.map(field => ({ ...field, options: resourceSpecOptions((result.value?.items || []).map(item => item.spec), field, specFilters[field.key]) })))
+function resetSpecFilters() { for (const field of resourceSpecFields) specFilters[field.key] = '' }
+function withSpecs(data: Result & { specs?: Record<string, ResourceSearchSpec> }): Result {
+  return { ...data, items: data.items.map(item => ({ ...item, spec: data.specs?.[item.id] })) }
+}
 const visible = ref(50)
 const copied = ref('')
 const copyError = ref('')
 const selectedBangumi = ref<Bangumi>()
 const brokenCovers = ref<Record<string, boolean>>({})
 const coverRetries = ref<Record<string, number>>({})
-const searchSnapshot = ref<{ result: Result; query: string; group: string; groups: Group[]; filter: string; resolution: string; visible: number }>()
+const searchSnapshot = ref<{ result: Result; query: string; group: string; groups: Group[]; filter: string; resolution: string; specFilters: ResourceSpecSelection; visible: number }>()
 // 字幕组检索只更新资源；保留同一关键词的番剧入口，避免顶部条目收缩。
 const bangumis = ref<Bangumi[]>([])
 const itemStrip = ref<HTMLElement>()
@@ -95,16 +103,27 @@ function allowReselectAfterCheck() {
   batch.allowReselectAfterCheck()
   for (const [key, state] of Object.entries(submissions.value)) if (state.uncertain) delete submissions.value[key]
 }
-const organizeResource = ref<Item>()
-const organizeFiles = ref<DownloadFiles>({ files: [] })
+const organizeEntries = ref<DownloadOrganizeResource[]>([])
+const organizingBatch = ref(false), organizeHiddenCount = ref(0)
 const prepareNotices = ref<Record<string, string>>({})
 function organizeSource(item: Item): DownloadResourceInput {
-  if (!isGarden.value) return { source: 'mikan', providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
+  if (!isGarden.value) return { source: 'mikan', title: item.title, providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
   const [provider, providerId] = item.id.split(':')
-  return { source: 'garden', provider, providerId: providerId || '', magnet: item.magnet }
+  return { source: 'garden', title: item.title, provider, providerId: providerId || '', magnet: item.magnet }
+}
+function organizeEntry(item: Item, files?: DownloadFiles): DownloadOrganizeResource {
+  const fansub = item.fansub || groups.value.find(group => group.id === item.groupId || item.title.startsWith(`[${group.name}]`) || item.title.startsWith(`【${group.name}】`))?.name
+  return { resource: { ...item, fansub }, source: organizeSource(item), files }
+}
+function openBatchOrganize(event: MouseEvent) {
+  if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !props.tmdbId || !batchCount.value) return
+  const entries = ([...batchSelected.value.values()] as Item[]).filter(canSelect).map(item => organizeEntry(item))
+  if (!entries.length) return
+  ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
+  organizingBatch.value = true; organizeHiddenCount.value = hiddenSelectionCount.value; organizeEntries.value = entries
 }
 async function openOrganize(item: Item, event: MouseEvent) {
-  if (organizeResource.value || interactionBusy.value || singleSubmitting.value || !props.tmdbId || submission(item)?.success || submission(item)?.uncertain) return
+  if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !props.tmdbId || submission(item)?.success || submission(item)?.uncertain) return
   const returnFocus = event.currentTarget as HTMLElement
   returnFocus.focus({ preventScroll: true })
   preparingItem.value = item.id
@@ -112,38 +131,41 @@ async function openOrganize(item: Item, event: MouseEvent) {
   try {
     const data = await p115Request<DownloadFiles>(props.token, 'download-organize/files', { method: 'POST', body: JSON.stringify(organizeSource(item)), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
     if (!data.files.length) { prepareNotices.value[item.id] = data.reason || '没有可整理的文件清单，可使用普通离线'; return }
-    organizeFiles.value = data
     preparingItem.value = ''
     await nextTick()
     if (lifecycle.signal.aborted) return
     returnFocus?.focus({ preventScroll: true })
-    organizeResource.value = { ...item, fansub: item.fansub || groups.value.find(group => group.id === item.groupId)?.name }
+    organizingBatch.value = false; organizeHiddenCount.value = 0; organizeEntries.value = [organizeEntry(item, data)]
   } catch (e) { if (!lifecycle.signal.aborted) prepareNotices.value[item.id] = e instanceof Error ? e.message : '读取文件清单失败，可使用普通离线' }
   finally {
     if (!lifecycle.signal.aborted) {
       preparingItem.value = ''
       await nextTick()
-      if (!organizeResource.value && returnFocus.isConnected && document.activeElement === document.body) returnFocus.focus({ preventScroll: true })
+      if (!organizeEntries.value.length && returnFocus.isConnected && document.activeElement === document.body) returnFocus.focus({ preventScroll: true })
     }
   }
 }
-function organizeUncertain() {
-  if (organizeResource.value) submissions.value[magnetKey(organizeResource.value.magnet)] = { organize: true, uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
+function organizeUncertain(keys: string[]) {
+  for (const key of keys) {
+    submissions.value[key] = { organize: true, uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
+    batch.statuses.value[key] = submissions.value[key]!
+  }
 }
-function organized(job: OrganizeJob) {
-  if (!organizeResource.value) return
-  const key = magnetKey(organizeResource.value.magnet)
-  submissions.value[key] = { organize: true, success: true, message: `已创建下载整理任务：${job.title}。可在下载整理的任务记录查看进度。` }
-  batchSelected.value.delete(key)
+function organized(keys: string[]) {
+  for (const key of keys) {
+    submissions.value[key] = { organize: true, success: true, message: `已创建下载整理任务：${props.title}。可在下载整理的任务记录查看进度。` }
+    batch.statuses.value[key] = submissions.value[key]!
+    batchSelected.value.delete(key)
+  }
 }
-function closeDialog() { if (organizeResource.value) return; batch.stop(); emit('close') }
+function closeDialog() { if (organizeEntries.value.length) return; batch.stop(); emit('close') }
 const resolutions = computed(() => ['全部', ...['2160P', '1080P', '720P', '480P', '未知'].filter(value => result.value?.items.some(item => item.resolution === value))])
 const groupOptions = computed(() => [{ value: '', label: isGarden.value ? '全部发布方' : '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: isGarden.value ? `${item.name} · ${item.originName} · ${item.kind === 'fansub' ? '字幕组' : '发布者'}` : item.name }))])
 const resolutionOptions = computed(() => resolutions.value.map(value => ({ value, label: value === '全部' ? '全部分辨率' : value })))
 const filtered = computed(() => {
   if (busy.value && retainedItems.value) return retainedItems.value
   const words = filter.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
-  return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
+  return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (resolution.value === '全部' || item.resolution === resolution.value) && (!batchMode.value || matchesResourceSpec(item.spec, specFilters)) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
 })
 const siteURL = computed(() => {
   if (isGarden.value) {
@@ -158,6 +180,7 @@ const siteURL = computed(() => {
   return `https://mikanani.me/Home/Search?${params}`
 })
 watch([filter, resolution], () => { visible.value = 50 }, { flush: 'sync' })
+watch(specFilters, () => { visible.value = 50 }, { flush: 'sync' })
 
 async function search(refresh = false, selectedGroup = '') {
   if (isGarden.value) { await searchGarden(refresh, selectedGroup); return }
@@ -183,7 +206,8 @@ async function search(refresh = false, selectedGroup = '') {
     const data = await response.json().catch(() => null)
     if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 403 ? '仅管理员可使用蜜柑搜索' : data?.error || `蜜柑搜索失败（HTTP ${response.status}）`)
     if (!selectedGroup || data.query !== result.value?.query) bangumis.value = data.bangumis || []
-    result.value = data as Result
+    result.value = withSpecs(data)
+    resetSpecFilters()
     selectedBangumi.value = undefined
     query.value = data.query
     if (!selectedGroup) groups.value = data.groups
@@ -211,7 +235,7 @@ async function searchGarden(refresh = false, selectedGroup = '', page = 1) {
     if (!selectedGroup) groups.value = page > 1 ? [...new Map([...groups.value, ...data.groups].map(item => [item.id, item])).values()] : data.groups
     query.value = data.query; group.value = selectedGroup
     if (page > 1) { visible.value += 50; appended = true }
-    else { visible.value = 50; resolution.value = '全部'; filter.value = ''; await resetResultPosition() }
+    else { visible.value = 50; resolution.value = '全部'; resetSpecFilters(); filter.value = ''; await resetResultPosition() }
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : 'Garden 搜索失败，请重试' }
   finally {
     busy.value = false; retainedItems.value = undefined
@@ -274,6 +298,7 @@ function backToSearch() {
   groups.value = saved.groups
   filter.value = saved.filter
   resolution.value = saved.resolution
+  Object.assign(specFilters, saved.specFilters)
   visible.value = saved.visible
   selectedBangumi.value = undefined
   searchSnapshot.value = undefined
@@ -287,7 +312,7 @@ async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion
   retainedItems.value = filtered.value
   if (!selectedBangumi.value && result.value) {
     // 进入番剧前保留搜索结果及筛选，返回时无需重新搜索。
-    searchSnapshot.value = { result: result.value, query: query.value, group: group.value, groups: groups.value, filter: filter.value, resolution: resolution.value, visible: visible.value }
+    searchSnapshot.value = { result: result.value, query: query.value, group: group.value, groups: groups.value, filter: filter.value, resolution: resolution.value, specFilters: { ...specFilters }, visible: visible.value }
   }
   selectedBangumi.value = card
   loadingMessage.value = expansion ? '正在加载该字幕组的更多资源…' : `正在读取 ${card.title} 的番剧资源…`
@@ -302,7 +327,7 @@ async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion
     })
     const data = await response.json().catch(() => null)
     if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 403 ? '仅管理员可使用蜜柑搜索' : data?.error || `蜜柑番剧读取失败（HTTP ${response.status}）`)
-    const next = data as Result
+    const next = withSpecs(data)
     if (expansion && result.value) {
       // 原站返回该字幕组的累积列表；替换该组并按磁力去重，保留其他组及其加载进度。
       const rows = [...result.value.items.filter(item => item.groupId !== expansion.groupId), ...next.items]
@@ -313,6 +338,7 @@ async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion
       if (previousBangumi?.id !== card.id) filter.value = ''
       group.value = ''
       resolution.value = '全部'
+      resetSpecFilters()
       visible.value = 50
       await resetResultPosition()
     }
@@ -445,7 +471,7 @@ onBeforeUnmount(() => {
               <span class="mikan-filter-label" aria-hidden="true">{{ isGarden ? '发布方' : '字幕组' }}</span>
               <MikanFilterSelect :model-value="group" :options="groupOptions" :label="`${providerName}${isGarden ? '发布方' : '字幕组'}`" :disabled="interactionBusy" @update:model-value="selectGroup" />
             </div>
-            <div class="mikan-filter-row">
+            <div v-if="!batchMode" class="mikan-filter-row">
               <span class="mikan-filter-label" aria-hidden="true">分辨率</span>
               <MikanFilterSelect v-model="resolution" :options="resolutionOptions" :label="`${providerName}分辨率`" :disabled="interactionBusy" />
             </div>
@@ -460,10 +486,14 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="batchMode" class="mikan-selection-tools">
               <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
+              <div class="mikan-spec-filters" role="group" aria-label="批量资源规格筛选">
+                <SelectMenu v-model="resolution" :options="resolutionOptions" label="批量分辨率" variant="anime" class="mikan-spec-select" :disabled="interactionBusy"><template #trigger="slot"><span>分辨率：{{ resolution === '全部' ? '全部' : slot.label }}</span></template></SelectMenu>
+                <SelectMenu v-for="field in specControls" :key="field.key" v-model="specFilters[field.key]" :options="field.options" :label="`批量${field.label}`" variant="anime" class="mikan-spec-select" :disabled="interactionBusy"><template #trigger="slot"><span>{{ field.label }}：{{ specFilters[field.key] ? slot.label : '全部' }}</span></template></SelectMenu>
+              </div>
               <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空</button>
             </div>
             <p v-if="!result.items.length" class="mikan-empty">{{ isGarden ? 'Garden 未找到资源，可修改片名、尝试原名或调整来源及发布方。' : selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
-            <p v-else-if="!filtered.length" class="mikan-empty">没有符合筛选条件的资源，请调整关键词或分辨率。</p>
+            <p v-else-if="!filtered.length" class="mikan-empty">没有符合筛选条件的资源，请调整关键词或规格筛选。</p>
             <ul class="mikan-resource-list" :aria-label="`${providerName}资源列表`">
               <li v-for="item in filtered.slice(0, visible)" :key="item.id" class="mikan-resource" :class="{ 'mikan-selectable': batchMode, 'mikan-resource-selected': batchMode && batchSelected.has(magnetKey(item.magnet)) }" @click="selectCard(item, $event)">
                 <label v-if="batchMode" class="mikan-resource-checkbox" @click.stop><input type="checkbox" :checked="batchSelected.has(magnetKey(item.magnet))" :disabled="interactionBusy || !canSelect(item)" :aria-label="`选择资源：${item.title}`" @change="toggleResource(item)" /><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" /><path v-if="batchSelected.has(magnetKey(item.magnet))" d="m7 12 3 3 7-7" /></svg></label>
@@ -498,7 +528,7 @@ onBeforeUnmount(() => {
         </div>
         <footer v-if="batchMode" class="mikan-batch-footer" aria-label="批量云下载操作">
           <div class="mikan-batch-count" tabindex="-1"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
-          <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><button v-else type="button" class="mikan-button mikan-primary-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg>提交到 115（{{ batchCount }}）</button></div>
+          <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="openBatchOrganize"><IconFolder :size="16" aria-hidden="true" />批量整理（{{ batchCount }}）</button><button type="button" class="mikan-button mikan-primary-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg>提交到 115（{{ batchCount }}）</button></template></div>
           <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
           <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="closeDialog">前往配置</RouterLink></p>
           <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
@@ -507,7 +537,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <DownloadOrganizeDialog v-if="organizeResource" :token="token" :resource="organizeResource" :source="organizeSource(organizeResource)" :files="organizeFiles.files" :subtitles="organizeFiles.subtitles" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeResource = undefined" @submitted="organized" @uncertain="organizeUncertain" />
+  <DownloadOrganizeDialog v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeEntries = []" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
 
 <style scoped>
@@ -603,6 +633,12 @@ onBeforeUnmount(() => {
 .mikan-resource-checkbox:has(input:disabled) { opacity: .45; cursor: default; }
 .mikan-resource-checkbox:has(input:focus-visible) { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; border-radius: 12px; }
 .mikan-selection-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 4px; }
+.mikan-spec-filters { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; overscroll-behavior: contain; padding: 4px; scrollbar-width: thin; --ae-surface: #f8fafc; --ae-ink: var(--search-dialog-text); --ae-muted: var(--search-dialog-muted); --ae-blue: var(--search-dialog-primary); --ae-inset: var(--search-dialog-secondary-background); }
+.dark .mikan-spec-filters { --ae-surface: #1e293b; }
+.mikan-spec-select { flex: 0 0 auto; min-width: 0; }
+.mikan-spec-select :deep(.select-menu-trigger) { min-height: 36px; padding: 6px 9px; gap: 6px; border: 0; border-radius: 10px; font-size: 11px; }
+.mikan-spec-select :deep(.select-menu-trigger span) { white-space: nowrap; }
+.mikan-spec-select :deep(.select-menu-trigger[aria-expanded=true]) { background: var(--search-dialog-action-background); }
 .mikan-select-all { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--search-dialog-text); font-size: 12px; cursor: pointer; }
 .mikan-select-all input { width: 18px; height: 18px; accent-color: var(--search-dialog-primary); }
 .mikan-select-all small { color: var(--search-dialog-muted); font-size: 11px; }
@@ -683,7 +719,11 @@ onBeforeUnmount(() => {
   .mikan-resource { padding: 16px; border-radius: 18px; }
   .mikan-resource-checkbox { top: 8px; left: 8px; width: 48px; height: 48px; }
   .mikan-selection-tools .mikan-select-all { min-height: 48px; }
-  .mikan-batch-footer { padding: 8px 16px 12px; gap: 4px 8px; }
+  .mikan-selection-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .mikan-spec-filters { grid-column: 1 / -1; grid-row: 2; }
+  .mikan-spec-select :deep(.select-menu-trigger) { min-height: 44px; }
+  .mikan-batch-footer { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 12px; gap: 4px 8px; }
+  .mikan-batch-actions .mikan-button { flex: 1; }
   .mikan-batch-count strong { font-size: 12px; }
   .mikan-batch-count > span { font-size: 10px; line-height: 16px; }
   .mikan-batch-actions .mikan-button { padding-inline: 10px; font-size: 11px; white-space: nowrap; }

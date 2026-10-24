@@ -3,6 +3,7 @@ import type { SubtitleImport } from '../types/subtitleImport'
 
 export type HistoryKind = 'organize' | 'cleanup' | 'subtitle'
 export interface HistoryItem {
+  titleOnly?: boolean
   id: string
   name: string
   source: string
@@ -85,7 +86,7 @@ export function historyTasks(jobs: OrganizeJob[], cleanup: OrganizeCleanup[], su
     key: `organize:${job.id}`, kind: 'organize', title: job.title, accountId: job.config.accountId,
     source: job.config.sourcePath, target: job.config.targetPath, status: job.status, createdAt: job.createdAt,
     message: job.message, organize: job,
-    items: job.items.map(item => ({ id: item.file.id, name: item.file.name, source: item.file.sourcePath, target: item.targetPath, status: item.status, message: item.message, mediaType: item.file.mediaType })),
+    items: job.items.map(item => ({ id: item.file.id, name: item.file.name, source: item.file.titleOnly ? '' : item.file.sourcePath, target: item.targetPath, status: item.status, message: item.message, mediaType: item.file.mediaType, titleOnly: item.file.titleOnly })),
   }))
   for (const job of cleanup) tasks.push({
     key: `cleanup:${job.id}`, kind: 'cleanup', title: `${job.mode === 'empty' ? '清理空目录' : '删除所选条目'} · ${job.parentPath || '未记录目录'}`,

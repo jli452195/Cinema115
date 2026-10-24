@@ -17,14 +17,15 @@ type GardenSearchInput struct {
 }
 
 type GardenSearchResult struct {
-	Items     []garden.Resource `json:"items"`
-	Groups    []animefeed.Group `json:"groups"`
-	Query     string            `json:"query"`
-	Page      int               `json:"page"`
-	HasMore   bool              `json:"hasMore"`
-	Cached    bool              `json:"cached"`
-	FetchedAt time.Time         `json:"fetchedAt"`
-	ExpiresAt time.Time         `json:"expiresAt"`
+	Specs     map[string]ResourceSearchSpec `json:"specs"`
+	Items     []garden.Resource             `json:"items"`
+	Groups    []animefeed.Group             `json:"groups"`
+	Query     string                        `json:"query"`
+	Page      int                           `json:"page"`
+	HasMore   bool                          `json:"hasMore"`
+	Cached    bool                          `json:"cached"`
+	FetchedAt time.Time                     `json:"fetchedAt"`
+	ExpiresAt time.Time                     `json:"expiresAt"`
 }
 
 func (s *GardenService) SearchResources(ctx context.Context, in GardenSearchInput) (GardenSearchResult, error) {
@@ -53,9 +54,11 @@ func (s *GardenService) SearchResources(ctx context.Context, in GardenSearchInpu
 		return s.SearchResources(ctx, in)
 	}
 	groups := make([]animefeed.Group, 0, len(resources.Rows))
+	specs := make(map[string]ResourceSearchSpec, len(resources.Rows))
 	seen := make(map[string]bool, len(resources.Rows))
 	for i := range resources.Rows {
 		r := &resources.Rows[i]
+		specs[r.Provider+":"+r.ProviderID] = resourceSearchSpec(r.Title)
 		g := garden.ResourceGroup(*r)
 		if !seen[g.ID] {
 			groups = append(groups, g)
@@ -64,5 +67,5 @@ func (s *GardenService) SearchResources(ctx context.Context, in GardenSearchInpu
 		magnet, _ := url.Parse(r.Magnet) // Already checked by the provider parser.
 		r.Magnet = "magnet:?xt=" + magnet.Query().Get("xt")
 	}
-	return GardenSearchResult{Items: resources.Rows, Groups: groups, Query: in.Query, Page: in.Page, HasMore: !*resources.Pagination.Complete && in.Page < 100, Cached: cached, FetchedAt: read.observed, ExpiresAt: read.expires}, nil
+	return GardenSearchResult{Items: resources.Rows, Specs: specs, Groups: groups, Query: in.Query, Page: in.Page, HasMore: !*resources.Pagination.Complete && in.Page < 100, Cached: cached, FetchedAt: read.observed, ExpiresAt: read.expires}, nil
 }
