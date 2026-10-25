@@ -5,6 +5,18 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig(({ mode }) => ({
   plugins: [
     vue(),
+    {
+      name: 'cinema115-build-info',
+      transformIndexHtml: () => Object.entries({
+        version: process.env.APP_VERSION || 'dev',
+        revision: process.env.APP_REVISION || '',
+        created: process.env.APP_CREATED || '',
+      }).map(([key, content]) => ({
+        tag: 'meta',
+        attrs: { name: `cinema115-${key}`, content },
+        injectTo: 'head' as const,
+      })),
+    },
     VitePWA({
       registerType: 'prompt', // 用户确认后更新
       injectRegister: 'auto',

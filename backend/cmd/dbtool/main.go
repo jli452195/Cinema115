@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"strm115/backend/internal/buildinfo"
 	"strm115/backend/internal/storage"
 )
 
@@ -28,7 +29,11 @@ func run() (err error) {
 	directory := flag.String("data-dir", defaultDir, "数据目录")
 	action := flag.String("action", "status", "操作：status、migrate、backup、reset-portal（停服后清空个人中心测试数据）")
 	output := flag.String("output", "", "备份文件路径，必须尚不存在")
+	showVersion := flag.Bool("version", false, "输出构建版本并退出")
 	flag.Parse()
+	if *showVersion {
+		return json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+	}
 	if *action != "status" && *action != "migrate" && *action != "backup" && *action != "reset-portal" {
 		return fmt.Errorf("操作应为 status、migrate、backup 或 reset-portal")
 	}

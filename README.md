@@ -42,13 +42,14 @@ TV 看板（`/tv` 和首页）提供「全部／剧集／动漫／纪录／综�
 
 ## NAS 部署（Docker）
 
-生产环境使用根目录 `Dockerfile` 和 `compose.yaml`，多阶段构建后只运行一个容器，由 Go 同时提供前端页面与 API，默认通过 `http://NAS_IP:8115` 访问。根目录 `.env` 配置 NAS 访问地址和账号；`compose.yaml` 使用 `./data:/data` 与 `/vol1/1000/媒体库:/strm` 两条挂载。页面从 `/strm` 下的真实文件夹中选择生成目录，例如 `/strm/待整理` 对应 NAS 的 `媒体库/待整理`。完整步骤见 [NAS Docker 部署](docs/docker.md)。
+从 [GitHub Releases](https://github.com/jli452195/Cinema115/releases) 下载对应版本的 `compose.yaml`，直接填写其中的管理员密码、`JWT_SECRET`、TMDB 密钥和 NAS 挂载路径，无需 `.env` 或本地构建。镜像为 `jli452195/cinema115`，支持 amd64 和 arm64；由 Go 同时提供前端页面与 API，默认通过 `http://NAS_IP:8115` 访问。页面选择 `/strm/待整理` 对应 NAS 的 `媒体库/待整理`。完整步骤见 [NAS Docker 部署](docs/docker.md)，维护者发布步骤见 [版本发布](docs/releasing.md)。
 
-配置 `.env` 并创建挂载目录后执行：
+填写 Compose 配置并创建挂载目录后执行：
 
 ```sh
 docker compose config --quiet
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 ## Windows / 本地开发

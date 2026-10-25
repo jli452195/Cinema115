@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"strm115/backend/internal/bot"
 	"strm115/backend/internal/btresource"
+	"strm115/backend/internal/buildinfo"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/garden"
@@ -39,6 +42,14 @@ type shareRequest struct {
 }
 
 func main() {
+	showVersion := flag.Bool("version", false, "输出构建版本并退出")
+	flag.Parse()
+	if *showVersion {
+		if err := json.NewEncoder(os.Stdout).Encode(buildinfo.Current()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	// 加载当前目录中的环境配置。
 	_ = godotenv.Load(".env")
 	_ = godotenv.Load("../.env")
@@ -101,6 +112,10 @@ func main() {
 	httpapi.RegisterPortalAuth(r, auth)
 	admin := r.Group("/api/admin")
 	admin.Use(httpapi.PortalAuthenticated(auth), httpapi.PortalAdminOnly())
+	admin.GET("/version", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, buildinfo.Current())
+	})
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
 	httpapi.RegisterPortalInvites(admin, auth)
 	httpapi.RegisterNamingTemplates(admin, database)

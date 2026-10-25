@@ -1,6 +1,8 @@
 # NAS Docker 部署
 
-根目录 `Dockerfile` 分别构建 Vue 和 Go，最终一个镜像、一个容器、一个 Go 进程同时提供页面和 API。项目 compose 使用 Linux NAS 的 host 网络，默认通过 `http://NAS_IP:8115` 访问。NAS 无需安装 Go、Node.js 或 Nginx。
+镜像 `jli452195/cinema115` 支持 amd64 和 arm64 NAS，一个容器、一个 Go 进程同时提供页面和 API。项目 compose 使用 Linux NAS 的 host 网络，默认通过 `http://NAS_IP:8115` 访问。NAS 无需安装 Go、Node.js 或 Nginx，也无需下载源码构建。
+
+从 [GitHub Releases](https://github.com/jli452195/Cinema115/releases) 下载目标版本附件中的 `compose.yaml`，附件已固定该次发布的镜像版本。根目录模板使用 `latest`，只跟随正式版；测试版必须使用明确版本，例如 `jli452195/cinema115:0.1.0-beta.1`，首个正式版发布前没有 `latest` 镜像。
 
 ## 配置
 
@@ -57,16 +59,19 @@ NAS 新增文件夹后重新打开选择器即可看到，无需修改 Docker �
 
 ```sh
 docker compose config --quiet
-docker compose up -d --build --remove-orphans
+docker compose pull
+docker compose up -d --remove-orphans
 docker compose ps
 curl -f http://127.0.0.1:8115/api/health
 ```
 
-也可在根目录执行 `docker build -t cinema115:local .` 构建镜像，然后在 NAS 容器管理界面选择 host 网络、添加环境变量 `HTTP_PORT=8115` 以及上述环境变量和两个挂载，无需发布端口。支持 amd64 和 arm64 NAS。若自行改用 bridge 网络，删除 `network_mode: host`，并将宿主机端口映射到实际 `HTTP_PORT`（例如 `8115:8115`）；Emby 反代端口也需另行映射。
+也可在 NAS 容器管理界面直接拉取 `jli452195/cinema115:版本号`，选择 host 网络、添加上述环境变量和两个挂载，无需发布端口。若自行改用 bridge 网络，删除 `network_mode: host`，并将宿主机端口映射到实际 `HTTP_PORT`（例如 `8115:8115`）；Emby 反代端口也需另行映射。
 
-Go 构建使用默认并发与垃圾回收参数，不再固定为低内存编译。BuildKit 缓存依赖和编译结果，修改后端代码后可复用未变更的包；首次构建 Telegram 协议依赖耗时和内存占用较高，缓存仅用于构建，不进入最终镜像。
+升级前使用 `dbtool` 备份数据库并保留当前 Compose。固定版本部署时，只修改 `image:` 的版本号，再执行上面的拉取和启动命令；使用 `latest` 时直接执行即可。不要用新版模板覆盖已填写的凭据与挂载。回退镜像不保证旧程序能读取新版数据库，必要时停服恢复升级前的完整备份。
 
-更新代码后重新执行构建启动命令。修改 Compose 环境变量或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
+修改 Compose 环境变量或挂载后执行 `docker compose up -d`；仅重启用 `docker compose restart`；查看日志用 `docker compose logs --tail=100 cinema115`；停止用 `docker compose down`。NAS 挂载数据保留，容器已配置自动重启、健康检查和日志轮转。
+
+查看正在运行的后端版本：`docker compose exec cinema115 /app/server -version`，输出版本号、源码提交和提交时间，无需重启服务或打开数据库。`/app/dbtool -version` 输出相同信息。前端 HTML 的 `cinema115-version`、`cinema115-revision`、`cinema115-created` 元信息对应当前页面构建，便于识别浏览器仍缓存旧页面的情况；管理员可通过 `GET /api/admin/version` 查询当前后端构建信息。
 
 首次部署后在「115 助手」配置主账号并扫码登录，普通功能统一使用主账号；小号仅用于用户播放绑定和秒传。多账号配置保存于 `/data/cinema115.db`，Cookie 字段使用 AES-GCM 加密，主账号角色单独保存。从 Windows 迁移到 NAS 时保留完整 `data/`、原 `JWT_SECRET` 并保证文件权限正确；运行中备份数据库应使用 `dbtool -action backup`。旧 `p115-accounts.enc` 或 `p115-session.enc` 首次启动时自动导入，成功后仅使用数据库，保留旧文件作为备份。根目录密钥和登录凭证不会打包到镜像中。
 

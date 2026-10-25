@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# Keep stable tag promotion and GitHub's latest release in the same order.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: jli452195/cinema115
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.version.outputs.revision }}
+      created: ${{ steps.version.outputs.created }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          number='(0|[1-9][0-9]*)'
+          if [[ ! "$TAG" =~ ^v${number}\.${number}\.${number}(-(alpha|beta|rc)\.${number})?$ ]]; then
+            echo 'Expected vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N' >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          if (( ${#version} > 128 )); then
+            echo 'Docker tag exceeds 128 characters' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo 'prerelease=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'prerelease=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  checks:
+    needs: metadata
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [metadata, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      REVISION: ${{ needs.metadata.outputs.revision }}
+      CREATED: ${{ needs.metadata.outputs.created }}
+      PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push versioned image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}
+          build-args: |
+            APP_VERSION=v${{ env.VERSION }}
+            APP_REVISION=${{ env.REVISION }}
+            APP_CREATED=${{ env.CREATED }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify both architectures and frontend metadata
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            for binary in /app/server /app/dbtool; do
+              docker run --rm --platform "$platform" --entrypoint "$binary" "$IMAGE@$DIGEST" -version > build-info.json
+              jq -e --arg version "v$VERSION" --arg revision "$REVISION" --arg created "$CREATED" \
+                '.version == $version and .revision == $revision and .created == $created' build-info.json
+            done
+            docker run --rm --platform "$platform" --entrypoint cat "$IMAGE@$DIGEST" /app/frontend/dist/index.html > frontend.html
+            grep -F "name=\"cinema115-version\" content=\"v$VERSION\"" frontend.html
+            grep -F "name=\"cinema115-revision\" content=\"$REVISION\"" frontend.html
+            grep -F "name=\"cinema115-created\" content=\"$CREATED\"" frontend.html
+          done
+      - name: Prepare deployment file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          sed "s|image: $IMAGE:latest|image: $IMAGE:$VERSION|" compose.yaml > release/compose.yaml
+          grep -F "image: $IMAGE:$VERSION" release/compose.yaml
+          docker compose -f release/compose.yaml config --quiet
+      - name: Prepare GitHub Release
+        id: release
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const repo = context.repo;
+            const tag = `v${process.env.VERSION}`;
+            const prerelease = process.env.PRERELEASE === 'true';
+            const find = async (request) => {
+              try { return (await request()).data; }
+              catch (error) { if (error.status !== 404) throw error; return null; }
+            };
+            const latest = await find(() => github.rest.repos.getLatestRelease(repo));
+            const parts = (value) => value.replace(/^v/, '').split('.').map(BigInt);
+            const older = (left, right) => {
+              const a = parts(left), b = parts(right);
+              for (let i = 0; i < 3; i++) {
+                if (a[i] !== b[i]) return a[i] < b[i];
+              }
+              return false;
+            };
+            if (latest && !/^v\d+\.\d+\.\d+$/.test(latest.tag_name)) {
+              throw new Error('Latest release has a nonstandard tag; resolve it before publishing.');
+            }
+            const promote = !prerelease && (!latest || !older(tag, latest.tag_name));
+            let release = await find(() => github.rest.repos.getReleaseByTag({ ...repo, tag }));
+            if (!release) {
+              release = (await github.rest.repos.createRelease({
+                ...repo, tag_name: tag, name: tag, target_commitish: process.env.REVISION,
+                draft: true, prerelease, generate_release_notes: true,
+                body: `Docker: \`${process.env.IMAGE}:${process.env.VERSION}\`\n\n下载附件 compose.yaml，填写凭据和挂载目录后部署。\n\nCommit: ${process.env.REVISION}`,
+              })).data;
+            }
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: release.id });
+            if (!assets.some(asset => asset.name === 'compose.yaml')) {
+              await github.rest.repos.uploadReleaseAsset({
+                ...repo, release_id: release.id, name: 'compose.yaml',
+                data: fs.readFileSync('release/compose.yaml'),
+                headers: { 'content-type': 'application/yaml' },
+              });
+            }
+            core.setOutput('id', release.id);
+            core.setOutput('promote', String(promote));
+      - name: Publish GitHub Release
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+          PROMOTE: ${{ steps.release.outputs.promote }}
+        with:
+          script: |
+            const release = await github.rest.repos.updateRelease({
+              ...context.repo, release_id: Number(process.env.RELEASE_ID),
+              draft: false, prerelease: process.env.PRERELEASE === 'true',
+              make_latest: process.env.PROMOTE === 'true' ? 'true' : 'false',
+            });
+            core.notice(`Published ${release.data.html_url}`);
+      # Record the newest stable release before changing the registry alias, so
+      # a later older release cannot roll it back after a partially failed run.
+      - name: Promote stable image to latest
+        if: steps.release.outputs.promote == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
