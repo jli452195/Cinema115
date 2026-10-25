@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -240,7 +241,11 @@ func TestBackgroundRunDeduplicatesEquivalentActiveSnapshot(t *testing.T) {
 
 func TestGenerateBatchWaitsForExistingEquivalentRun(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var callers sync.WaitGroup
+	defer func() {
+		cancel()
+		callers.Wait()
+	}()
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var calls atomic.Int32
@@ -256,30 +261,62 @@ func TestGenerateBatchWaitsForExistingEquivalentRun(t *testing.T) {
 	}))
 	runs := NewShareRuns(root, s)
 	runShareWorker(t, runs, cancel)
-	first := make(chan []BatchOutcome, 1)
-	second := make(chan []BatchOutcome, 1)
-	go func() {
-		outcomes, _ := runs.GenerateBatch(WithGenerationSource(context.Background(), "网页"), []GenerateInput{input})
-		first <- outcomes
-	}()
+	type batchResult struct {
+		outcomes []BatchOutcome
+		err      error
+	}
+	completed := make(chan batchResult, 2)
+	startBatch := func(source string) {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			outcomes, err := runs.GenerateBatch(WithGenerationSource(root, source), []GenerateInput{input})
+			completed <- batchResult{outcomes: outcomes, err: err}
+		}()
+	}
+	startBatch("网页")
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("首个任务未启动")
 	}
-	go func() {
-		outcomes, _ := runs.GenerateBatch(WithGenerationSource(context.Background(), "订阅"), []GenerateInput{input})
-		second <- outcomes
-	}()
-	close(release)
-	for _, completed := range []<-chan []BatchOutcome{first, second} {
-		select {
-		case outcomes := <-completed:
-			if len(outcomes) != 1 || outcomes[0].Err != nil || outcomes[0].Result == nil || outcomes[0].Result.Written != 1 {
-				t.Fatal("调用方未收到合并任务结果", outcomes)
+	startBatch("订阅")
+	// 第二次调用必须先完成入队，才能验证它等待的是仍在执行的同一任务。
+	// 仅启动 goroutine 就放行首个任务，会把正常的后续订阅收集误判为等待失败。
+	timeout := time.NewTimer(3 * time.Second)
+	defer timeout.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		runs.mu.Lock()
+		accepted, runCount := len(runs.accepted), len(runs.runs)
+		runs.mu.Unlock()
+		if accepted == 2 {
+			if runCount != 1 {
+				t.Fatalf("等价请求未合并：后台任务数 %d", runCount)
 			}
-		case <-time.After(time.Second):
-			t.Fatal("调用方等待了不存在的任务编号")
+			break
+		}
+		select {
+		case result := <-completed:
+			t.Fatalf("放行任务前调用已返回：%v, %v", result.outcomes, result.err)
+		case <-timeout.C:
+			t.Fatal("第二次调用未完成入队")
+		case <-tick.C:
+		}
+	}
+	close(release)
+	for i := 0; i < 2; i++ {
+		select {
+		case result := <-completed:
+			if result.err != nil {
+				t.Fatal("等待合并任务失败", result.err)
+			}
+			if outcomes := result.outcomes; len(outcomes) != 1 || outcomes[0].Err != nil || outcomes[0].Result == nil || outcomes[0].Result.Written != 1 {
+				t.Fatal("调用方未收到合并任务结果", result.outcomes)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("合并任务结束后调用方未收到结果")
 		}
 	}
 	if calls.Load() != 1 {
