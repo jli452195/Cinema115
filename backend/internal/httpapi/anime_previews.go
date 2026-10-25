@@ -144,9 +144,9 @@ func decorateAnimePreview(c *gin.Context, s *service.AnimeAdminService, sourceID
 	for _, item := range page.Items {
 		ids = append(ids, item.Release.ID)
 	}
-	states, err := s.Store.AnimePreviewStates(c.Request.Context(), sourceID, ids)
+	states, jobs, err := s.Store.AnimePreviewStates(c.Request.Context(), sourceID, ids)
 	if err == nil {
-		page.LocalStates = states
+		page.LocalStates, page.LocalJobs = states, jobs
 	}
 	return err
 }

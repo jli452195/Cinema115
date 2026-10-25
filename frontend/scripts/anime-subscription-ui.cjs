@@ -31,7 +31,11 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       return { ref: config.ref, config, id: `preview-${config.ref}-${state.batch}`, rev: 1, take, items, selected, pending, expires: Date.now() + (state.expired ? -1000 : 900000) }
     }
     function summary(source) { return { sourceRef: source.ref, sourcePreviewId: source.id, loadRevision: source.rev, generatedAt: Date.now(), expiresAt: source.expires, expired: source.expires < Date.now(), rawCount: source.items.length, loadedCount: source.items.length, matchedCount: source.items.filter(i => i.selectable).length, reviewCount: source.items.filter(i => i.decision === 'needs_confirmation').length, selectedCount: source.selected.length, pendingSelectionCount: source.pending.length, completeness: source.take > 100 || state.empty ? 'visible_end' : 'partial', stopReason: source.config.provider === 'anibt' && source.take >= 100 ? 'source_limit' : source.take > 100 ? '' : 'more_available', loadedFirst: source.items.length ? 25 : null, loadedLast: source.items.length ? 25 + Math.floor((source.items.length - 1) / 2) : null, gapsWithinLoadedMatches: [{ first: 26, last: 26 }], unloadedHistory: source.take <= 100 && !state.empty } }
-    function previewPage(source) { return { items: source.items, localStates: Object.fromEntries(source.items.slice(0,9).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected','filtered','needs_confirmation','seen','dismissed'][i]])), total: source.items.length, selectedIds: source.selected, pendingSelections: source.pending, summary: summary(source) } }
+    function previewPage(source) {
+      const localStates = { ...Object.fromEntries(source.items.slice(0,9).map((item,i)=>[item.release.id,['organized','downloading','blocked','filtered','selected','filtered','needs_confirmation','seen','dismissed'][i]])), ...state.redownloadStates }
+      const localJobs = Object.fromEntries(source.items.slice(0,3).map((item,i)=>[item.release.id,{id:`job-${item.release.id}`,revision:1,canRedownload:[0,2].includes(i) && localStates[item.release.id]!=='queued'}]))
+      return { items:source.items, localStates, localJobs, total:source.items.length, selectedIds:source.selected, pendingSelections:source.pending, summary:summary(source) }
+    }
     function response(batch, target, issues = []) {
       const sources = [...batch.sources.values()], totalRawCount = sources.reduce((n, s) => n + s.items.length, 0)
       return { batchId: batch.id, budget: { totalRawCount, limit: 2000, remaining: 2000 - totalRawCount }, sources: sources.map(summary), issues, ...(batch.sources.has(target) ? { page: previewPage(batch.sources.get(target)) } : {}) }
@@ -141,6 +145,20 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
           if (body.previous) assert.equal(body.previous.loadRevision, previous.rev, 'previous CAS must be recovered before regeneration')
           batch.sources.set(ref, makeSource(body.config.sources.find(s => s.ref === ref), ({mikan:2000,anibt:100,garden:1000})[body.config.sources.find(s => s.ref === ref).provider], previous))
           state.batches.set(batch.id, batch); data = response(batch, ref)
+        }
+      } else if (endpoint.endsWith('/release-states')) {
+        const source=[...state.batches.values()].reverse().flatMap(batch=>[...batch.sources.values()]).find(source=>source.items.some(item=>body.releaseIds.includes(item.release.id)))
+        data=source ? previewPage(source) : {localStates:{},localJobs:{}}
+      } else if (endpoint.endsWith('/redownload')) {
+        if(state.redownloadGate) await state.redownloadGate
+        state.redownloadReceipts ||= new Map()
+        if(state.redownloadReceipts.has(call.key)) data=state.redownloadReceipts.get(call.key)
+        else {
+          data={id:state.saved.id,revision:state.saved.revision,results:body.items.map((item,i)=>state.redownloadMode==='all'||state.redownloadMode==='partial'&&i===1?{id:item.id,error:'模拟任务仍在处理'}:{id:item.id,jobId:`next-${item.id}`})}
+          state.redownloadReceipts.set(call.key,structuredClone(data))
+          state.redownloadStates ||= {}
+          for(const result of data.results) if(result.jobId) state.redownloadStates[result.id.replace(/^job-/,'')]='queued'
+          if(state.redownloadMode==='unknown') {state.redownloadMode='';await route.abort();return}
         }
       } else if (/\/subscriptions\/[^/]+\/(remove|resume|pause|archive)$/.test(endpoint) && method === 'POST') {
         state.actionReceipts ||= new Map()
@@ -550,12 +568,13 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(await s.page.locator('.ae-preview-table tbody tr').count(),120,'all loaded history is visible without paging')
     assert.equal(await s.page.getByRole('button',{name:/继续加载历史|资源上一页|资源下一页/}).count(),0)
     assert.equal(s.calls.filter(c=>/\/previews\/.*\/(load|releases)$/.test(c.endpoint)).length,0,'no incremental or page requests')
-    assert.equal(await s.page.locator('.ae-preview input[type=checkbox]').count(),0)
-    assert.deepEqual(await s.page.locator('.ae-preview-table thead th').allTextContents(),['规则匹配','处理状态','RSS','字幕组','原标题','重命名不含扩展名','发布时间'])
-    assert.equal(await s.page.locator('.ae-preview-table tbody tr').first().locator('td').count(),7)
+    assert.equal(await s.page.locator('.ae-preview input[type=checkbox]').count(),121)
+    assert.ok(await s.page.locator('.ae-preview-table tbody input[type=checkbox]').first().isDisabled(),'unsaved edits cannot redownload')
+    assert.deepEqual(await s.page.locator('.ae-preview-table thead th').allTextContents(),['','规则匹配','处理状态','RSS','字幕组','原标题','重命名不含扩展名','发布时间'])
+    assert.equal(await s.page.locator('.ae-preview-table tbody tr').first().locator('td').count(),8)
     const firstRow=s.page.locator('.ae-preview-table tbody tr').first()
-    assert.equal(await firstRow.locator('td').nth(0).innerText(),'符合')
-    assert.equal(await firstRow.locator('td').nth(1).innerText(),'已整理')
+    assert.equal(await firstRow.locator('.ae-sticky-rule').innerText(),'符合')
+    assert.equal(await firstRow.locator('.ae-sticky-state').innerText(),'已整理')
     assert.match(await firstRow.locator('time').innerText(),/2026-10-20/)
     assert.deepEqual(await s.page.locator('.ae-preview-table tbody .ae-sticky-state').allTextContents().then(values=>values.slice(3,10)),['已过滤','已选定','已过滤','需确认','待检查','已忽略','尚未处理'],'persisted decisions must not be hidden as missing download records')
     await firstRow.locator('.ae-release-filename').waitFor()
@@ -746,7 +765,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     const readsBeforeReopen=zero.calls.length
     await zero.page.getByRole('button',{name:'预览',exact:true}).click()
     await zero.page.locator('.ae-preview-table').waitFor()
-    assert.equal(zero.calls.length,readsBeforeReopen,'valid full preview is reused on reopening')
+    assert.equal(zero.calls.filter(call=>!call.endpoint.endsWith('/release-states')).length,readsBeforeReopen-zero.calls.slice(0,readsBeforeReopen).filter(call=>call.endpoint.endsWith('/release-states')).length,'reopening refreshes only local execution states, reusing RSS and naming')
     await zero.page.getByRole('button',{name:'返回配置',exact:true}).click()
     await zero.page.getByRole('button',{name:'保存',exact:true}).click()
     await wait(()=>zero.calls.some(c=>c.key&&c.endpoint.endsWith('/subscriptions')))
@@ -894,6 +913,51 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(await managed.page.getByRole('button', { name: '已移除', exact: true }).count(), 0)
     assert.equal(managed.calls.filter(call => /p115|\/115\//.test(call.endpoint)).length, 0)
     passed.push('archived edits, new group continuation, local delete cancellation/busy/lost receipt and no removed filter')
+    const redo=await session()
+    redo.state.saved=structuredClone(s.state.saved); redo.state.saved.status='archived'
+    await redo.go('/anime/subscriptions/saved-subscription')
+    await redo.page.getByRole('button',{name:'预览',exact:true}).click()
+    const choices=redo.page.locator('.ae-preview-table tbody input[type=checkbox]')
+    await choices.first().waitFor()
+    assert.ok(await choices.first().isEnabled(),'completed resource can be redownloaded from an archived subscription')
+    assert.ok(await choices.nth(1).isDisabled(),'downloading resource is not selectable')
+    await choices.first().check()
+    await redo.page.getByRole('combobox',{name:'显示',exact:true}).click()
+    await redo.page.getByRole('option',{name:'有下载记录',exact:true}).click()
+    assert.equal(await redo.page.locator('.ae-preview-table tbody input:checked').count(),0,'changing filters clears hidden selections')
+    await redo.page.getByRole('checkbox',{name:'选择当前显示的可重新下载资源',exact:true}).check()
+    assert.equal(await redo.page.locator('.ae-preview-table tbody input:checked').count(),2,'select all includes only eligible visible resources')
+    await redo.page.screenshot({path:'test-results/anime-redownload-selected.png'})
+    let releaseRedo
+    redo.state.redownloadMode='all'; redo.state.redownloadGate=new Promise(resolve=>{releaseRedo=resolve})
+    await redo.page.getByRole('button',{name:'重新下载（2）',exact:true}).click()
+    await redo.page.getByRole('button',{name:'安排中…',exact:true}).waitFor()
+    assert.ok(await redo.page.getByRole('button',{name:'返回配置',exact:true}).isDisabled(),'cannot close while scheduling is in flight')
+    releaseRedo(); redo.state.redownloadGate=undefined
+    await redo.page.getByText('未能安排重新下载，2 条未提交',{exact:true}).waitFor()
+    assert.equal(await redo.page.locator('.ae-preview-table tbody input:checked').count(),2,'fully rejected batch preserves the selection')
+    redo.state.redownloadMode='partial'
+    await redo.page.getByRole('button',{name:'重新下载（2）',exact:true}).click()
+    await redo.page.getByText('已安排 1 条重新下载，1 条未提交',{exact:true}).waitFor()
+    assert.equal(await redo.page.locator('.ae-preview-table tbody input:checked').count(),1,'only rejected resources stay selected')
+    assert.equal(await redo.page.locator('.ae-sticky-state').filter({hasText:'待提交'}).count(),1,'accepted resource updates in place')
+    assert.equal(redo.state.saved.status,'archived','one-shot redownload does not resume RSS')
+    const firstRedo=redo.calls.find(call=>call.endpoint.endsWith('/redownload'))
+    assert.equal(firstRedo.body.items.length,2)
+    redo.state.redownloadMode='unknown'
+    await redo.page.getByRole('button',{name:'重新下载（1）',exact:true}).click()
+    await redo.page.getByRole('button',{name:'核对原请求',exact:true}).waitFor()
+    const unknownRedo=redo.calls.filter(call=>call.endpoint.endsWith('/redownload')).at(-1)
+    await redo.page.getByRole('button',{name:'返回配置',exact:true}).click()
+    await redo.page.getByRole('button',{name:'预览',exact:true}).click()
+    await redo.page.getByRole('button',{name:'核对原请求',exact:true}).click()
+    await redo.page.getByText('已安排 1 条重新下载',{exact:true}).waitFor()
+    const replayRedo=redo.calls.filter(call=>call.endpoint.endsWith('/redownload')).at(-1)
+    assert.equal(replayRedo.key,unknownRedo.key,'lost response and reopen preserve the idempotency key')
+    assert.deepEqual(replayRedo.body,unknownRedo.body,'replay does not substitute newer state')
+    assert.equal(await redo.page.locator('.ae-preview-table tbody input:checked').count(),0)
+    assert.equal(redo.calls.filter(call=>/p115|\/115\//.test(call.endpoint)).length,0,'selection and local refresh never query 115')
+    passed.push('RSS redownload: archived one-shot, eligible visible selection, partial failure, in-place progress and lost-receipt replay after reopening')
     assert.deepEqual(errors,[])
     console.log(JSON.stringify({passed,errors},null,2))
   } finally { await Promise.all(contexts.map(c=>c.close())); await browser.close() }

@@ -27,6 +27,7 @@ type AnimeDownloadSource struct {
 
 type AnimeDownloadSnapshot struct {
 	SchemaVersion       int                        `json:"schemaVersion"`
+	Redownload          bool                       `json:"redownload,omitempty"`
 	Target              AnimeDownloadTarget        `json:"target"`
 	Protocol            string                     `json:"protocol"`
 	InfoHash            string                     `json:"infoHash"`

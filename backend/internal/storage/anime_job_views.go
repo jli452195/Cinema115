@@ -23,7 +23,7 @@ func (s *Store) ListAnimeDownloadJobs(ctx context.Context, subscriptionID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM anime_subscriptions WHERE id=?`, subscriptionID).Scan(&id); err != nil {
 		return out, err
 	}
-	const filter = ` EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=?)`
+	const filter = ` NOT EXISTS(SELECT 1 FROM anime_download_jobs newer WHERE newer.claim_id=j.claim_id AND newer.attempt>j.attempt) AND EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=j.id AND s.subscription_id=?)`
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM anime_download_jobs j WHERE`+filter, subscriptionID).Scan(&out.Total); err != nil {
 		return out, err
 	}

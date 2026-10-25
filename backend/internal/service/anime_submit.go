@@ -46,6 +46,9 @@ func (s *AnimeAdminService) EnsureDownload(ctx context.Context, session *AnimeDo
 		if op.State != "prepared" {
 			return s.reconcileAnimeSubmit(ctx, session, op)
 		}
+		if job.Snapshot.Redownload {
+			return s.submitAnimeRedownload(ctx, session, op)
+		}
 		observation, err := s.SubmitGateway.InspectAnimeTask(ctx, session.cookie, op.Request.InfoHash)
 		if err != nil {
 			return animeSubmitReadError(ctx, err)

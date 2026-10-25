@@ -113,6 +113,15 @@ func checkAnimeJobAuthorizationTx(ctx context.Context, tx *sql.Tx, job model.Ani
 		if err != nil {
 			return err
 		}
+		// An explicit one-shot redownload also works for an archived/paused
+		// subscription. It does not resume RSS; subsequent lifecycle/identity
+		// changes still withdraw this generation's write authorization.
+		if job.Snapshot.Redownload && snap.Redownload && source.ID == job.Snapshot.Source.SourceID {
+			if sub.Status != "removed" && source.Status != "removed" && sub.RunGeneration == snap.Source.SubscriptionGeneration && source.RunGeneration == snap.Source.SourceGeneration && source.Revision == snap.Source.SourceRevision && source.Provider == snap.Source.Provider && source.ItemID != nil && *source.ItemID == snap.Source.ItemID && source.GroupID != nil && *source.GroupID == snap.Source.GroupID {
+				return nil
+			}
+			continue
+		}
 		if job.DownloadState != "queued" && sub.Status == "enabled" {
 			submitted, err := animeJobSubmittedTx(ctx, tx, job.ID)
 			if err != nil {

@@ -81,12 +81,20 @@ func (s Source) Summary(now int64) Summary {
 }
 
 type Page struct {
-	Items       []Item            `json:"items"`
-	Total       int               `json:"total"`
-	Summary     Summary           `json:"summary"`
-	SelectedIDs []string          `json:"selectedIds"`
-	Pending     []Pending         `json:"pendingSelections"`
-	LocalStates map[string]string `json:"localStates,omitempty"`
+	Items       []Item               `json:"items"`
+	Total       int                  `json:"total"`
+	Summary     Summary              `json:"summary"`
+	SelectedIDs []string             `json:"selectedIds"`
+	Pending     []Pending            `json:"pendingSelections"`
+	LocalStates map[string]string    `json:"localStates,omitempty"`
+	LocalJobs   map[string]Execution `json:"localJobs,omitempty"`
+}
+
+// Execution contains local capabilities, not a check of current cloud files.
+type Execution struct {
+	ID            string `json:"id"`
+	Revision      int64  `json:"revision"`
+	CanRedownload bool   `json:"canRedownload"`
 }
 
 func (s Source) Releases(now int64) Page {

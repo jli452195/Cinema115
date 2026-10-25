@@ -35,6 +35,7 @@ func TestAnimeDownloadHTTPDefinitionAuthReceiptAndLifecycle(t *testing.T) {
 	f.s.Directories = animeDownloadHTTPDirectory{}
 	cloud := p115.NewCloudClient()
 	f.s.SubmitGateway = cloud
+	f.s.Offline = cloud
 	f.s.StatusGateway = cloud
 	f.s.FileGateway = p115.NewShareClient()
 	f.s.DownloadCoordinator = &service.CloudDownloadCoordinator{}
@@ -84,6 +85,17 @@ func TestAnimeDownloadHTTPDefinitionAuthReceiptAndLifecycle(t *testing.T) {
 		t.Fatal(view)
 	}
 	f.call(t, "GET", base+"/jobs", f.admin, "", nil, 200)
+	stateInput := map[string]any{"sourceId": view["sources"].([]any)[0].(map[string]any)["id"], "releaseIds": []string{}}
+	f.call(t, "POST", base+"/release-states", "", "", stateInput, 401)
+	f.call(t, "POST", base+"/release-states", f.user, "", stateInput, 403)
+	f.call(t, "POST", base+"/release-states", f.admin, "", stateInput, 200)
+	redoInput := map[string]any{"sourceId": stateInput["sourceId"], "expectedRevision": view["revision"], "settingsRevision": settings.Revision, "items": []map[string]any{{"id": "ffffffffffffffffffffffffffffffff", "revision": 1}}}
+	f.call(t, "POST", base+"/redownload", f.user, "http_redownload_01", redoInput, 403)
+	redo := f.call(t, "POST", base+"/redownload", f.admin, "http_redownload_01", redoInput, 200)
+	if redo["results"].([]any)[0].(map[string]any)["error"] == "" {
+		t.Fatal("unknown resource was scheduled", redo)
+	}
+	f.call(t, "POST", base+"/redownload", f.admin, "http_redownload_01", redoInput, 200)
 	if f.mikan.reads != reads {
 		t.Fatal("local lifecycle or GET contacted upstream")
 	}

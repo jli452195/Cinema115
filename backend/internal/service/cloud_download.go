@@ -94,11 +94,20 @@ func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudD
 		return receipt, err
 	}
 	defer release()
+	result, err := submitCloudResource(ctx, s.Client, account.Cookie, resource, rawURL, strings.TrimSpace(config.TargetCID), nil)
+	result.AccountName, result.TargetPath = receipt.AccountName, receipt.TargetPath
+	return result, err
+}
+
+// Callers hold the UID/resource gate and pin credentials. RSS also commits its
+// durable submit intent before the first write; uncertain writes are reconciled
+// by its existing runner, never replayed through this helper.
+func submitCloudResource(ctx context.Context, client CloudURLAdder, cookie string, resource p115.CloudResource, rawURL, cid string, beforeWrite func() error) (CloudDownloadReceipt, error) {
+	var receipt CloudDownloadReceipt
 	if err := ctx.Err(); err != nil {
 		return receipt, err
 	}
-	// 本次查询、删除及提交始终使用这里取得的账号凭据和目录快照。
-	task, found, err := s.Client.LookupTask(ctx, account.Cookie, resource)
+	task, found, err := client.LookupTask(ctx, cookie, resource)
 	if err != nil {
 		return receipt, fmt.Errorf("查询原云下载任务: %w", err)
 	}
@@ -113,10 +122,17 @@ func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudD
 		if !ready {
 			return receipt, ErrCloudTaskRunning
 		}
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return receipt, err
+		}
+	}
+	if found {
 		if err := ctx.Err(); err != nil {
 			return receipt, err
 		}
-		if err := s.Client.DeleteTaskKeepFiles(ctx, account.Cookie, resource.Hash); err != nil {
+		if err := client.DeleteTaskKeepFiles(ctx, cookie, resource.Hash); err != nil {
 			return receipt, fmt.Errorf("移除原云下载任务记录: %w", err)
 		}
 		receipt.RemovedOldTask = true
@@ -124,7 +140,7 @@ func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudD
 	if err := ctx.Err(); err != nil {
 		return receipt, err
 	}
-	raw, err := s.Client.AddURL(ctx, account.Cookie, rawURL, strings.TrimSpace(config.TargetCID))
+	raw, err := client.AddURL(ctx, cookie, rawURL, cid)
 	if err != nil {
 		return receipt, fmt.Errorf("提交 115 云下载: %w", err)
 	}

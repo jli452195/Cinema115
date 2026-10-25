@@ -139,7 +139,7 @@ func TestAnimeDefinitionBackfillsFilteredResourcesWithoutRepeatingOrganized(t *t
 		ids[i] = release.ID
 	}
 	ids[len(ids)-1] = saved[0].ID
-	states, err := f.store.AnimePreviewStates(ctx, id, ids)
+	states, _, err := f.store.AnimePreviewStates(ctx, id, ids)
 	if err != nil || states[release.ID] != "organized" || states[saved[0].ID] != "filtered" {
 		t.Fatal("preview lost actual execution/skip states", states, err)
 	}
@@ -159,7 +159,7 @@ func TestAnimeDefinitionBackfillsFilteredResourcesWithoutRepeatingOrganized(t *t
 	if err != nil || stats.Selected != 1 {
 		t.Fatal("skipped history was not backfilled", stats, err)
 	}
-	states, err = f.store.AnimePreviewStates(ctx, id, []string{release.ID, saved[0].ID})
+	states, _, err = f.store.AnimePreviewStates(ctx, id, []string{release.ID, saved[0].ID})
 	if err != nil || states[release.ID] != "organized" || states[saved[0].ID] != "selected" {
 		t.Fatal(states, err)
 	}

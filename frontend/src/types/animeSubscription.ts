@@ -57,6 +57,7 @@ export interface AnimePreviewItem {
 export interface AnimePendingSelection { releaseId: string; reason: string; previousItem: AnimePreviewItem | null }
 export interface AnimePreviewPage {
 	localStates?: Record<string, string>
+	localJobs?: Record<string, { id: string; revision: number; canRedownload: boolean }>
   items: AnimePreviewItem[]; total: number; summary: AnimePreviewSummary
   selectedIds: string[]; pendingSelections: AnimePendingSelection[]
 }

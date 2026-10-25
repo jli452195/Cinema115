@@ -7,7 +7,7 @@ interface PendingAction { path: string; body: unknown; key: string; label: strin
 const pending = ref<Record<string, PendingAction>>({})
 watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { pending.value = {} }, { flush: 'sync' })
 
-export function useAnimeSubscriptionActions(token: MaybeRef<string>, id: string, changed: (receipt: { id: string; revision: number; status?: string }) => Promise<void>, scope = id) {
+export function useAnimeSubscriptionActions<T extends { id: string; revision: number; status?: string } = { id: string; revision: number; status?: string }>(token: MaybeRef<string>, id: string, changed: (receipt: T) => Promise<void>, scope = id) {
   const loading = ref(false), error = ref(''), notice = ref('')
   const current = computed(() => pending.value[scope])
   const owner = portalUser.value?.id
@@ -18,7 +18,7 @@ export function useAnimeSubscriptionActions(token: MaybeRef<string>, id: string,
     const requestToken = toValue(token)
     loading.value = true; error.value = ''; notice.value = ''
     try {
-      const receipt = await animeConfigRequest<{ id: string; revision: number; status?: string }>(requestToken, request.path, { method: request.method || 'POST', body: request.body, key: request.key })
+      const receipt = await animeConfigRequest<T>(requestToken, request.path, { method: request.method || 'POST', body: request.body, key: request.key })
       if (!receipt.id || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1) throw new AnimeConfigError('操作回执无法确认，请核对原操作', 'INVALID_RECEIPT', 0, {}, true)
       if (!owns() || requestToken !== portalToken.value) return
       delete pending.value[scope]; invalidateAnimeSubscriptions(id)
