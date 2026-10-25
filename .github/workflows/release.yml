@@ -56,6 +56,8 @@ jobs:
           else
             echo 'prerelease=false' >> "$GITHUB_OUTPUT"
           fi
+      - name: Test release notes generator
+        run: node --test .github/scripts/release-notes.test.cjs
       - name: Find successful CI for this commit
         id: ci
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -101,6 +103,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          fetch-depth: 0 # Release notes need previous tags and their commit history.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -174,10 +177,16 @@ jobs:
             const promote = !prerelease && (!latest || !older(tag, latest.tag_name));
             let release = await find(() => github.rest.repos.getReleaseByTag({ ...repo, tag }));
             if (!release) {
+              const { generateReleaseNotes } = require('./.github/scripts/release-notes.cjs');
+              const releases = await github.paginate(github.rest.repos.listReleases, { ...repo, per_page: 100 });
+              const notes = generateReleaseNotes({
+                tag, revision: process.env.REVISION, releases,
+                repoUrl: `${context.serverUrl}/${repo.owner}/${repo.repo}`, image: process.env.IMAGE,
+              });
+              core.notice(`Release notes: ${notes.previousTag || 'initial history'} -> ${tag}`);
               release = (await github.rest.repos.createRelease({
                 ...repo, tag_name: tag, name: tag, target_commitish: process.env.REVISION,
-                draft: true, prerelease, generate_release_notes: true,
-                body: `Docker: \`${process.env.IMAGE}:${process.env.VERSION}\`\n\n下载附件 compose.yaml，填写凭据和挂载目录后部署。\n\nCommit: ${process.env.REVISION}`,
+                draft: true, prerelease, body: notes.body,
               })).data;
             }
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: release.id });
