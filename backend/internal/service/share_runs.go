@@ -43,6 +43,15 @@ type ShareRunResult struct {
 	TempDirectoryID string `json:"tempDirectoryID,omitempty"`
 	Cleaned         bool   `json:"cleaned"`
 }
+
+func summarizeGenerationResult(r *GenerationResult) *ShareRunResult {
+	return &ShareRunResult{Cached: r.Cached, Mode: r.Mode, Count: r.Written, Failed: r.Failed, Total: len(r.Files), MetadataCount: r.MetadataWritten, MetadataFailed: r.MetadataFailed, MetadataTotal: len(r.MetadataFiles), ConflictRenamed: r.ConflictRenamed, Directory: r.Directory, ReshareURL: r.ReshareURL, TempDirectoryID: r.TempDirectoryID, Cleaned: r.Cleaned}
+}
+
+func (r *ShareRunResult) generationResult() *GenerationResult {
+	return &GenerationResult{Cached: r.Cached, Mode: r.Mode, Written: r.Count, Failed: r.Failed, Files: make([]GeneratedSTRM, r.Total), MetadataWritten: r.MetadataCount, MetadataFailed: r.MetadataFailed, MetadataFiles: make([]GeneratedMetadata, r.MetadataTotal), ConflictRenamed: r.ConflictRenamed, Directory: r.Directory, ReshareURL: r.ReshareURL, TempDirectoryID: r.TempDirectoryID, Cleaned: r.Cleaned}
+}
+
 type ShareRunItem struct {
 	TaskID  string          `json:"taskId"`
 	Status  string          `json:"status"`
@@ -610,7 +619,7 @@ func (s *ShareRuns) GenerateBatch(ctx context.Context, inputs []GenerateInput) (
 	outcomes := make([]BatchOutcome, len(view.Items))
 	for i, item := range view.Items {
 		if item.Result != nil {
-			outcomes[i].Result = &GenerationResult{Cached: item.Result.Cached, Mode: item.Result.Mode, Written: item.Result.Count, Failed: item.Result.Failed, Files: make([]GeneratedSTRM, item.Result.Total), MetadataWritten: item.Result.MetadataCount, MetadataFailed: item.Result.MetadataFailed, MetadataFiles: make([]GeneratedMetadata, item.Result.MetadataTotal), ConflictRenamed: item.Result.ConflictRenamed, Directory: item.Result.Directory, ReshareURL: item.Result.ReshareURL, TempDirectoryID: item.Result.TempDirectoryID, Cleaned: item.Result.Cleaned}
+			outcomes[i].Result = item.Result.generationResult()
 		}
 		if item.Status != "success" {
 			outcomes[i].Err = errors.New(item.Error)
@@ -717,7 +726,7 @@ func (s *ShareRuns) execute(run *shareRun) {
 		item := &run.view.Items[i]
 		item.Status, item.Message = "success", "生成成功"
 		if result != nil {
-			item.Result = &ShareRunResult{Cached: result.Cached, Mode: result.Mode, Count: result.Written, Failed: result.Failed, Total: len(result.Files), MetadataCount: result.MetadataWritten, MetadataFailed: result.MetadataFailed, MetadataTotal: len(result.MetadataFiles), ConflictRenamed: result.ConflictRenamed, Directory: result.Directory, ReshareURL: result.ReshareURL, TempDirectoryID: result.TempDirectoryID, Cleaned: result.Cleaned}
+			item.Result = summarizeGenerationResult(result)
 		}
 		if err != nil {
 			item.Status = "failed"

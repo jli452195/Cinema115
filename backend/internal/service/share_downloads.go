@@ -34,15 +34,18 @@ type downloadShareClient interface {
 	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
 	SendShare(context.Context, []string, string) (*p115.ShareInfo, error)
 	ConfigureShare(context.Context, *p115.ShareInfo, string, string) error
+	DeleteDirectory(context.Context, string, string) error
 }
 
 type downloadShareRequest struct {
-	ParentCID  string           `json:"parentCID"`
-	Directory  string           `json:"directory"`
-	Manifest   []string         `json:"manifest"`
-	Files      []p115.ShareFile `json:"files"`
-	Attempted  bool             `json:"attempted,omitempty"`
-	Configured bool             `json:"configured,omitempty"`
+	ParentCID   string           `json:"parentCID"`
+	Directory   string           `json:"directory"`
+	DirectoryID string           `json:"directoryId,omitempty"`
+	Manifest    []string         `json:"manifest"`
+	Files       []p115.ShareFile `json:"files"`
+	Attempted   bool             `json:"attempted,omitempty"`
+	Configured  bool             `json:"configured,omitempty"`
+	Generated   *ShareRunResult  `json:"generated,omitempty"`
 }
 
 // A failed durable boundary must stop the worker, without saving over it.
@@ -170,6 +173,7 @@ func (s *ShareTasks) prepareDownloadShare(ctx context.Context, task *model.Share
 		if !slices.Equal(manifest, d.Manifest) || !sameDownloadShareFiles(d.Files, files) {
 			return ctx, errors.New("整理目录与所选文件不一致，未创建分享；请核对目录")
 		}
+		d.DirectoryID = rootID
 		d.Attempted = true
 		if err := s.save(ctx, task, *req); err != nil {
 			return ctx, &shareCheckpointError{err}
@@ -219,6 +223,41 @@ func (s *ShareTasks) prepareDownloadShare(ctx context.Context, task *model.Share
 		return ctx, p115.ErrShareSnapshotPending
 	}
 	return context.WithValue(ctx, generationSnapshotKey{}, snapshot), nil
+}
+
+// The durable generation receipt lets retries recycle only the exact task
+// directory, including after a restart or a lost deletion response.
+func (s *ShareTasks) cleanupDownloadShare(ctx context.Context, task *model.ShareTask, req *shareTaskRequest, result *GenerationResult) error {
+	d := req.Download
+	id, err := strconv.ParseUint(d.DirectoryID, 10, 64)
+	if err != nil || id == 0 || d.DirectoryID == d.ParentCID {
+		return errors.New("STRM 已生成，但缺少有效的本次整理目录 ID，未执行回收")
+	}
+	if d.Generated == nil {
+		result.Mode, result.ReshareURL, result.TempDirectoryID = "direct", task.ShareURL, d.DirectoryID
+		result.Cleaned = false
+		d.Generated = summarizeGenerationResult(result)
+		task.Written, task.Total = result.Written, len(result.Files)
+		if err := s.save(ctx, task, *req); err != nil {
+			return &shareCheckpointError{err}
+		}
+	}
+	if d.Generated.Cleaned {
+		return nil
+	}
+	if s.OwnClient == nil {
+		return errors.New("STRM 已生成，目录尚未回收：分享 STRM 服务尚未初始化")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	reportGeneration(ctx, "deleting", "STRM 与元数据已生成，正在将本次整理目录移入回收站")
+	if err := s.OwnClient.DeleteDirectory(ctx, d.DirectoryID, generationCookie(ctx, s.Cookie)); err != nil {
+		return fmt.Errorf("STRM 已生成，但本次整理目录回收未确认；重试仅清理此目录: %w", err)
+	}
+	d.Generated.Cleaned, result.Cleaned = true, true
+	task.Note = "STRM 已生成，本次整理目录已移入回收站：" + d.Directory
+	return nil
 }
 
 func sameDownloadShareFiles(expected, actual []p115.ShareFile) bool {

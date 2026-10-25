@@ -151,6 +151,11 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 	if len(req.OwnRootIDs) > 0 {
 		ctx = context.WithValue(ctx, generationRootIDsKey{}, req.OwnRootIDs)
 	}
+	if req.Download != nil && req.Download.Generated != nil {
+		result := req.Download.Generated.generationResult()
+		err := s.cleanupDownloadShare(ctx, task, &req, result)
+		return s.finish(ctx, task, req, result, err, time.Since(started))
+	}
 	if req.Download != nil {
 		var err error
 		ctx, err = s.prepareDownloadShare(ctx, task, &req)
@@ -175,6 +180,13 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 	result, err := s.Generator.Generate(WithGenerationSource(ctx, task.Source), req.Input)
 	if (req.DirectoryLogID != "" || req.Download != nil) && err == nil && (result == nil || result.Written == 0 || result.Failed != 0 || result.MetadataFailed != 0) {
 		err = errors.New("STRM 或元数据未全部生成成功，目录批次保留，重试会复用当前分享")
+	}
+	if req.Download != nil && err == nil {
+		err = s.cleanupDownloadShare(ctx, task, &req, result)
+		var checkpoint *shareCheckpointError
+		if errors.As(err, &checkpoint) {
+			return result, err
+		}
 	}
 	return s.finish(ctx, task, req, result, err, time.Since(started))
 }

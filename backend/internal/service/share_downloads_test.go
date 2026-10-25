@@ -16,11 +16,15 @@ import (
 )
 
 type downloadShareFake struct {
-	*organizeFakeDrive
+	*cleanupFakeDrive
 	roots                    []p115.ShareFile
 	sends, configures, reads int
 	sendErr, configureErr    error
 	pending, review          bool
+}
+
+func (f *downloadShareFake) DeleteDirectory(ctx context.Context, cid, cookie string) error {
+	return f.DeleteEntries(ctx, []string{cid}, cookie)
 }
 
 func (f *downloadShareFake) SendShare(_ context.Context, ids []string, _ string) (*p115.ShareInfo, error) {
@@ -66,7 +70,7 @@ func (f *downloadShareFake) List(ctx context.Context, _ *p115.ShareInfo, cid str
 func downloadShareFixture(t *testing.T) (*DownloadOrganize, *ShareTasks, *storage.Store, *downloadShareFake, DownloadOrganizeInput) {
 	t.Helper()
 	s, drive, _, tracker, _, in := gardenFixture(t)
-	client := &downloadShareFake{organizeFakeDrive: drive}
+	client := &downloadShareFake{cleanupFakeDrive: &cleanupFakeDrive{organizeFakeDrive: drive}}
 	tasks, db, _ := setupShareTasks(t, generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
 		return &GenerationResult{Written: 1, Files: make([]GeneratedSTRM, 1)}, nil
 	}))
@@ -145,13 +149,25 @@ func TestDownloadShareHandoffAndCanonicalOutput(t *testing.T) {
 	if strings.Contains(string(record.Request), "secret-cookie") {
 		t.Fatal("persisted credentials")
 	}
+	var req shareTaskRequest
+	if err := json.Unmarshal(record.Request, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Download.Generated == nil || !req.Download.Generated.Cleaned || len(client.deleted) != 1 || client.deleted[0] != req.Download.DirectoryID {
+		t.Fatal("missing exact-directory cleanup", req.Download, client.deleted)
+	}
+	for _, root := range client.dirs["0"] {
+		if root.ID == req.Download.DirectoryID {
+			t.Fatal("completed wrapper still in drive", root)
+		}
+	}
 	if err := tasks.EnqueueDownloadShare(context.Background(), job, tasks.AccountCookie(in.AccountID)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if client.sends != 1 || len(taskHistory(t, db)) != 1 {
+	if client.sends != 1 || len(client.deleted) != 1 || len(taskHistory(t, db)) != 1 {
 		t.Fatal("duplicate handoff")
 	}
 	// The destination may have unrelated trees: only the parent listing is read.
@@ -180,6 +196,9 @@ func TestDownloadShareReviewAndGenerationRetryReuseLink(t *testing.T) {
 			record, _ := db.GetShareTask(context.Background(), job.ID)
 			if record.Status != "waiting_review" && record.Status != "failed" {
 				t.Fatal(record)
+			}
+			if len(client.deleted) != 0 {
+				t.Fatal("recycled incomplete generation", client.deleted)
 			}
 			if reason := tasks.RetryReason(record); reason != "" {
 				t.Fatal(reason)
@@ -320,7 +339,9 @@ func (s downloadShareFailStore) SaveShareTask(ctx context.Context, task model.Sh
 	if req.Download != nil {
 		beforeSend := req.Download.Attempted && req.Input.URL == ""
 		afterSend := req.Input.URL != "" && !req.Download.Configured
-		if s.stage == "before-send" && beforeSend || s.stage == "after-send" && afterSend {
+		beforeCleanup := req.Download.Generated != nil && !req.Download.Generated.Cleaned
+		afterCleanup := req.Download.Generated != nil && req.Download.Generated.Cleaned
+		if s.stage == "before-send" && beforeSend || s.stage == "after-send" && afterSend || s.stage == "before-cleanup" && beforeCleanup || s.stage == "after-cleanup" && afterCleanup {
 			return errors.New("checkpoint unavailable")
 		}
 	}
@@ -420,5 +441,128 @@ func TestDownloadShareReadableOwnerSnapshotDoesNotWaitForReview(t *testing.T) {
 	}
 	if client.sends != 1 || client.configures != 1 || client.reads != 3 {
 		t.Fatal("unexpected review waits or repeated requests", client)
+	}
+}
+
+func TestDownloadSharePartialGenerationRetainsDirectory(t *testing.T) {
+	for _, mode := range []string{"nil", "empty", "strm-failed", "metadata-failed"} {
+		t.Run(mode, func(t *testing.T) {
+			s, tasks, db, client, in := downloadShareFixture(t)
+			job := completeDownloadShare(t, s, in)
+			tasks.Generator = generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
+				result := &GenerationResult{Written: 1, Files: make([]GeneratedSTRM, 1)}
+				switch mode {
+				case "nil":
+					return nil, nil
+				case "empty":
+					result.Written = 0
+				case "strm-failed":
+					result.Failed = 1
+				case "metadata-failed":
+					result.MetadataFailed = 1
+				}
+				return result, nil
+			})
+			if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			record, err := db.GetShareTask(context.Background(), job.ID)
+			if err != nil || record.Status != "failed" || len(client.deleted) != 0 || tasks.RetryReason(record) != "" {
+				t.Fatal(record, client.deleted, err)
+			}
+		})
+	}
+}
+
+func TestDownloadShareCleanupRecovery(t *testing.T) {
+	for _, stage := range []string{"delete-failed", "response-lost", "before-cleanup", "after-cleanup"} {
+		t.Run(stage, func(t *testing.T) {
+			s, tasks, db, client, in := downloadShareFixture(t)
+			job := completeDownloadShare(t, s, in)
+			generated := 0
+			tasks.Generator = generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
+				generated++
+				return &GenerationResult{Written: 1, Files: make([]GeneratedSTRM, 1), MetadataWritten: 2, MetadataFiles: make([]GeneratedMetadata, 2), Directory: "strm", ConflictRenamed: 1}, nil
+			})
+			if stage == "delete-failed" || stage == "response-lost" {
+				client.deleteErr = errors.New("delete response unavailable")
+				client.applyOnError = stage == "response-lost"
+			} else {
+				tasks.Store = downloadShareFailStore{ShareTaskStore: db, stage: stage}
+			}
+			err := tasks.retryDue(context.Background(), time.Now())
+			if (stage == "before-cleanup" || stage == "after-cleanup") != (err != nil) {
+				t.Fatal("checkpoint failure must stop worker", err)
+			}
+			record, _ := db.GetShareTask(context.Background(), job.ID)
+			if stage == "before-cleanup" {
+				if len(client.deleted) != 0 {
+					t.Fatal("deleted before generation receipt was durable")
+				}
+			} else if record.Written != 1 || record.Total != 1 || len(client.deleted) != 1 {
+				t.Fatal("lost generation counts or unexpected cleanup", record, client.deleted)
+			}
+			if err := db.InterruptShareTasks(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			client.deleteErr = nil
+			restarted := &ShareTasks{Store: db, Settings: tasks.Settings, Generator: tasks.Generator, OwnClient: client, AccountCookie: tasks.AccountCookie}
+			if results, err := restarted.RetryTasks(context.Background(), []string{job.ID}); err != nil || !results[0].Accepted {
+				t.Fatal(results, err)
+			}
+			reads := client.reads
+			lists := 0
+			for _, n := range client.listCalls {
+				lists += n
+			}
+			if err := restarted.retryDue(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			record, _ = db.GetShareTask(context.Background(), job.ID)
+			var req shareTaskRequest
+			if err := json.Unmarshal(record.Request, &req); err != nil {
+				t.Fatal(err)
+			}
+			if record.Status != "success" || record.Written != 1 || record.Total != 1 || req.Download.Generated == nil || !req.Download.Generated.Cleaned || req.Download.Generated.MetadataCount != 2 || req.Download.Generated.ConflictRenamed != 1 {
+				t.Fatal(record, req.Download)
+			}
+			wantGenerated := 1
+			if stage == "before-cleanup" {
+				wantGenerated = 2 // No durable receipt: generation must be confirmed again.
+			} else {
+				for _, n := range client.listCalls {
+					lists -= n
+				}
+				if client.reads != reads || lists != 0 {
+					t.Fatal("cleanup retry scanned or read the share again")
+				}
+			}
+			if generated != wantGenerated || client.sends != 1 || client.configures != 1 || client.renames != 1 || client.moves != 1 {
+				t.Fatal("repeated cloud writes or generation", generated, client)
+			}
+			for _, cid := range client.deleted {
+				if cid != req.Download.DirectoryID || cid == "0" || cid == "801" {
+					t.Fatal("recycled unrelated directory", client.deleted)
+				}
+			}
+		})
+	}
+}
+
+func TestDownloadShareCleanupRetryRejectsChangedCredentials(t *testing.T) {
+	s, tasks, db, client, in := downloadShareFixture(t)
+	job := completeDownloadShare(t, s, in)
+	client.deleteErr = errors.New("unavailable")
+	if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	client.deleteErr = nil
+	tasks.AccountCookie = func(string) string { return "UID=456_changed" }
+	record, _ := db.GetShareTask(context.Background(), job.ID)
+	if reason := tasks.RetryReason(record); !strings.Contains(reason, "凭据已变化") {
+		t.Fatal(reason)
+	}
+	if results, err := tasks.RetryTasks(context.Background(), []string{job.ID}); err != nil || results[0].Accepted || len(client.deleted) != 1 {
+		t.Fatal(results, err, client.deleted)
 	}
 }
