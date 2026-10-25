@@ -216,7 +216,12 @@ func TestMergedShareExcludesReviewAndRetriesOnlyThatSource(t *testing.T) {
 				generated = append(generated, in)
 				return &GenerationResult{Written: 1}, nil
 			})
-			restarted := *s
+			restarted := &ShareTasks{
+				Store:     db,
+				Generator: s.Generator,
+				Settings:  s.Settings,
+				Cookie:    s.Cookie,
+			}
 			if err := restarted.retryDue(context.Background(), time.Now().Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}

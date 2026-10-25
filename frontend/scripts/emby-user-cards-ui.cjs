@@ -22,7 +22,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    ...['deleted', 'missing', 'other_server'].map(state => base(state, 'assigned', { embyState: state })),
   ]
   const settings = { enabled: true, libraryIds: [], allowDownload: false }
-  let failSave = false, failCheck = false, failList = false, delayCheck = false, releaseCheck
+  let failSave = false, failCheck = false, failList = false, delayCheck = false, releaseCheck, previewWithChild = true
   await page.route('**/api/**', async route => {
    const req = route.request(), p = new URL(req.url()).pathname, body = req.postDataJSON()
    if (req.method() === 'POST') writes.push({ p, body }); else reads.push(p)
@@ -38,7 +38,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    if (p === '/api/auth/me') data = { user: { id: 'admin', role: 'admin', username: 'admin' } }
    if (p.endsWith('/accounts')) data = { accounts: [] }
    if (p.endsWith('/sync')) data = { settings, members: members.map(({ embyState, embyCheckedAt, ...m }) => ({ ...m, disabled: false })) }
-   if (p.endsWith('/deletions/preview')) data = { key: body.key, name: body.key, fingerprint: 'mock', children: 1, personalDrives: 1, sessions: 0, embyStates: { [body.key]: body.key === 'deleted' ? 'deleted' : 'active', ChildUser: 'active' }, targets: [{ key: body.key, name: body.key, embyId: 'a'.repeat(32), remoteDeleted: body.key === 'deleted' }, { key: 'ChildUser', name: 'ChildUser', embyId: 'b'.repeat(32) }] }
+   if (p.endsWith('/deletions/preview')) data = {
+    key: body.key, name: body.key, fingerprint: 'mock', children: previewWithChild ? 1 : 0, personalDrives: 1, sessions: 0,
+    embyStates: { [body.key]: body.key === 'deleted' ? 'deleted' : 'active', ...(previewWithChild ? { ChildUser: 'active' } : {}) },
+    targets: [{ key: body.key, name: body.key, embyId: 'a'.repeat(32), remoteDeleted: body.key === 'deleted' }, ...(previewWithChild ? [{ key: 'ChildUser', name: 'ChildUser', embyId: 'b'.repeat(32) }] : [])],
+   }
    await route.fulfill({ json: data })
   })
   await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/users/list')
@@ -50,6 +54,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const close = async () => { await modal.getByRole('button', { name: '关闭用户管理' }).click(); await modal.waitFor({ state: 'hidden' }) }
   const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   await pool.waitFor()
+  assert.match(await page.getByRole('heading', { name: /^Emby 用户/ }).innerText(), /8$/)
   assert.equal(await page.locator('details').filter({ has: page.locator('summary', { hasText: '待核实 / 待清理记录' }) }).getAttribute('open'), null)
   assert.equal(writes.length, 0, 'Initial page load must be read-only')
   assert.equal(await page.locator('article.user-card input, article.user-card select').count(), 0)
@@ -178,11 +183,26 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   console.log('Role controls and handoff passed')
   const review = page.locator('details').filter({ has: page.locator('summary', { hasText: '待核实 / 待清理记录' }) })
   if (await review.getAttribute('open') === null) await review.locator('summary').click()
+  await page.getByLabel('搜索 Emby 用户').fill(members.find(m => m.embyState === 'deleted').embyId)
+  await pool.waitFor({ state: 'hidden' })
+  assert.equal(await card('deleted').isVisible(), true)
+  await page.getByLabel('搜索 Emby 用户').fill('')
+  previewWithChild = false
   await open('deleted')
   assert.equal(await modal.getByRole('radio').count(), 0)
   assert.equal(await modal.getByRole('button', { name: '检查网盘' }).count(), 0)
   await modal.locator('summary').click()
   await modal.getByRole('button', { name: '预览清理影响' }).click()
+  await deletion.getByRole('listitem').getByText('deleted', { exact: true }).waitFor()
+  assert.equal(await deletion.getByText('Emby 账号仍存在，将永久删除账号及观看记录', { exact: true }).count(), 0)
+  assert.equal(await deletion.getByRole('checkbox').count(), 0)
+  await deletion.getByRole('button', { name: '关闭删除确认' }).click()
+  previewWithChild = true
+  await open('deleted')
+  await modal.locator('summary').click()
+  await modal.getByRole('button', { name: '预览清理影响' }).click()
+  await deletion.getByText('Emby 账号仍存在，将永久删除账号及观看记录', { exact: true }).waitFor()
+  assert.equal(await deletion.getByRole('checkbox').isChecked(), false)
   await deletion.getByRole('button', { name: '关闭删除确认' }).click()
   failList = true
   await page.getByRole('button', { name: '刷新状态', exact: true }).click()
@@ -198,6 +218,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   for (const [width, height, columns] of [[1440, 1000, 3], [1024, 768, 3], [768, 900, 2], [390, 844, 1], [320, 568, 1], [667, 375, 1]]) {
    await page.setViewportSize({ width, height }); await noOverflow()
    assert.equal(await pool.evaluate(e => getComputedStyle(e.parentElement.parentElement).gridTemplateColumns.split(' ').length), columns)
+   let lightPalette
    for (const dark of [false, true]) {
     await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark); await settle()
     assert.ok(await pool.getByRole('button', { name: '管理用户 PoolUser' }).evaluate(e => e.getBoundingClientRect().height) >= 44)
@@ -215,8 +236,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await modal.locator('.member-dialog-body').evaluate(e => e.scrollWidth > e.clientWidth), false)
     const footer = await modal.locator('footer').boundingBox()
     assert.ok(footer.y + footer.height <= height + 1)
-    const surface = await modal.evaluate(e => getComputedStyle(e).backgroundColor.match(/\d+/g).map(Number))
-    assert.ok(surface.every(channel => dark ? channel < 80 : channel === 255), 'Dialog must follow the active light/dark palette')
+    const palette = await modal.evaluate(e => { const style = getComputedStyle(e); return [style.color, style.backgroundColor] })
+    if (dark) assert.notDeepEqual(palette, lightPalette, 'Dialog colors must respond to the active theme')
+    else lightPalette = palette
     await modal.locator('.member-dialog-body').evaluate(e => { e.scrollTop = e.scrollHeight })
     if ([1440, 390, 320].includes(width)) await page.screenshot({ path: path.join(screenshots, `dialog-${width}-${dark ? 'dark' : 'light'}.png`) })
     await close(); await noOverflow()

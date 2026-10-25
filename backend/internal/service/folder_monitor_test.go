@@ -14,20 +14,19 @@ import (
 )
 
 type folderMonitorClientFake struct {
-	drive              map[string][]p115.ShareFile
-	share              map[string][]p115.ShareFile
-	deleted            []string
-	addOnShare         p115.ShareFile
-	shareDirectorySize int64
-	nextDirectoryID    string
-	createdNames       []string
-	moveCalls          [][]string
-	shareCalls         [][]string
-	configureErr       error
-	onShare            func()
-	onMove             func()
-	listHook           func(context.Context, string, int, string) error
-	driveHook          func(context.Context, string, int, string) error
+	drive           map[string][]p115.ShareFile
+	share           map[string][]p115.ShareFile
+	deleted         []string
+	addOnShare      p115.ShareFile
+	nextDirectoryID string
+	createdNames    []string
+	moveCalls       [][]string
+	shareCalls      [][]string
+	configureErr    error
+	onShare         func()
+	onMove          func()
+	listHook        func(context.Context, string, int, string) error
+	driveHook       func(context.Context, string, int, string) error
 }
 
 func (f *folderMonitorClientFake) CreateDirectory(_ context.Context, parent, name, _ string) (string, error) {
@@ -213,9 +212,6 @@ func (f *folderMonitorClientFake) SendShare(_ context.Context, ids []string, _ s
 		for _, items := range f.drive {
 			for _, item := range items {
 				if item.ID == id {
-					if item.Directory {
-						item.Size = f.shareDirectorySize
-					}
 					f.share["0"] = append(f.share["0"], item)
 				}
 			}
@@ -279,121 +275,6 @@ func (f *folderMonitorGeneratorFake) Generate(ctx context.Context, input Generat
 		}
 	}
 	return &GenerationResult{Written: 1, Files: []GeneratedSTRM{{Path: "movie.strm"}}}, nil
-}
-
-func TestFolderMonitorDeletesOnlyFrozenRootsAndLeavesNewArrival(t *testing.T) {
-	t.Skip("legacy pre-batch-directory workflow")
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "monitor.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	secret, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accounts, err := newP115Accounts(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountID, _ := accounts.AddPrimary("监控账号")
-	account, _ := accounts.Get(accountID)
-	cookie := "UID=42_A"
-	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {
-		t.Fatal(err)
-	}
-	client := &folderMonitorClientFake{
-		drive:      map[string][]p115.ShareFile{"100": {{ID: "11", Name: "movie.mkv", Size: 100}}},
-		share:      map[string][]p115.ShareFile{},
-		addOnShare: p115.ShareFile{ID: "12", Name: "new.mkv", Size: 200},
-	}
-	generator := &folderMonitorGeneratorFake{}
-	service := NewFolderMonitorService(db, accounts, client, generator, t.TempDir(), nil)
-	value, err := service.Save(context.Background(), model.FolderMonitor{
-		Name: "收件箱", AccountID: accountID, SourceCID: "100", SourcePath: "/收件箱",
-		OutputDir: "strm", BaseURL: "http://nas:3002", VideoExtensions: "mkv",
-		MetadataExtensions: "srt", Recursive: true, Enabled: true, IntervalSeconds: 30,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.runOne(context.Background(), value.ID); err != nil {
-		t.Fatal(err)
-	}
-	value, _ = db.GetFolderMonitor(context.Background(), value.ID)
-	if value.Stage != "waiting" || value.StableScans != 1 {
-		t.Fatalf("first scan=%+v", value)
-	}
-	value.NextScanAt = time.Now().Add(-time.Second)
-	if err := db.SaveFolderMonitor(context.Background(), value); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.runOne(context.Background(), value.ID); err != nil {
-		t.Fatal(err)
-	}
-	value, _ = db.GetFolderMonitor(context.Background(), value.ID)
-	if value.Stage != "completed" || generator.calls != 1 || len(client.deleted) != 1 || client.deleted[0] != "11" {
-		t.Fatalf("value=%+v calls=%d deleted=%v", value, generator.calls, client.deleted)
-	}
-	if len(client.drive["100"]) != 1 || client.drive["100"][0].ID != "12" {
-		t.Fatalf("new arrival was removed: %+v", client.drive["100"])
-	}
-}
-
-func TestFolderMonitorAcceptsShareAggregateDirectorySize(t *testing.T) {
-	t.Skip("legacy pre-batch-directory workflow")
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "monitor.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	secret, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accounts, err := newP115Accounts(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountID, _ := accounts.AddPrimary("监控账号")
-	account, _ := accounts.Get(accountID)
-	cookie := "UID=42_A"
-	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {
-		t.Fatal(err)
-	}
-	client := &folderMonitorClientFake{
-		drive: map[string][]p115.ShareFile{
-			"100": {{ID: "11", Name: "show", Directory: true}},
-			"11":  {{ID: "12", Name: "episode.mkv", Size: 1234}},
-		},
-		share:              map[string][]p115.ShareFile{"11": {{ID: "12", Name: "episode.mkv", Size: 1234}}},
-		shareDirectorySize: 1234,
-	}
-	generator := &folderMonitorGeneratorFake{}
-	service := NewFolderMonitorService(db, accounts, client, generator, t.TempDir(), nil)
-	value, err := service.Save(context.Background(), model.FolderMonitor{
-		Name: "收件箱", AccountID: accountID, SourceCID: "100", SourcePath: "/收件箱",
-		OutputDir: "strm", BaseURL: "http://nas:3002", VideoExtensions: "mkv",
-		MetadataExtensions: "srt", Recursive: true, Enabled: true, IntervalSeconds: 30,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.runOne(context.Background(), value.ID); err != nil {
-		t.Fatal(err)
-	}
-	value, _ = db.GetFolderMonitor(context.Background(), value.ID)
-	value.NextScanAt = time.Now().Add(-time.Second)
-	if err := db.SaveFolderMonitor(context.Background(), value); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.runOne(context.Background(), value.ID); err != nil {
-		t.Fatal(err)
-	}
-	value, _ = db.GetFolderMonitor(context.Background(), value.ID)
-	if value.Stage != "completed" || generator.calls != 1 || len(client.deleted) != 1 || client.deleted[0] != "11" {
-		t.Fatalf("value=%+v calls=%d deleted=%v", value, generator.calls, client.deleted)
-	}
 }
 
 func TestManifestFingerprintDirectorySizeCompatibility(t *testing.T) {

@@ -66,7 +66,12 @@ func TestReviewRetryLimitAndSuccess(t *testing.T) {
 				t.Fatal("等待状态或凭证存储错误")
 			}
 			// 模拟重新装配调度器，不依赖原请求或内存队列。
-			restarted := *s
+			restarted := &ShareTasks{
+				Store:     db,
+				Generator: s.Generator,
+				Settings:  s.Settings,
+				Cookie:    s.Cookie,
+			}
 			for i := 0; i < 4; i++ {
 				if err := restarted.retryDue(context.Background(), time.Now().Add(time.Hour)); err != nil {
 					t.Fatal(err)

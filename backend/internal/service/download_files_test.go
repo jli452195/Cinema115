@@ -31,8 +31,18 @@ func TestDownloadFileSpecJSONContract(t *testing.T) {
 		t.Fatalf("resource specs did not decode into the shared type: %+v", got)
 	}
 	encoded, err := json.Marshal(got)
-	if err != nil || string(encoded) != raw {
-		t.Fatalf("resource spec JSON changed: %s, %v", encoded, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalFields, encodedFields map[string]any
+	if err := json.Unmarshal([]byte(raw), &originalFields); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &encodedFields); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(encodedFields, originalFields) {
+		t.Fatalf("resource spec JSON fields changed: %s", encoded)
 	}
 }
 

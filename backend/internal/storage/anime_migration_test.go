@@ -25,16 +25,6 @@ INSERT INTO anime_download_claims VALUES('old-account','hash-a','old-target','ol
 INSERT INTO anime_transfers VALUES('old-sub','hash-a',2,'completed',200,'{"legacy":"transfer"}');
 `
 
-func legacyAnimeStore(t *testing.T) (*Store, string) {
-	t.Helper()
-	s, path := testStore(t)
-	resetAnimeSchemaToV38(t, s)
-	if _, err := s.db.ExecContext(context.Background(), animeLegacyV38Fixture); err != nil {
-		t.Fatal(err)
-	}
-	return s, path
-}
-
 func animeMigrationRows(t *testing.T, db *sql.DB, table string) [][]any {
 	t.Helper()
 	var count int

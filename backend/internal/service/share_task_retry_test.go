@@ -57,7 +57,13 @@ func TestManualRetryBypassesScheduleAndAutomaticLimits(t *testing.T) {
 			if n, err := db.ClearShareTasks(context.Background(), []string{task.ID}); err != nil || n != 0 {
 				t.Fatal("队列任务被清理", n, err)
 			}
-			restarted := *s
+			restarted := &ShareTasks{
+				Store:         db,
+				Generator:     s.Generator,
+				Settings:      s.Settings,
+				Cookie:        s.Cookie,
+				AccountCookie: s.AccountCookie,
+			}
 			if err := restarted.retryDue(context.Background(), time.Now()); err != nil {
 				t.Fatal(err)
 			}
