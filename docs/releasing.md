@@ -9,7 +9,19 @@ Git 标签是应用发布版本的唯一来源。前端、Go 服务、数据库�
 3. 在 GitHub 仓库「Settings → Secrets and variables → Actions」添加两个 Repository secrets：`DOCKERHUB_USERNAME`（值为 `jli452195`）与 `DOCKERHUB_TOKEN`（访问令牌）。不将令牌写进文件或提交记录。
 4. 确认仓库已启用 Actions，组织策略允许工作流发布 GitHub Release。发布任务会申请 `contents: write`，其他任务只有源码读取权限。
 
-分支推送和 Pull Request 自动运行 Go 测试、`go vet`、前端契约测试和前端构建，不发布镜像。发布工作流会复用相同检查，全部通过后才登录 Docker Hub。
+日常 CI 在 `master` 推送和 Pull Request 时运行，不发布镜像。功能分支通过 PR 检查，避免同一次更新同时触发分支 push 与 PR 两套检查。同一分支或 PR 连续更新时自动取消旧 CI，只保留最新提交；标签发布不受此取消规则影响。
+
+CI 按 `master` 最近一次成功 CI 后的全部改动或 PR 的完整改动范围选择检查，防止连续推送取消旧任务后漏掉尚未验证的代码：
+
+| 修改范围 | 应用检查 |
+| --- | --- |
+| 仅 `backend/` | Go 测试、`go vet` |
+| 仅 `frontend/` | 前端契约测试、前端构建 |
+| 仅 Markdown、`docs/`、`licenses/` 或 `.gitignore` | 跳过应用检查 |
+| 工作流、Dockerfile、Compose 等公共配置或其他路径 | 前后端完整检查 |
+| 发布版本标签 | 始终前后端完整检查 |
+
+首次运行、强推后旧提交不可用或不再是当前提交祖先等无法确定可靠比较起点的情况会完整检查。发布工作流复用同一份 CI 并明确启用完整检查，全部通过后才登录 Docker Hub。
 
 ## 发布一个版本
 
@@ -69,4 +81,6 @@ cd ..
 docker compose config --quiet
 ```
 
-需要自行构建时，可在源码根目录执行 `docker build -t cinema115:dev .`；该镜像默认记录 `dev`。发布构建由工作流传入 `APP_VERSION`、`APP_REVISION`、`APP_CREATED` 三个构建参数，不把运行凭据传入构建。Go 和 Node 版本分别与 Dockerfile 的 Go 1.26、Node 22 保持一致。BuildKit 缓存仅用于加速构建，不进入最终运行镜像。
+需要自行构建时，可在源码根目录执行 `docker build -t cinema115:dev .`；该镜像默认记录 `dev`。发布构建由工作流传入 `APP_VERSION`、`APP_REVISION`、`APP_CREATED` 三个构建参数，不把运行凭据传入构建。Go 和 Node 版本分别与 Dockerfile 的 Go 1.26、Node 22 保持一致。
+
+发布使用 Docker Hub 的 `jli452195/cinema115:buildcache` 保存中间构建层，让不同版本标签复用依赖缓存。该标签仅供构建使用，不用于部署，也不改变版本镜像与 `latest` 的规则；首次发布没有缓存时正常构建并生成缓存。Go 模块下载独立保存在构建层中，修改业务代码可复用该层；依赖清单或基础构建镜像变化时重新下载。编译缓存挂载仅在同一构建器内复用，缓存和依赖不进入最终运行镜像。

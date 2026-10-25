@@ -2,15 +2,82 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
   workflow_call:
+    inputs:
+      full-check:
+        description: Run both application checks regardless of changed paths
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+# Release calls use a separate group and must finish even if another tag arrives.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      frontend: ${{ steps.paths.outputs.frontend }}
+    steps:
+      # Cover changes from canceled or failed pushes as well as the latest push.
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        id: base
+        if: ${{ !inputs.full-check && github.event_name == 'push' }}
+        continue-on-error: true # An unavailable baseline falls back to full checks.
+        with:
+          result-encoding: string
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', branch: context.ref.replace('refs/heads/', ''),
+              event: 'push', status: 'success', per_page: 1,
+            });
+            return data.workflow_runs[0]?.head_sha || '';
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: ${{ !inputs.full-check }}
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        env:
+          FULL_CHECK: ${{ inputs.full-check }}
+          BASE: ${{ github.event.pull_request.base.sha || steps.base.outputs.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend=false
+          frontend=false
+          if [[ "$FULL_CHECK" == true || -z "$BASE" ]] || ! git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null; then
+            backend=true
+            frontend=true
+          else
+            git diff --no-renames --name-only -z "$BASE" HEAD > "$RUNNER_TEMP/ci-changed-files"
+            while IFS= read -r -d '' file; do
+              case "$file" in
+                docs/*|*.md|licenses/*|.gitignore) ;;
+                backend/*) backend=true ;;
+                frontend/*) frontend=true ;;
+                *) backend=true; frontend=true ;;
+              esac
+            done < "$RUNNER_TEMP/ci-changed-files"
+          fi
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "Application checks: backend=$backend frontend=$frontend" >> "$GITHUB_STEP_SUMMARY"
+
   backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -28,6 +95,8 @@ jobs:
       - run: go vet ./...
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

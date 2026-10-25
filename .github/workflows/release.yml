@@ -55,7 +55,12 @@ jobs:
 
   checks:
     needs: metadata
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/ci.yml
+    with:
+      full-check: true
 
   publish:
     needs: [metadata, checks]
@@ -90,8 +95,8 @@ jobs:
             APP_VERSION=v${{ env.VERSION }}
             APP_REVISION=${{ env.REVISION }}
             APP_CREATED=${{ env.CREATED }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
       - name: Verify both architectures and frontend metadata
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
