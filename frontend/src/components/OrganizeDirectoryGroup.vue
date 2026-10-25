@@ -42,7 +42,7 @@ defineSlots<{ default(props: { group: DirectoryGroup }): unknown }>()
 <style scoped>
 .directory-group { --directory-indent: calc(var(--directory-depth) * 16px); }
 .directory-heading { @apply flex items-center gap-2 border-y border-slate-200/80 bg-slate-100 py-2 pr-3 dark:border-slate-700/80 dark:bg-slate-800; padding-left: calc(12px + var(--directory-indent)); }
-.directory-heading-sticky { position: sticky; top: var(--organize-toolbar-height); z-index: 5; box-shadow: 0 1px 2px rgb(15 23 42 / .05); }
+.directory-heading-sticky { position: sticky; top: var(--organize-sticky-offset, 0px); z-index: 5; box-shadow: 0 1px 2px rgb(15 23 42 / .05); }
 .directory-toggle { @apply flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium text-slate-700 dark:text-slate-200; }
 .directory-name { overflow-wrap: anywhere; }
 .directory-count { @apply ml-2 inline-block text-xs font-normal text-slate-500 dark:text-slate-400; }

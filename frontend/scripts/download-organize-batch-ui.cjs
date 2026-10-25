@@ -162,6 +162,12 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.getByText('已解析 61 / 61 项资源', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files') - before, 61)
     assert.equal(await editor.locator('[data-organize-file]').count(), 61)
+    await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = 0 })
+    await page.waitForFunction(() => {
+      const bar = document.querySelector('dialog.anime-floating-organize .numbering-bar')
+      return !bar.classList.contains('is-stuck') && getComputedStyle(bar).backgroundColor === 'rgba(0, 0, 0, 0)'
+    })
+    if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-in-flow.png`) })
     // Mixed title intents/file manifests share one list. Expected names never
     // invent a filename extension or expose the internal intent ID as a path.
     assert.equal(await editor.getByRole('button', { name: /^展开或折叠/ }).count(), 1)
@@ -169,23 +175,37 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await titleRow.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
     await titleRow.getByText('预计命名：测试作品.S01E01.1080p.[简体]-测试字幕组', { exact: true }).waitFor()
     assert.equal((await titleRow.textContent()).includes('.mkv'), false)
-    await editor.getByLabel('筛选整理文件名', { exact: true }).fill('[测试字幕组]')
-    assert.equal(await editor.locator('[data-organize-file]').count(), 60)
-    await editor.getByLabel('筛选整理文件名', { exact: true }).fill('')
+    assert.equal(await editor.getByRole('searchbox').count(), 0)
     await editor.locator('[data-organize-file]').nth(1).getByRole('button', { name: /^查看完整路径/ }).click()
     await editor.locator('[data-organize-file]').nth(1).getByText('/same/Show.mkv', { exact: true }).waitFor()
     await editor.locator('[data-organize-file]').nth(2).getByRole('checkbox').uncheck()
+    const assertStickyNumbering = async () => {
+      await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
+      await page.waitForFunction(() => {
+        const dialog = document.querySelector('dialog.anime-floating-organize')
+        const body = dialog.querySelector('.anime-floating-body'), bar = dialog.querySelector('.numbering-bar'), folder = dialog.querySelector('.directory-heading-sticky')
+        const bounds = bar.getBoundingClientRect(), viewport = body.getBoundingClientRect()
+        return bar.classList.contains('is-stuck') && getComputedStyle(bar).backdropFilter === 'none'
+          && Math.abs(bounds.top - viewport.top) <= 1
+          && Math.abs(bounds.left - viewport.left) <= 1
+          && Math.abs(bounds.right - viewport.left - body.clientWidth) <= 1
+          && Math.abs(folder.getBoundingClientRect().top - bounds.bottom) <= 1
+      })
+    }
+    await assertStickyNumbering()
+    if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-pinned-desktop.png`) })
       await page.setViewportSize({ width: 320, height: 740 })
       await page.evaluate(() => document.documentElement.classList.remove('dark'))
       assert.equal(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       const footer = await editor.locator('.anime-floating-footer').boundingBox()
       assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
-      await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
-      assert.equal(await editor.evaluate(el => {
-        const body = el.querySelector('.anime-floating-body')
-        return Math.abs(el.querySelector('.sticky').getBoundingClientRect().top - body.getBoundingClientRect().top - parseFloat(getComputedStyle(body).paddingTop)) <= 1
-      }), true)
-      assert.equal(await editor.evaluate(el => Math.abs(el.querySelector('.directory-heading-sticky').getBoundingClientRect().top - el.querySelector('.sticky').getBoundingClientRect().bottom) <= 1), true)
+      await assertStickyNumbering()
+      assert.ok((await editor.locator('.numbering-bar').boundingBox()).height <= 220, 'expanded mobile numbering must leave room for the file list')
+      await editor.getByRole('button', { name: '批量编号', exact: true }).click()
+      await assertStickyNumbering()
+      await editor.getByRole('button', { name: '批量编号', exact: true }).click()
+      await assertStickyNumbering()
+      if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
       await submit().click()
       await page.getByText('任务已创建', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files') - before, 61)
@@ -197,7 +217,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     const specBar = await search.getByRole('group', { name: '资源规格筛选' }).boundingBox()
     assert.ok(specBar.x >= 0 && specBar.x + specBar.width <= 320)
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-light.png`) })
-    passed.push('61 mixed title/file resources prepare once, expected names omit extensions/paths, titles remain searchable, single batch request and 320px layout')
+    passed.push('61 mixed resources prepare once; numbering blends into the glass before pinning, then covers the scroll viewport without gaps or extra blur through desktop/mobile wrapping and collapse; single batch request')
     // Escape cancels preparation and restores focus; navigation releases locks.
     await page.evaluate(() => document.documentElement.classList.add('dark'))
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-dark.png`) })

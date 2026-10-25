@@ -19,7 +19,7 @@ onBeforeUnmount(() => {
   unlock?.()
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
-defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 'instant' }) })
+defineExpose({ body, scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 'instant' }) })
 </script>
 
 <template>
@@ -40,7 +40,7 @@ defineExpose({ scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 
 .anime-floating-config { width: min(820px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); }
 .anime-floating-config .anime-floating-body { scrollbar-gutter: stable; }
 .anime-floating-organize { width: min(1040px, calc(100vw - 32px)); height: min(880px, calc(100dvh - 48px)); }
-.anime-floating-organize .anime-floating-body { scrollbar-gutter: stable; }
+.anime-floating-organize .anime-floating-body { scrollbar-gutter: stable; padding-top: 0; }
 .anime-floating-preview { width: min(1600px, calc(100vw - 40px)); height: min(760px, calc(100dvh - 40px)); max-height: calc(100dvh - 40px); }
 .anime-floating-preview .anime-floating-body { display: flex; overflow: hidden; padding-bottom: 4px; }
 .anime-floating-nested::backdrop { background: rgb(15 23 42 / .16); backdrop-filter: none; }

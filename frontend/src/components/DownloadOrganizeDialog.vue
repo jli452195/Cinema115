@@ -11,6 +11,7 @@ import type { DownloadBatchResult, DownloadOrganizeResource, OrganizeJob, Organi
 import { useDownloadOrganizeFiles } from '../composables/useDownloadOrganizeFiles'
 import { applyOrganizeMapping } from '../utils/organizeNaming'
 import { useMediaNamingPreview } from '../composables/useMediaNamingPreview'
+import { useStickySurface } from '../composables/useStickySurface'
 import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
 
@@ -29,6 +30,19 @@ const confirming = ref(false)
 const errorElement = ref<HTMLElement>()
 watch(error, async value => { if (value) { await nextTick(); errorElement.value?.scrollIntoView({ block: 'nearest' }) } })
 const batchOpen = ref(window.matchMedia('(min-width: 640px)').matches)
+const floatingDialog = ref<InstanceType<typeof AnimeFloatingDialog>>()
+const scrollBody = computed(() => floatingDialog.value?.body)
+const numberingAnchor = ref<HTMLElement>()
+const numberingStuck = useStickySurface(scrollBody, numberingAnchor)
+const numberingBar = ref<HTMLElement>(), numberingHeight = ref(0)
+watch(numberingBar, (element, _, onCleanup) => {
+  const measure = () => { numberingHeight.value = element?.offsetHeight || 0 }
+  measure()
+  if (!element) return
+  const observer = new ResizeObserver(measure)
+  observer.observe(element)
+  onCleanup(() => observer.disconnect())
+}, { flush: 'post' })
 const editDisabled = computed(() => busy.value || loading.value || confirming.value)
 const directoryOpen = ref(false), accountId = ref(''), targetCID = ref(''), targetPath = ref(''), downloadPath = ref('')
 const season = ref(String(props.seasons.find(s => s.number > 0)?.number ?? 1)), sourceStart = ref(1), targetStart = ref(1)
@@ -184,8 +198,8 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <AnimeFloatingDialog :title="job ? '任务已创建' : '下载并整理'" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
-  <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading">
+  <AnimeFloatingDialog ref="floatingDialog" :title="job ? '任务已创建' : '下载并整理'" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
+  <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
     <template v-if="job">
       <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
@@ -209,16 +223,19 @@ onBeforeUnmount(() => lifecycle.abort())
         <details class="resource-status"><summary>查看全部已选资源</summary><div class="resource-status-list"><div v-for="state in states.filter(state => state.status !== 'removed')" :key="state.key"><p>{{ state.resource.title }}<small>{{ state.status === 'ready' ? state.files?.files.some(file => file.titleOnly) ? '按标题识别' : '已读取文件清单' : state.status === 'loading' ? '识别中' : state.status === 'error' ? state.error : '待识别' }}</small></p><button class="secondary" :disabled="editDisabled" :aria-label="`移除资源 ${state.resource.title}`" @click="preparation.remove(state.key)">移除</button></div></div></details>
         <div v-for="state in states.filter(state => state.status === 'error')" :key="state.key" class="resource-error"><p role="alert">{{ state.resource.title }}：{{ state.error }}</p><button class="secondary" :disabled="editDisabled || parsing" @click="preparation.retry(state.key)">重试解析</button><button class="secondary" :disabled="editDisabled" @click="preparation.remove(state.key)">移除本次整理</button><span>可关闭弹窗后普通离线，失败项不会自动提交。</span></div>
       </template>
+      <div v-if="kind === 'tv' || notice || Object.keys(localConflicts).length" ref="numberingAnchor" aria-hidden="true" class="pointer-events-none h-px !-mb-px"></div>
+      <div v-if="kind === 'tv' || notice || Object.keys(localConflicts).length" ref="numberingBar" class="numbering-bar !mt-0" :class="{ 'is-stuck': numberingStuck }">
       <div v-if="kind === 'tv'" class="batch-editor"><button type="button" class="batch-toggle" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">批量编号 <IconChevronDown :size="14" aria-hidden="true" :class="{ 'rotate-180': batchOpen }" /></button><div v-show="batchOpen" class="mapping-bar">
         <label>目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
         <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
         <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
-        <button type="button" class="secondary" :disabled="editDisabled || !selected.length" @click="mapFiles()">应用偏移（{{ selected.length }} 项）</button>
+        <button type="button" class="secondary" :aria-label="`应用偏移（${selected.length} 项）`" :disabled="editDisabled || !selected.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ selected.length }} 项）</span></span></button>
         <button type="button" class="secondary" title="从目标集开始，按所选顺序连续编号；连集文件保留跨度" :disabled="editDisabled || !selected.length" @click="mapFiles(true)">连续编号</button>
         <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
       </div></div>
       <p v-if="notice" role="status" class="notice">{{ notice }}</p>
       <p v-if="Object.keys(localConflicts).length" role="alert" class="error">有 {{ Object.keys(localConflicts).length }} 个文件目标重名，请核对季集编号、命名模板或取消重复文件。</p>
+      </div>
       <OrganizeFileSelection ref="fileSelection" :rows="rows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" compact>
         <template #row-details="{ row }">
           <p v-if="results[row.id]?.directory && results[row.id]!.directory !== sharedDirectory" class="scope-note break-all">目录：{{ results[row.id]!.directory }}</p>
@@ -247,7 +264,7 @@ onBeforeUnmount(() => lifecycle.abort())
 </template>
 
 <style scoped>
-.download-organize { @apply min-w-0 space-y-2 text-slate-700 dark:text-slate-200; }
+.download-organize { @apply min-w-0 space-y-2 pt-1.5 text-slate-700 dark:text-slate-200; }
 .naming-summary { @apply flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400; }.naming-summary strong { @apply text-slate-800 dark:text-slate-100; }.naming-summary a { @apply text-blue-600 dark:text-blue-400; }.naming-summary button { @apply ml-auto; }
 .resource-title { @apply break-all text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }
@@ -260,10 +277,22 @@ onBeforeUnmount(() => lifecycle.abort())
 .subtitle-file { @apply mb-2 min-w-0 break-all pl-2; }.subtitle-target { @apply text-slate-700 dark:text-slate-200; }
 .directory-bar { @apply flex items-center gap-2 rounded-lg bg-slate-100/80 px-3 py-2 dark:bg-slate-800/70; }.directory-bar>div { @apply min-w-0 flex-1 text-xs; }.directory-bar p { @apply flex flex-wrap items-baseline gap-x-2 gap-y-1; }.directory-bar strong { @apply break-all font-medium; }.directory-bar small { @apply mt-1 block break-all text-slate-500 dark:text-slate-400; }
 .mapping-bar { @apply flex flex-wrap items-center gap-2 text-xs; }.mapping-bar label { @apply flex items-center gap-1; }.mapping-bar input { @apply w-16 rounded-lg border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }.season-select { @apply w-40; }
+.numbering-bar { @apply sticky top-0 z-10 space-y-2 -mx-[22px] px-[22px] py-2; background: transparent; }
+.numbering-bar.is-stuck { background: color-mix(in srgb, var(--floating-surface-container) 95%, var(--floating-surface-text)); box-shadow: 0 1px 0 rgb(148 163 184 / .16); }
 .season-select :deep(.select-menu-trigger) { height: var(--ae-control-height); min-height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
 .batch-toggle { @apply mb-2 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300; }
 .secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-100 font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-40 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
 .primary { @apply w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 sm:w-auto; }
 .submit-bar { @apply flex flex-wrap items-center justify-between gap-3 text-xs; }
 .notice { @apply text-xs leading-6 text-slate-600 dark:text-slate-300; }.error { @apply break-all text-sm leading-6 text-red-600 dark:text-red-400; }.error a,.task-link { @apply text-sm text-blue-600 underline dark:text-blue-400; }
+@media (max-width: 639px) {
+  .download-organize { padding-top: 8px; }
+  .numbering-bar { margin-inline: -18px; padding-inline: 18px; }
+  .mapping-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mapping-bar label { min-width: 0; white-space: nowrap; }
+  .mapping-bar label:first-child { grid-column: 1 / -1; }
+  .mapping-bar input { min-width: 0; width: 0; flex: 1; }
+  .mapping-bar .season-select { width: auto; flex: 1; }
+  .mapping-bar > span { display: none; }
+}
 </style>
