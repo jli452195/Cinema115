@@ -19,11 +19,15 @@ jobs:
   metadata:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       revision: ${{ steps.version.outputs.revision }}
       created: ${{ steps.version.outputs.created }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      reuse-ci: ${{ steps.ci.outputs.result }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -52,9 +56,28 @@ jobs:
           else
             echo 'prerelease=false' >> "$GITHUB_OUTPUT"
           fi
+      - name: Find successful CI for this commit
+        id: ci
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        continue-on-error: true # Lookup failures require full checks.
+        env:
+          REVISION: ${{ steps.version.outputs.revision }}
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', branch: 'master',
+              event: 'push', head_sha: process.env.REVISION, per_page: 1,
+            });
+            const run = data.workflow_runs[0];
+            const reuse = run?.status === 'completed' && run.conclusion === 'success' &&
+              run.head_sha === process.env.REVISION && run.head_branch === 'master' &&
+              run.event === 'push' && run.head_repository?.full_name === `${context.repo.owner}/${context.repo.repo}`;
+            core.notice(reuse ? `Reusing successful CI: ${run.html_url}` : 'No successful CI for this commit; running full checks.');
+            return reuse;
 
   checks:
     needs: metadata
+    if: needs.metadata.outputs.reuse-ci != 'true'
     permissions:
       contents: read
       actions: read
@@ -64,6 +87,7 @@ jobs:
 
   publish:
     needs: [metadata, checks]
+    if: ${{ !cancelled() && needs.metadata.result == 'success' && (needs.checks.result == 'success' || (needs.checks.result == 'skipped' && needs.metadata.outputs.reuse-ci == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -109,11 +133,11 @@ jobs:
               jq -e --arg version "v$VERSION" --arg revision "$REVISION" --arg created "$CREATED" \
                 '.version == $version and .revision == $revision and .created == $created' build-info.json
             done
-            docker run --rm --platform "$platform" --entrypoint cat "$IMAGE@$DIGEST" /app/frontend/dist/index.html > frontend.html
-            grep -F "name=\"cinema115-version\" content=\"v$VERSION\"" frontend.html
-            grep -F "name=\"cinema115-revision\" content=\"$REVISION\"" frontend.html
-            grep -F "name=\"cinema115-created\" content=\"$CREATED\"" frontend.html
           done
+          docker run --rm --platform linux/amd64 --entrypoint cat "$IMAGE@$DIGEST" /app/frontend/dist/index.html > frontend.html
+          grep -F "name=\"cinema115-version\" content=\"v$VERSION\"" frontend.html
+          grep -F "name=\"cinema115-revision\" content=\"$REVISION\"" frontend.html
+          grep -F "name=\"cinema115-created\" content=\"$CREATED\"" frontend.html
       - name: Prepare deployment file
         shell: bash
         run: |

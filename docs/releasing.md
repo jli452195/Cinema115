@@ -7,7 +7,7 @@ Git 标签是应用发布版本的唯一来源。前端、Go 服务、数据库�
 1. 将源码推送到 `jli452195/Cinema115`，默认分支为 `master`。
 2. 在 Docker Hub 创建公开仓库 `jli452195/cinema115`，创建具有该仓库读写权限的访问令牌。
 3. 在 GitHub 仓库「Settings → Secrets and variables → Actions」添加两个 Repository secrets：`DOCKERHUB_USERNAME`（值为 `jli452195`）与 `DOCKERHUB_TOKEN`（访问令牌）。不将令牌写进文件或提交记录。
-4. 确认仓库已启用 Actions，组织策略允许工作流发布 GitHub Release。发布任务会申请 `contents: write`，其他任务只有源码读取权限。
+4. 确认仓库已启用 Actions，组织策略允许工作流发布 GitHub Release。发布任务会申请 `contents: write`，CI 记录查询使用 `actions: read`，其他任务只读取源码。
 
 日常 CI 在 `master` 推送和 Pull Request 时运行，不发布镜像。功能分支通过 PR 检查，避免同一次更新同时触发分支 push 与 PR 两套检查。同一分支或 PR 连续更新时自动取消旧 CI，只保留最新提交；标签发布不受此取消规则影响。
 
@@ -19,9 +19,11 @@ CI 按 `master` 最近一次成功 CI 后的全部改动或 PR 的完整改动�
 | 仅 `frontend/` | 前端契约测试、前端构建 |
 | 仅 Markdown、`docs/`、`licenses/` 或 `.gitignore` | 跳过应用检查 |
 | 工作流、Dockerfile、Compose 等公共配置或其他路径 | 前后端完整检查 |
-| 发布版本标签 | 始终前后端完整检查 |
+| 发布版本标签 | 同一提交的 master CI 已成功则复用，否则前后端完整检查 |
 
-首次运行、强推后旧提交不可用或不再是当前提交祖先等无法确定可靠比较起点的情况会完整检查。发布工作流复用同一份 CI 并明确启用完整检查，全部通过后才登录 Docker Hub。
+首次运行、强推后旧提交不可用或不再是当前提交祖先等无法确定可靠比较起点的情况会完整检查。
+
+发布只复用本仓库 `master` 上 push 触发、提交 SHA 完全相同且最新一次已成功完成的 CI。PR 检查、其他提交、运行中、失败或已取消的记录均不复用；查不到记录或查询异常时，调用同一份 CI 执行前后端完整检查。复用成功或补充检查通过后才登录 Docker Hub，补充检查失败或取消时不发布。
 
 ## 发布一个版本
 
@@ -35,6 +37,8 @@ git tag -a v0.1.0-beta.1 -m "Cinema115 v0.1.0-beta.1"
 git push origin v0.1.0-beta.1
 ```
 
+为避免重复测试，先等要发布提交的 master CI 成功，再推送版本标签。如果推送标签时 CI 仍在运行，发布流程直接执行完整检查，不轮询等待。
+
 工作流只接受 `vX.Y.Z` 和 `vX.Y.Z-alpha.N`、`vX.Y.Z-beta.N`、`vX.Y.Z-rc.N`，数字不带多余前导零。Docker 标签省略开头的 `v`，应用显示保留 `v`。
 
 | Git 标签 | Docker 标签 | GitHub Release |
@@ -46,7 +50,7 @@ git push origin v0.1.0-beta.1
 
 版本递增遵循语义化版本：修复增加补丁号，兼容的新功能增加次版本号，不兼容变更增加主版本号。开发阶段可先发布 `0.x` 测试版。Git 提交描述改动，例如 `fix: 修复整理任务恢复`，不需要每个提交都写版本号。不要移动或复用已发布的版本标签。
 
-标签推送后，在 GitHub「Actions → Release」查看进度：校验标签 → 测试 → 构建并推送 `linux/amd64` 与 `linux/arm64` 镜像 → 分别执行两个架构的版本检查并核对前端信息 → 生成固定版本的 Compose → 发布 GitHub Release。正式版同时更新 Docker 的 `latest`；补发比现有最新正式版更低的版本不会把 `latest` 回退。
+标签推送后，在 GitHub「Actions → Release」查看进度：校验标签 → 复用成功 CI 或完整测试 → 构建并推送 `linux/amd64` 与 `linux/arm64` 镜像 → 分别执行两个架构的两个程序的版本检查、核对一次前端信息 → 生成固定版本的 Compose → 发布 GitHub Release。正式版同时更新 Docker 的 `latest`；补发比现有最新正式版更低的版本不会把 `latest` 回退。
 
 Release 自动附带改动说明和 `compose.yaml`，其中已经使用对应版本的镜像。首个正式版发布前，根目录模板的 `latest` 无法拉取，测试用户应下载测试版 Release 附件。镜像推送后仍需完成校验，只有工作流成功、Release 正式发布后才通知用户升级。
 
