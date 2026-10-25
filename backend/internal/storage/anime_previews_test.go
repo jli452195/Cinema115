@@ -3,9 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -70,8 +70,20 @@ func TestAnimePreviewPersistenceAndNoExecution(t *testing.T) {
 	}
 	defer reopened.Close()
 	got, err := reopened.GetAnimePreview(ctx, "admin-a", b.ID)
-	if err != nil || !reflect.DeepEqual(b, got) {
-		t.Fatal("snapshot changed on restart", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Compare persisted values, not time.Time's internal Local/UTC representation.
+	wantJSON, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Actor != got.Actor || string(wantJSON) != string(gotJSON) {
+		t.Fatalf("snapshot changed on restart\nwant: %s\ngot:  %s", wantJSON, gotJSON)
 	}
 	for _, table := range []string{"anime_release_decisions", "anime_subscriptions"} {
 		var count int

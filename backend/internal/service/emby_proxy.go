@@ -73,6 +73,7 @@ type EmbyProxy struct {
 	config       EmbyProxyConfig
 	handler      http.Handler
 	server       *http.Server
+	listener     net.Listener
 	serverCancel context.CancelFunc
 	ctx          context.Context
 	closed       bool
@@ -172,7 +173,7 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	if c.Enabled && (s.server == nil || c.Port != s.config.Port) {
 		listener, err = (&net.ListenConfig{}).Listen(ctx, "tcp", ":"+strconv.Itoa(c.Port))
 		if err != nil {
-			return fmt.Errorf("无法监听端口 %d，请检查占用或权限", c.Port)
+			return fmt.Errorf("无法监听端口 %d，请检查占用或权限: %w", c.Port, err)
 		}
 	}
 	data, err := json.Marshal(c)
@@ -185,12 +186,13 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 		}
 		return fmt.Errorf("保存反代配置: %w", err)
 	}
-	old, oldCancel := s.server, s.serverCancel
+	old, oldListener, oldCancel := s.server, s.listener, s.serverCancel
 	s.config, s.lastError = c, ""
 	previousHandler = s.handler
 	s.handler = s.factory(c)
 	if !c.Enabled {
 		s.server = nil
+		s.listener = nil
 		s.serverCancel = nil
 	}
 	if listener != nil {
@@ -199,6 +201,7 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 			return context.WithValue(serverContext, embyProxyLifecycleKey{}, serverContext)
 		}}
 		s.server = server
+		s.listener = listener
 		s.serverCancel = serverCancel
 		s.wg.Add(1)
 		go func() {
@@ -209,6 +212,8 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 			defer s.mu.Unlock()
 			if s.server == server {
 				s.server = nil
+				s.listener = nil
+				s.serverCancel = nil
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					s.lastError = "反代监听已停止，请重新保存配置"
 					s.Logs.Add(s.ctx, "ERROR", s.lastError)
@@ -217,6 +222,10 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 		}()
 	}
 	if old != nil && old != s.server {
+		// Release the port before returning; request shutdown can drain separately.
+		if oldListener != nil {
+			_ = oldListener.Close()
+		}
 		s.wg.Add(1)
 		go func() { defer s.wg.Done(); stopEmbyProxy(old, oldCancel) }()
 	}
@@ -255,11 +264,16 @@ func (s *EmbyProxy) Close() {
 	s.mu.Lock()
 	s.closed = true
 	server := s.server
+	listener := s.listener
 	cancelRequests := s.serverCancel
 	handler := s.handler
 	s.server = nil
+	s.listener = nil
 	s.serverCancel = nil
 	s.mu.Unlock()
+	if listener != nil {
+		_ = listener.Close()
+	}
 	if closer, ok := handler.(interface{ Close() }); ok {
 		closer.Close()
 	}

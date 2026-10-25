@@ -132,6 +132,22 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 		t.Fatal("重启没有恢复监听")
 	}
 	check(changed.Port)
+	// Re-enabling must not wait for the previous server's request cancellation.
+	resumeShutdown := make(chan struct{})
+	defer close(resumeShutdown)
+	restarted.mu.Lock()
+	oldCancel := restarted.serverCancel
+	restarted.serverCancel = func() { <-resumeShutdown; oldCancel() }
+	restarted.mu.Unlock()
+	changed.Enabled = false
+	if err := restarted.Apply(context.Background(), changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Enabled = true
+	if err := restarted.Apply(context.Background(), changed); err != nil {
+		t.Fatal("旧请求仍在退出时无法重新监听同一端口", err)
+	}
+	check(changed.Port)
 	if err := accounts.Delete(id, 2); err != nil {
 		t.Fatal(err)
 	}
