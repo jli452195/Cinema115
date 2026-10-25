@@ -68,7 +68,7 @@ export interface OrganizeItem {
 export interface OrganizeJob {
 	naming?: NamingRecord
 	resumable?: boolean
-  download?: { hash: string; directoryId?: string }
+  download?: { hash: string; directoryId?: string; share?: { directory: string; handedOff?: boolean } }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig

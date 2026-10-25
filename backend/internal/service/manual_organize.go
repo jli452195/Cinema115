@@ -569,7 +569,7 @@ func (s *OrganizeEngine) history(download bool) []OrganizeJob {
 			continue
 		}
 		copy := cloneOrganizeJob(job)
-		copy.Resumable = canContinueOrganize(job) || download && canResumeDownload(job)
+		copy.Resumable = canContinueOrganize(job) || download && (canResumeDownload(job) || pendingDownloadShare(job))
 		jobs = append(jobs, copy)
 	}
 	return jobs
@@ -584,6 +584,10 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	}
 	if job.Download != nil {
 		d := *job.Download
+		if d.Share != nil {
+			share := *d.Share
+			d.Share = &share
+		}
 		job.Download = &d
 	}
 	return job

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { IconFolder, IconArrowBackUp, IconChevronDown } from '@tabler/icons-vue'
+import { IconFolder, IconArrowBackUp, IconChevronDown, IconShare2 } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
@@ -27,6 +27,7 @@ const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states, selectedKeys } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
 const confirming = ref(false)
+const shareIssue = ref('正在读取分享设置…'), shareAction = ref(false)
 const errorElement = ref<HTMLElement>()
 watch(error, async value => { if (value) { await nextTick(); errorElement.value?.scrollIntoView({ block: 'nearest' }) } })
 const batchOpen = ref(window.matchMedia('(min-width: 640px)').matches)
@@ -109,7 +110,8 @@ async function locateProblem() {
 }
 const previewId = ref('')
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(130000)])
-const snapshotKey = computed(() => JSON.stringify({ naming: namingPreview.value.value, targetCID: targetCID.value, targetPath: targetPath.value, resources: preparation.resourceSelections() }))
+const snapshotKey = computed(() => JSON.stringify({ shareSTRM: shareAction.value, naming: namingPreview.value.value, targetCID: shareAction.value ? undefined : targetCID.value, targetPath: shareAction.value ? undefined : targetPath.value, resources: preparation.resourceSelections() }))
+const submitDisabled = computed(() => busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !!unresolved.value.length || !accountId.value || !selected.value.length || invalid.value || !!Object.keys(localConflicts.value).length)
 watch(snapshotKey, () => { conflicts.value = {} }, { flush: 'sync' })
 let previewKey = ''
 
@@ -128,24 +130,29 @@ function undoMapping() {
 async function loadConfig() {
   loading.value = true; error.value = ''
   try {
-    const [cloud, organize] = await Promise.all([
+    const [cloud, organize, share] = await Promise.all([
       p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', { signal: signal() }),
-      p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'download-organize/config', { signal: signal() }),
+      p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'download-organize/config', { signal: signal() }).catch(() => undefined),
+      p115Request<{ ready: boolean; reason: string }>(props.token, 'download-organize/share-config', { signal: signal() }).catch(() => ({ ready: false, reason: '读取分享设置失败，可重新读取配置' })),
     ])
     if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在 115 云下载中配置主账号的下载目录')
     accountId.value = cloud.accountId; downloadPath.value = cloud.targetPath
     if (organize?.accountId === cloud.accountId) { targetCID.value = organize.targetCID; targetPath.value = organize.targetPath }
+    else { targetCID.value = ''; targetPath.value = '' }
+    shareIssue.value = share.ready ? '' : share.reason || '请先完善分享 STRM 设置'
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取目录配置失败' }
   finally { if (!lifecycle.signal.aborted) loading.value = false }
 }
-async function start() {
-  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || Object.keys(localConflicts.value).length || !targetCID.value || !accountId.value || job.value) return
+async function start(sharing = false) {
+  if (confirming.value && sharing !== shareAction.value || sharing && shareIssue.value && !confirming.value) return
+  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || Object.keys(localConflicts.value).length || !sharing && !targetCID.value || !accountId.value || job.value) return
   busy.value = true; error.value = ''; notice.value = ''
+  shareAction.value = sharing
   let creationAttempt = false
   try {
     const key = snapshotKey.value
-    if (!previewId.value || previewKey !== key) {
-      const payload = { namingRevision: namingPreview.value.value?.naming.revision, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
+    if (!confirming.value && (!previewId.value || previewKey !== key)) {
+      const payload = { shareSTRM: sharing, namingRevision: namingPreview.value.value?.naming.revision, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: sharing ? undefined : targetCID.value, targetPath: sharing ? undefined : targetPath.value }
       const resources = preparation.resourceSelections()
       const previews = props.batch
         ? (await p115Request<DownloadBatchResult>(props.token, 'download-organize/batch/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...payload, resources }) }))
@@ -158,7 +165,9 @@ async function start() {
         for (const item of preview.items) {
           const id = props.batch ? `${preview.download!.hash}:${item.file.id}` : item.file.id
           if (!results.value[id] || !item.stem || typeof item.directory !== 'string' || !item.name || official[id]) throw new Error('任务命名预览结果不完整，请重试')
-          official[id] = { directory: item.directory, stem: item.stem, name: item.name }
+          const isolated = preview.download?.share?.directory
+          if (sharing && (!isolated || item.directory !== isolated && !item.directory.startsWith(`${isolated}/`))) throw new Error('分享整理缺少独立结果目录，请重新预览')
+          official[id] = { directory: isolated ? item.directory.slice(isolated.length).replace(/^\//, '') : item.directory, stem: item.stem, name: item.name }
         }
       }
       const expected = selected.value.flatMap(row => [row.id, ...(subtitlesByVideo.value[row.id] || []).map(sub => sub.file.id)])
@@ -204,14 +213,17 @@ onBeforeUnmount(() => lifecycle.abort())
     <template v-if="job">
       <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
       <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
+      <p v-if="shareAction" class="notice">文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM；进度、审核等待和重试统一在分享日志中处理。</p>
+      <RouterLink v-if="shareAction" to="/115/share/logs" class="task-link block">查看分享 STRM 日志</RouterLink>
     </template>
     <template v-else>
-      <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p><small v-if="sharedDirectory">公共子目录：{{ sharedDirectory }}</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
+      <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>普通整理目录</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p><small v-if="sharedDirectory">公共子目录：{{ sharedDirectory }}</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
       <div class="naming-summary"><strong>{{ title }}</strong><RouterLink :to="{ path: '/settings/naming', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh">刷新命名</button></div>
       <details class="organize-help">
         <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
         <div>
           <p class="scope-note">整条磁力下载，整理所选视频及已关联的字幕；其余文件保留在下载目录。</p>
+          <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。设置与日志沿用 115 分享 STRM 页面。</p>
           <p v-if="titleOnlyCount" class="scope-note">{{ titleOnlyCount }} 项单集按标题预览命名，扩展名与关联字幕下载后确认；合集及不明确的资源读取文件清单。</p>
           <div class="reference"><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>
           <p v-if="downloadPath" class="scope-note">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</p>
@@ -258,7 +270,17 @@ onBeforeUnmount(() => lifecycle.abort())
     <p v-if="error" ref="errorElement" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/cloud-download">前往云下载设置</RouterLink></p>
     <p v-if="loading" role="status" class="notice">读取目录配置…</p>
   </section>
-    <template v-if="!job" #footer><div class="submit-bar"><span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><button v-if="Object.keys(rowProblems).length" type="button" class="locate-problem" @click="locateProblem">{{ Object.keys(rowProblems).length }} 项待处理 · 定位问题</button></span><button type="button" class="primary" :disabled="busy || loading || !confirming && !namingPreview.ready.value || parsing || !!unresolved.length || !accountId || !targetCID || !selected.length || invalid || !!Object.keys(localConflicts).length" @click="start">{{ busy ? '正在确认并创建任务…' : confirming ? '确认任务状态' : planKey === snapshotKey ? '确认下载并整理' : '下载并自动整理' }}</button></div></template>
+    <template v-if="!job" #footer>
+      <div class="submit-bar">
+        <span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><button v-if="Object.keys(rowProblems).length" type="button" class="locate-problem" @click="locateProblem">{{ Object.keys(rowProblems).length }} 项待处理 · 定位问题</button></span>
+        <div class="submit-actions">
+          <button type="button" class="secondary share-action" :title="shareIssue || '下载、整理后生成分享 STRM'" :disabled="submitDisabled || !!shareIssue && !confirming || confirming && !shareAction" @click="start(true)"><IconShare2 :size="16" aria-hidden="true" />{{ shareAction && busy ? '正在创建分享任务…' : shareAction && confirming ? '确认任务状态' : shareAction && planKey === snapshotKey ? '确认分享 STRM' : '115 分享 STRM' }}</button>
+          <button type="button" class="primary" :disabled="submitDisabled || !targetCID || confirming && shareAction" @click="start(false)">{{ !shareAction && busy ? '正在确认并创建任务…' : !shareAction && confirming ? '确认任务状态' : !shareAction && planKey === snapshotKey ? '确认下载并整理' : '下载并自动整理' }}</button>
+        </div>
+      </div>
+      <p v-if="!targetCID && !loading" class="share-config-note">普通整理需选择目录；115 分享 STRM 使用主网盘根目录的独立文件夹。</p>
+      <p v-if="shareIssue" class="share-config-note">{{ shareIssue }} · <RouterLink to="/115/share" target="_blank" rel="noopener">分享设置</RouterLink><button v-if="!loading" type="button" :disabled="editDisabled" @click="loadConfig">重新读取配置</button></p>
+    </template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
 </template>
@@ -284,8 +306,10 @@ onBeforeUnmount(() => lifecycle.abort())
 .secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-100 font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-40 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
 .primary { @apply w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 sm:w-auto; }
 .submit-bar { @apply flex flex-wrap items-center justify-between gap-3 text-xs; }
+.submit-actions { @apply flex flex-wrap items-center gap-2; }.secondary.share-action { @apply h-auto px-4 py-2.5 text-sm; }.share-config-note { @apply mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400; }.share-config-note a,.share-config-note button { @apply text-blue-600 dark:text-blue-400; }.share-config-note button { @apply ml-2 disabled:opacity-40; }
 .notice { @apply text-xs leading-6 text-slate-600 dark:text-slate-300; }.error { @apply break-all text-sm leading-6 text-red-600 dark:text-red-400; }.error a,.task-link { @apply text-sm text-blue-600 underline dark:text-blue-400; }
 @media (max-width: 639px) {
+  .submit-actions { width: 100%; }.submit-actions > button { width: 100%; }.submit-bar > span { width: 100%; }
   .download-organize { padding-top: 8px; }
   .numbering-bar { margin-inline: -18px; padding-inline: 18px; }
   .mapping-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

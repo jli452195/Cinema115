@@ -16,14 +16,16 @@ import (
 // ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
 // Credentials only live in downloadPending and never enter plans/history.
 type ResourceDownload struct {
-	BatchID     string `json:"batchId,omitempty"`
-	Hash        string `json:"hash"`
-	ParentCID   string `json:"parentCID"`
-	ParentPath  string `json:"parentPath"`
-	DirectoryID string `json:"directoryId,omitempty"`
+	BatchID     string         `json:"batchId,omitempty"`
+	Hash        string         `json:"hash"`
+	ParentCID   string         `json:"parentCID"`
+	ParentPath  string         `json:"parentPath"`
+	DirectoryID string         `json:"directoryId,omitempty"`
+	Share       *DownloadShare `json:"share,omitempty"`
 }
 
 type DownloadOrganizeInput struct {
+	ShareSTRM      bool   `json:"shareSTRM,omitempty"`
 	NamingRevision *int64 `json:"namingRevision,omitempty"`
 	DownloadResourceInput
 	ManifestID string              `json:"manifestId,omitempty"`
@@ -54,6 +56,7 @@ type downloadPending struct {
 }
 
 type DownloadOrganize struct {
+	Shares    downloadShareQueue
 	Organize  *OrganizeEngine
 	Resources downloadResourceReader
 	Downloads *CloudDownloadService
@@ -119,7 +122,9 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	job.Message = "等待提交 115，整条磁力下载后仅整理所选文件"
 	doc := o.doc
 	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
-	doc.DownloadTarget = CloudDownloadConfig{AccountID: job.Config.AccountID, TargetCID: job.Config.TargetCID, TargetPath: job.Config.TargetPath}
+	if job.Download.Share == nil {
+		doc.DownloadTarget = CloudDownloadConfig{AccountID: job.Config.AccountID, TargetCID: job.Config.TargetCID, TargetPath: job.Config.TargetPath}
+	}
 	if err = o.saveLocked(doc); err != nil {
 		return OrganizeJob{}, err
 	}
@@ -208,10 +213,10 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		if saved.ID != id || saved.Download == nil {
 			continue
 		}
-		if s.live[id] != nil || saved.Status == "completed" {
+		if s.live[id] != nil || saved.Status == "completed" && !pendingDownloadShare(saved) {
 			return cloneOrganizeJob(saved), nil
 		}
-		continuing := canContinueOrganize(saved)
+		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved)
 		queued := canQueueDownload(saved)
 		if !continuing && !canResumeDownload(saved) {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
@@ -501,10 +506,20 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 				}
 			}
 		}
+		if job.Download.Share != nil {
+			if s.Shares == nil {
+				return s.stop(p, "interrupted", "文件已整理，分享队列尚未初始化；可继续原任务交接分享")
+			}
+			if err = s.Shares.EnqueueDownloadShare(ctx, *job, cookie); err != nil {
+				return s.stop(p, "interrupted", "文件已整理，交接分享队列失败；可继续原任务，不会重新下载："+organizePublicError(err, cookie))
+			}
+			job.Message = "文件已整理并交给 115 分享 STRM；生成进度和重试请查看分享日志"
+			job.Download.Share.HandedOff = true
+		}
 		if err = o.checkpoint(job); err != nil {
 			return false, err
 		}
-		notify = true
+		notify = job.Download.Share == nil
 	}
 	return true, nil
 }

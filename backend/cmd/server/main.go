@@ -300,6 +300,8 @@ func main() {
 	httpapi.RegisterReshareJobs(admin, database)
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
 	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
+	shareTasks.OwnClient = shareAPI.Client
+	downloadOrganize.Shares = shareTasks
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
 	folderMonitors.SetSharedSettings(automation.Value)
 	folderMonitors.Tasks = shareTasks

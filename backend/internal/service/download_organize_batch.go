@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 )
@@ -160,12 +161,24 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		}
 	}
 	download := s.Settings.View()
+	// Share STRM owns a separate result wrapper at the main drive root. The
+	// ordinary organize destination is neither required nor updated by it.
+	if common.ShareSTRM {
+		common.TargetCID, common.TargetPath = "0", "/"
+	}
 	if common.AccountID != download.AccountID || !organizeID(common.TargetCID) || !organizePath(common.TargetPath) {
 		return nil, fmt.Errorf("%w：请选择当前主账号的整理目录", ErrOrganizeInput)
 	}
 	a, err := s.Downloads.snapshot(download)
 	if err != nil {
 		return nil, err
+	}
+	var shareSettings AutomationSettings
+	if common.ShareSTRM {
+		shareSettings, err = s.ShareSettings(a.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%w：%s", ErrOrganizeInput, err)
+		}
 	}
 	c := OrganizeConfig{AccountID: a.ID, SourceCID: download.TargetCID, SourcePath: download.TargetPath, TargetCID: common.TargetCID, TargetPath: common.TargetPath}
 	files := make([]OrganizeFile, 0, count)
@@ -184,6 +197,13 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		}
 		hashes[manifest.Hash] = true
 		downloads = append(downloads, &ResourceDownload{Hash: manifest.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath})
+		if common.ShareSTRM {
+			token, err := organizeToken()
+			if err != nil {
+				return nil, err
+			}
+			downloads[index].Share = &DownloadShare{Directory: "Cinema115-" + token, Settings: shareSettings}
+		}
 		prefix := manifest.Hash + "/"
 		add := func(file OrganizeFile) {
 			key := prefix + file.ID
@@ -208,6 +228,13 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 	combined, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files}, OrganizePreviewInput{NamingRevision: common.NamingRevision, Kind: common.Kind, TMDBID: common.TMDBID, Files: selections, Subtitles: true})
 	if err != nil {
 		return nil, err
+	}
+	for i := range combined.Items {
+		item := &combined.Items[i]
+		if share := downloads[owners[item.File.ID]].Share; share != nil {
+			item.Directory = path.Join(share.Directory, item.Directory)
+			item.TargetPath = path.Join(c.TargetPath, item.Directory, item.Name)
+		}
 	}
 	if err = s.Organize.checkPlan(ctx, &combined, a.Cookie, false); err != nil {
 		return nil, err
@@ -316,7 +343,9 @@ func (s *DownloadOrganize) StartBatch(id string) (DownloadBatchResult, error) {
 		doc.Jobs = prependOrganizeJob(jobs[i], doc.Jobs)
 	}
 	c := jobs[0].Config
-	doc.DownloadTarget = CloudDownloadConfig{AccountID: c.AccountID, TargetCID: c.TargetCID, TargetPath: c.TargetPath}
+	if jobs[0].Download.Share == nil {
+		doc.DownloadTarget = CloudDownloadConfig{AccountID: c.AccountID, TargetCID: c.TargetCID, TargetPath: c.TargetPath}
+	}
 	if err := o.saveLocked(doc); err != nil {
 		return DownloadBatchResult{}, err
 	}

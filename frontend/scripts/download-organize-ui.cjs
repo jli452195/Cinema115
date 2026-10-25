@@ -4,6 +4,7 @@ const path = require('node:path'), os = require('node:os'), fs = require('node:f
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGying = source === 'gying'
+const shareMode = process.argv[3] === 'share'
 const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : 'Garden 搜索'
 const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : '/resources/garden/search'
 const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
@@ -16,6 +17,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const page = await context.newPage(); page.setDefaultTimeout(8000)
     page.on('pageerror', e => errors.push(e.message))
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
+    let shareConfigured = false, omitOrganizeDirectory = false
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
       { id: 'show/E030.mkv', name: 'E030.mkv', sourcePath: '/show/E030.mkv', episode: 30 },
@@ -51,7 +53,8 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         else data = nestedMode ? { files: nestedFiles, subtitles: [] } : Number.parseInt(isGying ? body.magnet.split(':').at(-1) : body.providerId, 16) === 2 ? { files: [], reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, subtitles }
       }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
-      else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/动漫' }
+      else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: omitOrganizeDirectory ? '' : '20', targetPath: omitOrganizeDirectory ? '' : '/动漫' }
+      else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: shareConfigured, reason: '请先完善分享 STRM 设置' }
       else if (endpoint.endsWith('/download-organize/jobs') && req.method() === 'GET') data = { jobs: [] }
       else if (endpoint.endsWith('/cloud-download/paths')) data = { directories: [{ id: '30', name: '自选目录' }], hasMore: false }
       else if (endpoint.endsWith('/naming/media-preview')) {
@@ -64,6 +67,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         if (conflict) data.items.filter(item => item.file.name.endsWith('.ass')).forEach(item => { item.conflict = '字幕目标同名' })
         if (staleTemplate) { staleTemplate = false; status = 409; data = { error: '命名模板已更新，请刷新命名预览并重新确认' } }
         else if (renamed) data.items.forEach(item => { item.name = item.name.replace('百变之星', '新名称'); item.stem = item.stem.replace('百变之星', '新名称') })
+        if (body.shareSTRM) {
+          data.id = 'share-plan'; data.download = { hash: '1'.padStart(40, '0'), share: { directory: 'Cinema115-isolated' } }
+          data.items.forEach(item => { item.directory = `Cinema115-isolated/${item.directory}` })
+        }
       }
       else if (endpoint.endsWith('/download-organize/jobs')) {
         if (holdJob) await new Promise(resolve => { releaseJob = resolve })
@@ -144,6 +151,45 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await first.getByRole('checkbox').click()
     await first.getByText('整理后：百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isEnabled(), true)
+    if (shareMode) {
+      const shareButton = page.getByRole('button', { name: '115 分享 STRM', exact: true })
+      const original = page.getByRole('button', { name: '下载并自动整理', exact: true })
+      assert.equal(await shareButton.isDisabled(), true)
+      shareConfigured = true; omitOrganizeDirectory = true
+      await page.getByRole('button', { name: '重新读取配置', exact: true }).click()
+      await shareButton.waitFor()
+      await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent.trim() === '115 分享 STRM').disabled)
+      assert.equal(await original.isDisabled(), true, 'only ordinary organize requires a target directory')
+      const a = await shareButton.boundingBox(), b = await original.boundingBox()
+      assert.ok(a.x < b.x, 'secondary share action must precede original action')
+      for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width: 320, height: 740 })
+        await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme)
+        assert.equal(await organizeDialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+        assert.ok((await shareButton.boundingBox()).height >= 40)
+        if (process.env.CINEMA_UI_SHOTS) await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, `share-organize-mobile-${theme}.png`) })
+      }
+      await shareButton.click()
+      const confirm = page.getByRole('button', { name: '确认任务状态', exact: true })
+      await confirm.waitFor()
+      assert.equal(await original.isDisabled(), true)
+      holdJob = true
+      await confirm.click()
+      await page.getByRole('button', { name: '正在创建分享任务…', exact: true }).waitFor()
+      assert.equal(await original.isDisabled(), true)
+      releaseJob()
+      await page.getByText('任务已创建', { exact: true }).waitFor()
+      assert.equal(await page.getByRole('link', { name: '查看分享 STRM 日志', exact: true }).getAttribute('href'), '/115/share/logs')
+      const previews = calls.filter(c => c.endpoint.endsWith('/download-organize/preview'))
+      assert.equal(previews.length, 1)
+      assert.equal(previews[0].body.shareSTRM, true)
+      assert.equal(previews[0].body.targetCID, undefined)
+      assert.equal(previews[0].body.targetPath, undefined)
+      assert.deepEqual(calls.filter(c => c.endpoint.endsWith('/download-organize/jobs')).map(c => c.body.previewId), ['share-plan', 'share-plan'])
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ passed: ['share and ordinary directory settings are independent; share works without organize directory; canonical names stay unchanged; mobile light/dark fit; shared lock and lost response preserve the same plan; logs link'], errors }, null, 2))
+      return
+    }
     const namingCalls = count('/naming/media-preview')
     const badRow = page.locator('[data-organize-file]').nth(2)
     await badRow.getByRole('checkbox').check()

@@ -992,9 +992,17 @@ func (s *FolderMonitorService) completeCleanedBatch(ctx context.Context, value *
 }
 
 func (s *FolderMonitorService) listRootEntries(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
+	return listDriveEntries(ctx, s.Client, cid, cookie)
+}
+
+type drivePageLister interface {
+	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
+}
+
+func listDriveEntries(ctx context.Context, client drivePageLister, cid, cookie string) ([]p115.ShareFile, error) {
 	entries := make([]p115.ShareFile, 0)
 	for offset := 0; ; {
-		page, err := s.Client.DriveFiles(ctx, cid, offset, cookie)
+		page, err := client.DriveFiles(ctx, cid, offset, cookie)
 		if err != nil {
 			return nil, err
 		}
@@ -1002,12 +1010,12 @@ func (s *FolderMonitorService) listRootEntries(ctx context.Context, cid, cookie 
 			return nil, errors.New("115 收件目录分页不完整")
 		}
 		entries = append(entries, page.Files...)
+		if len(entries) > 20000 {
+			return nil, errors.New("目录条目超过 20000 个")
+		}
 		offset += len(page.Files)
 		if offset >= page.Count {
 			return entries, nil
-		}
-		if len(entries) > 20000 {
-			return nil, errors.New("收件目录条目超过 20000 个")
 		}
 	}
 }

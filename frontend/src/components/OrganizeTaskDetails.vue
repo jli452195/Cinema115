@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
 import { historyDuration, historyLabels, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
@@ -75,6 +76,7 @@ async function copy(value: string) {
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
+      <RouterLink v-if="task.organize?.download?.share?.handedOff" to="/115/share/logs" class="text-xs text-blue-600 underline dark:text-blue-400">查看分享 STRM 日志与重试</RouterLink>
       <section v-if="folders.length" aria-label="路径信息" class="detail-panel space-y-3">
         <h3 class="text-sm font-semibold">路径信息</h3>
         <div v-for="folder in folders" :key="folder.label"><div class="mb-1 flex items-center justify-between gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">{{ folder.label }}</span><button class="path-copy" :aria-label="`复制${folder.label}`" @click="copy(folder.path!)">复制路径</button></div><p class="select-text break-all text-xs leading-5">{{ folder.path }}</p></div>

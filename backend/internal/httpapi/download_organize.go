@@ -17,6 +17,14 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 		c.Next()
 	})
 	r.GET("/config", func(c *gin.Context) { c.JSON(200, s.Target()) })
+	r.GET("/share-config", func(c *gin.Context) {
+		_, err := s.ShareSettings(s.Target().AccountID)
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		}
+		c.JSON(200, gin.H{"ready": err == nil, "reason": reason})
+	})
 	r.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": s.History()}) })
 	r.POST("/files", func(c *gin.Context) {
 		var in service.DownloadResourceInput

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"strm115/backend/internal/client/p115"
@@ -28,21 +29,24 @@ type ShareTaskStore interface {
 }
 
 type shareTaskRequest struct {
-	DirectoryLogID       string             `json:"directoryLogId,omitempty"`
-	DirectoryFingerprint string             `json:"directoryFingerprint,omitempty"`
-	DirectoryID          string             `json:"directoryId,omitempty"`
-	DirectoryEnded       bool               `json:"directoryEnded,omitempty"`
-	RetrySafe            bool               `json:"retrySafe,omitempty"`
-	Merged               bool               `json:"merged,omitempty"`
-	OwnShareCID          string             `json:"ownShareCID,omitempty"`
-	OwnRootIDs           []string           `json:"ownRootIDs,omitempty"`
-	Input                GenerateInput      `json:"input"`
-	Settings             AutomationSettings `json:"settings"`
-	CookieHash           string             `json:"cookieHash"`
+	Download             *downloadShareRequest `json:"download,omitempty"`
+	DirectoryLogID       string                `json:"directoryLogId,omitempty"`
+	DirectoryFingerprint string                `json:"directoryFingerprint,omitempty"`
+	DirectoryID          string                `json:"directoryId,omitempty"`
+	DirectoryEnded       bool                  `json:"directoryEnded,omitempty"`
+	RetrySafe            bool                  `json:"retrySafe,omitempty"`
+	Merged               bool                  `json:"merged,omitempty"`
+	OwnShareCID          string                `json:"ownShareCID,omitempty"`
+	OwnRootIDs           []string              `json:"ownRootIDs,omitempty"`
+	Input                GenerateInput         `json:"input"`
+	Settings             AutomationSettings    `json:"settings"`
+	CookieHash           string                `json:"cookieHash"`
 }
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
+	OwnClient        downloadShareClient
+	enqueueMu        sync.Mutex
 	DirectoryPrepare func(context.Context, GenerateInput, string, string) error
 	RetryWake        chan struct{}
 	Generator        MediaGenerator
@@ -147,6 +151,17 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 	if len(req.OwnRootIDs) > 0 {
 		ctx = context.WithValue(ctx, generationRootIDsKey{}, req.OwnRootIDs)
 	}
+	if req.Download != nil {
+		var err error
+		ctx, err = s.prepareDownloadShare(ctx, task, &req)
+		if err != nil {
+			var checkpoint *shareCheckpointError
+			if errors.As(err, &checkpoint) {
+				return nil, err
+			}
+			return s.finish(ctx, task, req, nil, err, time.Since(started))
+		}
+	}
 	if req.DirectoryLogID != "" {
 		ctx = context.WithValue(ctx, directoryGenerationKey{}, req.DirectoryLogID)
 		cookie := generationCookie(ctx, s.Cookie)
@@ -158,7 +173,7 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 		}
 	}
 	result, err := s.Generator.Generate(WithGenerationSource(ctx, task.Source), req.Input)
-	if req.DirectoryLogID != "" && err == nil && (result == nil || result.Written == 0 || result.Failed != 0 || result.MetadataFailed != 0) {
+	if (req.DirectoryLogID != "" || req.Download != nil) && err == nil && (result == nil || result.Written == 0 || result.Failed != 0 || result.MetadataFailed != 0) {
 		err = errors.New("STRM 或元数据未全部生成成功，目录批次保留，重试会复用当前分享")
 	}
 	return s.finish(ctx, task, req, result, err, time.Since(started))
@@ -185,7 +200,8 @@ func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shar
 	if err != nil {
 		req.RetrySafe = req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)
 		task.Status, task.Error = "failed", generationErrorDetail(err, req.Input)
-		if errors.Is(err, p115.ErrShareUnderReview) || (req.DirectoryLogID != "" && errors.Is(err, p115.ErrShareSnapshotPending)) {
+		creationUncertain := req.Download != nil && req.Download.Attempted && req.Input.URL == ""
+		if !creationUncertain && (errors.Is(err, p115.ErrShareUnderReview) || ((req.DirectoryLogID != "" || req.Download != nil) && errors.Is(err, p115.ErrShareSnapshotPending))) {
 			task.Status = "review"
 			// 只有只读生成或明确尚未转存的原分享可按原请求重试。
 			safe := task.Mode == "direct" || req.Input.Mode == "direct" || errors.Is(err, errSourceShareReview)

@@ -481,13 +481,17 @@ func fileIDs(files []p115.ShareFile) []string {
 }
 
 func (w *ShareWorkflow) captureSnapshot(ctx context.Context, share *p115.ShareInfo, cid, cookie string) ([]string, generationSnapshot, error) {
+	return captureShareSnapshot(ctx, w.Client, share, cid, cookie)
+}
+
+func captureShareSnapshot(ctx context.Context, client ShareLister, share *p115.ShareInfo, cid, cookie string) ([]string, generationSnapshot, error) {
 	if cid == "" {
 		cid = "0"
 	}
 	snapshot := generationSnapshot{ShareCode: share.Code, RootCID: cid, Pages: make(map[generationSnapshotPageKey]*p115.SharePage)}
-	manifest, roots, files, err := w.scanDirectory(context.WithValue(ctx, reshareScanPhaseKey{}, "snapshot"), cid, "正在读取分享目录并统计媒体数量", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
+	manifest, roots, files, err := scanShareTree(context.WithValue(ctx, reshareScanPhaseKey{}, "snapshot"), cid, "正在读取分享目录并统计媒体数量", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
 		page, err := measuredPages(ctx, "snapshot", func(ctx context.Context, id string, offset int) (*p115.SharePage, error) {
-			return w.Client.List(ctx, share, id, offset, cookie)
+			return client.List(ctx, share, id, offset, cookie)
 		})(ctx, id, offset)
 		if err != nil || page == nil {
 			return page, err
@@ -517,6 +521,10 @@ func (w *ShareWorkflow) snapshotFromCaptured(ctx context.Context, cid string, sn
 }
 
 func (w *ShareWorkflow) scanDirectory(ctx context.Context, cid, label string, list func(context.Context, string, int) (*p115.SharePage, error)) ([]string, []p115.ShareFile, []p115.ShareFile, error) {
+	return scanShareTree(ctx, cid, label, list)
+}
+
+func scanShareTree(ctx context.Context, cid, label string, list func(context.Context, string, int) (*p115.SharePage, error)) ([]string, []p115.ShareFile, []p115.ShareFile, error) {
 	if cid == "" {
 		cid = "0"
 	}

@@ -8,6 +8,7 @@
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",
     "test:garden-organize-ui": "node scripts/download-organize-ui.cjs",
+    "test:download-share-ui": "node scripts/download-organize-ui.cjs garden share && node scripts/download-organize-ui.cjs mikan share && node scripts/download-organize-ui.cjs gying share",
     "test:mikan-organize-ui": "node scripts/download-organize-ui.cjs mikan",
     "test:download-organize-batch-ui": "node scripts/download-organize-batch-ui.cjs && node scripts/download-organize-batch-ui.cjs mikan",
     "test:anime-resource-search-ui": "node scripts/anime-resource-search-ui.cjs",
