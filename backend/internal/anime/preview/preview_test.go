@@ -17,6 +17,26 @@ func ptr[T any](v T) *T { return &v }
 
 var observed = time.Date(2026, 10, 18, 12, 15, 48, 987000000, time.UTC)
 
+const starReleaseTitle = "六四位元字幕組★與暗黑召喚師秘密戀愛中 Dark Summoner to Dekiteiru★03★1920x1080★AVC AAC MP4★繁體中文"
+
+func TestPreviewStarDelimitedReleases(t *testing.T) {
+	c := config()
+	c.Sources[0].Binding.Scope = &model.AnimeScope{Kind: "range", First: ptr(1), Last: ptr(12)}
+	c.Sources[0].Binding.ChapterCorrespondence = &model.AnimeChapterCorrespondence{SourceEpisode: 1, ChapterEpisode: 1}
+	c.Sources[0].Rules.MinimumEpisode = ptr(1)
+	c.Sources[0].Rules.Match = SpecPatterns(releaseparse.Specification(starReleaseTitle))
+	source := build(t, c, page(strings.Replace(starReleaseTitle, "★03★", "★01★", 1), strings.Replace(starReleaseTitle, "★03★", "★02★", 1), starReleaseTitle))
+	summary := source.Summary(observed.UnixMilli())
+	if summary.MatchedCount != 3 || summary.ReviewCount != 0 {
+		t.Fatal("RSS preview still needs confirmation", summary)
+	}
+	for i, item := range source.Items {
+		if item.Projection.ChapterEpisode == nil || *item.Projection.ChapterEpisode != i+1 {
+			t.Fatal("incorrect mapped episode", item.Projection)
+		}
+	}
+}
+
 func config() Config {
 	return Config{Chapter: Chapter{BangumiID: ptr("123"), EditionKey: "original", DraftKey: "form-a"}, Settings: model.AnimeSettings{Revision: 1}, Sources: []model.AnimeSourceConfig{
 		{Ref: "main", Role: "main", Provider: "mikan", Status: "paused", ItemID: ptr("2259"), GroupID: ptr("45"), GroupName: ptr("字幕组"),

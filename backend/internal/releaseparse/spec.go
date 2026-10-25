@@ -11,9 +11,9 @@ import (
 	"unicode/utf8"
 )
 
-const SpecVersion int64 = 2
+const SpecVersion int64 = 3
 
-const specLanguage = `(?:[简繁](?:体|中|文)?|[日英](?:文|语)?)`
+const specLanguage = `(?:[简繁](?:体?中文|体|中|文)?|[日英](?:文|语)?)`
 const specLanguageSequence = specLanguage + `(?:[+&/ _-]*` + specLanguage + `)*`
 
 var (
@@ -65,6 +65,11 @@ func specification(title string) (Spec, bool) {
 		}
 		blocks = append(blocks, body)
 	}
+	for _, index := range starFields.FindAllStringSubmatchIndex(title, -1) {
+		if bracketNumber.MatchString(title[index[2]:index[3]]) {
+			tail = max(tail, index[1])
+		}
+	}
 	for _, rule := range []*regexp.Regexp{chineseNumber, seasonEpisode, labeledEpisode, dashedEpisode} {
 		for _, index := range rule.FindAllStringSubmatchIndex(title, -1) {
 			if rightBoundary(title, index[3]) && index[1] > tail {
@@ -73,7 +78,7 @@ func specification(title string) (Spec, bool) {
 		}
 	}
 	if tail >= 0 && tail < len(title) {
-		blocks = append(blocks, brackets.ReplaceAllString(title[tail:], " "))
+		blocks = append(blocks, strings.Split(brackets.ReplaceAllString(title[tail:], " "), "★")...)
 	}
 	languages := make(map[string]bool, 4)
 	codecs, containers, depths, modes := make(map[string]bool, 2), make(map[string]bool, 2), make(map[string]bool, 2), make(map[string]bool, 2)

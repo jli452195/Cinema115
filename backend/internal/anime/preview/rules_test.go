@@ -65,6 +65,7 @@ func TestSpecificationTemplatesMatchOriginalTitles(t *testing.T) {
 		spec  releaseparse.Spec
 		title string
 	}{
+		{releaseparse.Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"}, starReleaseTitle},
 		{releaseparse.Spec{Resolution: "1080p", Languages: []string{"zh-Hans", "ja"}, Container: "mp4"}, "[银色子弹字幕组][名侦探柯南][第30集][简日双语MP4][1080P]"},
 		{releaseparse.Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"}, "[ANi] Anime - 02 [1080P][Baha][AAC AVC][CHT][MP4]"},
 		{releaseparse.Spec{Resolution: "1080p", Codec: "h265", BitDepth: "10", SubtitleMode: "soft", Container: "mkv"}, "[LoliHouse] Anime - 03 [1920x1080][HEVC-10bit][内封][MKV]"},

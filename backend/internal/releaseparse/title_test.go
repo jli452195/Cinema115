@@ -8,12 +8,18 @@ import (
 	"testing"
 )
 
+const starReleaseTitle = "六四位元字幕組★與暗黑召喚師秘密戀愛中 Dark Summoner to Dekiteiru★03★1920x1080★AVC AAC MP4★繁體中文"
+
 func TestTitleOrdinaryNumbering(t *testing.T) {
 	for _, tc := range []struct {
 		title, raw string
 		episode    int
 		version    string
 	}{
+		{starReleaseTitle, "03", 3, ""},
+		{"字幕組★Show★ 03v2 ★1920x1080★AVC AAC MP4★繁體中文", "03v2", 3, "v2"},
+		{"字幕組★Show★2026★03★1080p", "03", 3, ""},
+		{"字幕組★Show★00★1080p", "00", 0, ""},
 		{"[字幕组] 测试 第30话 1080p", "30", 30, ""},
 		{"[组] 测试 第 0001 集 [720P]", "0001", 1, ""},
 		{"[Group] Show [01][1080p][HEVC x265 10bit]", "01", 1, ""},
@@ -135,6 +141,12 @@ func TestTitleNumberedSeriesStillRetainPackAndAmbiguityEvidence(t *testing.T) {
 
 func TestTitleUnsupportedAndAmbiguousNumbering(t *testing.T) {
 	for _, tc := range []struct{ title, kind, raw string }{
+		{"字幕組★Show★01-03★1920x1080", "batch", "01-03"},
+		{"字幕組★Show★01+02★1920x1080", "batch", "01+02"},
+		{"字幕組★Show★12.5★1920x1080", "special", "12.5"},
+		{"字幕組★Show★SP01★1920x1080", "special", "SP01"},
+		{"字幕組★Show★03★04★1920x1080", "composite", "03 / 04"},
+		{"字幕組★Show★03★[04][1080p]", "composite", "03 / 04"},
 		{"[组] 动画 [12.5] [1080p]", "special", "12.5"},
 		{"[组] 动画 - 07A [1080p]", "special", "07A"},
 		{"[组] 动画 [06Bv2] [1080p]", "special", "06Bv2"},
@@ -185,6 +197,10 @@ func TestTitleUnsupportedAndAmbiguousNumbering(t *testing.T) {
 
 func TestTitleDoesNotGuessFromMetadata(t *testing.T) {
 	for _, title := range []string{
+		"字幕組★Show★1920x1080★AVC AAC MP4★繁體中文",
+		"字幕組★Show★2026★1080★264★10bit★V2★12345678",
+		"字幕組★Show★03XYZ★1920x1080",
+		"【喵萌奶茶屋】★10月新番★[动画][1080p]",
 		"[组] Show [2026] [1080p] [x265] [10bit] [2.5GB] [12345678]",
 		"[组] Show S02 1080p HEVC AAC",
 		"[组] Show 2nd Season [1080p]",

@@ -12,6 +12,9 @@ func TestSpecificationPublisherMetadata(t *testing.T) {
 		title string
 		want  Spec
 	}{
+		{starReleaseTitle, Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, Codec: "h264", Container: "mp4"}},
+		{"字幕組★繁體中文 MP4 Adventure★03★1920x1080★HEVC MKV★簡體中文", Spec{Resolution: "1080p", Languages: []string{"zh-Hans"}, Codec: "h265", Container: "mkv"}},
+		{"字幕組★Show★03★1920x1080★AVC AAC MP4★繁體中文內嵌", Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard", Codec: "h264", Container: "mp4"}},
 		{"[绿茶字幕组] 每日动画 [01][1080p][简体内嵌][HEVC 10bit][MKV]", Spec{Resolution: "1080p", Languages: []string{"zh-Hans"}, SubtitleMode: "hard", Codec: "h265", BitDepth: "10", Container: "mkv"}},
 		{"[绿茶字幕组] 每日动画 [01][1080p][繁體內嵌][H.264][MP4]", Spec{Resolution: "1080p", Languages: []string{"zh-Hant"}, SubtitleMode: "hard", Codec: "h264", Container: "mp4"}},
 		{"[绿茶字幕组] 每日动画 [01] [1920x1080] 简繁日内封 HEVC 10bit MKV", Spec{Resolution: "1080p", Languages: []string{"ja", "zh-Hans", "zh-Hant"}, SubtitleMode: "soft", Codec: "h265", BitDepth: "10", Container: "mkv"}},
@@ -70,7 +73,7 @@ func TestSpecificationSilverBulletRealTitles(t *testing.T) {
 }
 
 func TestSpecificationChineseLanguageMarkersAreBounded(t *testing.T) {
-	for _, title := range []string{"[组][日常的简繁生活][01][1080p]", "[组][每日字幕故事][01][1080p]", "[组][第01集 简单的日语故事][1080p]"} {
+	for _, title := range []string{"[组][日常的简繁生活][01][1080p]", "[组][每日字幕故事][01][1080p]", "[组][第01集 简单的日语故事][1080p]", "字幕組★繁體中文故事★03★1080p", "字幕組★Show★03★繁體中文故事★1080p"} {
 		if got := Specification(title); len(got.Languages) > 0 {
 			t.Fatalf("series/episode name interpreted as language: %s %+v", title, got)
 		}
@@ -79,6 +82,8 @@ func TestSpecificationChineseLanguageMarkersAreBounded(t *testing.T) {
 		title     string
 		languages []string
 	}{
+		{"[组] 动画 [01][繁體中文][MP4]", []string{"zh-Hant"}},
+		{"[组] 动画 [01][简体中文][MP4]", []string{"zh-Hans"}},
 		{"[组] 动画 [01][繁體][MP4]", []string{"zh-Hant"}},
 		{"[组] 动画 [01][繁日雙語MP4]", []string{"ja", "zh-Hant"}},
 	} {

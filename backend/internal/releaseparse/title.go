@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-const ParserVersion int64 = 9
+const ParserVersion int64 = 10
 
 var ErrInput = errors.New("invalid release parser input")
 
@@ -25,7 +25,9 @@ const (
 )
 
 var (
-	brackets       = regexp.MustCompile(`[\[【(（]([^\[\]【】()（）]+)[\]】)）]`)
+	brackets = regexp.MustCompile(`[\[【(（]([^\[\]【】()（）]+)[\]】)）]`)
+	// Do not consume the closing separator: adjacent fields share it.
+	starFields     = regexp.MustCompile(`★([^★]*)`)
 	bracketNumber  = regexp.MustCompile(`(?i)^\s*(` + expression + `)(?:\s*(?:END|FIN|完|完结|完結))*\s*$`)
 	chineseNumber  = regexp.MustCompile(`第\s*(` + expression + `)\s*[话話集回]`)
 	seasonEpisode  = regexp.MustCompile(`(?i)S[0-9]{1,2}\s*E(` + expression + `)`)
@@ -120,10 +122,12 @@ func Title(title string) (Result, error) {
 		}
 		candidates = append(candidates, candidate{start: start, end: end, kind: kind, episode: n})
 	}
-	for _, b := range brackets.FindAllStringSubmatchIndex(title, -1) {
-		body := title[b[2]:b[3]]
-		if m := bracketNumber.FindStringSubmatchIndex(body); m != nil {
-			add(b[2]+m[2], b[2]+m[3], "", false)
+	for _, fields := range []*regexp.Regexp{brackets, starFields} {
+		for _, b := range fields.FindAllStringSubmatchIndex(title, -1) {
+			body := title[b[2]:b[3]]
+			if m := bracketNumber.FindStringSubmatchIndex(body); m != nil {
+				add(b[2]+m[2], b[2]+m[3], "", false)
+			}
 		}
 	}
 	for _, rule := range []struct {
