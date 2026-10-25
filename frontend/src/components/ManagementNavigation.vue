@@ -49,17 +49,19 @@ onBeforeUnmount(rememberScroll)
 .management-nav-label { margin: 0 12px 7px; color: rgb(var(--color-slate-500)); font-size: 11px; font-weight: 400; }
 .management-nav-item + .management-nav-item { margin-top: 4px; }
 .management-nav-row { display: flex; min-width: 0; border-radius: 11px; }
-.management-nav-marker { position: absolute; z-index: 2; left: 2px; top: 50%; width: 2px; height: 18px; border-radius: 2px; background: #739bc9; opacity: 0; transform: translateY(-50%) scaleY(0); transform-origin: center; transition: transform 180ms ease-out, opacity 180ms ease-out; pointer-events: none; }
+.management-nav-marker { position: absolute; z-index: 2; left: 2px; top: 50%; width: 2px; height: 18px; border-radius: 2px; background: #2563eb; opacity: 0; transform: translateY(-50%) scaleY(0); transform-origin: center; transition: transform 180ms ease-out, opacity 180ms ease-out; pointer-events: none; }
 .management-nav-row:has(:focus-visible) > .management-nav-marker { opacity: 1; transform: translateY(-50%) scaleY(1); }
-.dark .management-nav-marker { background: #94b8e5; }
+.dark .management-nav-marker { background: #93c5fd; }
 .management-nav-link { display: flex; flex: 1; min-width: 0; min-height: 44px; align-items: center; gap: 10px; padding: 0 12px; border-radius: 11px; font-size: 13px; font-weight: 500; }
 .management-nav-link > svg { width: 19px; height: 19px; flex-shrink: 0; }
 .management-nav-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.management-nav-row.is-section-active { background: #e8eff9; color: #315e99; }
+.management-nav-row.is-section-active { background: #2563eb; color: #fff; box-shadow: 0 2px 6px rgb(37 99 235 / 18%); }
+.management-nav-row.is-section-active > .management-nav-marker { background: #fff; }
+.management-nav-row.is-section-active .management-nav-link:focus-visible { outline-color: #fff; }
 .management-navigation .ambient-glow { --ambient-glow-strength: .45; --ambient-glow-step: 1px; --ambient-glow-wide-step: 1px; }
 .management-nav-link:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
-.dark .management-navigation { color: rgb(var(--color-slate-300)); }.dark .management-nav-label { color: rgb(var(--color-slate-500)); }.dark .management-nav-row.is-section-active { background: rgb(104 150 210 / 13%); color: #bad2f4; }
-@media (hover: hover) { .management-nav-row:hover { background-color: rgb(116 143 180 / 7%); }.management-nav-row.is-section-active:hover { background-color: rgb(116 155 210 / 17%); } }
+.dark .management-navigation { color: rgb(var(--color-slate-300)); }.dark .management-nav-label { color: rgb(var(--color-slate-500)); }.dark .management-nav-row.is-section-active { background: #3769b5; color: #fff; box-shadow: 0 2px 6px rgb(0 0 0 / 22%); }
+@media (hover: hover) { .management-nav-row:hover { background-color: rgb(116 143 180 / 7%); }.management-nav-row.is-section-active:hover { background-color: #1d4ed8; }.dark .management-nav-row.is-section-active:hover { background-color: #3b70bd; } }
 @media (hover: hover) and (pointer: fine) { .management-nav-row:hover > .management-nav-marker { opacity: 1; transform: translateY(-50%) scaleY(1); } }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .management-nav-link > span { transform-origin: left center; transition: transform 180ms ease-out; }
