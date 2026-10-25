@@ -10,7 +10,7 @@ const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
-const modules = ['ALL', 'STRM', 'Telegram', '订阅', '观影', '蜗牛', 'Emby', 'Emby 302', '蜜柑'] as const
+const modules = ['ALL', 'STRM', 'Telegram', '订阅', '搜索', 'Emby', 'Emby 302'] as const
 type Module = typeof modules[number]
 const route = useRoute()
 const router = useRouter()
@@ -47,7 +47,7 @@ let mounted = true
 const levelNavRef = ref<HTMLElement>()
 const { indicatorStyle } = useSlidingIndicator(levelNavRef, '[aria-pressed="true"]', [level])
 const bgColors: Record<Level, string> = { ALL: 'bg-slate-800', INFO: 'bg-emerald-500', DEBUG: 'bg-sky-500', ERROR: 'bg-red-500', WARNING: 'bg-amber-400' }
-const textColors: Record<Level, string> = { ALL: 'text-white', INFO: 'text-white', DEBUG: 'text-white', ERROR: 'text-white', WARNING: 'text-slate-900 dark:text-slate-100' }
+const textColors: Record<Level, string> = { ALL: 'text-white', INFO: 'text-white', DEBUG: 'text-white', ERROR: 'text-white', WARNING: 'text-slate-900' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
   return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source} ${entry.details ? JSON.stringify(entry.details) : ''}`.toLowerCase().includes(query)))
@@ -98,7 +98,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 </script>
 
 <template>
-  <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、观影、Emby、Emby 302 与蜜柑日志；详细过程可切换 DEBUG，排查问题请选择全部等级。" @logout="emit('logout')">
+  <ManagementLayout title="实时日志" description="查看 STRM、Telegram、订阅、搜索与 Emby 日志；搜索来源显示在每条记录中，排查问题请选择全部等级。" @logout="emit('logout')">
       <section class="logs-panel" aria-label="日志列表与筛选">
         <div class="logs-toolbar">
           <div class="logs-controls">
@@ -132,7 +132,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
           </div>
           <span class="sr-only" role="status">{{ retryStatus }}</span>
         </div>
-        <div v-if="!filtered.length" class="logs-empty">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? sessionExpired ? '重新登录后即可继续查看日志。' : '暂时无法读取日志，请重试。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行 STRM、Telegram、订阅、观影或 Emby 操作后会显示在这里。' }}</div>
+        <div v-if="!filtered.length" class="logs-empty">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? sessionExpired ? '重新登录后即可继续查看日志。' : '暂时无法读取日志，请重试。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行搜索、STRM、Telegram、订阅或 Emby 操作后会显示在这里。' }}</div>
         <ol v-else class="logs-list">
           <li v-for="entry in filtered.slice(0, visibleCount)" :key="entry.id" class="logs-entry">
             <div class="logs-entry-meta">

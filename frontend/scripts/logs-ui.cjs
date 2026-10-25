@@ -12,7 +12,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     entry(10, { details: { method: 'GET', path: '/Videos/123/stream', status: 302, durationMs: 128, url: 'https://mock.invalid/' + 'file'.repeat(40), requestHeaders: 'X-Mock: request', lookupHeaders: 'X-Mock: lookup', responseHeaders: 'X-Mock: response', steps: 'Verified playback permission\nResolved original file\nReturned CDN location', lookup: 'Mock lookup ' + 'result'.repeat(60) } }),
     entry(11, { level: 'WARNING', module: 'Telegram', source: '', taskID: '', message: '\u8bf7\u6c42\u7b49\u5f85\u91cd\u8bd5\uff0c\u539f\u8bb0\u5f55\u4fdd\u7559\u3002' }),
     entry(12, { level: 'DEBUG', module: 'STRM', taskID: 'task-debug', message: 'Diagnostic fixture', details: { steps: 'Unique diagnostic needle' } }),
-    entry(13, { level: 'ERROR', module: '\u8717\u725b', source: 'source'.repeat(15), taskID: 'task-'.repeat(15), message: '\u6a21\u62df\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002' }),
+    entry(13, { level: 'ERROR', module: '\u641c\u7d22', source: '\u8717\u725b' + 'source'.repeat(15), taskID: 'task-'.repeat(15), message: '\u6a21\u62df\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002' }),
   ]
   const state = { hold: true, status: 200, entries: rows, requests: 0, inFlight: 0, maxInFlight: 0, pending: [] }
   const errors = [], requests = [], passed = []
@@ -128,6 +128,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.locator('.logs-entry').count(), 1)
     assert.equal(await page.locator('.logs-level-badge').innerText(), 'DEBUG')
     assert.equal(state.requests, localCount)
+    await search.fill('')
+    await page.getByRole('combobox').selectOption('\u641c\u7d22')
+    assert.equal(await page.locator('.logs-entry').count(), 1)
+    await search.fill('\u8717\u725b')
+    assert.equal(await page.locator('.logs-entry').count(), 1)
+    assert.equal(await page.getByRole('combobox').locator('option').filter({ hasText: /^\u89c2\u5f71$|^\u8717\u725b$|^\u871c\u67d1$/ }).count(), 0)
+    await go('/logs?module=' + encodeURIComponent('\u641c\u7d22') + '&level=ALL')
+    assert.equal(await page.getByRole('combobox').inputValue(), '\u641c\u7d22')
+    assert.equal(await page.locator('.logs-entry').count(), 1)
+    passed.push('unified search module, provider text filtering and direct search-log route')
     await go('/logs?level=DEBUG&module=STRM&taskID=task-debug&keep=example')
     assert.equal(await page.locator('.logs-entry').count(), 1)
     await page.getByRole('button', { name: '\u53d6\u6d88\u4efb\u52a1\u7b5b\u9009' }).click()

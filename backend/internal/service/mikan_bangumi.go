@@ -30,14 +30,8 @@ func (s *MikanService) Bangumi(ctx context.Context, input MikanBangumiInput) (ou
 		return output, errors.New("蜜柑番剧读取功能不可用")
 	}
 	started := time.Now()
-	task := ""
-	if s.Logs != nil {
-		s.Logs.mu.Lock()
-		s.Logs.taskSequence++
-		task = fmt.Sprintf("MIKAN-%06d", s.Logs.taskSequence)
-		s.Logs.mu.Unlock()
-	}
-	log := func(level, message string) { s.Logs.Append("蜜柑", task, "番剧资源", level, message) }
+	task := s.Logs.NewTaskID("MIKAN")
+	log := func(level, message string) { s.Logs.Append("搜索", task, "蜜柑", level, message) }
 	log("INFO", fmt.Sprintf("读取蜜柑番剧 %s，字幕组 %s，加载数量 %d", input.ID, input.Group, input.Take))
 	defer func() {
 		if err != nil {

@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
             <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="emit('close')">前往配置</RouterLink></p>
           </template>
         </div>
-        <footer class="gy-footer">{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</footer>
+        <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>
@@ -734,7 +734,6 @@ onBeforeUnmount(() => {
 .gy-list-end { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 20px; }
 .gy-list-end > span, .gy-all-loaded { color: var(--gy-muted); font-size: 11px; line-height: 18px; }
 .gy-all-loaded { margin: 20px 0 0; text-align: center; }
-.gy-footer { flex-shrink: 0; padding: 12px 24px 16px; color: var(--gy-muted); font-size: 11px; line-height: 18px; }
 .gy-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 16px; color: var(--gy-muted); text-align: center; }
 .gy-empty svg { width: 36px; height: 36px; margin-bottom: 8px; }
 .gy-empty h3 { margin: 0; font-size: 14px; line-height: 22px; color: var(--gy-text); font-weight: 600; }
@@ -800,7 +799,6 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-actions-organize > [data-gy-action="open"] { grid-column: 1 / -1; }
   .gy-actions > :only-child { grid-column: 1 / -1; }
   .gy-copy-button { min-height: 48px; }
-  .gy-footer { padding: 8px 16px 12px; font-size: 10px; line-height: 16px; }
 }
 @media (max-width: 359px) { .gy-actions { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {

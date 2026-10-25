@@ -279,12 +279,9 @@ func (s *WoniuService) operation(action string) func(error) {
 	if s.Logs == nil {
 		return func(error) {}
 	}
-	s.Logs.mu.Lock()
-	s.Logs.taskSequence++
-	id := "WONIU-" + strconv.FormatUint(s.Logs.taskSequence, 10)
-	s.Logs.mu.Unlock()
+	id := s.Logs.NewTaskID("WONIU")
 	start := time.Now()
-	s.Logs.Append("蜗牛", id, "网页搜索", "INFO", "开始"+action)
+	s.Logs.Append("搜索", id, "蜗牛", "INFO", "开始"+action)
 	return func(err error) {
 		level, message := "INFO", action+"完成"
 		if err != nil {
@@ -294,6 +291,6 @@ func (s *WoniuService) operation(action string) func(error) {
 				level = "WARNING"
 			}
 		}
-		s.Logs.Append("蜗牛", id, "网页搜索", level, fmt.Sprintf("%s，耗时 %.2f 秒", message, time.Since(start).Seconds()))
+		s.Logs.Append("搜索", id, "蜗牛", level, fmt.Sprintf("%s，耗时 %.2f 秒", message, time.Since(start).Seconds()))
 	}
 }

@@ -103,7 +103,7 @@ func TestMikanAdminSearchAndLogs(t *testing.T) {
 			t.Fatal(response.Body.String())
 		}
 	}
-	request := httptest.NewRequest("GET", "/api/admin/logs?module=蜜柑&level=ALL", nil)
+	request := httptest.NewRequest("GET", "/api/admin/logs?module=搜索&level=ALL", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	response := httptest.NewRecorder()
 	r.ServeHTTP(response, request)

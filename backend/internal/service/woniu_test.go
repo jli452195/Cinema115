@@ -146,7 +146,7 @@ func TestWoniuQueuedCancellationAndSafeLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-s.gate
-	entries := s.Logs.Snapshot("ALL", "蜗牛")
+	entries := s.Logs.Snapshot("ALL", "搜索")
 	if len(entries) != 2 {
 		t.Fatal(entries)
 	}

@@ -546,7 +546,7 @@ onBeforeUnmount(() => {
           <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="closeDialog">前往配置</RouterLink></p>
           <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
         </footer>
-        <footer v-else class="mikan-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: isGarden ? 'ALL' : '蜜柑', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
+        <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>
@@ -693,8 +693,6 @@ onBeforeUnmount(() => {
 .mikan-list-end > span, .mikan-expansions > p { margin: 0; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
 .mikan-expansions { margin-top: 20px; }
 .mikan-expansions > div { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
-.mikan-footer { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 0 12px; padding: 8px 24px 12px; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
-.mikan-footer a { display: inline-flex; min-height: 32px; align-items: center; color: var(--search-dialog-primary); }
 .mikan-dialog button { cursor: pointer; }
 .mikan-dialog button:disabled { cursor: default; opacity: .45; }
 .mikan-dialog button:focus-visible, .mikan-dialog a:focus-visible, .mikan-dialog summary:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 3px; }
@@ -745,7 +743,6 @@ onBeforeUnmount(() => {
   .mikan-resource-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .mikan-resource-actions > :is(a, button) { min-width: 0; padding-inline: 6px; font-size: 11px; }
   .mikan-resource-actions > :is(a, button) > span { white-space: nowrap; }
-  .mikan-footer { padding: 4px 16px 8px; font-size: 10px; line-height: 16px; }
   .mikan-cover-retry { min-height: 32px; }
   .mikan-picker-hint { display: none; }
   .mikan-picker-heading > span { font-size: 10px; }

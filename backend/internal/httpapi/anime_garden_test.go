@@ -71,6 +71,9 @@ func TestGardenResourceSearchAdminBoundary(t *testing.T) {
 	if a.calls != 0 {
 		t.Fatal("unauthorized or invalid request reached upstream")
 	}
+	if len(f.s.Logs.Snapshot("ALL", "搜索")) != 4 {
+		t.Fatal("只有已通过鉴权的两次无效搜索应产生日志")
+	}
 	out := f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old"}`, 200)
 	if out["query"] != "old" || out["hasMore"] != false || a.calls != 1 || f.mikan.reads != 0 || f.bgm.calls != 0 {
 		t.Fatal(out, a.calls)
@@ -78,5 +81,9 @@ func TestGardenResourceSearchAdminBoundary(t *testing.T) {
 	f.call(t, "POST", "/resources/garden/search", f.admin, "", `{"query":"old"}`, 200)
 	if a.calls != 1 {
 		t.Fatal("search cache not reused")
+	}
+	entries := f.s.Logs.Snapshot("ALL", "搜索")
+	if len(entries) != 8 || entries[0].Source != "Garden" || entries[0].Level != "DEBUG" || !strings.Contains(entries[0].Message, "命中缓存") || entries[0].TaskID == entries[2].TaskID {
+		t.Fatalf("Garden 缓存日志或操作隔离错误: %+v", entries)
 	}
 }

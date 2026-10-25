@@ -100,7 +100,7 @@ func TestGyingSearchLogsMetadataFailure(t *testing.T) {
 	RegisterGying(router.Group("/api/admin"), &gyingSearcherFake{}, &gyingFailingTMDB{}, logs)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/admin/gying/search", strings.NewReader(`{"kind":"movie","tmdbId":"42"}`)))
-	entries := logs.Snapshot("ALL", "观影")
+	entries := logs.Snapshot("ALL", "搜索")
 	if len(entries) != 2 || entries[0].Level != "ERROR" || entries[0].TaskID != entries[1].TaskID || !strings.Contains(entries[0].Message, "TMDB 42") {
 		t.Fatalf("metadata failure missing from operation: %+v", entries)
 	}

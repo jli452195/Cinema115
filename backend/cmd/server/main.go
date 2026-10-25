@@ -137,11 +137,10 @@ func main() {
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	cloudClient := p115.NewCloudClient()
 	downloadCoordinator := &service.CloudDownloadCoordinator{}
-	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService, Templates: database}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator}
+	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService, Templates: database}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator, Logs: generationLogs}
 	httpapi.RegisterAnime(admin, animeAdmin)
 	animeDiscoveryRunner := &service.AnimeDiscoveryRunner{Admin: animeAdmin, Feeds: animeBindings}
 	animeAdmin.StatusGateway = cloudClient
-	animeAdmin.Logs = generationLogs
 	animeFiles := p115.NewShareClient()
 	animeFiles.ReadRetryDelays = nil
 	animeAdmin.FileGateway = animeFiles
@@ -175,7 +174,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpapi.RegisterNanShare(admin, nanShareService)
+	httpapi.RegisterNanShare(admin, nanShareService, generationLogs)
 	imageCacheBytes := tmdbimage.DefaultMaxBytes
 	if configured := strings.TrimSpace(os.Getenv("TMDB_IMAGE_CACHE_MAX_GB")); configured != "" {
 		gigabytes, parseErr := strconv.ParseInt(configured, 10, 64)

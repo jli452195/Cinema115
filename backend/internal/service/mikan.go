@@ -91,14 +91,8 @@ func cloneMikan(result mikan.Result) mikan.Result {
 
 func (s *MikanService) Search(ctx context.Context, input MikanInput) (output MikanResult, err error) {
 	started := time.Now()
-	task := ""
-	if s.Logs != nil {
-		s.Logs.mu.Lock()
-		s.Logs.taskSequence++
-		task = fmt.Sprintf("MIKAN-%06d", s.Logs.taskSequence)
-		s.Logs.mu.Unlock()
-	}
-	log := func(level, message string) { s.Logs.Append("蜜柑", task, "详情页搜索", level, message) }
+	task := s.Logs.NewTaskID("MIKAN")
+	log := func(level, message string) { s.Logs.Append("搜索", task, "蜜柑", level, message) }
 	log("INFO", "开始蜜柑搜索")
 	defer func() {
 		if err != nil {

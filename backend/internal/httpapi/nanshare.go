@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -24,8 +25,9 @@ type NanShareConfigurer interface {
 	Clear() error
 }
 
-func RegisterNanShare(admin *gin.RouterGroup, configurer NanShareConfigurer) {
+func RegisterNanShare(admin *gin.RouterGroup, configurer NanShareConfigurer, logs *service.GenerationLogs) {
 	group := admin.Group("/nanshare")
+	group.Use(operationLogs(logs, "搜索", "RE0", map[string]string{group.BasePath() + "/search": "资源搜索"}))
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
@@ -69,6 +71,7 @@ func RegisterNanShare(admin *gin.RouterGroup, configurer NanShareConfigurer) {
 			fail(c, err)
 			return
 		}
+		c.Set("operationLogSummary", fmt.Sprintf("找到 %d 条资源", len(view.Items)))
 		c.JSON(http.StatusOK, view)
 	})
 	group.GET("/share-options/:searchId", func(c *gin.Context) {

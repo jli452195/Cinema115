@@ -49,3 +49,25 @@ func TestTelegramOperationLogsExcludeCredentialsAndReads(t *testing.T) {
 		t.Fatal("等级划分不正确")
 	}
 }
+
+func TestTelegramSearchLogsUseSearchModule(t *testing.T) {
+	r := gin.New()
+	logs := &service.GenerationLogs{}
+	account, err := tguser.New(&userTestStore{}, &userTestStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	RegisterTelegramUser(r.Group("/api/admin"), account, &tmdbReaderFake{}, logs)
+	for _, path := range []string{"search", "search-stream", "select"} {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/admin/telegram-user/"+path, strings.NewReader(`{"private":"request-token"}`)))
+	}
+	entries := logs.Snapshot("ALL", "搜索")
+	if len(entries) != 6 || len(logs.Snapshot("ALL", "Telegram")) != 0 {
+		t.Fatalf("搜索混入 Telegram 或记录缺失: %+v", entries)
+	}
+	for _, entry := range entries {
+		if entry.Source != "Bot" || entry.TaskID == "" || strings.Contains(entry.Message, "request-token") {
+			t.Fatalf("Bot 搜索归属或脱敏错误: %+v", entry)
+		}
+	}
+}

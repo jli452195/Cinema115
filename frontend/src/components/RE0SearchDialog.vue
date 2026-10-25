@@ -357,6 +357,7 @@ onBeforeUnmount(() => {
             </li>
           </ul>
         </div>
+        <footer class="search-log-footer"><RouterLink v-if="!writing" :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click.capture="writing && $event.preventDefault()" @click="close">查看日志</RouterLink><span v-else>正在提交任务，请等待结果。</span></footer>
       </div>
     </dialog>
   </Teleport>

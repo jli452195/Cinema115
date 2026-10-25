@@ -209,7 +209,7 @@ func validateGyingConfig(input GyingConfigInput) (GyingConfigInput, error) {
 // Configure validates credentials against the remote site before replacing
 // the encrypted configuration. A blank password retains the saved password.
 func (s *GyingService) Configure(ctx context.Context, input GyingConfigInput) (view GyingView, opErr error) {
-	ctx, finish := StartGyingOperation(ctx, s.Logs, "登录配置", "登录并保存配置")
+	ctx, finish := StartGyingOperation(ctx, s.Logs, "登录并保存配置")
 	defer func() { finish(opErr) }()
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -261,7 +261,7 @@ func (s *GyingService) save(doc gyingDocument) error {
 }
 
 func (s *GyingService) Clear() (opErr error) {
-	ctx, finish := StartGyingOperation(context.Background(), s.Logs, "配置管理", "清除观影登录信息")
+	ctx, finish := StartGyingOperation(context.Background(), s.Logs, "清除观影登录信息")
 	defer func() { finish(opErr) }()
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -282,7 +282,7 @@ func (s *GyingService) Clear() (opErr error) {
 }
 
 func (s *GyingService) UpdateResourceOrder(input []string) (view GyingView, opErr error) {
-	ctx, finish := StartGyingOperation(context.Background(), s.Logs, "配置管理", "调整资源分类顺序")
+	ctx, finish := StartGyingOperation(context.Background(), s.Logs, "调整资源分类顺序")
 	defer func() { finish(opErr) }()
 	resourceOrder, err := validateGyingResourceOrder(input)
 	if err != nil {
@@ -305,7 +305,7 @@ func (s *GyingService) UpdateResourceOrder(input []string) (view GyingView, opEr
 }
 
 func (s *GyingService) Search(ctx context.Context, input GyingSearchInput) (output GyingSearchResult, opErr error) {
-	ctx, finish := StartGyingOperation(ctx, s.Logs, "资源搜索", "观影搜索")
+	ctx, finish := StartGyingOperation(ctx, s.Logs, "观影搜索")
 	defer func() { finish(opErr) }()
 	defer func() {
 		if opErr != nil {

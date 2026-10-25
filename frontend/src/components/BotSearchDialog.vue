@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
             </details>
           </template>
         </div>
-        <footer v-if="state?.configured && state.hasSession" class="bot-footer">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</footer>
+        <footer class="search-log-footer"><span v-if="state?.configured && state.hasSession">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>
@@ -436,7 +436,6 @@ onBeforeUnmount(() => {
 .bot-raw-reply summary svg { width: 14px; height: 14px; flex-shrink: 0; }
 .bot-raw-reply[open] summary svg { transform: rotate(90deg); }
 .bot-raw-reply p { margin: 0; padding: 0 14px 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
-.bot-footer { flex-shrink: 0; padding: 0 24px 20px; color: var(--bot-muted); font-size: 11px; line-height: 18px; }
 .bot-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 32px 16px; color: var(--bot-muted); text-align: center; }
 .bot-empty svg { width: 36px; height: 36px; margin-bottom: 8px; }
 .bot-empty p { margin: 0; font-size: 14px; line-height: 22px; }
@@ -468,7 +467,6 @@ onBeforeUnmount(() => {
   .bot-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
   .bot-resource { padding: 16px; border-radius: 18px; }
   .bot-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bot-footer { padding: 0 16px 16px; }
 }
 @media (max-width: 359px) {
   .bot-actions { grid-template-columns: minmax(0, 1fr); }

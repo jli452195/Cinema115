@@ -62,15 +62,15 @@ func TestGyingLogsSearchReloginCacheAndRefresh(t *testing.T) {
 		}
 	})
 	input := GyingSearchInput{CacheKey: "movie:42", OriginalTitle: "Movie", IMDBID: "tt12345"}
-	ctx, finish := StartGyingOperation(context.Background(), svc.Logs, "网页搜索", "搜索：电影 · TMDB 42")
+	ctx, finish := StartGyingOperation(context.Background(), svc.Logs, "搜索：电影 · TMDB 42")
 	result, err := svc.Search(ctx, input)
 	finish(err)
 	if err != nil || result.Cached || searches.Load() != 2 || logins.Load() != 1 {
 		t.Fatalf("first search: %v %+v", err, result)
 	}
-	entries := svc.Logs.Snapshot("ALL", "观影")
+	entries := svc.Logs.Snapshot("ALL", "搜索")
 	for _, entry := range entries {
-		if entry.TaskID != entries[0].TaskID || entry.Source != "网页搜索" {
+		if entry.TaskID != entries[0].TaskID || entry.Source != "观影" {
 			t.Fatal("operation IDs or sources split during re-login")
 		}
 	}
@@ -84,7 +84,7 @@ func TestGyingLogsSearchReloginCacheAndRefresh(t *testing.T) {
 	if err != nil || !result.Cached || searches.Load() != 2 {
 		t.Fatalf("cache made upstream request: %v", err)
 	}
-	if !strings.Contains(gyingMessages(svc.Logs.Snapshot("ALL", "观影")), "未访问观影站") {
+	if !strings.Contains(gyingMessages(svc.Logs.Snapshot("ALL", "搜索")), "未访问观影站") {
 		t.Fatal("missing cached origin")
 	}
 	input.Refresh = true
@@ -94,7 +94,7 @@ func TestGyingLogsSearchReloginCacheAndRefresh(t *testing.T) {
 	if searches.Load() != 3 || logins.Load() != 1 {
 		t.Fatal("forced refresh did not bypass cache or caused extra login")
 	}
-	if len(svc.Logs.Snapshot("ERROR", "观影")) != 0 {
+	if len(svc.Logs.Snapshot("ERROR", "搜索")) != 0 {
 		t.Fatal("successful flow logged errors")
 	}
 }
@@ -127,8 +127,8 @@ func TestGyingUnavailableDoesNotReloginAndCachesResults(t *testing.T) {
 	if searches.Load() != 1 || logins.Load() != 0 {
 		t.Fatal("下架不应重新登录或阻止有效结果缓存")
 	}
-	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
-	if !strings.Contains(logs, "跳过本轮第 1 个条目") || strings.Contains(logs, "private-password") || strings.Contains(logs, "会话失效") || len(svc.Logs.Snapshot("ERROR", "观影")) > 0 {
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "搜索"))
+	if !strings.Contains(logs, "跳过本轮第 1 个条目") || strings.Contains(logs, "private-password") || strings.Contains(logs, "会话失效") || len(svc.Logs.Snapshot("ERROR", "搜索")) > 0 {
 		t.Fatal(logs)
 	}
 }
@@ -162,8 +162,8 @@ func TestGyingLogsEmptyFallbackAndPartial(t *testing.T) {
 	if err != nil || len(result.Items) != 0 || queries.Load() != 2 {
 		t.Fatalf("empty fallback: %v", err)
 	}
-	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
-	if !strings.Contains(logs, "IMDb 兜底查询") || !strings.Contains(logs, "未发现可用资源") || len(svc.Logs.Snapshot("ERROR", "观影")) != 0 {
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "搜索"))
+	if !strings.Contains(logs, "IMDb 兜底查询") || !strings.Contains(logs, "未发现可用资源") || len(svc.Logs.Snapshot("ERROR", "搜索")) != 0 {
 		t.Fatalf("empty result logging: %s", logs)
 	}
 	partial := loggedGyingFixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +181,7 @@ func TestGyingLogsEmptyFallbackAndPartial(t *testing.T) {
 	if err != nil || !result.Partial || result.CacheExpiresAt != nil {
 		t.Fatalf("partial: %v", err)
 	}
-	if !strings.Contains(gyingMessages(partial.Logs.Snapshot("WARNING", "观影")), "1 个资源详情读取失败") {
+	if !strings.Contains(gyingMessages(partial.Logs.Snapshot("WARNING", "搜索")), "1 个资源详情读取失败") {
 		t.Fatal("missing partial warning")
 	}
 }
@@ -199,11 +199,11 @@ func TestGyingLogsErrorRedactionAndCancellation(t *testing.T) {
 		{errors.New("upstream Cookie: leaked"), "ERROR", "已隐藏"},
 	} {
 		logs := &GenerationLogs{}
-		ctx, finish := StartGyingOperation(context.Background(), logs, "测试", "搜索")
-		_, nested := StartGyingOperation(ctx, logs, "嵌套", "重复操作")
+		ctx, finish := StartGyingOperation(context.Background(), logs, "搜索")
+		_, nested := StartGyingOperation(ctx, logs, "重复操作")
 		nested(tc.err)
 		finish(tc.err)
-		entries := logs.Snapshot("ALL", "观影")
+		entries := logs.Snapshot("ALL", "搜索")
 		if len(entries) != 2 || entries[0].Level != tc.level || !strings.Contains(entries[0].Message, tc.reason) || strings.Contains(gyingMessages(entries), "leaked") {
 			t.Fatalf("unsafe/duplicate log: %+v", entries)
 		}
@@ -228,7 +228,7 @@ func TestGyingLogsConfiguration(t *testing.T) {
 	if err := svc.Clear(); err != nil {
 		t.Fatal(err)
 	}
-	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "搜索"))
 	for _, expected := range []string{"登录并保存配置", "调整资源分类顺序完成", "清除观影登录信息完成"} {
 		if !strings.Contains(logs, expected) {
 			t.Fatal(logs)
@@ -256,8 +256,8 @@ func TestGyingLogsSeedCompatibilityAndCache(t *testing.T) {
 	if err != nil || !result.Cached || requests.Load() != count {
 		t.Fatal("兼容结果未复用缓存", result, err)
 	}
-	logs := gyingMessages(svc.Logs.Snapshot("ALL", "观影"))
-	if !strings.Contains(logs, "downlist.list.e 有 1 项") || strings.Contains(logs, "private-cookie") || len(svc.Logs.Snapshot("ERROR", "观影")) != 0 {
+	logs := gyingMessages(svc.Logs.Snapshot("ALL", "搜索"))
+	if !strings.Contains(logs, "downlist.list.e 有 1 项") || strings.Contains(logs, "private-cookie") || len(svc.Logs.Snapshot("ERROR", "搜索")) != 0 {
 		t.Fatal(logs)
 	}
 }
@@ -274,7 +274,7 @@ func TestGyingLogsDetailFieldWithoutRawValues(t *testing.T) {
 	if !errors.Is(err, gying.ErrDetailFormat) {
 		t.Fatal(err)
 	}
-	logs := gyingMessages(svc.Logs.Snapshot("ERROR", "观影"))
+	logs := gyingMessages(svc.Logs.Snapshot("ERROR", "搜索"))
 	if !strings.Contains(logs, "list.m") || strings.Contains(logs, "private-cookie") {
 		t.Fatal(logs, err)
 	}

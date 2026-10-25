@@ -107,7 +107,7 @@ func RegisterGying(admin *gin.RouterGroup, searcher GyingSearcher, tmdb TMDBRead
 		if input.Kind == "tv" {
 			kindLabel = "剧集"
 		}
-		operationCtx, finish := service.StartGyingOperation(c.Request.Context(), logs, "网页搜索", "搜索："+kindLabel+" · TMDB "+strconv.Itoa(id))
+		operationCtx, finish := service.StartGyingOperation(c.Request.Context(), logs, "搜索："+kindLabel+" · TMDB "+strconv.Itoa(id))
 		var operationErr error
 		defer func() { finish(operationErr) }()
 		metadataCtx, metadataCancel := context.WithTimeout(operationCtx, 20*time.Second)

@@ -18,21 +18,17 @@ import (
 
 type gyingLogKey struct{}
 type gyingOperationLog struct {
-	store        *GenerationLogs
-	task, source string
+	store *GenerationLogs
+	task  string
 }
 
 // StartGyingOperation records one completion at the outermost operation boundary.
 // Nested service calls inherit the same task ID, including login retries.
-func StartGyingOperation(ctx context.Context, logs *GenerationLogs, source, action string) (context.Context, func(error)) {
+func StartGyingOperation(ctx context.Context, logs *GenerationLogs, action string) (context.Context, func(error)) {
 	if _, ok := ctx.Value(gyingLogKey{}).(gyingOperationLog); ok || logs == nil {
 		return ctx, func(error) {}
 	}
-	logs.mu.Lock()
-	logs.taskSequence++
-	task := fmt.Sprintf("GYING-%06d", logs.taskSequence)
-	logs.mu.Unlock()
-	logger := gyingOperationLog{store: logs, task: task, source: source}
+	logger := gyingOperationLog{store: logs, task: logs.NewTaskID("GYING")}
 	ctx = context.WithValue(ctx, gyingLogKey{}, logger)
 	ctx = gying.WithProgress(ctx, func(level, message string) { logGying(ctx, level, message) })
 	started := time.Now()
@@ -56,7 +52,7 @@ func StartGyingOperation(ctx context.Context, logs *GenerationLogs, source, acti
 
 func logGying(ctx context.Context, level, message string) {
 	if logger, ok := ctx.Value(gyingLogKey{}).(gyingOperationLog); ok {
-		logger.store.Append("观影", logger.task, logger.source, level, message)
+		logger.store.Append("搜索", logger.task, "观影", level, message)
 	}
 }
 

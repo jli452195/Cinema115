@@ -34,6 +34,17 @@ type GenerationLogs struct {
 	sequence, taskSequence uint64
 }
 
+// NewTaskID 为一次操作分配共享缓冲区内唯一的关联编号。
+func (s *GenerationLogs) NewTaskID(prefix string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskSequence++
+	return fmt.Sprintf("%s-%06d", prefix, s.taskSequence)
+}
+
 func (s *GenerationLogs) append(task, source, level, message string) {
 	s.Append("STRM", task, source, level, message)
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,8 @@ import (
 )
 
 func registerAnimeGarden(r *gin.RouterGroup, s *service.AnimeAdminService) {
+	r = r.Group("")
+	r.Use(operationLogs(s.Logs, "搜索", "Garden", map[string]string{r.BasePath() + "/resources/garden/search": "资源搜索"}))
 	ready := func(c *gin.Context) bool {
 		if s.Bindings == nil || s.Bindings.Garden == nil {
 			c.JSON(503, gin.H{"code": "PROVIDER_NOT_READY", "error": "Anime Garden 来源暂不可用"})
@@ -26,6 +29,11 @@ func registerAnimeGarden(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		if err != nil {
 			animeError(c, err)
 			return
+		}
+		c.Set("operationLogSummary", fmt.Sprintf("第 %d 页，找到 %d 条资源", out.Page, len(out.Items)))
+		if out.Cached {
+			c.Set("operationLogSummary", fmt.Sprintf("命中缓存，第 %d 页，返回 %d 条资源", out.Page, len(out.Items)))
+			c.Set("operationLogCached", true)
 		}
 		c.JSON(200, out)
 	})

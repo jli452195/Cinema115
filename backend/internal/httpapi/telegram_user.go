@@ -17,10 +17,15 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 	group := admin.Group("/telegram-user")
 	if len(sinks) > 0 {
 		actions := make(map[string]string)
-		for path, label := range map[string]string{"config": "保存用户与资源 Bot 配置", "check": "检查用户账号连接", "send-code": "请求登录验证码", "sign-in": "验证用户登录", "disconnect": "退出用户账号", "search": "资源搜索", "search-stream": "流式资源搜索", "select": "获取资源或翻页"} {
+		for path, label := range map[string]string{"config": "保存用户与资源 Bot 配置", "check": "检查用户账号连接", "send-code": "请求登录验证码", "sign-in": "验证用户登录", "disconnect": "退出用户账号"} {
 			actions[group.BasePath()+"/"+path] = label
 		}
-		group.Use(telegramOperationLogs(sinks[0], "用户账号", actions))
+		group.Use(operationLogs(sinks[0], "Telegram", "用户账号", actions))
+		group.Use(operationLogs(sinks[0], "搜索", "Bot", map[string]string{
+			group.BasePath() + "/search":        "资源搜索",
+			group.BasePath() + "/search-stream": "流式资源搜索",
+			group.BasePath() + "/select":        "获取资源或翻页",
+		}))
 	}
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -91,10 +96,10 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			}
 			view := account.View()
 			if path == "sign-in" && view.Stage == "password" {
-				c.Set("telegramLogSummary", "等待二步验证密码")
+				c.Set("operationLogSummary", "等待二步验证密码")
 			}
 			if path == "check" && !view.Authorized {
-				c.Set("telegramLogSummary", "当前账号未登录")
+				c.Set("operationLogSummary", "当前账号未登录")
 			}
 			c.JSON(200, account.View())
 		})
@@ -130,9 +135,9 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		}
 		if result.Cached {
 			summary += "，复用缓存，未发送 Bot 查询"
-			c.Set("telegramLogCached", true)
+			c.Set("operationLogCached", true)
 		}
-		c.Set("telegramLogSummary", summary)
+		c.Set("operationLogSummary", summary)
 	}
 	group.POST("/search", func(c *gin.Context) {
 		var input searchInput
@@ -190,16 +195,16 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				c.Set("telegramLogSummary", "页面停止等待；已开始的 Bot 查询继续限时收尾，未开始的查询退出排队")
+				c.Set("operationLogSummary", "页面停止等待；已开始的 Bot 查询继续限时收尾，未开始的查询退出排队")
 				return
 			}
-			c.Set("telegramLogFailed", true)
+			c.Set("operationLogFailed", true)
 			if result.Partial {
 				push(result, false)
 			}
 			var detail *tguser.OperationError
 			if errors.As(err, &detail) {
-				c.Set("telegramLogSummary", "未完成（"+detail.Code+"）："+detail.Message)
+				c.Set("operationLogSummary", "未完成（"+detail.Code+"）："+detail.Message)
 				c.SSEvent("error", detail)
 			} else {
 				c.SSEvent("error", gin.H{"error": err.Error()})
@@ -225,10 +230,10 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			fail(c, err)
 			return
 		}
-		c.Set("telegramLogSummary", fmt.Sprintf("返回资源 %d 项、链接 %d 条", len(result.Items), len(result.Links)))
+		c.Set("operationLogSummary", fmt.Sprintf("返回资源 %d 项、链接 %d 条", len(result.Items), len(result.Links)))
 		if result.Cached {
-			c.Set("telegramLogSummary", "复用资源缓存，未发送 Bot 查询")
-			c.Set("telegramLogCached", true)
+			c.Set("operationLogSummary", "复用资源缓存，未发送 Bot 查询")
+			c.Set("operationLogCached", true)
 		}
 		c.JSON(200, result)
 	})

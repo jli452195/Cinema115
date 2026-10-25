@@ -58,11 +58,11 @@ func TestMikanFallbackCacheRefreshAndGroups(t *testing.T) {
 	if filtered.ExpiresAt.Sub(filtered.FetchedAt) != time.Minute {
 		t.Fatal("空缓存时间错误")
 	}
-	if len(logs.Snapshot("ERROR", "蜜柑")) != 0 {
+	if len(logs.Snapshot("ERROR", "搜索")) != 0 {
 		t.Fatal("正常空结果被记成错误")
 	}
 	found := false
-	for _, e := range logs.Snapshot("DEBUG", "蜜柑") {
+	for _, e := range logs.Snapshot("DEBUG", "搜索") {
 		found = found || strings.Contains(e.Message, "缓存或同一")
 	}
 	if !found {
@@ -210,7 +210,7 @@ func TestMikanBangumiCacheRefreshAndErrors(t *testing.T) {
 	if _, err = s.Bangumi(context.Background(), MikanBangumiInput{ID: "../1940"}); !errors.Is(err, mikan.ErrInput) || reader.calls != 5 {
 		t.Fatal(err)
 	}
-	if len(logs.Snapshot("ERROR", "蜜柑")) != 1 {
+	if len(logs.Snapshot("ERROR", "搜索")) != 1 {
 		t.Fatal("错误日志缺失或重复")
 	}
 }

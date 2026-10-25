@@ -110,7 +110,7 @@ func newAnimeHTTPFixture(t *testing.T) animeHTTPFixture {
 	b := &animeHTTPDiscovery{}
 	m := &animeHTTPMikan{}
 	bindings := &service.AnimeBindingService{Entries: db, Subjects: b, Mikan: service.NewMikanService(m, nil)}
-	s := &service.AnimeAdminService{Store: db, Bindings: bindings, Discovery: b, Previews: &service.AnimePreviewService{Repository: db, Bindings: bindings}}
+	s := &service.AnimeAdminService{Store: db, Bindings: bindings, Discovery: b, Previews: &service.AnimePreviewService{Repository: db, Bindings: bindings}, Logs: &service.GenerationLogs{}}
 	r := gin.New()
 	RegisterAnime(r.Group("/api/admin", PortalAuthenticated(auth), PortalAdminOnly()), s)
 	return animeHTTPFixture{r, s, a, u, b, m}
