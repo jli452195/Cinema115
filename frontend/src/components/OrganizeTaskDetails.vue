@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import P115SidePanel from './P115SidePanel.vue'
+import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
 import { historyDuration, historyLabels, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
@@ -49,24 +49,23 @@ async function copy(value: string) {
 </script>
 
 <template>
-  <P115SidePanel :title="task.title" :description="`${historyLabels[task.kind]}任务详情`" wide @close="$emit('close')">
-    <template v-if="manualActions !== false && task.organize && !isActiveTask(task)" #actions>
+  <AnimeFloatingDialog :title="`${historyLabels[task.kind]}历史详情`" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
+    <template v-if="manualActions !== false && task.organize && !isActiveTask(task)" #header>
       <div class="flex flex-wrap gap-2">
         <button class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('source')">查看源目录剩余内容</button>
         <button v-if="canSubtitle" class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('subtitle')">补充字幕</button>
       </div>
       <p v-if="blockedReason" class="mt-2 text-xs text-amber-700 dark:text-amber-300">{{ blockedReason }}</p>
     </template>
-    <div class="space-y-5">
+    <div class="task-detail-sections">
       <p v-if="resumeError" ref="resumeAlert" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ resumeError }}</p>
       <p v-if="historyError || unavailable" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ unavailable ? '此任务已不在最近记录中，当前显示打开时保留的快照。' : '记录刷新失败，当前结果可能已过期。请刷新记录后再执行操作。' }}</p>
-      <section aria-label="任务摘要" class="space-y-3 text-sm">
-        <h3 class="break-all text-sm font-semibold text-slate-900 dark:text-slate-100">{{ task.title }}</h3>
-        <div class="flex flex-wrap items-center gap-3"><span class="badge" :class="`badge-${taskTone(task)}`">{{ taskStatus(task) }}</span><span class="text-xs text-slate-500 dark:text-slate-400">{{ resultSummary(task) }}</span></div>
+      <section aria-label="任务摘要" class="detail-panel space-y-3 text-sm">
+        <h3 class="break-words text-xl font-semibold leading-7 text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere]">{{ task.title }}</h3>
+        <div class="flex flex-wrap items-center gap-3"><span class="badge" :class="`badge-${taskTone(task)}`"><P115Icon v-if="taskTone(task) === 'success'" name="check" class="success-mark" />{{ taskStatus(task) }}</span><span class="text-xs text-slate-500 dark:text-slate-400">{{ resultSummary(task) }}</span></div>
         <p class="text-xs text-slate-500 dark:text-slate-400">{{ task.kind === 'cleanup' ? '按文件或目录条目计数' : task.kind === 'organize' ? `共 ${counts.total} 个文件，含 ${task.items.filter(item => item.mediaType === 'video').length} 个视频、${task.items.filter(item => item.mediaType === 'subtitle').length} 个字幕` : `共 ${counts.total} 个字幕文件，已跳过不计入上传成功数` }}</p>
         <p v-if="task.items.some(item => item.titleOnly)" class="text-xs text-slate-500 dark:text-slate-400">单集按标题预设命名，实际文件、扩展名与关联字幕下载后确认。</p>
-        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs"><dt class="text-slate-500 dark:text-slate-400">账号</dt><dd class="break-all">{{ accountName }}</dd><dt class="text-slate-500 dark:text-slate-400">创建时间</dt><dd>{{ historyTime(task.createdAt, true) }}</dd></dl>
-        <div v-for="folder in folders" :key="folder.label" class="rounded-lg bg-slate-50 p-3 dark:bg-slate-950"><div class="mb-1 flex items-center justify-between gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">{{ folder.label }}</span><button class="text-blue-700 hover:underline dark:text-blue-300" :aria-label="`复制${folder.label}`" @click="copy(folder.path!)">复制路径</button></div><p class="select-text break-all text-xs leading-5">{{ folder.path }}</p></div>
+        <dl class="task-detail-meta"><div><dt>账号</dt><dd>{{ accountName }}</dd></div><div><dt>创建时间</dt><dd>{{ historyTime(task.createdAt, true) }}</dd></div></dl>
       </section>
 
       <div v-if="counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
@@ -76,7 +75,12 @@ async function copy(value: string) {
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
-      <details v-if="stats?.batchSize" class="group rounded-xl border border-slate-200 p-3 text-xs leading-6 dark:border-slate-700">
+      <section v-if="folders.length" aria-label="路径信息" class="detail-panel space-y-3">
+        <h3 class="text-sm font-semibold">路径信息</h3>
+        <div v-for="folder in folders" :key="folder.label"><div class="mb-1 flex items-center justify-between gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">{{ folder.label }}</span><button class="path-copy" :aria-label="`复制${folder.label}`" @click="copy(folder.path!)">复制路径</button></div><p class="select-text break-all text-xs leading-5">{{ folder.path }}</p></div>
+      </section>
+
+      <details v-if="stats?.batchSize" class="detail-panel text-xs leading-6">
         <summary class="flex cursor-pointer list-none items-center gap-2 font-medium text-slate-700 dark:text-slate-200 [&::-webkit-details-marker]:hidden"><P115Icon name="chart" />耗时与请求详情<span class="ml-auto font-normal text-slate-500 dark:text-slate-400">累计 {{ historyDuration(stats.elapsedMs) }}</span></summary>
         <div class="mt-3 space-y-1 text-slate-500 dark:text-slate-400">
           <p>已完成 {{ stats.batchesCompleted }}/{{ stats.batchesTotal }} 批，每批最多 {{ stats.batchSize }} 个文件</p>
@@ -87,30 +91,55 @@ async function copy(value: string) {
         </div>
       </details>
 
-      <section aria-label="文件明细">
+      <section aria-label="文件明细" class="detail-panel">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold">{{ task.kind === 'cleanup' ? '条目明细' : '文件明细' }}</h3><div class="flex gap-1" role="group" aria-label="明细筛选"><button class="filter" :aria-pressed="filter === 'all'" @click="filter = 'all'">全部 {{ counts.total }}</button><button class="filter" :aria-pressed="filter === 'attention'" @click="filter = 'attention'">需关注 {{ counts.attention }}</button></div></div>
         <p v-if="!items.length" class="rounded-lg bg-slate-50 px-3 py-6 text-center text-xs text-slate-500 dark:bg-slate-950 dark:text-slate-400">{{ filter === 'attention' ? '没有需要关注的条目，可切换查看全部。' : '此任务没有文件明细。' }}</p>
         <ul class="divide-y divide-slate-200 dark:divide-slate-700">
           <li v-for="item in items" :key="item.id" class="py-4 first:pt-0">
             <div class="mb-2 flex items-start justify-between gap-3"><p class="min-w-0 break-all text-sm font-medium">{{ item.name }}</p><span class="shrink-0 text-xs" :class="needsAttention(item, task) ? 'text-amber-700 dark:text-amber-300' : item.status === 'done' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'">{{ itemStatus(item, task) }}</span></div>
-            <div v-for="path in [{ label: task.kind === 'subtitle' ? '本地文件' : '原路径', value: item.source }, { label: item.titleOnly ? '预计目标' : '目标路径', value: item.target }].filter(row => row.value)" :key="path.label" class="mt-2 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-950"><div class="mb-1 flex justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{{ path.label }}</span><button class="text-blue-700 hover:underline dark:text-blue-300" :aria-label="`复制${item.name}的${path.label}`" @click="copy(path.value!)">复制</button></div><p class="select-text break-all text-xs leading-5">{{ path.value }}</p></div>
+            <div v-for="path in [{ label: task.kind === 'subtitle' ? '本地文件' : '原路径', value: item.source }, { label: item.titleOnly ? '预计目标' : '目标路径', value: item.target }].filter(row => row.value)" :key="path.label" class="task-detail-path mt-2 rounded-lg p-2.5"><div class="mb-1 flex justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{{ path.label }}</span><button class="path-copy" :aria-label="`复制${item.name}的${path.label}`" @click="copy(path.value!)">复制</button></div><p class="select-text break-all text-xs leading-5">{{ path.value }}</p></div>
             <p v-if="item.message" class="mt-2 break-all text-xs leading-5" :class="needsAttention(item, task) ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'">{{ item.message }}</p>
           </li>
         </ul>
       </section>
     </div>
-    <template #footer><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? (task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></template>
-  </P115SidePanel>
+    <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? (task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
+  </AnimeFloatingDialog>
 </template>
 
 <style scoped>
+:global(.organize-task-dialog) { max-width: none; }
+:global(.organize-task-dialog .anime-floating-body) { padding-top: 10px; overflow-anchor: none; }
+.task-detail-sections { display: grid; gap: 14px; }
+.detail-panel { min-width: 0; padding: 16px 18px; border-radius: 12px; background: rgb(255 255 255 / .8); }
+.dark .detail-panel { background: rgb(255 255 255 / .045); }
+.task-detail-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; font-size: 12px; line-height: 20px; }
+.task-detail-meta > div { display: flex; gap: 12px; }
+.task-detail-meta dt { flex: none; color: var(--floating-surface-muted); }
+.task-detail-meta dd { min-width: 0; overflow-wrap: anywhere; }
+.task-detail-path { background: rgb(148 163 184 / .08); }
+.path-copy { display: inline-flex; min-height: 32px; align-items: center; margin-block: -6px; padding-inline: 4px; color: #1d4ed8; }
+.path-copy:hover { text-decoration: underline; }
+.dark .path-copy { color: #93c5fd; }
+.task-detail-footer { display: flex; align-items: center; gap: 12px; }
+@media (max-width: 639px) {
+  .detail-panel { padding: 14px; }
+  .task-detail-meta { grid-template-columns: minmax(0, 1fr); }
+  .task-detail-footer { flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+  .task-detail-footer > p { flex-basis: 100%; line-height: 18px; }
+  .task-detail-footer .action, .task-detail-footer .resume { min-height: 44px; }
+  .filter { min-height: 44px; }
+}
+@media (max-width: 639px), (pointer: coarse) { .path-copy { min-height: 44px; margin-block: 0; } }
 .action { @apply min-h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800; }
 .resume { @apply inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-500 dark:hover:bg-blue-600; }
 .filter { @apply rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800; }
 .filter[aria-pressed="true"] { @apply bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/50 dark:text-blue-300; }
-.badge { @apply rounded-md px-2 py-1 text-xs font-medium; }
+.badge { @apply inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium; }
 .badge-active { @apply bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300; }
-.badge-success { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300; }
+.badge-success { @apply px-0 text-slate-600 dark:text-slate-300; }
+.success-mark { width: 14px; height: 14px; color: #15803d; }
+.dark .success-mark { color: #4ade80; }
 .badge-warning { @apply bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300; }
 button:focus-visible, summary:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
 </style>
