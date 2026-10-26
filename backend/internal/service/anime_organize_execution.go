@@ -62,9 +62,19 @@ type animeOrganizationRun struct {
 	job      model.AnimeDownloadJob
 	op       model.AnimeOrganizeOperation
 	listings map[string][]model.AnimeDriveEntry
+	started  time.Time
+	writes   int
+	batches  int
+	limit    int
 }
 
+var errAnimeOrganizationYield = errors.New("anime organization yielded")
+
 func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string) error {
+	return s.organizeDownloadedFiles(ctx, session, jobID, 0)
+}
+
+func (s *AnimeAdminService) organizeDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string, limit int) error {
 	if s.OrganizationGateway == nil || s.FileGateway == nil {
 		return ErrAnimeOfflineUnavailable
 	}
@@ -83,7 +93,7 @@ func (s *AnimeAdminService) OrganizeDownloadedFiles(ctx context.Context, session
 		if err != nil {
 			return err
 		}
-		r := animeOrganizationRun{service: s, session: session, job: job, op: op, listings: make(map[string][]model.AnimeDriveEntry, 8)}
+		r := animeOrganizationRun{service: s, session: session, job: job, op: op, listings: make(map[string][]model.AnimeDriveEntry, 8), started: time.Now(), limit: limit}
 		if op.Progress.State == "needs_review" {
 			s.logAnimeJobIssue(job, op.Progress.Code)
 			return nil // Only an explicit reconcile action reopens this saved step.
@@ -220,6 +230,11 @@ func (r *animeOrganizationRun) resolveDirectory(ctx context.Context, relative st
 }
 
 func (r *animeOrganizationRun) dispatch(ctx context.Context, step model.AnimeOrganizeStep) error {
+	// Yield only between confirmed writes. The durable operation, file coverage
+	// and unknown-write recovery remain on the same job across scheduler turns.
+	if r.limit > 0 && step.Kind != "cleanup" && (r.batches >= r.limit || r.writes > 0 && time.Since(r.started) >= 10*time.Second) {
+		return errAnimeOrganizationYield
+	}
 	if err := r.session.Validate(ctx); err != nil {
 		return err
 	}
@@ -258,6 +273,12 @@ func (r *animeOrganizationRun) unknown(ctx context.Context, writeErr error) erro
 func (r *animeOrganizationRun) confirm(ctx context.Context, ids []string, cid string, partial bool) error {
 	p := r.progress()
 	step := p.Step
+	if !partial {
+		r.writes++
+	}
+	if !partial && (step.Kind == "rename" || step.Kind == "move") {
+		r.batches++
+	}
 	if step.Kind == "mkdir" && cid != "" {
 		p.Directories = append(p.Directories, model.AnimeOrganizeDirectory{Path: step.Path, CID: cid})
 	}

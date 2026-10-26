@@ -49,17 +49,24 @@ const animePollSettled = animeSourceComplete + ` AND s.health='ok' AND s.check_t
 // ReserveAnimeSourcePoll gives one bounded metadata read permission. It is not
 // a download lease. No network runs inside this transaction. Unscheduled feeds
 // are initialized in bounded batches and spread across the first minute.
-func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSourcePoll, bool, error) {
+func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64, providers ...string) (AnimeSourcePoll, bool, error) {
 	var out AnimeSourcePoll
-	if now <= 0 {
+	if now <= 0 || len(providers) > 1 {
 		return out, false, ErrAnimeInvalid
+	}
+	provider := ""
+	if len(providers) == 1 {
+		provider = providers[0]
+		if provider != "" && !animefeed.ValidProvider(provider) {
+			return out, false, ErrAnimeInvalid
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, false, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE `+animePollEligible+` AND s.next_check_at IS NULL ORDER BY s.id LIMIT 32`)
+	rows, err := tx.QueryContext(ctx, `SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE `+animePollEligible+` AND (?='' OR s.provider=?) AND s.next_check_at IS NULL ORDER BY s.id LIMIT 32`, provider, provider)
 	if err != nil {
 		return out, false, err
 	}
@@ -85,7 +92,7 @@ func (s *Store) ReserveAnimeSourcePoll(ctx context.Context, now int64) (AnimeSou
 		}
 	}
 	var id string
-	err = tx.QueryRowContext(ctx, `SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE `+animePollEligible+` AND s.next_check_at<=? AND (s.retry_after IS NULL OR s.retry_after<=?) AND (s.check_token IS NULL OR s.check_until IS NULL OR s.check_until<=?) ORDER BY s.next_check_at,s.id LIMIT 1`, now, now, now).Scan(&id)
+	err = tx.QueryRowContext(ctx, `SELECT s.id FROM anime_subscription_sources s JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE `+animePollEligible+` AND (?='' OR s.provider=?) AND s.next_check_at<=? AND (s.retry_after IS NULL OR s.retry_after<=?) AND (s.check_token IS NULL OR s.check_until IS NULL OR s.check_until<=?) ORDER BY s.next_check_at,s.id LIMIT 1`, provider, provider, now, now, now).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, tx.Commit()
 	}

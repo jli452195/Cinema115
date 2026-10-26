@@ -282,6 +282,14 @@ func TestAnimeBatchClaimsOnlyUnclaimedMatchingEpisodes(t *testing.T) {
 	if result := f.claim(t, 0, single, proof); !result.Skipped {
 		t.Fatal("later ordinary release bypassed batch claim", result)
 	}
+	// A collected collection between organization turns still owns its episodes.
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified' WHERE id=?`, out.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	single, proof = f.selectTitle(t, 0, "rel_during_organization", fmt.Sprintf("%040x", 3010), "Anime - 08 [HEVC]")
+	if result := f.claim(t, 0, single, proof); !result.Skipped {
+		t.Fatal("organization turn released collection coverage", result)
+	}
 	// The same publisher on another RSS remains independent. Use a different
 	// resource here; sharing one hash must never broaden an existing job's work.
 	other, proof := f.selectTitle(t, 1, "rel_batch_other", fmt.Sprintf("%040x", 3003), "Anime 01-12 合集")

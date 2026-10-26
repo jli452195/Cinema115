@@ -49,29 +49,27 @@ type animeDirectories interface {
 }
 
 type AnimeAdminService struct {
-	Store                *storage.Store
-	Bindings             *AnimeBindingService
-	Previews             *AnimePreviewService
-	Discovery            AnimeDiscovery
-	Accounts             animePrimaryAccounts
-	Directories          animeDirectories
-	Naming               *AnimeNamingService
-	Torrents             btresource.TorrentReader
-	Offline              CloudTaskReader
-	SubmitGateway        AnimeOfflineGateway
-	StatusGateway        AnimeStatusReader
-	FileGateway          AnimeFileGateway
-	OrganizationGateway  AnimeOrganizationGateway
-	ReserveOrganization  func() (func(), error)
-	Logs                 *GenerationLogs
-	organizationCache    animeOrganizationCache
-	DownloadCoordinator  *CloudDownloadCoordinator
-	downloadWakeOnce     sync.Once
-	downloadWake         chan struct{}
-	verificationWakeOnce sync.Once
-	verificationWake     chan struct{}
-	discoveryWakeOnce    sync.Once
-	discoveryWake        chan struct{}
+	Store               *storage.Store
+	Bindings            *AnimeBindingService
+	Previews            *AnimePreviewService
+	Discovery           AnimeDiscovery
+	Accounts            animePrimaryAccounts
+	Directories         animeDirectories
+	Naming              *AnimeNamingService
+	Torrents            btresource.TorrentReader
+	Offline             CloudTaskReader
+	SubmitGateway       AnimeOfflineGateway
+	StatusGateway       AnimeStatusReader
+	FileGateway         AnimeFileGateway
+	OrganizationGateway AnimeOrganizationGateway
+	ReserveOrganization func() (func(), error)
+	Logs                *GenerationLogs
+	organizationCache   animeOrganizationCache
+	DownloadCoordinator *CloudDownloadCoordinator
+	downloadWakeOnce    sync.Once
+	downloadWake        chan struct{}
+	verificationWake    animeSiteWake
+	discoveryWake       animeSiteWake
 }
 
 type AnimeSaveConfig struct {

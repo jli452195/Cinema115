@@ -18,10 +18,17 @@ type AnimeDiscoveryWork struct {
 // Pending choices survive RSS window eviction and process restart. A random
 // token plus a new decision generation fences a timed-out metadata verifier;
 // this reservation never permits an external drive write.
-func (s *Store) ReserveAnimeDiscovery(ctx context.Context, now int64) (AnimeDiscoveryWork, bool, error) {
+func (s *Store) ReserveAnimeDiscovery(ctx context.Context, now int64, providers ...string) (AnimeDiscoveryWork, bool, error) {
 	var out AnimeDiscoveryWork
-	if now <= 0 {
+	if now <= 0 || len(providers) > 1 {
 		return out, false, ErrAnimeInvalid
+	}
+	provider := ""
+	if len(providers) == 1 {
+		provider = providers[0]
+		if provider != "" && !animefeed.ValidProvider(provider) {
+			return out, false, ErrAnimeInvalid
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -31,7 +38,7 @@ func (s *Store) ReserveAnimeDiscovery(ctx context.Context, now int64) (AnimeDisc
 	var sourceID, releaseID, raw string
 	// Serialize collection verification within its source. A failed collection's
 	// backoff releases ordinary singles; other sources are never held behind it.
-	err = tx.QueryRowContext(ctx, `SELECT d.source_id,d.release_id,d.observation_json FROM anime_release_decisions d JOIN anime_subscription_sources s ON s.id=d.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE d.disposition='selected' AND d.observation_json IS NOT NULL AND (d.next_verify_at IS NULL OR d.next_verify_at<=?) AND (d.lease_until IS NULL OR d.lease_until<=?) AND d.generation<? AND `+animePollEligible+` AND NOT EXISTS(SELECT 1 FROM anime_job_selections j WHERE j.source_id=d.source_id AND j.release_id=d.release_id) AND NOT EXISTS(SELECT 1 FROM anime_release_decisions b WHERE b.source_id=d.source_id AND b.disposition='selected' AND b.lease_until>? AND json_extract(b.snapshot_json,'$.parse.kind')='batch') ORDER BY CASE WHEN json_extract(d.snapshot_json,'$.parse.kind')='batch' THEN 0 ELSE 1 END,COALESCE(d.next_verify_at,d.updated_at),d.source_id,d.release_id LIMIT 1`, now, now, model.AnimeMaxRevision-1, now).Scan(&sourceID, &releaseID, &raw)
+	err = tx.QueryRowContext(ctx, `SELECT d.source_id,d.release_id,d.observation_json FROM anime_release_decisions d JOIN anime_subscription_sources s ON s.id=d.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE d.disposition='selected' AND d.observation_json IS NOT NULL AND (?='' OR s.provider=?) AND (d.next_verify_at IS NULL OR d.next_verify_at<=?) AND (d.lease_until IS NULL OR d.lease_until<=?) AND d.generation<? AND `+animePollEligible+` AND NOT EXISTS(SELECT 1 FROM anime_job_selections j WHERE j.source_id=d.source_id AND j.release_id=d.release_id) AND NOT EXISTS(SELECT 1 FROM anime_release_decisions b WHERE b.source_id=d.source_id AND b.disposition='selected' AND b.lease_until>? AND json_extract(b.snapshot_json,'$.parse.kind')='batch') ORDER BY CASE WHEN json_extract(d.snapshot_json,'$.parse.kind')='batch' THEN 0 ELSE 1 END,COALESCE(d.next_verify_at,d.updated_at),d.source_id,d.release_id LIMIT 1`, provider, provider, now, now, model.AnimeMaxRevision-1, now).Scan(&sourceID, &releaseID, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}

@@ -67,7 +67,7 @@ func TestAnimeDefinitionServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
 		t.Fatal(out, err, feed.reads, reads)
 	}
 	select {
-	case <-s.animeDiscoveryWakeSignal():
+	case <-s.discoveryWake.signal("mikan"):
 	default:
 		t.Fatal("committed start did not wake pending resource verification")
 	}
@@ -81,7 +81,7 @@ func TestAnimeDefinitionServiceNoRepeatedRSSAndImmutableReplay(t *testing.T) {
 		t.Fatal(again, err)
 	}
 	select {
-	case <-s.animeDiscoveryWakeSignal():
+	case <-s.discoveryWake.signal("mikan"):
 		t.Fatal("idempotent start replay created another notification")
 	default:
 	}

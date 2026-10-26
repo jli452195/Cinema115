@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -39,40 +40,69 @@ func (r *AnimeDiscoveryRunner) valid() bool {
 	return r != nil && r.Admin != nil && r.Admin.Store != nil && r.Feeds != nil
 }
 
-func (s *AnimeAdminService) animeVerificationWakeSignal() chan struct{} {
-	s.verificationWakeOnce.Do(func() { s.verificationWake = make(chan struct{}, 1) })
-	return s.verificationWake
+var animeDiscoverySites = [...]string{"mikan", "anibt", "garden"}
+
+// Each site owns its wakeup. A slow site's loop cannot consume another site's
+// notification, and repeated notifications stay coalesced to one local tick.
+type animeSiteWake struct {
+	once     sync.Once
+	channels [len(animeDiscoverySites)]chan struct{}
+}
+
+func (w *animeSiteWake) signal(provider string) chan struct{} {
+	w.once.Do(func() {
+		for i := range w.channels {
+			w.channels[i] = make(chan struct{}, 1)
+		}
+	})
+	for i, site := range animeDiscoverySites {
+		if site == provider {
+			return w.channels[i]
+		}
+	}
+	return nil
+}
+
+func (w *animeSiteWake) notify(provider string) {
+	for _, site := range animeDiscoverySites {
+		if provider != "" && site != provider {
+			continue
+		}
+		select {
+		case w.signal(site) <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (s *AnimeAdminService) wakeAnimeVerification() {
-	select {
-	case s.animeVerificationWakeSignal() <- struct{}{}:
-	default:
-	}
+	s.verificationWake.notify("")
 }
 
-func (s *AnimeAdminService) animeDiscoveryWakeSignal() chan struct{} {
-	s.discoveryWakeOnce.Do(func() { s.discoveryWake = make(chan struct{}, 1) })
-	return s.discoveryWake
-}
 func (s *AnimeAdminService) wakeAnimeDiscovery() {
-	select {
-	case s.animeDiscoveryWakeSignal() <- struct{}{}:
-	default:
-	}
+	s.discoveryWake.notify("")
 }
 
 // Run owns all lanes and joins them on cancellation/error. Slow RSS reads cannot
-// consume verifier or local summary capacity. Each lane has one bounded worker.
+// consume other sites' verifier/RSS capacity or local summary capacity.
 func (r *AnimeDiscoveryRunner) Run(ctx context.Context) error {
 	if !r.valid() {
 		return storage.ErrAnimeInvalid
 	}
 	group, runCtx := errgroup.WithContext(ctx)
-	for _, lane := range []struct {
+	type discoveryLane struct {
 		tick func(context.Context) error
 		wake <-chan struct{}
-	}{{r.PollOnce, r.Admin.animeDiscoveryWakeSignal()}, {r.VerifyOnce, r.Admin.animeVerificationWakeSignal()}, {r.progressOnce, nil}} {
+	}
+	lanes := make([]discoveryLane, 0, 2*len(animeDiscoverySites)+1)
+	lanes = append(lanes, discoveryLane{tick: r.progressOnce})
+	for _, provider := range animeDiscoverySites {
+		provider := provider
+		lanes = append(lanes,
+			discoveryLane{func(ctx context.Context) error { return r.pollOnce(ctx, provider) }, r.Admin.discoveryWake.signal(provider)},
+			discoveryLane{func(ctx context.Context) error { return r.verifyOnce(ctx, provider) }, r.Admin.verificationWake.signal(provider)})
+	}
+	for _, lane := range lanes {
 		lane := lane
 		group.Go(func() error {
 			interval := r.interval
@@ -117,6 +147,10 @@ func (r *AnimeDiscoveryRunner) progressOnce(ctx context.Context) error {
 }
 
 func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
+	return r.pollOnce(ctx, "")
+}
+
+func (r *AnimeDiscoveryRunner) pollOnce(ctx context.Context, provider string) error {
 	if !r.valid() {
 		return storage.ErrAnimeInvalid
 	}
@@ -124,7 +158,7 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		poll, found, err := r.Admin.Store.ReserveAnimeSourcePoll(ctx, r.timestamp())
+		poll, found, err := r.Admin.Store.ReserveAnimeSourcePoll(ctx, r.timestamp(), provider)
 		if err != nil {
 			return fmt.Errorf("reserve anime RSS read: %w", err)
 		}
@@ -139,7 +173,7 @@ func (r *AnimeDiscoveryRunner) PollOnce(ctx context.Context) error {
 	}
 	// Continue a bounded pass immediately when more feeds are due. The store
 	// still enforces every source's persisted schedule and retry cooldown.
-	r.Admin.wakeAnimeDiscovery()
+	r.Admin.discoveryWake.notify(provider)
 	return nil
 }
 
@@ -166,7 +200,7 @@ func (r *AnimeDiscoveryRunner) poll(ctx context.Context, poll storage.AnimeSourc
 			readErr = err
 			if readErr == nil {
 				r.Admin.logAnimeRSSResult(poll, page, stats)
-				r.Admin.wakeAnimeVerification()
+				r.Admin.verificationWake.notify(poll.Source.Provider)
 				return nil
 			}
 			if errors.Is(readErr, storage.ErrAnimeConflict) {
@@ -241,6 +275,10 @@ func animeDiscoveryReadFailure(err error) (string, int64, bool) {
 }
 
 func (r *AnimeDiscoveryRunner) VerifyOnce(ctx context.Context) error {
+	return r.verifyOnce(ctx, "")
+}
+
+func (r *AnimeDiscoveryRunner) verifyOnce(ctx context.Context, provider string) error {
 	if !r.valid() {
 		return storage.ErrAnimeInvalid
 	}
@@ -249,7 +287,7 @@ func (r *AnimeDiscoveryRunner) VerifyOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		work, found, err := r.Admin.Store.ReserveAnimeDiscovery(ctx, r.timestamp())
+		work, found, err := r.Admin.Store.ReserveAnimeDiscovery(ctx, r.timestamp(), provider)
 		if err != nil {
 			return fmt.Errorf("reserve anime resource verification: %w", err)
 		}
@@ -262,7 +300,7 @@ func (r *AnimeDiscoveryRunner) VerifyOnce(ctx context.Context) error {
 	}
 	// Yield after a bounded batch, then drain locally pending selections without
 	// an extra five-second sleep. Persisted due times still gate retries.
-	r.Admin.wakeAnimeVerification()
+	r.Admin.verificationWake.notify(provider)
 	return nil
 }
 

@@ -405,6 +405,160 @@ func TestAnimeOrganizeBatchesShareOneTargetListing(t *testing.T) {
 	}
 }
 
+func TestAnimeOrganizeLargeCollectionYieldsToAnotherRSS(t *testing.T) {
+	f, db, _, job, drive := animeOrganizeCollection(t, 60) // 180 video/subtitle files.
+	cleanup := animeEnableCleanup(f, drive)
+	ctx := context.Background()
+	source, err := f.service.Store.GetAnimeSource(ctx, job.Snapshot.Source.SourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second).UnixMilli()
+	addDiscoveryServiceBackup(t, db, source, now)
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET provider='mikan',item_id='2259',binding_json=json_remove(binding_json,'$.review') WHERE id='standby-source'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE anime_subscription_sources SET next_check_at=? WHERE id=?`, now+3600000, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	discovery := &AnimeDiscoveryRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }, Feeds: animeRSSFunc(func(_ context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+		page := discoveryServicePage(in, now, 1)
+		page.Releases[0].Title = "[字幕组] 另一来源 - 02 [1080p]"
+		return page, nil
+	})}
+	f.service.Torrents = animeClaimTorrentFunc(func(context.Context, string, string, string) ([]byte, error) {
+		return []byte("d4:infod6:lengthi1e4:name1:y12:piece lengthi1e6:pieces20:" + strings.Repeat("p", 20) + "ee"), nil
+	})
+	if err := discovery.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := discovery.VerifyOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var otherID string
+	if err := db.QueryRow(`SELECT job_id FROM anime_job_selections WHERE source_id='standby-source'`).Scan(&otherID); err != nil {
+		var state string
+		_ = db.QueryRow(`SELECT COALESCE(error_code,'') || ':' || COALESCE((SELECT group_concat(disposition || ':' || COALESCE(reason_code,'')) FROM anime_release_decisions WHERE source_id=s.id),'no decisions') FROM anime_subscription_sources s WHERE id='standby-source'`).Scan(&state)
+		t.Fatal("other RSS did not create its intent", state, err)
+	}
+	// The large job goes first. Its due time is advanced after a bounded turn,
+	// so the other source's old queued intent wins the next admission.
+	if _, err := db.Exec(`UPDATE anime_download_jobs SET next_run_at=CASE WHEN id=? THEN NULL ELSE ? END`, job.ID, now-1); err != nil {
+		t.Fatal(err)
+	}
+	creates, submits, statuses := 0, 0, 0
+	f.service.FileGateway = &animeFileGatewayStub{page: drive.ReadAnimeDrivePage, create: func(ctx context.Context, parent, name, cookie string) (string, error) {
+		if name == "anime-"+otherID {
+			creates++
+			return "500", nil
+		}
+		return drive.CreateDirectory(ctx, parent, name, cookie)
+	}}
+	f.service.SubmitGateway = &animeSubmitGatewayStub{
+		inspect: func(context.Context, string, string) (p115.AnimeTaskObservation, error) {
+			return p115.AnimeTaskObservation{}, nil
+		},
+		submit: func(context.Context, string, string, string) error { submits++; return nil },
+	}
+	other, err := f.service.Store.GetAnimeDownloadJob(ctx, otherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.service.StatusGateway = animeStatusReaderFunc(func(_ context.Context, _, hash string) (model.AnimeOfflineStatus, error) {
+		if hash != other.Snapshot.InfoHash {
+			t.Error("organization reread its finished offline task")
+		}
+		statuses++
+		status := serviceAnimeStatus(other, "running", 50)
+		status.ResultID = "501"
+		return status, nil
+	})
+	runner := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	op, err := f.service.Store.GetAnimeOrganization(ctx, job.ID)
+	if err != nil || op.Progress.State != "working" || op.Progress.Step != nil || drive.renames != 4 || drive.moves != 0 || cleanup.deletes != 0 || submits != 0 {
+		t.Fatal("large organization did not yield at a confirmed boundary", op.Progress, err, drive.renames, drive.moves, submits)
+	}
+	now += 5001 // Preserve the existing UID admission interval.
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	other, err = f.service.Store.GetAnimeDownloadJob(ctx, otherID)
+	if err != nil || other.DownloadState != "downloading" || creates != 1 || submits != 1 || statuses != 1 || drive.moves != 0 {
+		t.Fatal("other RSS stayed behind the collection", other.DownloadState, err, creates, submits, statuses, drive.moves)
+	}
+	for turn := 0; turn < 4 && op.Progress.State != "done"; turn++ {
+		now += 5001
+		if err := runner.PollOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		op, err = f.service.Store.GetAnimeOrganization(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err != nil || op.Progress.State != "done" || drive.renames != 4 || drive.moves != 4 || cleanup.deletes != 1 || drive.reads != 2 {
+		t.Fatal("continuation repeated writes or per-file reads", op.Progress.State, err, drive.renames, drive.moves, cleanup.deletes, drive.reads)
+	}
+}
+
+func TestAnimeOrganizeYieldSurvivesRestartAndUnknownReceipt(t *testing.T) {
+	f, db, _, job, drive := animeOrganizeCollection(t, 60)
+	cleanup := animeEnableCleanup(f, drive)
+	now := time.Now().Add(time.Second).UnixMilli()
+	runner := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.UnixMilli(now) }}
+	if err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if drive.renames != 4 || drive.moves != 0 {
+		t.Fatal("collection did not stop after four confirmed batches", drive.renames, drive.moves)
+	}
+	reopenAnimeRecoveryFixture(t, f, db)
+	var err error
+	drive.db, err = sql.Open("sqlite", f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = drive.db.Close() })
+	f.service.organizationCache = animeOrganizationCache{}
+	drive.lost = "move"
+	now += 5001
+	if err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	op, err := f.service.Store.GetAnimeOrganization(context.Background(), job.ID)
+	if err != nil || op.Progress.State != "unknown" || drive.renames != 4 || drive.moves != 1 || cleanup.deletes != 0 {
+		t.Fatal("restart replayed confirmed batches or lost the uncertain move", op.Progress.State, err, drive.renames, drive.moves)
+	}
+	drive.lost = ""
+	now += 5001
+	if err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	op, err = f.service.Store.GetAnimeOrganization(context.Background(), job.ID)
+	if err != nil || op.Progress.State != "done" || drive.renames != 4 || drive.moves != 4 || cleanup.deletes != 1 {
+		t.Fatal("recovery replayed the uncertain move or lost remaining files", op.Progress.State, err, drive.renames, drive.moves, cleanup.deletes)
+	}
+}
+
+func TestAnimeOrganizeSlowPreflightStillMakesProgressBeforeYield(t *testing.T) {
+	f, _, session, job, drive := animeOrganizeFixture(t)
+	op, err := f.service.Store.PrepareAnimeOrganization(context.Background(), job, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := animeOrganizationRun{service: f.service, session: session, job: job, op: op,
+		listings: make(map[string][]model.AnimeDriveEntry), started: time.Now().Add(-time.Minute), limit: 4}
+	if err := run.run(context.Background()); !errors.Is(err, errAnimeOrganizationYield) {
+		t.Fatal("slow turn did not yield", err)
+	}
+	if drive.creates != 1 || len(run.op.Progress.Directories) != 1 || run.op.Progress.Step != nil {
+		t.Fatal("slow preflight caused a turn with no progress or lost its receipt", drive.creates, run.op.Progress)
+	}
+}
+
 func TestAnimeOrganizeReadFailureCooldownAndCredentialDenial(t *testing.T) {
 	for _, status := range []int{429, 403} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

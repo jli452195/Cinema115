@@ -68,7 +68,9 @@ func (s *Store) reserveAnimeDownloadWork(ctx context.Context, now int64, exclude
 			args = append(args, uid)
 		}
 	}
-	query += ` ORDER BY COALESCE(j.next_run_at,0),j.id LIMIT 1`
+	// An unscheduled new intent uses its arrival time, not an unconditional
+	// priority of zero, so new RSS posts cannot starve a yielded collection.
+	query += ` ORDER BY COALESCE(j.next_run_at,j.created_at),j.id LIMIT 1`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, false, err

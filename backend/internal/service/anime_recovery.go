@@ -18,7 +18,7 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 	if runErr == nil {
 		session.work = &work
 		if work.Job.FileState == "verified" && work.Job.Snapshot.Organization != nil {
-			runErr = r.Admin.OrganizeDownloadedFiles(runCtx, session, work.Job.ID)
+			runErr = r.Admin.organizeDownloadedFiles(runCtx, session, work.Job.ID, 4)
 		} else if work.Job.DownloadState == "completed" {
 			// Completion already persisted: read the task directory directly,
 			// without asking the offline service for the same state again.
@@ -29,7 +29,7 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 	}
 	code := ""
 	switch {
-	case runErr == nil, errors.Is(runErr, ErrAnimeDirectoryPending), errors.Is(runErr, ErrAnimeFilesIncomplete), errors.Is(runErr, ErrCloudTaskBusy), errors.Is(runErr, storage.ErrAnimeConflict):
+	case runErr == nil, errors.Is(runErr, errAnimeOrganizationYield), errors.Is(runErr, ErrAnimeDirectoryPending), errors.Is(runErr, ErrAnimeFilesIncomplete), errors.Is(runErr, ErrCloudTaskBusy), errors.Is(runErr, storage.ErrAnimeConflict):
 	case errors.Is(runErr, storage.ErrAnimeAccountChanged):
 		code = "DOWNLOAD_ACCOUNT_CHANGED"
 	case errors.Is(runErr, storage.ErrAnimeDirectoryRequired), errors.Is(runErr, ErrAnimeSubmitDirectory):
@@ -57,6 +57,9 @@ func (r *AnimeStatusRunner) execute(ctx context.Context, work storage.AnimeDownl
 	}
 	if err == nil && code != "DOWNLOAD_PAUSED" {
 		r.Admin.logAnimeJobIssue(work.Job, code)
+	}
+	if err == nil && errors.Is(runErr, errAnimeOrganizationYield) {
+		return errAnimeOrganizationYield
 	}
 	return err
 }

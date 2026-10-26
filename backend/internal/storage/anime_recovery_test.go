@@ -75,6 +75,26 @@ func TestAnimeOrganizationRecoveryRetainsLongerRetryTime(t *testing.T) {
 	}
 }
 
+func TestAnimeRecoveryNewArrivalsDoNotStarveYieldedOrganization(t *testing.T) {
+	f, job := animeOrganizeStoreFixture(t)
+	release, proof := f.selectTitle(t, 0, "rel_new_arrival", strings.Repeat("b", 40), "Anime - 31 [HEVC]")
+	other := f.claim(t, 0, release, proof).Job
+	now := time.Now().Add(time.Minute).UnixMilli()
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET next_run_at=CASE WHEN id=? THEN ? ELSE NULL END,created_at=?`, job.ID, now-1000, now-500); err != nil {
+		t.Fatal(err)
+	}
+	first := takeAnimeWork(t, f.store, now)
+	if first.Job.ID != job.ID {
+		t.Fatal("new arrival overtook already-due organization", first.Job.ID)
+	}
+	if err := f.store.CompleteAnimeDownloadWork(context.Background(), first, "", now); err != nil {
+		t.Fatal(err)
+	}
+	if next := takeAnimeWork(t, f.store, now+5001); next.Job.ID != other.ID {
+		t.Fatal("organization did not yield to the older waiting intent", next.Job.ID)
+	}
+}
+
 func TestAnimeRecoverySingleLeaseAndExpiredOwnerFencing(t *testing.T) {
 	f, job := animeSubmitStoreFixture(t)
 	ctx := context.Background()

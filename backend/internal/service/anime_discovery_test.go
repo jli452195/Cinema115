@@ -568,7 +568,7 @@ func TestAnimeDiscoveryCommitWakesVerifierWithoutAnotherRSSRead(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		f.service.wakeAnimeVerification()
 	}
-	if feedCalls.Load() != 1 || len(f.service.animeVerificationWakeSignal()) > 1 {
+	if feedCalls.Load() != 1 || len(f.service.verificationWake.signal("mikan")) > 1 {
 		t.Fatal("verification notifications caused extra RSS reads or unbounded queuing")
 	}
 }
@@ -587,7 +587,7 @@ func TestAnimeDiscoveryDrainsDueSourcesWithoutSchedulerSleep(t *testing.T) {
 	// Consume any fixture notification: only the bounded batch's own wakeup
 	// can process the fifth source while the fallback timer is one hour long.
 	select {
-	case <-f.service.animeDiscoveryWakeSignal():
+	case <-f.service.discoveryWake.signal("mikan"):
 	default:
 	}
 	r.interval = time.Hour
@@ -648,5 +648,101 @@ func TestAnimeDiscoveryRunnerReusesInteractiveMikanCache(t *testing.T) {
 	}
 	if err := r.VerifyOnce(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAnimeDiscoverySitesKeepWorkingWhileAnotherSiteIsBlocked(t *testing.T) {
+	for _, blockedStage := range []string{"rss", "verification"} {
+		t.Run(blockedStage, func(t *testing.T) {
+			f, db, runner, source, now := discoveryServiceFixture(t)
+			for i, provider := range []string{"anibt", "garden"} {
+				group := "45"
+				if provider == "garden" {
+					group = "dmhy_f45"
+				}
+				_, err := db.Exec(`INSERT INTO anime_subscription_sources(id,subscription_id,role,position,status,run_when_enabled,provider,source_key,item_id,group_id,group_name,namespace_id,binding_json,rules_json,revision,run_generation,health,checked_at,next_check_at,created_at,updated_at) SELECT ?,subscription_id,'standby',?,'enabled',1,?,?,item_id,?,group_name,?,json_set(binding_json,'$.review.groupId',?),rules_json,1,1,'unknown',1,?,created_at,updated_at FROM anime_subscription_sources WHERE id=?`, provider+"-source", i+1, provider, provider+":2259:"+group, group, provider+"-namespace", group, now-1, source.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner.interval = time.Hour // Only site-specific wakeups can run a second pass.
+			var clock atomic.Int64
+			clock.Store(now)
+			runner.now = func() time.Time { return time.UnixMilli(clock.Load()) }
+			blocked, secondRead := make(chan struct{}), make(chan struct{})
+			var blockedOnce sync.Once
+			var anibtReads atomic.Int32
+			wait := func(ctx context.Context) error {
+				blockedOnce.Do(func() { close(blocked) })
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			runner.Feeds = animeRSSFunc(func(ctx context.Context, _ *AnimeSourceBudget, in AnimeSourceInput) (AnimeSourceResult, error) {
+				if in.Source.Site() == "mikan" && blockedStage == "rss" {
+					return AnimeSourceResult{}, wait(ctx)
+				}
+				if in.Source.Site() == "anibt" && anibtReads.Add(1) == 2 {
+					close(secondRead)
+				}
+				page := discoveryServicePage(in, now, 1)
+				if in.Source.Site() != "mikan" {
+					page.Releases[0].PostKey = "rel_" + in.Source.Site()
+					page.Releases[0].TorrentURL = "https://anibt.net/api/torrent/" + page.Releases[0].PostKey + ".torrent"
+				}
+				if in.Source.Site() == "garden" {
+					page.Releases[0].TorrentURL = ""
+					page.Releases[0].MagnetHint = "magnet:?xt=urn:btih:" + gardenTestHash
+					page.Releases[0].Origin, page.Releases[0].OriginID = "dmhy", "688777"
+				}
+				return page, nil
+			})
+			f.service.Torrents = animeClaimTorrentFunc(func(ctx context.Context, provider, _, _ string) ([]byte, error) {
+				if provider == "mikan" && blockedStage == "verification" {
+					return nil, wait(ctx)
+				}
+				return animeClaimTestTorrent(), nil
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- runner.Run(ctx) }()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-time.After(3 * time.Second):
+					t.Error("site workers outlived cancellation")
+				}
+			})
+			select {
+			case <-blocked:
+			case <-time.After(3 * time.Second):
+				t.Fatal("slow site did not start")
+			}
+			for deadline := time.Now().Add(3 * time.Second); ; {
+				var linked int
+				if err := db.QueryRow(`SELECT count(*) FROM anime_job_selections WHERE source_id IN ('anibt-source','garden-source')`).Scan(&linked); err != nil {
+					t.Fatal(err)
+				}
+				if linked == 2 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("one slow site blocked other sites' discovery or verification", linked)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			clock.Store(now + time.Hour.Milliseconds())
+			for i := 0; i < 100; i++ {
+				f.service.discoveryWake.notify("anibt")
+			}
+			select {
+			case <-secondRead:
+			case <-time.After(3 * time.Second):
+				t.Fatal("healthy site's next pass waited for the slow site")
+			}
+		})
 	}
 }

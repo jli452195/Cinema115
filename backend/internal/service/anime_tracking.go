@@ -135,7 +135,11 @@ func (r *AnimeStatusRunner) runReady(ctx context.Context, uids []string) (string
 					// with another immediate GET of the same offline task.
 					jobID = ""
 				}
-				return work.Job.UID, jobID, true, r.execute(ctx, work)
+				err := r.execute(ctx, work)
+				if errors.Is(err, errAnimeOrganizationYield) {
+					jobID, err = "", nil
+				}
+				return work.Job.UID, jobID, true, err
 			}
 		}
 	}
@@ -153,7 +157,9 @@ func (r *AnimeStatusRunner) continueReadyJob(ctx context.Context, jobID string) 
 				return fmt.Errorf("reserve anime stage continuation: %w", err)
 			}
 			if found {
-				if err := r.execute(ctx, work); err != nil {
+				if err := r.execute(ctx, work); errors.Is(err, errAnimeOrganizationYield) {
+					return nil
+				} else if err != nil {
 					return err
 				}
 				continue
