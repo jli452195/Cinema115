@@ -52,7 +52,7 @@ func TestAnimeJobActionReadFailureRetryAndImmutableTerminal(t *testing.T) {
 			ctx := context.Background()
 			switch kind {
 			case "files_retry":
-				if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',result_object_id='300',file_state='needs_review',block_code='FILES_INCOMPLETE' WHERE id=?`, job.ID); err != nil {
+				if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',result_object_id='300',file_state='needs_review',block_code='FILES_INCOMPLETE',raw_status_json='{"schemaVersion":1,"fileReadFailures":3}' WHERE id=?`, job.ID); err != nil {
 					t.Fatal(err)
 				}
 			case "unknown":
@@ -92,7 +92,7 @@ func TestAnimeJobActionReadFailureRetryAndImmutableTerminal(t *testing.T) {
 					t.Fatal(err)
 				}
 				got, _ := f.store.GetAnimeDownloadJob(ctx, job.ID)
-				if got.FileState != "pending" || got.DownloadState != "completed" || got.BlockCode != nil || got.Generation != job.Generation {
+				if got.FileState != "pending" || got.DownloadState != "completed" || got.BlockCode != nil || got.Generation != job.Generation || got.Tracking == nil || got.Tracking.FileReadFailures != 0 {
 					t.Fatal(got)
 				}
 				return

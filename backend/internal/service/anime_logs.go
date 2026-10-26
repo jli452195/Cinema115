@@ -211,7 +211,14 @@ func (s *AnimeAdminService) logAnimeJobResult(prior, current model.AnimeDownload
 		return
 	}
 	resultPending := current.BlockCode != nil && *current.BlockCode == "TASK_RESULT_PENDING" && current.DownloadState == "completed"
-	if current.BlockCode != nil && !resultPending {
+	fileReadIssue := current.DownloadState == "completed" && current.Tracking != nil && current.Tracking.FileReadFailures > 0 && (current.FileState == "checking" || current.FileState == "needs_review")
+	if fileReadIssue && prior.FileState != current.FileState && current.FileState == "checking" {
+		s.logAnimeJob(current, "DEBUG", "文件清单暂未就绪，稍后自动补读")
+	} else if fileReadIssue && prior.FileState != current.FileState && current.Tracking.FileReadFailures >= 3 && current.BlockCode != nil && (*current.BlockCode == "FILES_INCOMPLETE" || *current.BlockCode == "FILES_READ_FAILED") {
+		s.logAnimeJob(current, "WARNING", "文件清单连续三次读取未完成，已停止自动补读，可手动重试")
+	} else if fileReadIssue && prior.FileState != current.FileState && current.Tracking.FileReadFailures >= 3 && current.BlockCode != nil && *current.BlockCode == "TASK_RATE_LIMITED" {
+		s.logAnimeJob(current, "WARNING", "文件清单连续读取受限，已停止自动补读，请等待冷却后手动重试")
+	} else if current.BlockCode != nil && !resultPending && (!fileReadIssue || current.FileState == "needs_review") {
 		s.logAnimeJobIssue(prior, *current.BlockCode)
 	}
 	if prior.DownloadState == current.DownloadState {

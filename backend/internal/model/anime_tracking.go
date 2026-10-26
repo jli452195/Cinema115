@@ -73,9 +73,10 @@ func (s AnimeOfflineStatus) Valid() bool {
 // observation and its actual timestamp. This is stored in raw_status_json for
 // schema compatibility; it contains only these typed fields.
 type AnimeDownloadTracking struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	AttemptedAt   int64               `json:"attemptedAt"`
-	ObservedAt    int64               `json:"observedAt"`
-	Failures      int                 `json:"failures"`
-	Observation   *AnimeOfflineStatus `json:"observation"`
+	SchemaVersion    int                 `json:"schemaVersion"`
+	AttemptedAt      int64               `json:"attemptedAt"`
+	ObservedAt       int64               `json:"observedAt"`
+	Failures         int                 `json:"failures"`
+	FileReadFailures int                 `json:"fileReadFailures,omitempty"`
+	Observation      *AnimeOfflineStatus `json:"observation"`
 }

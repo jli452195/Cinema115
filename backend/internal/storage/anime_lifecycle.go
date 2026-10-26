@@ -159,8 +159,10 @@ func evaluateAnimeLifecycleTx(ctx context.Context, tx *sql.Tx, id string, now in
 	}
 	reason := ""
 	if sub.Form.ArchiveOnCompletion() && info.CompletionIssue == "" {
-		complete, err := animeAllEpisodesOrganizedTx(ctx, tx, sub, entry)
-		if err != nil {
+		// The summary worker owns parsing. Dirty or absent summaries cannot
+		// archive a subscription, even if their previous value was complete.
+		var complete bool
+		if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM anime_subscription_sources s WHERE s.subscription_id=? AND s.status='enabled' AND s.run_when_enabled=1 AND NOT `+animeSourceComplete+`)`, sub.ID).Scan(&complete); err != nil {
 			return err
 		}
 		if complete {
@@ -178,47 +180,4 @@ func evaluateAnimeLifecycleTx(ctx context.Context, tx *sql.Tx, id string, now in
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO anime_subscription_archives(subscription_id,reason,archived_at) VALUES(?,?,?) ON CONFLICT(subscription_id) DO UPDATE SET reason=excluded.reason,archived_at=excluded.archived_at`, id, reason, now)
 	return err
-}
-
-func animeAllEpisodesOrganizedTx(ctx context.Context, tx *sql.Tx, sub model.AnimeSubscription, entry model.AnimeEntry) (bool, error) {
-	for _, source := range activeAnimeSources(sub) {
-		progress, err := readAnimeSourceProgress(ctx, tx, source, sub, entry)
-		if err != nil {
-			return false, err
-		}
-		if progress.State != "complete" {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func evaluateAnimeJobLifecycleTx(ctx context.Context, tx *sql.Tx, jobID string, now int64) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT s.subscription_id FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id WHERE x.job_id=? AND x.status='authorized'`, jobID)
-	if err != nil {
-		return err
-	}
-	ids := make([]string, 0, model.AnimeMaxSources)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	readErr := rows.Err()
-	closeErr := rows.Close()
-	if readErr != nil {
-		return readErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	for _, id := range ids {
-		if err := evaluateAnimeLifecycleTx(ctx, tx, id, now); err != nil {
-			return err
-		}
-	}
-	return nil
 }

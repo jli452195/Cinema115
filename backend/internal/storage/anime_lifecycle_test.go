@@ -358,6 +358,7 @@ func TestAnimeCompletionUsesSourceRules(t *testing.T) {
 		if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified',workflow_state='organized' WHERE id=?`, job.ID); err != nil {
 			t.Fatal(err)
 		}
+		refreshProgress(t, f)
 		sub := evaluateLifecycle(t, f, now)
 		if episode < 36 && sub.Status != "enabled" || episode == 36 && sub.Status != "archived" {
 			t.Fatal("source coverage", episode, sub.Status)
@@ -365,7 +366,7 @@ func TestAnimeCompletionUsesSourceRules(t *testing.T) {
 	}
 }
 
-func TestAnimeLastOrganizedCheckpointArchivesInSameTransaction(t *testing.T) {
+func TestAnimeLastOrganizedCheckpointArchivesWithProgressRefresh(t *testing.T) {
 	f, job := animeOrganizeStoreFixture(t)
 	ctx := context.Background()
 	now := time.Now().UnixMilli()
@@ -408,7 +409,67 @@ func TestAnimeLastOrganizedCheckpointArchivesInSameTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil || sub.Status != "enabled" {
+		t.Fatal("checkpoint parsed history or used a dirty summary", sub.Status, err)
+	}
+	refreshProgress(t, f)
+	sub, err = f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
 	if err != nil || sub.Status != "archived" {
-		t.Fatal("last completion waited for another poll", sub.Status, err)
+		t.Fatal("local progress refresh did not archive without another RSS poll", sub.Status, err)
+	}
+}
+
+func TestAnimeProgressArchiveIsAtomicAndDirtySummariesNeverComplete(t *testing.T) {
+	f, now := lifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.totalEpisodes',1); UPDATE anime_rss_settings SET auto_archive=0`); err != nil {
+		t.Fatal(err)
+	}
+	for group := range f.sub.Sources {
+		progressEpisode(t, f, group, 30, true)
+	}
+	refreshProgress(t, f)
+	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.totalEpisodes',2); UPDATE anime_rss_settings SET auto_archive=1`); err != nil {
+		t.Fatal(err)
+	}
+	if sub := evaluateLifecycle(t, f, now); sub.Status != "enabled" {
+		t.Fatal("old complete summary survived a total change", sub.Status)
+	}
+	refreshProgress(t, f)
+	for group := range f.sub.Sources {
+		progressEpisode(t, f, group, 31, true)
+	}
+	if sub := evaluateLifecycle(t, f, now); sub.Status != "enabled" {
+		t.Fatal("archiving used unpublished progress", sub.Status)
+	}
+	if _, err := f.store.db.Exec(`CREATE TRIGGER reject_anime_progress_archive BEFORE INSERT ON anime_subscription_archives BEGIN SELECT RAISE(ABORT,'injected archive failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	for i := 0; i < len(f.sub.Sources); i++ {
+		_, err := f.store.RefreshAnimeSourceProgress(ctx)
+		if err != nil {
+			failed = true
+			break
+		}
+	}
+	if !failed {
+		t.Fatal("archive failure swallowed")
+	}
+	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil || sub.Status != "enabled" {
+		t.Fatal("archive did not roll back", sub, err)
+	}
+	var dirty int
+	if err := f.store.db.QueryRow(`SELECT count(*) FROM anime_source_progress WHERE generation<>computed_generation`).Scan(&dirty); err != nil || dirty == 0 {
+		t.Fatal("failed archive published a clean summary and lost its retry", dirty, err)
+	}
+	if _, err := f.store.db.Exec(`DROP TRIGGER reject_anime_progress_archive`); err != nil {
+		t.Fatal(err)
+	}
+	refreshProgress(t, f)
+	sub, err = f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil || sub.Status != "archived" {
+		t.Fatal("summary refresh did not retry archiving", sub, err)
 	}
 }

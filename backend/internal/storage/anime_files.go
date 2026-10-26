@@ -185,12 +185,18 @@ func (s *Store) SaveAnimeFiles(ctx context.Context, expected model.AnimeDownload
 	return tx.Commit()
 }
 
-func (s *Store) MarkAnimeFilesReview(ctx context.Context, expected model.AnimeDownloadJob, code string, leaseToken ...string) error {
-	if !model.ValidAnimeID(expected.ID) {
+// Only explicitly transient failures receive two scheduled retries. The
+// counter survives restarts; an old receipt cannot clear a newer worker lease.
+func (s *Store) RecordAnimeFilesFailure(ctx context.Context, expected model.AnimeDownloadJob, code string, retryAt int64, leaseToken ...string) error {
+	if !model.ValidAnimeID(expected.ID) || !expected.CanCollectFiles() || retryAt < 0 {
 		return ErrAnimeInvalid
 	}
 	switch code {
-	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "FILES_OUTSIDE_TASK", "DOWNLOAD_ACCOUNT_CHANGED":
+	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "TASK_RATE_LIMITED", "TASK_POLL_CANCELLED":
+	case "FILES_OUTSIDE_TASK", "DOWNLOAD_ACCOUNT_CHANGED", "TASK_ACCESS_DENIED":
+		if retryAt != 0 {
+			return ErrAnimeInvalid
+		}
 	default:
 		return ErrAnimeInvalid
 	}
@@ -201,7 +207,28 @@ func (s *Store) MarkAnimeFilesReview(ctx context.Context, expected model.AnimeDo
 	if len(leaseToken) == 1 {
 		token = leaseToken[0]
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state='needs_review',block_code=?,revision=revision+1,next_run_at=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND revision=? AND generation=? AND workflow_state='active' AND download_state='completed' AND file_state<>'verified' AND (block_code IS NULL OR block_code IN ('FILES_READ_FAILED','FILES_INCOMPLETE','TASK_MISSING','TASK_READ_FAILED')) AND ((?='' AND lease_token IS NULL) OR (lease_token=? AND lease_until>?))`, code, time.Now().UnixMilli(), expected.ID, expected.Revision, expected.Generation, token, token, time.Now().UnixMilli())
+	now := time.Now().UnixMilli()
+	tracking := model.AnimeDownloadTracking{SchemaVersion: 1}
+	if expected.Tracking != nil {
+		tracking = *expected.Tracking
+	}
+	tracking.AttemptedAt = now
+	tracking.FileReadFailures = min(tracking.FileReadFailures+1, 3)
+	state := "needs_review"
+	var next *int64
+	if retryAt > 0 && tracking.FileReadFailures <= 2 {
+		delay := [...]time.Duration{5 * time.Second, 30 * time.Second}[tracking.FileReadFailures-1]
+		due := max(now+delay.Milliseconds(), retryAt)
+		next, state = &due, "checking"
+	} else if code == "TASK_RATE_LIMITED" && retryAt > now {
+		// Retain the UID-wide cooldown even when this job exhausts its budget.
+		next = &retryAt
+	}
+	raw, err := animeJSON(tracking)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state=?,block_code=?,raw_status_json=?,revision=revision+1,next_run_at=?,lease_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND revision=? AND generation=? AND workflow_state='active' AND download_state='completed' AND file_state<>'verified' AND ((?='' AND lease_token IS NULL) OR (lease_token=? AND lease_until>?))`, state, code, raw, next, now, expected.ID, expected.Revision, expected.Generation, token, token, now)
 	if err != nil {
 		return err
 	}

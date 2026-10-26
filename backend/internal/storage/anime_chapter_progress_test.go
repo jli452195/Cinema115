@@ -187,6 +187,7 @@ func TestAnimeContinuousChapterCompletionWaitsForEverySource(t *testing.T) {
 		t.Fatal(got)
 	}
 	progressEpisode(t, f, 1, 55, true)
+	refreshProgress(t, f)
 	if got := evaluateLifecycle(t, f, now); got.Status != "archived" {
 		t.Fatal("continuous range did not archive", got.Status)
 	}

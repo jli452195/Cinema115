@@ -2,6 +2,8 @@
 
 > 本文件为历史开发记录。当前以[配置与 RSS 生命周期](anime-subscription-dialog-plan.md)和[来源正则规则](anime-source-rules-refactor.md)为准。2026-10-22 的 v56 已清理开发期动漫运行数据及持久基线表，保留目录设置；下文旧基线、规格过滤和升级保留约定不再生效。
 
+2026-10-26 链路精简：离线完成后的文件清单为空、分页变化或明确的临时网络失败，复用原任务最多补读两次（失败后5秒、30秒，限流遵守更长的冷却）。失败次数保存在既有任务观测JSON，重启不重置；耗尽后由人工重试，显式重试重置此预算。凭据拒绝、账号变化、目录身份异常和固定容量限制不自动补读。补读只读取原任务文件，不再次查离线状态、提交下载或改动整理结果，正常成功路径无新增115请求。后台进度摘要计算仍在写事务外执行，发布有效摘要与归档判断同事务提交；归档只读取最新摘要，不重新解析发布历史。整理完成仅使摘要失效，由既有后台摘要循环完成归档，不等待下一次RSS请求。
+
 2026-10-20 P3-07～08接入：自动标准命名、批量移动原文件已装配，`organize`能力按实际依赖开放。SQLite v52扩展既有操作日志的kind约束，保存单个任务的目录及逐文件进度，不新建注册表/队列；v51数据保留。成功不读回，未知仅按固定对象核对，完成不跟踪二次整理；用户已确认取消P3-10，历史文件应用接口不再计划接入，既有占位路由继续关闭。新任务DTO含 `organization:{state,total,renamed,moved,targetPath,updatedAt}`，状态为pending/working/unknown/needs_review/done。此注记优先于下文阶段性关闸说明，详见[整理执行实现](anime-organization-execution-implementation.md)。
 
 版本：1，2026-10-18。依据[首版规则](anime-first-release-rules.md)、[总体方案](anime-subscription-plan.md)及 P0-01～P0-03 的验证报告。本文件确定后续实施契约；配套 [SQLite DDL](anime-subscription-schema.sql)用于空白临时数据库验证，尚未接入应用迁移或上线任何 API。进度见[任务表](anime-subscription-tasks.md)。

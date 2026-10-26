@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"time"
 
 	"strm115/backend/internal/client/p115"
@@ -20,6 +23,7 @@ var (
 	ErrAnimeFilesIncomplete  = errors.New("anime download files are incomplete or ambiguous")
 	ErrAnimeFilesOutside     = errors.New("anime download result is outside the task directory")
 	ErrAnimeDirectoryPending = errors.New("anime resource directory creation needs reconciliation")
+	errAnimeFilesPending     = fmt.Errorf("%w: directory listing is not settled", ErrAnimeFilesIncomplete)
 )
 
 // EnsureDownloadDirectory creates one randomly named resource directory once.
@@ -151,13 +155,19 @@ func (s *AnimeAdminService) readAnimeDirectory(ctx context.Context, session *Ani
 		if err != nil {
 			return nil, err
 		}
-		if page.CID != cid || page.Offset != offset || page.Count < 0 || page.Count > limit || count != -1 && page.Count != count || len(page.Entries) > 100 || offset+len(page.Entries) > page.Count || len(page.Entries) == 0 && offset < page.Count {
+		if page.CID != cid || page.Offset != offset || page.Count < 0 || page.Count > limit || len(page.Entries) > 100 {
 			return nil, ErrAnimeFilesIncomplete
+		}
+		if count != -1 && page.Count != count || offset+len(page.Entries) > page.Count || len(page.Entries) == 0 && offset < page.Count {
+			return nil, errAnimeFilesPending
 		}
 		count = page.Count
 		for _, entry := range page.Entries {
-			if !entry.Valid() || entry.ParentCID != cid || seen[entry.ID] || entry.ID == cid {
+			if !entry.Valid() || entry.ParentCID != cid || entry.ID == cid {
 				return nil, ErrAnimeFilesIncomplete
+			}
+			if seen[entry.ID] {
+				return nil, errAnimeFilesPending
 			}
 			seen[entry.ID] = true
 			entries = append(entries, entry)
@@ -169,7 +179,7 @@ func (s *AnimeAdminService) readAnimeDirectory(ctx context.Context, session *Ani
 	}
 }
 
-// CollectDownloadedFiles lists the saved task directory once after completion.
+// CollectDownloadedFiles normally lists the saved task directory once after completion.
 // Only the result's subdirectories need extra pages. Finished work is never
 // revisited, even when the user subsequently moves or renames its files.
 func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session *AnimeDownloadSession, jobID string) (model.AnimeDownloadJob, error) {
@@ -192,19 +202,13 @@ func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session 
 			readErr = session.Validate(ctx)
 		}
 		if readErr != nil {
-			code := "FILES_READ_FAILED"
-			if errors.Is(readErr, ErrAnimeFilesIncomplete) || errors.Is(readErr, p115.ErrAnimeDriveResponse) {
-				code = "FILES_INCOMPLETE"
+			if errors.Is(readErr, storage.ErrAnimeConflict) {
+				return readErr
 			}
-			if errors.Is(readErr, ErrAnimeFilesOutside) {
-				code = "FILES_OUTSIDE_TASK"
-			}
-			if errors.Is(readErr, storage.ErrAnimeAccountChanged) {
-				code = "DOWNLOAD_ACCOUNT_CHANGED"
-			}
+			code, retryAt := animeFileReadFailure(readErr, time.Now().UnixMilli())
 			writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer stop()
-			if err := s.Store.MarkAnimeFilesReview(writeCtx, job, code, session.leaseToken()); err != nil {
+			if err := s.Store.RecordAnimeFilesFailure(writeCtx, job, code, retryAt, session.leaseToken()); err != nil {
 				return err
 			}
 			if ctx.Err() != nil {
@@ -226,6 +230,31 @@ func (s *AnimeAdminService) CollectDownloadedFiles(ctx context.Context, session 
 		}
 	}
 	return out, err
+}
+
+func animeFileReadFailure(err error, now int64) (string, int64) {
+	code, retry := animeStatusReadFailure(err, now)
+	if code == "DOWNLOAD_ACCOUNT_CHANGED" || code == "TASK_ACCESS_DENIED" || code == "TASK_RATE_LIMITED" || code == "TASK_POLL_CANCELLED" {
+		if code == "TASK_POLL_CANCELLED" {
+			retry = now
+		}
+		return code, retry
+	}
+	if errors.Is(err, ErrAnimeFilesOutside) {
+		return "FILES_OUTSIDE_TASK", 0
+	}
+	if errors.Is(err, errAnimeFilesPending) {
+		return "FILES_INCOMPLETE", now
+	}
+	if errors.Is(err, ErrAnimeFilesIncomplete) || errors.Is(err, p115.ErrAnimeDriveResponse) {
+		return "FILES_INCOMPLETE", 0
+	}
+	var response *p115.HTTPError
+	var network net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &network) || errors.As(err, &response) && response.Status >= 500 {
+		return "FILES_READ_FAILED", now
+	}
+	return "FILES_READ_FAILED", 0
 }
 
 func (s *AnimeAdminService) readAnimeFiles(ctx context.Context, session *AnimeDownloadSession, job model.AnimeDownloadJob) (model.AnimeFileManifest, error) {
@@ -284,6 +313,15 @@ func (s *AnimeAdminService) readAnimeFiles(ctx context.Context, session *AnimeDo
 		}
 	}
 	manifest.CollectedAt = time.Now().UnixMilli()
+	files := 0
+	for _, entry := range manifest.Entries {
+		if entry.Kind == "file" {
+			files++
+		}
+	}
+	if files == 0 {
+		return manifest, errAnimeFilesPending
+	}
 	if manifest.Validate(job) != nil {
 		return manifest, ErrAnimeFilesIncomplete
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"time"
 
 	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
@@ -174,21 +175,10 @@ func animeProgressReleases(binding model.AnimeBinding, rules model.AnimeRules, r
 	return out, nil
 }
 
-func readAnimeSourceProgress(ctx context.Context, q animeReader, source model.AnimeSource, sub model.AnimeSubscription, entry model.AnimeEntry) (model.AnimeSourceProgress, error) {
-	observed, err := animeProgressRows(ctx, q, `SELECT snapshot_json FROM anime_release_decisions WHERE source_id=?`, source.ID)
-	if err != nil {
-		return model.AnimeSourceProgress{}, err
-	}
-	organized, err := animeProgressRows(ctx, q, animeOrganizedReleases, source.ID)
-	if err != nil {
-		return model.AnimeSourceProgress{}, err
-	}
-	return animeSourceProgress(ctx, source, sub, entry, observed, organized)
-}
-
 // RefreshAnimeSourceProgress processes at most one invalidated source. Read
 // a consistent local snapshot, then release SQLite before parsing its history.
-// The conditional write discards a result if any input changed in the meantime.
+// Publish a current result and evaluate archiving together, without parsing
+// history inside the write transaction. Changed inputs discard the result.
 func (s *Store) RefreshAnimeSourceProgress(ctx context.Context) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -235,8 +225,25 @@ func (s *Store) RefreshAnimeSourceProgress(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE anime_source_progress SET computed_generation=?,summary_json=? WHERE source_id=? AND generation=?`, generation, raw, id, generation)
-	return true, err
+	writeTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer writeTx.Rollback()
+	result, err := writeTx.ExecContext(ctx, `UPDATE anime_source_progress SET computed_generation=?,summary_json=? WHERE source_id=? AND generation=?`, generation, raw, id, generation)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 1 {
+		if err := evaluateAnimeLifecycleTx(ctx, writeTx, sub.ID, time.Now().UnixMilli()); err != nil {
+			return false, fmt.Errorf("evaluate anime progress lifecycle: %w", err)
+		}
+	}
+	return true, writeTx.Commit()
 }
 
 // One indexed batch for a page. Dirty results are deliberately neutral; a

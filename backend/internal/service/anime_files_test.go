@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,6 +16,29 @@ import (
 	medianaming "strm115/backend/internal/naming"
 	"strm115/backend/internal/storage"
 )
+
+func TestAnimeFileReadFailureClassifiesTransientEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		err   error
+		code  string
+		retry bool
+	}{
+		{errAnimeFilesPending, "FILES_INCOMPLETE", true},
+		{context.DeadlineExceeded, "FILES_READ_FAILED", true},
+		{io.ErrUnexpectedEOF, "FILES_READ_FAILED", true},
+		{&p115.HTTPError{Status: 502}, "FILES_READ_FAILED", true},
+		{&p115.HTTPError{Status: 404}, "FILES_READ_FAILED", false},
+		{p115.ErrAnimeDriveResponse, "FILES_INCOMPLETE", false},
+		{ErrAnimeFilesIncomplete, "FILES_INCOMPLETE", false},
+		{ErrAnimeFilesOutside, "FILES_OUTSIDE_TASK", false},
+		{storage.ErrAnimeAccountChanged, "DOWNLOAD_ACCOUNT_CHANGED", false},
+	} {
+		code, retryAt := animeFileReadFailure(tc.err, 1000)
+		if code != tc.code || (retryAt > 0) != tc.retry {
+			t.Fatal(tc.err, code, retryAt)
+		}
+	}
+}
 
 type animeFileGatewayStub struct {
 	create func(context.Context, string, string, string) (string, error)
@@ -347,7 +371,12 @@ func TestAnimeFilesIncompleteOrForeignTreeNeverBecomesVerified(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, ErrAnimeFilesIncomplete) || out.FileState != "needs_review" || out.Files != nil || out.WorkflowState != "active" || out.NextRunAt != nil {
+			transient := mode == "empty" || mode == "partial page" || mode == "duplicate page" || mode == "changed count"
+			want := "needs_review"
+			if transient {
+				want = "checking"
+			}
+			if !errors.Is(err, ErrAnimeFilesIncomplete) || out.FileState != want || out.Files != nil || out.WorkflowState != "active" || (out.NextRunAt != nil) != transient {
 				t.Fatal("bad file facts accepted", out, err)
 			}
 		})

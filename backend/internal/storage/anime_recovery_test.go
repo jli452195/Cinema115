@@ -178,7 +178,7 @@ func TestAnimeRecoveryDirectoryAndManifestRejectOldLease(t *testing.T) {
 		if err := f.store.SaveAnimeFiles(ctx, job, manifest, owner.Token); !errors.Is(err, ErrAnimeConflict) {
 			t.Fatal("stale manifest was saved", err)
 		}
-		if err := f.store.MarkAnimeFilesReview(ctx, job, "FILES_READ_FAILED", owner.Token); !errors.Is(err, ErrAnimeConflict) {
+		if err := f.store.RecordAnimeFilesFailure(ctx, job, "FILES_READ_FAILED", 0, owner.Token); !errors.Is(err, ErrAnimeConflict) {
 			t.Fatal("stale error cleared current lease", err)
 		}
 		if err := f.store.SaveAnimeFiles(ctx, job, manifest, next.Token); err != nil {

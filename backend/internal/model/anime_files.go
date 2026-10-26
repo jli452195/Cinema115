@@ -99,7 +99,7 @@ func (job AnimeDownloadJob) CanCollectFiles() bool {
 		return true
 	}
 	switch *job.BlockCode {
-	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "TASK_MISSING", "TASK_READ_FAILED":
+	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "TASK_MISSING", "TASK_READ_FAILED", "TASK_RATE_LIMITED", "TASK_POLL_CANCELLED":
 		return true
 	default:
 		return false

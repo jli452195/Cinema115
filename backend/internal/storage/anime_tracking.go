@@ -13,6 +13,7 @@ import (
 
 const animeStatusEligible = `j.workflow_state='active' AND j.file_state IN ('pending','checking')
  AND j.download_state IN ('accepted','downloading','unknown','completed')
+ AND NOT (j.download_state='completed' AND j.file_state='checking' AND j.result_object_id IS NOT NULL)
  AND (j.block_code IS NULL OR j.block_code IN ('TASK_READ_FAILED','TASK_STATUS_UNKNOWN','TASK_MISSING','TASK_RATE_LIMITED','TASK_POLL_CANCELLED','TASK_RESULT_PENDING'))
  AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state='confirmed' AND o.generation=j.generation AND o.authorized_at IS NOT NULL)`
 

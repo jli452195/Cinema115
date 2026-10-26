@@ -141,6 +141,114 @@ func TestAnimeRecoveryRunnerCompletedRestartSkipsStatus(t *testing.T) {
 	}
 }
 
+func TestAnimeFilesScheduledRetriesSurviveRestartAndStayBounded(t *testing.T) {
+	for _, mode := range []string{"recovers", "exhausted", "rate limited", "access denied"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			f, db, _, job := completedAnimeFilesFixture(t)
+			f.service.Logs = &GenerationLogs{}
+			if _, err := db.Exec(`UPDATE anime_download_jobs SET next_run_at=NULL WHERE id=?`, job.ID); err != nil {
+				t.Fatal(err)
+			}
+			pages, attempts := 0, 0
+			gateway := normalAnimeFileGateway(t, &pages)
+			normal := gateway.page
+			gateway.page = func(ctx context.Context, cid string, offset int, cookie string) (p115.AnimeDrivePage, error) {
+				if cid != "300" {
+					return normal(ctx, cid, offset, cookie)
+				}
+				attempts++
+				if mode == "recovers" && attempts == 3 {
+					return normal(ctx, cid, offset, cookie)
+				}
+				pages++
+				if mode == "access denied" {
+					return p115.AnimeDrivePage{}, &p115.HTTPError{Status: 403}
+				}
+				if mode == "rate limited" {
+					return p115.AnimeDrivePage{}, &p115.HTTPError{Status: 429, RetryAfter: time.Minute}
+				}
+				return p115.AnimeDrivePage{CID: cid}, nil // Finished task, empty result listing.
+			}
+			f.service.FileGateway = gateway
+			f.service.StatusGateway = animeStatusReaderFunc(func(context.Context, string, string) (model.AnimeOfflineStatus, error) {
+				t.Fatal("file recovery queried the completed offline task")
+				return model.AnimeOfflineStatus{}, nil
+			})
+			f.service.SubmitGateway = &animeSubmitGatewayStub{
+				inspect: func(context.Context, string, string) (p115.AnimeTaskObservation, error) {
+					t.Fatal("file recovery inspected the offline task")
+					return p115.AnimeTaskObservation{}, nil
+				},
+				submit: func(context.Context, string, string, string) error { t.Fatal("file recovery resubmitted"); return nil },
+			}
+			runner := &AnimeStatusRunner{Admin: f.service}
+			for attempt := 1; attempt <= 3; attempt++ {
+				before := time.Now().UnixMilli()
+				if err := runner.PollOnce(ctx); err != nil {
+					t.Fatal(err)
+				}
+				got, err := f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
+				if err != nil || attempts != attempt || pages != attempt*2 || got.DownloadState != "completed" {
+					t.Fatal("unexpected retry requests or changed download state", got, attempts, pages, err)
+				}
+				if mode == "recovers" && attempt == 3 {
+					if got.FileState != "verified" || got.WorkflowState != "original_saved" || got.Files == nil || got.NextRunAt != nil {
+						t.Fatal("transient file read did not finish", got)
+					}
+					break
+				}
+				if got.Tracking == nil || got.Tracking.FileReadFailures != attempt || got.Files != nil {
+					t.Fatal("file retry count or incomplete facts lost", got)
+				}
+				if attempt == 3 || mode == "access denied" {
+					if got.FileState != "needs_review" || mode != "rate limited" && got.NextRunAt != nil {
+						t.Fatal("file retries did not stop", got)
+					}
+					if mode == "rate limited" && (got.NextRunAt == nil || *got.NextRunAt < before+60000) {
+						t.Fatal("exhaustion lost UID cooldown", got)
+					}
+					break
+				}
+				delay := int64(5000)
+				if attempt == 2 {
+					delay = 30000
+				}
+				if mode == "rate limited" {
+					delay = 60000
+				}
+				if got.FileState != "checking" || got.NextRunAt == nil || *got.NextRunAt < before+delay {
+					t.Fatal("missing retry delay", got)
+				}
+				if err := runner.PollOnce(ctx); err != nil || attempts != attempt {
+					t.Fatal("retried before due time", attempts, err)
+				}
+				if attempt == 1 {
+					reopenAnimeRecoveryFixture(t, f, db)
+					db, err = sql.Open("sqlite", f.path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer db.Close()
+				}
+				// Advance only this test's persisted due time, without sleeping or
+				// allowing the simulated clock to skip freshly scheduled retries.
+				if _, err := db.Exec(`UPDATE anime_download_jobs SET next_run_at=0,raw_status_json=json_set(raw_status_json,'$.attemptedAt',0) WHERE id=?`, job.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reads := pages
+			if err := runner.PollOnce(ctx); err != nil || pages != reads {
+				t.Fatal("terminal file state kept polling", pages, err)
+			}
+			warnings := f.service.Logs.Snapshot("WARNING")
+			if (mode == "recovers" && len(warnings) != 0) || (mode != "recovers" && len(warnings) != 1) {
+				t.Fatal("temporary failures flooded warnings or exhaustion was silent", warnings)
+			}
+		})
+	}
+}
+
 func TestAnimeRecoveryRunnerUnknownAndReceiptFailureNeverResubmit(t *testing.T) {
 	for _, mode := range []string{"timeout matched", "timeout missing", "receipt failure"} {
 		t.Run(mode, func(t *testing.T) {

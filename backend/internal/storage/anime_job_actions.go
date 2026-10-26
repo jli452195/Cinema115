@@ -200,7 +200,7 @@ func (s *Store) ScheduleAnimeJobAction(ctx context.Context, id, action string, r
 			return out, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET file_state=CASE WHEN file_state='verified' THEN file_state ELSE 'pending' END,block_code=?,next_run_at=?,revision=revision+1,updated_at=? WHERE id=?`, code, now, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET raw_status_json=CASE WHEN download_state='completed' AND file_state<>'verified' THEN json_set(COALESCE(raw_status_json,'{"schemaVersion":1}'),'$.fileReadFailures',0) ELSE raw_status_json END,file_state=CASE WHEN file_state='verified' THEN file_state ELSE 'pending' END,block_code=?,next_run_at=?,revision=revision+1,updated_at=? WHERE id=?`, code, now, now, id); err != nil {
 		return out, err
 	}
 	out.Revision, out.ScheduledAt = revision+1, now
