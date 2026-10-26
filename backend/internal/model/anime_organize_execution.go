@@ -7,6 +7,7 @@ type AnimeOrganizeFile struct {
 	SourceCID    string `json:"sourceCid"`
 	OriginalName string `json:"originalName"`
 	TargetPath   string `json:"targetPath"`
+	VideoID      string `json:"videoId,omitempty"`
 }
 
 type AnimeOrganizeRequest struct {
@@ -16,10 +17,14 @@ type AnimeOrganizeRequest struct {
 }
 
 type AnimeOrganizeFileProgress struct {
-	ID      string `json:"id"`
-	Renamed bool   `json:"renamed"`
-	Moved   bool   `json:"moved"`
+	ID         string `json:"id"`
+	Renamed    bool   `json:"renamed"`
+	Moved      bool   `json:"moved"`
+	ExistingID string `json:"existingId,omitempty"` // keep the observed destination; discard this source copy
+	Conflict   bool   `json:"conflict,omitempty"`   // unresolved directory/source-name conflict
 }
+
+func (f AnimeOrganizeFileProgress) Handled() bool { return f.Moved && f.Renamed || f.ExistingID != "" }
 
 type AnimeOrganizeDirectory struct {
 	Path string `json:"path"` // relative to the fixed organize root
@@ -43,6 +48,18 @@ type AnimeOrganizeProgress struct {
 	Cleanup        string                      `json:"cleanup,omitempty"`        // recycled, uncertain, skipped
 	ReceiptIssue   string                      `json:"receiptIssue,omitempty"`   // fixed diagnostic enum, never raw upstream content
 	RecoveryChecks int                         `json:"recoveryChecks,omitempty"` // bounded read-only checks of this uncertain step
+}
+
+func (p AnimeOrganizeProgress) AllHandled() bool {
+	if len(p.Files) == 0 {
+		return false
+	}
+	for _, f := range p.Files {
+		if !f.Handled() || f.Conflict {
+			return false
+		}
+	}
+	return true
 }
 
 type AnimeOrganizeOperation struct {

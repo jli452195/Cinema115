@@ -15,7 +15,7 @@ import (
 	"strm115/backend/internal/releaseparse"
 )
 
-const RuleVersion int64 = 4
+const RuleVersion int64 = 5
 const LifetimeMillis int64 = 15 * 60 * 1000
 
 var (

@@ -193,7 +193,7 @@ func (s *AnimeAdminService) logAnimeJobIssue(job model.AnimeDownloadJob, code st
 		"ORGANIZE_MAPPING_REQUIRED":   "文件尚未匹配到明确季集，请核对命名设置",
 		"ORGANIZE_UNCERTAIN":          "整理结果尚未确认，将核对原步骤",
 		"ORGANIZE_RESULT_UNRESOLVED":  "整理结果仍未确认，请人工核对",
-		"ORGANIZE_TARGET_CONFLICT":    "整理目录存在同名冲突，请处理后重试",
+		"ORGANIZE_TARGET_CONFLICT":    "部分文件存在目录或来源名称冲突，其余已继续整理，请处理后继续",
 	}[code]
 	if message == "" {
 		message = "任务暂时无法继续，请核对下载与整理状态"
@@ -233,7 +233,19 @@ func (s *AnimeAdminService) logAnimeOrganizationResult(job model.AnimeDownloadJo
 		return
 	}
 	if current.State == "done" && prior.State != "done" {
-		level, message := "INFO", fmt.Sprintf("整理完成，已重命名并移动 %d 个文件", len(current.Files))
+		moved, skipped := 0, 0
+		for _, file := range current.Files {
+			if file.Moved {
+				moved++
+			}
+			if file.ExistingID != "" {
+				skipped++
+			}
+		}
+		level, message := "INFO", fmt.Sprintf("整理完成，已移动 %d 个文件", moved)
+		if skipped > 0 {
+			message += fmt.Sprintf("，已有同名文件跳过 %d 个", skipped)
+		}
 		if current.Cleanup == "uncertain" {
 			level, message = "WARNING", message+"；临时目录清理结果尚未确认，请人工核对"
 		}

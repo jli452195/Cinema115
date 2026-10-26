@@ -192,7 +192,7 @@ func (r *animeOrganizationRun) resolveDirectory(ctx context.Context, relative st
 		}
 		cid, err := organizeFindDirectory(animeOrganizeShareFiles(entries), part)
 		if err != nil {
-			return "", r.stop(ctx, "ORGANIZE_TARGET_CONFLICT")
+			return "", ErrOrganizeConflict
 		}
 		if cid != "" {
 			if err := r.rememberDirectory(ctx, prefix, cid); err != nil {
@@ -288,11 +288,7 @@ func (r *animeOrganizationRun) confirm(ctx context.Context, ids []string, cid st
 		p.ReceiptIssue = ""
 		p.RecoveryChecks = 0
 	}
-	all := len(p.Files) > 0
-	for _, f := range p.Files {
-		all = all && f.Moved
-	}
-	if all && p.Step == nil {
+	if p.AllHandled() && p.Step == nil {
 		if _, ok := r.service.OrganizationGateway.(AnimeOrganizationCleanupGateway); !ok {
 			p.State, p.Cleanup = "done", "skipped"
 		}
@@ -315,7 +311,7 @@ func (r *animeOrganizationRun) cleanup(ctx context.Context) error {
 	if r.job.DirectoryCID == nil {
 		return storage.ErrAnimeConflict
 	}
-	// The transaction checks all moved receipts, the saved root identity and
+	// The transaction checks every move/keep-existing outcome, the saved root identity and
 	// current authorization. No extra drive listing or metadata read is needed.
 	if err := r.dispatch(ctx, model.AnimeOrganizeStep{Kind: "cleanup", CID: *r.job.DirectoryCID}); err != nil {
 		if errors.Is(err, storage.ErrAnimeWriteUnauthorized) {
@@ -373,43 +369,87 @@ func (r *animeOrganizationRun) reconcile(ctx context.Context) error {
 }
 
 func (r *animeOrganizationRun) run(ctx context.Context) error {
-	allMoved := len(r.op.Progress.Files) > 0
-	for _, file := range r.op.Progress.Files {
-		allMoved = allMoved && file.Moved
-	}
-	if allMoved {
+	if r.op.Progress.AllHandled() {
 		return r.cleanup(ctx)
 	}
 	// Resolve each path once; all batches share its conflict listing in this pass.
-	for _, f := range r.op.Request.Files {
-		cid, err := r.resolveDirectory(ctx, path.Dir(f.TargetPath))
+	blocked := make(map[string]bool)
+	for i, f := range r.op.Request.Files {
+		if r.op.Progress.Files[i].Handled() {
+			continue
+		}
+		dir := path.Dir(f.TargetPath)
+		if blocked[dir] {
+			continue
+		}
+		cid, err := r.resolveDirectory(ctx, dir)
+		if errors.Is(err, ErrOrganizeConflict) {
+			blocked[dir] = true
+			continue
+		}
 		if err != nil {
 			return err
 		}
 		if cid == "" {
 			return nil
-		} // a recorded unknown/conflict stopped resolution
+		} // a recorded unknown write stopped resolution
 	}
-	// Check every planned destination before changing the first source name.
+	// Keep existing files individually. Directory/source conflicts retain only
+	// the affected files; they must not prevent the rest of a batch completing.
+	p := r.progress()
+	changed := false
 	for i, f := range r.op.Request.Files {
-		if r.op.Progress.Files[i].Moved {
+		if p.Files[i].Handled() {
 			continue
 		}
-		entries, err := r.list(ctx, r.directoryCID(path.Dir(f.TargetPath)))
-		if err != nil {
-			return err
+		file := &p.Files[i]
+		file.Conflict = blocked[path.Dir(f.TargetPath)]
+		if !file.Conflict {
+			entries, err := r.list(ctx, r.directoryCID(path.Dir(f.TargetPath)))
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				if entry.ID == f.ID || !strings.EqualFold(entry.Name, path.Base(f.TargetPath)) {
+					continue
+				}
+				if entry.Kind != "file" {
+					file.Conflict = true
+					break
+				}
+				file.ExistingID = entry.ID
+			}
+			if file.Conflict {
+				file.ExistingID = ""
+			}
 		}
-		if organizeCollision(animeOrganizeShareFiles(entries), path.Base(f.TargetPath), f.ID) {
-			return r.stop(ctx, "ORGANIZE_TARGET_CONFLICT")
-		}
-		if !r.op.Progress.Files[i].Renamed {
+		if !file.Handled() && !file.Conflict && !file.Renamed {
 			// The isolated source tree was already listed once. Do not scan it
 			// again or request per-file metadata just to repeat that evidence.
 			for _, e := range r.job.Files.Entries {
 				if e.ParentCID == f.SourceCID && e.ID != f.ID && strings.EqualFold(e.Name, path.Base(f.TargetPath)) {
-					return r.stop(ctx, "ORGANIZE_TARGET_CONFLICT")
+					file.Conflict = true
+					break
 				}
 			}
+		}
+		changed = changed || *file != r.op.Progress.Files[i]
+	}
+	conflicts := make(map[string]bool)
+	for _, file := range p.Files {
+		if file.Conflict {
+			conflicts[file.ID] = true
+		}
+	}
+	for i, file := range r.op.Request.Files {
+		if !p.Files[i].Handled() && conflicts[file.VideoID] {
+			p.Files[i].Conflict = true
+			changed = changed || p.Files[i] != r.op.Progress.Files[i]
+		}
+	}
+	if changed {
+		if err := r.save(ctx, p, false); err != nil {
+			return err
 		}
 	}
 	for _, kind := range []string{"rename", "move"} {
@@ -417,7 +457,7 @@ func (r *animeOrganizationRun) run(ctx context.Context) error {
 			step := model.AnimeOrganizeStep{Kind: kind, IDs: []string{}}
 			for i, f := range r.op.Request.Files {
 				p := r.op.Progress.Files[i]
-				if p.Moved || kind == "rename" && p.Renamed {
+				if p.Handled() || p.Conflict || kind == "rename" && p.Renamed {
 					continue
 				}
 				cid := f.SourceCID
@@ -461,6 +501,9 @@ func (r *animeOrganizationRun) run(ctx context.Context) error {
 				return nil
 			}
 		}
+	}
+	if !r.op.Progress.AllHandled() {
+		return r.stop(ctx, "ORGANIZE_TARGET_CONFLICT")
 	}
 	return r.cleanup(ctx)
 }

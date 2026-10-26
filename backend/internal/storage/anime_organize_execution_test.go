@@ -37,8 +37,8 @@ func animeOrganizeStoreFixture(t *testing.T) (*downloadClaimFixture, model.Anime
 	return f, job
 }
 
-func TestAnimeCleanupStepRequiresMovedFilesAndExactIsolatedRoot(t *testing.T) {
-	for _, mode := range []string{"valid", "unmoved", "shared download parent", "organize parent", "unknown root", "not our name", "wrong manifest root", "target inside root", "file IDs supplied"} {
+func TestAnimeCleanupStepRequiresHandledFilesAndExactIsolatedRoot(t *testing.T) {
+	for _, mode := range []string{"valid", "existing skipped", "unresolved conflict", "unmoved", "unrenamed", "shared download parent", "organize parent", "unknown root", "not our name", "wrong manifest root", "target inside root", "file IDs supplied"} {
 		t.Run(mode, func(t *testing.T) {
 			f, job := animeOrganizeStoreFixture(t)
 			op, err := f.store.PrepareAnimeOrganization(context.Background(), job, "")
@@ -50,8 +50,14 @@ func TestAnimeCleanupStepRequiresMovedFilesAndExactIsolatedRoot(t *testing.T) {
 			}
 			step := model.AnimeOrganizeStep{Kind: "cleanup", CID: *job.DirectoryCID}
 			switch mode {
+			case "existing skipped":
+				op.Progress.Files[0].Renamed, op.Progress.Files[0].Moved, op.Progress.Files[0].ExistingID = false, false, "999"
+			case "unresolved conflict":
+				op.Progress.Files[0].Moved, op.Progress.Files[0].Conflict = false, true
 			case "unmoved":
 				op.Progress.Files[0].Moved = false
+			case "unrenamed":
+				op.Progress.Files[0].Renamed = false
 			case "shared download parent":
 				step.CID = job.ParentCID
 				job.DirectoryCID = &step.CID
@@ -69,8 +75,51 @@ func TestAnimeCleanupStepRequiresMovedFilesAndExactIsolatedRoot(t *testing.T) {
 			case "file IDs supplied":
 				step.IDs = []string{"400"}
 			}
-			if validAnimeCleanupStep(job, op, step) != (mode == "valid") {
+			if validAnimeCleanupStep(job, op, step) != (mode == "valid" || mode == "existing skipped") {
 				t.Fatal("cleanup boundary not enforced", mode)
+			}
+		})
+	}
+}
+
+func TestAnimeOrganizeKeepExistingIsDurableAndCannotBecomeAMove(t *testing.T) {
+	f, job := animeOrganizeStoreFixture(t)
+	ctx := context.Background()
+	op, err := f.store.PrepareAnimeOrganization(ctx, job, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := op.Progress
+	p.Files = append([]model.AnimeOrganizeFileProgress{}, p.Files...)
+	p.Files[0].ExistingID = "999"
+	op, err = f.store.CheckpointAnimeOrganization(ctx, op, p, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.store.GetAnimeOrganization(ctx, job.ID)
+	if err != nil || stored.Progress.Files[0].ExistingID != "999" || stored.Progress.Files[0].Moved {
+		t.Fatal("keep-existing decision lost or reported as moved", stored, err)
+	}
+	for _, mode := range []string{"forget", "move", "rename", "replace destination", "dispatch"} {
+		t.Run(mode, func(t *testing.T) {
+			p := op.Progress
+			p.Files = append([]model.AnimeOrganizeFileProgress{}, p.Files...)
+			dispatch := false
+			switch mode {
+			case "forget":
+				p.Files[0].ExistingID = ""
+			case "move":
+				p.Files[0].Renamed, p.Files[0].Moved = true, true
+			case "rename":
+				p.Files[0].Renamed = true
+			case "replace destination":
+				p.Files[0].ExistingID = "998"
+			case "dispatch":
+				dispatch = true
+				p.Step = &model.AnimeOrganizeStep{Kind: "rename", CID: op.Request.Files[0].SourceCID, IDs: []string{p.Files[0].ID}}
+			}
+			if _, err := f.store.CheckpointAnimeOrganization(ctx, op, p, dispatch, ""); err == nil {
+				t.Fatal("resolved copy was scheduled again", mode)
 			}
 		})
 	}

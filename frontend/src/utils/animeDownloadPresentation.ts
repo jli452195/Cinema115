@@ -16,7 +16,7 @@ export function animeOrganizationState(state: string) {
 }
 const reasons: Record<string, string> = {
   ORGANIZE_MAPPING_REQUIRED: '文件尚未全部匹配到明确季集，保留原文件，请核对命名计划。',
-  ORGANIZE_TARGET_CONFLICT: '来源或目标目录存在同名冲突，整理已停止，不覆盖文件。',
+  ORGANIZE_TARGET_CONFLICT: '部分文件存在目录或来源名称冲突，其余文件已继续整理。处理后可继续原任务。',
   ORGANIZE_UNCERTAIN: '改名或移动结果未知，只核对已记录的对象，不重复发送原指令。',
   ORGANIZE_READ_FAILED: '读取整理目录失败，保留已完成步骤，稍后继续读取。',
   ORGANIZE_RESULT_UNRESOLVED: '部分结果无法确认，已保存确认成功的步骤，请人工核对；不会重放未确认的指令。',

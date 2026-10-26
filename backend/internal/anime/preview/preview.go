@@ -121,9 +121,15 @@ func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, 
 		item.Decision, item.ReasonCode = result, code
 	}
 	pass := func(stage string) { item.Steps = append(item.Steps, Step{Stage: stage, Result: "passed"}) }
-	// A batch title is only a candidate. All match/exclude/numbering rules are
-	// applied to its actual files before a download can be claimed.
+	// A batch title is only a candidate. Actual files must pass the rules using
+	// their publisher context before a download can be claimed.
 	if item.Release.Parse.Kind == "batch" && sourceBinding.Validate(true) == nil && rules.MinimumEpisode != nil {
+		exclusions := compiled
+		exclusions.match = nil
+		if code := exclusions.Filter(item.Release.Title); code != "" {
+			stop("patterns", "filtered", code)
+			return nil
+		}
 		item.Decision, item.ReasonCode, item.Selectable = "matched", "BATCH_FILES_PENDING", true
 		item.Steps = append(item.Steps, Step{Stage: "files", Result: "needs_confirmation", ReasonCode: item.ReasonCode})
 		return nil
@@ -161,7 +167,7 @@ func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, 
 		return nil
 	}
 	pass("minimum")
-	// No info-hash has been verified in P1. This is not a download decision.
+	// Metadata matching does not verify the info-hash or authorize a download.
 	item.Steps = append(item.Steps, Step{Stage: "identity", Result: "needs_confirmation", ReasonCode: "HASH_NOT_VERIFIED"})
 	item.Decision, item.ReasonCode, item.Selectable = "matched", "MATCHED_METADATA_ONLY", true
 	return nil

@@ -15,6 +15,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
 )
 
@@ -448,6 +449,7 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 			}
 		}
 		mediaDirectorySubtitleValues(siblings)
+		subtitleMatcher := organizeSubtitleMatcher(siblings)
 		for _, file := range siblings {
 			if file.ID == root.ID {
 				result.Files[0].NamingValues = file.NamingValues
@@ -456,7 +458,7 @@ func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (Org
 		}
 		for _, file := range files {
 			if !file.Directory && organizeMedia(file.Name) == "subtitle" {
-				owner, _ := organizeSubtitleOwner(OrganizeFile{ShareFile: file, ParentID: input.ParentID}, siblings)
+				owner, _ := organizeSubtitleOwner(OrganizeFile{ShareFile: file, ParentID: input.ParentID}, siblings, subtitleMatcher)
 				if owner != root.ID {
 					continue
 				}
@@ -497,11 +499,12 @@ type OrganizeSubtitle struct {
 // Tail is already filename-safe so both preview clients and execution append it verbatim.
 func organizeSubtitles(files []OrganizeFile) []OrganizeSubtitle {
 	subtitles := make([]OrganizeSubtitle, 0)
+	matcher := organizeSubtitleMatcher(files)
 	for _, file := range files {
 		if file.MediaType != "subtitle" {
 			continue
 		}
-		owner, tail := organizeSubtitleOwner(file, files)
+		owner, tail := organizeSubtitleOwner(file, files, matcher)
 		if tail = organizeName(tail); tail != "" {
 			tail = "." + tail
 		}
@@ -510,7 +513,17 @@ func organizeSubtitles(files []OrganizeFile) []OrganizeSubtitle {
 	return subtitles
 }
 
-func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile) (string, string) {
+func organizeSubtitleMatcher(files []OrganizeFile) *mediafacts.SubtitleMatcher {
+	videos := make([]mediafacts.SubtitleVideo, 0, len(files))
+	for _, file := range files {
+		if file.MediaType == "video" {
+			videos = append(videos, mediafacts.SubtitleVideo{ID: file.ID, ParentID: file.ParentID, Name: file.Name})
+		}
+	}
+	return mediafacts.NewSubtitleMatcher(videos)
+}
+
+func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) (string, string) {
 	bestID, tail, longest := "", "", -1
 	stem := []rune(strings.TrimSuffix(sub.Name, path.Ext(sub.Name)))
 	for _, video := range files {
@@ -526,6 +539,12 @@ func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile) (string, stri
 			bestID, tail, longest = video.ID, string(stem[n:]), n
 		} else if n == longest {
 			bestID = ""
+		}
+	}
+	if longest < 0 {
+		owners, tail := matcher.Candidates(sub.ParentID, sub.Name)
+		if len(owners) == 1 {
+			return owners[0], tail
 		}
 	}
 	return bestID, tail

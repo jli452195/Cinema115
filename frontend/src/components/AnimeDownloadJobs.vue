@@ -8,26 +8,28 @@ import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { animeConfigMessage } from '../lib/anime-config-api'
 import { animeLocalTime } from '../utils/animeSubscriptionPresentation'
 import { animeDownloadState, animeDownloadReason } from '../utils/animeDownloadPresentation'
-import type { AnimeDownloadPage } from '../types/animeSubscription'
+import type { AnimeDownloadJob, AnimeDownloadPage, AnimeSourceProgress } from '../types/animeSubscription'
 
 const props = defineProps<{ token: string; id: string; locked: boolean; version: number }>()
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; progress: [value: Record<string, AnimeSourceProgress>] }>()
 const stateKey = `jobs:${props.id}`, saved = subscriptionState(stateKey)
 const page = ref(saved.page || 1), expanded = ref(saved.expanded), result = ref<AnimeDownloadPage>(), loading = ref(false), error = ref('')
 const pages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
 let controller: AbortController | undefined, disposed = false, refreshing = false
 function save() { rememberSubscriptionState(stateKey, { top: 0, page: page.value, expanded: expanded.value }) }
+function lastResultAt(job: AnimeDownloadJob) { return Math.max(job.observedAt || 0, job.organization?.updatedAt || 0) }
 function toggle(id: string) { expanded.value = expanded.value.includes(id) ? expanded.value.filter(value => value !== id) : [...expanded.value, id]; save() }
 function changePage(value: number) { if (value < 1 || value > pages.value || loading.value) return; void load(false, false, value) }
 async function load(force = false, silent = false, requestedPage = page.value) {
   controller?.abort(); const active = new AbortController(); controller = active
   const key = `subscriptions/${encodeURIComponent(props.id)}/jobs?page=${requestedPage}&pageSize=20`
-  if (!force) { const cached = cachedSubscription<AnimeDownloadPage>(key); if (cached) { result.value = cached.data; page.value = requestedPage; save(); if (cached.fresh) return } }
+  if (!force) { const cached = cachedSubscription<AnimeDownloadPage>(key); if (cached) { result.value = cached.data; page.value = requestedPage; save(); if (cached.data.sourceProgress) emit('progress', cached.data.sourceProgress); if (cached.fresh) return } }
   refreshing = true; if (!silent) { loading.value = true; error.value = '' }
   try {
     const data = await readSubscription<AnimeDownloadPage>(key, props.token, active.signal)
     if (disposed || active.signal.aborted || controller !== active) return
     result.value = data; page.value = data.page; save(); error.value = ''
+    if (data.sourceProgress) emit('progress', data.sourceProgress)
     const last = Math.max(1, Math.ceil(data.total / 20))
     if (page.value > last) changePage(last)
   } catch (reason) { if (!disposed && !active.signal.aborted && controller === active) error.value = animeConfigMessage(reason) }
@@ -58,10 +60,10 @@ onBeforeUnmount(() => { save(); disposed = true; controller?.abort() })
           <div><dt>115 状态</dt><dd>{{ ({ queued: '待提交', submitting: '提交中', unknown: '未知', accepted: '已接收', downloading: '下载中', completed: '已完成', failed: '失败', blocked: '受阻', cancelled: '已取消' } as Record<string, string>)[job.downloadState] || job.downloadState }}</dd></div>
           <div><dt>文件清单</dt><dd>{{ job.fileState === 'verified' ? `已保存 ${job.files?.filter(file => file.kind === 'file').length ?? 0} 个文件的记录` : job.fileState === 'needs_review' ? '需要处理' : '尚未取得完整清单' }}</dd></div>
           <template v-if="job.organizationPlanned">
-            <div><dt>整理进度</dt><dd>{{ job.fileState !== 'verified' ? '等待下载与清单完成' : animeDownloadState(job) }}<span v-if="job.organization?.total" class="as-muted"> · <span class="inline-block">已改名 {{ job.organization.renamed }}/{{ job.organization.total }}</span>，<span class="inline-block">已移动 {{ job.organization.moved }}/{{ job.organization.total }}</span></span></dd></div>
+            <div><dt>整理进度</dt><dd>{{ job.fileState !== 'verified' ? '等待下载与清单完成' : animeDownloadState(job) }}<span v-if="job.organization?.total" class="as-muted"> · <span class="inline-block">已移动 {{ job.organization.moved }}/{{ job.organization.total }}</span><span v-if="job.organization.skipped" class="inline-block">，已有跳过 {{ job.organization.skipped }} 个</span></span></dd></div>
             <div v-if="job.organization?.targetPath"><dt>整理目录2</dt><dd>{{ job.organization.targetPath }}</dd></div>
           </template>
-          <div><dt>最近结果</dt><dd>{{ animeLocalTime(job.observedAt) }}<span v-if="job.attemptedAt && job.attemptedAt > job.observedAt" class="as-muted"> · 最近尝试 {{ animeLocalTime(job.attemptedAt) }}</span></dd></div>
+          <div><dt>最近结果</dt><dd>{{ animeLocalTime(lastResultAt(job)) }}<span v-if="job.attemptedAt && job.attemptedAt > lastResultAt(job)" class="as-muted"> · 最近尝试 {{ animeLocalTime(job.attemptedAt) }}</span></dd></div>
         </dl>
         <p class="as-muted">路径仅为执行时记录，不跟踪二次整理后的位置。</p>
         <p v-if="job.blockCode" class="as-job-reason">{{ animeDownloadReason(job.blockCode, job.downloadState) }}<code>{{ job.blockCode }}</code></p>

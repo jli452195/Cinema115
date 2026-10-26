@@ -83,6 +83,7 @@ type AnimeDownloadJob struct {
 }
 
 type AnimeDownloadClaimResult struct {
+	SkipReason         string           `json:"skipReason,omitempty"`
 	Skipped            bool             `json:"skipped,omitempty"`
 	Job                AnimeDownloadJob `json:"job"`
 	Created            bool             `json:"created"`

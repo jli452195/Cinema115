@@ -89,7 +89,7 @@ export type AnimeSourceCard = Pick<AnimeSubscriptionView['sources'][number], 'id
 export type AnimeSubscriptionCard = Pick<AnimeSubscriptionView, 'id' | 'status' | 'entry'> & { sources: AnimeSourceCard[] }
 export interface AnimeDownloadJob {
 	organizationPlanned?: boolean
-  organization?: { state: string; total: number; renamed: number; moved: number; targetPath: string; updatedAt: number }
+  organization?: { state: string; total: number; renamed: number; moved: number; skipped?: number; targetPath: string; updatedAt: number }
   id: string; title: string; groupName: string; revision: number
   downloadState: string; fileState: string; workflowState: string; blockCode: string | null
   executionPath: string; directoryCid: string | null; createdAt: number; updatedAt: number
@@ -97,7 +97,7 @@ export interface AnimeDownloadJob {
   files: { id: string; name: string; kind: string; size: string }[]
   permittedActions: { reconcile: boolean; retry: boolean }
 }
-export interface AnimeDownloadPage { items: AnimeDownloadJob[]; total: number; page: number; pageSize: number; dataVersion: string }
+export interface AnimeDownloadPage { items: AnimeDownloadJob[]; total: number; page: number; pageSize: number; dataVersion: string; sourceProgress?: Record<string, AnimeSourceProgress> }
 export interface AnimeSubscriptionPage { items: AnimeSubscriptionCard[]; total: number; page: number; pageSize: number; dataVersion: string }
 export interface AnimeSaveReceipt { id: string; entryId: string; revision: number; status: string; sourceIds: Record<string, string>; sourceRevisions: Record<string, number>; requiresRepreview: boolean }
 

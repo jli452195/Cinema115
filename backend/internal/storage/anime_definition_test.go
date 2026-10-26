@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"strings"
@@ -140,7 +141,7 @@ func TestAnimeDefinitionBackfillsFilteredResourcesWithoutRepeatingOrganized(t *t
 	}
 	ids[len(ids)-1] = saved[0].ID
 	states, _, err := f.store.AnimePreviewStates(ctx, id, ids)
-	if err != nil || states[release.ID] != "organized" || states[saved[0].ID] != "filtered" {
+	if err != nil || states[release.ID] != "organized" || states[saved[0].ID] != "BELOW_SOURCE_MINIMUM" {
 		t.Fatal("preview lost actual execution/skip states", states, err)
 	}
 	editAnimeDefinition(t, f, func(c *model.AnimeSubscriptionConfig) {
@@ -273,7 +274,7 @@ func TestAnimeDefinitionHighestVersionIgnoresPublicationTime(t *testing.T) {
 	}
 }
 
-func TestAnimeDefinitionAcceptedAndUnknownSnapshotsStayImmutable(t *testing.T) {
+func TestAnimeDefinitionEditsKeepIssuedSnapshotsAndRemovalPurgesExclusiveTasks(t *testing.T) {
 	for _, state := range []string{"confirmed", "unknown"} {
 		t.Run(state, func(t *testing.T) {
 			f, job := animeSubmitStoreFixture(t)
@@ -309,27 +310,18 @@ func TestAnimeDefinitionAcceptedAndUnknownSnapshotsStayImmutable(t *testing.T) {
 					c.Sources[i] = source
 				}
 			})
-			oldSource, _ := f.store.GetAnimeSource(context.Background(), job.Snapshot.Source.SourceID)
+			if _, err := f.store.GetAnimeSource(context.Background(), job.Snapshot.Source.SourceID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatal("removed source retained", err)
+			}
 			newSource, err := f.store.GetAnimeSource(context.Background(), out.SourceIDs["replacement"])
-			if err != nil || oldSource.Status != "removed" || oldSource.NamespaceID == newSource.NamespaceID {
-				t.Fatal("source replacement inherited old runtime", oldSource.Status, newSource.NamespaceID, err)
+			if err != nil || newSource.NamespaceID == job.Snapshot.Source.NamespaceID {
+				t.Fatal("source replacement inherited old runtime", newSource.NamespaceID, err)
 			}
-			after, _ = f.store.GetAnimeDownloadJob(context.Background(), job.ID)
-			if !reflect.DeepEqual(before, after) {
-				t.Fatal("source replacement mutated issued task")
+			if _, err := f.store.GetAnimeDownloadJob(context.Background(), job.ID); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatal("removed source kept its exclusive task", err)
 			}
-			if err := f.store.DispatchAnimeSubmit(context.Background(), op.ID); !errors.Is(err, ErrAnimeConflict) {
-				t.Fatal("issued submit replayed", err)
-			}
-			if state == "confirmed" {
-				tx, err := f.store.db.BeginTx(context.Background(), nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer tx.Rollback()
-				if err := checkAnimeJobAuthorizationTx(context.Background(), tx, after); err != nil {
-					t.Fatal("accepted task cannot continue original organization", err)
-				}
+			if err := f.store.DispatchAnimeSubmit(context.Background(), op.ID); err == nil {
+				t.Fatal("deleted submit replayed")
 			}
 		})
 	}

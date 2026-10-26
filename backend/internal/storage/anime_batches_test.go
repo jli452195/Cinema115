@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/btresource"
+	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/utils/torrentmeta"
 )
@@ -31,6 +32,121 @@ func batchClaimFixture(t *testing.T) *downloadClaimFixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+func TestAnimeBatchDiscoveryPrefersVerifiedCoverageAndReleasesFailedCollections(t *testing.T) {
+	for _, mode := range []string{"partial coverage", "no matching files", "read failed"} {
+		t.Run(mode, func(t *testing.T) {
+			f := batchClaimFixture(t)
+			now := time.Now().UnixMilli()
+			if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET next_check_at=?`, now-1); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET status='paused' WHERE id=?`, f.sub.Sources[1].ID); err != nil {
+				t.Fatal(err)
+			}
+			poll := discoveryPoll(t, f.store, now+60001)
+			rows := []animefeed.SourceRelease{discoveryRow("rel_single_1", now), discoveryRow("rel_single_2", now), discoveryRow("rel_batch", now)}
+			rows[0].Title, rows[1].Title, rows[2].Title = "Anime - 01 [HEVC]", "Anime - 02 [HEVC]", "Anime 01-02 合集 [HEVC]"
+			if _, err := f.store.CompleteAnimeSourcePoll(context.Background(), poll, discoveryPage(poll, now+60001, rows...), now+60001); err != nil {
+				t.Fatal(err)
+			}
+			work, found, err := f.store.ReserveAnimeDiscovery(context.Background(), now+60002)
+			if err != nil || !found || work.Decision.Snapshot.Parse.Kind != "batch" {
+				t.Fatal("collection was not verified first", work, found, err)
+			}
+			if _, found, err := f.store.ReserveAnimeDiscovery(context.Background(), now+60003); err != nil || found {
+				t.Fatal("concurrent single verification overtook collection", found, err)
+			}
+			code, retryable := "", false
+			if mode == "read failed" {
+				code, retryable = "RESOURCE_READ_FAILED", true
+			} else {
+				codec := "HEVC"
+				if mode == "no matching files" {
+					codec = "AVC"
+				}
+				verified, err := btresource.Verify(context.Background(), "garden", work.Observation, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.store.ClaimAnimeDownload(context.Background(), work.Decision.SourceID, work.Decision.ReleaseID, work.Decision.Generation, verified, f.target, []torrentmeta.File{{Path: "Anime - 01 [" + codec + "].mkv", Size: 1}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.store.CompleteAnimeDiscovery(context.Background(), work, code, retryable, now+60004); err != nil {
+				t.Fatal(err)
+			}
+			states, _, err := f.store.AnimePreviewStates(context.Background(), poll.Source.ID, []string{work.Decision.ReleaseID})
+			if err != nil || mode == "no matching files" && states[work.Decision.ReleaseID] != "BATCH_NO_MATCHING_FILES" {
+				t.Fatal("lost collection explanation", states, err)
+			}
+			pending, found, err := f.store.ReserveAnimeDiscovery(context.Background(), now+60005)
+			if err != nil || !found || pending.Decision.Snapshot.Parse.Kind != "episode" || mode == "partial coverage" && *pending.Decision.Snapshot.Parse.Episode != 2 {
+				t.Fatal("uncovered single did not continue", pending, found, err)
+			}
+			wantCovered := 0
+			if mode == "partial coverage" {
+				wantCovered = 1
+			}
+			var count int
+			if err := f.store.db.QueryRow(`SELECT count(*) FROM anime_release_decisions WHERE source_id=? AND disposition='filtered' AND reason_code='EPISODE_ALREADY_COVERED' AND next_verify_at IS NULL AND json_type(snapshot_json,'$.selection') IS NULL`, poll.Source.ID).Scan(&count); err != nil || count != wantCovered {
+				t.Fatal("coverage skipped wrong singles", count, wantCovered, err)
+			}
+		})
+	}
+}
+
+func TestAnimeBatchCannotReplaceQueuedOrVerifyingSingle(t *testing.T) {
+	for _, mode := range []string{"queued", "verifying"} {
+		t.Run(mode, func(t *testing.T) {
+			f := batchClaimFixture(t)
+			single, proof := f.selectTitle(t, 0, "rel_single", fmt.Sprintf("%040x", 7000), "Anime - 01 [HEVC]")
+			if mode == "queued" {
+				f.claim(t, 0, single, proof)
+			} else if _, err := f.store.db.Exec(`UPDATE anime_release_decisions SET lease_token=?,lease_until=? WHERE release_id=?`, single.ID, time.Now().UnixMilli()+60000, single.ID); err != nil {
+				t.Fatal(err)
+			}
+			batch, proof := f.selectTitle(t, 0, "rel_batch", fmt.Sprintf("%040x", 7001), "Anime 01-02 合集 [HEVC]")
+			out := claimBatch(t, f, 0, batch, proof, []torrentmeta.File{{Path: "Anime - 01 [HEVC].mkv"}, {Path: "Anime - 02 [HEVC].mkv"}})
+			if !out.Created || len(out.Job.Snapshot.BatchFiles) != 1 || *out.Job.Snapshot.BatchFiles[0].Parse.Episode != 2 {
+				t.Fatal("collection replaced work already in flight", out.Job.Snapshot.BatchFiles)
+			}
+		})
+	}
+}
+
+func TestAnimeBatchPublisherLabelsSurviveSubmitAndCompletion(t *testing.T) {
+	f := batchClaimFixture(t)
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.match',json('["(?i)1080p","外挂"]')) WHERE id=?`, f.sub.Sources[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.sub, err = f.store.GetAnimeSubscription(context.Background(), f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]torrentmeta.File, 0, 12)
+	for n := 1; n <= 12; n++ {
+		files = append(files, torrentmeta.File{Path: fmt.Sprintf("[MMSUB] Kono Oto Tomare - %02d [WebRip 1080p AVC-8bit AAC].mkv", n), Size: 1024})
+	}
+	r, v := f.selectTitle(t, 0, "rel_mmsub", fmt.Sprintf("%040x", 7002), "Anime 01-12 合集 [1080p][简繁外挂字幕]")
+	job := claimBatch(t, f, 0, r, v, files).Job
+	if len(job.Snapshot.BatchFiles) != 12 {
+		t.Fatal(job.Snapshot.BatchFiles)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET directory_cid='200' WHERE id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PrepareAnimeSubmit(context.Background(), job.ID, job.Generation, f.target); err != nil {
+		t.Fatal("contextual match lost its submit authorization", err)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified',workflow_state='organized' WHERE id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := refreshProgress(t, f)[f.sub.Sources[0].ID]; p.State != "complete" || p.OrganizedCount != 12 || p.MissingCount != 0 {
+		t.Fatal("completed collection was filtered again by bare file names", p)
+	}
 }
 
 func TestAnimeBatchOverlappingTailContributesToArchiveOnlyWithKnownTotal(t *testing.T) {
@@ -127,7 +243,7 @@ func TestAnimeBatchClaimsOnlyUnclaimedMatchingEpisodes(t *testing.T) {
 		progressEpisode(t, f, 0, n, true)
 	}
 	progressEpisode(t, f, 0, 9, true)
-	progressEpisode(t, f, 0, 11, false) // selected ordinary post, not yet verified
+	progressEpisode(t, f, 0, 11, false) // A candidate does not reserve a download.
 	files := make([]torrentmeta.File, 0, 12)
 	for n := 1; n <= 12; n++ {
 		codec := "HEVC"
@@ -138,10 +254,10 @@ func TestAnimeBatchClaimsOnlyUnclaimedMatchingEpisodes(t *testing.T) {
 	}
 	release, verified := f.selectTitle(t, 0, "rel_batch_1", fmt.Sprintf("%040x", 3000), "[组] Anime 01-12 合集 [HEVC/AVC]")
 	out := claimBatch(t, f, 0, release, verified, files)
-	if !out.Created || out.Skipped || out.Job.Snapshot.Organization == nil || len(out.Job.Snapshot.BatchFiles) != 2 {
+	if !out.Created || out.Skipped || out.Job.Snapshot.Organization == nil || len(out.Job.Snapshot.BatchFiles) != 3 {
 		t.Fatal(out)
 	}
-	for i, n := range []int{8, 12} {
+	for i, n := range []int{8, 11, 12} {
 		if *out.Job.Snapshot.BatchFiles[i].Parse.Episode != n {
 			t.Fatal("organized, pending or nonmatching episode was selected", out.Job.Snapshot.BatchFiles)
 		}
@@ -176,15 +292,21 @@ func TestAnimeBatchClaimsOnlyUnclaimedMatchingEpisodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	progress := refreshProgress(t, f)[f.sub.Sources[0].ID]
-	if progress.OrganizedCount != 10 || progress.PublishedThrough != 12 || progress.MissingCount != 2 || !reflect.DeepEqual(progress.Missing, []model.AnimeEpisodeRange{{First: 10, Last: 11}}) {
+	if progress.OrganizedCount != 11 || progress.PublishedThrough != 12 || progress.MissingCount != 1 || !reflect.DeepEqual(progress.Missing, []model.AnimeEpisodeRange{{First: 10, Last: 10}}) {
 		t.Fatal("batch receipts did not contribute per-episode progress", progress)
 	}
 }
 
 func TestAnimeBatchNoMatchesOrAlreadyCompleteCreatesNoDownload(t *testing.T) {
-	for _, mode := range []string{"no match", "complete"} {
+	for _, mode := range []string{"no match", "complete", "below minimum"} {
 		t.Run(mode, func(t *testing.T) {
 			f := batchClaimFixture(t)
+			if mode == "below minimum" {
+				if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.minimumEpisode',10) WHERE id=?`, f.sub.Sources[0].ID); err != nil {
+					t.Fatal(err)
+				}
+				f.sub.Sources[0].Rules.MinimumEpisode = animePtr(10)
+			}
 			baseline := 0
 			if mode == "complete" {
 				for n := 1; n <= 12; n++ {
@@ -202,8 +324,14 @@ func TestAnimeBatchNoMatchesOrAlreadyCompleteCreatesNoDownload(t *testing.T) {
 				t.Fatal(out)
 			}
 			assertDownloadCounts(t, f.store, baseline, baseline, baseline, baseline)
+			want := "BATCH_NO_MISSING_FILES"
+			if mode == "no match" {
+				want = "BATCH_NO_MATCHING_FILES"
+			} else if mode == "below minimum" {
+				want = "BELOW_SOURCE_MINIMUM"
+			}
 			d, err := f.store.GetAnimeReleaseDecision(context.Background(), f.sub.Sources[0].ID, r.ID)
-			if err != nil || d.Disposition != "filtered" || d.ReasonCode == nil || *d.ReasonCode != "BATCH_NO_MISSING_FILES" || d.Snapshot.Selection != nil {
+			if err != nil || d.Disposition != "filtered" || d.ReasonCode == nil || *d.ReasonCode != want || out.SkipReason != want || d.Snapshot.Selection != nil {
 				t.Fatal("skipped collection remained pending", d, err)
 			}
 		})

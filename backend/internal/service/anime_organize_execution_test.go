@@ -319,14 +319,17 @@ func TestAnimeOrganizePartialMoveKeepsSuccessAndNeverReplays(t *testing.T) {
 	}
 }
 
-func TestAnimeOrganizeConflictStopsBeforeRenaming(t *testing.T) {
+func TestAnimeOrganizeExistingVideoSkipsAndMissingSubtitleContinues(t *testing.T) {
 	f, _, session, job, d := animeOrganizeFixture(t)
 	d.entries["900"] = []model.AnimeDriveEntry{{ID: "901", ParentCID: "900", Kind: "directory", Name: "黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}"}}
 	d.entries["901"] = []model.AnimeDriveEntry{{ID: "902", ParentCID: "901", Kind: "directory", Name: "Season 01"}}
 	d.entries["902"] = []model.AnimeDriveEntry{{ID: "999", ParentCID: "902", Kind: "file", Name: "黑暗召唤师在地下恋爱中.S01E01.1080p-" + job.Snapshot.Source.GroupName + ".mkv", Size: 99}}
 	op := organizeTestCall(t, f, session, job.ID)
-	if op.Progress.Code != "ORGANIZE_TARGET_CONFLICT" || d.renames != 0 || d.moves != 0 || d.creates != 0 || d.reads != 3 {
+	if op.Progress.State != "done" || op.Progress.Code != "" || op.Progress.Files[0].ExistingID != "999" || op.Progress.Files[0].Moved || !op.Progress.Files[1].Moved || d.renames != 1 || d.moves != 1 || d.creates != 0 || d.reads != 3 {
 		t.Fatal(op.Progress, d)
+	}
+	if d.entries["902"][0].ID != "999" || d.entries["902"][0].Size != 99 {
+		t.Fatal("existing file was replaced", d.entries["902"])
 	}
 }
 

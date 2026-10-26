@@ -9,6 +9,7 @@ import (
 
 	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/utils/torrentmeta"
 )
 
 const animeOrganizedReleases = `SELECT x.snapshot_json FROM anime_job_selections x JOIN anime_download_jobs j ON j.id=x.job_id WHERE x.source_id=? AND x.status='authorized' AND j.workflow_state='organized' AND NOT EXISTS(SELECT 1 FROM anime_download_jobs newer WHERE newer.claim_id=j.claim_id AND newer.attempt>j.attempt)`
@@ -70,8 +71,15 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		if !sameAnimeEpisodeRules(d.Rules, source.Rules) {
 			continue
 		}
-		for _, release := range animeProgressReleases(model.AnimeRelease{Title: d.Title, Parse: d.Parse}, d.BatchFiles) {
-			ok, err := match(release)
+		releases, err := animeProgressReleases(source.Binding, rules, model.AnimeRelease{Title: d.Title, Parse: d.Parse}, d.BatchFiles)
+		if err != nil {
+			return out, err
+		}
+		for _, release := range releases {
+			ok := d.Parse.Kind == "batch" // Batch files already passed the contextual matcher.
+			if !ok {
+				ok, err = match(release)
+			}
 			if err != nil {
 				return out, err
 			}
@@ -96,8 +104,15 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		if !sameAnimeEpisodeRules(snapshot.Decision.Rules, source.Rules) {
 			continue
 		}
-		for _, release := range animeProgressReleases(snapshot.Release, snapshot.BatchFiles) {
-			ok, err := match(release)
+		releases, err := animeProgressReleases(source.Binding, rules, snapshot.Release, snapshot.BatchFiles)
+		if err != nil {
+			return out, err
+		}
+		for _, release := range releases {
+			ok := snapshot.Release.Parse.Kind == "batch"
+			if !ok {
+				ok, err = match(release)
+			}
 			if err != nil {
 				return out, err
 			}
@@ -137,15 +152,26 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	return out, nil
 }
 
-func animeProgressReleases(release model.AnimeRelease, files []model.AnimeBatchFile) []model.AnimeRelease {
+func animeProgressReleases(binding model.AnimeBinding, rules model.AnimeRules, release model.AnimeRelease, files []model.AnimeBatchFile) ([]model.AnimeRelease, error) {
 	if release.Parse.Kind != "batch" {
-		return []model.AnimeRelease{release}
+		return []model.AnimeRelease{release}, nil
 	}
-	out := make([]model.AnimeRelease, 0, len(files))
+	if len(files) == 0 {
+		return nil, nil
+	}
+	manifest := make([]torrentmeta.File, 0, len(files))
 	for _, file := range files {
+		manifest = append(manifest, torrentmeta.File{Path: file.Path, Size: file.Size})
+	}
+	matched, err := preview.MatchBatchFiles(binding, rules, release.Title, manifest)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.AnimeRelease, 0, len(matched))
+	for _, file := range matched {
 		out = append(out, model.AnimeRelease{Title: path.Base(file.Path), Parse: file.Parse})
 	}
-	return out
+	return out, nil
 }
 
 func readAnimeSourceProgress(ctx context.Context, q animeReader, source model.AnimeSource, sub model.AnimeSubscription, entry model.AnimeEntry) (model.AnimeSourceProgress, error) {

@@ -64,6 +64,15 @@ func TestAnimeCleanupRecyclesOnlyOwnRootWithOneExtraWrite(t *testing.T) {
 	if len(d.entries["902"]) != 2 || len(d.entries["900"]) != 1 {
 		t.Fatal("organized media or shared destination affected", d.entries)
 	}
+	plan, err := f.service.JobOrganizationPreview(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range plan.Items {
+		if item.ID == "402" && item.Reason != "temporary_recycled" {
+			t.Fatal("preview claims a recycled attachment is still at its source", item)
+		}
+	}
 	for i := 0; i < 2; i++ {
 		organizeTestCall(t, f, session, job.ID)
 	}

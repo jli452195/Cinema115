@@ -16,6 +16,7 @@ import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscription
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeSourceSpecs, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import { sourceProgressDescription, subscriptionLifecycle, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
+import type { AnimeSourceProgress } from '../types/animeSubscription'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -101,6 +102,11 @@ async function openPreview() {
 function closePreview() { if (previewActionBusy.value) return; previewOpen.value = false; void nextTick(() => previewButton.value?.focus({ preventScroll: true })) }
 watch(previewRef, async () => { if (previewOpen.value && previewSource.value && !editor.validPreview(previewSource.value)) await editor.runPreview(previewSource.value) })
 async function reload() { if (dirty.value) { reloadConfirm.value = true; discard.value = true; shell.value?.scrollTo(0); return } await editor.initialize() }
+function updateProgress(progress: Record<string, AnimeSourceProgress>) {
+  for (const source of local.value?.sources || []) {
+    if (progress[source.id]) source.progress = progress[source.id]
+  }
+}
 </script>
 
 <template>
@@ -163,7 +169,7 @@ async function reload() { if (dirty.value) { reloadConfirm.value = true; discard
         </div>
         <div v-if="tab === 'jobs' && local" id="anime-panel-jobs" role="tabpanel" aria-labelledby="anime-tab-jobs">
           <p v-for="source in local.sources" :key="source.id" class="ae-note">{{ sourceProgressDescription(source) }}</p>
-          <AnimeDownloadJobs :key="local.id" :token="token" :id="local.id" :locked="actions.locked.value || saveBusy" :version="jobsVersion" />
+          <AnimeDownloadJobs :key="local.id" :token="token" :id="local.id" :locked="actions.locked.value || saveBusy" :version="jobsVersion" @progress="updateProgress" />
         </div>
         </fieldset>
       </template>

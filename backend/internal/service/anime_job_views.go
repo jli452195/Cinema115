@@ -46,6 +46,7 @@ type AnimeOrganizationView struct {
 	Total      int    `json:"total"`
 	Renamed    int    `json:"renamed"`
 	Moved      int    `json:"moved"`
+	Skipped    int    `json:"skipped"`
 	TargetPath string `json:"targetPath"`
 	UpdatedAt  int64  `json:"updatedAt"`
 }
@@ -55,11 +56,12 @@ func (s *AnimeAdminService) OrganizationAvailable() bool {
 }
 
 type AnimeJobPageView struct {
-	Items       []AnimeJobView `json:"items"`
-	Total       int            `json:"total"`
-	Page        int            `json:"page"`
-	PageSize    int            `json:"pageSize"`
-	DataVersion string         `json:"dataVersion"`
+	Items          []AnimeJobView                       `json:"items"`
+	Total          int                                  `json:"total"`
+	Page           int                                  `json:"page"`
+	PageSize       int                                  `json:"pageSize"`
+	DataVersion    string                               `json:"dataVersion"`
+	SourceProgress map[string]model.AnimeSourceProgress `json:"sourceProgress"`
 }
 
 func (s *AnimeAdminService) DownloadAvailable() bool {
@@ -91,6 +93,9 @@ func (s *AnimeAdminService) jobView(ctx context.Context, job model.AnimeDownload
 				if f.Moved {
 					v.Organization.Moved++
 				}
+				if f.ExistingID != "" {
+					v.Organization.Skipped++
+				}
 			}
 		}
 	}
@@ -116,6 +121,18 @@ func (s *AnimeAdminService) JobPageView(ctx context.Context, id string, page, si
 		}
 		out.Items = append(out.Items, v)
 	}
+	sub, err := s.Store.GetAnimeSubscription(ctx, id, false)
+	if err != nil {
+		return out, err
+	}
+	ids := make([]string, 0, len(sub.Sources))
+	for _, source := range sub.Sources {
+		ids = append(ids, source.ID)
+	}
+	out.SourceProgress, err = s.Store.AnimeSourceProgresses(ctx, ids, true)
+	if err != nil {
+		return out, err
+	}
 	out.DataVersion, err = preview.Digest(out)
 	return out, err
 }
@@ -138,6 +155,9 @@ func (s *AnimeAdminService) JobAction(ctx context.Context, actor, key, id, actio
 				message, level := "已安排任务核对", "INFO"
 				if action == "retry" {
 					message = "已安排任务重试"
+					if prior.FileState == "verified" && prior.Snapshot.Organization != nil {
+						message = "已安排重新整理，沿用已下载资源"
+					}
 				}
 				if resultErr != nil {
 					message, level = "任务操作未完成；"+animeLogOperationError(resultErr), "WARNING"

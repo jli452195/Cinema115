@@ -149,10 +149,12 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		}
 	}
 	videoIndices := make([]int, 0, videoCount)
+	subtitleVideos := make([]mediafacts.SubtitleVideo, 0, videoCount)
 	for _, e := range job.Files.Entries {
 		if e.Kind != "file" || !isVideo(path.Ext(e.Name)) {
 			continue
 		}
+		subtitleVideos = append(subtitleVideos, mediafacts.SubtitleVideo{ID: e.ID, ParentID: e.ParentCID, Name: e.Name})
 		item := Item{ID: e.ID, Kind: "video", OriginalPath: original(e), Status: "needs_review", Reason: "unmapped"}
 		parsed, err := releaseparse.Title(e.Name)
 		if batch {
@@ -195,6 +197,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		videoIndices = append(videoIndices, len(out.Items))
 		out.Items = append(out.Items, item)
 	}
+	subtitleMatcher := mediafacts.NewSubtitleMatcher(subtitleVideos)
 	for _, e := range job.Files.Entries {
 		if e.Kind != "file" || isVideo(path.Ext(e.Name)) {
 			continue
@@ -205,7 +208,8 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			if batch {
 				item.Status, item.Reason = "preserved", "batch_not_selected"
 			}
-			matched, suffix := -1, ""
+			var candidates []int
+			suffix := ""
 			for _, index := range videoIndices {
 				v := out.Items[index]
 				entry := entries[v.ID]
@@ -213,14 +217,30 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 				if entry.ParentCID != e.ParentCID || !ok {
 					continue
 				}
-				if matched >= 0 {
-					matched = -2
-					break
-				}
-				matched, suffix = index, s
+				candidates, suffix = append(candidates, index), s
 			}
-			if matched >= 0 {
-				v := out.Items[matched]
+			if len(candidates) == 0 {
+				ids, tail := subtitleMatcher.Candidates(e.ParentCID, e.Name)
+				suffix = tail
+				for _, id := range ids {
+					for _, index := range videoIndices {
+						if out.Items[index].ID == id {
+							candidates = append(candidates, index)
+							break
+						}
+					}
+				}
+			}
+			if len(candidates) > 1 {
+				for _, index := range candidates {
+					if !batch || out.Items[index].Status != "preserved" {
+						item.Status, item.Reason = "needs_review", "subtitle_unmatched"
+						break
+					}
+				}
+			}
+			if len(candidates) == 1 {
+				v := out.Items[candidates[0]]
 				item.VideoID = v.ID
 				if v.Status == "ready" {
 					result, err := naming.Companion(rendered[v.ID], suffix, e.Name)

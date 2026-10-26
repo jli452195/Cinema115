@@ -14,8 +14,8 @@ import (
 )
 
 // ClaimDownload verifies a server-observed resource, then atomically associates
-// an already authorized pending choice with one local intent. P1 form saves
-// cannot call this via HTTP; activation/worker integration comes later in P2.
+// an already authorized pending choice with one local intent. Form saves only
+// update rules; discovery owns resource selection and verification.
 // The caller must use the exact provider observation kept in its saved preview
 // or controlled RSS read. Client-supplied resource hashes are never accepted.
 func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDownloadSession, sourceID, releaseID string, generation int64, observation animefeed.SourceRelease) (model.AnimeDownloadClaimResult, error) {
@@ -103,8 +103,13 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 			s.wakeDownloads()
 		} else if s.Logs != nil {
 			message := "此集已由合集补齐或正在处理，已跳过"
-			if d.Snapshot.Parse.Kind == "batch" {
-				message = "合集没有符合规则的待补集，已跳过"
+			switch result.SkipReason {
+			case "BATCH_NO_MATCHING_FILES":
+				message = "合集内没有通过规则且集号明确的视频，已跳过"
+			case "BATCH_NO_MISSING_FILES":
+				message = "合集匹配集数已有任务覆盖，无需重复下载"
+			case "BELOW_SOURCE_MINIMUM":
+				message = "合集匹配集数均低于补番起点，已跳过"
 			}
 			s.logAnime(sub.ID, animeLogSource("动漫 RSS", source.Provider, *source.GroupName), "DEBUG", animeLogTitle(release.Title)+"："+message)
 		}

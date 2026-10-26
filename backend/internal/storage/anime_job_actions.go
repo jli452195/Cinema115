@@ -59,9 +59,40 @@ func animeJobActionsTx(ctx context.Context, tx *sql.Tx, job model.AnimeDownloadJ
 		if err != nil {
 			return out, err
 		}
-		// Only an exact persisted step can be reconciled. No retry means no
-		// replay, including partially completed batches and target conflicts.
+		// Reconciliation uses the recorded step. Replanning is limited to a
+		// mapping failure before any external write was authorized.
 		out.Reconcile = op.Progress.Step != nil && op.Progress.State != "done" && code != "DOWNLOAD_ACCOUNT_CHANGED" && code != "TASK_ACCESS_DENIED"
+		if code == "ORGANIZE_TARGET_CONFLICT" && job.DownloadState == "completed" &&
+			op.Generation == job.Generation && op.Request.Target == job.Snapshot.Organization.Target &&
+			op.Progress.State == "needs_review" && op.Progress.Step == nil && op.Progress.Cleanup == "" {
+			if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err == nil {
+				out.Retry = true
+			} else if !errors.Is(err, ErrAnimeWriteUnauthorized) {
+				return out, err
+			}
+		}
+		if code == "ORGANIZE_MAPPING_REQUIRED" && job.DownloadState == "completed" &&
+			op.Generation == job.Generation && op.Request.Target == job.Snapshot.Organization.Target &&
+			op.Progress.State == "needs_review" && op.Progress.Code == "ORGANIZE_MAPPING_REQUIRED" &&
+			op.Progress.Step == nil && len(op.Progress.Directories) == 0 && op.Progress.Cleanup == "" {
+			var unissued bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_drive_operations WHERE id=? AND state='failed' AND authorized_at IS NULL)
+ AND (? OR EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE x.job_id=? AND x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled'))`, op.ID, job.Snapshot.Redownload, job.ID).Scan(&unissued); err != nil {
+				return out, err
+			}
+			if unissued {
+				for _, file := range op.Progress.Files {
+					unissued = unissued && !file.Moved
+				}
+			}
+			if unissued {
+				if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err == nil {
+					out.Retry = true
+				} else if !errors.Is(err, ErrAnimeWriteUnauthorized) {
+					return out, err
+				}
+			}
+		}
 		return out, nil
 	}
 	switch code {
@@ -142,7 +173,27 @@ func (s *Store) ScheduleAnimeJobAction(ctx context.Context, id, action string, r
 	if job.DownloadState == "completed" || job.DownloadState == "accepted" || job.DownloadState == "downloading" || job.DownloadState == "queued" && actions.Retry {
 		code = nil
 	}
-	if job.FileState == "verified" {
+	if job.FileState == "verified" && action == "retry" && job.BlockCode != nil && *job.BlockCode == "ORGANIZE_TARGET_CONFLICT" {
+		// Resume the original journal. Successful moves and keep-existing
+		// decisions survive; an in-flight write is never replayed here.
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state='prepared',result_json=json_set(result_json,'$.state','working','$.code',''),error_code=NULL,updated_at=? WHERE download_job_id=? AND kind='organize'`, now, job.ID); err != nil {
+			return out, err
+		}
+	} else if job.FileState == "verified" && action == "retry" {
+		// Discard only an unissued mapping plan. The worker rebuilds it from
+		// the same manifest and frozen settings; download/submit facts stay intact.
+		result, err := tx.ExecContext(ctx, `DELETE FROM anime_drive_operations WHERE download_job_id=? AND kind='organize' AND generation=? AND state='failed' AND authorized_at IS NULL`, job.ID, job.Generation)
+		if err != nil {
+			return out, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return out, err
+		}
+		if count != 1 {
+			return out, ErrAnimeConflict
+		}
+	} else if job.FileState == "verified" {
 		organizationCode := "ORGANIZE_UNCERTAIN"
 		code = &organizationCode
 		if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state='unknown',result_json=json_set(result_json,'$.state','unknown','$.code','ORGANIZE_UNCERTAIN'),error_code='ORGANIZE_UNCERTAIN',updated_at=? WHERE download_job_id=? AND kind='organize' AND json_extract(result_json,'$.step') IS NOT NULL`, now, id); err != nil {

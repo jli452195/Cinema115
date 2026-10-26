@@ -452,7 +452,7 @@ func TestAnimeReleaseVersionsDismissalAndSourceReplacement(t *testing.T) {
 	edit.Sources[0].Role = "main"
 	edit.Sources[1].Role = "standby"
 	sub = saveAnimeConfig(t, s, edit)
-	// Remove/re-add the same source identity: old namespace and decisions remain.
+	// Remove/re-add the same source identity without inheriting its history.
 	replacement := animeMainSource("replacement", "45")
 	replacement.Role = "standby"
 	edit.ExpectedRevision = sub.Revision
@@ -460,24 +460,24 @@ func TestAnimeReleaseVersionsDismissalAndSourceReplacement(t *testing.T) {
 	edit.RemovedSources = []model.AnimeSourceRemoval{{ID: main.ID, ExpectedRevision: 2}}
 	sub = saveAnimeConfig(t, s, edit)
 	all, err := s.GetAnimeSubscription(ctx, sub.ID, true)
-	if err != nil || len(all.Sources) != 3 {
+	if err != nil || len(all.Sources) != 2 {
 		t.Fatal(all, err)
 	}
-	var old, newSource model.AnimeSource
+	var newSource model.AnimeSource
 	for _, source := range all.Sources {
 		if source.ID == main.ID {
-			old = source
+			t.Fatal("removed source retained", source)
 		}
 		if source.GroupID != nil && *source.GroupID == "45" && source.Status != "removed" {
 			newSource = source
 		}
 	}
-	if old.Status != "removed" || newSource.ID == main.ID || newSource.NamespaceID == main.NamespaceID {
+	if newSource.ID == "" || newSource.ID == main.ID || newSource.NamespaceID == main.NamespaceID {
 		t.Fatal("source history reused", all)
 	}
 	page, err = s.ListAnimeReleases(ctx, AnimeReleaseFilter{SourceID: main.ID})
-	if err != nil || page.Total != 3 {
-		t.Fatal("removed source lost history", err)
+	if err != nil || page.Total != 0 {
+		t.Fatal("removed source retained history", page, err)
 	}
 	page, err = s.ListAnimeReleases(ctx, AnimeReleaseFilter{SourceID: newSource.ID})
 	if err != nil || page.Total != 0 || page.Items == nil {

@@ -176,6 +176,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
       } else if ((endpoint.endsWith('/subscriptions') && method === 'POST') || (/\/subscriptions\/[^/]+$/.test(endpoint) && method === 'PATCH')) {
         if (state.ruleFailure) { status = 400; data = { error: '匹配正则第 1 条语法无效，请使用 Go/RE2 支持的表达式', code: 'SOURCE_RULE_INVALID', details: { sourceRef: body.config.sources[0].ref, field: state.ruleFailure, line: 1 } } }
         else if (state.saveMode === 'conflict') { status = 409; data = { error: '配置版本已变化，输入保留', code: 'REVISION_CONFLICT' } }
+        else if (state.saveMode === 'busy') { state.saveMode = ''; status = 409; data = { error: '任务正在处理，请稍后重试删除；115 文件将保留', code: 'TASK_BUSY' } }
         else if (state.saveMode === 'duplicate') { status = 409; data = { error: '该篇章已有订阅配置', code: 'SUBSCRIPTION_EXISTS', details: { existingId: 'saved-subscription' } } }
         else {
           const ids = Object.fromEntries(body.config.sources.map(s => [s.ref, s.id || `source-${s.ref}`]))
@@ -786,10 +787,10 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     }
     await numbering.page.getByRole('button',{name:'预览',exact:true}).click()
     await numbering.page.locator('.ae-preview-table').waitFor()
-    const expectedNotes=['合集资源，暂不支持自动整理','未能识别单集编号','特殊集资源，暂不支持自动整理','编号含歧义，需确认集号']
+    const expectedNotes=['合集按包内文件分别命名','未能识别单集编号','特殊集资源，暂不支持自动整理','编号含歧义，需确认集号']
     for(const [i,note] of expectedNotes.entries()) {
       const row=numbering.page.locator('.ae-preview-table tbody tr').nth(i)
-      assert.equal(await row.locator('.ae-rename-pending').innerText(),note)
+      assert.equal(await row.locator('.ae-rename-pending').innerText(),i===0?'已按包内文件分别整理':note)
       assert.equal(await row.locator('.ae-sticky-rule .ae-status').getAttribute('title'),note)
       assert.equal(await row.locator('.ae-release-filename').count(),0,'unresolved rows never fabricate a filename')
     }
@@ -799,6 +800,27 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.deepEqual(await numbering.page.locator('.ae-release-reason').allTextContents().then(values=>values.slice(0,4)),expectedNotes)
     await numbering.page.getByRole('button',{name:'返回配置',exact:true}).click()
     assert.equal(await numbering.page.getByLabel('集数偏移',{exact:true}).inputValue(),'-24')
+    const batches=await session()
+    await batches.go();await batches.source()
+    batches.state.rowCount=2
+    batches.state.previewTransform=item=>({...item,selectable:true,decision:'matched',reasonCode:'BATCH_FILES_PENDING',release:{...item.release,parse:{...item.release.parse,kind:'batch',episode:null,rawEpisode:'01-13'}}})
+    await batches.page.getByRole('button',{name:'预览',exact:true}).click()
+    const batchRows=batches.page.locator('.ae-preview-table tbody tr')
+    await batchRows.first().locator('.ae-rename-pending').filter({hasText:'已按包内文件分别整理'}).waitFor()
+    assert.deepEqual(await batchRows.locator('.ae-sticky-rule .ae-status').allTextContents(),['包内匹配','包内匹配'])
+    assert.equal(await batchRows.nth(1).locator('.ae-rename-pending').innerText(),'合集按包内文件分别命名')
+    assert.equal(await batchRows.first().locator('.ae-sticky-state').innerText(),'已整理')
+    assert.equal(batches.calls.some(call=>call.endpoint.endsWith('/organization-preview')),false,'batch labels reuse local state without per-resource requests')
+    const covered=await session()
+    await covered.go();await covered.source()
+    covered.state.rowCount=4
+    covered.state.redownloadStates={'main-release-0':'BATCH_NO_MATCHING_FILES','main-release-1':'BATCH_NO_MISSING_FILES','main-release-2':'EPISODE_ALREADY_COVERED','main-release-3':'BELOW_SOURCE_MINIMUM'}
+    await covered.page.getByRole('button',{name:'预览',exact:true}).click()
+    await covered.page.getByText('合集已覆盖',{exact:true}).waitFor()
+    assert.deepEqual(await covered.page.locator('.ae-preview-table tbody .ae-sticky-state').allTextContents(),['包内未匹配','已有任务覆盖','合集已覆盖','低于起点'])
+    assert.match(await covered.page.getByText('包内未匹配',{exact:true}).getAttribute('title'),/集号明确/)
+    assert.equal(covered.writes().length,0,'showing coverage reasons cannot submit or organize resources')
+    passed.push('batch previews describe per-file matching, preserve completed state and avoid extra manifest requests')
     assert.equal(numbering.writes().length,0,'explaining a parse issue cannot create downloads or save a subscription')
     passed.push('preview distinguishes packs, unknown, special and ambiguous numbering without losing ordinary naming or editing state')
     await s.go('/anime/subscriptions/saved-subscription')
@@ -890,6 +912,41 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     assert.equal(managed.state.saved.status, 'enabled')
     assert.equal(managed.state.saved.sources[0].id, originalSource, 'adding a group keeps original source identity')
     assert.equal(managed.state.saved.sources.length, 2)
+    const removeRSS = await session()
+    removeRSS.state.saved = structuredClone(managed.state.saved)
+    removeRSS.state.namingTarget = structuredClone(managed.state.namingTarget)
+    const removedSource = removeRSS.state.saved.sources.find(source => source.role === 'standby')
+    await removeRSS.go('/anime/subscriptions/saved-subscription')
+    await removeRSS.page.getByRole('tab', { name: /备用 RSS/ }).click()
+    await removeRSS.page.locator('.ac-backup-row').click()
+    await removeRSS.page.getByRole('button', { name: '移除备用 RSS 来源', exact: true }).click()
+    const removalPrompt = removeRSS.page.locator('.ae-inline-notice')
+    assert.match(await removalPrompt.innerText(), /保存后清除该来源及其独有的下载、整理记录，保留 115 文件/)
+    await removalPrompt.getByRole('button', { name: '取消', exact: true }).click()
+    assert.equal(await removeRSS.page.locator('.ac-backup-row').count(), 1)
+    const writesBeforeRemoval = removeRSS.writes().length
+    await removeRSS.page.getByRole('button', { name: '移除备用 RSS 来源', exact: true }).click()
+    await removalPrompt.getByRole('button', { name: '确认', exact: true }).click()
+    assert.equal(await removeRSS.page.locator('.ac-backup-row').count(), 0)
+    assert.equal(removeRSS.state.saved.sources.length, 2, 'confirmation only stages deletion until Save')
+    assert.equal(removeRSS.writes().length, writesBeforeRemoval)
+    removeRSS.state.saveMode = 'busy'
+    await removeRSS.page.getByRole('button', { name: '保存', exact: true }).click()
+    await removeRSS.page.getByText('任务正在处理，请稍后重试删除；115 文件将保留', { exact: true }).waitFor()
+    assert.equal(removeRSS.state.saved.sources.length, 2, 'busy save keeps the persisted source')
+    assert.equal(await removeRSS.page.locator('.ac-backup-row').count(), 0, 'busy feedback preserves the staged edit')
+    const removalRequest = removeRSS.writes().at(-1)
+    assert.deepEqual(removalRequest.body.config.removedSourceIds, [{ id: removedSource.id, expectedRevision: removedSource.revision }])
+    assert.ok(removalRequest.body.config.sources.every(source => source.id !== removedSource.id))
+    assert.ok(removalRequest.body.config.naming.sources.every(mapping => mapping.sourceRef !== removedSource.id))
+    await removeRSS.page.getByRole('button', { name: '保存', exact: true }).click()
+    await wait(() => removeRSS.page.locator('.ac-identity').count().then(n => !n))
+    assert.equal(removeRSS.state.saved.sources.length, 1)
+    await removeRSS.go('/anime/subscriptions/saved-subscription')
+    await removeRSS.page.getByRole('tab', { name: /备用 RSS/ }).click()
+    assert.equal(await removeRSS.page.locator('.ac-backup-row').count(), 0)
+    assert.equal(removeRSS.calls.filter(call => /p115|\/115\//.test(call.endpoint)).length, 0)
+    passed.push('source deletion stages until Save, explains record cleanup, preserves edits on TASK_BUSY and retries without cloud requests')
     await managed.go('/anime/subscriptions/saved-subscription')
     await managed.page.setViewportSize({ width: 390, height: 844 })
     await managed.page.getByRole('button', { name: '删除订阅', exact: true }).click()

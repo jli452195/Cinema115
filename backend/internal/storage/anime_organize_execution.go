@@ -86,7 +86,7 @@ func (s *Store) PrepareAnimeOrganization(ctx context.Context, expected model.Ani
 			continue
 		}
 		entry := entries[item.ID]
-		op.Request.Files = append(op.Request.Files, model.AnimeOrganizeFile{ID: item.ID, SourceCID: entry.ParentCID, OriginalName: entry.Name, TargetPath: strings.TrimPrefix(item.TargetPath, strings.TrimRight(op.Request.Target.ParentPath, "/")+"/")})
+		op.Request.Files = append(op.Request.Files, model.AnimeOrganizeFile{ID: item.ID, SourceCID: entry.ParentCID, OriginalName: entry.Name, TargetPath: strings.TrimPrefix(item.TargetPath, strings.TrimRight(op.Request.Target.ParentPath, "/")+"/"), VideoID: item.VideoID})
 		op.Progress.Files = append(op.Progress.Files, model.AnimeOrganizeFileProgress{ID: item.ID, Renamed: entry.Name == path.Base(item.TargetPath)})
 	}
 	state := "prepared"
@@ -157,12 +157,6 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 		if !reflect.DeepEqual(unchanged, old) {
 			return empty, ErrAnimeInvalid
 		}
-		if err := checkAnimeDownloadTargetTx(ctx, tx, job.Snapshot.Target, false); err != nil {
-			return empty, err
-		}
-		if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err != nil {
-			return empty, err
-		}
 	}
 	if len(next.Files) != len(op.Progress.Files) || len(next.Directories) < len(op.Progress.Directories) {
 		return empty, ErrAnimeInvalid
@@ -170,15 +164,27 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 	if !dispatch && !validAnimeOrganizeProgress(op, next) {
 		return empty, ErrAnimeInvalid
 	}
-	all := len(next.Files) > 0
+	keepExisting := false
 	for i, f := range next.Files {
 		old := op.Progress.Files[i]
-		if f.ID != old.ID || old.Renamed && !f.Renamed || old.Moved && !f.Moved || f.Moved && !f.Renamed {
+		if f.ID != old.ID || old.Renamed && !f.Renamed || old.Moved && !f.Moved || f.Moved && !f.Renamed ||
+			f.Conflict && f.Handled() || f.ExistingID != "" && (f.Moved || f.ExistingID == f.ID || !model.ValidAnimeExternalID(f.ExistingID)) ||
+			old.ExistingID != "" && f.ExistingID != old.ExistingID {
 			return empty, ErrAnimeInvalid
 		}
-		all = all && f.Moved
+		keepExisting = keepExisting || f.ExistingID != old.ExistingID
 	}
-	if next.State == "done" && (!all || next.Step != nil || next.Code != "") {
+	// Keeping a destination authorizes discarding this downloaded copy at final
+	// cleanup. Validate that decision just like a new write, not like a receipt.
+	if dispatch || keepExisting {
+		if err := checkAnimeDownloadTargetTx(ctx, tx, job.Snapshot.Target, false); err != nil {
+			return empty, err
+		}
+		if err := checkAnimeJobAuthorizationTx(ctx, tx, job); err != nil {
+			return empty, err
+		}
+	}
+	if next.State == "done" && (!next.AllHandled() || next.Step != nil || next.Code != "") {
 		return empty, ErrAnimeInvalid
 	}
 	state := "prepared"
@@ -204,7 +210,7 @@ func (s *Store) CheckpointAnimeOrganization(ctx context.Context, expected model.
 		return empty, err
 	}
 	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state=?,result_json=?,error_code=NULLIF(?,''),authorized_at=CASE WHEN ? THEN ? ELSE authorized_at END,updated_at=? WHERE id=?`, state, raw, next.Code, dispatch, now, now, op.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state=?,result_json=?,error_code=NULLIF(?,''),authorized_at=CASE WHEN ? THEN ? ELSE authorized_at END,updated_at=? WHERE id=?`, state, raw, next.Code, dispatch || keepExisting, now, now, op.ID); err != nil {
 		return empty, err
 	}
 	workflow := "active"
@@ -278,6 +284,12 @@ func validAnimeOrganizeProgress(op model.AnimeOrganizeOperation, next model.Anim
 	}
 	for i, f := range next.Files {
 		old := previous.Files[i]
+		if f.ExistingID != old.ExistingID || f.Conflict != old.Conflict {
+			if previous.Step != nil || next.Step != nil || old.Handled() ||
+				f.Renamed != old.Renamed || f.Moved != old.Moved {
+				return false
+			}
+		}
 		if f.Renamed == old.Renamed && f.Moved == old.Moved {
 			continue
 		}
@@ -351,10 +363,8 @@ func validAnimeCleanupStep(job model.AnimeDownloadJob, op model.AnimeOrganizeOpe
 	if step.Kind != "cleanup" || job.DirectoryCID == nil || !model.ValidAnimeExternalID(*job.DirectoryCID) || step.CID != *job.DirectoryCID || step.CID == job.ParentCID || step.CID == op.Request.Target.ParentCID || step.Path != "" || len(step.IDs) != 0 || op.Progress.Cleanup != "" || job.DirectoryName != "anime-"+job.ID || job.Files == nil || len(op.Progress.Files) == 0 {
 		return false
 	}
-	for _, f := range op.Progress.Files {
-		if !f.Moved || !f.Renamed {
-			return false
-		}
+	if !op.Progress.AllHandled() {
+		return false
 	}
 	for _, d := range op.Progress.Directories {
 		if d.CID == step.CID {
@@ -411,7 +421,7 @@ func validAnimeOrganizeStep(req model.AnimeOrganizeRequest, p model.AnimeOrganiz
 				continue
 			}
 			found = true
-			if p.Files[i].Moved {
+			if p.Files[i].Handled() || p.Files[i].Conflict {
 				return false
 			}
 			if step.Kind == "rename" && (f.SourceCID != step.CID || p.Files[i].Renamed) {

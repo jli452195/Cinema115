@@ -133,16 +133,17 @@ func TestAnibtProviderPreviewAndSave(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	removed, active := false, false
+	oldPresent, active := false, false
 	for _, row := range updated.Sources {
-		removed = removed || row.ID == old.ID && row.Status == "removed" && row.Provider == "anibt"
+		oldPresent = oldPresent || row.ID == old.ID
 		active = active || row.ID != old.ID && row.Status != "removed" && row.Provider == "mikan"
 	}
-	if !removed || !active || updated.EntryID != saved.EntryID {
-		t.Fatal("replacement lost identity/history", updated)
+	if oldPresent || !active || updated.EntryID != saved.EntryID {
+		t.Fatal("replacement did not purge the old source", updated)
 	}
+	// This standalone preview was never bound to the saved subscription.
 	if _, e = s.Store.GetAnimePreview(ctx, "admin", preview.Batch.ID); e != nil {
-		t.Fatal("old preview lost", e)
+		t.Fatal("unrelated preview deleted", e)
 	}
 }
 func TestAnibtCacheIsolationFailureAndCooldown(t *testing.T) {

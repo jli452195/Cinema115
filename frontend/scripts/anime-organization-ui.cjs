@@ -15,7 +15,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const source = { id: 'source-a', role: 'main', provider: 'mikan', position: 0, configuredState: 'paused', revision: 1, runWhenEnabled: true, itemId: '300', groupId: '10', groupName: '银色子弹', binding: { schemaVersion: 1, confirmed: true, scope: { kind: 'feed' }, review: { method: 'source_review', itemId: '300', groupId: '10' } }, rules: { schemaVersion: 1, minimumEpisode: 25, match: [], exclude: [] } }
   const sub = { id: 'sub-a', entryId: 'entry-a', status: 'paused', revision: 2, firstEnabledAt: now, updatedAt: now, naming, entry: { id: 'entry-a', title: naming.target.title, editionKey: 'original', revision: 1, metadata: { schemaVersion: 1 } }, sources: [source], form: { schemaVersion: 1 }, readiness: { ready: true, issues: [] }, permittedActions: ['resume', 'archive', 'remove'].map(name => ({ name, allowed: true })) }
   const plan = () => ({ mode: 'standard', revision: 2, cloudConflictChecked: false, items: [
-    { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: 'ready', reason: 'mapped' },
+    { id: '300', kind: 'video', originalPath: `/下载/anime-job/${state.longPath ? 'UnbrokenRelease'.repeat(14) : 'video'}.mkv`, targetPath: `/旧整理/作品 (2026) {tmdb-335790}/Season 01/${state.longPath ? 'UnbrokenTitle'.repeat(14) : '作品'}.S01E01.银色子弹.mkv`, status: state.skipped ? 'skipped' : 'ready', reason: state.skipped ? 'existing_target' : 'mapped' },
     { id: '301', kind: 'subtitle', originalPath: '/下载/anime-job/video.chs.ass', targetPath: '/旧整理/作品 (2026) {tmdb-335790}/Season 01/作品.S01E01.银色子弹.chs.ass', status: 'ready', reason: 'subtitle_matched', videoId: '300' },
     { id: '302', kind: 'video', originalPath: '/下载/anime-job/other.mkv', targetPath: '/旧整理/重复.mkv', status: 'conflict', reason: 'duplicate_target' },
     { id: '303', kind: 'attachment', originalPath: '/下载/anime-job/readme.txt', targetPath: '', status: 'preserved', reason: 'attachment_preserved' }
@@ -31,7 +31,13 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     else if (endpoint.endsWith('/settings')) data = { settings, primaryAccount: { id: 'main', name: '主网盘', uid: '123', revision: 2 }, readiness: { ready: true, issues: [] } }
     else if (endpoint.endsWith('/subscriptions/sub-a/jobs')) {
       if (state.failJobs) { status = 503; data = { error: '模拟本地任务读取失败' } }
-      else data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: state.jobRevision, downloadState: 'completed', fileState: 'verified', workflowState: state.phase === 'done' ? 'organized' : 'active', organizationPlanned: true, organization: { state: state.phase, total: 2, renamed: state.phase === 'pending' ? 0 : 2, moved: state.phase === 'done' ? 2 : state.phase === 'needs_review' ? 1 : 0, targetPath: '/旧整理/这是一个很长的目录用来确认手机上自然折行', updatedAt: now }, blockCode: state.phase === 'unknown' ? 'ORGANIZE_UNCERTAIN' : state.phase === 'needs_review' ? 'ORGANIZE_RESULT_UNRESOLVED' : null, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: ['unknown', 'needs_review'].includes(state.phase), retry: false } }], total: 1, page: 1, pageSize: 20 }
+      else data = { items: [{ id: 'job-a', title: '[银色子弹] 作品 - 25', groupName: '银色子弹', revision: state.jobRevision, downloadState: 'completed', fileState: 'verified', workflowState: state.phase === 'done' ? 'organized' : 'active', organizationPlanned: true, organization: { state: state.phase, total: 2, renamed: state.mappingReview || state.phase === 'pending' ? 0 : 2, moved: state.mappingReview ? 0 : state.phase === 'done' ? 2 - (state.skipped || 0) : state.phase === 'needs_review' ? 1 : 0, skipped: state.skipped || 0, targetPath: '/旧整理/这是一个很长的目录用来确认手机上自然折行', updatedAt: now }, blockCode: state.conflictReview ? 'ORGANIZE_TARGET_CONFLICT' : state.mappingReview ? 'ORGANIZE_MAPPING_REQUIRED' : state.phase === 'unknown' ? 'ORGANIZE_UNCERTAIN' : state.phase === 'needs_review' ? 'ORGANIZE_RESULT_UNRESOLVED' : null, executionPath: '/下载/anime-job', directoryCid: '200', files: [{ id: '300', kind: 'file', name: 'video.mkv', size: '100' }], updatedAt: now, observedAt: now, permittedActions: { reconcile: !state.mappingReview && !state.conflictReview && ['unknown', 'needs_review'].includes(state.phase), retry: !!(state.mappingReview || state.conflictReview) } }], total: 1, page: 1, pageSize: 20, sourceProgress: { 'source-a': { state: state.phase === 'done' ? 'complete' : 'missing', firstEpisode: 25, publishedThrough: 25, organizedCount: state.phase === 'done' ? 1 : 0, missingCount: state.phase === 'done' ? 0 : 1 } } }
+    }
+    else if (endpoint.endsWith('/jobs/job-a/retry')) {
+      assert.equal(req.method(), 'POST'); assert.deepEqual(body, { expectedRevision: state.jobRevision })
+      state.retryWrites = (state.retryWrites || 0) + 1
+      state.mappingReview = false; state.conflictReview = false; state.phase = 'working'
+      data = { id: 'job-a', revision: ++state.jobRevision }
     }
     else if (endpoint.endsWith('/jobs/job-a/reconcile')) {
       assert.equal(req.method(), 'POST')
@@ -65,6 +71,9 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto(origin + '/anime/subscriptions/sub-a', { waitUntil: 'networkidle' })
+    const rule = page.getByRole('textbox', { name: '匹配正则（全部满足）', exact: true, includeHidden: true })
+    await rule.fill('keep-my-unsaved-rule')
+    const configReads = calls.filter(c => c.endpoint.endsWith('/subscriptions/sub-a') && c.method === 'GET').length
     await page.getByRole('tab').nth(2).click()
     await page.locator('[data-job-id="job-a"] > button').click()
     const job = page.locator('[data-job-id="job-a"]')
@@ -138,8 +147,32 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         if (phase === 'unknown') { await job.scrollIntoViewIfNeeded(); await page.screenshot({ path: 'test-results/anime-organization-unknown.png' }) }
       } else assert.equal(await job.getByRole('button', { name: '核对整理结果', exact: true }).count(), 0)
     }
-    await job.getByText('已改名 2/2，已移动 2/2', { exact: false }).waitFor()
+    state.phase = 'needs_review'; state.mappingReview = true; state.jobRevision++
+    await refresh.click()
+    const retry = job.getByRole('button', { name: '重新整理', exact: true })
+    await retry.focus(); await page.keyboard.press('Enter')
+    await job.getByText('安排重新整理已完成，后台会沿用原任务处理。', { exact: true }).waitFor()
+    assert.equal(state.retryWrites, 1)
+    assert.equal(await job.getByRole('button', { name: '重新整理', exact: true }).count(), 0)
+    assert.equal(calls.some(c=>c.endpoint.endsWith('/redownload')), false, 'replanning never schedules another download')
+    passed.push('未写入的映射失败复用重试接口显示重新整理，键盘提交沿用原任务，不重新下载')
+    state.phase = 'done'; state.jobRevision++; await refresh.click()
+    await job.getByText('已移动 2/2', { exact: false }).waitFor()
     passed.push('真实整理进度区分工作、未知、部分成功与完成，未知仅核对，完成无执行按钮且保留预览DOM')
+    state.phase = 'needs_review'; state.conflictReview = true; state.jobRevision++; await refresh.click()
+    await job.getByRole('button', { name: '继续整理', exact: true }).click()
+    await job.getByText('安排继续整理已完成，后台会沿用原任务处理。', { exact: true }).waitFor()
+    assert.equal(state.retryWrites, 2)
+    state.phase = 'done'; state.skipped = 1; state.jobRevision++; await refresh.click()
+    await job.getByText('已移动 1/2', { exact: false }).waitFor()
+    await job.getByText('已有跳过 1 个', { exact: false }).waitFor()
+    await job.getByRole('button', { name: '重新读取整理预览' }).click()
+    await job.getByText('已有同名文件，已跳过', { exact: true }).waitFor()
+    await page.getByText('银色子弹：已完成', { exact: true }).waitFor()
+    assert.equal(await rule.inputValue(), 'keep-my-unsaved-rule')
+    assert.equal(calls.filter(c => c.endpoint.endsWith('/subscriptions/sub-a') && c.method === 'GET').length, configReads)
+    assert.equal(calls.some(c => c.endpoint.endsWith('/redownload')), false)
+    passed.push('冲突沿用原任务继续整理，已有跳过单独统计并显示；同一轮询同步缺集摘要，保留未保存规则且不重读配置或重新下载')
     await page.setViewportSize({ width: 320, height: 740 }); await job.scrollIntoViewIfNeeded()
     state.longPath = true; await job.getByRole('button', { name: '重新读取整理预览' }).click()
     await job.getByText(/UnbrokenRelease/).waitFor()

@@ -218,10 +218,20 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		}
 		d.Snapshot.BatchFiles, batchFiles = all, selected
 		if len(selected) == 0 {
-			err := skipAnimeBatchTx(ctx, tx, d, "BATCH_NO_MISSING_FILES", &out)
+			reason := "BELOW_SOURCE_MINIMUM"
+			for _, file := range all {
+				if *file.Parse.Episode >= *source.Rules.MinimumEpisode {
+					reason = "BATCH_NO_MISSING_FILES"
+					break
+				}
+			}
+			if len(all) == 0 {
+				reason = "BATCH_NO_MATCHING_FILES"
+			}
+			err := skipAnimeReleaseTx(ctx, tx, d, reason, &out)
 			return out, err
 		}
-		if err := saveAnimeBatchDecisionTx(ctx, tx, d); err != nil {
+		if err := saveAnimeDecisionSnapshotTx(ctx, tx, d); err != nil {
 			return out, err
 		}
 	} else {
@@ -237,7 +247,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 			return out, err
 		}
 		if occupied[*release.Parse.Episode] {
-			err := skipAnimeBatchTx(ctx, tx, d, "EPISODE_ALREADY_COVERED", &out)
+			err := skipAnimeReleaseTx(ctx, tx, d, "EPISODE_ALREADY_COVERED", &out)
 			return out, err
 		}
 	}
@@ -361,6 +371,11 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		}
 	}
 	out.DecisionGeneration = d.Generation
+	if len(batchFiles) > 0 {
+		if err := coverAnimeSingleDecisionsTx(ctx, tx, source.ID, batchFiles, now); err != nil {
+			return out, err
+		}
+	}
 	return out, nil
 }
 

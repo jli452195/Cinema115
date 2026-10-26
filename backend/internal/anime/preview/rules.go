@@ -41,14 +41,20 @@ func CompileRules(r model.AnimeRules) (SourceRules, error) {
 	return out, nil
 }
 
-func (r SourceRules) Filter(title string) string {
+func (r SourceRules) Filter(titles ...string) string {
 	for _, re := range r.exclude {
-		if re.MatchString(title) {
-			return "EXCLUDED_PATTERN"
+		for _, title := range titles {
+			if re.MatchString(title) {
+				return "EXCLUDED_PATTERN"
+			}
 		}
 	}
 	for _, re := range r.match {
-		if !re.MatchString(title) {
+		matched := false
+		for _, title := range titles {
+			matched = matched || re.MatchString(title)
+		}
+		if !matched {
 			return "REQUIRED_PATTERN_MISSING"
 		}
 	}

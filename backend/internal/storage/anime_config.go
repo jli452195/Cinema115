@@ -291,12 +291,12 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 	if err := animeChanged(result); err != nil {
 		return receipt, err
 	}
-	for _, removal := range in.RemovedSources {
-		result, err := tx.ExecContext(ctx, `UPDATE anime_subscription_sources SET status='removed',run_when_enabled=0,revision=revision+1,run_generation=run_generation+1,next_check_at=NULL,check_token=NULL,updated_at=? WHERE id=? AND subscription_id=? AND revision=?`, now, removal.ID, in.ID, removal.ExpectedRevision)
-		if err != nil {
-			return receipt, animeDBError("remove anime source", err)
+	if len(in.RemovedSources) > 0 {
+		ids := make([]string, 0, len(in.RemovedSources))
+		for _, removal := range in.RemovedSources {
+			ids = append(ids, removal.ID)
 		}
-		if err := animeChanged(result); err != nil {
+		if err := deleteAnimeSourcesTx(ctx, tx, in.ID, ids); err != nil {
 			return receipt, err
 		}
 	}
@@ -322,11 +322,6 @@ func saveAnimeConfigurationTx(ctx context.Context, tx *sql.Tx, in model.AnimeSub
 				return receipt, err
 			}
 			if _, err := controlAnimeQueuedJobsTx(ctx, tx, in.ID, true, now); err != nil {
-				return receipt, err
-			}
-		}
-		for _, removal := range in.RemovedSources {
-			if err := invalidateAnimeSourceConfigurationTx(ctx, tx, removal.ID, now); err != nil {
 				return receipt, err
 			}
 		}

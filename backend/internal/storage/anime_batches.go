@@ -35,7 +35,9 @@ func animeReservedEpisodesTx(ctx context.Context, tx *sql.Tx, sourceID, exceptRe
 	if batchesOnly {
 		return out, nil
 	}
-	decisions, err := animeProgressRows(ctx, tx, `SELECT snapshot_json FROM anime_release_decisions WHERE source_id=? AND release_id<>? AND json_type(snapshot_json,'$.selection')='object'`, sourceID, exceptRelease)
+	// Ordinary feed candidates are not downloads. Reserve only established jobs
+	// or an in-flight verifier, so a first scan can prefer a verified collection.
+	decisions, err := animeProgressRows(ctx, tx, `SELECT d.snapshot_json FROM anime_release_decisions d WHERE d.source_id=? AND d.release_id<>? AND json_type(d.snapshot_json,'$.selection')='object' AND json_extract(d.snapshot_json,'$.parse.kind')='episode' AND (d.lease_until>? OR EXISTS(SELECT 1 FROM anime_job_selections x WHERE x.source_id=d.source_id AND x.release_id=d.release_id AND x.status='authorized'))`, sourceID, exceptRelease, time.Now().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +57,7 @@ func selectAnimeBatchFilesTx(ctx context.Context, tx *sql.Tx, source model.Anime
 	rules := source.Rules
 	zero := 0
 	rules.MinimumEpisode = &zero
-	all, err := preview.MatchBatchFiles(source.Binding, rules, manifest)
+	all, err := preview.MatchBatchFiles(source.Binding, rules, release.Title, manifest)
 	if err != nil {
 		return nil, nil, ErrAnimeInvalid
 	}
@@ -98,21 +100,31 @@ func selectAnimeBatchFilesTx(ctx context.Context, tx *sql.Tx, source model.Anime
 	return all, selected, nil
 }
 
-func saveAnimeBatchDecisionTx(ctx context.Context, tx *sql.Tx, d model.AnimeReleaseDecision) error {
+// Only a committed collection claim can cover pending single posts. Clear their
+// unexecuted choices in the same transaction, avoiding torrent/drive requests.
+func coverAnimeSingleDecisionsTx(ctx context.Context, tx *sql.Tx, sourceID string, files []model.AnimeBatchFile, now int64) error {
+	raw, err := animeJSON(files)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE anime_release_decisions AS d SET disposition='filtered',reason_code='EPISODE_ALREADY_COVERED',snapshot_json=json_remove(snapshot_json,'$.selection'),next_verify_at=NULL,generation=generation+1,updated_at=? WHERE source_id=? AND disposition='selected' AND json_extract(snapshot_json,'$.parse.kind')='episode' AND json_extract(snapshot_json,'$.parse.episode') IN (SELECT json_extract(value,'$.parse.episode') FROM json_each(?)) AND (lease_until IS NULL OR lease_until<=?) AND generation<? AND NOT EXISTS(SELECT 1 FROM anime_job_selections x WHERE x.source_id=d.source_id AND x.release_id=d.release_id)`, now, sourceID, raw, now, model.AnimeMaxRevision-1)
+	return err
+}
+
+func saveAnimeDecisionSnapshotTx(ctx context.Context, tx *sql.Tx, d model.AnimeReleaseDecision) error {
 	raw, err := animeJSON(d.Snapshot)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE anime_release_decisions SET snapshot_json=?,updated_at=? WHERE source_id=? AND release_id=? AND generation=?`, raw, time.Now().UnixMilli(), d.SourceID, d.ReleaseID, d.Generation)
+	_, err = tx.ExecContext(ctx, `UPDATE anime_release_decisions SET snapshot_json=?,disposition=?,reason_code=?,updated_at=? WHERE source_id=? AND release_id=? AND generation=?`, raw, d.Disposition, d.ReasonCode, time.Now().UnixMilli(), d.SourceID, d.ReleaseID, d.Generation)
 	return err
 }
 
-func skipAnimeBatchTx(ctx context.Context, tx *sql.Tx, d model.AnimeReleaseDecision, reason string, out *model.AnimeDownloadClaimResult) error {
+func skipAnimeReleaseTx(ctx context.Context, tx *sql.Tx, d model.AnimeReleaseDecision, reason string, out *model.AnimeDownloadClaimResult) error {
 	d.Snapshot.Selection = nil
-	if err := saveAnimeBatchDecisionTx(ctx, tx, d); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE anime_release_decisions SET disposition='filtered',reason_code=? WHERE source_id=? AND release_id=? AND generation=?`, reason, d.SourceID, d.ReleaseID, d.Generation)
+	d.Disposition, d.ReasonCode = "filtered", &reason
+	err := saveAnimeDecisionSnapshotTx(ctx, tx, d)
 	out.Skipped = err == nil
+	out.SkipReason = reason
 	return err
 }

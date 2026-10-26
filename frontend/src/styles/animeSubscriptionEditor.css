@@ -99,6 +99,7 @@
 .ae-release-reason.ae-error { color: #b91c1c; }.dark .ae-release-reason.ae-error { color: #fca5a5; }
 .ae-release-feed, .ae-release-group { color: var(--ae-muted); font-size: 12px; }
 .ae-status { display: inline-block; padding: 2px 7px; border-radius: 5px; white-space: nowrap; color: var(--ae-muted); background: var(--ae-inset); font-size: 11px; line-height: 1.8; }
+.ae-sticky-rule .ae-status { padding-inline: 5px; }
 .ae-status.done, .ae-status.active { background: #ecf5ff; color: #337ecc; }.dark .ae-status.done, .dark .ae-status.active { background: #283e59; color: #a8ceff; }
 .ae-status.attention { background: #faf0d9; color: #805b16; }.dark .ae-status.attention { background: #4c4026; color: #edd49b; }
 .ae-no-record, .ae-rename-pending { color: var(--ae-muted); font-size: 12px; line-height: 1.8; }
