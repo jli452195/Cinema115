@@ -1,6 +1,18 @@
 package model
 
-import "strm115/backend/internal/btresource"
+import (
+	"strm115/backend/internal/btresource"
+	"strm115/backend/internal/releaseparse"
+	"strm115/backend/internal/utils/torrentmeta"
+)
+
+// A selected video within one verified batch. Paths are relative to the download
+// directory and may include the torrent root name. Numbering uses frozen rules.
+type AnimeBatchFile struct {
+	Path  string              `json:"path"`
+	Size  int64               `json:"size"`
+	Parse releaseparse.Result `json:"parse"`
+}
 
 // AnimeSelectionBasis records the background worker's execution authorization
 // against a fixed source generation and download target.
@@ -26,6 +38,8 @@ type AnimeDownloadSource struct {
 }
 
 type AnimeDownloadSnapshot struct {
+	Manifest            []torrentmeta.File         `json:"manifest,omitempty"`
+	BatchFiles          []AnimeBatchFile           `json:"batchFiles,omitempty"`
 	SchemaVersion       int                        `json:"schemaVersion"`
 	Redownload          bool                       `json:"redownload,omitempty"`
 	Target              AnimeDownloadTarget        `json:"target"`
@@ -69,6 +83,7 @@ type AnimeDownloadJob struct {
 }
 
 type AnimeDownloadClaimResult struct {
+	Skipped            bool             `json:"skipped,omitempty"`
 	Job                AnimeDownloadJob `json:"job"`
 	Created            bool             `json:"created"`
 	DecisionGeneration int64            `json:"decisionGeneration"`

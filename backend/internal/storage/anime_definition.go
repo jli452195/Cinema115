@@ -62,6 +62,21 @@ func refreshAnimePendingJobTx(ctx context.Context, tx *sql.Tx, p AnimeSourcePoll
 		return nil
 	}
 	snapshot := job.Snapshot
+	if release.Parse.Kind == "batch" {
+		if p.Subscription.Naming == nil {
+			return nil
+		}
+		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, p.Source, release, snapshot.Manifest)
+		if errors.Is(err, ErrAnimeConflict) {
+			// Like a now-excluded ordinary post, a queued collection remains
+			// blocked when its frozen files no longer satisfy the edited rules.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		decision.BatchFiles, snapshot.BatchFiles = all, selected
+	}
 	snapshot.Release, snapshot.Decision, snapshot.Naming = release, decision, p.Subscription.Naming
 	snapshot.Source.SourceRevision, snapshot.Source.SourceGeneration = p.Source.Revision, p.Source.RunGeneration
 	snapshot.Source.SubscriptionRevision, snapshot.Source.SubscriptionGeneration = p.Subscription.Revision, p.Subscription.RunGeneration

@@ -102,7 +102,11 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		}
 	}
 	rootPath := strings.TrimRight(job.Snapshot.Target.ParentPath, "/") + "/" + job.DirectoryName
+	originalPaths := make(map[string]string, len(job.Files.Entries))
 	original := func(e model.AnimeDriveEntry) string {
+		if value, ok := originalPaths[e.ID]; ok {
+			return value
+		}
 		parts := []string{e.Name}
 		parent := e.ParentCID
 		for parent != *job.DirectoryCID {
@@ -113,7 +117,36 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			parts = append([]string{p.Name}, parts...)
 			parent = p.ParentCID
 		}
-		return rootPath + "/" + strings.Join(parts, "/")
+		value := rootPath + "/" + strings.Join(parts, "/")
+		originalPaths[e.ID] = value
+		return value
+	}
+	batch := job.Snapshot.Release.Parse.Kind == "batch"
+	selected := make(map[string]model.AnimeBatchFile, len(job.Snapshot.BatchFiles))
+	if batch {
+		if len(job.Snapshot.BatchFiles) == 0 {
+			return out, fmt.Errorf("batch has no selected files")
+		}
+		for _, file := range job.Snapshot.BatchFiles {
+			if file.Parse.Kind != "episode" || file.Parse.Episode == nil || !isVideo(path.Ext(file.Path)) {
+				return out, fmt.Errorf("invalid batch file selection")
+			}
+			var matches []model.AnimeDriveEntry
+			for _, entry := range job.Files.Entries {
+				relative := strings.TrimPrefix(original(entry), rootPath+"/")
+				if entry.Kind == "file" && (relative == file.Path || strings.HasSuffix(relative, "/"+file.Path)) {
+					matches = append(matches, entry)
+				}
+			}
+			if len(matches) != 1 || file.Size > 0 && matches[0].Size != file.Size {
+				out.Items = append(out.Items, Item{ID: "unresolved:" + file.Path, Kind: "video", OriginalPath: file.Path, Status: "needs_review", Reason: "batch_file_unresolved"})
+				continue
+			}
+			if _, exists := selected[matches[0].ID]; exists {
+				return out, fmt.Errorf("batch file selection is ambiguous")
+			}
+			selected[matches[0].ID] = file
+		}
 	}
 	videoIndices := make([]int, 0, videoCount)
 	for _, e := range job.Files.Entries {
@@ -122,6 +155,16 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		}
 		item := Item{ID: e.ID, Kind: "video", OriginalPath: original(e), Status: "needs_review", Reason: "unmapped"}
 		parsed, err := releaseparse.Title(e.Name)
+		if batch {
+			file, ok := selected[e.ID]
+			if !ok {
+				item.Status, item.Reason = "preserved", "batch_not_selected"
+				videoIndices = append(videoIndices, len(out.Items))
+				out.Items = append(out.Items, item)
+				continue
+			}
+			parsed = file.Parse
+		}
 		// A single unnamed video may use its trusted release title. Explicit
 		// batch/composite/SP evidence must never be replaced by that fallback.
 		if err == nil && parsed.Kind == "unknown" && parsed.RawEpisode == "" && videoCount == 1 {
@@ -131,7 +174,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		item.Reason = projection.Status
 		if projection.Status == "mapped" {
 			hint := releaseparse.Spec{}
-			if videoCount == 1 {
+			if videoCount == 1 && !batch {
 				hint = mediafacts.Specification(job.Snapshot.Release.Title)
 			}
 			values := mediafacts.Values(e.Name, hint, job.Snapshot.Source.GroupName)
@@ -159,6 +202,9 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		item := Item{ID: e.ID, Kind: "attachment", OriginalPath: original(e), Status: "preserved", Reason: "attachment_preserved"}
 		if isSubtitle(path.Ext(e.Name)) {
 			item.Kind, item.Status, item.Reason = "subtitle", "needs_review", "subtitle_unmatched"
+			if batch {
+				item.Status, item.Reason = "preserved", "batch_not_selected"
+			}
 			matched, suffix := -1, ""
 			for _, index := range videoIndices {
 				v := out.Items[index]
@@ -179,13 +225,15 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 				if v.Status == "ready" {
 					result, err := naming.Companion(rendered[v.ID], suffix, e.Name)
 					if err != nil {
-						item.Reason, item.Error = "naming_invalid", err.Error()
+						item.Status, item.Reason, item.Error = "needs_review", "naming_invalid", err.Error()
 					} else {
 						item.TargetPath = path.Join(o.Target.ParentPath, result.RelativePath)
 						item.Status, item.Reason = "ready", "subtitle_matched"
 					}
 				} else {
-					item.Reason = "video_needs_review"
+					if !batch || v.Status != "preserved" {
+						item.Status, item.Reason = "needs_review", "video_needs_review"
+					}
 				}
 			}
 		}
@@ -213,7 +261,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		item := &out.Items[i]
 		if item.VideoID != "" {
 			for _, v := range out.Items {
-				if v.ID == item.VideoID && v.Status != "ready" {
+				if v.ID == item.VideoID && v.Status != "ready" && (!batch || v.Status != "preserved") {
 					item.Status, item.Reason = "needs_review", "video_needs_review"
 				}
 			}

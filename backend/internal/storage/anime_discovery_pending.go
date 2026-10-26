@@ -90,7 +90,7 @@ func (s *Store) CompleteAnimeDiscovery(ctx context.Context, work AnimeDiscoveryW
 	}
 	var next, reason any
 	disposition := d.Disposition
-	if linked {
+	if linked || d.Disposition == "filtered" {
 		// Claim committed before its local receipt was lost: release the read
 		// reservation but never downgrade or retry the existing job.
 		reason = d.ReasonCode

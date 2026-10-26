@@ -75,7 +75,7 @@ func (s *AnimeAdminService) logAnimeRSSResult(poll storage.AnimeSourcePoll, page
 	}
 	message := fmt.Sprintf("%s，读取 %d 条", action, page.RawCount)
 	if stats.Selected > 0 {
-		message += fmt.Sprintf("，选中 %d 条待下载", stats.Selected)
+		message += fmt.Sprintf("，选中 %d 条待核验", stats.Selected)
 	}
 	if stats.Review > 0 {
 		message += fmt.Sprintf("，%d 条资源待确认", stats.Review)

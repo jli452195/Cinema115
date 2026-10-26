@@ -53,7 +53,7 @@ func PreferCurrentVersions(items []Item) {
 	versions := make([]int, len(items))
 	for i := range items {
 		item := &items[i]
-		if !item.Selectable {
+		if !item.Selectable || item.Release.Parse.Kind == "batch" {
 			continue
 		}
 		key := EpisodeEdition(item.Release.Parse)

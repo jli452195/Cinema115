@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -41,21 +42,23 @@ type Evidence struct {
 // Verified cannot be constructed from an arbitrary claimed hash by callers.
 // Its exported projection contains no credentials and is immutable by value.
 type Verified struct {
+	files      []torrentmeta.File
 	hash       string
 	verifiedAt int64
 	evidence   Evidence
 }
 
-func (v Verified) Hash() string       { return v.hash }
-func (v Verified) VerifiedAt() int64  { return v.verifiedAt }
-func (v Verified) Evidence() Evidence { return v.evidence }
+func (v Verified) Hash() string              { return v.hash }
+func (v Verified) VerifiedAt() int64         { return v.verifiedAt }
+func (v Verified) Evidence() Evidence        { return v.evidence }
+func (v Verified) Files() []torrentmeta.File { return append([]torrentmeta.File(nil), v.files...) }
 func (v Verified) Valid() bool {
 	return len(v.hash) == 40 && v.verifiedAt > 0 && v.evidence.SchemaVersion == 1 && v.evidence.ContentFingerprint != ""
 }
 
 // Restore accepts only a previously committed, trusted verification record.
 // It is for storage recovery, never for interpreting an HTTP claimed hash.
-func Restore(hash string, version int, verifiedAt int64, evidence Evidence) (Verified, error) {
+func Restore(hash string, version int, verifiedAt int64, evidence Evidence, files []torrentmeta.File) (Verified, error) {
 	validHex := func(s string, size int) bool {
 		b, err := hex.DecodeString(s)
 		return err == nil && len(b) == size && strings.ToLower(s) == s
@@ -70,7 +73,7 @@ func Restore(hash string, version int, verifiedAt int64, evidence Evidence) (Ver
 	} else if evidence.Method != "source_magnet" || evidence.Provider != "garden" || evidence.MetadataSHA256 != "" {
 		return Verified{}, ErrInvalid
 	}
-	return Verified{hash: hash, verifiedAt: verifiedAt, evidence: evidence}, nil
+	return Verified{hash: hash, verifiedAt: verifiedAt, evidence: evidence, files: append([]torrentmeta.File(nil), files...)}, nil
 }
 
 type TorrentReader interface {
@@ -122,7 +125,19 @@ func Verify(ctx context.Context, provider string, row animefeed.SourceRelease, r
 			}
 			return Verified{}, readErr
 		}
-		out.hash, err = TorrentHash(body)
+		var meta torrentmeta.Metadata
+		meta, err = torrentmeta.Parse(body)
+		if errors.Is(err, torrentmeta.ErrUnsupported) {
+			err = ErrUnsupported
+		} else if err != nil {
+			err = ErrInvalid
+		}
+		out.hash, out.files = meta.InfoHash, meta.Files
+		if meta.MultiFile {
+			for i := range out.files {
+				out.files[i].Path = path.Join(meta.Name, out.files[i].Path)
+			}
+		}
 		if err == nil && row.MagnetHint != "" {
 			var hint string
 			hint, err = MagnetHash(row.MagnetHint)

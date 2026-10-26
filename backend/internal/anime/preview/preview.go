@@ -121,6 +121,13 @@ func evaluateCompiled(sourceBinding model.AnimeBinding, rules model.AnimeRules, 
 		item.Decision, item.ReasonCode = result, code
 	}
 	pass := func(stage string) { item.Steps = append(item.Steps, Step{Stage: stage, Result: "passed"}) }
+	// A batch title is only a candidate. All match/exclude/numbering rules are
+	// applied to its actual files before a download can be claimed.
+	if item.Release.Parse.Kind == "batch" && sourceBinding.Validate(true) == nil && rules.MinimumEpisode != nil {
+		item.Decision, item.ReasonCode, item.Selectable = "matched", "BATCH_FILES_PENDING", true
+		item.Steps = append(item.Steps, Step{Stage: "files", Result: "needs_confirmation", ReasonCode: item.ReasonCode})
+		return nil
+	}
 	if code := compiled.Filter(item.Release.Title); code != "" {
 		stop("patterns", "filtered", code)
 		return nil

@@ -191,6 +191,7 @@ type AnimeRelease struct {
 // P1 explanations omit Selection and cannot authorize downloads. P2 execution
 // choices also fix the target, generations and interpretation versions.
 type AnimeDecisionSnapshot struct {
+	BatchFiles    []AnimeBatchFile     `json:"batchFiles,omitempty"`
 	SchemaVersion int                  `json:"schemaVersion"`
 	Title         string               `json:"title"`
 	Binding       AnimeBinding         `json:"binding"`

@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -78,11 +80,40 @@ func (s *AnimeAdminService) ClaimDownload(ctx context.Context, session *AnimeDow
 	if err := session.Validate(ctx); err != nil {
 		return empty, err
 	}
-	result, err := s.Store.ClaimAnimeDownload(ctx, sourceID, releaseID, generation, verified, session.Target())
+	manifest := verified.Files()
+	if d.Snapshot.Parse.Kind == "batch" && len(manifest) == 0 && release.Provider == "garden" {
+		if s.Bindings == nil || s.Bindings.Garden == nil {
+			return empty, btresource.ErrUnsupported
+		}
+		files, err := s.Bindings.Garden.Files(ctx, DownloadResourceInput{Source: "garden", Provider: observation.Origin, ProviderID: observation.OriginID, Magnet: observation.MagnetHint})
+		if err != nil {
+			if errors.Is(err, garden.ErrInvalid) || errors.Is(err, ErrOrganizeInput) {
+				return empty, btresource.ErrInvalid
+			}
+			return empty, btresource.ErrRead
+		}
+		if files.Reason != "" || len(files.Files) == 0 || files.Hash != verified.Hash() {
+			return empty, btresource.ErrUnsupported
+		}
+		manifest = files.manifest
+	}
+	result, err := s.Store.ClaimAnimeDownload(ctx, sourceID, releaseID, generation, verified, session.Target(), manifest)
 	if err == nil {
-		s.wakeDownloads()
+		if !result.Skipped {
+			s.wakeDownloads()
+		} else if s.Logs != nil {
+			message := "此集已由合集补齐或正在处理，已跳过"
+			if d.Snapshot.Parse.Kind == "batch" {
+				message = "合集没有符合规则的待补集，已跳过"
+			}
+			s.logAnime(sub.ID, animeLogSource("动漫 RSS", source.Provider, *source.GroupName), "DEBUG", animeLogTitle(release.Title)+"："+message)
+		}
 		if result.Created && s.Logs != nil {
-			s.logAnimeJob(result.Job, "INFO", "已加入下载队列")
+			message := "已加入下载队列"
+			if len(result.Job.Snapshot.BatchFiles) > 0 {
+				message += fmt.Sprintf("，合集补缺 %d 集", len(result.Job.Snapshot.BatchFiles))
+			}
+			s.logAnimeJob(result.Job, "INFO", message)
 		}
 	}
 	return result, err

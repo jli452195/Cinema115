@@ -32,6 +32,7 @@ type DownloadFileSpec struct {
 }
 
 type DownloadFiles struct {
+	manifest   []torrentmeta.File          // Retain original facts for RSS without another site read.
 	ManifestID string                      `json:"manifestId,omitempty"`
 	Specs      map[string]DownloadFileSpec `json:"specs,omitempty"`
 	Hash       string                      `json:"hash"`
@@ -141,7 +142,7 @@ func (t mikanTorrentTransport) Fetch(ctx context.Context, endpoint string, _ int
 }
 
 func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles, error) {
-	out := DownloadFiles{Hash: hash, Files: []OrganizeFile{}, Subtitles: []OrganizeSubtitle{}, Specs: make(map[string]DownloadFileSpec)}
+	out := DownloadFiles{manifest: files, Hash: hash, Files: []OrganizeFile{}, Subtitles: []OrganizeSubtitle{}, Specs: make(map[string]DownloadFileSpec)}
 	media := make([]OrganizeFile, 0, len(files))
 	for _, file := range files {
 		kind := organizeMedia(file.Path)

@@ -21,7 +21,7 @@ func TestSourceRegexFilteringAndCustomEpisodes(t *testing.T) {
 		{"Anime ep=25 [1080P]", "", 25},
 		{"Anime ep=25 [720p]", "REQUIRED_PATTERN_MISSING", 25},
 		{"sample ep=25 [1080P]", "EXCLUDED_PATTERN", 25},
-		{"[batch] Anime ep=25 [1080P]", "EXCLUDED_PATTERN", 25},
+		{"[batch] Anime ep=25 [1080P]", "EXCLUDED_PATTERN", -1},
 		{"Anime - 12 [1080P]", "", -1},
 		{"Anime ep=25 ep=26 [1080P]", "", -1},
 		{"Anime ep=00 [1080P]", "", 0},

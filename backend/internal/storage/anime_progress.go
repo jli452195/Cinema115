@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 
 	"strm115/backend/internal/anime/preview"
 	"strm115/backend/internal/model"
@@ -15,8 +16,8 @@ const animeOrganizedReleases = `SELECT x.snapshot_json FROM anime_job_selections
 // Correlated with source alias s. Dirty summaries never suppress RSS reads.
 const animeSourceComplete = `EXISTS(SELECT 1 FROM anime_source_progress g WHERE g.source_id=s.id AND g.generation=g.computed_generation AND json_extract(g.summary_json,'$.state')='complete')`
 
-func animeProgressRows(ctx context.Context, q animeReader, query, id string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, query, id)
+func animeProgressRows(ctx context.Context, q animeReader, query string, args ...any) ([]string, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -69,15 +70,17 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		if !sameAnimeEpisodeRules(d.Rules, source.Rules) {
 			continue
 		}
-		ok, err := match(model.AnimeRelease{Title: d.Title, Parse: d.Parse})
-		if err != nil {
-			return out, err
-		}
-		if ok && d.Parse.Episode != nil {
-			if first < 0 || *d.Parse.Episode < first {
-				first = *d.Parse.Episode
+		for _, release := range animeProgressReleases(model.AnimeRelease{Title: d.Title, Parse: d.Parse}, d.BatchFiles) {
+			ok, err := match(release)
+			if err != nil {
+				return out, err
 			}
-			out.PublishedThrough = max(out.PublishedThrough, *d.Parse.Episode)
+			if ok && release.Parse.Episode != nil {
+				if first < 0 || *release.Parse.Episode < first {
+					first = *release.Parse.Episode
+				}
+				out.PublishedThrough = max(out.PublishedThrough, *release.Parse.Episode)
+			}
 		}
 	}
 	// Use the same compiled matcher for observed titles and organized receipts.
@@ -93,12 +96,14 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		if !sameAnimeEpisodeRules(snapshot.Decision.Rules, source.Rules) {
 			continue
 		}
-		ok, err := match(snapshot.Release)
-		if err != nil {
-			return out, err
-		}
-		if p := snapshot.Release.Parse; ok && p.Kind == "episode" && p.Episode != nil {
-			found[*p.Episode] = true
+		for _, release := range animeProgressReleases(snapshot.Release, snapshot.BatchFiles) {
+			ok, err := match(release)
+			if err != nil {
+				return out, err
+			}
+			if p := release.Parse; ok && p.Kind == "episode" && p.Episode != nil {
+				found[*p.Episode] = true
+			}
 		}
 	}
 	for n := range found {
@@ -130,6 +135,17 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 		out.State = "missing"
 	}
 	return out, nil
+}
+
+func animeProgressReleases(release model.AnimeRelease, files []model.AnimeBatchFile) []model.AnimeRelease {
+	if release.Parse.Kind != "batch" {
+		return []model.AnimeRelease{release}
+	}
+	out := make([]model.AnimeRelease, 0, len(files))
+	for _, file := range files {
+		out = append(out, model.AnimeRelease{Title: path.Base(file.Path), Parse: file.Parse})
+	}
+	return out
 }
 
 func readAnimeSourceProgress(ctx context.Context, q animeReader, source model.AnimeSource, sub model.AnimeSubscription, entry model.AnimeEntry) (model.AnimeSourceProgress, error) {

@@ -9,16 +9,42 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/utils/torrentmeta"
 )
 
 func testTorrent() ([]byte, string) {
 	info := "d6:lengthi1e4:name1:x12:piece lengthi1e6:pieces20:" + strings.Repeat("p", 20) + "e"
 	h := sha1.Sum([]byte(info))
 	return []byte("d4:info" + info + "e"), hex.EncodeToString(h[:])
+}
+
+func TestVerifiedRetainsDetachedTorrentManifest(t *testing.T) {
+	post := strings.Repeat("a", 40)
+	row := animefeed.SourceRelease{PostKey: post, Title: "batch", TorrentURL: "https://mikanani.me/Download/20261019/" + post + ".torrent"}
+	body := []byte("d4:infod5:filesld6:lengthi1e4:pathl1:aee" + "d6:lengthi1e4:pathl1:beee4:name1:x12:piece lengthi2e6:pieces20:" + strings.Repeat("p", 20) + "ee")
+	reads := 0
+	verified, err := Verify(context.Background(), "mikan", row, torrentFunc(func(context.Context, string, string, string) ([]byte, error) {
+		reads++
+		return body, nil
+	}))
+	want := []torrentmeta.File{{Path: "x/a", Size: 1}, {Path: "x/b", Size: 1}}
+	if err != nil || reads != 1 || !reflect.DeepEqual(verified.Files(), want) {
+		t.Fatal("manifest required a second read or lost the root", verified.Files(), err)
+	}
+	copy := verified.Files()
+	copy[0].Path = "changed"
+	if !reflect.DeepEqual(verified.Files(), want) {
+		t.Fatal("caller mutated verification cache")
+	}
+	restored, err := Restore(verified.Hash(), VerificationVersion, verified.VerifiedAt(), verified.Evidence(), verified.Files())
+	if err != nil || !reflect.DeepEqual(restored.Files(), want) {
+		t.Fatal("manifest lost on recovery", err)
+	}
 }
 
 func TestTorrentHashExactInfoAndV1Semantics(t *testing.T) {
@@ -185,7 +211,7 @@ func TestRestoreVerifiedEvidenceIsStrict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := Restore(v.Hash(), VerificationVersion, v.VerifiedAt(), v.Evidence()); err != nil || got.Hash() != v.Hash() {
+	if got, err := Restore(v.Hash(), VerificationVersion, v.VerifiedAt(), v.Evidence(), nil); err != nil || got.Hash() != v.Hash() {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*Evidence){
@@ -193,14 +219,14 @@ func TestRestoreVerifiedEvidenceIsStrict(t *testing.T) {
 	} {
 		e := v.Evidence()
 		change(&e)
-		if _, err := Restore(v.Hash(), VerificationVersion, v.VerifiedAt(), e); err == nil {
+		if _, err := Restore(v.Hash(), VerificationVersion, v.VerifiedAt(), e, nil); err == nil {
 			t.Fatal("invalid saved proof accepted")
 		}
 	}
-	if _, err := Restore(strings.ToUpper(v.Hash()), VerificationVersion, v.VerifiedAt(), v.Evidence()); err == nil {
+	if _, err := Restore(strings.ToUpper(v.Hash()), VerificationVersion, v.VerifiedAt(), v.Evidence(), nil); err == nil {
 		t.Fatal("noncanonical hash restored")
 	}
-	if _, err := Restore(v.Hash(), VerificationVersion+1, v.VerifiedAt(), v.Evidence()); err == nil {
+	if _, err := Restore(v.Hash(), VerificationVersion+1, v.VerifiedAt(), v.Evidence(), nil); err == nil {
 		t.Fatal("unknown verifier accepted")
 	}
 }

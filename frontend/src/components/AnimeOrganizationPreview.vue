@@ -13,7 +13,7 @@ async function read() {
   catch (reason) { if (!controller.signal.aborted) error.value = animeConfigMessage(reason) }
   finally { loading.value = false }
 }
-const labels: Record<string, string> = { mapped: '可按计划整理', subtitle_matched: '字幕已配对', unmapped: '编号尚未映射', ignored: '按规则保留', subtitle_unmatched: '字幕未找到唯一对应视频', video_needs_review: '先确认对应视频', attachment_preserved: '附件保留原处', duplicate_target: '目标路径重复，不覆盖', name_too_long: '名称过长，需要调整', naming_invalid: '命名不符合模板，请调整' }
+const labels: Record<string, string> = { batch_not_selected: '不整理，随临时目录清理', batch_file_unresolved: '未找到唯一对应的合集文件', mapped: '可按计划整理', subtitle_matched: '字幕已配对', unmapped: '编号尚未映射', ignored: '按规则保留', subtitle_unmatched: '字幕未找到唯一对应视频', video_needs_review: '先确认对应视频', attachment_preserved: '附件保留原处', duplicate_target: '目标路径重复，不覆盖', name_too_long: '名称过长，需要调整', naming_invalid: '命名不符合模板，请调整' }
 onBeforeUnmount(() => controller.abort())
 </script>
 <template>

@@ -59,7 +59,7 @@ func (r SourceRules) Filter(title string) string {
 // fails or matches multiple times never falls back to a different episode.
 func (r SourceRules) Parse(title string) (releaseparse.Result, error) {
 	out, err := releaseparse.Title(title)
-	if err != nil || r.episode == nil {
+	if err != nil || r.episode == nil || out.Kind == "batch" {
 		return out, err
 	}
 	out.Kind, out.Episode, out.RawEpisode = "unknown", nil, ""

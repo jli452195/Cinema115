@@ -35,7 +35,7 @@ func TestAnimeRSSLogsDescribeCommittedPollingWithoutExtraRequests(t *testing.T) 
 	}
 	check()
 	info := f.service.Logs.Snapshot("INFO", "订阅")
-	if len(info) != 1 || info[0].TaskID != source.SubscriptionID || !strings.Contains(info[0].Source, "蜜柑") || !strings.Contains(info[0].Message, "选中 1 条待下载") || !strings.Contains(info[0].Message, "《") {
+	if len(info) != 1 || info[0].TaskID != source.SubscriptionID || !strings.Contains(info[0].Source, "蜜柑") || !strings.Contains(info[0].Message, "选中 1 条待核验") || !strings.Contains(info[0].Message, "《") {
 		t.Fatal("missing RSS identity or actual result", info)
 	}
 	check()

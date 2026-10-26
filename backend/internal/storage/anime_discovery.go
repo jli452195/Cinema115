@@ -206,6 +206,10 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 	if err != nil {
 		return stats, err
 	}
+	covered, err := animeReservedEpisodesTx(ctx, tx, poll.Source.ID, "", true)
+	if err != nil {
+		return stats, err
+	}
 	candidates := make([]preview.Item, 0, len(releases))
 	newMatch := false
 	generations := make(map[string]int64, len(releases))
@@ -250,6 +254,9 @@ func (s *Store) CompleteAnimeSourcePoll(ctx context.Context, poll AnimeSourcePol
 		disposition, reason := item.Decision, item.ReasonCode
 		if disposition == "matched" {
 			disposition = "selected"
+		}
+		if disposition == "selected" && r.Parse.Kind == "episode" && r.Parse.Episode != nil && covered[*r.Parse.Episode] {
+			disposition, reason = "filtered", "EPISODE_ALREADY_COVERED"
 		}
 		if disposition == "selected" && frozen[preview.EpisodeEdition(r.Parse)] {
 			// A changed configuration may reauthorize this exact unsubmitted

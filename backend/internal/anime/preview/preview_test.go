@@ -318,7 +318,7 @@ func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
 		p.Releases[i].PostKey = fmt.Sprintf("rel_ani_fixture_%d", i+1)
 	}
 	s := build(t, c, p)
-	if len(s.SelectedIDs) != 2 {
+	if len(s.SelectedIDs) != 3 {
 		t.Fatal("ordinary ANi episodes did not match the selected specification", s.Items)
 	}
 	for i, episode := range []int{2, 1} {
@@ -327,7 +327,7 @@ func TestPreviewANiSeasonNumberIsNotAnEpisodeRange(t *testing.T) {
 			t.Fatal("season number replaced the publisher episode", item)
 		}
 	}
-	if s.Items[2].Selectable || s.Items[2].Release.Parse.Kind != "batch" || s.Items[2].ReasonCode != "EPISODE_NUMBER_UNRESOLVED" {
+	if !s.Items[2].Selectable || s.Items[2].Release.Parse.Kind != "batch" || s.Items[2].ReasonCode != "BATCH_FILES_PENDING" || s.Items[2].Release.Parse.Episode != nil {
 		t.Fatal("a genuine episode range became a single episode", s.Items[2])
 	}
 }
@@ -352,7 +352,7 @@ func TestPreviewRanmaPublisherOffsetAndCurrentVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := build(t, c, p)
-	if len(s.SelectedIDs) != 3 || !s.Items[0].Selectable || s.Items[1].Selectable || s.Items[1].ReasonCode != "RELEASE_VERSION_SUPERSEDED" {
+	if len(s.SelectedIDs) != 4 || !s.Items[0].Selectable || s.Items[1].Selectable || s.Items[1].ReasonCode != "RELEASE_VERSION_SUPERSEDED" {
 		t.Fatal("current v2 must win once without losing other episodes", s.Items)
 	}
 	for i, episode := range []int{27, 27, 26, 25} {
@@ -361,12 +361,12 @@ func TestPreviewRanmaPublisherOffsetAndCurrentVersion(t *testing.T) {
 			t.Fatal("publisher season changed the configured TMDB offset", naming)
 		}
 	}
-	if s.Items[4].Selectable || s.Items[4].Release.Parse.Kind != "batch" || plan.Project("main", s.Items[4].Release.Parse).Status != "unmapped" {
-		t.Fatal("a true range was selected or mapped as one episode", s.Items[4])
+	if !s.Items[4].Selectable || s.Items[4].Release.Parse.Kind != "batch" || plan.Project("main", s.Items[4].Release.Parse).Status != "unmapped" {
+		t.Fatal("batch must await file inspection without mapping the range as one episode", s.Items[4])
 	}
 	source.Rules.MinimumEpisode = ptr(2)
 	s = build(t, c, p)
-	if len(s.SelectedIDs) != 2 || s.Items[3].ReasonCode != "BELOW_SOURCE_MINIMUM" {
+	if len(s.SelectedIDs) != 3 || s.Items[3].ReasonCode != "BELOW_SOURCE_MINIMUM" {
 		t.Fatal("naming offset must not change the publisher download minimum", s.Items)
 	}
 }

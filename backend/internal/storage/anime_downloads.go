@@ -12,6 +12,7 @@ import (
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/utils/torrentmeta"
 )
 
 var (
@@ -44,7 +45,7 @@ func (s *Store) FindAnimeVerifiedRelease(ctx context.Context, releaseID, fingerp
 	if snapshot.Protocol != "bt_v1" || snapshot.InfoHash != hash || snapshot.Release.ID != releaseID || snapshot.Release.ContentFingerprint != fingerprint {
 		return btresource.Verified{}, false, ErrAnimeIdentity
 	}
-	v, err := btresource.Restore(hash, snapshot.VerificationVersion, verifiedAt, snapshot.Evidence)
+	v, err := btresource.Restore(hash, snapshot.VerificationVersion, verifiedAt, snapshot.Evidence, snapshot.Manifest)
 	return v, err == nil, err
 }
 
@@ -126,7 +127,7 @@ func readAnimeReleaseDecision(ctx context.Context, r animeReader, sourceID, rele
 // ClaimAnimeDownload consumes only an authoritative pending execution choice,
 // never a P1 form selection. Verification must come from the controlled source
 // observation. No network operation or automatic retry takes place here.
-func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID string, decisionGeneration int64, verified btresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
+func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID string, decisionGeneration int64, verified btresource.Verified, target model.AnimeDownloadTarget, manifest ...[]torrentmeta.File) (model.AnimeDownloadClaimResult, error) {
 	var out model.AnimeDownloadClaimResult
 	if !model.ValidAnimeID(sourceID) || !model.ValidAnimeID(releaseID) || decisionGeneration < 1 || decisionGeneration >= model.AnimeMaxRevision || !verified.Valid() || target.Validate() != nil {
 		return out, ErrAnimeInvalid
@@ -136,7 +137,14 @@ func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID stri
 		return out, fmt.Errorf("begin anime resource claim: %w", err)
 	}
 	defer tx.Rollback()
-	out, err = claimAnimeDownloadTx(ctx, tx, sourceID, releaseID, decisionGeneration, verified, target)
+	files := verified.Files()
+	if len(manifest) > 1 {
+		return out, ErrAnimeInvalid
+	}
+	if len(manifest) == 1 {
+		files = manifest[0]
+	}
+	out, err = claimAnimeDownloadTx(ctx, tx, sourceID, releaseID, decisionGeneration, verified, target, files)
 	if err != nil {
 		return model.AnimeDownloadClaimResult{}, err
 	}
@@ -146,7 +154,7 @@ func (s *Store) ClaimAnimeDownload(ctx context.Context, sourceID, releaseID stri
 	return out, nil
 }
 
-func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID string, generation int64, verified btresource.Verified, target model.AnimeDownloadTarget) (model.AnimeDownloadClaimResult, error) {
+func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID string, generation int64, verified btresource.Verified, target model.AnimeDownloadTarget, manifest []torrentmeta.File) (model.AnimeDownloadClaimResult, error) {
 	var out model.AnimeDownloadClaimResult
 	if err := checkAnimeDownloadTargetTx(ctx, tx, target, true); err != nil {
 		return out, err
@@ -199,12 +207,39 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if source.Binding.Validate(true) != nil || source.Rules.Validate(true) != nil {
 		return out, ErrAnimeInvalid
 	}
-	match, err := preview.MatchesRelease(source.Binding, source.Rules, release)
-	if err != nil {
-		return out, fmt.Errorf("check anime selected rules: %w", err)
-	}
-	if !match {
-		return out, ErrAnimeConflict
+	var batchFiles []model.AnimeBatchFile
+	if release.Parse.Kind == "batch" {
+		if sub.Naming == nil {
+			return out, ErrAnimeDirectoryRequired
+		}
+		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, source, release, manifest)
+		if err != nil {
+			return out, err
+		}
+		d.Snapshot.BatchFiles, batchFiles = all, selected
+		if len(selected) == 0 {
+			err := skipAnimeBatchTx(ctx, tx, d, "BATCH_NO_MISSING_FILES", &out)
+			return out, err
+		}
+		if err := saveAnimeBatchDecisionTx(ctx, tx, d); err != nil {
+			return out, err
+		}
+	} else {
+		match, err := preview.MatchesRelease(source.Binding, source.Rules, release)
+		if err != nil {
+			return out, fmt.Errorf("check anime selected rules: %w", err)
+		}
+		if !match {
+			return out, ErrAnimeConflict
+		}
+		occupied, err := animeReservedEpisodesTx(ctx, tx, source.ID, release.ID, true)
+		if err != nil {
+			return out, err
+		}
+		if occupied[*release.Parse.Episode] {
+			err := skipAnimeBatchTx(ctx, tx, d, "EPISODE_ALREADY_COVERED", &out)
+			return out, err
+		}
 	}
 	if err := checkAnimeClaimedEditionTx(ctx, tx, sourceID, release, verified.Hash()); err != nil {
 		return out, err
@@ -243,9 +278,13 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		out.Created = true
 	}
 	snapshot := model.AnimeDownloadSnapshot{
+		BatchFiles:    batchFiles,
 		SchemaVersion: model.AnimeSchemaVersion, Target: target, Protocol: "bt_v1", InfoHash: verified.Hash(), VerificationVersion: btresource.VerificationVersion,
 		Evidence: evidence, Release: release, Decision: d.Snapshot, Naming: sub.Naming,
 		Source: model.AnimeDownloadSource{SubscriptionID: sub.ID, SubscriptionRevision: sub.Revision, SubscriptionGeneration: sub.RunGeneration, SourceID: source.ID, SourceRevision: source.Revision, SourceGeneration: source.RunGeneration, Provider: source.Provider, ItemID: *source.ItemID, GroupID: *source.GroupID, GroupName: *source.GroupName, NamespaceID: source.NamespaceID},
+	}
+	if release.Parse.Kind == "batch" {
+		snapshot.Manifest = manifest
 	}
 	if out.Created {
 		settings, err := readAnimeSettingsTx(ctx, tx)
@@ -282,6 +321,20 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		return out, fmt.Errorf("read anime claimed job: %w", err)
 	}
 	job := out.Job
+	if !out.Created && release.Parse.Kind == "batch" {
+		for _, selected := range batchFiles {
+			found := false
+			for _, file := range job.Snapshot.BatchFiles {
+				if reflect.DeepEqual(file, selected) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return out, ErrAnimeResourceSource
+			}
+		}
+	}
 	if job.AccountID != target.AccountID || job.AccountRevision != target.AccountRevision || job.UID != target.UID || job.ParentCID != target.ParentCID || job.Snapshot.InfoHash != verified.Hash() || job.Snapshot.Protocol != "bt_v1" {
 		return out, ErrAnimeResourceTarget
 	}
