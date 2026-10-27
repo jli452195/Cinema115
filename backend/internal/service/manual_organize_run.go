@@ -83,6 +83,7 @@ func (s *OrganizeEngine) checkpoint(job *OrganizeJob) error {
 		if doc.Jobs[i].ID == job.ID {
 			doc.Jobs[i] = cloneOrganizeJob(*job)
 			doc.Jobs[i].Items = append([]OrganizeItem{}, job.Items...)
+			updateDownloadShareMembers(&doc, *job)
 			if err := s.saveLocked(doc); err != nil {
 				return err
 			}

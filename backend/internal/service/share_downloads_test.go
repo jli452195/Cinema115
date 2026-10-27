@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 type downloadShareFake struct {
 	*cleanupFakeDrive
 	roots                    []p115.ShareFile
+	shares                   map[string][]p115.ShareFile
 	sends, configures, reads int
 	sendErr, configureErr    error
 	pending, review          bool
@@ -29,6 +31,7 @@ func (f *downloadShareFake) DeleteDirectory(ctx context.Context, cid, cookie str
 
 func (f *downloadShareFake) SendShare(_ context.Context, ids []string, _ string) (*p115.ShareInfo, error) {
 	f.sends++
+	f.roots = nil
 	for _, id := range ids {
 		for _, files := range f.dirs {
 			for _, file := range files {
@@ -38,7 +41,15 @@ func (f *downloadShareFake) SendShare(_ context.Context, ids []string, _ string)
 			}
 		}
 	}
-	return &p115.ShareInfo{Code: "ownedabc", Password: "abcd"}, f.sendErr
+	code := "ownedabc"
+	if f.sends > 1 {
+		code += strconv.Itoa(f.sends)
+	}
+	if f.shares == nil {
+		f.shares = make(map[string][]p115.ShareFile)
+	}
+	f.shares[code] = append([]p115.ShareFile(nil), f.roots...)
+	return &p115.ShareInfo{Code: code, Password: "abcd"}, f.sendErr
 }
 
 func (f *downloadShareFake) ConfigureShare(_ context.Context, share *p115.ShareInfo, password, _ string) error {
@@ -49,10 +60,11 @@ func (f *downloadShareFake) ConfigureShare(_ context.Context, share *p115.ShareI
 	return f.configureErr
 }
 
-func (f *downloadShareFake) List(ctx context.Context, _ *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
+func (f *downloadShareFake) List(ctx context.Context, share *p115.ShareInfo, cid string, offset int, cookie string) (*p115.SharePage, error) {
 	f.reads++
 	if cid == "0" {
-		return &p115.SharePage{Count: len(f.roots), Files: f.roots, UnderReview: f.review}, nil
+		roots := f.shares[share.Code]
+		return &p115.SharePage{Count: len(roots), Files: roots, UnderReview: f.review}, nil
 	}
 	page, err := f.DriveFiles(ctx, cid, offset, cookie)
 	if err == nil {
@@ -386,13 +398,11 @@ func TestDownloadShareBatchPreservesSubtitlesAndRequestReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roots := make(map[string]bool)
+	root := preview.Jobs[0].Download.Share.Directory
 	for _, job := range preview.Jobs {
-		root := job.Download.Share.Directory
-		if roots[root] || len(job.Items) != 2 || job.Items[1].File.MediaType != "subtitle" {
+		if job.Download.Share.Directory != root || len(job.Items) != 2 || job.Items[1].File.MediaType != "subtitle" {
 			t.Fatal(job)
 		}
-		roots[root] = true
 		for _, item := range job.Items {
 			if !strings.HasPrefix(item.Directory, root+"/") || !strings.Contains(item.TargetPath, root) || item.Conflict != "" {
 				t.Fatal(item)

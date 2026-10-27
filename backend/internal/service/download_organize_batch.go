@@ -174,11 +174,17 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		return nil, err
 	}
 	var shareSettings AutomationSettings
+	var shareDirectory string
 	if common.ShareSTRM {
 		shareSettings, err = s.ShareSettings(a.ID)
 		if err != nil {
 			return nil, fmt.Errorf("%w：%s", ErrOrganizeInput, err)
 		}
+		token, err := organizeToken()
+		if err != nil {
+			return nil, err
+		}
+		shareDirectory = "Cinema115-" + token
 	}
 	c := OrganizeConfig{AccountID: a.ID, SourceCID: download.TargetCID, SourcePath: download.TargetPath, TargetCID: common.TargetCID, TargetPath: common.TargetPath}
 	files := make([]OrganizeFile, 0, count)
@@ -198,11 +204,7 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		hashes[manifest.Hash] = true
 		downloads = append(downloads, &ResourceDownload{Hash: manifest.Hash, ParentCID: download.TargetCID, ParentPath: download.TargetPath})
 		if common.ShareSTRM {
-			token, err := organizeToken()
-			if err != nil {
-				return nil, err
-			}
-			downloads[index].Share = &DownloadShare{Directory: "Cinema115-" + token, Settings: shareSettings}
+			downloads[index].Share = &DownloadShare{Directory: shareDirectory, Settings: shareSettings}
 		}
 		prefix := manifest.Hash + "/"
 		add := func(file OrganizeFile) {
@@ -321,7 +323,7 @@ func (s *DownloadOrganize) StartBatch(id string) (DownloadBatchResult, error) {
 	if !ok {
 		return DownloadBatchResult{}, fmt.Errorf("%w：批量预览已过期，请重新确认", ErrOrganizeConflict)
 	}
-	if len(s.live)+len(batch.jobs) > 100 {
+	if s.trackedDownloadsLocked()+len(batch.jobs) > 100 {
 		return DownloadBatchResult{}, fmt.Errorf("%w：下载整理队列最多 100 项，请等待或减少选择", ErrOrganizeConflict)
 	}
 	var account P115Account
@@ -340,6 +342,9 @@ func (s *DownloadOrganize) StartBatch(id string) (DownloadBatchResult, error) {
 	for i := range jobs {
 		jobs[i].Status, jobs[i].UpdatedAt, jobs[i].CreatedAt = "queued", time.Now(), time.Now()
 		jobs[i].Message = "已加入批量下载整理队列，完成一项即整理一项"
+		if jobs[i].Download.Share != nil {
+			jobs[i].Message = "已加入批量下载队列，就绪资源将合并整理与分享；晚到资源自动补批"
+		}
 		doc.Jobs = prependOrganizeJob(jobs[i], doc.Jobs)
 	}
 	c := jobs[0].Config

@@ -213,7 +213,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <template v-if="job">
       <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
       <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
-      <p v-if="shareAction" class="notice">文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM；进度、审核等待和重试统一在分享日志中处理。</p>
+      <p v-if="shareAction" class="notice"><span v-if="batch">同批就绪资源合并整理并生成分享 STRM，慢资源随后自动补批，各批使用独立的 Cinema115-任务编号 文件夹。</span><span v-else>文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM。</span>生成进度和重试请查看分享日志。</p>
       <RouterLink v-if="shareAction" to="/115/share/logs" class="task-link block">查看分享 STRM 日志</RouterLink>
     </template>
     <template v-else>

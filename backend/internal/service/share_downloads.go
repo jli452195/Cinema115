@@ -19,9 +19,12 @@ import (
 
 // DownloadShare keeps generation settings pinned without storing credentials.
 type DownloadShare struct {
-	HandedOff bool               `json:"handedOff,omitempty"`
-	Directory string             `json:"directory"`
-	Settings  AutomationSettings `json:"settings"`
+	HandedOff  bool               `json:"handedOff,omitempty"`
+	Directory  string             `json:"directory"`
+	Settings   AutomationSettings `json:"settings"`
+	ReadyAt    time.Time          `json:"readyAt,omitempty"`
+	LeaderID   string             `json:"leaderId,omitempty"`
+	SourceDirs []string           `json:"sourceDirs,omitempty"`
 }
 
 type downloadShareQueue interface {
@@ -52,7 +55,7 @@ type downloadShareRequest struct {
 type shareCheckpointError struct{ error }
 
 func pendingDownloadShare(job OrganizeJob) bool {
-	return job.Status == "completed" && job.Download != nil && job.Download.Share != nil && !job.Download.Share.HandedOff
+	return job.Status == "completed" && job.Download != nil && job.Download.Share != nil && !job.Download.Share.HandedOff && (job.Download.Share.LeaderID == "" || job.Download.Share.LeaderID == job.ID)
 }
 
 func (s *DownloadOrganize) ShareSettings(accountID string) (AutomationSettings, error) {

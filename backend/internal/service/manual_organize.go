@@ -181,6 +181,9 @@ func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive O
 	for i := range s.doc.Jobs {
 		job := &s.doc.Jobs[i]
 		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
+			if waitingDownloadShare(*job) {
+				continue // Bound files awaiting collection have no result-directory writes.
+			}
 			job.Status, job.Message = "interrupted", "服务重启，任务已中断；请检查任务详情"
 			if canContinueOrganize(*job) || canResumeDownload(*job) {
 				job.Message = "服务重启，任务已中断；可在原任务详情中检查并继续"
@@ -605,6 +608,7 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 		d := *job.Download
 		if d.Share != nil {
 			share := *d.Share
+			share.SourceDirs = append([]string(nil), share.SourceDirs...)
 			d.Share = &share
 		}
 		job.Download = &d
@@ -619,7 +623,8 @@ func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
 	counts := map[bool]int{job.Download != nil: 1}
 	for _, old := range jobs {
 		download := old.Download != nil
-		if counts[download] < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" {
+		sealed := unhandedDownloadShare(old) && old.Download.Share.LeaderID != ""
+		if counts[download] < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed {
 			out = append(out, old)
 			counts[download]++
 		}

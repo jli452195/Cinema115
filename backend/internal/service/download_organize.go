@@ -147,7 +147,7 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 	if a.Revision != job.Revision {
 		return a, fmt.Errorf("%w：账号配置已变化，请重新确认账号和目录", ErrOrganizeConflict)
 	}
-	if len(s.live) >= 100 {
+	if s.trackedDownloadsLocked() >= 100 {
 		return a, fmt.Errorf("%w：下载整理队列已满（100 项），请等待完成", ErrOrganizeConflict)
 	}
 	for _, p := range s.live {
@@ -158,6 +158,14 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 			if slices.Contains(p.targets, downloadTargetKey(item)) {
 				return a, fmt.Errorf("%w：队列中已有相同目标名称，请调整自定义标记", ErrOrganizeConflict)
 			}
+		}
+	}
+	for _, saved := range s.Organize.doc.Jobs {
+		if saved.ID == job.ID || !unhandedDownloadShare(saved) || (!waitingDownloadShare(saved) && saved.Download.Share.LeaderID == "") || saved.Download.Share.LeaderID == job.ID {
+			continue
+		}
+		if saved.Download.Hash == job.Download.Hash {
+			return a, ErrCloudTaskBusy
 		}
 	}
 	for _, item := range job.Items {
@@ -209,6 +217,12 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 	o := s.Organize
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	for _, saved := range o.doc.Jobs {
+		if saved.ID == id && saved.Download != nil && saved.Download.Share != nil && saved.Download.Share.LeaderID != "" {
+			id = saved.Download.Share.LeaderID
+			break
+		}
+	}
 	for i, saved := range o.doc.Jobs {
 		if saved.ID != id || saved.Download == nil {
 			continue
@@ -267,7 +281,12 @@ func (s *DownloadOrganize) Run(ctx context.Context) (runErr error) {
 		default:
 		}
 	}()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
+		if err := s.sealShareCollections(time.Now()); err != nil {
+			return err
+		}
 		s.mu.Lock()
 		for id, p := range s.live {
 			if p.running {
@@ -294,6 +313,7 @@ func (s *DownloadOrganize) Run(ctx context.Context) (runErr error) {
 		case <-ctx.Done():
 			return nil
 		case <-s.wake:
+		case <-ticker.C:
 		}
 	}
 }
@@ -352,7 +372,7 @@ func (s *DownloadOrganize) advance(ctx context.Context, p *downloadPending) (boo
 		}
 		return s.stop(p, "interrupted", message)
 	}
-	if job.Status == "queued" {
+	if job.Status == "queued" && !p.ready {
 		if done, err := s.submit(ctx, p); err != nil || done {
 			return done, err
 		}
@@ -482,6 +502,16 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 		}
 		return s.stop(p, "blocked", organizePublicError(err, cookie)+"；未执行重命名或移动，请检查本次下载目录")
 	}
+	if share := job.Download.Share; share != nil && job.Download.BatchID != "" && share.LeaderID == "" {
+		// Ready resources are collected locally before any result-directory write.
+		// A dead magnet never joins the sealed organization/share plan.
+		if !p.continuing {
+			share.SourceDirs = dirs
+		}
+		share.ReadyAt = time.Now()
+		job.Status, job.Message = "running", "下载文件已确认，等待同批就绪资源合并整理与分享"
+		return true, o.checkpoint(job)
+	}
 	// runBatch revalidates source identities and destination collisions just
 	// before writes; another whole-plan scan would only duplicate those reads.
 	if err = o.runJob(ctx, job, cookie); err != nil {
@@ -489,7 +519,9 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 	}
 	if job.Status == "completed" {
 		job.Message = "所选文件已整理；未选文件保留在下载目录"
-		if p.continuing {
+		if job.Download.Share != nil && job.Download.Share.LeaderID == job.ID {
+			dirs = job.Download.Share.SourceDirs
+		} else if p.continuing {
 			_, dirs, _ = s.downloadFiles(ctx, job, cookie)
 		}
 		// Remove only directories observed empty, deepest first, never leftovers.
