@@ -39,6 +39,7 @@ type Detail struct {
 	EpisodeCount int             `json:"episodeCount"`
 	Genres       []Genre         `json:"genres"`
 	Countries    []string        `json:"countries"`
+	CountryCodes []string        `json:"countryCodes"`
 	Cast         []CastMember    `json:"cast"`
 	Seasons      []SeasonSummary `json:"seasons"`
 	Collection   *Collection     `json:"collection"`
@@ -152,6 +153,7 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		Genres         []Genre     `json:"genres"`
 		Collection     *Collection `json:"belongs_to_collection"`
 		Countries      []struct {
+			Code string `json:"iso_3166_1"`
 			Name string `json:"name"`
 		} `json:"production_countries"`
 		ExternalIDs struct {
@@ -208,6 +210,9 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 	}
 	for _, country := range raw.Countries {
 		detail.Countries = append(detail.Countries, country.Name)
+		if country.Code != "" {
+			detail.CountryCodes = append(detail.CountryCodes, country.Code)
+		}
 	}
 	for _, member := range cast {
 		if len(detail.Cast) == 20 {

@@ -155,7 +155,7 @@ func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuer
 		}
 		item := &page.Items[i]
 		if item.TMDBID != "" {
-			data, _, err := s.db.TMDBCache(ctx, "detail:v2:tv:"+item.TMDBID)
+			data, _, err := s.db.TMDBCache(ctx, tmdbDetailCachePrefix+"tv:"+item.TMDBID)
 			if err != nil {
 				return page, err
 			}

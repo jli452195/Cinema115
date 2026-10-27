@@ -86,12 +86,13 @@ interface Detail extends CacheInfo {
   numbering?: NumberingInfo
   id: number; kind: 'movie' | 'tv'; title: string; originalTitle: string; overview: string; posterUrl: string
   backdropUrl: string; date: string; rating: number; votes: number; tagline: string; status: string; runtime: number
-  episodeCount: number; genres: { id: number; name: string }[]; countries: string[]; cast: CastMember[]
+  episodeCount: number; genres: { id: number; name: string }[]; countries: string[]; countryCodes?: string[]; cast: CastMember[]
   seasons: SeasonSummary[]; collection: { id: number; name: string } | null; imdbId: string; imdbUrl: string; tmdbUrl: string
 }
 const detail = ref<Detail | null>(null)
 const { mediaColorStyle, readPosterColors } = useMediaColors(() => tmdbImageURL(detail.value?.posterUrl || ''))
 // 动画类型包含日漫、国漫及动画电影，不按国家限制入口。
+const canUseSubtitleLibrary = computed(() => !!detail.value?.genres?.some(genre => genre.id === 16) && !!detail.value?.countryCodes?.includes('JP'))
 const canSearchAnimeResources = computed(() => isPortalAdmin.value && !!detail.value?.genres?.some(genre => genre.id === 16))
 watch(canSearchAnimeResources, allowed => { if (!allowed) { mikanSearchOpen.value = false; gardenSearchOpen.value = false } })
 const loading = ref(true)
@@ -263,9 +264,9 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="botSearchOpen = false" />
     <TelegramChannelSearchDialog v-if="isPortalAdmin && searchConfigured.channels && channelSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="channelSearchOpen = false" />
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
-    <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
-    <WoniuSearchDialog v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
-    <AnimeResourceSearchDialog v-if="canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen) && detail" :key="gardenSearchOpen ? 'garden' : 'mikan'" :provider="gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :tmdb-id="detail.id" :kind="detail.kind" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false" />
+    <GyingSearchDialog :subtitle-library="canUseSubtitleLibrary" v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
+    <WoniuSearchDialog :subtitle-library="canUseSubtitleLibrary" v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
+    <AnimeResourceSearchDialog :subtitle-library="canUseSubtitleLibrary" v-if="canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen) && detail" :key="gardenSearchOpen ? 'garden' : 'mikan'" :provider="gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :tmdb-id="detail.id" :kind="detail.kind" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false" />
     <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">

@@ -25,6 +25,7 @@ import (
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/client/subshare"
 	"strm115/backend/internal/client/tguser"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/client/tmdbimage"
@@ -268,6 +269,9 @@ func main() {
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
+	subtitleLibrary := subshare.New(filepath.Join(dataDir, "subtitle-library"))
+	downloadOrganize.Subtitles = subtitleLibrary
+	httpapi.RegisterSubtitleLibrary(admin, subtitleLibrary)
 	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest

@@ -19,7 +19,7 @@ import { normalize115Share } from '../utils/shareLink'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
 
-const props = defineProps<{ source: 'gying' | 'woniu'; token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string; date?: string; seasons?: { number: number; name: string; episodeCount: number }[]; themeColors?: Record<string, string> }>()
+const props = defineProps<{ source: 'gying' | 'woniu'; token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; imdbId: string; date?: string; seasons?: { number: number; name: string; episodeCount: number }[]; subtitleLibrary?: boolean; themeColors?: Record<string, string> }>()
 const sourceLabel = props.source === 'woniu' ? '蜗牛' : '观影'
 const sourceLogo = props.source === 'woniu' ? woniuLogo : gyingLogo
 const settingsPath = '/' + props.source
@@ -598,7 +598,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <DownloadOrganizeDialog v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => organized(keys, true)" />
+  <DownloadOrganizeDialog :subtitle-library="subtitleLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => organized(keys, true)" />
 </template>
 
 <style scoped>

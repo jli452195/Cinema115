@@ -89,9 +89,9 @@ export function subtitlePairKey(name: string): string {
 }
 
 export function subtitleLanguage(name: string): string {
-  if (/双语|雙語|中英|chs[._-]eng|cht[._-]eng/i.test(name)) return 'zh-en'
-  if (/简体|簡體|简中|簡中|chs|zh[._-]cn|sc\b/i.test(name)) return 'zh-CN'
-  if (/繁体|繁體|繁中|cht|zh[._-]tw|tc\b/i.test(name)) return 'zh-TW'
+  if (/中英|(?:chs|cht|sc|tc)[._-]eng/i.test(name)) return 'zh-en'
+  if (/简体|簡體|简中|簡中|简日|簡日|chs|zh[._-]cn|(?:^|[._\[ -])(?:sc(?:jp)?|gb)(?=$|[._\] -])/i.test(name)) return 'zh-CN'
+  if (/繁体|繁體|繁中|繁日|cht|zh[._-]tw|(?:^|[._\[ -])(?:tc(?:jp)?|big5)(?=$|[._\] -])/i.test(name)) return 'zh-TW'
   if (/英文|(?:^|[._ -])(?:eng|en)(?:[._ -]|$)/i.test(name)) return 'en'
   return ''
 }

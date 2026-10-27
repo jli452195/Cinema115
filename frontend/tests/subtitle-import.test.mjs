@@ -28,6 +28,9 @@ test('season/episode matching stays ambiguous across versions, supports Chinese 
   assert.equal(subtitleLanguage('show.chs.ass'), 'zh-CN')
   assert.equal(subtitleLanguage('show.中英双语.ass'), 'zh-en')
   assert.equal(subtitleLanguage('unknown.ass'), '')
+  for (const tag of ['scjp', 'GB', '简日双语']) assert.equal(subtitleLanguage(`Show.${tag}.ass`), 'zh-CN')
+  for (const tag of ['tcjp', 'BIG5', '繁日雙語']) assert.equal(subtitleLanguage(`Show.${tag}.ass`), 'zh-TW')
+  assert.equal(subtitleLanguage('Show.双语.ass'), '')
 })
 
 test('49 anime subtitles with hyphen episode numbers match unique organized videos', () => {

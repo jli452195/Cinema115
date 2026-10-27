@@ -170,7 +170,7 @@ func (s *TMDBService) NumberingChoices(ctx context.Context, id int) (*NumberingC
 	} else {
 		result.GroupsError = "TMDB 剧集组服务未配置，已保存编排仍可查看或恢复默认。"
 	}
-	detail, _, err := cachedTMDB[tmdb.Detail](ctx, s, "detail:v2:tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
+	detail, _, err := cachedTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+"tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
 	if err != nil {
 		result.DefaultError = "TMDB 默认季集资料暂时不可用，恢复默认后将随常规资料刷新读取。"
 	} else {

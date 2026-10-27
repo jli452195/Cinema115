@@ -22,7 +22,7 @@ func TestDetailsMovieTVAndSeason(t *testing.T) {
 			if r.URL.Query().Get("append_to_response") != "credits,external_ids" {
 				t.Error("未附加电影演职员")
 			}
-			w.Write([]byte(`{"id":42,"title":"电影","original_title":"Movie","release_date":"2024-01-02","runtime":123,"poster_path":"/poster.jpg","backdrop_path":"/back.jpg","belongs_to_collection":{"id":7,"name":"系列"},"credits":{"cast":[{"id":1,"name":"演员","character":"角色","profile_path":"/actor.jpg"}]},"external_ids":{"imdb_id":"tt1234567"}}`))
+			w.Write([]byte(`{"id":42,"title":"电影","original_title":"Movie","release_date":"2024-01-02","runtime":123,"production_countries":[{"iso_3166_1":"JP","name":"Japan"}],"poster_path":"/poster.jpg","backdrop_path":"/back.jpg","belongs_to_collection":{"id":7,"name":"系列"},"credits":{"cast":[{"id":1,"name":"演员","character":"角色","profile_path":"/actor.jpg"}]},"external_ids":{"imdb_id":"tt1234567"}}`))
 		case "/tv/42":
 			if r.URL.Query().Get("append_to_response") != "aggregate_credits,external_ids" {
 				t.Error("未附加全季演员")
@@ -44,6 +44,9 @@ func TestDetailsMovieTVAndSeason(t *testing.T) {
 		}
 		if movie.Title != "电影" || movie.Date != "2024-01-02" || movie.Runtime != 123 || movie.Collection.ID != 7 || movie.Cast[0].Character != "角色" || movie.IMDBURL != "https://www.imdb.com/title/tt1234567/" || !strings.Contains(movie.BackdropURL, "/w1280/") || movie.Seasons == nil {
 			t.Fatal("电影详情归一化错误")
+		}
+		if len(movie.CountryCodes) != 1 || movie.CountryCodes[0] != "JP" || movie.Countries[0] != "Japan" {
+			t.Fatal("详情须同时保留国家名称和国家代码", movie)
 		}
 	}
 	if calls["/movie/42"] != 1 {

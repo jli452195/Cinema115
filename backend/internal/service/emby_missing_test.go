@@ -131,7 +131,7 @@ func TestMissingEpisodesPublishedScopeEventsAndPaging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.SaveTMDBCache(ctx, "detail:v2:tv:1", cache, time.Now().Unix()); err != nil {
+	if err := f.db.SaveTMDBCache(ctx, tmdbDetailCachePrefix+"tv:1", cache, time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.db.EmbyStage(ctx, scope, "staging", []model.EmbyItem{{ID: "staged", Type: "Episode", SeriesID: "series-01", Season: 1, Episode: 1}}); err != nil {

@@ -14,18 +14,26 @@ import { useMediaNamingPreview } from '../composables/useMediaNamingPreview'
 import { useStickySurface } from '../composables/useStickySurface'
 import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
+import { magnetKey } from '../lib/cloud-download-batch'
+import SubtitleLibraryDialog from './SubtitleLibraryDialog.vue'
+import { subtitleTargetName, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 
 const props = defineProps<{
   token: string; entries: DownloadOrganizeResource[]; hiddenCount?: number; batch?: boolean
   tmdbId: number; kind: 'movie' | 'tv'; title: string; date: string
   seasons: { number: number; name: string; episodeCount: number }[]
   themeColors?: Record<string, string>
+  subtitleLibrary?: boolean; originalTitle?: string
 }>()
 const emit = defineEmits<{ close: []; submitted: [keys: string[]]; uncertain: [keys: string[]] }>()
 const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states, selectedKeys } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
+const subtitleOpen = ref(false), externalSubtitles = ref<LibrarySubtitleSelection[]>([]), subtitleVersion = ref<SubtitleVersion>()
+const selectedExternal = computed(() => externalSubtitles.value.filter(sub => selected.value.some(row => row.id === sub.videoId)))
+const externalName = (sub: LibrarySubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language)
+function selectSubtitles(items: LibrarySubtitleSelection[], version: SubtitleVersion) { externalSubtitles.value = items; subtitleVersion.value = version; subtitleOpen.value = false }
 const confirming = ref(false)
 const shareIssue = ref('正在读取分享设置…'), shareAction = ref(false)
 const errorElement = ref<HTMLElement>()
@@ -92,6 +100,12 @@ const localConflicts = computed(() => {
       const ids = targets.get(key) || []; ids.push(file.id); targets.set(key, ids)
     }
   }
+  for (const sub of selectedExternal.value) {
+    const video = results.value[sub.videoId]
+    if (!video) continue
+    const key = `${video.directory}/${externalName(sub)}`.toLowerCase()
+    const ids = targets.get(key) || []; ids.push(sub.videoId); targets.set(key, ids)
+  }
   for (const ids of targets.values()) if (ids.length > 1) for (const id of ids) out[id] = '本次多个文件目标同名，请核对季集编号、命名模板或取消重复文件'
   return out
 })
@@ -110,7 +124,13 @@ async function locateProblem() {
 }
 const previewId = ref('')
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(130000)])
-const snapshotKey = computed(() => JSON.stringify({ shareSTRM: shareAction.value, naming: namingPreview.value.value, targetCID: shareAction.value ? undefined : targetCID.value, targetPath: shareAction.value ? undefined : targetPath.value, resources: preparation.resourceSelections() }))
+function resourceSelections() {
+  return preparation.resourceSelections().map(resource => ({ ...resource,
+    subtitles: selectedExternal.value.filter(sub => preparation.owners.get(sub.videoId)?.key === magnetKey(resource.magnet))
+      .map(sub => ({ versionId: sub.versionId, path: sub.path, sha: sub.file.sha, language: sub.language, videoId: preparation.owners.get(sub.videoId)!.id })),
+  }))
+}
+const snapshotKey = computed(() => JSON.stringify({ shareSTRM: shareAction.value, naming: namingPreview.value.value, targetCID: shareAction.value ? undefined : targetCID.value, targetPath: shareAction.value ? undefined : targetPath.value, resources: resourceSelections() }))
 const submitDisabled = computed(() => busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !!unresolved.value.length || !accountId.value || !selected.value.length || invalid.value || !!Object.keys(localConflicts.value).length)
 watch(snapshotKey, () => { conflicts.value = {} }, { flush: 'sync' })
 let previewKey = ''
@@ -153,7 +173,7 @@ async function start(sharing = false) {
     const key = snapshotKey.value
     if (!confirming.value && (!previewId.value || previewKey !== key)) {
       const payload = { shareSTRM: sharing, namingRevision: namingPreview.value.value?.naming.revision, tmdbId: props.tmdbId, kind: props.kind, accountId: accountId.value, targetCID: sharing ? undefined : targetCID.value, targetPath: sharing ? undefined : targetPath.value }
-      const resources = preparation.resourceSelections()
+      const resources = resourceSelections()
       const previews = props.batch
         ? (await p115Request<DownloadBatchResult>(props.token, 'download-organize/batch/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...payload, resources }) }))
         : { id: '', jobs: [await p115Request<OrganizeJob>(props.token, 'download-organize/preview', { method: 'POST', signal: signal(), body: JSON.stringify({ ...payload, ...resources[0] }) })] }
@@ -211,7 +231,7 @@ onBeforeUnmount(() => lifecycle.abort())
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
     <template v-if="job">
-      <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
+      <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，另上传 {{ selectedExternal.length }} 个外部字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
       <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
       <p v-if="shareAction" class="notice"><span v-if="batch">同批就绪资源合并整理并生成分享 STRM，慢资源随后自动补批，各批使用独立的 Cinema115-任务编号 文件夹。</span><span v-else>文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM。</span>生成进度和重试请查看分享日志。</p>
       <RouterLink v-if="shareAction" to="/115/share/logs" class="task-link block">查看分享 STRM 日志</RouterLink>
@@ -219,6 +239,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <template v-else>
       <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>普通整理目录</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p><small v-if="sharedDirectory">公共子目录：{{ sharedDirectory }}</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
       <div class="naming-summary"><strong>{{ title }}</strong><RouterLink :to="{ path: '/settings/naming', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh">刷新命名</button></div>
+      <div v-if="subtitleLibrary" class="external-subtitle-bar"><span>字幕</span><p>{{ subtitleVersion ? `${subtitleVersion.source} · ${subtitleVersion.name} · 本次 ${selectedExternal.length} 个` : '未选择外部字幕' }}</p><button type="button" class="secondary" :disabled="editDisabled || parsing || !selected.length" :title="!selected.length ? '请先勾选需要整理的视频' : ''" @click="subtitleOpen = true">{{ subtitleVersion ? '更换字幕' : '查找字幕' }}</button><button v-if="externalSubtitles.length" type="button" class="secondary" :disabled="editDisabled" @click="externalSubtitles = []; subtitleVersion = undefined">移除</button></div>
       <details class="organize-help">
         <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
         <div>
@@ -250,6 +271,7 @@ onBeforeUnmount(() => lifecycle.abort())
       </div>
       <OrganizeFileSelection ref="fileSelection" :rows="rows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" compact>
         <template #row-details="{ row }">
+          <details v-if="externalSubtitles.some(sub => sub.videoId === row.id)" class="subtitle-details" @click.stop @mousedown.stop><summary><IconChevronDown :size="13" aria-hidden="true" />字幕库（{{ externalSubtitles.filter(sub => sub.videoId === row.id).length }}）<span v-if="!row.selected">未选择</span></summary><div v-for="sub in externalSubtitles.filter(sub => sub.videoId === row.id)" :key="sub.path" class="subtitle-file"><p>{{ sub.file.name }}</p><p class="subtitle-target">{{ row.selected ? `整理后：${externalName(sub)}` : '随视频选择，当前不上传' }}</p></div></details>
           <p v-if="results[row.id]?.directory && results[row.id]!.directory !== sharedDirectory" class="scope-note break-all">目录：{{ results[row.id]!.directory }}</p>
           <details v-if="subtitlesByVideo[row.id]?.length" class="subtitle-details" :open="row.selected && subtitlesByVideo[row.id]!.some(sub => displayedConflicts[sub.file.id])" @click.stop @mousedown.stop>
             <summary><IconChevronDown :size="13" aria-hidden="true" />关联字幕（{{ subtitlesByVideo[row.id]!.length }}）<span v-if="!row.selected">未选择</span></summary>
@@ -272,7 +294,7 @@ onBeforeUnmount(() => lifecycle.abort())
   </section>
     <template v-if="!job" #footer>
       <div class="submit-bar">
-        <span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><button v-if="Object.keys(rowProblems).length" type="button" class="locate-problem" @click="locateProblem">{{ Object.keys(rowProblems).length }} 项待处理 · 定位问题</button></span>
+        <span>已选 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，外部字幕 {{ selectedExternal.length }} 个</span><button v-if="Object.keys(rowProblems).length" type="button" class="locate-problem" @click="locateProblem">{{ Object.keys(rowProblems).length }} 项待处理 · 定位问题</button></span>
         <div class="submit-actions">
           <button type="button" class="secondary share-action" :title="shareIssue || '下载、整理后生成分享 STRM'" :disabled="submitDisabled || !!shareIssue && !confirming || confirming && !shareAction" @click="start(true)"><IconShare2 :size="16" aria-hidden="true" />{{ shareAction && busy ? '正在创建分享任务…' : shareAction && confirming ? '确认任务状态' : shareAction && planKey === snapshotKey ? '确认分享 STRM' : '115 分享 STRM' }}</button>
           <button type="button" class="primary" :disabled="submitDisabled || !targetCID || confirming && shareAction" @click="start(false)">{{ !shareAction && busy ? '正在确认并创建任务…' : !shareAction && confirming ? '确认任务状态' : !shareAction && planKey === snapshotKey ? '确认下载并整理' : '下载并自动整理' }}</button>
@@ -283,10 +305,13 @@ onBeforeUnmount(() => lifecycle.abort())
     </template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
+  <SubtitleLibraryDialog v-if="subtitleOpen" :token="token" :title="title" :original-title="originalTitle" :videos="selected" :selections="selectedExternal" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
 </template>
 
 <style scoped>
 .download-organize { @apply min-w-0 space-y-2 pt-1.5 text-slate-700 dark:text-slate-200; }
+.external-subtitle-bar { display:flex;align-items:center;gap:8px;padding:8px 0;font-size:12px;flex-wrap:wrap; }
+.external-subtitle-bar p { flex:1;min-width:100px;color:#64748b;overflow-wrap:anywhere; }
 .naming-summary { @apply flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400; }.naming-summary strong { @apply text-slate-800 dark:text-slate-100; }.naming-summary a { @apply text-blue-600 dark:text-blue-400; }.naming-summary button { @apply ml-auto; }
 .resource-title { @apply break-all text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }

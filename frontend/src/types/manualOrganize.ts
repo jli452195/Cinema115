@@ -1,5 +1,6 @@
 import type { NumberingInfo } from './tvNumbering'
 import type { NamingRecord } from './naming'
+import type { LibrarySubtitleFile } from '../utils/subtitleLibrary'
 export interface DownloadResourceInput {
   title?: string
   fansub?: string
@@ -68,7 +69,7 @@ export interface OrganizeItem {
 export interface OrganizeJob {
 	naming?: NamingRecord
 	resumable?: boolean
-  download?: { hash: string; directoryId?: string; share?: { directory: string; handedOff?: boolean } }
+  download?: { hash: string; directoryId?: string; share?: { directory: string; handedOff?: boolean }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig

@@ -5,6 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGying = source === 'gying'
 const shareMode = process.argv[3] === 'share'
+const subtitleMode = process.argv[3] === 'subtitles'
 const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : 'Garden 搜索'
 const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : '/resources/garden/search'
 const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
@@ -18,6 +19,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     page.on('pageerror', e => errors.push(e.message))
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
     let shareConfigured = false, omitOrganizeDirectory = false
+    let japanese = true
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
       { id: 'show/E030.mkv', name: 'E030.mkv', sourcePath: '/show/E030.mkv', episode: 30 },
@@ -40,7 +42,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       calls.push({ endpoint, body }); let status = 200, data = {}
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: 'admin', disabled: false } }
       else if (endpoint.endsWith('/accounts')) data = { accounts: [] }
-      else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: endpoint.includes('/detail/movie/') ? 'movie' : 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: [{ id: 16, name: '动画' }], countries: ['JP'], cast: [], seasons: [{ number: 1, name: 'The very long season name with an unbroken subtitle ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ', episodeCount: 26 }, { number: 2, name: '新的篇章与很长的季度副标题', episodeCount: 25 }], collection: null }
+      else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: endpoint.includes('/detail/movie/') ? 'movie' : 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: [{ id: 16, name: '动画' }], countries: ['Japan'], countryCodes: japanese ? ['JP'] : ['CN'], cast: [], seasons: [{ number: 1, name: 'The very long season name with an unbroken subtitle ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ', episodeCount: 26 }, { number: 2, name: '新的篇章与很长的季度副标题', episodeCount: 25 }], collection: null }
+      else if (endpoint === '/api/admin/subtitles/search') data = { versions: [{ id: 'v1', title: '百变之星', originalTitle: 'カレイドスター', year: '2003', source: 'BD', name: '测试字幕组', url: 'https://github.com/foxofice/sub_share' }] }
+      else if (endpoint === '/api/admin/subtitles/versions/v1/files') data = { files: ['Show [30].chs.ass', 'Show [30].cht.ass', 'Show [SP01].chs.ass'].map((name, i) => ({ path: `subs_list/animation/2003/Show/BD/Group/${name}`, name, sha: String(i + 1).repeat(40), revision: 'a'.repeat(40), size: 100 })) }
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
       else if (endpoint.endsWith('/mikan/search')) data = { items: Array.from({ length: 15 }, (_, i) => {
         const r = resource(i + 1), id = (i + 1).toString(16).padStart(40, '0')
@@ -134,6 +138,64 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     passed.push('no filter toolbar; excluding all directories keeps recovery accessible; keyboard restore remains unselected without requests or dialog resize')
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isDisabled(), true)
+    if (subtitleMode) {
+      assert.equal(count('/subtitles/search'), 0, 'opening organizer must not fetch catalogue')
+      const second = page.locator('[data-organize-file]').nth(1)
+      await second.getByRole('checkbox').check()
+      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      const library = page.locator('dialog.subtitle-library')
+      await library.getByRole('button', { name: /百变之星.*2003/ }).click()
+      await library.getByText('已选 1 个字幕', { exact: true }).waitFor()
+      assert.equal(await library.getByRole('checkbox').count(), 2)
+      await library.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+      assert.equal(await library.count(), 0)
+      await organizeDialog.getByText('，外部字幕 1 个', { exact: true }).waitFor()
+      const external = second.locator('details.subtitle-details')
+      await external.locator('summary').click()
+      await external.getByText(/整理后：.*zh-CN.ass/).waitFor()
+      const beforeName = await external.locator('.subtitle-target').innerText()
+      await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('31')
+      await page.waitForTimeout(700)
+      assert.notEqual(await external.locator('.subtitle-target').innerText(), beforeName)
+      const afterCalls = count('/subtitles/versions/v1/files')
+      await second.getByRole('checkbox').uncheck()
+      assert.equal(await organizeDialog.getByText('，外部字幕 1 个', { exact: true }).count(), 0)
+      await second.getByRole('checkbox').check()
+      assert.equal(count('/subtitles/versions/v1/files'), afterCalls)
+      const artifact = path.join(os.tmpdir(), 'cinema115-subtitle-library-ui')
+      await fs.mkdir(artifact, { recursive: true })
+      for (const [width, theme] of [[1440, 'light'], [390, 'light'], [390, 'dark']]) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
+        await page.screenshot({ path: path.join(artifact, `organize-${width}-${theme}.png`) })
+        await organizeDialog.getByRole('button', { name: '更换字幕', exact: true }).click()
+        await library.getByRole('button', { name: /百变之星.*2003/ }).click()
+        // Subtitle source numbers use the original source files, independent of the edited target episode.
+        await library.getByRole('button', { name: '关闭字幕库', exact: true }).waitFor()
+        await page.screenshot({ path: path.join(artifact, `library-${width}-${theme}.png`) })
+        const layout = await library.evaluate(el => ({ overflow: el.scrollWidth > el.clientWidth + 1, width: el.getBoundingClientRect().width, screen: innerWidth }))
+        assert.equal(layout.overflow, false)
+        assert.ok(layout.width <= layout.screen)
+        await library.getByRole('button', { name: '关闭字幕库', exact: true }).click()
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).click()
+      const payload = calls.find(c => c.endpoint.endsWith('/download-organize/preview')).body
+      assert.equal(payload.subtitles.length, 1)
+      assert.equal(payload.subtitles[0].videoId, files[1].id)
+      assert.equal(payload.subtitles[0].sha, '1'.repeat(40))
+      const libraryCalls = count('/subtitles/search')
+      japanese = false
+      await page.reload()
+      await page.getByRole('button', { name: searchLabel, exact: true }).click()
+      await open(row)
+      await panel.waitFor()
+      assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).count(), 0, 'non-Japanese details must not offer library')
+      assert.equal(count('/subtitles/search'), libraryCalls)
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ source, passed: ['lazy catalogue', 'unique episode mapping; specials stay manual', 'selection follows video', 'renamed subtitle follows final video', 'desktop/mobile/dark no overflow', 'original video identity submitted', 'non-Japanese details hide library'], artifact }, null, 2))
+      return
+    }
     const first = page.locator('[data-organize-file]').nth(0), second = page.locator('[data-organize-file]').nth(1)
     assert.equal(await second.getByRole('spinbutton', { name: 'E030.mkv 结束集', exact: true }).count(), 0)
     assert.equal(await first.getByRole('textbox', { name: 'E027-E28.mkv 自定义标记', exact: true }).count(), 0)

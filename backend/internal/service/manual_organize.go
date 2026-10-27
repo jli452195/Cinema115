@@ -591,7 +591,7 @@ func (s *OrganizeEngine) history(download bool) []OrganizeJob {
 			continue
 		}
 		copy := cloneOrganizeJob(job)
-		copy.Resumable = canContinueOrganize(job) || download && (canResumeDownload(job) || pendingDownloadShare(job))
+		copy.Resumable = canContinueOrganize(job) || download && (canResumeDownload(job) || pendingDownloadShare(job) || pendingDownloadSubtitles(job))
 		jobs = append(jobs, copy)
 	}
 	return jobs
@@ -606,6 +606,7 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	}
 	if job.Download != nil {
 		d := *job.Download
+		d.Subtitles = append([]DownloadSubtitle(nil), d.Subtitles...)
 		if d.Share != nil {
 			share := *d.Share
 			share.SourceDirs = append([]string(nil), share.SourceDirs...)

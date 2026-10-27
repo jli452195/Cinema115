@@ -16,17 +16,19 @@ import (
 // ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
 // Credentials only live in downloadPending and never enter plans/history.
 type ResourceDownload struct {
-	BatchID     string         `json:"batchId,omitempty"`
-	Hash        string         `json:"hash"`
-	ParentCID   string         `json:"parentCID"`
-	ParentPath  string         `json:"parentPath"`
-	DirectoryID string         `json:"directoryId,omitempty"`
-	Share       *DownloadShare `json:"share,omitempty"`
+	Subtitles   []DownloadSubtitle `json:"subtitles,omitempty"`
+	BatchID     string             `json:"batchId,omitempty"`
+	Hash        string             `json:"hash"`
+	ParentCID   string             `json:"parentCID"`
+	ParentPath  string             `json:"parentPath"`
+	DirectoryID string             `json:"directoryId,omitempty"`
+	Share       *DownloadShare     `json:"share,omitempty"`
 }
 
 type DownloadOrganizeInput struct {
-	ShareSTRM      bool   `json:"shareSTRM,omitempty"`
-	NamingRevision *int64 `json:"namingRevision,omitempty"`
+	Subtitles      []DownloadSubtitleSelection `json:"subtitles,omitempty"`
+	ShareSTRM      bool                        `json:"shareSTRM,omitempty"`
+	NamingRevision *int64                      `json:"namingRevision,omitempty"`
 	DownloadResourceInput
 	ManifestID string              `json:"manifestId,omitempty"`
 	Kind       string              `json:"kind"`
@@ -56,6 +58,7 @@ type downloadPending struct {
 }
 
 type DownloadOrganize struct {
+	Subtitles subtitleLibrary
 	Shares    downloadShareQueue
 	Organize  *OrganizeEngine
 	Resources downloadResourceReader
@@ -227,10 +230,10 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		if saved.ID != id || saved.Download == nil {
 			continue
 		}
-		if s.live[id] != nil || saved.Status == "completed" && !pendingDownloadShare(saved) {
+		if s.live[id] != nil || saved.Status == "completed" && !pendingDownloadShare(saved) && !pendingDownloadSubtitles(saved) {
 			return cloneOrganizeJob(saved), nil
 		}
-		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved)
+		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved) || pendingDownloadSubtitles(saved)
 		queued := canQueueDownload(saved)
 		if !continuing && !canResumeDownload(saved) {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
@@ -518,6 +521,12 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 		return false, err
 	}
 	if job.Status == "completed" {
+		if err := s.uploadSubtitles(ctx, job, cookie); err != nil {
+			return false, err
+		}
+		if job.Status != "completed" {
+			return true, nil
+		}
 		job.Message = "所选文件已整理；未选文件保留在下载目录"
 		if job.Download.Share != nil && job.Download.Share.LeaderID == job.ID {
 			dirs = job.Download.Share.SourceDirs

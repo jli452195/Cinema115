@@ -95,6 +95,7 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 			itemCount += len(o.doc.Jobs[i].Items)
 		}
 		leader.Items = make([]OrganizeItem, 0, itemCount)
+		leader.Download.Subtitles = nil
 		leader.Download.Share.SourceDirs = nil
 		leader.Download.Share.Directory = "Cinema115-" + leader.ID
 		leader.Download.Share.LeaderID = leader.ID
@@ -114,6 +115,16 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 				}
 				item.Directory = leader.Download.Share.Directory + strings.TrimPrefix(item.Directory, previous)
 				item.TargetPath = path.Join(member.Config.TargetPath, item.Directory, item.Name)
+			}
+			for j := range member.Download.Subtitles {
+				sub := member.Download.Subtitles[j]
+				if sub.VideoIndex < 0 || sub.VideoIndex >= len(member.Items) {
+					return fmt.Errorf("分享批次的字幕视频关联无效")
+				}
+				sub.TargetPath = path.Join(path.Dir(member.Items[sub.VideoIndex].TargetPath), sub.Name)
+				member.Download.Subtitles[j] = sub
+				sub.VideoIndex += len(leader.Items)
+				leader.Download.Subtitles = append(leader.Download.Subtitles, sub)
 			}
 			leader.Items = append(leader.Items, member.Items...)
 			leader.Download.Share.SourceDirs = append(leader.Download.Share.SourceDirs, member.Download.Share.SourceDirs...)
@@ -156,6 +167,19 @@ func updateDownloadShareMembers(doc *organizeDocument, leader OrganizeJob) {
 		member = cloneOrganizeJob(member)
 		member.Status, member.Message, member.UpdatedAt = leader.Status, leader.Message, leader.UpdatedAt
 		member.Download.Share.HandedOff = leader.Download.Share.HandedOff
+		for j, sub := range member.Download.Subtitles {
+			if sub.VideoIndex < 0 || sub.VideoIndex >= len(member.Items) {
+				continue
+			}
+			videoID := member.Items[sub.VideoIndex].File.ID
+			for _, result := range leader.Download.Subtitles {
+				if result.VideoIndex >= 0 && result.VideoIndex < len(leader.Items) && leader.Items[result.VideoIndex].File.ID == videoID && result.File.Path == sub.File.Path && result.Language == sub.Language {
+					result.VideoIndex = sub.VideoIndex
+					member.Download.Subtitles[j] = result
+					break
+				}
+			}
+		}
 		for j, item := range member.Items {
 			if result, ok := files[item.File.ID]; ok {
 				member.Items[j] = result

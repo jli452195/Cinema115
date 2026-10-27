@@ -40,7 +40,7 @@ func (s *TMDBService) AnimeDetails(ctx context.Context, id int) (*tmdb.Detail, e
 	if id < 1 {
 		return nil, tmdb.ErrInput
 	}
-	v, info, err := cachedTMDB[tmdb.Detail](ctx, s, "detail:v2:tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
+	v, info, err := cachedTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+"tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
 	if err == nil {
 		v.CacheInfo = info
 	}

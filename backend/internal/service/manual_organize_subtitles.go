@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 const MaxSubtitleImportBytes = 64 << 20
@@ -108,11 +109,7 @@ func (s *ManualOrganize) subtitleVideos(ctx context.Context, accountID, jobID, c
 }
 
 func subtitleExtension(name string) bool {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".srt", ".ass", ".ssa", ".vtt", ".idx", ".sub":
-		return true
-	}
-	return false
+	return subtitle.Supported(name)
 }
 
 func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePreviewInput) (SubtitleImport, error) {
@@ -162,16 +159,9 @@ func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePre
 		if len([]rune(file.Version)) > 30 || organizeName(file.Version) != file.Version {
 			return SubtitleImport{}, fmt.Errorf("%w：字幕版本标记无效", ErrOrganizeInput)
 		}
-		name := strings.TrimSuffix(video.Name, path.Ext(video.Name))
-		if file.Version != "" {
-			name += "." + file.Version
-		}
-		if file.Language != "" {
-			name += "." + file.Language
-		}
-		name += strings.ToLower(path.Ext(file.OriginalName))
-		if len(name) > 255 {
-			return SubtitleImport{}, fmt.Errorf("%w：字幕文件名超过 115 上传的 255 字节限制，请缩短视频名或版本标记", ErrOrganizeInput)
+		name, err := subtitle.Name(video.Name, file.OriginalName, file.Language, file.Version)
+		if err != nil {
+			return SubtitleImport{}, fmt.Errorf("%w：%s", ErrOrganizeInput, err)
 		}
 		key := video.ParentID + "/" + strings.ToLower(name)
 		if names[key] {

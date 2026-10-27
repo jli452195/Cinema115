@@ -266,6 +266,9 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 		item.File = originals[item.File.ID]
 		jobs[index].Items = append(jobs[index].Items, item)
 	}
+	if err := s.planSubtitles(ctx, jobs, resources); err != nil {
+		return nil, err
+	}
 	return jobs, nil
 }
 

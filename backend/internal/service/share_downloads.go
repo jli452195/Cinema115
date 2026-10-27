@@ -102,9 +102,17 @@ func (s *ShareTasks) EnqueueDownloadShare(ctx context.Context, job OrganizeJob, 
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("查询分享交接记录: %w", err)
 	}
-	download := &downloadShareRequest{ParentCID: job.Config.TargetCID, Directory: share.Directory, Files: make([]p115.ShareFile, 0, len(job.Items))}
+	items := append([]OrganizeItem(nil), job.Items...)
+	for _, sub := range job.Download.Subtitles {
+		if sub.VideoIndex < 0 || sub.VideoIndex >= len(job.Items) || !organizeID(sub.FileID) || (sub.Status != "done" && sub.Status != "skipped") {
+			return errors.New("所选外部字幕尚未核实，不能交接分享")
+		}
+		video := job.Items[sub.VideoIndex]
+		items = append(items, OrganizeItem{File: OrganizeFile{ShareFile: p115.ShareFile{ID: sub.FileID, Name: sub.Name, Size: sub.File.Size}}, Name: sub.Name, Directory: video.Directory, Status: "done"})
+	}
+	download := &downloadShareRequest{ParentCID: job.Config.TargetCID, Directory: share.Directory, Files: make([]p115.ShareFile, 0, len(items))}
 	entries := make(map[string]bool, len(job.Items)*2)
-	for _, item := range job.Items {
+	for _, item := range items {
 		if item.Status != "done" || item.Directory != share.Directory && !strings.HasPrefix(item.Directory, share.Directory+"/") {
 			return errors.New("文件尚未全部整理到本次独立目录")
 		}
@@ -126,6 +134,14 @@ func (s *ShareTasks) EnqueueDownloadShare(ctx context.Context, job OrganizeJob, 
 	}
 	sort.Strings(download.Manifest)
 	input := share.Settings.Generation
+	// Explicitly selected library subtitles must also accompany the local STRM,
+	// even when their extension is absent from the ordinary metadata settings.
+	for _, sub := range job.Download.Subtitles {
+		ext := strings.TrimPrefix(strings.ToLower(path.Ext(sub.Name)), ".")
+		if !slices.Contains(strings.Split(input.MetadataExtensions, ","), ext) {
+			input.MetadataExtensions = strings.Trim(input.MetadataExtensions+","+ext, ",")
+		}
+	}
 	input.Mode, input.URL, input.Password, input.CID, input.SharePath = "direct", "", "", "0", ""
 	req := shareTaskRequest{Download: download, Input: input, Settings: share.Settings, CookieHash: cookieHash(cookie)}
 	now := time.Now().UTC()

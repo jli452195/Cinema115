@@ -47,6 +47,15 @@ test('skipped subtitles never count as uploaded or cause a false failure warning
   assert.equal(taskTone(job), 'success')
 })
 
+test('external subtitle failures remain on the original download card', () => {
+  const job = { id: 'download', title: '作品', status: 'partial', createdAt: '2026-10-28T00:00:00Z', config: { accountId: 'main' }, items: [{ file: { id: '1', name: 'video.mkv', mediaType: 'video' }, status: 'done' }], download: { subtitles: [{ file: { name: '01.chs.ass', path: 'animation/show/01.chs.ass' }, targetPath: '/out/video.zh-CN.ass', status: 'uncertain', message: '上传回执丢失' }] } }
+  const tasks = historyTasks([job], [], [])
+  assert.equal(tasks.length, 1)
+  assert.equal(tasks[0].items[1].target, '/out/video.zh-CN.ass')
+  assert.equal(taskCounts(tasks[0]).attention, 1)
+  assert.equal(taskCounts(tasks[0]).done, 1)
+})
+
 test('task identity includes kind; subtitles resolve the parent title without depending on retention', () => {
   const jobs = [{ id: 'same', title: '閃靈二人組', status: 'completed', createdAt: '2026-10-15T00:00:00Z', config: { accountId: 'main', sourcePath: '/in', targetPath: '/out' }, items: [] }]
   const cleanup = [{ id: 'same', accountId: 'main', mode: 'empty', parentPath: '/in/目录', createdAt: '2026-10-14T00:00:00Z', status: 'completed', items: [] }]
