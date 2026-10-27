@@ -18,7 +18,8 @@ import (
 )
 
 var ErrBusy = errors.New("Telegram 正在处理另一项操作，请稍后再试")
-var ErrConfig = errors.New("请先配置 Telegram API ID、API Hash 和资源 Bot")
+var ErrConfig = errors.New("请先配置 Telegram API ID 和 API Hash")
+var ErrBotConfig = errors.New("请先在 Telegram 搜索配置中填写资源 Bot")
 var ErrLogin = errors.New("请先在 Telegram 用户账号页面登录并检查连接")
 var ErrInput = errors.New("输入格式无效")
 
@@ -32,20 +33,25 @@ type Config struct {
 	Bot     string `json:"bot"`
 }
 type View struct {
-	APIID      int    `json:"apiId"`
-	Configured bool   `json:"configured"`
-	HasSession bool   `json:"hasSession"`
-	Authorized bool   `json:"authorized"`
-	Name       string `json:"name"`
-	Username   string `json:"username"`
-	Stage      string `json:"stage"`
-	Bot        string `json:"bot"`
+	APIID         int    `json:"apiId"`
+	Configured    bool   `json:"configured"`
+	BotConfigured bool   `json:"botConfigured"`
+	HasSession    bool   `json:"hasSession"`
+	Authorized    bool   `json:"authorized"`
+	Name          string `json:"name"`
+	Username      string `json:"username"`
+	Stage         string `json:"stage"`
+	Bot           string `json:"bot"`
 }
 type Client struct {
 	configStore, sessionStore       Store
 	gate                            chan struct{}
 	mu                              sync.Mutex
 	config                          Config
+	channels                        channelSettings
+	channelCatalog                  *channelCatalog
+	userID                          int64
+	identityKnown                   bool
 	authorized                      bool
 	name, username, phone, codeHash string
 	expires                         time.Time
@@ -89,9 +95,11 @@ func New(configStore, sessionStore Store) (*Client, error) {
 	c.searches = make(map[string]*searchJob)
 	c.searchTiming = defaultSearchTiming
 	if value := configStore.Value(); value != "" {
-		if err := json.Unmarshal([]byte(value), &c.config); err != nil {
+		var saved accountSettings
+		if err := json.Unmarshal([]byte(value), &saved); err != nil {
 			return nil, errors.New("Telegram 用户配置无法读取")
 		}
+		c.config, c.channels = saved.Config, saved.Channels
 	}
 	return c, nil
 }
@@ -112,6 +120,10 @@ func (c *Client) unlock() { <-c.gate }
 func (c *Client) View() View {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.viewLocked()
+}
+
+func (c *Client) viewLocked() View {
 	stage := "idle"
 	if time.Now().Before(c.expires) {
 		if c.passwordNeeded {
@@ -120,7 +132,8 @@ func (c *Client) View() View {
 			stage = "code"
 		}
 	}
-	return View{APIID: c.config.APIID, Configured: c.config.APIID > 0 && c.config.APIHash != "" && validBotUsername(c.config.Bot), HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, Stage: stage, Bot: c.config.Bot}
+	configured := c.config.APIID > 0 && c.config.APIHash != ""
+	return View{APIID: c.config.APIID, Configured: configured, BotConfigured: configured && validBotUsername(c.config.Bot), HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, Stage: stage, Bot: c.config.Bot}
 }
 
 var hashPattern = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
@@ -146,20 +159,15 @@ func (c *Client) Save(input Config) error {
 		input.APIHash = c.config.APIHash
 	}
 	input.Bot = normalizeBotUsername(input.Bot)
-	if input.APIID < 1 || !hashPattern.MatchString(input.APIHash) || !validBotUsername(input.Bot) {
+	if input.APIID < 1 || !hashPattern.MatchString(input.APIHash) || (input.Bot != "" && !validBotUsername(input.Bot)) {
 		return ErrInput
 	}
 	if c.sessionStore.Value() != "" && (input.APIID != c.config.APIID || input.APIHash != c.config.APIHash) {
 		return errors.New("更换 API 凭据前，请先退出当前 Telegram 用户账号")
 	}
-	data, err := json.Marshal(input)
-	if err != nil {
+	if err := c.saveSettingsLocked(input, c.channels); err != nil {
 		return err
 	}
-	if err = c.configStore.Save(string(data)); err != nil {
-		return errors.New("保存 Telegram 用户配置失败")
-	}
-	c.config = input
 	c.clearSearchLocked()
 	return nil
 }
@@ -186,6 +194,20 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.authorized = state.Authorized
+	c.identityKnown = true
+	c.userID = 0
+	if state.Authorized && state.User != nil {
+		c.userID = state.User.ID
+	}
+	if c.channels.OwnerID != 0 && c.channels.OwnerID != c.userID {
+		if err := c.saveSettingsLocked(c.config, channelSettings{}); err != nil {
+			c.channelCatalog = nil
+			return err
+		}
+	}
+	if c.channelCatalog != nil && c.channelCatalog.ownerID != c.userID {
+		c.channelCatalog = nil
+	}
 	if !state.Authorized {
 		c.clearSearchLocked()
 	}
@@ -297,12 +319,12 @@ func (c *Client) Disconnect(ctx context.Context) error {
 			return publicError(err)
 		}
 	}
-	if err := c.sessionStore.Save(""); err != nil {
-		return errors.New("清除 Telegram 登录会话失败")
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.authorized = false
+	c.userID = 0
+	c.identityKnown = true
+	c.channelCatalog = nil
 	c.name = ""
 	c.username = ""
 	c.phone = ""
@@ -310,7 +332,12 @@ func (c *Client) Disconnect(ctx context.Context) error {
 	c.passwordNeeded = false
 	c.expires = time.Time{}
 	c.clearSearchLocked()
-	return nil
+	sessionErr := c.sessionStore.Save("")
+	configErr := c.saveSettingsLocked(c.config, channelSettings{})
+	if sessionErr != nil {
+		return errors.New("清除 Telegram 登录会话失败")
+	}
+	return configErr
 }
 func publicError(err error) error {
 	if err == nil {
@@ -320,7 +347,7 @@ func publicError(err error) error {
 	if errors.As(err, &searchErr) {
 		return err
 	}
-	if errors.Is(err, ErrConfig) || errors.Is(err, ErrLogin) || errors.Is(err, ErrInput) || errors.Is(err, ErrBusy) {
+	if errors.Is(err, ErrConfig) || errors.Is(err, ErrBotConfig) || errors.Is(err, ErrLogin) || errors.Is(err, ErrInput) || errors.Is(err, ErrBusy) {
 		return err
 	}
 	if errors.Is(err, context.Canceled) {

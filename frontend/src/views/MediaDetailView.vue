@@ -67,7 +67,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
     }
   }
   void check('re0', nanShareRequest<NanShareConfigView>(token, 'config', signal))
-  void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal))
+  void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal).then(status => ({ configured: status.botConfigured })))
   void check('gying', gyingRequest<GyingConfigView>(token, 'config', signal))
   void check('woniu', woniuRequest<WoniuConfigView>(token, 'config', signal))
 }, { immediate: true })

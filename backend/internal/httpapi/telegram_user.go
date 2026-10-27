@@ -26,6 +26,9 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			group.BasePath() + "/search-stream": "流式资源搜索",
 			group.BasePath() + "/select":        "获取资源或翻页",
 		}))
+		group.Use(operationLogs(sinks[0], "Telegram", "频道配置", map[string]string{
+			group.BasePath() + "/channels": "保存搜索频道",
+		}))
 	}
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -34,6 +37,10 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 	})
 	fail := func(c *gin.Context, err error) {
 		status := 502
+		if errors.Is(err, tguser.ErrChannelSelection) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "channel_selection_expired"})
+			return
+		}
 		var detail *tguser.OperationError
 		if errors.As(err, &detail) {
 			if detail.RetryAt != nil {
@@ -48,12 +55,46 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		if errors.Is(err, tguser.ErrInput) {
 			status = 400
 		}
-		if errors.Is(err, tguser.ErrLogin) || errors.Is(err, tguser.ErrConfig) {
+		if errors.Is(err, tguser.ErrLogin) || errors.Is(err, tguser.ErrConfig) || errors.Is(err, tguser.ErrBotConfig) {
 			status = 409
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 	}
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, account.View()) })
+	group.GET("/channels", func(c *gin.Context) { c.JSON(200, account.ChannelConfig()) })
+	group.POST("/channels/list", func(c *gin.Context) {
+		var input struct {
+			Cursor string `json:"cursor"`
+		}
+		if c.ShouldBindJSON(&input) != nil || len(input.Cursor) > 64 {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 40*time.Second)
+		defer cancel()
+		result, err := account.ListChannels(ctx, input.Cursor)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, result)
+	})
+	group.POST("/channels", func(c *gin.Context) {
+		var input struct {
+			SelectionToken string   `json:"selectionToken"`
+			ChannelIDs     []string `json:"channelIds"`
+		}
+		if c.ShouldBindJSON(&input) != nil || len(input.SelectionToken) > 64 {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		if err := account.SaveChannels(input.SelectionToken, input.ChannelIDs); err != nil {
+			fail(c, err)
+			return
+		}
+		c.Set("operationLogSummary", fmt.Sprintf("已保存 %d 个频道", len(input.ChannelIDs)))
+		c.JSON(200, account.ChannelConfig())
+	})
 	group.POST("/config", func(c *gin.Context) {
 		var input tguser.Config
 		if c.ShouldBindJSON(&input) != nil {

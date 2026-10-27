@@ -9,7 +9,7 @@ import { gyingRequest, type GyingConfigView } from '../types/gying'
 import { woniuRequest, type WoniuConfigView } from '../types/woniu'
 import woniuLogo from '../assets/woniu.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
-import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
+import { telegramUserRequest, type TelegramUserStatus, type TelegramChannelConfig } from '../types/telegramUser'
 import { resourceSources as sources } from '../utils/managementFeatures'
 
 const props = defineProps<{ token: string }>()
@@ -17,7 +17,7 @@ defineEmits<{ logout: [] }>()
 type Source = typeof sources[number]['id']
 type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
-const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial() })
+const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), telegramChannels: initial() })
 const lifecycle = new AbortController()
 const toneClasses = {
   neutral: 'text-slate-500 dark:text-slate-400',
@@ -44,6 +44,9 @@ async function load(source: Source) {
       summary = config.configured
         ? { label: '已配置', tone: 'success' }
         : { label: '未配置', tone: 'neutral' }
+    } else if (source === 'telegramChannels') {
+      const config = await telegramUserRequest<TelegramChannelConfig>(props.token, 'channels', signal)
+      summary = config.channels.length ? { label: `已选择 ${config.channels.length} 个频道`, tone: 'success' } : { label: '未选择频道', tone: 'neutral' }
     } else {
       const status = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', signal)
       summary = {
@@ -66,7 +69,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <div class="grid items-start gap-3 sm:gap-4 md:grid-cols-2">
       <NavigationCard v-for="source in sources" :key="source.id" :to="source.settings" :title="source.title" :description="source.description" :aria-describedby="`source-status-${source.id}`" class="resource-card">
         <template #icon>
-          <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
+          <img v-if="source.id === 'telegram' || source.id === 'telegramChannels'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
           <img v-else-if="source.id === 'woniu'" :src="woniuLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />

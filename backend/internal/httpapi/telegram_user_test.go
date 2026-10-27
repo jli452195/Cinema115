@@ -32,10 +32,17 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 		status                   int
 	}{
 		{"GET", "config", "", "", 401}, {"POST", "search", `{"kind":"movie","tmdbId":"42"}`, "", 401},
+		{"GET", "channels", "", "", 401},
+		{"POST", "channels/list", `{}`, "", 401},
+		{"POST", "channels", `{"selectionToken":"old","channelIds":["123"]}`, "", 401},
 		{"POST", "config", `{"apiId":0,"apiHash":"bad"}`, "test-admin", 400},
-		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `"}`, "test-admin", 400},
+		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `"}`, "test-admin", 200},
 		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `","bot":"example_bot"}`, "test-admin", 200},
 		{"GET", "config", "", "test-admin", 200},
+		{"GET", "channels", "", "test-admin", 200},
+		{"POST", "channels/list", `bad`, "test-admin", 400},
+		{"POST", "channels/list", `{}`, "test-admin", 409},
+		{"POST", "channels", `{"selectionToken":"old","channelIds":["123"]}`, "test-admin", 409},
 		{"POST", "send-code", `{"phone":"bad"}`, "test-admin", 400},
 		{"POST", "select", `{"id":"x"}`, "test-admin", 400},
 		{"POST", "search", `{"kind":"person","tmdbId":"1"}`, "test-admin", 400},

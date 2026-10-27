@@ -62,7 +62,7 @@ func (c *Client) Close() {
 // Caller holds mu. Cache reads never acquire the Telegram connection gate.
 func (c *Client) cachedExchangeLocked(action storedAction, key string, refresh bool) (SearchResult, bool, error) {
 	if !validBotUsername(c.config.Bot) {
-		return SearchResult{}, false, ErrConfig
+		return SearchResult{}, false, ErrBotConfig
 	}
 	if len(key) > 7 && key[:7] == "select:" {
 		selected, ok := c.results[key[7:]]

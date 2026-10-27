@@ -38,4 +38,5 @@ export const resourceSources = [
   { id: 'woniu', title: '蜗牛配置', description: '登录蜗牛 I 4K，配置详情页网盘搜索。', settings: '/woniu', menuIcon: 'search' },
   { id: 're0', title: 'RE0 配置', description: '管理 NanShare 连接，检查 RE0 搜索与分享 STRM 配置。', settings: '/nanshare', menuIcon: 'link' },
   { id: 'telegram', title: 'Telegram 搜索配置', description: '配置 Telegram API、用户账号登录与资源 Bot。', settings: '/telegram/user', menuIcon: 'telegram' },
+  { id: 'telegramChannels', title: 'TG 频道配置', description: '选择已加入的频道，配置聚合资源搜索来源。', settings: '/telegram/channels', menuIcon: 'telegram' },
 ] as const

@@ -1,4 +1,7 @@
-export interface TelegramUserStatus { apiId: number; configured: boolean; hasSession: boolean; authorized: boolean; name: string; username: string; stage: 'idle' | 'code' | 'password'; bot: string }
+export interface TelegramUserStatus { apiId: number; configured: boolean; botConfigured: boolean; hasSession: boolean; authorized: boolean; name: string; username: string; stage: 'idle' | 'code' | 'password'; bot: string }
+export interface TelegramChannel { id: string; title: string; username?: string }
+export interface TelegramChannelConfig { account: TelegramUserStatus; channels: TelegramChannel[] }
+export interface TelegramChannelPage { channels: TelegramChannel[]; selectionToken: string; nextCursor: string; config?: TelegramChannelConfig }
 export interface BotSearchResult { text: string; items: { id: string; title: string; tmdbId?: string; size?: string; kind: 'resource' | 'page' }[]; links: string[]; remaining?: number; page?: number; empty: boolean; allLoaded?: boolean; cached?: boolean; expiresAt?: string; partial?: boolean; warning?: string }
 export interface BotSearchStreamEvent { complete: boolean; result: BotSearchResult }
 export interface BotSearchProgress { stage: 'queued' | 'waiting' | 'collecting'; position?: number }

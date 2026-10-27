@@ -187,7 +187,7 @@ onMounted(async () => {
   try { state.value = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', lifecycle.signal) }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '配置读取失败' }
   finally { checking.value = false }
-  if (!lifecycle.signal.aborted && state.value?.configured && state.value.hasSession) await request()
+  if (!lifecycle.signal.aborted && state.value?.botConfigured && state.value.hasSession) await request()
 })
 onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', syncVisualViewport)
@@ -217,7 +217,7 @@ onBeforeUnmount(() => {
             <input v-model="query" type="search" placeholder="筛选资源名称、大小或 TMDB ID" :disabled="!resources.length" />
           </label>
           <div class="bot-tools">
-            <button type="button" :disabled="!state?.configured || !state.hasSession || busy || checking || retrySeconds > 0" class="bot-tool-button" @click="request(undefined, true)">
+            <button type="button" :disabled="!state?.botConfigured || !state.hasSession || busy || checking || retrySeconds > 0" class="bot-tool-button" @click="request(undefined, true)">
               <svg aria-hidden="true" :class="{ 'bot-spinning': searchBusy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               刷新搜索
             </button>
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
 
         <div class="bot-body">
           <p v-if="checking" role="status" class="bot-notice bot-info">读取 Telegram 登录状态…</p>
-          <div v-else-if="!state?.configured || !state.hasSession" class="bot-setup">
+          <div v-else-if="!state?.botConfigured || !state.hasSession" class="bot-setup">
             <h3>登录 Telegram 后搜索资源</h3>
             <p>请使用已获资源 Bot 认证的 Telegram 用户账号。</p>
             <RouterLink to="/telegram/user" class="bot-button bot-primary-button" @click="emit('close')">配置并登录 Telegram</RouterLink>
@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
             </details>
           </template>
         </div>
-        <footer class="search-log-footer"><span v-if="state?.configured && state.hasSession">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></footer>
+        <footer class="search-log-footer"><span v-if="state?.botConfigured && state.hasSession">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>

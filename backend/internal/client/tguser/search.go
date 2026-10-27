@@ -284,7 +284,7 @@ func (c *Client) performExchange(ctx context.Context, action storedAction, key s
 	botUsername := c.config.Bot
 	c.mu.Unlock()
 	if !validBotUsername(botUsername) {
-		return result, ErrConfig
+		return result, ErrBotConfig
 	}
 	if strings.HasPrefix(key, "select:") {
 		c.mu.Lock()

@@ -31,8 +31,8 @@ func testClient(t *testing.T) *Client {
 func TestAccountConfigAndSession(t *testing.T) {
 	legacyConfig := `{"apiId":123,"apiHash":"` + strings.Repeat("b", 32) + `"}`
 	legacy, err := New(&memoryStore{value: legacyConfig}, &memoryStore{})
-	if err != nil || legacy.View().Bot != "" || legacy.View().Configured {
-		t.Fatal("未指定 Bot 的旧配置不应自动填充或视为已配置", err)
+	if err != nil || legacy.View().Bot != "" || !legacy.View().Configured || legacy.View().BotConfigured {
+		t.Fatal("API 配置不应依赖资源 Bot", err)
 	}
 	c := testClient(t)
 	if c.View().Bot != "" || c.View().Configured {
@@ -59,8 +59,8 @@ func TestAccountConfigAndSession(t *testing.T) {
 	if err := c.Save(Config{APIID: 123, Bot: "not-a-bot"}); !errors.Is(err, ErrInput) {
 		t.Fatal("无效 Bot 用户名未被拒绝")
 	}
-	if err := c.Save(Config{APIID: 123, Bot: "  "}); !errors.Is(err, ErrInput) {
-		t.Fatal("未填写 Bot 不应沿用已有配置")
+	if err := c.Save(Config{APIID: 123, Bot: "  "}); err != nil || !c.View().Configured || c.View().BotConfigured {
+		t.Fatal("清空 Bot 不应影响 API 配置", err)
 	}
 	store := encryptedSession{c.sessionStore}
 	if err := store.StoreSession(context.Background(), []byte("session-bytes")); err != nil {
