@@ -12,8 +12,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   page.on('console', m => { if (m.text().includes('[Vue warn]')) errors.push(m.text()) })
   const channels = [{ id: '11', title: '115网盘热更频道' }, { id: '12', title: '爱影热更频道' }]
   const ed2k = 'ed2k://|file|Movie.mkv|123|0123456789abcdef0123456789abcdef|/'
-  const first = { id: '11:10', title: '测试电影 2160p 多音轨', text: '测试电影 2160p\n4K HDR\nhttps://115.com/s/example?password=abcd', channel: channels[0], sourceUrl: 'https://t.me/c/11/10', postedAt: '2026-10-27T01:00:00Z', links: [{ type: '115', url: 'https://115.com/s/example?password=abcd' }] }
-  const second = { id: '12:20', title: '测试电影 1080p', text: '测试电影 1080p\n' + ed2k, channel: channels[1], sourceUrl: 'https://t.me/c/12/20', postedAt: '2026-10-26T01:00:00Z', links: [{ type: 'ed2k', url: ed2k }] }
+  const first = { id: '11:10', title: '测试电影', metadata: { episode: 'S01E13', specs: ['2160p', 'HDR', 'HEVC'], size: '18.1 GB' }, text: '测试电影 2160p\n4K HDR\nhttps://115.com/s/example?password=abcd', channel: channels[0], sourceUrl: 'https://t.me/c/11/10', postedAt: '2026-10-27T01:00:00Z', links: [{ type: '115', url: 'https://115.com/s/example?password=abcd' }] }
+  const second = { id: '12:20', title: '测试电影', text: '测试电影 1080p\n' + ed2k, channel: channels[1], sourceUrl: 'https://t.me/c/12/20', postedAt: '2026-10-26T01:00:00Z', links: [{ type: 'ed2k', url: ed2k, metadata: { specs: ['1080p', 'HEVC'], size: '1.2 GiB' } }] }
   let failMore = false, expired = false, holdSearch = false, releaseSearch, uncertainDownload = true, configReady = true
   let run
   const baseResult = () => ({ items: [first], warnings: [{ channel: channels[1], error: '频道读取超时，可加载更多重试' }], hasMore: true, cursor: 'page2', partial: true, cached: false, expiresAt: '2026-10-27T02:00:00Z' })
@@ -62,6 +62,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByText('爱影热更频道：频道读取超时', { exact: false }).waitFor()
   const shareLink = dialog.getByRole('link', { name: '打开分享', exact: true })
   assert.equal(await shareLink.getAttribute('href'), first.links[0].url)
+  await dialog.getByText('S01E13', { exact: true }).waitFor()
+  await dialog.getByText('2160p', { exact: true }).waitFor()
   await dialog.getByText('消息内容', { exact: true }).click()
   await dialog.getByText('测试电影 2160p\n4K HDR', { exact: false }).waitFor()
   failMore = true

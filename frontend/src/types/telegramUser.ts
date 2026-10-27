@@ -2,8 +2,9 @@ export interface TelegramUserStatus { apiId: number; configured: boolean; botCon
 export interface TelegramChannel { id: string; title: string; username?: string }
 export interface TelegramChannelConfig { account: TelegramUserStatus; channels: TelegramChannel[] }
 export interface TelegramChannelPage { channels: TelegramChannel[]; selectionToken: string; nextCursor: string; config?: TelegramChannelConfig }
-export interface TelegramChannelLink { type: '115' | 'ed2k'; url: string }
-export interface TelegramChannelResource { id: string; title: string; text: string; channel: TelegramChannel; sourceUrl: string; postedAt: string; links: TelegramChannelLink[] }
+export interface TelegramChannelMetadata { episode?: string; specs?: string[]; size?: string }
+export interface TelegramChannelLink { type: '115' | 'ed2k'; url: string; metadata?: TelegramChannelMetadata }
+export interface TelegramChannelResource { id: string; title: string; text: string; channel: TelegramChannel; sourceUrl: string; postedAt: string; links: TelegramChannelLink[]; metadata?: TelegramChannelMetadata }
 export interface TelegramChannelSearchResult { items: TelegramChannelResource[]; warnings: { channel: TelegramChannel; error: string }[]; cursor: string; hasMore: boolean; partial: boolean; cached: boolean; expiresAt: string; retryAt?: string; truncated?: boolean }
 export interface BotSearchResult { text: string; items: { id: string; title: string; tmdbId?: string; size?: string; kind: 'resource' | 'page' }[]; links: string[]; remaining?: number; page?: number; empty: boolean; allLoaded?: boolean; cached?: boolean; expiresAt?: string; partial?: boolean; warning?: string }
 export interface BotSearchStreamEvent { complete: boolean; result: BotSearchResult }

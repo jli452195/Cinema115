@@ -26,17 +26,19 @@ const channelSearchBatchSize = 6
 const channelSearchItemLimit = 1000
 
 type ChannelLink struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type     string           `json:"type"`
+	URL      string           `json:"url"`
+	Metadata *ChannelMetadata `json:"metadata,omitempty"`
 }
 type ChannelResource struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	Text      string        `json:"text"`
-	Channel   Channel       `json:"channel"`
-	SourceURL string        `json:"sourceUrl"`
-	PostedAt  time.Time     `json:"postedAt"`
-	Links     []ChannelLink `json:"links"`
+	ID        string           `json:"id"`
+	Title     string           `json:"title"`
+	Text      string           `json:"text"`
+	Channel   Channel          `json:"channel"`
+	SourceURL string           `json:"sourceUrl"`
+	PostedAt  time.Time        `json:"postedAt"`
+	Links     []ChannelLink    `json:"links"`
+	Metadata  *ChannelMetadata `json:"metadata,omitempty"`
 }
 type ChannelSearchWarning struct {
 	Channel Channel `json:"channel"`
@@ -379,6 +381,9 @@ func channelMessage(message *tg.Message, channel Channel, query string) (Channel
 	if len(links) == 0 {
 		return ChannelResource{}, false
 	}
+	if query != "" && !channelRelevant(message.Message, links, query) {
+		return ChannelResource{}, false
+	}
 	// Only one share can safely inherit a separate password from the message.
 	shareCount, shareIndex := 0, 0
 	for i, link := range links {
@@ -391,13 +396,14 @@ func channelMessage(message *tg.Message, channel Channel, query string) (Channel
 		links[shareIndex].URL = shareWithPassword(links[shareIndex].URL, message.Message)
 	}
 	title := "频道资源"
+	queryKey := channelTextKey(query)
 	for _, line := range strings.Split(message.Message, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" && !strings.HasPrefix(strings.ToLower(line), "http") && !strings.HasPrefix(strings.ToLower(line), "ed2k:") {
 			if title == "频道资源" {
 				title = line
 			}
-			if query != "" && strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
+			if queryKey != "" && strings.Contains(channelTextKey(line), queryKey) {
 				title = line
 				break
 			}
@@ -406,9 +412,11 @@ func channelMessage(message *tg.Message, channel Channel, query string) (Channel
 	if runes := []rune(title); len(runes) > 240 {
 		title = string(runes[:240])
 	}
+	metadata := channelMetadata(title, message.Message, links)
+	title = channelDisplayTitle(title, metadata)
 	path := "c/" + channel.ID
 	if channelUsernamePattern.MatchString(channel.Username) {
 		path = channel.Username
 	}
-	return ChannelResource{ID: channel.ID + ":" + strconv.Itoa(message.ID), Title: title, Text: message.Message, Channel: channel, SourceURL: "https://t.me/" + path + "/" + strconv.Itoa(message.ID), PostedAt: time.Unix(int64(message.Date), 0).UTC(), Links: links}, true
+	return ChannelResource{ID: channel.ID + ":" + strconv.Itoa(message.ID), Title: title, Text: message.Message, Channel: channel, SourceURL: "https://t.me/" + path + "/" + strconv.Itoa(message.ID), PostedAt: time.Unix(int64(message.Date), 0).UTC(), Links: links, Metadata: metadata}, true
 }
