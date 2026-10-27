@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url)
 const source = await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
-new Function('require', 'module', 'exports', compiled)(require, module, module.exports)
+new Function('require', 'module', 'exports', compiled)(name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
 const { episodeNumber, matchSubtitle, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles } = module.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 

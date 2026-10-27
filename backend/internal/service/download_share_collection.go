@@ -173,7 +173,7 @@ func updateDownloadShareMembers(doc *organizeDocument, leader OrganizeJob) {
 			}
 			videoID := member.Items[sub.VideoIndex].File.ID
 			for _, result := range leader.Download.Subtitles {
-				if result.VideoIndex >= 0 && result.VideoIndex < len(leader.Items) && leader.Items[result.VideoIndex].File.ID == videoID && result.File.Path == sub.File.Path && result.Language == sub.Language {
+				if result.VideoIndex >= 0 && result.VideoIndex < len(leader.Items) && leader.Items[result.VideoIndex].File.ID == videoID && result.File.Path == sub.File.Path && result.AttachmentID == sub.AttachmentID && result.Language == sub.Language && result.Version == sub.Version {
 					result.VideoIndex = sub.VideoIndex
 					member.Download.Subtitles[j] = result
 					break

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path"
 	"slices"
 	"strings"
@@ -58,19 +59,21 @@ type downloadPending struct {
 }
 
 type DownloadOrganize struct {
-	Subtitles subtitleLibrary
-	Shares    downloadShareQueue
-	Organize  *OrganizeEngine
-	Resources downloadResourceReader
-	Downloads *CloudDownloadService
-	Settings  *CloudDownloadSettings
-	Reader    downloadStatusReader
-	mu        sync.Mutex
-	live      map[string]*downloadPending
-	wake      chan struct{}
-	steps     chan struct{}
-	manifests map[string]downloadManifest
-	batches   map[string]downloadBatch
+	SubtitleAttachments string // Server-owned task attachments, outside the web root.
+	attachmentMu        sync.Mutex
+	Subtitles           subtitleLibrary
+	Shares              downloadShareQueue
+	Organize            *OrganizeEngine
+	Resources           downloadResourceReader
+	Downloads           *CloudDownloadService
+	Settings            *CloudDownloadSettings
+	Reader              downloadStatusReader
+	mu                  sync.Mutex
+	live                map[string]*downloadPending
+	wake                chan struct{}
+	steps               chan struct{}
+	manifests           map[string]downloadManifest
+	batches             map[string]downloadBatch
 }
 
 func NewDownloadOrganize(o *OrganizeEngine, resources downloadResourceReader, downloads *CloudDownloadService, settings *CloudDownloadSettings, reader downloadStatusReader) *DownloadOrganize {
@@ -176,7 +179,7 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 			return a, fmt.Errorf("%w：请先处理命名冲突", ErrOrganizeInput)
 		}
 	}
-	return a, nil
+	return a, s.requireSubtitleAttachments(job)
 }
 
 func canResumeDownload(job OrganizeJob) bool {
@@ -286,7 +289,14 @@ func (s *DownloadOrganize) Run(ctx context.Context) (runErr error) {
 	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var swept time.Time
 	for {
+		if time.Since(swept) > time.Minute {
+			if err := s.pruneSubtitleAttachments(time.Now()); err != nil {
+				log.Printf("清理本地字幕附件: %v", err)
+			}
+			swept = time.Now()
+		}
 		if err := s.sealShareCollections(time.Now()); err != nil {
 			return err
 		}

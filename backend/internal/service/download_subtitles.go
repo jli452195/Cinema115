@@ -16,23 +16,32 @@ type subtitleLibrary interface {
 	Read(context.Context, subshare.File) ([]byte, error)
 }
 type DownloadSubtitleSelection struct {
-	SHA       string `json:"sha"`
-	VersionID string `json:"versionId"`
-	Path      string `json:"path"`
-	VideoID   string `json:"videoId"`
-	Language  string `json:"language"`
+	LocalID      string `json:"localId,omitempty"`
+	OriginalName string `json:"originalName,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
+	Size         int64  `json:"size,omitempty"`
+	Version      string `json:"version,omitempty"`
+	VideoID      string `json:"videoId"`
+	Language     string `json:"language"`
+	SHA          string `json:"sha"`
+	VersionID    string `json:"versionId"`
+	Path         string `json:"path"`
 }
 
 // VideoIndex refers to the immutable item order, including after cloud binding.
 type DownloadSubtitle struct {
-	FileID     string        `json:"fileId,omitempty"`
-	File       subshare.File `json:"file"`
-	VideoIndex int           `json:"videoIndex"`
-	Language   string        `json:"language"`
-	Name       string        `json:"name"`
-	TargetPath string        `json:"targetPath"`
-	Status     string        `json:"status"`
-	Message    string        `json:"message,omitempty"`
+	AttachmentID string        `json:"attachmentId,omitempty"`
+	LocalID      string        `json:"localId,omitempty"`
+	SHA256       string        `json:"sha256,omitempty"`
+	Version      string        `json:"version,omitempty"`
+	FileID       string        `json:"fileId,omitempty"`
+	File         subshare.File `json:"file"`
+	VideoIndex   int           `json:"videoIndex"`
+	Language     string        `json:"language"`
+	Name         string        `json:"name"`
+	TargetPath   string        `json:"targetPath"`
+	Status       string        `json:"status"`
+	Message      string        `json:"message,omitempty"`
 }
 
 func pendingDownloadSubtitles(job OrganizeJob) bool {
@@ -66,23 +75,39 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 		job := &jobs[i]
 		for _, selection := range resource.Subtitles {
 			count++
-			if count > 100 || s.Subtitles == nil {
-				return fmt.Errorf("%w：字幕库不可用或所选字幕超过 100 个", ErrOrganizeInput)
+			if count > 100 {
+				return fmt.Errorf("%w：所选字幕超过 100 个", ErrOrganizeInput)
 			}
-			files, ok := versions[selection.VersionID]
-			if !ok {
+			var source *subshare.File
+			attachment := ""
+			if selection.LocalID != "" {
+				if s.SubtitleAttachments == "" || !subtitleAttachmentID(selection.LocalID) || !subtitleDigest(selection.SHA256) || selection.Size < 1 || selection.Size > p115.MaxSubtitleBytes || !subtitle.Supported(selection.OriginalName) || len(selection.OriginalName) > 2048 || strings.ContainsAny(selection.OriginalName, "\x00\r\n") || selection.VersionID != "" || selection.Path != "" || selection.SHA != "" {
+					return fmt.Errorf("%w：本地字幕文件或大小无效", ErrOrganizeInput)
+				}
 				var err error
-				files, err = s.Subtitles.Files(ctx, selection.VersionID)
+				attachment, err = organizeToken()
 				if err != nil {
 					return err
 				}
-				versions[selection.VersionID] = files
-			}
-			var source *subshare.File
-			for n := range files {
-				if files[n].Path == selection.Path {
-					source = &files[n]
-					break
+				source = &subshare.File{Path: selection.LocalID, Name: selection.OriginalName, Size: selection.Size}
+			} else {
+				if s.Subtitles == nil {
+					return fmt.Errorf("%w：字幕库不可用", ErrOrganizeInput)
+				}
+				files, ok := versions[selection.VersionID]
+				if !ok {
+					var err error
+					files, err = s.Subtitles.Files(ctx, selection.VersionID)
+					if err != nil {
+						return err
+					}
+					versions[selection.VersionID] = files
+				}
+				for n := range files {
+					if files[n].Path == selection.Path && files[n].SHA == selection.SHA {
+						source = &files[n]
+						break
+					}
 				}
 			}
 			videoIndex := -1
@@ -92,7 +117,7 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 					break
 				}
 			}
-			if source == nil || source.SHA != selection.SHA || videoIndex < 0 {
+			if source == nil || videoIndex < 0 {
 				return fmt.Errorf("%w：字幕或关联视频不在本次选择中", ErrOrganizeInput)
 			}
 			video := job.Items[videoIndex]
@@ -100,7 +125,10 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 			if video.File.TitleOnly {
 				videoName = video.Stem + ".mkv"
 			}
-			name, err := subtitle.Name(videoName, source.Name, selection.Language, "")
+			if organizeName(selection.Version) != selection.Version {
+				return fmt.Errorf("%w：字幕版本标记无效", ErrOrganizeInput)
+			}
+			name, err := subtitle.Name(videoName, source.Name, selection.Language, selection.Version)
 			if err != nil {
 				return fmt.Errorf("%w：%s", ErrOrganizeInput, err)
 			}
@@ -114,7 +142,7 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 			if total > MaxSubtitleImportBytes {
 				return fmt.Errorf("%w：所选字幕总大小超过 64 MiB", ErrOrganizeInput)
 			}
-			job.Download.Subtitles = append(job.Download.Subtitles, DownloadSubtitle{File: *source, VideoIndex: videoIndex, Language: selection.Language, Name: name, TargetPath: target, Status: "pending"})
+			job.Download.Subtitles = append(job.Download.Subtitles, DownloadSubtitle{File: *source, VideoIndex: videoIndex, Language: selection.Language, Version: selection.Version, LocalID: selection.LocalID, SHA256: selection.SHA256, AttachmentID: attachment, Name: name, TargetPath: target, Status: "pending"})
 		}
 		for _, sub := range job.Download.Subtitles {
 			if !strings.EqualFold(path.Ext(sub.Name), ".idx") {
@@ -122,7 +150,7 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 			}
 			paired := false
 			for _, other := range job.Download.Subtitles {
-				if other.VideoIndex == sub.VideoIndex && other.Language == sub.Language && other.File.Revision == sub.File.Revision && strings.EqualFold(other.File.Path, strings.TrimSuffix(sub.File.Path, path.Ext(sub.File.Path))+".sub") {
+				if other.VideoIndex == sub.VideoIndex && other.Language == sub.Language && other.Version == sub.Version && other.File.Revision == sub.File.Revision && ((sub.LocalID != "" && other.LocalID != "" && strings.EqualFold(other.File.Name, strings.TrimSuffix(sub.File.Name, path.Ext(sub.File.Name))+".sub")) || (sub.LocalID == "" && other.LocalID == "" && strings.EqualFold(other.File.Path, strings.TrimSuffix(sub.File.Path, path.Ext(sub.File.Path))+".sub"))) {
 					paired = true
 					break
 				}
@@ -147,7 +175,7 @@ func (s *DownloadOrganize) uploadSubtitles(ctx context.Context, job *OrganizeJob
 		return s.Organize.checkpoint(job)
 	}
 	uploader, ok := s.Organize.drive.(subtitleUploader)
-	if !ok || s.Subtitles == nil {
+	if !ok {
 		return fail(&job.Download.Subtitles[0], fmt.Errorf("字幕来源或上传服务不可用"))
 	}
 	cache := make(map[string][]p115.ShareFile)
@@ -160,7 +188,7 @@ func (s *DownloadOrganize) uploadSubtitles(ctx context.Context, job *OrganizeJob
 			return fail(sub, fmt.Errorf("字幕视频关联无效"))
 		}
 		video := job.Items[sub.VideoIndex]
-		name, err := subtitle.Name(video.Name, sub.File.Name, sub.Language, "")
+		name, err := subtitle.Name(video.Name, sub.File.Name, sub.Language, sub.Version)
 		if err != nil {
 			return fail(sub, err)
 		}
@@ -220,7 +248,7 @@ func (s *DownloadOrganize) uploadSubtitles(ctx context.Context, job *OrganizeJob
 			}
 			continue
 		}
-		data, err := s.Subtitles.Read(ctx, sub.File)
+		data, err := s.readDownloadSubtitle(ctx, *sub)
 		if err != nil {
 			return fail(sub, err)
 		}

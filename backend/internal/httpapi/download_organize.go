@@ -13,7 +13,11 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 	r := admin.Group("/p115/download-organize")
 	r.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
+		limit := int64(512 << 10)
+		if c.Request.Method == http.MethodPost && c.FullPath() == "/api/admin/p115/download-organize/subtitles/attachments" {
+			limit = service.MaxSubtitleImportBytes + 1<<20
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	})
 	r.GET("/config", func(c *gin.Context) { c.JSON(200, s.Target()) })
@@ -26,6 +30,19 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 		c.JSON(200, gin.H{"ready": err == nil, "reason": reason})
 	})
 	r.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": s.History()}) })
+	r.POST("/subtitles/attachments", func(c *gin.Context) {
+		values, files, ok := readSubtitleUpload(c)
+		if !ok {
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+		defer cancel()
+		if err := s.SaveSubtitleAttachments(ctx, values["previewId"], files); err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	r.POST("/files", func(c *gin.Context) {
 		var in service.DownloadResourceInput
 		if c.ShouldBindJSON(&in) != nil {

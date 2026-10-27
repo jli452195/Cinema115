@@ -5,6 +5,8 @@ import type { SubtitleVideo } from '../types/subtitleImport'
 export const maxFileBytes = 16 * 1024 * 1024
 export const maxTotalBytes = 64 * 1024 * 1024
 export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string; sourceKey?: string; sourceLabel?: string }
+export interface LocalSubtitleSelection { localId: string; file: LocalSubtitle; videoId: string; language: string; version: string }
+export interface SubtitleMatchRow { key: string; pairKey?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
 const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
@@ -117,7 +119,7 @@ function crc32(data: Uint8Array) { let c = 0xffffffff; for (const b of data) c =
 
 // Read the central directory before inflating. Stream bounded compressed chunks,
 // check actual output size and CRC, and never interpret archive paths as disk paths.
-async function readZip(bytes: Uint8Array, signal?: AbortSignal): Promise<{ files: LocalSubtitle[]; ignored: number }> {
+export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, limits = { bytes: maxTotalBytes, files: 100 }): Promise<{ files: LocalSubtitle[]; ignored: number }> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   let end = -1
   for (let p = bytes.length - 22; p >= Math.max(0, bytes.length - 65557); p--) {
@@ -144,7 +146,7 @@ async function readZip(bytes: Uint8Array, signal?: AbortSignal): Promise<{ files
     if (!isSubtitle(name)) { ignored++; continue }
     if (!name || name.length > 2048 || /^(?:\/|[a-z]:)/i.test(name) || name.split('/').includes('..') || /[\x00\r\n]/.test(name)) throw new Error('ZIP 中包含无效文件路径。')
     if (method !== 0 && method !== 8) throw new Error('ZIP 压缩方法不受支持，请先在电脑上解压。')
-    if (!size || size > maxFileBytes || total + size > maxTotalBytes || files.length >= 100) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB。')
+    if (!size || size > maxFileBytes || total + size > limits.bytes || files.length >= limits.files) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB。')
     if (local + 30 > centralOffset || view.getUint32(local, true) !== 0x04034b50 || view.getUint16(local + 8, true) !== method || view.getUint16(local + 6, true) & 1) throw new Error('ZIP 文件头无效。')
     const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true)
     if (start + compressed > centralOffset) throw new Error('ZIP 文件内容不完整。')
@@ -186,10 +188,9 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
     const archive = /\.(zip|rar|7z)$/i.test(file.name)
     const sourceKey = archive ? `archive:${sha256(bytes)}` : undefined
     let result: { files: LocalSubtitle[]; ignored: number }
-    if (/\.zip$/i.test(file.name)) result = await readZip(bytes, signal)
-    else if (/\.(rar|7z)$/i.test(file.name)) {
+    if (archive) {
       const { readSubtitleArchive } = await import('./subtitleArchiveClient')
-      result = await readSubtitleArchive(bytes, /\.rar$/i.test(file.name) ? 'rar' : '7z', { bytes: maxTotalBytes - total, files: 100 - files.length }, signal)
+      result = await readSubtitleArchive(bytes, /\.zip$/i.test(file.name) ? 'zip' : /\.rar$/i.test(file.name) ? 'rar' : '7z', { bytes: maxTotalBytes - total, files: 100 - files.length }, signal)
     } else result = { files: [{ name: file.name, data: bytes, sha256: sha256(bytes) }], ignored: 0 }
     ignored += result.ignored
     for (const sub of result.files) {

@@ -271,6 +271,7 @@ func main() {
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
 	subtitleLibrary := subshare.New(filepath.Join(dataDir, "subtitle-library"))
 	downloadOrganize.Subtitles = subtitleLibrary
+	downloadOrganize.SubtitleAttachments = filepath.Join(dataDir, "subtitle-attachments")
 	httpapi.RegisterSubtitleLibrary(admin, subtitleLibrary)
 	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {

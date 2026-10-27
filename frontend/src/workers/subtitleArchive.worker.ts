@@ -1,6 +1,7 @@
 import { libarchiveWasm } from 'libarchive-wasm'
 import wasmURL from 'libarchive-wasm/dist/libarchive.wasm?url'
 import { extractSubtitleArchive, validateArchive, type ArchiveKind, type ArchiveLimits } from '../utils/subtitleArchive'
+import { readSubtitleZip } from '../utils/subtitleImport'
 
 const worker = self as unknown as {
   onmessage: ((event: MessageEvent<{ bytes: Uint8Array; kind: ArchiveKind; limits: ArchiveLimits }>) => void) | null
@@ -8,6 +9,11 @@ const worker = self as unknown as {
 }
 worker.onmessage = async ({ data }) => {
   try {
+    if (data.kind === 'zip') {
+      const result = await readSubtitleZip(data.bytes, undefined, data.limits)
+      worker.postMessage({ result }, result.files.map(file => file.data.buffer as ArrayBuffer))
+      return
+    }
     validateArchive(data.bytes, data.kind)
     const module = await libarchiveWasm({ locateFile: () => wasmURL })
     const result = extractSubtitleArchive(data.bytes, data.kind, module, data.limits)

@@ -6,6 +6,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGying = source === 'gying'
 const shareMode = process.argv[3] === 'share'
 const subtitleMode = process.argv[3] === 'subtitles'
+const localSubtitleMode = process.argv[3] === 'local-subtitles'
 const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : 'Garden 搜索'
 const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : '/resources/garden/search'
 const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
@@ -18,7 +19,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const page = await context.newPage(); page.setDefaultTimeout(8000)
     page.on('pageerror', e => errors.push(e.message))
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
-    let shareConfigured = false, omitOrganizeDirectory = false
+    let shareConfigured = false, omitOrganizeDirectory = false, loseAttachmentResponse = localSubtitleMode
     let japanese = true
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
@@ -38,7 +39,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     ]
     const resource = n => ({ provider: 'dmhy', providerId: String(n), title: `测试合集 ${n} [1080p]`, size: 1024 ** 3, createdAt: '2026-10-23T00:00:00Z', magnet: `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`, publisher: { id: 2, name: '测试组' } })
     await page.route('**/api/**', async route => {
-      const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON()
+      const req = route.request(), endpoint = new URL(req.url()).pathname
+      const multipart = req.headers()['content-type']?.startsWith('multipart/form-data')
+      const body = multipart ? req.postData() : req.postDataJSON()
       calls.push({ endpoint, body }); let status = 200, data = {}
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: 'admin', disabled: false } }
       else if (endpoint.endsWith('/accounts')) data = { accounts: [] }
@@ -75,6 +78,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
           data.id = 'share-plan'; data.download = { hash: '1'.padStart(40, '0'), share: { directory: 'Cinema115-isolated' } }
           data.items.forEach(item => { item.directory = `Cinema115-isolated/${item.directory}` })
         }
+      }
+      else if (endpoint.endsWith('/download-organize/subtitles/attachments')) {
+        assert.ok(multipart)
+        if (loseAttachmentResponse) { loseAttachmentResponse = false; status = 502; data = { error: '模拟附件回执丢失' } }
+        else { await route.fulfill({ status: 204 }); return }
       }
       else if (endpoint.endsWith('/download-organize/jobs')) {
         if (holdJob) await new Promise(resolve => { releaseJob = resolve })
@@ -138,6 +146,94 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     passed.push('no filter toolbar; excluding all directories keeps recovery accessible; keyboard restore remains unselected without requests or dialog resize')
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isDisabled(), true)
+    if (localSubtitleMode) {
+      const { zipSync, strToU8 } = require('fflate')
+      const first = organizeDialog.locator('[data-organize-file]').first()
+      const second = organizeDialog.locator('[data-organize-file]').nth(1)
+      await first.getByRole('checkbox').check()
+      await second.getByRole('checkbox').check()
+      const imported = page.locator('dialog.local-subtitle-dialog')
+      const picker = () => imported.getByLabel('选择本地字幕或压缩包', { exact: true })
+      const subtitleRow = name => imported.locator('.match-files > li').filter({ has: page.getByRole('checkbox', { name: `选择字幕 ${name}`, exact: true }) })
+      await organizeDialog.getByRole('button', { name: '导入字幕', exact: true }).click()
+      assert.equal(await page.locator('dialog[open]').count(), 3)
+      const archive = zipSync({
+        '字幕组/Show [30].chs.ass': strToU8('[Script Info]\nTitle: first'),
+        '字幕组/Show [30].cht.ass': strToU8('[Script Info]\nTitle: traditional'),
+        '字幕组/Show [SP01].ass': strToU8('[Script Info]\nTitle: special'),
+        '字幕组/readme.txt': strToU8('ignored'),
+      })
+      const zip = { name: 'Group.zip', mimeType: 'application/zip', buffer: Buffer.from(archive) }
+      await picker().setInputFiles(zip)
+      await imported.getByText(/共 3 个字幕，1 个未匹配/).waitFor()
+      assert.equal(await imported.getByRole('checkbox', { name: '选择字幕 字幕组/Show [30].chs.ass', exact: true }).isChecked(), true)
+      const special = subtitleRow('字幕组/Show [SP01].ass')
+      assert.equal(await special.getByRole('checkbox').isChecked(), false)
+      await special.getByRole('combobox', { name: /对应视频/ }).selectOption(files[0].id)
+      await special.getByRole('checkbox').check()
+      await picker().setInputFiles(zip)
+      await imported.getByText(/已跳过 3 个重复字幕/).waitFor()
+      // Invalid archives leave all mappings intact; RAR/7z use the real WASM worker.
+      await picker().setInputFiles({ name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('broken') })
+      await imported.getByRole('alert').waitFor()
+      assert.equal(await imported.locator('.match-files > li').count(), 3)
+      for (const [index, name] of ['normal.7z', 'normal-v5.rar'].entries()) {
+        await picker().setInputFiles(path.join(__dirname, '../tests/fixtures/subtitle-archives', name))
+        await imported.getByText(new RegExp(`共 ${index + 4} 个字幕`)).waitFor()
+      }
+      // A second local version must carry an explicit marker to avoid overwrite.
+      await picker().setInputFiles({ name: 'Another [30].chs.ass', mimeType: 'text/plain', buffer: Buffer.from('another version') })
+      await imported.getByText(/共 6 个字幕/).waitFor()
+      await imported.getByText(/多个字幕的目标名称相同/).waitFor()
+      const another = subtitleRow('Another [30].chs.ass')
+      await another.getByRole('textbox', { name: /版本/ }).fill('Alt')
+      await imported.getByText(/多个字幕的目标名称相同/).waitFor({ state: 'detached' })
+      const artifact = path.join(os.tmpdir(), 'cinema115-local-subtitles-ui')
+      await fs.mkdir(artifact, { recursive: true })
+      for (const [width, theme] of [[1440, 'light'], [390, 'light'], [320, 'dark']]) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
+        assert.equal(await imported.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+        const apply = imported.getByRole('button', { name: '使用所选字幕', exact: true })
+        await apply.scrollIntoViewIfNeeded()
+        const bounds = await apply.boundingBox()
+        assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 900, 'footer remains accessible')
+        await page.screenshot({ path: path.join(artifact, `local-${width}-${theme}.png`) })
+      }
+      assert.equal(count('/download-organize/subtitles/attachments'), 0)
+      assert.equal(count('/download-organize/jobs'), 0)
+      await imported.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+      await imported.waitFor({ state: 'detached' })
+      const external = second.locator('details.subtitle-details')
+      await external.locator('summary').click()
+      const beforeName = await external.locator('.subtitle-target').first().innerText()
+      await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('31')
+      await page.waitForTimeout(700)
+      assert.notEqual(await external.locator('.subtitle-target').first().innerText(), beforeName)
+      await organizeDialog.getByRole('button', { name: '导入字幕', exact: true }).click()
+      assert.equal(await imported.locator('.match-files > li').count(), 4, 'only selected local files are retained')
+      await page.keyboard.press('Escape')
+      await imported.waitFor({ state: 'detached' })
+      assert.equal(await organizeDialog.isVisible(), true)
+      assert.equal(await organizeDialog.getByRole('button', { name: '导入字幕', exact: true }).evaluate(el => el === document.activeElement), true)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      const start = organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true })
+      await start.click()
+      await organizeDialog.getByText('模拟附件回执丢失', { exact: true }).waitFor()
+      assert.equal(count('/download-organize/jobs'), 0)
+      await organizeDialog.getByRole('button', { name: '确认下载并整理', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).click()
+      await organizeDialog.getByText('任务已创建', { exact: true }).waitFor()
+      assert.equal(count('/download-organize/subtitles/attachments'), 2, 'creation receipt retry must not upload again')
+      assert.equal(count('/download-organize/preview'), 1)
+      const preview = calls.find(c => c.endpoint.endsWith('/download-organize/preview')).body
+      assert.equal(preview.subtitles.length, 4)
+      for (const sub of preview.subtitles) { assert.match(sub.localId, /^[a-f0-9]{32}$/); assert.match(sub.sha256, /^[a-f0-9]{64}$/); assert.equal(sub.data, undefined) }
+      assert.equal(preview.subtitles.find(sub => sub.version === 'Alt').videoId, files[1].id)
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ passed: ['ZIP/RAR/7z worker extraction', 'unmatched manual mapping', 'append deduplication and invalid archive preserve mappings', 'duplicate target requires version', 'desktop/mobile/dark no overflow', 'nested Escape preserves parent and focus', 'final subtitle name follows video edits', 'metadata-only preview, upload only at Start', 'attachment and creation lost receipts retry same task'], artifact }, null, 2))
+      return
+    }
     if (subtitleMode) {
       assert.equal(count('/subtitles/search'), 0, 'opening organizer must not fetch catalogue')
       const second = page.locator('[data-organize-file]').nth(1)

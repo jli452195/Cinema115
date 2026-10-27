@@ -16,6 +16,8 @@ import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
 import { magnetKey } from '../lib/cloud-download-batch'
 import SubtitleLibraryDialog from './SubtitleLibraryDialog.vue'
+import LocalSubtitleDialog from './LocalSubtitleDialog.vue'
+import type { LocalSubtitleSelection } from '../utils/subtitleImport'
 import { subtitleTargetName, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 
 const props = defineProps<{
@@ -31,9 +33,15 @@ const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states, selectedKeys } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
 const subtitleOpen = ref(false), externalSubtitles = ref<LibrarySubtitleSelection[]>([]), subtitleVersion = ref<SubtitleVersion>()
-const selectedExternal = computed(() => externalSubtitles.value.filter(sub => selected.value.some(row => row.id === sub.videoId)))
-const externalName = (sub: LibrarySubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language)
+const localSubtitleOpen = ref(false), localSubtitles = ref<LocalSubtitleSelection[]>([])
+const selectedLibrary = computed(() => externalSubtitles.value.filter(sub => selected.value.some(row => row.id === sub.videoId)))
+const selectedLocal = computed(() => localSubtitles.value.filter(sub => selected.value.some(row => row.id === sub.videoId)))
+const allExternal = computed(() => [...externalSubtitles.value, ...localSubtitles.value])
+const selectedExternal = computed(() => [...selectedLibrary.value, ...selectedLocal.value])
+const externalIssue = computed(() => selectedExternal.value.length > 100 || selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0) > 64 * 1024 * 1024 ? '外部字幕合计不能超过 100 个或 64 MiB，请减少选择。' : '')
+const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, 'version' in sub ? sub.version : '')
 function selectSubtitles(items: LibrarySubtitleSelection[], version: SubtitleVersion) { externalSubtitles.value = items; subtitleVersion.value = version; subtitleOpen.value = false }
+function selectLocal(items: LocalSubtitleSelection[]) { localSubtitles.value = [...localSubtitles.value.filter(sub => !selected.value.some(row => row.id === sub.videoId)), ...items]; localSubtitleOpen.value = false }
 const confirming = ref(false)
 const shareIssue = ref('正在读取分享设置…'), shareAction = ref(false)
 const errorElement = ref<HTMLElement>()
@@ -127,13 +135,16 @@ const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(1300
 function resourceSelections() {
   return preparation.resourceSelections().map(resource => ({ ...resource,
     subtitles: selectedExternal.value.filter(sub => preparation.owners.get(sub.videoId)?.key === magnetKey(resource.magnet))
-      .map(sub => ({ versionId: sub.versionId, path: sub.path, sha: sub.file.sha, language: sub.language, videoId: preparation.owners.get(sub.videoId)!.id })),
+      .map(sub => ({ language: sub.language, videoId: preparation.owners.get(sub.videoId)!.id, ...('localId' in sub
+        ? { localId: sub.localId, originalName: sub.file.name, sha256: sub.file.sha256, size: sub.file.data.length, version: sub.version }
+        : { versionId: sub.versionId, path: sub.path, sha: sub.file.sha }) })),
   }))
 }
 const snapshotKey = computed(() => JSON.stringify({ shareSTRM: shareAction.value, naming: namingPreview.value.value, targetCID: shareAction.value ? undefined : targetCID.value, targetPath: shareAction.value ? undefined : targetPath.value, resources: resourceSelections() }))
-const submitDisabled = computed(() => busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !!unresolved.value.length || !accountId.value || !selected.value.length || invalid.value || !!Object.keys(localConflicts.value).length)
+const submitDisabled = computed(() => busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !!unresolved.value.length || !accountId.value || !selected.value.length || invalid.value || !!externalIssue.value || !!Object.keys(localConflicts.value).length)
 watch(snapshotKey, () => { conflicts.value = {} }, { flush: 'sync' })
 let previewKey = ''
+let uploadedPreview = ''
 
 function mapFiles(sequential = false) {
   error.value = ''; notice.value = ''; conflicts.value = {}
@@ -165,7 +176,7 @@ async function loadConfig() {
 }
 async function start(sharing = false) {
   if (confirming.value && sharing !== shareAction.value || sharing && shareIssue.value && !confirming.value) return
-  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || Object.keys(localConflicts.value).length || !sharing && !targetCID.value || !accountId.value || job.value) return
+  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || unresolved.value.length || !selected.value.length || invalid.value || externalIssue.value || Object.keys(localConflicts.value).length || !sharing && !targetCID.value || !accountId.value || job.value) return
   busy.value = true; error.value = ''; notice.value = ''
   shareAction.value = sharing
   let creationAttempt = false
@@ -197,6 +208,12 @@ async function start(sharing = false) {
       if (!previewId.value) throw new Error('任务预览缺少编号，请重试')
       planResults.value = official; planKey.value = key
       if (changed) { notice.value = '最终命名有变化，已更新下方预览，请核对后再次确认。'; return }
+    }
+    if (!confirming.value && selectedLocal.value.length && uploadedPreview !== previewId.value) {
+      const body = new FormData(); body.append('previewId', previewId.value)
+      for (const sub of selectedLocal.value) body.append(sub.localId, new Blob([new Uint8Array(sub.file.data)]), sub.file.name.split(/[\\/]/).pop()!)
+      await p115Request<void>(props.token, 'download-organize/subtitles/attachments', { method: 'POST', signal: signal(), body })
+      uploadedPreview = previewId.value
     }
     // Reuse the ID after a lost response; the server persists before submitting.
     creationAttempt = true
@@ -239,7 +256,8 @@ onBeforeUnmount(() => lifecycle.abort())
     <template v-else>
       <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>普通整理目录</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p><small v-if="sharedDirectory">公共子目录：{{ sharedDirectory }}</small></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
       <div class="naming-summary"><strong>{{ title }}</strong><RouterLink :to="{ path: '/settings/naming', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh">刷新命名</button></div>
-      <div v-if="subtitleLibrary" class="external-subtitle-bar"><span>字幕</span><p>{{ subtitleVersion ? `${subtitleVersion.source} · ${subtitleVersion.name} · 本次 ${selectedExternal.length} 个` : '未选择外部字幕' }}</p><button type="button" class="secondary" :disabled="editDisabled || parsing || !selected.length" :title="!selected.length ? '请先勾选需要整理的视频' : ''" @click="subtitleOpen = true">{{ subtitleVersion ? '更换字幕' : '查找字幕' }}</button><button v-if="externalSubtitles.length" type="button" class="secondary" :disabled="editDisabled" @click="externalSubtitles = []; subtitleVersion = undefined">移除</button></div>
+      <div v-if="subtitleLibrary" class="external-subtitle-bar"><span>字幕</span><p>{{ selectedExternal.length ? `本次 ${selectedExternal.length} 个${selectedLocal.length ? ` · 本地 ${selectedLocal.length} 个` : ''}${subtitleVersion ? ` · ${subtitleVersion.name}` : ''}` : '未选择外部字幕' }}</p><button type="button" class="secondary" :disabled="editDisabled || parsing || !selected.length" :title="!selected.length ? '请先勾选需要整理的视频' : ''" @click="subtitleOpen = true">{{ subtitleVersion ? '更换字幕' : '查找字幕' }}</button><button type="button" class="secondary" :disabled="editDisabled || parsing || !selected.length" :title="!selected.length ? '请先勾选需要整理的视频' : ''" @click="localSubtitleOpen = true">导入字幕</button><button v-if="allExternal.length" type="button" class="secondary" :disabled="editDisabled" @click="externalSubtitles = []; localSubtitles = []; subtitleVersion = undefined">移除</button></div>
+      <p v-if="externalIssue" role="alert" class="error">{{ externalIssue }}</p>
       <details class="organize-help">
         <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
         <div>
@@ -271,7 +289,7 @@ onBeforeUnmount(() => lifecycle.abort())
       </div>
       <OrganizeFileSelection ref="fileSelection" :rows="rows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" compact>
         <template #row-details="{ row }">
-          <details v-if="externalSubtitles.some(sub => sub.videoId === row.id)" class="subtitle-details" @click.stop @mousedown.stop><summary><IconChevronDown :size="13" aria-hidden="true" />字幕库（{{ externalSubtitles.filter(sub => sub.videoId === row.id).length }}）<span v-if="!row.selected">未选择</span></summary><div v-for="sub in externalSubtitles.filter(sub => sub.videoId === row.id)" :key="sub.path" class="subtitle-file"><p>{{ sub.file.name }}</p><p class="subtitle-target">{{ row.selected ? `整理后：${externalName(sub)}` : '随视频选择，当前不上传' }}</p></div></details>
+          <details v-if="allExternal.some(sub => sub.videoId === row.id)" class="subtitle-details" @click.stop @mousedown.stop><summary><IconChevronDown :size="13" aria-hidden="true" />外部字幕（{{ allExternal.filter(sub => sub.videoId === row.id).length }}）<span v-if="!row.selected">未选择</span></summary><div v-for="sub in allExternal.filter(sub => sub.videoId === row.id)" :key="'localId' in sub ? sub.localId : sub.path" class="subtitle-file"><p>{{ sub.file.name }}</p><p class="subtitle-target">{{ row.selected ? `整理后：${externalName(sub)}` : '随视频选择，当前不上传' }}</p></div></details>
           <p v-if="results[row.id]?.directory && results[row.id]!.directory !== sharedDirectory" class="scope-note break-all">目录：{{ results[row.id]!.directory }}</p>
           <details v-if="subtitlesByVideo[row.id]?.length" class="subtitle-details" :open="row.selected && subtitlesByVideo[row.id]!.some(sub => displayedConflicts[sub.file.id])" @click.stop @mousedown.stop>
             <summary><IconChevronDown :size="13" aria-hidden="true" />关联字幕（{{ subtitlesByVideo[row.id]!.length }}）<span v-if="!row.selected">未选择</span></summary>
@@ -305,7 +323,8 @@ onBeforeUnmount(() => lifecycle.abort())
     </template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
-  <SubtitleLibraryDialog v-if="subtitleOpen" :token="token" :title="title" :original-title="originalTitle" :videos="selected" :selections="selectedExternal" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
+  <SubtitleLibraryDialog v-if="subtitleOpen" :token="token" :title="title" :original-title="originalTitle" :videos="selected" :selections="selectedLibrary" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
+  <LocalSubtitleDialog v-if="localSubtitleOpen" :videos="selected" :selections="selectedLocal" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="localSubtitleOpen = false" @select="selectLocal" />
 </template>
 
 <style scoped>

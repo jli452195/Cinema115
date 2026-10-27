@@ -13,7 +13,7 @@ function compile(source, resolver = require) {
   new Function('require', 'module', 'exports', compiled)(resolver, module, module.exports)
   return module.exports
 }
-loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8')))
+loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
 loaded.set('../lib/p115-api', compile(await readFile(new URL('../src/lib/p115-api.ts', import.meta.url), 'utf8')))
 const { readSubtitleResponse, readDriveSubtitles, mergeSubtitleFiles } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
 
