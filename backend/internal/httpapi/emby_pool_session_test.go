@@ -22,6 +22,7 @@ import (
 type poolProtocolDrive struct {
 	proxyCacheFake
 	failNext   bool
+	targetErr  error
 	attempts   []string
 	checks     int
 	checkErr   error
@@ -48,6 +49,9 @@ func (*poolProtocolDrive) DriveFiles(context.Context, string, int, string) (*p11
 }
 func (f *poolProtocolDrive) DownloadInfoWithUA(_ context.Context, _ *p115.ShareInfo, _ string, cookie, _ string) (*p115.DownloadInfo, error) {
 	f.attempts = append(f.attempts, p115.CookieUserID(cookie))
+	if f.targetErr != nil {
+		return nil, f.targetErr
+	}
 	if f.failNext {
 		f.failNext = false
 		return nil, p115.ErrShareLoginRequired
@@ -713,5 +717,75 @@ func checkPoolProtocolNegotiationRedirectAndStop(t *testing.T, legacy bool, pick
 			t.Fatal("parallel rollback did not restore B", w.Code, w.Body.String())
 		}
 		t.Log("20 GET/HEAD requests blocked before cloud work; exact Ping only; persisted silent evidence permits HTTP takeover; retired A fenced; parallel rollback restores both devices")
+	})
+	t.Run("capacity-fallback-http", func(t *testing.T) {
+		doc, err := db.PlaybackPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalSettings := doc.Settings
+		t.Cleanup(func() {
+			if err := members.ConfigurePool(ctx, originalSettings); err != nil {
+				t.Error(err)
+			}
+		})
+		bound := doc.Assignments[profileID]
+		// Restore both mocked accounts and expire occupancy on the spare UID.
+		// The old user's UID stays occupied, so a new trusted device needs a slot.
+		for _, id := range []string{target, other} {
+			a, err := accounts.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc.Health[id] = model.PlaybackPoolHealth{UID: a.UID, Revision: a.Revision, State: "ready"}
+		}
+		for key, lease := range doc.Leases {
+			if lease.UID != bound.UID {
+				lease.ExpiresAt = time.Now().Add(-time.Second).UnixMilli()
+				doc.Leases[key] = lease
+			}
+		}
+		doc.Settings.MaxSessions = 1
+		doc.Leases["capacity-occupant"] = model.PlaybackPoolLease{Key: "capacity-occupant", UID: bound.UID, Issued: true, ExpiresAt: time.Now().Add(time.Minute).UnixMilli()}
+		if err := db.SavePlaybackPool(ctx, doc); err != nil {
+			t.Fatal(err)
+		}
+		members.Pool, err = service.NewDynamicPool(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.identities.RememberDevice(upstream.URL, "capacity-token", uid, "capacity-device", "player"); err != nil {
+			t.Fatal(err)
+		}
+		request := strings.ReplaceAll(strings.Replace(path, "PlaySessionId=session", "PlaySessionId=capacity-play", 1), "api_key=token", "api_key=capacity-token")
+		if w := call("GET", request, ""); w.Code != 302 {
+			t.Fatal("HTTP capacity fallback failed", w.Code, w.Body.String())
+		}
+		after, err := db.PlaybackPool(ctx)
+		if err != nil || after.Assignments[profileID].UID == bound.UID || after.Health[bound.AccountID].State != "ready" {
+			t.Fatal("HTTP fallback did not commit spare UID or punished old account", err)
+		}
+	})
+	t.Run("timeout-keeps-user-uid", func(t *testing.T) {
+		before, err := db.PlaybackPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drive.checkErr, drive.targetErr = context.DeadlineExceeded, context.DeadlineExceeded
+		defer func() { drive.checkErr, drive.targetErr = nil, nil }()
+		request := strings.Replace(path, "PlaySessionId=session", "PlaySessionId=network-timeout", 1)
+		w := call("GET", request, "")
+		if w.Code != 503 || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "保留原 UID") {
+			t.Fatal("timeout lost recovery response", w.Code, w.Header(), w.Body.String())
+		}
+		after, err := db.PlaybackPool(ctx)
+		if err != nil || !reflect.DeepEqual(before.Assignments, after.Assignments) {
+			t.Fatal("timeout changed user assignment", err)
+		}
+		checks, links := drive.checks, len(drive.attempts)
+		w = call("GET", request, "")
+		if w.Code != 503 || w.Header().Get("Retry-After") == "" || drive.checks != checks || len(drive.attempts) != links {
+			t.Fatal("cooldown repeated 115 work", w.Code, drive.checks-checks, len(drive.attempts)-links)
+		}
 	})
 }

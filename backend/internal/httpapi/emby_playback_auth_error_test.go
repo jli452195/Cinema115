@@ -23,6 +23,7 @@ func TestPlaybackAuthorizationFailureClassification(t *testing.T) {
 	}{
 		{context.Canceled, 502}, {context.DeadlineExceeded, 504},
 		{service.ErrPlaybackIdentityUnavailable, 502}, {service.ErrLogin, 403}, {service.ErrMemberPlayback, 403},
+		{&service.PoolRecoveryError{Reason: "115 网络请求失败", RetryAfter: 10}, 503},
 	} {
 		_, status := playbackAuthorizationFailure(context.Background(), fmt.Errorf("wrapped: %w", tc.err))
 		if status != tc.status {

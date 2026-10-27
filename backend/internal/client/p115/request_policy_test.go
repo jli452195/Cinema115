@@ -3,6 +3,7 @@ package p115
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,8 +86,37 @@ func TestMetadataCooldownHonorsRetryAfterAndCancellation(t *testing.T) {
 	next, stop := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer stop()
 	_, err = c.metadataRequest(next, http.MethodGet, func() ([]byte, error) { t.Error("冷却期不应发出请求"); return nil, nil })
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrRateQueueFull) {
 		t.Fatal(err)
+	}
+}
+
+func TestMediaAuthorizationPreservesThrottleWithoutReadRetry(t *testing.T) {
+	c := newTestShareClient()
+	c.ReadRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second}
+	calls := 0
+	c.HTTP.Transport = metadataTransport(func(*http.Request) (*http.Response, error) {
+		calls++
+		response := instantResponse(429, nil)
+		response.Header = http.Header{"Retry-After": []string{"30"}}
+		return response, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := c.ValidateMediaPlaybackDirectory(ctx, "account", "9", "UID=22_A")
+	var upstream *HTTPError
+	if calls != 1 || !errors.As(err, &upstream) || upstream.Status != 429 || upstream.RetryAfter != 30*time.Second || ctx.Err() != nil {
+		t.Fatal("authorization hid throttle behind timeout or retried", calls, err)
+	}
+	// The bounded overflow lane must preserve the same retry policy instead
+	// of accidentally borrowing the metadata reader's longer retry delays.
+	for i := 0; i < 129; i++ {
+		c.playbackReader(fmt.Sprintf("UID=%d_A", i+100))
+	}
+	calls = 0
+	err = c.ValidateMediaPlaybackDirectory(ctx, "account", "9", "UID=23_A")
+	if calls != 1 || !errors.As(err, &upstream) || upstream.Status != 429 || ctx.Err() != nil {
+		t.Fatal("authorization overflow borrowed metadata retry policy", calls, err)
 	}
 }
 

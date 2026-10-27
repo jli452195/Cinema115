@@ -14,11 +14,14 @@ import (
 func playbackAuthorizationFailure(ctx context.Context, err error) (string, int) {
 	service.ObservePoolAdmission(ctx, err)
 	var admission *service.PoolAdmissionError
+	var recovery *service.PoolRecoveryError
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		return "播放请求已取消，未判定账号绑定失效", 499
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return "播放权限查询超时，请稍后重试", http.StatusGatewayTimeout
+	case errors.As(err, &recovery):
+		return recovery.Error(), http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrPoolCooling):
 		return "共享小号正在冷却，请稍后重试", http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrUserPlaybackStopped):

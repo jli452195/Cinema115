@@ -1,7 +1,6 @@
 package service
 
 // Isolated characterization tests: no live accounts or external writes.
-// Residual assertions describe current behavior, not the proposed device-slot model.
 import (
 	"context"
 	"fmt"
@@ -171,30 +170,6 @@ func TestMultiUIDAnalysisIssuedFailoverAccumulatesResidual(t *testing.T) {
 	t.Log("same issued session switches across 3 UIDs: initially active=1 residual=2; after 3 minutes residual=0, active=1")
 	now = now.Add(time.Duration(p.Settings().LeaseMinutes) * time.Minute)
 	multiUIDCounts(t, p, accounts, 0, 0, 0)
-}
-
-func TestMultiUIDAnalysisSameUserSeparateSessions(t *testing.T) {
-	p, _ := poolTest(t)
-	settings := p.Settings()
-	settings.MaxSessions = 1
-	if err := p.Configure(context.Background(), settings); err != nil {
-		t.Fatal(err)
-	}
-	accounts := []P115Account{poolTestAccount("a", "1"), poolTestAccount("b", "2"), poolTestAccount("c", "3")}
-	for i := 0; i < 3; i++ {
-		l, err := p.Acquire(context.Background(), fmt.Sprintf("session-%d", i), "same-user", accounts, poolProbe)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := l.Commit(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		if err := l.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	multiUIDCounts(t, p, accounts, 3, 0, 0)
-	t.Log("one user, 3 different session keys, capacity 1 per UID: 3 UIDs x 1 slot")
 }
 
 func TestMultiUIDAnalysisRapidSameDeviceKeepsOneSlot(t *testing.T) {

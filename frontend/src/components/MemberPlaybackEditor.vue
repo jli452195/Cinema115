@@ -61,7 +61,7 @@ const checkedTime = computed(() => {
 })
 const sourceOptions = computed(() => [
  { value: 'primary', label: '主网盘', description: '使用管理员配置的主网盘' },
- { value: 'assigned', label: '动态共享池', description: '播放时分配健康小号，不固定账号' },
+ { value: 'assigned', label: '动态共享池', description: '优先沿用原账号，新增名额不足或确认故障时切换' },
  ...(!props.member.administrator ? [{ value: 'personal', label: '个人网盘', description: '由本人在个人中心扫码绑定' }] : []),
 ])
 const dialog = ref<HTMLDialogElement>(), trigger = ref<HTMLButtonElement>(), closeButton = ref<HTMLButtonElement>(), continueButton = ref<HTMLButtonElement>()

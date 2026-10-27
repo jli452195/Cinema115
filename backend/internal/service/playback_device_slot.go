@@ -211,6 +211,9 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 		pd.Health[lease.AccountID] = health
 		p.recordHealthEvent(&pd, lease.AccountID, h, health)
 	}
+	if err := a.poolLease.commitAssignment(&pd); err != nil {
+		return err
+	}
 	if err := a.service.db.SavePlaybackState(ctx, ud, pd); err != nil {
 		return err
 	}
@@ -220,7 +223,7 @@ func (a *MediaAuthorization) commitDevicePlayback(ctx context.Context) error {
 		p.metrics.CapacityTransfers++
 	}
 	a.userLease.Record, a.poolLease.Record = current, lease
+	a.poolLease.assignment = pd.Assignments[lease.UserID]
 	a.userLease.handoff = nil
-	p.rememberPoolPreference(lease.UserID, lease.UID)
 	return nil
 }

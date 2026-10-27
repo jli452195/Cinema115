@@ -25,7 +25,6 @@ type PoolMetrics struct {
 	Allocations       uint64 `json:"allocations"`
 	Reused            uint64 `json:"reused"`
 	CopyPreferred     uint64 `json:"copyPreferred"`
-	RecentPreferred   uint64 `json:"recentPreferred"`
 	PeakUIDSessions   int    `json:"peakUidSessions"`
 	P50MS             int64  `json:"p50Ms"`
 	P95MS             int64  `json:"p95Ms"`

@@ -11,7 +11,7 @@ import (
 type playbackReadPool struct {
 	mu       sync.Mutex
 	clients  map[string]*ShareClient
-	overflow *ShareClient
+	overflow map[string]*ShareClient
 }
 
 func (c *ShareClient) playbackReader(cookie string) *ShareClient {
@@ -25,12 +25,20 @@ func (c *ShareClient) playbackScopedReader(scope, cookie string) *ShareClient {
 	if child := c.playbackReaders.clients[key]; child != nil {
 		return child
 	}
-	if len(c.playbackReaders.clients) >= 128 && c.playbackReaders.overflow != nil {
-		return c.playbackReaders.overflow
+	if len(c.playbackReaders.clients) >= 128 && c.playbackReaders.overflow[scope] != nil {
+		return c.playbackReaders.overflow[scope]
 	}
 	child := &ShareClient{HTTP: c.HTTP, WebURL: c.WebURL, AppURL: c.AppURL, RequestInterval: c.RequestInterval, ReadRetryDelays: append([]time.Duration(nil), c.ReadRetryDelays...), requestGate: make(chan struct{}, 1)}
+	if scope == "media-authorization" {
+		// Pool recovery owns retries. Preserve 429/Retry-After instead of
+		// sleeping here until the authorization deadline hides the real cause.
+		child.ReadRetryDelays = nil
+	}
 	if len(c.playbackReaders.clients) >= 128 {
-		c.playbackReaders.overflow = child
+		if c.playbackReaders.overflow == nil {
+			c.playbackReaders.overflow = make(map[string]*ShareClient)
+		}
+		c.playbackReaders.overflow[scope] = child
 		return child
 	}
 	if c.playbackReaders.clients == nil {

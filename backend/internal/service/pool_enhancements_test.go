@@ -213,8 +213,8 @@ func TestPoolHealthBackoffProbeDebounceAndStaleSuccess(t *testing.T) {
 	}
 }
 
-func TestPoolAffinityLoadFirstAndPreferenceExpires(t *testing.T) {
-	p, _ := poolTest(t)
+func TestPoolAffinityPersistsWithoutHoldingCapacity(t *testing.T) {
+	p, store := poolTest(t)
 	now := time.Now()
 	p.now = func() time.Time { return now }
 	ctx := context.Background()
@@ -230,24 +230,25 @@ func TestPoolAffinityLoadFirstAndPreferenceExpires(t *testing.T) {
 	}
 	_ = l.Close()
 	l2, err := p.Acquire(preferred, "two", "u", accounts, poolProbe)
-	if err != nil || l2.Account.ID != "a" {
-		t.Fatal("affinity overrode lower load", err)
+	if err != nil || l2.Account.ID != "b" {
+		t.Fatal("user moved to lower load", err)
 	}
 	_ = l2.Close()
-	// Let the first lease expire. Recent preference has a shorter lifetime.
+	// Stop/idle expiry releases capacity without erasing the user target.
 	now = now.Add(5 * time.Hour)
-	if score := p.poolPreferences(ctx, "u", now.UnixMilli())("2"); score != 0 {
-		t.Fatal("preference became permanent")
+	p, err = NewDynamicPool(ctx, store)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i := 0; i < 1100; i++ {
-		p.rememberPoolPreference(fmt.Sprint(i), "2")
+	p.now = func() time.Time { return now }
+	if p.AccountStatus(b).Sessions != 0 {
+		t.Fatal("assignment reserved capacity")
 	}
-	if len(p.recent) != 1024 {
-		t.Fatal("unbounded preferences", len(p.recent))
+	l3, err := p.Acquire(ctx, "new-player", "u", accounts, poolProbe)
+	if err != nil || l3.Account.ID != "b" {
+		t.Fatal("restart/expiry lost user target", err)
 	}
-	if _, ok := p.recent["1099"]; ok {
-		t.Fatal("unhashed user preference")
-	}
+	_ = l3.Close()
 }
 
 func TestPoolCopyAffinityRejectsAmbiguousAndUnverifiedMaterial(t *testing.T) {

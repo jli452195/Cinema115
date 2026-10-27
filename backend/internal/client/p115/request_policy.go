@@ -93,13 +93,13 @@ func (c *ShareClient) metadataRequest(ctx context.Context, method string, reques
 	case c.requestGate <- struct{}{}:
 	case <-ctx.Done():
 		reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
-		return nil, ctx.Err()
+		return nil, errors.Join(ErrRateQueueFull, ctx.Err())
 	}
 	defer func() { <-c.requestGate }()
 	for attempt := 0; ; attempt++ {
 		if err := waitRequest(ctx, c.nextRequest); err != nil {
 			reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
-			return nil, err
+			return nil, errors.Join(ErrRateQueueFull, err)
 		}
 		waited := time.Since(waitStarted)
 		requestStarted := time.Now()

@@ -110,7 +110,7 @@ func TestPoolRequestBudgetCancellationAndGlobalThrottle(t *testing.T) {
 	}
 	deadline, cancel := context.WithTimeout(ctx, time.Millisecond)
 	defer cancel()
-	if err := WaitRequestBudget(deadline, "UID=1_B"); !errors.Is(err, context.DeadlineExceeded) {
+	if err := WaitRequestBudget(deadline, "UID=1_B"); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrRateQueueFull) {
 		t.Fatal("same UID escaped rate limit", err)
 	}
 	if b.waiting != 0 {

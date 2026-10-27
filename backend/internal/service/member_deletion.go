@@ -443,13 +443,13 @@ func (s *MemberPlaybackService) finishDeletionTarget(ctx context.Context, job *m
 			delete(pd.Leases, k)
 		}
 	}
+	delete(pd.Assignments, t.UserID)
 	job.Targets[index].Completed = true
 	if err := s.db.FinishMemberDeletion(ctx, *job, t, ud, pd); err != nil {
 		job.Targets[index].Completed = false
 		return err
 	}
 	u.doc, p.doc = ud, pd
-	delete(p.recent, DirectLinkKey("pool-preference", t.UserID))
 	s.mu.Lock()
 	delete(s.records, t.UserID)
 	s.mu.Unlock()

@@ -13,6 +13,7 @@ type PlaybackPoolSettings struct {
 }
 
 type PlaybackPoolLease struct {
+	UserTarget         bool   `json:"userTarget,omitempty"`
 	SlotKey            string `json:"slotKey,omitempty"`
 	BorrowedKey        string `json:"borrowedKey,omitempty"`
 	BorrowedGeneration uint64 `json:"borrowedGeneration,omitempty"`
@@ -34,6 +35,7 @@ type PlaybackPoolLease struct {
 }
 
 type PlaybackPoolHealth struct {
+	Fault     string `json:"fault,omitempty"`
 	Sequence  uint64 `json:"sequence"`
 	Failures  int    `json:"failures"`
 	NextProbe int64  `json:"nextProbe"`
@@ -44,15 +46,24 @@ type PlaybackPoolHealth struct {
 	CheckedAt int64  `json:"checkedAt"`
 }
 
+// A successful playback fixes the user's target without reserving capacity.
+// Generation fences requests prepared before a later successful switch.
+type PlaybackPoolAssignment struct {
+	AccountID  string `json:"accountId"`
+	UID        string `json:"uid"`
+	Generation uint64 `json:"generation"`
+}
+
 type PlaybackPoolDocument struct {
-	Events        []PlaybackPoolEvent           `json:"events,omitempty"`
-	EventSequence uint64                        `json:"eventSequence"`
-	GlobalUntil   int64                         `json:"globalUntil,omitempty"`
-	Settings      PlaybackPoolSettings          `json:"settings"`
-	Leases        map[string]PlaybackPoolLease  `json:"leases"`
-	Health        map[string]PlaybackPoolHealth `json:"health"`
-	Modes         map[string]string             `json:"modes"`
-	Generation    uint64                        `json:"generation"`
+	Assignments   map[string]PlaybackPoolAssignment `json:"assignments,omitempty"`
+	Events        []PlaybackPoolEvent               `json:"events,omitempty"`
+	EventSequence uint64                            `json:"eventSequence"`
+	GlobalUntil   int64                             `json:"globalUntil,omitempty"`
+	Settings      PlaybackPoolSettings              `json:"settings"`
+	Leases        map[string]PlaybackPoolLease      `json:"leases"`
+	Health        map[string]PlaybackPoolHealth     `json:"health"`
+	Modes         map[string]string                 `json:"modes"`
+	Generation    uint64                            `json:"generation"`
 }
 
 // Bounded health history contains only configuration handles and safe enums.

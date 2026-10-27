@@ -130,6 +130,9 @@ func poolBlockedReason(blocked map[string]map[string]bool) PoolAdmissionReason {
 	var result PoolAdmissionReason
 	for _, reasons := range blocked {
 		for reason := range reasons {
+			if reason == "user_uid_pinned" {
+				continue
+			}
 			r := PoolAdmissionReason(reason)
 			if r != PoolCapacityFull && r != PoolRecoveryBusy && r != PoolDraining {
 				return PoolMixedBlocked

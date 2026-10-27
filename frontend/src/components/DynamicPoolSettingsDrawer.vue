@@ -25,7 +25,7 @@ const groups: { title: string; icon: 'pool' | 'clock' | 'settings'; fields: { ke
   { title: '重试与冷却', icon: 'clock' as const, fields: [
     { key: 'maxAttempts' as const, label: '最多尝试账号数', min: 1, max: 3, hint: '1–3 个，故障时有界切换' },
     { key: 'budgetSeconds' as const, label: '取链总预算（秒）', min: 5, max: 90, hint: '5–90 秒，包含重试' },
-    { key: 'cooldownSeconds' as const, label: '临时错误冷却（秒）', min: 5, max: 3600, hint: '5–3600 秒' },
+    { key: 'cooldownSeconds' as const, label: '故障冷却基准（秒）', min: 5, max: 3600, hint: '5–3600 秒；首次网络故障最多等待约 12 秒' },
   ] },
   { title: 'API 频率与通知', icon: 'settings' as const, fields: [
     { key: 'uidIntervalMs' as const, label: '每 UID API 请求间隔（毫秒）', min: 100, max: 10000, hint: '100–10000 毫秒' },

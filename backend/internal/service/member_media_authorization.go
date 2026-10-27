@@ -205,10 +205,7 @@ func (s *MemberPlaybackService) beginMediaAuthorizationTracked(ctx context.Conte
 		return nil, err
 	}
 	grant := &MediaAuthorization{service: s, record: r, account: a, download: download, checkedAt: started, poolLease: lease, userLease: userLease}
-	grant.deferredRead = deferredPlaybackRead(ctx) && !download && !a.Primary
-	if lease != nil && grant.deferredRead {
-		lease.skipHealthRefresh = true
-	}
+	grant.deferredRead = deferredPlaybackRead(ctx) && !download && !a.Primary && (lease == nil || lease.skipHealthRefresh)
 	if err := grant.CheckCurrent(ctx); err != nil {
 		return nil, errors.Join(err, grant.Close())
 	}
@@ -237,7 +234,7 @@ func (s *MemberPlaybackService) checkMediaDrive(ctx context.Context, a P115Accou
 			case <-probe.done:
 			}
 			// The leading request may have been canceled independently of this one.
-			if errors.Is(probe.err, context.Canceled) || errors.Is(probe.err, context.DeadlineExceeded) {
+			if errors.Is(probe.err, context.Canceled) {
 				continue
 			}
 			return probe.err
@@ -266,7 +263,7 @@ func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Accou
 				return drive.ValidateMediaPlaybackDirectory(ctx, a.ID, a.PlaybackParentCID, a.Cookie)
 			})
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return errors.Join(ctx.Err(), err)
 			}
 			if err != nil {
 				return fmt.Errorf("网盘登录或目录不可用: %w", err)
@@ -282,7 +279,7 @@ func (s *MemberPlaybackService) probeMediaDrive(ctx context.Context, a P115Accou
 func (s *MemberPlaybackService) probeMediaDriveSeparate(ctx context.Context, a P115Account) error {
 	valid, err := s.checker.CheckCookie(ctx, a.Cookie)
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return errors.Join(ctx.Err(), err)
 	}
 	if err != nil {
 		return fmt.Errorf("暂时无法检查网盘登录: %w", err)
@@ -293,7 +290,7 @@ func (s *MemberPlaybackService) probeMediaDriveSeparate(ctx context.Context, a P
 	if !a.Primary {
 		err := s.drive.ValidateCacheParent(ctx, a.PlaybackParentCID, a.Cookie)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return errors.Join(ctx.Err(), err)
 		}
 		if err != nil {
 			return fmt.Errorf("网盘目录不可用: %w", err)

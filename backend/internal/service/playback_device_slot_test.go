@@ -350,6 +350,11 @@ func TestDeviceSlotOldInflightCannotIssueAfterUIDSwitch(t *testing.T) {
 
 func TestDeviceSlotOtherDevicesAndUnknownIdentity(t *testing.T) {
 	s, r, accounts, _ := deviceSlotFixture(t)
+	settings := s.Pool.Settings()
+	settings.MaxSessions = 2
+	if err := s.Pool.Configure(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
 	deviceSlotIssue(t, s, r, accounts, "phone", "phone")
 	deviceSlotIssue(t, s, r, accounts, "tv", "tv")
 	multiUIDCounts(t, s.Pool, accounts, 2, 0, 0)
@@ -366,6 +371,9 @@ func TestDeviceSlotOtherDevicesAndUnknownIdentity(t *testing.T) {
 		_ = l.Close()
 	}
 	multiUIDCounts(t, p, accounts, 2, 0, 0)
+	if p.AccountStatus(accounts[0]).Sessions != 2 {
+		t.Fatal("same user sessions merged or moved to another UID")
+	}
 }
 
 func TestDeviceSlotCrossUIDResidualBoundAndNoRollback(t *testing.T) {

@@ -753,6 +753,10 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		}
 		authorization, err = members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
 		if err != nil {
+			var recovery *service.PoolRecoveryError
+			if errors.As(err, &recovery) {
+				w.Header().Set("Retry-After", strconv.Itoa(recovery.RetryAfter))
+			}
 			fail(playbackAuthorizationFailure(ctx, err))
 			return false
 		}
@@ -855,11 +859,18 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		if authorization != nil && h.cache.Members.Pool != nil {
 			retry, reportErr := authorization.PoolTargetFailed(ctx, err)
 			if reportErr != nil {
+				var recovery *service.PoolRecoveryError
+				if errors.As(reportErr, &recovery) {
+					w.Header().Set("Retry-After", strconv.Itoa(recovery.RetryAfter))
+					h.logs.Add(ctx, "WARNING", fmt.Sprintf("目标账号检查失败，分类=%s；%s", service.ClassifyPoolFault(service.PoolFaultTarget, err).Code, recovery.Error()))
+					fail(recovery.Error(), http.StatusServiceUnavailable)
+					return false
+				}
 				fail("共享池故障状态保存失败", 503)
 				return false
 			}
 			if retry && service.PoolCanRetry(ctx) {
-				h.logs.Add(ctx, "WARNING", "目标账号不可用，在原请求预算内重新选择池账号")
+				h.logs.Add(ctx, "WARNING", "目标账号已确认不可用，分类="+service.ClassifyPoolFault(service.PoolFaultTarget, err).Code+"；在原请求预算内准备其他 UID，成功后才更新用户分配")
 				return true
 			}
 		}

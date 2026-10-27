@@ -225,7 +225,7 @@ func WaitRequestBudget(ctx context.Context, cookie string) error {
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); b.waiting--; b.stats.WaitMS += b.now().Sub(now).Milliseconds(); b.mu.Unlock() }()
 	if err := b.waitUntil(ctx, at); err != nil {
-		return err
+		return errors.Join(ErrRateQueueFull, err)
 	}
 	b.mu.Lock()
 	cooling := b.cooling.After(b.now())

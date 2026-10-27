@@ -25,9 +25,9 @@
 | --- | --- | --- | --- |
 | 登录失效 | 凭据配置 | 是 | invalid_credentials |
 | 目录无效 | 凭据配置及目录 | 是 | invalid_directory |
-| HTTP 429 | 全局，另保存 UID 冷却 | 是，但全局冷却阻止立即继续请求 | throttled |
-| 明确 UID 限流 | UID | 是 | throttled |
-| HTTP 5xx、网络错误或单次探测超时 | 当前配置的暂时故障 | 是 | cooldown |
+| HTTP 429 | 全局，另保存 UID 冷却 | 否，遵守冷却 | throttled |
+| 明确 UID 限流 | UID | 否，保留原 UID | throttled |
+| HTTP 5xx、网络错误或单次探测超时 | 当前配置的暂时故障 | 首次短冷却复核原 UID，连续第二轮失败才允许 | cooldown |
 | 文件缺失、不可见、取链受限 | 文件 | 否 | 不改变 |
 | 未知业务码、无效文件响应 | 文件/请求 | 否 | 不改变 |
 | 写入结果不确定 | 当前文件及写入目标 | 否 | 不改变 |

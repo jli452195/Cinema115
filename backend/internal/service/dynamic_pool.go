@@ -37,7 +37,6 @@ type DynamicPool struct {
 	metrics             PoolMetrics
 	latencies           []int64
 	latencyNext         int
-	recent              map[string]poolPreference
 	probes              map[string]time.Time
 	lastBackgroundProbe time.Time
 	lastReconcile       time.Time
@@ -63,7 +62,10 @@ func NewDynamicPool(ctx context.Context, store poolStore) (*DynamicPool, error) 
 	if d.Modes == nil {
 		d.Modes = make(map[string]string)
 	}
-	return &DynamicPool{store: store, doc: d, busy: make(map[string]bool), changed: make(chan struct{}), now: time.Now, recent: make(map[string]poolPreference), probes: make(map[string]time.Time), metrics: PoolMetrics{StartedAt: time.Now().UnixMilli()}}, nil
+	if d.Assignments == nil {
+		d.Assignments = make(map[string]model.PlaybackPoolAssignment)
+	}
+	return &DynamicPool{store: store, doc: d, busy: make(map[string]bool), changed: make(chan struct{}), now: time.Now, probes: make(map[string]time.Time), metrics: PoolMetrics{StartedAt: time.Now().UnixMilli()}}, nil
 }
 
 func validatePoolSettings(s model.PlaybackPoolSettings) error {
@@ -84,6 +86,7 @@ func (p *DynamicPool) Settings() model.PlaybackPoolSettings {
 func (p *DynamicPool) clone() model.PlaybackPoolDocument {
 	d := p.doc
 	d.Leases, d.Health, d.Modes = maps.Clone(d.Leases), maps.Clone(d.Health), maps.Clone(d.Modes)
+	d.Assignments = maps.Clone(d.Assignments)
 	d.Events = append([]model.PlaybackPoolEvent(nil), d.Events...)
 	return d
 }
@@ -212,6 +215,9 @@ type PoolLease struct {
 	closed            bool
 	healthSequence    uint64
 	skipHealthRefresh bool // A target read proves no write-directory health.
+	assignment        model.PlaybackPoolAssignment
+	trackAssignment   bool
+	recoveryUntil     time.Time
 }
 
 func eligiblePoolAccount(a P115Account) bool {
@@ -227,6 +233,12 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		return nil, ErrPoolCooling
 	}
 	counts := make(map[string]int, len(accounts))
+	uidCooling := make(map[string]bool, len(d.Health))
+	for _, h := range d.Health {
+		if h.State == "throttled" && h.Until > now {
+			uidCooling[h.UID] = true
+		}
+	}
 	counted := make(map[string]bool, len(d.Leases))
 	for k, l := range d.Leases {
 		if l.ExpiresAt <= now {
@@ -242,6 +254,10 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		}
 	}
 	req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
+	trackAssignment := !req.Download && !req.Task
+	assignment := d.Assignments[user]
+	target, pendingTarget := poolUserTarget(d, user, accounts, now)
+	pinned := trackAssignment && poolTargetPinned(d, target, accounts, now)
 	slotKey := requestPoolSlot(req, user)
 	slotTarget := poolSlotTarget(d, slotKey, user, now)
 	sharesSlot := func(a P115Account) bool { return poolHasSlot(d, slotKey, a.UID, now) }
@@ -261,6 +277,25 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	previous, exists := d.Leases[key]
 	if exists && previous.UserID != user {
 		return nil, ErrLogin
+	}
+	reusesLease := func(a P115Account) bool {
+		return exists && previous.AccountID == a.ID && previous.UID == a.UID && previous.Revision == a.Revision && previous.DirectoryID == a.PlaybackParentCID && (slotKey == "" || slotTarget.Key == "" || preferredSlot(a))
+	}
+	hasCapacity := func(a P115Account) bool {
+		return counts[a.UID] < d.Settings.MaxSessions || reusesLease(a) || canBorrow(a) || sharesSlot(a)
+	}
+	// Only real capacity pressure relaxes affinity. Recovery/draining retain
+	// their own admission rules, and concurrent preparations keep one target.
+	if pinned && !pendingTarget {
+		for _, a := range accounts {
+			if a.ID == target.AccountID && a.UID == target.UID {
+				h := d.Health[a.ID]
+				if !hasCapacity(a) && (h.Revision != a.Revision || h.State == "" || h.State == "ready") && !uidCooling[a.UID] && d.Modes[a.ID] != "draining" {
+					pinned = false
+				}
+				break
+			}
+		}
 	}
 	if slotKey != "" {
 		pending := 0
@@ -299,6 +334,10 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		if !eligiblePoolAccount(a) {
 			continue
 		}
+		if pinned && (a.ID != target.AccountID || a.UID != target.UID) {
+			blockPoolUID(blocked, a.UID, "user_uid_pinned")
+			continue
+		}
 		mode := d.Modes[a.ID]
 		if mode == "disabled" {
 			blockPoolUID(blocked, a.UID, "disabled")
@@ -311,14 +350,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			cooling = cooling || h.Until > now
 			continue
 		}
-		uidCooling := false
-		for _, health := range d.Health {
-			if health.State == "throttled" && health.UID == a.UID && health.Until > now {
-				uidCooling = true
-				break
-			}
-		}
-		if uidCooling {
+		if uidCooling[a.UID] {
 			blockPoolUID(blocked, a.UID, "throttled")
 			cooling = true
 			continue
@@ -327,7 +359,12 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			blockPoolUID(blocked, a.UID, "already_attempted")
 			continue
 		}
-		if exists && previous.AccountID == a.ID && previous.UID == a.UID && previous.Revision == a.Revision && previous.DirectoryID == a.PlaybackParentCID && (slotKey == "" || slotTarget.Key == "" || preferredSlot(a)) {
+		if h.State != "ready" && p.probes[a.UID].After(p.now()) {
+			blockPoolUID(blocked, a.UID, string(PoolRecoveryBusy))
+			full = true
+			continue
+		}
+		if reusesLease(a) {
 			req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
 			if previous.Stopped || req.userGeneration != 0 && previous.UserGeneration != req.userGeneration {
 				d.Generation++
@@ -341,14 +378,14 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			}
 			p.metrics.Reused++
 			recordPoolCandidate(ctx, a.UID, "selected", "existing_lease", previous.Generation)
-			return &PoolLease{pool: p, Record: previous, Account: a, healthSequence: h.Sequence}, nil
+			return p.newLease(previous, a, assignment, trackAssignment), nil
 		}
 		if mode == "draining" && !preferredSlot(a) {
 			blockPoolUID(blocked, a.UID, string(PoolDraining))
 			full = true
 			continue
 		}
-		if counts[a.UID] >= d.Settings.MaxSessions && !canBorrow(a) && !sharesSlot(a) {
+		if !hasCapacity(a) {
 			blockPoolUID(blocked, a.UID, string(PoolCapacityFull))
 			full = true
 			continue
@@ -391,6 +428,9 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 			return nil, p.admissionError(d, poolBlockedReason(blocked), blocked)
 		}
 		if cooling {
+			if pinned {
+				return nil, poolRecoveryError(d.Health[target.AccountID], now)
+			}
 			return nil, ErrPoolCooling
 		}
 		if invalid {
@@ -404,8 +444,9 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		}
 		return nil, p.admissionError(d, PoolLeaseLimit, blocked)
 	}
-	preferred := p.poolPreferences(ctx, user, now)
-	// Capacity ranks first. Local copy and expiring preference only break ties.
+	copies, _ := ctx.Value(poolCopyPreferenceKey{}).(map[string]bool)
+	// When affinity permits a new target, balance capacity first. Verified local
+	// copies only break ties and never trigger cloud searches.
 	sort.Slice(options, func(i, j int) bool {
 		if preferredSlot(options[i]) != preferredSlot(options[j]) {
 			return preferredSlot(options[i])
@@ -416,13 +457,13 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		if counts[options[i].UID] != counts[options[j].UID] {
 			return counts[options[i].UID] < counts[options[j].UID]
 		}
-		if preferred(options[i].UID) != preferred(options[j].UID) {
-			return preferred(options[i].UID) > preferred(options[j].UID)
+		if copies[options[i].UID] != copies[options[j].UID] {
+			return copies[options[i].UID]
 		}
 		return options[i].ID < options[j].ID
 	})
 	n := 1
-	for n < len(options) && preferredSlot(options[n]) == preferredSlot(options[0]) && canBorrow(options[n]) == canBorrow(options[0]) && counts[options[n].UID] == counts[options[0].UID] && preferred(options[n].UID) == preferred(options[0].UID) {
+	for n < len(options) && preferredSlot(options[n]) == preferredSlot(options[0]) && canBorrow(options[n]) == canBorrow(options[0]) && counts[options[n].UID] == counts[options[0].UID] && copies[options[n].UID] == copies[options[0].UID] {
 		n++
 	}
 	a := options[int(d.Generation%uint64(n))]
@@ -440,6 +481,7 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 	}
 	d.Generation++
 	l := model.PlaybackPoolLease{Key: key, UserID: user, AccountID: a.ID, UID: a.UID, Revision: a.Revision, DirectoryID: a.PlaybackParentCID, Generation: d.Generation, ExpiresAt: p.now().Add(time.Duration(d.Settings.BudgetSeconds+5) * time.Second).UnixMilli()}
+	l.UserTarget = trackAssignment
 	l.SlotKey = slotKey
 	if canBorrow(a) {
 		l.BorrowedKey, l.BorrowedGeneration = borrow.Key, borrow.Generation
@@ -464,12 +506,22 @@ func (p *DynamicPool) reserve(ctx context.Context, key, user string, accounts []
 		additional = 0
 	}
 	p.metrics.PeakUIDSessions = max(p.metrics.PeakUIDSessions, counts[a.UID]+additional)
-	if preferred(a.UID) >= 2 {
+	if copies[a.UID] {
 		p.metrics.CopyPreferred++
-	} else if preferred(a.UID) == 1 {
-		p.metrics.RecentPreferred++
 	}
-	return &PoolLease{pool: p, Record: l, Account: a, healthSequence: d.Health[a.ID].Sequence}, nil
+	return p.newLease(l, a, assignment, trackAssignment), nil
+}
+
+// Called under mu. Foreground recovery and background probes share one gate;
+// the lease cleanup releases it, while the deadline bounds abandoned work.
+func (p *DynamicPool) newLease(record model.PlaybackPoolLease, a P115Account, assignment model.PlaybackPoolAssignment, tracked bool) *PoolLease {
+	h := p.doc.Health[a.ID]
+	l := &PoolLease{pool: p, Record: record, Account: a, healthSequence: h.Sequence, assignment: assignment, trackAssignment: tracked}
+	if h.State != "ready" {
+		l.recoveryUntil = p.now().Add(time.Duration(p.doc.Settings.BudgetSeconds+5) * time.Second)
+		p.probes[a.UID] = l.recoveryUntil
+	}
+	return l
 }
 
 func (p *DynamicPool) CoolingUntil() time.Time {
@@ -505,7 +557,9 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 		}
 		attempts.remaining--
 		attempts.excluded[l.Account.UID] = true
-		if probe == nil {
+		// Healthy/first-use read-only requests defer the directory check. A
+		// previously failed account must pass a real probe before it recovers.
+		if probe == nil || deferredPlaybackRead(ctx) && (l.recoveryUntil.IsZero() || l.healthSequence == 0) {
 			l.skipHealthRefresh = true
 			recordPoolCandidate(ctx, l.Account.UID, "probe", "deferred_to_target_read", l.Record.Generation)
 			ok = true
@@ -528,14 +582,18 @@ func (p *DynamicPool) Acquire(ctx context.Context, key, user string, accounts []
 		if errors.Is(err, p115.ErrRateQueueFull) {
 			return nil, errors.Join(err, l.releaseUnissued())
 		}
-		if !ClassifyPoolFault(PoolFaultProbe, err).SwitchUID {
+		decision := ClassifyPoolFault(PoolFaultProbe, err)
+		if decision.Health == "" {
 			return nil, errors.Join(err, l.releaseUnissued())
 		}
-		if saveErr := p.report(ctx, l.Account, err); saveErr != nil {
+		if saveErr := p.reportChecked(ctx, l.Account, err, &l.healthSequence); saveErr != nil {
 			return nil, errors.Join(saveErr, l.releaseUnissued())
 		}
 		if releaseErr := l.releaseUnissued(); releaseErr != nil {
 			return nil, releaseErr
+		}
+		if !p.canSwitchAccount(l.Account) {
+			return nil, p.accountRecoveryError(l.Account)
 		}
 	}
 	return nil, ErrPoolUnavailable
@@ -557,6 +615,9 @@ func (p *DynamicPool) reportChecked(ctx context.Context, a P115Account, err erro
 	if old.Revision > a.Revision || sequence != nil && old.Sequence != *sequence {
 		return nil
 	}
+	if err != nil && old.Revision == a.Revision && old.State == decision.Health && old.Until > p.now().UnixMilli() {
+		return nil // Concurrent observations during one cooldown are one failure.
+	}
 	h := model.PlaybackPoolHealth{Revision: a.Revision, State: "ready", UID: a.UID, CheckedAt: p.now().UnixMilli()}
 	h.Sequence = old.Sequence + 1
 	h.NextProbe = p.now().Add(5*time.Minute + poolProbeJitter(a.ID)).UnixMilli()
@@ -566,9 +627,18 @@ func (p *DynamicPool) reportChecked(ctx context.Context, a P115Account, err erro
 			h.Failures = min(old.Failures+1, 8)
 		}
 		h.State = decision.Health
+		h.Fault = decision.Code
 		base := time.Duration(d.Settings.CooldownSeconds) * time.Second
 		delay := min(base*time.Duration(1<<min(h.Failures-1, 5)), max(base, 30*time.Minute))
 		h.Until = p.now().Add(delay + poolProbeJitter(a.ID)).UnixMilli()
+		if h.State == "cooldown" {
+			delay = min(base*time.Duration(1<<max(0, min(h.Failures-2, 5))), max(base, 5*time.Minute))
+			if h.Failures == 1 {
+				delay = min(base, 10*time.Second)
+			}
+			h.Until = p.now().Add(delay + min(poolProbeJitter(a.ID), 2*time.Second)).UnixMilli()
+			h.NextProbe = h.Until
+		}
 		if errors.Is(err, p115.ErrShareLoginRequired) {
 			h.State = "invalid_credentials"
 			h.Until = 0
@@ -602,7 +672,7 @@ func (l *PoolLease) Current() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c, ok := p.doc.Leases[l.Record.Key]
-	return ok && !c.Stopped && c.Generation == l.Record.Generation && c.ExpiresAt > p.now().UnixMilli() && p.doc.Modes[c.AccountID] != "disabled"
+	return ok && !c.Stopped && c.Generation == l.Record.Generation && c.ExpiresAt > p.now().UnixMilli() && p.doc.Modes[c.AccountID] != "disabled" && l.assignmentCurrent(p.doc)
 }
 
 func (l *PoolLease) Commit(ctx context.Context) error {
@@ -626,6 +696,9 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 	c.Stopped = false
 	c.ExpiresAt = p.now().Add(time.Duration(d.Settings.LeaseMinutes) * time.Minute).UnixMilli()
 	d.Leases[c.Key] = c
+	if err := l.commitAssignment(&d); err != nil {
+		return err
+	}
 	// A late successful request cannot clear a newer observed account failure.
 	if old.Sequence == l.healthSequence && !l.skipHealthRefresh {
 		h := model.PlaybackPoolHealth{Revision: c.Revision, UID: c.UID, State: "ready", CheckedAt: p.now().UnixMilli(), Sequence: old.Sequence + 1, NextProbe: p.now().Add(5*time.Minute + poolProbeJitter(c.AccountID)).UnixMilli()}
@@ -636,7 +709,7 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 		return err
 	}
 	l.Record = c
-	p.rememberPoolPreference(c.UserID, c.UID)
+	l.assignment = d.Assignments[c.UserID]
 	return nil
 }
 
@@ -644,6 +717,9 @@ func (l *PoolLease) releaseUnissued() error {
 	p := l.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !l.recoveryUntil.IsZero() && p.probes[l.Account.UID].Equal(l.recoveryUntil) {
+		delete(p.probes, l.Account.UID)
+	}
 	c, ok := p.doc.Leases[l.Record.Key]
 	if !ok || c.Generation != l.Record.Generation || c.Issued {
 		return nil

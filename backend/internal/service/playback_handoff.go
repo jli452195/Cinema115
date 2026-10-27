@@ -171,7 +171,7 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 			return ErrAccountChanged
 		}
 		health := pd.Health[lease.AccountID]
-		if alreadyIssued && (health.State != "ready" || health.Revision != lease.Revision) {
+		if alreadyIssued && health.State != "" && (health.State != "ready" || health.Revision != lease.Revision) {
 			return ErrAccountChanged
 		}
 		if health.Sequence != a.poolLease.healthSequence && health.State != "ready" && health.Revision == lease.Revision {
@@ -217,12 +217,15 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 			pd.Health[lease.AccountID] = h
 			p.recordHealthEvent(&pd, lease.AccountID, health, h)
 		}
+		if err := a.poolLease.commitAssignment(&pd); err != nil {
+			return err
+		}
 		if err := a.service.db.SavePlaybackState(ctx, d, pd); err != nil {
 			return err
 		}
 		u.doc, p.doc = d, pd
 		a.poolLease.Record = lease
-		p.rememberPoolPreference(lease.UserID, lease.UID)
+		a.poolLease.assignment = pd.Assignments[lease.UserID]
 	}
 	a.userLease.Record = current
 	a.userLease.handoff = nil

@@ -23,11 +23,14 @@ func (a *MediaAuthorization) PoolTargetFailed(ctx context.Context, err error) (b
 	}
 	decision := ClassifyPoolFault(PoolFaultTarget, err)
 	recordPoolCandidate(ctx, a.account.UID, "target", decision.Code, a.poolLease.Record.Generation)
-	if !decision.SwitchUID {
+	if decision.Health == "" {
 		return false, nil
 	}
-	if err := a.poolLease.pool.report(ctx, a.account, err); err != nil {
+	if err := a.poolLease.pool.reportChecked(ctx, a.account, err, &a.poolLease.healthSequence); err != nil {
 		return false, err
+	}
+	if !a.poolLease.pool.canSwitchAccount(a.account) {
+		return false, a.poolLease.pool.accountRecoveryError(a.account)
 	}
 	return true, a.Close()
 }
@@ -143,19 +146,13 @@ func (s *MemberPlaybackService) poolAuthorization(ctx context.Context, r model.M
 	}
 	ctx = WithPoolRequest(ctx, req)
 	started := time.Now()
-	probe := s.checkMediaDrive
-	if deferredPlaybackRead(ctx) {
-		// A verified target read proves credential usability, not directory
-		// health. Writes and cached links perform the deferred directory check.
-		probe = nil
-		if s.Cache != nil && s.Cache.logs != nil {
-			s.Cache.logs.Add(ctx, "DEBUG", "目标只读取链延后目录核验；直链缓存命中或需要写入时实时核验")
-		}
-	}
-	lease, err := s.Pool.Acquire(ctx, key, r.UserID, s.poolAccounts(), probe)
+	lease, err := s.Pool.Acquire(ctx, key, r.UserID, s.poolAccounts(), s.checkMediaDrive)
 	if s.Cache != nil && s.Cache.logs != nil {
 		identity := DirectLinkKey("pool-log", r.ServerID, r.UserID)[:12]
 		if err == nil {
+			if lease.skipHealthRefresh {
+				s.Cache.logs.Add(ctx, "DEBUG", "目标只读取链延后目录核验；直链缓存命中或需要写入时实时核验")
+			}
 			s.Cache.logs.Add(ctx, "DEBUG", fmt.Sprintf("池调度完成：用户摘要=%s，代次=%d，准备耗时=%d ms，已换 UID 次数=%d", identity, lease.Record.Generation, time.Since(started).Milliseconds(), PoolAttemptSwitches(ctx)))
 		} else {
 			reason := "核验或存储失败"

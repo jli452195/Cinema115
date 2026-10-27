@@ -114,8 +114,8 @@ func (c *mediaWaitContext) Done() <-chan struct{} {
 }
 
 func TestConcurrentMediaDriveProbesShareOnlyInflightWork(t *testing.T) {
-	for _, cancelWaiter := range []bool{false, true} {
-		t.Run(map[bool]string{false: "share", true: "cancel-waiter"}[cancelWaiter], func(t *testing.T) {
+	for _, mode := range []string{"share", "cancel-waiter", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
 			s, _, _ := memberFixture(t)
 			main := memberTestPrimary(t, s)
 			a, _ := s.accounts.Get(main)
@@ -129,6 +129,9 @@ func TestConcurrentMediaDriveProbesShareOnlyInflightWork(t *testing.T) {
 					case <-release:
 					case <-ctx.Done():
 						return false, ctx.Err()
+					}
+					if mode == "timeout" {
+						return false, context.DeadlineExceeded
 					}
 				}
 				return true, nil
@@ -152,18 +155,22 @@ func TestConcurrentMediaDriveProbesShareOnlyInflightWork(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("waiter not attached")
 			}
-			if cancelWaiter {
+			if mode == "cancel-waiter" {
 				cancelFollower()
 				if err := <-follower; !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
 			}
 			close(release)
-			if err := <-leader; err != nil {
+			var want error
+			if mode == "timeout" {
+				want = context.DeadlineExceeded
+			}
+			if err := <-leader; !errors.Is(err, want) {
 				t.Fatal(err)
 			}
-			if !cancelWaiter {
-				if err := <-follower; err != nil {
+			if mode != "cancel-waiter" {
+				if err := <-follower; !errors.Is(err, want) {
 					t.Fatal(err)
 				}
 			}
