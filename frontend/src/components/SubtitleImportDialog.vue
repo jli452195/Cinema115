@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { p115Request } from '../lib/p115-api'
-import { analyzeSubtitle, episodeNumber, readLocalSubtitles, subtitleLanguage, subtitlePairKey } from '../utils/subtitleImport'
+import { analyzeSubtitle, episodeNumber, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey } from '../utils/subtitleImport'
 import type { LocalSubtitle, SubtitleMatch } from '../utils/subtitleImport'
 import type { OrganizeJob } from '../types/manualOrganize'
 import type { SubtitleImport, SubtitleVideo } from '../types/subtitleImport'
 import SubtitleSourceDialog from './SubtitleSourceDialog.vue'
-import { formatSubtitleSize, mergeSubtitleFiles, readDriveSubtitles, type SubtitleSourceFile } from '../utils/subtitleSources'
+import { readDriveSubtitles, type SubtitleSourceFile } from '../utils/subtitleSources'
 
 const props = defineProps<{ token: string; job: OrganizeJob; accountName: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()

@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 import type { DriveFile } from '../types/manualOrganize'
-import { formatSubtitleSize, isSubtitleSource, splitSubtitleArchive, type SubtitleSourceFile } from '../utils/subtitleSources'
-import { maxFileBytes, maxTotalBytes } from '../utils/subtitleImport'
+import type { SubtitleSourceFile } from '../utils/subtitleSources'
+import { formatSubtitleSize, isSubtitle, isSubtitleArchive, maxFileBytes, maxTotalBytes, splitSubtitleArchive } from '../utils/subtitleImport'
 
 const props = defineProps<{ token: string; accountId: string }>()
 const emit = defineEmits<{ close: []; select: [files: SubtitleSourceFile[]] }>()
@@ -18,13 +18,13 @@ const previousFocus = document.activeElement instanceof HTMLElement ? document.a
 const previousOverflow = document.body.style.overflow
 const cid = computed(() => path.value.at(-1)?.id || '0')
 const currentPath = computed(() => '/' + path.value.map(item => item.name).join('/'))
-const visible = computed(() => files.value.filter(file => file.directory || isSubtitleSource(file.name) || splitSubtitleArchive.test(file.name)))
+const visible = computed(() => files.value.filter(file => file.directory || isSubtitle(file.name) || isSubtitleArchive(file.name) || splitSubtitleArchive.test(file.name)))
 const total = computed(() => selected.value.reduce((sum, file) => sum + file.size, 0))
 const selectionError = computed(() => selected.value.length > 100 || total.value > maxTotalBytes ? '所选文件不能超过 100 个或 64 MiB，请取消部分勾选。' : '')
 function unavailable(file: DriveFile) {
   if (splitSubtitleArchive.test(file.name)) return '不支持分卷'
   if (!Number.isSafeInteger(file.size) || file.size <= 0) return '空文件或大小无效'
-  if (file.size > (/\.(zip|rar|7z)$/i.test(file.name) ? maxTotalBytes : maxFileBytes)) return '文件超过大小限制'
+  if (file.size > (isSubtitleArchive(file.name) ? maxTotalBytes : maxFileBytes)) return '文件超过大小限制'
   return ''
 }
 function toggle(file: DriveFile) {

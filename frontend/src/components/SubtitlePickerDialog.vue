@@ -3,8 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
-import { analyzeSubtitle, maxTotalBytes, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
-import { formatSubtitleSize, mergeSubtitleFiles } from '../utils/subtitleSources'
+import { analyzeSubtitle, formatSubtitleSize, maxTotalBytes, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import type { OrganizeRow } from '../types/manualOrganize'
 
@@ -13,7 +12,8 @@ const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection
 type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
 type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
 const lifecycle = new AbortController()
-const query = ref(props.title), busy = ref(false), choosing = ref(false), searchError = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref(props.version), showResults = ref(true)
+const query = ref(props.title), busy = ref<'' | 'search' | 'files'>(''), searchError = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref(props.version), showResults = ref(true)
+const choosing = computed(() => busy.value === 'files')
 const libraryRows = ref<LibraryRow[]>(props.library.map(item => ({ ...item, key: `library:${item.versionId}:${item.path}`, pairKey: libraryPairKey(item.versionId, item.path), sourceLabel: '字幕库', selected: true, reason: '已保存的字幕匹配' })))
 const localRows = ref<LocalRow[]>(props.local.map(item => ({ ...item, key: item.localId, pairKey: localPairKey(item.file), sourceLabel: '本地导入', selected: true, reason: '已保存的字幕匹配' })))
 const rows = computed(() => [...libraryRows.value, ...localRows.value])
@@ -45,18 +45,18 @@ async function request<T>(path: string): Promise<T> {
 }
 async function search(initial = false) {
   if (busy.value || !query.value.trim()) return
-  busy.value = true; searchError.value = ''; showResults.value = true
+  busy.value = 'search'; searchError.value = ''; showResults.value = true
   try {
     const params = new URLSearchParams(); params.append('q', query.value.trim())
     if (initial && props.originalTitle && props.originalTitle !== query.value.trim()) params.append('q', props.originalTitle)
     versions.value = (await request<{ versions: SubtitleVersion[] }>(`search?${params}`)).versions
   } catch (reason) { if (!lifecycle.signal.aborted) { versions.value = []; searchError.value = reason instanceof Error ? reason.message : '搜索失败' } }
-  finally { busy.value = false }
+  finally { busy.value = '' }
 }
 async function choose(item: SubtitleVersion) {
   if (busy.value || reading.value) return
   if (loadedVersion === item.id) { showResults.value = false; return }
-  busy.value = true; choosing.value = true; searchError.value = ''
+  busy.value = 'files'; searchError.value = ''
   try {
     const data = await request<{ files: LibrarySubtitleFile[] }>(`versions/${encodeURIComponent(item.id)}/files`)
     const existing = libraryRows.value.some(row => row.versionId === item.id)
@@ -67,7 +67,7 @@ async function choose(item: SubtitleVersion) {
     })
     version.value = item; loadedVersion = item.id; showResults.value = false
   } catch (reason) { if (!lifecycle.signal.aborted) searchError.value = reason instanceof Error ? reason.message : '读取版本失败' }
-  finally { busy.value = false; choosing.value = false }
+  finally { busy.value = '' }
 }
 function libraryPairKey(id: string, name: string) { const pair = subtitlePairKey(name); return pair ? `library:${id}/${pair}` : '' }
 function localPairKey(file: LocalSubtitleSelection['file']) { const pair = subtitlePairKey(file.name); return pair ? `local:${file.sourceKey || 'local'}/${pair}` : '' }
@@ -110,7 +110,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
   <AnimeFloatingDialog title="查找字幕" close-label="关闭字幕选择" size="config" class="subtitle-picker" @close="emit('close')">
     <template #header>
       <div class="picker-actions">
-        <form class="picker-search" @submit.prevent="search()"><input v-model="query" aria-label="字幕作品搜索词" maxlength="128" placeholder="作品中文名、原名或英文名" /><button type="submit" :disabled="busy || !query.trim()"><IconSearch :size="16" aria-hidden="true" />搜索</button></form>
+        <form class="picker-search" @submit.prevent="search()"><input v-model="query" aria-label="字幕作品搜索词" maxlength="128" placeholder="作品中文名、原名或英文名" /><button type="submit" :disabled="!!busy || !query.trim()"><IconSearch :size="16" aria-hidden="true" />搜索</button></form>
         <button type="button" class="picker-import" :disabled="reading" @click="picker?.click()"><IconUpload :size="16" aria-hidden="true" />导入字幕</button>
         <input ref="picker" type="file" multiple accept=".zip,.rar,.7z,.ass,.ssa,.srt,.vtt,.idx,.sub" class="sr-only" aria-label="选择本地字幕或压缩包" :disabled="reading" @change="selectFiles" />
       </div>
@@ -120,7 +120,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
       <p v-if="searchError" role="alert" class="picker-error">{{ searchError }}</p>
       <template v-if="showResults">
         <div v-if="!busy && !versions.length && !rows.length" class="picker-empty"><IconUpload :size="28" aria-hidden="true" /><p>{{ searchError ? '可以直接导入本地字幕' : '没有找到匹配字幕' }}</p><span>换用原名搜索，或导入字幕文件、ZIP / RAR / 7z 压缩包。</span><button type="button" :disabled="reading" @click="picker?.click()">选择字幕或压缩包</button></div>
-        <ul class="picker-versions"><li v-for="item in versions" :key="item.id"><button type="button" :disabled="busy || reading" @click="choose(item)"><strong>{{ item.title }} <small>{{ item.year }}</small></strong><span>{{ item.source }} · {{ item.name }}</span></button></li></ul>
+        <ul class="picker-versions"><li v-for="item in versions" :key="item.id"><button type="button" :disabled="!!busy || reading" @click="choose(item)"><strong>{{ item.title }} <small>{{ item.year }}</small></strong><span>{{ item.source }} · {{ item.name }}</span></button></li></ul>
       </template>
       <div v-else-if="version" class="picker-version"><button type="button" class="picker-back" :disabled="choosing" @click="showResults = true; searchError = ''"><IconArrowLeft :size="15" aria-hidden="true" />返回搜索结果</button><strong>{{ version.title }} · {{ version.name }}</strong><a :href="version.url" target="_blank" rel="noopener noreferrer">查看来源</a><details v-if="version.description" class="picker-note"><summary>版本说明</summary><p class="whitespace-pre-wrap break-words">{{ version.description }}</p></details></div>
       <p v-if="reading" role="status" class="picker-note">正在本地读取和解析…<button type="button" @click="controller?.abort()">取消读取</button></p>

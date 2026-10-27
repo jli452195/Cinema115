@@ -8,7 +8,9 @@ export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string;
 export interface LocalSubtitleSelection { localId: string; file: LocalSubtitle; videoId: string; language: string; version: string }
 export interface SubtitleMatchRow { key: string; pairKey?: string; sourceLabel?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
-const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
+export const isSubtitleArchive = (name: string) => /\.(zip|rar|7z)$/i.test(name)
+export const splitSubtitleArchive = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
+export const formatSubtitleSize = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
 const stem = (name: string) => base(name).replace(/\.[^.]+$/, '')
 // Only shield explicitly labeled audio blocks; arbitrary numbers remain evidence.
@@ -193,11 +195,11 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
   if (input.length > 100 || input.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) throw new Error('每次选择的文件不能超过 100 个或 64 MiB。')
   for (const file of input) {
     signal?.throwIfAborted()
-    if (splitArchiveName.test(file.name)) throw new Error('不支持分卷压缩包，请在电脑上解压后选择字幕。')
-    if (!/\.(zip|rar|7z)$/i.test(file.name) && !isSubtitle(file.name)) { ignored++; continue }
+    if (splitSubtitleArchive.test(file.name)) throw new Error('不支持分卷压缩包，请在电脑上解压后选择字幕。')
+    const archive = isSubtitleArchive(file.name)
+    if (!archive && !isSubtitle(file.name)) { ignored++; continue }
     const bytes = new Uint8Array(await file.arrayBuffer())
     signal?.throwIfAborted()
-    const archive = /\.(zip|rar|7z)$/i.test(file.name)
     const sourceKey = archive ? `archive:${sha256(bytes)}` : undefined
     let result: { files: LocalSubtitle[]; ignored: number }
     if (archive) {
@@ -212,4 +214,20 @@ export async function readLocalSubtitles(input: File[], signal?: AbortSignal): P
     }
   }
   return { files, ignored }
+}
+
+export function mergeSubtitleFiles<T extends LocalSubtitle>(current: T[], incoming: LocalSubtitle[], append: boolean): { kept: T[]; added: LocalSubtitle[]; duplicates: number } {
+  const kept = append ? current : []
+  const key = (file: LocalSubtitle) => `${file.sourceKey || 'local'}\x00${file.name.toLowerCase()}\x00${file.sha256}`
+  const seen = new Set(kept.map(key))
+  const added: LocalSubtitle[] = []
+  let total = kept.reduce((sum, file) => sum + file.data.length, 0), duplicates = 0
+  for (const file of incoming) {
+    const identity = key(file)
+    if (seen.has(identity)) { duplicates++; continue }
+    seen.add(identity); total += file.data.length
+    if (kept.length + added.length >= 100 || total > maxTotalBytes) throw new Error('合并后超过 100 个字幕或 64 MiB，请减少文件或选择替换当前列表。')
+    added.push(file)
+  }
+  return { kept, added, duplicates }
 }

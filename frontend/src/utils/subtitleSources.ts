@@ -1,13 +1,10 @@
 import { p115Request } from '../lib/p115-api'
 import type { DriveFile } from '../types/manualOrganize'
-import { maxTotalBytes, readLocalSubtitles, type LocalSubtitle } from './subtitleImport'
+import { isSubtitleArchive, maxTotalBytes, readLocalSubtitles, type LocalSubtitle } from './subtitleImport'
 
 export interface SubtitleSourceFile extends DriveFile { parentId: string; sourcePath: string }
 interface SourcePlan { id: string; files: SubtitleSourceFile[] }
 export interface SubtitleReadProgress { phase: 'prepare' | 'download' | 'extract'; name: string; index: number; count: number; loaded: number; total: number }
-export const splitSubtitleArchive = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
-export const isSubtitleSource = (name: string) => /\.(zip|rar|7z|srt|ass|ssa|vtt|idx|sub)$/i.test(name)
-export const formatSubtitleSize = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`
 
 // Check both the response headers and the actual streamed bytes before creating
 // a File. A gateway error or an oversized response never reaches the extractor.
@@ -73,7 +70,7 @@ export async function readDriveSubtitles(token: string, accountId: string, jobId
       for (const file of result.files) {
         total += file.data.length
         if (files.length >= 100 || total > maxTotalBytes) throw new Error('每次最多 100 个字幕，合计 64 MiB。')
-        files.push({ ...file, sourceKey: file.sourceKey || `drive-directory:${source.parentId}`, sourceLabel: `${expected.sourcePath}${/\.(zip|rar|7z)$/i.test(source.name) ? '（压缩包）' : ''}` })
+        files.push({ ...file, sourceKey: file.sourceKey || `drive-directory:${source.parentId}`, sourceLabel: `${expected.sourcePath}${isSubtitleArchive(source.name) ? '（压缩包）' : ''}` })
       }
     }
     return { files, ignored }
@@ -81,20 +78,4 @@ export async function readDriveSubtitles(token: string, accountId: string, jobId
     // Cleanup is independent of a cancelled download, and remains bounded.
     void p115Request<void>(token, `${prefix}/${encodeURIComponent(plan.id)}?accountId=${encodeURIComponent(accountId)}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {})
   }
-}
-
-export function mergeSubtitleFiles<T extends LocalSubtitle>(current: T[], incoming: LocalSubtitle[], append: boolean): { kept: T[]; added: LocalSubtitle[]; duplicates: number } {
-  const kept = append ? current : []
-  const key = (file: LocalSubtitle) => `${file.sourceKey || 'local'}\x00${file.name.toLowerCase()}\x00${file.sha256}`
-  const seen = new Set(kept.map(key))
-  const added: LocalSubtitle[] = []
-  let total = kept.reduce((sum, file) => sum + file.data.length, 0), duplicates = 0
-  for (const file of incoming) {
-    const identity = key(file)
-    if (seen.has(identity)) { duplicates++; continue }
-    seen.add(identity); total += file.data.length
-    if (kept.length + added.length >= 100 || total > maxTotalBytes) throw new Error('合并后超过 100 个字幕或 64 MiB，请减少文件或选择替换当前列表。')
-    added.push(file)
-  }
-  return { kept, added, duplicates }
 }

@@ -11,7 +11,7 @@ const source = await readFile(new URL('../src/utils/subtitleImport.ts', import.m
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
-const { episodeNumber, matchSubtitle, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles } = module.exports
+const { episodeNumber, matchSubtitle, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
 test('season/episode matching stays ambiguous across versions, supports Chinese and numeric names', () => {
@@ -171,4 +171,18 @@ test('raw subtitles, count limits, empty files and cancellation', async () => {
   await assert.rejects(readLocalSubtitles(Array.from({ length: 101 }, () => new File(['x'], 'a.srt'))), /100/)
   const controller = new AbortController(); controller.abort()
   await assert.rejects(readLocalSubtitles([new File(['text'], 'a.ass')], controller.signal))
+})
+
+test('append preserves edited row identity, deduplicates within sources and checks combined budget atomically', () => {
+  const old = { name: '01.srt', data: new Uint8Array([1]), sha256: 'a', videoId: 'manual', language: 'en', manual: true }
+  const result = mergeSubtitleFiles([old], [old, { ...old, name: '02.srt' }], true)
+  assert.equal(result.kept[0], old)
+  assert.equal(result.kept[0].videoId, 'manual')
+  assert.equal(result.duplicates, 1)
+  assert.equal(result.added.length, 1)
+  assert.equal(mergeSubtitleFiles([old], [{ ...old, sourceKey: 'other-directory' }], true).added.length, 1)
+  assert.equal(mergeSubtitleFiles([old], [old], false).kept.length, 0)
+  const full = Array.from({ length: 100 }, (_, index) => ({ ...old, name: `${index}.srt` }))
+  assert.throws(() => mergeSubtitleFiles(full, [{ ...old, name: 'new.srt' }], true), /100/)
+  assert.equal(full.length, 100)
 })

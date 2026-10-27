@@ -16,7 +16,7 @@ import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
 import { magnetKey } from '../lib/cloud-download-batch'
 import SubtitlePickerDialog from './SubtitlePickerDialog.vue'
-import type { LocalSubtitleSelection } from '../utils/subtitleImport'
+import { maxTotalBytes, type LocalSubtitleSelection } from '../utils/subtitleImport'
 import { subtitleTargetName, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 
 const props = defineProps<{
@@ -37,7 +37,7 @@ const selectedLibrary = computed(() => externalSubtitles.value.filter(sub => sel
 const selectedLocal = computed(() => localSubtitles.value.filter(sub => selected.value.some(row => row.id === sub.videoId)))
 const allExternal = computed(() => [...externalSubtitles.value, ...localSubtitles.value])
 const selectedExternal = computed(() => [...selectedLibrary.value, ...selectedLocal.value])
-const externalIssue = computed(() => selectedExternal.value.length > 100 || selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0) > 64 * 1024 * 1024 ? '外部字幕合计不能超过 100 个或 64 MiB，请减少选择。' : '')
+const externalIssue = computed(() => selectedExternal.value.length > 100 || selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0) > maxTotalBytes ? '外部字幕合计不能超过 100 个或 64 MiB，请减少选择。' : '')
 const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, 'version' in sub ? sub.version : '')
 function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion) {
   const ids = new Set(selected.value.map(row => row.id))

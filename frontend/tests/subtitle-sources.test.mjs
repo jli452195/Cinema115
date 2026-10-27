@@ -15,7 +15,7 @@ function compile(source, resolver = require) {
 }
 loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
 loaded.set('../lib/p115-api', compile(await readFile(new URL('../src/lib/p115-api.ts', import.meta.url), 'utf8')))
-const { readSubtitleResponse, readDriveSubtitles, mergeSubtitleFiles } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
+const { readSubtitleResponse, readDriveSubtitles } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
 
 test('download streams enforce exact size, errors, progress and cancellation', async () => {
   const signal = new AbortController().signal
@@ -61,18 +61,4 @@ test('cloud input uses authenticated snapshots, parses ZIP and releases on succe
     assert.equal(calls[2].init.method, 'DELETE')
     t.mock.restoreAll()
   }
-})
-
-test('append preserves edited row identity, deduplicates within sources and checks combined budget atomically', () => {
-  const old = { name: '01.srt', data: new Uint8Array([1]), sha256: 'a', videoId: 'manual', language: 'en', manual: true }
-  const result = mergeSubtitleFiles([old], [old, { ...old, name: '02.srt' }], true)
-  assert.equal(result.kept[0], old)
-  assert.equal(result.kept[0].videoId, 'manual')
-  assert.equal(result.duplicates, 1)
-  assert.equal(result.added.length, 1)
-  assert.equal(mergeSubtitleFiles([old], [{ ...old, sourceKey: 'other-directory' }], true).added.length, 1)
-  assert.equal(mergeSubtitleFiles([old], [old], false).kept.length, 0)
-  const full = Array.from({ length: 100 }, (_, index) => ({ ...old, name: `${index}.srt` }))
-  assert.throws(() => mergeSubtitleFiles(full, [{ ...old, name: 'new.srt' }], true), /100/)
-  assert.equal(full.length, 100)
 })
