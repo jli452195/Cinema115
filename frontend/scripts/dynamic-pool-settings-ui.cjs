@@ -26,7 +26,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    else if(p==='/api/admin/member-playback/pool/pool'){modeWrites.push(req.postDataJSON());if(failMode){status=500;data={error:'模式保存失败'}}else {pool[0].pool.mode=req.postDataJSON().mode;data={accounts:pool}}}
    else if(p==='/api/admin/member-playback/pool/pool/check'){checkWrites.push(p);pool[0].pool.state=checkState;data={accounts:pool}}
    else if(p==='/api/admin/member-playback/settings') data={settings:{allowDownload:false,publicUrl:''}}
-   else if(p==='/api/admin/emby/proxy') data={config:{enabled:false,debug:false,prewarm:false,prepareFiles:true,port:8097,url:'http://emby',accountId:'main',directLinkCacheMinutes:9},listening:false,error:''}
+   else if(p==='/api/admin/emby/proxy') data={config:{enabled:false,debug:false,port:8097,url:'http://emby',accountId:'main',directLinkCacheMinutes:9},listening:false,error:''}
    else if(p==='/api/admin/emby/playback-cache/users') data={embyUrl:'http://emby',users:[{Id:'reader',Policy:{IsDisabled:false}},{Id:'personal',Policy:{IsDisabled:false}}],members:[{embyId:'reader',embyName:'读者',source:'assigned'},{embyId:'personal',embyName:'个人用户',source:'personal',personalDrive:{connected:true}}]}
    else if(p==='/api/admin/emby/instant-upload') {if(req.method()==='POST'){writes.push(req.postDataJSON());config={...config,userId:req.postDataJSON().userId}}data={config,records:[],running:false}}
    else if(p==='/api/admin/emby/instant-upload/run') {writes.push(req.postDataJSON());data={id:req.postDataJSON().id,accountId:'pool',targetCid:'123',status:'success',message:'模拟秒传成功',startedAt:new Date().toISOString(),durationMs:10}}

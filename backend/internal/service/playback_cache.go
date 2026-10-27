@@ -357,12 +357,6 @@ func (snap PlaybackCacheSnapshot) Select(embyURL, userID string) (*PlaybackCache
 	return &selected, nil
 }
 
-type playbackPrewarmKey struct{}
-
-func PlaybackPrewarmContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, playbackPrewarmKey{}, true)
-}
-
 func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -412,16 +406,6 @@ func (s *PlaybackCache) put(e PlaybackCacheEntry) error {
 }
 func cacheMatches(f p115.DrivePlaybackFile, info *p115.DownloadInfo) bool {
 	return info != nil && info.Size > 0 && f.Size == info.Size && len(info.SHA1) == 40 && strings.EqualFold(f.SHA1, info.SHA1)
-}
-
-type preparePlaybackFileKey struct{}
-
-func PreparePlaybackFileContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, preparePlaybackFileKey{}, true)
-}
-func preparingPlaybackFile(ctx context.Context) bool {
-	v, _ := ctx.Value(preparePlaybackFileKey{}).(bool)
-	return v
 }
 
 // PlaybackResolution contains display metadata only; it never contains credentials or URLs.

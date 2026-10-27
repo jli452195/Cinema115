@@ -2,6 +2,8 @@
 
 创建日期：2026-10-03。
 
+后续清理：Emby 302 主动预热及独立文件准备模式已整体移除。下文预热相关任务与验收为历史记录；当前 PlaybackInfo 仅协商，正式取链通过准入后才按需准备文件，详见 [Emby 302 反代](emby-proxy.md)。
+
 状态：动态池主链路、设备名额、可选心跳熔断及容量转交已实施。当前环境无法进行真实 Yamby/Emby/115 联动验证，按用户要求将实机演练从本轮任务及完成门槛中移除；不标记为实测通过。验收采用临时 SQLite、模拟上游、可控时钟、HTTP 协议测试和竞争检测。本轮补齐记录见第 16 节。实际行为和参数见 [动态播放池](dynamic-playback-pool.md)、[设备策略与容量转交验证](playback-device-policy-validation.md)。
 
 ## 1. 目标与实施边界
@@ -66,7 +68,7 @@
 
 **自查与阶段验收：** 搜索所有“绑定失效不切换”“首次无可用回主盘”等规则，逐条标记保留或修改；不能只改前端文字，也不能误删个人来源和子账号的拒绝逻辑。
 
-重点入口：`emby_registration.go`、`member_source.go`、`member_media_authorization.go`、`playback_cache.go`、`emby_proxy.go`、`emby_prewarm.go`、`instant_upload.go`。
+重点入口：`emby_registration.go`、`member_source.go`、`member_media_authorization.go`、`playback_cache.go`、`emby_proxy.go`、`instant_upload.go`。
 
 ## 4. P1：数据模型和接口契约
 

@@ -13,17 +13,15 @@ type quickPlaybackSearch interface {
 }
 
 func quickTargetQuery(ctx context.Context, quick quickPlaybackSearch, hash, cookie string) (*p115.DrivePlaybackFile, error) {
-	if !preparingPlaybackFile(ctx) {
-		if candidate, ok := quick.(interface {
-			FindPlaybackCandidateBySHA1(context.Context, string, string) (*p115.DrivePlaybackFile, error)
+	if candidate, ok := quick.(interface {
+		FindPlaybackCandidateBySHA1(context.Context, string, string) (*p115.DrivePlaybackFile, error)
+	}); ok {
+		// Only use the candidate optimization with a client that also verifies
+		// the actual downloaded file before persisting a ready copy.
+		if _, ok := quick.(interface {
+			VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
 		}); ok {
-			// Only use the candidate optimization with a client that also verifies
-			// the actual downloaded file before persisting a ready copy.
-			if _, ok := quick.(interface {
-				VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
-			}); ok {
-				return candidate.FindPlaybackCandidateBySHA1(ctx, hash, cookie)
-			}
+			return candidate.FindPlaybackCandidateBySHA1(ctx, hash, cookie)
 		}
 	}
 	return quick.FindPlaybackFileBySHA1Quick(ctx, hash, cookie)

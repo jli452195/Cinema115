@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const page = await context.newPage(), errors = [], writes = [], runIds = []
     page.on('pageerror', e => errors.push(e.message))
     page.on('dialog', d => d.accept())
-    let proxy = { enabled: true, debug: false, prewarm: true, prepareFiles: false, port: 8097, url: 'http://emby:8096', accountId: 'main', embyPathPrefix: '', directLinkCacheMinutes: 9 }
+    let proxy = { enabled: true, debug: false, port: 8097, url: 'http://emby:8096', accountId: 'main', embyPathPrefix: '', directLinkCacheMinutes: 9 }
     let access = { allowDownload: false, publicUrl: '' }, policy = { mode: 'parallel', silenceSeconds: 60 }
     let upload = { config: { userId: 'pool-user', sourceAccountId: 'main', accountId: '', targetCid: '', targetPath: '' }, records: [], running: false }
     let failProxyRead = false, failAccountRead = false, failProxyWrite = '', failAccessWrite = false, runDelay = 0, failRun = false
@@ -50,8 +50,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const saveProxy = page.getByRole('button', { name: '保存反代配置', exact: true }), port = page.getByLabel('反代监听端口', { exact: false })
     await saveProxy.waitFor()
     await page.locator('#proxy-runtime-title').getByText('反代正在监听', { exact: true }).waitFor()
-    assert.equal(await page.getByRole('switch', { name: '提前准备秒传文件', exact: true }).count(), 0)
-    assert.equal(await page.getByRole('switch', { name: '提前获取播放直链', exact: true }).count(), 0)
     await port.fill('8098')
     assert.equal(await page.locator('.proxy-entry code').innerText(), 'http://127.0.0.1:8097')
     await page.getByRole('button', { name: '刷新状态', exact: true }).click()
@@ -74,7 +72,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(proxy.port, 8097); assert.equal(access.publicUrl, 'https://emby.example.com')
     failProxyWrite = ''
     await saveProxy.click(); await page.getByText('反代配置已保存，入口正在监听。请在播放器中验证实际播放。', { exact: true }).waitFor()
-    assert.equal(proxy.port, 8098); assert.equal(proxy.prewarm, true); assert.equal(proxy.prepareFiles, false)
+    assert.equal(proxy.port, 8098)
     assert.equal(await page.locator('.proxy-entry code').innerText(), 'http://127.0.0.1:8098')
     const before = writes.length
     await port.fill('65536'); await saveProxy.click()
@@ -166,6 +164,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.locator('#proxy-runtime-title').getByText('反代正在监听', { exact: true }).waitFor()
     assert.equal(await saveProxy.isDisabled(), false)
     assert.deepEqual(errors, [])
-    console.log('Proxy mocked UI passed: independent saves, native validity, preserved flags and drafts, runtime saved port, retry, six sizes/light+dark, kept task and idempotent retry')
+    console.log('Proxy mocked UI passed: independent saves, native validity, preserved settings and drafts, runtime saved port, retry, six sizes/light+dark, kept task and idempotent retry')
   } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exitCode = 1 })

@@ -12,8 +12,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-// MediaAuthorization belongs to one HTTP request. Never cache it across requests
-// or use it in a background prewarm spawned by another request.
+// MediaAuthorization belongs to one HTTP request. Never share it across requests.
 type MediaAuthorization struct {
 	releaseMember  func()
 	retiredDevices int
@@ -41,7 +40,7 @@ func WithPlaybackFileReuse(ctx context.Context) context.Context {
 func deferredPlaybackRead(ctx context.Context) bool {
 	req, _ := ctx.Value(poolRequestKey{}).(PoolRequest)
 	file, _ := ctx.Value(playbackFileReuseKey{}).(bool)
-	return (playbackDirectShare(ctx) || file) && !req.Download && !req.Task && !preparingPlaybackFile(ctx)
+	return (playbackDirectShare(ctx) || file) && !req.Download && !req.Task
 }
 
 // WithPlaybackDirectShare marks a share STRM request whose target account will

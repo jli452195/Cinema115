@@ -19,8 +19,6 @@ import (
 type EmbyProxyConfig struct {
 	Enabled                bool   `json:"enabled"`
 	Debug                  bool   `json:"debug"`
-	Prewarm                bool   `json:"prewarm"`
-	PrepareFiles           bool   `json:"prepareFiles"`
 	DirectLinkCacheMinutes int    `json:"directLinkCacheMinutes"`
 	Port                   int    `json:"port"`
 	URL                    string `json:"url"`
@@ -82,7 +80,7 @@ type EmbyProxy struct {
 }
 
 func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler, logs ...*EmbyProxyLogs) (*EmbyProxy, error) {
-	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097, DirectLinkCacheMinutes: 9, PrepareFiles: true}}
+	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097, DirectLinkCacheMinutes: 9}}
 	if len(logs) > 0 {
 		s.Logs = logs[0]
 	}
@@ -157,8 +155,6 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	var previousHandler http.Handler
 	defer func() {
 		s.mu.Unlock()
-		// A prewarm worker may read proxy status while it shuts down.
-		// Never wait for that worker while holding the status mutex.
 		if closer, ok := previousHandler.(interface{ Close() }); ok {
 			closer.Close()
 		}

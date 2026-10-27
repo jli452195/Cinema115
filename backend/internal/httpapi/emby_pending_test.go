@@ -20,7 +20,7 @@ func (f *pendingProxyFake) UploadPlayback(context.Context, *p115.DownloadInfo, s
 
 func TestPendingPlaybackReturnsRetryAfterWithoutReplay(t *testing.T) {
 	var denied atomic.Bool
-	h := prewarmFixture(t, false, false, &denied)
+	h := proxyPlaybackFixture(t, &denied)
 	target, err := h.accounts.Add("friend")
 	if err != nil {
 		t.Fatal(err)
@@ -42,11 +42,11 @@ func TestPendingPlaybackReturnsRetryAfterWithoutReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer h.cache.Close()
-	if err := h.cache.ApplyBindings(h.config.URL, []service.PlaybackBinding{{UserID: prewarmTestUser, AccountID: target}}); err != nil {
+	if err := h.cache.ApplyBindings(h.config.URL, []service.PlaybackBinding{{UserID: proxyPlaybackTestUser, AccountID: target}}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		w := prewarmCall(h, "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=token", "player-UA")
+		w := proxyPlaybackCall(h, "/cinema115/play?ItemId=movie&MediaSourceId=src&api_key=token", "player-UA")
 		seconds, err := strconv.Atoi(w.Header().Get("Retry-After"))
 		if w.Code != 503 || err != nil || seconds < 1 || seconds > 30 || f.uploads != 1 {
 			t.Fatal("incorrect pending response", w.Code, w.Body.String())

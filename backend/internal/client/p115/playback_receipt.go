@@ -23,36 +23,6 @@ func (c *ShareClient) CompletePlaybackUpload(ctx context.Context, info *Download
 	)
 }
 
-// Confirm the exact upload receipt without asking for a UA-specific CDN URL.
-func (c *ShareClient) CompletePlaybackFile(ctx context.Context, info *DownloadInfo, cid string, result *InstantUploadResult, cookie string) (DrivePlaybackFile, error) {
-	var f DrivePlaybackFile
-	if result == nil || info == nil || !instantHash.MatchString(info.SHA1) || info.Size <= 0 || !validDriveID(cid, true) || CookieUserID(cookie) == "" {
-		return f, completionFailure("秒传回执或目标账号无效")
-	}
-	var err error
-	if validDriveID(result.FileID, false) {
-		f, err = c.playbackFileInfo(ctx, result.FileID, cookie)
-	} else if result.FileID == "" && instantPickCode.MatchString(result.PickCode) {
-		var found *DrivePlaybackFile
-		found, err = c.playbackPickCodeMetadata(ctx, "receipt:"+CookieUserID(cookie), result.PickCode, cookie)
-		if found != nil {
-			f = *found
-		}
-	} else {
-		return f, completionFailure("秒传回执缺少有效文件标识")
-	}
-	if err != nil {
-		return f, err
-	}
-	if !validDriveID(f.ID, false) || !instantPickCode.MatchString(f.PickCode) || result.PickCode != "" && f.PickCode != result.PickCode || !strings.EqualFold(f.SHA1, info.SHA1) || f.Size != info.Size || f.CID != "" && f.CID != cid {
-		return f, completionFailure("目标文件身份、SHA1、大小或目录与秒传回执不一致")
-	}
-	if f.CID == "" {
-		f.CID = cid
-	}
-	return f, nil
-}
-
 // Use the exact receipt identity, never the search index of a newly uploaded file.
 func completePlaybackReceipt(info *DownloadInfo, cid string, result *InstantUploadResult, readLink func(string) (*DownloadInfo, string, error), readFile func(string) (DrivePlaybackFile, error)) (DrivePlaybackFile, string, error) {
 	if result == nil || info == nil || !instantHash.MatchString(info.SHA1) || !validDriveID(cid, true) {

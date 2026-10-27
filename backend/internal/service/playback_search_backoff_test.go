@@ -4,51 +4,24 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"strm115/backend/internal/client/p115"
 	"testing"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
 
-type filePrepareFake struct {
+type playbackSearchCounter struct {
 	*fastCacheFake
-	fileChecks, queries int
+	queries int
 }
 
-func (f *filePrepareFake) CompletePlaybackFile(_ context.Context, _ *p115.DownloadInfo, _ string, result *p115.InstantUploadResult, _ string) (p115.DrivePlaybackFile, error) {
-	f.fileChecks++
-	for _, file := range f.files {
-		if file.ID == result.FileID {
-			return file, nil
-		}
-	}
-	return p115.DrivePlaybackFile{}, errors.New("missing")
-}
-func (f *filePrepareFake) FindPlaybackFileBySHA1(ctx context.Context, hash, cookie string) (*p115.DrivePlaybackFile, error) {
+func (f *playbackSearchCounter) FindPlaybackFileBySHA1(ctx context.Context, hash, cookie string) (*p115.DrivePlaybackFile, error) {
 	f.queries++
 	return f.fastCacheFake.FindPlaybackFileBySHA1(ctx, hash, cookie)
 }
-func TestPrepareFileWithoutLinkThenActualUA(t *testing.T) {
-	s, base, selected := setupFastCache(t)
-	f := &filePrepareFake{fastCacheFake: base}
-	s.client = f
-	ctx := PreparePlaybackFileContext(context.Background())
-	for _, ua := range []string{"detail-UA", "other-UA"} {
-		link, report, err := s.ResolvePickCodeWithReport(ctx, selected, "pickaaa", "src", ua, "primary")
-		if err != nil || link != "" || report.FileCacheID == "" {
-			t.Fatal("preparation failed", err)
-		}
-	}
-	if f.uploads != 1 || f.fileChecks != 1 || f.completes != 0 || f.ua != "" || f.queries != 1 {
-		t.Fatal("preparation made redundant request", f)
-	}
-	link, _, err := s.ResolvePickCodeWithReport(context.Background(), selected, "pickaaa", "src", "actual-player", "primary")
-	if err != nil || link == "" || f.ua != "actual-player" || f.uploads != 1 || f.queries != 1 {
-		t.Fatal("actual playback did not reuse file", err)
-	}
-}
 func TestPlaybackSearchBackoffDoesNotTurnErrorIntoMiss(t *testing.T) {
 	s, base, selected := setupFastCache(t)
-	f := &filePrepareFake{fastCacheFake: base}
+	f := &playbackSearchCounter{fastCacheFake: base}
 	s.client = f
 	f.searchErr = errors.New("network")
 	for i := 0; i < 4; i++ {
@@ -73,7 +46,7 @@ func TestPlaybackSearchBackoffDoesNotTurnErrorIntoMiss(t *testing.T) {
 }
 func TestPlaybackPendingMissBackoffAndSizeMismatch(t *testing.T) {
 	s, base, selected := setupFastCache(t)
-	f := &filePrepareFake{fastCacheFake: base}
+	f := &playbackSearchCounter{fastCacheFake: base}
 	s.client = f
 	f.uploadErr = p115.ErrInstantUncertain
 	_, _, _ = s.ResolvePickCodeWithReport(context.Background(), selected, "pickaaa", "src", "UA")

@@ -96,26 +96,6 @@ func TestDirectLinkCacheDefaultMigrationAndValidation(t *testing.T) {
 		if proxy.Status().Config.DirectLinkCacheMinutes != tc.want {
 			t.Fatal("migration changed explicit setting")
 		}
-		if !proxy.Status().Config.PrepareFiles || proxy.Status().Config.Prewarm {
-			t.Fatal("incorrect preparation defaults")
-		}
-		config := proxy.Status().Config
-		config.PrepareFiles = false
-		raw, err := json.Marshal(config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.Save(string(raw)); err != nil {
-			t.Fatal(err)
-		}
-		reopened, err := NewEmbyProxy(context.Background(), store, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if reopened.Status().Config.PrepareFiles {
-			t.Fatal("explicit disable lost after restart")
-		}
-		reopened.Close()
 		proxy.Close()
 	}
 	for _, n := range []int{-1, 31} {

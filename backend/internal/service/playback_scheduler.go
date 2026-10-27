@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
 
@@ -18,11 +17,8 @@ type playbackScheduler struct {
 
 func (s *PlaybackCache) acquirePlayback(ctx context.Context, uid string) (func(), error) {
 	p := &s.scheduler
-	warm, _ := ctx.Value(playbackPrewarmKey{}).(bool)
-	if !warm {
-		s.foregroundWaiting.Add(1)
-		defer s.foregroundWaiting.Add(-1)
-	}
+	s.foregroundWaiting.Add(1)
+	defer s.foregroundWaiting.Add(-1)
 	p.mu.Lock()
 	if p.changed == nil {
 		p.changed = make(chan struct{})
@@ -44,9 +40,6 @@ func (s *PlaybackCache) acquirePlayback(ctx context.Context, uid string) (func()
 			return nil, err
 		}
 		available := !p.exclusive && ((uid == "" && len(p.uids) == 0) || (uid != "" && p.writers == 0 && len(p.uids) < 4 && !p.uids[uid]))
-		if warm && (!available || s.foregroundWaiting.Load() > 0) {
-			return nil, fmt.Errorf("播放正在使用或等待，跳过本次预热")
-		}
 		if available {
 			if uid == "" {
 				p.exclusive = true

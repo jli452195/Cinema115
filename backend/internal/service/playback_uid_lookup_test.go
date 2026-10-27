@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -99,16 +98,5 @@ func TestPlaybackUIDNewestOnlyBeforeRecoverySearch(t *testing.T) {
 	_, _, err := s.ResolvePickCodeWithReport(context.Background(), selected, "pickaaa", "source", "player")
 	if err != nil || f.verified != 0 || f.searches != 1 || f.attempts[old.File.ID] != 1 || f.attempts[alias.File.ID] != 0 || f.uploads != 2 {
 		t.Fatal("walked stale history", err, f.attempts)
-	}
-}
-
-func TestPlaybackPrepareKeepsMetadataPath(t *testing.T) {
-	s, base, selected := setupFastCache(t)
-	base.files = []p115.DrivePlaybackFile{{ID: "123", CID: "0", PickCode: "pick123", Size: 100, SHA1: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}
-	f := &fusedPlaybackFake{fastCacheFake: base, verifyErr: errors.New("must not fetch URL")}
-	s.client = f
-	_, _, err := s.ResolvePickCodeWithReport(PreparePlaybackFileContext(context.Background()), selected, "pickaaa", "source", "player")
-	if err != nil || f.metadata != 1 || f.candidates != 0 || f.verified != 0 {
-		t.Fatal("preparation fetched UA-specific URL", err)
 	}
 }

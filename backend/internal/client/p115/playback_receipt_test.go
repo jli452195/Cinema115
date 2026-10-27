@@ -10,45 +10,6 @@ import (
 	"time"
 )
 
-func TestPrepareReceiptNeverFetchesCDNLink(t *testing.T) {
-	for _, mode := range []string{"id", "pickcode", "wrong-size", "wrong-hash"} {
-		t.Run(mode, func(t *testing.T) {
-			c := newTestShareClient()
-			calls := 0
-			c.HTTP.Transport = metadataTransport(func(r *http.Request) (*http.Response, error) {
-				calls++
-				hash := strings.Repeat("A", 40)
-				size := 100
-				if mode == "wrong-size" {
-					size = 999
-				}
-				if mode == "wrong-hash" {
-					hash = strings.Repeat("B", 40)
-				}
-				if r.URL.Path == "/files/get_info" {
-					return instantResponse(200, []byte(fmt.Sprintf(`{"state":true,"data":[{"file_id":"12","pick_code":"pick123","sha1":"%s","file_size":"%d","category_id":"0"}]}`, hash, size))), nil
-				}
-				if r.URL.Path == "/files/supervision" {
-					return instantResponse(200, []byte(fmt.Sprintf(`{"state":true,"data":{"file_id":"12","pick_code":"pick123","file_name":"v.mkv","file_sha1":"%s","file_size":"%d"}}`, hash, size))), nil
-				}
-				t.Error("unexpected request", r.URL.Path)
-				return nil, errors.New("unexpected")
-			})
-			result := &InstantUploadResult{PickCode: "pick123"}
-			if mode == "id" {
-				result.FileID = "12"
-			}
-			f, err := c.CompletePlaybackFile(context.Background(), &DownloadInfo{Name: "v.mkv", Size: 100, SHA1: strings.Repeat("A", 40)}, "0", result, "UID=22_A")
-			if (err != nil) != (mode == "wrong-size" || mode == "wrong-hash") || calls != 1 {
-				t.Fatal("receipt validation failed", err, calls)
-			}
-			if err == nil && (f.ID != "12" || f.Size != 100) {
-				t.Fatal("wrong identity")
-			}
-		})
-	}
-}
-
 func TestPlaybackReceiptUsesPickcodeWithoutSearch(t *testing.T) {
 	for _, mode := range []string{"pickcode-only", "no-sha", "id-only", "mismatch", "wrong-id", "link-error"} {
 		t.Run(mode, func(t *testing.T) {

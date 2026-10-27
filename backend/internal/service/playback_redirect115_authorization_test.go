@@ -43,7 +43,7 @@ func TestPlay115DeferredDirectoryAuthorization(t *testing.T) {
 }
 
 func testDeclaredDirectoryAuthorization(t *testing.T, play115 bool) {
-	for _, mode := range []string{"hit", "hit-directory-invalid", "miss", "miss-directory-invalid", "miss-ticket-error", "miss-revoked-preflight", "query-error", "identity-error", "revoked", "download", "prepare"} {
+	for _, mode := range []string{"hit", "hit-directory-invalid", "miss", "miss-directory-invalid", "miss-ticket-error", "miss-revoked-preflight", "query-error", "identity-error", "revoked", "download"} {
 		t.Run(mode, func(t *testing.T) {
 			s, remote, id := memberFixture(t)
 			memberScan(t, s, id)
@@ -113,9 +113,6 @@ func testDeclaredDirectoryAuthorization(t *testing.T, play115 bool) {
 			if play115 {
 				ctx = WithPlay115Source(ctx, Play115Source{FileID: "999", SHA1: file.SHA1, Size: file.Size, Name: file.Name})
 			}
-			if mode == "prepare" {
-				ctx = PreparePlaybackFileContext(ctx)
-			}
 			user := remote.users[r.EmbyID]
 			if mode == "download" {
 				user.Policy["EnableContentDownloading"] = true
@@ -130,7 +127,7 @@ func testDeclaredDirectoryAuthorization(t *testing.T, play115 bool) {
 				t.Fatal(err)
 			}
 			defer grant.Close()
-			if mode != "download" && mode != "prepare" && grant.Commit(ctx) == nil {
+			if mode != "download" && grant.Commit(ctx) == nil {
 				t.Fatal("unverified grant committed")
 			}
 			selected := &PlaybackCacheSelection{binding: PlaybackBinding{AccountID: a.ID, ParentCID: a.PlaybackParentCID}, accountRevision: a.Revision, cookie: a.Cookie, uid: a.UID}
@@ -155,7 +152,7 @@ func testDeclaredDirectoryAuthorization(t *testing.T, play115 bool) {
 					wantReads = 0
 				}
 			}
-			if mode == "download" || mode == "prepare" {
+			if mode == "download" {
 				wantChecks = 1
 			}
 			if mode == "miss" {

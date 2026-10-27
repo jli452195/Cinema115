@@ -16,9 +16,9 @@ import '../styles/emby-proxy.css'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-interface Config { enabled: boolean; debug: boolean; prewarm: boolean; prepareFiles: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
+interface Config { enabled: boolean; debug: boolean; directLinkCacheMinutes: number; port: number; url: string; accountId: string; embyPathPrefix: string }
 interface Status { config: Config; listening: boolean; error: string }
-const defaults: Config = { enabled: false, debug: false, prewarm: false, prepareFiles: true, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' }
+const defaults: Config = { enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' }
 const config = ref<Config>({ ...defaults })
 const status = ref<Status>()
 const mediaSettings = ref<InstanceType<typeof MemberPlaybackAdmin>>()
@@ -136,7 +136,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
                     <label class="block text-sm">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="proxy-input mt-2" /><span class="proxy-help mt-2 block">默认 9 分钟，0 为关闭。命中不续期，也不能延长 115 直链的有效期。</span></label>
                     <label class="block text-sm">Emby 中对应 STRM 根目录的路径（选填）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media" class="proxy-input mt-2" /><span class="proxy-help mt-2 block">Emby 返回本地 .strm 路径时填写，其相对目录需与 Cinema115 STRM 根目录一致。返回 HTTP 链接时可留空。</span></label>
                     <SettingSwitch v-model="config.debug" label="反代调试日志" description="记录播放取链时间轴与连接计时，可查看完整 CDN 地址和请求响应头；Cookie、登录令牌及未知请求头值隐藏，不记录请求正文。" />
-                    <p class="proxy-help">当前用户播放流程在正式取链时准备文件，跳过提前准备与直链预热。原有设置保留，不在此提供开关。</p>
+                    <p class="proxy-help">播放文件在正式取链时按需准备，成功取得的直链按上述时间缓存复用。</p>
                   </div>
                 </details>
                 <button type="submit" class="proxy-button" :disabled="busy || !loaded">{{ busy ? '正在处理…' : '保存反代配置' }}</button>

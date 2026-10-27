@@ -15,28 +15,15 @@ import (
 func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
 	for _, suffix := range []string{"", "/movie.mkv", "/e63d59350688066658c5d8cf2748b97abb684251", "/e63d59350688066658c5d8cf2748b97abb684251/[标题] 日本語.mkv"} {
 		t.Run("abc123"+suffix, func(t *testing.T) {
-			testPickCodeFriendPlaybackDownloadAndCache(t, "/api/redirect115/abc123"+suffix, false)
+			testPickCodeFriendPlaybackDownloadAndCache(t, "/api/redirect115/abc123"+suffix)
 		})
 	}
 	t.Run("play115", func(t *testing.T) {
-		testPickCodeFriendPlaybackDownloadAndCache(t, "/play115/abc123/3432417343848548293/e63d59350688066658c5d8cf2748b97abb684251/589916580/external-name.mkv", false)
+		testPickCodeFriendPlaybackDownloadAndCache(t, "/play115/abc123/3432417343848548293/e63d59350688066658c5d8cf2748b97abb684251/589916580/external-name.mkv")
 	})
 }
 
-func TestPickCodeFriendPrewarm(t *testing.T) {
-	for _, path := range []string{"/api/redirect115/abc123", "/play115/abc123/123/" + strings.Repeat("b", 40) + "/589916580/external-name.mkv"} {
-		t.Run(path, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, path, true) })
-	}
-}
-
-func TestPickCodeFilePreparationIndependentOfLinkPrewarm(t *testing.T) {
-	for _, path := range []string{"/api/redirect115/abc123", "/play115/abc123/123/" + strings.Repeat("b", 40) + "/589916580/external-name.mkv"} {
-		t.Run(path, func(t *testing.T) { testPickCodeFriendPlaybackDownloadAndCache(t, path, false, true) })
-	}
-}
-
-func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string, prewarm bool, prepare ...bool) {
-	prepareFiles := len(prepare) > 0 && prepare[0]
+func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string) {
 	wantSourceReads := 1
 	wantName, wantHash, wantSize := "movie", strings.Repeat("A", 40), int64(100)
 	if strings.HasPrefix(sourcePath, "/play115/") {
@@ -99,7 +86,7 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 	if err := cache.ApplyBindings(upstream.URL, []service.PlaybackBinding{{UserID: userID, AccountID: targetID}}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9, Prewarm: prewarm, PrepareFiles: prepareFiles, Debug: prepareFiles}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
+	h := NewEmbyCachedProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: sourceID, DirectLinkCacheMinutes: 9}, accounts, NewShareAPI(func() string { return "" }), cache, logs).(*embyProxyHandler)
 	defer h.Close()
 	h.pickDownload = func(context.Context, string, string, string) (string, error) {
 		t.Fatal("source direct link returned to friend")
@@ -120,40 +107,11 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string,
 	if fake.pickReads != 0 || fake.uploads != 0 {
 		t.Fatal("cloud access before authorization")
 	}
-	if prewarm || prepareFiles {
-		if w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer"); w.Code != 200 {
-			t.Fatal(w.Code)
-		}
-		awaitPrewarm(t, h)
-		if fake.uploads != 1 {
-			t.Fatal("friend file not prepared")
-		}
-		if prepareFiles {
-			foundTimeline := false
-			for _, entry := range logs.Snapshot() {
-				if entry.Details == nil || !strings.Contains(entry.Details.Steps, "提前准备秒传文件开始") {
-					continue
-				}
-				steps := entry.Details.Steps
-				if !strings.Contains(steps, "预热文件准备=") || strings.Contains(steps, "等待同源预热=") {
-					t.Fatal("preparation mislabeled as waiting", steps)
-				}
-				foundTimeline = true
-			}
-			if !foundTimeline {
-				t.Fatal("missing preparation timeline")
-			}
-			if fake.links != 0 || len(h.directLinks.Status().Entries) != 0 {
-				t.Fatal("file preparation fetched/cached a playback URL")
-			}
-			req := httptest.NewRequest("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer", nil)
-			req.Header.Set("User-Agent", "other-detail-UA")
-			h.ServeHTTP(httptest.NewRecorder(), req)
-			awaitPrewarm(t, h)
-			if fake.links != 0 || fake.uploads != 1 || fake.pickReads != wantSourceReads {
-				t.Fatal("UA change repeated preparation")
-			}
-		}
+	if w := call("GET", "/emby/Items/movie/PlaybackInfo?api_key=viewer"); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	if fake.pickReads != 0 || fake.uploads != 0 || fake.links != 0 || len(h.directLinks.Status().Entries) != 0 {
+		t.Fatal("playback negotiation accessed 115 or prepared files")
 	}
 	for _, p := range []string{path, "/Items/movie/Download?api_key=viewer", path} {
 		w := call("GET", p)

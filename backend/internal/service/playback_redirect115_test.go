@@ -13,7 +13,7 @@ import (
 )
 
 func TestRedirect115TargetFirst(t *testing.T) {
-	for _, mode := range []string{"hit", "prepare", "miss", "miss-other-sha1", "source-unavailable", "query-error", "identity-error", "wrong-uid", "known-conflict", "ambiguous", "pending"} {
+	for _, mode := range []string{"hit", "miss", "miss-other-sha1", "source-unavailable", "query-error", "identity-error", "wrong-uid", "known-conflict", "ambiguous", "pending"} {
 		t.Run(mode, func(t *testing.T) {
 			s, base, selected := setupFastCache(t)
 			f := &fusedPlaybackFake{fastCacheFake: base}
@@ -26,8 +26,6 @@ func TestRedirect115TargetFirst(t *testing.T) {
 			switch mode {
 			case "hit":
 				sourceCookie = "" // No primary credential needed for a target hit.
-			case "prepare":
-				ctx = PreparePlaybackFileContext(ctx)
 			case "miss", "miss-other-sha1", "source-unavailable":
 				base.files = nil
 				if mode == "miss-other-sha1" {
@@ -77,15 +75,12 @@ func TestRedirect115TargetFirst(t *testing.T) {
 				}
 				return
 			}
-			if mode == "hit" || mode == "prepare" {
+			if mode == "hit" {
 				if base.reads != 0 || base.uploads != 0 || report.UsedSource {
 					t.Fatal("target hit read primary or uploaded")
 				}
-				if mode == "hit" && (link == "" || f.candidates != 1 || f.verified != 1 || f.metadata != 0) {
+				if link == "" || f.candidates != 1 || f.verified != 1 || f.metadata != 0 {
 					t.Fatal("wrong target hit request budget")
-				}
-				if mode == "prepare" && (link != "" || f.candidates != 0 || f.verified != 0 || f.metadata != 1) {
-					t.Fatal("preparation fetched a URL")
 				}
 				materials := s.Status().Materials
 				if len(materials) != 1 || materials[0].Name != file.Name || len(materials[0].Origins) != 0 || materials[0].VerifiedAt.IsZero() {

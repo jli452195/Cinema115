@@ -198,8 +198,10 @@ func TestDistributedSchedulerAndConcurrentMaterialMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.acquirePlayback(PlaybackPrewarmContext(ctx), "3"); err == nil {
-		t.Fatal("prewarm passed maintenance")
+	waiting, cancelWaiting := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancelWaiting()
+	if _, err := s.acquirePlayback(waiting, "3"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("playback passed maintenance", err)
 	}
 	maintenanceRelease()
 	var wg sync.WaitGroup

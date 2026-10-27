@@ -164,7 +164,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	_, verifiesTarget := s.client.(interface {
 		VerifiedPlaybackURL(context.Context, p115.DrivePlaybackFile, string, string) (string, error)
 	})
-	deferDirectory := redirectLookup && validMaterialHash(hint) && verifiesTarget && !preparingPlaybackFile(ctx)
+	deferDirectory := redirectLookup && validMaterialHash(hint) && verifiesTarget
 	if material, _ := s.lookupMaterial(origin, hint); material.ID == "" && !deferDirectory {
 		next("源资料缺失时目录核验")
 		// A verified redirect115 target read can authorize playback without a
@@ -421,27 +421,10 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
 		}
 	}
-	if preparingPlaybackFile(ctx) {
-		next("目标文件元数据核验")
-		s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执核验目标文件；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
-	} else {
-		next("目标 SHA1 校验与取链")
-		s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
-	}
-	var file p115.DrivePlaybackFile
-	var link string
-	if preparingPlaybackFile(ctx) {
-		if preparer, ok := fast.(interface {
-			CompletePlaybackFile(context.Context, *p115.DownloadInfo, string, *p115.InstantUploadResult, string) (p115.DrivePlaybackFile, error)
-		}); ok {
-			file, err = preparer.CompletePlaybackFile(ctx, info, selected.binding.ParentCID, result, selected.cookie)
-		} else {
-			err = fmt.Errorf("播放客户端不支持独立文件核验")
-		}
-	} else {
-		file, link, err = fast.CompletePlaybackUpload(ctx, info, selected.binding.ParentCID, result, selected.cookie, ua)
-	}
-	if err != nil || !cacheMatches(file, info) || file.ID == "" || file.PickCode == "" || !preparingPlaybackFile(ctx) && !p115.AllowedDirectPlaybackURL(link) {
+	next("目标 SHA1 校验与取链")
+	s.logs.Add(ctx, "INFO", fmt.Sprintf("115 已返回秒传成功，开始按回执取链；fileID=%s｜pickcode=%s", result.FileID, result.PickCode))
+	file, link, err := fast.CompletePlaybackUpload(ctx, info, selected.binding.ParentCID, result, selected.cookie, ua)
+	if err != nil || !cacheMatches(file, info) || file.ID == "" || file.PickCode == "" || !p115.AllowedDirectPlaybackURL(link) {
 		reason := "目标 SHA1、文件标识或直链未通过核验"
 		var detailed *p115.PlaybackCompletionError
 		if errors.As(err, &detailed) {
@@ -495,7 +478,7 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 	if e.UID != selected.uid || p115.CookieUserID(selected.cookie) != selected.uid {
 		return "", fmt.Errorf("目标凭据与副本 UID 不一致")
 	}
-	if preparingPlaybackFile(ctx) || !canVerify {
+	if !canVerify {
 		if err := grant.ValidateTargetDirectory(ctx); err != nil {
 			return "", err
 		}
@@ -506,30 +489,27 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 	e.AccountID, e.ParentCID = selected.binding.AccountID, selected.binding.ParentCID
 	e.TargetScope = DirectLinkKey(selected.binding.AccountID, selected.uid, selected.cookie, fmt.Sprint(selected.accountRevision))
 	var link string
-	if !preparingPlaybackFile(ctx) {
-		var err error
-		cooldownKey := DirectLinkKey("target-link", selected.uid, e.File.ID, ua)
-		if err := s.waitPlaybackSearch(ctx, cooldownKey, e.TargetScope); err != nil {
-			return "", err
+	cooldownKey := DirectLinkKey("target-link", selected.uid, e.File.ID, ua)
+	if err := s.waitPlaybackSearch(ctx, cooldownKey, e.TargetScope); err != nil {
+		return "", err
+	}
+	if canVerify {
+		link, err = verified.VerifiedPlaybackURL(ctx, e.File, selected.cookie, ua)
+	} else {
+		link, err = s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
+	}
+	if err == nil && !p115.AllowedDirectPlaybackURL(link) {
+		err = p115.ErrDriveLinkRestricted
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
-		if canVerify {
-			link, err = verified.VerifiedPlaybackURL(ctx, e.File, selected.cookie, ua)
-		} else {
-			link, err = s.client.DriveDownloadURLWithUA(ctx, e.File.ID, e.File.PickCode, selected.cookie, ua)
+		failure := &playbackTargetError{stage: "目标文件取链失败", err: err}
+		if !errors.Is(err, p115.ErrDriveRejected) && !errors.Is(err, p115.ErrDriveFileMissing) {
+			s.backoffPlaybackSearch(cooldownKey, e.TargetScope, time.Now().Add(5*time.Second), failure)
 		}
-		if err == nil && !p115.AllowedDirectPlaybackURL(link) {
-			err = p115.ErrDriveLinkRestricted
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			failure := &playbackTargetError{stage: "目标文件取链失败", err: err}
-			if !errors.Is(err, p115.ErrDriveRejected) && !errors.Is(err, p115.ErrDriveFileMissing) {
-				s.backoffPlaybackSearch(cooldownKey, e.TargetScope, time.Now().Add(5*time.Second), failure)
-			}
-			return "", failure
-		}
+		return "", failure
 	}
 	if grant != nil {
 		if err := grant.CheckCurrent(ctx); err != nil {
@@ -541,7 +521,7 @@ func (s *PlaybackCache) reuseFastEntry(ctx context.Context, e PlaybackCacheEntry
 	if err != nil {
 		return "", err
 	}
-	if grant != nil && canVerify && !preparingPlaybackFile(ctx) {
+	if grant != nil && canVerify {
 		grant.targetRead = true
 		if grant.deferredRead {
 			s.logs.Add(ctx, "DEBUG", "目标副本取链与文件身份核验通过，复用本次实时凭据检查；未请求播放目录")
