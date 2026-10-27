@@ -24,8 +24,9 @@ export default defineConfig(({ mode }) => ({
         name: 'Cinema115',
         short_name: 'Cinema115',
         description: '影视资源与媒体自动化平台',
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
+        // Static installation/splash fallback; document theme-color follows the active theme.
+        theme_color: '#f8fafc',
+        background_color: '#f8fafc',
         display: 'standalone',
         icons: [
           {

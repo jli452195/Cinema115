@@ -11,10 +11,12 @@ export function useTheme() {
     
     const applyTheme = () => {
       const isDark = currentTheme.value === 'dark' || (currentTheme.value === 'system' && mediaQuery.matches)
-      if (isDark) {
-        document.documentElement.classList.add('dark')
-      } else {
-        document.documentElement.classList.remove('dark')
+      const root = document.documentElement
+      root.classList.toggle('dark', isDark)
+      const background = getComputedStyle(root).getPropertyValue(isDark ? '--color-slate-950' : '--color-slate-50').trim()
+      // Update both media defaults so a manual theme also overrides the system color.
+      for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+        meta.content = `rgb(${background})`
       }
     }
 
