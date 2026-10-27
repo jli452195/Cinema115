@@ -8,7 +8,7 @@ import { formatSubtitleSize, mergeSubtitleFiles } from '../utils/subtitleSources
 import { subtitleTargetName } from '../utils/subtitleLibrary'
 import type { OrganizeRow } from '../types/manualOrganize'
 
-const props = defineProps<{ videos: OrganizeRow[]; targetNames: Record<string, string>; selections: LocalSubtitleSelection[] }>()
+const props = defineProps<{ videos: OrganizeRow[]; season: number; targetNames: Record<string, string>; selections: LocalSubtitleSelection[] }>()
 const emit = defineEmits<{ close: []; select: [items: LocalSubtitleSelection[]] }>()
 const lifecycle = new AbortController()
 const rows = ref<(LocalSubtitleSelection & SubtitleMatchRow)[]>(props.selections.map(item => ({ ...item, key: item.localId, pairKey: pairKey(item.file), selected: true, reason: '已保存的字幕匹配' })))
@@ -38,9 +38,8 @@ async function read(files: File[]) {
     if (!data.files.length) throw new Error('没有找到支持的字幕文件，原列表已保留。')
     const merged = mergeSubtitleFiles(rows.value.map(row => row.file), data.files, append.value)
     const kept = rows.value.filter(row => merged.kept.includes(row.file))
-    const videos = props.videos.map(video => ({ ...video, path: video.sourcePath }))
     rows.value = [...kept, ...merged.added.map(file => {
-      const match = analyzeSubtitle(file.name, videos, props.videos[0]?.season ?? 1)
+      const match = analyzeSubtitle(file.name, props.videos, props.season)
       const localId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
       return { key: localId, pairKey: pairKey(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: !!match.videoId, reason: match.reason }
     })]

@@ -323,8 +323,8 @@ onBeforeUnmount(() => lifecycle.abort())
     </template>
   </AnimeFloatingDialog>
   <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
-  <SubtitleLibraryDialog v-if="subtitleOpen" :token="token" :title="title" :original-title="originalTitle" :videos="selected" :selections="selectedLibrary" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
-  <LocalSubtitleDialog v-if="localSubtitleOpen" :videos="selected" :selections="selectedLocal" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="localSubtitleOpen = false" @select="selectLocal" />
+  <SubtitleLibraryDialog v-if="subtitleOpen" :token="token" :title="title" :original-title="originalTitle" :videos="selected" :season="Number(season)" :selections="selectedLibrary" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
+  <LocalSubtitleDialog v-if="localSubtitleOpen" :videos="selected" :season="Number(season)" :selections="selectedLocal" :target-names="Object.fromEntries(selected.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="localSubtitleOpen = false" @select="selectLocal" />
 </template>
 
 <style scoped>

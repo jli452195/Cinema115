@@ -49,12 +49,24 @@ export interface SubtitleMatch {
   reason: string
   candidates: { id: string; reason: string; score: number }[]
 }
+export type SubtitleMatchVideo = Pick<SubtitleVideo, 'id' | 'name'> & { season?: number; episode?: number }
+
+function videoEpisode(video: SubtitleMatchVideo) {
+  // Editable target numbers are authoritative, even when currently invalid.
+  // Videos from completed tasks have no such fields and use their final names.
+  if ('season' in video || 'episode' in video) {
+    const { season, episode } = video
+    if (typeof season !== 'number' || !Number.isInteger(season) || season < 0 || season > 1000 || typeof episode !== 'number' || !Number.isInteger(episode) || episode < 1 || episode > 10000) return undefined
+    return { season, episode }
+  }
+  return episodeNumber(video.name)
+}
 
 function titleTokens(name: string) {
   return new Set(stem(name).toLowerCase().replace(/\[[^\]]*\]|【[^】]*】/g, ' ').replace(/s\d+e\d+|\b(?:\d{3,4}p|bluray|bdrip|web[ .-]?dl|hevc|x26[45]|h26[45]|flac|aac|chs|cht|eng|ass|srt)\b/g, ' ').match(/[a-z]{3,}|[\u3400-\u9fff]{2,}/g) || [])
 }
 
-function rankCandidates(name: string, videos: SubtitleVideo[]) {
+function rankCandidates(name: string, videos: SubtitleMatchVideo[]) {
   const title = titleTokens(name)
   const resolution = name.match(/\b(2160|1080|720|480)p\b/i)?.[1]
   return videos.map(video => {
@@ -65,16 +77,16 @@ function rankCandidates(name: string, videos: SubtitleVideo[]) {
   }).sort((a, b) => b.score - a.score)
 }
 
-export function analyzeSubtitle(name: string, videos: SubtitleVideo[], season: number): SubtitleMatch {
+export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number): SubtitleMatch {
   const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
-  const exact = videos.filter(video => stem(name).toLowerCase() === stem(video.name).toLowerCase())
+  const exact = videos.filter(video => !('season' in video || 'episode' in video) && stem(name).toLowerCase() === stem(video.name).toLowerCase())
   if (exact.length === 1) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
   if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')
   const episode = episodeNumber(name)
   if (episode) {
     if (!Number.isInteger(season) || season < 0 || season > 1000) return no('请填写有效默认季')
     const candidates = videos.filter(video => {
-      const target = episodeNumber(video.name)
+      const target = videoEpisode(video)
       return target && target.episode === episode.episode && (target.season ?? season) === (episode.season ?? season)
     })
     const label = `S${String(episode.season ?? season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
@@ -88,7 +100,7 @@ export function analyzeSubtitle(name: string, videos: SubtitleVideo[], season: n
   return no('未识别到明确集号，请按顺序匹配或手动选择')
 }
 
-export function matchSubtitle(name: string, videos: SubtitleVideo[], season: number): string { return analyzeSubtitle(name, videos, season).videoId }
+export function matchSubtitle(name: string, videos: SubtitleMatchVideo[], season: number): string { return analyzeSubtitle(name, videos, season).videoId }
 
 export function subtitlePairKey(name: string): string {
   return /\.(idx|sub)$/i.test(name) ? name.replace(/\\/g, '/').replace(/\.(idx|sub)$/i, '').toLowerCase() : ''

@@ -44,6 +44,43 @@ test('49 anime subtitles with hyphen episode numbers match unique organized vide
   for (const name of ['Show_03.ass', 'Show - 03.chs.ass', '[Group][03][1080p].ass', 'Show EP03.ass', 'Show 第03话.ass']) assert.equal(episodeNumber(name).episode, 3)
 })
 
+test('confirmed target episodes match numeric subtitles independently of original video names', () => {
+  const videos = [1, 2, 3].map(episode => ({
+    ...video(String(episode), `[LP-Raws] Mayoi Neko Overrun! ${String(episode).padStart(2, '0')} (BDRip 1080p HEVC-YUV420P10 FLAC).mkv`),
+    season: 1, episode,
+  }))
+  for (const target of videos) {
+    assert.equal(episodeNumber(target.name), undefined)
+    for (const [tag, language] of [['sc', 'zh-CN'], ['tc', 'zh-TW']]) {
+      const name = `${String(target.episode).padStart(2, '0')}.${tag}.ass`
+      const match = analyzeSubtitle(name, videos, 1)
+      assert.equal(match.videoId, target.id)
+      assert.equal(match.confidence, 'high')
+      assert.equal(subtitleLanguage(name), language)
+    }
+  }
+  assert.equal(matchSubtitle('04.sc.ass', videos, 1), '')
+  assert.equal(matchSubtitle('01.sc.ass', videos.slice(1), 1), '', 'unselected videos cannot be matched')
+  for (const name of ['SP01.ass', '01-02.ass', 'OVA01.ass', '01.5.ass']) assert.equal(matchSubtitle(name, videos, 1), '', name)
+})
+
+test('edited numbers take priority, invalid targets do not fall back, and duplicate targets require confirmation', () => {
+  const changed = { ...video('edited', 'Show.S01E14.mkv'), season: 2, episode: 1 }
+  assert.equal(matchSubtitle('01.sc.ass', [changed], 2), 'edited')
+  assert.equal(matchSubtitle('S02E01.tc.ass', [changed], 1), 'edited')
+  assert.equal(matchSubtitle('01.sc.ass', [changed], 1), '', 'use current target season, not first video season')
+  assert.equal(matchSubtitle('Show.S01E14.ass', [changed], 1), '', 'same original stem cannot bypass edited target')
+  for (const fields of [{ season: 2, episode: '' }, { season: '', episode: 14 }, { season: 1, episode: 0 }, { season: 1, episode: 1.5 }, { season: 1, episode: 10001 }, { season: 1001, episode: 14 }]) {
+    assert.equal(matchSubtitle('Show.S01E14.ass', [{ ...changed, ...fields }], 1), '', JSON.stringify(fields))
+  }
+  const other = { ...video('other', 'Different release.mkv'), season: 2, episode: 1 }
+  const ambiguous = analyzeSubtitle('01.sc.ass', [changed, other], 2)
+  assert.equal(ambiguous.videoId, '')
+  assert.equal(ambiguous.confidence, 'medium')
+  assert.equal(ambiguous.candidates.length, 2)
+  assert.equal(matchSubtitle('Show.S01E14.ass', [video('done', 'Show.S01E14.mkv')], 1), 'done', 'completed-task filenames retain existing matching')
+})
+
 test('specials, ranges, years, checksums and encoding numbers are not guessed', () => {
   for (const name of ['Show - 1080p.ass', 'Show_2024.ass', 'Show [720].ass', 'Show [A0123456].ass', 'Show - 01-02.ass', 'Show S01E01-E02.ass', 'Show SP01.ass', 'Show [OVA][01].ass', 'Show NCOP01.ass', 'Show [01][02].ass', 'Show - 01.5.ass']) {
     assert.equal(episodeNumber(name), undefined, name)

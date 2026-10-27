@@ -6,9 +6,8 @@ import { analyzeSubtitle, maxTotalBytes, subtitleLanguage, subtitlePairKey } fro
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import SubtitleMatchList from './SubtitleMatchList.vue'
 import type { OrganizeRow } from '../types/manualOrganize'
-import type { SubtitleVideo } from '../types/subtitleImport'
 
-const props = defineProps<{ token: string; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; selections?: LibrarySubtitleSelection[] }>()
+const props = defineProps<{ token: string; title: string; originalTitle?: string; videos: OrganizeRow[]; season: number; targetNames: Record<string, string>; selections?: LibrarySubtitleSelection[] }>()
 const emit = defineEmits<{ close: []; select: [items: LibrarySubtitleSelection[], version: SubtitleVersion] }>()
 const lifecycle = new AbortController()
 const query = ref(props.title), busy = ref(false), error = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref<SubtitleVersion>()
@@ -37,12 +36,11 @@ async function choose(item: SubtitleVersion) {
   busy.value = true; error.value = ''
   try {
     const data = await request<{ files: LibrarySubtitleFile[] }>(`versions/${encodeURIComponent(item.id)}/files`)
-    const videos: SubtitleVideo[] = props.videos.map(video => ({ ...video, path: video.sourcePath }))
     rows.value = data.files.map(file => {
-      const match = analyzeSubtitle(file.name, videos, props.videos[0]?.season ?? 1), lang = subtitleLanguage(file.name)
+      const match = analyzeSubtitle(file.name, props.videos, props.season), lang = subtitleLanguage(file.name)
       const saved = props.selections?.find(row => row.versionId === item.id && row.path === file.path && row.file.sha === file.sha)
       const existing = props.selections?.some(row => row.versionId === item.id)
-      return { key: file.path, pairKey: subtitlePairKey(file.path), versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved && videos.some(video => video.id === saved.videoId) ? saved.videoId : match.videoId, selected: existing ? !!saved : !!match.videoId && lang === 'zh-CN', reason: match.reason }
+      return { key: file.path, pairKey: subtitlePairKey(file.path), versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved && props.videos.some(video => video.id === saved.videoId) ? saved.videoId : match.videoId, selected: existing ? !!saved : !!match.videoId && lang === 'zh-CN', reason: match.reason }
     })
     version.value = item
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取版本失败' }
