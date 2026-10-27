@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import BotSearchDialog from '../components/BotSearchDialog.vue'
+import TelegramChannelSearchDialog from '../components/TelegramChannelSearchDialog.vue'
 import GyingSearchDialog from '../components/GyingSearchDialog.vue'
 import WoniuSearchDialog from '../components/WoniuSearchDialog.vue'
 import AnimeResourceSearchDialog from '../components/AnimeResourceSearchDialog.vue'
@@ -34,13 +35,14 @@ import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
 import telegramIcon from '../assets/telegram/telegram.svg'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
-import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
+import { telegramUserRequest, type TelegramUserStatus, type TelegramChannelConfig } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
 import { woniuRequest, type WoniuConfigView } from '../types/woniu'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const versionCache = provideEmbyVersionCache()
 const botSearchOpen = ref(false)
+const channelSearchOpen = ref(false)
 const gyingSearchOpen = ref(false)
 const woniuSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
@@ -48,9 +50,10 @@ const gardenSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
 const numberingOpen = ref(false)
 const numberingNotice = ref('')
-const searchConfigured = ref({ re0: false, bot: false, gying: false, woniu: false })
+const searchConfigured = ref({ re0: false, bot: false, channels: false, gying: false, woniu: false })
 watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
-  searchConfigured.value = { re0: false, bot: false, gying: false, woniu: false }
+  searchConfigured.value = { re0: false, bot: false, channels: false, gying: false, woniu: false }
+  channelSearchOpen.value = false
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
   woniuSearchOpen.value = false
   mikanSearchOpen.value = false; gardenSearchOpen.value = false
@@ -68,11 +71,12 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   }
   void check('re0', nanShareRequest<NanShareConfigView>(token, 'config', signal))
   void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal).then(status => ({ configured: status.botConfigured })))
+  void check('channels', telegramUserRequest<TelegramChannelConfig>(token, 'channels', signal).then(config => ({ configured: config.account.hasSession && config.channels.length > 0 })))
   void check('gying', gyingRequest<GyingConfigView>(token, 'config', signal))
   void check('woniu', woniuRequest<WoniuConfigView>(token, 'config', signal))
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
-watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
+watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; channelSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError, refresh: refreshEmbyMedia, lastReadSucceeded: embyReadSucceeded } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
@@ -257,6 +261,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   <div class="media-detail flex min-h-screen flex-col" :style="mediaColorStyle">
     <TMDBEpisodeGroupDialog v-if="isPortalAdmin && kind === 'tv' && numberingOpen && detail" :token="token" :tmdb-id="tmdbId" :title="detail.title" @close="numberingOpen = false" @saved="numberingSaved" />
     <BotSearchDialog v-if="isPortalAdmin && searchConfigured.bot && botSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="botSearchOpen = false" />
+    <TelegramChannelSearchDialog v-if="isPortalAdmin && searchConfigured.channels && channelSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" @close="channelSearchOpen = false" />
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
     <WoniuSearchDialog v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
@@ -314,6 +319,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
                     <span class="font-semibold">Bot</span>
                     <span class="detail-muted">搜索</span>
                   </span>
+                </SearchPill>
+                <SearchPill v-if="isPortalAdmin && searchConfigured.channels" aria-label="TG 频道搜索" @click="channelSearchOpen = true">
+                  <img :src="telegramIcon" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
+                  <span class="flex items-center gap-0.5"><span class="font-semibold">TG 频道</span><span class="detail-muted">搜索</span></span>
                 </SearchPill>
                 <SearchPill v-if="isPortalAdmin && searchConfigured.gying" @click="gyingSearchOpen = true">
                   <img :src="gyingLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />

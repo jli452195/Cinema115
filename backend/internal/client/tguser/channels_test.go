@@ -19,6 +19,7 @@ type channelTransport struct {
 	list      func(*tg.MessagesGetDialogsRequest) (tg.MessagesDialogsClass, error)
 	calls     int
 	logoutErr error
+	search    func(context.Context, *tg.MessagesSearchRequest) (tg.MessagesMessagesClass, error)
 }
 
 func channelClient(t *testing.T) (*Client, *channelTransport) {
@@ -49,6 +50,12 @@ func channelClient(t *testing.T) (*Client, *channelTransport) {
 					out.(*tg.MessagesDialogsBox).Dialogs = response
 				case *tg.AuthLogOutRequest:
 					return f.logoutErr
+				case *tg.MessagesSearchRequest:
+					response, err := f.search(ctx, request)
+					if err != nil {
+						return err
+					}
+					out.(*tg.MessagesMessagesBox).Messages = response
 				default:
 					return fmt.Errorf("unexpected request %T", request)
 				}

@@ -29,6 +29,9 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		group.Use(operationLogs(sinks[0], "Telegram", "频道配置", map[string]string{
 			group.BasePath() + "/channels": "保存搜索频道",
 		}))
+		group.Use(operationLogs(sinks[0], "搜索", "TG 频道", map[string]string{
+			group.BasePath() + "/channels/search": "频道资源搜索",
+		}))
 	}
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -180,6 +183,30 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		}
 		c.Set("operationLogSummary", summary)
 	}
+	group.POST("/channels/search", func(c *gin.Context) {
+		var input struct {
+			searchInput
+			Cursor string `json:"cursor"`
+		}
+		if c.ShouldBindJSON(&input) != nil || len(input.Cursor) > 64 || (input.Cursor != "" && input.Refresh) {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		title, ok := loadSearchTitle(c, input.searchInput)
+		if !ok {
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
+		defer cancel()
+		result, err := account.SearchChannels(ctx, title, input.Cursor, input.Refresh)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.Set("operationLogCached", result.Cached)
+		c.Set("operationLogSummary", fmt.Sprintf("%s/%s，已加载资源 %d 项，频道异常 %d 项", input.Kind, input.TMDBID, len(result.Items), len(result.Warnings)))
+		c.JSON(200, result)
+	})
 	group.POST("/search", func(c *gin.Context) {
 		var input searchInput
 		if c.ShouldBindJSON(&input) != nil || (input.Kind != "movie" && input.Kind != "tv") {

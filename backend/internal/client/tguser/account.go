@@ -50,6 +50,8 @@ type Client struct {
 	config                          Config
 	channels                        channelSettings
 	channelCatalog                  *channelCatalog
+	channelSearches                 map[string]*channelSearch
+	channelRetryAt                  time.Time
 	userID                          int64
 	identityKnown                   bool
 	authorized                      bool
@@ -200,6 +202,8 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 		c.userID = state.User.ID
 	}
 	if c.channels.OwnerID != 0 && c.channels.OwnerID != c.userID {
+		c.channelSearches = nil
+		c.channelRetryAt = time.Time{}
 		if err := c.saveSettingsLocked(c.config, channelSettings{}); err != nil {
 			c.channelCatalog = nil
 			return err
@@ -325,6 +329,8 @@ func (c *Client) Disconnect(ctx context.Context) error {
 	c.userID = 0
 	c.identityKnown = true
 	c.channelCatalog = nil
+	c.channelSearches = nil
+	c.channelRetryAt = time.Time{}
 	c.name = ""
 	c.username = ""
 	c.phone = ""

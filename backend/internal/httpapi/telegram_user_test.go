@@ -1,18 +1,30 @@
 package httpapi
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/tguser"
+	"strm115/backend/internal/client/tmdb"
 )
 
 type userTestStore struct{ value string }
 
 func (s *userTestStore) Value() string           { return s.value }
 func (s *userTestStore) Save(value string) error { s.value = value; return nil }
+
+type telegramSearchReader struct{ tmdbReaderFake }
+
+func (f *telegramSearchReader) Details(ctx context.Context, kind string, id int) (*tmdb.Detail, error) {
+	detail, err := f.tmdbReaderFake.Details(ctx, kind, id)
+	if err == nil {
+		detail.Title = "测试影片"
+	}
+	return detail, err
+}
 func TestTelegramUserAdminAndConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -25,7 +37,7 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 			c.AbortWithStatus(401)
 		}
 	})
-	RegisterTelegramUser(admin, account, &tmdbReaderFake{})
+	RegisterTelegramUser(admin, account, &telegramSearchReader{})
 	hash := strings.Repeat("a", 32)
 	for _, tc := range []struct {
 		method, path, body, auth string
@@ -34,6 +46,7 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 		{"GET", "config", "", "", 401}, {"POST", "search", `{"kind":"movie","tmdbId":"42"}`, "", 401},
 		{"GET", "channels", "", "", 401},
 		{"POST", "channels/list", `{}`, "", 401},
+		{"POST", "channels/search", `{"kind":"movie","tmdbId":"42"}`, "", 401},
 		{"POST", "channels", `{"selectionToken":"old","channelIds":["123"]}`, "", 401},
 		{"POST", "config", `{"apiId":0,"apiHash":"bad"}`, "test-admin", 400},
 		{"POST", "config", `{"apiId":123,"apiHash":"` + hash + `"}`, "test-admin", 200},
@@ -42,6 +55,10 @@ func TestTelegramUserAdminAndConfig(t *testing.T) {
 		{"GET", "channels", "", "test-admin", 200},
 		{"POST", "channels/list", `bad`, "test-admin", 400},
 		{"POST", "channels/list", `{}`, "test-admin", 409},
+		{"POST", "channels/search", `{"kind":"person","tmdbId":"42"}`, "test-admin", 400},
+		{"POST", "channels/search", `{"kind":"movie","tmdbId":"bad"}`, "test-admin", 400},
+		{"POST", "channels/search", `{"kind":"movie","tmdbId":"42","cursor":"old","refresh":true}`, "test-admin", 400},
+		{"POST", "channels/search", `{"kind":"movie","tmdbId":"42"}`, "test-admin", 409},
 		{"POST", "channels", `{"selectionToken":"old","channelIds":["123"]}`, "test-admin", 409},
 		{"POST", "send-code", `{"phone":"bad"}`, "test-admin", 400},
 		{"POST", "select", `{"id":"x"}`, "test-admin", 400},

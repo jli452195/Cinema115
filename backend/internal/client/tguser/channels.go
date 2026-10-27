@@ -69,6 +69,9 @@ func (c *Client) saveSettingsLocked(cfg Config, channels channelSettings) error 
 	if err := c.configStore.Save(string(data)); err != nil {
 		return errors.New("保存 Telegram 配置失败")
 	}
+	if channelFingerprint(c.channels) != channelFingerprint(channels) {
+		c.channelSearches = nil
+	}
 	c.config, c.channels = cfg, channels
 	return nil
 }

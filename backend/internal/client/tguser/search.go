@@ -187,15 +187,7 @@ func (c *Client) parse(m *tg.Message, botUsername, searchKey string) (SearchResu
 	result := SearchResult{Text: m.Message, Items: make([]Action, 0, len(parsed.Items)), Links: links, Remaining: parsed.Remaining, Page: parsed.Page, Empty: parsed.Empty}
 	// 单链接消息若把提取码单独列出，可安全地补到该链接；多链接不猜测提取码归属。
 	if len(result.Links) == 1 {
-		if match := passwordPattern.FindStringSubmatch(m.Message); len(match) > 1 {
-			u, _ := url.Parse(result.Links[0])
-			q := u.Query()
-			if q.Get("password") == "" {
-				q.Set("password", match[1])
-				u.RawQuery = q.Encode()
-				result.Links[0] = u.String()
-			}
-		}
+		result.Links[0] = shareWithPassword(result.Links[0], m.Message)
 	}
 	for _, item := range parsed.Items {
 		action := storedAction{message: m.ID, command: botCommand(item.URL, botUsername), direct: shareLink(item.URL), searchKey: searchKey}
@@ -249,6 +241,19 @@ func (c *Client) parse(m *tg.Message, botUsername, searchKey string) (SearchResu
 		}
 	}
 	return result, recognized, nil
+}
+
+func shareWithPassword(link, text string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	if match := passwordPattern.FindStringSubmatch(text); len(match) > 1 && u.Query().Get("password") == "" {
+		query := u.Query()
+		query.Set("password", match[1])
+		u.RawQuery = query.Encode()
+	}
+	return u.String()
 }
 
 // 搜索与取链接只向当前配置的 Bot 发送；每次先记住聊天快照，忽略历史回复。
