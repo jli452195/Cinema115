@@ -53,7 +53,7 @@ const conflicts = computed(() => {
   return found
 })
 const displayed = computed(() => rows.value.filter(row => filter.value === 'all' || filter.value === 'unmatched' && !row.videoId || filter.value === 'review' && row.pending || filter.value === 'conflict' && (conflicts.value.has(row.id) || !row.videoId && row.match.candidates.length > 1)))
-const languages = [{ value: '', label: '未知 / 不标记' }, { value: 'zh-CN', label: '简体中文' }, { value: 'zh-TW', label: '繁体中文' }, { value: 'en', label: '英文' }, { value: 'zh-en', label: '中英双语' }, { value: 'zh', label: '中文' }]
+const languages = [{ value: '', label: '未知 / 不标记' }, { value: 'zh-CN', label: '简体中文' }, { value: 'zh-TW', label: '繁体中文' }, { value: 'ja', label: '日文' }, { value: 'en', label: '英文' }, { value: 'zh-en', label: '中英双语' }, { value: 'zh', label: '中文' }]
 const request = <T,>(path: string, init: RequestInit = {}, timeout = 130000) => p115Request<T>(props.token, `manual-organize/subtitles${path}`, { ...init, signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(timeout)]) })
 const message = (reason: unknown) => reason instanceof Error ? reason.message : '字幕操作失败'
 

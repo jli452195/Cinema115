@@ -9,9 +9,12 @@ export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test
 const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
 const stem = (name: string) => base(name).replace(/\.[^.]+$/, '')
+// Only shield explicitly labeled audio blocks; arbitrary numbers remain evidence.
+const withoutAudioMetadata = (title: string) => title.replace(/(?:^|[^a-z0-9])(?:AAC|FLAC|ALAC|AC-?3|E-?AC-?3|DDP?|DTS(?:-HD)?|TRUEHD|OPUS|AUDIO)[ ._-]*\[[^\[\]]*\]/gi, ' ')
+const episodeTitle = (name: string) => withoutAudioMetadata(stem(name))
 
 export function episodeNumber(name: string): { season?: number; episode: number } | undefined {
-  const title = stem(name)
+  const title = episodeTitle(name)
   // Ranges, specials, resolutions, years and release revisions are not episodes.
   if (ambiguousEpisode(title)) return undefined
   const explicit = [...title.matchAll(/(?:^|[^a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?=$|[^a-z0-9])/gi)]
@@ -22,6 +25,7 @@ export function episodeNumber(name: string): { season?: number; episode: number 
   const numbers: number[] = []
   for (const pattern of [
     /第\s*(\d{1,4})\s*[集话話]/g,
+    /(?:^|[^a-z0-9])#\s*(\d{1,4})(?=$|[^a-z0-9])/gi,
     /(?:^|[ ._\[【-])EP?(\d{1,4})(?=$|[ ._\]】\[-])/gi,
     /^\s*(\d{1,3})(?=$|[ ._\[【-])/g,
     /[\[【](\d{1,3})[\]】]/g,
@@ -32,8 +36,8 @@ export function episodeNumber(name: string): { season?: number; episode: number 
 }
 
 function ambiguousEpisode(title: string) {
-  return /(?:S\d+[ ._-]*E\d+|\bEP?\d+|\b\d{1,3})\s*(?:[-~～–+]\s*(?:E(?:P)?)?\d{1,3}(?![\da-z])|E\d{1,4}(?![\da-z]))/i.test(title)
-    || /(?:S\d+[ ._-]*E|(?:^|[ _\[【-])(?:EP?)?)(\d{1,3})\.\d/i.test(title)
+  return /(?:S\d+[ ._-]*E\d+|(?:^|[^a-z0-9])(?:EP?|#\s*)?\d{1,4})\s*(?:[-~～–+]\s*(?:EP?|#)?\s*\d{1,4}(?![\da-z])|E\d{1,4}(?![\da-z]))/i.test(title)
+    || /(?:S\d+[ ._-]*E|(?:^|[ _\[【(-])(?:EP?|#\s*)?)(\d{1,4})\.\d/i.test(title)
     || /(?:^|[ ._\[【-])(?:SP|OVA|OAD|NCOP|NCED|OP|ED|PV)(?:\d|\b)|特典|特别篇|特別篇|总集篇|總集篇/i.test(title)
 }
 
@@ -63,7 +67,7 @@ export function analyzeSubtitle(name: string, videos: SubtitleVideo[], season: n
   const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
   const exact = videos.filter(video => stem(name).toLowerCase() === stem(video.name).toLowerCase())
   if (exact.length === 1) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
-  if (ambiguousEpisode(stem(name))) return no('特典或多集范围，请手动指定视频')
+  if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')
   const episode = episodeNumber(name)
   if (episode) {
     if (!Number.isInteger(season) || season < 0 || season > 1000) return no('请填写有效默认季')
@@ -76,7 +80,7 @@ export function analyzeSubtitle(name: string, videos: SubtitleVideo[], season: n
     if (!candidates.length) return no(`${label} 没有对应视频，可能缺集或季不一致`)
     return { videoId: '', confidence: 'medium', reason: `${label} 有 ${candidates.length} 个版本，请确认候选`, candidates: rankCandidates(name, candidates) }
   }
-  if (videos.length === 1 && !episodeNumber(videos[0].name) && !ambiguousEpisode(stem(videos[0].name)) && !/S\d+[ ._-]*E\d/i.test(videos[0].name)) {
+  if (videos.length === 1 && !episodeNumber(videos[0].name) && !ambiguousEpisode(episodeTitle(videos[0].name)) && !/S\d+[ ._-]*E\d/i.test(videos[0].name)) {
     return { videoId: '', confidence: 'low', reason: '仅有一个视频，但未识别到集号，请确认', candidates: [{ id: videos[0].id, score: 0, reason: '当前唯一视频' }] }
   }
   return no('未识别到明确集号，请按顺序匹配或手动选择')
@@ -89,11 +93,19 @@ export function subtitlePairKey(name: string): string {
 }
 
 export function subtitleLanguage(name: string): string {
-  if (/中英|(?:chs|cht|sc|tc)[._-]eng/i.test(name)) return 'zh-en'
+  const tags = [...stem(name).matchAll(/(?:^|[^a-z0-9])SUB(?:TITLE)?S?[ ._:-]*\[([^\[\]]*)\]/gi)]
+  if (!tags.length) return languageFromName(withoutAudioMetadata(stem(name)))
+  const languages = new Set(tags.map(tag => languageFromName(tag[1])))
+  return languages.size === 1 ? [...languages][0] : ''
+}
+
+function languageFromName(name: string): string {
+  if (/中英|(?:chs|cht|sc|tc)[ ._+&/-]+(?:eng|en)(?=$|[^a-z0-9])/i.test(name)) return 'zh-en'
   if (/简体|簡體|简中|簡中|简日|簡日|chs|zh[._-]cn|(?:^|[._\[ -])(?:sc(?:jp)?|gb)(?=$|[._\] -])/i.test(name)) return 'zh-CN'
   if (/繁体|繁體|繁中|繁日|cht|zh[._-]tw|(?:^|[._\[ -])(?:tc(?:jp)?|big5)(?=$|[._\] -])/i.test(name)) return 'zh-TW'
-  if (/英文|(?:^|[._ -])(?:eng|en)(?:[._ -]|$)/i.test(name)) return 'en'
-  return ''
+  const english = /英文|(?:^|[^a-z0-9])(?:eng|en)(?=$|[^a-z0-9])/i.test(name)
+  if (/日文|日语|日語|(?:^|[^a-z0-9])(?:jp|jpn|ja)(?=$|[^a-z0-9])/i.test(name)) return english ? '' : 'ja'
+  return english ? 'en' : ''
 }
 
 const crcTable = new Uint32Array(256).map((_, n) => {

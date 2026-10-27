@@ -19,7 +19,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const rar = await fs.readFile('tests/fixtures/subtitle-archives/normal-v4.rar')
     const zip = Buffer.from(zipSync({ 'S01E02.ass': strToU8('subtitle two'), 'font.ttf': strToU8('font') }))
     const config = { accountId: 'main', sourceCID: '10', sourcePath: '/来源', targetCID: '20', targetPath: '/影视库' }
-    const videos = [1, 2].map(i => ({ id: String(100 + i), name: `Show.S01E0${i}.mkv`, directory: false, size: 100, parentId: '20', path: `/影视库/Show.S01E0${i}.mkv` }))
+    const videos = [1, 2].map(i => ({ id: String(100 + i), name: `[Cleo]Trinity_Blood_-_0${i}_(Dual Audio_10bit_BD1080p_x265).mkv`, directory: false, size: 100, parentId: '20', path: `/影视库/Show.S01E0${i}.mkv` }))
     const job = { id: 'job', title: '网盘字幕测试', config, status: 'completed', createdAt: '2026-10-15T01:00:00Z', items: videos.map(video => ({ file: { ...video, mediaType: 'video' }, targetPath: video.path, targetCID: '20', status: 'done' })) }
     const entries = [
       { id: '600', name: 'normal.7z', size: normal.length, directory: false },
@@ -87,7 +87,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await picker.getByRole('checkbox', { name: '选择 normal.7z', exact: true }).waitFor()
       return picker
     }
+    for (const [tag, language] of [['eng', 'en'], ['jpn', 'ja']]) {
+      const name = `[アニメ] TrinityBlood #01 FLIGHT NIGHT (BD 1080p H.264 AAC[2.0(jpn)+5.1(eng)] SUB[${tag}]).ass`
+      await dialog.locator('input[type=file]').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(`subtitle ${tag}`) })
+      await dialog.getByRole('combobox', { name: `${name} 对应视频`, exact: true }).waitFor()
+      assert.equal(await dialog.getByRole('combobox', { name: `${name} 对应视频`, exact: true }).inputValue(), '101')
+      assert.equal(await dialog.getByRole('combobox', { name: `${name} 语言`, exact: true }).inputValue(), language)
+      await dialog.getByRole('radio', { name: '替换当前列表', exact: true }).check()
+    }
+    passed.push('hash episode and labeled audio channels auto-match Cleo underscore videos; SUB tags select English or Japanese')
     await dialog.locator('input[type=file]').setInputFiles({ name: 'S01E01.srt', mimeType: 'text/plain', buffer: Buffer.from('local subtitle') })
+    await dialog.getByRole('combobox', { name: 'S01E01.srt 对应视频', exact: true }).waitFor()
+    await dialog.getByRole('radio', { name: '追加到列表', exact: true }).check()
     await dialog.getByRole('combobox', { name: 'S01E01.srt 对应视频', exact: true }).selectOption('101')
     await dialog.getByRole('combobox', { name: 'S01E01.srt 语言', exact: true }).selectOption('en')
     await dialog.getByRole('textbox', { name: 'S01E01.srt 版本', exact: true }).fill('keep-edit')

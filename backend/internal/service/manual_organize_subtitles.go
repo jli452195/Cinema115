@@ -151,11 +151,6 @@ func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePre
 		if total > MaxSubtitleImportBytes {
 			return SubtitleImport{}, fmt.Errorf("%w：每次字幕总大小不能超过 64 MiB", ErrOrganizeInput)
 		}
-		switch file.Language {
-		case "", "zh-CN", "zh-TW", "en", "zh", "zh-en":
-		default:
-			return SubtitleImport{}, ErrOrganizeInput
-		}
 		if len([]rune(file.Version)) > 30 || organizeName(file.Version) != file.Version {
 			return SubtitleImport{}, fmt.Errorf("%w：字幕版本标记无效", ErrOrganizeInput)
 		}

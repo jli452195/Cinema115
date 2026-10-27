@@ -97,6 +97,11 @@ func TestManualOrganizeSubtitleValidationAndAccountBinding(t *testing.T) {
 	s, d, id, job, _ := newSubtitleTest(t)
 	data := []byte("subtitle")
 	good := subtitleSelection("1", "101", "01.ass", data)
+	japanese := good
+	japanese.Language = "ja"
+	if plan := previewSubtitles(t, s, id, job.ID, japanese); !strings.HasSuffix(plan.Items[0].Name, ".ja.ass") {
+		t.Fatal("Japanese language was not preserved", plan.Items[0])
+	}
 	for _, mutate := range []func(*SubtitleSelection){
 		func(f *SubtitleSelection) { f.VideoID = "foreign" }, func(f *SubtitleSelection) { f.OriginalName = "x.exe" }, func(f *SubtitleSelection) { f.SHA256 = "bad" },
 		func(f *SubtitleSelection) { f.Size = p115.MaxSubtitleBytes + 1 }, func(f *SubtitleSelection) { f.Version = "../escape" }, func(f *SubtitleSelection) { f.Language = "../x" },

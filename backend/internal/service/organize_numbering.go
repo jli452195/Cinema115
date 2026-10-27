@@ -46,8 +46,9 @@ func organizeFileNumbering(file *OrganizeFile) {
 	if special {
 		season = 0
 	}
-	// File-only normalization: title-01 uses the existing dash grammar while
-	// retaining its metadata, range and ambiguity checks. RSS parsing is unchanged.
+	// Treat filename underscores as separators (Title_-_03_(BD...)), then reuse
+	// the existing dash, metadata and ambiguity checks. Keep the source untouched.
+	name = strings.ReplaceAll(name, "_", " ")
 	name = organizeCompactEpisode.ReplaceAllString(name, " - ${1}")
 	// A four-digit year after SxxExx is filename metadata, not a fractional
 	// episode. Keep genuine decimals and conflicting numbering for review.

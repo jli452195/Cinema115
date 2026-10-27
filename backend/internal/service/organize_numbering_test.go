@@ -41,6 +41,13 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 		{"Show/[Group] Show [01v2].mkv", 1, 1, 0},
 		{"Show/Animation-02.WMV", 1, 2, 0},
 		{"Show/Animation-03v2.mkv", 1, 3, 0},
+		{"Show/[Cleo]Trinity_Blood_-_01_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 1, 0},
+		{"Show/[Cleo]Trinity_Blood_-_02_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 2, 0},
+		{"Show/[Cleo]Trinity_Blood_-_03_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 3, 0},
+		{"Show/Cleo]Trinity_Blood_-_03_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 3, 0},
+		{"Show/Trinity_Blood_-_03-04_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 3, 4},
+		{"Show/Trinity_Blood_-_03.5_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 0, 0},
+		{"Show/Trinity_Blood_[03]_-_04_(Dual Audio_10bit_BD1080p_x265).mkv", 1, 0, 0},
 		{"Show/Animation-03-04.mkv", 1, 3, 4},
 		{"Show/Animation-2024.mkv", 1, 0, 0},
 		{"Show/Animation-1080.mkv", 1, 0, 0},
@@ -159,6 +166,39 @@ func TestOrganizeSpecialNumbering(t *testing.T) {
 				t.Fatalf("got S%dE%d-%d; want S%dE%d-%d", file.Season, file.Episode, file.EndEpisode, tc.season, tc.episode, tc.end)
 			}
 		})
+	}
+}
+
+func TestOrganizeUnderscoreNamesReachNamingPreviewAndPlan(t *testing.T) {
+	s, drive, account, _ := newOrganizeTest(t)
+	drive.dirs["30"] = nil
+	for episode := 1; episode <= 3; episode++ {
+		drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: fmt.Sprint(episode + 100), Name: fmt.Sprintf("[Cleo]Trinity_Blood_-_%02d_(Dual Audio_10bit_BD1080p_x265).mkv", episode), Size: 100})
+	}
+	ctx := context.Background()
+	scan, err := s.Scan(ctx, OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
+	if err != nil || len(scan.Files) != 3 {
+		t.Fatal(scan, err)
+	}
+	input := OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42}
+	namingInput := MediaNamingInput{Kind: input.Kind, TMDBID: input.TMDBID}
+	for _, file := range scan.Files {
+		selection := OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}
+		input.Files = append(input.Files, selection)
+		namingInput.Files = append(namingInput.Files, MediaNamingFile{OrganizeSelection: selection, Name: file.Name, NamingValues: file.NamingValues})
+	}
+	preview, err := (MediaNaming{Templates: s.templates, Metadata: s.metadata}).Preview(ctx, namingInput)
+	if err != nil || len(preview.Items) != 3 {
+		t.Fatal(preview, err)
+	}
+	plan, err := s.Preview(ctx, account, input)
+	if err != nil || len(plan.Items) != 3 {
+		t.Fatal(plan, err)
+	}
+	for i, item := range preview.Items {
+		if item.Error != "" || item.Result == nil || !strings.Contains(item.Result.Name, fmt.Sprintf(".S01E%02d.", i+1)) || plan.Items[i].Name != item.Result.Name {
+			t.Fatal("inferred episode did not reach consistent naming preview and plan", item, plan.Items[i])
+		}
 	}
 }
 

@@ -50,6 +50,35 @@ test('specials, ranges, years, checksums and encoding numbers are not guessed', 
   }
 })
 
+test('hash episode subtitles match underscore releases without treating audio channels as episodes', () => {
+  const videos = [1, 2, 3].map(i => video(String(i), `[Cleo]Trinity_Blood_-_0${i}_(Dual Audio_10bit_BD1080p_x265).mkv`))
+  for (const codec of ['AAC', 'FLAC', 'DTS-HD', 'Audio']) {
+    const name = `[アニメ] TrinityBlood #01 FLIGHT NIGHT (BD 1080p H.264 ${codec}[2.0(jpn)+5.1(eng)] SUB[eng]).ass`
+    assert.deepEqual(episodeNumber(name), { episode: 1 }, name)
+    assert.equal(subtitleLanguage(name), 'en', name)
+    assert.equal(analyzeSubtitle(name, videos, 1).videoId, '1', name)
+  }
+  assert.equal(matchSubtitle('TrinityBlood #03 SUB[jpn].ass', videos, 1), '3')
+  assert.equal(subtitleLanguage('TrinityBlood #03 AAC[5.1(eng)] SUB[jpn].ass'), 'ja')
+  assert.equal(matchSubtitle('TrinityBlood #01 SUB[eng].ass', [...videos, video('other', 'TrinityBlood.S01E01.mkv')], 1), '')
+  for (const name of ['Show #01-02.ass', 'Show #01-#02.ass', 'Show #01.5.ass', 'Show #01 #02.ass', 'Show_01-02.ass', 'Show #01 [02].ass', 'Show #01 [SP].ass']) {
+    assert.equal(episodeNumber(name), undefined, name)
+    assert.equal(matchSubtitle(name, videos, 1), '', name)
+  }
+})
+
+test('subtitle language uses explicit subtitle tags and never the labeled audio track languages', () => {
+  for (const name of ['Show AAC[eng].ass', 'Show FLAC[jpn].ass', 'Show Audio[eng jpn].ass', 'Show AAC[eng] SUB[fra].ass', 'Show SUB[eng] SUB[jpn].ass', 'Show SUB[jpn+eng].ass']) {
+    assert.equal(subtitleLanguage(name), '', name)
+  }
+  for (const [tag, language] of [['eng', 'en'], ['jpn', 'ja'], ['chs', 'zh-CN'], ['cht', 'zh-TW'], ['chs+eng', 'zh-en']]) {
+    assert.equal(subtitleLanguage(`Show AAC[2.0(eng)+5.1(jpn)] SUB[${tag}].ass`), language)
+  }
+  assert.equal(subtitleLanguage('Show.jpn.ass'), 'ja')
+  assert.equal(subtitleLanguage('Show[eng].ass'), 'en')
+  assert.equal(subtitleLanguage('Show AAC[eng].chs.ass'), 'zh-CN')
+})
+
 test('multiple versions are ranked but never selected automatically; missing season remains unmatched', () => {
   const videos = [video('720', 'Precure - S01E01 - 720p.mkv'), video('1080', 'Precure - S01E01 - 1080p.mkv')]
   const match = analyzeSubtitle('[Group] Precure - 01 [1080p].ass', videos, 1)
