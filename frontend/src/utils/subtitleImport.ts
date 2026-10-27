@@ -6,7 +6,7 @@ export const maxFileBytes = 16 * 1024 * 1024
 export const maxTotalBytes = 64 * 1024 * 1024
 export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string; sourceKey?: string; sourceLabel?: string }
 export interface LocalSubtitleSelection { localId: string; file: LocalSubtitle; videoId: string; language: string; version: string }
-export interface SubtitleMatchRow { key: string; pairKey?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
+export interface SubtitleMatchRow { key: string; pairKey?: string; sourceLabel?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
 const splitArchiveName = /(?:\.part\d+\.rar|\.[rz]\d{2,3}|\.(?:rar|7z|zip)\.\d{3,})$/i
 const base = (name: string) => name.replace(/\\/g, '/').split('/').pop() || ''
