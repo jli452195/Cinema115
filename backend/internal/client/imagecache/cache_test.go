@@ -195,6 +195,89 @@ func TestConcurrentMissIsCoalesced(t *testing.T) {
 	}
 }
 
+func TestCachePublishesImageWithMetadata(t *testing.T) {
+	body := testPNG(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	cache, err := New(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.baseURL = server.URL
+	// Pause after the image rename but before its metadata is written. A reader
+	// arriving in this interval must not infer WebP from the cache filename.
+	published, readerArrived, resume := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	now := time.Now()
+	cache.now = func() time.Time {
+		switch calls.Add(1) {
+		case 1:
+			close(published)
+			<-resume
+		case 2:
+			close(readerArrived)
+		}
+		return now
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	var workers sync.WaitGroup
+	defer func() {
+		close(resume)
+		cancel()
+		workers.Wait()
+	}()
+	read := func() <-chan error {
+		result := make(chan error, 1)
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			asset, err := cache.Open(ctx, "w342", "poster.webp")
+			if err == nil {
+				defer asset.File.Close()
+				data, readErr := io.ReadAll(asset.File)
+				err = readErr
+				if err == nil && (string(data) != string(body) || asset.ContentType != "image/png" || asset.ETag == "") {
+					err = errors.New("并发读取拿到了尚未完整发布的图片缓存")
+				}
+			}
+			result <- err
+		}()
+		return result
+	}
+	first := read()
+	select {
+	case <-published:
+	case <-ctx.Done():
+		t.Fatal("图片发布未开始", ctx.Err())
+	}
+	second := read()
+	select {
+	case <-readerArrived:
+	case <-ctx.Done():
+		t.Fatal("并发读取未开始", ctx.Err())
+	}
+	select {
+	case err := <-second:
+		t.Fatal("元数据发布前不应返回缓存", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Release the writer before waiting for either reader.
+	resume <- struct{}{}
+	for _, result := range []<-chan error{first, second} {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("图片发布后读取没有完成", ctx.Err())
+		}
+	}
+}
+
 func TestCleanupRemovesExpiredAndLimitsSize(t *testing.T) {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	cache, err := New(t.TempDir(), 5)

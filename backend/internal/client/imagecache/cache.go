@@ -77,6 +77,7 @@ type Cache struct {
 	http        *http.Client
 	now         func() time.Time
 	mu          sync.Mutex
+	assetMu     sync.RWMutex
 	flights     map[string]*flight
 	negative    map[string]negativeEntry
 	pending     map[string]refreshRequest
@@ -162,6 +163,8 @@ func readMetadata(path string) metadata {
 }
 
 func (c *Cache) open(path, metadataPath string) (*Asset, error) {
+	c.assetMu.RLock()
+	defer c.assetMu.RUnlock()
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("打开图片缓存: %w", err)
@@ -415,6 +418,9 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("关闭图片缓存: %w", err)
 	}
+	// Publish the image and its metadata together, including during refreshes.
+	c.assetMu.Lock()
+	defer c.assetMu.Unlock()
 	if err := replaceFile(temporaryPath, path); err != nil {
 		return fmt.Errorf("替换图片缓存: %w", err)
 	}
