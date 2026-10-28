@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +21,7 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	}
 	mediaTestFile(t, rule.Source, "season/Unknown.S01E01.strm", "http://unchanged/")
 	mediaTestFile(t, rule.Source, "season/Unknown.S01E01.ass", "subtitle")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
 	if run.FailureCount != 2 || run.ReadyCount != 0 {
 		t.Fatal("unmatched video and companion must be eligible", run)
@@ -30,10 +29,7 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(rule.Failure, "season/Unknown.S01E01.strm")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("preview must never move files", err)
 	}
-	if _, err := s.Apply(run.ID); err == nil {
-		t.Fatal("unmatched preview must not offer a separate quarantine confirmation")
-	}
-	queued, _ := s.Scan(rule.ID)
+	queued, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &queued, "auto")
 	for _, e := range queued.Entries {
 		if e.File.Directory {
@@ -55,7 +51,7 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	if queued.FailureCount != 0 || queued.ReadyCount != 0 {
 		t.Fatal("stored failures must not be offered for repeated moves", queued)
 	}
-	scan, _ := s.Scan(rule.ID)
+	scan, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &scan, "auto")
 	if len(scan.Entries) != 0 {
 		t.Fatal("failure directory must not be scanned")
@@ -70,20 +66,12 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	if snapshot.Entries[0].Failure.State != "stored" {
 		t.Fatal("failure snapshot aliases live state")
 	}
-	var input MediaOrganizeCorrection
-	input.Groups = append(input.Groups, struct {
-		ID     string `json:"id"`
-		Kind   string `json:"kind"`
-		TMDBID int    `json:"tmdbId"`
-	}{ID: "1", Kind: "tv", TMDBID: 42})
-	corrected, err := restarted.Correct(context.Background(), queued.ID, input)
+	_, err = restarted.Retry(queued.ID, MediaOrganizeCorrection{FileID: queued.Entries[0].File.ID, Kind: "tv", TMDBID: 42})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if corrected.ReadyCount != 2 {
-		t.Fatal("correction must allow processing directly from failure directory", corrected)
-	}
-	mediaTestProcess(t, restarted, &corrected, "execute")
+	corrected, _ := restarted.Snapshot(queued.ID)
+	mediaTestProcess(t, restarted, &corrected, "retry")
 	for _, e := range corrected.Entries {
 		if e.File.Directory {
 			continue
@@ -109,7 +97,7 @@ func TestMediaOrganizerFailureDirectoryConflictAndTransient(t *testing.T) {
 		mediaTestFile(t, rule.Source, "Unknown.S01E01.mkv", "source")
 		mediaTestFile(t, rule.Source, "Unknown.S01E01.ass", "subtitle")
 		mediaTestFile(t, rule.Failure, "Unknown.S01E01.mkv", "existing")
-		run, _ := s.Scan(rule.ID)
+		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "auto")
 		for _, name := range []string{"Unknown.S01E01.mkv", "Unknown.S01E01.ass"} {
 			if _, err := os.Stat(filepath.Join(rule.Source, name)); err != nil {
@@ -130,7 +118,7 @@ func TestMediaOrganizerFailureDirectoryConflictAndTransient(t *testing.T) {
 		rule, _ = s.SaveRule(rule)
 		mediaTestFile(t, rule.Source, "Work.S01E01.mkv", "source")
 		mediaTestFile(t, rule.Source, "Work.S01E01.ass", "subtitle")
-		run, _ := s.Scan(rule.ID)
+		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "auto")
 		if run.FailureCount != 0 || len(s.doc.Seen[rule.ID]) != 0 {
 			t.Fatal("metadata failure must not be quarantined or negatively cached", run)
@@ -158,7 +146,7 @@ func TestMediaOrganizerCloudFailureMoveAndUncertainResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	drive.dirs = map[string][]p115.ShareFile{"10": {{ID: "30", Name: "Unknown.S01E01.mkv", Size: 10}}, "20": {}, "40": {}}
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
 	drive.moveErr, drive.applyMove = context.DeadlineExceeded, true
 	mediaTestProcess(t, s, &run, "execute")
@@ -174,15 +162,12 @@ func TestMediaOrganizerCloudFailureMoveAndUncertainResume(t *testing.T) {
 	if drive.renames != 0 {
 		t.Fatal("quarantine must retain original filename")
 	}
-	var correction MediaOrganizeCorrection
-	if err := json.Unmarshal([]byte(`{"groups":[{"id":"1","kind":"tv","tmdbId":42}]}`), &correction); err != nil {
-		t.Fatal(err)
-	}
-	corrected, err := s.Correct(context.Background(), run.ID, correction)
+	_, err = s.Retry(run.ID, MediaOrganizeCorrection{FileID: run.Entries[0].File.ID, Kind: "tv", TMDBID: 42})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mediaTestProcess(t, s, &corrected, "execute")
+	corrected, _ := s.Snapshot(run.ID)
+	mediaTestProcess(t, s, &corrected, "retry")
 	if corrected.Status != "completed" || corrected.Entries[0].Failure != nil || len(drive.dirs["40"]) != 0 || drive.moves != before+1 {
 		t.Fatal("cloud correction did not move from the recorded failure directory", corrected, drive.moves)
 	}
@@ -211,7 +196,7 @@ func TestMediaOrganizerFailureLocalMoveIntentRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	mediaTestFile(t, rule.Source, "Unknown.S01E01.strm", "http://original/")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
 	run.Status = "running"
 	run.Entries[0].Failure = &MediaOrganizeFailure{State: "moving", Reason: run.Entries[0].Message}
@@ -240,7 +225,8 @@ func TestMediaOrganizerFailureLocalMoveIntentRecovery(t *testing.T) {
 	if snapshot.Status != "interrupted" {
 		t.Fatal(snapshot)
 	}
-	queued, err := restarted.Apply(run.ID)
+	_, err = restarted.Retry(run.ID, MediaOrganizeCorrection{FileID: run.Entries[0].File.ID})
+	queued, _ := restarted.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +251,7 @@ func TestMediaOrganizerFailureHealthyWorkAndStorageError(t *testing.T) {
 			t.Fatal(err)
 		}
 		mediaTestFile(t, rule.Source, "Work.S01E01.strm", "http://original/")
-		run, _ := s.Scan(rule.ID)
+		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "auto")
 		if run.Status != "completed" || run.Entries[0].Status != "done" {
 			t.Fatal(run)
@@ -280,7 +266,7 @@ func TestMediaOrganizerFailureHealthyWorkAndStorageError(t *testing.T) {
 			t.Fatal(err)
 		}
 		mediaTestFile(t, rule.Source, "Unknown.S01E01.strm", "http://original/")
-		run, _ := s.Scan(rule.ID)
+		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "scan")
 		files, err := s.files(context.Background(), rule)
 		if err != nil {
@@ -305,7 +291,7 @@ func TestMediaOrganizerFailureRecoveryPlanRetention(t *testing.T) {
 	for i := range 25 {
 		s.doc.Runs = append([]MediaOrganizeRun{{ID: fmt.Sprint(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{Status: "done"}}}}, s.doc.Runs...)
 	}
-	if _, err := s.Scan(rule.ID); err != nil {
+	if _, err := s.Start(rule.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Snapshot("relocated"); err != nil {

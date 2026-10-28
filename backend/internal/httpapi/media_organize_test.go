@@ -113,7 +113,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 			t.Error("worker leaked")
 		}
 	}()
-	response = request("POST", "/rules/"+rule.ID+"/scan", "", 202)
+	response = request("POST", "/rules/"+rule.ID+"/run", "", 202)
 	var run service.MediaOrganizeRun
 	if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
@@ -131,32 +131,14 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		}
 		t.Fatal("task did not reach", status)
 	}
-	wait("preview")
-	if len(run.Entries) != 1 {
-		t.Fatal(run)
-	}
-	readState("")
-	if state.History.Total != 0 {
-		t.Fatal("preview leaked into history or overview payload", state)
-	}
-	request("POST", "/runs/"+run.ID+"/preview", `{"files":[{"id":"Work.2024.strm","season":-1,"episode":1}]}`, 400)
-	deadline := time.Now().Add(time.Second)
-	for {
-		_, err = s.Apply(run.ID)
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Millisecond)
-	}
 	wait("completed")
 	data, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative)))
 	if err != nil || string(data) != body {
 		t.Fatal("file contents changed", err)
 	}
-	request("GET", "/runs/"+run.ID, "", 200)
+	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200)
+	request("POST", "/runs/"+run.ID+"/retry", "{\"fileId\":\"Work.2024.strm\",\"season\":-1}", 400)
+	request("POST", "/runs/"+run.ID+"/retry", "{}", 400)
 	readState("?page=99")
 	if state.History.Page != 1 || state.History.Total != 1 || state.History.Items[0].Status != "done" || state.History.Items[0].Target == "" {
 		t.Fatal("executed file missing from history", state)

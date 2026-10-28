@@ -99,7 +99,7 @@ func (f *mediaOrganizeFiles) checkLocalCleanup(e MediaOrganizeEntry) (string, er
 }
 
 // Cleanup uses only this auto-scan's exact file snapshots. Nothing here is
-// replayed by Apply, and no nonempty directory is ever recursively deleted.
+// replayed by task retries, and no nonempty directory is ever recursively deleted.
 func (s *MediaOrganizer) cleanup(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	if err := s.cleanupEntries(ctx, f, run, f.unrelated); err != nil {
 		return err

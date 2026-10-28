@@ -100,7 +100,7 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" || e.VideoID == "" {
+		if e.File.MediaType != "attachment" || e.Status == "done" || e.VideoID == "" || !mediaInTask(*e, run.TaskFileID) {
 			continue
 		}
 		owner, longest, _ := mediaAttachmentVideo(e.File, files)
@@ -116,6 +116,11 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 			}
 		}
 		if !valid {
+			if run.TaskFileID != "" {
+				e.Relative, e.Target = "", ""
+				e.Status, e.Message = "retained", "附件未匹配对应视频，保留来源待核对"
+				continue
+			}
 			e.Group, e.VideoID, e.Relative, e.Target = "", "", "", ""
 			e.Status, e.Message = "retained", "附件未匹配对应视频或目录含未处理视频，保留来源"
 		}
@@ -132,9 +137,10 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 	files := mediaEntryFiles(run.Entries)
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" {
+		if e.File.MediaType != "attachment" || e.Status == "done" || !mediaInTask(*e, run.TaskFileID) {
 			continue
 		}
+		originalGroup, originalVideo := e.Group, e.VideoID
 		e.Status, e.Message = "retained", "无法确认附件归属，保留来源"
 		e.Group, e.VideoID, e.Relative, e.Target = "", "", "", ""
 		owner, longest, tail := mediaAttachmentVideo(e.File, files)
@@ -189,6 +195,11 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 			e.Target = path.Join(run.Rule.Target, e.Relative)
 		} else if e.VideoID != "" {
 			e.Status, e.Message = "unmatched", "对应视频尚未匹配，附件保留来源"
+		}
+		if run.TaskFileID != "" && e.VideoID != originalVideo {
+			e.Group, e.VideoID = originalGroup, originalVideo
+			e.Relative, e.Target = "", ""
+			e.Status, e.Message = "retained", "公共附件归属不再唯一，保留来源待核对"
 		}
 	}
 }

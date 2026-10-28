@@ -71,6 +71,7 @@ type MediaOrganizeRun struct {
 	Entries      []MediaOrganizeEntry `json:"entries"`
 	ReadyCount   int                  `json:"readyCount"`
 	FailureCount int                  `json:"failureCount"`
+	TaskFileID   string               `json:"taskFileId,omitempty"`
 }
 
 type mediaOrganizeDocument struct {
@@ -115,7 +116,7 @@ func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource
 		r := &s.doc.Runs[i]
 		if r.Status == "queued" || r.Status == "scanning" || r.Status == "running" {
 			r.Status = "interrupted"
-			r.Message = "服务重启，任务已中断；核对预览后可继续"
+			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
 		}
 	}
 	return s, s.persistLocked()
@@ -303,7 +304,7 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 	return ErrMediaOrganizeInput
 }
 
-func (s *MediaOrganizer) Scan(id string) (MediaOrganizeRun, error) {
+func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.doc.Runs {
@@ -315,13 +316,13 @@ func (s *MediaOrganizer) Scan(id string) (MediaOrganizeRun, error) {
 	}
 	for _, rule := range s.doc.Rules {
 		if rule.ID == id {
-			return s.queueScanLocked(rule, false)
+			return s.queueScanLocked(rule)
 		}
 	}
 	return MediaOrganizeRun{}, ErrMediaOrganizeInput
 }
 
-func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule, automatic bool) (MediaOrganizeRun, error) {
+func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeRun, error) {
 	id, err := organizeToken()
 	if err != nil {
 		return MediaOrganizeRun{}, err
@@ -331,9 +332,9 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule, automatic bool)
 	// They must not consume history retention or evict actual file results.
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
 		if old.Rule.ID == rule.ID && old.Status != "queued" && old.Status != "scanning" && old.Status != "running" && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Result != nil || e.Status == "done" || e.Failure != nil }) {
-			return true // A rescan replaces unused previews and diagnostics for this rule.
+			return true // A rescan replaces empty outcomes and diagnostics for this rule.
 		}
-		return (old.Status == "completed" || old.Status == "preview") && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "retained" })
+		return old.Status == "completed" && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "retained" })
 	})
 	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
 	// Count actual terminal batches, not the newly queued (possibly empty) scan.
@@ -362,10 +363,7 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule, automatic bool)
 	if err := s.persistLocked(); err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	s.actions[id] = "scan"
-	if automatic {
-		s.actions[id] = "auto"
-	}
+	s.actions[id] = "auto"
 	s.notify()
 	return r, nil
 }
@@ -463,7 +461,7 @@ func (s *MediaOrganizer) schedule() error {
 			}
 		}
 		if !pending {
-			if _, err := s.queueScanLocked(rule, true); err != nil && !errors.Is(err, ErrMediaOrganizeBusy) {
+			if _, err := s.queueScanLocked(rule); err != nil && !errors.Is(err, ErrMediaOrganizeBusy) {
 				return err
 			}
 		}

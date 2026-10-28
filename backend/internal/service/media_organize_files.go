@@ -27,6 +27,7 @@ type mediaOrganizeFiles struct {
 	lists          map[string][]p115.ShareFile
 	unrelated      []MediaOrganizeEntry
 	directories    []MediaOrganizeEntry
+	scanned        []MediaOrganizeEntry
 	localSnapshots map[string]os.FileInfo
 	settlingVideos map[string]bool
 	failureChecked bool

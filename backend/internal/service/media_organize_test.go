@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -94,12 +93,30 @@ func mediaTestProcess(t *testing.T, s *MediaOrganizer, run *MediaOrganizeRun, ac
 	s.mu.Lock()
 	delete(s.actions, run.ID)
 	s.mu.Unlock()
+	if action == "scan" {
+		files, err := s.files(context.Background(), run.Rule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.scan(context.Background(), files, run); err != nil {
+			t.Fatal(err)
+		}
+		// Pause between recognition and execution to inspect or mutate the plan.
+		run.Status = "interrupted"
+		if len(run.Entries) == 0 {
+			run.Status = "completed"
+		}
+		if err := s.checkpoint(run); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	if err := s.process(context.Background(), run, action); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
+func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 	s, _, store, rule := newMediaOrganizeTest(t)
 	const body = "http://example.invalid/play115/path?token=unchanged\r\n"
 	mediaTestFile(t, rule.Source, "Work.S01E01.strm", body)
@@ -110,24 +127,24 @@ func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(rule.Source, "Work.S01E03.mkv"), []byte("writing"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.Scan(rule.ID)
+	run, err := s.Start(rule.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mediaTestProcess(t, s, &run, "scan")
-	if run.Status != "preview" || len(run.Entries) != 4 {
-		t.Fatalf("unexpected preview %+v", run)
+	if run.Status != "interrupted" || len(run.Entries) != 4 {
+		t.Fatalf("unexpected scan %+v", run)
 	}
 	state := s.State(1)
-	if state.History.Total != 0 {
-		t.Fatal("preview must be pending, not file history", state)
+	if state.History.Total != 2 || state.History.Items[0].Status != "error" {
+		t.Fatal("interrupted primary files must remain visible for recovery", state)
 	}
 	for _, e := range run.Entries {
 		if _, err := os.Stat(filepath.Join(rule.Source, filepath.FromSlash(e.File.ID))); err != nil {
 			t.Fatal("preview moved a file", err)
 		}
 	}
-	queued, err := s.Apply(run.ID)
+	queued, err := s.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +187,7 @@ func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
 		t.Fatal(saved)
 	}
 	state = restarted.State(1)
-	if state.History.Total != 3 {
+	if state.History.Total != 2 {
 		t.Fatal("history must contain only executed files", state)
 	}
 	for _, item := range state.History.Items {
@@ -204,7 +221,7 @@ func TestMediaOrganizerStandardNumberingPreviewAndExecution(t *testing.T) {
 	for _, tc := range cases {
 		mediaTestFile(t, rule.Source, tc.name, content)
 	}
-	run, err := s.Scan(rule.ID)
+	run, err := s.Start(rule.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +246,7 @@ func TestMediaOrganizerStandardNumberingPreviewAndExecution(t *testing.T) {
 			}
 		}
 	}
-	run, err = s.Apply(run.ID)
+	run, err = s.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,21 +270,19 @@ func TestMediaOrganizerManualMatchPreservesSubtitles(t *testing.T) {
 	f.items = nil
 	mediaTestFile(t, rule.Source, "Unknown.S01E01.mkv", "video")
 	mediaTestFile(t, rule.Source, "Unknown.S01E01.ass", "sub")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
-	var correction MediaOrganizeCorrection
-	if err := json.Unmarshal([]byte(`{"groups":[{"id":"1","kind":"tv","tmdbId":42}],"files":[]}`), &correction); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := s.Correct(context.Background(), run.ID, correction)
+	_, err := s.Retry(run.ID, MediaOrganizeCorrection{FileID: run.Entries[0].File.ID, Kind: "tv", TMDBID: 42})
 	if err != nil {
 		t.Fatal(err)
 	}
+	updated, _ := s.Snapshot(run.ID)
+	mediaTestProcess(t, s, &updated, "retry")
 	if len(updated.Entries) != 2 {
 		t.Fatal("subtitle lost from scan snapshot")
 	}
 	for _, e := range updated.Entries {
-		if e.Status != "ready" {
+		if e.Status != "done" {
 			t.Fatal(e)
 		}
 	}
@@ -278,7 +293,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 	mediaTestFile(t, rule.Source, "Work.S01E01.mkv", "video")
 	mediaTestFile(t, rule.Source, "Work.S01E01.ass", "sub")
 	mediaTestFile(t, rule.Source, "Work.S01E02.mkv", "video2")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
 	for _, e := range run.Entries {
 		if e.File.Name == "Work.S01E02.mkv" {
@@ -298,7 +313,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 		t.Fatal("subtitle moved without video", err)
 	}
 	state := s.State(1)
-	if state.History.Total != 3 {
+	if state.History.Total != 2 {
 		t.Fatal("each failed video/subtitle attempt must be recorded", state)
 	}
 	for _, item := range state.History.Items {
@@ -307,7 +322,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 		}
 	}
 	before := state.History.Items[0]
-	if _, err := s.Correct(context.Background(), run.ID, MediaOrganizeCorrection{}); err != nil {
+	if _, err := s.Task(run.ID, run.Entries[0].File.ID); err != nil {
 		t.Fatal(err)
 	}
 	after := s.State(1).History.Items[0]
@@ -319,13 +334,13 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
 	for i := range 20 {
-		s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "saved-" + strconv.Itoa(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: strconv.Itoa(i)}}, Status: "done"}}})
+		s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "saved-" + strconv.Itoa(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: strconv.Itoa(i)}, MediaType: "video"}, Status: "done"}}})
 	}
 	for i := range 25 {
 		if i == 10 {
 			mediaTestFile(t, rule.Source, "unowned/font.ttf", "retained font")
 		}
-		run, err := s.Scan(rule.ID)
+		run, err := s.Start(rule.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,10 +387,10 @@ func TestMediaOrganizerIncrementalAndRollback(t *testing.T) {
 	s, f, store, rule := newMediaOrganizeTest(t)
 	f.items = nil
 	mediaTestFile(t, rule.Source, "Unknown.S01E01.mkv", "v")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
 	calls := f.browseCalls
-	run, _ = s.Scan(rule.ID)
+	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
 	if f.browseCalls != calls || len(run.Entries) != 0 {
 		t.Fatal("unchanged unmatched file re-queried")
@@ -383,7 +398,7 @@ func TestMediaOrganizerIncrementalAndRollback(t *testing.T) {
 	if err := os.Remove(filepath.Join(rule.Source, "Unknown.S01E01.mkv")); err != nil {
 		t.Fatal(err)
 	}
-	run, _ = s.Scan(rule.ID)
+	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
 	if len(s.doc.Seen[rule.ID]) != 0 {
 		t.Fatal("stale incremental entries retained")
@@ -628,7 +643,7 @@ func TestMediaOrganizerOwnedWorker(t *testing.T) {
 			t.Error("worker leaked")
 		}
 	}()
-	run, err := s.Scan(rule.ID)
+	run, err := s.Start(rule.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,25 +664,13 @@ func TestMediaOrganizerOwnedWorker(t *testing.T) {
 			}
 		}
 	}
-	wait("preview")
-	deadline := time.Now().Add(time.Second)
-	for {
-		_, err = s.Apply(run.ID)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, ErrMediaOrganizeBusy) || time.Now().After(deadline) {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Millisecond)
-	}
 	wait("completed")
 }
 
 func TestMediaOrganizerCheckpointCopiesAllMutableFields(t *testing.T) {
 	s, _, store, rule := newMediaOrganizeTest(t)
 	mediaTestFile(t, rule.Source, "Work.S01E01.1080p.mkv", "v")
-	run, _ := s.Scan(rule.ID)
+	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
 	run.Entries[0].File.NamingValues["resolution"] = "mutated"
 	run.Entries[0].Status = "mutated"
