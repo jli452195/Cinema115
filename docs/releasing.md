@@ -17,11 +17,13 @@ CI 按 `master` 最近一次成功 CI 后的全部改动或 PR 的完整改动�
 | --- | --- |
 | 仅 `backend/` | Go 测试、`go vet` |
 | 仅 `frontend/` | 前端契约测试、前端构建 |
-| 仅 Markdown、`docs/`、`licenses/` 或 `.gitignore` | 跳过应用检查 |
+| 仅 Markdown、`docs/`、`licenses/`、`.gitignore` 或文档工作流 | 跳过应用检查 |
 | 工作流、Dockerfile、Compose 等公共配置或其他路径 | 前后端完整检查 |
 | 发布版本标签 | 同一提交的 master CI 已成功则复用，否则前后端完整检查 |
 
 首次运行、强推后旧提交不可用或不再是当前提交祖先等无法确定可靠比较起点的情况会完整检查。
+
+用户文档使用独立的 `Docs` 工作流：PR 变更 `docs/site/` 或 `.github/workflows/docs.yml` 时只构建，`master` 上的相同变更构建成功后发布到 GitHub Pages。仅修改业务代码不重建文档；文档发布不需要版本标签，也不构建 Docker。首次 Pages 设置与写作步骤见 [编写文档](site/contributing/index.md)。
 
 发布只复用本仓库 `master` 上 push 触发、提交 SHA 完全相同且最新一次已成功完成的 CI。PR 检查、其他提交、运行中、失败或已取消的记录均不复用；查不到记录或查询异常时，调用同一份 CI 执行前后端完整检查。复用成功或补充检查通过后才登录 Docker Hub，补充检查失败或取消时不发布。
 

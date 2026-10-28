@@ -1,5 +1,7 @@
 # Cinema115
 
+用户文档使用 VitePress 与 Teek，[在线文档](https://jli452195.github.io/Cinema115/)由 GitHub Pages 托管，源码位于 [`docs/site/`](docs/site/index.md)。从[开始使用](docs/site/guide/index.md)阅读安装与配置教程；本地预览、新增文章及首次开启自动发布见[编写文档](docs/site/contributing/index.md)。
+
 同一 Emby 用户允许多个播放会话，覆盖主网盘、个人网盘、动态小号池及播放子账号；小号池独立按实际 UID 限制容量和限速。管理员可查看和释放对应会话，详见 [播放会话管理](docs/single-playback.md)。
 
 同设备同播放器连续播放可在旧会话静默后接替，并优先继承原 UID 名额；要求设备信息来自 Emby 登录响应，缺失时通过反代重新登录。详见 [实现清单与注意事项](docs/device-playback-handoff.md)。

@@ -1,0 +1,18 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <g filter="url(#shadow)" transform="translate(256, 256)">
+    <!-- stylized C for Cinema -->
+    <path d="M-90 -70 A 90 90 0 1 0 -90 70 L -55 50 A 50 50 0 1 1 -55 -50 Z" fill="#38bdf8" />
+    <!-- 115 -->
+    <text x="30" y="55" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="160" font-weight="900" font-style="italic" fill="#f8fafc" text-anchor="middle" letter-spacing="-8">115</text>
+  </g>
+</svg>

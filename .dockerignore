@@ -15,6 +15,7 @@ data/
 strm/
 .tmp_p115/
 tests/
+docs/site/
 .git/
 .idea/
 .vscode/
