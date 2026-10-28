@@ -1,159 +1,99 @@
-# Cinema115
+<p align="center">
+  <img src="docs/site/public/logo.svg" width="72" height="72" alt="Cinema115 Logo">
+</p>
 
-用户文档使用 VitePress 与 Teek，[在线文档](https://jli452195.github.io/Cinema115/)由 GitHub Pages 托管，源码位于 [`docs/site/`](docs/site/index.md)。从[开始使用](docs/site/guide/index.md)阅读安装与配置教程；本地预览、新增文章及首次开启自动发布见[编写文档](docs/site/contributing/index.md)。
+<h1 align="center">Cinema115</h1>
 
-同一 Emby 用户允许多个播放会话，覆盖主网盘、个人网盘、动态小号池及播放子账号；小号池独立按实际 UID 限制容量和限速。管理员可查看和释放对应会话，详见 [播放会话管理](docs/single-playback.md)。
+<p align="center">
+  围绕 115 网盘的 STRM 生成、下载整理与动漫订阅工具。<br>
+  支持 Emby 原文件直链播放，日常操作通过网页完成。
+</p>
 
-同设备同播放器连续播放可在旧会话静默后接替，并优先继承原 UID 名额；要求设备信息来自 Emby 登录响应，缺失时通过反代重新登录。详见 [实现清单与注意事项](docs/device-playback-handoff.md)。
+<p align="center">
+  <a href="https://github.com/jli452195/Cinema115/releases/latest"><img src="https://img.shields.io/github/v/release/jli452195/Cinema115?style=flat-square&amp;label=Version&amp;color=2563eb" alt="最新正式版本"></a>
+  <a href="https://jli452195.github.io/Cinema115/"><img src="https://img.shields.io/badge/Wiki-%E5%9C%A8%E7%BA%BF%E6%96%87%E6%A1%A3-2563eb?style=flat-square&amp;logo=vitepress&amp;logoColor=white" alt="Wiki 在线文档"></a>
+  <a href="https://hub.docker.com/r/jli452195/cinema115"><img src="https://img.shields.io/badge/Docker-Hub-2496ed?style=flat-square&amp;logo=docker&amp;logoColor=white" alt="Docker Hub 镜像"></a>
+  <a href="https://github.com/jli452195/Cinema115"><img src="https://img.shields.io/badge/GitHub-%E9%A1%B9%E7%9B%AE%E6%BA%90%E7%A0%81-475569?style=flat-square&amp;logo=github&amp;logoColor=white" alt="GitHub 项目源码"></a>
+</p>
 
-TV 看板（`/tv` 和首页）提供「全部／剧集／动漫／纪录／综艺」类别，电影看板（`/movie`）提供「全部／电影／动漫／纪录」。动漫对应 TMDB 动画，纪录对应纪录片，综艺对应真人秀或脱口秀；剧集排除动画、纪录片、真人秀、脱口秀及新闻，电影类别排除动画和纪录片。类别与类型、地区、年份组合查询，切换类别重置类型和页码，两种看板的筛选均保存在各自 URL 中，刷新或返回可恢复。分类依据 TMDB 标注，可能存在少量漏分或交叉分类。
+## 界面预览
 
-电影／剧集详情页支持「追更」，右上角菜单可进入「我的追更」（`/follows`）。管理员在「追更管理」（`/follows/manage`）查看合并申请、订阅人数，保存处理状态与用户可见说明，并进入影视详情搜索资源。新的追更申请通过 Telegram 独立通知聊天发送，通知地址在追更管理中配置；多人加入同一轮追更不重复通知。入库自动完成后续接入，详见 [影视追更](docs/follows.md)。
+浏览电影、剧集与动漫，按地区、年份和类型筛选，并查看 Emby 入库状态。
 
-普通用户使用 Emby 账号登录个人中心，邀请直接注册 Emby。管理员使用 `.env` 中的独立管理账号，通过「邀请与设置」管理邀请和播放规则，通过「Emby 用户管理」指定个人网盘或动态小号池来源。详见 [Emby 个人中心](docs/member-playback.md)。
+![日本动漫浏览页](docs/site/public/screenshots/anime-library.webp)
 
-「115 网盘 → 115 助手」位于 `/helper115`，旧 `/115/login` 自动跳转。主账号独立配置，统一用于分享、下载、整理、Telegram 和源文件读取，普通功能不再选择账号。下方可添加小号，用于动态播放池和秒传；手动秒传选择目标用户，任务启动时选择并固定小号及目录。池失效时有界切换其他 UID；空池或繁忙不回退主网盘。详见 [115 主账号与小号](docs/p115-accounts.md)。
+<details>
+<summary>查看动漫订阅与 115 网盘界面</summary>
 
-电影／剧集详情提供「Bot 搜索」浮窗，使用 TMDB 中文标题通过 Telegram 用户账号查询配置的资源 Bot，展示资源版本。Bot 用户名可在 `/telegram/user` 自行修改；搜索结果（包括未找到资源）缓存 24 小时，重复打开可复用，支持主动刷新。网页搜索通过流式响应立即展示 Bot 首批结果，同时继续收集同次查询的后续回复；点击“加载更多资源”会持续追加，缓存整体返回累计结果，到达末尾后显示完成状态。资源卡片上的「分享 STRM」遵循「115分享STRM」已保存的转存开关：开启时按分享者 user ID 与所选账号判断，本人分享直接生成，其他账号的分享转存后创建新分享再生成；关闭时直接生成。卡片内显示进度和结果，多个链接依次处理。先在 `/telegram/user` 保存 API ID、Hash 与 Bot 用户名，并登录已获该 Bot 认证的账号；与原 Bot 配置独立。使用与会话说明见 [Telegram 资源搜索](docs/telegram-resource-search.md)。
+### 动漫订阅
 
-管理员还可在影视详情使用「观影搜索」。该功能先用 TMDB 原名查询并完整保留不同季度、OVA、特别篇等条目，没有有效资源时再用 IMDb `tt...` 编号兜底；结果按电影、剧集、动漫、种子和网盘分类展示。账号在 `/gying` 登录，密码与会话仅在服务端加密保存。当前只支持查看、复制和打开资源，不接入 115 或 STRM，详见 [观影资源搜索](docs/gying.md)。
+从 AniBT、蜜柑或 AnimeGarden 选择番剧与字幕组，预览匹配结果和整理后的文件名。
 
-电影详情中的「查看系列」进入站内 `/collection/:tmdbId`，展示 TMDB 系列海报、简介及按上映时间排列的电影，未公布日期的放在最后。卡片显示 Emby 入库标识并进入 `/movie/:tmdbId`；长系列每次展示 30 部，入库检查每批最多 100 条。管理员接口 `GET /api/admin/tmdb/collection/:id` 复用 TMDB 客户端五分钟缓存，支持加载失败重试，TMDB 密钥不发送到浏览器。
+![动漫订阅日历](docs/site/public/screenshots/anime-calendar.webp)
 
-首页 `/` 默认显示看板，使用 TMDB 展示电影和剧集的中文片名、海报、年份与用户评分，支持类型、出品地区、年份、热门／最新／TMDB 评分排序及分页。页面统一使用浅色顶部导航，不再显示侧边栏或手机抽屉。点击品牌返回首页，电影和剧集分别进入 `/movie`、`/tv`；放大镜进入独立搜索页 `/search`，支持聚合、电影、剧集、演员四种范围；关键词 `q`、范围 `scope=multi|movie|tv|person` 和页码 `page` 保存在 URL 中，刷新和前进后退可恢复。右上角头像打开管理菜单，可进入 115 网盘、Telegram 配置、查看日志、Emby 及退出登录；115 功能分类页位于 `/115`。评分排序至少需要 100 人评价；搜索按 TMDB 相关度返回，聚合模式使用综合搜索并过滤人物结果，保留上游分页，部分页面可能较少或没有影视结果；聚合仅显示本页影视数量。搜索结果复用影视卡片及 Emby 入库标识，旧看板搜索链接自动转入新页面。点击海报进入站内影视详情。IMDb、豆瓣评分暂未接入。
+### 115 网盘
 
-演员搜索通过管理员接口 `GET /api/admin/tmdb/people?query=姓名&page=1` 查询 TMDB 表演部门人物（含配音），展示照片、姓名与代表作，过滤其他工作人员并沿用上游分页。点击进入 `/person/:tmdbId`，由 `GET /api/admin/tmdb/person/:id` 读取简介及参演影视；支持电影／剧集筛选、分批加载和 Emby 入库标识，返回搜索保留姓名及页码。两个接口复用 TMDB 客户端的有界五分钟缓存。
+集中管理分享 STRM、云下载、下载整理、手动整理与目录分享。
 
-剧集和电影分别使用 `/tv`、`/movie` 路由，切换片库会同步更新地址栏。支持直接访问、刷新和浏览器前进后退；未登录时先显示登录页，登录后继续进入原路由。NAS 单端口部署由后端提供页面回退，无需额外配置反向代理。
+![115 网盘功能入口](docs/site/public/screenshots/drive-overview.webp)
 
-影视详情路由为 `/movie/:tmdbId` 和 `/tv/:tmdbId`，例如 `/movie/550`、`/tv/1399`。详情页展示淡背景图、海报、中文片名、简介、TMDB 评分、上映／首播日期与演员；电影有系列时提供 TMDB 系列链接，IMDb 仅提供条目链接。剧集显示季列表（含特别篇），展开时按需请求分集资料，同一页面重复展开复用结果。当前不推断入库状态，也未接入资源搜索或播放按钮。
+</details>
 
-详情与分集分别使用管理员接口 `GET /api/admin/tmdb/detail/:kind/:id`、`GET /api/admin/tmdb/tv/:id/season/:number`，使用 SQLite 压缩缓存并在过期后后台重新验证。剧集季标题一次读取 `/api/admin/tmdb/tv/:id/schedules` 的精简播出缓存；完整简介在展开季后读取，长剧每次显示二十集。缺集区间由前端计算，缓存字段和全局预热规则见 [Emby 入库索引](docs/emby.md)。无效参数返回 400，找不到条目返回 404；页面提供缺图占位、加载失败重试，并在切换影视时取消旧请求。
+## 核心功能
 
-在根目录 `.env` 的 `TMDB_API_KEY` 中填写 TMDB 账户「设置 → API」里的 API Key（v3 auth），可从 https://www.themoviedb.org/settings/api 获取。密钥只供后端访问固定的 TMDB API，浏览器通过鉴权接口查询数据；海报、背景、演员照片和分集截图通过同源 `/api/tmdb/image` 由 NAS 按需代理，用户设备无需直接访问 `image.tmdb.org`。图片在浏览器缓存 24 小时，在 NAS 缓存 7 天后后台验证，90 天未使用或总量超过 `TMDB_IMAGE_CACHE_MAX_GB`（默认 5 GB）时清理；新图片路径会直接创建新缓存。Docker Compose 将密钥和缓存上限传入后端运行环境，不写入前端或镜像；修改后本地重启后端，NAS 使用 `docker compose up -d` 重新创建配置发生变化的容器。
+- **115 分享与 STRM**：从分享链接或网盘目录生成 STRM，支持转存再分享与配套字幕。
+- **下载与整理**：提交磁力或 ED2K 云下载，结合 TMDB 资料预览、校正命名并整理到目标目录。
+- **动漫 RSS 订阅**：按字幕组订阅，自动下载与重命名整理，支持缺集补齐和齐集归档。
+- **影视浏览与资源搜索**：浏览 TMDB 影视资料，在详情页使用已配置的资源站点、Telegram Bot 或频道搜索资源。
+- **Emby 直链播放**：通过 302 反代获取原文件直链，支持主网盘、用户个人网盘和动态小号池。
+- **用户与播放管理**：普通用户通过 Emby 登录个人中心，管理员管理邀请、播放子账号及播放会话。
 
-「115分享STRM」包含基础设置、普通分享、转存再分享和日志四个标签。基础设置新增「分享审核中自动重试」，默认关闭；开启并保存后默认间隔 30 分钟、最多重试 6 次，可自行调整。网页按当前分享标签执行，Telegram 使用保存的默认模式。
+动漫订阅可独立用于下载和整理。Emby 播放遵守 Emby 权限，仅支持原文件，不提供转码或重新封装。
 
-视频后缀与元数据后缀在基础设置中并排配置。元数据默认 `srt,ass,ssa`，可增加 `nfo` 等后缀，留空则不下载配套文件。匹配的元数据按原始内容、后缀和目录层级保存，不生成 STRM，也不受视频最小文件大小限制；单文件最多 32 MB。单个元数据下载失败会继续尝试其余文件并显示独立警告，不把已经写入的 STRM 判为失败；再次提交同一分享会继续重试未完整的快照。包含子目录、Bot 默认转存与审核重试统一使用开关。
+## 快速开始
 
-该页面的「日志」按任务显示原链接、新链接、状态、生成数量、重试次数和下次执行时间，支持筛选、搜索、分页及清理已结束记录。任务与重试队列保存在 SQLite，关闭网页后仍可继续，服务重启保留审核等待任务。已创建新分享的重试只复用新链接生成，不会重复转存，临时目录保留待核对。详见 [审核重试说明](docs/reshare.md)。右上角管理菜单中的「查看日志」继续提供 INFO / DEBUG 等级的实时过程记录。
+推荐在 Linux NAS 上使用 Docker Compose 部署。镜像为 `jli452195/cinema115`，支持 `amd64` 和 `arm64`，一个容器同时提供网页与 API。
 
-本地测试脚本、截图、验收 STRM 和排查资料集中放在 [`tests/`](tests/README.md)，开发服务日志位于 `tests/runtime/`。Docker 构建排除此目录及 Go 测试源码、测试夹具；本地单元测试仍可正常运行。
+1. 从 [最新正式版](https://github.com/jli452195/Cinema115/releases/latest) 下载附件 `compose.yaml`，放进部署目录。
+2. 填写管理员账号、密码、随机 `JWT_SECRET` 和 TMDB API Key，修改 NAS 挂载路径及运行用户 UID/GID。提前创建 `data` 和媒体库挂载目录，并授予该 UID/GID 读写权限。
+3. 在该目录执行：
 
-纯 Go 后端与 Vue 3 前端。当前支持管理员登录、115 扫码/Cookie 登录、分享目录分页浏览、STRM 下载和媒体代理。
+   ```sh
+   docker compose config --quiet
+   docker compose pull
+   docker compose up -d
+   ```
 
-## NAS 部署（Docker）
+打开 `http://NAS_IP:8115`，使用配置的管理员账号登录，在「115 网盘 → 115 助手」创建并登录主账号，再设置所需功能的目录。
 
-从 [GitHub Releases](https://github.com/jli452195/Cinema115/releases) 下载对应版本的 `compose.yaml`，直接填写其中的管理员密码、`JWT_SECRET`、TMDB 密钥和 NAS 挂载路径，无需 `.env` 或本地构建。镜像为 `jli452195/cinema115`，支持 amd64 和 arm64；由 Go 同时提供前端页面与 API，默认通过 `http://NAS_IP:8115` 访问。页面选择 `/strm/待整理` 对应 NAS 的 `媒体库/待整理`。完整步骤见 [NAS Docker 部署](docs/docker.md)，维护者发布步骤见 [版本发布](docs/releasing.md)。
+Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。完整操作见 [Docker 部署](https://jli452195.github.io/Cinema115/guide/installation)。
 
-填写 Compose 配置并创建挂载目录后执行：
+更新和迁移时保留原 `JWT_SECRET` 与运行数据，按照 [更新与备份](https://jli452195.github.io/Cinema115/guide/upgrade) 操作。
 
-```sh
-docker compose config --quiet
-docker compose pull
-docker compose up -d
-```
+## 使用文档
 
-## Windows / 本地开发
+| 文档 | 内容 |
+| --- | --- |
+| [开始使用](https://jli452195.github.io/Cinema115/guide/) | 安装、首次登录与功能配置顺序。 |
+| [115 账号配置](https://jli452195.github.io/Cinema115/guide/accounts) | 主账号、小号与用户个人网盘的用途。 |
+| [动漫订阅](https://jli452195.github.io/Cinema115/anime/) | 选择来源、字幕组、集号映射、整理与归档。 |
+| [更新与备份](https://jli452195.github.io/Cinema115/guide/upgrade) | 镜像更新、运行数据备份与恢复。 |
+| [常见问题](https://jli452195.github.io/Cinema115/faq/) | 页面访问、路径权限与播放问题排查。 |
 
-使用 64 位 Go，`go version` 应显示 `windows/amd64`。更换 Go 安装后重新打开终端，让新的 PATH 生效；编译使用 Go 默认并发与垃圾回收参数。
+<details>
+<summary>功能与实现说明</summary>
 
-在项目根目录将 `.env.example` 复制为 `.env`，填写管理员账号、密码和随机 `JWT_SECRET`。配置仅由后端读取。
+- 网盘与整理：[115 主账号与小号](docs/p115-accounts.md)、[分享 STRM](docs/reshare.md)、[下载整理](docs/garden-download-organize.md)、[手动整理](docs/manual-organize.md)。
+- Emby：[302 反代](docs/emby-proxy.md)、[入库索引](docs/emby.md)、[个人中心](docs/member-playback.md)、[播放会话](docs/single-playback.md)。
+- 资源搜索：[Telegram](docs/telegram-resource-search.md)、[观影](docs/gying.md)、[蜜柑](docs/mikan.md)、[蜗牛](docs/woniu.md)。
+- 维护：[数据库](docs/database.md)、[版本发布](docs/releasing.md)。
 
-```powershell
-cd backend
-go mod tidy
-go run ./cmd/server
-```
+</details>
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+## 开发与反馈
 
-已安装 Air 时在 `backend` 执行 `air -c .air.toml`。后端监听 `.env` 的 `HTTP_PORT`（未设置时为 3002），Vite API 代理同步读取该配置；不要同时运行两个后端占用同一端口。
+项目使用 Go、Vue 3 与 SQLite。本地启动与检查见 [开发指南](docs/development.md)，文档站预览与写作见 [编写文档](https://jli452195.github.io/Cinema115/contributing/)。
 
-从 32 位 Go 切换后，先停止正在运行的 Air，再用新的 Go 重新安装同版本工具（安装 Go 不会自动更新已有的 `air.exe`）：
+反馈问题请提交 [GitHub Issue](https://github.com/jli452195/Cinema115/issues)，附上项目版本、复现步骤与相关日志。发布版本与更新说明见 [Releases](https://github.com/jli452195/Cinema115/releases)。
 
-```powershell
-go install github.com/air-verse/air@v1.67.4
-air -c .air.toml
-```
-
-已有数据库和加密登录会话可以继续使用，保留根目录 `.env` 和 `data/` 即可。
-
-## 分享播放与 Emby
-
-1. 登录管理员后台，在「115 网盘」扫码并确认，等待后端获取 Cookie 并保存成功。
-2. 点击右上角管理菜单「115 网盘」，再进入「分享播放 / STRM」卡片，输入分享链接和提取码。
-3. 从媒体库真实文件夹中选择生成目录（例如 `/strm/待整理`），点击「一键生成 STRM」。自动分页读取视频、按配置扫描子目录，直接保存到媒体库中的对应子目录。默认不转存；打开「转存再分享」后先转换为自己的分享。预览和单个下载仍使用原分享。
-4. 把 STRM 放进 Emby 媒体库。Emby 必须能够访问 STRM 中的 Cinema115 地址。
-
-根目录 `.env` 可选配置：
-
-```dotenv
-# 相对 backend 工作目录；默认保存到项目根目录 data。
-DATA_DIR=../data
-```
-
-在「分享播放 / STRM」填写 Emby 能访问的「STRM 播放地址」，点击「保存生成设置」。地址保存在服务器并立即生效，不从环境变量读取；首次未配置时页面默认填入当前访问地址。已有 STRM 不会自动改写。
-
-STRM 写入固定的 Cinema115 代理地址。每次播放用已登录账户请求最新 115 直链，并转发 Range、HEAD 和媒体响应头；不会落盘保存视频。代理流量经过后端，受后端带宽限制。
-
-需要客户端直接读取 115 时，可在「Emby → Emby 302 反代」配置独立监听端口，并让 Emby 客户端连接反代入口。源文件统一由主账号读取，共享池用户首次播放按容量选号，后续优先沿用原 UID，新增名额不足或确认故障时有界切换，成功提交才更新分配。已有分享 STRM 无需重新生成。项目采用 host 网络，无需端口映射；管理端口由 `HTTP_PORT` 配置，详见 [Emby 302 反代](docs/emby-proxy.md)。
-
-STRM 链接统一使用 `/api/share115/{分享码}/{SHA1}/{提取码}/{文件ID}`。SHA1 从 115 分享列表读取，输出为 40 位大写十六进制；提取码必须非空，空值或 `-` 占位均拒绝。新路径不接受查询参数、额外路径段或编码分隔符。网页单文件、批量、Telegram、目录分享及追更统一使用此格式，基础设置实时预览示例地址。兼容已有 `/api/?share_code=...&id=...&receive_code=...`，三个身份参数必须各出现一次，允许并忽略其他参数；旧文件无需替换。已废弃的签名地址仍不支持；不会自动改写旧文件，同名不同内容仍保留旧文件并为新文件添加数字后缀。成功快照缓存按格式版本隔离，避免复用旧输出。后台分享管理接口仍需管理员登录。
-
-新播放链接没有 Cinema115 设置的过期时间，能否播放取决于分享是否有效和后端 115 登录状态。旧路径中的播放凭证仍按原有效期校验。更换 `JWT_SECRET` 会使旧路径凭证失效，也会使原有加密登录会话无法解密。
-
-115 登录凭证统一通过网页扫码或 Cookie 登录设置，不从环境变量读取。账号保存在 `data/cinema115.db`，Cookie 使用 AES-GCM 加密，密钥由原 `JWT_SECRET` 派生。主账号在 115 助手中独立创建，普通功能统一使用主账号，各功能保留独立目录设置。小号仅用于用户播放和秒传，既有普通账号不会自动提升为主账号。
-
-「115 网盘」的 Cookie 登录页默认隐藏凭证。留空点击「测试 Cookie」会验证服务器已保存的凭证；填写新值时只测试输入内容，不修改原配置。「验证并保存」在 115 验证通过后才替换凭证。状态区会区分未配置、已连接、已失效和暂时无法验证；网络故障不会被误判为登录失效。
-
-批量生成支持播放服务地址、视频后缀、最小文件大小、是否扫描子目录和起始目录 ID（默认 `0`）配置。预览中可进入文件夹并设为起始目录。页面通过目录选择器读取 `STRM_ROOT` 下的真实文件夹，统一显示为 `/strm/...`；移除选项不删除服务器文件。挂载 `/vol1/1000/媒体库:/strm` 后，页面选择 `/strm/已整理` 对应 NAS 的 `/vol1/1000/媒体库/已整理`。Windows 开发默认根目录为项目 `data/media`，可用 `.env` 的 `STRM_ROOT` 配置，页面仍显示 `/strm/...`。
-
-生成时直接保留分享的文件夹层级，不加批次目录，不打包 ZIP。目标文件内容相同就直接复用且不改写；同名但内容不同时保留旧文件，并以稳定的数字后缀另存，同时在结果和日志中提示。其他工具移走文件后，可再次生成。结果统计本次成功处理数，Emby 可直接读取该目录。普通选项保存在当前浏览器，分享链接和提取码不持久化到浏览器配置。
-
-`POST /api/admin/p115/share/generate` 使用管理员 JWT 鉴权，接收 `url`、`password`、`cid`、`baseUrl`、`outputDir`、`videoExtensions`、`metadataExtensions`、`minSizeMB`、`recursive`，返回 JSON：`directory`、`count`（本次成功处理数）、`metadataCount`、`metadataFailed`、`conflictRenamed`、`skipped`、`total`；页面默认开启 `recursive`。`GET /api/admin/p115/share/generation-config` 返回默认配置和统一的 `/strm` 虚拟根路径，`GET /api/admin/p115/share/output-directories` 只枚举媒体库根目录内可安全选择的真实文件夹。单次扫描限制为 5 分钟、500 页、20 层目录、20000 个条目和 10000 个视频，超限需缩小起始目录。扫描失败不写文件；每个新文件先完整写入同目录临时文件，再原子落盘。
-
-网页、Telegram 与订阅共用活动任务指纹：相同账号、链接、提取码、模式及生成设置仍在排队或执行时，只复用同一任务。完整成功后另存不含 Cookie 的本地快照；再次提交会先核对快照中的全部普通文件，文件完整时直接返回“已复用快照”而不请求 115。文件被移动、删除，路径出现符号链接，或元数据曾失败时，快照自动失效并重新读取分享。
-
-「转存再分享」开关保存到服务器，供网页和 Telegram 共用。开启后先判断分享者与所选账号是否一致，本人分享直接生成；其他分享在 115 创建独立临时目录，按当前后缀及最小大小配置等待视频和元数据数量与原分享一致，不比较文件名、目录路径或大小。随后创建自己的分享，显式设置并确认长期有效，再带当前任务固定的 Cookie 读取新分享并确认媒体数量，直接复用这份内存快照生成 STRM。生成成功后将临时目录移入回收站，以删除接口结果和本地检查点结束任务，不再重复扫描新分享。不会清空回收站。失败时保留目录及任务记录。网页与 Bot 搜索卡片统一提交后台任务，关闭弹窗或页面不会取消已接收的任务；只有「停止任务」会明确取消。单个等待阶段最多 90 秒，每条执行最多 5 分钟，完成后按配置发送 Telegram 通知。后端停机仍会中断执行并保留检查点。
-
-右上角管理菜单「Telegram 配置」展示功能卡片，点击「Bot 配置」可管理多组 Bot Token、允许的聊天 ID、通知聊天和启用状态。各功能明确保存 `botId`，不使用全局当前 Bot；配置删除、停用或清空 Token 后要求重新配置，不回退其他 Bot。在「115分享STRM」选择并保存 Bot 后，一条消息可发送多个分享链接，只处理允许的聊天。Bot 确认接收数量后按顺序逐条处理并回复结果，单条失败继续处理后续链接。同一消息中相同分享与提取码去重，重新发送仍会生成。完整说明及失败处理见 [转存再分享与 Telegram](docs/reshare.md)。
-
-浏览器不支持所有 MKV、HEVC 或音频格式，此项目不做转码。不兼容的文件可交给 Emby 转码播放。生成 STRM 仅证明播放入口已创建，并不证明当前账户有权获得 115 直链。
-
-右上角管理菜单「查看日志」可查看网页和 Telegram 发起的 STRM 生成、转存再分享日志，支持 ALL、INFO、DEBUG、ERROR、WARNING 等级筛选、关键词搜索及暂停更新。页面默认 INFO，显示消息批次数量与当前序号、遍历模式、115 分享链接（含实际提取码）、任务开始、输出目录、转存模式、分享者账号归属判断提示和目录分页；每成功写入 10 个文件记录数量进度，例如 `STRM 生成成功：10/100`、`20/100`，末尾不足 10 个也补齐最终数量。分母是本次筛选后计划生成的 STRM 数量。生成结束时以 INFO 显示成功与失败文件数、生成阶段耗时以及整项任务总耗时；中断时显示已扫描但未处理的文件数，不将尚未处理的文件算作失败。逐文件完整路径、详细执行阶段和过滤记录在 DEBUG；WARNING 保留取消、无匹配视频或遗留临时目录，ERROR 保留失败与超时。ALL 仍显示全部等级。页面每 2 秒刷新，保留本次后端运行期间最近 2,000 条日志，重启清空；转存任务检查点独立保存在 `data/cinema115.db`。日志接口需要管理员登录，按需显示分享链接及提取码，不记录 Cookie、Bot Token 或管理员登录凭证。
-
-## 数据库
-
-剧集详情和手动整理支持管理员手动选择 TMDB 剧集组，统一用于详情、入库进度、追更和资源匹配；已保存编排不会被普通刷新覆盖，支持审核上游变化和恢复默认。详见 [季集方案](docs/tv-numbering.md)。
-
-右上角管理菜单「Emby」进入 `/emby` 功能入口页，点击「媒体库同步」卡片打开 `/emby/library`，支持指定媒体库首次全量索引与 Webhook 后续更新，看板卡片和影视详情按 TMDB ID 显示入库状态。配置方法、事件验证与备份说明见 [Emby 入库索引](docs/emby.md)。
-
-使用纯 Go SQLite，无需额外数据库服务。首次启动会事务导入旧 `data/reshare-jobs/*.json`，保留原文件备份；新任务只写 `data/cinema115.db`。账号配置和加密登录凭证沿用原存储。数据库随 `./data:/data` 挂载持久化；运行中备份使用镜像自带 `/app/dbtool`，不要只复制主 `.db` 文件。查询接口、迁移失败处理和恢复步骤见 [数据库迁移与备份](docs/database.md)。
-
-## 验证
-
-```powershell
-cd backend
-go test ./...
-go vet ./...
-```
-
-```powershell
-cd frontend
-npm run build
-```
-
-测试包含 p115cipher 原实现 RSA 向量、损坏数据、分享分页归一化、播放凭证、Range/HEAD 转发和登录会话加密恢复。运行时无需 Python。
-
-第三方来源与许可证见 `THIRD_PARTY_NOTICES.md`。
-
-## Emby 个人中心
-
-普通用户直接使用 Emby 账号登录；邀请注册直接创建 Emby 账号。邀请分为自备 115 网盘和管理员共享小号池两种。未特别指定来源的已有用户默认使用主网盘；共享池按实际 UID 计算会话容量与 API 限速，自动选择及有界故障切换；空池、全失效或繁忙不回退主网盘。个人网盘由用户自行管理凭据和目录，管理员无法通过产品接口查看个人 Cookie。共享小号池在 `/115/pool` 独立管理，Emby 管理员也可指定主网盘或动态共享池播放。管理端使用登录页的“管理员登录”。
-
-测试阶段重建方式、接口和授权规则见 [Emby 个人中心](docs/member-playback.md)。旧网站账号、接管邀请和二次注册流程已删除。
+第三方来源与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。本项目使用 TMDB API，但未获 TMDB 认可或认证。
