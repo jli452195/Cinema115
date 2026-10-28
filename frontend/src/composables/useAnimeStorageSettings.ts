@@ -10,20 +10,20 @@ interface PendingDirectory { kind: DirectoryKind; accountId: string; cid: string
 // lifetime. Reopening any entry point must recover this exact request.
 const pending = ref<PendingDirectory>(), saving = ref(false)
 let identity = 0
-watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   identity++; pending.value = undefined; saving.value = false
 }, { flush: 'sync' })
 
 export function useAnimeStorageSettings(token: string, changed: (settings: AnimeSettingsView) => void) {
   const settings = ref<AnimeSettingsView>(), loading = ref(false), readError = ref(''), error = ref(''), notice = ref('')
-  const owner = portalUser.value?.id, controller = new AbortController()
+  const owner = token === portalToken.value ? portalUser.value?.id : undefined, controller = new AbortController()
   let disposed = false
-  const owns = () => !disposed && token === portalToken.value && owner === portalUser.value?.id && portalUser.value?.role === 'admin'
+  const owns = () => !disposed && !!owner && owner === portalUser.value?.id && portalUser.value?.role === 'admin'
   async function readSettings() {
     if (loading.value || !owns()) return
     loading.value = true; readError.value = ''
     try {
-      const result = await animeConfigRequest<AnimeSettingsView>(token, 'settings', { signal: controller.signal })
+      const result = await animeConfigRequest<AnimeSettingsView>(portalToken.value, 'settings', { signal: controller.signal })
       if (owns()) settings.value = result
     } catch (reason) { if (owns()) readError.value = animeConfigMessage(reason) }
     finally { if (!disposed) loading.value = false }
@@ -33,7 +33,7 @@ export function useAnimeStorageSettings(token: string, changed: (settings: Anime
     if (!request || saving.value || !owns()) return
     saving.value = true; error.value = ''; notice.value = ''
     try {
-      const response = await animeConfigRequest<AnimeSettings | { settings: AnimeSettings }>(token, request.path, { method: 'PATCH', key: request.key, body: request.body })
+      const response = await animeConfigRequest<AnimeSettings | { settings: AnimeSettings }>(portalToken.value, request.path, { method: 'PATCH', key: request.key, body: request.body })
       if (current !== identity) return
       const result = 'settings' in response ? response.settings : response
       if (!result || !Number.isSafeInteger(result.revision) || result.revision < 1 || result.accountId !== request.accountId || !result.downloadCid || (request.kind === 'download' ? result.downloadCid : result.organizeCid) !== request.cid) {

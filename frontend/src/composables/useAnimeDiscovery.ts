@@ -14,7 +14,7 @@ export class AnimeDiscoveryError extends Error {
   constructor(message: string, public code: string, public status: number) { super(message) }
 }
 
-watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   generation++
   cache.clear(); scrolls.clear(); details.clear(); lastQuery = undefined
   clearTimeout(cooldownTimer); animeCooldownUntil.value = 0
@@ -73,7 +73,7 @@ export async function requestAnime<T>(key: string, path: string, token: string, 
   const data = await response.json().catch(() => null)
   if (signal.aborted || epoch !== generation) throw new DOMException('Request cancelled', 'AbortError')
   if (!response.ok || !data) {
-    if (response.status === 401) clearPortalSession()
+    if (response.status === 401) clearPortalSession(token)
     if (data?.code === 'SOURCE_COOLDOWN') setCooldown(data.details?.retryAfterAt || Date.now() + Math.max(1, Number(response.headers.get('Retry-After')) || 30) * 1000)
     throw new AnimeDiscoveryError(data?.code === 'SOURCE_COOLDOWN' ? animeCooldownMessage() : data?.error || `读取失败（HTTP ${response.status}）`, data?.code || '', response.status)
   }

@@ -6,7 +6,7 @@ import type { AnimeCatalogStatus, AnimeSourceProvider } from '../types/animeCata
 
 const cache = new Map<string, { data: AnimeCatalogStatus; until: number }>()
 let generation = 0
-watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role, animeSubscriptionsVersion], () => {
+watch([() => portalUser.value?.id, () => portalUser.value?.role, animeSubscriptionsVersion], () => {
   generation++; cache.clear()
 }, { flush: 'sync' })
 
@@ -24,7 +24,7 @@ export function animeCatalogStatusSnapshot(provider: AnimeSourceProvider, ids: s
 // are checked, in local batches, without fetching any site's entry pages.
 export async function requestAnimeCatalogStatuses(token: string, provider: AnimeSourceProvider, ids: string[], signal: AbortSignal, force = false) {
   const epoch = generation
-  const allowed = () => !signal.aborted && epoch === generation && token && token === portalToken.value && portalUser.value?.role === 'admin'
+  const allowed = () => !signal.aborted && epoch === generation && token && portalUser.value?.role === 'admin'
   if (!allowed()) throw new DOMException('Request cancelled', 'AbortError')
   const unique = [...new Set(ids)]
   const missing = unique.filter(id => force || (cache.get(`${provider}:${id}`)?.until || 0) <= Date.now())

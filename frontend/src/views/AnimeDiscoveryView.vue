@@ -104,7 +104,7 @@ async function load(force = false) {
 }
 
 watch(keyword, value => { input.value = value; inputError.value = '' })
-watch([dataKey, () => props.token, () => portalUser.value?.id, () => portalUser.value?.role], () => {
+watch([dataKey, () => portalUser.value?.id, () => portalUser.value?.role], () => {
   void load()
 }, { immediate: true })
 watch(scrollKey, key => { void restorePosition(key) })

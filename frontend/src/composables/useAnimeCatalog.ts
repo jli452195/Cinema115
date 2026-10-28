@@ -11,12 +11,12 @@ const queries = new Map<AnimeProviderID, Record<string, string>>()
 const drafts = new Map<AnimeProviderID, string>()
 const mikanEntries = new Map<string, { entry: MikanEntry; until: number }>()
 let generation = 0
-watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { generation++; catalogs.clear(); seasons.clear(); queries.clear(); drafts.clear(); mikanEntries.clear() }, { flush: 'sync' })
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => { generation++; catalogs.clear(); seasons.clear(); queries.clear(); drafts.clear(); mikanEntries.clear() }, { flush: 'sync' })
 export function catalogSeasonsSnapshot(provider: AnimeProviderID) { return seasons.get(provider) }
 export async function requestCatalogSeasons(token: string, provider: AnimeProviderID, signal: AbortSignal, refresh = false) {
   const epoch = generation
   const result = await animeConfigRequest<AnimeCatalogSeasons>(token, `catalog/${provider}/seasons${refresh ? '?refresh=true' : ''}`, { signal })
-  if (signal.aborted || epoch !== generation || token !== portalToken.value || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
+  if (signal.aborted || epoch !== generation || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
   if (result.provider !== provider || !Array.isArray(result.seasons) || !result.seasons.length || result.seasons.length > 404 || result.seasons.some(value => typeof value !== 'string' || !/^(20\d{2}|2100)-(01|04|07|10)$/.test(value)) || !Number.isFinite(result.expiresAt)) throw new Error('季度目录暂时无法读取')
   seasons.set(provider, result)
   return result
@@ -57,7 +57,7 @@ export function rememberCatalogDraft(provider: AnimeProviderID, value: string) {
 export async function requestCatalog(token: string, provider: AnimeSourceProvider, key: string, body: { mode: string; season?: string; keyword?: string; refresh: boolean }, signal: AbortSignal) {
   const epoch = generation
   const result = await animeConfigRequest<AnimeCatalog>(token, `catalog/${provider}`, { method: 'POST', body, signal })
-  if (signal.aborted || epoch !== generation || token !== portalToken.value || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
+  if (signal.aborted || epoch !== generation || portalUser.value?.role !== 'admin') throw new DOMException('Request cancelled', 'AbortError')
   if (result.provider !== provider || !Array.isArray(result.days) || !Array.isArray(result.items)) throw new Error(`${provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑'}返回的列表格式不正确`)
   if (result.season !== (body.mode === 'calendar' ? body.season : '')) throw new Error('返回的季度与请求不符，请重试')
   for (const item of result.items) forgetAnimeCatalogStatus(provider, item.id)

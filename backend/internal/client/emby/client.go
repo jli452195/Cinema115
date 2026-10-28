@@ -19,6 +19,11 @@ type Client struct {
 	BaseURL, Key string
 	HTTP         *http.Client
 }
+
+type HTTPError struct{ StatusCode int }
+
+func (e *HTTPError) Error() string { return fmt.Sprintf("Emby 返回 HTTP %d", e.StatusCode) }
+
 type Server struct {
 	ID      string `json:"Id"`
 	Name    string `json:"ServerName"`
@@ -168,7 +173,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Emby 返回 HTTP %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024+1))
 	if err != nil {

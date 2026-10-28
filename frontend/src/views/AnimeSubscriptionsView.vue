@@ -68,7 +68,7 @@ async function load(force = false, silent = false) {
 watch(keyword, value => { input.value = value; inputError.value = '' })
 watch(animeSubscriptionsVersion, () => { if (props.token && portalUser.value?.role === 'admin') void load(true, true) })
 useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !document.querySelector('dialog[open]'))
-watch([dataKey, () => props.token, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
+watch([dataKey, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
 watch(() => route.fullPath, () => {
   if (route.name === 'anime-subscriptions') rememberSubscriptionQuery(Object.fromEntries(Object.entries(query()).filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
 }, { immediate: true })

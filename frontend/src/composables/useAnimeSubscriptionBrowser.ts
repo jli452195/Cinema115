@@ -14,7 +14,7 @@ function boundedSet<T>(map: Map<string, T>, key: string, value: T) {
   map.delete(key); map.set(key, value)
   while (map.size > 40) map.delete(map.keys().next().value!)
 }
-watch([portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => {
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   version++; cache.clear(); states.clear(); lastQuery = undefined; lastID = ''
   animeSubscriptionsVersion.value++
 }, { flush: 'sync' })

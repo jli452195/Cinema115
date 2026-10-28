@@ -7,6 +7,7 @@ import NamingTemplateEditor from '../components/NamingTemplateEditor.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import { namingRequest } from '../lib/naming-api'
+import { portalUser } from '../composables/usePortalAuth'
 import { cloneNamingTemplate, namingSample, namingSignature } from '../utils/namingTemplate'
 import type { NamingKind, NamingPreview, NamingRecord, NamingResult, NamingSettings, NamingTemplate } from '../types/naming'
 
@@ -112,7 +113,7 @@ onBeforeRouteLeave(() => {
 })
 watch([() => namingSignature(current.value), sample, kind], () => { if (settings.value) schedulePreview() }, { flush: 'sync' })
 watch(kind, () => { if (sample.value === 'range' && kind.value === 'movie') sample.value = 'full'; error.value = ''; notice.value = '' })
-watch(() => props.token, () => {
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   lifecycle.abort(); previewController.abort(); clearTimeout(previewTimer); sequence++; readSequence++
   lifecycle = new AbortController(); pending.value = undefined; saving.value = false; settings.value = undefined
   void read(true)

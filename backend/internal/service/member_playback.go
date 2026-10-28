@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -378,14 +379,29 @@ func (s *MemberPlaybackService) portalUser(ctx context.Context, id string) (mode
 	}
 	u, err := s.db.PortalUser(ctx, id)
 	if err != nil {
-		return u, ErrLogin
+		if errors.Is(err, storage.ErrEmbyUserNotFound) {
+			return u, ErrLogin
+		}
+		return u, ErrAuthUnavailable
 	}
 	c := s.emby.snapshot()
 	if u.ServerID != c.ServerID || c.APIKey == "" {
 		return u, ErrLogin
 	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	remote, err := s.NewEmby(c.URL, c.APIKey).ManagedUser(ctx, u.EmbyID)
-	if err != nil || remote.Policy["IsDisabled"] == true || remote.Policy["IsAdministrator"] == true {
+	if err != nil {
+		var status *emby.HTTPError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			return u, ErrLogin
+		}
+		return u, ErrAuthUnavailable
+	}
+	if remote.Policy["IsDisabled"] == true || remote.Policy["IsAdministrator"] == true {
+		return u, ErrLogin
+	}
+	if current := s.emby.snapshot(); current.ServerID != c.ServerID || current.URL != c.URL {
 		return u, ErrLogin
 	}
 	u.Username = remote.Name

@@ -31,7 +31,9 @@ async function handleLoggedIn(value: string) {
   setPortalToken(value)
   await ensurePortalSession(true)
   registeredUsername.value = ''
-  await router.replace(target)
+  // Successful login pages follow the session watcher. Registration recovery
+  // and verification failures still need the target's recovery screen.
+  if (route.name === 'register' || portalAuthError.value) await router.replace(target)
 }
 
 let loggingOut = false
@@ -42,15 +44,28 @@ async function logout() {
   try { await router.replace(destination) }
   finally { loggingOut = false }
 }
-watch([token, portalUser], ([value], [previousToken, previousUser]) => {
+watch([token, portalUser], ([value, currentUser], [previousToken, previousUser]) => {
   if (!value && previousToken && !loggingOut && !route.meta.public) {
     const admin = previousUser?.role === 'admin' || !portalBrowseRoutes.has(String(route.name))
     void router.replace({ path: admin ? '/admin/login' : '/login', query: { redirect: route.fullPath } })
+  } else if (value && currentUser && !loggingOut) {
+    if (route.name === 'login' || route.name === 'admin-login') void router.replace(loginReturnPath(route.query.redirect))
+    else if (!route.meta.public && !canViewRoute.value) void router.replace('/')
   }
 })
+function syncLogin(event: StorageEvent) {
+  if (event.storageArea === localStorage && (event.key === 'admin_token' || event.key === null)) void ensurePortalSession(true, { background: true })
+}
+function resumeLogin() { if (!document.hidden) void ensurePortalSession(false, { background: true }) }
 onMounted(() => { void ensurePortalSession() })
+window.addEventListener('storage', syncLogin)
+document.addEventListener('visibilitychange', resumeLogin)
 const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true, { background: true }) }, 60000)
-onBeforeUnmount(() => window.clearInterval(authTimer))
+onBeforeUnmount(() => {
+  window.clearInterval(authTimer)
+  window.removeEventListener('storage', syncLogin)
+  document.removeEventListener('visibilitychange', resumeLogin)
+})
 </script>
 
 <template>

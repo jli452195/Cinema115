@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import AnimeFloatingDialog from '../components/AnimeFloatingDialog.vue'
 import AnimeSubscriptionDialog from '../components/AnimeSubscriptionDialog.vue'
-import { portalToken, portalUser } from '../composables/usePortalAuth'
+import { portalUser } from '../composables/usePortalAuth'
 import { requestMikanCatalogEntry } from '../composables/useAnimeCatalog'
 import { requestAnimeCatalogStatuses } from '../composables/useAnimeCatalogStatus'
 import { animeReturnPath } from '../composables/useAnimeSubscriptionBrowser'
@@ -45,7 +45,7 @@ async function resolveEntry() {
     else ready.value = true
   } catch (reason) { if (!active.signal.aborted && controller === active) error.value = animeConfigMessage(reason) }
 }
-watch([() => route.fullPath, () => props.token, portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { void resolveEntry() }, { immediate: true })
+watch([() => route.fullPath, () => portalUser.value?.id, () => portalUser.value?.role], () => { void resolveEntry() }, { immediate: true })
 onBeforeRouteLeave(cancel); onBeforeRouteUpdate(cancel); onBeforeUnmount(cancel)
 </script>
 

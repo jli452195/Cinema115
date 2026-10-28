@@ -83,7 +83,7 @@ onBeforeRouteLeave(() => {
 })
 function unload(event: BeforeUnloadEvent) { if (dirty.value || saving.value || pending.value || directoryBlocked.value) event.preventDefault() }
 window.addEventListener('beforeunload', unload)
-watch([() => props.token, () => portalUser.value?.id, () => portalUser.value?.role], () => { data.value = undefined; baseline.value = ''; pending.value = undefined; void read() }, { immediate: true })
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => { data.value = undefined; baseline.value = ''; pending.value = undefined; void read() }, { immediate: true })
 onBeforeUnmount(() => { generation++; controller.abort(); window.removeEventListener('beforeunload', unload); leaveDecision?.(false) })
 </script>
 

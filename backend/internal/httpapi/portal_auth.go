@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
@@ -19,6 +20,8 @@ func portalAuthError(c *gin.Context, err error) {
 		status, message = 401, service.ErrLogin.Error()
 	case errors.Is(err, service.ErrAuthBusy):
 		status, message = 429, err.Error()
+	case errors.Is(err, service.ErrAuthUnavailable):
+		status, message = 503, service.ErrAuthUnavailable.Error()
 	case errors.Is(err, service.ErrUserInput):
 		status, message = 400, err.Error()
 	case errors.Is(err, service.ErrMemberPlayback):
@@ -50,6 +53,9 @@ func portalAuthPayload(c *gin.Context, status int, message string) gin.H {
 	return out
 }
 func PortalAuthenticated(auth *service.PortalAuth) gin.HandlerFunc {
+	return portalAuthenticated(auth, false)
+}
+func portalAuthenticated(auth *service.PortalAuth, renew bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		header := c.GetHeader("Authorization")
@@ -57,13 +63,24 @@ func PortalAuthenticated(auth *service.PortalAuth) gin.HandlerFunc {
 			c.AbortWithStatusJSON(401, portalAuthPayload(c, 401, "请先登录"))
 			return
 		}
-		u, err := auth.Authenticate(c.Request.Context(), strings.TrimPrefix(header, "Bearer "))
+		value := strings.TrimPrefix(header, "Bearer ")
+		var u model.PortalUser
+		var renewed string
+		var err error
+		if renew {
+			u, renewed, err = auth.Session(c.Request.Context(), value)
+		} else {
+			u, err = auth.Authenticate(c.Request.Context(), value)
+		}
 		if err != nil {
 			portalAuthError(c, err)
 			return
 		}
 		c.Set("portal_user", u)
 		c.Set("portal_role", u.Role)
+		if renewed != "" {
+			c.Set("portal_token", renewed)
+		}
 		if u.Role == "admin" {
 			c.Set("admin_username", u.Username)
 		}
@@ -120,11 +137,18 @@ func RegisterPortalAuth(r *gin.Engine, auth *service.PortalAuth) {
 			portalAuthError(c, err)
 			return
 		}
-		c.JSON(200, gin.H{"token": token, "expiresIn": 86400, "user": u})
+		c.JSON(200, gin.H{"token": token, "expiresIn": int(service.PortalSessionLifetime.Seconds()), "user": u})
 	}
 	r.POST("/api/auth/login", login)
 	r.POST("/api/auth/admin/login", login)
-	r.GET("/api/auth/me", PortalAuthenticated(auth), func(c *gin.Context) { u, _ := c.Get("portal_user"); c.JSON(200, gin.H{"user": u}) })
+	r.GET("/api/auth/me", portalAuthenticated(auth, true), func(c *gin.Context) {
+		u, _ := c.Get("portal_user")
+		out := gin.H{"user": u}
+		if token := c.GetString("portal_token"); token != "" {
+			out["token"] = token
+		}
+		c.JSON(200, out)
+	})
 }
 func RegisterPortalInvites(admin *gin.RouterGroup, auth *service.PortalAuth) {
 	registerPortalInvites(admin, auth)

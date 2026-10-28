@@ -192,8 +192,8 @@ async function load(refresh = false) {
   } catch (reason) { if (!active.signal.aborted && !disposed && controller === active) error.value = animeConfigMessage(reason) }
   finally { if (!disposed && controller === active) loading.value = false }
 }
-watch([key, () => props.token, portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
-watch([provider, mode, () => props.token, portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadSeasons() }, { immediate: true })
+watch([key, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
+watch([provider, mode, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadSeasons() }, { immediate: true })
 watch([page, pages, paginated, result], () => {
   if (result.value && paginated.value && page.value > pages.value) void router.replace({ path: '/anime', query: query({ page: pages.value > 1 ? String(pages.value) : undefined }) })
 })
@@ -201,7 +201,7 @@ watch(keyword, value => { input.value = value; inputError.value = '' })
 watch(provider, value => { input.value = catalogDraft(value as AnimeProviderID) ?? keyword.value; inputError.value = '' })
 watch(input, value => { if (available.value) rememberCatalogDraft(provider.value as AnimeProviderID, value) })
 watch(scrollKey, value => { void restorePosition(value) })
-watch([result, () => items.value.map(item => item.id).join(','), provider, animeSubscriptionsVersion, () => props.token, portalToken, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadStatuses() }, { immediate: true })
+watch([result, () => items.value.map(item => item.id).join(','), provider, animeSubscriptionsVersion, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadStatuses() }, { immediate: true })
 function recheckStatuses() { if (document.visibilityState === 'visible') { updateCalendarDate(); if (!statusPending) void loadStatuses() } }
 watch(() => route.fullPath, () => {
   if (route.name !== 'anime-discovery' || !available.value) return
