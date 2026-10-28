@@ -9,7 +9,7 @@ import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../
 import { readSubtitleResponse } from '../utils/subtitleSources'
 import type { OrganizeRow } from '../types/manualOrganize'
 
-const props = defineProps<{ token: string; title: string; originalTitle?: string; videos: OrganizeRow[]; season: number; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; season: number; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
 const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion] }>()
 type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
 type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
@@ -46,11 +46,13 @@ const issue = computed(() => {
 const request = <T,>(path: string) => subtitleRequest<T>(props.token, path, lifecycle.signal)
 async function search(initial = false) {
   if (busy.value || assrtBusy.value || reading.value || !query.value.trim()) return
-  busy.value = 'search'; searchError.value = ''; showResults.value = true; versions.value = []
+  searchError.value = ''; showResults.value = true; versions.value = []
   assrtItems.value = []; assrtMore.value = false; assrtPosition = 0; assrtQuery = query.value.trim()
   await Promise.allSettled([searchLibrary(initial), searchAssrt()])
 }
 async function searchLibrary(initial: boolean) {
+  if (!props.animationLibrary) return
+  busy.value = 'search'
   try {
     const params = new URLSearchParams(); params.append('q', query.value.trim())
     if (initial && props.originalTitle && props.originalTitle !== query.value.trim()) params.append('q', props.originalTitle)
@@ -79,9 +81,9 @@ async function choose(item: SubtitleVersion) {
     const data = await request<{ files: LibrarySubtitleFile[] }>(`versions/${encodeURIComponent(item.id)}/files`)
     const existing = libraryRows.value.some(row => row.versionId === item.id)
     libraryRows.value = data.files.map(file => {
-      const match = analyzeSubtitle(file.name, props.videos, props.season), lang = subtitleLanguage(file.name)
+      const match = analyzeSubtitle(file.name, props.videos, props.season, props.kind), lang = subtitleLanguage(file.name)
       const saved = libraryRows.value.find(row => row.versionId === item.id && row.path === file.path && row.file.sha === file.sha)
-      return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved && props.videos.some(video => video.id === saved.videoId) ? saved.videoId : match.videoId, selected: existing ? !!saved?.selected : !!match.videoId && lang === 'zh-CN', reason: match.reason }
+      return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved && props.videos.some(video => video.id === saved.videoId) ? saved.videoId : match.videoId, selected: existing ? !!saved?.selected : props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: match.reason }
     })
     version.value = item; loadedVersion = item.id; showResults.value = false
   } catch (reason) { if (!lifecycle.signal.aborted) searchError.value = reason instanceof Error ? reason.message : '读取版本失败' }
@@ -105,15 +107,16 @@ async function read(files: File[], item?: AssrtSubtitle) {
       files = [new File([new Uint8Array(bytes)], name)]
     }
     const data = await readLocalSubtitles(files, signal)
+    signal.throwIfAborted()
     if (!data.files.length) throw new Error('没有找到支持的字幕文件，原列表已保留。')
     if (item) data.files = data.files.map(file => ({ ...file, sourceKey, sourceLabel: `射手网 · ${item.group || item.title}`, origin: 'assrt' }))
     const current = append.value || item ? localRows.value : localRows.value.filter(row => row.file.origin === 'assrt')
     const merged = mergeSubtitleFiles(current.map(row => row.file), data.files, true)
     const kept = localRows.value.filter(row => merged.kept.includes(row.file))
     localRows.value = [...kept, ...merged.added.map(file => {
-      const match = analyzeSubtitle(file.name, props.videos, props.season)
+      const match = analyzeSubtitle(file.name, props.videos, props.season, props.kind)
       const localId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
-      return { key: localId, pairKey: localPairKey(file), sourceLabel: localSourceLabel(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: !!match.videoId, reason: match.reason }
+      return { key: localId, pairKey: localPairKey(file), sourceLabel: localSourceLabel(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: props.kind !== 'movie' && !!match.videoId, reason: match.reason }
     })]
     if (item) loadedAssrt.add(item.id)
     notice.value = `共 ${localRows.value.length} 个字幕，${localRows.value.filter(row => !row.videoId).length} 个未匹配，默认不选${merged.duplicates ? `；已跳过 ${merged.duplicates} 个重复字幕` : ''}${data.ignored ? `；已忽略 ${data.ignored} 个其他文件` : ''}。`
@@ -164,6 +167,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
       <p v-if="notice" role="status" class="picker-note">{{ notice }}</p>
       <p v-if="importError" role="alert" class="picker-error">{{ importError }}</p>
       <div v-if="hasLocal" class="picker-local"><label><input v-model="append" type="checkbox" :disabled="reading" />继续添加时保留已导入文件</label><button type="button" :disabled="reading" @click="localRows = localRows.filter(row => row.file.origin === 'assrt'); notice = ''; importError = ''">移除本地字幕</button></div>
+      <p v-if="kind === 'movie' && rows.length" class="picker-note">{{ videos.length === 1 ? '字幕已关联当前电影，请勾选要使用的版本。' : '存在多个视频版本，请指定对应视频并勾选字幕。' }}</p>
       <SubtitleMatchList v-if="rows.length" :rows="rows" :videos="videos" :target-names="targetNames" :disabled="reading || choosing" />
     </div>
     <template #footer>

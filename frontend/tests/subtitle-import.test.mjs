@@ -14,6 +14,24 @@ new Function('require', 'module', 'exports', compiled)(name => name === './subti
 const { episodeNumber, matchSubtitle, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
+test('movie matching ignores episode-like numbers and leaves multiple versions for confirmation', () => {
+  const movie = { ...video('movie', '1917.2019.1080p.mkv'), season: 0, episode: 0 }
+  for (const name of ['1917.2019.chs.srt', 'Movie_03.chs.ass', 'Film #01.ass', 'Film - 01-02.ass', 'S02E03.ass']) {
+    const result = analyzeSubtitle(name, [movie], NaN, 'movie')
+    assert.equal(result.videoId, 'movie', name)
+    assert.equal(result.confidence, 'low', name)
+    assert.doesNotMatch(result.reason, /S\d+E\d+/, name)
+  }
+  const versions = [movie, { ...movie, id: '4k', name: '1917.2019.2160p.mkv' }]
+  for (const name of ['1917.2019.1080p.srt', 'Movie_03.chs.ass']) {
+    const result = analyzeSubtitle(name, versions, 1, 'movie')
+    assert.equal(result.videoId, '', 'even a matching filename must not silently choose a movie version')
+    assert.equal(result.confidence, 'medium')
+    assert.equal(result.candidates.length, 2)
+  }
+  assert.equal(analyzeSubtitle('movie.srt', [], 1, 'movie').confidence, 'none')
+})
+
 test('season/episode matching stays ambiguous across versions, supports Chinese and numeric names', () => {
   const videos = [video('1', '剧集 - S01E03.mkv'), video('2', '剧集 - S02E03.mkv')]
   assert.equal(matchSubtitle('第03集.ass', videos, 2), '2')

@@ -21,7 +21,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     page.on('pageerror', e => errors.push(e.message))
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
     let shareConfigured = false, omitOrganizeDirectory = false, loseAttachmentResponse = localSubtitleMode
-    let japanese = true, emptySubtitles = localSubtitleMode
+    let japanese = true, animation = true, emptySubtitles = localSubtitleMode, assrtConfigured = assrtMode
     let assrtFail = false, assrtDownloadFail = false, releaseLibrary
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
@@ -47,7 +47,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       calls.push({ endpoint, body }); let status = 200, data = {}
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'admin', role: 'admin', disabled: false } }
       else if (endpoint.endsWith('/accounts')) data = { accounts: [] }
-      else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: endpoint.includes('/detail/movie/') ? 'movie' : 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: [{ id: 16, name: '动画' }], countries: ['Japan'], countryCodes: japanese ? ['JP'] : ['CN'], cast: [], seasons: [{ number: 1, name: 'The very long season name with an unbroken subtitle ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ', episodeCount: 26 }, { number: 2, name: '新的篇章与很长的季度副标题', episodeCount: 25 }], collection: null }
+      else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: endpoint.includes('/detail/movie/') ? 'movie' : 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: animation ? [{ id: 16, name: '动画' }] : [], countries: ['Japan'], countryCodes: japanese ? ['JP'] : ['CN'], cast: [], seasons: [{ number: 1, name: 'The very long season name with an unbroken subtitle ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ', episodeCount: 26 }, { number: 2, name: '新的篇章与很长的季度副标题', episodeCount: 25 }], collection: null }
       else if (endpoint === '/api/admin/subtitles/search') {
         if (assrtMode && new URL(req.url()).searchParams.getAll('q').includes('慢字幕库')) await new Promise(resolve => { releaseLibrary = resolve })
         if (new URL(req.url()).searchParams.getAll('q').includes('故障测试')) { status = 502; data = { error: '模拟字幕库异常' } }
@@ -55,7 +55,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       }
       else if (endpoint === '/api/admin/subtitles/assrt/search') {
         if (assrtFail) { status = 429; data = { error: '射手网请求已达配额，请稍后重试' } }
-        else data = { configured: assrtMode, items: assrtMode ? [{ id: 123, title: '百变之星 BD 中文字幕', language: '简体 / 繁体', group: '射手测试组', format: 'ASS', videoName: 'Show.1080p.BluRay' }] : [], hasMore: false }
+        else data = { configured: assrtConfigured, items: assrtConfigured ? [{ id: 123, title: '百变之星 BD 中文字幕', language: '简体 / 繁体', group: '射手测试组', format: 'ASS', videoName: 'Show.1080p.BluRay' }] : [], hasMore: false }
       }
       else if (endpoint === '/api/admin/subtitles/assrt/123/download') {
         if (assrtDownloadFail) { await route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: '射手下载配额不足，请稍后重试' }) }); return }
@@ -449,10 +449,84 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await page.getByRole('button', { name: searchLabel, exact: true }).click()
       await open(row)
       await panel.waitFor()
-      assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).count(), 0, 'non-Japanese details must not offer library')
+      assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).isDisabled(), true, 'all works keep selection required')
       assert.equal(count('/subtitles/search'), libraryCalls)
+      await organizeDialog.locator('[data-organize-file]').nth(1).getByRole('checkbox').check()
+      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await library.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
+      assert.equal(count('/subtitles/search'), libraryCalls + 1, 'non-Japanese animation also searches the animation catalogue')
+      if (isGying) {
+        animation = false; assrtConfigured = true
+        await page.reload()
+        await page.getByRole('button', { name: searchLabel, exact: true }).click()
+        await open(row)
+        await panel.waitFor()
+        const beforeLibrary = count('/subtitles/search'), beforeAssrt = count('/subtitles/assrt/search')
+        const seriesVideo = organizeDialog.locator('[data-organize-file]').nth(1)
+        await seriesVideo.getByRole('checkbox').check()
+        await seriesVideo.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
+        assert.equal(count('/subtitles/assrt/search'), beforeAssrt, 'selecting videos does not search subtitles')
+        await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+        const assrtResult = library.getByRole('button', { name: /百变之星 BD 中文字幕/ })
+        await assrtResult.click()
+        await library.getByText(/^已选 2 个字幕/).waitFor()
+        assert.equal(count('/subtitles/search'), beforeLibrary, 'live-action TV skips animation catalogue')
+        assert.equal(await library.getByLabel('01.chs.ass 对应视频', { exact: true }).inputValue(), files[1].id)
+        await library.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+        await seriesVideo.getByText(/外部字幕（2）/).waitFor()
+
+        // Movie numbering fields are zero; sequel-like subtitle numbers must not
+        // be interpreted as episodes. Keep two releases for version selection.
+        files.splice(0, files.length, ...['1080p', '2160p'].map(resolution => ({ id: `movie/1917.2019.${resolution}.mkv`, name: `1917.2019.${resolution}.mkv`, sourcePath: `/movie/1917.2019.${resolution}.mkv`, directory: false, parentId: '', size: 0, mediaType: 'video', season: 0, episode: 0, namingValues: { resolution } })))
+        subtitles.length = 0
+        await page.goto(`${origin}/movie/12501`)
+        await page.getByRole('button', { name: searchLabel, exact: true }).click()
+        await open(row)
+        await panel.waitFor()
+        const find = organizeDialog.getByRole('button', { name: '查找字幕', exact: true })
+        assert.equal(await find.isDisabled(), true)
+        const movies = organizeDialog.locator('[data-organize-file]')
+        await movies.nth(0).getByRole('checkbox').check()
+        await find.click()
+        await assrtResult.click()
+        await library.getByText('字幕已关联当前电影，请勾选要使用的版本。', { exact: true }).waitFor()
+        await library.getByText(/^已选 0 个字幕/).waitFor()
+        assert.equal(await library.getByLabel('01.chs.ass 对应视频', { exact: true }).inputValue(), files[0].id)
+        const subrow = library.locator('.match-files > li').filter({ has: page.getByRole('checkbox', { name: '选择字幕 01.chs.ass', exact: true }) })
+        assert.doesNotMatch(await subrow.locator('.match-target').innerText(), /S\d+E\d+/)
+        await library.getByRole('checkbox', { name: '选择字幕 01.chs.ass', exact: true }).check()
+        await library.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+        await find.click()
+        await library.getByText(/^已选 1 个字幕/).waitFor()
+        assert.equal(await library.getByLabel('01.chs.ass 对应视频', { exact: true }).inputValue(), files[0].id, 'reopening keeps confirmed movie selection')
+        await library.getByRole('button', { name: '关闭字幕选择', exact: true }).click()
+        await movies.nth(1).getByRole('checkbox').check()
+        await find.click()
+        await library.getByRole('button', { name: '移除全部', exact: true }).click()
+        await assrtResult.click()
+        await library.getByText('存在多个视频版本，请指定对应视频并勾选字幕。', { exact: true }).waitFor()
+        assert.equal(await library.getByLabel('01.chs.ass 对应视频', { exact: true }).inputValue(), '')
+        await library.getByText(/^已选 0 个字幕/).waitFor()
+        await library.getByLabel('01.chs.ass 对应视频', { exact: true }).selectOption(files[1].id)
+        await library.getByRole('checkbox', { name: '选择字幕 01.chs.ass', exact: true }).check()
+        for (const width of [390, 1440]) {
+          await page.setViewportSize({ width, height: 1000 })
+          await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), width === 390)
+          assert.equal(await library.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+        }
+        await library.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+        await movies.nth(1).getByText(/外部字幕（1）/).waitFor()
+        await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).click()
+        await page.getByText('任务已创建', { exact: true }).waitFor()
+        const moviePayload = calls.filter(c => c.endpoint.endsWith('/download-organize/preview')).at(-1).body
+        assert.equal(moviePayload.kind, 'movie')
+        assert.equal(moviePayload.subtitles[0].videoId, files[1].id)
+        assert.ok(moviePayload.subtitles[0].localId)
+        assert.equal(count('/subtitles/search'), beforeLibrary, 'movies never search animation catalogue')
+        passed.push('live-action TV and movies use Assrt with no animation requests; movies bypass numbering; single-video confirmation and multi-version manual selection; saved selection, responsive layout and shared attachment submission')
+      }
       assert.deepEqual(errors, [])
-      console.log(JSON.stringify({ source, passed: ['lazy catalogue', 'shared library/local selection, cross-source collision validation and one apply', 'reselect loaded version without refetch; reopen retains local version; cancel discards edits', 'unique episode mapping; specials stay manual', 'selection follows video', 'renamed subtitle follows final video', 'desktop/mobile/dark no overflow', 'original video identity submitted', 'non-Japanese details hide library'], artifact }, null, 2))
+      console.log(JSON.stringify({ source, passed: ['lazy catalogue', 'shared library/local selection, cross-source collision validation and one apply', 'reselect loaded version without refetch; reopen retains local version; cancel discards edits', 'unique episode mapping; specials stay manual', 'selection follows video', 'renamed subtitle follows final video', 'desktop/mobile/dark no overflow', 'original video identity submitted', 'non-Japanese animation keeps subtitle entry and catalogue', ...passed], artifact }, null, 2))
       return
     }
     const first = page.locator('[data-organize-file]').nth(0), second = page.locator('[data-organize-file]').nth(1)

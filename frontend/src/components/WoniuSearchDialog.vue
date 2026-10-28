@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import MediaResourceSearchDialog from './MediaResourceSearchDialog.vue'
-defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; subtitleLibrary?: boolean; themeColors?: Record<string, string> }>()
+defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; originalTitle: string; animationLibrary?: boolean; themeColors?: Record<string, string> }>()
 defineEmits<{ close: [] }>()
 </script>
 <template><MediaResourceSearchDialog source="woniu" v-bind="$props" imdb-id="" @close="$emit('close')" /></template>

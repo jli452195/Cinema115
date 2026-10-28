@@ -79,8 +79,13 @@ function rankCandidates(name: string, videos: SubtitleMatchVideo[]) {
   }).sort((a, b) => b.score - a.score)
 }
 
-export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number): SubtitleMatch {
+export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number, kind: 'movie' | 'tv' = 'tv'): SubtitleMatch {
   const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
+  if (kind === 'movie') {
+    if (!videos.length) return no('请先选择视频')
+    if (videos.length === 1) return { videoId: videos[0].id, confidence: 'low', reason: '已关联当前电影，请确认字幕版本', candidates: [] }
+    return { videoId: '', confidence: 'medium', reason: '存在多个电影版本，请指定对应视频', candidates: rankCandidates(name, videos) }
+  }
   const exact = videos.filter(video => !('season' in video || 'episode' in video) && stem(name).toLowerCase() === stem(video.name).toLowerCase())
   if (exact.length === 1) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
   if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')

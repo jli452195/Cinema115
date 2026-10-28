@@ -19,7 +19,7 @@ import AnimeProviderBrand from './AnimeProviderBrand.vue'
 import { searchGardenResources } from '../lib/garden-search'
 import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
 
-const props = withDefaults(defineProps<{ token: string; title: string; originalTitle: string; provider?: 'mikan' | 'garden'; subtitleLibrary?: boolean; themeColors?: Record<string, string>; tmdbId?: number; kind?: 'movie' | 'tv'; date?: string; seasons?: { number: number; name: string; episodeCount: number }[] }>(), { provider: 'mikan' })
+const props = withDefaults(defineProps<{ token: string; title: string; originalTitle: string; provider?: 'mikan' | 'garden'; animationLibrary?: boolean; themeColors?: Record<string, string>; tmdbId?: number; kind?: 'movie' | 'tv'; date?: string; seasons?: { number: number; name: string; episodeCount: number }[] }>(), { provider: 'mikan' })
 const emit = defineEmits<{ close: [] }>()
 const isGarden = computed(() => props.provider === 'garden')
 const providerName = computed(() => isGarden.value ? 'Garden' : '蜜柑')
@@ -550,7 +550,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <DownloadOrganizeDialog :subtitle-library="subtitleLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeEntries = []" @submitted="organized" @uncertain="organizeUncertain" />
+  <DownloadOrganizeDialog :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeEntries = []" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
 
 <style scoped>
