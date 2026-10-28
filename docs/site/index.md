@@ -1,5 +1,6 @@
 ---
 layout: home
+pageClass: docs-home
 title: 使用文档
 hero:
   name: Cinema115
@@ -21,6 +22,10 @@ features:
     details: 了解主账号、小号和个人网盘的用途，按需要完成配置。
     link: /guide/accounts
     linkText: 配置网盘账号
+  - title: 动漫订阅
+    details: 从资源站点选择番剧和字幕组，自动下载到 115 并重命名整理。
+    link: /anime/
+    linkText: 查看订阅指南
   - title: 更新与备份
     details: 保存配置和运行数据，了解镜像升级、版本检查及恢复注意事项。
     link: /guide/upgrade

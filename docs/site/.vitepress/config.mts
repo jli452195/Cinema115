@@ -3,6 +3,7 @@ import { defineTeekConfig } from 'vitepress-theme-teek/config'
 
 const sections = [
   { text: '开始使用', link: '/guide/', activeMatch: '/guide/' },
+  { text: '动漫订阅', link: '/anime/', activeMatch: '/anime/' },
   { text: '常见问题', link: '/faq/', activeMatch: '/faq/' },
   { text: '编写文档', link: '/contributing/', activeMatch: '/contributing/' },
 ]
@@ -47,7 +48,7 @@ export default defineConfig({
   extends: teekConfig,
   lang: 'zh-CN',
   title: 'Cinema115',
-  description: 'Cinema115 使用文档：安装部署、115 账号配置与更新备份。',
+  description: 'Cinema115 使用文档：安装部署、115 账号配置、动漫订阅与更新备份。',
   base: '/Cinema115/',
   // Teek 默认忽略死链；用户文档保留构建检查，避免发布失效的教程链接。
   ignoreDeadLinks: false,

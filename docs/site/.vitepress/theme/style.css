@@ -13,6 +13,57 @@
   --vp-c-brand-soft: rgba(147, 180, 255, 0.14);
 }
 
+.docs-home .VPHero .container {
+  gap: 32px;
+}
+
+.docs-home .VPHero .main {
+  order: 1;
+}
+
+.docs-home .VPHero .image {
+  order: 2;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.docs-home .VPHero .image-container {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  transform: none;
+}
+
+.docs-home .VPHero .image-bg {
+  display: none;
+}
+
+@media (min-width: 960px) {
+  .docs-home .VPHero .container {
+    gap: 0;
+  }
+
+  .docs-home .VPHero.has-image .main {
+    flex: none;
+    width: calc(100% / 3 * 2);
+  }
+
+  .docs-home .VPHero .image {
+    position: relative;
+    flex: 1;
+    width: auto;
+    min-height: 0;
+  }
+
+  .docs-home .VPHero .image-container {
+    position: absolute;
+    top: -32px;
+    right: 0;
+    max-width: 528px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto !important;
