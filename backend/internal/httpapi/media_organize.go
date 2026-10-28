@@ -68,13 +68,6 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		}
 		c.JSON(200, out)
 	})
-	g.DELETE("/runs/:id", func(c *gin.Context) {
-		if err := s.DeleteRun(c.Param("id")); err != nil {
-			fail(c, err)
-			return
-		}
-		c.JSON(200, gin.H{"ok": true})
-	})
 	g.POST("/runs/:id/preview", func(c *gin.Context) {
 		var in service.MediaOrganizeCorrection
 		if !bindNamingJSON(c, &in) {

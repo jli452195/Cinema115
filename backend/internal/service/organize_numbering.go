@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/releaseparse"
 )
 
 var organizeFileRange = regexp.MustCompile(`(?i)^(\d{1,4})\s*([-~～〜至到+&])\s*E?(\d{1,4})$`)
-var organizeFileSeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})\s*E`)
+var organizeFileSeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,4})\s*E`)
 var organizeCompactEpisode = regexp.MustCompile(`(?i)-(\d{1,4}(?:v\d{1,3})?)$`)
-var organizeSceneYear = regexp.MustCompile(`(?i)(S\d{1,2}\s*E\d{1,4}(?:\s*[-~～〜至到+&]\s*E?\d{1,4})?)\.(19\d{2}|20\d{2}|21\d{2})($|[ ._\-])`)
 var organizeSPNumber = regexp.MustCompile(`(?i)(^|[^a-z0-9])SP[ ._-]*#?[ ._-]*([0-9])`)
 var organizeSPMarker = regexp.MustCompile(`(?i)(^|[^a-z0-9])SP($|[\[\]【】()（） ._-])`)
 var organizeSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[【 ._(（\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE|MENU|MINI[ ._-]*ANIME|TOKUTEN)(?:[0-9]|$|[\]】 ._)）\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
@@ -46,13 +46,17 @@ func organizeFileNumbering(file *OrganizeFile) {
 	if special {
 		season = 0
 	}
+	if numbered, found := mediafacts.StandardNumbering(name); found {
+		if numbered.Episode == 0 || special && numbered.Season != 0 {
+			return
+		}
+		file.Season, file.Episode, file.EndEpisode = numbered.Season, numbered.Episode, numbered.EndEpisode
+		return
+	}
 	// Treat filename underscores as separators (Title_-_03_(BD...)), then reuse
 	// the existing dash, metadata and ambiguity checks. Keep the source untouched.
 	name = strings.ReplaceAll(name, "_", " ")
 	name = organizeCompactEpisode.ReplaceAllString(name, " - ${1}")
-	// A four-digit year after SxxExx is filename metadata, not a fractional
-	// episode. Keep genuine decimals and conflicting numbering for review.
-	name = organizeSceneYear.ReplaceAllString(name, "${1} ${2}${3}")
 	parsed, err := releaseparse.Title(name)
 	if err != nil {
 		return

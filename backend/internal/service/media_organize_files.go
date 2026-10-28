@@ -25,6 +25,10 @@ type mediaOrganizeFiles struct {
 	drive          OrganizeDrive
 	cookie         string
 	lists          map[string][]p115.ShareFile
+	unrelated      []MediaOrganizeEntry
+	directories    []MediaOrganizeEntry
+	localSnapshots map[string]os.FileInfo
+	settlingVideos map[string]bool
 	failureChecked bool
 }
 
@@ -109,11 +113,18 @@ func mediaLocalPath(root, relative string, create bool) (string, error) {
 }
 
 func mediaFileType(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".sup", ".smi", ".sami", ".ttml", ".dfxp", ".scc":
+		return "subtitle"
+	}
 	if strings.EqualFold(path.Ext(name), ".iso") {
 		return ""
 	}
 	if strings.EqualFold(path.Ext(name), ".strm") {
 		return "video"
+	}
+	if mediaAttachment(name) {
+		return "attachment"
 	}
 	return organizeMedia(name)
 }
@@ -123,6 +134,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 	appendFile := func(file p115.ShareFile, parent, relative string, modified int64) {
 		typeName := mediaFileType(file.Name)
 		if typeName == "" {
+			if !mediaKeepFile(file.Name) {
+				f.unrelated = append(f.unrelated, MediaOrganizeEntry{File: OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: "cleanup"}, Modified: modified})
+			}
 			return
 		}
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
@@ -131,6 +145,8 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Fingerprint: parent + "/" + file.Name + ":" + strconv.FormatInt(file.Size, 10) + ":" + strconv.FormatInt(modified, 10), Status: "pending"})
 	}
 	if f.rule.Storage == "local" {
+		f.localSnapshots = make(map[string]os.FileInfo)
+		f.settlingVideos = make(map[string]bool)
 		root, err := mediaLocalRoot(f.rule.Source)
 		if err != nil {
 			return nil, err
@@ -164,9 +180,13 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				if dirs > 300 || strings.Count(rel, string(filepath.Separator)) > 12 {
 					return fmt.Errorf("目录过大，请缩小扫描范围")
 				}
-				return nil
-			}
-			if mediaFileType(entry.Name()) == "" {
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				id := filepath.ToSlash(rel)
+				f.localSnapshots[id] = info
+				f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: id, Name: entry.Name(), Directory: true}, ParentID: filepath.ToSlash(filepath.Dir(rel)), SourcePath: id, MediaType: "cleanup"}})
 				return nil
 			}
 			info, err := entry.Info()
@@ -177,11 +197,17 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return nil
 			}
 			if time.Since(info.ModTime()) < 30*time.Second {
+				if mediaFileType(entry.Name()) == "video" {
+					f.settlingVideos[filepath.ToSlash(filepath.Dir(rel))] = true
+				}
 				return nil
 			} // Allow uploads/copies to settle.
 			appendFile(p115.ShareFile{ID: filepath.ToSlash(rel), Name: entry.Name(), Size: info.Size()}, filepath.ToSlash(filepath.Dir(rel)), filepath.ToSlash(rel), info.ModTime().UnixNano())
-			if len(out) > 5000 {
-				return fmt.Errorf("单次最多 5000 个媒体文件，请缩小扫描范围")
+			if !mediaKeepFile(entry.Name()) || mediaFileType(entry.Name()) == "subtitle" || mediaFileType(entry.Name()) == "attachment" {
+				f.localSnapshots[filepath.ToSlash(rel)] = info
+			}
+			if len(out)+len(f.unrelated) > 5000 {
+				return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
 			}
 			return nil
 		})
@@ -192,8 +218,8 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		visited := make(map[string]bool)
 		var walk func(string, string, int) error
 		walk = func(cid, prefix string, depth int) error {
-			if cid == f.rule.TargetID {
-				return fmt.Errorf("目标目录不能位于来源目录内")
+			if cid == f.rule.TargetID || cid != "" && cid == f.rule.FailureID {
+				return fmt.Errorf("目标或失败目录不能位于来源目录内")
 			}
 			if visited[cid] || depth > 12 || len(visited) >= 300 {
 				return fmt.Errorf("目录循环或范围过大")
@@ -208,14 +234,15 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 					return err
 				}
 				if file.Directory {
+					f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: file, ParentID: cid, SourcePath: path.Join(prefix, file.Name), MediaType: "cleanup"}})
 					if err := walk(file.ID, path.Join(prefix, file.Name), depth+1); err != nil {
 						return err
 					}
 				} else {
 					appendFile(file, cid, path.Join(prefix, file.Name), 0)
 				}
-				if len(out) > 5000 {
-					return fmt.Errorf("单次最多 5000 个媒体文件")
+				if len(out)+len(f.unrelated) > 5000 {
+					return fmt.Errorf("单次最多 5000 个文件")
 				}
 			}
 			return nil

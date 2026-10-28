@@ -136,7 +136,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		t.Fatal(run)
 	}
 	readState("")
-	if len(state.Runs) != 1 || state.Runs[0].Entries != nil || state.Runs[0].PendingCount != 1 || state.History.Total != 0 {
+	if state.History.Total != 0 {
 		t.Fatal("preview leaked into history or overview payload", state)
 	}
 	request("POST", "/runs/"+run.ID+"/preview", `{"files":[{"id":"Work.2024.strm","season":-1,"episode":1}]}`, 400)
@@ -158,7 +158,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	}
 	request("GET", "/runs/"+run.ID, "", 200)
 	readState("?page=99")
-	if len(state.Runs) != 0 || state.History.Page != 1 || state.History.Total != 1 || state.History.Items[0].Status != "done" || state.History.Items[0].Target == "" {
+	if state.History.Page != 1 || state.History.Total != 1 || state.History.Items[0].Status != "done" || state.History.Items[0].Target == "" {
 		t.Fatal("executed file missing from history", state)
 	}
 	request("DELETE", "/rules/"+rule.ID, "", 200)

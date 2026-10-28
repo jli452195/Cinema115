@@ -12,6 +12,7 @@ import (
 	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
 	"strm115/backend/internal/releaseparse"
 )
@@ -90,10 +91,15 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 	}
 	video.Season = 1
 	organizeFileNumbering(&video)
-	parsed, err := releaseparse.Title(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
-	unmapped := video.Episode == 0 && (parsed.Kind != "unknown" || parsed.RawEpisode != "")
+	unmapped := false
+	if video.Episode == 0 {
+		stem := strings.TrimSuffix(video.Name, path.Ext(video.Name))
+		_, standard := mediafacts.StandardNumbering(stem)
+		parsed, err := releaseparse.Title(stem)
+		unmapped = err != nil || standard || parsed.Kind != "unknown" || parsed.RawEpisode != ""
+	}
 	wrongEpisode := video.Episode > 0 && video.Episode != intent.File.Episode
-	if err != nil || organizeSpecialFile.MatchString(video.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(video.SourcePath))) || video.EndEpisode != 0 || unmapped || wrongEpisode {
+	if organizeSpecialFile.MatchString(video.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(video.SourcePath))) || video.EndEpisode != 0 || unmapped || wrongEpisode {
 		return fmt.Errorf("%w：实际视频编号与标题不一致，请核对后手动整理：%s", errDownloadTitleReview, video.Name)
 	}
 	if organizeFileSeason.MatchString(intent.File.Name) && organizeFileSeason.MatchString(video.Name) && video.Season != intent.File.Season {

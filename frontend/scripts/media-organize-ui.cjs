@@ -10,33 +10,51 @@ const copy = value => JSON.parse(JSON.stringify(value))
   page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000)
   const rule = { id: 'rule1', name: 'NAS 验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, enabled: false, intervalMinutes: 5 }
   const run = { id: 'run1', rule, status: 'preview', readyCount: 1, failureCount: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), message: '核对预览', groups: [{ id: '1', identity: { name: 'Example' }, kind: 'tv', tmdbId: 42, title: '示例作品', category: '剧集/动漫' }], entries: [{ file: { id: 'file1', name: 'Example.S01E01.strm', sourcePath: 'Example.S01E01.strm', mediaType: 'video', season: 1, episode: 1 }, group: '1', relative: '剧集/动漫/示例作品 (2024) {tmdb-42}/Season 01/Example.S01E01.strm', status: 'ready' }] }
-  const state = { rules: [], runs: [], records: [] }
-  let emptyScan = false
+  const state = { rules: [], records: [] }
+  let emptyScan = false, rejectRuleSave = false, delayedState
   await page.route('**/api/**', async route => {
     const req = route.request(), u = new URL(req.url()), endpoint = u.pathname, method = req.method(), body = req.postDataJSON()
-    calls.push({ endpoint, method, body, query: u.searchParams.toString() }); let data = {}
+    calls.push({ endpoint, method, body, query: u.searchParams.toString() }); let data = {}, status = 200
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
     else if (endpoint === '/api/admin/media-organize') {
       const pages = Math.max(1, Math.ceil(state.records.length / 20)), page = Math.max(1, Math.min(Number(u.searchParams.get('page') || 1), pages))
-      data = { rules: copy(state.rules), runs: state.runs.map(r => ({ ...copy(r), entries: null, groups: null, entryCount: r.entries.length, pendingCount: r.entries.filter(e => e.status !== 'done').length })), history: { items: copy(state.records.slice((page - 1) * 20, page * 20)), page, pages, total: state.records.length } }
+      data = { rules: copy(state.rules), active: ['queued', 'scanning', 'running'].includes(run.status), history: { items: copy(state.records.slice((page - 1) * 20, page * 20)), page, pages, total: state.records.length } }
+      if (delayedState) {
+        const held = delayedState; delayedState = undefined
+        held.started(); await held.release
+        if (held.reject) { status = 503; data = { error: '过期读取失败' } }
+      }
     }
-    else if (endpoint === '/api/admin/media-organize/rules' && method === 'POST') { assert.equal('scope' in body, false); Object.assign(rule, body, { id: 'rule1' }); state.rules = [copy(rule)]; data = rule }
-    else if (endpoint.endsWith('/scan')) { state.runs = emptyScan ? [] : [copy(run)]; data = emptyScan ? { ...copy(run), id: 'empty', status: 'queued', entries: [], groups: [] } : run }
+    else if (endpoint === '/api/admin/media-organize/rules' && method === 'POST') {
+      assert.equal('scope' in body, false)
+      if (rejectRuleSave) { rejectRuleSave = false; status = 503; data = { error: '模拟保存失败' } }
+      else { Object.assign(rule, body, { id: 'rule1' }); state.rules = [copy(rule)]; data = rule }
+    }
+    else if (endpoint === '/api/admin/media-organize/rules/rule1' && method === 'DELETE') { state.rules = []; state.records = []; data = { ok: true } }
+    else if (endpoint.endsWith('/scan')) { data = emptyScan ? { ...copy(run), id: 'empty', status: 'queued', entries: [], groups: [] } : run }
     else if (endpoint === '/api/admin/media-organize/runs/empty') data = { ...copy(run), id: 'empty', status: 'completed', entries: [], groups: [], message: '没有新的可处理文件' }
     else if (endpoint === '/api/admin/media-organize/runs/run1') data = run
     else if (endpoint.endsWith('/preview')) { run.entries[0].file.episode = body.files[0].episode; run.entries[0].relative = run.entries[0].relative.replace('S01E01.strm', `S01E${String(body.files[0].episode).padStart(2, '0')}.strm`); data = run }
-    else if (endpoint.endsWith('/apply') && run.failureCount) { run.status = 'partial'; run.failureCount = 0; run.entries[0].failure = { state: 'stored', reason: '请选择对应作品' }; state.runs = [copy(run)]; data = run }
+    else if (endpoint.endsWith('/apply') && run.failureCount) { run.status = 'partial'; run.failureCount = 0; run.entries[0].failure = { state: 'stored', reason: '请选择对应作品' }; data = run }
     else if (endpoint.endsWith('/apply')) {
-      run.status = 'completed'; run.readyCount = 0; run.entries[0].status = 'done'; state.runs = []; data = run
+      run.status = 'completed'; run.readyCount = 0; run.entries[0].status = 'done'; data = run
       const e = run.entries[0]
       state.records = [{ runId: run.id, fileId: e.file.id, name: e.file.name, title: '示例作品', kind: 'tv', mediaType: 'video', season: e.file.season, episode: e.file.episode, source: `${rule.source}/${e.file.sourcePath}`, target: `${rule.target}/${e.relative}`, status: 'done', at: run.updatedAt }]
     }
     else if (endpoint === '/api/admin/tmdb/browse') { assert.equal(u.searchParams.get('kind'), 'multi'); assert.equal(u.searchParams.get('query'), 'Example'); data = { items: [{ id: 42, kind: 'tv', title: '示例作品', date: '2024-01-01' }] } }
     else if (endpoint === '/api/admin/p115/accounts') data = { accounts: [{ id: 'primary1', primary: true }, { id: 'secondary', primary: false }] }
     else if (endpoint === '/api/admin/p115/cloud-download/paths') { assert.equal(u.searchParams.get('accountId'), 'primary1'); data = { directories: [{ id: '10', name: 'inbox' }], hasMore: false } }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
+    await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
   })
+  async function holdRefresh(reject = false) {
+    let started, release
+    const ready = new Promise(resolve => { started = resolve })
+    delayedState = { started, release: new Promise(resolve => { release = resolve }), reject }
+    await page.getByRole('button', { name: '刷新记录', exact: true }).click()
+    await ready
+    return release
+  }
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/media/organize', { waitUntil: 'networkidle' })
@@ -61,7 +79,8 @@ const copy = value => JSON.parse(JSON.stringify(value))
     await preview.getByText('Example.S01E01.strm', { exact: true }).waitFor()
     assert.equal(await page.getByRole('region', { name: '整理记录', exact: true }).count(), 0)
     await preview.getByRole('button', { name: '关闭整理预览', exact: true }).click()
-    await page.locator('.mo-pending-open').click()
+    assert.equal(await page.getByRole('region', { name: '待处理任务', exact: true }).count(), 0)
+    await page.getByRole('button', { name: '扫描预览', exact: true }).click()
     await preview.getByText('Example.S01E01.strm', { exact: true }).waitFor()
     await preview.getByRole('spinbutton', { name: '集', exact: true }).fill('13')
     assert.equal(await preview.getByRole('button', { name: '确认整理并移动', exact: true }).isDisabled(), true)
@@ -136,7 +155,7 @@ const copy = value => JSON.parse(JSON.stringify(value))
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false)
     await page.screenshot({ path: 'test-results/media-organize-history-mobile-dark.png', fullPage: true })
     await page.getByRole('button', { name: '新增规则' }).click()
-    await editor.getByText('自动扫描并整理', { exact: true }).click()
+    await editor.getByText('启用监控', { exact: true }).click()
     await editor.getByRole('spinbutton', { name: '扫描间隔（分钟）', exact: true }).waitFor()
     assert.equal(await editor.getByRole('textbox', { name: '规则名称', exact: true }).evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(30, 41, 59)')
     await page.waitForTimeout(200)
@@ -162,7 +181,80 @@ const copy = value => JSON.parse(JSON.stringify(value))
     await preview.getByText(/已移入失败目录.*在此修正匹配/).waitFor()
     await preview.getByText(`${rule.failure}/${run.entries[0].file.sourcePath}`, { exact: true }).waitFor()
     await page.screenshot({ path: 'test-results/media-organize-quarantined-mobile-dark.png' })
+    await preview.getByRole('button', { name: '关闭整理预览', exact: true }).click()
+    state.records.unshift({ runId: run.id, fileId: 'cleanup', name: 'ads.zip', title: '', kind: '', mediaType: 'cleanup', season: 0, episode: 0, source: '/media/inbox/ads.zip', status: 'done', message: '已从来源删除无关文件', at: run.updatedAt })
+    await page.getByRole('button', { name: '刷新记录', exact: true }).click()
+    const cleaned = history.getByRole('button', { name: '查看ads.zip的整理记录', exact: true })
+    await cleaned.getByText('已删除', { exact: true }).waitFor()
+    assert.equal(await cleaned.getByText('无关文件', { exact: true }).count(), 1)
+    assert.equal(await cleaned.locator('.mo-red, .mo-episode').count(), 0)
+    assert.equal(await cleaned.locator('.mo-result-path').count(), 1)
+    const scansBeforeToggle = calls.filter(call => call.endpoint.endsWith('/scan')).length
+    await page.getByRole('button', { name: '启用NAS 验收的目录监控', exact: true }).click()
+    await page.getByText('定时监控 · 每 5 分钟', { exact: true }).waitFor()
+    const enabledRequest = calls.filter(call => call.endpoint.endsWith('/rules') && call.method === 'POST').at(-1)
+    assert.equal(enabledRequest.body.enabled, true)
+    assert.equal(enabledRequest.body.failure, rule.failure)
+    assert.equal(enabledRequest.body.source, rule.source)
+    rejectRuleSave = true
+    await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '模拟保存失败' }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).count(), 1)
+    await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
+    await page.getByText('监控已暂停', { exact: true }).waitFor()
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/scan')).length, scansBeforeToggle)
+    const releaseSave = await holdRefresh()
+    await page.getByRole('button', { name: '编辑NAS 验收', exact: true }).click()
+    await editor.getByRole('textbox', { name: '规则名称', exact: true }).fill('NAS 更新')
+    await editor.getByRole('button', { name: '保存规则', exact: true }).click()
+    await editor.waitFor({ state: 'hidden' })
+    releaseSave()
+    await page.getByRole('heading', { name: 'NAS 更新', exact: true }).waitFor()
+    const releaseToggle = await holdRefresh(true)
+    await page.getByRole('button', { name: '启用NAS 更新的目录监控', exact: true }).click()
+    await page.getByRole('button', { name: '暂停NAS 更新的目录监控', exact: true }).waitFor()
+    releaseToggle()
+    await page.waitForResponse(response => response.url().includes('/api/admin/media-organize?page=') && response.status() === 200)
+    assert.equal(await page.getByRole('alert').count(), 0)
+    const recordsBeforeDelete = copy(state.records)
+    const releaseDelete = await holdRefresh()
+    await page.getByRole('button', { name: '删除NAS 更新', exact: true }).click()
+    const deletion = page.getByRole('dialog', { name: '移除记录', exact: true })
+    await deletion.getByRole('button', { name: '确认移除', exact: true }).click()
+    await deletion.waitFor({ state: 'hidden' })
+    releaseDelete()
+    await page.getByText('添加一个来源目录，先扫描预览，再启用监控。', { exact: true }).waitFor()
+    assert.equal(await history.count(), 0)
+    state.records = recordsBeforeDelete
+    const longPath = '/Cinema115/' + '用于验证目录换行和省略的较长文件夹名称/'.repeat(8)
+    state.rules = [
+      { ...copy(rule), source: longPath + '待整理', target: longPath + '已整理', failure: longPath + '整理失败' },
+      { ...copy(rule), id: 'cloud', name: '115 下载整理', storage: '115', source: '/Cinema115/云下载', target: '/Cinema115/媒体库', failure: '', enabled: true, intervalMinutes: 10, classify: false },
+      { ...copy(rule), id: 'strm', name: '名称很长时也不会撑开卡片的 STRM 自动整理规则'.repeat(2), source: '/strm/inbox', target: '/strm/library', failure: '/strm/failed' },
+    ]
+    await page.setViewportSize({ width: 1680, height: 1080 })
+    await page.evaluate(() => document.documentElement.classList.remove('dark'))
+    await page.reload({ waitUntil: 'networkidle' })
+    const ruleCards = page.locator('.mo-rule-card')
+    await ruleCards.nth(2).waitFor()
+    const desktopCards = await ruleCards.evaluateAll(cards => cards.map(card => ({ x: card.getBoundingClientRect().x, y: card.getBoundingClientRect().y, width: card.getBoundingClientRect().width, height: card.getBoundingClientRect().height, footer: card.querySelector('.mo-rule-actions').getBoundingClientRect().y })))
+    assert.equal(new Set(desktopCards.map(card => Math.round(card.y))).size, 1)
+    assert.equal(new Set(desktopCards.map(card => Math.round(card.footer))).size, 1)
+    assert.ok(desktopCards.every(card => card.width >= 320 && card.height < 420), JSON.stringify(desktopCards))
+    assert.equal(await ruleCards.first().getByTitle(state.rules[0].source, { exact: true }).count(), 1)
+    assert.equal(await ruleCards.nth(1).getByText('未设置，识别失败的视频留在来源', { exact: true }).count(), 1)
+    await ruleCards.first().hover()
+    assert.ok((await ruleCards.first().evaluate(el => getComputedStyle(el, '::before').animationName)).includes('ambient-glow'))
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    assert.equal(await ruleCards.first().evaluate(el => getComputedStyle(el, '::before').animationName), 'none')
+    await page.screenshot({ path: 'test-results/media-organize-rules-desktop.png', fullPage: true })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(() => document.documentElement.classList.add('dark'))
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1), false)
+    assert.equal(await ruleCards.first().locator('h3').evaluate(el => getComputedStyle(el).color), 'rgb(241, 245, 249)')
+    assert.ok((await ruleCards.first().getByRole('button', { name: '扫描预览', exact: true }).boundingBox()).height >= 44)
+    await page.screenshot({ path: 'test-results/media-organize-rules-mobile-dark.png', fullPage: true })
     assert.deepEqual(errors, [])
-    console.log('PASS: conditional per-file history, pending previews, empty scans, failure reasons, pagination, reopening; STRM corrections, TMDB search, primary-only picker, mobile dark without overflow')
+    console.log('PASS: rule cards, monitoring toggle and failed saves, stale reads after save/toggle/delete, three-column and mobile layouts, reduced motion; history, previews, STRM corrections, TMDB search, primary-only picker')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

@@ -36,6 +36,12 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	queued, _ := s.Scan(rule.ID)
 	mediaTestProcess(t, s, &queued, "auto")
 	for _, e := range queued.Entries {
+		if e.File.Directory {
+			if e.Status != "done" {
+				t.Fatal("emptied source directory should be cleaned", e)
+			}
+			continue
+		}
 		if e.Failure == nil || e.Failure.State != "stored" || e.Failure.Message != "" {
 			t.Fatal("failure move missing", e)
 		}
@@ -79,6 +85,9 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	}
 	mediaTestProcess(t, restarted, &corrected, "execute")
 	for _, e := range corrected.Entries {
+		if e.File.Directory {
+			continue
+		}
 		if e.Status != "done" || e.Failure != nil {
 			t.Fatal("failure recovery did not complete", e)
 		}

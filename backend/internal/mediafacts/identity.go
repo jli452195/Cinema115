@@ -19,8 +19,8 @@ type Identity struct {
 
 var identityID = regexp.MustCompile(`(?i)[\[{]tmdb(?:id)?[=-](\d+)[\]}]`)
 var identityYear = regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})(?:$|[^0-9])`)
-var identitySeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:S|SEASON[ ._-]*)(\d{1,3})(?:E|$|[^0-9])|第\s*([0-9一二三四五六七八九十]+)\s*季`)
-var identityEpisode = regexp.MustCompile(`(?i)(?:^|[ ._\-])S\d{1,3}[ ._-]*E\d+|(?:^|[ ._\-])(?:EPISODE|EP|E)[ ._-]*\d+|[ ._]+-[ ._]*\d+|第\s*\d+\s*[集话話]|[\[【]\d{1,4}(?:v\d+)?[\]】]`)
+var identitySeason = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:S|SEASON[ ._-]*)(\d{1,4})(?:E|$|[^0-9])|第\s*([0-9一二三四五六七八九十]+)\s*季`)
+var identityEpisode = regexp.MustCompile(`(?i)(?:^|[ ._\-])S\d{1,4}[ ._-]*E\d+|(?:^|[ ._\-])(?:EPISODE|EP|E)[ ._-]*\d+|[ ._]+-[ ._]*\d+|第\s*\d+\s*[集话話]|[\[【]\d{1,4}(?:v\d+)?[\]】]`)
 var identitySpec = regexp.MustCompile(`(?i)(?:^|[ ._\[【(（-])(?:\d{3,4}[pi]|[48]K|WEB[ ._-]?DL|WEBRIP|BLU[ ._-]?RAY|BDRIP|REMUX|HDTV|HEVC|AVC|X26[45]|H[ .]?26[45]|AAC|FLAC|DUAL AUDIO|10BIT|CHS|CHT|SC_TC)(?:$|[^a-z0-9])`)
 var identityGroup = regexp.MustCompile(`(?i)字幕[组組]|SUBS?|RAWS?|VCB|Cleo|ANK|LoliHouse|Nix`)
 

@@ -148,6 +148,8 @@ func TestDownloadTitleBindingRejectsAmbiguityWithoutChangingPlan(t *testing.T) {
 		{"Show [12].mkv", "Show [13].mkv"}, {"Show [13].mkv"}, {"Show [11-12].mkv"},
 		{"Show [12.5].mkv"}, {"Show [SP12].mkv"}, {"Show S02E12.mkv"}, {"disc.iso"},
 		{"extras/Show.mkv"}, {"Show [00].mkv"},
+		{"Show S01E13 - 1080p.mkv"}, {"Show S01E12foo.mkv"},
+		{"Show S01E12-1080pixels.mkv"}, {"Show S01E12 E13 - 1080p.mkv"},
 	} {
 		t.Run(strings.Join(names, ","), func(t *testing.T) {
 			job := OrganizeJob{Config: OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"}, Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show S01E12"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S01E12", Directory: "Show/Season 01"}}}
@@ -163,6 +165,10 @@ func TestDownloadTitleBindingRejectsAmbiguityWithoutChangingPlan(t *testing.T) {
 	job := OrganizeJob{Config: OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"}, Items: []OrganizeItem{{File: OrganizeFile{TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S01E12"}}}
 	if err := bindDownloadFiles(&job, []OrganizeFile{{ShareFile: p115.ShareFile{ID: "901", Name: "video.mp4"}, SourcePath: "video.mp4", MediaType: "video"}}, ""); err != nil || job.Items[0].Name != "Show - S01E12.mp4" {
 		t.Fatal("single unnumbered video cannot use the release title", job, err)
+	}
+	job.Items = []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show S01E12"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S01E12"}}
+	if err := bindDownloadFiles(&job, []OrganizeFile{{ShareFile: p115.ShareFile{ID: "901", Name: "Show S01E12 - 1080p.mkv"}, SourcePath: "Show S01E12 - 1080p.mkv", MediaType: "video"}}, ""); err != nil || job.Items[0].File.Episode != 12 || job.Items[0].Name != "Show - S01E12.mkv" {
+		t.Fatal("standard actual filename did not bind to the release", job, err)
 	}
 	job.Items = []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show [12]"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S02E12"}}
 	if err := bindDownloadFiles(&job, []OrganizeFile{{ShareFile: p115.ShareFile{ID: "901", Name: "Show S02E12.mp4"}, SourcePath: "Show S02E12.mp4", MediaType: "video"}}, ""); err != nil || job.Items[0].Name != "Show - S02E12.mp4" {

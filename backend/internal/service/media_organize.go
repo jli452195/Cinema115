@@ -69,8 +69,6 @@ type MediaOrganizeRun struct {
 	UpdatedAt    time.Time            `json:"updatedAt"`
 	Groups       []MediaOrganizeGroup `json:"groups"`
 	Entries      []MediaOrganizeEntry `json:"entries"`
-	EntryCount   int                  `json:"entryCount"`
-	PendingCount int                  `json:"pendingCount"`
 	ReadyCount   int                  `json:"readyCount"`
 	FailureCount int                  `json:"failureCount"`
 }
@@ -154,7 +152,6 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 			target.Entries[i].Failure = &failure
 		}
 	}
-	mediaRunCounts(target)
 }
 
 func (s *MediaOrganizer) Snapshot(id string) (MediaOrganizeRun, error) {
@@ -170,24 +167,34 @@ func (s *MediaOrganizer) Snapshot(id string) (MediaOrganizeRun, error) {
 	return MediaOrganizeRun{}, ErrMediaOrganizeInput
 }
 
-func (s *MediaOrganizer) DeleteRun(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.active == id || s.actions[id] != "" {
-		return ErrMediaOrganizeBusy
-	}
-	for i, r := range s.doc.Runs {
-		if r.ID == id {
-			s.doc.Runs = append(s.doc.Runs[:i], s.doc.Runs[i+1:]...)
-			return s.persistLocked()
-		}
-	}
-	return ErrMediaOrganizeInput
-}
-
 func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, error) {
 	if strings.TrimSpace(rule.Name) == "" || len([]rune(rule.Name)) > 80 || rule.IntervalMinutes < 1 || rule.IntervalMinutes > 1440 {
 		return rule, ErrMediaOrganizeInput
+	}
+	if rule.ID != "" {
+		s.mu.Lock()
+		for i, old := range s.doc.Rules {
+			if old.ID != rule.ID {
+				continue
+			}
+			settings := rule
+			settings.Enabled, settings.LastScan = old.Enabled, old.LastScan
+			if settings != old {
+				break
+			}
+			// Scheduling changes never touch a running task's frozen rule or
+			// require an available mount/account merely to pause monitoring.
+			if old.Enabled == rule.Enabled {
+				s.mu.Unlock()
+				return old, nil
+			}
+			old.Enabled = rule.Enabled
+			s.doc.Rules[i] = old
+			err := s.persistLocked()
+			s.mu.Unlock()
+			return old, err
+		}
+		s.mu.Unlock()
 	}
 	if rule.Storage == "local" {
 		source, err := mediaLocalRoot(rule.Source)
@@ -323,7 +330,10 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule, automatic bool)
 	// Empty scan outcomes are only needed until the next scan.
 	// They must not consume history retention or evict actual file results.
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
-		return len(old.Entries) == 0 && (old.Status == "completed" || old.Status == "preview")
+		if old.Rule.ID == rule.ID && old.Status != "queued" && old.Status != "scanning" && old.Status != "running" && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Result != nil || e.Status == "done" || e.Failure != nil }) {
+			return true // A rescan replaces unused previews and diagnostics for this rule.
+		}
+		return (old.Status == "completed" || old.Status == "preview") && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "retained" })
 	})
 	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
 	// Count actual terminal batches, not the newly queued (possibly empty) scan.

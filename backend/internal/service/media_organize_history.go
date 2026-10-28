@@ -21,6 +21,7 @@ type MediaOrganizeHistoryItem struct {
 	Title     string `json:"title"`
 	Kind      string `json:"kind"`
 	MediaType string `json:"mediaType"`
+	Directory bool   `json:"directory,omitempty"`
 	Season    int    `json:"season"`
 	Episode   int    `json:"episode"`
 	Source    string `json:"source"`
@@ -37,7 +38,7 @@ type MediaOrganizeHistory struct {
 
 type MediaOrganizeState struct {
 	Rules   []MediaOrganizeRule  `json:"rules"`
-	Runs    []MediaOrganizeRun   `json:"runs"`
+	Active  bool                 `json:"active"`
 	History MediaOrganizeHistory `json:"history"`
 }
 
@@ -46,7 +47,7 @@ type MediaOrganizeState struct {
 func (s *MediaOrganizer) State(page int) MediaOrganizeState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Runs: []MediaOrganizeRun{}}
+	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Active: s.active != "" || len(s.actions) > 0}
 	type recorded struct {
 		run    *MediaOrganizeRun
 		entry  *MediaOrganizeEntry
@@ -55,8 +56,6 @@ func (s *MediaOrganizer) State(page int) MediaOrganizeState {
 	records := make([]recorded, 0)
 	for i := range s.doc.Runs {
 		r := &s.doc.Runs[i]
-		summary := *r
-		mediaRunCounts(&summary)
 		for j := range r.Entries {
 			e := &r.Entries[j]
 			if e.Result != nil {
@@ -64,10 +63,6 @@ func (s *MediaOrganizer) State(page int) MediaOrganizeState {
 			} else if e.Status == "done" {
 				records = append(records, recorded{r, e, MediaOrganizeResult{Status: "done", At: r.UpdatedAt}})
 			}
-		}
-		if summary.PendingCount > 0 || r.Status == "queued" || r.Status == "scanning" || r.Status == "running" || r.Status == "failed" || r.Status == "interrupted" {
-			summary.Entries, summary.Groups = nil, nil
-			state.Runs = append(state.Runs, summary)
 		}
 	}
 	sort.SliceStable(records, func(i, j int) bool { return records[i].result.At.After(records[j].result.At) })
@@ -85,7 +80,7 @@ func (s *MediaOrganizer) State(page int) MediaOrganizeState {
 		if r.Rule.Storage == "local" {
 			source, target = filepath.ToSlash(source), filepath.ToSlash(target)
 		}
-		item := MediaOrganizeHistoryItem{RunID: r.ID, FileID: e.File.ID, Name: e.File.Name, MediaType: e.File.MediaType, Season: e.File.Season, Episode: e.File.Episode, Source: path.Join(source, e.File.SourcePath), Target: target, MediaOrganizeResult: row.result}
+		item := MediaOrganizeHistoryItem{RunID: r.ID, FileID: e.File.ID, Name: e.File.Name, MediaType: e.File.MediaType, Directory: e.File.Directory, Season: e.File.Season, Episode: e.File.Episode, Source: path.Join(source, e.File.SourcePath), Target: target, MediaOrganizeResult: row.result}
 		for _, g := range r.Groups {
 			if g.ID == e.Group {
 				item.Title, item.Kind = g.Title, g.Kind

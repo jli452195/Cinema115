@@ -35,6 +35,9 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 	}
 	transient := mediaTransientGroups(run)
 	for _, e := range run.Entries {
+		if e.File.MediaType == "cleanup" {
+			continue
+		}
 		if e.Status != "done" && e.Failure != nil && e.Failure.State == "moving" {
 			eligible[e.File.ID] = true
 			continue
@@ -55,13 +58,12 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 }
 
 func mediaRunCounts(run *MediaOrganizeRun) {
-	run.EntryCount, run.PendingCount, run.ReadyCount, run.FailureCount = len(run.Entries), 0, 0, 0
+	run.ReadyCount, run.FailureCount = 0, 0
 	failures := mediaFailureEntries(run)
 	for _, e := range run.Entries {
-		if e.Status == "done" {
+		if e.Status == "done" || e.Status == "retained" || e.File.MediaType == "cleanup" {
 			continue
 		}
-		run.PendingCount++
 		if failures[e.File.ID] {
 			if e.Failure == nil || e.Failure.State != "stored" {
 				run.FailureCount++

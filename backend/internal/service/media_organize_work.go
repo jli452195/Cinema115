@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,14 +103,40 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 		if action == "scan" {
 			run.Status = "preview"
 			run.Message = "请核对作品和目标路径，再确认整理"
-			if len(run.Entries) == 0 {
+			if !slices.ContainsFunc(run.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "retained" }) {
 				run.Status, run.Message = "completed", "没有新的可处理文件；新写入文件稳定 30 秒后再扫描"
 			}
 			return s.checkpoint(run)
 		}
+		mediaDiscardOrphanSidecars(files, run, entries)
 	}
 	if err = s.execute(ctx, files, run); err != nil {
 		return err
+	}
+	if action == "auto" && len(files.unrelated)+len(files.directories) > 0 {
+		status, message, count := run.Status, run.Message, len(run.Entries)
+		run.Status = "running"
+		if err = s.cleanup(ctx, files, run); err != nil {
+			return err
+		}
+		run.Status, run.Message = status, message
+		cleaned := 0
+		for _, e := range run.Entries[count:] {
+			if e.Status == "done" {
+				cleaned++
+			}
+		}
+		if cleaned > 0 {
+			run.Message = fmt.Sprintf("已清理 %d 项（无关文件、未归属字幕与附件及空文件夹）", cleaned)
+			if count > 0 {
+				run.Message = message + "；" + run.Message
+			}
+		}
+		for _, e := range run.Entries[count:] {
+			if e.Result != nil && e.Result.Status == "error" {
+				run.Status = "partial"
+			}
+		}
 	}
 	s.mu.Lock()
 	if s.doc.Seen[run.Rule.ID] == nil {
@@ -117,6 +144,9 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 	}
 	transient := mediaTransientGroups(run)
 	for _, e := range run.Entries {
+		if e.File.MediaType == "cleanup" {
+			continue
+		}
 		if e.Status == "done" || e.Status == "conflict" || e.Status == "invalid" || e.Status == "needs_match" {
 			// Upstream errors are transient, not negative recognition results.
 			if !transient[e.Group] {
@@ -154,6 +184,9 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	results := make(map[string]naming.Result)
 	for i := range run.Entries {
 		e := &run.Entries[i]
+		if e.File.MediaType == "cleanup" {
+			continue
+		}
 		if e.File.MediaType != "video" && e.Status != "done" {
 			e.Group, e.VideoID, e.Relative, e.Target = "", "", "", ""
 			e.Status, e.Message = "unmatched", "未找到唯一对应的视频，保留来源"
@@ -223,6 +256,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		e.Status = "ready"
 		e.Message = ""
 	}
+	mediaOrganizeAttachments(run, results)
 	duplicates := make(map[string][]int)
 	for i, e := range run.Entries {
 		if e.Status != "ready" {
@@ -262,6 +296,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 }
 
 func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	mediaValidateAttachmentOwners(run, mediaEntryFiles(run.Entries))
 	run.Status = "running"
 	if err := s.checkpoint(run); err != nil {
 		return err
@@ -295,7 +330,7 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 				}
 			}
 			if !videoDone {
-				e.Status, e.Message = "error", "对应视频尚未整理成功，字幕保留来源"
+				e.Status, e.Message = "error", "对应视频尚未整理成功，关联文件保留来源"
 				e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
 				continue
 			}
@@ -337,7 +372,7 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 	run.Status = "completed"
 	run.Message = "整理完成"
 	for _, e := range run.Entries {
-		if e.Status != "done" {
+		if e.Status != "done" && e.Status != "retained" {
 			run.Status = "partial"
 			run.Message = "已处理可整理文件，其余条目请核对"
 			break

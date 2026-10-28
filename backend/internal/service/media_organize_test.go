@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,6 +43,22 @@ func (f *mediaRecognitionFake) Details(_ context.Context, kind string, id int) (
 }
 func (f *mediaRecognitionFake) AlternativeNames(context.Context, string, int) ([]string, error) {
 	return []string{"作品别名"}, nil
+}
+
+type mediaWaitingRecognition struct {
+	*mediaRecognitionFake
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (f mediaWaitingRecognition) Browse(ctx context.Context, options tmdb.Options) (*tmdb.Page, error) {
+	f.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-f.release:
+		return f.mediaRecognitionFake.Browse(ctx, options)
+	}
 }
 
 func newMediaOrganizeTest(t *testing.T) (*MediaOrganizer, *mediaRecognitionFake, *failingAccountStore, MediaOrganizeRule) {
@@ -102,7 +119,7 @@ func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
 		t.Fatalf("unexpected preview %+v", run)
 	}
 	state := s.State(1)
-	if state.History.Total != 0 || len(state.Runs) != 1 || state.Runs[0].PendingCount != 4 || state.Runs[0].Entries != nil || state.Runs[0].Groups != nil {
+	if state.History.Total != 0 {
 		t.Fatal("preview must be pending, not file history", state)
 	}
 	for _, e := range run.Entries {
@@ -153,7 +170,7 @@ func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
 		t.Fatal(saved)
 	}
 	state = restarted.State(1)
-	if state.History.Total != 3 || len(state.Runs) != 1 || state.Runs[0].PendingCount != 1 {
+	if state.History.Total != 3 {
 		t.Fatal("history must contain only executed files", state)
 	}
 	for _, item := range state.History.Items {
@@ -165,6 +182,69 @@ func TestMediaOrganizerLocalPreviewExecuteAndPersistence(t *testing.T) {
 	fresh, _ := restarted.Snapshot(run.ID)
 	if fresh.Entries[0].Result.Status != "done" {
 		t.Fatal("snapshot result is not detached")
+	}
+}
+
+func TestMediaOrganizerStandardNumberingPreviewAndExecution(t *testing.T) {
+	s, metadata, _, rule := newMediaOrganizeTest(t)
+	metadata.items = append(metadata.items, tmdb.Item{ID: 43, Kind: "tv", Title: "魔法骑士雷阿斯", Date: "2026-01-01"})
+	cases := []struct {
+		name            string
+		season, episode int
+	}{
+		{"魔法骑士雷阿斯 (2026) - S01E04 - 1080p.Crunchyroll.WEB-DL.H264.AAC.mkv", 1, 4},
+		{"Work.S02E05 - 2160p.strm", 2, 5},
+		{"Work (2024)/Season 02/E06.strm", 2, 6},
+		{"Work.S1000E11 - 1080p.strm", 1000, 11},
+		{"[Nix-Raws] Work [07][1080p].mkv", 1, 7},
+		{"Work.S01E08.5.mkv", 1, 0},
+		{"Work.S01E09 [10].mkv", 1, 0},
+	}
+	const content = "http://example.invalid/original-file\r\n"
+	for _, tc := range cases {
+		mediaTestFile(t, rule.Source, tc.name, content)
+	}
+	run, err := s.Scan(rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaTestProcess(t, s, &run, "scan")
+	if len(run.Entries) != len(cases) {
+		t.Fatal("scan lost files", run)
+	}
+	for _, e := range run.Entries {
+		for _, tc := range cases {
+			if e.File.ID != tc.name {
+				continue
+			}
+			if e.File.Season != tc.season || e.File.Episode != tc.episode {
+				t.Fatalf("%s: got S%dE%d, want S%dE%d", tc.name, e.File.Season, e.File.Episode, tc.season, tc.episode)
+			}
+			if tc.episode == 0 {
+				if e.Status != "invalid" || e.Target != "" {
+					t.Fatal("ambiguous numbering became executable", e)
+				}
+			} else if e.Status != "ready" || !strings.Contains(e.Relative, fmt.Sprintf("S%02dE%02d", tc.season, tc.episode)) {
+				t.Fatal("numbering did not reach naming preview", e)
+			}
+		}
+	}
+	run, err = s.Apply(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaTestProcess(t, s, &run, "execute")
+	for _, e := range run.Entries {
+		if e.File.Episode == 0 {
+			if _, err := os.Stat(filepath.Join(rule.Source, filepath.FromSlash(e.File.ID))); err != nil {
+				t.Fatal("ambiguous source was moved", e, err)
+			}
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(rule.Target, filepath.FromSlash(e.Relative)))
+		if err != nil || e.Status != "done" || string(body) != content {
+			t.Fatal("execution lost original file content or numbering", e, err)
+		}
 	}
 }
 
@@ -242,6 +322,9 @@ func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 		s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "saved-" + strconv.Itoa(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: strconv.Itoa(i)}}, Status: "done"}}})
 	}
 	for i := range 25 {
+		if i == 10 {
+			mediaTestFile(t, rule.Source, "unowned/font.ttf", "retained font")
+		}
 		run, err := s.Scan(rule.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -252,13 +335,13 @@ func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 		}
 		mediaTestProcess(t, s, &run, action)
 		state := s.State(1)
-		if run.Status != "completed" || len(state.Runs) != 0 || state.History.Total != 20 || len(s.doc.Runs) != 21 {
+		if run.Status != "completed" || state.History.Total != 20 || len(s.doc.Runs) != 21 {
 			t.Fatal("empty scans must stay hidden and preserve actual history", run, state)
 		}
 	}
 	s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "failed", Rule: rule, Status: "failed", Message: "来源目录不可访问"})
-	if state := s.State(1); len(state.Runs) != 1 || state.Runs[0].Message == "" || state.History.Total != 20 {
-		t.Fatal("scan failure must remain accessible as a pending diagnostic", state)
+	if failed, err := s.Snapshot("failed"); err != nil || failed.Message == "" || s.State(1).History.Total != 20 {
+		t.Fatal("scan failure must not create a file execution record", failed, err)
 	}
 }
 
@@ -275,7 +358,7 @@ func TestMediaOrganizerFileHistoryPagination(t *testing.T) {
 		t.Run(strconv.Itoa(tt.requested), func(t *testing.T) {
 			state := s.State(tt.requested)
 			h := state.History
-			if len(state.Runs) != 0 || h.Page != tt.page || h.Pages != 3 || h.Total != 45 || len(h.Items) != tt.count || h.Items[0].Episode != tt.firstEpisode {
+			if h.Page != tt.page || h.Pages != 3 || h.Total != 45 || len(h.Items) != tt.count || h.Items[0].Episode != tt.firstEpisode {
 				t.Fatal("incorrect history pagination", state)
 			}
 			if h.Items[0].RunID != "batch" || h.Items[0].Season != 1 || h.Items[0].Source != filepath.ToSlash(rule.Source)+"/"+h.Items[0].Name {
@@ -315,6 +398,122 @@ func TestMediaOrganizerIncrementalAndRollback(t *testing.T) {
 	if len(state.Rules) != 1 {
 		t.Fatal("save failure did not roll back", state.Rules)
 	}
+}
+
+func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
+	s, metadata, store, rule := newMediaOrganizeTest(t)
+	mediaTestFile(t, rule.Source, "Work.S01E01.strm", "http://unchanged/")
+	rule.Enabled = true
+	if _, err := s.SaveRule(rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.schedule(); err != nil {
+		t.Fatal(err)
+	}
+	runID := s.doc.Runs[0].ID
+	lastScan := s.State(1).Rules[0].LastScan
+	rule.Enabled = false
+	if _, err := s.SaveRule(rule); err != nil {
+		t.Fatal("queued work must not prevent pausing", err)
+	}
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	s.metadata = mediaWaitingRecognition{metadata, started, release}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("monitoring worker did not stop")
+		}
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("worker did not start")
+	}
+	for _, enabled := range []bool{true, false} {
+		rule.Enabled = enabled
+		saved, err := s.SaveRule(rule)
+		if err != nil || saved.Enabled != enabled || !saved.LastScan.Equal(lastScan) {
+			t.Fatal("monitoring toggle changed the scan schedule or was blocked", saved, err)
+		}
+	}
+	changed := rule
+	changed.Target = t.TempDir()
+	if _, err := s.SaveRule(changed); !errors.Is(err, ErrMediaOrganizeBusy) {
+		t.Fatal("running work must still block configuration changes", err)
+	}
+	store.err = errors.New("disk full")
+	rule.Enabled = true
+	_, saveErr := s.SaveRule(rule)
+	store.err = nil
+	if saveErr == nil || s.State(1).Rules[0].Enabled {
+		t.Fatal("failed toggle must preserve the persisted pause", saveErr)
+	}
+	close(release)
+	for ctx.Err() == nil {
+		run, err := s.Snapshot(runID)
+		if err == nil && run.Status == "completed" {
+			if !run.Rule.Enabled || s.State(1).Rules[0].Enabled || run.ReadyCount != 0 || run.FailureCount != 0 {
+				t.Fatal("pause changed the frozen task or counts", run)
+			}
+			data, err := os.ReadFile(filepath.Join(rule.Target, filepath.FromSlash(run.Entries[0].Relative)))
+			if err != nil || string(data) != "http://unchanged/" {
+				t.Fatal("in-flight work did not finish after pausing", err)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("paused monitoring interrupted in-flight work")
+}
+
+func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
+	t.Run("missing local directory", func(t *testing.T) {
+		s, _, _, rule := newMediaOrganizeTest(t)
+		rule.Enabled = true
+		if _, err := s.SaveRule(rule); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(rule.Source); err != nil { // Empty, isolated t.TempDir only.
+			t.Fatal(err)
+		}
+		rule.Enabled = false
+		if _, err := s.SaveRule(rule); err != nil || s.State(1).Rules[0].Enabled {
+			t.Fatal("unavailable mounts must still allow pausing", err)
+		}
+		rule.Classify = !rule.Classify
+		if _, err := s.SaveRule(rule); err == nil {
+			t.Fatal("configuration changes must still validate storage")
+		}
+	})
+	t.Run("removed primary account", func(t *testing.T) {
+		s, drive, rule := newMediaCleanupCloud(t)
+		rule.Enabled = true
+		if _, err := s.SaveRule(rule); err != nil {
+			t.Fatal(err)
+		}
+		a, err := s.accounts.Primary(rule.AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.accounts.Delete(a.ID, a.Revision); err != nil {
+			t.Fatal(err)
+		}
+		rule.Enabled = false
+		if _, err := s.SaveRule(rule); err != nil || s.State(1).Rules[0].Enabled || len(drive.cookies) != 0 {
+			t.Fatal("pausing must not require a primary account or drive request", err)
+		}
+		if _, err := s.files(context.Background(), rule); err == nil {
+			t.Fatal("execution must still reject a removed account")
+		}
+	})
 }
 
 func TestMediaOrganizerRecognitionIsConservative(t *testing.T) {
