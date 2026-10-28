@@ -11,7 +11,7 @@ const source = await readFile(new URL('../src/utils/subtitleImport.ts', import.m
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
-const { episodeNumber, matchSubtitle, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
+const { episodeNumber, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
 test('movie matching ignores episode-like numbers and leaves multiple versions for confirmation', () => {
@@ -34,15 +34,15 @@ test('movie matching ignores episode-like numbers and leaves multiple versions f
 
 test('season/episode matching stays ambiguous across versions, supports Chinese and numeric names', () => {
   const videos = [video('1', '剧集 - S01E03.mkv'), video('2', '剧集 - S02E03.mkv')]
-  assert.equal(matchSubtitle('第03集.ass', videos, 2), '2')
-  assert.equal(matchSubtitle('03.chs.srt', videos, 1), '1')
-  assert.equal(matchSubtitle('[Group] Show [03].ass', videos, 1), '1')
-  assert.equal(matchSubtitle('S02E03.chs.ass', videos, 1), '2')
-  assert.equal(matchSubtitle('E03.ass', [...videos, video('3', '剧集 - S01E03 - 4K.mkv')], 1), '')
-  assert.equal(matchSubtitle('不明字幕.ass', videos.slice(0, 1), 1), '')
+  assert.equal(analyzeSubtitle('第03集.ass', videos, 2).videoId, '2')
+  assert.equal(analyzeSubtitle('03.chs.srt', videos, 1).videoId, '1')
+  assert.equal(analyzeSubtitle('[Group] Show [03].ass', videos, 1).videoId, '1')
+  assert.equal(analyzeSubtitle('S02E03.chs.ass', videos, 1).videoId, '2')
+  assert.equal(analyzeSubtitle('E03.ass', [...videos, video('3', '剧集 - S01E03 - 4K.mkv')], 1).videoId, '')
+  assert.equal(analyzeSubtitle('不明字幕.ass', videos.slice(0, 1), 1).videoId, '')
   assert.equal(analyzeSubtitle('不明字幕.ass', [video('movie', '电影 (2024).mkv')], 1).confidence, 'low')
   assert.equal(episodeNumber('剧集 - S01E01-E02.ass'), undefined)
-  assert.equal(matchSubtitle('不明字幕.ass', [video('combined', '剧集 - S01E01-E02.mkv')], 1), '')
+  assert.equal(analyzeSubtitle('不明字幕.ass', [video('combined', '剧集 - S01E01-E02.mkv')], 1).videoId, '')
   assert.equal(subtitleLanguage('show.chs.ass'), 'zh-CN')
   assert.equal(subtitleLanguage('show.中英双语.ass'), 'zh-en')
   assert.equal(subtitleLanguage('unknown.ass'), '')
@@ -77,26 +77,26 @@ test('confirmed target episodes match numeric subtitles independently of origina
       assert.equal(subtitleLanguage(name), language)
     }
   }
-  assert.equal(matchSubtitle('04.sc.ass', videos, 1), '')
-  assert.equal(matchSubtitle('01.sc.ass', videos.slice(1), 1), '', 'unselected videos cannot be matched')
-  for (const name of ['SP01.ass', '01-02.ass', 'OVA01.ass', '01.5.ass']) assert.equal(matchSubtitle(name, videos, 1), '', name)
+  assert.equal(analyzeSubtitle('04.sc.ass', videos, 1).videoId, '')
+  assert.equal(analyzeSubtitle('01.sc.ass', videos.slice(1), 1).videoId, '', 'unselected videos cannot be matched')
+  for (const name of ['SP01.ass', '01-02.ass', 'OVA01.ass', '01.5.ass']) assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
 })
 
 test('edited numbers take priority, invalid targets do not fall back, and duplicate targets require confirmation', () => {
   const changed = { ...video('edited', 'Show.S01E14.mkv'), season: 2, episode: 1 }
-  assert.equal(matchSubtitle('01.sc.ass', [changed], 2), 'edited')
-  assert.equal(matchSubtitle('S02E01.tc.ass', [changed], 1), 'edited')
-  assert.equal(matchSubtitle('01.sc.ass', [changed], 1), '', 'use current target season, not first video season')
-  assert.equal(matchSubtitle('Show.S01E14.ass', [changed], 1), '', 'same original stem cannot bypass edited target')
+  assert.equal(analyzeSubtitle('01.sc.ass', [changed], 2).videoId, 'edited')
+  assert.equal(analyzeSubtitle('S02E01.tc.ass', [changed], 1).videoId, 'edited')
+  assert.equal(analyzeSubtitle('01.sc.ass', [changed], 1).videoId, '', 'use current target season, not first video season')
+  assert.equal(analyzeSubtitle('Show.S01E14.ass', [changed], 1).videoId, '', 'same original stem cannot bypass edited target')
   for (const fields of [{ season: 2, episode: '' }, { season: '', episode: 14 }, { season: 1, episode: 0 }, { season: 1, episode: 1.5 }, { season: 1, episode: 10001 }, { season: 1001, episode: 14 }]) {
-    assert.equal(matchSubtitle('Show.S01E14.ass', [{ ...changed, ...fields }], 1), '', JSON.stringify(fields))
+    assert.equal(analyzeSubtitle('Show.S01E14.ass', [{ ...changed, ...fields }], 1).videoId, '', JSON.stringify(fields))
   }
   const other = { ...video('other', 'Different release.mkv'), season: 2, episode: 1 }
   const ambiguous = analyzeSubtitle('01.sc.ass', [changed, other], 2)
   assert.equal(ambiguous.videoId, '')
   assert.equal(ambiguous.confidence, 'medium')
   assert.equal(ambiguous.candidates.length, 2)
-  assert.equal(matchSubtitle('Show.S01E14.ass', [video('done', 'Show.S01E14.mkv')], 1), 'done', 'completed-task filenames retain existing matching')
+  assert.equal(analyzeSubtitle('Show.S01E14.ass', [video('done', 'Show.S01E14.mkv')], 1).videoId, 'done', 'completed-task filenames retain existing matching')
 })
 
 test('specials, ranges, years, checksums and encoding numbers are not guessed', () => {
@@ -113,12 +113,12 @@ test('hash episode subtitles match underscore releases without treating audio ch
     assert.equal(subtitleLanguage(name), 'en', name)
     assert.equal(analyzeSubtitle(name, videos, 1).videoId, '1', name)
   }
-  assert.equal(matchSubtitle('TrinityBlood #03 SUB[jpn].ass', videos, 1), '3')
+  assert.equal(analyzeSubtitle('TrinityBlood #03 SUB[jpn].ass', videos, 1).videoId, '3')
   assert.equal(subtitleLanguage('TrinityBlood #03 AAC[5.1(eng)] SUB[jpn].ass'), 'ja')
-  assert.equal(matchSubtitle('TrinityBlood #01 SUB[eng].ass', [...videos, video('other', 'TrinityBlood.S01E01.mkv')], 1), '')
+  assert.equal(analyzeSubtitle('TrinityBlood #01 SUB[eng].ass', [...videos, video('other', 'TrinityBlood.S01E01.mkv')], 1).videoId, '')
   for (const name of ['Show #01-02.ass', 'Show #01-#02.ass', 'Show #01.5.ass', 'Show #01 #02.ass', 'Show_01-02.ass', 'Show #01 [02].ass', 'Show #01 [SP].ass']) {
     assert.equal(episodeNumber(name), undefined, name)
-    assert.equal(matchSubtitle(name, videos, 1), '', name)
+    assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
   }
 })
 

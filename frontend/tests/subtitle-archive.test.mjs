@@ -10,7 +10,7 @@ const source = await readFile(new URL('../src/utils/subtitleArchive.ts', import.
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(require, module, module.exports)
-const { extractSubtitleArchive, validateArchive } = module.exports
+const { extractSubtitleArchive } = module.exports
 const wasm = await libarchiveWasm({ wasmBinary: await readFile(new URL('../node_modules/libarchive-wasm/dist/libarchive.wasm', import.meta.url)) })
 const fixture = async name => new Uint8Array(await readFile(new URL(`./fixtures/subtitle-archives/${name}`, import.meta.url)))
 const limits = { bytes: 64 * 1024 * 1024, files: 100 }

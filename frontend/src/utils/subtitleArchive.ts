@@ -17,7 +17,7 @@ const starts = (bytes: Uint8Array, signature: number[]) => signature.every((valu
 
 // Reject volume and encryption flags independently of names and selected entries.
 // In particular, an archive with an encrypted non-subtitle is still rejected.
-export function validateArchive(bytes: Uint8Array, kind: Exclude<ArchiveKind, 'zip'>) {
+function validateArchive(bytes: Uint8Array, kind: Exclude<ArchiveKind, 'zip'>) {
   if (kind === '7z') {
     if (bytes.length < 32 || !starts(bytes, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) reject()
     return

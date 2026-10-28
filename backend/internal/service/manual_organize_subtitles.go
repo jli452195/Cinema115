@@ -66,10 +66,10 @@ func (s *ManualOrganize) SubtitleVideos(ctx context.Context, accountID, jobID st
 	if err != nil {
 		return nil, err
 	}
-	return s.subtitleVideos(ctx, accountID, jobID, a.Cookie)
+	return s.subtitleVideos(ctx, accountID, jobID, a.Cookie, make(map[string][]p115.ShareFile))
 }
 
-func (s *ManualOrganize) subtitleVideos(ctx context.Context, accountID, jobID, cookie string) ([]SubtitleVideo, error) {
+func (s *ManualOrganize) subtitleVideos(ctx context.Context, accountID, jobID, cookie string, cache map[string][]p115.ShareFile) ([]SubtitleVideo, error) {
 	var job *OrganizeJob
 	for _, item := range s.History() {
 		if item.ID == jobID && item.Config.AccountID == accountID {
@@ -81,7 +81,6 @@ func (s *ManualOrganize) subtitleVideos(ctx context.Context, accountID, jobID, c
 	if job == nil || job.Status == "running" || job.Status == "queued" {
 		return nil, fmt.Errorf("%w：请从已结束的整理记录选择作品", ErrOrganizeInput)
 	}
-	cache := make(map[string][]p115.ShareFile)
 	videos := make([]SubtitleVideo, 0, len(job.Items))
 	for _, item := range job.Items {
 		if item.Status != "done" || item.File.MediaType != "video" || !organizeID(item.TargetCID) {
@@ -108,10 +107,6 @@ func (s *ManualOrganize) subtitleVideos(ctx context.Context, accountID, jobID, c
 	return videos, nil
 }
 
-func subtitleExtension(name string) bool {
-	return subtitle.Supported(name)
-}
-
 func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePreviewInput) (SubtitleImport, error) {
 	if len(input.Files) == 0 || len(input.Files) > 100 {
 		return SubtitleImport{}, ErrOrganizeInput
@@ -127,7 +122,8 @@ func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePre
 		return SubtitleImport{}, err
 	}
 	defer s.releaseCleanup()
-	videos, err := s.subtitleVideos(ctx, input.AccountID, input.JobID, a.Cookie)
+	cache := make(map[string][]p115.ShareFile)
+	videos, err := s.subtitleVideos(ctx, input.AccountID, input.JobID, a.Cookie, cache)
 	if err != nil {
 		return SubtitleImport{}, err
 	}
@@ -138,12 +134,11 @@ func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePre
 	plan := SubtitleImport{AccountID: input.AccountID, JobID: input.JobID, Revision: a.Revision, CreatedAt: time.Now(), Status: "preview", Items: make([]SubtitleImportItem, 0, len(input.Files))}
 	seen := make(map[string]bool, len(input.Files))
 	names := make(map[string]bool, len(input.Files))
-	cache := make(map[string][]p115.ShareFile)
 	var total int64
 	for _, file := range input.Files {
 		video, ok := byID[file.VideoID]
 		digest, hashErr := hex.DecodeString(file.SHA256)
-		if !ok || !organizeID(file.LocalID) || seen[file.LocalID] || !subtitleExtension(file.OriginalName) || len(file.OriginalName) > 2048 || strings.ContainsAny(file.OriginalName, "\x00\r\n") || file.Size <= 0 || file.Size > p115.MaxSubtitleBytes || hashErr != nil || len(digest) != sha256.Size {
+		if !ok || !organizeID(file.LocalID) || seen[file.LocalID] || !subtitle.Supported(file.OriginalName) || len(file.OriginalName) > 2048 || strings.ContainsAny(file.OriginalName, "\x00\r\n") || file.Size <= 0 || file.Size > p115.MaxSubtitleBytes || hashErr != nil || len(digest) != sha256.Size {
 			return SubtitleImport{}, fmt.Errorf("%w：字幕文件、大小或视频匹配无效", ErrOrganizeInput)
 		}
 		seen[file.LocalID] = true
@@ -163,16 +158,8 @@ func (s *ManualOrganize) PreviewSubtitles(ctx context.Context, input SubtitlePre
 			return SubtitleImport{}, fmt.Errorf("%w：多个字幕的目标名称相同，请修改语言、版本或取消勾选", ErrOrganizeInput)
 		}
 		names[key] = true
-		files, ok := cache[video.ParentID]
-		if !ok {
-			files, err = s.list(ctx, video.ParentID, a.Cookie)
-			if err != nil {
-				return SubtitleImport{}, err
-			}
-			cache[video.ParentID] = files
-		}
 		item := SubtitleImportItem{SubtitleSelection: file, Video: video, Name: name, TargetPath: path.Join(path.Dir(video.Path), name), Status: "pending"}
-		if organizeCollision(files, name, "") {
+		if organizeCollision(cache[video.ParentID], name, "") {
 			item.Status, item.Message = "skipped", "已有同名条目，将跳过"
 		}
 		plan.Items = append(plan.Items, item)
@@ -329,14 +316,23 @@ func (s *ManualOrganize) runSubtitleImport(ctx context.Context, job *SubtitleImp
 	if !ok {
 		return fmt.Errorf("当前网盘不支持字幕上传")
 	}
+	// Reuse each verified post-upload snapshot for the next preflight in that
+	// directory. Keep verification after every write so an uncertain upload
+	// still stops the remaining files immediately; never reuse preview snapshots.
+	cache := make(map[string][]p115.ShareFile)
 	for i := range job.Items {
 		item := &job.Items[i]
 		if item.Status == "skipped" {
 			continue
 		}
-		files, err := s.list(ctx, item.Video.ParentID, cookie)
-		if err != nil {
-			return err
+		files, loaded := cache[item.Video.ParentID]
+		if !loaded {
+			var err error
+			files, err = s.list(ctx, item.Video.ParentID, cookie)
+			if err != nil {
+				return err
+			}
+			cache[item.Video.ParentID] = files
 		}
 		if !organizeSourceMatches(files, OrganizeFile{ShareFile: item.Video.ShareFile}, item.Video.Name) {
 			return fmt.Errorf("目标视频已移动或改名，已停止，请重新预览")
@@ -357,7 +353,7 @@ func (s *ManualOrganize) runSubtitleImport(ctx context.Context, job *SubtitleImp
 		if err := uploader.UploadSubtitle(ctx, item.Video.ParentID, item.Name, data[item.LocalID], cookie); err != nil {
 			return fmt.Errorf("字幕上传结果待核实，已停止后续上传: %w", err)
 		}
-		files, err = s.list(ctx, item.Video.ParentID, cookie)
+		files, err := s.list(ctx, item.Video.ParentID, cookie)
 		if err != nil {
 			return err
 		}
@@ -370,6 +366,7 @@ func (s *ManualOrganize) runSubtitleImport(ctx context.Context, job *SubtitleImp
 		if matches != 1 {
 			return fmt.Errorf("上传后未能唯一核实字幕，已停止后续上传，请刷新目标目录")
 		}
+		cache[item.Video.ParentID] = files
 		item.Status, item.Message = "done", "已上传并核实"
 		if err := s.subtitleCheckpoint(*job); err != nil {
 			return err

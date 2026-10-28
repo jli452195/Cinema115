@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 type subtitleSourceReader interface {
@@ -48,7 +49,7 @@ func validateSubtitleSource(file p115.ShareFile) error {
 	}
 	ext := strings.ToLower(path.Ext(file.Name))
 	archive := ext == ".zip" || ext == ".rar" || ext == ".7z"
-	if file.Directory || (!archive && !subtitleExtension(file.Name)) || file.Size <= 0 || file.Size > p115.MaxSubtitleSourceBytes || (!archive && file.Size > p115.MaxSubtitleBytes) {
+	if file.Directory || (!archive && !subtitle.Supported(file.Name)) || file.Size <= 0 || file.Size > p115.MaxSubtitleSourceBytes || (!archive && file.Size > p115.MaxSubtitleBytes) {
 		return fmt.Errorf("%w：请选择 ZIP / RAR / 7z 或字幕文件，压缩包总计 64 MiB，单字幕 16 MiB", ErrOrganizeInput)
 	}
 	return nil
@@ -67,12 +68,12 @@ func (s *ManualOrganize) PrepareSubtitleSources(ctx context.Context, input Subti
 	if _, ok := s.drive.(subtitleSourceReader); !ok {
 		return SubtitleSources{}, fmt.Errorf("当前网盘不支持读取字幕来源")
 	}
-	if _, err := s.subtitleVideos(ctx, a.ID, input.JobID, a.Cookie); err != nil {
+	parents := make(map[string][]p115.ShareFile)
+	if _, err := s.subtitleVideos(ctx, a.ID, input.JobID, a.Cookie, parents); err != nil {
 		return SubtitleSources{}, err
 	}
 	files := make([]SubtitleSourceFile, 0, len(input.Files))
 	seen := make(map[string]bool, len(input.Files))
-	parents := make(map[string][]p115.ShareFile)
 	var total int64
 	for _, requested := range input.Files {
 		if !organizeID(requested.ID) || !organizeID(requested.ParentID) || seen[requested.ID] {

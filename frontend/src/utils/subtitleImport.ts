@@ -107,8 +107,6 @@ export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], seas
   return no('未识别到明确集号，请按顺序匹配或手动选择')
 }
 
-export function matchSubtitle(name: string, videos: SubtitleMatchVideo[], season: number): string { return analyzeSubtitle(name, videos, season).videoId }
-
 export function subtitlePairKey(name: string): string {
   return /\.(idx|sub)$/i.test(name) ? name.replace(/\\/g, '/').replace(/\.(idx|sub)$/i, '').toLowerCase() : ''
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,95 @@ func TestManualOrganizeSubtitleImportUsesCurrentNameAndReplay(t *testing.T) {
 	_, err = restarted.ImportSubtitles(context.Background(), id, plan.ID, nil)
 	if err != nil || d.uploads != 1 {
 		t.Fatalf("replayed upload: %v", err)
+	}
+}
+
+func TestManualOrganizeSubtitleReusesDirectoryReads(t *testing.T) {
+	for _, directories := range []int{1, 2} {
+		t.Run(fmt.Sprint(directories), func(t *testing.T) {
+			s, d, id, job, _ := newSubtitleTest(t)
+			if directories == 2 {
+				// Give the second video a separate destination, as with multiple seasons.
+				item := &job.Items[1]
+				for i, file := range d.dirs[item.TargetCID] {
+					if file.ID == item.File.ID {
+						d.dirs["808"] = []p115.ShareFile{file}
+						d.dirs[item.TargetCID] = append(d.dirs[item.TargetCID][:i], d.dirs[item.TargetCID][i+1:]...)
+						break
+					}
+				}
+				item.TargetCID, item.TargetPath = "808", path.Join("/其他季", item.Name)
+				for i := range s.doc.Jobs {
+					if s.doc.Jobs[i].ID == job.ID {
+						s.doc.Jobs[i] = job
+					}
+				}
+			}
+			data := []byte("subtitle")
+			selections := make([]SubtitleSelection, 0, 12)
+			payload := make(map[string][]byte, 12)
+			for i := 0; i < 12; i++ {
+				selection := subtitleSelection(fmt.Sprint(i+1), job.Items[i%2].File.ID, "episode.ass", data)
+				selection.Version = fmt.Sprint(i)
+				// Include a VobSub pair: the newly verified index must not make its
+				// pending payload look like a conflicting pre-existing half pair.
+				if i < 2 {
+					selection.VideoID, selection.Version = job.Items[0].File.ID, "Pair"
+					selection.OriginalName = []string{"episode.idx", "episode.sub"}[i]
+				}
+				selections = append(selections, selection)
+				payload[selection.LocalID] = data
+			}
+			d.listCalls = make(map[string]int)
+			plan := previewSubtitles(t, s, id, job.ID, selections...)
+			if len(d.listCalls) != directories {
+				t.Fatal("missing destination reads", d.listCalls)
+			}
+			for _, count := range d.listCalls {
+				if count != 1 {
+					t.Fatal("preview repeated directory reads", d.listCalls)
+				}
+			}
+			d.listCalls = make(map[string]int)
+			result, err := s.ImportSubtitles(context.Background(), id, plan.ID, payload)
+			if err != nil || result.Status != "completed" || d.uploads != len(selections) {
+				t.Fatal(result, err, d.uploads)
+			}
+			reads := 0
+			for _, count := range d.listCalls {
+				reads += count
+			}
+			if reads != len(selections)+directories {
+				t.Fatal("expected one initial snapshot per directory plus each upload verification", d.listCalls)
+			}
+			for _, item := range result.Items {
+				if item.Status != "done" {
+					t.Fatal("upload was not verified", item)
+				}
+			}
+		})
+	}
+}
+
+func TestManualOrganizeSubtitleMissingUploadStopsAfterVerifiedSuccess(t *testing.T) {
+	s, d, id, job, _ := newSubtitleTest(t)
+	data := []byte("subtitle")
+	selections := make([]SubtitleSelection, 0, 3)
+	files := make(map[string][]byte, 3)
+	for i := 1; i <= 3; i++ {
+		selection := subtitleSelection(fmt.Sprint(i), "101", "episode.ass", data)
+		selection.Version = fmt.Sprint(i)
+		selections = append(selections, selection)
+		files[selection.LocalID] = data
+	}
+	plan := previewSubtitles(t, s, id, job.ID, selections...)
+	d.beforeUpload = func() { d.noApply = d.uploads == 2 }
+	result, err := s.ImportSubtitles(context.Background(), id, plan.ID, files)
+	if err != nil || result.Status != "partial" || d.uploads != 2 || result.Items[0].Status != "done" || result.Items[1].Status != "uncertain" || result.Items[2].Status != "pending" {
+		t.Fatal("unconfirmed upload continued or verified success lost", result, err)
+	}
+	if _, err := s.ImportSubtitles(context.Background(), id, plan.ID, files); err != nil || d.uploads != 2 {
+		t.Fatal("repeated an uncertain write", err, d.uploads)
 	}
 }
 
