@@ -25,6 +25,8 @@
     "test:organize-workflow": "node --test tests/manual-organize-workflow.test.mjs tests/organize-selection.test.mjs tests/organize-history.test.mjs",
     "test:organize-history-ui": "node scripts/organize-history-ui.cjs",
     "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs tests/subtitle-sources.test.mjs",
+    "test:subtitle-settings-ui": "node scripts/subtitle-settings-ui.cjs",
+    "test:assrt-ui": "node scripts/download-organize-ui.cjs garden assrt",
     "test:subtitle-sources-ui": "node scripts/subtitle-sources-ui.cjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",

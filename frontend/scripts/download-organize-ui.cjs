@@ -7,6 +7,7 @@ const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGyin
 const shareMode = process.argv[3] === 'share'
 const subtitleMode = process.argv[3] === 'subtitles'
 const localSubtitleMode = process.argv[3] === 'local-subtitles'
+const assrtMode = process.argv[3] === 'assrt'
 const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : 'Garden 搜索'
 const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : '/resources/garden/search'
 const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
@@ -21,6 +22,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
     let shareConfigured = false, omitOrganizeDirectory = false, loseAttachmentResponse = localSubtitleMode
     let japanese = true, emptySubtitles = localSubtitleMode
+    let assrtFail = false, assrtDownloadFail = false, releaseLibrary
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
       { id: 'show/E030.mkv', name: 'E030.mkv', sourcePath: '/show/E030.mkv', episode: 30 },
@@ -47,8 +49,19 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       else if (endpoint.endsWith('/accounts')) data = { accounts: [] }
       else if (endpoint.includes('/tmdb/detail/')) data = { id: 12501, kind: endpoint.includes('/detail/movie/') ? 'movie' : 'tv', title: '百变之星', originalTitle: 'カレイドスター', overview: '', posterUrl: '', backdropUrl: '', date: '2003-04-03', rating: 7, votes: 1, genres: [{ id: 16, name: '动画' }], countries: ['Japan'], countryCodes: japanese ? ['JP'] : ['CN'], cast: [], seasons: [{ number: 1, name: 'The very long season name with an unbroken subtitle ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ', episodeCount: 26 }, { number: 2, name: '新的篇章与很长的季度副标题', episodeCount: 25 }], collection: null }
       else if (endpoint === '/api/admin/subtitles/search') {
+        if (assrtMode && new URL(req.url()).searchParams.getAll('q').includes('慢字幕库')) await new Promise(resolve => { releaseLibrary = resolve })
         if (new URL(req.url()).searchParams.getAll('q').includes('故障测试')) { status = 502; data = { error: '模拟字幕库异常' } }
         else data = { versions: emptySubtitles ? [] : [{ id: 'v1', title: '百变之星', originalTitle: 'カレイドスター', year: '2003', source: 'BD', name: '测试字幕组', url: 'https://github.com/foxofice/sub_share' }] }
+      }
+      else if (endpoint === '/api/admin/subtitles/assrt/search') {
+        if (assrtFail) { status = 429; data = { error: '射手网请求已达配额，请稍后重试' } }
+        else data = { configured: assrtMode, items: assrtMode ? [{ id: 123, title: '百变之星 BD 中文字幕', language: '简体 / 繁体', group: '射手测试组', format: 'ASS', videoName: 'Show.1080p.BluRay' }] : [], hasMore: false }
+      }
+      else if (endpoint === '/api/admin/subtitles/assrt/123/download') {
+        if (assrtDownloadFail) { await route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: '射手下载配额不足，请稍后重试' }) }); return }
+        const { zipSync, strToU8 } = require('fflate')
+        const bytes = Buffer.from(zipSync({ '01.chs.ass': strToU8('[Script Info]\nTitle: Assrt'), '01.cht.ass': strToU8('[Script Info]\nTitle: Assrt CHT'), 'font.ttf': strToU8('font') }))
+        await route.fulfill({ status: 200, contentType: 'application/octet-stream', headers: { 'Content-Length': String(bytes.length), 'X-Subtitle-Filename': encodeURIComponent('测试字幕.zip') }, body: bytes }); return
       }
       else if (endpoint === '/api/admin/subtitles/versions/v1/files') data = { files: ['01.sc.ass', '01.tc.ass', 'Show [SP01].chs.ass'].map((name, i) => ({ path: `subs_list/animation/2003/Show/BD/Group/${name}`, name, sha: String(i + 1).repeat(40), revision: 'a'.repeat(40), size: 100 })) }
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
@@ -149,6 +162,80 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     passed.push('no filter toolbar; excluding all directories keeps recovery accessible; keyboard restore remains unselected without requests or dialog resize')
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isDisabled(), true)
+    assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).isDisabled(), true, 'subtitle mapping still requires selected videos')
+    if (assrtMode) {
+      const second = organizeDialog.locator('[data-organize-file]').nth(1)
+      await second.getByRole('checkbox').check()
+      await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
+      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      const picker = page.locator('dialog.subtitle-picker'), result = picker.getByRole('button', { name: /百变之星 BD 中文字幕/ })
+      await result.waitFor()
+      await picker.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
+      assert.equal(count('/subtitles/assrt/123/download'), 0)
+      assrtDownloadFail = true
+      await result.click()
+      await picker.getByRole('alert').filter({ hasText: '射手下载配额不足' }).waitFor()
+      assert.equal(await picker.locator('.match-files > li').count(), 0)
+      assrtDownloadFail = false
+      await result.click()
+      await picker.getByText(/^已选 2 个字幕/).waitFor()
+      assert.equal(await picker.locator('.match-files > li').count(), 2)
+      await picker.getByText('射手网 · 射手测试组', { exact: true }).first().waitFor()
+      await result.click()
+      assert.equal(count('/subtitles/assrt/123/download'), 2, 'loaded Assrt result must not download again')
+      await picker.getByLabel('选择本地字幕或压缩包', { exact: true }).setInputFiles({ name: '01.en.srt', mimeType: 'text/plain', buffer: Buffer.from('english') })
+      await picker.getByText(/^已选 3 个字幕/).waitFor()
+      await picker.getByRole('button', { name: '移除本地字幕', exact: true }).click()
+      await picker.getByText(/^已选 2 个字幕/).waitFor()
+      assrtFail = true
+      await picker.getByRole('textbox', { name: '字幕作品搜索词', exact: true }).fill('故障测试')
+      await picker.getByRole('button', { name: '搜索', exact: true }).click()
+      await picker.getByText(/射手网：.*配额/).waitFor()
+      await picker.getByText(/^已选 2 个字幕/).waitFor()
+      assrtFail = false
+      await picker.getByRole('textbox', { name: '字幕作品搜索词', exact: true }).fill('慢字幕库')
+      await picker.getByRole('button', { name: '搜索', exact: true }).click()
+      await result.waitFor()
+      await result.click()
+      assert.equal(count('/subtitles/assrt/123/download'), 2, 'slow library must not block Assrt result')
+      releaseLibrary()
+      await picker.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
+      const artifact = path.join(os.tmpdir(), 'cinema115-assrt-ui'); await fs.mkdir(artifact, { recursive: true })
+      for (const [width, theme] of [[1440, 'light'], [390, 'light'], [320, 'dark']]) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
+        assert.equal(await picker.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+        await page.screenshot({ path: path.join(artifact, `picker-${width}-${theme}.png`) })
+      }
+      assert.equal(count('/download-organize/subtitles/attachments'), 0)
+      await picker.getByRole('checkbox', { name: '选择字幕 01.cht.ass', exact: true }).uncheck()
+      await picker.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+      await organizeDialog.getByText('本次 1 个 · 射手网 1 个', { exact: true }).waitFor()
+      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await picker.getByText(/^已选 1 个字幕/).waitFor()
+      await result.click()
+      await picker.getByText(/^已选 2 个字幕/).waitFor()
+      assert.equal(count('/subtitles/assrt/123/download'), 3, 'saved subset must not prevent restoring the complete package')
+      await picker.getByRole('button', { name: '使用所选字幕', exact: true }).click()
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await picker.getByRole('button', { name: /百变之星.*2003/ }).click()
+      await picker.getByRole('button', { name: '移除全部', exact: true }).click()
+      await picker.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
+      assert.equal(await picker.locator('.match-files > li').count(), 0, 'clear returns to results instead of a blank body')
+      await page.keyboard.press('Escape')
+      await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).waitFor()
+      await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).click()
+      await organizeDialog.getByText('任务已创建', { exact: true }).waitFor()
+      assert.equal(count('/download-organize/subtitles/attachments'), 1)
+      const preview = calls.find(c => c.endpoint.endsWith('/download-organize/preview')).body
+      assert.equal(preview.subtitles.length, 2)
+      assert.equal(preview.subtitles[0].videoId, files[1].id)
+      assert.ok(preview.subtitles.every(sub => sub.localId && sub.sha256 && !sub.url))
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ passed: ['selection required; merged search; independent slow/error source', 'real ZIP extraction; local removal retains Assrt; repeat clicks reuse files; saved subset can restore full package', 'source labels and mobile/dark layout; clear returns to results', 'same attachment submission and lost receipt recovery'], artifact }, null, 2)); return
+    }
     if (localSubtitleMode) {
       const { zipSync, strToU8 } = require('fflate')
       const first = organizeDialog.locator('[data-organize-file]').first()

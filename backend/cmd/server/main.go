@@ -273,6 +273,15 @@ func main() {
 	downloadOrganize.Subtitles = subtitleLibrary
 	downloadOrganize.SubtitleAttachments = filepath.Join(dataDir, "subtitle-attachments")
 	httpapi.RegisterSubtitleLibrary(admin, subtitleLibrary)
+	subtitleStore, err := service.NewSessionStore(filepath.Join(dataDir, "subtitle-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	assrtService, err := service.NewAssrtService(subtitleStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterAssrt(admin, assrtService)
 	httpapi.RegisterDownloadOrganize(admin, downloadOrganize)
 	admin.POST("/p115/share/parse", func(c *gin.Context) {
 		var req shareRequest

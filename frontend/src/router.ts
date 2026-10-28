@@ -33,6 +33,7 @@ import GyingView from './views/GyingView.vue'
 import WoniuView from './views/WoniuView.vue'
 import NanShareView from './views/NanShareView.vue'
 import ResourceConfigView from './views/ResourceConfigView.vue'
+import SubtitleSettingsView from './views/SubtitleSettingsView.vue'
 import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import NamingSettingsView from './views/NamingSettingsView.vue'
@@ -91,6 +92,7 @@ export const router = createRouter({
     { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/resources' } },
     { path: '/telegram/channels', name: 'telegram-channels', component: TelegramChannelsView, meta: { managementSection: '/resources' } },
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },
+    { path: '/resources/subtitles', name: 'subtitle-settings', component: SubtitleSettingsView, meta: { managementSection: '/resources' } },
     { path: '/logs', name: 'logs', component: LogsView },
     { path: '/gying', name: 'gying', component: GyingView, meta: { managementSection: '/resources' } },
     { path: '/woniu', name: 'woniu', component: WoniuView, meta: { managementSection: '/resources' } },
