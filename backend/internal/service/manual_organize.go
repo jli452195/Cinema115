@@ -318,12 +318,16 @@ func (s *OrganizeEngine) listUntil(ctx context.Context, cid, cookie string, visi
 }
 
 func (s *OrganizeEngine) listOnce(ctx context.Context, cid, cookie string) ([]p115.ShareFile, error) {
+	return listOrganizeFiles(ctx, s.drive, cid, cookie)
+}
+
+func listOrganizeFiles(ctx context.Context, drive OrganizeDrive, cid, cookie string) ([]p115.ShareFile, error) {
 	files := make([]p115.ShareFile, 0)
 	seen := make(map[string]bool)
 	total := -1
 	for offset := 0; ; {
 		started := time.Now()
-		page, err := s.drive.DriveFiles(ctx, cid, offset, cookie)
+		page, err := drive.DriveFiles(ctx, cid, offset, cookie)
 		if stats := organizeStatsFrom(ctx); stats != nil {
 			stats.DirectoryRequests++
 			stats.DirectoryMS += time.Since(started).Milliseconds()

@@ -266,6 +266,15 @@ func main() {
 	manualOrganize := service.NewManualOrganize(organizeEngine)
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
+	mediaOrganizeStore, err := service.NewSessionStore(filepath.Join(dataDir, "media-organize.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mediaOrganizer, err := service.NewMediaOrganizer(mediaOrganizeStore, tmdbService, database, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterMediaOrganize(admin, mediaOrganizer)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
@@ -482,6 +491,16 @@ func main() {
 		go func() { defer workers.Done(); _ = tmdbService.Run(ctx, embyService.CachedSeriesIDs) }()
 	}
 	workerErrors := make(chan error, 8)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := mediaOrganizer.Run(ctx); err != nil {
+			select {
+			case workerErrors <- err:
+			case <-ctx.Done():
+			}
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

@@ -59,6 +59,7 @@ export const adminAccountGroups: { label: string; links: AccountLink[] }[] = [
     { label: '追更管理', to: '/follows/manage', icon: 'management' },
     { label: '动漫订阅', to: '/anime', icon: 'anime' },
     { label: '命名模板', to: '/settings/naming', icon: 'naming' },
+    { label: '自动整理', to: '/media/organize', icon: 'organize' },
     { label: '用户与邀请', to: '/users', icon: 'users', children: managementCategories.users.features.map(feature => ({ label: feature.title, to: feature.to, icon: feature.menuIcon })) },
     { label: '查看日志', to: '/logs', icon: 'logs' },
   ] },

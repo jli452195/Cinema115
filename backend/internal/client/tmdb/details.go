@@ -32,21 +32,23 @@ type Collection struct {
 type Detail struct {
 	CacheInfo
 	Item
-	BackdropURL  string          `json:"backdropUrl"`
-	Tagline      string          `json:"tagline"`
-	Status       string          `json:"status"`
-	Runtime      int             `json:"runtime"`
-	EpisodeCount int             `json:"episodeCount"`
-	Genres       []Genre         `json:"genres"`
-	Countries    []string        `json:"countries"`
-	CountryCodes []string        `json:"countryCodes"`
-	Cast         []CastMember    `json:"cast"`
-	Seasons      []SeasonSummary `json:"seasons"`
-	Collection   *Collection     `json:"collection"`
-	IMDBID       string          `json:"imdbId"`
-	IMDBURL      string          `json:"imdbUrl"`
-	TMDBURL      string          `json:"tmdbUrl"`
-	Numbering    *NumberingInfo  `json:"numbering,omitempty"`
+	BackdropURL        string          `json:"backdropUrl"`
+	Tagline            string          `json:"tagline"`
+	Status             string          `json:"status"`
+	Runtime            int             `json:"runtime"`
+	EpisodeCount       int             `json:"episodeCount"`
+	Genres             []Genre         `json:"genres"`
+	Countries          []string        `json:"countries"`
+	CountryCodes       []string        `json:"countryCodes"`
+	OriginCountryCodes []string        `json:"originCountryCodes,omitempty"`
+	OriginalLanguage   string          `json:"originalLanguage,omitempty"`
+	Cast               []CastMember    `json:"cast"`
+	Seasons            []SeasonSummary `json:"seasons"`
+	Collection         *Collection     `json:"collection"`
+	IMDBID             string          `json:"imdbId"`
+	IMDBURL            string          `json:"imdbUrl"`
+	TMDBURL            string          `json:"tmdbUrl"`
+	Numbering          *NumberingInfo  `json:"numbering,omitempty"`
 }
 
 type Episode struct {
@@ -133,26 +135,28 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		return nil, ErrInput
 	}
 	var raw struct {
-		ID             int         `json:"id"`
-		Title          string      `json:"title"`
-		Name           string      `json:"name"`
-		OriginalTitle  string      `json:"original_title"`
-		OriginalName   string      `json:"original_name"`
-		Overview       string      `json:"overview"`
-		Poster         string      `json:"poster_path"`
-		Backdrop       string      `json:"backdrop_path"`
-		ReleaseDate    string      `json:"release_date"`
-		AirDate        string      `json:"first_air_date"`
-		Rating         float64     `json:"vote_average"`
-		Votes          int         `json:"vote_count"`
-		Tagline        string      `json:"tagline"`
-		Status         string      `json:"status"`
-		Runtime        int         `json:"runtime"`
-		EpisodeRuntime []int       `json:"episode_run_time"`
-		EpisodeCount   int         `json:"number_of_episodes"`
-		Genres         []Genre     `json:"genres"`
-		Collection     *Collection `json:"belongs_to_collection"`
-		Countries      []struct {
+		ID                 int         `json:"id"`
+		Title              string      `json:"title"`
+		Name               string      `json:"name"`
+		OriginalTitle      string      `json:"original_title"`
+		OriginalName       string      `json:"original_name"`
+		Overview           string      `json:"overview"`
+		Poster             string      `json:"poster_path"`
+		Backdrop           string      `json:"backdrop_path"`
+		ReleaseDate        string      `json:"release_date"`
+		AirDate            string      `json:"first_air_date"`
+		Rating             float64     `json:"vote_average"`
+		Votes              int         `json:"vote_count"`
+		Tagline            string      `json:"tagline"`
+		Status             string      `json:"status"`
+		Runtime            int         `json:"runtime"`
+		EpisodeRuntime     []int       `json:"episode_run_time"`
+		EpisodeCount       int         `json:"number_of_episodes"`
+		Genres             []Genre     `json:"genres"`
+		OriginalLanguage   string      `json:"original_language"`
+		OriginCountryCodes []string    `json:"origin_country"`
+		Collection         *Collection `json:"belongs_to_collection"`
+		Countries          []struct {
 			Code string `json:"iso_3166_1"`
 			Name string `json:"name"`
 		} `json:"production_countries"`
@@ -205,6 +209,7 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		Item:        Item{ID: id, Kind: kind, Title: title, OriginalTitle: original, Overview: raw.Overview, PosterURL: imageURL(raw.Poster, "w500"), Date: date, Rating: raw.Rating, Votes: raw.Votes},
 		BackdropURL: imageURL(raw.Backdrop, "w1280"), Tagline: raw.Tagline, Status: raw.Status, Runtime: raw.Runtime, EpisodeCount: raw.EpisodeCount,
 		Genres: raw.Genres, Countries: make([]string, 0, len(raw.Countries)), Cast: make([]CastMember, 0, min(len(cast), 20)),
+		OriginalLanguage: raw.OriginalLanguage, OriginCountryCodes: raw.OriginCountryCodes,
 		Seasons: make([]SeasonSummary, 0, len(raw.Seasons)), Collection: raw.Collection,
 		IMDBID: validIMDBID(raw.ExternalIDs.IMDB), IMDBURL: imdbURL(raw.ExternalIDs.IMDB), TMDBURL: "https://www.themoviedb.org" + endpoint + "?language=zh-CN",
 	}

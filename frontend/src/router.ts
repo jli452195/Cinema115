@@ -37,6 +37,7 @@ import SubtitleSettingsView from './views/SubtitleSettingsView.vue'
 import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import NamingSettingsView from './views/NamingSettingsView.vue'
+import MediaOrganizeView from './views/MediaOrganizeView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
@@ -68,6 +69,7 @@ export const router = createRouter({
     { path: '/users/list', name: 'user-management', component: EmbyUsersView },
     { path: '/users/invites', name: 'user-invites', component: PortalSettingsView },
     { path: '/settings/naming', name: 'naming-settings', component: NamingSettingsView },
+    { path: '/media/organize', name: 'media-organize', component: MediaOrganizeView },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },
     { path: '/movie', name: 'movie', component: DashboardView, props: { kind: 'movie' } },
