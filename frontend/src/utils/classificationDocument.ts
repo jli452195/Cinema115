@@ -1,64 +1,104 @@
-import { isMap, isScalar, isSeq, parseDocument, type Document, type YAMLMap } from 'yaml'
-import type { ClassificationCondition, ClassificationConfig, ClassificationKind, ClassificationRule } from '../types/classification'
+import { isMap, isNode, isScalar, isSeq, LineCounter, parseDocument, type Document, type YAMLMap } from 'yaml'
+import type { ClassificationCondition, ClassificationConfig, ClassificationDiagnostic, ClassificationKind, ClassificationRule } from '../types/classification'
 
 export const classificationConditions: { key: ClassificationCondition; label: string }[] = [
   { key: 'genres', label: '类型' }, { key: 'origin_countries', label: '原产地' },
   { key: 'production_countries', label: '制作国家' }, { key: 'languages', label: '原始语言' },
 ]
 export interface ClassificationEditorDocument {
+  source: string
   document: Document
   config: ClassificationConfig
   nodes: Map<string, YAMLMap>
+  lineCounter: LineCounter
 }
 
-// Edit YAML nodes rather than stringify a JSON projection, preserving comments
-// on documents, sections, rules, fields and values when reordering or editing.
+function problem(lineCounter: LineCounter, node: unknown, field: string, message: string, offset?: number): never {
+  const position = lineCounter.linePos(offset ?? (isNode(node) ? node.range?.[0] ?? 0 : 0))
+  const diagnostic: ClassificationDiagnostic = { field, line: Math.max(1, position.line), column: Math.max(1, position.col), message }
+  throw Object.assign(new Error(message), { diagnostic })
+}
+
+// Go's YAML decoder accepts legacy octal/binary/underscore notation. Resolve the
+// same integer value rather than treating 016 as decimal 16 or a string.
+function integerValue(node: unknown): number | undefined {
+  if (!isScalar(node) || node.anchor || node.tag && node.tag !== 'tag:yaml.org,2002:int' || node.tag === undefined && node.type !== 'PLAIN') return
+  const text = node.source?.replace(/_/g, '').replace(/^\+/, '')
+  if (!text || !/^(?:0[xX][\da-fA-F]+|0[oO][0-7]+|0[bB][01]+|0[0-7]*|[1-9]\d*)$/.test(text)) return
+  const normalized = /^0[0-7]+$/.test(text) ? `0o${text.slice(1)}` : text
+  try {
+    const value = BigInt(normalized)
+    if (value > 0 && value <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(value)
+  } catch { /* Invalid integer notation is reported at the caller's field. */ }
+}
+
+// Keep the source and editable projection together. Semantic validation is
+// separate so incomplete visual edits can still be represented without loss.
 export function parseClassification(source: string): ClassificationEditorDocument {
-  if (new TextEncoder().encode(source).length > 256 * 1024) throw new Error('分类 YAML 不能超过 256 KiB')
-  const document = parseDocument(source, { uniqueKeys: true, strict: true })
-  if (document.errors.length || document.warnings.length) throw new Error(document.errors[0]?.message || document.warnings[0]!.message)
-  const mapping = (node: unknown, keys: string[], required: string[]) => {
-    if (!isMap(node) || node.anchor || node.tag && node.tag !== 'tag:yaml.org,2002:map') throw new Error('分类配置须使用普通 YAML 映射，不支持锚点或标签')
-    for (const pair of node.items) if (!isScalar(pair.key) || pair.key.anchor || typeof pair.key.value !== 'string' || !keys.includes(pair.key.value)) throw new Error('分类配置包含不支持的字段')
-    for (const key of required) if (!node.has(key)) throw new Error(`分类配置缺少 ${key}`)
+  const lineCounter = new LineCounter()
+  if (new TextEncoder().encode(source).length > 256 * 1024) problem(lineCounter, undefined, '$', '分类 YAML 不能超过 256 KiB')
+  const document = parseDocument(source, { uniqueKeys: true, strict: true, lineCounter })
+  const syntaxError = document.errors[0]
+  if (syntaxError) problem(lineCounter, undefined, '$', syntaxError.message, syntaxError.pos[0])
+  const fail = (node: unknown, field: string, message: string): never => problem(lineCounter, node, field, message)
+  const mapping = (node: unknown, field: string, keys: string[], required: string[]) => {
+    if (!isMap(node) || node.anchor || node.tag && node.tag !== 'tag:yaml.org,2002:map') return fail(node, field, '分类配置须使用普通 YAML 映射，不支持锚点或自定义标签')
+    for (const pair of node.items) {
+      if (!isScalar(pair.key) || pair.key.anchor || pair.key.tag && pair.key.tag !== 'tag:yaml.org,2002:str' || typeof pair.key.value !== 'string') fail(pair.key, field, '分类字段名须为普通文本')
+      const key = String((pair.key as { value: string }).value)
+      if (!keys.includes(key)) fail(pair.key, `${field}.${key}`, '分类配置包含不支持的字段')
+    }
+    for (const key of required) if (!node.has(key)) fail(node, `${field}.${key}`, `分类配置缺少 ${key}`)
     return node
   }
-  const text = (value: unknown): string => {
-    if (!isScalar(value) || value.anchor || value.tag && value.tag !== 'tag:yaml.org,2002:str' || typeof value.value !== 'string') throw new Error('分类名称与目录须为普通文本')
-    return value.value
+  const text = (node: unknown, field: string): string => {
+    if (!isScalar(node) || node.anchor || node.tag && node.tag !== 'tag:yaml.org,2002:str' || typeof node.value !== 'string') return fail(node, field, '分类名称与目录须为普通文本')
+    return node.value
   }
-  const root = mapping(document.contents, ['version', 'movie', 'tv'], ['version', 'movie', 'tv'])
+  const list = (node: unknown, field: string) => {
+    if (!isSeq(node) || node.anchor || node.tag && node.tag !== 'tag:yaml.org,2002:seq') return fail(node, field, '分类规则与条件须为普通列表')
+    return node
+  }
+  const root = mapping(document.contents, '$', ['version', 'movie', 'tv'], ['version', 'movie', 'tv'])
   const version = root.get('version', true)
-  if (!isScalar(version) || version.anchor || version.tag && version.tag !== 'tag:yaml.org,2002:int' || version.value !== 1) throw new Error('仅支持分类配置版本 1')
+  if (integerValue(version) !== 1) fail(version, 'version', '仅支持整数分类配置版本 1')
   const config = {} as ClassificationConfig, nodes = new Map<string, YAMLMap>()
   for (const kind of ['movie', 'tv'] as const) {
-    const section = mapping(root.get(kind, true), ['fallback', 'rules'], ['fallback', 'rules'])
-    const sequence = section.get('rules', true)
-    if (!isSeq(sequence) || sequence.anchor || sequence.tag && sequence.tag !== 'tag:yaml.org,2002:seq') throw new Error('分类规则须为普通列表')
-    config[kind] = { fallback: text(section.get('fallback', true)), rules: sequence.items.map((item, index) => {
-      const rule = mapping(item, ['name', 'path', 'match'], ['name', 'path', 'match'])
-      const match = mapping(rule.get('match', true), classificationConditions.map(item => item.key), [])
-      const parsed: ClassificationRule = { key: `${kind}-${index}`, name: text(rule.get('name', true)), path: text(rule.get('path', true)), match: {} }
+    const section = mapping(root.get(kind, true), kind, ['fallback', 'rules'], ['fallback', 'rules'])
+    const sequence = list(section.get('rules', true), `${kind}.rules`)
+    config[kind] = { fallback: text(section.get('fallback', true), `${kind}.fallback`), rules: sequence.items.map((item, index) => {
+      const field = `${kind}.rules[${index}]`
+      const rule = mapping(item, field, ['name', 'path', 'match'], ['name', 'path', 'match'])
+      const match = mapping(rule.get('match', true), `${field}.match`, classificationConditions.map(item => item.key), [])
+      const parsed: ClassificationRule = { key: `${kind}-${index}`, name: text(rule.get('name', true), `${field}.name`), path: text(rule.get('path', true), `${field}.path`), match: {} }
       for (const { key } of classificationConditions) {
         if (!match.has(key)) continue
-        const values = match.get(key, true)
-        if (!isSeq(values) || values.anchor || values.tag && values.tag !== 'tag:yaml.org,2002:seq' || !values.items.length) throw new Error('条件须为非空普通列表')
-        parsed.match[key] = values.items.map(value => {
-          if (!isScalar(value) || value.anchor || value.tag && value.tag !== `tag:yaml.org,2002:${key === 'genres' ? 'int' : 'str'}`) throw new Error('条件不支持别名、锚点或自定义标签')
+        const valueField = `${field}.match.${key}`, values = list(match.get(key, true), valueField)
+        const seen = new Set<string | number>()
+        parsed.match[key] = values.items.map((node, valueIndex) => {
+          const itemField = `${valueField}[${valueIndex}]`
+          let value: string | number
           if (key === 'genres') {
-            if (!Number.isSafeInteger(value.value) || Number(value.value) <= 0) throw new Error('类型 ID 须为正整数')
-            return value.value as number
+            const integer = integerValue(node)
+            if (integer === undefined) return fail(node, itemField, '类型 ID 须为有效正整数')
+            value = integer
+          } else {
+            const code = text(node, itemField).trim()
+            if (!/^[a-z]{2}$/i.test(code)) return fail(node, itemField, '国家和语言须为两位字母代码')
+            value = key === 'languages' ? code.toLowerCase() : code.toUpperCase()
           }
-          if (typeof value.value !== 'string' || !/^[a-z]{2}$/i.test(value.value.trim())) throw new Error('国家和语言须为两位字母代码')
-          return key === 'languages' ? value.value.trim().toLowerCase() : value.value.trim().toUpperCase()
+          if (seen.has(value)) fail(node, itemField, '同一条件不能包含重复值')
+          seen.add(value)
+          return value
         })
-        if (new Set(parsed.match[key]).size !== parsed.match[key]!.length) throw new Error('同一条件不能包含重复值')
       }
       nodes.set(parsed.key, rule)
       return parsed
     }) }
   }
-  return { document, config, nodes }
+  const warning = document.warnings[0]
+  if (warning) problem(lineCounter, undefined, '$', warning.message, warning.pos[0])
+  return { source, document, config, nodes, lineCounter }
 }
 
 export function classificationSignature(config: ClassificationConfig) {
@@ -68,21 +108,48 @@ export function classificationSignature(config: ClassificationConfig) {
   }))
 }
 
-export function classificationIssue(config: ClassificationConfig): { kind: ClassificationKind; key?: string; message: string } | undefined {
-  const directoryError = (value: string) => !value || value.split('/').some(part => !part || part === '.' || part === '..' || /[\\:*?"<>|\u0000-\u001f\u007f]/.test(part) || part !== part.trim() || /\.$/.test(part))
+function directoryError(value: string): boolean {
+  return !value || value.split('/').some(part => {
+    const base = part.split('.')[0]!.trimEnd()
+    return !part || part !== part.trim() || part.startsWith('.') || part.endsWith('.')
+      || /[\\:*?"<>|\u0000-\u001f\u007f-\u009f]/.test(part)
+      || /^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|(?:COM|LPT)[1-9¹²³])$/i.test(base)
+      || new TextEncoder().encode(part).length > 240
+  })
+}
+
+export function classificationIssue(config: ClassificationConfig): { kind: ClassificationKind; key?: string; field: string; message: string } | undefined {
   for (const kind of ['movie', 'tv'] as const) {
-    if (directoryError(config[kind].fallback)) return { kind, message: `请填写有效的兜底相对目录，例如 ${kind === 'movie' ? '电影' : '剧集'}/其他` }
+    if (directoryError(config[kind].fallback)) return { kind, field: `${kind}.fallback`, message: `请填写有效的兜底相对目录，例如 ${kind === 'movie' ? '电影' : '剧集'}/其他` }
     const names = new Set<string>()
-    for (const rule of config[kind].rules) {
-      const name = rule.name.trim()
-      const message = !name ? '请填写规则名称' : names.has(name) ? '当前类型存在同名规则' : directoryError(rule.path) ? '请填写有效的相对目录，不能包含绝对路径或上级目录' : !Object.keys(rule.match).length ? '至少选择一项匹配条件' : Object.values(rule.match).some(values => !values?.length) ? '每项条件至少选择一个匹配值，或移除该条件' : ''
-      if (message) return { kind, key: rule.key, message }
+    for (const [index, rule] of config[kind].rules.entries()) {
+      const name = rule.name.trim(), prefix = `${kind}.rules[${index}]`
+      const emptyCondition = classificationConditions.find(({ key }) => rule.match[key] && !rule.match[key]!.length)
+      const issue = !name ? { field: `${prefix}.name`, message: '请填写规则名称' }
+        : names.has(name) ? { field: `${prefix}.name`, message: '当前类型存在同名规则' }
+        : directoryError(rule.path) ? { field: `${prefix}.path`, message: '请填写有效的相对目录，不能包含绝对路径、上级目录或非法目录段' }
+        : !Object.keys(rule.match).length ? { field: `${prefix}.match`, message: '至少选择一项匹配条件' }
+        : emptyCondition ? { field: `${prefix}.match.${emptyCondition.key}`, message: '每项条件至少选择一个匹配值，或移除该条件' }
+        : undefined
+      if (issue) return { kind, key: rule.key, ...issue }
       names.add(name)
     }
   }
 }
 
+// Source mode uses the same semantic checks as the visual form, now positioned
+// against the exact parsed document rather than generated or saved YAML.
+export function validateClassification(editor: ClassificationEditorDocument): void {
+  const issue = classificationIssue(editor.config)
+  if (!issue) return
+  const path = issue.field.replace(/\[(\d+)\]/g, '.$1').split('.').map(part => /^\d+$/.test(part) ? Number(part) : part)
+  let node: unknown = editor.document.getIn(path, true)
+  while (!isNode(node) && path.length) { path.pop(); node = editor.document.getIn(path, true) }
+  problem(editor.lineCounter, node, issue.field, issue.message)
+}
+
 export function writeClassification(editor: ClassificationEditorDocument, config: ClassificationConfig): string {
+  if (classificationSignature(editor.config) === classificationSignature(config)) return editor.source
   const document = editor.document.clone()
   const setText = (node: YAMLMap, key: string, value: string) => {
     const scalar = node.get(key, true)
@@ -101,9 +168,13 @@ export function writeClassification(editor: ClassificationEditorDocument, config
       if (!isMap(match)) throw new Error('分类匹配条件无效')
       for (const { key } of classificationConditions) {
         const values = rule.match[key]
-        if (!values?.length) { match.delete(key); continue }
+        if (values === undefined) { match.delete(key); continue }
         const previous = match.get(key, true)
-        if (isSeq(previous)) previous.items = values.map(value => previous.items.find(item => isScalar(item) && String(item.value).trim().toLowerCase() === String(value).toLowerCase()) || document.createNode(value))
+        if (isSeq(previous)) previous.items = values.map(value => {
+          const retained = previous.items.find(item => isScalar(item) && (key === 'genres' ? integerValue(item) === value : String(item.value).trim().toLowerCase() === String(value).toLowerCase()))
+          if (isScalar(retained)) { if (key === 'genres') retained.value = value; return retained }
+          return document.createNode(value)
+        })
         else match.set(key, document.createNode(values))
       }
       return node

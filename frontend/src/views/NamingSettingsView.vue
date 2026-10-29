@@ -123,7 +123,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController.abort(); clearTimeo
 </script>
 
 <template>
-  <ManagementLayout title="命名模板" description="统一设置电影和剧集的目录、文件名规则，供不同存储与整理功能使用。" content-class="max-w-6xl" @logout="$emit('logout')">
+  <ManagementLayout title="命名模板" description="统一设置电影和剧集的目录、文件名规则，供不同存储与整理功能使用。" @logout="$emit('logout')">
     <div class="naming-settings">
       <header class="ns-toolbar">
         <div class="ns-kind" role="group" aria-label="模板类型"><button v-for="option in [{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :key="option.value" type="button" :disabled="locked" :aria-pressed="kind === option.value" :aria-label="`${option.label}${dirty(option.value) ? '，有未保存修改' : ''}`" @click="chooseKind(option.value)">{{ option.label }}<span v-if="dirty(option.value)" class="ns-dirty" aria-hidden="true"></span></button></div>
