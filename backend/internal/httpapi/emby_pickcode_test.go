@@ -21,12 +21,19 @@ func TestPickCodeFriendPlaybackDownloadAndCache(t *testing.T) {
 	t.Run("play115", func(t *testing.T) {
 		testPickCodeFriendPlaybackDownloadAndCache(t, "/play115/abc123/3432417343848548293/e63d59350688066658c5d8cf2748b97abb684251/589916580/external-name.mkv")
 	})
+	t.Run("drive115", func(t *testing.T) {
+		testPickCodeFriendPlaybackDownloadAndCache(t, "/api/drive115/abc123/3432417343848548293/e63d59350688066658c5d8cf2748b97abb684251/589916580/native-name.mkv")
+	})
 }
 
 func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string) {
 	wantSourceReads := 1
 	wantName, wantHash, wantSize := "movie", strings.Repeat("A", 40), int64(100)
-	if strings.HasPrefix(sourcePath, "/play115/") {
+	completePrefix := "/play115/"
+	if strings.HasPrefix(sourcePath, "/api/drive115/") {
+		completePrefix = "/api/drive115/"
+	}
+	if strings.HasPrefix(sourcePath, completePrefix) {
 		claim, ok := parsePickCodeSTRMClaim("http://nas" + sourcePath)
 		if !ok {
 			t.Fatal("invalid play115 fixture")
@@ -136,8 +143,8 @@ func testPickCodeFriendPlaybackDownloadAndCache(t *testing.T, sourcePath string)
 	if err := accounts.Update(sourceID, 2, "主账号", &empty); err != nil {
 		t.Fatal(err)
 	}
-	if strings.HasPrefix(sourcePath, "/play115/") {
-		sourcePath = "/play115/otherpc/999/" + wantHash + "/589916580/other-name.mkv"
+	if strings.HasPrefix(sourcePath, completePrefix) {
+		sourcePath = completePrefix + "otherpc/999/" + wantHash + "/589916580/other-name.mkv"
 	} else {
 		sourcePath = "/api/redirect115/otherpc/" + strings.Repeat("a", 40) + "/other-name.mkv"
 	}

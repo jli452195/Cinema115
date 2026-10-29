@@ -91,6 +91,7 @@ export const router = createRouter({
     { path: '/115/share/logs', name: 'share-logs', component: ShareView, props: { tab: 'logs' } },
     { path: '/115/cloud-download', name: 'cloud-download', component: CloudDownloadView },
     { path: '/115/folder-monitor', name: 'folder-monitor', component: FolderMonitorView },
+    { path: '/115/drive-strm', name: 'drive-strm', component: () => import('./views/DriveSTRMView.vue') },
     { path: '/115/download-organize', name: 'download-organize', component: DownloadOrganizeView },
     { path: '/115/manual-organize', name: 'manual-organize', component: ManualOrganizeView },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },

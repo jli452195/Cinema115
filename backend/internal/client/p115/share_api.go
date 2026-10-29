@@ -45,6 +45,7 @@ func NewShareClient() *ShareClient {
 
 type ShareFile struct {
 	SHA1      string `json:"sha1"`
+	PickCode  string `json:"pickCode,omitempty"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`

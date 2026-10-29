@@ -5,10 +5,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 const MaxMetadataSize int64 = 32 << 20
+
+// ReadDriveMetadata uses the listing identity and one download lookup. It never
+// supplements missing hashes with a per-file supervision request.
+func (c *ShareClient) ReadDriveMetadata(ctx context.Context, expected ShareFile, cookie string) ([]byte, error) {
+	if expected.Directory || !validDriveID(expected.ID, false) || !instantPickCode.MatchString(expected.PickCode) || !instantHash.MatchString(expected.SHA1) || expected.Size <= 0 || expected.Size > MaxMetadataSize {
+		return nil, fmt.Errorf("附件身份、大小或取链信息无效（最大 32 MB）")
+	}
+	info, id, err := c.pickCodeInfo(ctx, expected.PickCode, cookie, PlaybackUserAgent)
+	if err != nil {
+		return nil, err
+	}
+	if id != expected.ID || info.Size != expected.Size || info.SHA1 != "" && !strings.EqualFold(info.SHA1, expected.SHA1) {
+		return nil, fmt.Errorf("附件取链身份与目录列表不一致")
+	}
+	data, err := c.readMetadataURL(ctx, info.URL)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != expected.Size {
+		return nil, fmt.Errorf("附件下载不完整")
+	}
+	return data, nil
+}
 
 // ReadMetadata 读取有权访问的配套文件；登录 Cookie 仅发送给下载地址查询接口。
 func (c *ShareClient) ReadMetadata(ctx context.Context, share *ShareInfo, fileID, cookie string) ([]byte, error) {

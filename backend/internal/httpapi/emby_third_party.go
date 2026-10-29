@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/strm"
 )
 
 func pickCodeSHA1Context(ctx context.Context, claim *sharePlaybackParams) context.Context {
@@ -56,6 +56,14 @@ func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
 		return nil, false
 	}
 	path := u.EscapedPath()
+	if strings.HasPrefix(path, strm.DrivePrefix) {
+		// Our generator always escapes filenames. Unlike legacy generators,
+		// native declarations never recover unescaped URL fragments.
+		if strings.Contains(raw, "#") {
+			return nil, false
+		}
+		return parsePlay115Path(strings.TrimPrefix(path, strm.DrivePrefix))
+	}
 	if strings.Contains(raw, "#") {
 		// Some STRM generators leave filename '#' characters unescaped. Only
 		// recover them in the final filename slot; never change source identity
@@ -105,22 +113,11 @@ func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
 }
 
 func parsePlay115Path(path string) (*sharePlaybackParams, bool) {
-	parts := strings.Split(path, "/")
-	if len(parts) != 5 || !pickCodePattern.MatchString(parts[0]) || !strmFileID.MatchString(parts[1]) || !pickCodePathSHA1Pattern.MatchString(parts[2]) || !strmFileID.MatchString(parts[3]) {
+	value, err := strm.ParseDrivePath(strm.DrivePrefix + path)
+	if err != nil {
 		return nil, false
 	}
-	if _, err := strconv.ParseUint(parts[1], 10, 64); err != nil {
-		return nil, false
-	}
-	size, err := strconv.ParseInt(parts[3], 10, 64)
-	if err != nil || size <= 0 {
-		return nil, false
-	}
-	name, ok := pickCodeFilename(parts[4])
-	if !ok || strings.TrimSpace(name) == "" {
-		return nil, false
-	}
-	return &sharePlaybackParams{PickCode: parts[0], FileID: parts[1], SHA1: strings.ToUpper(parts[2]), Size: size, Name: name}, true
+	return &sharePlaybackParams{PickCode: value.PickCode, FileID: value.FileID, SHA1: value.SHA1, Size: value.Size, Name: value.Name}, true
 }
 
 func pickCodeFilename(raw string) (string, bool) {

@@ -339,6 +339,9 @@ func main() {
 	}
 	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
+	driveSTRM := service.NewDriveSTRMService(database, accounts, shareAPI.Client, shareAPI.OutputRoot)
+	driveEvents := service.NewDriveSTRMEvents(driveSTRM, shareAPI.Client)
+	httpapi.RegisterDriveSTRM(admin, driveSTRM, driveEvents, shareAPI.BaseURL)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)
 	}
@@ -541,6 +544,21 @@ func main() {
 		if err := folderMonitors.Run(ctx); err != nil {
 			workerErrors <- err
 		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := driveSTRM.Run(ctx); err != nil {
+			select {
+			case workerErrors <- err:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		driveEvents.Run(ctx)
 	}()
 	workers.Add(1)
 	go func() {

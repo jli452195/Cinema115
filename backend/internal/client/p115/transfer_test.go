@@ -33,7 +33,7 @@ func TestTransferAPIFormsAndLargeIDs(t *testing.T) {
 			if r.Form.Get("cid") != id {
 				t.Error("大整数 ID 丢失精度")
 			}
-			w.Write([]byte(`{"state":1,"count":"1","data":[{"fid":3516637914517734610,"n":"视频.mkv","s":"100"}]}`))
+			w.Write([]byte(`{"state":1,"count":"1","data":[{"fid":3516637914517734610,"n":"视频.mkv","s":"100","sha":"0123456789abcdef0123456789abcdef01234567","pc":"abc123"}]}`))
 		case "/share/receive":
 			if r.Form.Get("file_id") != "1,2" || r.Form.Get("cid") != id || r.Form.Get("receive_code") != "abcd" {
 				t.Error("转存参数错误")
@@ -67,6 +67,9 @@ func TestTransferAPIFormsAndLargeIDs(t *testing.T) {
 	page, err := c.DriveFiles(ctx, cid, 0, "test-cookie")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(page.Files) != 1 || page.Files[0].ID != "3516637914517734610" || page.Files[0].SHA1 != "0123456789ABCDEF0123456789ABCDEF01234567" || page.Files[0].PickCode != "abc123" || page.Files[0].Size != 100 {
+		t.Fatal("目录列表丢失 STRM 字段或大整数精度", page)
 	}
 	share, err := c.SendShare(ctx, []string{page.Files[0].ID}, "test-cookie")
 	if err != nil || share.URL != "https://115cdn.com/s/own?password=abcd" {

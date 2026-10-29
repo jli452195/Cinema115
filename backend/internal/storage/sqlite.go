@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 62
+const schemaVersion = 64
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct{ db *sql.DB }
@@ -535,6 +535,9 @@ PRAGMA user_version=30;`); err != nil {
 	}
 	if _, err := tx.ExecContext(ctx, mediaOrganizeSchema); err != nil {
 		return fmt.Errorf("创建整理记录存储: %w", err)
+	}
+	if err := initializeDriveSTRMSchema(ctx, tx, version); err != nil {
+		return fmt.Errorf("创建目录 STRM 存储: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)
