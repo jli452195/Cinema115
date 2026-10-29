@@ -70,6 +70,7 @@ export const router = createRouter({
     { path: '/settings/classification', redirect: to => ({ name: 'classification-settings', query: to.query, hash: to.hash }) },
     { path: '/media/organize', component: () => import('./views/OrganizeWorkspaceView.vue'), meta: { managementSection: '/media/organize' }, children: [
       { path: '', name: 'media-organize', component: () => import('./views/MediaOrganizeView.vue') },
+      { path: 'history', name: 'media-organize-history', component: () => import('./views/MediaOrganizeHistoryView.vue') },
       { path: 'naming', name: 'naming-settings', component: () => import('./views/NamingSettingsView.vue') },
       { path: 'classification', name: 'classification-settings', component: () => import('./views/ClassificationSettingsView.vue') },
     ] },

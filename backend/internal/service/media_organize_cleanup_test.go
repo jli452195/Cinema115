@@ -85,7 +85,7 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 	}
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
-	if len(run.Entries) != 6 || len(s.State(1).History.Items) != 1 {
+	if len(run.Entries) != 6 || len(mediaTestState(s, 1).History.Items) != 1 {
 		t.Fatal("scan must produce one primary task with its companions", run)
 	}
 	mediaTestProcess(t, s, &run, "execute")
@@ -134,7 +134,7 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := restarted.State(1); state.History.Total != 1 || len(state.Cleanup) != 1 || state.History.Items[0].AttachmentCount != 4 {
+	if state := mediaTestState(restarted, 1); state.History.Total != 1 || len(state.Cleanup) != 1 || state.History.Items[0].AttachmentCount != 4 {
 		t.Fatal("task aggregation or durable cleanup summary lost", state)
 	}
 }
@@ -171,7 +171,7 @@ func TestMediaOrganizerRechecksAttachmentOwnershipBeforeMoving(t *testing.T) {
 	}
 }
 
-func TestMediaOrganizerSharedArtworkIncludesIncrementallySkippedVideos(t *testing.T) {
+func TestMediaOrganizerSharedArtworkIncludesUnmatchedSourceVideos(t *testing.T) {
 	s, metadata, _, rule := newMediaOrganizeTest(t)
 	metadata.items = nil
 	mediaTestFile(t, rule.Source, "Work.S01E01.mkv", "unmatched video")
@@ -186,7 +186,7 @@ func TestMediaOrganizerSharedArtworkIncludesIncrementallySkippedVideos(t *testin
 		if e.File.Name == "poster.png" && (e.Status != "retained" || e.VideoID != "" || e.Target != "") {
 			t.Fatal("shared artwork ignored a present but skipped work", e)
 		}
-		if e.File.MediaType == "video" && e.Status != "done" {
+		if e.File.Name == "Other.S01E01.mkv" && e.Status != "done" {
 			t.Fatal("retained artwork blocked the independent matched video", e)
 		}
 	}
@@ -467,7 +467,7 @@ func TestMediaOrganizerOrphanSubtitlesAndEmptyDirectories(t *testing.T) {
 }
 
 func TestMediaOrganizerDoesNotDiscardSubtitlesOfUnprocessedVideos(t *testing.T) {
-	for _, scenario := range []string{"settling", "incremental skip"} {
+	for _, scenario := range []string{"settling", "unmatched video"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, metadata, _, rule := newMediaOrganizeTest(t)
 			mediaTestFile(t, rule.Source, "Work.S01E01.mkv", "video")
@@ -520,7 +520,7 @@ func TestMediaOrganizerCloudEmptyDirectoriesRecheck(t *testing.T) {
 				t.Fatal(err)
 			}
 			if incoming {
-				if len(d.deleted) != 0 || s.State(1).History.Total != 0 {
+				if len(d.deleted) != 0 || mediaTestState(s, 1).History.Total != 0 {
 					t.Fatal("nonempty folder was deleted or falsely recorded", d.deleted)
 				}
 			} else if !slices.Equal(d.deleted, []string{"31", "30"}) || len(d.dirs["10"]) != 0 {
@@ -695,7 +695,7 @@ func TestMediaOrganizerRepeatedStartReusesScanningRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if repeated.ID != run.ID || len(s.doc.Runs) != 1 || s.doc.Runs[0].ID != run.ID || s.State(1).History.Total != 1 {
+		if repeated.ID != run.ID || len(s.doc.Runs) != 1 || s.doc.Runs[0].ID != run.ID || mediaTestState(s, 1).History.Total != 1 {
 			t.Fatal("repeated start must reuse the pending run", s.doc.Runs)
 		}
 	}

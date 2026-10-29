@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -143,7 +142,7 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
 		organizeFileNumbering(&item)
 		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
-		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Fingerprint: parent + "/" + file.Name + ":" + strconv.FormatInt(file.Size, 10) + ":" + strconv.FormatInt(modified, 10), Status: "pending"})
+		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Status: "pending"})
 	}
 	if f.rule.Storage == "local" {
 		f.localSnapshots = make(map[string]os.FileInfo)

@@ -81,7 +81,7 @@ func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaO
 		}
 		run.TaskFileID, run.Status = input.FileID, "queued"
 		run.Message = "等待重新整理当前任务"
-		if err := s.persistLocked(); err != nil {
+		if err := s.persistLocked(run.ID); err != nil {
 			return MediaOrganizeTask{}, err
 		}
 		s.actions[id] = "retry"

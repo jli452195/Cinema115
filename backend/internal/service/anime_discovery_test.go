@@ -474,9 +474,17 @@ func TestAnimeDiscoveryRunnerRunCancellationWaitsForBothLanes(t *testing.T) {
 	r.now = nil
 	r.interval = time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
+	joined := false
+	t.Cleanup(func() {
+		cancel()
+		if !joined {
+			if err := <-done; err != nil {
+				t.Errorf("stop discovery runner: %v", err)
+			}
+		}
+	})
 	for _, started := range []chan struct{}{pollStarted, verifyStarted} {
 		select {
 		case <-started:
@@ -487,6 +495,7 @@ func TestAnimeDiscoveryRunnerRunCancellationWaitsForBothLanes(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
+		joined = true
 		if err != nil {
 			t.Fatal(err)
 		}

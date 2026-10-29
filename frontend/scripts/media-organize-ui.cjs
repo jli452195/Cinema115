@@ -15,7 +15,7 @@ const gate = () => {
   page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000)
   const rule = { id: 'rule1', name: 'NAS 验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, enabled: false, intervalMinutes: 5 }
   const entry = (id, mediaType, status, videoId) => ({ file: { id, name: path.basename(id), sourcePath: id, mediaType, season: 1, episode: 1 }, group: '1', videoId, target: '/media/library/' + id, status, message: status === 'error' ? '模拟附件写入失败' : '' })
-  const task = (id, status, entries) => ({ runId: 'run1', fileId: id, name: path.basename(id), title: '示例作品', kind: 'tv', mediaType: 'video', season: 1, episode: 1, source: rule.source + '/' + id, target: rule.target + '/' + id, status, at: new Date().toISOString(), attachmentCount: entries.length - 1, entries, rule: copy(rule), group: { id: '1', identity: { name: 'Unknown' }, kind: 'tv', tmdbId: 42, title: '示例作品' } })
+  const task = (id, status, entries) => ({ runId: 'run1', fileId: id, name: path.basename(id), title: '示例作品', kind: 'tv', mediaType: 'video', season: 1, episode: 1, source: rule.source + '/' + id, target: rule.target + '/' + id, status, at: new Date().toISOString(), attachmentCount: entries.length - 1, canDelete: true, entries, rule: copy(rule), group: { id: '1', identity: { name: 'Unknown' }, kind: 'tv', tmdbId: 42, title: '示例作品' } })
   const first = task('Work.S01E01.strm', 'partial', [entry('Work.S01E01.strm', 'video', 'done'), entry('Work.S01E01.ass', 'subtitle', 'error', 'Work.S01E01.strm'), entry('Work.S01E01.nfo', 'attachment', 'done', 'Work.S01E01.strm')])
   const second = task('Work.S01E02.mkv', 'error', [entry('Work.S01E02.mkv', 'video', 'needs_match')])
   second.episode = 2; second.group.tmdbId = 0; second.group.message = '未找到唯一匹配'
@@ -29,9 +29,15 @@ const gate = () => {
     let data = {}, status = 200
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
-    else if (endpoint === '/api/admin/media-organize') {
-      const pages = Math.max(1, Math.ceil(state.records.length / 20)), page = Math.max(1, Math.min(Number(u.searchParams.get('page') || 1), pages))
-      data = { rules: state.rules, active: state.active, activeRules: state.activeRules, cleanup: state.cleanup, history: { items: state.records.slice((page - 1) * 20, page * 20).map(({entries, rule, group, ...item}) => item), page, pages, total: state.records.length } }
+    else if (endpoint === '/api/admin/media-organize') data = { rules: state.rules, active: state.active, activeRules: state.activeRules }
+    else if (endpoint === '/api/admin/media-organize/history') {
+      const q = (u.searchParams.get('q') || '').toLowerCase(), filter = u.searchParams.get('status') || 'all'
+      const matches = state.records.filter(item => [item.title, item.name, item.source, item.target].some(value => value?.toLowerCase().includes(q)))
+      const category = item => ['queued', 'scanning', 'running'].includes(item.status) ? 'running' : item.status === 'done' ? 'done' : 'attention'
+      const records = matches.filter(item => filter === 'all' || category(item) === filter)
+      const counts = { all: matches.length, running: 0, done: 0, attention: 0 }; matches.forEach(item => counts[category(item)]++)
+      const pages = Math.max(1, Math.ceil(records.length / 20)), page = Math.max(1, Math.min(Number(u.searchParams.get('page') || 1), pages))
+      data = { items: records.slice((page - 1) * 20, page * 20).map(({entries, rule, group, ...item}) => item), page, pages, total: records.length, counts, active: state.active, activity: [], cleanup: state.cleanup }
     } else if (endpoint.endsWith('/run')) { state.active = true; state.activeRules = [rule.id]; data = { id: 'new-run', status: 'queued' } }
     else if (endpoint.endsWith('/task')) { data = tasks.find(task => task.fileId === u.searchParams.get('fileId')); assert.ok(data, 'task ID is required') }
     else if (endpoint.endsWith('/retry')) {
@@ -49,18 +55,19 @@ const gate = () => {
     else if (endpoint === '/api/admin/p115/cloud-download/paths') { assert.equal(u.searchParams.get('accountId'), 'primary1'); data = { directories: [{ id: '10', name: 'inbox' }], hasMore: false } }
     const response = { status, contentType: 'application/json', body: JSON.stringify(data) }
     if (endpoint.endsWith('/task') && heldTask) { const pending = heldTask; heldTask = undefined; await pending.wait() }
-    if (endpoint === '/api/admin/media-organize' && heldState) { const pending = heldState; heldState = undefined; await pending.wait() }
+    if (endpoint === '/api/admin/media-organize/history' && heldState) { const pending = heldState; heldState = undefined; await pending.wait() }
     await route.fulfill(response).catch(() => {})
   })
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/media/organize', { waitUntil: 'networkidle' })
     const history = page.getByRole('region', { name: '整理记录', exact: true })
+    const nav = page.getByRole('navigation', { name: '整理功能', exact: true })
+    const tab = label => nav.getByRole('link', { name: label, exact: true })
     const detail = page.getByRole('dialog', { name: '整理详情', exact: true })
     const card = history.getByRole('button', { name: '查看Work.S01E01.strm的整理记录', exact: true })
-    assert.equal(await history.locator('.mo-result').count(), 3)
-    await card.getByText('部分完成', { exact: true }).waitFor()
-    assert.equal(await card.getByText('附件 2', { exact: true }).count(), 1)
+    assert.equal(await history.count(), 0)
+    assert.equal(calls.some(call => call.endpoint.endsWith('/history')), false)
     assert.equal(await page.getByRole('button', { name: '扫描预览', exact: true }).count(), 0)
     await page.getByRole('button', { name: '立即运行', exact: true }).click()
     assert.equal(await detail.count(), 0)
@@ -68,8 +75,11 @@ const gate = () => {
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1)
     assert.equal(state.rules[0].enabled, false)
     state.active = false; state.activeRules = []
-    await page.getByRole('button', { name: '刷新记录', exact: true }).click()
-    await page.getByRole('button', { name: '立即运行', exact: true }).waitFor()
+    await tab('整理记录').click()
+    await card.waitFor()
+    assert.equal(await history.locator('.mo-result').count(), 3)
+    await card.getByText('部分完成', { exact: true }).waitFor()
+    assert.equal(await card.getByText('附件 2', { exact: true }).count(), 1)
     await card.click()
     assert.equal(await detail.locator('.mo-file').count(), 3)
     assert.equal(await detail.getByText('Work.S01E02.mkv', { exact: true }).count(), 0)
@@ -102,6 +112,7 @@ const gate = () => {
     const retry = calls.filter(c => c.endpoint.endsWith('/retry')).at(-1)
     assert.deepEqual(retry.body, { fileId: second.fileId, season: 1, episode: 13, kind: 'tv', tmdbId: 99 })
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
+    await tab('整理规则').click()
     await page.getByRole('button', { name: '启用NAS 验收的目录监控', exact: true }).click()
     await page.getByText('定时监控 · 每 5 分钟', { exact: true }).waitFor()
     rejectRuleSave = true
@@ -111,12 +122,13 @@ const gate = () => {
     await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
     await page.getByText('监控已暂停', { exact: true }).waitFor()
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1)
-    await page.locator('.mo-cleanup summary').click()
-    await page.getByText('文件 6 · 空目录 2', { exact: true }).waitFor()
     await page.locator('.mo-rule-card').hover()
     assert.ok((await page.locator('.mo-rule-card').evaluate(el => getComputedStyle(el, '::before').animationName)).includes('ambient-glow'))
     await page.emulateMedia({ reducedMotion: 'reduce' })
     assert.equal(await page.locator('.mo-rule-card').evaluate(el => getComputedStyle(el, '::before').animationName), 'none')
+    await tab('整理记录').click()
+    await page.locator('.mo-cleanup summary').click()
+    await page.getByText('文件 6 · 空目录 2', { exact: true }).waitFor()
     state.records = Array.from({ length: 45 }, (_, i) => ({ ...copy(first), fileId: 'fixture-' + i, episode: i + 1 }))
     await page.getByRole('button', { name: '刷新记录', exact: true }).click()
     const pagination = page.getByRole('navigation', { name: '整理记录分页', exact: true })
@@ -157,6 +169,7 @@ const gate = () => {
     await page.screenshot({ path: 'test-results/media-organize-task-narrow.png' })
     await detail.getByRole('button', { name: '关闭整理详情', exact: true }).click()
     await page.setViewportSize({ width: 390, height: 844 })
+    await tab('整理规则').click()
     await page.getByRole('button', { name: '编辑NAS 验收' }).click()
     const editor = page.getByRole('dialog', { name: '整理规则', exact: true })
     await editor.getByRole('combobox', { name: '存储位置' }).click()

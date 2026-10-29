@@ -60,7 +60,11 @@ func animeClaimServiceFixture(t *testing.T) (*animeDownloadFixture, *sql.DB, *An
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close anime fixture SQL database: %v", err)
+		}
+	})
 
 	if _, err := db.ExecContext(ctx, `UPDATE anime_subscription_sources SET status='enabled' WHERE id=?`, source.ID); err != nil {
 		t.Fatal(err)

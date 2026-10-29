@@ -41,7 +41,11 @@ func newAnimeDownloadFixture(t *testing.T) *animeDownloadFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close anime fixture store: %v", err)
+		}
+	})
 	accounts, err := OpenP115AccountsSQLite(ctx, db, dir, "test-secret")
 	if err != nil {
 		t.Fatal(err)

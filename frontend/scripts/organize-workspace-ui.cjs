@@ -19,7 +19,8 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     calls.push({ endpoint, method, body }); let data = {}
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
-    else if (endpoint === '/api/admin/media-organize') data = { rules: [rule], active: true, activeRules: [], cleanup: [], history: { items: [], page: 1, pages: 1, total: 0 } }
+    else if (endpoint === '/api/admin/media-organize') data = { rules: [rule], active: true, activeRules: [] }
+    else if (endpoint === '/api/admin/media-organize/history') data = { items: [], page: 1, pages: 1, total: 0, counts: { all: 0, running: 0, done: 0, attention: 0 }, active: false, activity: [], cleanup: [] }
     else if (endpoint === '/api/admin/media-organize/rules') { if (holdSave) { saveStarted(); await holdSave }; Object.assign(rule, body); data = rule }
     else if (endpoint === '/api/admin/classification' && method === 'GET') data = { record: classification, defaultYAML: defaults }
     else if (endpoint === '/api/admin/classification' && method === 'PUT') {
@@ -43,7 +44,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await fs.mkdir('test-results', { recursive: true })
     await page.goto(origin + '/media/organize'); await page.locator('.mo-rule-card').waitFor()
     assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), '自动整理')
-    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['整理管理', '命名模板', '分类规则'])
+    assert.deepEqual(await nav.getByRole('link').allTextContents(), ['整理规则', '整理记录', '命名模板', '分类规则'])
     assert.equal(count('/api/admin/naming'), 0); assert.equal(count('/api/admin/classification'), 0)
     assert.equal(await page.locator('.management-navigation a[href="/settings/naming"], .management-navigation a[href="/settings/classification"]').count(), 0)
     assert.equal(await page.locator('.mo-section a').count(), 0)
@@ -52,6 +53,10 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await page.screenshot({ path: 'test-results/organize-workspace-management.png', fullPage: true })
 
     const mediaReads = count('/api/admin/media-organize')
+    assert.equal(count('/api/admin/media-organize/history'), 0)
+    await tab('整理记录').click(); await page.getByRole('region', { name: '整理记录', exact: true }).waitFor()
+    assert.equal(await shell(), true); assert.equal(await page.locator('.mo-rule-card').count(), 0)
+    assert.equal(count('/api/admin/media-organize/history'), 1)
     await tab('命名模板').click(); await settledNaming()
     assert.equal(await shell(), true); assert.equal(await page.locator('.mo-page').count(), 0)
     assert.equal(count('/api/admin/classification'), 0)
@@ -79,20 +84,20 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await page.locator('.cr-rule').first().waitFor(); assert.equal(await shell(), true)
     assert.equal(await page.locator('.management-nav-link[aria-current]').getAttribute('href'), '/media/organize')
     await page.getByRole('textbox', { name: '规则名称', exact: true }).fill('未保存分类')
-    await tab('整理管理').click()
+    await tab('整理规则').click()
     const classificationLeave = page.getByRole('dialog', { name: '放弃未保存的修改？', exact: true })
     await classificationLeave.getByRole('button', { name: '取消', exact: true }).click()
     assert.equal(await tab('分类规则').getAttribute('aria-current'), 'page')
     assert.equal(await page.getByRole('textbox', { name: '规则名称', exact: true }).inputValue(), '未保存分类')
     loseSave = true; await page.getByRole('button', { name: '保存规则', exact: true }).click()
     await page.getByRole('button', { name: '确认保存结果', exact: true }).waitFor()
-    await tab('整理管理').click()
+    await tab('整理规则').click()
     await page.getByRole('dialog', { name: '放弃确认并离开？', exact: true }).getByRole('button', { name: '取消', exact: true }).click()
     await page.getByRole('button', { name: '确认保存结果', exact: true }).click()
     await page.getByText('电影和剧集分类规则已保存并生效', { exact: true }).waitFor()
     passed.push('标签切换复用命名/分类未保存确认；取消保留当前页及表单，未知保存回执保持原请求')
 
-    await tab('整理管理').click(); await page.locator('.mo-rule-card').waitFor()
+    await tab('整理规则').click(); await page.locator('.mo-rule-card').waitFor()
     await page.goBack(); await page.locator('.cr-rule').first().waitFor()
     await page.goForward(); await page.locator('.mo-rule-card').waitFor()
     assert.equal(await shell(), true); assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1)
@@ -117,7 +122,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await mediaLeave.getByRole('button', { name: '放弃修改并离开', exact: true }).click()
     await page.locator('.cr-rule').first().waitFor()
     assert.notEqual(await page.evaluate(() => document.body.style.overflow), 'hidden')
-    await tab('整理管理').click(); await page.locator('.mo-rule-card').waitFor()
+    await tab('整理规则').click(); await page.locator('.mo-rule-card').waitFor()
     passed.push('规则编辑离开可取消；提交操作中不切页；后台任务运行不阻止正常切页，前进后退与刷新正确')
 
     let releasePreview

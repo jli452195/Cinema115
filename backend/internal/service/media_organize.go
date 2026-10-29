@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -38,17 +37,16 @@ type MediaOrganizeRule struct {
 }
 
 type MediaOrganizeEntry struct {
-	File        OrganizeFile          `json:"file"`
-	Modified    int64                 `json:"modified,omitempty"`
-	Fingerprint string                `json:"fingerprint"`
-	Group       string                `json:"group"`
-	VideoID     string                `json:"videoId,omitempty"`
-	Relative    string                `json:"relative,omitempty"`
-	Target      string                `json:"target,omitempty"`
-	Status      string                `json:"status"`
-	Message     string                `json:"message,omitempty"`
-	Result      *MediaOrganizeResult  `json:"result,omitempty"`
-	Failure     *MediaOrganizeFailure `json:"failure,omitempty"`
+	File     OrganizeFile          `json:"file"`
+	Modified int64                 `json:"modified,omitempty"`
+	Group    string                `json:"group"`
+	VideoID  string                `json:"videoId,omitempty"`
+	Relative string                `json:"relative,omitempty"`
+	Target   string                `json:"target,omitempty"`
+	Status   string                `json:"status"`
+	Message  string                `json:"message,omitempty"`
+	Result   *MediaOrganizeResult  `json:"result,omitempty"`
+	Failure  *MediaOrganizeFailure `json:"failure,omitempty"`
 }
 
 type MediaOrganizeGroup struct {
@@ -100,16 +98,15 @@ type ClassificationRules interface {
 }
 
 type mediaOrganizeDocument struct {
-	Rules []MediaOrganizeRule          `json:"rules"`
-	Runs  []MediaOrganizeRun           `json:"runs"`
-	Seen  map[string]map[string]string `json:"seen"`
+	Rules []MediaOrganizeRule `json:"rules"`
+	Runs  []MediaOrganizeRun  `json:"runs"`
 }
 
 // MediaOrganizer has its own state and worker; it never updates anime tasks.
 // Only immutable naming facts and the provider's directory reservation are shared.
 type MediaOrganizer struct {
 	mu             sync.Mutex
-	store          accountSecretStore
+	db             mediaOrganizeStorage
 	doc            mediaOrganizeDocument
 	metadata       MediaRecognitionSource
 	templates      NamingTemplates
@@ -118,50 +115,13 @@ type MediaOrganizer struct {
 	drive          OrganizeDrive
 	reserve        func() (func(), error)
 	active         string
+	persistErr     error
 	actions        map[string]string
 	wake           chan struct{}
 }
 
-func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource, templates NamingTemplates, classification ClassificationRules, accounts *P115Accounts, drive OrganizeDrive, reserve func() (func(), error)) (*MediaOrganizer, error) {
-	s := &MediaOrganizer{store: store, metadata: metadata, templates: templates, classification: classification, accounts: accounts, drive: drive, reserve: reserve, actions: make(map[string]string), wake: make(chan struct{}, 1)}
-	if store.Value() != "" {
-		if err := json.Unmarshal([]byte(store.Value()), &s.doc); err != nil {
-			return nil, fmt.Errorf("读取通用整理配置: %w", err)
-		}
-	}
-	if s.doc.Seen == nil {
-		s.doc.Seen = make(map[string]map[string]string)
-	}
-	if s.doc.Rules == nil {
-		s.doc.Rules = []MediaOrganizeRule{}
-	}
-	if s.doc.Runs == nil {
-		s.doc.Runs = []MediaOrganizeRun{}
-	}
-	for i := range s.doc.Runs {
-		r := &s.doc.Runs[i]
-		if r.Status == "queued" || r.Status == "scanning" || r.Status == "running" {
-			r.Status = "interrupted"
-			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
-		}
-	}
-	return s, s.persistLocked()
-}
-
-func (s *MediaOrganizer) persistLocked() error {
-	raw, err := json.Marshal(s.doc)
-	if err != nil {
-		return fmt.Errorf("编码整理记录: %w", err)
-	}
-	if err = s.store.Save(string(raw)); err != nil {
-		var previous mediaOrganizeDocument
-		if decodeErr := json.Unmarshal([]byte(s.store.Value()), &previous); decodeErr != nil {
-			return fmt.Errorf("恢复整理记录: %w", errors.Join(err, decodeErr))
-		}
-		s.doc = previous
-		return fmt.Errorf("保存整理记录: %w", err)
-	}
-	return nil
+func (s *MediaOrganizer) persistLocked(changed ...string) error {
+	return s.persistSQLiteLocked(changed)
 }
 
 func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
@@ -293,7 +253,6 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 				found = true
 				rule.LastScan = old.LastScan
 				if old.Storage != rule.Storage || old.Source != rule.Source || old.Target != rule.Target || old.SourceID != rule.SourceID || old.TargetID != rule.TargetID || old.Failure != rule.Failure || old.FailureID != rule.FailureID || old.Classify != rule.Classify || old.AccountID != rule.AccountID {
-					delete(s.doc.Seen, rule.ID)
 					rule.LastScan = time.Time{}
 				}
 				s.doc.Rules[i] = rule
@@ -316,15 +275,17 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 	for i, r := range s.doc.Rules {
 		if r.ID == id {
 			s.doc.Rules = append(s.doc.Rules[:i], s.doc.Rules[i+1:]...)
+			removed := []string{}
 			runs := make([]MediaOrganizeRun, 0, len(s.doc.Runs))
 			for _, run := range s.doc.Runs {
 				if run.Rule.ID != id {
 					runs = append(runs, run)
+				} else {
+					removed = append(removed, run.ID)
 				}
 			}
 			s.doc.Runs = runs
-			delete(s.doc.Seen, id)
-			return s.persistLocked()
+			return s.persistLocked(removed...)
 		}
 	}
 	return ErrMediaOrganizeInput
@@ -368,39 +329,28 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	// Empty scan outcomes are only needed until the next scan.
-	// They must not consume history retention or evict actual file results.
+	// Keep at most the latest empty diagnostic for each rule. Actual media
+	// tasks persist until explicitly deleted and never block later scans.
+	removed := []string{}
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
-		if old.Rule.ID == rule.ID && old.Status != "queued" && old.Status != "scanning" && old.Status != "running" && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Result != nil || e.Status == "done" || e.Failure != nil }) {
-			return true // A rescan replaces empty outcomes and diagnostics for this rule.
-		}
-		return old.Status == "completed" && !slices.ContainsFunc(old.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "retained" })
-	})
-	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
-	// Count actual terminal batches, not the newly queued (possibly empty) scan.
-	retained := 0
-	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
-		if len(old.Entries) == 0 || old.Status != "completed" && old.Status != "failed" && old.Status != "partial" {
+		if old.Rule.ID != rule.ID || mediaRunActive(old.Status) || old.ID == s.active {
 			return false
 		}
-		for _, e := range old.Entries {
-			if e.Status != "done" && e.Failure != nil && (e.Failure.State == "stored" || e.Failure.State == "moving") {
-				return false // Keep the only recovery plan for relocated files.
+		for _, entry := range old.Entries {
+			if entry.File.MediaType == "video" {
+				return false
 			}
 		}
-		retained++
-		return retained > 20
+		removed = append(removed, old.ID)
+		return true
 	})
-	if len(s.doc.Runs) > 50 {
-		s.doc.Runs = s.doc.Runs[1:]
-		return MediaOrganizeRun{}, fmt.Errorf("%w：请先处理已有任务", ErrMediaOrganizeBusy)
-	}
+	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
 	for i := range s.doc.Rules {
 		if s.doc.Rules[i].ID == rule.ID {
 			s.doc.Rules[i].LastScan = time.Now()
 		}
 	}
-	if err := s.persistLocked(); err != nil {
+	if err := s.persistLocked(append(removed, id)...); err != nil {
 		return MediaOrganizeRun{}, err
 	}
 	s.actions[id] = "auto"
@@ -423,7 +373,7 @@ func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 	for i := range s.doc.Runs {
 		if s.doc.Runs[i].ID == r.ID {
 			cloneMediaRun(*r, &s.doc.Runs[i])
-			return s.persistLocked()
+			return s.persistLocked(r.ID)
 		}
 	}
 	return ErrMediaOrganizeInput
@@ -445,6 +395,11 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 		}
 		for ctx.Err() == nil {
 			s.mu.Lock()
+			if s.persistErr != nil {
+				err := s.persistErr
+				s.mu.Unlock()
+				return err
+			}
 			var id, action string
 			var run MediaOrganizeRun
 			if s.active != "" {

@@ -120,7 +120,7 @@ func TestMediaOrganizerFailureDirectoryConflictAndTransient(t *testing.T) {
 		mediaTestFile(t, rule.Source, "Work.S01E01.ass", "subtitle")
 		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "auto")
-		if run.FailureCount != 0 || len(s.doc.Seen[rule.ID]) != 0 {
+		if run.FailureCount != 0 {
 			t.Fatal("metadata failure must not be quarantined or negatively cached", run)
 		}
 		for _, e := range run.Entries {
@@ -287,7 +287,7 @@ func TestMediaOrganizerFailureHealthyWorkAndStorageError(t *testing.T) {
 
 func TestMediaOrganizerFailureRecoveryPlanRetention(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
-	s.doc.Runs = []MediaOrganizeRun{{ID: "relocated", Rule: rule, Status: "partial", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "unknown"}}, Status: "needs_match", Failure: &MediaOrganizeFailure{State: "stored"}}}}}
+	s.doc.Runs = []MediaOrganizeRun{{ID: "relocated", Rule: rule, Status: "partial", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "unknown"}, MediaType: "video"}, Status: "needs_match", Failure: &MediaOrganizeFailure{State: "stored"}}}}}
 	for i := range 25 {
 		s.doc.Runs = append([]MediaOrganizeRun{{ID: fmt.Sprint(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{Status: "done"}}}}, s.doc.Runs...)
 	}

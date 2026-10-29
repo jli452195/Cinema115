@@ -63,23 +63,6 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 			}
 		}
 	}
-	s.mu.Lock()
-	if s.doc.Seen[run.Rule.ID] == nil {
-		s.doc.Seen[run.Rule.ID] = make(map[string]string)
-	}
-	transient := mediaTransientGroups(run)
-	for _, e := range run.Entries {
-		if e.File.MediaType == "cleanup" || !mediaInTask(e, run.TaskFileID) {
-			continue
-		}
-		if e.Status == "done" || e.Status == "conflict" || e.Status == "invalid" || e.Status == "needs_match" {
-			// Upstream errors are transient, not negative recognition results.
-			if !transient[e.Group] {
-				s.doc.Seen[run.Rule.ID][e.File.ID] = e.Fingerprint
-			}
-		}
-	}
-	s.mu.Unlock()
 	return s.checkpoint(run)
 }
 
@@ -94,20 +77,8 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 		return err
 	}
 	files.scanned = entries
-	s.mu.Lock()
-	seen := make(map[string]string, len(s.doc.Seen[run.Rule.ID]))
-	for _, e := range entries {
-		if value, ok := s.doc.Seen[run.Rule.ID][e.File.ID]; ok && value == e.Fingerprint {
-			seen[e.File.ID] = value
-		}
-	}
-	s.doc.Seen[run.Rule.ID] = seen
-	s.mu.Unlock()
 	indices := make(map[string]int)
 	for _, e := range entries {
-		if seen[e.File.ID] == e.Fingerprint {
-			continue
-		}
 		if e.File.MediaType != "video" {
 			run.Entries = append(run.Entries, e)
 			continue

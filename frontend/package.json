@@ -8,6 +8,7 @@
     "test:classification-ui": "node scripts/classification-settings-ui.cjs",
     "test:organize-workspace-ui": "node scripts/organize-workspace-ui.cjs",
     "test:media-organize-ui": "node scripts/media-organize-ui.cjs",
+    "test:media-organize-history-ui": "node scripts/media-organize-history-ui.cjs",
     "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",

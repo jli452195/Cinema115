@@ -135,7 +135,7 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 	if run.Status != "interrupted" || len(run.Entries) != 4 {
 		t.Fatalf("unexpected scan %+v", run)
 	}
-	state := s.State(1)
+	state := mediaTestState(s, 1)
 	if state.History.Total != 2 || state.History.Items[0].Status != "error" {
 		t.Fatal("interrupted primary files must remain visible for recovery", state)
 	}
@@ -186,7 +186,7 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 	if len(saved.Entries) != 4 || saved.Status != "partial" {
 		t.Fatal(saved)
 	}
-	state = restarted.State(1)
+	state = mediaTestState(restarted, 1)
 	if state.History.Total != 2 {
 		t.Fatal("history must contain only executed files", state)
 	}
@@ -312,7 +312,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(rule.Source, "Work.S01E01.ass")); err != nil || string(data) != "sub" {
 		t.Fatal("subtitle moved without video", err)
 	}
-	state := s.State(1)
+	state := mediaTestState(s, 1)
 	if state.History.Total != 2 {
 		t.Fatal("each failed video/subtitle attempt must be recorded", state)
 	}
@@ -325,7 +325,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 	if _, err := s.Task(run.ID, run.Entries[0].File.ID); err != nil {
 		t.Fatal(err)
 	}
-	after := s.State(1).History.Items[0]
+	after := mediaTestState(s, 1).History.Items[0]
 	if after.Status != before.Status || after.Message != before.Message || !after.At.Equal(before.At) {
 		t.Fatal("preview update changed execution result", before, after)
 	}
@@ -349,13 +349,13 @@ func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 			action = "auto"
 		}
 		mediaTestProcess(t, s, &run, action)
-		state := s.State(1)
+		state := mediaTestState(s, 1)
 		if run.Status != "completed" || state.History.Total != 20 || len(s.doc.Runs) != 21 {
 			t.Fatal("empty scans must stay hidden and preserve actual history", run, state)
 		}
 	}
 	s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "failed", Rule: rule, Status: "failed", Message: "来源目录不可访问"})
-	if failed, err := s.Snapshot("failed"); err != nil || failed.Message == "" || s.State(1).History.Total != 20 {
+	if failed, err := s.Snapshot("failed"); err != nil || failed.Message == "" || mediaTestState(s, 1).History.Total != 20 {
 		t.Fatal("scan failure must not create a file execution record", failed, err)
 	}
 }
@@ -371,7 +371,7 @@ func TestMediaOrganizerFileHistoryPagination(t *testing.T) {
 	s.doc.Runs = []MediaOrganizeRun{run}
 	for _, tt := range []struct{ requested, page, count, firstEpisode int }{{0, 1, 20, 45}, {2, 2, 20, 25}, {99, 3, 5, 5}} {
 		t.Run(strconv.Itoa(tt.requested), func(t *testing.T) {
-			state := s.State(tt.requested)
+			state := mediaTestState(s, tt.requested)
 			h := state.History
 			if h.Page != tt.page || h.Pages != 3 || h.Total != 45 || len(h.Items) != tt.count || h.Items[0].Episode != tt.firstEpisode {
 				t.Fatal("incorrect history pagination", state)
@@ -383,7 +383,7 @@ func TestMediaOrganizerFileHistoryPagination(t *testing.T) {
 	}
 }
 
-func TestMediaOrganizerIncrementalAndRollback(t *testing.T) {
+func TestMediaOrganizerSourceRescanAndRollback(t *testing.T) {
 	s, f, store, rule := newMediaOrganizeTest(t)
 	f.items = nil
 	mediaTestFile(t, rule.Source, "Unknown.S01E01.mkv", "v")
@@ -392,24 +392,21 @@ func TestMediaOrganizerIncrementalAndRollback(t *testing.T) {
 	calls := f.browseCalls
 	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	if f.browseCalls != calls || len(run.Entries) != 0 {
-		t.Fatal("unchanged unmatched file re-queried")
+	if f.browseCalls <= calls || len(run.Entries) != 1 {
+		t.Fatal("source files must be eligible again, regardless of prior history")
 	}
 	if err := os.Remove(filepath.Join(rule.Source, "Unknown.S01E01.mkv")); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	if len(s.doc.Seen[rule.ID]) != 0 {
-		t.Fatal("stale incremental entries retained")
-	}
 	store.err = errors.New("disk full")
 	rule.ID = ""
 	rule.Name = "should not save"
 	if _, err := s.SaveRule(rule); err == nil {
 		t.Fatal("expected storage error")
 	}
-	state := s.State(1)
+	state := mediaTestState(s, 1)
 	if len(state.Rules) != 1 {
 		t.Fatal("save failure did not roll back", state.Rules)
 	}
@@ -426,7 +423,7 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID := s.doc.Runs[0].ID
-	lastScan := s.State(1).Rules[0].LastScan
+	lastScan := mediaTestState(s, 1).Rules[0].LastScan
 	rule.Enabled = false
 	if _, err := s.SaveRule(rule); err != nil {
 		t.Fatal("queued work must not prevent pausing", err)
@@ -468,14 +465,14 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	rule.Enabled = true
 	_, saveErr := s.SaveRule(rule)
 	store.err = nil
-	if saveErr == nil || s.State(1).Rules[0].Enabled {
+	if saveErr == nil || mediaTestState(s, 1).Rules[0].Enabled {
 		t.Fatal("failed toggle must preserve the persisted pause", saveErr)
 	}
 	close(release)
 	for ctx.Err() == nil {
 		run, err := s.Snapshot(runID)
 		if err == nil && run.Status == "completed" {
-			if !run.Rule.Enabled || s.State(1).Rules[0].Enabled || run.ReadyCount != 0 || run.FailureCount != 0 {
+			if !run.Rule.Enabled || mediaTestState(s, 1).Rules[0].Enabled || run.ReadyCount != 0 || run.FailureCount != 0 {
 				t.Fatal("pause changed the frozen task or counts", run)
 			}
 			data, err := os.ReadFile(filepath.Join(rule.Target, filepath.FromSlash(run.Entries[0].Relative)))
@@ -500,7 +497,7 @@ func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 		rule.Enabled = false
-		if _, err := s.SaveRule(rule); err != nil || s.State(1).Rules[0].Enabled {
+		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].Enabled {
 			t.Fatal("unavailable mounts must still allow pausing", err)
 		}
 		rule.Classify = !rule.Classify
@@ -522,7 +519,7 @@ func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 		rule.Enabled = false
-		if _, err := s.SaveRule(rule); err != nil || s.State(1).Rules[0].Enabled || len(drive.cookies) != 0 {
+		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].Enabled || len(drive.cookies) != 0 {
 			t.Fatal("pausing must not require a primary account or drive request", err)
 		}
 		if _, err := s.files(context.Background(), rule); err == nil {

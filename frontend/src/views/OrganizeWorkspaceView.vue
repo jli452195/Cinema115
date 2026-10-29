@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { ref, watch } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 
 defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
-const route = useRoute()
+const route = useRoute(), historyLocation = ref('/media/organize/history')
+watch(() => route.fullPath, value => { if (route.name === 'media-organize-history') historyLocation.value = value }, { immediate: true })
 const sections = [
-  { name: 'media-organize', label: '整理管理' },
+  { name: 'media-organize', label: '整理规则' },
+  { name: 'media-organize-history', label: '整理记录' },
   { name: 'naming-settings', label: '命名模板' },
   { name: 'classification-settings', label: '分类规则' },
 ]
@@ -15,7 +18,7 @@ const sections = [
 <template>
   <ManagementLayout title="自动整理" description="管理目录监控、整理记录、公共命名模板与分类规则。" @logout="$emit('logout')">
     <nav class="organize-sections" aria-label="整理功能">
-      <RouterLink v-for="section in sections" :key="section.name" :to="route.name === section.name ? route.fullPath : { name: section.name }" :aria-current="route.name === section.name ? 'page' : undefined">{{ section.label }}</RouterLink>
+      <RouterLink v-for="section in sections" :key="section.name" :to="route.name === section.name ? route.fullPath : section.name === 'media-organize-history' ? historyLocation : { name: section.name }" :aria-current="route.name === section.name ? 'page' : undefined">{{ section.label }}</RouterLink>
     </nav>
     <RouterView v-slot="{ Component }"><component :is="Component" :token="token" /></RouterView>
   </ManagementLayout>

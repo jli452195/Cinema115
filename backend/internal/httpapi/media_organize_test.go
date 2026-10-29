@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/storage"
 )
 
 type httpMediaMetadata struct{}
@@ -26,7 +27,7 @@ func (httpMediaMetadata) Details(context.Context, string, int) (*tmdb.Detail, er
 }
 
 func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
-	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "media.enc"), "test-secret")
+	store, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "media.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,8 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := service.NewMediaOrganizer(store, httpMediaMetadata{}, httpNamingTemplates{}, classification, nil, nil, nil)
+	t.Cleanup(func() { _ = store.Close() })
+	s, err := service.OpenMediaOrganizerSQLite(context.Background(), store, t.TempDir(), "test-secret", httpMediaMetadata{}, httpNamingTemplates{}, classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,18 +70,26 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		t.Fatal("missing admin middleware")
 	}
 	for _, query := range []string{"?page=0", "?page=-1", "?page=abc"} {
-		request("GET", query, "", 400)
+		request("GET", "/history"+query, "", 400)
 	}
-	var state service.MediaOrganizeState
+	request("GET", "/history?status=unknown", "", 400)
+	request("DELETE", "/history", `{}`, 400)
+	request("DELETE", "/history", `{"completed":true,"items":[{"runId":"x","fileId":"y"}]}`, 400)
+	request("DELETE", "/history", `{"completed":true}`, 200)
+	var lightweight map[string]json.RawMessage
+	if err := json.Unmarshal(request("GET", "", "", 200).Body.Bytes(), &lightweight); err != nil || lightweight["history"] != nil {
+		t.Fatal("settings endpoint must not load record history", err)
+	}
+	var state service.MediaOrganizeHistory
 	readState := func(query string) {
 		t.Helper()
-		response := request("GET", query, "", 200)
+		response := request("GET", "/history"+query, "", 200)
 		if err := json.Unmarshal(response.Body.Bytes(), &state); err != nil {
 			t.Fatal(err)
 		}
 	}
 	readState("")
-	if state.History.Items == nil || state.History.Total != 0 || state.History.Page != 1 {
+	if state.Items == nil || state.Total != 0 || state.Page != 1 {
 		t.Fatal("missing empty history contract", state)
 	}
 	source, target := t.TempDir(), t.TempDir()
@@ -147,18 +157,42 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	request("POST", "/runs/"+run.ID+"/retry", "{\"fileId\":\"Work.2024.strm\",\"season\":-1}", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{}", 400)
 	readState("?page=99")
-	if state.History.Page != 1 || state.History.Total != 1 || state.History.Items[0].Status != "done" || state.History.Items[0].Target == "" {
+	if state.Page != 1 || state.Total != 1 || state.Items[0].Status != "done" || state.Items[0].Target == "" {
 		t.Fatal("executed file missing from history", state)
+	}
+	until := time.Now().Add(3 * time.Second)
+	for s.State().Active && time.Now().Before(until) {
+		time.Sleep(time.Millisecond)
+	}
+	readState("?q=work&status=done")
+	if state.Total != 1 || state.Counts["done"] != 1 || !state.Items[0].CanDelete {
+		t.Fatal("history filtering or delete permission missing", state)
+	}
+	selection := service.MediaOrganizeDelete{Items: []service.MediaOrganizeDeleteItem{{RunID: run.ID, FileID: "Work.2024.strm"}}}
+	raw, _ = json.Marshal(selection)
+	response = request("DELETE", "/history", string(raw), 200)
+	if !strings.Contains(response.Body.String(), `"deleted":1`) {
+		t.Fatal("single task deletion did not report count", response.Body.String())
+	}
+	readState("")
+	if state.Total != 0 {
+		t.Fatal("deleted task is still visible", state)
+	}
+	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 400)
+	data, err = os.ReadFile(filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative)))
+	if err != nil || string(data) != body {
+		t.Fatal("record deletion changed the organized file", err)
 	}
 	request("DELETE", "/rules/"+rule.ID, "", 200)
 }
 
 func TestMediaOrganizeClassificationUnavailableAPI(t *testing.T) {
-	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "media.enc"), "test-secret")
+	store, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "media.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := service.NewMediaOrganizer(store, nil, nil, nil, nil, nil, nil)
+	t.Cleanup(func() { _ = store.Close() })
+	s, err := service.OpenMediaOrganizerSQLite(context.Background(), store, t.TempDir(), "test-secret", nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +207,7 @@ func TestMediaOrganizeClassificationUnavailableAPI(t *testing.T) {
 	if w.Code != 503 || !strings.Contains(w.Body.String(), service.ErrClassificationUnavailable.Error()) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("unavailable configuration: %d %s", w.Code, w.Body.String())
 	}
-	if s.State(1).Active || !s.State(1).Rules[0].LastScan.IsZero() {
+	if s.State().Active || !s.State().Rules[0].LastScan.IsZero() {
 		t.Fatal("rejected submission changed monitoring state")
 	}
 }

@@ -27,7 +27,7 @@ func TestMediaOrganizerTaskRetryOnlyFailedCompanions(t *testing.T) {
 	}
 	mediaTestProcess(t, s, &run, "execute")
 	task, err := s.Task(run.ID, "Work.S01E01.strm")
-	if err != nil || task.Status != "partial" || len(task.Entries) != 2 || s.State(1).History.Total != 2 {
+	if err != nil || task.Status != "partial" || len(task.Entries) != 2 || mediaTestState(s, 1).History.Total != 2 {
 		t.Fatal("one card per primary; failed companion must be partial", task, err)
 	}
 	other, _ := s.Task(run.ID, "Work.S01E02.mkv")
@@ -67,7 +67,7 @@ func TestMediaOrganizerSeparateVersionsAndSharedArtwork(t *testing.T) {
 	}
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	state := s.State(1)
+	state := mediaTestState(s, 1)
 	if state.History.Total != 2 {
 		t.Fatal("different file versions merged", state)
 	}
@@ -180,7 +180,7 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 		return MediaOrganizeRun{}
 	}
 	run = wait(run.ID)
-	state := s.State(1)
+	state := mediaTestState(s, 1)
 	if state.History.Total != 2 || len(state.Cleanup) != 1 || state.Rules[0].Enabled {
 		t.Fatal("incorrect task/cleanup projection or monitoring toggled", state)
 	}
@@ -202,7 +202,7 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(next.ID)
-	if s.State(1).History.Total != 2 {
+	if mediaTestState(s, 1).History.Total != 2 {
 		t.Fatal("empty run duplicated history")
 	}
 	t.Log("gray run: YAML classification, 2 media tasks, matched subtitles/artwork, orphan cleanup, unchanged STRM, duplicate submission and empty rescan passed")

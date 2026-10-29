@@ -27,12 +27,32 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		c.JSON(status, gin.H{"error": err.Error()})
 	}
 	g.GET("", func(c *gin.Context) {
+		c.JSON(200, s.State())
+	})
+	g.GET("/history", func(c *gin.Context) {
 		page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 		if err != nil || page < 1 {
 			fail(c, service.ErrMediaOrganizeInput)
 			return
 		}
-		c.JSON(200, s.State(page))
+		out, err := s.History(c.Request.Context(), c.Query("q"), c.DefaultQuery("status", "all"), page)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	g.DELETE("/history", func(c *gin.Context) {
+		var in service.MediaOrganizeDelete
+		if !bindNamingJSON(c, &in) {
+			return
+		}
+		count, err := s.DeleteHistory(c.Request.Context(), in)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"deleted": count})
 	})
 	g.POST("/rules", func(c *gin.Context) {
 		var in service.MediaOrganizeRule

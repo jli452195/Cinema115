@@ -271,11 +271,9 @@ func main() {
 	manualOrganize := service.NewManualOrganize(organizeEngine)
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
 	httpapi.RegisterManualOrganize(admin, manualOrganize)
-	mediaOrganizeStore, err := service.NewSessionStore(filepath.Join(dataDir, "media-organize.enc"), secret)
-	if err != nil {
-		log.Fatal(err)
-	}
-	mediaOrganizer, err := service.NewMediaOrganizer(mediaOrganizeStore, tmdbService, database, classification, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
+	mediaInitCtx, mediaInitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	mediaOrganizer, err := service.OpenMediaOrganizerSQLite(mediaInitCtx, database, dataDir, secret, tmdbService, database, classification, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
+	mediaInitCancel()
 	if err != nil {
 		log.Fatal(err)
 	}
