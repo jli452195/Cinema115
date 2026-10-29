@@ -275,7 +275,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mediaOrganizer, err := service.NewMediaOrganizer(mediaOrganizeStore, tmdbService, database, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
+	mediaOrganizer, err := service.NewMediaOrganizer(mediaOrganizeStore, tmdbService, database, classification, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
 	if err != nil {
 		log.Fatal(err)
 	}

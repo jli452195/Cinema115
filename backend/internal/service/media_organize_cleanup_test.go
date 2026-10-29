@@ -130,7 +130,7 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 			t.Fatal("retained media file removed", name, err)
 		}
 	}
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func newMediaCleanupCloud(t *testing.T) (*MediaOrganizer, *mediaCleanupDrive, Me
 	manual, fake, accountID, _ := newOrganizeTest(t)
 	d := &mediaCleanupDrive{cleanupFakeDrive: &cleanupFakeDrive{organizeFakeDrive: fake}, paths: map[string]string{"10": "/inbox", "20": "/library", "40": "/failed"}}
 	d.dirs = map[string][]p115.ShareFile{"10": {}, "20": {}, "40": {}}
-	s, err := NewMediaOrganizer(&failingAccountStore{}, &mediaRecognitionFake{}, organizeDefaultTemplates{}, manual.accounts, d, manual.ReserveDirectoryWork)
+	s, err := NewMediaOrganizer(&failingAccountStore{}, &mediaRecognitionFake{}, organizeDefaultTemplates{}, nil, manual.accounts, d, manual.ReserveDirectoryWork)
 	if err != nil {
 		t.Fatal(err)
 	}

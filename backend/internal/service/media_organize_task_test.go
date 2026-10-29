@@ -101,7 +101,7 @@ func TestMediaOrganizerTaskCorrectionAndRestartScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +133,17 @@ func TestMediaOrganizerTaskCorrectionAndRestartScope(t *testing.T) {
 	}
 }
 
-// A small real-filesystem run: STRM content, video, artwork, cleanup, duplicate
-// submission and a second scan use the same owned worker as the application.
+// A small real-filesystem run: classification, STRM content, video, artwork,
+// cleanup, duplicate submission and a second scan use the application's worker.
 func TestMediaOrganizerGrayRun(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
+	settings, _, initial := classificationTestStore(t)
+	s.classification = settings
+	rule.Classify = true
+	var err error
+	if rule, err = s.SaveRule(rule); err != nil {
+		t.Fatal(err)
+	}
 	const strm = "http://example.invalid/original\r\n"
 	mediaTestFile(t, rule.Source, "show/Work.S01E01.strm", strm)
 	for _, name := range []string{"show/Work.S01E01.ass", "show/Work.S01E02.mkv", "show/poster.jpg", "Other.Movie.2023-poster.jpg", "ads.txt"} {
@@ -178,7 +185,7 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 		t.Fatal("incorrect task/cleanup projection or monitoring toggled", state)
 	}
 	task, err := s.Task(run.ID, "show/Work.S01E01.strm")
-	if err != nil || task.Status != "done" {
+	if err != nil || task.Status != "done" || task.Group.Category != "剧集/其他剧集" || run.Classification.Revision != initial.Revision {
 		t.Fatal(task, err)
 	}
 	data, err := os.ReadFile(task.Entries[0].Target)
@@ -198,5 +205,5 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 	if s.State(1).History.Total != 2 {
 		t.Fatal("empty run duplicated history")
 	}
-	t.Log("gray run: 2 media tasks, matched subtitles/artwork, orphan cleanup, unchanged STRM, duplicate submission and empty rescan passed")
+	t.Log("gray run: YAML classification, 2 media tasks, matched subtitles/artwork, orphan cleanup, unchanged STRM, duplicate submission and empty rescan passed")
 }

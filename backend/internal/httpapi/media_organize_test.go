@@ -30,7 +30,11 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := service.NewMediaOrganizer(store, httpMediaMetadata{}, httpNamingTemplates{}, nil, nil, nil)
+	classification, err := service.OpenMediaClassification(context.Background(), filepath.Join(t.TempDir(), "classification.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := service.NewMediaOrganizer(store, httpMediaMetadata{}, httpNamingTemplates{}, classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +92,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
 	}
-	rule := service.MediaOrganizeRule{Name: "API验收", Storage: "local", Source: source, Target: target, Failure: t.TempDir(), IntervalMinutes: 5}
+	rule := service.MediaOrganizeRule{Name: "API验收", Storage: "local", Source: source, Target: target, Failure: t.TempDir(), Classify: true, IntervalMinutes: 5}
 	raw, _ := json.Marshal(rule)
 	response := request("POST", "/rules", string(raw), 200)
 	if err := json.Unmarshal(response.Body.Bytes(), &rule); err != nil {
@@ -132,6 +136,9 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		t.Fatal("task did not reach", status)
 	}
 	wait("completed")
+	if run.Groups[0].Category != "电影/其他电影" || run.Classification.Revision == "" || !strings.HasPrefix(run.Entries[0].Relative, "电影/其他电影/") {
+		t.Fatal("API worker did not use the configured classification", run)
+	}
 	data, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative)))
 	if err != nil || string(data) != body {
 		t.Fatal("file contents changed", err)
@@ -144,4 +151,29 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		t.Fatal("executed file missing from history", state)
 	}
 	request("DELETE", "/rules/"+rule.ID, "", 200)
+}
+
+func TestMediaOrganizeClassificationUnavailableAPI(t *testing.T) {
+	store, err := service.NewSessionStore(filepath.Join(t.TempDir(), "media.enc"), "test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := service.NewMediaOrganizer(store, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := s.SaveRule(service.MediaOrganizeRule{Name: "分类不可用", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), Classify: true, IntervalMinutes: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	RegisterMediaOrganize(router.Group("/api/admin"), s)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("POST", "/api/admin/media-organize/rules/"+rule.ID+"/run", nil))
+	if w.Code != 503 || !strings.Contains(w.Body.String(), service.ErrClassificationUnavailable.Error()) || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("unavailable configuration: %d %s", w.Code, w.Body.String())
+	}
+	if s.State(1).Active || !s.State(1).Rules[0].LastScan.IsZero() {
+		t.Fatal("rejected submission changed monitoring state")
+	}
 }

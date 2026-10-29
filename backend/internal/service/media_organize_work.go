@@ -15,6 +15,9 @@ import (
 )
 
 func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, action string) error {
+	if err := run.prepareClassification(); err != nil {
+		return err
+	}
 	files, err := s.files(ctx, run.Rule)
 	if err != nil {
 		return err
@@ -212,7 +215,11 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		g.Category = ""
 		g.Message = ""
 		if run.Rule.Classify {
-			g.Category = mediaCategory(p.detail)
+			category, err := run.Classification.Classifier.Classify(mediaClassificationFacts(p.detail))
+			if err != nil {
+				return fmt.Errorf("计算整理分类: %w", err)
+			}
+			g.Category = category.Path
 		}
 	}
 	results := make(map[string]naming.Result)

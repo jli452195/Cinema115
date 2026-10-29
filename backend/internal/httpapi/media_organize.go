@@ -21,6 +21,9 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		if errors.Is(err, service.ErrMediaOrganizeBusy) {
 			status = http.StatusConflict
 		}
+		if errors.Is(err, service.ErrClassificationUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
 		c.JSON(status, gin.H{"error": err.Error()})
 	}
 	g.GET("", func(c *gin.Context) {

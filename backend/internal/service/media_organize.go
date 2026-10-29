@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"strm115/backend/internal/mediacategory"
 	"strm115/backend/internal/mediafacts"
 )
 
@@ -61,17 +62,41 @@ type MediaOrganizeGroup struct {
 }
 
 type MediaOrganizeRun struct {
-	ID           string               `json:"id"`
-	Rule         MediaOrganizeRule    `json:"rule"`
-	Status       string               `json:"status"`
-	Message      string               `json:"message,omitempty"`
-	CreatedAt    time.Time            `json:"createdAt"`
-	UpdatedAt    time.Time            `json:"updatedAt"`
-	Groups       []MediaOrganizeGroup `json:"groups"`
-	Entries      []MediaOrganizeEntry `json:"entries"`
-	ReadyCount   int                  `json:"readyCount"`
-	FailureCount int                  `json:"failureCount"`
-	TaskFileID   string               `json:"taskFileId,omitempty"`
+	ID             string                 `json:"id"`
+	Rule           MediaOrganizeRule      `json:"rule"`
+	Classification ClassificationSnapshot `json:"classification"`
+	Status         string                 `json:"status"`
+	Message        string                 `json:"message,omitempty"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
+	Groups         []MediaOrganizeGroup   `json:"groups"`
+	Entries        []MediaOrganizeEntry   `json:"entries"`
+	ReadyCount     int                    `json:"readyCount"`
+	FailureCount   int                    `json:"failureCount"`
+	TaskFileID     string                 `json:"taskFileId,omitempty"`
+}
+
+// Restore only this batch's rules, never the current global configuration.
+func (r *MediaOrganizeRun) prepareClassification() error {
+	if !r.Rule.Classify {
+		return nil
+	}
+	snapshot := &r.Classification
+	if snapshot.Revision == "" || snapshot.Revision != classificationRevision(snapshot.YAML) {
+		return fmt.Errorf("%w：批次分类规则快照无效", ErrMediaOrganizeInput)
+	}
+	if snapshot.Classifier == nil {
+		classifier, err := mediacategory.Compile(snapshot.YAML)
+		if err != nil {
+			return fmt.Errorf("编译批次分类规则: %w", err)
+		}
+		snapshot.Classifier = classifier
+	}
+	return nil
+}
+
+type ClassificationRules interface {
+	Snapshot() (ClassificationSnapshot, error)
 }
 
 type mediaOrganizeDocument struct {
@@ -83,21 +108,22 @@ type mediaOrganizeDocument struct {
 // MediaOrganizer has its own state and worker; it never updates anime tasks.
 // Only immutable naming facts and the provider's directory reservation are shared.
 type MediaOrganizer struct {
-	mu        sync.Mutex
-	store     accountSecretStore
-	doc       mediaOrganizeDocument
-	metadata  MediaRecognitionSource
-	templates NamingTemplates
-	accounts  *P115Accounts
-	drive     OrganizeDrive
-	reserve   func() (func(), error)
-	active    string
-	actions   map[string]string
-	wake      chan struct{}
+	mu             sync.Mutex
+	store          accountSecretStore
+	doc            mediaOrganizeDocument
+	metadata       MediaRecognitionSource
+	templates      NamingTemplates
+	classification ClassificationRules
+	accounts       *P115Accounts
+	drive          OrganizeDrive
+	reserve        func() (func(), error)
+	active         string
+	actions        map[string]string
+	wake           chan struct{}
 }
 
-func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource, templates NamingTemplates, accounts *P115Accounts, drive OrganizeDrive, reserve func() (func(), error)) (*MediaOrganizer, error) {
-	s := &MediaOrganizer{store: store, metadata: metadata, templates: templates, accounts: accounts, drive: drive, reserve: reserve, actions: make(map[string]string), wake: make(chan struct{}, 1)}
+func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource, templates NamingTemplates, classification ClassificationRules, accounts *P115Accounts, drive OrganizeDrive, reserve func() (func(), error)) (*MediaOrganizer, error) {
+	s := &MediaOrganizer{store: store, metadata: metadata, templates: templates, classification: classification, accounts: accounts, drive: drive, reserve: reserve, actions: make(map[string]string), wake: make(chan struct{}, 1)}
 	if store.Value() != "" {
 		if err := json.Unmarshal([]byte(store.Value()), &s.doc); err != nil {
 			return nil, fmt.Errorf("读取通用整理配置: %w", err)
@@ -323,11 +349,25 @@ func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 }
 
 func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeRun, error) {
+	var classification ClassificationSnapshot
+	if rule.Classify {
+		if s.classification == nil {
+			return MediaOrganizeRun{}, ErrClassificationUnavailable
+		}
+		var err error
+		classification, err = s.classification.Snapshot()
+		if err != nil {
+			return MediaOrganizeRun{}, err
+		}
+	}
 	id, err := organizeToken()
 	if err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	r := MediaOrganizeRun{ID: id, Rule: rule, Status: "queued", CreatedAt: time.Now(), UpdatedAt: time.Now(), Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	r := MediaOrganizeRun{ID: id, Rule: rule, Classification: classification, Status: "queued", CreatedAt: time.Now(), UpdatedAt: time.Now(), Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	if err := r.prepareClassification(); err != nil {
+		return MediaOrganizeRun{}, err
+	}
 	// Empty scan outcomes are only needed until the next scan.
 	// They must not consume history retention or evict actual file results.
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
@@ -461,7 +501,7 @@ func (s *MediaOrganizer) schedule() error {
 			}
 		}
 		if !pending {
-			if _, err := s.queueScanLocked(rule); err != nil && !errors.Is(err, ErrMediaOrganizeBusy) {
+			if _, err := s.queueScanLocked(rule); err != nil && !errors.Is(err, ErrMediaOrganizeBusy) && !errors.Is(err, ErrClassificationUnavailable) {
 				return err
 			}
 		}

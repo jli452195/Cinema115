@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/mediacategory"
 )
 
@@ -34,6 +35,19 @@ type ClassificationDocument struct {
 	ActiveRevision string                     `json:"activeRevision"`
 	LoadError      string                     `json:"loadError,omitempty"`
 	Diagnostic     *mediacategory.ConfigError `json:"diagnostic,omitempty"`
+}
+
+// Use already loaded metadata; origin and production countries never substitute
+// for one another, and classification adds no metadata requests.
+func mediaClassificationFacts(detail *tmdb.Detail) mediacategory.Facts {
+	genres := make([]int, 0, len(detail.Genres))
+	for _, genre := range detail.Genres {
+		genres = append(genres, genre.ID)
+	}
+	return mediacategory.Facts{
+		Kind: detail.Kind, Genres: genres, OriginCountries: detail.OriginCountryCodes,
+		ProductionCountries: detail.CountryCodes, OriginalLanguage: detail.OriginalLanguage,
+	}
 }
 
 // MediaClassification manages the one YAML file. Its compiled snapshot is only

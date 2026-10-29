@@ -64,7 +64,7 @@ func newMediaOrganizeTest(t *testing.T) (*MediaOrganizer, *mediaRecognitionFake,
 	t.Helper()
 	f := &mediaRecognitionFake{items: []tmdb.Item{{ID: 42, Kind: "tv", Title: "作品", OriginalTitle: "Work", Date: "2024-01-01"}}}
 	store := &failingAccountStore{}
-	s, err := NewMediaOrganizer(store, f, organizeDefaultTemplates{}, nil, nil, nil)
+	s, err := NewMediaOrganizer(store, f, organizeDefaultTemplates{}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 			t.Fatal("source not removed", err)
 		}
 	}
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestMediaOrganizerRecognitionIsConservative(t *testing.T) {
 func TestMediaOrganizerCloudRetryPaginationAndFrozenCredentials(t *testing.T) {
 	manual, drive, accountID, _ := newOrganizeTest(t)
 	f := &mediaRecognitionFake{}
-	s, err := NewMediaOrganizer(&failingAccountStore{}, f, organizeDefaultTemplates{}, manual.accounts, mediaOrganizeDirectoryFake{drive}, manual.ReserveDirectoryWork)
+	s, err := NewMediaOrganizer(&failingAccountStore{}, f, organizeDefaultTemplates{}, nil, manual.accounts, mediaOrganizeDirectoryFake{drive}, manual.ReserveDirectoryWork)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestMediaOrganizerCheckpointCopiesAllMutableFields(t *testing.T) {
 	if err := s.checkpoint(&saved); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -56,7 +56,7 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	if len(scan.Entries) != 0 {
 		t.Fatal("failure directory must not be scanned")
 	}
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestMediaOrganizerFailureDirectoryConflictAndTransient(t *testing.T) {
 func TestMediaOrganizerCloudFailureMoveAndUncertainResume(t *testing.T) {
 	manual, drive, accountID, _ := newOrganizeTest(t)
 	f := &mediaRecognitionFake{}
-	s, err := NewMediaOrganizer(&failingAccountStore{}, f, organizeDefaultTemplates{}, manual.accounts, mediaOrganizeDirectoryFake{drive}, manual.ReserveDirectoryWork)
+	s, err := NewMediaOrganizer(&failingAccountStore{}, f, organizeDefaultTemplates{}, nil, manual.accounts, mediaOrganizeDirectoryFake{drive}, manual.ReserveDirectoryWork)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestMediaOrganizerFailureLocalMoveIntentRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate a restart between the physical move and its final checkpoint.
-	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, nil, nil, nil)
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

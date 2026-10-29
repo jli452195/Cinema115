@@ -47,6 +47,9 @@ func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaO
 		if video.Status == "done" && (input.TMDBID > 0 || input.Season != nil || input.Episode != nil) {
 			return MediaOrganizeTask{}, fmt.Errorf("%w：已完成的主文件不能修改，仅可重试失败附件", ErrMediaOrganizeInput)
 		}
+		if err := run.prepareClassification(); err != nil {
+			return MediaOrganizeTask{}, err
+		}
 		if video.Status != "done" {
 			old := slices.IndexFunc(run.Groups, func(g MediaOrganizeGroup) bool { return g.ID == video.Group })
 			if old < 0 {
