@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:classification": "node --test tests/classification-document.test.mjs",
+    "test:classification-ui": "node scripts/classification-settings-ui.cjs",
     "test:media-organize-ui": "node scripts/media-organize-ui.cjs",
     "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",
@@ -50,7 +52,8 @@
     "qrcode": "^1.5.4",
     "vue": "^3.5.13",
     "vue-draggable-plus": "^0.6.1",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.3",

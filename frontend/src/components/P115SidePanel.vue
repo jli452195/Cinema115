@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import P115Icon from './P115Icon.vue'
 
-const props = defineProps<{ title: string; description: string; busy?: boolean; wide?: boolean }>()
+const props = defineProps<{ title: string; description: string; busy?: boolean; wide?: boolean; narrow?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>(), titleID = useId(), descriptionID = useId()
 const heading = ref<HTMLElement>(), scrollBody = ref<HTMLElement>()
@@ -29,7 +29,7 @@ onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previou
 </script>
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :aria-labelledby="titleID" :aria-describedby="descriptionID" :class="wide ? 'left-0 right-auto ml-0 w-screen sm:left-auto sm:right-0 sm:ml-auto sm:w-[720px] sm:max-w-[calc(100vw-2rem)]' : 'ml-auto w-full sm:w-[540px]'" class="m-0 h-[100dvh] max-h-[100dvh] max-w-none overflow-hidden border-0 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-950/50 sm:rounded-l-2xl dark:bg-slate-900 dark:text-slate-200" @cancel.prevent="close" @click="backdrop">
+    <dialog ref="dialog" :aria-labelledby="titleID" :aria-describedby="descriptionID" :class="wide ? 'left-0 right-auto ml-0 w-screen sm:left-auto sm:right-0 sm:ml-auto sm:w-[720px] sm:max-w-[calc(100vw-2rem)]' : narrow ? 'ml-auto w-full sm:w-[420px]' : 'ml-auto w-full sm:w-[540px]'" class="m-0 h-[100dvh] max-h-[100dvh] max-w-none overflow-hidden border-0 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-950/50 sm:rounded-l-2xl dark:bg-slate-900 dark:text-slate-200" @cancel.prevent="close" @click="backdrop">
       <div class="flex h-full min-h-0 flex-col">
         <header class="flex shrink-0 items-start gap-4 border-b border-slate-200 px-5 py-5 sm:px-6 dark:border-slate-700">
           <div class="min-w-0 flex-1"><h2 :id="titleID" ref="heading" tabindex="-1" :class="wide ? 'line-clamp-2 break-all focus:outline-none' : ''" class="text-lg font-semibold text-slate-900 dark:text-slate-100" :title="title">{{ title }}</h2><p :id="descriptionID" class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ description }}</p></div>

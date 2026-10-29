@@ -165,7 +165,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
       <p v-if="error" role="alert" class="mo-error">{{ error }}<button @click="refresh()">重新加载</button></p>
       <p v-if="notice" role="status" class="mo-muted">{{ notice }}</p>
       <section class="mo-rules" aria-label="整理规则">
-        <header class="mo-section"><h2>整理规则</h2><RouterLink to="/settings/naming">命名模板<IconArrowRight :size="15" /></RouterLink></header>
+        <header class="mo-section"><h2>整理规则</h2><div class="mo-footer"><RouterLink to="/settings/classification">分类规则<IconArrowRight :size="15" /></RouterLink><RouterLink to="/settings/naming">命名模板<IconArrowRight :size="15" /></RouterLink></div></header>
         <p v-if="loading" class="mo-empty">正在读取配置…</p>
         <div v-else-if="!rules.length" class="mo-empty"><IconFolder :size="30" /><p>添加来源与目标目录，立即运行或启用监控。</p><button class="mo-button" @click="edit()">添加整理规则</button></div>
         <div v-else class="mo-rule-grid">

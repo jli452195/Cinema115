@@ -69,6 +69,7 @@ export const router = createRouter({
     { path: '/users/list', name: 'user-management', component: EmbyUsersView },
     { path: '/users/invites', name: 'user-invites', component: PortalSettingsView },
     { path: '/settings/naming', name: 'naming-settings', component: NamingSettingsView },
+    { path: '/settings/classification', name: 'classification-settings', component: () => import('./views/ClassificationSettingsView.vue') },
     { path: '/media/organize', name: 'media-organize', component: MediaOrganizeView },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },

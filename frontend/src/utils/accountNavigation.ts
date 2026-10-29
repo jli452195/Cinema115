@@ -6,7 +6,7 @@ import {
   IconFolderShare, IconBooks, IconListSearch, IconArrowsShuffle,
   IconDatabaseCog, IconUsers, IconMovie, IconSearch, IconLink,
   IconLayoutSidebar, IconCalendar, IconTemplate, IconSubtitles,
-  IconChevronRight, IconChevronLeft, IconX,
+  IconChevronRight, IconChevronLeft, IconX, IconCategory,
 } from '@tabler/icons-vue'
 import { managementCategories, resourceSources } from './managementFeatures'
 
@@ -18,6 +18,7 @@ export const accountIcons = {
   follows: IconHeart,
   anime: IconCalendar,
   naming: IconTemplate,
+  classification: IconCategory,
   subtitles: IconSubtitles,
   management: IconListCheck,
   invite: IconUserPlus,
@@ -59,6 +60,7 @@ export const adminAccountGroups: { label: string; links: AccountLink[] }[] = [
     { label: '追更管理', to: '/follows/manage', icon: 'management' },
     { label: '动漫订阅', to: '/anime', icon: 'anime' },
     { label: '命名模板', to: '/settings/naming', icon: 'naming' },
+    { label: '分类规则', to: '/settings/classification', icon: 'classification' },
     { label: '自动整理', to: '/media/organize', icon: 'organize' },
     { label: '用户与邀请', to: '/users', icon: 'users', children: managementCategories.users.features.map(feature => ({ label: feature.title, to: feature.to, icon: feature.menuIcon })) },
     { label: '查看日志', to: '/logs', icon: 'logs' },
