@@ -25,12 +25,12 @@ const sections = [
 </template>
 
 <style scoped>
-.organize-sections { display: flex; align-items: center; gap: 26px; margin-bottom: 22px; overflow-x: auto; scrollbar-width: none; }
+.organize-sections { display: flex; align-items: center; gap: 26px; margin-bottom: 12px; overflow-x: auto; scrollbar-width: none; }
 .organize-sections a { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 44px; padding: 0 3px 9px; white-space: nowrap; font-size: 14px; color: rgb(var(--color-slate-500)); }
 .organize-sections a[aria-current=page] { color: #2563eb; font-weight: 600; }
 .organize-sections a[aria-current=page]::after { content: ''; position: absolute; bottom: 0; left: 3px; right: 3px; height: 2px; border-radius: 2px; background: currentColor; }
 .organize-sections a:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; border-radius: 4px; }
 .dark .organize-sections a[aria-current=page] { color: #93c5fd; }
 @media (hover: hover) { .organize-sections a:hover { color: #2563eb; }.dark .organize-sections a:hover { color: #93c5fd; } }
-@media (max-width: 639px) { .organize-sections { gap: 22px; margin-bottom: 18px; }.organize-sections a { font-size: 13px; } }
+@media (max-width: 639px) { .organize-sections { gap: 22px; margin-bottom: 10px; }.organize-sections a { font-size: 13px; } }
 </style>

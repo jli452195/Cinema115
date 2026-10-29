@@ -26,7 +26,7 @@ const showSidebar = computed(() => isPortalAdmin.value && adminAccountGroups.som
           <button v-if="showSidebar && !desktop" type="button" class="management-navigation-trigger" aria-label="打开功能导航" aria-haspopup="dialog" :aria-expanded="sidebar?.opened || false" @click="sidebar?.openDrawer($event)"><NavigationIcon name="sidebar" :size="18" /><span>功能导航</span></button>
           <PageBreadcrumb v-if="parent" :parent="parent" />
         </div>
-        <header class="management-heading mb-7 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2">
+        <header class="management-heading mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1">
           <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{{ title }}</h1>
           <div v-if="$slots.actions" class="flex items-center gap-3"><slot name="actions" /></div>
           <p class="col-span-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ description }}</p>
@@ -38,7 +38,8 @@ const showSidebar = computed(() => isPortalAdmin.value && adminAccountGroups.som
 </template>
 
 <style scoped>
-.management-shell { width: 100%; min-width: 0; flex: 1; }
+.management-shell { --management-content-top: calc(var(--workbench-header-height) + 9px); width: 100%; min-width: 0; flex: 1; }
+.management-content { padding-top: var(--management-content-top); }
 .management-shell.has-management-sidebar { display: grid; grid-template-columns: 216px minmax(0, 1fr); max-width: 1600px; margin-inline: auto; padding-left: 16px; }
 .management-breadcrumb-row { display: flex; min-width: 0; align-items: center; gap: 12px; margin-bottom: 4px; }
 .management-navigation-trigger { display: inline-flex; min-height: 44px; flex-shrink: 0; align-items: center; gap: 7px; padding: 0 10px; margin-left: -10px; border-radius: 10px; font-size: 12px; color: rgb(var(--color-slate-600)); cursor: pointer; }.management-navigation-trigger svg { width: 18px; height: 18px; }.management-navigation-trigger:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }.dark .management-navigation-trigger { color: rgb(var(--color-slate-300)); }

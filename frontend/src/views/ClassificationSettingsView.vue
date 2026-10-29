@@ -163,8 +163,12 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 <template>
     <div class="classification-settings">
       <header class="cs-toolbar">
-        <div class="cs-mode" role="group" aria-label="编辑模式"><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'visual'" @click="chooseMode('visual')">可视化</button><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'source'" @click="chooseMode('source')">YAML</button></div>
-        <div class="cs-actions"><button class="cs-button" type="button" :disabled="locked || !settings" @click="dialog = 'reset'"><IconRestore :size="15" aria-hidden="true" />恢复默认</button><button class="cs-button cs-primary" type="button" :disabled="locked || !settings || !dirty" @click="save"><IconDeviceFloppy :size="15" aria-hidden="true" />{{ saving ? '保存中…' : '保存规则' }}</button></div>
+        <div v-if="mode === 'visual'" class="cs-kind" role="group" aria-label="作品类型"><button v-for="option in [{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :key="option.value" type="button" :disabled="locked || !settings" :aria-pressed="kind === option.value" @click="kind = option.value">{{ option.label }}</button></div>
+        <p v-else class="cs-scope-label">完整分类配置<span>电影和剧集</span></p>
+        <div class="cs-tools">
+          <div class="cs-mode" role="group" aria-label="编辑模式"><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'visual'" @click="chooseMode('visual')">可视化</button><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'source'" @click="chooseMode('source')">YAML</button></div>
+          <div class="cs-actions"><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="dialog = 'reset'"><IconRestore :size="15" aria-hidden="true" />恢复默认</button><button class="cs-button cs-primary" type="button" :disabled="locked || !settings || !dirty" @click="save"><IconDeviceFloppy :size="15" aria-hidden="true" />{{ saving ? '保存中…' : '保存规则' }}</button></div>
+        </div>
       </header>
       <p v-if="loading" class="cs-status" role="status">正在读取分类规则…</p>
       <div v-if="settings?.record.loadError && !dirty" class="cs-warning" role="alert"><p>文件未能正常加载：{{ settings.record.loadError }}</p><p>{{ settings.record.activeRevision ? '继续使用最后一次有效规则。' : '保存有效规则后才能启动需要分类的整理任务。' }}请修正规则或恢复默认后保存。</p></div>
@@ -174,8 +178,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
         <button v-if="diagnostic" class="cs-location cs-error" type="button" :disabled="locked" @click="revealProblem(diagnostic.field)">{{ diagnostic.field }}<template v-if="diagnostic.line">，第 {{ diagnostic.line }} 行，第 {{ diagnostic.column }} 列</template><span v-if="mode === 'source'">定位</span></button>
       </div>
       <template v-if="settings">
-        <div v-if="mode === 'visual'" class="cs-kind" role="group" aria-label="作品类型"><button v-for="option in [{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :key="option.value" type="button" :disabled="locked" :aria-pressed="kind === option.value" @click="kind = option.value">{{ option.label }}</button></div>
-        <section v-else class="cs-source" aria-label="分类源码编辑">
+        <section v-if="mode === 'source'" class="cs-source" aria-label="分类源码编辑">
           <header><div><IconCode :size="17" aria-hidden="true" /><code>classification.yaml</code></div><span>电影和剧集共用配置</span></header>
           <Suspense><YamlSourceEditor ref="sourceInput" :model-value="workingSource" :disabled="locked" :diagnostic="diagnostic" @update:model-value="editSource" @ready="nextTick(() => diagnostic ? locateSource() : sourceInput?.focus())" /><template #fallback><div class="cs-editor-loading" role="status">正在加载 YAML 编辑器…</div></template></Suspense>
           <p id="classification-source-help">Tab 缩进，Shift + Tab 取消缩进；切换模式不保存，修正后可切回可视化或保存规则。</p>
@@ -183,7 +186,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
       </template>
       <ClassificationRuleEditor v-if="mode === 'visual' && editor" :key="`${documentGeneration}-${kind}`" ref="ruleEditor" v-model="current" :kind="kind" :disabled="locked" :invalid-key="invalidKey" :can-save="dirty" :saving="saving" :pending="!!pending" :error="error" @save="pending ? confirmSave() : save()" />
       <div class="cs-feedback" aria-live="polite" role="status">
-        <template v-if="!error && !parseError"><p v-if="notice">{{ notice }}</p><p v-else-if="settings">{{ dirty ? '有未保存的修改；保存将同时更新电影和剧集规则' : '电影和剧集共用一份分类文件' }}</p></template>
+        <template v-if="!error && !parseError"><p v-if="notice">{{ notice }}</p><p v-else-if="settings && dirty">有未保存的修改；保存将同时更新电影和剧集规则</p></template>
         <div class="cs-feedback-actions"><div v-if="pending" class="cs-actions"><button class="cs-button" type="button" :disabled="saving" @click="confirmSave">确认保存结果</button><button class="cs-read" type="button" :disabled="saving" @click="dialog = 'read'">放弃等待并重读</button></div><button v-else class="cs-read" type="button" :disabled="locked" @click="reread"><IconRefresh :size="14" aria-hidden="true" />重新读取文件</button><span>classification.yaml</span></div>
       </div>
     </div>
@@ -195,9 +198,57 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 </template>
 
 <style scoped>
-.classification-settings { display: grid; gap: 18px; }.cs-toolbar, .cs-actions { display: flex; align-items: center; gap: 8px; }.cs-toolbar { justify-content: space-between; flex-wrap: wrap; gap: 12px; }.cs-mode, .cs-kind { display: inline-flex; width: fit-content; gap: 3px; padding: 3px; border-radius: 10px; background: rgb(var(--color-slate-200) / .65); }.cs-mode button, .cs-kind button { min-height: 34px; padding: 6px 24px; border-radius: 7px; font-size: 13px; color: rgb(var(--color-slate-500)); }.cs-mode button[aria-pressed=true], .cs-kind button[aria-pressed=true] { background: #fff; color: #1d4ed8; box-shadow: 0 1px 4px rgb(15 23 42 / .08); }.cs-button { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px; border-radius: 9px; background: rgb(148 163 184 / .12); font-size: 12px; white-space: nowrap; color: rgb(var(--color-slate-700)); }.cs-primary { background: #2563eb; color: #fff; }.cs-button:hover:not(:disabled) { filter: brightness(.96); }.cs-button:disabled, .cs-mode button:disabled, .cs-kind button:disabled, .cs-read:disabled { opacity: .45; cursor: default; }.cs-status, .cs-feedback { font-size: 12px; color: rgb(var(--color-slate-500)); line-height: 1.8; }.cs-feedback { overflow-wrap: anywhere; }.cs-feedback-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }.cs-feedback-actions > span { color: rgb(var(--color-slate-400)); font-size: 11px; }.cs-read { display: inline-flex; align-items: center; gap: 6px; padding-block: 7px; color: #2563eb; }.cs-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.cs-warning { font-size: 12px; line-height: 1.8; color: #92400e; background: #fffbeb; border-radius: 10px; padding: 12px; overflow-wrap: anywhere; }.cs-error { color: #b91c1c; }.classification-settings :focus-visible, .cs-button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
-.dark .cs-mode, .dark .cs-kind { background: rgb(var(--color-slate-900)); }.dark .cs-mode button, .dark .cs-kind button { color: rgb(var(--color-slate-400)); }.dark .cs-mode button[aria-pressed=true], .dark .cs-kind button[aria-pressed=true] { background: rgb(var(--color-slate-800)); color: #93c5fd; }.dark .cs-button:not(.cs-primary) { color: rgb(var(--color-slate-200)); }.dark .cs-status, .dark .cs-feedback { color: rgb(var(--color-slate-400)); }.dark .cs-read { color: #93c5fd; }.dark .cs-error { color: #fca5a5; }.dark .cs-warning { color: #fde68a; background: #451a03; }
-@media(max-width: 639px) { .cs-toolbar { gap: 8px; }.cs-mode button, .cs-kind button { min-height: 40px; padding-inline: 12px; }.cs-button { min-height: 42px; padding-inline: 10px; }.cs-actions { gap: 5px; }.cs-file { align-items: flex-start; }.cs-read { min-height: 42px; } }
+.classification-settings { display: grid; gap: 18px; }
+.cs-toolbar, .cs-tools, .cs-actions { display: flex; align-items: center; }
+.cs-toolbar { justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 40px; }
+.cs-tools { gap: 18px; min-width: 0; }
+.cs-actions { gap: 8px; }
+.cs-kind { display: inline-flex; gap: 5px; }
+.cs-kind button { min-height: 40px; padding: 8px 16px; font-size: 14px; color: rgb(var(--color-slate-500)); }
+.cs-kind button[aria-pressed=true] { color: #1d4ed8; font-weight: 600; box-shadow: inset 0 -2px currentColor; }
+.cs-mode { display: inline-flex; width: fit-content; gap: 2px; padding: 3px; border-radius: 8px; background: rgb(148 163 184 / .12); }
+.cs-mode button { min-height: 30px; padding: 5px 11px; border-radius: 5px; font-size: 12px; color: rgb(var(--color-slate-500)); }
+.cs-mode button[aria-pressed=true] { background: #fff; color: rgb(var(--color-slate-800)); }
+.cs-scope-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 600; color: rgb(var(--color-slate-800)); }
+.cs-scope-label span { font-size: 12px; font-weight: 400; color: rgb(var(--color-slate-500)); }
+.cs-button { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px; border-radius: 8px; background: rgb(148 163 184 / .12); font-size: 12px; white-space: nowrap; color: rgb(var(--color-slate-700)); }
+.cs-secondary { background: transparent; }
+.cs-primary { background: #2563eb; color: #fff; }
+.cs-button:hover:not(:disabled) { filter: brightness(.96); }
+.cs-secondary:hover:not(:disabled) { background: rgb(148 163 184 / .1); }
+.cs-button:disabled, .cs-mode button:disabled, .cs-kind button:disabled, .cs-read:disabled { opacity: .45; cursor: default; }
+.cs-status, .cs-feedback { font-size: 12px; color: rgb(var(--color-slate-500)); line-height: 1.8; }
+.cs-feedback { overflow-wrap: anywhere; }
+.cs-feedback-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
+.cs-feedback-actions > span { color: rgb(var(--color-slate-400)); font-size: 11px; }
+.cs-read { display: inline-flex; align-items: center; gap: 6px; padding-block: 7px; color: #2563eb; }
+.cs-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cs-warning { font-size: 12px; line-height: 1.8; color: #92400e; background: #fffbeb; border-radius: 10px; padding: 12px; overflow-wrap: anywhere; }
+.cs-error { color: #b91c1c; }
+.classification-settings :focus-visible, .cs-button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.dark .cs-mode { background: rgb(148 163 184 / .12); }
+.dark .cs-mode button, .dark .cs-kind button { color: rgb(var(--color-slate-400)); }
+.dark .cs-mode button[aria-pressed=true] { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-100)); }
+.dark .cs-kind button[aria-pressed=true] { color: #93c5fd; }
+.dark .cs-scope-label, .dark .cs-button:not(.cs-primary) { color: rgb(var(--color-slate-200)); }
+.dark .cs-status, .dark .cs-feedback { color: rgb(var(--color-slate-400)); }
+.dark .cs-read { color: #93c5fd; }
+.dark .cs-error { color: #fca5a5; }
+.dark .cs-warning { color: #fde68a; background: #451a03; }
+@media(max-width: 639px) {
+  .cs-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 8px; }
+  .cs-tools { display: contents; }
+  .cs-mode { justify-self: end; }
+  .cs-kind button { min-height: 42px; padding-inline: 12px; }
+  .cs-mode button { min-height: 36px; padding-inline: 9px; }
+  .cs-actions { grid-column: 1 / -1; justify-content: flex-end; gap: 8px; }
+  .cs-feedback .cs-actions { justify-content: flex-start; }
+  .cs-scope-label { font-size: 13px; gap: 2px 8px; }
+  .cs-scope-label span { font-size: 11px; }
+  .cs-button { min-height: 42px; padding-inline: 10px; }
+  .cs-file { align-items: flex-start; }
+  .cs-read { min-height: 42px; }
+}
 .cs-source { min-width: 0; overflow: hidden; border-radius: 8px; background: #282c34; }
 .cs-source > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; min-height: 42px; padding: 10px 15px; background: #21252b; font-size: 11px; color: #9da5b4; }.cs-source > header > div { display: flex; align-items: center; gap: 8px; }.cs-source > header code { font-size: 12px; color: #c6cbd3; }
 .cs-source > p { padding: 9px 15px; background: #21252b; font-size: 11px; color: #9da5b4; line-height: 1.8; }.cs-location { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-block: 4px; text-align: left; }.cs-location span { text-decoration: underline; }.cs-error { white-space: pre-wrap; }
