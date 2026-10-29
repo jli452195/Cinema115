@@ -95,17 +95,26 @@ func RegisterNamingTemplates(admin *gin.RouterGroup, store *storage.Store) {
 }
 
 func bindNamingJSON(c *gin.Context, input any) bool {
-	decoder := json.NewDecoder(c.Request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(input); err != nil {
-		namingError(c, naming.ErrInput)
-		return false
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := decodeStrictJSON(c.Request.Body, input); err != nil {
 		namingError(c, naming.ErrInput)
 		return false
 	}
 	return true
+}
+
+func decodeStrictJSON(reader io.Reader, input any) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(input); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return errors.New("请求只能包含一份 JSON")
+	}
+	return nil
 }
 
 func namingError(c *gin.Context, err error) {

@@ -38,7 +38,7 @@ func Companion(video Result, tail, originalName string) (Result, error) {
 		components = append(components, strings.Split(video.Directory, "/")...)
 	}
 	for _, component := range components {
-		if component == "" || component != cleanText(component) || unsafeText(component) || reservedName(component) || len(component) > maxComponentBytes || !utf8.ValidString(component) {
+		if !validComponent(component) {
 			return Result{}, fmt.Errorf("%w：视频命名结果无效", ErrInput)
 		}
 	}
@@ -51,6 +51,21 @@ func Companion(video Result, tail, originalName string) (Result, error) {
 		return Result{}, fmt.Errorf("%w：字幕文件名超过 %d 字节", ErrInput, maxComponentBytes)
 	}
 	return Result{Directory: video.Directory, Stem: video.Stem + tail, Extension: extension, Name: name, RelativePath: path.Join(video.Directory, name)}, nil
+}
+
+// ValidateDirectory checks a relative directory without cleaning or changing it.
+// Classification and rendered media companions share the same component rules.
+func ValidateDirectory(directory string) error {
+	for _, component := range strings.Split(directory, "/") {
+		if !validComponent(component) {
+			return fmt.Errorf("%w：目录段 %q 无效，须使用合法的相对目录", ErrInput, component)
+		}
+	}
+	return nil
+}
+
+func validComponent(component string) bool {
+	return component != "" && component == cleanText(component) && !unsafeText(component) && !reservedName(component) && len(component) <= maxComponentBytes && utf8.ValidString(component)
 }
 
 func (r *Renderer) Render(data Data) (Result, error) {

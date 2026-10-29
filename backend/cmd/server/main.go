@@ -86,6 +86,10 @@ func main() {
 			log.Printf("关闭数据库: %v", err)
 		}
 	}()
+	classification, classificationErr := service.OpenMediaClassification(initCtx, filepath.Join(dataDir, "classification.yaml"))
+	if classificationErr != nil {
+		log.Printf("分类规则未加载，可从管理端修正后重新加载: %v", classificationErr)
+	}
 	accounts, err := service.OpenP115AccountsSQLite(initCtx, database, dataDir, secret)
 	if err != nil {
 		initCancel()
@@ -120,6 +124,7 @@ func main() {
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
 	httpapi.RegisterPortalInvites(admin, auth)
 	httpapi.RegisterNamingTemplates(admin, database)
+	httpapi.RegisterMediaClassification(admin, classification)
 	catalog := r.Group("/api/catalog")
 	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)
