@@ -36,8 +36,6 @@ import ResourceConfigView from './views/ResourceConfigView.vue'
 import SubtitleSettingsView from './views/SubtitleSettingsView.vue'
 import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
-import NamingSettingsView from './views/NamingSettingsView.vue'
-import MediaOrganizeView from './views/MediaOrganizeView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
@@ -68,9 +66,13 @@ export const router = createRouter({
     { path: '/users', name: 'users-category', component: HomeView, props: { category: 'users' }, meta: { categoryPage: true } },
     { path: '/users/list', name: 'user-management', component: EmbyUsersView },
     { path: '/users/invites', name: 'user-invites', component: PortalSettingsView },
-    { path: '/settings/naming', name: 'naming-settings', component: NamingSettingsView },
-    { path: '/settings/classification', name: 'classification-settings', component: () => import('./views/ClassificationSettingsView.vue') },
-    { path: '/media/organize', name: 'media-organize', component: MediaOrganizeView },
+    { path: '/settings/naming', redirect: to => ({ name: 'naming-settings', query: to.query, hash: to.hash }) },
+    { path: '/settings/classification', redirect: to => ({ name: 'classification-settings', query: to.query, hash: to.hash }) },
+    { path: '/media/organize', component: () => import('./views/OrganizeWorkspaceView.vue'), meta: { managementSection: '/media/organize' }, children: [
+      { path: '', name: 'media-organize', component: () => import('./views/MediaOrganizeView.vue') },
+      { path: 'naming', name: 'naming-settings', component: () => import('./views/NamingSettingsView.vue') },
+      { path: 'classification', name: 'classification-settings', component: () => import('./views/ClassificationSettingsView.vue') },
+    ] },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' } },
     { path: '/movie', name: 'movie', component: DashboardView, props: { kind: 'movie' } },

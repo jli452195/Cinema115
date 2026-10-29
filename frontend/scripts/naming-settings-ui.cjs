@@ -81,6 +81,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto(origin + '/settings/naming', { waitUntil: 'networkidle' }); await settled()
+    assert.equal(new URL(page.url()).pathname, '/media/organize/naming')
     assert.equal(await save.isDisabled(), true)
     assert.equal(calls.filter(call => call.endpoint === '/api/admin/naming').length, 1)
     assert.equal(await title().innerText(), '作品名称')
@@ -94,9 +95,9 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.equal(await title().evaluate(el => getComputedStyle(el).cursor), 'grab')
     assert.equal(await filename.evaluate(el => getComputedStyle(el).borderColor), 'rgba(0, 0, 0, 0)')
     await title().click()
-    assert.equal(await page.locator('a[href="/settings/naming"]').count() > 0, true)
+    assert.equal(await page.locator('a[href="/media/organize/naming"]').count() > 0, true)
     await page.screenshot({ path: 'test-results/naming-desktop-light.png', fullPage: true })
-    passed.push('独立命名模板入口，读取一次本地配置，初始无修改禁止保存')
+    passed.push('自动整理共用页面，旧命名地址跳转；读取一次本地配置，初始无修改禁止保存')
 
     await title().click(); const composing = previewCalls().length
     await prefix().evaluate(input => {
@@ -155,12 +156,12 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     let releaseSave; state.saveGate = new Promise(resolve => { releaseSave = resolve })
     state.loseSave = true; await save.click()
     await page.getByRole('button', { name: '保存中…', exact: true }).waitFor()
-    assert.equal(await title().isDisabled(), true); await push('/logs'); assert.equal(new URL(page.url()).pathname, '/settings/naming')
+    assert.equal(await title().isDisabled(), true); await push('/logs'); assert.equal(new URL(page.url()).pathname, '/media/organize/naming')
     releaseSave(); state.saveGate = null
     const confirm = page.getByRole('button', { name: '确认保存结果', exact: true }); await confirm.waitFor()
     const frozen = copy(putCalls().at(-1)); assert.equal(await movie.isDisabled(), true); assert.equal(await title().isDisabled(), true)
     await push('/settings/naming'); assert.equal(new URL(page.url()).searchParams.get('kind'), 'tv')
-    await push('/logs'); assert.equal(new URL(page.url()).pathname, '/settings/naming')
+    await push('/logs'); assert.equal(new URL(page.url()).pathname, '/media/organize/naming')
     await confirm.click(); await confirm.waitFor({ state: 'detached' }); assert.deepEqual(putCalls().at(-1), frozen); assert.equal(state.writes, 2)
     passed.push('保存丢回执锁定编辑与导航，原正文核对，不重复写入')
 
@@ -233,7 +234,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     await push('/logs')
     const leave = page.getByRole('dialog', { name: '放弃未保存的模板修改？', exact: true })
-    await leave.getByRole('button', { name: '继续编辑', exact: true }).click(); assert.equal(new URL(page.url()).pathname, '/settings/naming')
+    await leave.getByRole('button', { name: '继续编辑', exact: true }).click(); assert.equal(new URL(page.url()).pathname, '/media/organize/naming')
     await push('/logs'); await leave.getByRole('button', { name: '放弃修改并离开', exact: true }).click()
     await page.waitForURL('**/logs'); assert.equal(await page.evaluate(() => document.body.style.overflow), '')
     state.failRead = true; await push('/settings/naming'); await page.getByText('模拟读取失败', { exact: true }).waitFor()

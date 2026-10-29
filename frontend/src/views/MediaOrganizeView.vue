@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolderExclamation, IconClock, IconAdjustmentsHorizontal, IconPlayerPause, IconPlayerPlay, IconRefresh, IconEdit, IconTrash, IconSearch, IconArrowRight, IconChevronRight, IconX } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolderExclamation, IconClock, IconAdjustmentsHorizontal, IconPlayerPause, IconPlayerPlay, IconRefresh, IconEdit, IconTrash, IconSearch, IconChevronRight, IconX } from '@tabler/icons-vue'
 import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
+import P115ActionDialog from '../components/P115ActionDialog.vue'
 import PaginationControl from '../components/PaginationControl.vue'
 import { mediaOrganizeRequest, type MediaRule, type MediaTask, type MediaCleanup, type MediaGroup, type MediaState, type MediaHistory, type MediaHistoryItem, type MediaEntry } from '../lib/media-organize-api'
 import { p115Request } from '../lib/p115-api'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
 const rules = ref<MediaRule[]>([]), active = ref(false), editor = ref<MediaRule>(), current = ref<MediaTask>()
 const history = ref<MediaHistory>({ items: [], page: 1, pages: 1, total: 0 })
-const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true), dirty = ref(false)
+const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true)
 const directory = ref<'source' | 'target' | 'failure'>(), query = ref(''), searchGroup = ref(''), candidates = ref<{ id: number; kind: string; title: string; date: string }[]>([])
 const deleting = ref<{ id: string; name: string }>()
+const leaveDialog = ref(false), editorSnapshot = ref(''), taskSnapshot = ref('')
+let leaveDecision: ((value: boolean) => void) | undefined
 const lifecycle = new AbortController()
 let timer: number | undefined, generation = 0, stateGeneration = 0
 const refreshing = ref(false)
@@ -26,13 +28,18 @@ const activeRules = ref<string[]>([]), cleanup = ref<MediaCleanup[]>([])
 const primary = computed(() => current.value?.entries.find(e => e.file.id === current.value?.fileId))
 const attachments = computed(() => current.value?.entries.filter(e => e.file.id !== current.value?.fileId) || [])
 const editable = computed(() => primary.value?.status !== 'done')
+const dirty = computed(() => !!current.value && editable.value && taskSignature(current.value) !== taskSnapshot.value)
+const unsaved = computed(() => dirty.value || !!editor.value && ruleSignature(editor.value) !== editorSnapshot.value)
 const matchChanged = ref(false)
 const taskLabels: Record<string, string> = { done: '成功', partial: '部分完成', error: '失败', queued: '排队中', scanning: '识别中', running: '整理中' }
 function statusClass(status: string) { return status === 'done' ? 'mo-success' : status === 'partial' ? 'mo-warning' : running(status) ? 'mo-processing' : 'mo-failure' }
+function ruleSignature(rule: MediaRule) { return JSON.stringify([rule.name, rule.storage, rule.source, rule.target, rule.failure || '', rule.sourceId || '', rule.targetId || '', rule.failureId || '', rule.accountId || '', rule.classify, rule.enabled, rule.intervalMinutes]) }
+function taskSignature(task: MediaTask) { const file = task.entries.find(entry => entry.file.id === task.fileId)?.file; return JSON.stringify([task.group.kind, task.group.tmdbId, file?.season, file?.episode]) }
 function acceptTask(task: MediaTask) {
   const { rule, group, entries, ...item } = task
   history.value.items = history.value.items.map(row => row.runId === item.runId && row.fileId === item.fileId ? item : row)
   current.value = task
+  taskSnapshot.value = taskSignature(task)
 }
 const storageOptions = [{ value: 'local', label: 'NAS / 本地挂载' }, { value: '115', label: '115 主账号' }]
 async function request<T>(path = '', init: RequestInit = {}) { return mediaOrganizeRequest<T>(props.token, path, { ...init, signal: lifecycle.signal }) }
@@ -54,7 +61,7 @@ async function refresh(page = history.value.page) {
         if (draft?.file && primary.value?.status !== 'done') {
           current.value.group = draft.group
           if (primary.value) { primary.value.file.season = draft.file.season; primary.value.file.episode = draft.file.episode }
-        } else { dirty.value = false; matchChanged.value = false }
+        } else { matchChanged.value = false }
       }
     }
     error.value = ''
@@ -72,6 +79,7 @@ async function act(name: string, fn: () => Promise<void>, dialog = false) {
 }
 function edit(rule?: MediaRule) {
   editor.value = rule ? { ...rule } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, enabled: false, intervalMinutes: 5 }
+  editorSnapshot.value = ruleSignature(editor.value)
   dialogError.value = ''
 }
 function storageChanged() { if (editor.value) Object.assign(editor.value, { source: '', target: '', failure: '', sourceId: '', targetId: '', failureId: '', accountId: '' }) }
@@ -109,10 +117,10 @@ async function runNow(rule: MediaRule) {
 async function openTask(item: MediaHistoryItem) {
   await act(item.fileId, async () => {
     acceptTask(await request<MediaTask>(`/runs/${item.runId}/task?fileId=${encodeURIComponent(item.fileId)}`))
-    generation++; dirty.value = false; matchChanged.value = false; dialogError.value = ''; searchGroup.value = ''; candidates.value = []
+    generation++; matchChanged.value = false; dialogError.value = ''; searchGroup.value = ''; candidates.value = []
   })
 }
-function closeRun() { current.value = undefined; generation++; searchGroup.value = ''; dirty.value = false; candidates.value = [] }
+function closeRun() { current.value = undefined; generation++; searchGroup.value = ''; candidates.value = [] }
 async function retry() {
   await act('retry', async () => {
     const task = current.value
@@ -125,7 +133,7 @@ async function retry() {
     const updated = await request<MediaTask>(`/runs/${task.runId}/retry`, { method: 'POST', body: JSON.stringify({ fileId: task.fileId, ...correction }) })
     stateGeneration++
     acceptTask(updated)
-    dirty.value = false; matchChanged.value = false
+    matchChanged.value = false
     await refresh()
   }, true)
 }
@@ -141,7 +149,7 @@ async function search() {
 }
 function pick(candidate: { id: number; kind: string; title: string }) {
   const group = current.value?.group
-  if (group) { group.tmdbId = candidate.id; group.kind = candidate.kind; group.title = candidate.title; dirty.value = true; matchChanged.value = true }
+  if (group) { group.tmdbId = candidate.id; group.kind = candidate.kind; group.title = candidate.title; matchChanged.value = true }
   searchGroup.value = ''; candidates.value = []
 }
 async function remove() { await act('delete', async () => { if (!deleting.value) return; await request(`/rules/${deleting.value.id}`, { method: 'DELETE' }); stateGeneration++; deleting.value = undefined; await refresh() }, true) }
@@ -154,18 +162,30 @@ function failureNotice(entry: MediaEntry) {
 }
 function poll() { window.clearTimeout(timer); if (lifecycle.signal.aborted || document.hidden) return; const processing = active.value || current.value && running(current.value.status); if (!processing && !rules.value.some(r => r.enabled)) return; timer = window.setTimeout(async () => { await refresh(); poll() }, processing ? 2500 : 60000) }
 async function visible() { if (!document.hidden) await refresh(); poll() }
-onMounted(async () => { document.addEventListener('visibilitychange', visible); await refresh(); poll() })
-onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
+function decideLeave(value: boolean) { leaveDialog.value = false; leaveDecision?.(value); leaveDecision = undefined }
+function beforeUnload(event: BeforeUnloadEvent) { if (busy.value || unsaved.value) { event.preventDefault(); event.returnValue = '' } }
+onBeforeRouteLeave(() => {
+  leaveDecision?.(false); leaveDecision = undefined
+  if (busy.value) {
+    const message = '正在处理当前操作，请完成后再切换页面'
+    error.value = message
+    if (editor.value || current.value || deleting.value) dialogError.value = message
+    return false
+  }
+  if (!unsaved.value) { leaveDialog.value = false; return true }
+  leaveDialog.value = true
+  return new Promise<boolean>(resolve => { leaveDecision = resolve })
+})
+onMounted(async () => { window.addEventListener('beforeunload', beforeUnload); document.addEventListener('visibilitychange', visible); await refresh(); poll() })
+onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('visibilitychange', visible); decideLeave(false) })
 </script>
 
 <template>
-  <ManagementLayout title="自动整理" description="识别作品、分类并使用公共命名模板整理。支持 NAS 挂载目录、STRM、视频和 115 主账号。" @logout="$emit('logout')">
-    <template #actions><button class="mo-button mo-primary" @click="edit()"><IconPlus :size="17" />新增规则</button></template>
     <div class="mo-page">
       <p v-if="error" role="alert" class="mo-error">{{ error }}<button @click="refresh()">重新加载</button></p>
       <p v-if="notice" role="status" class="mo-muted">{{ notice }}</p>
       <section class="mo-rules" aria-label="整理规则">
-        <header class="mo-section"><h2>整理规则</h2><div class="mo-footer"><RouterLink to="/settings/classification">分类规则<IconArrowRight :size="15" /></RouterLink><RouterLink to="/settings/naming">命名模板<IconArrowRight :size="15" /></RouterLink></div></header>
+        <header class="mo-section"><h2>整理规则</h2><button class="mo-button mo-primary" @click="edit()"><IconPlus :size="17" aria-hidden="true" />新增规则</button></header>
         <p v-if="loading" class="mo-empty">正在读取配置…</p>
         <div v-else-if="!rules.length" class="mo-empty"><IconFolder :size="30" /><p>添加来源与目标目录，立即运行或启用监控。</p><button class="mo-button" @click="edit()">添加整理规则</button></div>
         <div v-else class="mo-rule-grid">
@@ -215,7 +235,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         <label>目标目录<div class="mo-input-action"><input v-model="editor.target" required :readonly="editor.storage === '115'" :placeholder="editor.storage === 'local' ? '/media/library' : '选择 115 目标目录'" /><button v-if="editor.storage === '115'" type="button" class="mo-icon" aria-label="选择目标目录" @click="chooseDirectory('target')"><IconFolder :size="19" /></button></div></label>
         <label>整理失败目录（可选）<div class="mo-input-action"><input v-model="editor.failure" aria-label="整理失败目录" :readonly="editor.storage === '115'" placeholder="留空则保留在来源目录" /><button v-if="editor.failure" type="button" class="mo-icon" aria-label="清空整理失败目录" @click="clearFailure"><IconX :size="17" /></button><button v-if="editor.storage === '115'" type="button" class="mo-icon" aria-label="选择整理失败目录" @click="chooseDirectory('failure')"><IconFolder :size="19" /></button></div><span class="mo-muted">执行时将无法匹配、季集不明或冲突文件移入，保留原名与目录层级；网络故障保留原处。</span></label>
         <p class="mo-muted">{{ editor.storage === 'local' ? '填写容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。' : '使用 115 主账号，来源与目标不能重叠。更换主账号后需重新选择目录。' }}</p>
-        <SettingSwitch v-model="editor.classify" label="按作品信息分类" description="电影按动画、华语、其他分类；剧集按动漫、纪录、综艺和地区分类。" />
+        <SettingSwitch v-model="editor.classify" label="按作品信息分类" description="根据作品信息及当前分类规则，在目标目录下生成分类子目录。" />
         <SettingSwitch v-model="editor.enabled" label="启用监控" description="按设置间隔扫描并整理媒体及附件，删除无关文件（含压缩包）、未归属字幕和空文件夹；立即运行同样执行清理。" />
         <label v-if="editor.enabled">扫描间隔（分钟）<input v-model.number="editor.intervalMinutes" type="number" min="1" max="1440" required /></label>
         <p class="mo-muted">STRM 正文保持原样。已有同名文件不会覆盖，命名沿用全局电影和剧集模板。</p>
@@ -230,14 +250,14 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         <section class="mo-work">
           <header><div><h3>主文件</h3><p class="mo-muted">{{ current.group.tmdbId ? `${current.group.kind === 'movie' ? '电影' : '剧集'} · TMDB ${current.group.tmdbId}` : current.group.message }}<span v-if="current.group.category" class="mo-meta">{{ current.group.category }}</span></p></div><button v-if="editable && !running(current.status)" class="mo-button" :disabled="!!busy" @click="match(current.group)">{{ current.group.tmdbId ? '更换作品' : '匹配作品' }}</button></header>
           <form v-if="searchGroup" class="mo-search" @submit.prevent="search"><div class="mo-input-action"><input v-model="query" aria-label="搜索 TMDB 作品" required placeholder="片名" /><button class="mo-icon" type="submit" :disabled="!!busy" aria-label="搜索作品"><IconSearch :size="18" /></button></div><div class="mo-candidates"><button v-for="candidate in candidates" :key="`${candidate.kind}:${candidate.id}`" type="button"  :disabled="!!busy" @click="pick(candidate)"><strong>{{ candidate.title }}</strong><span>{{ candidate.kind === 'movie' ? '电影' : '剧集' }} · {{ candidate.date?.slice(0, 4) }} · {{ candidate.id }}</span></button><p v-if="busy === 'search'" class="mo-muted" role="status">正在搜索 TMDB 作品…</p><p v-if="!busy && candidates.length === 0" class="mo-muted">输入片名并搜索，选择正确作品。</p></div></form>
-          <article v-if="primary" class="mo-file"><div class="mo-file-path"><strong>{{ primary.file.name }}</strong><span class="mo-muted">原路径</span><code>{{ sourcePath(primary) }}</code><template v-if="primary.target"><span class="mo-muted">{{ dirty ? '原计划目标（保存后重新计算）' : '目标路径' }}</span><code class="mo-target">{{ primary.target }}</code></template><p v-if="primary.message" class="mo-red">{{ primary.message }}</p><p v-if="failureNotice(primary)" class="mo-muted">{{ failureNotice(primary) }}</p></div><div class="mo-file-controls"><template v-if="editable && current.group.kind === 'tv'"><label>季<input v-model.number="primary.file.season" type="number" min="0" max="1000" :disabled="!!busy || running(current.status)" @input="dirty = true" /></label><label>集<input v-model.number="primary.file.episode" type="number" min="1" max="10000" :disabled="!!busy || running(current.status)" @input="dirty = true" /></label></template><span class="mo-status">{{ labels[primary.status] || primary.status }}</span></div></article>
+          <article v-if="primary" class="mo-file"><div class="mo-file-path"><strong>{{ primary.file.name }}</strong><span class="mo-muted">原路径</span><code>{{ sourcePath(primary) }}</code><template v-if="primary.target"><span class="mo-muted">{{ dirty ? '原计划目标（保存后重新计算）' : '目标路径' }}</span><code class="mo-target">{{ primary.target }}</code></template><p v-if="primary.message" class="mo-red">{{ primary.message }}</p><p v-if="failureNotice(primary)" class="mo-muted">{{ failureNotice(primary) }}</p></div><div class="mo-file-controls"><template v-if="editable && current.group.kind === 'tv'"><label>季<input v-model.number="primary.file.season" type="number" min="0" max="1000" :disabled="!!busy || running(current.status)" /></label><label>集<input v-model.number="primary.file.episode" type="number" min="1" max="10000" :disabled="!!busy || running(current.status)" /></label></template><span class="mo-status">{{ labels[primary.status] || primary.status }}</span></div></article>
         </section>
         <section v-if="attachments.length" class="mo-work"><header><h3>关联文件 <span class="mo-muted">{{ attachments.length }} 项</span></h3></header><article v-for="entry in attachments" :key="entry.file.id" class="mo-file"><div class="mo-file-path"><strong>{{ entry.file.name }}</strong><code>{{ sourcePath(entry) }}</code><code v-if="entry.target" class="mo-target">{{ entry.target }}</code><p v-if="entry.message" class="mo-red">{{ entry.message }}</p><p v-if="failureNotice(entry)" class="mo-muted">{{ failureNotice(entry) }}</p></div><span class="mo-status" :class="{ 'mo-red': entry.status !== 'done' }">{{ labels[entry.status] || entry.status }}</span></article></section>
       </div>
       <template #footer><div class="mo-footer"><span v-if="dirty" class="mo-muted">仅更新当前任务，保存后在后台重新整理。</span><button class="mo-button" :disabled="!!busy" @click="closeRun">关闭</button><button v-if="!running(current.status) && current.status !== 'done'" class="mo-button mo-primary" :disabled="!!busy || !!searchGroup" @click="retry">{{ dirty ? '保存并重试此任务' : '重试此任务' }}</button></div></template>
     </FloatingDialog>
     <FloatingDialog v-if="deleting" title="移除记录" close-label="取消移除" :close-disabled="!!busy" @close="deleting = undefined"><p class="py-4 text-sm">确认移除{{ deleting.name }}？文件不会被删除。</p><p v-if="dialogError" role="alert" class="mo-error">{{ dialogError }}</p><template #footer><div class="mo-footer"><button class="mo-button" @click="deleting = undefined">取消</button><button class="mo-button mo-primary" :disabled="!!busy" @click="remove">确认移除</button></div></template></FloatingDialog>
-  </ManagementLayout>
+    <P115ActionDialog v-if="leaveDialog" title="放弃未保存的整理修改？" @close="decideLeave(false)"><p>整理规则或任务修正尚未保存，离开后将丢弃这些修改。后台整理任务会继续运行。</p><template #footer><button type="button" class="mo-button" @click="decideLeave(false)">继续编辑</button><button type="button" class="mo-button mo-primary" @click="decideLeave(true)">放弃修改并离开</button></template></P115ActionDialog>
 </template>
 
 <style scoped>
@@ -264,7 +284,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .mo-result-path{display:grid;grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:baseline;font-size:11px;line-height:1.7;color:rgb(var(--color-slate-500))}.mo-result-path code{color:rgb(var(--color-slate-600))}.mo-result-message{font-size:12px;line-height:1.7}.mo-result time{margin-top:auto;padding-top:2px;font-size:11px;color:rgb(var(--color-slate-500))}
 :global(.dark .mo-result){background:#1e293b}:global(.dark .mo-result:hover){background:#24334d}:global(.dark .mo-success){color:#dcfce7;background:#166534}:global(.dark .mo-failure){color:#fee2e2;background:#991b1b}:global(.dark .mo-kind){color:#bfdbfe;background:#1e40af}:global(.dark .mo-episode){color:#fff;background:#2563eb}:global(.dark .mo-format){color:#cbd5e1;background:rgb(100 116 139/.25)}:global(.dark .mo-result-path code){color:#cbd5e1}
 @media(max-width:639px){.mo-history-grid{gap:10px}.mo-result{padding:14px 12px}.mo-result-path{gap:6px}}
-.mo-page{display:grid;gap:22px}.mo-section{display:flex;align-items:center;justify-content:space-between;min-height:54px;gap:12px}.mo-section h2,.mo-title h3{font-size:14px;font-weight:600}.mo-work h3{font-size:16px;font-weight:600}.mo-section a{display:flex;align-items:center;gap:6px;font-size:12px;color:#2563eb}.mo-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mo-title>span:not(.mo-chip){font-size:11px;color:rgb(var(--color-slate-500));border-radius:6px;padding:2px 6px;background:rgb(148 163 184/.1)}.mo-muted{font-size:12px;color:rgb(var(--color-slate-500));line-height:1.7}.mo-meta{margin-left:12px}.mo-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mo-button,.mo-icon{display:inline-flex;justify-content:center;align-items:center;gap:6px;min-height:36px;border-radius:9px;background:rgb(148 163 184/.1);font-size:12px;padding:6px 12px;white-space:nowrap}.mo-icon{width:36px;padding:0;background:transparent}.mo-button:hover,.mo-icon:hover{background:rgb(148 163 184/.18)}.mo-primary{background:#2563eb;color:white}.mo-primary:hover{background:#1d4ed8}button:disabled{opacity:.45;cursor:default}.mo-empty{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center;font-size:13px;color:rgb(var(--color-slate-500));padding:32px 10px}.mo-form{display:grid;gap:18px;padding:8px 0}.mo-form label{display:grid;gap:7px;font-size:12px;font-weight:500}.mo-form input,.mo-search input,.mo-file-controls input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-form input:focus,.mo-search input:focus,.mo-file-controls input:focus{border-color:#3b82f6}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-footer{justify-content:flex-end}.mo-footer>.mo-muted{margin-right:auto}.mo-error{font-size:13px;line-height:1.6;color:#dc2626;padding:10px 0}.mo-error button{margin-left:12px;text-decoration:underline}.mo-preview{display:grid;gap:18px}.mo-work{padding-top:16px}.mo-work>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.mo-work+.mo-work{border-top:1px solid rgb(148 163 184/.18)}.mo-file{display:flex;align-items:center;gap:14px;padding:11px 0}.mo-file+.mo-file{border-top:1px solid rgb(148 163 184/.09)}.mo-file-path{flex:1;min-width:0;display:grid;gap:6px}.mo-file-path code{font-size:13px;overflow-wrap:anywhere;line-height:1.75;color:rgb(var(--color-slate-600))}.mo-file-path code.mo-target{color:#2563eb}.mo-file-controls{display:flex;align-items:center;gap:7px;flex-shrink:0}.mo-file-controls label{display:grid;gap:3px;font-size:12px;color:rgb(var(--color-slate-500))}.mo-file-controls input{width:72px;font-size:14px;min-height:36px;padding:6px 8px}.mo-status{width:56px;text-align:right;font-size:12px;color:rgb(var(--color-slate-500))}.mo-search{padding:10px 0}.mo-candidates{display:grid;gap:4px;margin-top:8px;max-height:220px;overflow:auto}.mo-candidates button{display:flex;justify-content:space-between;gap:10px;text-align:left;padding:10px;border-radius:8px;background:rgb(148 163 184/.08);font-size:12px}.mo-candidates span{font-size:11px;color:rgb(var(--color-slate-500))}.mo-blue{color:#2563eb!important}.mo-red{color:#dc2626!important}:global(.dark .mo-primary){background:#3769b5}:global(.dark .mo-blue),:global(.dark .mo-file-path code.mo-target),:global(.dark .mo-section a){color:#93c5fd!important}:global(.dark .mo-red),:global(.dark .mo-error){color:#fca5a5!important}button:focus-visible,a:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}@media(max-width:639px){.mo-file-path{width:100%}.mo-file{align-items:flex-start;flex-direction:column;gap:8px}.mo-file-controls{align-self:flex-end}.mo-button,.mo-icon{min-height:44px}.mo-footer{gap:8px}.mo-footer>.mo-muted{flex:1 0 100%}.mo-candidates button{flex-direction:column;gap:4px}}
+.mo-page{display:grid;gap:22px}.mo-section{display:flex;align-items:center;justify-content:space-between;min-height:54px;gap:12px}.mo-section h2,.mo-title h3{font-size:14px;font-weight:600}.mo-work h3{font-size:16px;font-weight:600}.mo-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mo-title>span:not(.mo-chip){font-size:11px;color:rgb(var(--color-slate-500));border-radius:6px;padding:2px 6px;background:rgb(148 163 184/.1)}.mo-muted{font-size:12px;color:rgb(var(--color-slate-500));line-height:1.7}.mo-meta{margin-left:12px}.mo-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mo-button,.mo-icon{display:inline-flex;justify-content:center;align-items:center;gap:6px;min-height:36px;border-radius:9px;background:rgb(148 163 184/.1);font-size:12px;padding:6px 12px;white-space:nowrap}.mo-icon{width:36px;padding:0;background:transparent}.mo-button:hover,.mo-icon:hover{background:rgb(148 163 184/.18)}.mo-primary{background:#2563eb;color:white}.mo-primary:hover{background:#1d4ed8}button:disabled{opacity:.45;cursor:default}.mo-empty{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center;font-size:13px;color:rgb(var(--color-slate-500));padding:32px 10px}.mo-form{display:grid;gap:18px;padding:8px 0}.mo-form label{display:grid;gap:7px;font-size:12px;font-weight:500}.mo-form input,.mo-search input,.mo-file-controls input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-form input:focus,.mo-search input:focus,.mo-file-controls input:focus{border-color:#3b82f6}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-footer{justify-content:flex-end}.mo-footer>.mo-muted{margin-right:auto}.mo-error{font-size:13px;line-height:1.6;color:#dc2626;padding:10px 0}.mo-error button{margin-left:12px;text-decoration:underline}.mo-preview{display:grid;gap:18px}.mo-work{padding-top:16px}.mo-work>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.mo-work+.mo-work{border-top:1px solid rgb(148 163 184/.18)}.mo-file{display:flex;align-items:center;gap:14px;padding:11px 0}.mo-file+.mo-file{border-top:1px solid rgb(148 163 184/.09)}.mo-file-path{flex:1;min-width:0;display:grid;gap:6px}.mo-file-path code{font-size:13px;overflow-wrap:anywhere;line-height:1.75;color:rgb(var(--color-slate-600))}.mo-file-path code.mo-target{color:#2563eb}.mo-file-controls{display:flex;align-items:center;gap:7px;flex-shrink:0}.mo-file-controls label{display:grid;gap:3px;font-size:12px;color:rgb(var(--color-slate-500))}.mo-file-controls input{width:72px;font-size:14px;min-height:36px;padding:6px 8px}.mo-status{width:56px;text-align:right;font-size:12px;color:rgb(var(--color-slate-500))}.mo-search{padding:10px 0}.mo-candidates{display:grid;gap:4px;margin-top:8px;max-height:220px;overflow:auto}.mo-candidates button{display:flex;justify-content:space-between;gap:10px;text-align:left;padding:10px;border-radius:8px;background:rgb(148 163 184/.08);font-size:12px}.mo-candidates span{font-size:11px;color:rgb(var(--color-slate-500))}.mo-blue{color:#2563eb!important}.mo-red{color:#dc2626!important}:global(.dark .mo-primary){background:#3769b5}:global(.dark .mo-blue),:global(.dark .mo-file-path code.mo-target){color:#93c5fd!important}:global(.dark .mo-red),:global(.dark .mo-error){color:#fca5a5!important}button:focus-visible,a:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}@media(max-width:639px){.mo-file-path{width:100%}.mo-file{align-items:flex-start;flex-direction:column;gap:8px}.mo-file-controls{align-self:flex-end}.mo-button,.mo-icon{min-height:44px}.mo-footer{gap:8px}.mo-footer>.mo-muted{flex:1 0 100%}.mo-candidates button{flex-direction:column;gap:4px}}
 :global(.mo-preview-dialog.anime-floating.anime-floating-organize){height:fit-content;min-height:min(360px,calc(100dvh - 48px))}
 .mo-form :deep(input[role="switch"]:checked + span){background:#2563eb}
 :global(.dark .mo-form input),:global(.dark .mo-search input),:global(.dark .mo-file-controls input){background:#1e293b;color:#e2e8f0;border-color:rgb(148 163 184/.3)}

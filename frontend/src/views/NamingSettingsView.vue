@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { IconRefresh, IconRestore, IconDeviceFloppy } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
 import NamingTemplateEditor from '../components/NamingTemplateEditor.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import SelectMenu from '../components/SelectMenu.vue'
@@ -12,7 +11,6 @@ import { cloneNamingTemplate, namingSample, namingSignature } from '../utils/nam
 import type { NamingKind, NamingPreview, NamingRecord, NamingResult, NamingSettings, NamingTemplate } from '../types/naming'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
 const kind = computed<NamingKind>(() => route.query.kind === 'tv' ? 'tv' : 'movie')
 const kindLabel = computed(() => kind.value === 'movie' ? '电影' : '剧集')
@@ -107,6 +105,7 @@ function decide(value: boolean) {
 function beforeUnload(event: BeforeUnloadEvent) { if (anyDirty.value || pending.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteUpdate(() => !locked.value)
 onBeforeRouteLeave(() => {
+  leaveDecision?.(false); leaveDecision = undefined
   if (saving.value || pending.value) { error.value = '保存结果尚未确认，请先确认原请求'; return false }
   if (!anyDirty.value) return true
   dialog.value = 'leave'; return new Promise<boolean>(resolve => { leaveDecision = resolve })
@@ -123,7 +122,6 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController.abort(); clearTimeo
 </script>
 
 <template>
-  <ManagementLayout title="命名模板" description="统一设置电影和剧集的目录、文件名规则，供不同存储与整理功能使用。" @logout="$emit('logout')">
     <div class="naming-settings">
       <header class="ns-toolbar">
         <div class="ns-kind" role="group" aria-label="模板类型"><button v-for="option in [{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :key="option.value" type="button" :disabled="locked" :aria-pressed="kind === option.value" :aria-label="`${option.label}${dirty(option.value) ? '，有未保存修改' : ''}`" @click="chooseKind(option.value)">{{ option.label }}<span v-if="dirty(option.value)" class="ns-dirty" aria-hidden="true"></span></button></div>
@@ -139,10 +137,9 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController.abort(); clearTimeo
         </section>
       </template>
       <div class="ns-feedback" role="status" aria-live="polite"><p v-if="error">{{ error }}</p><p v-else-if="notice">{{ notice }}</p><p v-else-if="settings">{{ dirty(kind) ? '当前模板有未保存的修改' : '当前模板已保存' }}</p><div class="ns-feedback-actions"><button v-if="pending" type="button" class="ns-button" :disabled="saving" @click="confirmSave">确认保存结果</button><button v-else-if="!loading" type="button" class="ns-reload" @click="reload"><IconRefresh :size="13" aria-hidden="true" />重新读取{{ settings ? '当前模板' : '设置' }}</button></div></div>
-      <p class="ns-stage">手动整理、下载整理使用已保存的模板；已创建的任务保持原命名。动漫订阅将在后续步骤接入。</p>
+      <p class="ns-stage">自动整理、手动整理、下载整理和动漫订阅共用已保存的模板；已创建的任务保持原命名。</p>
     </div>
     <P115ActionDialog v-if="dialog" :title="dialog === 'leave' ? '放弃未保存的模板修改？' : dialog === 'reload' ? `重新读取${kindLabel}模板？` : `恢复${kindLabel}默认模板？`" @close="decide(false)"><p>{{ dialog === 'leave' ? '电影或剧集模板仍有未保存的修改，离开后将丢弃这些修改。' : dialog === 'reload' ? '当前类型的未保存修改会被替换，另一类型的编辑内容将保留。' : '仅替换当前类型的编辑内容，保存后才会更新服务端模板。' }}</p><template #footer><button type="button" class="ns-button" @click="decide(false)">继续编辑</button><button type="button" class="ns-button ns-save" @click="decide(true)">{{ dialog === 'leave' ? '放弃修改并离开' : dialog === 'reload' ? '重新读取' : '恢复默认' }}</button></template></P115ActionDialog>
-  </ManagementLayout>
 </template>
 
 <style scoped>

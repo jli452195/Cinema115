@@ -436,7 +436,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) clearTimeout(timer) })
 
         <section v-if="scanId" v-show="activeStep === 3" ref="editPanel" tabindex="-1" aria-label="校正文件与命名" class="panel">
           <h2 class="heading">校正文件与命名</h2>
-          <RouterLink :to="{ path: '/settings/naming', query: media?.kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener" class="mt-2 inline-block text-xs text-blue-600 dark:text-blue-400">编辑公共命名模板</RouterLink>
+          <RouterLink :to="{ name: 'naming-settings', query: media?.kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener" class="mt-2 inline-block text-xs text-blue-600 dark:text-blue-400">编辑公共命名模板</RouterLink>
           <div v-if="media?.kind === 'tv'" class="mt-3 flex flex-wrap items-center gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">季集方案：{{ numberingLabel(media.numbering) }}</span><button type="button" class="text-blue-600 disabled:opacity-50 dark:text-blue-400" :disabled="!!busy || active" @click="numberingOpen = true">设置全站季集方案</button></div>
           <p class="mt-2 break-all text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ selectedName }} · 已选 {{ selectedRows.length }} / {{ rows.length }} 个视频</p>
           <div class="my-4 flex flex-wrap items-center gap-3 text-sm">

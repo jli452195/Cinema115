@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import P115Icon from './P115Icon.vue'
+import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
 const props = defineProps<{ title: string; busy?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>(), titleID = useId()
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-const previousOverflow = document.body.style.overflow
+let unlock: (() => void) | undefined
 function close() { if (!props.busy) emit('close') }
-onMounted(() => { document.body.style.overflow = 'hidden'; dialog.value?.showModal() })
-onBeforeUnmount(() => { dialog.value?.close(); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus() })
+onMounted(() => { unlock = lockAnimeDialogScroll(); dialog.value?.showModal() })
+onBeforeUnmount(() => { dialog.value?.close(); unlock?.(); if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) })
 </script>
 <template>
   <Teleport to="body">

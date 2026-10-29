@@ -2,7 +2,6 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { IconCode, IconDeviceFloppy, IconRefresh, IconRestore } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
 import ClassificationRuleEditor from '../components/ClassificationRuleEditor.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { portalUser } from '../composables/usePortalAuth'
@@ -11,7 +10,6 @@ import { classificationIssue, classificationSignature, parseClassification, vali
 import type { ClassificationConfig, ClassificationDiagnostic, ClassificationKind, ClassificationRecord, ClassificationSettings } from '../types/classification'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
 const YamlSourceEditor = defineAsyncComponent(() => import('../components/YamlSourceEditor.vue'))
 const kind = ref<ClassificationKind>('movie'), settings = shallowRef<ClassificationSettings>(), editor = shallowRef<ClassificationEditorDocument>()
 const drafts = ref<ClassificationConfig>({ movie: { fallback: '', rules: [] }, tv: { fallback: '', rules: [] } })
@@ -163,7 +161,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 </script>
 
 <template>
-  <ManagementLayout title="分类规则" description="按作品信息匹配分类目录，供自动整理使用。作品目录和文件名沿用命名模板。" @logout="$emit('logout')">
     <div class="classification-settings">
       <header class="cs-toolbar">
         <div class="cs-mode" role="group" aria-label="编辑模式"><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'visual'" @click="chooseMode('visual')">可视化</button><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'source'" @click="chooseMode('source')">YAML</button></div>
@@ -195,7 +192,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
       <p v-else>{{ dialog === 'reset' ? '电影和剧集规则均会替换为默认配置，保存后才生效。' : dialog === 'read' ? '电影和剧集的本地修改会被文件内容替换。' : '电影和剧集的本地修改尚未保存，离开后会丢失。' }}</p>
       <template #footer><button class="cs-button" type="button" @click="decide(false)">取消</button><button class="cs-button cs-primary" type="button" @click="decide(true)">{{ dialog === 'reset' ? '恢复默认' : dialog === 'read' ? '重新读取' : '放弃并离开' }}</button></template>
     </P115ActionDialog>
-  </ManagementLayout>
 </template>
 
 <style scoped>
