@@ -22,6 +22,7 @@ type DriveSTRM struct {
 	FullScan           bool           `json:"fullScan,omitempty"`
 	PendingDirectories []string       `json:"pendingDirectories,omitempty"`
 	LastScanAt         time.Time      `json:"lastScanAt,omitempty"`
+	LastFullScanAt     time.Time      `json:"lastFullScanAt,omitempty"`
 	NextScanAt         time.Time      `json:"nextScanAt,omitempty"`
 	LastError          string         `json:"lastError,omitempty"`
 	FailureCount       int            `json:"failureCount,omitempty"`

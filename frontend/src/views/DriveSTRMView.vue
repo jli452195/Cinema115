@@ -101,7 +101,7 @@ async function remove() {
   await act('delete', async () => { await request(`/${deleting.value!.id}`, { method: 'DELETE' }); generation++; deleting.value = undefined; notice.value = '映射已删除，本地与网盘文件均已保留'; await refresh(); await nextTick(); addButton.value?.focus() }, true)
 }
 function date(value?: string) { return value && !value.startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检查' }
-function status(m: Mapping) { return m.status === 'running' ? (m.mode === 'changes' ? '正在检查变更' : '正在完整扫描') : m.status === 'stopped' ? '已停止' : m.lastError ? '需检查' : m.queued ? '等待扫描' : m.enabled ? '监控中' : '已暂停' }
+function status(m: Mapping) { return m.status === 'running' ? (m.mode === 'changes' ? '正在检查变更' : m.mode === 'tree' ? '正在核对目录' : '正在完整扫描') : m.status === 'stopped' ? '已停止' : m.lastError ? '需检查' : m.queued ? '等待扫描' : m.enabled ? '监控中' : '已暂停' }
 async function visible() { window.clearTimeout(timer); if (!document.hidden) await refresh(); poll() }
 function beforeUnload(e: BeforeUnloadEvent) { if (unsaved.value || busy.value) { e.preventDefault(); e.returnValue = '' } }
 onBeforeRouteLeave(() => {
@@ -131,7 +131,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         <footer class="ds-actions"><button class="ds-button ds-check" :disabled="!!busy || active(m) || changedAccount(m) || !state.accountReady || !m.enabled" :title="!m.enabled ? '开启监控后检查事件更新；也可直接完整扫描' : undefined" @click="run(m, false)"><IconRefresh :size="16" aria-hidden="true" />{{ active(m) ? '检查中…' : '检查更新' }}</button><button class="ds-button" :disabled="!!busy || active(m) || changedAccount(m) || !state.accountReady" @click="run(m, true)"><IconSearch :size="16" aria-hidden="true" />完整扫描补齐</button></footer>
       </article>
     </section>
-    <p class="ds-footnote">开启监控后按生活事件检查变更，每天完整扫描补漏。云端改名或移动后会保留旧本地文件；移走或删除本地文件后，可完整扫描补齐。播放需通过 Cinema115 的 Emby 反代。</p>
+    <p class="ds-footnote">生活事件发现变更，每天核对目录补齐缺失文件，每周完整核验；同路径文件替换可手动完整扫描。目录树导出 TXT 由系统清理，云端源文件与旧本地文件均保留。播放需通过 Cinema115 的 Emby 反代。</p>
     <P115ActionDialog v-if="editor" :title="editor.id ? '编辑 STRM 映射' : '新增 STRM 映射'" :busy="!!busy" @close="closeEditor">
       <form id="drive-strm-form" class="ds-form" @submit.prevent="save">
         <p v-if="dialogError" role="alert" class="ds-failed">{{ dialogError }}</p>
@@ -141,7 +141,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         <div><span class="ds-label">主网盘来源</span><button type="button" class="ds-directory" :disabled="!!busy" @click="selectSource"><IconCloud :size="17" aria-hidden="true" /><span>{{ editor.sourcePath || '选择云端目录' }}</span><span class="ds-link">选择</span></button></div>
         <div><span class="ds-label">本地输出</span><div class="ds-output"><label class="ds-sr" for="ds-output">本地输出相对目录</label><input id="ds-output" v-model="editor.outputDir" required placeholder="例如：动漫（相对 /strm）" :disabled="!!busy" /><button type="button" class="ds-button" :disabled="!!busy" @click="outputDialog = true">选择</button></div><small>{{ strmDirectoryPath(editor.outputDir) }} · 可填写新的子目录</small></div>
         <label>STRM 服务地址<input v-model="editor.baseUrl" type="url" required placeholder="http://192.168.0.24:8080" :disabled="!!busy" /><small>填写 Cinema115 地址，不含路径；STRM 不保存登录凭据。</small></label>
-        <SettingSwitch v-model="editor.enabled" label="自动监控" description="事件发现变更，每天完整扫描补漏。保存后先生成一次。" :disabled="!!busy" />
+        <SettingSwitch v-model="editor.enabled" label="自动监控" description="事件更新，每天核对缺失，每周完整核验。保存后先生成一次。" :disabled="!!busy" />
         <details class="ds-options"><summary>附加文件<span>字幕、NFO、图片</span></summary><div><SettingSwitch v-model="subtitle" label="下载外挂字幕" :disabled="!!busy" /><SettingSwitch v-model="nfo" label="下载 NFO" :disabled="!!busy" /><SettingSwitch v-model="images" label="下载海报与剧照" :disabled="!!busy" /><small>按原名保存，单个附件最大 32 MB。附件失败可重试，不阻止其余 STRM 生成。</small></div></details>
       </form>
       <template #footer><button class="ds-button" :disabled="!!busy" @click="closeEditor">取消</button><button type="submit" form="drive-strm-form" class="ds-button ds-primary" :disabled="!!busy || !editor.sourceCID || !editor.outputDir || changedAccount(editor)">{{ busy === 'save' ? '保存中…' : '保存映射' }}</button></template>

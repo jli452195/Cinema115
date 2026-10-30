@@ -46,7 +46,7 @@ func TestDriveSTRMStorageUpgradesMissingDirectoryColumn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, schemaErr := db.Exec(`DROP INDEX drive_strm_directories; ALTER TABLE drive_strm_files DROP COLUMN directory; PRAGMA user_version=63;`)
+			_, schemaErr := db.Exec(`DROP INDEX drive_strm_directories; DROP INDEX drive_strm_paths; ALTER TABLE drive_strm_files DROP COLUMN directory; PRAGMA user_version=63;`)
 			closeErr := db.Close()
 			if schemaErr != nil || closeErr != nil {
 				t.Fatalf("prepare development schema: %v, close: %v", schemaErr, closeErr)
@@ -57,6 +57,10 @@ func TestDriveSTRMStorageUpgradesMissingDirectoryColumn(t *testing.T) {
 				s, err = Open(ctx, filename)
 				if err != nil {
 					t.Fatal(err)
+				}
+				var indexes int
+				if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name='drive_strm_paths'`).Scan(&indexes); err != nil || indexes != 1 {
+					t.Fatalf("lookup indexes=%d err=%v", indexes, err)
 				}
 				all, err := s.ListDriveSTRMFiles(ctx, "mapping")
 				if err != nil || len(all) != wantFiles {
@@ -135,5 +139,153 @@ func TestDriveSTRMStorageResetsOwnershipAtomicallyAndPersistsCursor(t *testing.T
 	}
 	if cursor, err := s.LoadDriveSTRMCursor(ctx, "primary"); err != nil || cursor != "18446744073709551616" {
 		t.Fatalf("cursor=%q err=%v", cursor, err)
+	}
+}
+
+func TestDriveSTRMFileBatchSkipsUnchangedAndRollsBackFailure(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	files := []model.DriveSTRMFile{
+		{MappingID: "mapping", FileID: "1", ParentCID: "100", Path: "a.strm", Digest: "original", Signature: "sha:12"},
+		{MappingID: "mapping", FileID: "200", ParentCID: "100", Path: "Season 01", Directory: true},
+	}
+	if err := s.SaveDriveSTRMFiles(ctx, files); err != nil {
+		t.Fatal(err)
+	}
+	var before, after int
+	if err := s.db.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDriveSTRMFiles(ctx, files); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDriveSTRMFile(ctx, files[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("unchanged records caused %d SQLite writes", after-before)
+	}
+	changed := files[0]
+	changed.Digest = "new"
+	if err := s.SaveDriveSTRMFiles(ctx, []model.DriveSTRMFile{changed, {MappingID: "missing", FileID: "2"}}); err == nil {
+		t.Fatal("batch with an invalid foreign key succeeded")
+	}
+	saved, err := s.ListDriveSTRMFilesByIDs(ctx, "mapping", []string{"1"})
+	if err != nil || len(saved) != 1 || saved[0] != files[0] {
+		t.Fatalf("failed batch changed ownership: %+v err=%v", saved, err)
+	}
+	if err := s.SaveDriveSTRMFiles(ctx, []model.DriveSTRMFile{changed, files[1]}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT changes()`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	// The last unchanged directory record should not trigger an UPDATE.
+	if after != 0 {
+		t.Fatalf("unchanged directory was updated: %d", after)
+	}
+	saved, err = s.ListDriveSTRMFilesByIDs(ctx, "mapping", []string{"1"})
+	if err != nil || len(saved) != 1 || saved[0] != changed {
+		t.Fatalf("changed file was not persisted: %+v err=%v", saved, err)
+	}
+}
+
+func TestDriveSTRMFileLookupsPreserveConflictingOwnersAndScope(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"mapping", "other"} {
+		if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: id, AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := []model.DriveSTRMFile{
+		{MappingID: "mapping", FileID: "1", ParentCID: "100", Path: "Season 01/A.strm", Digest: "first"},
+		{MappingID: "mapping", FileID: "2", ParentCID: "200", Path: "Season 01/a.strm", Digest: "conflicting owner"},
+		{MappingID: "mapping", FileID: "3", ParentCID: "100", Path: "Season 01", Directory: true},
+		{MappingID: "other", FileID: "1", ParentCID: "100", Path: "Season 01/A.strm", Digest: "other mapping"},
+	}
+	if err := s.SaveDriveSTRMFiles(ctx, files); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := s.ListDriveSTRMFilesByPaths(ctx, "mapping", []string{"Season 01/A.strm", "Season 01/A.strm"})
+	if err != nil || len(matched) != 2 || matched[0] != files[0] || matched[1] != files[1] {
+		t.Fatalf("path ownership was collapsed or escaped mapping: %+v err=%v", matched, err)
+	}
+	ids := make([]string, 1001)
+	for i := range ids {
+		ids[i] = "1"
+	}
+	ids[500] = "3"
+	matched, err = s.ListDriveSTRMFilesByIDs(ctx, "mapping", ids)
+	if err != nil || len(matched) != 2 || matched[0] != files[0] || matched[1] != files[2] {
+		t.Fatalf("chunked ID lookup=%+v err=%v", matched, err)
+	}
+	matched, err = s.ListDriveSTRMFilesByIDs(ctx, "mapping", nil)
+	if err != nil || len(matched) != 0 {
+		t.Fatalf("empty ID lookup=%+v err=%v", matched, err)
+	}
+}
+
+func TestDriveSTRMExportCleanupIdentityOutlivesMappingAndRestart(t *testing.T) {
+	ctx := context.Background()
+	filename := filepath.Join(t.TempDir(), "drive.db")
+	s, err := Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDriveSTRMCursor(ctx, "primary", "321"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.SaveDriveSTRMExport(ctx, "primary", "123"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SaveDriveSTRMExport(ctx, "different", "123"); err == nil {
+		t.Fatal("export cleanup identity was reassigned")
+	}
+	if err := s.DeleteDriveSTRM(ctx, "mapping"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	exports, err := s.ListDriveSTRMExports(ctx)
+	if err != nil || len(exports) != 1 || exports["123"] != "primary" {
+		t.Fatalf("exports=%+v err=%v", exports, err)
+	}
+	for range 2 {
+		if err := s.DeleteDriveSTRMExport(ctx, "123"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exports, err = s.ListDriveSTRMExports(ctx)
+	if err != nil || len(exports) != 0 {
+		t.Fatalf("exports=%+v err=%v", exports, err)
+	}
+	if cursor, err := s.LoadDriveSTRMCursor(ctx, "primary"); err != nil || cursor != "321" {
+		t.Fatalf("unrelated event cursor changed: %q err=%v", cursor, err)
 	}
 }

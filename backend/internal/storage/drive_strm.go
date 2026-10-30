@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"strm115/backend/internal/model"
 )
@@ -13,7 +14,8 @@ import (
 const driveSTRMSchema = `
 CREATE TABLE IF NOT EXISTS drive_strm_mappings(id TEXT PRIMARY KEY, record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS drive_strm_files(mapping_id TEXT NOT NULL REFERENCES drive_strm_mappings(id) ON DELETE CASCADE, file_id TEXT NOT NULL, directory INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY(mapping_id,file_id));
-CREATE TABLE IF NOT EXISTS drive_strm_cursors(account_id TEXT PRIMARY KEY, cursor TEXT NOT NULL);`
+CREATE TABLE IF NOT EXISTS drive_strm_cursors(account_id TEXT PRIMARY KEY, cursor TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS drive_strm_exports(export_id TEXT PRIMARY KEY, account_id TEXT NOT NULL);`
 
 func initializeDriveSTRMSchema(ctx context.Context, tx *sql.Tx, version int) error {
 	if _, err := tx.ExecContext(ctx, driveSTRMSchema); err != nil {
@@ -33,7 +35,8 @@ UPDATE drive_strm_files SET directory=CASE WHEN json_extract(record,'$.directory
 			}
 		}
 	}
-	_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS drive_strm_directories ON drive_strm_files(mapping_id,directory)`)
+	_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS drive_strm_directories ON drive_strm_files(mapping_id,directory);
+CREATE INDEX IF NOT EXISTS drive_strm_paths ON drive_strm_files(mapping_id,json_extract(record,'$.path') COLLATE NOCASE);`)
 	return err
 }
 
@@ -53,6 +56,58 @@ func (s *Store) SaveDriveSTRMCursor(ctx context.Context, accountID, cursor strin
 	_, err := s.db.ExecContext(ctx, `INSERT INTO drive_strm_cursors(account_id,cursor) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET cursor=excluded.cursor`, accountID, cursor)
 	if err != nil {
 		return fmt.Errorf("保存目录 STRM 事件游标: %w", err)
+	}
+	return nil
+}
+
+// Export cleanup identities outlive individual mappings. They contain no
+// credentials, and cannot be reassigned to a different account on replay.
+func (s *Store) SaveDriveSTRMExport(ctx context.Context, accountID, exportID string) error {
+	if accountID == "" || exportID == "" {
+		return fmt.Errorf("目录 STRM 导出清理记录缺少身份")
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO drive_strm_exports(export_id,account_id) VALUES(?,?) ON CONFLICT(export_id) DO NOTHING`, exportID, accountID)
+	if err != nil {
+		return fmt.Errorf("保存目录 STRM 导出清理记录: %w", err)
+	}
+	created, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("读取目录 STRM 导出清理保存结果: %w", err)
+	}
+	if created > 0 {
+		return nil
+	}
+	var owner string
+	if err := s.db.QueryRowContext(ctx, `SELECT account_id FROM drive_strm_exports WHERE export_id=?`, exportID).Scan(&owner); err != nil {
+		return fmt.Errorf("读取目录 STRM 导出归属: %w", err)
+	}
+	if owner != accountID {
+		return fmt.Errorf("目录 STRM 导出清理记录已属于其他账号")
+	}
+	return nil
+}
+
+// ListDriveSTRMExports returns export ID -> pinned account configuration ID.
+func (s *Store) ListDriveSTRMExports(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT export_id,account_id FROM drive_strm_exports`)
+	if err != nil {
+		return nil, fmt.Errorf("查询目录 STRM 导出清理记录: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var exportID, accountID string
+		if err := rows.Scan(&exportID, &accountID); err != nil {
+			return nil, fmt.Errorf("读取目录 STRM 导出清理记录: %w", err)
+		}
+		out[exportID] = accountID
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteDriveSTRMExport(ctx context.Context, exportID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM drive_strm_exports WHERE export_id=?`, exportID); err != nil {
+		return fmt.Errorf("删除目录 STRM 导出清理记录: %w", err)
 	}
 	return nil
 }
@@ -140,19 +195,53 @@ func (s *Store) DeleteDriveSTRM(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListDriveSTRMFiles(ctx context.Context, id string) ([]model.DriveSTRMFile, error) {
-	return s.listDriveSTRMFiles(ctx, id, false)
+	return s.listDriveSTRMFiles(ctx, `mapping_id=?`, id)
 }
 
 func (s *Store) ListDriveSTRMDirectories(ctx context.Context, id string) ([]model.DriveSTRMFile, error) {
-	return s.listDriveSTRMFiles(ctx, id, true)
+	return s.listDriveSTRMFiles(ctx, `mapping_id=? AND directory=1`, id)
 }
 
-func (s *Store) listDriveSTRMFiles(ctx context.Context, id string, directories bool) ([]model.DriveSTRMFile, error) {
-	query := `SELECT record FROM drive_strm_files WHERE mapping_id=?`
-	if directories {
-		query += ` AND directory=1`
+func (s *Store) ListDriveSTRMFilesByIDs(ctx context.Context, mappingID string, ids []string) ([]model.DriveSTRMFile, error) {
+	return s.listDriveSTRMFilesBy(ctx, mappingID, `file_id`, ids)
+}
+
+// Paths are local output paths. Return every owner of a matched path so the
+// caller can reject ambiguity instead of silently choosing another file ID.
+// NOCASE follows SQLite's ASCII case folding; non-ASCII names match exactly.
+func (s *Store) ListDriveSTRMFilesByPaths(ctx context.Context, mappingID string, paths []string) ([]model.DriveSTRMFile, error) {
+	return s.listDriveSTRMFilesBy(ctx, mappingID, `json_extract(record,'$.path') COLLATE NOCASE`, paths)
+}
+
+func (s *Store) listDriveSTRMFilesBy(ctx context.Context, mappingID, column string, keys []string) ([]model.DriveSTRMFile, error) {
+	out := make([]model.DriveSTRMFile, 0, len(keys))
+	seen := make(map[string]bool, len(keys))
+	// Leave room for the mapping parameter on SQLite builds with a smaller
+	// variable limit. The indexed query reads only this upstream page's owners.
+	for offset := 0; offset < len(keys); offset += 500 {
+		end := min(offset+500, len(keys))
+		args := make([]any, 1, end-offset+1)
+		args[0] = mappingID
+		for _, key := range keys[offset:end] {
+			args = append(args, key)
+		}
+		where := `mapping_id=? AND ` + column + ` IN (` + strings.TrimSuffix(strings.Repeat("?,", end-offset), ",") + `)`
+		files, err := s.listDriveSTRMFiles(ctx, where, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range files {
+			if !seen[file.FileID] {
+				seen[file.FileID] = true
+				out = append(out, file)
+			}
+		}
 	}
-	rows, err := s.db.QueryContext(ctx, query, id)
+	return out, nil
+}
+
+func (s *Store) listDriveSTRMFiles(ctx context.Context, where string, args ...any) ([]model.DriveSTRMFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT record FROM drive_strm_files WHERE `+where+` ORDER BY file_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询目录 STRM 文件索引: %w", err)
 	}
@@ -173,16 +262,43 @@ func (s *Store) listDriveSTRMFiles(ctx context.Context, id string, directories b
 }
 
 func (s *Store) SaveDriveSTRMFile(ctx context.Context, value model.DriveSTRMFile) error {
-	if value.MappingID == "" || value.FileID == "" {
-		return fmt.Errorf("目录 STRM 文件索引缺少身份")
+	return s.SaveDriveSTRMFiles(ctx, []model.DriveSTRMFile{value})
+}
+
+// SaveDriveSTRMFiles commits one page of ownership records together. Replaying
+// identical records does not dirty SQLite pages or rewrite the output index.
+func (s *Store) SaveDriveSTRMFiles(ctx context.Context, values []model.DriveSTRMFile) error {
+	if len(values) == 0 {
+		return nil
 	}
-	raw, err := json.Marshal(value)
+	raw := make([]string, len(values))
+	for i, value := range values {
+		if value.MappingID == "" || value.FileID == "" {
+			return fmt.Errorf("目录 STRM 文件索引缺少身份")
+		}
+		data, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("编码目录 STRM 文件索引: %w", err)
+		}
+		raw[i] = string(data)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("开始保存目录 STRM 文件索引: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO drive_strm_files(mapping_id,file_id,directory,record) VALUES(?,?,?,?) ON CONFLICT(mapping_id,file_id) DO UPDATE SET directory=excluded.directory,record=excluded.record`, value.MappingID, value.FileID, value.Directory, string(raw))
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO drive_strm_files(mapping_id,file_id,directory,record) VALUES(?,?,?,?) ON CONFLICT(mapping_id,file_id) DO UPDATE SET directory=excluded.directory,record=excluded.record WHERE directory<>excluded.directory OR record<>excluded.record`)
 	if err != nil {
 		return fmt.Errorf("保存目录 STRM 文件索引: %w", err)
+	}
+	defer stmt.Close()
+	for i, value := range values {
+		if _, err := stmt.ExecContext(ctx, value.MappingID, value.FileID, value.Directory, raw[i]); err != nil {
+			return fmt.Errorf("保存目录 STRM 文件索引: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交目录 STRM 文件索引: %w", err)
 	}
 	return nil
 }

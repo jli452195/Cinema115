@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -23,9 +24,13 @@ type DriveSTRMStore interface {
 	GetDriveSTRM(context.Context, string) (model.DriveSTRM, error)
 	ListDriveSTRM(context.Context) ([]model.DriveSTRM, error)
 	DeleteDriveSTRM(context.Context, string) error
-	ListDriveSTRMFiles(context.Context, string) ([]model.DriveSTRMFile, error)
 	ListDriveSTRMDirectories(context.Context, string) ([]model.DriveSTRMFile, error)
-	SaveDriveSTRMFile(context.Context, model.DriveSTRMFile) error
+	SaveDriveSTRMFiles(context.Context, []model.DriveSTRMFile) error
+	ListDriveSTRMFilesByIDs(context.Context, string, []string) ([]model.DriveSTRMFile, error)
+	ListDriveSTRMFilesByPaths(context.Context, string, []string) ([]model.DriveSTRMFile, error)
+	SaveDriveSTRMExport(context.Context, string, string) error
+	ListDriveSTRMExports(context.Context) (map[string]string, error)
+	DeleteDriveSTRMExport(context.Context, string) error
 	LoadDriveSTRMCursor(context.Context, string) (string, error)
 	SaveDriveSTRMCursor(context.Context, string, string) error
 }
@@ -39,7 +44,8 @@ type driveSTRMMetadataReader interface {
 	ReadDriveMetadata(context.Context, p115.ShareFile, string) ([]byte, error)
 }
 
-// DriveSTRMService has no cloud mutation operations and no anime dependencies.
+// DriveSTRMService never changes source files and has no anime dependencies.
+// Only its own generated directory-tree exports are created and cleaned up.
 // A single tracked worker freezes credentials for each scan. Life events only
 // enqueue known directory scopes; full reconciliation repairs missed changes.
 type DriveSTRMService struct {
@@ -56,6 +62,7 @@ type DriveSTRMService struct {
 }
 
 const driveSTRMReconcileInterval = 24 * time.Hour
+const driveSTRMFullInterval = 7 * 24 * time.Hour
 
 func NewDriveSTRMService(store DriveSTRMStore, accounts *P115Accounts, client DriveSTRMClient, root string) *DriveSTRMService {
 	return &DriveSTRMService{Store: store, Accounts: accounts, Client: client, Root: root, wake: make(chan struct{}, 1)}
@@ -174,6 +181,7 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	}
 	value.Status, value.LastError = "queued", ""
 	value.LastScanAt, value.Stats = old.LastScanAt, old.Stats
+	value.LastFullScanAt = old.LastFullScanAt
 	value.Queued, value.FullScan, value.PendingDirectories = true, true, nil
 	value.Mode = "full"
 	value.UpdatedAt = time.Now().UTC()
@@ -357,9 +365,24 @@ func (s *DriveSTRMService) Run(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	var lastCleanup time.Time
+	var cleanupError string
 	for {
 		if ctx.Err() != nil {
 			return nil
+		}
+		// Retry only our persisted export files, including when all mappings
+		// have been removed. Pending upstream jobs must finish before reuse.
+		if time.Since(lastCleanup) >= 30*time.Second {
+			lastCleanup = time.Now()
+			message := ""
+			if err := s.cleanDriveSTRMExports(ctx); err != nil && ctx.Err() == nil {
+				message = err.Error()
+			}
+			if message != "" && message != cleanupError {
+				log.Printf("目录 STRM 导出清理暂未完成，将重试：%s", message)
+			}
+			cleanupError = message
 		}
 		value, scanCtx, found, err := s.next(ctx)
 		if err != nil {
@@ -404,15 +427,19 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 		if !value.Queued && !(value.Enabled && !value.NextScanAt.After(now)) {
 			continue
 		}
-		if !value.Queued {
-			value.FullScan = true
+		if !value.Queued || value.Enabled && !value.NextScanAt.After(now) {
+			value.FullScan = value.FullScan || value.LastFullScanAt.IsZero() || now.Sub(value.LastFullScanAt) >= driveSTRMFullInterval
+			// Frequent life events must not postpone periodic reconciliation.
+			value.PendingDirectories = nil
 		}
 		snapshot := value
 		value.Queued, value.FullScan, value.PendingDirectories = false, false, nil
 		value.Status, value.LastError, value.UpdatedAt = "running", "", now
 		value.Stats = model.DriveSTRMStats{}
-		if snapshot.FullScan || len(snapshot.PendingDirectories) == 0 {
+		if snapshot.FullScan {
 			value.Mode, snapshot.Mode = "full", "full"
+		} else if len(snapshot.PendingDirectories) == 0 {
+			value.Mode, snapshot.Mode = "tree", "tree"
 		} else {
 			value.Mode, snapshot.Mode = "changes", "changes"
 		}
@@ -450,8 +477,13 @@ func (s *DriveSTRMService) finish(ctx context.Context, id string, stats model.Dr
 		return err
 	}
 	value.Stats = stats
+	if scanErr == nil && value.Mode == "full" {
+		value.LastFullScanAt = time.Now().UTC()
+	}
 	value.LastScanAt, value.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-	value.NextScanAt = value.LastScanAt.Add(driveSTRMReconcileInterval)
+	if value.Mode != "changes" || value.NextScanAt.IsZero() {
+		value.NextScanAt = value.LastScanAt.Add(driveSTRMReconcileInterval)
+	}
 	if value.Status != "stopped" {
 		value.Status, value.LastError = "idle", ""
 		if scanErr != nil {
