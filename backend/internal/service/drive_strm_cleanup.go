@@ -179,7 +179,12 @@ func (s *DriveSTRMService) cleanupDriveSTRMOutput(ctx context.Context) (bool, er
 	if err != nil {
 		// Local permission errors and an incomplete destination retry alone;
 		// they must never turn into a remote full-scan failure.
-		return true, s.Store.RetryDriveSTRMCleanup(ctx, job, err.Error(), time.Now().UTC().Add(driveSTRMRetryDelay(job.Attempts+1)))
+		delay := driveSTRMRetryDelay(job.Attempts + 1)
+		if retryErr := s.Store.RetryDriveSTRMCleanup(ctx, job, err.Error(), time.Now().UTC().Add(delay)); retryErr != nil {
+			return true, retryErr
+		}
+		s.logDriveSTRM(value.ID, "WARNING", fmt.Sprintf("目录「%s」旧输出暂未清理：%s；将在 %s 后单独重试；原因：%s", value.Name, job.Record.Path, delay, err))
+		return true, nil
 	}
 	return true, s.Store.DeleteDriveSTRMCleanup(ctx, job.ID)
 }

@@ -66,6 +66,7 @@ type DriveSTRMService struct {
 	Accounts         *P115Accounts
 	Client           DriveSTRMClient
 	Root             string
+	Logs             *GenerationLogs
 	mu               sync.Mutex
 	wake             chan struct{}
 	active           string
@@ -77,6 +78,7 @@ type DriveSTRMService struct {
 	metadataInterval time.Duration
 	running          bool
 	lastPicked       string
+	scanStarted      time.Time
 }
 
 func NewDriveSTRMService(store DriveSTRMStore, accounts *P115Accounts, client DriveSTRMClient, root string) *DriveSTRMService {
@@ -446,7 +448,8 @@ func (s *DriveSTRMService) runScans(ctx context.Context) error {
 				message = err.Error()
 			}
 			if message != "" && message != cleanupError {
-				log.Printf("目录 STRM 导出清理暂未完成，将重试：%s", message)
+				log.Printf("目录 STRM 导出清理暂未完成，将重试：%s", monitorLogDetail(message, ""))
+				s.logDriveSTRM("", "WARNING", "目录树导出清理暂未完成，将重试："+message)
 			}
 			cleanupError = message
 		}
@@ -534,8 +537,10 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 		}
 		s.active = value.ID
 		s.lastPicked = value.ID
+		s.scanStarted = now
 		scanCtx, cancel := context.WithCancel(ctx)
 		s.cancel = cancel
+		s.logDriveSTRM(value.ID, "INFO", fmt.Sprintf("目录「%s」开始%s：来源=%s，输出=%s", value.Name, driveSTRMLogMode(snapshot.Mode), value.SourcePath, value.OutputDir))
 		return snapshot, scanCtx, true, nil
 	}
 	return model.DriveSTRM{}, nil, false, nil
@@ -548,6 +553,11 @@ func (s *DriveSTRMService) finish(ctx context.Context, id string, stats model.Dr
 		s.cancel()
 	}
 	s.active, s.cancel = "", nil
+	elapsed := time.Duration(0)
+	if !s.scanStarted.IsZero() {
+		elapsed = time.Since(s.scanStarted)
+	}
+	s.scanStarted = time.Time{}
 	s.wakeAttachments()
 	// Finishing must survive cancellation of the process-level worker context.
 	processCanceled := ctx.Err() != nil
@@ -591,5 +601,9 @@ func (s *DriveSTRMService) finish(ctx context.Context, id string, stats model.Dr
 			value.Status = "queued"
 		}
 	}
-	return s.Store.SaveDriveSTRM(ctx, value)
+	if err := s.Store.SaveDriveSTRM(ctx, value); err != nil {
+		return err
+	}
+	s.logDriveSTRMResult(value, scanErr, processCanceled, elapsed)
+	return nil
 }

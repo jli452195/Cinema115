@@ -341,6 +341,7 @@ func main() {
 	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	driveSTRM := service.NewDriveSTRMService(database, accounts, shareAPI.Client, shareAPI.OutputRoot)
+	driveSTRM.Logs = generationLogs
 	driveEvents := service.NewDriveSTRMEvents(driveSTRM, shareAPI.Client)
 	httpapi.RegisterDriveSTRM(admin, driveSTRM, driveEvents, shareAPI.BaseURL)
 	httpapi.RegisterDrivePlayback(r, accounts, shareAPI.Client, shareAPI.MediaHTTP, generationLogs)

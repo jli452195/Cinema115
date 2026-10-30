@@ -224,10 +224,26 @@ func (s *DriveSTRMService) finishAttachment(ctx, workCtx context.Context, job mo
 	if downloadErr == nil || ctx.Err() != nil || workCtx.Err() != nil && errors.Is(downloadErr, context.Canceled) {
 		return nil
 	}
-	return s.Store.RetryDriveSTRMAttachment(ctx, job, monitorLogDetail(downloadErr.Error(), cookie), time.Now().UTC().Add(driveSTRMRetryDelay(job.Attempts+1)))
+	detail := monitorLogDetail(downloadErr.Error(), cookie)
+	delay := driveSTRMRetryDelay(job.Attempts + 1)
+	if err := s.Store.RetryDriveSTRMAttachment(ctx, job, detail, time.Now().UTC().Add(delay)); err != nil {
+		return err
+	}
+	s.logDriveSTRM(job.Record.MappingID, "WARNING", fmt.Sprintf("附件下载未完成：%s；将在 %s 后单独重试，不重扫目录；原因：%s", job.Record.Path, delay, detail))
+	return nil
 }
 
 func (s *DriveSTRMService) runAttachments(ctx context.Context) error {
+	lastLog := time.Now()
+	completed, checked := 0, 0
+	flush := func() {
+		if completed+checked > 0 {
+			s.logDriveSTRM("", "INFO", fmt.Sprintf("后台处理进度：完成附件任务 %d，旧输出清理检查 %d 项", completed, checked))
+			completed, checked = 0, 0
+			lastLog = time.Now()
+		}
+	}
+	defer flush()
 	for ctx.Err() == nil {
 		cleaned, err := s.cleanupDriveSTRMOutput(ctx)
 		if err != nil {
@@ -235,6 +251,12 @@ func (s *DriveSTRMService) runAttachments(ctx context.Context) error {
 				return nil
 			}
 			return err
+		}
+		if cleaned {
+			checked++
+		}
+		if time.Since(lastLog) >= 15*time.Second {
+			flush()
 		}
 		job, workCtx, wait, found, err := s.nextAttachment(ctx)
 		if err != nil {
@@ -251,11 +273,15 @@ func (s *DriveSTRMService) runAttachments(ctx context.Context) error {
 				}
 				return err
 			}
+			if downloadErr == nil {
+				completed++
+			}
 			continue
 		}
 		if cleaned {
 			continue
 		}
+		flush()
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():

@@ -75,6 +75,7 @@ func (s *DriveSTRMService) scanDirectoryTree(ctx context.Context, value model.Dr
 	if err != nil {
 		return stats, nil, err
 	}
+	s.logDriveSTRM(value.ID, "INFO", fmt.Sprintf("目录「%s」正在导出目录树，等待 115 返回结果", value.Name))
 	// Persist an accepted external job even if the request was just canceled.
 	saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	err = s.Store.SaveDriveSTRMExport(saveCtx, value.AccountID, id)
@@ -169,5 +170,6 @@ func (s *DriveSTRMService) scanDirectoryTree(ctx context.Context, value model.Dr
 	for cid := range wanted {
 		cids = append(cids, cid)
 	}
+	s.logDriveSTRM(value.ID, "INFO", fmt.Sprintf("目录「%s」目录树核对完成：视频 %d，已有输出 %d，需补扫 %d 个目录", value.Name, stats.Videos, stats.Unchanged, len(cids)))
 	return stats, cids, nil
 }

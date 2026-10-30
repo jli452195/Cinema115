@@ -95,6 +95,7 @@ type driveSTRMScan struct {
 	claimed           map[string]string
 	blocked           map[string]bool
 	lastProgress      time.Time
+	lastLog           time.Time
 }
 
 func driveSTRMOutputPath(relative string, video bool) string {
@@ -120,7 +121,14 @@ func (r *driveSTRMScan) progress(ctx context.Context) error {
 		return nil
 	}
 	r.lastProgress = time.Now()
-	return r.service.progress(ctx, r.value.ID, r.stats)
+	if err := r.service.progress(ctx, r.value.ID, r.stats); err != nil {
+		return err
+	}
+	if time.Since(r.lastLog) >= 15*time.Second {
+		r.lastLog = time.Now()
+		r.service.logDriveSTRM(r.value.ID, "INFO", fmt.Sprintf("目录「%s」生成进度：%s", r.value.Name, driveSTRMLogStats(r.stats)))
+	}
+	return nil
 }
 
 // Inspect path types without repeatedly opening unchanged output contents.
@@ -293,7 +301,7 @@ func (s *DriveSTRMService) scan(ctx context.Context, value model.DriveSTRM) (mod
 	if err != nil {
 		return model.DriveSTRMStats{}, err
 	}
-	r := driveSTRMScan{service: s, value: value, cookie: account.Cookie, directory: directory, videos: videos, metadata: metadata, claimed: make(map[string]string), blocked: make(map[string]bool), lastProgress: time.Now()}
+	r := driveSTRMScan{service: s, value: value, cookie: account.Cookie, directory: directory, videos: videos, metadata: metadata, claimed: make(map[string]string), blocked: make(map[string]bool), lastProgress: time.Now(), lastLog: time.Now()}
 	root, err := s.Client.ReadDirectory(ctx, value.SourceCID, account.Cookie)
 	if err != nil {
 		return r.stats, fmt.Errorf("核验来源目录: %w", err)
@@ -311,6 +319,7 @@ func (s *DriveSTRMService) scan(ctx context.Context, value model.DriveSTRM) (mod
 			value.Mode, value.PendingDirectories = "changes", cids
 		} else if errors.Is(treeErr, p115.ErrDriveTreeExportUnsupported) {
 			value.Mode = "full"
+			s.logDriveSTRM(value.ID, "WARNING", "当前目录不支持目录树核对，改用完整扫描")
 			if err := s.setScanMode(ctx, value.ID, "full"); err != nil {
 				return r.stats, err
 			}
