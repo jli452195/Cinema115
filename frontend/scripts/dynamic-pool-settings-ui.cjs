@@ -33,10 +33,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
   })
   await page.goto('http://127.0.0.1:5173/helper115')
-  await page.getByText('仅一个 UID 参与调度，暂无其他 UID 备用',{exact:true}).waitFor()
+  await page.getByText('仅单 UID 调度中',{exact:true}).waitFor()
   const overview=page.getByLabel('动态池运行概览'), card=page.locator('article').filter({has:page.getByRole('heading',{name:'小号 A',exact:true})})
   await overview.getByText('80.0%',{exact:true}).waitFor()
-  assert.equal(await overview.getByText('参与调度涉及 1 个 UID',{exact:true}).count(),1)
+  assert.equal(await overview.getByText('1 个检查通过',{exact:true}).count(),1)
   assert.equal(await page.getByText('2 份配置共用此 UID 名额，容量不累加',{exact:true}).count(),2)
   await page.getByRole('button',{name:'调度设置',exact:true}).click()
   await page.getByLabel('每 UID 名额上限',{exact:true}).fill('2')
@@ -94,8 +94,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   // Unknown health does not imply failure or unusability.
   pool.forEach(a=>a.pool.state='unknown');zeroSamples=true
   await page.getByRole('button',{name:'刷新状态',exact:true}).click()
-  await overview.getByText('暂无样本',{exact:true}).waitFor()
-  await overview.getByText('暂无请求',{exact:true}).waitFor()
+  await overview.getByText('等待请求完成',{exact:true}).waitFor()
+  await overview.locator('.metric-cell').filter({hasText:'取链成功率'}).locator('.metric-number').getByText('--',{exact:true}).waitFor()
   assert.equal(await page.getByText('参与调度的小号目前均处于故障或冷却状态',{exact:true}).count(),0)
   await page.getByRole('button',{name:'运行详情',exact:true}).click()
   await page.getByRole('dialog').getByText('暂无样本',{exact:true}).first().waitFor()
