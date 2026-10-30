@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { IconChevronRight, IconRefresh, IconSearch, IconX } from '@tabler/icons-vue'
+import { IconChevronRight, IconDownload, IconRefresh, IconSearch, IconX } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import PlaybackDiagnostics from '../components/PlaybackDiagnostics.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
@@ -41,6 +41,17 @@ const error = ref('')
 const updated = ref('')
 const visibleCount = ref(100)
 const capacity = ref(2000)
+interface LogFile { name: string; size: number; modifiedAt: string; active: boolean }
+const persistence = ref<{ enabled: boolean; lastError: string; failedWrites: number }>()
+const historyFiles = ref<LogFile[]>([])
+const historyLimits = ref({ maxSizeMB: 20, maxBackups: 10, maxAgeDays: 14 })
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyStatus = ref('')
+const downloading = ref('')
+let historyLoaded = false
+let cursor: number | undefined
+let instanceID = ''
 const lifecycle = new AbortController()
 let timer: number | undefined
 let mounted = true
@@ -66,7 +77,7 @@ async function refresh() {
   loading.value = true
   if (retrying) retryStatus.value = '正在重试读取日志'
   try {
-    const response = await fetch('/api/admin/logs?module=ALL&level=ALL', {
+    const response = await fetch('/api/admin/logs?module=ALL&level=ALL' + (cursor === undefined ? '' : `&after=${cursor}&instanceID=${encodeURIComponent(instanceID)}`), {
       headers: { Authorization: `Bearer ${props.token}` },
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(10000)]),
     })
@@ -74,9 +85,13 @@ async function refresh() {
     if (response.status === 401) { sessionExpired.value = true; throw new Error('管理员登录已过期，请重新登录') }
     const data = await response.json().catch(() => null)
     if (!mounted) return
-    if (!response.ok || !Array.isArray(data?.entries)) throw new Error(data?.error ?? `日志读取失败（HTTP ${response.status}）`)
-    entries.value = data.entries
+    if (!response.ok || !Array.isArray(data?.entries) || !Number.isSafeInteger(data.cursor) || typeof data.instanceID !== 'string') throw new Error(data?.error ?? `日志读取失败（HTTP ${response.status}）`)
     capacity.value = data.capacity
+    if (cursor === undefined || data.reset || data.instanceID !== instanceID) entries.value = data.entries.slice(0, capacity.value)
+    else if (data.entries.length) entries.value = [...new Map<number, LogEntry>([...entries.value, ...data.entries].map(entry => [entry.id, entry])).values()].sort((a, b) => b.id - a.id).slice(0, capacity.value)
+    cursor = data.cursor
+    instanceID = data.instanceID
+    persistence.value = data.persistence
     updated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     if (retrying && document.activeElement === retryButtonRef.value) searchInputRef.value?.focus()
     error.value = ''
@@ -91,6 +106,68 @@ async function refresh() {
     // Pause after a failed read; a successful retry resumes the single polling loop.
     if (mounted && !error.value && !sessionExpired.value) timer = window.setTimeout(() => { void refresh() }, 2000)
   }
+}
+
+function historyToggle(event: Event) {
+  if ((event.currentTarget as HTMLDetailsElement).open && !historyLoaded) void loadHistory()
+}
+
+async function loadHistory() {
+  if (historyLoading.value || !mounted || sessionExpired.value) return
+  historyLoading.value = true
+  historyError.value = ''
+  historyStatus.value = '正在读取历史日志文件'
+  try {
+    const response = await fetch('/api/admin/logs/files', {
+      headers: { Authorization: `Bearer ${props.token}` },
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(10000)]),
+    })
+    if (!mounted) return
+    if (response.status === 401) { sessionExpired.value = true; throw new Error('管理员登录已过期，请重新登录') }
+    const data = await response.json().catch(() => null)
+    if (!response.ok || !Array.isArray(data?.files)) throw new Error(data?.error ?? `历史日志读取失败（HTTP ${response.status}）`)
+    historyFiles.value = data.files
+    historyLimits.value = { maxSizeMB: data.maxSizeMB, maxBackups: data.maxBackups, maxAgeDays: data.maxAgeDays }
+    historyLoaded = true
+    historyStatus.value = `已读取 ${data.files.length} 个日志文件`
+  } catch (e) {
+    if (mounted) { historyError.value = e instanceof Error ? e.message : '历史日志读取失败'; historyStatus.value = '' }
+  } finally { historyLoading.value = false }
+}
+
+async function downloadLog(file: LogFile) {
+  if (downloading.value || !mounted || sessionExpired.value) return
+  downloading.value = file.name
+  historyError.value = ''
+  historyStatus.value = `正在准备下载 ${file.name}`
+  try {
+    const response = await fetch('/api/admin/logs/files/' + encodeURIComponent(file.name), {
+      headers: { Authorization: `Bearer ${props.token}` },
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(60000)]),
+    })
+    if (!mounted) return
+    if (response.status === 401) { sessionExpired.value = true; throw new Error('管理员登录已过期，请重新登录') }
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.error ?? `日志下载失败（HTTP ${response.status}）`)
+    }
+    const blob = await response.blob()
+    if (!mounted) return
+    const url = URL.createObjectURL(blob)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = file.name
+      link.click()
+    } finally { window.setTimeout(() => URL.revokeObjectURL(url), 0) }
+    historyStatus.value = `已开始下载 ${file.name}`
+  } catch (e) {
+    if (mounted) { historyError.value = e instanceof Error ? e.message : '日志下载失败'; historyStatus.value = '' }
+  } finally { downloading.value = '' }
+}
+
+function fileSize(bytes: number) {
+  return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 onMounted(() => { void refresh() })
@@ -123,6 +200,24 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
             <span>仅查看任务：{{ taskID }}</span>
             <button type="button" @click="clearTaskFilter">取消任务筛选</button>
           </div>
+          <p v-if="persistence && (persistence.lastError || persistence.failedWrites > 0)" class="logs-persistence" role="status"><template v-if="persistence.lastError">文件保存异常，最近日志仍可查看；{{ persistence.failedWrites }} 条写入未成功。{{ persistence.lastError }}</template><template v-else>{{ persistence.enabled ? '日志写入已恢复' : '文件持久化未启用' }}，本次有 {{ persistence.failedWrites }} 条记录未保存。</template></p>
+          <details class="logs-history" @toggle="historyToggle">
+            <summary><IconChevronRight :size="14" stroke="1.75" aria-hidden="true" focusable="false" /><span>历史日志</span></summary>
+            <div class="logs-history-content" :aria-busy="historyLoading">
+              <div class="logs-history-heading"><span>日志文件</span><button type="button" class="logs-history-action" :disabled="historyLoading || sessionExpired" @click="loadHistory"><IconRefresh :size="15" stroke="1.75" aria-hidden="true" focusable="false" />刷新列表</button></div>
+              <p v-if="historyError" class="logs-history-error" role="alert">{{ historyError }}<RouterLink v-if="sessionExpired" :to="{ path: '/admin/login', query: { redirect: route.fullPath } }">重新登录</RouterLink></p>
+              <p v-if="historyLoading && !historyLoaded" class="logs-history-note">正在读取日志文件…</p>
+              <ul v-else-if="historyFiles.length" class="logs-history-files">
+                <li v-for="file in historyFiles" :key="file.name">
+                  <div class="logs-file-info"><span class="logs-file-name">{{ file.name }}<span v-if="file.active" class="logs-file-active">当前</span></span><span class="logs-file-meta">{{ fileSize(file.size) }} · {{ new Date(file.modifiedAt).toLocaleString('zh-CN', { hour12: false }) }}</span></div>
+                  <button type="button" class="logs-history-action" :aria-label="`下载 ${file.name}`" :aria-busy="downloading === file.name" :disabled="Boolean(downloading) || sessionExpired" @click="downloadLog(file)"><IconDownload :size="15" stroke="1.75" aria-hidden="true" focusable="false" />{{ downloading === file.name ? '准备中' : '下载' }}</button>
+                </li>
+              </ul>
+              <p v-else-if="!historyError" class="logs-history-note">暂无日志文件。</p>
+              <p class="logs-history-note">INFO、WARNING、ERROR 保存为 JSONL；DEBUG 仅保留在最近记录中。单文件 {{ historyLimits.maxSizeMB }} MB，历史最多 {{ historyLimits.maxBackups }} 份、{{ historyLimits.maxAgeDays }} 天，达到任一限制后清理。</p>
+              <span class="sr-only" role="status">{{ historyStatus }}</span>
+            </div>
+          </details>
           <div v-if="error" class="logs-error">
             <p role="alert">{{ error }}。{{ entries.length ? '当前保留上次读取的日志。' : '' }}</p>
             <RouterLink v-if="sessionExpired" :to="{ path: '/admin/login', query: { redirect: route.fullPath } }" class="logs-retry">重新登录</RouterLink>
@@ -151,7 +246,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
         </ol>
         <div v-if="filtered.length > visibleCount" class="logs-more"><button type="button" @click="visibleCount += 100">加载更多（还剩 {{ filtered.length - visibleCount }} 条）</button></div>
       </section>
-      <p class="logs-footnote">全部模块合计保留本次后端运行期间最近 {{ capacity.toLocaleString() }} 条日志，重启后清空。分享任务记录独立保留；此页仅显示新产生的日志。</p>
+      <p class="logs-footnote">页面展示全部模块最近 {{ capacity.toLocaleString() }} 条记录，搜索仅限最近记录；更早的日志可展开「历史日志」下载。{{ persistence?.enabled ? '重启后恢复已保存的最近记录。' : '文件持久化尚未启用。' }}分享任务记录独立保留。</p>
   </ManagementLayout>
 </template>
 
@@ -190,6 +285,24 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 .logs-task-filter button { min-height: 44px; margin-left: auto; padding: 0 8px; flex-shrink: 0; border-radius: 8px; cursor: pointer; }
 .logs-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px; border-radius: 10px; background: #fcebed; color: #a23549; font-size: 13px; line-height: 22px; overflow-wrap: anywhere; }
 .logs-error > p { min-width: 0; flex: 1 1 240px; }
+.logs-persistence { padding: 10px 12px; border-radius: 10px; background: #fff4df; color: #8a5a13; font-size: 12px; line-height: 21px; overflow-wrap: anywhere; }
+.logs-history { min-width: 0; color: var(--logs-muted); }
+.logs-history > summary { display: flex; width: fit-content; min-height: 32px; align-items: center; gap: 5px; border-radius: 6px; color: var(--logs-action-text); font-size: 12px; cursor: pointer; list-style: none; }
+.logs-history > summary::-webkit-details-marker { display: none; }
+.logs-history > summary > svg { flex-shrink: 0; transition: transform 150ms ease-out; }
+.logs-history[open] > summary > svg { transform: rotate(90deg); }
+.logs-history-content { display: grid; gap: 10px; margin-top: 6px; padding: 12px; border-radius: 10px; background: var(--logs-soft); }
+.logs-history-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; color: var(--logs-text); font-size: 12px; font-weight: 500; }
+.logs-history-action { display: inline-flex; min-height: 36px; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 8px; background: var(--logs-action); color: var(--logs-action-text); font-size: 12px; cursor: pointer; }
+.logs-history-action:disabled { opacity: .6; cursor: wait; }
+.logs-history-files { display: grid; gap: 4px; min-width: 0; }
+.logs-history-files > li { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 6px 0; }
+.logs-file-info { display: grid; gap: 3px; min-width: 0; flex: 1 1 240px; }
+.logs-file-name { color: var(--logs-text); font-size: 12px; overflow-wrap: anywhere; }
+.logs-file-active { margin-left: 8px; color: var(--logs-action-text); font-size: 11px; }
+.logs-file-meta, .logs-history-note { font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.logs-history-error { color: #a23549; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.logs-history-error > a { margin-left: 8px; color: var(--logs-action-text); text-decoration: underline; }
 .logs-empty { padding: 64px 24px; color: var(--logs-muted); text-align: center; font-size: 13px; line-height: 24px; }
 .logs-list { padding: 4px 0 8px; }
 .logs-entry { min-width: 0; padding: 16px 24px; transition: background-color 150ms ease-out; }
@@ -208,15 +321,18 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 .logs-details :deep(button) { min-height: 36px; padding: 0 8px; border-radius: 8px; color: var(--logs-action-text); }
 .logs-more { padding: 12px 24px 20px; text-align: center; }
 .logs-more button { min-height: 44px; padding: 0 20px; border-radius: 10px; background: var(--logs-soft); color: var(--logs-action-text); font-size: 13px; cursor: pointer; }
-.logs-module:focus-visible, .logs-clear:focus-visible, .logs-retry:focus-visible, .logs-task-filter button:focus-visible, .logs-levels button:focus-visible, .logs-details summary:focus-visible, .logs-details :deep(button:focus-visible), .logs-more button:focus-visible { outline: 2px solid var(--logs-focus); outline-offset: -2px; }
+.logs-module:focus-visible, .logs-clear:focus-visible, .logs-retry:focus-visible, .logs-task-filter button:focus-visible, .logs-levels button:focus-visible, .logs-details summary:focus-visible, .logs-details :deep(button:focus-visible), .logs-more button:focus-visible, .logs-history > summary:focus-visible, .logs-history-action:focus-visible { outline: 2px solid var(--logs-focus); outline-offset: -2px; }
 .logs-footnote { margin-top: 16px; color: rgb(var(--color-slate-500)); font-size: 12px; line-height: 24px; }
 .dark .logs-panel { --logs-soft: rgb(var(--color-slate-950) / 60%); --logs-text: rgb(var(--color-slate-300)); --logs-muted: rgb(var(--color-slate-400)); --logs-action: #29394d; --logs-action-hover: #334961; --logs-action-text: #bad2f4; --logs-focus: #94b8e5; background: rgb(var(--color-slate-900)); box-shadow: 0 1px 4px rgb(0 0 0 / 15%); }
 .dark .logs-toolbar { background: rgb(var(--color-slate-950) / 20%); }
 .dark .logs-entry:nth-child(even) { background: rgb(var(--color-slate-950) / 22%); }
 .dark .logs-error { background: #45272e; color: #ffb4bf; }
+.dark .logs-persistence { background: #3b3020; color: #f1cd91; }
+.dark .logs-history-error { color: #ffb4bf; }
 .dark .logs-footnote { color: rgb(var(--color-slate-500)); }
 @media (hover: hover) and (pointer: fine) {
   .logs-retry:not([aria-disabled="true"]):hover { background: var(--logs-action-hover); box-shadow: 0 2px 6px rgb(15 23 42 / 6%); }
+  .logs-history-action:not(:disabled):hover { background: var(--logs-action-hover); }
   .logs-clear:hover, .logs-task-filter button:hover, .logs-details :deep(button:hover), .logs-more button:hover { background: var(--logs-action); }
   .logs-entry:hover { background: #f5f8fc; }.dark .logs-entry:hover { background: #272c32; }
 }
@@ -230,12 +346,13 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
   .logs-status { width: 100%; margin-left: 0; }
   .logs-entry { padding: 14px 16px; }.logs-entry-meta { gap: 6px 10px; }
   .logs-details summary, .logs-details :deep(button) { min-height: 44px; }
+  .logs-history > summary, .logs-history-action { min-height: 44px; }
 }
 @media (max-width: 379px) {
   .logs-controls { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .logs-retry, .logs-entry, .logs-details summary > svg { transition: none; }
+  .logs-retry, .logs-entry, .logs-details summary > svg, .logs-history > summary > svg { transition: none; }
   .logs-retry .is-refreshing { animation: none; }
 }
 </style>

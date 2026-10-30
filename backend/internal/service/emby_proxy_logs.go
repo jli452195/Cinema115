@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -40,8 +39,7 @@ func PlaybackAccountLabel(name, uid, accountID string) string {
 // EmbyProxyLogs writes to the shared real-time log buffer under its own module.
 // Callers supply fixed diagnostic messages and validated identifiers, never raw URLs or credentials.
 type EmbyProxyLogs struct {
-	entries  *GenerationLogs
-	sequence atomic.Uint64
+	entries *GenerationLogs
 }
 
 func NewEmbyProxyLogs(entries *GenerationLogs) *EmbyProxyLogs {
@@ -143,7 +141,7 @@ func (s *EmbyProxyLogs) Trace(ctx context.Context) context.Context {
 	if s == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, proxyTraceKey{}, fmt.Sprintf("302-%06d", s.sequence.Add(1)))
+	return context.WithValue(ctx, proxyTraceKey{}, s.entries.NewTaskID("302"))
 }
 
 func (s *EmbyProxyLogs) Add(ctx context.Context, level, message string) {

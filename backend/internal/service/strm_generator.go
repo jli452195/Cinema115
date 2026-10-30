@@ -90,6 +90,18 @@ type STRMGenerator struct {
 	Root   string
 }
 
+// A large batch reports elapsed-time milestones, regardless of file count.
+// The outer LoggedGenerator owns the final INFO summary.
+type strmWriteProgress struct{ last time.Time }
+
+func (p *strmWriteProgress) report(ctx context.Context, now time.Time, written, total int) {
+	if now.Sub(p.last) < 15*time.Second {
+		return
+	}
+	p.last = now
+	logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成进度：%d/%d", written, total))
+}
+
 func generationInputError(message string) error {
 	return fmt.Errorf("%w：%s", ErrGenerationInput, message)
 }
@@ -210,7 +222,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 			label = "STRM 生成中断！"
 			remainder = fmt.Sprintf("，未处理：%d", len(result.Files)-result.Written-result.Failed)
 		}
-		logGeneration(ctx, "INFO", fmt.Sprintf("%s成功：%d，失败：%d%s，耗时 %.2f 秒", label, result.Written, result.Failed, remainder, time.Since(started).Seconds()))
+		logGeneration(ctx, "DEBUG", fmt.Sprintf("%s成功：%d，失败：%d%s，耗时 %.2f 秒", label, result.Written, result.Failed, remainder, time.Since(started).Seconds()))
 	}()
 	visited := make(map[string]bool)
 	usedPaths := make(map[string]bool)
@@ -266,7 +278,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 			if len(page.Files) == 0 && offset < page.Count {
 				return fmt.Errorf("分享分页不完整，请重试")
 			}
-			logGeneration(ctx, "INFO", fmt.Sprintf("读取分享目录第 %d 页，本页 %d 项", pages, len(page.Files)))
+			logGeneration(ctx, "DEBUG", fmt.Sprintf("读取分享目录第 %d 页，本页 %d 项", pages, len(page.Files)))
 			for _, file := range page.Files {
 				entries++
 				if entries > 20000 {
@@ -373,6 +385,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 	for _, file := range result.MetadataFiles {
 		reservedPaths[strings.ToLower(file.Path)] = true
 	}
+	progress := strmWriteProgress{last: time.Now()}
 	for i := range result.Files {
 		file := &result.Files[i]
 		if err := ctx.Err(); err != nil {
@@ -398,11 +411,7 @@ func (g *STRMGenerator) Generate(ctx context.Context, input GenerateInput) (outp
 		if len(result.Files) <= 100 {
 			logGeneration(ctx, "DEBUG", "STRM 生成成功："+filepath.ToSlash(filepath.Join(directory, filepath.FromSlash(actualPath))))
 		}
-		// Small jobs report every ten writes; large jobs keep about 100 milestones.
-		milestone := max(10, (len(result.Files)+99)/100)
-		if result.Written%milestone == 0 || result.Written == len(result.Files) {
-			logGeneration(ctx, "INFO", fmt.Sprintf("STRM 生成成功：%d/%d", result.Written, len(result.Files)))
-		}
+		progress.report(ctx, time.Now(), result.Written, len(result.Files))
 	}
 	logGeneration(ctx, "DEBUG", fmt.Sprintf("STRM 生成完成：新增 %d", result.Written))
 	if metadataErr := g.copyMetadata(ctx, share, cookie, directory, result, reservedPaths); metadataErr != nil {

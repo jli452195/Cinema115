@@ -42,13 +42,7 @@ type embyOperationLog struct {
 }
 
 func (s *EmbyService) newLogTask() string {
-	if s.Logs == nil {
-		return ""
-	}
-	s.Logs.mu.Lock()
-	defer s.Logs.mu.Unlock()
-	s.Logs.taskSequence++
-	return fmt.Sprintf("EMBY-%06d", s.Logs.taskSequence)
+	return s.Logs.NewTaskID("EMBY")
 }
 
 func (s *EmbyService) logContext(ctx context.Context, c EmbyConfig, task, source string, extra ...string) context.Context {

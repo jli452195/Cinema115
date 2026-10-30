@@ -14,7 +14,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     entry(12, { level: 'DEBUG', module: 'STRM', taskID: 'task-debug', message: 'Diagnostic fixture', details: { steps: 'Unique diagnostic needle' } }),
     entry(13, { level: 'ERROR', module: '\u641c\u7d22', source: '\u8717\u725b' + 'source'.repeat(15), taskID: 'task-'.repeat(15), message: '\u6a21\u62df\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002' }),
   ]
-  const state = { hold: true, status: 200, entries: rows, requests: 0, inFlight: 0, maxInFlight: 0, pending: [] }
+  const files = [{ name: 'cinema115.log', size: 2048, modifiedAt: '2026-10-30T10:15:30Z', active: true }, { name: 'cinema115-2026-10-29T10-15-30.000.log', size: 1048576, modifiedAt: '2026-10-29T10:15:30Z', active: false }]
+  const state = { hold: true, status: 200, entries: rows, requests: 0, inFlight: 0, maxInFlight: 0, pending: [], reset: false, instanceID: 'instance-a', persistError: '', failedWrites: 0, persistEnabled: true, fileRequests: 0, filesStatus: 200, downloadStatus: 200 }
   const errors = [], requests = [], passed = []
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
@@ -22,6 +23,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       localStorage.setItem('admin_token', 'mock-logs-token')
       localStorage.setItem('cinema115-theme', 'light')
       window.__logsAborts = 0
+      window.__logURLs = { created: 0, revoked: 0 }
+      const createURL = URL.createObjectURL, revokeURL = URL.revokeObjectURL
+      URL.createObjectURL = blob => { window.__logURLs.created++; return createURL.call(URL, blob) }
+      URL.revokeObjectURL = url => { window.__logURLs.revoked++; return revokeURL.call(URL, url) }
       const original = window.fetch
       window.fetch = (input, init) => {
         if (String(input).includes('/api/admin/logs')) {
@@ -33,17 +38,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
     })
     await context.route('**/api/**', async route => {
-      const endpoint = new URL(route.request().url()).pathname
-      requests.push({ endpoint, method: route.request().method() })
+      const requestURL = new URL(route.request().url()), endpoint = requestURL.pathname
+      requests.push({ endpoint, after: requestURL.searchParams.get('after'), instanceID: requestURL.searchParams.get('instanceID'), method: route.request().method(), authorization: route.request().headers().authorization })
       if (endpoint === '/api/admin/logs') {
         state.requests++; state.inFlight++; state.maxInFlight = Math.max(state.maxInFlight, state.inFlight)
-        const status = state.status, entries = structuredClone(state.entries)
+        const status = state.status, snapshot = structuredClone(state.entries), cursor = Math.max(0, ...snapshot.map(entry => entry.id))
+        const after = requestURL.searchParams.get('after'), instanceID = state.instanceID, reset = state.reset || after !== null && (Number(after) > cursor || requestURL.searchParams.get('instanceID') !== instanceID)
+        const entries = after === null || reset ? snapshot : snapshot.filter(entry => entry.id > Number(after))
         try {
           if (state.hold) await new Promise(resolve => state.pending.push(resolve))
-          await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(status === 200 ? { entries, capacity: 2000 } : { error: 'Mock read failure' }) })
+          await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(status === 200 ? { entries, capacity: 2000, cursor, reset, instanceID, persistence: { enabled: state.persistEnabled, lastError: state.persistError, failedWrites: state.failedWrites } } : { error: 'Mock read failure' }) })
         } catch (error) {
           if (!/closed|intercepted|invalid.*state/i.test(error.message)) throw error
         } finally { state.inFlight-- }
+        return
+      }
+      if (endpoint === '/api/admin/logs/files') {
+        state.fileRequests++
+        await route.fulfill({ status: state.filesStatus, contentType: 'application/json', body: JSON.stringify(state.filesStatus === 200 ? { files, maxSizeMB: 20, maxBackups: 10, maxAgeDays: 14 } : { error: 'Mock file list failure' }) })
+        return
+      }
+      if (endpoint.startsWith('/api/admin/logs/files/')) {
+        await route.fulfill({ status: state.downloadStatus, contentType: state.downloadStatus === 200 ? 'application/x-ndjson' : 'application/json', body: state.downloadStatus === 200 ? '{"level":"ERROR","message":"Historical fixture"}\n' : JSON.stringify({ error: 'Mock download failure' }) })
         return
       }
       const body = endpoint === '/api/auth/me' ? { user: { id: 'mock', username: 'logs-review', role: 'admin' } } : { items: [], unread: 0, accounts: [], configured: false }
@@ -197,6 +213,79 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await page.locator('.logs-details summary').first().click()
     }
     passed.push('saturated selector and badges, indicator alignment, 320–1440px light/dark layout and touch targets')
+
+    assert.equal(state.fileRequests, 0, 'history files were read before opening history')
+    const history = page.locator('.logs-history'), historySummary = history.locator(':scope > summary')
+    await historySummary.click()
+    await history.locator('.logs-history-files li').first().waitFor()
+    assert.equal(await history.locator('.logs-history-files li').count(), 2)
+    assert((await historySummary.boundingBox()).height >= 44)
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'history list overflows at 320px')
+    for (const button of await history.getByRole('button').all()) assert((await button.boundingBox()).height >= 44)
+    assert.match(await history.innerText(), /20 MB/)
+    await page.waitForTimeout(2150)
+    assert.equal(state.fileRequests, 1, 'normal polling refreshed the history file list')
+    await historySummary.click(); await historySummary.click()
+    await page.waitForTimeout(100)
+    assert.equal(state.fileRequests, 1, 'reopening history unexpectedly reread metadata')
+    await history.getByRole('button', { name: '\u5237\u65b0\u5217\u8868' }).click()
+    await waitFor(() => state.fileRequests === 2)
+    const downloadEvent = page.waitForEvent('download')
+    await history.getByRole('button', { name: '\u4e0b\u8f7d cinema115.log', exact: true }).click()
+    const download = await downloadEvent
+    assert.equal(download.suggestedFilename(), 'cinema115.log')
+    assert.match(fs.readFileSync(await download.path(), 'utf8'), /Historical fixture/)
+    await page.waitForFunction(() => window.__logURLs.created === 1 && window.__logURLs.revoked === 1)
+    assert(requests.filter(request => request.endpoint.startsWith('/api/admin/logs/files')).every(request => request.authorization === 'Bearer mock-logs-token'))
+    state.downloadStatus = 500
+    await history.getByRole('button', { name: '\u4e0b\u8f7d cinema115.log', exact: true }).click()
+    await history.locator('.logs-history-error').waitFor()
+    assert.match(await history.locator('.logs-history-error').innerText(), /Mock download failure/)
+    state.downloadStatus = 200; state.filesStatus = 500
+    await history.getByRole('button', { name: '\u5237\u65b0\u5217\u8868' }).click()
+    await page.waitForFunction(() => document.querySelector('.logs-history-error')?.textContent.includes('Mock file list failure'))
+    assert.equal(await history.locator('.logs-history-files li').count(), 2, 'history read failure discarded prior metadata')
+    state.filesStatus = 200
+    await history.getByRole('button', { name: '\u5237\u65b0\u5217\u8868' }).click()
+    await history.locator('.logs-history-error').waitFor({ state: 'detached' })
+    await screenshot('logs-history-320-dark')
+    await historySummary.click()
+    passed.push('history reads only on demand, manual refresh, authenticated JSONL download, Blob cleanup, file errors and 320px touch layout')
+
+    await go('/logs')
+    const incrementalStart = state.requests
+    state.entries = [entry(20, { message: 'Incremental fixture' }), ...rows]
+    await page.getByText('Incremental fixture', { exact: true }).waitFor()
+    assert.equal(await page.locator('.logs-entry').count(), 2)
+    assert(requests.some(request => request.endpoint === '/api/admin/logs' && request.after === '13'))
+    const incrementalDone = state.requests
+    await waitFor(() => state.requests > incrementalDone)
+    assert.equal(await page.getByText('Incremental fixture', { exact: true }).count(), 1, 'incremental poll duplicated a record')
+    state.entries = [entry(1, { message: 'Restarted fixture' })]; state.reset = true
+    await page.getByText('Restarted fixture', { exact: true }).waitFor()
+    assert.equal(await page.locator('.logs-entry').count(), 1, 'cursor reset did not replace old cache')
+    state.reset = false; state.entries = [entry(2, { level: 'DEBUG', message: 'Old instance debug fixture' }), entry(1, { message: 'Persisted info fixture' })]
+    await go('/logs?level=ALL')
+    await page.getByText('Old instance debug fixture', { exact: true }).waitFor()
+    state.entries = [entry(2, { message: 'Same cursor new instance fixture' }), entry(1, { message: 'Persisted info fixture' })]; state.instanceID = 'instance-b'
+    await page.getByText('Same cursor new instance fixture', { exact: true }).waitFor()
+    assert.equal(await page.getByText('Old instance debug fixture', { exact: true }).count(), 0, 'instance reset retained the old DEBUG event with a reused ID')
+    assert(requests.some(request => request.endpoint === '/api/admin/logs' && request.after === '2' && request.instanceID === 'instance-a'), 'incremental request omitted the instance identity')
+    state.reset = false; state.persistError = 'Mock disk full'; state.failedWrites = 2
+    await page.locator('.logs-persistence').waitFor()
+    assert.match(await page.locator('.logs-persistence').innerText(), /2/)
+    assert.match(await page.locator('.logs-persistence').innerText(), /Mock disk full/)
+    state.persistError = ''
+    await page.waitForFunction(() => document.querySelector('.logs-persistence')?.textContent.includes('\u65e5\u5fd7\u5199\u5165\u5df2\u6062\u590d'))
+    assert.match(await page.locator('.logs-persistence').innerText(), /2/)
+    assert.doesNotMatch(await page.locator('.logs-persistence').innerText(), /Mock disk full/)
+    state.persistEnabled = false
+    await page.waitForFunction(() => document.querySelector('.logs-persistence')?.textContent.includes('\u6587\u4ef6\u6301\u4e45\u5316\u672a\u542f\u7528'))
+    assert.doesNotMatch(await page.locator('.logs-persistence').innerText(), /\u5df2\u6062\u590d/)
+    state.persistEnabled = true; state.failedWrites = 0
+    await page.locator('.logs-persistence').waitFor({ state: 'detached' })
+    assert(state.requests > incrementalStart)
+    passed.push('cursor incremental merge, empty delta preservation, restart and same-cursor instance reset, persistence failure/recovery and retained failed-write count')
 
     await page.setViewportSize({ width: 1440, height: 1000 })
     state.entries = []; await go('/logs')

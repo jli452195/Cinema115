@@ -87,7 +87,7 @@ func TestDrivePlaybackOriginalFileAndCredentialCache(t *testing.T) {
 	check(http.MethodHead, "player", 1)
 	check(http.MethodGet, "player", 1)
 	entries := logs.Snapshot("ALL")
-	if len(entries) != 2 || entries[0].Source != "目录播放" || !strings.Contains(entries[0].Message, "缓存命中=true") || !strings.Contains(entries[0].Message, "bytes=0-1023") || strings.Contains(entries[0].Message, "private") || strings.Contains(entries[0].Message, "https://") {
+	if len(entries) != 2 || entries[0].Source != "目录播放" || entries[0].Level != "DEBUG" || !strings.Contains(entries[0].Message, "缓存命中=true") || !strings.Contains(entries[0].Message, "bytes=0-1023") || strings.Contains(entries[0].Message, "private") || strings.Contains(entries[0].Message, "https://") {
 		t.Fatal("playback diagnostics missing or exposing credentials")
 	}
 	check(http.MethodGet, "other-player", 1)

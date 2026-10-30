@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 )
@@ -97,7 +97,7 @@ func TestGenerationLogsRepeatedWriteAndSource(t *testing.T) {
 		if entry.Source != "Telegram" || entry.TaskID == "" {
 			t.Fatal("任务来源缺失")
 		}
-		written = written || entry.Level == "INFO" && strings.Contains(entry.Message, "STRM 生成成功")
+		written = written || entry.Level == "INFO" && strings.Contains(entry.Message, "STRM 写入 1")
 		if strings.Contains(entry.Message, "已存在") {
 			t.Fatal("不应记录已存在统计")
 		}
@@ -143,7 +143,7 @@ func TestGenerationLogErrorLevelsAndProgress(t *testing.T) {
 	}
 }
 
-func TestGenerationInfoDescribesEffectiveInput(t *testing.T) {
+func TestGenerationInputDetailsStayDebugAndStartRemainsInfo(t *testing.T) {
 	root := t.TempDir()
 	logs := &GenerationLogs{}
 	g := &LoggedGenerator{Root: root, Logs: logs, Generator: generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
@@ -157,21 +157,21 @@ func TestGenerationInfoDescribesEffectiveInput(t *testing.T) {
 	if _, err := g.Generate(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
-	messages := make(map[string]bool)
-	for _, entry := range logs.Snapshot("INFO") {
-		messages[entry.Message] = true
+	messages := make(map[string]string)
+	for _, entry := range logs.Snapshot("ALL") {
+		messages[entry.Message] = entry.Level
 		if strings.Contains(entry.Message, "private-") || strings.Contains(entry.Message, "old-password") {
 			t.Fatal("记录了无关凭证或未使用的提取码")
 		}
 	}
-	for _, expected := range []string{
-		"遍历模式：包含所有子目录",
-		"115链接：https://115cdn.com/s/demo?password=new1",
-		"开始处理任务：demo",
-		"使用配置的目录：待整理（" + filepath.ToSlash(filepath.Join(root, "待整理")) + "）",
+	for expected, level := range map[string]string{
+		"遍历模式：包含所有子目录":                                  "DEBUG",
+		"115链接：https://115cdn.com/s/demo?password=new1": "DEBUG",
+		"开始处理任务：demo":                                   "INFO",
+		"使用配置的目录：待整理（" + filepath.ToSlash(filepath.Join(root, "待整理")) + "）": "DEBUG",
 	} {
-		if !messages[expected] {
-			t.Fatalf("INFO 缺少任务信息：%s", expected)
+		if messages[expected] != level {
+			t.Fatalf("任务信息等级错误：%s level=%s", expected, messages[expected])
 		}
 	}
 }
@@ -187,7 +187,7 @@ func TestReshareStagesInGenerationLogs(t *testing.T) {
 	var permanent, cleaned bool
 	for _, entry := range all {
 		wantLevel := "DEBUG"
-		if strings.HasPrefix(entry.Message, "遍历模式：") || strings.HasPrefix(entry.Message, "115链接：") || strings.HasPrefix(entry.Message, "开始处理任务：") || strings.HasPrefix(entry.Message, "分享者与所选账号") || strings.HasPrefix(entry.Message, "正在核对分享者 user ID") || strings.Contains(entry.Message, "总耗时") {
+		if strings.HasPrefix(entry.Message, "开始处理任务：") || strings.HasPrefix(entry.Message, "分享者与所选账号") || strings.HasPrefix(entry.Message, "正在核对分享者 user ID") || strings.Contains(entry.Message, "总耗时") {
 			wantLevel = "INFO"
 		}
 		if entry.Level != wantLevel {
@@ -201,16 +201,15 @@ func TestReshareStagesInGenerationLogs(t *testing.T) {
 	}
 }
 
-func TestInfoLogsReportStartPagesAndSuccessfulWriteMilestones(t *testing.T) {
+func TestGenerationInfoKeepsOneCompletionSummary(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		count, failAt int
-		want          []string
 	}{
-		{"不足十个", 7, 0, []string{"STRM 生成成功：7/7"}},
-		{"整十不重复完成", 20, 0, []string{"STRM 生成成功：20/20", "STRM 生成成功：10/20"}},
-		{"补齐尾数", 25, 0, []string{"STRM 生成成功：25/25", "STRM 生成成功：20/25", "STRM 生成成功：10/25"}},
-		{"中途失败不报告完成", 25, 13, []string{"STRM 生成成功：10/25"}},
+		{"不足十个", 7, 0},
+		{"整十不重复完成", 20, 0},
+		{"非整十完成", 25, 0},
+		{"中途失败不报告完成", 25, 13},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := make([]p115.ShareFile, 0, tc.count+1)
@@ -252,27 +251,36 @@ func TestInfoLogsReportStartPagesAndSuccessfulWriteMilestones(t *testing.T) {
 			if result == nil || result.Written != wantWritten {
 				t.Fatal("写入数量错误")
 			}
-			got := make([]string, 0, len(tc.want))
+			completed := 0
 			for _, entry := range logs.Snapshot("INFO") {
 				if strings.HasPrefix(entry.Message, "STRM 生成成功：") {
-					got = append(got, entry.Message)
+					t.Fatal("job emitted file-count milestones", entry)
+				}
+				if strings.Contains(entry.Message, "总耗时") {
+					completed++
+					if !strings.Contains(entry.Message, fmt.Sprintf("STRM 写入 %d，失败 0", wantWritten)) {
+						t.Fatal("final summary lost write statistics", entry)
+					}
 				}
 			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("INFO 进度错误：%v", got)
+			wantCompleted := 1
+			if tc.failAt > 0 {
+				wantCompleted = 0
 			}
-			var pageLogged, summaryLogged, completed bool
-			for _, entry := range logs.Snapshot("INFO") {
+			if completed != wantCompleted {
+				t.Fatalf("incorrect completion count=%d want=%d", completed, wantCompleted)
+			}
+			var pageLogged, summaryLogged bool
+			for _, entry := range logs.Snapshot("DEBUG") {
 				pageLogged = pageLogged || entry.Message == fmt.Sprintf("读取分享目录第 1 页，本页 %d 项", len(files))
-				completed = completed || strings.Contains(entry.Message, "总耗时")
 				if tc.failAt == 0 {
 					summaryLogged = summaryLogged || strings.HasPrefix(entry.Message, fmt.Sprintf("STRM 生成完成！成功：%d，失败：0，耗时 ", wantWritten))
 				} else {
 					summaryLogged = summaryLogged || strings.HasPrefix(entry.Message, fmt.Sprintf("STRM 生成中断！成功：%d，失败：1，未处理：%d，耗时 ", wantWritten, tc.count-wantWritten-1))
 				}
 			}
-			if !pageLogged || !summaryLogged || completed != (tc.failAt == 0) {
-				t.Fatal("INFO 分页、统计或完成状态错误")
+			if !pageLogged || !summaryLogged {
+				t.Fatal("DEBUG 分页或内部统计缺失")
 			}
 			detailed := 0
 			for _, entry := range logs.Snapshot("DEBUG") {
@@ -287,5 +295,25 @@ func TestInfoLogsReportStartPagesAndSuccessfulWriteMilestones(t *testing.T) {
 				t.Fatal("写入失败没有保留 ERROR 日志")
 			}
 		})
+	}
+}
+
+func TestSTRMWriteProgressThrottlesByElapsedTime(t *testing.T) {
+	logs := &GenerationLogs{}
+	ctx := context.WithValue(context.Background(), generationLogKey{}, generationLogger{store: logs, task: "time-progress", source: "网页"})
+	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	progress := strmWriteProgress{last: start}
+	progress.report(ctx, start.Add(time.Second), 10, 50)
+	progress.report(ctx, start.Add(14*time.Second), 19, 50)
+	if len(logs.Snapshot("INFO")) != 0 {
+		t.Fatal("progress logged before the interval elapsed")
+	}
+	progress.report(ctx, start.Add(15*time.Second), 20, 50)
+	progress.report(ctx, start.Add(29*time.Second), 39, 50)
+	progress.report(ctx, start.Add(30*time.Second), 40, 50)
+	progress.report(ctx, start.Add(31*time.Second), 50, 50)
+	entries := logs.Snapshot("INFO")
+	if len(entries) != 2 || entries[0].Message != "STRM 生成进度：40/50" || entries[1].Message != "STRM 生成进度：20/50" {
+		t.Fatalf("interval progress missing, duplicated, or forced at completion: %+v", entries)
 	}
 }

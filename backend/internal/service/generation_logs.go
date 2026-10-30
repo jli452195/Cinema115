@@ -28,10 +28,14 @@ type GenerationLog struct {
 
 // GenerationLogs 使用固定容量环形缓冲区，允许记录分享链接，不记录登录凭证。
 type GenerationLogs struct {
+	writeMu                sync.Mutex
 	mu                     sync.RWMutex
 	entries                [GenerationLogCapacity]GenerationLog
 	next, size             int
 	sequence, taskSequence uint64
+	files                  generationLogJournal
+	persistence            LogPersistenceStatus
+	sessionID              string
 }
 
 // NewTaskID 为一次操作分配共享缓冲区内唯一的关联编号。
@@ -42,6 +46,9 @@ func (s *GenerationLogs) NewTaskID(prefix string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.taskSequence++
+	if s.sessionID != "" {
+		return fmt.Sprintf("%s-%s-%06d", prefix, s.sessionID, s.taskSequence)
+	}
 	return fmt.Sprintf("%s-%06d", prefix, s.taskSequence)
 }
 
@@ -58,9 +65,9 @@ func (s *GenerationLogs) appendDetails(module, task, source, level, message stri
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sequence++
+	// Serialize append order, while keeping reads independent of disk writes.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	runes := []rune(message)
 	if len(runes) > 1000 {
 		message = string(runes[:1000]) + "…"
@@ -68,33 +75,61 @@ func (s *GenerationLogs) appendDetails(module, task, source, level, message stri
 	if details != nil {
 		copy := *details
 		details = &copy
+		boundGenerationLogDetails(details)
 	}
-	s.entries[s.next] = GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message, Details: details}
+	s.mu.Lock()
+	s.sequence++
+	entry := GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message, Details: details}
+	s.entries[s.next] = entry
 	s.next = (s.next + 1) % len(s.entries)
 	if s.size < len(s.entries) {
 		s.size++
 	}
+	s.mu.Unlock()
+	s.persist(entry)
 }
 
 // Snapshot 返回独立副本，按最新优先排列，等级筛选采用精确匹配。
 func (s *GenerationLogs) Snapshot(level string, modules ...string) []GenerationLog {
+	module := "ALL"
+	if len(modules) > 0 {
+		module = modules[0]
+	}
+	return s.Read(level, module, 0, false).Entries
+}
+
+// Read returns a consistent cursor and detects an overwritten or restarted cache.
+func (s *GenerationLogs) Read(level, module string, after uint64, incremental bool, instance ...string) LogSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	result := make([]GenerationLog, 0, s.size)
+	reset := incremental && after > s.sequence
+	if incremental && len(instance) > 0 && instance[0] != "" && instance[0] != s.sessionID {
+		reset = true
+	}
+	if incremental && s.size > 0 && after > 0 {
+		oldest := s.entries[(s.next-s.size+len(s.entries))%len(s.entries)].ID
+		reset = reset || after < oldest-1
+	}
+	capacity := s.size
+	if incremental && !reset {
+		capacity = int(min(uint64(capacity), s.sequence-after))
+	}
+	result := make([]GenerationLog, 0, capacity)
 	for i := 0; i < s.size; i++ {
 		entry := s.entries[(s.next-1-i+len(s.entries))%len(s.entries)]
+		if incremental && !reset && entry.ID <= after {
+			break
+		}
+		if module != "ALL" && entry.Module != module || level != "ALL" && entry.Level != level {
+			continue
+		}
 		if entry.Details != nil {
 			copy := *entry.Details
 			entry.Details = &copy
 		}
-		if len(modules) > 0 && modules[0] != "ALL" && entry.Module != modules[0] {
-			continue
-		}
-		if level == "ALL" || entry.Level == level {
-			result = append(result, entry)
-		}
+		result = append(result, entry)
 	}
-	return result
+	return LogSnapshot{Entries: result, Capacity: GenerationLogCapacity, Cursor: s.sequence, InstanceID: s.sessionID, Reset: reset, Persistence: s.persistence}
 }
 
 type generationLogKey struct{}
@@ -144,10 +179,7 @@ func (g *LoggedGenerator) Generate(ctx context.Context, input GenerateInput) (re
 }
 
 func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInput, run func(context.Context) (*GenerationResult, error)) (result *GenerationResult, err error) {
-	g.Logs.mu.Lock()
-	g.Logs.taskSequence++
-	task := fmt.Sprintf("STRM-%06d", g.Logs.taskSequence)
-	g.Logs.mu.Unlock()
+	task := g.Logs.NewTaskID("STRM")
 	source, _ := ctx.Value(generationSourceKey{}).(string)
 	if source != "Telegram" && source != "订阅" && source != "追更" && source != "目录分享" {
 		source = "网页"
@@ -173,7 +205,7 @@ func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInpu
 	if input.Recursive {
 		mode = "包含所有子目录"
 	}
-	logGeneration(ctx, "INFO", "遍历模式："+mode)
+	logGeneration(ctx, "DEBUG", "遍历模式："+mode)
 	if share, parseErr := p115.ParseShareURL(input.URL); parseErr == nil {
 		if input.Password != "" {
 			share.Password = strings.TrimSpace(input.Password)
@@ -183,28 +215,28 @@ func (g *LoggedGenerator) generateLogged(ctx context.Context, input GenerateInpu
 		if share.Password != "" {
 			link += "?password=" + url.QueryEscape(share.Password)
 		}
-		logGeneration(ctx, "INFO", "115链接："+link)
+		logGeneration(ctx, "DEBUG", "115链接："+link)
 		logGeneration(ctx, "INFO", "开始处理任务："+url.PathEscape(share.Code))
 	} else {
 		logGeneration(ctx, "INFO", "开始处理任务："+task)
 	}
 	if g.Root != "" {
 		if directory, resolveErr := ResolveOutputDirectory(g.Root, input.OutputDir); resolveErr == nil {
-			logGeneration(ctx, "INFO", fmt.Sprintf("使用配置的目录：%s（%s）", filepath.ToSlash(filepath.Clean(input.OutputDir)), filepath.ToSlash(directory)))
+			logGeneration(ctx, "DEBUG", fmt.Sprintf("使用配置的目录：%s（%s）", filepath.ToSlash(filepath.Clean(input.OutputDir)), filepath.ToSlash(directory)))
 		}
 	}
 	defer func() {
 		elapsed := time.Since(started).Seconds()
 		counts := ""
 		if result != nil {
-			counts = fmt.Sprintf("，新增 %d", result.Written)
+			counts = fmt.Sprintf("，STRM 写入 %d，失败 %d，附件写入 %d，失败 %d", result.Written, result.Failed, result.MetadataWritten, result.MetadataFailed)
 		}
 		if err == nil {
 			label := "分享生成 STRM 完成！"
 			if result != nil && result.ReshareURL != "" {
 				label = "转存分享生成 STRM 完成！"
 			}
-			logGeneration(ctx, "INFO", fmt.Sprintf("%s总耗时 %.2f 秒", label, elapsed))
+			logGeneration(ctx, "INFO", fmt.Sprintf("%s%s，总耗时 %.2f 秒", label, counts, elapsed))
 			return
 		}
 		level, reason := "ERROR", "生成失败："+generationErrorDetail(err, input)

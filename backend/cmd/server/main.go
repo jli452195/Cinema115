@@ -109,6 +109,9 @@ func main() {
 	// 记录路由模板，避免将播放凭证写入访问日志。
 	r.Use(func(c *gin.Context) {
 		c.Next()
+		if c.Request.Method == http.MethodGet && c.FullPath() == "/api/admin/logs" && c.Writer.Status() < 400 {
+			return // Successful log polling is not an operational event.
+		}
 		log.Printf("%s %s %d", c.Request.Method, c.FullPath(), c.Writer.Status())
 	})
 	r.Use(corsMiddleware())
@@ -133,6 +136,14 @@ func main() {
 	httpapi.RegisterTVNumbering(admin, tmdbService)
 	httpapi.RegisterTMDB(catalog, tmdbService)
 	generationLogs := &service.GenerationLogs{}
+	if err := generationLogs.EnablePersistence(filepath.Join(dataDir, "logs")); err != nil {
+		log.Printf("日志文件未能启用，暂保留最近记录：%v", err)
+	}
+	defer func() {
+		if err := generationLogs.Close(); err != nil {
+			log.Printf("关闭日志文件：%v", err)
+		}
+	}()
 	mikanService := service.NewMikanService(mikan.New(), generationLogs)
 	httpapi.RegisterMikan(admin, mikanService)
 	animeDiscovery := bangumi.New()

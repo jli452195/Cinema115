@@ -34,7 +34,7 @@ func TestLogAPIValidationAndAdminBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		query, auth string
 		code, count int
-	}{{"", "", 401, 0}, {"?level=ALL", "test-admin", 200, 3}, {"?level=INFO", "test-admin", 200, 2}, {"?level=WARNING", "test-admin", 200, 1}, {"?level=ERROR", "test-admin", 200, 0}, {"?level=invalid", "test-admin", 400, 0}, {"?module=API", "test-admin", 400, 0}, {"?module=Telegram", "test-admin", 200, 2}, {"?module=Telegram&level=INFO", "test-admin", 200, 1}, {"?module=订阅", "test-admin", 200, 1}, {"?module=ALL", "test-admin", 200, 6}, {"?module=ALL&level=DEBUG", "test-admin", 200, 1}} {
+	}{{"", "", 401, 0}, {"?level=ALL", "test-admin", 200, 3}, {"?level=INFO", "test-admin", 200, 1}, {"?level=WARNING", "test-admin", 200, 1}, {"?level=ERROR", "test-admin", 200, 0}, {"?level=invalid", "test-admin", 400, 0}, {"?module=API", "test-admin", 400, 0}, {"?module=Telegram", "test-admin", 200, 2}, {"?module=Telegram&level=INFO", "test-admin", 200, 1}, {"?module=订阅", "test-admin", 200, 1}, {"?module=ALL", "test-admin", 200, 6}, {"?module=ALL&level=DEBUG", "test-admin", 200, 2}} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/admin/logs"+tc.query, nil)
 		req.Header.Set("Authorization", tc.auth)

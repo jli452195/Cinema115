@@ -71,7 +71,7 @@ func TestShareCanaryLegacyAndNewHTTP(t *testing.T) {
 			}
 			requests++
 			entries := a.Logs.Snapshot("ALL")
-			if len(entries) != requests || entries[0].Module != "STRM" || entries[0].Source != "分享播放" || entries[0].Level != "INFO" || !strings.Contains(entries[0].Message, method+" HTTP 206") {
+			if len(entries) != requests || entries[0].Module != "STRM" || entries[0].Source != "分享播放" || entries[0].Level != "DEBUG" || !strings.Contains(entries[0].Message, method+" HTTP 206") {
 				t.Fatal("new or legacy standalone share playback missing or duplicating logs")
 			}
 			if strings.Contains(entries[0].Message, "test-cookie") || strings.Contains(entries[0].Message, "fwgl") || strings.Contains(entries[0].Message, "https://") {
