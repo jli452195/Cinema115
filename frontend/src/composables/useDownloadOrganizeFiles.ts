@@ -65,11 +65,10 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
     const entry = states.value.find(state => state.key === key)
     if (entry?.status === 'error') { entry.status = 'waiting'; entry.files = undefined; void parse() }
   }
-  function resourceSelections() {
-    return active.value.map(entry => ({ ...entry.source, manifestId: entry.files?.manifestId, files: rows.value.filter(row => row.selected && owners.get(row.id)?.key === entry.key).map(row => ({ id: owners.get(row.id)!.id, season: row.season, episode: row.episode })) })).filter(entry => entry.files.length)
+  function resourceSelections(chosen: OrganizeRow[]) {
+    return active.value.map(entry => ({ ...entry.source, manifestId: entry.files?.manifestId, files: chosen.filter(row => owners.get(row.id)?.key === entry.key).map(row => ({ id: owners.get(row.id)!.id, season: row.season, episode: row.episode })) })).filter(entry => entry.files.length)
   }
-  const selectedKeys = computed(() => [...new Set(rows.value.filter(row => row.selected).map(row => owners.get(row.id)!.key))])
   for (const entry of states.value) if (entry.files) append(entry, entry.files)
   onBeforeUnmount(pause)
-  return { states, rows, subtitles, sources, parsing, active, unresolved, readyCount, selectedKeys, owners, remove, pause, parse, retry, resourceSelections }
+  return { states, rows, subtitles, sources, parsing, active, unresolved, readyCount, owners, remove, pause, parse, retry, resourceSelections }
 }

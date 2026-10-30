@@ -79,7 +79,7 @@ function rankCandidates(name: string, videos: SubtitleMatchVideo[]) {
   }).sort((a, b) => b.score - a.score)
 }
 
-export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number, kind: 'movie' | 'tv' = 'tv'): SubtitleMatch {
+export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number, kind: 'movie' | 'tv' = 'tv', options: { sourceEpisodes?: boolean } = {}): SubtitleMatch {
   const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
   if (kind === 'movie') {
     if (!videos.length) return no('请先选择视频')
@@ -91,13 +91,21 @@ export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], seas
   if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')
   const episode = episodeNumber(name)
   if (episode) {
-    if (!Number.isInteger(season) || season < 0 || season > 1000) return no('请填写有效默认季')
+    const targetSeason = episode.season ?? season
+    if (!Number.isInteger(targetSeason) || targetSeason < 0 || targetSeason > 1000) return no('请先选择字幕所属季')
     const candidates = videos.filter(video => {
       const target = videoEpisode(video)
-      return target && target.episode === episode.episode && (target.season ?? season) === (episode.season ?? season)
+      if (!target || (target.season ?? season) !== targetSeason) return false
+      // A plain release number may refer to the source before an offset. Keep
+      // both interpretations as candidates rather than silently choosing one.
+      return target.episode === episode.episode || options.sourceEpisodes && episode.season === undefined && episodeNumber(video.name)?.episode === episode.episode
     })
-    const label = `S${String(episode.season ?? season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
-    if (candidates.length === 1) return { videoId: candidates[0].id, confidence: 'high', reason: `${label} 唯一对应${episode.season === undefined ? '（使用默认季）' : ''}`, candidates: [] }
+    const label = `S${String(targetSeason).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
+    if (candidates.length === 1) {
+      const target = videoEpisode(candidates[0])!
+      const reason = target.episode !== episode.episode ? `发布第 ${episode.episode} 集唯一对应 S${String(targetSeason).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : `${label} 唯一对应${episode.season === undefined ? '（使用所选季）' : ''}`
+      return { videoId: candidates[0].id, confidence: 'high', reason, candidates: [] }
+    }
     if (!candidates.length) return no(`${label} 没有对应视频，可能缺集或季不一致`)
     return { videoId: '', confidence: 'medium', reason: `${label} 有 ${candidates.length} 个版本，请确认候选`, candidates: rankCandidates(name, candidates) }
   }

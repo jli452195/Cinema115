@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
+import SelectMenu from './SelectMenu.vue'
 import { analyzeSubtitle, formatSubtitleSize, maxTotalBytes, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
 import type { OrganizeRow } from '../types/manualOrganize'
 
-const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; season: number; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
 const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion] }>()
 type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
 type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
@@ -18,11 +19,22 @@ const query = ref(props.title), busy = ref<'' | 'search' | 'files'>(''), searchE
 const choosing = computed(() => busy.value === 'files')
 const assrtItems = ref<AssrtSubtitle[]>([]), assrtBusy = ref(false), assrtError = ref(''), assrtConfigured = ref(false), assrtMore = ref(false)
 const searching = computed(() => busy.value === 'search' || assrtBusy.value)
+const targetSeasons = computed(() => [...new Set(props.videos.map(video => video.season).filter(season => Number.isInteger(season) && season >= 0 && season <= 1000))].sort((a, b) => a - b))
+const matchingSeason = ref(targetSeasons.value.length === 1 ? String(targetSeasons.value[0]) : '')
+const seasonOptions = computed(() => [{ value: '', label: '请选择字幕所属季' }, ...targetSeasons.value.map(number => ({ value: String(number), label: number === 0 ? '特别篇' : `第 ${number} 季` }))])
+const subtitleMatch = (name: string) => analyzeSubtitle(name, props.videos, matchingSeason.value === '' ? NaN : Number(matchingSeason.value), props.kind, { sourceEpisodes: true })
 let assrtQuery = '', assrtPosition = 0
 const libraryRows = ref<LibraryRow[]>(props.library.map(item => ({ ...item, key: `library:${item.versionId}:${item.path}`, pairKey: libraryPairKey(item.versionId, item.path), sourceLabel: '字幕库', selected: true, reason: '已保存的字幕匹配' })))
 const localRows = ref<LocalRow[]>(props.local.map(item => ({ ...item, key: item.localId, pairKey: localPairKey(item.file), sourceLabel: localSourceLabel(item.file), selected: true, reason: '已保存的字幕匹配' })))
 const hasLocal = computed(() => localRows.value.some(row => row.file.origin !== 'assrt'))
 const rows = computed(() => [...libraryRows.value, ...localRows.value])
+const manualRows = new Set<string>()
+let matching = false
+watch(() => rows.value.map(row => ({ key: row.key, videoId: row.videoId, selected: row.selected })), (current, previous) => {
+  if (matching) return
+  const before = new Map(previous.map(row => [row.key, row]))
+  for (const row of current) { const old = before.get(row.key); if (old && (old.videoId !== row.videoId || old.selected !== row.selected)) manualRows.add(row.key) }
+}, { flush: 'sync' })
 const selected = computed(() => rows.value.filter(row => row.selected))
 const total = computed(() => selected.value.reduce((sum, row) => sum + ('localId' in row ? row.file.data.length : row.file.size), 0))
 const picker = ref<HTMLInputElement>(), reading = ref(false), importError = ref(''), notice = ref(''), append = ref(true)
@@ -80,11 +92,11 @@ async function choose(item: SubtitleVersion) {
   try {
     const data = await request<{ files: LibrarySubtitleFile[] }>(`versions/${encodeURIComponent(item.id)}/files`)
     const existing = libraryRows.value.some(row => row.versionId === item.id)
-    libraryRows.value = data.files.map(file => {
-      const match = analyzeSubtitle(file.name, props.videos, props.season, props.kind), lang = subtitleLanguage(file.name)
+    libraryRows.value = [...libraryRows.value.filter(row => row.versionId !== item.id), ...data.files.map(file => {
+      const match = subtitleMatch(file.name), lang = subtitleLanguage(file.name)
       const saved = libraryRows.value.find(row => row.versionId === item.id && row.path === file.path && row.file.sha === file.sha)
-      return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved && props.videos.some(video => video.id === saved.videoId) ? saved.videoId : match.videoId, selected: existing ? !!saved?.selected : props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: match.reason }
-    })
+      return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, videoId: saved ? props.videos.some(video => video.id === saved.videoId) ? saved.videoId : '' : match.videoId, selected: existing ? !!saved?.selected : props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: saved?.reason || match.reason }
+    })]
     version.value = item; loadedVersion = item.id; showResults.value = false
   } catch (reason) { if (!lifecycle.signal.aborted) searchError.value = reason instanceof Error ? reason.message : '读取版本失败' }
   finally { busy.value = '' }
@@ -114,7 +126,7 @@ async function read(files: File[], item?: AssrtSubtitle) {
     const merged = mergeSubtitleFiles(current.map(row => row.file), data.files, true)
     const kept = localRows.value.filter(row => merged.kept.includes(row.file))
     localRows.value = [...kept, ...merged.added.map(file => {
-      const match = analyzeSubtitle(file.name, props.videos, props.season, props.kind)
+      const match = subtitleMatch(file.name)
       const localId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
       return { key: localId, pairKey: localPairKey(file), sourceLabel: localSourceLabel(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: props.kind !== 'movie' && !!match.videoId, reason: match.reason }
     })]
@@ -127,7 +139,19 @@ async function read(files: File[], item?: AssrtSubtitle) {
   } finally { reading.value = false }
 }
 function selectFiles(event: Event) { const input = event.target as HTMLInputElement; const files = Array.from(input.files || []); input.value = ''; void read(files) }
-function clear() { libraryRows.value = []; localRows.value = []; version.value = undefined; loadedVersion = ''; loadedAssrt.clear(); notice.value = ''; importError.value = ''; showResults.value = true }
+function matchUnassigned() {
+  matching = true
+  try {
+    for (const row of rows.value) {
+      if (row.videoId || manualRows.has(row.key)) continue
+      const match = subtitleMatch(row.file.name)
+      row.reason = match.reason
+      row.videoId = match.videoId
+      if (match.videoId) row.selected = props.kind !== 'movie' && ('localId' in row || row.language === 'zh-CN')
+    }
+  } finally { matching = false }
+}
+function clear() { libraryRows.value = []; localRows.value = []; manualRows.clear(); version.value = undefined; loadedVersion = ''; loadedAssrt.clear(); notice.value = ''; importError.value = ''; showResults.value = true }
 function apply() {
   if (reading.value || choosing.value || issue.value) return
   const library: LibrarySubtitleSelection[] = [], local: LocalSubtitleSelection[] = []
@@ -151,6 +175,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
       </div>
     </template>
     <div @dragover.prevent @drop.prevent="read(Array.from($event.dataTransfer?.files || []))">
+      <div v-if="kind === 'tv' && targetSeasons.length > 1" class="picker-season"><label>字幕所属季 <SelectMenu v-model="matchingSeason" :options="seasonOptions" label="字幕所属季" variant="anime" :disabled="reading || choosing" @change="matchUnassigned" /></label><p class="picker-note">无季号的字幕按所选季匹配；切换时保留已有对应关系，只匹配未关联项。</p></div>
       <p v-if="busy" role="status" class="picker-note">{{ choosing ? '正在读取字幕文件…' : '正在查找字幕…' }}</p>
       <p v-if="searchError" role="alert" class="picker-error">{{ searchError }}</p>
       <template v-if="showResults">
@@ -182,6 +207,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
 <style scoped>
 .subtitle-picker { font-size:13px; }
 .picker-actions,.picker-search,.picker-footer,.picker-footer>div,.picker-local { display:flex;align-items:center;gap:8px; }
+.picker-season { margin-bottom:12px; }.picker-season label { display:flex;align-items:center;gap:8px;font-size:12px; }.picker-season :deep(.select-menu) { min-width:160px; }
 .picker-search { flex:1;min-width:0; }
 .picker-search input { flex:1;min-width:0;min-height:36px;padding:6px 10px;border:1px solid rgb(148 163 184 / .25);border-radius:9px;background:var(--floating-surface-container,#fff);color:inherit; }
 button { min-height:36px;border-radius:9px;padding:6px 10px;background:rgb(148 163 184 / .1); }

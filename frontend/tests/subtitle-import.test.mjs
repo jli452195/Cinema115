@@ -99,6 +99,34 @@ test('edited numbers take priority, invalid targets do not fall back, and duplic
   assert.equal(analyzeSubtitle('Show.S01E14.ass', [video('done', 'Show.S01E14.mkv')], 1).videoId, 'done', 'completed-task filenames retain existing matching')
 })
 
+test('multi-season subtitles require a chosen scope unless their target season is explicit', () => {
+  const videos = [1, 2].map(season => ({ ...video(String(season), `Release - 01.mkv`), season, episode: 1 }))
+  const options = { sourceEpisodes: true }
+  assert.equal(analyzeSubtitle('01.sc.ass', videos, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('01.sc.ass', videos, 1, 'tv', options).videoId, '1')
+  assert.equal(analyzeSubtitle('01.sc.ass', videos, 2, 'tv', options).videoId, '2')
+  assert.equal(analyzeSubtitle('S02E01.sc.ass', videos, NaN, 'tv', options).videoId, '2')
+  assert.equal(analyzeSubtitle('S01E01.sc.ass', videos, 2, 'tv', options).videoId, '1')
+})
+
+test('download subtitle matching can use source numbers after offsets without choosing ambiguous interpretations', () => {
+  const first = { ...video('offset', '[Group] Show - 27 [1080p].mkv'), season: 2, episode: 1 }
+  const options = { sourceEpisodes: true }
+  assert.equal(analyzeSubtitle('27.sc.ass', [first], 2).videoId, '', 'other subtitle flows retain target-only matching')
+  const match = analyzeSubtitle('27.sc.ass', [first], 2, 'tv', options)
+  assert.equal(match.videoId, 'offset')
+  assert.match(match.reason, /发布第 27 集.*S02E01/)
+  assert.equal(analyzeSubtitle('01.sc.ass', [first], 2, 'tv', options).videoId, 'offset')
+  assert.equal(analyzeSubtitle('S01E27.sc.ass', [first], 2, 'tv', options).videoId, '', 'explicit target seasons do not fall back to original release numbering')
+  assert.equal(analyzeSubtitle('27.sc.ass', [first], 1, 'tv', options).videoId, '', 'original numbers stay inside the chosen target season')
+  const second = { ...video('target', '[Group] Show - 53 [1080p].mkv'), season: 2, episode: 27 }
+  const ambiguous = analyzeSubtitle('27.sc.ass', [first, second], 2, 'tv', options)
+  assert.equal(ambiguous.videoId, '')
+  assert.deepEqual(new Set(ambiguous.candidates.map(candidate => candidate.id)), new Set(['offset', 'target']))
+  assert.equal(analyzeSubtitle('S02E27.sc.ass', [first, second], NaN, 'tv', options).videoId, 'target')
+  assert.equal(analyzeSubtitle('27.sc.ass', [{ ...first, episode: 0 }], 2, 'tv', options).videoId, '', 'invalid target mapping never becomes eligible through its original name')
+})
+
 test('specials, ranges, years, checksums and encoding numbers are not guessed', () => {
   for (const name of ['Show - 1080p.ass', 'Show_2024.ass', 'Show [720].ass', 'Show [A0123456].ass', 'Show - 01-02.ass', 'Show S01E01-E02.ass', 'Show SP01.ass', 'Show [OVA][01].ass', 'Show NCOP01.ass', 'Show [01][02].ass', 'Show - 01.5.ass']) {
     assert.equal(episodeNumber(name), undefined, name)

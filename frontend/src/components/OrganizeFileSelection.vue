@@ -4,7 +4,7 @@ import OrganizeDirectoryGroup from './OrganizeDirectoryGroup.vue'
 import type { OrganizeRow } from '../types/manualOrganize'
 import { directoryFileRows, directoryGroups, inDirectory, parentDirectory, rowExcluded, setRangeSelection } from '../utils/organizeSelection'
 
-const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; targetNames?: Record<string, string>; conflicts?: Record<string, string> }>()
+const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; emptyText?: string; targetNames?: Record<string, string>; conflicts?: Record<string, string> }>()
 const excluded = ref<string[]>([])
 const collapsed = ref<string[]>([])
 const anchor = ref('')
@@ -56,15 +56,19 @@ function toggleList(list: string[], value: string) { return list.includes(value)
 async function locateIssue(id: string) {
   const row = props.rows.find(row => row.id === id)
   if (!row) return
-  const directory = props.flat ? props.rootPath : parentDirectory(row.sourcePath)
-  collapsed.value = collapsed.value.filter(root => !inDirectory(directory, root))
+  revealRows([id])
   await nextTick()
   const element = rootElement.value?.querySelector<HTMLElement>(`[data-organize-file="${CSS.escape(id)}"]`)
   element?.scrollIntoView({ block: 'center' })
   const target = element?.querySelector<HTMLElement>('[aria-invalid="true"]') || element?.querySelector<HTMLElement>('button')
   target?.focus({ preventScroll: true })
 }
-defineExpose({ locateIssue })
+function revealRows(ids: string[]) {
+  const paths = props.rows.filter(row => ids.includes(row.id)).map(row => parentDirectory(row.sourcePath))
+  excluded.value = excluded.value.filter(root => !paths.some(directory => inDirectory(directory, root)))
+  collapsed.value = collapsed.value.filter(root => !paths.some(directory => inDirectory(directory, root)))
+}
+defineExpose({ locateIssue, revealRows })
 </script>
 
 <template>
@@ -92,7 +96,7 @@ defineExpose({ locateIssue })
           </div>
         </template>
       </OrganizeDirectoryGroup>
-      <p v-if="!available.length" class="p-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ excluded.length ? '所有目录均已排除，可在上方恢复。' : '没有可整理的文件。' }}</p>
+      <p v-if="!available.length" class="p-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ !rows.length && emptyText ? emptyText : excluded.length ? '所有目录均已排除，可在上方恢复。' : emptyText || '没有可整理的文件。' }}</p>
     </div>
   </div>
 </template>

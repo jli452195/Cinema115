@@ -114,12 +114,20 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     // Editing already prepared files is possible while the next request waits.
     await page.getByRole('button', { name: '停止解析', exact: true }).click()
     await page.getByRole('button', { name: '继续解析', exact: true }).waitFor()
+    await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
+    assert.equal(await submit().isEnabled(), true, 'waiting resources do not block confirmed files')
+    await editor.getByText('文件已全部暂存，可继续核对整理清单。', { exact: true }).waitFor()
+    await editor.getByRole('button', { name: '退回编辑第 1 季', exact: true }).click()
     held = 0; release()
     await page.getByRole('button', { name: '继续解析', exact: true }).click()
     await editor.getByRole('alert').filter({ hasText: '模拟种子读取失败' }).waitFor()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 3)
-    assert.equal(await submit().isDisabled(), true)
+    await page.waitForFunction(() => [...document.querySelectorAll('dialog.anime-floating-organize button')].some(button => /^暂存这 \d+ 项$/.test(button.textContent) && !button.disabled))
+    assert.equal(await submit().isEnabled(), true, 'ready checked files submit without staging despite another resource failure')
     assert.equal(await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).inputValue(), '9')
+    await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
+    assert.equal(await submit().isEnabled(), true, 'failed resources do not block confirmed files')
+    await editor.getByRole('button', { name: '退回编辑第 1 季', exact: true }).click()
     fail = 0
     await page.getByRole('button', { name: '重试解析', exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 4)
@@ -136,6 +144,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await editor.locator('[data-organize-file]').count(), 3)
     await editor.locator('[data-organize-file]').first().getByText('整理后：测试作品.S01E01.1080p.[简体]-测试字幕组.mkv', { exact: true }).waitFor()
     const requests = count('/download-organize/files')
+    await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     await submit().click()
     await page.getByRole('button', { name: '确认任务状态', exact: true }).click()
     await page.getByText('任务已创建', { exact: true }).waitFor()
@@ -185,11 +194,21 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
         const dialog = document.querySelector('dialog.anime-floating-organize')
         const body = dialog.querySelector('.anime-floating-body'), bar = dialog.querySelector('.numbering-bar'), folder = dialog.querySelector('.directory-heading-sticky')
         const bounds = bar.getBoundingClientRect(), viewport = body.getBoundingClientRect()
+        const stage = bar.querySelector('.stage-action')
+        if (!stage || stage.disabled) return false
+        const action = stage.getBoundingClientRect(), folderBounds = folder.getBoundingClientRect()
+        const hit = document.elementFromPoint(action.x + action.width / 2, action.y + action.height / 2)
         return bar.classList.contains('is-stuck') && getComputedStyle(bar).backdropFilter === 'none'
           && Math.abs(bounds.top - viewport.top) <= 1
           && Math.abs(bounds.left - viewport.left) <= 1
           && Math.abs(bounds.right - viewport.left - body.clientWidth) <= 1
-          && Math.abs(folder.getBoundingClientRect().top - bounds.bottom) <= 1
+          && Math.abs(folderBounds.top - bounds.bottom) <= 1
+          // Staging stays usable while scrolling, including when the folder
+          // header and mobile numbering controls are pinned alongside it.
+          && action.width > 0 && action.height > 0
+          && action.top >= viewport.top - 1 && action.bottom <= viewport.bottom + 1
+          && action.left >= viewport.left - 1 && action.right <= viewport.left + body.clientWidth + 1
+          && action.bottom <= folderBounds.top + 1 && stage.contains(hit)
       })
     }
     await assertStickyNumbering()
@@ -200,12 +219,15 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       const footer = await editor.locator('.anime-floating-footer').boundingBox()
       assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
       await assertStickyNumbering()
-      assert.ok((await editor.locator('.numbering-bar').boundingBox()).height <= 220, 'expanded mobile numbering must leave room for the file list')
+      const numberingHeight = (await editor.locator('.numbering-bar').boundingBox()).height
+      if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-mobile.png`) })
+      assert.ok(numberingHeight <= 220, `expanded mobile numbering must leave room for the file list (${numberingHeight}px)`)
       await editor.getByRole('button', { name: '批量编号', exact: true }).click()
       await assertStickyNumbering()
       await editor.getByRole('button', { name: '批量编号', exact: true }).click()
       await assertStickyNumbering()
       if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
+      assert.equal(await editor.locator('.confirmed-group').count(), 0)
       await submit().click()
       await page.getByText('任务已创建', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files') - before, 61)
@@ -217,7 +239,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     const specBar = await search.getByRole('group', { name: '资源规格筛选' }).boundingBox()
     assert.ok(specBar.x >= 0 && specBar.x + specBar.width <= 320)
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-light.png`) })
-    passed.push('61 mixed resources prepare once; numbering blends into the glass before pinning, then covers the scroll viewport without gaps or extra blur through desktop/mobile wrapping and collapse; single batch request')
+    passed.push('61 mixed resources prepare once; numbering pins without gaps or extra blur and staging stays visible and hit-testable through desktop/mobile wrapping and collapse; single batch request')
     // Escape cancels preparation and restores focus; navigation releases locks.
     await page.evaluate(() => document.documentElement.classList.add('dark'))
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-dark.png`) })
@@ -296,6 +318,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.locator('.organize-help > summary').click()
     await editor.getByText(/1 项单集按标题预览命名/).waitFor()
     assert.equal(await editor.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
+    assert.equal(await editor.locator('.confirmed-group').count(), 0)
     await submit().click()
     await page.getByText('任务已创建', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files'), beforeSingle + 1)
