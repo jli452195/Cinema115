@@ -127,9 +127,13 @@ func TestPlaybackTimingFollowsDebugSwitch(t *testing.T) {
 			if w := proxyPlaybackCall(h, play, "player"); w.Code != 302 {
 				t.Fatal(w.Code)
 			}
-			steps := h.logs.Snapshot()[0].Details.Steps
-			if !strings.Contains(steps, "播放取链结果") || !strings.Contains(steps, "取链账号") {
-				t.Fatal("missing playback summary", steps)
+			row := h.logs.Snapshot()[0]
+			if !strings.Contains(row.Message, "播放取链结果") || !strings.Contains(row.Message, "取链账号") || !strings.Contains(row.Message, "请求耗时") || (row.Details != nil) != debug {
+				t.Fatal("missing playback summary or wrong debug details", row)
+			}
+			steps := ""
+			if debug {
+				steps = row.Details.Steps
 			}
 			for _, marker := range []string{"[+", "Emby 请求计时", "播放入口分段耗时"} {
 				if strings.Contains(steps, marker) != debug {
@@ -141,7 +145,7 @@ func TestPlaybackTimingFollowsDebugSwitch(t *testing.T) {
 				t.Fatal("authorization bypassed")
 			}
 			rows := h.logs.Snapshot()
-			if rows[0].Level != "ERROR" || !strings.Contains(rows[0].Details.Steps, "HTTP 403") {
+			if rows[0].Level != "ERROR" || !strings.Contains(rows[0].Message, "HTTP 403") || !strings.Contains(rows[0].Message, "用户权限查询") || !strings.Contains(rows[0].Message, "请求耗时") || (rows[0].Details != nil) != debug {
 				t.Fatal("error hidden by debug switch")
 			}
 		})

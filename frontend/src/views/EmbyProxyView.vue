@@ -135,7 +135,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
                   <div class="space-y-4 pt-4">
                     <label class="block text-sm">直链缓存时间（分钟）<input v-model.number="config.directLinkCacheMinutes" type="number" min="0" max="30" step="1" required class="proxy-input mt-2" /><span class="proxy-help mt-2 block">默认 9 分钟，0 为关闭。命中不续期，也不能延长 115 直链的有效期。</span></label>
                     <label class="block text-sm">Emby 中对应 STRM 根目录的路径（选填）<input v-model.trim="config.embyPathPrefix" placeholder="例如 /media" class="proxy-input mt-2" /><span class="proxy-help mt-2 block">Emby 返回本地 .strm 路径时填写，其相对目录需与 Cinema115 STRM 根目录一致。返回 HTTP 链接时可留空。</span></label>
-                    <SettingSwitch v-model="config.debug" label="反代调试日志" description="记录播放取链时间轴与连接计时，可查看完整 CDN 地址和请求响应头；Cookie、登录令牌及未知请求头值隐藏，不记录请求正文。" />
+                    <SettingSwitch v-model="config.debug" label="反代调试日志" description="开启后，新请求可展开取链步骤、连接计时、CDN 地址与请求响应头；详情仅存内存，日志文件始终只保存摘要。Cookie、登录令牌及未知请求头值隐藏。" />
                     <p class="proxy-help">播放文件在正式取链时按需准备，成功取得的直链按上述时间缓存复用。</p>
                   </div>
                 </details>

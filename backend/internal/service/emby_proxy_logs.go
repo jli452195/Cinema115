@@ -68,26 +68,7 @@ func ProxyTraceID(ctx context.Context) string {
 }
 
 func (s *EmbyProxyLogs) AddDetails(ctx context.Context, level, message string, details ProxyLogDetails) {
-	if s == nil {
-		return
-	}
-	if group, ok := ctx.Value(proxyGroupKey{}).(*proxyLogGroup); ok {
-		group.mu.Lock()
-		defer group.mu.Unlock()
-		group.details = details
-		if group.bytes+len(message) <= 16384 && len(group.lines) < 64 {
-			group.lines = append(group.lines, group.step(level, message))
-			group.bytes += len(message)
-		}
-		if group.level == "DEBUG" && level != "DEBUG" || level == "ERROR" || level == "WARNING" && group.level != "ERROR" {
-			group.level = level
-		}
-		if group.summary == "" {
-			group.summary = message
-		}
-		return
-	}
-	s.entries.appendDetails("Emby 302", ProxyTraceID(ctx), "反代", level, message, &details)
+	s.add(ctx, level, message, &details)
 }
 
 type proxyGroupKey struct{}
@@ -98,14 +79,12 @@ type proxyLogGroup struct {
 	lines          []string
 	bytes          int
 	level, summary string
+	lastMessage    string
 	details        ProxyLogDetails
 }
 
-func (g *proxyLogGroup) step(level, message string) string {
-	if !g.debug {
-		return level + " · " + message
-	}
-	return fmt.Sprintf("%s · [+%d ms] %s", level, time.Since(g.started).Milliseconds(), message)
+func proxyLogResult(message string) bool {
+	return strings.HasPrefix(message, "播放取链结果：") || strings.HasPrefix(message, "下载取链结果：")
 }
 
 // The immutable request setting is also inherited by request-owned workers.
@@ -114,7 +93,7 @@ func ProxyDebugEnabled(ctx context.Context) bool {
 	return ok && g.debug
 }
 
-// Group one HTTP request into one row; steps remain available on expansion.
+// Group one HTTP request into one row; only debug requests retain expandable details.
 func (s *EmbyProxyLogs) BeginRequest(ctx context.Context, debug bool) (context.Context, func()) {
 	g := &proxyLogGroup{level: "DEBUG", started: time.Now(), debug: debug}
 	ctx = context.WithValue(ctx, proxyGroupKey{}, g)
@@ -124,16 +103,21 @@ func (s *EmbyProxyLogs) BeginRequest(ctx context.Context, debug bool) (context.C
 		}
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		if len(g.lines) == 0 && g.summary == "" {
+		if g.lastMessage == "" {
 			return
 		}
-		if g.summary == "" {
-			g.summary = g.lines[len(g.lines)-1]
+		summary := g.summary
+		if summary == "" {
+			summary = g.lastMessage
+		} else {
+			summary += fmt.Sprintf("｜请求耗时 %d ms", time.Since(g.started).Milliseconds())
 		}
-		if len(g.lines) > 0 {
+		var details *ProxyLogDetails
+		if g.debug {
 			g.details.Steps = strings.Join(g.lines, "\n")
+			details = &g.details
 		}
-		s.entries.appendDetails("Emby 302", ProxyTraceID(ctx), "反代", g.level, g.summary, &g.details)
+		s.entries.appendDetails("Emby 302", ProxyTraceID(ctx), "反代", g.level, summary, details)
 	}
 }
 
@@ -145,24 +129,46 @@ func (s *EmbyProxyLogs) Trace(ctx context.Context) context.Context {
 }
 
 func (s *EmbyProxyLogs) Add(ctx context.Context, level, message string) {
+	s.add(ctx, level, message, nil)
+}
+
+func (s *EmbyProxyLogs) add(ctx context.Context, level, message string, details *ProxyLogDetails) {
 	if s == nil {
 		return
 	}
 	if group, ok := ctx.Value(proxyGroupKey{}).(*proxyLogGroup); ok {
+		if level == "DEBUG" && !group.debug {
+			return
+		}
 		group.mu.Lock()
 		defer group.mu.Unlock()
+		if level != "DEBUG" || group.lastMessage == "" {
+			group.lastMessage = message
+		}
 		if group.level == "DEBUG" && level == "INFO" {
 			group.level = "INFO"
 		}
-		if group.bytes+len(message) <= 16384 && len(group.lines) < 64 {
-			group.lines = append(group.lines, group.step(level, message))
-			group.bytes += len(message)
+		if group.debug {
+			if group.bytes+len(message) <= 16384 && len(group.lines) < 64 {
+				group.lines = append(group.lines, fmt.Sprintf("%s · [+%d ms] %s", level, time.Since(group.started).Milliseconds(), message))
+				group.bytes += len(message)
+			}
+			if details != nil {
+				group.details = *details
+			}
 		}
 		if level == "ERROR" || level == "WARNING" && group.level != "ERROR" {
 			group.level = level
-			group.summary = message
+			// HTTP diagnostics must not replace the more specific business failure.
+			if details == nil || group.summary == "" {
+				if proxyLogResult(group.summary) || strings.HasPrefix(group.summary, "HTTP ") && !strings.HasPrefix(message, "HTTP ") {
+					group.summary += "｜" + message
+				} else {
+					group.summary = message
+				}
+			}
 		}
-		if (strings.HasPrefix(message, "播放取链结果：") || strings.HasPrefix(message, "下载取链结果：")) && group.level == "INFO" {
+		if proxyLogResult(message) {
 			group.summary = message
 		}
 		return

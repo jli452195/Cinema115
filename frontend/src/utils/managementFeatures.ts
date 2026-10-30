@@ -12,11 +12,11 @@ export const managementCategories = {
     features: [
       { title: '115 助手', description: '管理账号连接、扫码登录与 Cookie 校验，为分享播放提供凭证。', to: '/helper115', icon: 'cloud', menuIcon: 'cloud' },
       { title: '115分享STRM', description: '从分享链接生成 STRM，管理转存再分享、审核重试与任务记录。', to: '/115/share', icon: 'play', menuIcon: 'share' },
+      { title: '115网盘STRM', description: '监控主网盘目录，保留层级生成本地 STRM，按需下载字幕与图片。', to: '/115/drive-strm', icon: 'monitor', menuIcon: 'folder' },
       { title: '115 云下载', description: '提交磁力或 ED2K 到指定网盘目录。', to: '/115/cloud-download', icon: 'download', menuIcon: 'download' },
       { title: '下载整理', description: '查看详情页发起的下载整理任务，检查进度并继续未完成的文件。', to: '/115/download-organize', icon: 'download', menuIcon: 'organize' },
       { title: '手动整理', description: '选择文件或文件夹，手动匹配 TMDB，校正季集与命名后移动到目标目录。', to: '/115/manual-organize', icon: 'monitor', menuIcon: 'organize' },
       { title: '115 目录分享', description: '手动或定时分享目录并生成 STRM，完成后回收临时目录。', to: '/115/folder-monitor', icon: 'monitor', menuIcon: 'folder' },
-      { title: '目录 STRM', description: '监控主网盘目录，保留层级生成本地 STRM，按需下载字幕与图片。', to: '/115/drive-strm', icon: 'monitor', menuIcon: 'folder' },
     ],
   },
   telegram: {

@@ -167,12 +167,12 @@ onBeforeRouteLeave(() => {
   if (busy.value) { (editor.value || deleting.value ? dialogError : error).value = '正在处理当前操作，请完成后再切换页面'; return false }
   return !unsaved.value || window.confirm('放弃未保存的修改？')
 })
-onMounted(async () => { document.title = '目录 STRM · Cinema115'; document.addEventListener('visibilitychange', visible); window.addEventListener('beforeunload', beforeUnload); await refresh(); poll() })
+onMounted(async () => { document.title = '115网盘STRM · Cinema115'; document.addEventListener('visibilitychange', visible); window.addEventListener('beforeunload', beforeUnload); await refresh(); poll() })
 onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 
 <template>
-  <ManagementLayout title="目录 STRM" description="从主网盘生成本地 STRM，保留原目录层级。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
+  <ManagementLayout title="115网盘STRM" description="从主网盘生成本地 STRM，保留原目录层级。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <p v-if="error" role="alert" class="ds-alert">{{ error }} <button type="button" class="underline" :disabled="!!busy" @click="refresh">重新加载</button></p>
     <p v-if="notice" role="status" class="ds-notice">{{ notice }}</p>
     <p v-if="state && !state.accountReady" class="ds-alert">请先在 <RouterLink to="/helper115" class="underline">115 助手</RouterLink> 配置并登录主账号，基础设置可先保存。</p>

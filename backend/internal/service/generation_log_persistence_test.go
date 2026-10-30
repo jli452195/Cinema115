@@ -49,7 +49,7 @@ func TestGenerationLogsPersistenceRetainsHistoryBeyondRecentCache(t *testing.T) 
 	}
 }
 
-func TestGenerationLogsPersistSanitizedBoundedDetails(t *testing.T) {
+func TestGenerationLogsKeepBoundedDiagnosticsInMemoryOnly(t *testing.T) {
 	directory := t.TempDir()
 	logs := &GenerationLogs{}
 	if err := logs.EnablePersistence(directory); err != nil {
@@ -64,7 +64,9 @@ func TestGenerationLogsPersistSanitizedBoundedDetails(t *testing.T) {
 		Steps:           strings.Repeat("早期诊断 ", 4000) + "\n最终失败原因仍然保留",
 		Method:          "GET", Path: "/Videos/{Id}/stream",
 	}
-	logs.appendDetails("Emby 302", "task", "反代", "ERROR", "failed https://cdn.example/video?sig=private-signature", details)
+	for _, level := range []string{"INFO", "WARNING", "ERROR"} {
+		logs.appendDetails("Emby 302", "task", "反代", level, "result https://cdn.example/video?sig=private-signature", details)
+	}
 	entry := logs.Snapshot("ERROR")[0]
 	if entry.Details.URL != details.URL || !strings.Contains(entry.Details.Steps, "最终失败原因仍然保留") {
 		t.Fatal("in-memory diagnostics changed or important trace tail was lost")
@@ -80,14 +82,33 @@ func TestGenerationLogsPersistSanitizedBoundedDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"cdn.example", "signed-secret", "private-uid", "private-cid", "private-token", "private-key", "private-signature"} {
+	for _, secret := range []string{"details", "最终失败原因仍然保留", "cdn.example", "signed-secret", "private-uid", "private-cid", "private-token", "private-key", "private-signature"} {
 		if strings.Contains(string(data), secret) {
 			t.Fatalf("persistent log contains %q", secret)
 		}
 	}
-	var saved GenerationLog
-	if err := json.Unmarshal(data, &saved); err != nil || !strings.Contains(saved.Details.Steps, "最终失败原因仍然保留") {
-		t.Fatalf("saved diagnostic is invalid: %v", err)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var saved GenerationLog
+		if err := json.Unmarshal([]byte(line), &saved); err != nil || saved.Details != nil || !strings.HasPrefix(saved.Message, "result ") {
+			t.Fatalf("saved summary is invalid: %+v err=%v", saved, err)
+		}
+	}
+	if err := logs.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &GenerationLogs{}
+	if err := restarted.EnablePersistence(directory); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if rows := restarted.Snapshot("ALL"); len(rows) != 3 {
+		t.Fatalf("summaries were not restored: %+v", rows)
+	} else {
+		for _, row := range rows {
+			if row.Details != nil {
+				t.Fatal("restart restored transient diagnostics")
+			}
+		}
 	}
 }
 

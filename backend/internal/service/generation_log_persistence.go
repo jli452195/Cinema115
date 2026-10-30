@@ -61,9 +61,7 @@ func (s *GenerationLogs) EnablePersistence(directory string) error {
 		if entry.ID <= s.sequence {
 			continue
 		}
-		if entry.Details != nil {
-			boundGenerationLogDetails(entry.Details)
-		}
+		entry.Details = nil
 		s.entries[s.next] = entry
 		s.next = (s.next + 1) % len(s.entries)
 		s.size = min(s.size+1, len(s.entries))
@@ -186,16 +184,7 @@ func persistentLogText(value string) string {
 func persistentGenerationLog(entry GenerationLog) GenerationLog {
 	entry.Message = persistentLogText(entry.Message)
 	entry.Source = persistentLogText(entry.Source)
-	if entry.Details != nil {
-		details := *entry.Details
-		entry.Details = &details
-		if details.URL != "" {
-			details.URL = "[链接已隐藏]"
-		}
-		for _, field := range []*string{&details.Path, &details.Steps, &details.Lookup, &details.RequestHeaders, &details.ResponseHeaders, &details.LookupHeaders} {
-			*field = persistentLogText(*field)
-		}
-		boundGenerationLogDetails(&details)
-	}
+	// Proxy diagnostics are memory-only at every severity; files retain the summary.
+	entry.Details = nil
 	return entry
 }

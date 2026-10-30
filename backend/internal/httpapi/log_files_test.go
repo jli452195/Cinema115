@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,11 @@ func TestLogFilesDownloadAndIncrementalAdminAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer logs.Close()
-	logs.Append("STRM", "task", "目录生成", "ERROR", "preserved failure")
+	proxy := service.NewEmbyProxyLogs(logs)
+	ctx, finish := proxy.BeginRequest(proxy.Trace(context.Background()), true)
+	proxy.Add(ctx, "ERROR", "preserved failure")
+	proxy.AddDetails(ctx, "DEBUG", "memory-only steps", service.ProxyLogDetails{URL: "https://cdn.115.com/file?signature=transient-signature", Status: 502})
+	finish()
 	logs.Append("STRM", "task", "目录生成", "DEBUG", "transient diagnostics")
 	router := gin.New()
 	admin := router.Group("/api/admin", func(c *gin.Context) {
@@ -54,7 +59,7 @@ func TestLogFilesDownloadAndIncrementalAdminAPI(t *testing.T) {
 		t.Fatalf("invalid download response: %d %v", download.Code, download.Header())
 	}
 	var saved service.GenerationLog
-	if err := json.Unmarshal(download.Body.Bytes(), &saved); err != nil || saved.Message != "preserved failure" || strings.Contains(download.Body.String(), "transient diagnostics") {
+	if err := json.Unmarshal(download.Body.Bytes(), &saved); err != nil || !strings.HasPrefix(saved.Message, "preserved failure") || saved.Details != nil || strings.Contains(download.Body.String(), "transient") || strings.Contains(download.Body.String(), "memory-only") {
 		t.Fatalf("unexpected downloaded history: %s err=%v", download.Body.String(), err)
 	}
 	if response := call("/files/unrelated.log", "test-admin"); response.Code != http.StatusNotFound {
@@ -62,7 +67,7 @@ func TestLogFilesDownloadAndIncrementalAdminAPI(t *testing.T) {
 	}
 	first := call("?module=ALL&level=ALL", "test-admin")
 	var snapshot service.LogSnapshot
-	if err := json.Unmarshal(first.Body.Bytes(), &snapshot); err != nil || len(snapshot.Entries) != 2 || !snapshot.Persistence.Enabled {
+	if err := json.Unmarshal(first.Body.Bytes(), &snapshot); err != nil || len(snapshot.Entries) != 2 || !snapshot.Persistence.Enabled || snapshot.Entries[1].Details == nil || !strings.Contains(snapshot.Entries[1].Details.Steps, "memory-only steps") {
 		t.Fatalf("invalid snapshot: %s err=%v", first.Body.String(), err)
 	}
 	incremental := call("?module=ALL&level=ALL&after="+strconv.FormatUint(snapshot.Cursor, 10), "test-admin")

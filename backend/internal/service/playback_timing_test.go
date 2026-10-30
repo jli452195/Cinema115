@@ -27,16 +27,19 @@ func TestPlaybackTimingFollowsRequestDebugSetting(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows := s.logs.Snapshot()
-			if len(rows) != 1 || rows[0].Details == nil {
+			if len(rows) != 1 || rows[0].Message == "" || (rows[0].Details != nil) != debug {
 				t.Fatal("missing playback log")
 			}
-			steps := rows[0].Details.Steps
+			steps := ""
+			if rows[0].Details != nil {
+				steps = rows[0].Details.Steps
+			}
 			for _, marker := range []string{"秒传链路耗时：", "等待缓存操作=", "[+"} {
 				if strings.Contains(steps, marker) != debug {
 					t.Fatal("wrong debug output", marker, steps)
 				}
 			}
-			if !strings.Contains(steps, "115 已返回秒传成功") {
+			if debug && !strings.Contains(steps, "115 已返回秒传成功") {
 				t.Fatal("normal result was suppressed")
 			}
 		})

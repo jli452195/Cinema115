@@ -257,6 +257,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     state.entries = [entry(20, { message: 'Incremental fixture' }), ...rows]
     await page.getByText('Incremental fixture', { exact: true }).waitFor()
     assert.equal(await page.locator('.logs-entry').count(), 2)
+    assert.equal(await page.locator('.logs-entry').filter({ hasText: 'Incremental fixture' }).locator('.logs-details').count(), 0, 'summary-only row exposed an expandable diagnostic')
     assert(requests.some(request => request.endpoint === '/api/admin/logs' && request.after === '13'))
     const incrementalDone = state.requests
     await waitFor(() => state.requests > incrementalDone)
@@ -264,6 +265,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     state.entries = [entry(1, { message: 'Restarted fixture' })]; state.reset = true
     await page.getByText('Restarted fixture', { exact: true }).waitFor()
     assert.equal(await page.locator('.logs-entry').count(), 1, 'cursor reset did not replace old cache')
+    assert.equal(await page.locator('.logs-details').count(), 0, 'restored summary retained an empty diagnostic entry')
     state.reset = false; state.entries = [entry(2, { level: 'DEBUG', message: 'Old instance debug fixture' }), entry(1, { message: 'Persisted info fixture' })]
     await go('/logs?level=ALL')
     await page.getByText('Old instance debug fixture', { exact: true }).waitFor()

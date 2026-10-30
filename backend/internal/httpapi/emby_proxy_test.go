@@ -263,26 +263,15 @@ func TestEmbyProxyAuthenticated302AndPassthrough(t *testing.T) {
 			t.Fatal("302 日志泄漏凭据", secret)
 		}
 	}
-	for _, message := range []string{"开始直链播放解析", "权限校验通过", "STRM 解析成功", "115 直链获取成功", "返回 HTTP 302", "播放解析结束", "HTTP 401", "HTTP 403", "HTTP 409", "HTTP 503", "已禁用转码与封装转换"} {
+	for _, message := range []string{"播放取链结果：", "取链账号", "返回 HTTP 302", "HTTP 401", "HTTP 403", "HTTP 409", "HTTP 503", "已禁止转码/封装转换请求"} {
 		if !strings.Contains(string(raw), message) {
 			t.Fatal("缺少播放诊断", message)
 		}
 	}
-	trace := ""
 	for _, entry := range entries {
-		if strings.Contains(entry.Message, "返回 HTTP 302") {
-			trace = entry.TaskID
-			break
+		if entry.TaskID == "" || entry.Details != nil {
+			t.Fatal("非调试请求缺少关联编号或保留了详情")
 		}
-	}
-	foundStart := false
-	for _, entry := range entries {
-		if entry.TaskID == trace && entry.Details != nil && strings.Contains(entry.Details.Steps, "开始直链播放解析") {
-			foundStart = true
-		}
-	}
-	if trace == "" || !foundStart {
-		t.Fatal("同一播放请求缺少关联编号")
 	}
 }
 

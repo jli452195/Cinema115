@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,9 +13,6 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
-
-type proxyLookupDiagnosticKey struct{}
-type proxyLookupDiagnostic struct{ headers, description string }
 
 // Only known diagnostic values are exposed. Unknown headers and credentials
 // retain their names but not values; URL-bearing headers lose all query values.
@@ -137,8 +133,6 @@ func proxyDebugCredential(r *http.Request) string {
 }
 
 func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
-	lookup := &proxyLookupDiagnostic{}
-	r = r.WithContext(context.WithValue(r.Context(), proxyLookupDiagnosticKey{}, lookup))
 	started := time.Now()
 	path, route := proxyDebugRoute(r)
 	method := r.Method
@@ -185,9 +179,6 @@ func (h *embyProxyHandler) serveDebug(w http.ResponseWriter, r *http.Request) {
 			details.URL = w.Header().Get("Location")
 			details.LookupHeaders = proxyLookupHeaders(r.UserAgent())
 			details.Lookup = "取链使用的 UA；Cookie 已隐藏。缓存命中时本次未请求 115。播放器访问 CDN 的实际请求头不可由反代观察。"
-			if lookup.headers != "" {
-				details.LookupHeaders, details.Lookup = lookup.headers, lookup.description
-			}
 		}
 		level := "DEBUG"
 		if status == 499 && r.Context().Err() != nil {

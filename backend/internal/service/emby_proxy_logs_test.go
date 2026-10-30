@@ -3,8 +3,52 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
+
+func TestEmbyProxyRequestSummaryAndDebug(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, level, result, want string
+		}{
+			{"success", "INFO", "播放取链结果：返回 HTTP 302", "播放取链结果：返回 HTTP 302"},
+			{"recovered warning", "WARNING", "下载取链结果：返回 HTTP 302", "下载取链结果：返回 HTTP 302"},
+			{"failure", "ERROR", "HTTP 504：Emby 用户权限查询超时", "HTTP 504：Emby 用户权限查询超时"},
+			{"cleanup failure", "ERROR", "播放取链结果：返回 HTTP 302", "HTTP 302｜共享池全局冷却持久化失败"},
+			{"failed cleanup", "ERROR", "HTTP 504：Emby 用户权限查询超时", "HTTP 504：Emby 用户权限查询超时｜共享池全局冷却持久化失败"},
+			{"fallback", "INFO", "播放解析结束：转交 Emby，耗时 3 ms", "播放解析结束：转交 Emby"},
+		} {
+			t.Run(fmt.Sprintf("%t/%s", debug, tc.name), func(t *testing.T) {
+				logs := NewEmbyProxyLogs(&GenerationLogs{})
+				ctx, finish := logs.BeginRequest(logs.Trace(context.Background()), debug)
+				logs.Add(ctx, "INFO", "开始解析")
+				if tc.name == "recovered warning" {
+					logs.Add(ctx, "WARNING", "原 UID 暂不可用")
+				}
+				logs.Add(ctx, tc.level, tc.result)
+				logs.AddDetails(ctx, "DEBUG", "后置 HTTP 诊断", ProxyLogDetails{URL: "https://cdn.115.com/video?signature=memory-only", Status: 302})
+				if tc.name == "failure" {
+					logs.AddDetails(ctx, "ERROR", "通用 HTTP 错误详情", ProxyLogDetails{Status: 504})
+				}
+				if tc.name == "cleanup failure" || tc.name == "failed cleanup" {
+					logs.Add(ctx, "ERROR", "共享池全局冷却持久化失败")
+				}
+				finish()
+				rows := logs.Snapshot()
+				if len(rows) != 1 || rows[0].TaskID == "" || rows[0].Level != tc.level || !strings.Contains(rows[0].Message, tc.want) || !strings.Contains(rows[0].Message, "耗时") {
+					t.Fatalf("request summary lost: %+v", rows)
+				}
+				if (rows[0].Details != nil) != debug {
+					t.Fatalf("debug toggle ignored: %+v", rows[0])
+				}
+				if debug && (!strings.Contains(rows[0].Details.Steps, "开始解析") || !strings.Contains(rows[0].Details.Steps, "后置 HTTP 诊断") || !strings.Contains(rows[0].Details.Steps, "[+")) {
+					t.Fatal("existing debug steps lost")
+				}
+			})
+		}
+	}
+}
 
 func TestEmbyProxyLogsSharedBufferAndModuleFilter(t *testing.T) {
 	shared := &GenerationLogs{}

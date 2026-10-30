@@ -533,7 +533,9 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 		var diagnostic *service.PoolDiagnostic
 		ctx, diagnostic = service.WithPoolDiagnostic(ctx)
 		var apiTrace *p115.BudgetTrace
-		ctx, apiTrace = p115.WithBudgetTrace(ctx)
+		if service.ProxyDebugEnabled(ctx) {
+			ctx, apiTrace = p115.WithBudgetTrace(ctx)
+		}
 		observed := &poolResponseWriter{ResponseWriter: w}
 		w = observed
 		defer func() {
@@ -542,13 +544,15 @@ func (h *embyProxyHandler) redirect(w http.ResponseWriter, r *http.Request, item
 			}
 			h.cache.Members.Pool.ObserveRedirect(time.Since(started), observed.status == http.StatusFound, max(switches, service.PoolAttemptSwitches(ctx)))
 			snapshot := diagnostic.Snapshot()
-			stages, origins := apiTrace.Snapshot()
-			if detail, err := json.Marshal(struct{ Stages, Origins map[string]uint64 }{stages, origins}); err == nil {
-				h.logs.Add(ctx, "DEBUG", "池请求 API 放行统计："+string(detail))
-			}
 			h.cache.Members.Pool.ObserveAdmissionOutcome(snapshot.Outcome)
-			if detail, err := json.Marshal(snapshot); err == nil {
-				h.logs.Add(ctx, "DEBUG", "池候选诊断："+string(detail))
+			if apiTrace != nil {
+				stages, origins := apiTrace.Snapshot()
+				if detail, err := json.Marshal(struct{ Stages, Origins map[string]uint64 }{stages, origins}); err == nil {
+					h.logs.Add(ctx, "DEBUG", "池请求 API 放行统计："+string(detail))
+				}
+				if detail, err := json.Marshal(snapshot); err == nil {
+					h.logs.Add(ctx, "DEBUG", "池候选诊断："+string(detail))
+				}
 			}
 			if err := h.cache.Members.PersistPoolCooling(); err != nil {
 				h.logs.Add(ctx, "ERROR", "共享池全局冷却持久化失败")
@@ -716,8 +720,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	if err != nil {
-		h.logs.Add(ctx, "ERROR", "STRM 读取解析失败："+err.Error())
-		fail("无法解析分享 STRM，请检查链接格式、必要分享参数及本地媒体路径映射", 422)
+		fail("STRM 读取解析失败："+err.Error()+"；请检查链接格式、必要分享参数及本地媒体路径映射", 422)
 		return false
 	}
 	timing.next("播放授权及账号准备")
@@ -886,8 +889,7 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	if err != nil || !p115.AllowedMediaURL(link) {
-		h.logs.Add(ctx, "ERROR", fmt.Sprintf("115 直链获取失败，耗时 %d ms：%s", time.Since(downloadStarted).Milliseconds(), proxyFailureReason(err)))
-		fail("115 直链获取失败，请检查所选账号、分享状态及播放客户端", 502)
+		fail("115 直链获取失败："+proxyFailureReason(err)+"；请检查所选账号、分享状态及播放客户端", 502)
 		return false
 	}
 	if authorization != nil {
