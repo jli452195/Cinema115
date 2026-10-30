@@ -342,6 +342,7 @@ func main() {
 	driveSTRM := service.NewDriveSTRMService(database, accounts, shareAPI.Client, shareAPI.OutputRoot)
 	driveEvents := service.NewDriveSTRMEvents(driveSTRM, shareAPI.Client)
 	httpapi.RegisterDriveSTRM(admin, driveSTRM, driveEvents, shareAPI.BaseURL)
+	httpapi.RegisterDrivePlayback(r, accounts, shareAPI.Client, shareAPI.MediaHTTP, generationLogs)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
 		log.Fatal(err)
 	}

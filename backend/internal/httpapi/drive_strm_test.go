@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 )
@@ -69,7 +70,13 @@ func TestDriveSTRMAPIProtectsRuntimeAndPreservesOutputs(t *testing.T) {
 		return w.Body.Bytes()
 	}
 	call(http.MethodPost, "", `{}`, http.StatusBadRequest)
-	body := `{"name":"Library","accountId":"` + id + `","sourceCID":"100","sourcePath":"forged path","outputDir":"library","baseUrl":"http://localhost:3002","enabled":false,"status":"running","stats":{"written":999},"pendingDirectories":["999"]}`
+	initial := string(call(http.MethodGet, "", "", http.StatusOK))
+	if !strings.Contains(initial, `"settingsSaved":false`) || strings.Contains(initial, `"defaults"`) || !strings.Contains(initial, `"baseUrl":"http://localhost:3002"`) {
+		t.Fatalf("missing initial settings: %s", initial)
+	}
+	body := `{"name":"Library","accountId":"` + id + `","sourceCID":"100","sourcePath":"forged path","outputDir":"library","baseUrl":"https://forged.example","settings":{"baseUrl":"https://forged.example"},"enabled":false,"status":"running","stats":{"written":999},"pendingDirectories":["999"]}`
+	call(http.MethodPost, "", body, http.StatusBadRequest)
+	call(http.MethodPut, "/settings", `{"baseUrl":"http://localhost:3002","videoExtensions":"mkv,mp4","metadataExtensions":"srt,ass,ssa","minSizeMB":0}`, http.StatusOK)
 	var saved struct {
 		ID string `json:"id"`
 	}
@@ -83,8 +90,16 @@ func TestDriveSTRMAPIProtectsRuntimeAndPreservesOutputs(t *testing.T) {
 	if value.SourcePath != "/library" || value.Status != "queued" || value.Stats.Written != 0 || len(value.PendingDirectories) != 0 || !value.FullScan {
 		t.Fatalf("client overwrote service-owned state: %+v", value)
 	}
+	settings, err := db.GetDriveSTRMSettings(ctx)
+	if err != nil || settings.BaseURL != "http://localhost:3002" || value.Settings != (model.DriveSTRMSettings{}) {
+		t.Fatalf("mapping input overwrote settings: %+v %v", settings, err)
+	}
+	rawMapping, _ := json.Marshal(value)
+	if strings.Contains(string(rawMapping), "baseUrl") || strings.Contains(string(rawMapping), "videoExtensions") {
+		t.Fatalf("mapping contains duplicate settings: %s", rawMapping)
+	}
 	listed := string(call(http.MethodGet, "", "", http.StatusOK))
-	if strings.Contains(listed, "pendingDirectories") || strings.Contains(listed, "fullScan") {
+	if strings.Contains(listed, `"pendingDirectories"`) || strings.Contains(listed, `"fullScan"`) {
 		t.Fatal("unnecessary internal scan state returned")
 	}
 	call(http.MethodPut, "/"+saved.ID+"/monitor", `{}`, http.StatusBadRequest)

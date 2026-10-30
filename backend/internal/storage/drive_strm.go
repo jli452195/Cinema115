@@ -12,6 +12,7 @@ import (
 )
 
 const driveSTRMSchema = `
+CREATE TABLE IF NOT EXISTS drive_strm_settings(id INTEGER PRIMARY KEY CHECK(id=1), record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS drive_strm_mappings(id TEXT PRIMARY KEY, record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS drive_strm_files(mapping_id TEXT NOT NULL REFERENCES drive_strm_mappings(id) ON DELETE CASCADE, file_id TEXT NOT NULL, directory INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY(mapping_id,file_id));
 CREATE TABLE IF NOT EXISTS drive_strm_cursors(account_id TEXT PRIMARY KEY, cursor TEXT NOT NULL);
@@ -38,6 +39,32 @@ UPDATE drive_strm_files SET directory=CASE WHEN json_extract(record,'$.directory
 	_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS drive_strm_directories ON drive_strm_files(mapping_id,directory);
 CREATE INDEX IF NOT EXISTS drive_strm_paths ON drive_strm_files(mapping_id,json_extract(record,'$.path') COLLATE NOCASE);`)
 	return err
+}
+
+func (s *Store) GetDriveSTRMSettings(ctx context.Context) (model.DriveSTRMSettings, error) {
+	value := model.DefaultDriveSTRMSettings()
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `SELECT record FROM drive_strm_settings WHERE id=1`).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return value, ErrNotFound
+		}
+		return value, fmt.Errorf("读取目录 STRM 基础设置: %w", err)
+	}
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return value, fmt.Errorf("解析目录 STRM 基础设置: %w", err)
+	}
+	return value, nil
+}
+
+func (s *Store) SaveDriveSTRMSettings(ctx context.Context, value model.DriveSTRMSettings) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("编码目录 STRM 基础设置: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO drive_strm_settings(id,record) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record`, string(raw)); err != nil {
+		return fmt.Errorf("保存目录 STRM 基础设置: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) LoadDriveSTRMCursor(ctx context.Context, accountID string) (string, error) {

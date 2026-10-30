@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
+	"strm115/backend/internal/storage"
 )
 
 type DriveSTRMLifeClient interface {
@@ -65,30 +68,50 @@ func (r *DriveSTRMEvents) Check(ctx context.Context) error {
 // context, alongside the independent scan worker. An upstream failure backs
 // off rather than immediately replaying pages or delaying ordinary playback.
 func (r *DriveSTRMEvents) Run(ctx context.Context) {
-	delay := 20 * time.Second
+	r.run(ctx, 5*time.Second)
+}
+
+// A lightweight local refresh lets period changes take effect while a long
+// interval or disabled watcher is waiting. It never creates extra readers.
+func (r *DriveSTRMEvents) run(ctx context.Context, refresh time.Duration) {
+	if r.service == nil || r.client == nil {
+		return
+	}
+	ticker := time.NewTicker(refresh)
+	defer ticker.Stop()
+	var lastAttempt time.Time
+	failures := 0
 	for {
-		pollCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		err := r.Check(pollCtx)
-		cancel()
 		if ctx.Err() != nil {
 			return
 		}
-		if err == nil {
-			delay = 20 * time.Second
-		} else if delay < 5*time.Minute {
-			delay *= 2
-			if delay > 5*time.Minute {
-				delay = 5 * time.Minute
+		settings, err := r.service.Store.GetDriveSTRMSettings(ctx)
+		if err == nil && driveSTRMEventDue(settings, lastAttempt, failures, time.Now()) {
+			pollCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			err = r.Check(pollCtx)
+			cancel()
+			lastAttempt = time.Now()
+			if err == nil {
+				failures = 0
+			} else {
+				failures++
 			}
 		}
-		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-ticker.C:
 		}
 	}
+}
+
+func driveSTRMEventDue(settings model.DriveSTRMSettings, last time.Time, failures int, now time.Time) bool {
+	if settings.EventIntervalSeconds == 0 {
+		return false
+	}
+	interval := time.Duration(settings.EventIntervalSeconds) * time.Second
+	delay := min(interval*time.Duration(1<<min(failures, 4)), max(interval, 5*time.Minute))
+	return last.IsZero() || !last.Add(delay).After(now)
 }
 
 func (r *DriveSTRMEvents) check(ctx context.Context) error {
@@ -96,6 +119,12 @@ func (r *DriveSTRMEvents) check(ctx context.Context) error {
 		return fmt.Errorf("目录 STRM 事件服务尚未初始化")
 	}
 	s := r.service
+	if _, err := s.Store.GetDriveSTRMSettings(ctx); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
 	values, err := s.Store.ListDriveSTRM(ctx)
 	if err != nil {
 		return err

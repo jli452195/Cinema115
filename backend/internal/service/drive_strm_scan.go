@@ -152,7 +152,7 @@ func (r *driveSTRMScan) write(ctx context.Context, item driveSTRMAttachment, vid
 	owned := previous.MappingID == record.MappingID && previous.FileID == record.FileID && driveSTRMSamePath(previous.Path, record.Path) && previous.Digest != ""
 	var data []byte
 	if video {
-		link, err := strm.DriveURL(r.value.BaseURL, strm.Drive{PickCode: file.PickCode, FileID: file.ID, SHA1: file.SHA1, Size: file.Size, Name: file.Name})
+		link, err := strm.DriveURL(r.value.Settings.BaseURL, strm.Drive{PickCode: file.PickCode, FileID: file.ID, SHA1: file.SHA1, Size: file.Size, Name: file.Name})
 		if err != nil {
 			return record, err
 		}
@@ -211,7 +211,7 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 				return err
 			}
 			ext := strings.ToLower(path.Ext(entry.Name))
-			video := !entry.Directory && r.videos[ext] && entry.Size >= r.value.MinSizeMB*(1<<20)
+			video := !entry.Directory && r.videos[ext] && entry.Size >= r.value.Settings.MinSizeMB*(1<<20)
 			if !entry.Directory && !video && !r.metadata[ext] {
 				continue
 			}
@@ -320,11 +320,11 @@ func (s *DriveSTRMService) scan(ctx context.Context, value model.DriveSTRM) (mod
 	if err != nil {
 		return model.DriveSTRMStats{}, err
 	}
-	videos, err := driveSTRMExtensions(value.VideoExtensions)
+	videos, err := driveSTRMExtensions(value.Settings.VideoExtensions)
 	if err != nil {
 		return model.DriveSTRMStats{}, err
 	}
-	metadata, err := parseMetadataExtensions(value.MetadataExtensions, videos)
+	metadata, err := parseMetadataExtensions(value.Settings.MetadataExtensions, videos)
 	if err != nil {
 		return model.DriveSTRMStats{}, err
 	}

@@ -3,13 +3,86 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"strm115/backend/internal/model"
 )
+
+func TestDriveSTRMSettingsPersistIndependentlyOfMappings(t *testing.T) {
+	ctx := context.Background()
+	filename := filepath.Join(t.TempDir(), "drive.db")
+	s, err := Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if s != nil {
+			s.Close()
+		}
+	}()
+	if _, err := s.GetDriveSTRMSettings(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unsaved settings=%v", err)
+	}
+	settings := model.DriveSTRMSettings{BaseURL: "https://cinema.example", VideoExtensions: "mkv", MetadataExtensions: "ass", MinSizeMB: 10}
+	if err := s.SaveDriveSTRMSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	mapping := model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", Settings: settings, UpdatedAt: time.Now().UTC()}
+	if err := s.SaveDriveSTRM(ctx, mapping); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `SELECT record FROM drive_strm_mappings WHERE id='mapping'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "baseUrl") || strings.Contains(raw, "videoExtensions") || strings.Contains(raw, "settings") {
+		t.Fatalf("runtime settings persisted inside mapping: %s", raw)
+	}
+	if err := s.DeleteDriveSTRM(ctx, mapping.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetDriveSTRMSettings(ctx)
+	if err != nil || got != settings {
+		t.Fatalf("settings changed after mapping removal/restart: %+v %v", got, err)
+	}
+}
+
+func TestDriveSTRMSettingsMissingPeriodsUseDefaultsAndZeroDisables(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, tc := range []struct {
+		raw                    string
+		event, reconcile, full int
+	}{
+		{`{"baseUrl":"https://cinema.example","videoExtensions":"mkv"}`, 20, 24, 168},
+		{`{"eventIntervalSeconds":0,"reconcileIntervalHours":0,"fullScanIntervalHours":0}`, 0, 0, 0},
+		{`{"eventIntervalSeconds":300,"reconcileIntervalHours":6,"fullScanIntervalHours":24}`, 300, 6, 24},
+	} {
+		if _, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO drive_strm_settings(id,record) VALUES(1,?)`, tc.raw); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetDriveSTRMSettings(ctx)
+		if err != nil || got.EventIntervalSeconds != tc.event || got.ReconcileIntervalHours != tc.reconcile || got.FullScanIntervalHours != tc.full {
+			t.Fatalf("decode settings=%+v err=%v", got, err)
+		}
+	}
+}
 
 func TestDriveSTRMStorageUpgradesMissingDirectoryColumn(t *testing.T) {
 	for _, populated := range []bool{false, true} {

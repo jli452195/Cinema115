@@ -11,7 +11,182 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/model"
 )
+
+func TestDriveSTRMPeriodsAreIndependentAndChangingSettingsDoesNotQueue(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		reconcile, full int
+		want            string
+	}{
+		{"disabled", 0, 0, ""},
+		{"full before next tree", 168, 24, "full"},
+		{"full without tree", 0, 24, "full"},
+		{"tree without full", 6, 0, "tree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, db, _, mapping, _ := driveSTRMTestSetup(t)
+			ctx := context.Background()
+			if _, err := driveSTRMTestAttempt(t, s); err != nil {
+				t.Fatal(err)
+			}
+			value, _ := db.GetDriveSTRM(ctx, mapping.ID)
+			value.LastReconcileAt = time.Now().Add(-7 * time.Hour)
+			value.LastFullScanAt = time.Now().Add(-25 * time.Hour)
+			if err := db.SaveDriveSTRM(ctx, value); err != nil {
+				t.Fatal(err)
+			}
+			settings, _ := s.Settings(ctx)
+			settings.ReconcileIntervalHours, settings.FullScanIntervalHours = tc.reconcile, tc.full
+			if _, err := s.SaveSettings(ctx, settings); err != nil {
+				t.Fatal(err)
+			}
+			stored, _ := db.GetDriveSTRM(ctx, mapping.ID)
+			if stored.Queued || stored.Status != "idle" || stored.NextScanAt != value.NextScanAt {
+				t.Fatalf("settings save changed idle mapping: %+v", stored)
+			}
+			listed, err := s.List(ctx)
+			if err != nil || len(listed) != 1 || listed[0].NextScanAt.IsZero() != (tc.want == "") {
+				t.Fatalf("projected schedule=%+v err=%v", listed, err)
+			}
+			storedAfterList, _ := db.GetDriveSTRM(ctx, mapping.ID)
+			if storedAfterList.NextScanAt != stored.NextScanAt {
+				t.Fatal("GET schedule projection persisted a retry deadline")
+			}
+			attempt, _, found, err := s.next(ctx)
+			if err != nil || found != (tc.want != "") || found && attempt.Mode != tc.want {
+				t.Fatalf("periodic selection: found=%v mode=%s err=%v", found, attempt.Mode, err)
+			}
+			if found {
+				if err := s.finish(ctx, mapping.ID, model.DriveSTRMStats{}, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestDriveSTRMDisabledPeriodsKeepAcceptedWorkAndFailedRetries(t *testing.T) {
+	s, db, client, mapping, _ := driveSTRMTestSetup(t)
+	ctx := context.Background()
+	settings, _ := s.Settings(ctx)
+	settings.EventIntervalSeconds, settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 0, 0
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	// Creation was already accepted before all automatic periods were closed.
+	client.pageErr = errors.New("temporary network failure")
+	if _, err := driveSTRMTestAttempt(t, s); err == nil {
+		t.Fatal("failed scan succeeded")
+	}
+	value, _ := db.GetDriveSTRM(ctx, mapping.ID)
+	value.NextScanAt = time.Now().Add(-time.Second)
+	if err := db.SaveDriveSTRM(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetMonitoring(ctx, mapping.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, err := s.next(ctx); err != nil || found {
+		t.Fatalf("paused directory automatically retried: found=%v err=%v", found, err)
+	}
+	// Re-enable without creating a fresh queue: the persisted retry remains
+	// eligible even though both scheduled scans are disabled globally.
+	value, _ = db.GetDriveSTRM(ctx, mapping.ID)
+	value.Enabled = true
+	if err := db.SaveDriveSTRM(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+	client.pageErr = nil
+	if _, err := driveSTRMTestAttempt(t, s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetMonitoring(ctx, mapping.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Queue(ctx, mapping.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driveSTRMTestAttempt(t, s); err != nil {
+		t.Fatalf("manual full scan blocked by disabled periods or monitoring: %v", err)
+	}
+	if _, _, found, err := s.next(ctx); err != nil || found {
+		t.Fatalf("disabled zero timestamps unexpectedly due: found=%v err=%v", found, err)
+	}
+}
+
+func TestDriveSTRMPausedDirectoryCompletesAlreadyAcceptedEvent(t *testing.T) {
+	s, db, _, mapping, _ := driveSTRMTestSetup(t)
+	ctx := context.Background()
+	if _, err := driveSTRMTestAttempt(t, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NotifyDirectories(ctx, mapping.AccountID, []string{mapping.SourceCID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetMonitoring(ctx, mapping.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driveSTRMTestAttempt(t, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NotifyDirectories(ctx, mapping.AccountID, []string{mapping.SourceCID}); err != nil {
+		t.Fatal(err)
+	}
+	value, _ := db.GetDriveSTRM(ctx, mapping.ID)
+	if value.Queued {
+		t.Fatal("paused directory accepted a new automatic event")
+	}
+}
+
+func TestDriveSTRMDisabledPeriodsDoNotTreatZeroCheckpointsAsDue(t *testing.T) {
+	s, db, _, mapping, _ := driveSTRMTestSetup(t)
+	ctx := context.Background()
+	settings, _ := s.Settings(ctx)
+	settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 0
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	mapping.Queued, mapping.FullScan, mapping.Status = false, false, "idle"
+	if err := db.SaveDriveSTRM(ctx, mapping); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, err := s.next(ctx); err != nil || found {
+		t.Fatalf("closed periods with zero checkpoints triggered: found=%v err=%v", found, err)
+	}
+}
+
+func TestDriveSTRMStoppingDoesNotForceDisabledFullScan(t *testing.T) {
+	s, db, _, mapping, _ := driveSTRMTestSetup(t)
+	ctx := context.Background()
+	settings, _ := s.Settings(ctx)
+	settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 6, 0
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(ctx, mapping.ID); err != nil {
+		t.Fatal(err)
+	}
+	value, _ := db.GetDriveSTRM(ctx, mapping.ID)
+	if value.FullScan || value.Queued {
+		t.Fatal("stopped attempt retained accepted full scan")
+	}
+	if _, _, found, err := s.next(ctx); err != nil || found {
+		t.Fatalf("stop immediately restarted due periodic work: found=%v err=%v", found, err)
+	}
+	value.UpdatedAt = time.Now().Add(-7 * time.Hour)
+	if err := db.SaveDriveSTRM(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+	attempt, _, found, err := s.next(ctx)
+	if err != nil || !found || attempt.Mode != "tree" {
+		t.Fatalf("stopped work forced full scan: found=%v mode=%s err=%v", found, attempt.Mode, err)
+	}
+	if err := s.finish(ctx, mapping.ID, model.DriveSTRMStats{}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDriveSTRMEventsDoNotPostponeReconciliation(t *testing.T) {
 	s, db, client, value, _ := driveSTRMTestSetup(t)
@@ -27,7 +202,7 @@ func TestDriveSTRMEventsDoNotPostponeReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, _ := db.GetDriveSTRM(context.Background(), value.ID)
-	if after.Mode != "changes" || !after.NextScanAt.Equal(before.NextScanAt) || !after.LastFullScanAt.Equal(before.LastFullScanAt) {
+	if after.Mode != "changes" || !after.LastReconcileAt.Equal(before.LastReconcileAt) || !after.LastFullScanAt.Equal(before.LastFullScanAt) {
 		t.Fatalf("event moved periodic deadlines: before=%+v after=%+v", before, after)
 	}
 }
@@ -45,8 +220,8 @@ func TestDriveSTRMDueReconciliationWinsOverQueuedEvents(t *testing.T) {
 	if saved.Mode != "tree" || len(client.exportCalls) == 0 {
 		t.Fatalf("queued event starved due tree: %+v", saved)
 	}
-	saved.NextScanAt = time.Now().Add(-time.Second)
-	saved.LastFullScanAt = time.Now().Add(-driveSTRMFullInterval - time.Hour)
+	saved.LastReconcileAt = time.Now().Add(-25 * time.Hour)
+	saved.LastFullScanAt = time.Now().Add(-169 * time.Hour)
 	if err := db.SaveDriveSTRM(context.Background(), saved); err != nil {
 		t.Fatal(err)
 	}

@@ -113,7 +113,12 @@ func driveSTRMTestSetup(t *testing.T) (*DriveSTRMService, *storage.Store, *drive
 	}
 	client := &driveSTRMTestClient{files: map[string][]p115.ShareFile{}, paths: map[string]string{"100": "/library", "200": "/library/Season 01", "300": "/other"}, metadata: map[string][]byte{}, metadataErr: map[string]error{}}
 	s := NewDriveSTRMService(db, accounts, client, root)
-	value, err := s.Save(context.Background(), model.DriveSTRM{Name: "library", AccountID: id, SourceCID: "100", OutputDir: "strm", BaseURL: "https://cinema.example", VideoExtensions: "mkv,mp4", MetadataExtensions: "ass,nfo,jpg", Enabled: true})
+	settings := model.DefaultDriveSTRMSettings()
+	settings.BaseURL, settings.VideoExtensions, settings.MetadataExtensions = "https://cinema.example", "mkv,mp4", "ass,nfo,jpg"
+	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	value, err := s.Save(context.Background(), model.DriveSTRM{Name: "library", AccountID: id, SourceCID: "100", OutputDir: "strm", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +175,15 @@ func TestDriveSTRMScanPersistsOwnershipAndRepairsMissingOutputs(t *testing.T) {
 		t.Fatalf("repair stats=%+v err=%v", stats, err)
 	}
 	// Update managed bytes after a service-address change, but preserve a hand edit.
-	value.BaseURL = "https://new.example"
-	if _, err := s.Save(ctx, value); err != nil {
+	settings, err := s.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.BaseURL = "https://new.example"
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Queue(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filename, []byte("manual output\n"), 0644); err != nil {

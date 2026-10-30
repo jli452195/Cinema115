@@ -13,12 +13,13 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
-	"strm115/backend/internal/strm"
 )
 
 var ErrDriveSTRMBusy = errors.New("目录 STRM 正在扫描，请完成后再修改")
 
 type DriveSTRMStore interface {
+	SaveDriveSTRMSettings(context.Context, model.DriveSTRMSettings) error
+	GetDriveSTRMSettings(context.Context) (model.DriveSTRMSettings, error)
 	SaveDriveSTRM(context.Context, model.DriveSTRM) error
 	SaveDriveSTRMConfiguration(context.Context, model.DriveSTRM, bool) error
 	GetDriveSTRM(context.Context, string) (model.DriveSTRM, error)
@@ -61,9 +62,6 @@ type DriveSTRMService struct {
 	lastPicked string
 }
 
-const driveSTRMReconcileInterval = 24 * time.Hour
-const driveSTRMFullInterval = 7 * 24 * time.Hour
-
 func NewDriveSTRMService(store DriveSTRMStore, accounts *P115Accounts, client DriveSTRMClient, root string) *DriveSTRMService {
 	return &DriveSTRMService{Store: store, Accounts: accounts, Client: client, Root: root, wake: make(chan struct{}, 1)}
 }
@@ -76,7 +74,22 @@ func (s *DriveSTRMService) Wake() {
 }
 
 func (s *DriveSTRMService) List(ctx context.Context) ([]model.DriveSTRM, error) {
-	return s.Store.ListDriveSTRM(ctx)
+	values, err := s.Store.ListDriveSTRM(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.Store.GetDriveSTRMSettings(ctx)
+	if errors.Is(err, storage.ErrNotFound) {
+		return values, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	for i := range values {
+		values[i].NextScanAt = driveSTRMNextScan(values[i], settings, now)
+	}
+	return values, nil
 }
 
 func driveSTRMExtensions(raw string) (map[string]bool, error) {
@@ -95,33 +108,12 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	if err != nil {
 		return value, err
 	}
-	base, err := ValidateBaseURL(value.BaseURL)
-	if err != nil {
-		return value, err
-	}
-	value.BaseURL = base
-	if _, err := strm.DriveURL(base, strm.Drive{PickCode: "abcdef", FileID: "1", SHA1: strings.Repeat("A", 40), Size: 1, Name: "validate.mkv"}); err != nil {
-		return value, generationInputError(err.Error())
-	}
 	output, err := ResolveOutputDirectory(s.Root, value.OutputDir)
 	if err != nil {
 		return value, err
 	}
-	if strings.TrimSpace(value.VideoExtensions) == "" {
-		value.VideoExtensions = DefaultVideoExtensions
-	}
-	videos, err := driveSTRMExtensions(value.VideoExtensions)
-	if err != nil {
+	if _, err := s.Settings(ctx); err != nil {
 		return value, err
-	}
-	if len(videos) == 0 {
-		return value, generationInputError("至少需要一个视频后缀")
-	}
-	if _, err := parseMetadataExtensions(value.MetadataExtensions, videos); err != nil {
-		return value, err
-	}
-	if value.MinSizeMB < 0 || value.MinSizeMB > 1<<30 {
-		return value, generationInputError("最小文件大小无效")
 	}
 	s.mu.Lock()
 	active := value.ID != "" && s.active == value.ID
@@ -181,11 +173,12 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	}
 	value.Status, value.LastError = "queued", ""
 	value.LastScanAt, value.Stats = old.LastScanAt, old.Stats
+	value.LastReconcileAt = old.LastReconcileAt
 	value.LastFullScanAt = old.LastFullScanAt
 	value.Queued, value.FullScan, value.PendingDirectories = true, true, nil
 	value.Mode = "full"
 	value.UpdatedAt = time.Now().UTC()
-	value.NextScanAt = value.UpdatedAt
+	value.NextScanAt = time.Time{}
 	reset := old.ID != "" && (old.AccountID != value.AccountID || old.SourceCID != value.SourceCID || old.OutputDir != value.OutputDir)
 	if err := s.Store.SaveDriveSTRMConfiguration(ctx, value, reset); err != nil {
 		return value, err
@@ -205,11 +198,15 @@ func (s *DriveSTRMService) SetMonitoring(ctx context.Context, id string, enabled
 		return value, nil
 	}
 	if enabled {
+		if _, err := s.Settings(ctx); err != nil {
+			return value, err
+		}
 		if _, err := s.Accounts.Primary(value.AccountID); err != nil {
 			return value, err
 		}
 		value.Queued, value.FullScan = true, true
 		value.LastError, value.FailureCount = "", 0
+		value.NextScanAt = time.Time{}
 		if s.active != id {
 			value.Status = "queued"
 		}
@@ -238,12 +235,16 @@ func (s *DriveSTRMService) Queue(ctx context.Context, id string, full bool) erro
 	if err != nil {
 		return err
 	}
+	if _, err := s.Settings(ctx); err != nil {
+		return err
+	}
 	if _, err := s.Accounts.Primary(value.AccountID); err != nil {
 		return err
 	}
 	value.Queued = true
 	value.FullScan = value.FullScan || full || len(value.PendingDirectories) == 0
 	value.LastError, value.FailureCount = "", 0
+	value.NextScanAt = time.Time{}
 	if s.active != id {
 		value.Status = "queued"
 	}
@@ -264,9 +265,10 @@ func (s *DriveSTRMService) Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	value.Queued, value.FullScan, value.PendingDirectories = false, true, nil
+	value.Queued, value.FullScan, value.PendingDirectories = false, false, nil
 	value.Status, value.LastError = "stopped", "已停止，可重新检查并补齐"
-	value.NextScanAt, value.UpdatedAt = time.Now().Add(driveSTRMReconcileInterval).UTC(), time.Now().UTC()
+	value.NextScanAt, value.UpdatedAt = time.Time{}, time.Now().UTC()
+	value.FailureCount = 0
 	if err := s.Store.SaveDriveSTRM(ctx, value); err != nil {
 		return err
 	}
@@ -353,6 +355,7 @@ func (s *DriveSTRMService) Run(ctx context.Context) error {
 				continue
 			}
 			value.Status, value.Queued, value.FullScan = "queued", true, true
+			value.LastError, value.FailureCount, value.NextScanAt = "", 0, time.Time{}
 			if err = s.Store.SaveDriveSTRM(ctx, value); err != nil {
 				break
 			}
@@ -411,6 +414,13 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 	if err != nil {
 		return model.DriveSTRM{}, nil, false, err
 	}
+	settings, err := s.Store.GetDriveSTRMSettings(ctx)
+	if errors.Is(err, storage.ErrNotFound) {
+		return model.DriveSTRM{}, nil, false, nil
+	}
+	if err != nil {
+		return model.DriveSTRM{}, nil, false, err
+	}
 	now := time.Now().UTC()
 	// Round-robin avoids a noisy mapping starving other queued directories.
 	sort.SliceStable(values, func(i, j int) bool {
@@ -421,18 +431,22 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 		return values[i].ID < values[j].ID
 	})
 	for _, value := range values {
-		if value.Queued && value.LastError != "" && value.NextScanAt.After(now) {
+		retry := value.FailureCount > 0
+		if retry && (!value.Enabled || value.NextScanAt.After(now)) {
 			continue
 		}
-		if !value.Queued && !(value.Enabled && !value.NextScanAt.After(now)) {
+		treeAt, fullAt := driveSTRMDeadlines(value, settings, now)
+		treeDue, fullDue := driveSTRMDue(treeAt, now), driveSTRMDue(fullAt, now)
+		if !value.Queued && !retry && !treeDue && !fullDue {
 			continue
 		}
-		if !value.Queued || value.Enabled && !value.NextScanAt.After(now) {
-			value.FullScan = value.FullScan || value.LastFullScanAt.IsZero() || now.Sub(value.LastFullScanAt) >= driveSTRMFullInterval
+		if treeDue || fullDue {
+			value.FullScan = value.FullScan || fullDue
 			// Frequent life events must not postpone periodic reconciliation.
 			value.PendingDirectories = nil
 		}
 		snapshot := value
+		snapshot.Settings = settings
 		value.Queued, value.FullScan, value.PendingDirectories = false, false, nil
 		value.Status, value.LastError, value.UpdatedAt = "running", "", now
 		value.Stats = model.DriveSTRMStats{}
@@ -477,37 +491,28 @@ func (s *DriveSTRMService) finish(ctx context.Context, id string, stats model.Dr
 		return err
 	}
 	value.Stats = stats
-	if scanErr == nil && value.Mode == "full" {
-		value.LastFullScanAt = time.Now().UTC()
-	}
 	value.LastScanAt, value.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-	if value.Mode != "changes" || value.NextScanAt.IsZero() {
-		value.NextScanAt = value.LastScanAt.Add(driveSTRMReconcileInterval)
+	if scanErr == nil && value.Mode != "changes" {
+		value.LastReconcileAt = value.LastScanAt
+		if value.Mode == "full" {
+			value.LastFullScanAt = value.LastScanAt
+		}
 	}
+	value.NextScanAt = time.Time{}
 	if value.Status != "stopped" {
 		value.Status, value.LastError = "idle", ""
 		if scanErr != nil {
 			value.Status, value.LastError = "error", scanErr.Error()
 			value.FullScan = true
 			value.FailureCount++
-			delay := time.Minute
-			if value.FailureCount > 1 {
-				delay = 5 * time.Minute
-			}
-			if value.FailureCount > 2 {
-				delay = 30 * time.Minute
-			}
-			if value.FailureCount > 3 {
-				delay = driveSTRMReconcileInterval
-			}
-			value.NextScanAt = value.LastScanAt.Add(delay)
+			value.NextScanAt = value.LastScanAt.Add(driveSTRMRetryDelay(value.FailureCount))
 		} else {
 			value.FailureCount = 0
 		}
 		if processCanceled {
 			value.Queued, value.FullScan = true, true
 			value.LastError, value.FailureCount = "", 0
-			value.NextScanAt = value.LastScanAt
+			value.NextScanAt = time.Time{}
 		}
 		if value.Queued {
 			value.Status = "queued"

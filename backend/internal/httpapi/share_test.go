@@ -121,7 +121,7 @@ func TestMediaRangeAndHEAD(t *testing.T) {
 	for _, method := range []string{"GET", "HEAD"} {
 		api := NewShareAPI(func() string { return "" })
 		api.MediaHTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if r.Method != method || r.Header.Get("Range") != "bytes=4-7" || r.Header.Get("Cookie") != "" {
+			if r.Method != method || r.Header.Get("Range") != "bytes=4-7" || r.Header.Get("If-Range") != "test-etag" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
 				t.Error("请求方法或 Range 不正确，或泄露 Cookie")
 			}
 			return &http.Response{StatusCode: 206, Header: http.Header{"Content-Range": {"bytes 4-7/10"}, "Content-Length": {"4"}, "Accept-Ranges": {"bytes"}}, Body: io.NopCloser(strings.NewReader("4567"))}, nil
@@ -130,7 +130,10 @@ func TestMediaRangeAndHEAD(t *testing.T) {
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(method, "/", nil)
 		c.Request.Header.Set("Range", "bytes=4-7")
-		if err := api.proxy(c, "https://cdn.115cdn.com/movie", "movie.mkv"); err != nil {
+		c.Request.Header.Set("If-Range", "test-etag")
+		c.Request.Header.Set("Cookie", "browser-private")
+		c.Request.Header.Set("Authorization", "Bearer browser-private")
+		if err := streamMedia(c, api.MediaHTTP, "https://cdn.115cdn.com/movie", "movie.mkv"); err != nil {
 			t.Fatal(err)
 		}
 		c.Writer.WriteHeaderNow()

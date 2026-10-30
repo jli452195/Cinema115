@@ -81,6 +81,7 @@ func driveSTRMTreeSetup(t *testing.T) (*DriveSTRMService, *storage.Store, *drive
 	client := &driveSTRMTreeTestClient{driveSTRMTestClient: base, leaves: []string{"movie.mkv", "Season 01/E01.mkv", "poster.jpg", "ignored.zip"}}
 	s.Client = client
 	base.calls = nil
+	value.Settings, _ = s.Settings(context.Background())
 	return s, db, client, value, root
 }
 
@@ -91,7 +92,7 @@ func driveSTRMTreeDue(t *testing.T, db *storage.Store, id string) {
 		t.Fatal(err)
 	}
 	value.Queued, value.FullScan, value.PendingDirectories = false, false, nil
-	value.NextScanAt = time.Now().Add(-time.Second)
+	value.LastReconcileAt = time.Now().Add(-25 * time.Hour)
 	// A daily tree check is due while the weekly metadata scan is still fresh.
 	value.LastFullScanAt = time.Now()
 	if err := db.SaveDriveSTRM(context.Background(), value); err != nil {

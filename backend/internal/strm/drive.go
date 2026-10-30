@@ -16,7 +16,8 @@ var drivePickCode = regexp.MustCompile(`^[a-zA-Z0-9]{6,64}$`)
 var driveSHA1 = regexp.MustCompile(`^[a-fA-F0-9]{40}$`)
 
 // Drive is a complete source-file declaration, not proof of cloud ownership.
-// Playback must still authorize the Emby user and verify the selected target.
+// Direct playback verifies it in the primary account. Emby proxy playback also
+// authorizes the user and verifies the selected playback target.
 type Drive struct {
 	PickCode string
 	FileID   string
@@ -57,8 +58,8 @@ func DrivePath(value Drive) (string, error) {
 	return path, nil
 }
 
-// DriveURL builds a declaration consumed by the authorized Emby reverse proxy.
-// It does not grant anonymous access to a source file or select a playback UID.
+// DriveURL builds a source URL usable by a player or the authorized Emby proxy.
+// The URL never selects a playback UID or contains account credentials.
 func DriveURL(baseURL string, value Drive) (string, error) {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	u, err := url.Parse(base)

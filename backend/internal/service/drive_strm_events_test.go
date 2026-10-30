@@ -21,6 +21,111 @@ func (f driveSTRMLifeFake) LifeEvents(ctx context.Context, offset, limit int, co
 	return f(ctx, offset, limit, cookie)
 }
 
+type driveSTRMObservedSettings struct {
+	DriveSTRMStore
+	reads chan struct{}
+}
+
+func (s driveSTRMObservedSettings) GetDriveSTRMSettings(ctx context.Context) (model.DriveSTRMSettings, error) {
+	value, err := s.DriveSTRMStore.GetDriveSTRMSettings(ctx)
+	select {
+	case s.reads <- struct{}{}:
+	default:
+	}
+	return value, err
+}
+
+func TestDriveSTRMEventLoopAppliesPeriodsAndManualCheckRemainsIndependent(t *testing.T) {
+	s, _ := driveSTRMEventFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	settings, _ := s.Settings(ctx)
+	settings.EventIntervalSeconds = 0
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	reads := make(chan struct{}, 1)
+	s.Store = driveSTRMObservedSettings{s.Store, reads}
+	var requests atomic.Int32
+	called := make(chan struct{}, 1)
+	r := NewDriveSTRMEvents(s, driveSTRMLifeFake(func(context.Context, int, int, string) (p115.LifeEventPage, error) {
+		requests.Add(1)
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+		return p115.LifeEventPage{}, nil
+	}))
+	done := make(chan struct{})
+	go func() { defer close(done); r.run(ctx, time.Millisecond) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("event worker did not stop")
+		}
+	}()
+	waitReads := func() {
+		t.Helper()
+		for range 3 {
+			select {
+			case <-reads:
+			case <-time.After(time.Second):
+				t.Fatal("event worker stopped refreshing local settings")
+			}
+		}
+	}
+	waitReads()
+	if requests.Load() != 0 {
+		t.Fatal("disabled watcher requested 115")
+	}
+	settings.EventIntervalSeconds = 20
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("period change did not enable the waiting worker")
+	}
+	settings.EventIntervalSeconds = 0
+	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	waitReads()
+	if requests.Load() != 1 {
+		t.Fatal("closing the watcher caused another upstream request")
+	}
+	if err := r.Check(ctx); err != nil || requests.Load() != 2 {
+		t.Fatalf("manual check obeyed disabled automatic period: calls=%d err=%v", requests.Load(), err)
+	}
+}
+
+func TestDriveSTRMEventFailureBackoffNeverShortensSelectedPeriod(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		seconds, failures int
+		delay             time.Duration
+	}{
+		{20, 0, 20 * time.Second},
+		{20, 1, 40 * time.Second},
+		{20, 4, 5 * time.Minute},
+		{20, 50, 5 * time.Minute},
+		{300, 1, 5 * time.Minute},
+		{1800, 1, 30 * time.Minute},
+	} {
+		settings := model.DriveSTRMSettings{EventIntervalSeconds: tc.seconds}
+		if driveSTRMEventDue(settings, now, tc.failures, now.Add(tc.delay-time.Nanosecond)) ||
+			!driveSTRMEventDue(settings, now, tc.failures, now.Add(tc.delay)) {
+			t.Fatalf("event retry ignored period=%d failures=%d", tc.seconds, tc.failures)
+		}
+	}
+	if driveSTRMEventDue(model.DriveSTRMSettings{}, time.Time{}, 0, now) {
+		t.Fatal("zero period was treated as immediately due")
+	}
+}
+
 func driveSTRMEventFixture(t *testing.T) (*DriveSTRMService, *storage.Store) {
 	t.Helper()
 	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "drive-events.db"))
@@ -30,6 +135,11 @@ func driveSTRMEventFixture(t *testing.T) (*DriveSTRMService, *storage.Store) {
 	t.Cleanup(func() { db.Close() })
 	accounts := &P115Accounts{value: accountDocument{Accounts: []P115Account{{ID: "main", Primary: true, Cookie: "UID=42_A", Revision: 1}}}}
 	s := NewDriveSTRMService(db, accounts, nil, t.TempDir())
+	settings := model.DefaultDriveSTRMSettings()
+	settings.BaseURL, settings.VideoExtensions = "https://cinema.example", "mkv"
+	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
 	mapping := model.DriveSTRM{ID: "mapping", AccountID: "main", SourceCID: "10", Enabled: true, UpdatedAt: time.Now()}
 	if err := db.SaveDriveSTRM(context.Background(), mapping); err != nil {
 		t.Fatal(err)

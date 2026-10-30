@@ -1,10 +1,7 @@
 package httpapi
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -186,43 +183,7 @@ func (a *ShareAPI) play(c *gin.Context, claim *sharePlaybackParams) {
 		c.JSON(502, gin.H{"error": err.Error()})
 		return
 	}
-	if err = a.proxy(c, link, claim.Name); err != nil && !c.Writer.Written() {
+	if err = streamMedia(c, a.MediaHTTP, link, claim.Name); err != nil && !c.Writer.Written() {
 		c.JSON(502, gin.H{"error": "读取 115 媒体失败"})
 	}
-}
-
-func (a *ShareAPI) proxy(c *gin.Context, link, name string) error {
-	ctx, cancel := context.WithCancel(c.Request.Context())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, c.Request.Method, link, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", p115.PlaybackUserAgent)
-	req.Header.Set("Accept-Encoding", "identity")
-	for _, h := range []string{"Range", "If-Range"} {
-		if v := c.GetHeader(h); v != "" {
-			req.Header.Set(h, v)
-		}
-	}
-	resp, err := a.MediaHTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 && resp.StatusCode != 206 && resp.StatusCode != 416 {
-		return fmt.Errorf("媒体返回状态 %d", resp.StatusCode)
-	}
-	for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
-		if v := resp.Header.Get(h); v != "" {
-			c.Header(h, v)
-		}
-	}
-	c.Header("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
-	c.Status(resp.StatusCode)
-	if c.Request.Method == http.MethodHead {
-		return nil
-	}
-	_, err = io.Copy(c.Writer, resp.Body)
-	return err
 }

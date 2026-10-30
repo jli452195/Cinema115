@@ -15,15 +15,11 @@ import (
 // Accept configuration only; runtime state, statistics and pending work are
 // owned by the service and cannot be replaced by a browser's stale snapshot.
 type driveSTRMInput struct {
-	Name               string `json:"name"`
-	AccountID          string `json:"accountId"`
-	SourceCID          string `json:"sourceCID"`
-	OutputDir          string `json:"outputDir"`
-	BaseURL            string `json:"baseUrl"`
-	Enabled            bool   `json:"enabled"`
-	VideoExtensions    string `json:"videoExtensions"`
-	MetadataExtensions string `json:"metadataExtensions"`
-	MinSizeMB          int64  `json:"minSizeMB"`
+	Name      string `json:"name"`
+	AccountID string `json:"accountId"`
+	SourceCID string `json:"sourceCID"`
+	OutputDir string `json:"outputDir"`
+	Enabled   bool   `json:"enabled"`
 }
 
 func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService, events *service.DriveSTRMEvents, defaultBaseURL func() string) {
@@ -56,7 +52,29 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 			values[i].PendingDirectories = nil
 			values[i].FullScan = false
 		}
-		c.JSON(http.StatusOK, gin.H{"mappings": values, "primaryAccountId": scanner.Accounts.PrimaryID(), "accountReady": primaryErr == nil && primary.Cookie != "", "events": events.State(), "defaults": gin.H{"baseUrl": defaultBaseURL(), "videoExtensions": service.DefaultVideoExtensions}})
+		settings, err := scanner.Store.GetDriveSTRMSettings(c.Request.Context())
+		saved := err == nil
+		if errors.Is(err, storage.ErrNotFound) {
+			settings = model.DefaultDriveSTRMSettings()
+			settings.BaseURL, settings.VideoExtensions, settings.MetadataExtensions = defaultBaseURL(), service.DefaultVideoExtensions, "srt,ass,ssa"
+		} else if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"mappings": values, "primaryAccountId": scanner.Accounts.PrimaryID(), "accountReady": primaryErr == nil && primary.Cookie != "", "events": events.State(), "settings": settings, "settingsSaved": saved})
+	})
+	group.PUT("/settings", func(c *gin.Context) {
+		input := model.DefaultDriveSTRMSettings()
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "基础设置参数无效"})
+			return
+		}
+		value, err := scanner.SaveSettings(c.Request.Context(), input)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, value)
 	})
 	save := func(c *gin.Context) {
 		var input driveSTRMInput
@@ -66,7 +84,7 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
-		value, err := scanner.Save(ctx, model.DriveSTRM{ID: c.Param("id"), Name: input.Name, AccountID: input.AccountID, SourceCID: input.SourceCID, OutputDir: input.OutputDir, BaseURL: input.BaseURL, Enabled: input.Enabled, VideoExtensions: input.VideoExtensions, MetadataExtensions: input.MetadataExtensions, MinSizeMB: input.MinSizeMB})
+		value, err := scanner.Save(ctx, model.DriveSTRM{ID: c.Param("id"), Name: input.Name, AccountID: input.AccountID, SourceCID: input.SourceCID, OutputDir: input.OutputDir, Enabled: input.Enabled})
 		if err != nil {
 			fail(c, err)
 			return
@@ -118,6 +136,10 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 	group.POST("/:id/check", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 		defer cancel()
+		if _, err := scanner.Settings(ctx); err != nil {
+			fail(c, err)
+			return
+		}
 		value, err := scanner.Store.GetDriveSTRM(ctx, c.Param("id"))
 		if err != nil {
 			fail(c, err)
