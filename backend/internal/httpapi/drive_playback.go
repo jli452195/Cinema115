@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,18 +22,11 @@ type drivePlaybackClient interface {
 func RegisterDrivePlayback(r *gin.Engine, accounts *service.P115Accounts, client drivePlaybackClient, mediaHTTP *http.Client, logs *service.GenerationLogs) {
 	var cache service.DirectLinkCache
 	play := func(c *gin.Context) {
-		started := time.Now()
-		cacheHit, phase, failure := false, "地址解析", ""
-		defer func() {
-			level := "INFO"
-			if c.Writer.Status() >= 400 || failure != "" {
-				level = "ERROR"
-			}
-			logs.Append("STRM", "", "目录播放", level, fmt.Sprintf("目录 STRM 播放：%s HTTP %d，阶段=%s，缓存命中=%t，耗时=%d ms，UA=%s，Range=%s%s", c.Request.Method, c.Writer.Status(), phase, cacheHit, time.Since(started).Milliseconds(), service.PlaybackLogName(c.Request.UserAgent()), service.PlaybackLogName(c.GetHeader("Range")), failure))
-		}()
+		entry := strmPlaybackLog{started: time.Now(), phase: "地址解析"}
+		defer entry.write(c, logs, "目录播放")
 		c.Header("Cache-Control", "no-store")
 		fail := func(status int, message string) {
-			failure = "，原因=" + message
+			entry.failure = message
 			if c.Request.Method == http.MethodHead {
 				c.Status(status)
 				return
@@ -51,7 +43,7 @@ func RegisterDrivePlayback(r *gin.Engine, accounts *service.P115Accounts, client
 			fail(http.StatusBadRequest, err.Error())
 			return
 		}
-		phase = "主账号检查"
+		entry.phase = "主账号检查"
 		account, err := accounts.Primary("")
 		if err != nil {
 			fail(http.StatusServiceUnavailable, err.Error())
@@ -60,7 +52,7 @@ func RegisterDrivePlayback(r *gin.Engine, accounts *service.P115Accounts, client
 		key := service.DirectLinkKey(account.ID, strconv.FormatUint(account.Revision, 10), account.Cookie, file.PickCode, file.FileID, file.SHA1, strconv.FormatInt(file.Size, 10))
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
-		phase = "直链核验"
+		entry.phase = "直链核验"
 		value, hit, _, err := cache.Get(ctx, key, 5*time.Minute, service.DirectLinkCacheEntry{}, func(ctx context.Context) (service.DirectLinkValue, error) {
 			link, err := client.VerifiedPlaybackURL(ctx, p115.DrivePlaybackFile{ID: file.FileID, PickCode: file.PickCode, SHA1: file.SHA1, Size: file.Size, Name: file.Name}, account.Cookie, p115.PlaybackUserAgent)
 			if err != nil {
@@ -72,7 +64,7 @@ func RegisterDrivePlayback(r *gin.Engine, accounts *service.P115Accounts, client
 			return service.DirectLinkValue{URL: link}, nil
 		})
 		cancel()
-		cacheHit = hit
+		entry.cacheHit = &hit
 		if err != nil {
 			status := http.StatusBadGateway
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -83,13 +75,13 @@ func RegisterDrivePlayback(r *gin.Engine, accounts *service.P115Accounts, client
 			fail(status, "115 文件取链失败："+p115.SharePlaybackFailureReason(err))
 			return
 		}
-		phase = "原文件传输"
-		if err := streamMedia(c, mediaHTTP, value.URL, file.Name); err != nil {
+		entry.phase = "原文件传输"
+		if err := streamMedia(c, mediaHTTP, value.URL, file.Name, func() { entry.write(c, logs, "目录播放") }); err != nil {
 			if c.Request.Context().Err() != nil {
-				phase = "客户端结束读取"
+				entry.phase = "客户端结束读取"
 				return
 			}
-			failure = "，原因=读取 115 原文件失败"
+			entry.failure = "读取 115 原文件失败"
 			if !c.Writer.Written() {
 				cache.Remove(key)
 				fail(http.StatusBadGateway, "读取 115 原文件失败，请重试")

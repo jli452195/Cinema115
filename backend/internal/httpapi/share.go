@@ -22,6 +22,7 @@ type ShareAPI struct {
 	Cookie     func() string
 	BaseURL    func() string
 	MediaHTTP  *http.Client
+	Logs       *service.GenerationLogs
 }
 
 func NewShareAPI(cookie func() string) *ShareAPI {
@@ -173,17 +174,34 @@ func (a *ShareAPI) streamQuery(c *gin.Context) {
 }
 
 func (a *ShareAPI) play(c *gin.Context, claim *sharePlaybackParams) {
+	entry := strmPlaybackLog{started: time.Now(), phase: "分享账号检查"}
+	defer entry.write(c, a.Logs, "分享播放")
 	cookie := a.Cookie()
 	if cookie == "" {
+		entry.failure = "分享使用的 115 账号未配置或未登录"
 		c.JSON(503, gin.H{"error": "分享使用的 115 账号未选择、已删除或未登录，请管理员检查分享基础设置"})
 		return
 	}
+	entry.phase = "分享取链"
 	link, err := a.Client.DownloadURL(c.Request.Context(), &p115.ShareInfo{Code: claim.Code, Password: claim.Password}, claim.FileID, cookie)
 	if err != nil {
+		if c.Request.Context().Err() != nil {
+			entry.phase = "客户端结束读取"
+			return
+		}
+		entry.failure = p115.SharePlaybackFailureReason(err)
 		c.JSON(502, gin.H{"error": err.Error()})
 		return
 	}
-	if err = streamMedia(c, a.MediaHTTP, link, claim.Name); err != nil && !c.Writer.Written() {
-		c.JSON(502, gin.H{"error": "读取 115 媒体失败"})
+	entry.phase = "原文件传输"
+	if err = streamMedia(c, a.MediaHTTP, link, claim.Name, func() { entry.write(c, a.Logs, "分享播放") }); err != nil {
+		if c.Request.Context().Err() != nil {
+			entry.phase = "客户端结束读取"
+			return
+		}
+		entry.failure = "读取 115 原文件失败"
+		if !c.Writer.Written() {
+			c.JSON(502, gin.H{"error": "读取 115 媒体失败"})
+		}
 	}
 }

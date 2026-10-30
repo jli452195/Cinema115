@@ -309,6 +309,7 @@ func main() {
 		c.JSON(http.StatusOK, info)
 	})
 	shareAPI := httpapi.NewShareAPI(func() string { return "" })
+	shareAPI.Logs = generationLogs
 	if root := os.Getenv("STRM_ROOT"); root != "" {
 		shareAPI.OutputRoot = root
 	}

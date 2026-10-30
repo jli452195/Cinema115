@@ -29,12 +29,20 @@ func TestShareCanaryLegacyAndNewHTTP(t *testing.T) {
 	}))
 	defer upstream.Close()
 	a := NewShareAPI(func() string { return "test-cookie" })
+	a.Logs = &service.GenerationLogs{}
 	a.Client.AppURL = upstream.URL
 	a.MediaHTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Range") != "bytes=0-3" || r.Header.Get("Cookie") != "" {
 			t.Error("range lost or credential leaked")
 		}
-		return &http.Response{StatusCode: 206, Header: http.Header{"Content-Range": {"bytes 0-3/100"}, "Content-Length": {"4"}}, Body: io.NopCloser(strings.NewReader("test"))}, nil
+		body := io.MultiReader(mediaReadFunc(func([]byte) (int, error) {
+			entries := a.Logs.Snapshot("ALL")
+			if len(entries) == 0 || entries[0].Source != "分享播放" || !strings.Contains(entries[0].Message, "HTTP 206") {
+				t.Error("share playback log did not appear before media body reading")
+			}
+			return 0, io.EOF
+		}), strings.NewReader("test"))
+		return &http.Response{StatusCode: 206, Header: http.Header{"Content-Range": {"bytes 0-3/100"}, "Content-Length": {"4"}}, Body: io.NopCloser(body)}, nil
 	})}
 	r := gin.New()
 	a.Register(r, r.Group("/api/admin"))
@@ -44,6 +52,7 @@ func TestShareCanaryLegacyAndNewHTTP(t *testing.T) {
 		"/api/?share_code=sws8jb636j9&id=3532903049309717944&receive_code=fwgl&filename=movie.mp4",
 		"/api/share115/sws8jb636j9/3C57FCFD33B9476B43C6BCED7D20B5887EFB2A4E/fwgl/3532903049309717944",
 	}
+	requests := 0
 	for _, path := range paths {
 		for _, method := range []string{"GET", "HEAD"} {
 			req, err := http.NewRequest(method, server.URL+path, nil)
@@ -59,6 +68,14 @@ func TestShareCanaryLegacyAndNewHTTP(t *testing.T) {
 			resp.Body.Close()
 			if readErr != nil || resp.StatusCode != 206 || resp.Header.Get("Content-Range") != "bytes 0-3/100" || (method == "HEAD" && len(body) != 0) || (method == "GET" && string(body) != "test") {
 				t.Fatal(method, resp.StatusCode, readErr)
+			}
+			requests++
+			entries := a.Logs.Snapshot("ALL")
+			if len(entries) != requests || entries[0].Module != "STRM" || entries[0].Source != "分享播放" || entries[0].Level != "INFO" || !strings.Contains(entries[0].Message, method+" HTTP 206") {
+				t.Fatal("new or legacy standalone share playback missing or duplicating logs")
+			}
+			if strings.Contains(entries[0].Message, "test-cookie") || strings.Contains(entries[0].Message, "fwgl") || strings.Contains(entries[0].Message, "https://") {
+				t.Fatal("share playback log contains source credentials or signed URL")
 			}
 		}
 	}

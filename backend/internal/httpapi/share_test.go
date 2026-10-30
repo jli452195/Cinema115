@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"strm115/backend/internal/service"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -17,6 +18,7 @@ func TestGenerateAndRouteShareSTRM(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cookie := "selected-cookie"
 	api := NewShareAPI(func() string { return cookie })
+	api.Logs = &service.GenerationLogs{}
 	api.BaseURL = func() string { return "http://nas:8115" }
 	r := gin.New()
 	api.Register(r, r.Group("/api/admin"))
@@ -58,6 +60,12 @@ func TestGenerateAndRouteShareSTRM(t *testing.T) {
 				r.ServeHTTP(w, httptest.NewRequest(method, tc.path, nil))
 				if w.Code != tc.status {
 					t.Fatalf("%s %s: %d", method, tc.path, w.Code)
+				}
+				if tc.status == http.StatusServiceUnavailable {
+					entries := api.Logs.Snapshot("ALL")
+					if len(entries) == 0 || entries[0].Source != "分享播放" || entries[0].Level != "ERROR" || !strings.Contains(entries[0].Message, "HTTP 503") {
+						t.Fatal("share account failure did not produce playback diagnostics")
+					}
 				}
 			}
 		}
@@ -133,7 +141,7 @@ func TestMediaRangeAndHEAD(t *testing.T) {
 		c.Request.Header.Set("If-Range", "test-etag")
 		c.Request.Header.Set("Cookie", "browser-private")
 		c.Request.Header.Set("Authorization", "Bearer browser-private")
-		if err := streamMedia(c, api.MediaHTTP, "https://cdn.115cdn.com/movie", "movie.mkv"); err != nil {
+		if err := streamMedia(c, api.MediaHTTP, "https://cdn.115cdn.com/movie", "movie.mkv", nil); err != nil {
 			t.Fatal(err)
 		}
 		c.Writer.WriteHeaderNow()

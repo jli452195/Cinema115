@@ -12,7 +12,7 @@ import (
 
 // Share and directory STRM use the same original-file transport. Only the
 // lookup depends on the source; media requests never carry account credentials.
-func streamMedia(c *gin.Context, client *http.Client, link, name string) error {
+func streamMedia(c *gin.Context, client *http.Client, link, name string, onReady func()) error {
 	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, link, nil)
 	if err != nil {
 		return err
@@ -42,6 +42,9 @@ func streamMedia(c *gin.Context, client *http.Client, link, name string) error {
 	// After committing media headers, callers must not append a JSON error even
 	// if the very first body read fails.
 	c.Writer.WriteHeaderNow()
+	if onReady != nil {
+		onReady()
+	}
 	if c.Request.Method == http.MethodHead {
 		return nil
 	}
