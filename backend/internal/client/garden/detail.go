@@ -14,11 +14,17 @@ type DetailFile struct {
 	Size string `json:"size"` // Upstream display size, never used as exact byte identity.
 }
 
+type DetailLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
 type ResourceDetail struct {
 	Status   string   `json:"status"`
 	Resource Resource `json:"resource"`
 	Detail   struct {
 		Files        []DetailFile `json:"files"`
+		Magnets      []DetailLink `json:"magnets"`
 		HasMoreFiles bool         `json:"hasMoreFiles"`
 	} `json:"detail"`
 	IsDeleted bool `json:"isDeleted"`

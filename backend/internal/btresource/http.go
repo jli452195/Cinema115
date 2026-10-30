@@ -14,6 +14,7 @@ import (
 )
 
 var mikanTorrentPath = regexp.MustCompile(`^/Download/[0-9]{8}/([a-fA-F0-9]{40})\.torrent$`)
+var dmhyTorrentPath = regexp.MustCompile(`^/[0-9]{4}/[0-9]{2}/[0-9]{2}/([a-fA-F0-9]{40})\.torrent$`)
 var anibtPostKey = regexp.MustCompile(`^rel_[A-Za-z0-9_-]{1,60}$`)
 var ErrRead = errors.New("anime torrent metadata unavailable")
 
@@ -32,6 +33,12 @@ func TorrentURL(provider, postKey, raw string) (string, error) {
 	}
 	if provider == "anibt" && u.Host == "anibt.net" && anibtPostKey.MatchString(postKey) && u.Path == "/api/torrent/"+postKey+".torrent" {
 		return u.String(), nil
+	}
+	if provider == "dmhy" && u.Host == "dl.dmhy.org" {
+		parts := dmhyTorrentPath.FindStringSubmatch(u.Path)
+		if len(parts) == 2 && strings.EqualFold(parts[1], postKey) {
+			return u.String(), nil
+		}
 	}
 	return "", ErrInvalid
 }

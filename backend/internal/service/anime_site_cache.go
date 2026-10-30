@@ -41,16 +41,21 @@ func newAnimeSiteCache(client animeSiteTransport, site string) *animeSiteCache {
 // cooldown. Failed refreshes retain successes; a cancelled leader does not
 // poison another caller. No background goroutines are started.
 func (s *animeSiteCache) read(ctx context.Context, path string, ttl time.Duration, refresh bool, budget *AnimeSourceBudget, validate func([]byte) error) (animeSiteResponse, bool, error) {
+	return s.readKey(ctx, path, path, ttl, refresh, budget, validate)
+}
+
+// readKey allows verified content to share a cache/flight across source URLs.
+func (s *animeSiteCache) readKey(ctx context.Context, key, path string, ttl time.Duration, refresh bool, budget *AnimeSourceBudget, validate func([]byte) error) (animeSiteResponse, bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return animeSiteResponse{}, false, err
 		}
 		s.mu.Lock()
-		if v, ok := s.cache[path]; ok && !refresh && time.Now().Before(v.expires) {
+		if v, ok := s.cache[key]; ok && !refresh && time.Now().Before(v.expires) {
 			s.mu.Unlock()
 			return v, true, nil
 		}
-		if f, ok := s.flights[path]; ok {
+		if f, ok := s.flights[key]; ok {
 			s.mu.Unlock()
 			select {
 			case <-ctx.Done():
@@ -67,12 +72,12 @@ func (s *animeSiteCache) read(ctx context.Context, path string, ttl time.Duratio
 			return animeSiteResponse{}, false, &animefeed.HTTPError{Site: s.Site, Status: 429, RetryAt: time.Now().Add(2 * time.Second)}
 		}
 		f := &animeSiteFlight{done: make(chan struct{})}
-		s.flights[path] = f
+		s.flights[key] = f
 		s.mu.Unlock()
 		v, err := s.fetch(ctx, path, ttl, budget, validate)
 		s.mu.Lock()
 		if err == nil {
-			s.cache[path] = v
+			s.cache[key] = v
 			bytes := 0
 			for key, entry := range s.cache {
 				if !time.Now().Before(entry.expires) {
@@ -94,7 +99,7 @@ func (s *animeSiteCache) read(ctx context.Context, path string, ttl time.Duratio
 			}
 		}
 		f.result, f.err = v, err
-		delete(s.flights, path)
+		delete(s.flights, key)
 		close(f.done)
 		s.mu.Unlock()
 		return v, false, err

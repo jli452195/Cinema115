@@ -20,13 +20,26 @@ type gardenDetailFake struct {
 	paths      []string
 	names      []string
 	incomplete bool
+	hash       string
+	links      []garden.DetailLink
+	deleted    bool
+	provider   string
+	post       string
 }
 
 func (f *gardenDetailFake) Fetch(_ context.Context, p string, _ int64) ([]byte, error) {
 	f.paths = append(f.paths, p)
-	d := garden.ResourceDetail{Status: "OK", Resource: garden.Resource{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}}
+	hash := f.hash
+	if hash == "" {
+		hash = gardenTestHash
+	}
+	d := garden.ResourceDetail{Status: "OK", Resource: garden.Resource{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + hash}, IsDeleted: f.deleted}
+	if f.provider != "" {
+		d.Resource.Provider, d.Resource.ProviderID = f.provider, f.post
+	}
 	d.Detail.Files = []garden.DetailFile{}
 	d.Detail.HasMoreFiles = f.incomplete
+	d.Detail.Magnets = f.links
 	for _, name := range f.names {
 		d.Detail.Files = append(d.Detail.Files, garden.DetailFile{Name: name, Size: "1.2GB"})
 	}

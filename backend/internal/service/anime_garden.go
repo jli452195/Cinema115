@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"strm115/backend/internal/btresource"
 	"strm115/backend/internal/client/animefeed"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/mikan"
@@ -13,10 +14,14 @@ import (
 type GardenService struct {
 	*animeSiteCache
 	CatalogLinks AnimeCatalogLinks
+	torrents     *animeSiteCache
 }
 
 func NewGardenService(client animeSiteTransport) *GardenService {
-	return &GardenService{animeSiteCache: newAnimeSiteCache(client, "garden")}
+	return &GardenService{
+		animeSiteCache: newAnimeSiteCache(client, "garden"),
+		torrents:       newAnimeSiteCache(gardenTorrentTransport{reader: &btresource.HTTPReader{}}, "garden"),
+	}
 }
 
 type AnimeGardenCatalog struct {
