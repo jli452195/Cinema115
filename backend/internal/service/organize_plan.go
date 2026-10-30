@@ -11,34 +11,6 @@ import (
 	"strm115/backend/internal/naming"
 )
 
-func (s *ManualOrganize) Preview(ctx context.Context, accountID string, input OrganizePreviewInput) (OrganizeJob, error) {
-	if (input.Kind != "movie" && input.Kind != "tv") || input.TMDBID < 1 || len(input.Files) == 0 || len(input.Files) > 1000 {
-		return OrganizeJob{}, ErrOrganizeInput
-	}
-	s.mu.Lock()
-	s.pruneLocked()
-	scan, ok := s.scans[input.ScanID]
-	s.mu.Unlock()
-	if !ok || scan.Config.AccountID != accountID {
-		return OrganizeJob{}, fmt.Errorf("%w：扫描已过期，请重新选择文件", ErrOrganizeConflict)
-	}
-	a, err := s.account(accountID)
-	if err != nil {
-		return OrganizeJob{}, err
-	}
-	if a.Revision != scan.Revision {
-		return OrganizeJob{}, fmt.Errorf("%w：账号配置已修改，请重新扫描", ErrOrganizeConflict)
-	}
-	job, err := s.buildPlan(ctx, scan, input)
-	if err != nil {
-		return OrganizeJob{}, err
-	}
-	if err := s.checkPlan(ctx, &job, a.Cookie, true); err != nil {
-		return OrganizeJob{}, err
-	}
-	return s.rememberPlan(job)
-}
-
 // buildPlan is shared by actual cloud scans and pre-download website lists.
 // It performs metadata/naming validation without touching 115.
 func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input OrganizePreviewInput) (OrganizeJob, error) {

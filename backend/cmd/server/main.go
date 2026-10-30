@@ -279,9 +279,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	manualOrganize := service.NewManualOrganize(organizeEngine)
 	animeAdmin.ReserveOrganization = organizeEngine.ReserveDirectoryWork
-	httpapi.RegisterManualOrganize(admin, manualOrganize)
 	mediaInitCtx, mediaInitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	mediaOrganizer, err := service.OpenMediaOrganizerSQLite(mediaInitCtx, database, dataDir, secret, tmdbService, database, classification, accounts, p115.NewShareClient(), organizeEngine.ReserveDirectoryWork)
 	mediaInitCancel()
@@ -542,13 +540,6 @@ func main() {
 	go func() {
 		defer workers.Done()
 		if err := downloadOrganize.Run(ctx); err != nil {
-			workerErrors <- err
-		}
-	}()
-	workers.Add(1)
-	go func() {
-		defer workers.Done()
-		if err := organizeEngine.Run(ctx); err != nil {
 			workerErrors <- err
 		}
 	}()

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +15,7 @@ import (
 
 // Exercise the actual form encoding, response parsing, context timing observer
 // and batch reconciler together against a local in-memory drive.
-func TestManualOrganizeBatchHTTPIntegrationAndStats(t *testing.T) {
+func TestOrganizeBatchHTTPIntegrationAndStats(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, 51)
 	var mu sync.Mutex
 	requests := 0
@@ -98,13 +97,5 @@ func TestManualOrganizeBatchHTTPIntegrationAndStats(t *testing.T) {
 	}
 	if job.Stats.ElapsedMS < 0 || job.Stats.SaveMS < 0 || job.Stats.StartedAt.IsZero() {
 		t.Fatal("耗时统计无效")
-	}
-	if _, err := s.Start(id, plan.ID); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := s.Run(ctx); err != nil {
-		t.Fatal(err)
 	}
 }

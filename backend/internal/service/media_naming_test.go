@@ -145,13 +145,13 @@ func TestMediaNamingDirectorySubtitleScope(t *testing.T) {
 	}
 }
 
-func TestManualNamingSubtitlePreviewMatchesExecution(t *testing.T) {
+func TestOrganizeNamingSubtitlePreviewMatchesExecution(t *testing.T) {
 	s, drive, account, _ := newOrganizeTest(t)
 	drive.dirs["10"][0].Name = "海洋奇缘2[HDR+杜比视界双版本][国英多音轨+简繁英字幕]"
 	drive.dirs["30"] = []p115.ShareFile{{ID: "101", Name: "Moana.2.2024.V2.Bluray.2160p.Atmos.TrueHD7.1.DoVi.HDR.x265.10bit-DreamHD.mkv", Size: 100}}
-	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
-	if err != nil || len(scan.Files) != 1 || drive.listCalls["10"] != 1 || drive.listCalls["30"] != 1 {
-		t.Fatal("directory tags added drive reads", scan, err, drive.listCalls)
+	scan := organizeTestSource(t, s, account)
+	if len(scan.Files) != 1 || len(drive.listCalls) != 0 {
+		t.Fatal("source facts added drive reads", scan, drive.listCalls)
 	}
 	file := scan.Files[0]
 	selection := OrganizeSelection{ID: file.ID}
@@ -160,29 +160,17 @@ func TestManualNamingSubtitlePreviewMatchesExecution(t *testing.T) {
 		t.Fatal("naming preview", preview, err)
 	}
 	want := "测试作品 (2024).2160p.BluRay.HEVC.10bit.DV HDR.TRUEHD.7.1.Atmos.[简繁英].mkv"
-	plan, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{selection}})
+	plan, err := s.buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{selection}})
 	if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != want || preview.Items[0].Result.Name != want {
 		t.Fatal("subtitle naming differs between preview and plan", preview, plan, err)
+	}
+	plan, err = s.rememberPlan(plan)
+	if err != nil {
+		t.Fatal(err)
 	}
 	finished := organizeTestRun(t, s, account, plan)
 	if finished.Status != "completed" || finished.Items[0].Name != want {
 		t.Fatal("execution changed the agreed subtitle label", finished)
-	}
-}
-
-func TestManualNamingSingleSelectionUsesAllSiblings(t *testing.T) {
-	for _, mixed := range []bool{false, true} {
-		s, drive, account, _ := newOrganizeTest(t)
-		drive.dirs["30"] = []p115.ShareFile{{ID: "101", Name: "Movie.mkv", Size: 100}}
-		want := "简繁英"
-		if mixed {
-			drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: "103", Name: "Other.mkv", Size: 100})
-			want = ""
-		}
-		scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "30", ParentPath: "/来源/Movie[简繁英字幕]", EntryID: "101"})
-		if err != nil || len(scan.Files) != 1 || scan.Files[0].NamingValues[naming.Languages] != want || drive.listCalls["30"] != 1 {
-			t.Fatal("selecting one file misrepresented its directory or added reads", mixed, scan, err, drive.listCalls)
-		}
 	}
 }
 
@@ -295,35 +283,46 @@ func TestMediaNamingRevisionAndValidation(t *testing.T) {
 	}
 }
 
-func TestManualNamingSnapshotRootAndRestart(t *testing.T) {
-	s, drive, account, store := newOrganizeTest(t)
+func TestDownloadNamingSnapshotRootAndRestart(t *testing.T) {
+	s, drive, _, tracker, transport, input := gardenFixture(t)
 	template, _ := naming.Default(naming.TV)
 	template.Directories = nil
 	template.Filename = []naming.Block{{Field: naming.SeasonEpisode}}
 	templates := &mediaNamingTemplates{record: naming.Snapshot{Revision: 2, Template: template}}
-	s.templates = templates
-	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}})
+	s.Organize.templates = templates
+	transport.names = append(transport.names, "show/[Group] Show [01].zh-CN.ass")
+	input.Files[0].Episode = 13
+	plan, err := s.Preview(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := plan.Items[0].Name
 	plan.Naming.Template.Filename[0].Prefix = "client-tamper"
 	templates.record.Revision++
 	templates.record.Template.Filename[0].Prefix = "new-template"
-	if _, err := s.Start(account, plan.ID); err != nil {
+	if _, err := s.Start(plan.ID); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewOrganizeEngine(store, s.accounts, drive, s.metadata, templates)
+	restarted, err := NewOrganizeEngine(s.Organize.store, s.Organize.accounts, drive, s.Organize.metadata, templates)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manual := NewManualOrganize(restarted)
-	job, err := manual.Resume(plan.ID)
+	s = NewDownloadOrganize(restarted, nil, s.Downloads, s.Settings, tracker)
+	job, err := s.Resume(plan.ID)
 	if err != nil || job.Naming.Revision != 2 || job.Naming.Template.Filename[0].Prefix != "" || job.Items[0].Name != want || job.Items[0].Directory != "" {
 		t.Fatal("restart changed original intent", job, err)
 	}
-	if err := restarted.runJob(context.Background(), &restarted.pending.job, restarted.pending.cookie); err != nil {
-		t.Fatal(err)
+	pending := s.live[job.ID]
+	tracker.resultID = "801"
+	tracker.beforeRead = func() {
+		drive.dirs[pending.job.Download.DirectoryID] = []p115.ShareFile{{ID: "801", Name: "show", Directory: true}}
+		drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: "[Group] Show [01].mkv", Size: 1200}, {ID: "902", Name: "[Group] Show [01].zh-CN.ass", Size: 100}}
 	}
-	finished := manual.History()[0]
-	if finished.Status != "completed" || finished.Items[0].TargetCID != "20" || drive.creates != 0 || templates.calls != 1 || len(drive.dirs["20"]) != 2 {
+	if done, err := s.advance(context.Background(), pending); err != nil || !done {
+		t.Fatal("restarted download did not finish", done, err)
+	}
+	finished := s.History()[0]
+	if finished.Status != "completed" || finished.Items[0].TargetCID != "20" || drive.creates != 1 || templates.calls != 1 || len(drive.dirs["20"]) != 2 {
 		t.Fatal("root task did not complete with frozen naming", finished, templates.calls)
 	}
 	if reflect.DeepEqual(finished.Naming.Template, templates.record.Template) {
@@ -332,16 +331,20 @@ func TestManualNamingSnapshotRootAndRestart(t *testing.T) {
 }
 
 func TestTitlelessNamingStillRejectsTargetCollisions(t *testing.T) {
-	s, drive, account, _ := newOrganizeTest(t)
-	s.templates = &mediaNamingTemplates{record: naming.Snapshot{Template: naming.Template{Kind: naming.TV, Filename: []naming.Block{{Field: naming.SeasonEpisode}}}}}
+	s, drive, _, _, transport, input := gardenFixture(t)
+	s.Organize.templates = &mediaNamingTemplates{record: naming.Snapshot{Template: naming.Template{Kind: naming.TV, Filename: []naming.Block{{Field: naming.SeasonEpisode}}}}}
 	drive.dirs["20"] = []p115.ShareFile{{ID: "existing", Name: "S01E01.mkv", Size: 100}}
-	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 1}, {ID: "103", Season: 1, Episode: 1}})
+	input.Files = []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1}, {ID: transport.names[1], Season: 1, Episode: 1}}
+	plan, err := s.Preview(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range plan.Items {
 		if item.File.MediaType == "video" && item.Conflict == "" {
 			t.Fatal("same-name target accepted", item)
 		}
 	}
-	if _, err := s.Start(account, plan.ID); err == nil || drive.renames+drive.moves+drive.creates != 0 {
+	if _, err := s.Start(plan.ID); !errors.Is(err, ErrOrganizeInput) || drive.renames+drive.moves+drive.creates != 0 {
 		t.Fatal("conflicting titleless plan executed", err)
 	}
 }

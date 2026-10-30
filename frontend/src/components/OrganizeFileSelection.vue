@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import OrganizeDirectoryGroup from './OrganizeDirectoryGroup.vue'
-import type { OrganizeRow } from '../types/manualOrganize'
+import type { OrganizeRow } from '../types/organize'
 import { directoryFileRows, directoryGroups, inDirectory, parentDirectory, rowExcluded, setRangeSelection } from '../utils/organizeSelection'
 
 const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; emptyText?: string; targetNames?: Record<string, string>; conflicts?: Record<string, string> }>()

@@ -268,7 +268,7 @@ func gardenFixture(t *testing.T) (*DownloadOrganize, *organizeFakeDrive, *cloudA
 	adder := &cloudAdderStub{}
 	settings := &CloudDownloadSettings{value: cloudDownloadDocument{CloudDownloadConfig: CloudDownloadConfig{AccountID: account, TargetCID: "10", TargetPath: "/来源"}}}
 	tracker := &gardenTrackerFake{}
-	s := NewDownloadOrganize(o.OrganizeEngine, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
+	s := NewDownloadOrganize(o, g, &CloudDownloadService{Accounts: o.accounts, Client: adder, Coordinator: &CloudDownloadCoordinator{}}, settings, tracker)
 	in := DownloadOrganizeInput{DownloadResourceInput: DownloadResourceInput{Provider: "dmhy", ProviderID: "688777", Magnet: "magnet:?xt=urn:btih:" + gardenTestHash}, Kind: "tv", TMDBID: 42, AccountID: account, TargetCID: "20", TargetPath: "/目标", Files: []OrganizeSelection{{ID: transport.names[0], Season: 1, Episode: 1}}}
 	return s, drive, adder, tracker, transport, in
 }
@@ -361,9 +361,6 @@ func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T)
 	}
 	if adder.url != "" || drive.creates != 0 {
 		t.Fatal("preparation submitted or created a folder")
-	}
-	if _, err = NewManualOrganize(s.Organize).Start(in.AccountID, preview.ID); err == nil {
-		t.Fatal("ordinary organizer accepted a website plan")
 	}
 	job, err := s.Start(preview.ID)
 	if err != nil {
@@ -611,8 +608,8 @@ func TestGardenPreviewConflictsUnsupportedAndRestart(t *testing.T) {
 	if _, err = s.Start(preview.ID); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := newManualOrganizeTest(s.Organize.store, s.Organize.accounts, s.Organize.drive, s.Organize.metadata)
-	if err != nil || restarted.history(true)[0].Status != "interrupted" {
+	restarted, err := newOrganizeEngineTest(s.Organize.store, s.Organize.accounts, s.Organize.drive, s.Organize.metadata)
+	if err != nil || restarted.history()[0].Status != "interrupted" {
 		t.Fatal("restart silently rebound work", err)
 	}
 	transport.incomplete = true

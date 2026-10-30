@@ -664,7 +664,7 @@ Gemini CLI 在方案阶段审查信息结构；实现后审查实际代码与必
 - ANI-RSS：<https://github.com/wushuo894/ani-rss>
 - 蜜柑：<https://mikanani.me/>
 - Bangumi：<https://bgm.tv/>；公开 API：<https://bangumi.github.io/api/>
-- 项目现有基础能力：`docs/mikan.md`、`docs/cloud-download.md`、`docs/manual-organize.md`；`docs/tv-numbering.md` 仅参考资料结构与版本校验方式，本模块独立保存订阅目标快照。
+- 项目现有基础能力：`docs/mikan.md`、`docs/cloud-download.md`、`docs/garden-download-organize.md`；`docs/tv-numbering.md` 仅参考资料结构与版本校验方式，本模块独立保存订阅目标快照。
 
 ## 18. 下一轮逐项讨论清单
 

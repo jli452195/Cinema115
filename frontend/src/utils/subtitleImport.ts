@@ -1,6 +1,5 @@
 import { Inflate } from 'fflate'
 import { sha256 } from 'js-sha256'
-import type { SubtitleVideo } from '../types/subtitleImport'
 
 export const maxFileBytes = 16 * 1024 * 1024
 export const maxTotalBytes = 64 * 1024 * 1024
@@ -51,7 +50,7 @@ export interface SubtitleMatch {
   reason: string
   candidates: { id: string; reason: string; score: number }[]
 }
-export type SubtitleMatchVideo = Pick<SubtitleVideo, 'id' | 'name'> & { season?: number; episode?: number }
+export interface SubtitleMatchVideo { id: string; name: string; season?: number; episode?: number }
 
 function videoEpisode(video: SubtitleMatchVideo) {
   // Editable target numbers are authoritative, even when currently invalid.

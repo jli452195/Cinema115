@@ -9,7 +9,6 @@ import P115View from './views/P115View.vue'
 import ShareView from './views/ShareView.vue'
 import CloudDownloadView from './views/CloudDownloadView.vue'
 import FolderMonitorView from './views/FolderMonitorView.vue'
-import ManualOrganizeView from './views/ManualOrganizeView.vue'
 import DownloadOrganizeView from './views/DownloadOrganizeView.vue'
 import TelegramView from './views/TelegramView.vue'
 import TelegramUserView from './views/TelegramUserView.vue'
@@ -93,7 +92,6 @@ export const router = createRouter({
     { path: '/115/folder-monitor', name: 'folder-monitor', component: FolderMonitorView },
     { path: '/115/drive-strm', name: 'drive-strm', component: () => import('./views/DriveSTRMView.vue') },
     { path: '/115/download-organize', name: 'download-organize', component: DownloadOrganizeView },
-    { path: '/115/manual-organize', name: 'manual-organize', component: ManualOrganizeView },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
     { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/resources' } },

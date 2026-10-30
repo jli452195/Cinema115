@@ -15,7 +15,7 @@ import (
 
 // A trusted, already-previewed season with existing destination directories.
 // This isolates execution traffic from TMDB, scanning and preview traffic.
-func organizeBatchFixture(t *testing.T, count int) (*ManualOrganize, *organizeFakeDrive, string, OrganizeJob) {
+func organizeBatchFixture(t *testing.T, count int) (*OrganizeEngine, *organizeFakeDrive, string, OrganizeJob) {
 	t.Helper()
 	s, drive, id, _ := newOrganizeTest(t)
 	account, err := s.accounts.Get(id)
@@ -23,7 +23,7 @@ func organizeBatchFixture(t *testing.T, count int) (*ManualOrganize, *organizeFa
 		t.Fatal(err)
 	}
 	const folder = "测试作品 (2024) {tmdb-42}"
-	job := OrganizeJob{ID: "batch-plan", Config: s.Config(), Revision: account.Revision, Kind: "tv", TMDBID: 42, Title: "测试作品", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
+	job := OrganizeJob{ID: "batch-plan", Config: organizeTestConfig(id), Revision: account.Revision, Kind: "tv", TMDBID: 42, Title: "测试作品", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
 	drive.dirs["30"] = make([]p115.ShareFile, 0, count)
 	drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: folder, Directory: true}}
 	drive.dirs["40"] = []p115.ShareFile{{ID: "50", Name: "Season 01", Directory: true}}
@@ -39,7 +39,7 @@ func organizeBatchFixture(t *testing.T, count int) (*ManualOrganize, *organizeFa
 	return s, drive, id, job
 }
 
-func TestManualOrganizeBatchRequestReduction(t *testing.T) {
+func TestOrganizeBatchRequestReduction(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, 100)
 	drive.pageSize = 100
 	job := organizeTestRun(t, s, id, plan)
@@ -65,7 +65,7 @@ func TestManualOrganizeBatchRequestReduction(t *testing.T) {
 	t.Logf("100 files, existing folders, single-page directories: 900 -> %d drive requests; 502 -> %d execution checkpoints", requests, job.Stats.Checkpoints)
 }
 
-func TestManualOrganizeBatchPartialOutcomes(t *testing.T) {
+func TestOrganizeBatchPartialOutcomes(t *testing.T) {
 	for _, phase := range []string{"rename", "move"} {
 		for _, responseError := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/error=%v", phase, responseError), func(t *testing.T) {
@@ -104,15 +104,12 @@ func TestManualOrganizeBatchPartialOutcomes(t *testing.T) {
 				if phase == "move" && drive.moves != 1 {
 					t.Fatal("部分成功的批量移动不得拆分重试")
 				}
-				if _, err := s.Start(id, plan.ID); err != nil || drive.renames != 1 {
-					t.Fatal("重复提交不可重放批次", err)
-				}
 			})
 		}
 	}
 }
 
-func TestManualOrganizeBatchConflictChecksStayFresh(t *testing.T) {
+func TestOrganizeBatchConflictChecksStayFresh(t *testing.T) {
 	t.Run("collision in last row blocks whole batch", func(t *testing.T) {
 		s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 		drive.dirs["50"] = append(drive.dirs["50"], p115.ShareFile{ID: "900", Name: plan.Items[p115.DriveMutationBatchLimit-1].Name})
@@ -164,7 +161,7 @@ func TestManualOrganizeBatchConflictChecksStayFresh(t *testing.T) {
 	})
 }
 
-func TestManualOrganizeBatchFullPaginationAndExactSelection(t *testing.T) {
+func TestOrganizeBatchFullPaginationAndExactSelection(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, 101)
 	drive.pageSize = 7
 	drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: "900", Name: "new-arrival.mkv", Size: 999})
@@ -189,7 +186,7 @@ func TestManualOrganizeBatchFullPaginationAndExactSelection(t *testing.T) {
 	}
 }
 
-func TestManualOrganizeBatchNoUnnecessaryWrites(t *testing.T) {
+func TestOrganizeBatchNoUnnecessaryWrites(t *testing.T) {
 	for _, inPlace := range []bool{false, true} {
 		t.Run(fmt.Sprint(inPlace), func(t *testing.T) {
 			s, drive, id, plan := organizeBatchFixture(t, 5)
@@ -212,7 +209,7 @@ func TestManualOrganizeBatchNoUnnecessaryWrites(t *testing.T) {
 	}
 }
 
-func TestManualOrganizeBatchReadbackFailureStopsWithoutReplay(t *testing.T) {
+func TestOrganizeBatchReadbackFailureStopsWithoutReplay(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 	drive.beforeRead = func(cid string, _ int) error {
 		if drive.renames > 0 && cid == "30" {
@@ -255,26 +252,24 @@ func (s *organizeCheckpointStore) Save(raw string) error {
 	return nil
 }
 
-func TestManualOrganizeBatchDurableIntentBeforeWrites(t *testing.T) {
+func TestOrganizeBatchDurableIntentBeforeWrites(t *testing.T) {
 	for _, stage := range []string{"renaming", "moving"} {
 		t.Run(stage, func(t *testing.T) {
-			s, drive, id, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
+			s, drive, _, plan := organizeBatchFixture(t, p115.DriveMutationBatchLimit+1)
 			store := &organizeCheckpointStore{failStage: stage}
 			s.store = store
-			if _, err := s.Start(id, plan.ID); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.runJob(context.Background(), &s.pending.job, s.pending.cookie); err == nil {
+			job, cookie := organizeTestPersist(t, s, plan)
+			if err := s.runJob(context.Background(), &job, cookie); err == nil {
 				t.Fatal("应报告阶段保存失败")
 			}
 			if drive.moves != 0 || (stage == "renaming" && drive.renames != 0) {
 				t.Fatal("未持久化意图就发出了写请求")
 			}
-			restarted, err := newManualOrganizeTest(store, s.accounts, drive, organizeFakeMetadata{})
+			restarted, err := newOrganizeEngineTest(store, s.accounts, drive, organizeFakeMetadata{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if restarted.pending != nil || restarted.History()[0].Status != "interrupted" {
+			if restarted.doc.Jobs[0].Status != "interrupted" {
 				t.Fatal("重启不得重放未确认的批次")
 			}
 			if strings.Contains(store.data, "secret-cookie") {
@@ -284,7 +279,7 @@ func TestManualOrganizeBatchDurableIntentBeforeWrites(t *testing.T) {
 	}
 }
 
-func TestManualOrganizeBatchGroupsSourceAndDestination(t *testing.T) {
+func TestOrganizeBatchGroupsSourceAndDestination(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, 8)
 	drive.dirs["31"] = []p115.ShareFile{}
 	drive.dirs["51"] = []p115.ShareFile{}

@@ -46,11 +46,11 @@ func interruptedGarden(t *testing.T, bound bool) (*DownloadOrganize, *organizeFa
 	if err = s.Organize.checkpoint(&p.job); err != nil {
 		t.Fatal(err)
 	}
-	o, err := newManualOrganizeTest(s.Organize.store, s.Organize.accounts, drive, nil)
+	o, err := newOrganizeEngineTest(s.Organize.store, s.Organize.accounts, drive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s = NewDownloadOrganize(o.OrganizeEngine, nil, s.Downloads, s.Settings, tracker)
+	s = NewDownloadOrganize(o, nil, s.Downloads, s.Settings, tracker)
 	*adder = cloudAdderStub{}
 	tracker.calls, tracker.resultID = 0, "801" // Real completed responses can omit target CID.
 	return s, drive, adder, tracker, job.ID

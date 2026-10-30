@@ -29,7 +29,7 @@ func (s *FolderMonitorService) NotifyOrganized(ctx context.Context, accountID st
 		value.ScheduleVersion++
 		value.StableFingerprint, value.StableScans = "", 0
 		value.NextScanAt, value.UpdatedAt = time.Now().UTC(), time.Now().UTC()
-		value.ScheduleMessage = "手动整理已完成，正在检查目录"
+		value.ScheduleMessage = "下载整理已完成，正在检查目录"
 		if err := s.Store.SaveFolderMonitor(ctx, value); err != nil {
 			return err
 		}

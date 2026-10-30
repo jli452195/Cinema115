@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { IconCircleCheck, IconDeviceTv, IconEye, IconFolderMinus, IconFolders, IconMovie, IconSubtitles } from '@tabler/icons-vue'
+import { IconCircleCheck, IconDeviceTv, IconEye, IconFolders, IconMovie } from '@tabler/icons-vue'
 import { activePhase, historyTime, isActiveTask, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
 const props = defineProps<{ task: HistoryTask }>()
 const emit = defineEmits<{ details: [] }>()
 const active = computed(() => isActiveTask(props.task))
 const counts = computed(() => taskCounts(props.task))
-const typeIcon = computed(() => props.task.kind === 'cleanup' ? IconFolderMinus : props.task.kind === 'subtitle' ? IconSubtitles : props.task.organize?.naming?.template.kind === 'movie' ? IconMovie : props.task.organize?.naming?.template.kind === 'tv' ? IconDeviceTv : IconFolders)
+const typeIcon = computed(() => props.task.organize?.naming?.template.kind === 'movie' ? IconMovie : props.task.organize?.naming?.template.kind === 'tv' ? IconDeviceTv : IconFolders)
 const episode = computed(() => {
   if (props.task.organize?.naming?.template.kind !== 'tv') return ''
   const videos = props.task.organize.items.filter(item => item.file.mediaType === 'video')
@@ -17,7 +17,7 @@ const episode = computed(() => {
   const matches = [...name.matchAll(/(?:^|[^a-z0-9])(S[0-9]{1,3}E[0-9]{1,4})(?=$|[^a-z0-9])/gi)]
   return matches.length === 1 ? matches[0]![1]!.toUpperCase() : ''
 })
-const summary = computed(() => props.task.status === 'completed' && counts.value.total > 0 && counts.value.done === counts.value.total ? `${counts.value.total} 个${props.task.kind === 'cleanup' ? '条目' : '文件'}` : resultSummary(props.task))
+const summary = computed(() => props.task.status === 'completed' && counts.value.total > 0 && counts.value.done === counts.value.total ? `${counts.value.total} 个文件` : resultSummary(props.task))
 const paths = computed(() => {
   const single = props.task.items.length === 1 ? props.task.items[0] : undefined
   return [

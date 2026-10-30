@@ -80,7 +80,7 @@ func NewDownloadOrganize(o *OrganizeEngine, resources downloadResourceReader, do
 	return &DownloadOrganize{Organize: o, Resources: resources, Downloads: downloads, Settings: settings, Reader: reader, live: make(map[string]*downloadPending), wake: make(chan struct{}, 1), steps: make(chan struct{}, 4), manifests: make(map[string]downloadManifest), batches: make(map[string]downloadBatch)}
 }
 
-func (s *DownloadOrganize) History() []OrganizeJob { return s.Organize.history(true) }
+func (s *DownloadOrganize) History() []OrganizeJob { return s.Organize.history() }
 
 func (s *DownloadOrganize) Target() CloudDownloadConfig {
 	o := s.Organize

@@ -1,4 +1,4 @@
-import type { OrganizeRow } from '../types/manualOrganize'
+import type { OrganizeRow } from '../types/organize'
 
 export const parentDirectory = (filePath: string) => filePath.slice(0, filePath.lastIndexOf('/')) || '/'
 export const inDirectory = (directory: string, root: string) => directory === root || directory.startsWith(root === '/' ? '/' : `${root}/`)

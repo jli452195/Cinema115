@@ -252,18 +252,15 @@ func TestNumberingOrganizeAllowsUnlistedEpisodesAndInvalidatesOldPreview(t *test
 	if plan.Numbering == nil || plan.Numbering.Revision != 1 {
 		t.Fatal(plan.Numbering)
 	}
-	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	unlisted, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}}})
+	scan := organizeTestSource(t, s, account)
+	unlisted, err := s.buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: "tv", TMDBID: 42, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}}})
 	if err != nil || len(unlisted.Items) != 1 || !strings.Contains(unlisted.Items[0].Name, "S01E13") {
 		t.Fatal("TMDB numbering must remain advisory", unlisted, err)
 	}
 	if _, err = metadata.SaveNumbering(context.Background(), 42, SaveNumberingInput{Revision: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Start(account, plan.ID); !errors.Is(err, ErrOrganizeConflict) {
+	if _, err = s.buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: "tv", TMDBID: 42, NumberingRevision: &plan.Numbering.Revision, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 12}}}); !errors.Is(err, ErrOrganizeConflict) {
 		t.Fatal("old preview accepted", err)
 	}
 }

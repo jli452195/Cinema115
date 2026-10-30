@@ -20,7 +20,7 @@ export interface DirectoryGenerationSettings {
 
 export const directoryShareActive = (value?: DirectoryShareConfig | null) => !!value && (value.running || value.queued || (value.hasBatch && !value.lastError && !['blocked', 'sharing_legacy'].includes(value.stage)))
 
-export function useDirectoryShare(token: string, configurationId: () => string | undefined = () => undefined) {
+export function useDirectoryShare(token: string) {
   const lifecycle = new AbortController()
   const monitor = ref<DirectoryShareConfig>()
   const accountId = ref('')
@@ -69,8 +69,7 @@ export function useDirectoryShare(token: string, configurationId: () => string |
         p115Request<{ accounts: P115Account[] }>(token, 'accounts', { signal }),
       ])
       if (lifecycle.signal.aborted || version !== revision) return
-      const id = configurationId()
-      monitor.value = id ? data.monitors.find(value => value.id === id) : data.monitors.length === 1 ? data.monitors[0] : undefined
+      monitor.value = data.monitors.length === 1 ? data.monitors[0] : undefined
       accountId.value = settings.settings.accountId || ''
       generation.value = settings.settings.generation
       const bound = monitor.value?.hasBatch ? monitor.value.accountId : accountId.value

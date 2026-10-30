@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
-import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/manualOrganize'
+import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/organize'
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'

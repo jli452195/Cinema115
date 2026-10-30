@@ -133,7 +133,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <div class="flex items-center gap-3"><h2>自动执行</h2><span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs dark:bg-slate-800" :class="monitor?.schedulePaused ? 'text-amber-600 dark:text-amber-300' : monitor?.enabled ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500'">{{ scheduleState }}</span></div>
           <div class="flex items-center gap-3"><button v-if="monitor?.enabled" type="button" :disabled="submitting || loading" class="hint px-3 py-2 disabled:opacity-40" @click="saveSchedule(false)">关闭</button><button type="button" :disabled="!canSchedule" class="secondary" @click="openSchedule">{{ monitor?.schedulePaused ? '重新开启' : monitor?.enabled ? '调整间隔' : '开启自动执行' }}</button></div>
         </div>
-        <p class="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">{{ monitor?.enabled ? `每 ${Math.round((monitor.intervalSeconds || 600) / 60)} 分钟发现新内容，5 秒后复查稳定即执行。手动整理完成后立即检查。` : '开启后，手动整理完成立即检查；其他新内容按设定间隔发现，5 秒后复查稳定即执行。' }}</p>
+        <p class="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">{{ monitor?.enabled ? `每 ${Math.round((monitor.intervalSeconds || 600) / 60)} 分钟发现新内容，5 秒后复查稳定即执行。下载整理完成后立即检查。` : '开启后，下载整理完成立即检查；其他新内容按设定间隔发现，5 秒后复查稳定即执行。' }}</p>
         <p class="hint mt-2">遇到整理占用时每 5 秒重试；本批完成立即检查下一批，目录为空后恢复定时间隔。</p>
         <p v-if="monitor?.schedulePaused" role="status" class="mt-3 text-sm text-amber-700 dark:text-amber-300">{{ monitor.schedulePaused }}</p>
         <p v-else-if="monitor?.enabled && monitor.scheduleMessage && !active" class="mt-3 text-sm">{{ monitor.scheduleMessage }}</p>
@@ -181,7 +181,7 @@ onBeforeUnmount(() => lifecycle.abort())
     <P115ActionDialog v-if="scheduleDialog" title="自动分享并生成 STRM" :busy="submitting" @close="scheduleDialog = false">
       <p class="break-all">来源：{{ monitor?.sourcePath || monitor?.sourceCID }}</p>
       <div class="flex items-center justify-between gap-4"><span>常规检查间隔</span><SelectMenu v-model="interval" :options="intervals" :disabled="submitting" label="常规检查间隔" /></div>
-      <p>到点发现内容后等待 5 秒复查，无变化即开始处理，不等下一轮定时。手动整理完成后立即检查；遇到占用每 5 秒重试，本批完成立即检查下一批。发生错误后暂停，等待核对。</p>
+      <p>到点发现内容后等待 5 秒复查，无变化即开始处理，不等下一轮定时。下载整理完成后立即检查；遇到占用每 5 秒重试，本批完成立即检查下一批。发生错误后暂停，等待核对。</p>
       <p class="rounded-xl bg-amber-50 p-3 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">全部生成成功后，本批源文件随临时目录移入 115 回收站。关闭自动执行只停止新批次，已提交的任务继续处理。</p>
       <p v-if="actionError" role="alert" class="text-red-600 dark:text-red-400">{{ actionError }}</p>
       <template #footer><button type="button" :disabled="submitting" class="secondary" @click="scheduleDialog = false">取消</button><button type="button" :disabled="submitting" class="primary" @click="saveSchedule(true)">{{ submitting ? '保存中…' : '确认开启' }}</button></template>

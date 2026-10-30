@@ -1,4 +1,4 @@
-import type { OrganizeFile, OrganizeRow } from '../types/manualOrganize'
+import type { OrganizeFile, OrganizeRow } from '../types/organize'
 
 export interface OrganizeMappingSource { episode: number }
 export function organizeFileRow(file: OrganizeFile, selected: boolean): OrganizeRow {

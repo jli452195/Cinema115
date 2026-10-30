@@ -8,7 +8,7 @@ import { analyzeSubtitle, formatSubtitleSize, maxTotalBytes, mergeSubtitleFiles,
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
-import type { OrganizeRow } from '../types/manualOrganize'
+import type { OrganizeRow } from '../types/organize'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
 const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion] }>()

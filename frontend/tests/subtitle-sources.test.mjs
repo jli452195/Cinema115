@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
-import { zipSync, strToU8 } from 'fflate'
 
 const require = createRequire(import.meta.url)
 const loaded = new Map()
@@ -14,8 +13,7 @@ function compile(source, resolver = require) {
   return module.exports
 }
 loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
-loaded.set('../lib/p115-api', compile(await readFile(new URL('../src/lib/p115-api.ts', import.meta.url), 'utf8')))
-const { readSubtitleResponse, readDriveSubtitles } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
+const { readSubtitleResponse } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
 
 test('download streams enforce exact size, errors, progress and cancellation', async () => {
   const signal = new AbortController().signal
@@ -32,33 +30,4 @@ test('download streams enforce exact size, errors, progress and cancellation', a
   controller.abort()
   await assert.rejects(pending, { name: 'AbortError' })
   assert.equal(cancelled, true)
-})
-
-test('cloud input uses authenticated snapshots, parses ZIP and releases on success or failure', async t => {
-  const bytes = zipSync({ 'S01E01.srt': strToU8('subtitle'), 'font.ttf': strToU8('font') })
-  const source = { id: '42', parentId: '10', name: 'subs.zip', size: bytes.length, directory: false, sourcePath: '/字幕/subs.zip' }
-  for (const broken of [false, true]) {
-    const calls = [], progress = []
-    t.mock.method(globalThis, 'fetch', async (url, init) => {
-      calls.push({ url, init })
-      assert.equal(init.headers.Authorization, 'Bearer admin')
-      if (init.method === 'POST') return Response.json({ id: 'snapshot', files: [source] })
-      if (init.method === 'DELETE') return new Response(null, { status: 204 })
-      return new Response(broken ? bytes.subarray(0, 2) : bytes)
-    })
-    const action = readDriveSubtitles('admin', 'main', 'job', [source], new AbortController().signal, p => progress.push(p))
-    if (broken) await assert.rejects(action, /subs.zip.*不完整/)
-    else {
-      const result = await action
-      assert.equal(result.files[0].name, 'S01E01.srt')
-      assert.equal(result.files[0].sourceLabel, '/字幕/subs.zip（压缩包）')
-      assert.match(result.files[0].sourceKey, /^archive:/)
-      assert.equal(result.ignored, 1)
-      assert.deepEqual([...new Set(progress.map(p => p.phase))], ['prepare', 'download', 'extract'])
-    }
-    assert.equal(calls.length, 3)
-    assert.match(calls[1].url, /snapshot\/files\/42\?accountId=main/)
-    assert.equal(calls[2].init.method, 'DELETE')
-    t.mock.restoreAll()
-  }
 })

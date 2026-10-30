@@ -11,7 +11,7 @@ import (
 	"strm115/backend/internal/client/tmdb"
 )
 
-func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
+func TestOrganizeFileNumberingSharedByGardenAndCloudFiles(t *testing.T) {
 	type example struct {
 		name                 string
 		season, episode, end int
@@ -88,44 +88,23 @@ func TestOrganizeFileNumberingSharedByGardenAndManualScan(t *testing.T) {
 	for episode := 1; episode <= 52; episode++ {
 		cases = append(cases, example{fmt.Sprintf("陰陽大戰記/陰陽大戰記-%02d.wmv", episode), 1, episode, 0})
 	}
-	s, drive, _, _, transport, in := gardenFixture(t)
+	s, _, _, _, transport, in := gardenFixture(t)
 	transport.names = make([]string, len(cases))
-	drive.dirs["30"] = make([]p115.ShareFile, len(cases))
 	for i, tc := range cases {
 		transport.names[i] = tc.name
-		drive.dirs["30"][i] = p115.ShareFile{ID: fmt.Sprint(i + 100), Name: path.Base(tc.name), Size: 100}
-		if path.Base(path.Dir(tc.name)) == "SP" {
-			drive.dirs["30"][i].Directory = true
-			drive.dirs["30"][i].Name = "SP"
-			drive.dirs[fmt.Sprint(i+100)] = []p115.ShareFile{{ID: "900", Name: path.Base(tc.name), Size: 100}}
-		}
 	}
 	gardenFiles, err := s.Resources.Files(context.Background(), in.DownloadResourceInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manual := NewManualOrganize(s.Organize)
-	scan, err := manual.Scan(context.Background(), OrganizeScanInput{AccountID: in.AccountID, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	byID := make(map[string]OrganizeFile, len(scan.Files))
-	for _, file := range scan.Files {
+	byID := make(map[string]OrganizeFile, len(gardenFiles.Files))
+	for _, file := range gardenFiles.Files {
 		byID[file.ID] = file
 	}
 	for i, tc := range cases {
-		var fromGarden OrganizeFile
-		for _, file := range gardenFiles.Files {
-			if file.ID == tc.name {
-				fromGarden = file
-				break
-			}
-		}
-		id := fmt.Sprint(i + 100)
-		if path.Base(path.Dir(tc.name)) == "SP" {
-			id = "900"
-		}
-		for entry, file := range map[string]OrganizeFile{"garden": fromGarden, "manual": byID[id]} {
+		cloud := OrganizeFile{ShareFile: p115.ShareFile{ID: fmt.Sprint(i + 100), Name: path.Base(tc.name), Size: 100}, SourcePath: tc.name, MediaType: "video", Season: 1}
+		organizeFileNumbering(&cloud)
+		for entry, file := range map[string]OrganizeFile{"garden": byID[tc.name], "cloud": cloud} {
 			if file.ID == "" || file.Season != tc.season || file.Episode != tc.episode || file.EndEpisode != tc.end {
 				t.Errorf("%s %q: got S%dE%d-%d; want S%dE%d-%d", entry, tc.name, file.Season, file.Episode, file.EndEpisode, tc.season, tc.episode, tc.end)
 			}
@@ -189,11 +168,11 @@ func TestOrganizeUnderscoreNamesReachNamingPreviewAndPlan(t *testing.T) {
 		drive.dirs["30"] = append(drive.dirs["30"], p115.ShareFile{ID: fmt.Sprint(episode + 100), Name: fmt.Sprintf("[Cleo]Trinity_Blood_-_%02d_(Dual Audio_10bit_BD1080p_x265).mkv", episode), Size: 100})
 	}
 	ctx := context.Background()
-	scan, err := s.Scan(ctx, OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
-	if err != nil || len(scan.Files) != 3 {
-		t.Fatal(scan, err)
+	scan := organizeTestSource(t, s, account)
+	if len(scan.Files) != 3 {
+		t.Fatal(scan)
 	}
-	input := OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42}
+	input := OrganizePreviewInput{Kind: "tv", TMDBID: 42}
 	namingInput := MediaNamingInput{Kind: input.Kind, TMDBID: input.TMDBID}
 	for _, file := range scan.Files {
 		selection := OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}
@@ -204,7 +183,7 @@ func TestOrganizeUnderscoreNamesReachNamingPreviewAndPlan(t *testing.T) {
 	if err != nil || len(preview.Items) != 3 {
 		t.Fatal(preview, err)
 	}
-	plan, err := s.Preview(ctx, account, input)
+	plan, err := s.buildPlan(ctx, scan, input)
 	if err != nil || len(plan.Items) != 3 {
 		t.Fatal(plan, err)
 	}
@@ -215,7 +194,7 @@ func TestOrganizeUnderscoreNamesReachNamingPreviewAndPlan(t *testing.T) {
 	}
 }
 
-func TestOrganizeSpecialScanPreviewAndExecution(t *testing.T) {
+func TestOrganizeSpecialPlanPreviewAndExecution(t *testing.T) {
 	s, drive, account, _ := newOrganizeTest(t)
 	metadata := &organizeReferenceMetadata{}
 	s.metadata = metadata
@@ -227,11 +206,12 @@ func TestOrganizeSpecialScanPreviewAndExecution(t *testing.T) {
 		{ID: "203", Name: "Show sp02.mkv", Size: 100},
 	}
 	ctx := context.Background()
-	scan, err := s.Scan(ctx, OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"})
-	if err != nil || len(scan.Files) != 4 || drive.listCalls["90"] != 1 {
-		t.Fatal("SP scan added reads or lost files", scan, drive.listCalls, err)
+	scan := organizeTestSource(t, s, account)
+	scan.Files = append(scan.Files, organizeTestFiles(drive.dirs["90"], "90", "/来源/待整理/SP")...)
+	if len(scan.Files) != 4 {
+		t.Fatal("SP source facts lost files", scan)
 	}
-	input := OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 36581, Subtitles: true}
+	input := OrganizePreviewInput{Kind: "tv", TMDBID: 36581, Subtitles: true}
 	namingInput := MediaNamingInput{Kind: input.Kind, TMDBID: input.TMDBID, Subtitles: organizeSubtitles(scan.Files)}
 	want := map[string]string{"101": "S01E22", "201": "S00E01", "202": "S00E01", "203": "S00E02"}
 	for _, file := range scan.Files {
@@ -239,7 +219,7 @@ func TestOrganizeSpecialScanPreviewAndExecution(t *testing.T) {
 			continue
 		}
 		if fmt.Sprintf("S%02dE%02d", file.Season, file.Episode) != want[file.ID] {
-			t.Fatal("scan lost the source's explicit numbering", file)
+			t.Fatal("source lost its explicit numbering", file)
 		}
 		selection := OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}
 		input.Files = append(input.Files, selection)
@@ -249,9 +229,13 @@ func TestOrganizeSpecialScanPreviewAndExecution(t *testing.T) {
 	if err != nil || len(preview.Items) != 4 {
 		t.Fatal("SP naming preview", preview, err)
 	}
-	plan, err := s.Preview(ctx, account, input)
+	plan, err := s.buildPlan(ctx, scan, input)
 	if err != nil || len(plan.Items) != 4 {
 		t.Fatal("SP organize plan", plan, err)
+	}
+	plan, err = s.rememberPlan(plan)
+	if err != nil {
+		t.Fatal(err)
 	}
 	names := make(map[string]string, len(preview.Items))
 	for _, item := range preview.Items {
@@ -317,13 +301,12 @@ func (m *organizeReferenceMetadata) Season(context.Context, int, int) (*tmdb.Sea
 	return nil, fmt.Errorf("season is unavailable")
 }
 
-func TestOrganizePreviewsAcceptManualNumberingWithoutSeasonRequests(t *testing.T) {
+func TestOrganizePreviewsAcceptExplicitNumberingWithoutSeasonRequests(t *testing.T) {
 	s, drive, adder, tracker, _, in := gardenFixture(t)
 	metadata := &organizeReferenceMetadata{}
 	s.Organize.metadata = metadata
-	manual := NewManualOrganize(s.Organize)
 	for _, selection := range []OrganizeSelection{{ID: "101", Season: 1, Episode: 13}, {ID: "101", Season: 1, Episode: 12}, {ID: "101", Season: 9, Episode: 99}} {
-		job := organizeTestPreview(t, manual, in.AccountID, []OrganizeSelection{selection})
+		job := organizeTestPreview(t, s.Organize, in.AccountID, []OrganizeSelection{selection})
 		if !strings.Contains(job.Items[0].Name, fmt.Sprintf("S%02dE%02d", selection.Season, selection.Episode)) {
 			t.Fatal("manual numbering changed", job)
 		}

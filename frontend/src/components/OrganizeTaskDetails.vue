@@ -3,10 +3,10 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
-import { historyDuration, historyLabels, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
+import { historyDuration, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
-const props = defineProps<{ manualActions?: boolean; task: HistoryTask; accountName: string; blockedReason: string; canSubtitle: boolean; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
-defineEmits<{ close: []; source: []; subtitle: []; resume: [] }>()
+const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
+defineEmits<{ close: []; resume: [] }>()
 // This component is keyed by task identity, not the polling snapshot.
 const filter = ref(taskCounts(props.task).attention ? 'attention' : 'all')
 const feedback = ref('')
@@ -50,21 +50,14 @@ async function copy(value: string) {
 </script>
 
 <template>
-  <AnimeFloatingDialog :title="`${historyLabels[task.kind]}历史详情`" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
-    <template v-if="manualActions !== false && task.organize && !isActiveTask(task)" #header>
-      <div class="flex flex-wrap gap-2">
-        <button class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('source')">查看源目录剩余内容</button>
-        <button v-if="canSubtitle" class="action" :disabled="!!blockedReason" :title="blockedReason" @click="$emit('subtitle')">补充字幕</button>
-      </div>
-      <p v-if="blockedReason" class="mt-2 text-xs text-amber-700 dark:text-amber-300">{{ blockedReason }}</p>
-    </template>
+  <AnimeFloatingDialog title="整理历史详情" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
     <div class="task-detail-sections">
       <p v-if="resumeError" ref="resumeAlert" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ resumeError }}</p>
       <p v-if="historyError || unavailable" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ unavailable ? '此任务已不在最近记录中，当前显示打开时保留的快照。' : '记录刷新失败，当前结果可能已过期。请刷新记录后再执行操作。' }}</p>
       <section aria-label="任务摘要" class="detail-panel space-y-3 text-sm">
         <h3 class="break-words text-xl font-semibold leading-7 text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere]">{{ task.title }}</h3>
         <div class="flex flex-wrap items-center gap-3"><span class="badge" :class="`badge-${taskTone(task)}`"><P115Icon v-if="taskTone(task) === 'success'" name="check" class="success-mark" />{{ taskStatus(task) }}</span><span class="text-xs text-slate-500 dark:text-slate-400">{{ resultSummary(task) }}</span></div>
-        <p class="text-xs text-slate-500 dark:text-slate-400">{{ task.kind === 'cleanup' ? '按文件或目录条目计数' : task.kind === 'organize' ? `共 ${counts.total} 个文件，含 ${task.items.filter(item => item.mediaType === 'video').length} 个视频、${task.items.filter(item => item.mediaType === 'subtitle').length} 个字幕` : `共 ${counts.total} 个字幕文件，已跳过不计入上传成功数` }}</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">共 {{ counts.total }} 个文件，含 {{ task.items.filter(item => item.mediaType === 'video').length }} 个视频、{{ task.items.filter(item => item.mediaType === 'subtitle').length }} 个字幕</p>
         <p v-if="task.items.some(item => item.titleOnly)" class="text-xs text-slate-500 dark:text-slate-400">单集按标题预设命名，实际文件、扩展名与关联字幕下载后确认。</p>
         <dl class="task-detail-meta"><div><dt>账号</dt><dd>{{ accountName }}</dd></div><div><dt>创建时间</dt><dd>{{ historyTime(task.createdAt, true) }}</dd></div></dl>
       </section>
@@ -72,7 +65,7 @@ async function copy(value: string) {
       <div v-if="counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
         <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
         <p v-if="task.message" class="mt-1 break-all">{{ task.message }}</p>
-        <p>{{ resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : task.kind === 'cleanup' ? '请先核实网盘实际内容，再重新预览剩余条目。待核实条目不会自动重复执行。' : '请核对原位置与目标位置的实际文件，再重新扫描或预览。待核实条目不会自动重复执行。' }}</p>
+        <p>{{ resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : '请核对原位置与目标位置的实际文件，再重新预览。待核实条目不会自动重复执行。' }}</p>
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
@@ -94,12 +87,12 @@ async function copy(value: string) {
       </details>
 
       <section aria-label="文件明细" class="detail-panel">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold">{{ task.kind === 'cleanup' ? '条目明细' : '文件明细' }}</h3><div class="flex gap-1" role="group" aria-label="明细筛选"><button class="filter" :aria-pressed="filter === 'all'" @click="filter = 'all'">全部 {{ counts.total }}</button><button class="filter" :aria-pressed="filter === 'attention'" @click="filter = 'attention'">需关注 {{ counts.attention }}</button></div></div>
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold">文件明细</h3><div class="flex gap-1" role="group" aria-label="明细筛选"><button class="filter" :aria-pressed="filter === 'all'" @click="filter = 'all'">全部 {{ counts.total }}</button><button class="filter" :aria-pressed="filter === 'attention'" @click="filter = 'attention'">需关注 {{ counts.attention }}</button></div></div>
         <p v-if="!items.length" class="rounded-lg bg-slate-50 px-3 py-6 text-center text-xs text-slate-500 dark:bg-slate-950 dark:text-slate-400">{{ filter === 'attention' ? '没有需要关注的条目，可切换查看全部。' : '此任务没有文件明细。' }}</p>
         <ul class="divide-y divide-slate-200 dark:divide-slate-700">
           <li v-for="item in items" :key="item.id" class="py-4 first:pt-0">
             <div class="mb-2 flex items-start justify-between gap-3"><p class="min-w-0 break-all text-sm font-medium">{{ item.name }}</p><span class="shrink-0 text-xs" :class="needsAttention(item, task) ? 'text-amber-700 dark:text-amber-300' : item.status === 'done' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'">{{ itemStatus(item, task) }}</span></div>
-            <div v-for="path in [{ label: task.kind === 'subtitle' ? '本地文件' : '原路径', value: item.source }, { label: item.titleOnly ? '预计目标' : '目标路径', value: item.target }].filter(row => row.value)" :key="path.label" class="task-detail-path mt-2 rounded-lg p-2.5"><div class="mb-1 flex justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{{ path.label }}</span><button class="path-copy" :aria-label="`复制${item.name}的${path.label}`" @click="copy(path.value!)">复制</button></div><p class="select-text break-all text-xs leading-5">{{ path.value }}</p></div>
+            <div v-for="path in [{ label: '原路径', value: item.source }, { label: item.titleOnly ? '预计目标' : '目标路径', value: item.target }].filter(row => row.value)" :key="path.label" class="task-detail-path mt-2 rounded-lg p-2.5"><div class="mb-1 flex justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{{ path.label }}</span><button class="path-copy" :aria-label="`复制${item.name}的${path.label}`" @click="copy(path.value!)">复制</button></div><p class="select-text break-all text-xs leading-5">{{ path.value }}</p></div>
             <p v-if="item.message" class="mt-2 break-all text-xs leading-5" :class="needsAttention(item, task) ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'">{{ item.message }}</p>
           </li>
         </ul>

@@ -33,7 +33,7 @@
 
 ### 115 网盘
 
-集中管理分享 STRM、云下载、下载整理、手动整理与目录分享。
+集中管理分享 STRM、云下载、下载整理与目录分享。
 
 ![115 网盘功能入口](docs/site/public/screenshots/drive-overview.webp)
 
@@ -83,7 +83,7 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 <details>
 <summary>功能与实现说明</summary>
 
-- 网盘与整理：[115 主账号与小号](docs/p115-accounts.md)、[分享 STRM](docs/reshare.md)、[下载整理](docs/garden-download-organize.md)、[手动整理](docs/manual-organize.md)。
+- 网盘与整理：[115 主账号与小号](docs/p115-accounts.md)、[分享 STRM](docs/reshare.md)、[下载整理](docs/garden-download-organize.md)、[自动整理](docs/media-organize.md)。
 - Emby：[302 反代](docs/emby-proxy.md)、[入库索引](docs/emby.md)、[个人中心](docs/member-playback.md)、[播放会话](docs/single-playback.md)。
 - 资源搜索：[Telegram](docs/telegram-resource-search.md)、[观影](docs/gying.md)、[蜜柑](docs/mikan.md)、[蜗牛](docs/woniu.md)。
 - 维护：[数据库](docs/database.md)、[版本发布](docs/releasing.md)。

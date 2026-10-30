@@ -5,33 +5,41 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"strm115/backend/internal/client/p115"
 )
 
-func runResumedManual(t *testing.T, s *ManualOrganize, id string) OrganizeJob {
+// Recovery exercises the live download workflow with an already-bound plan.
+func organizeResumeFixture(t *testing.T, count int) (*OrganizeEngine, *organizeFakeDrive, string, OrganizeJob) {
 	t.Helper()
-	job, err := s.Resume(id)
+	s, drive, account, plan := organizeBatchFixture(t, count)
+	plan.Download = &ResourceDownload{Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", DirectoryID: "10", ParentCID: "0", ParentPath: "/"}
+	return s, drive, account, plan
+}
+
+func runResumedDownload(t *testing.T, s *OrganizeEngine, id string) OrganizeJob {
+	t.Helper()
+	download := NewDownloadOrganize(s, nil, nil, nil, nil)
+	job, err := download.Resume(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repeated, err := s.Resume(id); err != nil || repeated.ID != id {
+	if repeated, err := download.Resume(id); err != nil || repeated.ID != id {
 		t.Fatal("duplicate resume", repeated, err)
 	}
-	p := s.pending
-	if err := s.runJob(context.Background(), &p.job, p.cookie); err != nil {
-		t.Fatal(err)
+	if p := download.live[id]; p != nil {
+		if done, err := download.advance(context.Background(), p); err != nil || !done {
+			t.Fatal("continuation did not finish", done, err)
+		}
 	}
-	s.pending = nil
-	if len(s.History()) != 1 || job.ID != s.History()[0].ID {
+	if len(download.History()) != 1 || job.ID != download.History()[0].ID {
 		t.Fatal("continuation created another task")
 	}
-	return s.History()[0]
+	return download.History()[0]
 }
 
 func TestOrganizeContinueOriginal150FileTask(t *testing.T) {
-	s, drive, account, plan := organizeBatchFixture(t, 150)
+	s, drive, account, plan := organizeResumeFixture(t, 150)
 	drive.beforeRead = func(cid string, offset int) error {
 		if cid == "30" && drive.moves == 1 {
 			return fmt.Errorf("temporary directory read failure")
@@ -42,29 +50,26 @@ func TestOrganizeContinueOriginal150FileTask(t *testing.T) {
 	if first.Status != "partial" || first.Items[49].Status != "done" || !first.Resumable {
 		t.Fatal("expected 50/150 partial", first.Status)
 	}
-	s.pending = nil // The real worker releases this on exit.
+
 	drive.beforeRead = nil
 	// The user may rearrange already-confirmed files. Never recheck or replay them.
 	drive.dirs["50"] = nil
-	if err := s.SaveConfig(OrganizeConfig{AccountID: account, SourceCID: "0", SourcePath: "/", TargetCID: "0", TargetPath: "/"}); err != nil {
-		t.Fatal(err)
-	}
-	job := runResumedManual(t, s, plan.ID)
+	job := runResumedDownload(t, s, plan.ID)
 	if job.Status != "completed" || job.ID != first.ID || !job.CreatedAt.Equal(first.CreatedAt) || job.Config.TargetCID != "20" || len(drive.dirs["50"]) != 100 {
 		t.Fatal("original plan/progress changed", job.Status)
 	}
 	if drive.renames != 3 || drive.moves != 3 || job.Stats.RenameRequests != 3 || job.Stats.MoveRequests != 3 {
 		t.Fatal("completed writes replayed or counters reset", drive.renames, drive.moves, job.Stats)
 	}
-	if _, err := s.Resume(plan.ID); err != nil || s.pending != nil {
-		t.Fatal("completed task was replayed", err)
+	if job := runResumedDownload(t, s, plan.ID); job.Status != "completed" || drive.moves != 3 {
+		t.Fatal("completed task was replayed", job)
 	}
 }
 
 func TestOrganizeContinueReconcilesUnknownWrites(t *testing.T) {
 	for _, phase := range []string{"rename", "move"} {
 		t.Run(phase, func(t *testing.T) {
-			s, drive, account, plan := organizeBatchFixture(t, 3)
+			s, drive, account, plan := organizeResumeFixture(t, 3)
 			if phase == "rename" {
 				drive.renameApplyIDs = map[string]bool{plan.Items[0].File.ID: true}
 			} else {
@@ -74,7 +79,7 @@ func TestOrganizeContinueReconcilesUnknownWrites(t *testing.T) {
 			if first.Status != "partial" {
 				t.Fatal("expected partial write")
 			}
-			s.pending = nil
+
 			// Simulate the last write completing after the failed read-back. The
 			// same original ID is still the only acceptable evidence of success.
 			if phase == "move" {
@@ -83,7 +88,7 @@ func TestOrganizeContinueReconcilesUnknownWrites(t *testing.T) {
 				drive.dirs["50"] = append(drive.dirs["50"], file)
 			}
 			drive.renameApplyIDs, drive.moveApplyIDs = nil, nil
-			job := runResumedManual(t, s, plan.ID)
+			job := runResumedDownload(t, s, plan.ID)
 			if job.Status != "completed" || len(drive.dirs["50"]) != 3 {
 				t.Fatal("continuation failed", job.Status)
 			}
@@ -105,17 +110,15 @@ func TestOrganizeContinueReconcilesUnknownWrites(t *testing.T) {
 func TestOrganizeContinueRejectsChangedIdentityAndTarget(t *testing.T) {
 	for _, mode := range []string{"size", "name", "different-id", "missing", "target-directory", "target-deleted", "target-conflict"} {
 		t.Run(mode, func(t *testing.T) {
-			s, drive, account, plan := organizeBatchFixture(t, 1)
-			if _, err := s.Start(account, plan.ID); err != nil {
-				t.Fatal(err)
-			}
+			s, drive, _, plan := organizeResumeFixture(t, 1)
+			organizeTestPersist(t, s, plan)
 			job := cloneOrganizeJob(s.doc.Jobs[0])
 			job.Status = "partial"
 			job.Items[0].TargetCID = "50"
 			if err := s.checkpoint(&job); err != nil {
 				t.Fatal(err)
 			}
-			s.pending = nil
+
 			switch mode {
 			case "size":
 				drive.dirs["30"][0].Size++
@@ -133,7 +136,7 @@ func TestOrganizeContinueRejectsChangedIdentityAndTarget(t *testing.T) {
 			case "target-conflict":
 				drive.dirs["50"] = []p115.ShareFile{{ID: "99999", Name: job.Items[0].Name, Size: job.Items[0].File.Size}}
 			}
-			result := runResumedManual(t, s, job.ID)
+			result := runResumedDownload(t, s, job.ID)
 			if result.Status != "partial" || drive.renames != 0 || drive.moves != 0 || drive.creates != 0 {
 				t.Fatal("changed identity caused a write", mode, result.Status)
 			}
@@ -142,9 +145,9 @@ func TestOrganizeContinueRejectsChangedIdentityAndTarget(t *testing.T) {
 }
 
 func TestOrganizeContinueAccountPersistenceAndWriterGuards(t *testing.T) {
-	for _, mode := range []string{"account", "persist", "writer"} {
+	for _, mode := range []string{"account", "persist"} {
 		t.Run(mode, func(t *testing.T) {
-			s, drive, account, plan := organizeBatchFixture(t, 1)
+			s, drive, account, plan := organizeResumeFixture(t, 1)
 			plan.Status = "interrupted"
 			s.doc.Jobs = []OrganizeJob{plan}
 			switch mode {
@@ -155,10 +158,9 @@ func TestOrganizeContinueAccountPersistenceAndWriterGuards(t *testing.T) {
 				}
 			case "persist":
 				s.store.(*failingAccountStore).err = errors.New("disk full")
-			case "writer":
-				s.cleaning = true
 			}
-			if _, err := s.Resume(plan.ID); err == nil || s.pending != nil || s.doc.Jobs[0].Status != "interrupted" {
+			download := NewDownloadOrganize(s, nil, nil, nil, nil)
+			if _, err := download.Resume(plan.ID); err == nil || len(download.live) != 0 || s.doc.Jobs[0].Status != "interrupted" {
 				t.Fatal("unsafe resume accepted", err)
 			}
 			if drive.renames != 0 || drive.moves != 0 {
@@ -170,16 +172,6 @@ func TestOrganizeContinueAccountPersistenceAndWriterGuards(t *testing.T) {
 
 func TestGardenContinueBoundTaskKeepsWorkflowAndSkipsDownload(t *testing.T) {
 	s, drive, adder, tracker, id := interruptedGarden(t, true)
-	manual := NewManualOrganize(s.Organize)
-	if len(manual.History()) != 0 || len(s.History()) != 1 {
-		t.Fatal("download history leaked to manual organizer")
-	}
-	if _, err := manual.Resume(id); err == nil {
-		t.Fatal("manual endpoint accepted download continuation")
-	}
-	if _, err := manual.Start(s.History()[0].Config.AccountID, id); err == nil {
-		t.Fatal("manual endpoint accepted download idempotency key")
-	}
 	if _, err := s.Resume(id); err != nil {
 		t.Fatal(err)
 	}
@@ -193,15 +185,42 @@ func TestGardenContinueBoundTaskKeepsWorkflowAndSkipsDownload(t *testing.T) {
 	if tracker.calls != 0 || adder.url != "" || adder.deleted != "" || drive.renames != 1 || drive.moves != 1 {
 		t.Fatal("continuation queried/submitted download or replayed writes")
 	}
-	if len(s.History()) != 1 || len(manual.History()) != 0 {
+	if len(s.History()) != 1 {
 		t.Fatal("continuation changed task origin")
 	}
-	// Each workflow has its own retention allowance.
-	jobs := []OrganizeJob{s.History()[0]}
-	for i := 0; i < 40; i++ {
-		jobs = prependOrganizeJob(OrganizeJob{ID: fmt.Sprint(i), Status: "completed", CreatedAt: time.Now()}, jobs)
+}
+
+func TestDownloadContinuationWaitsForDirectoryWorkAndNotifiesAfterRelease(t *testing.T) {
+	s, drive, _, plan := organizeResumeFixture(t, 1)
+	plan.Status = "interrupted"
+	s.doc.Jobs = []OrganizeJob{plan}
+	download := NewDownloadOrganize(s, nil, nil, nil, nil)
+	if _, err := download.Resume(plan.ID); err != nil {
+		t.Fatal(err)
 	}
-	if len(jobs) != 31 {
-		t.Fatal("manual history evicted download history", len(jobs))
+	release, err := s.ReserveDirectoryWork()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := download.live[plan.ID]
+	if done, err := download.advance(context.Background(), p); err != nil || done || drive.renames+drive.moves != 0 {
+		t.Fatal("busy directory performed writes", done, err)
+	}
+	release()
+	called := false
+	s.OnCompleted = func(_ context.Context, config OrganizeConfig) {
+		called = true
+		if config != plan.Config || download.History()[0].Status != "completed" {
+			t.Error("notification preceded committed completion")
+		}
+		release, err := s.ReserveDirectoryWork()
+		if err != nil {
+			t.Error("writer not released before notification", err)
+		} else {
+			release()
+		}
+	}
+	if done, err := download.advance(context.Background(), p); err != nil || !done || !called {
+		t.Fatal("continuation did not resume or notify", done, err, called)
 	}
 }

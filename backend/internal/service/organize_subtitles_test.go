@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"path"
 	"strings"
@@ -11,50 +10,38 @@ import (
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
-func TestManualOrganizeBracketSubtitlesFollowVideo(t *testing.T) {
-	for _, single := range []bool{false, true} {
-		t.Run(map[bool]string{false: "directory", true: "single video"}[single], func(t *testing.T) {
-			s, drive, account, _ := newOrganizeTest(t)
-			drive.dirs["30"] = []p115.ShareFile{
-				{ID: "101", Name: "[Kono Oto Tomare][02][1080P].mkv", Size: 100},
-				{ID: "102", Name: "[Kono Oto Tomare][02][CHT].ass", Size: 10},
-				{ID: "103", Name: "[Kono Oto Tomare][02][CHS].ass", Size: 10},
-				{ID: "104", Name: "readme.txt", Size: 1},
-			}
-			input := OrganizeScanInput{AccountID: account, ParentID: "10", ParentPath: "/来源", EntryID: "30"}
-			if single {
-				input.ParentID, input.ParentPath, input.EntryID = "30", "/来源/待整理", "101"
-			}
-			scan, err := s.Scan(context.Background(), input)
-			if err != nil || len(scan.Files) != 3 {
-				t.Fatal("scan lost video or companion subtitles", scan, err)
-			}
-			plan, err := s.Preview(context.Background(), account, OrganizePreviewInput{ScanID: scan.ID, Kind: "tv", TMDBID: 42, Subtitles: true, Files: []OrganizeSelection{{ID: "101", Season: 1, Episode: 2}}})
-			if err != nil || len(plan.Items) != 3 || drive.renames+drive.moves+drive.creates != 0 {
-				t.Fatal("preview lost subtitles or wrote to drive", plan, err)
-			}
-			stem := strings.TrimSuffix(plan.Items[0].Name, ".mkv")
-			if plan.Items[1].Name != stem+".zh-Hant.ass" || plan.Items[2].Name != stem+".zh-Hans.ass" {
-				t.Fatal("subtitle language or shared video stem lost", plan.Items)
-			}
-			job := organizeTestRun(t, s, account, plan)
-			if job.Status != "completed" || drive.moves != 1 || drive.renames != 1 || len(drive.dirs[job.Items[0].TargetCID]) != 3 || len(drive.dirs["30"]) != 1 || drive.dirs["30"][0].ID != "104" {
-				t.Fatal("video and subtitles did not move together", job, drive.dirs)
-			}
-		})
+func TestOrganizeBracketSubtitlesFollowVideo(t *testing.T) {
+	s, drive, account, _ := newOrganizeTest(t)
+	drive.dirs["30"] = []p115.ShareFile{
+		{ID: "101", Name: "[Kono Oto Tomare][02][1080P].mkv", Size: 100},
+		{ID: "102", Name: "[Kono Oto Tomare][02][CHT].ass", Size: 10},
+		{ID: "103", Name: "[Kono Oto Tomare][02][CHS].ass", Size: 10},
+		{ID: "104", Name: "readme.txt", Size: 1},
+	}
+	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 2}})
+	if len(plan.Items) != 3 || drive.renames+drive.moves+drive.creates != 0 {
+		t.Fatal("preview lost subtitles or wrote to drive", plan)
+	}
+	stem := strings.TrimSuffix(plan.Items[0].Name, ".mkv")
+	if plan.Items[1].Name != stem+".zh-Hant.ass" || plan.Items[2].Name != stem+".zh-Hans.ass" {
+		t.Fatal("subtitle language or shared video stem lost", plan.Items)
+	}
+	job := organizeTestRun(t, s, account, plan)
+	if job.Status != "completed" || drive.moves != 1 || drive.renames != 1 || len(drive.dirs[job.Items[0].TargetCID]) != 3 || len(drive.dirs["30"]) != 1 || drive.dirs["30"][0].ID != "104" {
+		t.Fatal("video and subtitles did not move together", job, drive.dirs)
 	}
 }
 
-func TestManualOrganizeSingleVideoKeepsFallbackAmbiguity(t *testing.T) {
+func TestOrganizeSelectionKeepsFallbackAmbiguity(t *testing.T) {
 	s, drive, account, _ := newOrganizeTest(t)
 	drive.dirs["30"] = []p115.ShareFile{
 		{ID: "101", Name: "[Show][02][1080P].mkv", Size: 100},
 		{ID: "102", Name: "[Show][02][CHT].ass", Size: 10},
 		{ID: "103", Name: "[Show][02][720P].mkv", Size: 100},
 	}
-	scan, err := s.Scan(context.Background(), OrganizeScanInput{AccountID: account, ParentID: "30", ParentPath: "/来源/待整理", EntryID: "101"})
-	if err != nil || len(scan.Files) != 1 || scan.Files[0].ID != "101" {
-		t.Fatal("single-video selection hid an ambiguous sibling", scan, err)
+	plan := organizeTestPreview(t, s, account, []OrganizeSelection{{ID: "101", Season: 1, Episode: 2}})
+	if len(plan.Items) != 1 || plan.Items[0].File.ID != "101" {
+		t.Fatal("selected video claimed an ambiguous sibling subtitle", plan)
 	}
 }
 

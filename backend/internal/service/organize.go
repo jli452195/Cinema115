@@ -19,7 +19,7 @@ import (
 	"strm115/backend/internal/naming"
 )
 
-var ErrOrganizeInput = errors.New("手动整理参数无效")
+var ErrOrganizeInput = errors.New("整理参数无效")
 var ErrOrganizeConflict = errors.New("整理状态已变化")
 var errOrganizePagination = errors.New("115 目录分页尚未稳定")
 
@@ -55,18 +55,9 @@ type OrganizeFile struct {
 }
 
 type OrganizeScan struct {
-	ID        string         `json:"id"`
-	Files     []OrganizeFile `json:"files"`
-	ExpiresAt time.Time      `json:"expiresAt"`
-	Config    OrganizeConfig `json:"-"`
-	Revision  uint64         `json:"-"`
-}
-
-type OrganizeScanInput struct {
-	AccountID  string `json:"accountId"`
-	ParentID   string `json:"parentId"`
-	ParentPath string `json:"parentPath"`
-	EntryID    string `json:"entryId"`
+	Files    []OrganizeFile `json:"files"`
+	Config   OrganizeConfig `json:"-"`
+	Revision uint64         `json:"-"`
 }
 
 type OrganizeSelection struct {
@@ -78,7 +69,6 @@ type OrganizeSelection struct {
 type OrganizePreviewInput struct {
 	NamingRevision    *int64              `json:"namingRevision,omitempty"`
 	NumberingRevision *int64              `json:"numberingRevision,omitempty"`
-	ScanID            string              `json:"scanId"`
 	Kind              string              `json:"kind"`
 	TMDBID            int                 `json:"tmdbId"`
 	Subtitles         bool                `json:"subtitles"`
@@ -118,20 +108,12 @@ type OrganizeJob struct {
 
 type organizeDocument struct {
 	Version        int                 `json:"version"`
-	Config         OrganizeConfig      `json:"config"`
 	DownloadTarget CloudDownloadConfig `json:"downloadTarget"`
 	Jobs           []OrganizeJob       `json:"jobs"`
-	CleanupJobs    []OrganizeCleanup   `json:"cleanupJobs,omitempty"`
-	SubtitleJobs   []SubtitleImport    `json:"subtitleJobs,omitempty"`
 }
 
-type organizePending struct {
-	job    OrganizeJob
-	cookie string
-}
-
-// Only the live worker keeps a credential snapshot. Neither plans nor history
-// contain credentials. A restart interrupts work instead of rebinding accounts.
+// Shared planning and execution state. Credentials are supplied by each live
+// download worker and never persisted in plans or history.
 type OrganizeEngine struct {
 	// Set at startup; called after successful persistence and releasing the writer.
 	OnCompleted func(context.Context, OrganizeConfig)
@@ -143,36 +125,27 @@ type OrganizeEngine struct {
 	metadata    OrganizeMetadata
 	templates   NamingTemplates
 	plans       map[string]OrganizeJob
-	pending     *organizePending
-	wake        chan struct{}
 	cleaning    bool
 }
 
-// Manual-only scans and import previews never belong to download organization.
-type ManualOrganize struct {
-	*OrganizeEngine
-	scans               map[string]OrganizeScan
-	cleanupPlans        map[string]OrganizeCleanup
-	subtitlePlans       map[string]SubtitleImport
-	subtitleSources     map[string]subtitleSourcePlan
-	subtitleSourceReads int
-}
-
-// ReserveDirectoryWork shares the same reservation as organize/cleanup/upload.
+// ReserveDirectoryWork serializes the shared directory mutation workflows.
 // The caller must release it when its bounded directory operation finishes.
 func (s *OrganizeEngine) ReserveDirectoryWork() (func(), error) {
-	if err := s.reserveCleanup(); err != nil {
-		return nil, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cleaning {
+		return nil, fmt.Errorf("%w：已有目录操作执行中，请等待完成", ErrOrganizeConflict)
 	}
-	return s.releaseCleanup, nil
-}
-
-func NewManualOrganize(engine *OrganizeEngine) *ManualOrganize {
-	return &ManualOrganize{OrganizeEngine: engine, scans: make(map[string]OrganizeScan)}
+	s.cleaning = true
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.cleaning = false
+	}, nil
 }
 
 func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive OrganizeDrive, metadata OrganizeMetadata, templates NamingTemplates) (*OrganizeEngine, error) {
-	s := &OrganizeEngine{store: store, accounts: accounts, drive: drive, metadata: metadata, templates: templates, plans: make(map[string]OrganizeJob), wake: make(chan struct{}, 1), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
+	s := &OrganizeEngine{store: store, accounts: accounts, drive: drive, metadata: metadata, templates: templates, plans: make(map[string]OrganizeJob), doc: organizeDocument{Version: 1, Jobs: []OrganizeJob{}}}
 	if store.Value() != "" {
 		if err := json.Unmarshal([]byte(store.Value()), &s.doc); err != nil || s.doc.Version != 1 {
 			return nil, fmt.Errorf("整理任务存储无法解析")
@@ -188,18 +161,6 @@ func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive O
 			if canContinueOrganize(*job) || canResumeDownload(*job) {
 				job.Message = "服务重启，任务已中断；可在原任务详情中检查并继续"
 			}
-		}
-	}
-	for i := range s.doc.CleanupJobs {
-		if s.doc.CleanupJobs[i].Status == "running" {
-			s.doc.CleanupJobs[i].Status = "interrupted"
-			s.doc.CleanupJobs[i].Message = "服务重启，清理已中断；请检查网盘和回收站后重新预览"
-		}
-	}
-	for i := range s.doc.SubtitleJobs {
-		if s.doc.SubtitleJobs[i].Status == "running" {
-			s.doc.SubtitleJobs[i].Status = "interrupted"
-			s.doc.SubtitleJobs[i].Message = "服务重启，字幕导入已中断；请核实目标目录后重新预览"
 		}
 	}
 	if err := s.saveLocked(s.doc); err != nil {
@@ -218,32 +179,6 @@ func (s *OrganizeEngine) saveLocked(doc organizeDocument) error {
 	}
 	s.doc = doc
 	return nil
-}
-
-func (s *ManualOrganize) Config() OrganizeConfig {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.doc.Config
-	if id := s.accounts.PrimaryID(); c.AccountID != id {
-		c = OrganizeConfig{AccountID: id}
-	}
-	return c
-}
-
-func (s *ManualOrganize) SaveConfig(c OrganizeConfig) error {
-	account, err := s.accounts.Primary(c.AccountID)
-	if err != nil {
-		return err
-	}
-	c.AccountID = account.ID
-	if !organizeID(c.SourceCID) || !organizeID(c.TargetCID) || !organizePath(c.SourcePath) || !organizePath(c.TargetPath) {
-		return fmt.Errorf("%w：请选择来源和目标目录", ErrOrganizeInput)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	doc := s.doc
-	doc.Config = c
-	return s.saveLocked(doc)
 }
 
 func organizeID(id string) bool {
@@ -273,21 +208,6 @@ func (s *OrganizeEngine) account(id string) (P115Account, error) {
 		return a, fmt.Errorf("%w：所选账号未登录，请配置凭据", ErrOrganizeInput)
 	}
 	return a, nil
-}
-
-func (s *OrganizeEngine) Browse(ctx context.Context, accountID, cid string, offset int) (*p115.SharePage, error) {
-	if !organizeID(cid) || offset < 0 {
-		return nil, ErrOrganizeInput
-	}
-	a, err := s.account(accountID)
-	if err != nil {
-		return nil, err
-	}
-	page, err := s.drive.DriveFiles(ctx, cid, offset, a.Cookie)
-	if err != nil {
-		return nil, &organizeSafeError{err: err, message: organizePublicError(err, a.Cookie)}
-	}
-	return page, nil
 }
 
 // Exhaust pagination before checking names; an incomplete directory must never
@@ -376,126 +296,6 @@ func organizeMedia(name string) string {
 	return ""
 }
 
-func (s *ManualOrganize) Scan(ctx context.Context, input OrganizeScanInput) (OrganizeScan, error) {
-	c := s.Config()
-	if input.AccountID != c.AccountID || !organizeID(input.ParentID) || !organizePath(input.ParentPath) || input.EntryID == "0" || !organizeID(input.EntryID) || !organizeID(c.TargetCID) || !organizePath(c.TargetPath) {
-		return OrganizeScan{}, fmt.Errorf("%w：请选择有效来源，并保存目标目录设置", ErrOrganizeInput)
-	}
-	// Browsing a job's source or a subdirectory changes only this scan's
-	// snapshot. The saved defaults and their target directory stay separate.
-	c.SourceCID, c.SourcePath = input.ParentID, path.Clean(input.ParentPath)
-	a, err := s.account(input.AccountID)
-	if err != nil {
-		return OrganizeScan{}, err
-	}
-	files, err := s.list(ctx, input.ParentID, a.Cookie)
-	if err != nil {
-		return OrganizeScan{}, err
-	}
-	var root *p115.ShareFile
-	for i := range files {
-		if files[i].ID == input.EntryID {
-			root = &files[i]
-			break
-		}
-	}
-	if root == nil {
-		return OrganizeScan{}, fmt.Errorf("%w：所选条目已移动或删除", ErrOrganizeConflict)
-	}
-	result := OrganizeScan{Config: c, Revision: a.Revision, Files: []OrganizeFile{}, ExpiresAt: time.Now().Add(30 * time.Minute)}
-	visited := make(map[string]bool)
-	var walk func(p115.ShareFile, string, string, int) error
-	walk = func(f p115.ShareFile, parent, prefix string, depth int) error {
-		if depth > 12 || (f.Directory && len(visited) >= 300) {
-			return fmt.Errorf("%w：单次最多 1000 个媒体文件、300 个目录、12 层目录，请缩小选择范围", ErrOrganizeInput)
-		}
-		if f.Directory {
-			if f.ID == c.TargetCID {
-				return fmt.Errorf("%w：目标目录不能是所选文件夹或其子目录", ErrOrganizeInput)
-			}
-			if visited[f.ID] {
-				return fmt.Errorf("网盘目录重复，请重新扫描")
-			}
-			visited[f.ID] = true
-			children, err := s.list(ctx, f.ID, a.Cookie)
-			if err != nil {
-				return err
-			}
-			for _, child := range children {
-				if err := walk(child, f.ID, path.Join(prefix, f.Name), depth+1); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		media := organizeMedia(f.Name)
-		if media == "" {
-			return nil
-		}
-		if len(result.Files) >= 1000 {
-			return fmt.Errorf("%w：单次最多 1000 个媒体文件，请缩小选择范围", ErrOrganizeInput)
-		}
-		item := OrganizeFile{ShareFile: f, ParentID: parent, SourcePath: path.Join(prefix, f.Name), MediaType: media, Season: 1}
-		organizeFileNumbering(&item)
-		item.NamingValues = mediaFileValues(f.Name, DownloadFileSpec{})
-		result.Files = append(result.Files, item)
-		return nil
-	}
-	if err := walk(*root, input.ParentID, c.SourcePath, 0); err != nil {
-		return OrganizeScan{}, err
-	}
-	if root.Directory {
-		mediaDirectorySubtitleValues(result.Files)
-	}
-	// A selected single video may have companion subtitles in the same folder.
-	if !root.Directory && organizeMedia(root.Name) == "video" {
-		siblings := make([]OrganizeFile, 0, len(files))
-		for _, file := range files {
-			if !file.Directory {
-				siblings = append(siblings, OrganizeFile{ShareFile: file, ParentID: input.ParentID, SourcePath: path.Join(c.SourcePath, file.Name), MediaType: organizeMedia(file.Name)})
-			}
-		}
-		mediaDirectorySubtitleValues(siblings)
-		subtitleMatcher := organizeSubtitleMatcher(siblings)
-		for _, file := range siblings {
-			if file.ID == root.ID {
-				result.Files[0].NamingValues = file.NamingValues
-				break
-			}
-		}
-		for _, file := range files {
-			if !file.Directory && organizeMedia(file.Name) == "subtitle" {
-				owner, _ := organizeSubtitleOwner(OrganizeFile{ShareFile: file, ParentID: input.ParentID}, siblings, subtitleMatcher)
-				if owner != root.ID {
-					continue
-				}
-				if err := walk(file, input.ParentID, c.SourcePath, 0); err != nil {
-					return OrganizeScan{}, err
-				}
-			}
-		}
-	}
-	result.ID, err = organizeToken()
-	if err != nil {
-		return OrganizeScan{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pruneLocked()
-	if len(s.scans) >= 8 {
-		oldest := ""
-		var at time.Time
-		for id, scan := range s.scans {
-			if oldest == "" || scan.ExpiresAt.Before(at) {
-				oldest, at = id, scan.ExpiresAt
-			}
-		}
-		delete(s.scans, oldest)
-	}
-	s.scans[result.ID] = result
-	return result, nil
-}
-
 type OrganizeSubtitle struct {
 	File    OrganizeFile `json:"file"`
 	VideoID string       `json:"videoId,omitempty"`
@@ -557,15 +357,6 @@ func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *medi
 	return bestID, tail
 }
 
-func (s *ManualOrganize) pruneLocked() {
-	s.OrganizeEngine.pruneLocked()
-	for id, scan := range s.scans {
-		if time.Now().After(scan.ExpiresAt) {
-			delete(s.scans, id)
-		}
-	}
-}
-
 func (s *OrganizeEngine) pruneLocked() {
 	for id, plan := range s.plans {
 		if time.Since(plan.CreatedAt) > 30*time.Minute {
@@ -584,18 +375,16 @@ func organizeName(name string) string {
 	return strings.Trim(name, " .")
 }
 
-func (s *ManualOrganize) History() []OrganizeJob { return s.history(false) }
-
-func (s *OrganizeEngine) history(download bool) []OrganizeJob {
+func (s *OrganizeEngine) history() []OrganizeJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	jobs := make([]OrganizeJob, 0, len(s.doc.Jobs))
 	for _, job := range s.doc.Jobs {
-		if (job.Download != nil) != download {
+		if job.Download == nil {
 			continue
 		}
 		copy := cloneOrganizeJob(job)
-		copy.Resumable = canContinueOrganize(job) || download && (canResumeDownload(job) || pendingDownloadShare(job) || pendingDownloadSubtitles(job))
+		copy.Resumable = canContinueOrganize(job) || canResumeDownload(job) || pendingDownloadShare(job) || pendingDownloadSubtitles(job)
 		jobs = append(jobs, copy)
 	}
 	return jobs
@@ -621,17 +410,14 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	return job
 }
 
-// Retain active work even when ordinary/manual jobs fill the recent history.
+// Retain active work even when completed jobs fill the recent history.
 func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
 	out := make([]OrganizeJob, 0, len(jobs)+1)
 	out = append(out, job)
-	counts := map[bool]int{job.Download != nil: 1}
 	for _, old := range jobs {
-		download := old.Download != nil
 		sealed := unhandedDownloadShare(old) && old.Download.Share.LeaderID != ""
-		if counts[download] < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed {
+		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed {
 			out = append(out, old)
-			counts[download]++
 		}
 	}
 	return out

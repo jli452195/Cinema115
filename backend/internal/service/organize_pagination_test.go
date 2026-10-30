@@ -19,7 +19,7 @@ func (d organizePaginationDrive) DriveFiles(ctx context.Context, cid string, off
 	return d.read(ctx, cid, offset, cookie)
 }
 
-func TestManualOrganizeRestartsUnstablePagination(t *testing.T) {
+func TestOrganizeRestartsUnstablePagination(t *testing.T) {
 	for _, mode := range []string{"count-changed", "overflow", "offset-reset", "duplicate", "empty", "nil"} {
 		t.Run(mode, func(t *testing.T) {
 			s, drive, _, _ := newOrganizeTest(t)
@@ -58,7 +58,7 @@ func TestManualOrganizeRestartsUnstablePagination(t *testing.T) {
 	}
 }
 
-func TestManualOrganizePaginationRetriesAreBoundedAndCancelable(t *testing.T) {
+func TestOrganizePaginationRetriesAreBoundedAndCancelable(t *testing.T) {
 	s, drive, _, _ := newOrganizeTest(t)
 	calls := 0
 	s.drive = organizePaginationDrive{OrganizeDrive: drive, read: func(context.Context, string, int, string) (*p115.SharePage, error) {
@@ -87,7 +87,7 @@ func TestManualOrganizePaginationRetriesAreBoundedAndCancelable(t *testing.T) {
 	}
 }
 
-func TestManualOrganize150FilesRecoverAfterMoveWithoutReplayingWrites(t *testing.T) {
+func TestOrganize150FilesRecoverAfterMoveWithoutReplayingWrites(t *testing.T) {
 	s, drive, id, plan := organizeBatchFixture(t, 150)
 	drive.pageSize = 100
 	reads := 0
@@ -120,7 +120,7 @@ func TestManualOrganize150FilesRecoverAfterMoveWithoutReplayingWrites(t *testing
 	}
 }
 
-func TestManualOrganizeWaitsForBatchResultsWithoutReplayingWrites(t *testing.T) {
+func TestOrganizeWaitsForBatchResultsWithoutReplayingWrites(t *testing.T) {
 	for _, phase := range []string{"rename", "move"} {
 		t.Run(phase, func(t *testing.T) {
 			s, drive, id, plan := organizeBatchFixture(t, 2)

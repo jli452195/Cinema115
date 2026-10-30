@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 import { magnetKey } from '../lib/cloud-download-batch'
 import { organizeFileRow } from '../utils/organizeNaming'
-import type { DownloadFiles, DownloadOrganizeResource, OrganizeFile, OrganizeRow, OrganizeSubtitle } from '../types/manualOrganize'
+import type { DownloadFiles, DownloadOrganizeResource, OrganizeFile, OrganizeRow, OrganizeSubtitle } from '../types/organize'
 
 export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganizeResource[], multiple: boolean, lifecycle: AbortSignal) {
   const states = ref(entries.map(entry => ({ ...entry, key: magnetKey(entry.resource.magnet), status: 'waiting', error: '' })))

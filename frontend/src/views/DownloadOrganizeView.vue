@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import OrganizeTaskHistory from '../components/OrganizeTaskHistory.vue'
 import { p115Request } from '../lib/p115-api'
-import type { OrganizeJob } from '../types/manualOrganize'
+import type { OrganizeJob } from '../types/organize'
 import type { P115Account } from '../types/p115Accounts'
 
 const props = defineProps<{ token: string }>()
@@ -78,6 +78,6 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(timer); document.removeE
 
 <template>
   <ManagementLayout title="下载整理" description="详情页发起的下载整理任务。继续任务会保留原定目录、命名与已完成进度。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
-    <OrganizeTaskHistory :jobs="jobs" :cleanup-jobs="[]" :subtitle-jobs="[]" :accounts="accounts" tab="organize" organize-only :ready="ready" :error="error" :refreshing="refreshing" :refreshed-at="refreshedAt" :busy="false" :resuming="resuming" :resume-error="resumeError" @refresh="refresh" @resume="resume" />
+    <OrganizeTaskHistory :jobs="jobs" :accounts="accounts" :ready="ready" :error="error" :refreshing="refreshing" :refreshed-at="refreshedAt" :resuming="resuming" :resume-error="resumeError" @refresh="refresh" @resume="resume" />
   </ManagementLayout>
 </template>
