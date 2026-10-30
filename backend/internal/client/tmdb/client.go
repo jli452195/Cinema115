@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 var ErrInput = errors.New("看板查询参数无效")
@@ -36,7 +38,7 @@ type Client struct {
 }
 
 func New(key string) *Client {
-	return &Client{key: strings.TrimSpace(key), base: "https://api.themoviedb.org/3", http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, cache: make(map[string]cachedResponse)}
+	return &Client{key: strings.TrimSpace(key), base: "https://api.themoviedb.org/3", http: &http.Client{Transport: netproxy.Transport("tmdb"), Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, cache: make(map[string]cachedResponse)}
 }
 
 type Genre struct {

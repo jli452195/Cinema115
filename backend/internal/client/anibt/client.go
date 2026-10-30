@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/netproxy"
 )
 
 const BaseURL = "https://anibt.net"
@@ -30,7 +31,9 @@ type Client struct {
 	BaseURL string
 }
 
-func New() *Client { return &Client{BaseURL: BaseURL, HTTP: &http.Client{Timeout: 20 * time.Second}} }
+func New() *Client {
+	return &Client{BaseURL: BaseURL, HTTP: &http.Client{Transport: netproxy.Transport("anibt"), Timeout: 20 * time.Second}}
+}
 
 // Paths are constructed by the adapter. No user-supplied URL or credentials
 // are accepted. A canonical same-source RSS redirect is bounded to two hops.

@@ -25,6 +25,10 @@ func RegisterMikanImages(r gin.IRoutes, images TMDBImageStore) {
 	registerImages(r, "/api/mikan/image/:size/:name", images)
 }
 
+func RegisterBangumiImages(r gin.IRoutes, images TMDBImageStore) {
+	registerImages(r, "/api/bangumi/image/:size/:name", images)
+}
+
 func RegisterAnibtImages(r gin.IRoutes, images TMDBImageStore) {
 	// size 是 AniBT 封面目录，name 是内容哈希，由缓存层校验固定源。
 	registerImages(r, "/api/anibt/image/:size/:name", images)

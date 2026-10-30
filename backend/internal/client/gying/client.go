@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/imagecache"
+	"strm115/backend/internal/netproxy"
 )
 
 var (
@@ -69,7 +70,7 @@ func New(baseURL string, httpClient *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("创建观影会话失败: %w", err)
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 45 * time.Second}
+		httpClient = &http.Client{Transport: netproxy.Transport("gying"), Timeout: 45 * time.Second}
 	} else {
 		copy := *httpClient
 		httpClient = &copy

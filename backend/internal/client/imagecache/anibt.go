@@ -3,6 +3,8 @@ package imagecache
 import (
 	"net/url"
 	"regexp"
+
+	"strm115/backend/internal/netproxy"
 )
 
 var anibtCoverPath = regexp.MustCompile(`^/anime_covers/([A-Za-z0-9_-]{1,64})/([a-f0-9]{64})(?:\.(?:jpg|png|webp)|/v4/w(?:240|360)\.webp)$`)
@@ -16,6 +18,7 @@ func NewAnibt(root string) (*Cache, error) {
 	}
 	c.anibt = true
 	c.baseURL = "https://r2.anibt.net"
+	c.http.Transport = netproxy.Transport("anibt")
 	c.downloads = make(chan struct{}, 2)
 	return c, nil
 }

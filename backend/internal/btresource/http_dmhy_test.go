@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/netproxy"
 )
 
 func TestDMHYTorrentURL(t *testing.T) {
@@ -61,6 +65,53 @@ func TestDMHYTorrentHTTPReader(t *testing.T) {
 			var upstream *animefeed.HTTPError
 			if !errors.As(err, &upstream) || upstream.Site != "dmhy" || upstream.Status != status {
 				t.Fatalf("upstream rejection lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestTorrentReaderUsesProviderProxyScope(t *testing.T) {
+	observed := make(chan string, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed <- r.Host
+		w.WriteHeader(http.StatusBadGateway) // Stop CONNECT without contacting any upstream.
+	}))
+	defer proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	previous := netproxy.Default
+	manager := netproxy.New()
+	netproxy.Default = manager
+	t.Cleanup(func() { manager.CloseIdleConnections(); netproxy.Default = previous })
+	for _, scope := range []string{"mikan", "anibt", "garden"} {
+		manager.Transport(scope).DialContext = func(ctx context.Context, network, target string) (net.Conn, error) {
+			if target != proxyURL.Host {
+				return nil, errors.New("unexpected direct connection")
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, target)
+		}
+	}
+	const hash = "57294b2c4f26b6c6f2fa71416194ead5a82adc7c"
+	for _, tc := range []struct{ provider, scope, post, endpoint, host string }{
+		{"mikan", "mikan", hash, "https://mikanani.me/Download/20230121/" + hash + ".torrent", "mikanani.me:443"},
+		{"anibt", "anibt", "rel_test", "https://anibt.net/api/torrent/rel_test.torrent", "anibt.net:443"},
+		{"dmhy", "garden", hash, "https://dl.dmhy.org/2023/01/21/" + hash + ".torrent", "dl.dmhy.org:443"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			_, policy, err := netproxy.Prepare(netproxy.Config{Enabled: true, URL: proxy.URL, Services: []string{tc.scope}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager.Apply(policy)
+			if _, err := (&HTTPReader{}).ReadTorrent(context.Background(), tc.provider, tc.post, tc.endpoint); !errors.Is(err, ErrRead) {
+				t.Fatal("unexpected proxy failure", err)
+			}
+			select {
+			case host := <-observed:
+				if host != tc.host {
+					t.Fatal("wrong torrent endpoint", host)
+				}
+			default:
+				t.Fatal("torrent did not use its provider policy")
 			}
 		})
 	}

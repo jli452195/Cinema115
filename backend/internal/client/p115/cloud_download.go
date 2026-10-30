@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 // CloudTask is the stable subset of a 115 cloud-download task.  Raw keeps the
@@ -88,7 +90,7 @@ type CloudClient struct {
 
 func NewCloudClient() *CloudClient {
 	return &CloudClient{
-		HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		HTTP: &http.Client{Transport: netproxy.DirectTransport(), Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
 		BaseURL: "https://clouddownload.115.com",
@@ -425,7 +427,11 @@ func (c *CloudClient) webRequest(ctx context.Context, cookie string, method stri
 	}
 	client := c.HTTP
 	if client == nil {
-		client = http.DefaultClient
+		client = NewCloudClient().HTTP
+	} else if client.Transport == nil {
+		copy := *client
+		copy.Transport = netproxy.DirectTransport()
+		client = &copy
 	}
 	started := time.Now()
 	writes := 0

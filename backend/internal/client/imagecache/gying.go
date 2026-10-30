@@ -1,6 +1,10 @@
 package imagecache
 
-import "strings"
+import (
+	"strings"
+
+	"strm115/backend/internal/netproxy"
+)
 
 const GyingMaxBytes = int64(200 << 20)
 
@@ -12,6 +16,7 @@ func NewGying(root string) (*Cache, error) {
 	}
 	cache.gying = true
 	cache.baseURL = "https://s.tutu.pm"
+	cache.http.Transport = netproxy.Transport("gying")
 	cache.downloads = make(chan struct{}, 2)
 	return cache, nil
 }

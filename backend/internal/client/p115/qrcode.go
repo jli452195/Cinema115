@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 // QRCode 表示二维码会话。
@@ -36,7 +38,7 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 15 * time.Second}, BaseURL: "https://qrcodeapi.115.com", sessions: make(map[string]session)}
+	return &Client{HTTP: &http.Client{Transport: netproxy.DirectTransport(), Timeout: 15 * time.Second}, BaseURL: "https://qrcodeapi.115.com", sessions: make(map[string]session)}
 }
 
 func (c *Client) CreateQRCode(ctx context.Context, app string) (*QRCode, error) {

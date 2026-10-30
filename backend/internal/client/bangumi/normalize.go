@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"net/url"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/model"
 )
 
@@ -58,16 +57,8 @@ func validText(s string, max int) bool {
 	return utf8.ValidString(s) && utf8.RuneCountInString(s) <= max
 }
 
-var coverPath = regexp.MustCompile(`^/pic/cover/[lcmsg]/[a-fA-F0-9]{2}/[a-fA-F0-9]{2}/[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp)$`)
-
-// Only known Bangumi covers are retained, with HTTP upgraded to HTTPS. The
-// image proxy will be connected at the UI/API stage; no image is fetched here.
 func normalizeCover(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.Host != "lain.bgm.tv" || u.Scheme != "https" && u.Scheme != "http" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" || u.RawPath != "" || !coverPath.MatchString(u.Path) {
-		return ""
-	}
-	return "https://lain.bgm.tv" + u.Path
+	return imagecache.BangumiCoverURL(raw)
 }
 
 func (w wireSubject) card() (Card, error) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/netproxy"
 )
 
 type Client struct {
@@ -96,7 +97,7 @@ func NormalizeURL(raw string) (string, error) {
 	return strings.TrimRight(u.String(), "/"), nil
 }
 func New(base, key string) *Client {
-	return &Client{BaseURL: base, Key: key, HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Client{BaseURL: base, Key: key, HTTP: &http.Client{Transport: netproxy.DirectTransport(), Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 type User struct {

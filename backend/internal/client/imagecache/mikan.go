@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 const MikanMaxBytes = int64(200 << 20)
@@ -16,6 +18,7 @@ func NewMikan(root string) (*Cache, error) {
 	}
 	cache.mikan = true
 	cache.baseURL = "https://mikanani.me"
+	cache.http.Transport = netproxy.Transport("mikan")
 	cache.downloads = make(chan struct{}, 2)
 	return cache, nil
 }

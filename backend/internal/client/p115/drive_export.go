@@ -142,7 +142,7 @@ func (c *ShareClient) readDriveTreeExportURL(ctx context.Context, link string, s
 	}
 	req.Header.Set("User-Agent", PlaybackUserAgent)
 	// Only the fixed 115 API receives cookies; CDN redirects stay allowlisted.
-	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	client := &http.Client{Transport: c.requestTransport(), Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !AllowedMediaURL(req.URL.String()) {
 			return fmt.Errorf("目录树下载重定向不被允许")
 		}

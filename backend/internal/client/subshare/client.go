@@ -24,6 +24,7 @@ import (
 	"unicode"
 
 	"golang.org/x/sync/singleflight"
+	"strm115/backend/internal/netproxy"
 	"strm115/backend/internal/utils/subtitle"
 )
 
@@ -64,7 +65,7 @@ type Client struct {
 }
 
 func New(cacheDir string) *Client {
-	return &Client{HTTP: &http.Client{Timeout: 25 * time.Second}, API: "https://api.github.com/repos/foxofice/sub_share", Raw: "https://raw.githubusercontent.com/foxofice/sub_share/master", CacheDir: cacheDir, lists: make(map[string]listing)}
+	return &Client{HTTP: &http.Client{Transport: netproxy.Transport("github"), Timeout: 25 * time.Second}, API: "https://api.github.com/repos/foxofice/sub_share", Raw: "https://raw.githubusercontent.com/foxofice/sub_share/master", CacheDir: cacheDir, lists: make(map[string]listing)}
 }
 
 func (c *Client) get(ctx context.Context, target string, limit int64, raw bool) ([]byte, error) {

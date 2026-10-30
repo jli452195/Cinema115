@@ -98,6 +98,7 @@ export const router = createRouter({
     { path: '/telegram/channels', name: 'telegram-channels', component: TelegramChannelsView, meta: { managementSection: '/resources' } },
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },
     { path: '/resources/subtitles', name: 'subtitle-settings', component: SubtitleSettingsView, meta: { managementSection: '/resources' } },
+    { path: '/resources/network', name: 'network-proxy', component: () => import('./views/NetworkProxyView.vue'), meta: { managementSection: '/resources' } },
     { path: '/logs', name: 'logs', component: LogsView },
     { path: '/gying', name: 'gying', component: GyingView, meta: { managementSection: '/resources' } },
     { path: '/woniu', name: 'woniu', component: WoniuView, meta: { managementSection: '/resources' } },

@@ -40,4 +40,5 @@ export const resourceSources = [
   { id: 'telegram', title: 'Telegram 搜索配置', description: '配置 Telegram API、用户账号登录与资源 Bot。', settings: '/telegram/user', menuIcon: 'telegram' },
   { id: 'telegramChannels', title: 'TG 频道配置', description: '选择已加入的频道，配置聚合资源搜索来源。', settings: '/telegram/channels', menuIcon: 'telegram' },
   { id: 'subtitles', title: '字幕', description: '管理字幕库、射手网及在线字幕 API 配置。', settings: '/resources/subtitles', menuIcon: 'subtitles' },
+  { id: 'network', title: '网络代理', description: '配置 NAS 访问外部资源服务的代理与服务范围。', settings: '/resources/network', menuIcon: 'proxy' },
 ] as const

@@ -31,6 +31,7 @@ import (
 	"strm115/backend/internal/client/tmdbimage"
 	"strm115/backend/internal/httpapi"
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/netproxy"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/storage"
 	"sync"
@@ -120,6 +121,16 @@ func main() {
 	httpapi.RegisterPortalAuth(r, auth)
 	admin := r.Group("/api/admin")
 	admin.Use(httpapi.PortalAuthenticated(auth), httpapi.PortalAdminOnly())
+	networkProxyStore, err := service.NewSessionStore(filepath.Join(dataDir, "network-proxy.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	networkProxy, err := service.NewNetworkProxy(networkProxyStore, netproxy.Default)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer netproxy.Default.CloseIdleConnections()
+	httpapi.RegisterNetworkProxy(admin, networkProxy)
 	admin.GET("/version", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, buildinfo.Current())
@@ -210,6 +221,11 @@ func main() {
 		log.Fatal(err)
 	}
 	httpapi.RegisterMikanImages(r, mikanImages)
+	bangumiImages, err := imagecache.NewBangumi(filepath.Join(dataDir, "bangumi-images"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterBangumiImages(r, bangumiImages)
 	anibtImages, err := imagecache.NewAnibt(filepath.Join(dataDir, "anibt-images"))
 	if err != nil {
 		log.Fatal(err)
@@ -492,6 +508,8 @@ func main() {
 	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); mikanImages.Run(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); bangumiImages.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); anibtImages.Run(ctx) }()
 	workers.Add(1)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/netproxy"
 )
 
 var mikanTorrentPath = regexp.MustCompile(`^/Download/[0-9]{8}/([a-fA-F0-9]{40})\.torrent$`)
@@ -52,7 +53,11 @@ func (r *HTTPReader) ReadTorrent(ctx context.Context, provider, postKey, raw str
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	client := http.Client{Timeout: 20 * time.Second}
+	scope := provider
+	if scope == "dmhy" {
+		scope = "garden"
+	}
+	client := http.Client{Transport: netproxy.Transport(scope), Timeout: 20 * time.Second}
 	if r != nil && r.HTTP != nil {
 		client = *r.HTTP
 	}

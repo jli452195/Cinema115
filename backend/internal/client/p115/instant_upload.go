@@ -276,7 +276,7 @@ func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cook
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: c.requestTransport(), Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -325,7 +325,7 @@ func (c *ShareClient) instantRangeHash(ctx context.Context, link string, start, 
 	req.Header.Set("User-Agent", PlaybackUserAgent)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	req.Header.Set("Accept-Encoding", "identity")
-	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 25 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	client := &http.Client{Transport: c.requestTransport(), Timeout: 25 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !AllowedMediaURL(req.URL.String()) {
 			return fmt.Errorf("校验直链重定向无效")
 		}

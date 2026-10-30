@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
-import { IconSubtitles } from '@tabler/icons-vue'
+import { IconArrowsShuffle, IconSubtitles } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import NavigationCard from '../components/NavigationCard.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
@@ -13,13 +13,14 @@ import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus, type TelegramChannelConfig } from '../types/telegramUser'
 import { resourceSources as sources } from '../utils/managementFeatures'
 import { subtitleRequest, type SubtitleConfig } from '../utils/subtitleApi'
+import { networkProxyRequest, type NetworkProxyConfig } from '../lib/network-proxy-api'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 type Source = typeof sources[number]['id']
 type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
-const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), telegramChannels: initial(), subtitles: initial() })
+const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), telegramChannels: initial(), subtitles: initial(), network: initial() })
 const lifecycle = new AbortController()
 const toneClasses = {
   neutral: 'text-slate-500 dark:text-slate-400',
@@ -52,6 +53,9 @@ async function load(source: Source) {
     } else if (source === 'subtitles') {
       const config = await subtitleRequest<SubtitleConfig>(props.token, 'config', signal)
       summary = { label: config.assrt.configured ? '字幕库可用，射手网已配置' : '字幕库可用', tone: 'success' }
+    } else if (source === 'network') {
+      const config = await networkProxyRequest<NetworkProxyConfig>(props.token, signal)
+      summary = { label: config.enabled ? `已启用 ${config.services.length} 项服务` : '未启用', tone: config.enabled ? 'success' : 'neutral' }
     } else {
       const status = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', signal)
       summary = {
@@ -79,6 +83,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <IconSubtitles v-else-if="source.id === 'subtitles'" :size="28" aria-hidden="true" />
+          <IconArrowsShuffle v-else-if="source.id === 'network'" :size="28" aria-hidden="true" />
         </template>
         <template #trailing>
           <span role="status" :aria-busy="summaries[source.id].loading" :title="summaries[source.id].label" class="inline-flex h-6 w-4 shrink-0 items-center justify-end" :class="toneClasses[summaries[source.id].tone]">

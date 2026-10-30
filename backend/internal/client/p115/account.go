@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 // AccountClient 查询 Cookie 对应的真实登录状态。
@@ -24,7 +26,7 @@ type AccountClient struct {
 
 func NewAccountClient() *AccountClient {
 	return &AccountClient{
-		HTTP:       &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		HTTP:       &http.Client{Transport: netproxy.DirectTransport(), Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 		StatusURL:  "https://my.115.com/?ct=guide&ac=status",
 		DevicesURL: "https://qrcodeapi.115.com/app/1.0/web/1.0/login_log/login_devices",
 		InfoURL:    "https://my.115.com/?ct=ajax&ac=nav",

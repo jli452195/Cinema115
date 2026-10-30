@@ -57,3 +57,25 @@ func TestPlaybackRangeReusesConnectionAndResumesTLS(t *testing.T) {
 		}
 	}
 }
+
+func Test115ClientsKeepExplicitDirectTransports(t *testing.T) {
+	for name, client := range map[string]*http.Client{
+		"account": NewAccountClient().HTTP, "qrcode": NewClient().HTTP,
+		"cloud": NewCloudClient().HTTP, "share": NewShareClient().HTTP,
+	} {
+		transport, ok := client.Transport.(*http.Transport)
+		if !ok || transport.Proxy != nil {
+			t.Fatal("115 request may inherit an outbound proxy", name)
+		}
+	}
+	client := NewShareClient()
+	client.HTTP.Transport = nil
+	if transport := client.requestTransport().(*http.Transport); transport.Proxy != nil {
+		t.Fatal("request-local media wrapper inherited an environment proxy")
+	}
+	injected := metadataTransport(func(*http.Request) (*http.Response, error) { return nil, nil })
+	client.HTTP.Transport = injected
+	if _, ok := client.requestTransport().(metadataTransport); !ok {
+		t.Fatal("injected transport was discarded")
+	}
+}

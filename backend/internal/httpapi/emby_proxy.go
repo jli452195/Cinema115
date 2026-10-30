@@ -112,6 +112,7 @@ func NewEmbyProxyHandler(c service.EmbyProxyConfig, accounts *service.P115Accoun
 		h.logs = logs[0]
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	h.http = &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	upstream, _ := url.Parse(c.URL)

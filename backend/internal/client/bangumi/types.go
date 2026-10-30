@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"strm115/backend/internal/netproxy"
 )
 
 const (
@@ -172,7 +174,7 @@ func issueFrom(err error, retry time.Time) *Issue {
 }
 
 func newHTTPClient() *http.Client {
-	return &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &http.Client{Transport: netproxy.Transport("bangumi"), Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 func (m CacheMeta) clone() CacheMeta {

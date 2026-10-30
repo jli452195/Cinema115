@@ -6,6 +6,7 @@ import (
 
 	"strm115/backend/internal/anime/binding"
 	"strm115/backend/internal/anime/preview"
+	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
 )
@@ -88,12 +89,21 @@ type AnimeSourceCard struct {
 	Progress        model.AnimeSourceProgress `json:"progress"`
 }
 
+// Normalize stored cover addresses for display without changing entry identity,
+// persisting a migration, or fetching subject metadata during list requests.
+func animeViewEntry(entry model.AnimeEntry) model.AnimeEntry {
+	if cover := imagecache.BangumiCoverURL(entry.Metadata.CoverURL); cover != "" {
+		entry.Metadata.CoverURL = cover
+	}
+	return entry
+}
+
 func (s *AnimeAdminService) subscriptionView(ctx context.Context, sub model.AnimeSubscription, settings model.AnimeSettings) (AnimeSubscriptionView, error) {
 	e, err := s.Store.GetAnimeEntry(ctx, sub.EntryID)
 	if err != nil {
 		return AnimeSubscriptionView{}, err
 	}
-	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: e, EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
+	v := AnimeSubscriptionView{AnimeSubscription: sub, Entry: animeViewEntry(e), EffectiveState: sub.Status, Readiness: s.settingsReadiness(settings), PermittedActions: []AnimeAction{{Name: "save", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "enable", ReasonCode: "CAPABILITY_UNAVAILABLE"}, {Name: "organize", ReasonCode: "CAPABILITY_UNAVAILABLE"}}}
 	v.Lifecycle, err = s.Store.AnimeLifecycle(ctx, sub, e, time.Now().UnixMilli())
 	if err != nil {
 		return v, err
@@ -210,7 +220,7 @@ func (s *AnimeAdminService) Subscriptions(ctx context.Context, f storage.AnimeSu
 	}
 	out := AnimeSubscriptionList{Total: p.Total, Page: p.Page, PageSize: p.PageSize, Items: make([]AnimeSubscriptionCard, 0, len(p.Items))}
 	for _, sub := range p.Items {
-		v := AnimeSubscriptionCard{ID: sub.ID, Status: sub.Status, Entry: entries[sub.EntryID], Sources: make([]AnimeSourceCard, 0, len(sub.Sources))}
+		v := AnimeSubscriptionCard{ID: sub.ID, Status: sub.Status, Entry: animeViewEntry(entries[sub.EntryID]), Sources: make([]AnimeSourceCard, 0, len(sub.Sources))}
 		for _, source := range sub.Sources {
 			v.Sources = append(v.Sources, AnimeSourceCard{ID: source.ID, GroupName: source.GroupName, Position: source.Position, ConfiguredState: source.Status, RunWhenEnabled: source.RunWhenEnabled, Progress: progress[source.ID]})
 		}

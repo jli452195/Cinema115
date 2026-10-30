@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"strm115/backend/internal/netproxy"
 	"strm115/backend/internal/service"
 )
 
@@ -48,7 +49,7 @@ func NewTelegram(token, chats, dataDir string, generator ShareGenerator, setting
 		}
 		allowed[id] = true
 	}
-	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state-"+strings.SplitN(token, ":", 2)[0]+".json"), Generator: generator, Settings: settings, ShareEnabled: true}, nil
+	return &Telegram{Token: token, AllowedChats: allowed, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Transport: netproxy.Transport("telegram_bot"), Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, StatePath: filepath.Join(dataDir, "telegram-state-"+strings.SplitN(token, ":", 2)[0]+".json"), Generator: generator, Settings: settings, ShareEnabled: true}, nil
 }
 
 type telegramMessage struct {

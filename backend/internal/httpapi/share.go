@@ -27,6 +27,7 @@ type ShareAPI struct {
 
 func NewShareAPI(cookie func() string) *ShareAPI {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = 25 * time.Second
 	return &ShareAPI{OutputRoot: "../data/media", Client: p115.NewShareClient(), Cookie: cookie, MediaHTTP: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !p115.AllowedMediaURL(req.URL.String()) {

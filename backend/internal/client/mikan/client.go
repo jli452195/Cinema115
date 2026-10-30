@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/net/html"
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/netproxy"
 )
 
 const BaseURL = "https://mikanani.me"
@@ -59,7 +60,7 @@ type Client struct {
 }
 
 func New() *Client {
-	return &Client{BaseURL: BaseURL, HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Client{BaseURL: BaseURL, HTTP: &http.Client{Transport: netproxy.Transport("mikan"), Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func NormalizeQuery(raw string) (string, error) {

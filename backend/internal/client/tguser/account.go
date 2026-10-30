@@ -13,8 +13,11 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+
+	"strm115/backend/internal/netproxy"
 )
 
 var ErrBusy = errors.New("Telegram 正在处理另一项操作，请稍后再试")
@@ -185,7 +188,12 @@ func (c *Client) run(ctx context.Context, operation func(context.Context, *teleg
 	if cfg.APIID < 1 || cfg.APIHash == "" {
 		return ErrConfig
 	}
-	client := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{SessionStorage: encryptedSession{c.sessionStore}, NoUpdates: true})
+	client := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
+		SessionStorage: encryptedSession{c.sessionStore},
+		NoUpdates:      true,
+		// One operation keeps its proxy snapshot for every DC connection and retry.
+		Resolver: dcs.Plain(dcs.PlainOptions{Dial: netproxy.Default.Dialer("telegram_user")}),
+	})
 	return client.Run(ctx, func(ctx context.Context) error { return operation(ctx, client) })
 }
 func (c *Client) status(ctx context.Context, client *telegram.Client) error {

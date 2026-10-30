@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 var ErrInput = errors.New("图片参数无效")
@@ -66,6 +68,7 @@ type refreshRequest struct{ size, name string }
 
 type Cache struct {
 	embyRequest EmbyRequest
+	bgm         bool
 	mikan       bool
 	anibt       bool
 	garden      bool
@@ -99,7 +102,7 @@ func New(root string, maxBytes int64) (*Cache, error) {
 	}
 	return &Cache{
 		root: abs, maxBytes: maxBytes, baseURL: "https://image.tmdb.org",
-		http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		http: &http.Client{Transport: netproxy.Transport("tmdb"), Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		now:  time.Now, flights: make(map[string]*flight), negative: make(map[string]negativeEntry),
 		pending: make(map[string]refreshRequest), refresh: make(chan struct{}, 1), prune: make(chan struct{}, 1), downloads: make(chan struct{}, 4),
 	}, nil
@@ -125,6 +128,9 @@ func validName(name string) bool {
 
 func (c *Cache) paths(size, name string) (string, string, error) {
 	_, valid := allowedSizes[size]
+	if c.bgm {
+		valid = validBangumiImage(size, name)
+	}
 	if c.garden {
 		valid = gardenSubjectID.MatchString(size) && name == "poster.jpeg"
 	}
@@ -299,6 +305,9 @@ func (c *Cache) fetch(ctx context.Context, size, name, path, metadataPath string
 
 func (c *Cache) download(ctx context.Context, size, name, path, metadataPath string) error {
 	upstream, err := url.JoinPath(c.baseURL, "t", "p", size, name)
+	if c.bgm {
+		upstream, err = url.JoinPath(c.baseURL, "pic", "cover", strings.ReplaceAll(size, "-", "/"), name)
+	}
 	if c.garden {
 		upstream, err = url.JoinPath(c.baseURL, "bangumi", "subject", size, name)
 		upstream += "?quality=small"
@@ -380,7 +389,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 	}
 	// 上游验证页面可能伪装成图片响应；检查文件签名，禁止将 HTML 缓存为封面。
 	var source io.Reader = response.Body
-	if c.garden || c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
+	if c.bgm || c.garden || c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		reader := bufio.NewReader(response.Body)
 		header, peekErr := reader.Peek(512)
 		if peekErr != nil && !errors.Is(peekErr, io.EOF) {
@@ -435,7 +444,7 @@ func (c *Cache) download(ctx context.Context, size, name, path, metadataPath str
 		return err
 	}
 	// 小容量缓存写入后通知受控工作协程清理，避免只等定时清理导致持续膨胀。
-	if c.garden || c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
+	if c.bgm || c.garden || c.anibt || c.mikan || c.gying || c.woniu || c.embyRequest != nil {
 		select {
 		case c.prune <- struct{}{}:
 		default:

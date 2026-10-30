@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/netproxy"
 )
 
 var (
@@ -55,7 +57,8 @@ func New(baseURL, token string) (*Client, error) {
 		return nil, fmt.Errorf("%w：会话令牌格式不正确", ErrInput)
 	}
 	return &Client{baseURL: base, token: token, http: &http.Client{
-		Timeout: 30 * time.Second,
+		Transport: netproxy.DirectTransport(),
+		Timeout:   30 * time.Second,
 		// Never forward login bodies or bearer tokens to a redirect target.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil

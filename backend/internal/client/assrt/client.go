@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"strm115/backend/internal/netproxy"
 	"strm115/backend/internal/utils/subtitle"
 )
 
@@ -82,7 +83,7 @@ type Client struct {
 }
 
 func New(token string) *Client {
-	return &Client{HTTP: &http.Client{Timeout: 30 * time.Second}, token: token}
+	return &Client{HTTP: &http.Client{Transport: netproxy.Transport("assrt"), Timeout: 30 * time.Second}, token: token}
 }
 
 func ValidToken(token string) bool {

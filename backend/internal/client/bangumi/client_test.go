@@ -66,7 +66,7 @@ func TestCalendarUsesOneSnapshotAndCopiesResults(t *testing.T) {
 		t.Fatal(first, err)
 	}
 	card := first.Days[0].Items[0]
-	if card.ID != "278826" || card.Title != "从零开始 第二季" || card.OriginalTitle != "Re:Zero 2nd season" || card.Date != "2020-07-08" || card.CoverURL != "https://lain.bgm.tv/pic/cover/m/06/8c/278826_test.jpg" || card.Weekday == nil || *card.Weekday != 3 {
+	if card.ID != "278826" || card.Title != "从零开始 第二季" || card.OriginalTitle != "Re:Zero 2nd season" || card.Date != "2020-07-08" || card.CoverURL != "/api/bangumi/image/m-06-8c/278826_test.jpg" || card.Weekday == nil || *card.Weekday != 3 {
 		t.Fatal(card)
 	}
 	version := first.DataVersion

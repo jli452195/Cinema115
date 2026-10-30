@@ -57,7 +57,10 @@ export function animeCooldownMessage() {
 }
 export function animeImageURL(value: string) {
   if (/^\/api\/mikan\/image\/\d{6}\/[a-zA-Z0-9._-]+$/.test(value)) return value
-  try { const url = new URL(value); return url.protocol === 'https:' ? url.href : '' } catch { return '' }
+  if (/^\/api\/anibt\/image\/[a-zA-Z0-9_-]{1,64}\/[a-f0-9]{64}\.webp$/.test(value)) return value
+  if (/^\/api\/garden\/image\/[1-9]\d{0,7}\/poster\.jpeg$/.test(value)) return value
+  if (/^\/api\/bangumi\/image\/[lcmsg]-[a-fA-F0-9]{2}-[a-fA-F0-9]{2}\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$/i.test(value)) return value
+  return ''
 }
 
 export async function requestAnime<T>(key: string, path: string, token: string, signal: AbortSignal, body?: unknown): Promise<T> {

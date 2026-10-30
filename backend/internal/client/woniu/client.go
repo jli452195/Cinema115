@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"strm115/backend/internal/netproxy"
 )
 
 const BaseURL = "https://www.wn4k.com"
@@ -136,7 +138,7 @@ func New(base string, injected *http.Client) (*Client, error) {
 	if injected != nil {
 		client = *injected
 	} else {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport := netproxy.Transport("woniu").Clone()
 		transport.MaxConnsPerHost = 4
 		client.Transport = transport
 	}

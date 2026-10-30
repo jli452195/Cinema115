@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"strm115/backend/internal/netproxy"
 )
 
 // The resolver supplies current credentials for one request; they are never persisted.
@@ -17,6 +19,7 @@ func NewEmby(root string, request EmbyRequest) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
+	cache.http.Transport = netproxy.DirectTransport()
 	cache.embyRequest = request
 	cache.downloads = make(chan struct{}, 2)
 	return cache, nil

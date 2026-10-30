@@ -85,7 +85,7 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 
 - 网盘与整理：[115 主账号与小号](docs/p115-accounts.md)、[分享 STRM](docs/reshare.md)、[下载整理](docs/garden-download-organize.md)、[自动整理](docs/media-organize.md)。
 - Emby：[302 反代](docs/emby-proxy.md)、[入库索引](docs/emby.md)、[个人中心](docs/member-playback.md)、[播放会话](docs/single-playback.md)。
-- 资源搜索：[Telegram](docs/telegram-resource-search.md)、[观影](docs/gying.md)、[蜜柑](docs/mikan.md)、[蜗牛](docs/woniu.md)。
+- 资源搜索：[网络代理](docs/network-proxy.md)、[Telegram](docs/telegram-resource-search.md)、[观影](docs/gying.md)、[蜜柑](docs/mikan.md)、[蜗牛](docs/woniu.md)。
 - 维护：[数据库](docs/database.md)、[版本发布](docs/releasing.md)。
 
 </details>

@@ -94,6 +94,7 @@ func (c *ShareClient) UploadSubtitle(ctx context.Context, cid, name string, data
 
 func (c *ShareClient) subtitleUploadRequest(req *http.Request) ([]byte, error) {
 	client := *c.HTTP
+	client.Transport = c.requestTransport()
 	client.Timeout = 90 * time.Second
 	client.Jar = nil
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

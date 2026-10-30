@@ -55,7 +55,7 @@ func (c *ShareClient) readMetadataURL(ctx context.Context, link string) ([]byte,
 	}
 	req.Header.Set("User-Agent", PlaybackUserAgent)
 	// 独立客户端复用传输层，不使用 API 的 Cookie Jar，也不修改共享客户端。
-	client := &http.Client{Transport: c.HTTP.Transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	client := &http.Client{Transport: c.requestTransport(), Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !AllowedMediaURL(req.URL.String()) {
 			return fmt.Errorf("元数据重定向不被允许")
 		}

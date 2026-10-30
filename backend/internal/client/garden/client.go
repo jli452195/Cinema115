@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"strm115/backend/internal/client/animefeed"
+	"strm115/backend/internal/netproxy"
 )
 
 var ErrInvalid = errors.New("invalid Anime Garden response")
@@ -26,7 +27,7 @@ type Client struct {
 }
 
 func New() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}, MetadataURL: "https://bgm.animes.garden", ResourcesURL: "https://api.animes.garden"}
+	return &Client{HTTP: &http.Client{Transport: netproxy.Transport("garden"), Timeout: 20 * time.Second}, MetadataURL: "https://bgm.animes.garden", ResourcesURL: "https://api.animes.garden"}
 }
 
 // The adapter constructs paths; callers cannot choose a host or follow redirects.

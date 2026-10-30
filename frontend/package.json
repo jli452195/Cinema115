@@ -32,6 +32,7 @@
     "test:organize-workflow": "node --test tests/organize-selection.test.mjs tests/organize-history.test.mjs",
     "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs tests/subtitle-sources.test.mjs",
     "test:subtitle-settings-ui": "node scripts/subtitle-settings-ui.cjs",
+    "test:network-proxy-ui": "node scripts/network-proxy-ui.cjs",
     "test:assrt-ui": "node scripts/download-organize-ui.cjs garden assrt",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
