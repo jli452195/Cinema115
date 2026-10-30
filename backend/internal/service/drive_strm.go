@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/storage"
@@ -34,6 +36,16 @@ type DriveSTRMStore interface {
 	DeleteDriveSTRMExport(context.Context, string) error
 	LoadDriveSTRMCursor(context.Context, string) (string, error)
 	SaveDriveSTRMCursor(context.Context, string, string) error
+	QueueDriveSTRMAttachments(context.Context, []model.DriveSTRMAttachment) error
+	ListDriveSTRMAttachments(context.Context, int) ([]model.DriveSTRMAttachment, error)
+	RetryDriveSTRMAttachment(context.Context, model.DriveSTRMAttachment, string, time.Time) error
+	CompleteDriveSTRMAttachment(context.Context, model.DriveSTRMAttachment, model.DriveSTRMFile) error
+	DeleteDriveSTRMAttachment(context.Context, int64) error
+	DeleteDriveSTRMAttachments(context.Context, string) error
+	DriveSTRMAttachmentCounts(context.Context) (map[string][2]int, error)
+	ListDriveSTRMCleanup(context.Context, int) ([]model.DriveSTRMCleanup, error)
+	RetryDriveSTRMCleanup(context.Context, model.DriveSTRMCleanup, string, time.Time) error
+	DeleteDriveSTRMCleanup(context.Context, int64) error
 }
 
 type DriveSTRMClient interface {
@@ -47,23 +59,28 @@ type driveSTRMMetadataReader interface {
 
 // DriveSTRMService never changes source files and has no anime dependencies.
 // Only its own generated directory-tree exports are created and cleaned up.
-// A single tracked worker freezes credentials for each scan. Life events only
-// enqueue known directory scopes; full reconciliation repairs missed changes.
+// Tracked scan and attachment workers freeze credentials for accepted work.
+// Life events enqueue directory scopes; reconciliation repairs missed changes.
 type DriveSTRMService struct {
-	Store      DriveSTRMStore
-	Accounts   *P115Accounts
-	Client     DriveSTRMClient
-	Root       string
-	mu         sync.Mutex
-	wake       chan struct{}
-	active     string
-	cancel     context.CancelFunc
-	running    bool
-	lastPicked string
+	Store            DriveSTRMStore
+	Accounts         *P115Accounts
+	Client           DriveSTRMClient
+	Root             string
+	mu               sync.Mutex
+	wake             chan struct{}
+	active           string
+	cancel           context.CancelFunc
+	metadataWake     chan struct{}
+	metadataActive   string
+	metadataCancel   context.CancelFunc
+	metadataStarted  time.Time
+	metadataInterval time.Duration
+	running          bool
+	lastPicked       string
 }
 
 func NewDriveSTRMService(store DriveSTRMStore, accounts *P115Accounts, client DriveSTRMClient, root string) *DriveSTRMService {
-	return &DriveSTRMService{Store: store, Accounts: accounts, Client: client, Root: root, wake: make(chan struct{}, 1)}
+	return &DriveSTRMService{Store: store, Accounts: accounts, Client: client, Root: root, wake: make(chan struct{}, 1), metadataWake: make(chan struct{}, 1)}
 }
 
 func (s *DriveSTRMService) Wake() {
@@ -77,6 +94,14 @@ func (s *DriveSTRMService) List(ctx context.Context) ([]model.DriveSTRM, error) 
 	values, err := s.Store.ListDriveSTRM(ctx)
 	if err != nil {
 		return nil, err
+	}
+	counts, err := s.Store.DriveSTRMAttachmentCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range values {
+		count := counts[values[i].ID]
+		values[i].MetadataPending, values[i].MetadataFailed = count[0], count[1]
 	}
 	settings, err := s.Store.GetDriveSTRMSettings(ctx)
 	if errors.Is(err, storage.ErrNotFound) {
@@ -117,19 +142,29 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	}
 	s.mu.Lock()
 	active := value.ID != "" && s.active == value.ID
+	old := model.DriveSTRM{}
+	if !active && value.ID != "" {
+		old, err = s.Store.GetDriveSTRM(ctx, value.ID)
+	}
 	s.mu.Unlock()
 	if active {
 		return value, ErrDriveSTRMBusy
 	}
-	// Validate the remote selection without holding the worker/control mutex.
-	directory, err := s.Client.ReadDirectory(ctx, value.SourceCID, account.Cookie)
 	if err != nil {
-		return value, fmt.Errorf("核验来源目录: %w", err)
+		return value, err
 	}
-	if directory.CID != value.SourceCID {
-		return value, generationInputError("来源目录身份已变化")
+	// Validate the remote selection without holding the worker/control mutex.
+	value.SourcePath = old.SourcePath
+	if old.AccountID != value.AccountID || old.SourceCID != value.SourceCID {
+		directory, err := s.Client.ReadDirectory(ctx, value.SourceCID, account.Cookie)
+		if err != nil {
+			return value, fmt.Errorf("核验来源目录: %w", err)
+		}
+		if directory.CID != value.SourceCID {
+			return value, generationInputError("来源目录身份已变化")
+		}
+		value.SourcePath = directory.Path
 	}
-	value.SourcePath = directory.Path
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, err := s.Accounts.Primary(value.AccountID)
@@ -139,7 +174,6 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	if current.Revision != account.Revision {
 		return value, ErrAccountChanged
 	}
-	old := model.DriveSTRM{}
 	if value.ID != "" {
 		old, err = s.Store.GetDriveSTRM(ctx, value.ID)
 		if err != nil {
@@ -171,15 +205,26 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 			return value, err
 		}
 	}
-	value.Status, value.LastError = "queued", ""
-	value.LastScanAt, value.Stats = old.LastScanAt, old.Stats
-	value.LastReconcileAt = old.LastReconcileAt
-	value.LastFullScanAt = old.LastFullScanAt
-	value.Queued, value.FullScan, value.PendingDirectories = true, true, nil
-	value.Mode = "full"
-	value.UpdatedAt = time.Now().UTC()
-	value.NextScanAt = time.Time{}
 	reset := old.ID != "" && (old.AccountID != value.AccountID || old.SourceCID != value.SourceCID || old.OutputDir != value.OutputDir)
+	if old.ID != "" && !reset {
+		name, enabled := value.Name, value.Enabled
+		value = old
+		value.Name, value.Enabled = name, enabled
+		if enabled && !old.Enabled {
+			value.Queued, value.FullScan = true, value.FullScan || value.LastFullScanAt.IsZero()
+			value.PendingDirectories = nil
+			value.Status, value.LastError, value.FailureCount = "queued", "", 0
+			value.NextScanAt = time.Time{}
+		}
+	} else {
+		value.Status, value.LastError = "queued", ""
+		value.Queued, value.FullScan, value.PendingDirectories = true, true, nil
+		value.Mode = "full"
+	}
+	value.UpdatedAt = time.Now().UTC()
+	if reset && s.metadataActive == value.ID && s.metadataCancel != nil {
+		s.metadataCancel()
+	}
 	if err := s.Store.SaveDriveSTRMConfiguration(ctx, value, reset); err != nil {
 		return value, err
 	}
@@ -204,7 +249,8 @@ func (s *DriveSTRMService) SetMonitoring(ctx context.Context, id string, enabled
 		if _, err := s.Accounts.Primary(value.AccountID); err != nil {
 			return value, err
 		}
-		value.Queued, value.FullScan = true, true
+		value.Queued, value.FullScan = true, value.FullScan || value.LastFullScanAt.IsZero()
+		value.PendingDirectories = nil
 		value.LastError, value.FailureCount = "", 0
 		value.NextScanAt = time.Time{}
 		if s.active != id {
@@ -225,6 +271,9 @@ func (s *DriveSTRMService) Delete(ctx context.Context, id string) error {
 	if s.active == id {
 		return ErrDriveSTRMBusy
 	}
+	if s.metadataActive == id && s.metadataCancel != nil {
+		s.metadataCancel()
+	}
 	return s.Store.DeleteDriveSTRM(ctx, id)
 }
 
@@ -242,7 +291,7 @@ func (s *DriveSTRMService) Queue(ctx context.Context, id string, full bool) erro
 		return err
 	}
 	value.Queued = true
-	value.FullScan = value.FullScan || full || len(value.PendingDirectories) == 0
+	value.FullScan = value.FullScan || full || value.LastFullScanAt.IsZero()
 	value.LastError, value.FailureCount = "", 0
 	value.NextScanAt = time.Time{}
 	if s.active != id {
@@ -275,7 +324,10 @@ func (s *DriveSTRMService) Stop(ctx context.Context, id string) error {
 	if s.active == id && s.cancel != nil {
 		s.cancel()
 	}
-	return nil
+	if s.metadataActive == id && s.metadataCancel != nil {
+		s.metadataCancel()
+	}
+	return s.Store.DeleteDriveSTRMAttachments(ctx, id)
 }
 
 // NotifyDirectories commits all affected queues before returning. Callers may
@@ -366,6 +418,17 @@ func (s *DriveSTRMService) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	workers, runCtx := errgroup.WithContext(ctx)
+	workers.Go(func() error { return s.runScans(runCtx) })
+	workers.Go(func() error { return s.runAttachments(runCtx) })
+	err = workers.Wait()
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return nil
+	}
+	return err
+}
+
+func (s *DriveSTRMService) runScans(ctx context.Context) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	var lastCleanup time.Time
@@ -445,6 +508,15 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 			// Frequent life events must not postpone periodic reconciliation.
 			value.PendingDirectories = nil
 		}
+		if s.metadataActive == value.ID {
+			// Finish the accepted file before replacing this mapping's snapshot.
+			// Canceling on every life event would repeatedly fetch slow files.
+			value.Queued = true
+			if err := s.Store.SaveDriveSTRM(ctx, value); err != nil {
+				return value, nil, false, err
+			}
+			continue
+		}
 		snapshot := value
 		snapshot.Settings = settings
 		value.Queued, value.FullScan, value.PendingDirectories = false, false, nil
@@ -476,6 +548,7 @@ func (s *DriveSTRMService) finish(ctx context.Context, id string, stats model.Dr
 		s.cancel()
 	}
 	s.active, s.cancel = "", nil
+	s.wakeAttachments()
 	// Finishing must survive cancellation of the process-level worker context.
 	processCanceled := ctx.Err() != nil
 	if processCanceled {

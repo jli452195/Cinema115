@@ -70,7 +70,7 @@ func TestDriveSTRMSettingsMissingPeriodsUseDefaultsAndZeroDisables(t *testing.T)
 		raw                    string
 		event, reconcile, full int
 	}{
-		{`{"baseUrl":"https://cinema.example","videoExtensions":"mkv"}`, 20, 24, 168},
+		{`{"baseUrl":"https://cinema.example","videoExtensions":"mkv"}`, 20, 24, 720},
 		{`{"eventIntervalSeconds":0,"reconcileIntervalHours":0,"fullScanIntervalHours":0}`, 0, 0, 0},
 		{`{"eventIntervalSeconds":300,"reconcileIntervalHours":6,"fullScanIntervalHours":24}`, 300, 6, 24},
 	} {
@@ -360,5 +360,513 @@ func TestDriveSTRMExportCleanupIdentityOutlivesMappingAndRestart(t *testing.T) {
 	}
 	if cursor, err := s.LoadDriveSTRMCursor(ctx, "primary"); err != nil || cursor != "321" {
 		t.Fatalf("unrelated event cursor changed: %q err=%v", cursor, err)
+	}
+}
+
+func TestDriveSTRMAttachmentsPreserveRetryAcrossDiscoveryAndRestart(t *testing.T) {
+	ctx := context.Background()
+	filename := filepath.Join(t.TempDir(), "drive.db")
+	s, err := Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	for _, id := range []string{"mapping", "other"} {
+		if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: id, AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := driveSTRMStoredAttachment("mapping", "10")
+	other := driveSTRMStoredAttachment("other", "20")
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{job, other}); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(queued) != 2 {
+		t.Fatalf("initial jobs=%+v err=%v", queued, err)
+	}
+	job = queued[0]
+	next := time.Now().Add(time.Hour).UTC().Truncate(time.Millisecond)
+	if err := s.RetryDriveSTRMAttachment(ctx, job, "附件暂不可用", next); err != nil {
+		t.Fatal(err)
+	}
+	discovered := job
+	discovered.Settings.MetadataFilesPerSecond = 9
+	discovered.Attempts, discovered.LastError, discovered.NextAttemptAt = 99, "stale state", time.Now()
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{discovered}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err = s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(queued) != 2 || queued[0].Record.MappingID != "other" {
+		t.Fatalf("retry ordering lost across restart: %+v err=%v", queued, err)
+	}
+	retried := queued[1]
+	if retried.ID != job.ID || retried.Attempts != 1 || retried.LastError != "附件暂不可用" || !retried.NextAttemptAt.Equal(next) || retried.Settings != job.Settings {
+		t.Fatalf("rediscovery replaced retry or its settings: %+v", retried)
+	}
+	counts, err := s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || counts["mapping"] != [2]int{1, 1} || counts["other"] != [2]int{1, 0} {
+		t.Fatalf("counts=%v err=%v", counts, err)
+	}
+
+	changed := retried
+	changed.SHA1 = strings.Repeat("B", 40)
+	changed.Record.Signature = changed.SHA1 + ":12"
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{changed}); err != nil {
+		t.Fatal(err)
+	}
+	staleRecord := job.Record
+	staleRecord.Digest = "old-bytes"
+	if err := s.CompleteDriveSTRMAttachment(ctx, job, staleRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetryDriveSTRMAttachment(ctx, job, "old failure", next); err != nil {
+		t.Fatal(err)
+	}
+	files, err := s.ListDriveSTRMFiles(ctx, "mapping")
+	if err != nil || len(files) != 0 {
+		t.Fatalf("stale completion wrote ownership: %+v err=%v", files, err)
+	}
+	queued, err = s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(queued) != 2 || queued[1].ID == job.ID || queued[1].Attempts != 0 || !queued[1].NextAttemptAt.IsZero() {
+		t.Fatalf("new content did not reset only its own job: %+v err=%v", queued, err)
+	}
+	current := queued[1]
+	record := current.Record
+	record.Digest = "new-bytes"
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER fail_attachment_completion BEFORE INSERT ON drive_strm_files BEGIN SELECT RAISE(ABORT,'test write failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteDriveSTRMAttachment(ctx, current, record); err == nil {
+		t.Fatal("failed index write acknowledged the attachment")
+	}
+	counts, err = s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || counts["mapping"] != [2]int{1, 0} {
+		t.Fatalf("failed completion lost its job: %v err=%v", counts, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER fail_attachment_completion`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteDriveSTRMAttachment(ctx, current, record); err != nil {
+		t.Fatal(err)
+	}
+	files, err = s.ListDriveSTRMFiles(ctx, "mapping")
+	if err != nil || len(files) != 1 || files[0] != record {
+		t.Fatalf("completed file=%+v err=%v", files, err)
+	}
+	counts, err = s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || len(counts) != 1 || counts["other"] != [2]int{1, 0} {
+		t.Fatalf("completion removed another job or retained completed job: %v err=%v", counts, err)
+	}
+}
+
+func TestDriveSTRMAttachmentsRespectMappingLifecycle(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mappings := []model.DriveSTRM{
+		{ID: "running", Status: "running"},
+		{ID: "stopped", Status: "stopped"},
+		{ID: "queued", Status: "idle", Queued: true},
+		{ID: "paused", Status: "idle", Enabled: false},
+	}
+	for i := range mappings {
+		mapping := &mappings[i]
+		mapping.AccountID, mapping.SourceCID, mapping.UpdatedAt = "primary", "100", time.Now().UTC()
+		mapping.MetadataPending, mapping.MetadataFailed = 200, 100
+		if err := s.SaveDriveSTRM(ctx, *mapping); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{driveSTRMStoredAttachment(mapping.ID, fmt.Sprint(i+1))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued, err := s.ListDriveSTRMAttachments(ctx, 1)
+	if err != nil || len(queued) != 1 || queued[0].Record.MappingID != "paused" {
+		t.Fatalf("running/stopped/queued mapping filled candidate limit or paused work stalled: %+v err=%v", queued, err)
+	}
+	stored, err := s.GetDriveSTRM(ctx, "paused")
+	if err != nil || stored.MetadataPending != 0 || stored.MetadataFailed != 0 {
+		t.Fatalf("runtime counts persisted: %+v err=%v", stored, err)
+	}
+	if err := s.DeleteDriveSTRMAttachment(ctx, queued[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	mappings[0].SourceCID = "300"
+	if err := s.SaveDriveSTRMConfiguration(ctx, mappings[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDriveSTRM(ctx, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDriveSTRM(ctx, "queued"); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || len(counts) != 0 {
+		t.Fatalf("mapping reset/deletion left attachment jobs: %v err=%v", counts, err)
+	}
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{driveSTRMStoredAttachment("paused", "4"), driveSTRMStoredAttachment("missing", "5")}); err == nil {
+		t.Fatal("invalid mapping in attachment batch did not fail")
+	}
+	counts, err = s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || len(counts) != 0 {
+		t.Fatalf("failed attachment batch left partial work: %v err=%v", counts, err)
+	}
+	invalidFile := driveSTRMStoredAttachment("paused", "4")
+	invalidFile.PickCode, invalidFile.SHA1, invalidFile.Size = "", "", 0
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{invalidFile}); err != nil {
+		t.Fatal(err)
+	}
+	queued, err = s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(queued) != 1 || queued[0].Record.FileID != "4" {
+		t.Fatalf("invalid attachment identity rejected the scan instead of its own worker: %+v err=%v", queued, err)
+	}
+	if err := s.DeleteDriveSTRMAttachments(ctx, "paused"); err != nil {
+		t.Fatal(err)
+	}
+	counts, err = s.DriveSTRMAttachmentCounts(ctx)
+	if err != nil || len(counts) != 0 {
+		t.Fatalf("stop cleanup left jobs: %v err=%v", counts, err)
+	}
+}
+
+func driveSTRMStoredAttachment(mappingID, fileID string) model.DriveSTRMAttachment {
+	sha1 := strings.Repeat("A", 40)
+	return model.DriveSTRMAttachment{
+		Record:        model.DriveSTRMFile{MappingID: mappingID, FileID: fileID, ParentCID: "100", Path: fileID + ".ass", Signature: sha1 + ":12"},
+		AccountID:     "primary",
+		CredentialKey: "credential-fingerprint",
+		SourceCID:     "100",
+		OutputDir:     "strm",
+		Settings:      model.DefaultDriveSTRMSettings(),
+		Name:          fileID + ".ass",
+		PickCode:      "abcdef",
+		SHA1:          sha1,
+		Size:          12,
+	}
+}
+
+func TestDriveSTRMCleanupTracksOnlyCommittedReplacements(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	old := model.DriveSTRMFile{MappingID: "mapping", FileID: "1", ParentCID: "100", Path: "old/a.strm", Digest: "old-bytes"}
+	if err := s.SaveDriveSTRMFile(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	moved := old
+	moved.Path, moved.Digest = "new/a.strm", "new-bytes"
+	if err := s.SaveDriveSTRMFiles(ctx, []model.DriveSTRMFile{moved, {MappingID: "missing", FileID: "2"}}); err == nil {
+		t.Fatal("invalid batch succeeded")
+	}
+	queued, err := s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("failed index update left cleanup: %+v err=%v", queued, err)
+	}
+	files, err := s.ListDriveSTRMFiles(ctx, "mapping")
+	if err != nil || len(files) != 1 || files[0] != old {
+		t.Fatalf("failed index update changed ownership: %+v err=%v", files, err)
+	}
+	if err := s.SaveDriveSTRMFile(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	queued, err = s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(queued) != 1 || queued[0].Record != old {
+		t.Fatalf("successful replacement lost old ownership: %+v err=%v", queued, err)
+	}
+	for _, tc := range []struct {
+		name     string
+		old, new model.DriveSTRMFile
+	}{
+		{name: "unchanged-path", old: old, new: old},
+		{name: "old-directory", old: model.DriveSTRMFile{Directory: true, Digest: "old"}, new: model.DriveSTRMFile{Digest: "new"}},
+		{name: "new-directory", old: model.DriveSTRMFile{Digest: "old"}, new: model.DriveSTRMFile{Directory: true, Digest: "new"}},
+		{name: "old-unowned", old: model.DriveSTRMFile{}, new: model.DriveSTRMFile{Digest: "new"}},
+		{name: "new-unowned", old: model.DriveSTRMFile{Digest: "old"}, new: model.DriveSTRMFile{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, after := tc.old, tc.new
+			before.MappingID, before.FileID, before.Path = "mapping", tc.name, "old/"+tc.name
+			after.MappingID, after.FileID = "mapping", tc.name
+			if tc.name == "unchanged-path" {
+				after.Path = before.Path
+				after.Digest = "changed-bytes"
+			} else {
+				after.Path = "new/" + tc.name
+			}
+			if err := s.SaveDriveSTRMFile(ctx, before); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SaveDriveSTRMFile(ctx, after); err != nil {
+				t.Fatal(err)
+			}
+			jobs, err := s.ListDriveSTRMCleanup(ctx, 10)
+			if err != nil || len(jobs) != 1 || jobs[0].Record != old {
+				t.Fatalf("ineligible replacement queued cleanup: %+v err=%v", jobs, err)
+			}
+		})
+	}
+}
+
+func TestDriveSTRMCleanupAttachmentCompletionIsAtomicAndTokenBound(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	job := driveSTRMStoredAttachment("mapping", "10")
+	old := job.Record
+	old.Path, old.Digest = "old/10.ass", "old-bytes"
+	if err := s.SaveDriveSTRMFile(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{job}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("attachments=%+v err=%v", jobs, err)
+	}
+	stale := jobs[0]
+	job = stale
+	job.Record.Signature = "new-content"
+	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{job}); err != nil {
+		t.Fatal(err)
+	}
+	staleRecord := stale.Record
+	staleRecord.Digest = "stale-bytes"
+	if err := s.CompleteDriveSTRMAttachment(ctx, stale, staleRecord); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListDriveSTRMAttachments(ctx, 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("attachments=%+v err=%v", jobs, err)
+	}
+	job = jobs[0]
+	record := job.Record
+	record.Digest = "new-bytes"
+	invalid := record
+	invalid.Path = "wrong.ass"
+	if err := s.CompleteDriveSTRMAttachment(ctx, job, invalid); err == nil {
+		t.Fatal("mismatched completion succeeded")
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER fail_cleanup_attachment_index BEFORE INSERT ON drive_strm_files BEGIN SELECT RAISE(ABORT,'test index write failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteDriveSTRMAttachment(ctx, job, record); err == nil {
+		t.Fatal("failed index update completed the attachment")
+	}
+	queued, err := s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("failed/stale attachment left cleanup: %+v err=%v", queued, err)
+	}
+	files, err := s.ListDriveSTRMFiles(ctx, "mapping")
+	if err != nil || len(files) != 1 || files[0] != old {
+		t.Fatalf("failed/stale completion changed index: %+v err=%v", files, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_attachment_index`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteDriveSTRMAttachment(ctx, job, record); err != nil {
+		t.Fatal(err)
+	}
+	queued, err = s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(queued) != 1 || queued[0].Record != old {
+		t.Fatalf("successful attachment lost cleanup: %+v err=%v", queued, err)
+	}
+	files, err = s.ListDriveSTRMFiles(ctx, "mapping")
+	if err != nil || len(files) != 1 || files[0] != record {
+		t.Fatalf("successful attachment ownership=%+v err=%v", files, err)
+	}
+}
+
+func TestDriveSTRMCleanupPreservesRetryAcrossRestartAndRejectsStaleToken(t *testing.T) {
+	ctx := context.Background()
+	filename := filepath.Join(t.TempDir(), "drive.db")
+	s, err := Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	record := model.DriveSTRMFile{MappingID: "mapping", FileID: "1", ParentCID: "100", Path: "old/a.strm", Digest: "old-bytes"}
+	if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{record, record}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("cleanup=%+v err=%v", jobs, err)
+	}
+	job := jobs[0]
+	next := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	if err := s.RetryDriveSTRMCleanup(ctx, job, "文件被占用", next); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{record}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || jobs[0].Record != record || jobs[0].Attempts != 1 || jobs[0].LastError != "文件被占用" || !jobs[0].NextAttemptAt.Equal(next) {
+		t.Fatalf("retry changed after rediscovery/restart: %+v err=%v", jobs, err)
+	}
+	record.Digest = "different-bytes"
+	if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{record}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetryDriveSTRMCleanup(ctx, job, "stale retry", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDriveSTRMCleanup(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(jobs) != 1 || jobs[0].ID <= job.ID || jobs[0].Record != record || jobs[0].Attempts != 0 || !jobs[0].NextAttemptAt.IsZero() || jobs[0].LastError != "" {
+		t.Fatalf("stale token changed replacement job: %+v err=%v", jobs, err)
+	}
+	if err := s.DeleteDriveSTRMCleanup(ctx, jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("completed cleanup remained: %+v err=%v", jobs, err)
+	}
+}
+
+func TestDriveSTRMCleanupFiltersLifecycleAndDeadlinesBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, value := range []model.DriveSTRM{
+		{ID: "running", Status: "running"},
+		{ID: "stopped", Status: "stopped"},
+		{ID: "queued", Status: "idle", Queued: true},
+		{ID: "paused", Status: "idle", Enabled: false},
+	} {
+		value.AccountID, value.SourceCID, value.UpdatedAt = "primary", "100", time.Now().UTC()
+		if err := s.SaveDriveSTRM(ctx, value); err != nil {
+			t.Fatal(err)
+		}
+		record := model.DriveSTRMFile{MappingID: value.ID, FileID: "1", Path: "old/a.strm", Digest: "old-bytes"}
+		if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{record}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	jobs, err := s.ListDriveSTRMCleanup(ctx, 1)
+	if err != nil || len(jobs) != 1 || jobs[0].Record.MappingID != "paused" {
+		t.Fatalf("lifecycle filled candidate limit or paused work stalled: %+v err=%v", jobs, err)
+	}
+	if err := s.RetryDriveSTRMCleanup(ctx, jobs[0], "稍后重试", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	due := model.DriveSTRMFile{MappingID: "paused", FileID: "2", Path: "old/b.strm", Digest: "old-bytes"}
+	if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{due}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListDriveSTRMCleanup(ctx, 1)
+	if err != nil || len(jobs) != 1 || jobs[0].Record != due {
+		t.Fatalf("future deadline filled candidate limit: %+v err=%v", jobs, err)
+	}
+	for _, limit := range []int{0, -1, 1001} {
+		if _, err := s.ListDriveSTRMCleanup(ctx, limit); err == nil {
+			t.Fatalf("invalid limit %d succeeded", limit)
+		}
+	}
+	paused, err := s.GetDriveSTRM(ctx, "paused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDriveSTRMConfiguration(ctx, paused, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"running", "stopped", "queued"} {
+		if err := s.DeleteDriveSTRM(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM drive_strm_cleanup`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("reset/delete left cleanup: count=%d err=%v", count, err)
+	}
+}
+
+func TestDriveSTRMCleanupValidatesEvidenceAndQueuesAtomically(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SaveDriveSTRM(ctx, model.DriveSTRM{ID: "mapping", AccountID: "primary", SourceCID: "100", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	valid := model.DriveSTRMFile{MappingID: "mapping", FileID: "1", Path: "old/a.strm", Digest: "old-bytes"}
+	for _, field := range []string{"mapping", "file", "path", "digest", "directory", "foreign-key"} {
+		invalid := valid
+		switch field {
+		case "mapping":
+			invalid.MappingID = ""
+		case "file":
+			invalid.FileID = ""
+		case "path":
+			invalid.Path = ""
+		case "digest":
+			invalid.Digest = ""
+		case "directory":
+			invalid.Directory = true
+		case "foreign-key":
+			invalid.MappingID = "missing"
+		}
+		if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{valid, invalid}); err == nil {
+			t.Fatalf("invalid %s evidence was accepted", field)
+		}
+		jobs, err := s.ListDriveSTRMCleanup(ctx, 10)
+		if err != nil || len(jobs) != 0 {
+			t.Fatalf("invalid %s batch left partial jobs: %+v err=%v", field, jobs, err)
+		}
+	}
+	if err := s.QueueDriveSTRMCleanup(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	other := valid
+	other.Path = "another/a.strm"
+	if err := s.QueueDriveSTRMCleanup(ctx, []model.DriveSTRMFile{valid, valid, other}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ListDriveSTRMCleanup(ctx, 10)
+	if err != nil || len(jobs) != 2 || jobs[0].Record != valid || jobs[1].Record != other {
+		t.Fatalf("distinct old paths were collapsed or duplicates retained: %+v err=%v", jobs, err)
 	}
 }

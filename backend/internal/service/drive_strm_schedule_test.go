@@ -16,14 +16,15 @@ import (
 
 func TestDriveSTRMPeriodsAreIndependentAndChangingSettingsDoesNotQueue(t *testing.T) {
 	for _, tc := range []struct {
-		name            string
-		reconcile, full int
-		want            string
+		name                          string
+		reconcile, full               int
+		reconcileEnabled, fullEnabled bool
+		want                          string
 	}{
-		{"disabled", 0, 0, ""},
-		{"full before next tree", 168, 24, "full"},
-		{"full without tree", 0, 24, "full"},
-		{"tree without full", 6, 0, "tree"},
+		{"disabled with retained periods", 24, 720, false, false, ""},
+		{"full before next tree", 168, 24, true, true, "full"},
+		{"full without tree", 6, 24, false, true, "full"},
+		{"tree without full", 6, 24, true, false, "tree"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, db, _, mapping, _ := driveSTRMTestSetup(t)
@@ -39,8 +40,12 @@ func TestDriveSTRMPeriodsAreIndependentAndChangingSettingsDoesNotQueue(t *testin
 			}
 			settings, _ := s.Settings(ctx)
 			settings.ReconcileIntervalHours, settings.FullScanIntervalHours = tc.reconcile, tc.full
+			settings.ReconcileEnabled, settings.FullScanEnabled = tc.reconcileEnabled, tc.fullEnabled
 			if _, err := s.SaveSettings(ctx, settings); err != nil {
 				t.Fatal(err)
+			}
+			if saved, err := s.Settings(ctx); err != nil || saved != settings {
+				t.Fatalf("switches changed selected periods: %+v err=%v", saved, err)
 			}
 			stored, _ := db.GetDriveSTRM(ctx, mapping.ID)
 			if stored.Queued || stored.Status != "idle" || stored.NextScanAt != value.NextScanAt {
@@ -71,7 +76,8 @@ func TestDriveSTRMDisabledPeriodsKeepAcceptedWorkAndFailedRetries(t *testing.T) 
 	s, db, client, mapping, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
 	settings, _ := s.Settings(ctx)
-	settings.EventIntervalSeconds, settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 0, 0
+	settings.EventIntervalSeconds = 0
+	settings.ReconcileEnabled, settings.FullScanEnabled = false, false
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +150,7 @@ func TestDriveSTRMDisabledPeriodsDoNotTreatZeroCheckpointsAsDue(t *testing.T) {
 	s, db, _, mapping, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
 	settings, _ := s.Settings(ctx)
-	settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 0
+	settings.ReconcileEnabled, settings.FullScanEnabled = false, false
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +167,7 @@ func TestDriveSTRMStoppingDoesNotForceDisabledFullScan(t *testing.T) {
 	s, db, _, mapping, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
 	settings, _ := s.Settings(ctx)
-	settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 6, 0
+	settings.ReconcileEnabled, settings.ReconcileIntervalHours, settings.FullScanEnabled = true, 6, false
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -220,8 +226,16 @@ func TestDriveSTRMDueReconciliationWinsOverQueuedEvents(t *testing.T) {
 	if saved.Mode != "tree" || len(client.exportCalls) == 0 {
 		t.Fatalf("queued event starved due tree: %+v", saved)
 	}
+	settings, err := s.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.FullScanEnabled = true
+	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
 	saved.LastReconcileAt = time.Now().Add(-25 * time.Hour)
-	saved.LastFullScanAt = time.Now().Add(-169 * time.Hour)
+	saved.LastFullScanAt = time.Now().Add(-721 * time.Hour)
 	if err := db.SaveDriveSTRM(context.Background(), saved); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +244,7 @@ func TestDriveSTRMDueReconciliationWinsOverQueuedEvents(t *testing.T) {
 	}
 	saved, _ = db.GetDriveSTRM(context.Background(), value.ID)
 	if saved.Mode != "full" || time.Since(saved.LastFullScanAt) > time.Minute {
-		t.Fatalf("weekly metadata scan skipped: %+v", saved)
+		t.Fatalf("monthly metadata scan skipped: %+v", saved)
 	}
 }
 

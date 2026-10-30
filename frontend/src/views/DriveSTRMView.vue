@@ -13,10 +13,12 @@ import { strmDirectoryPath } from '../utils/strmDirectory'
 interface Settings {
   baseUrl: string; videoExtensions: string; metadataExtensions: string; minSizeMB: number
   eventIntervalSeconds: number; reconcileIntervalHours: number; fullScanIntervalHours: number
+  reconcileEnabled: boolean; fullScanEnabled: boolean; metadataRateEnabled: boolean; metadataFilesPerSecond: number
 }
 interface Mapping {
   id: string; name: string; accountId: string; sourceCID: string; sourcePath: string; outputDir: string; enabled: boolean
   status: string; mode?: string; queued: boolean; lastScanAt?: string; lastError?: string
+  metadataPending: number; metadataFailed: number
   stats: { videos: number; written: number; unchanged: number; metadataWritten: number; failed: number }
 }
 interface State {
@@ -29,16 +31,30 @@ const state = ref<State>(), editor = ref<Mapping>(), deleting = ref<Mapping>()
 const settingsDraft = ref<Settings>(), savedSettings = ref<Settings>()
 const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true)
 const sourceDialog = ref(false), outputDialog = ref(false)
+const scanMode = ref<'increment' | 'full'>('increment')
 const lifecycle = new AbortController()
 const addButton = ref<HTMLButtonElement>()
 let timer: number | undefined, pendingRefresh: Promise<void> | undefined, generation = 0, snapshot = ''
 const active = (m: Mapping) => m.status === 'running' || m.queued && !m.lastError
+const pendingMetadata = (m: Mapping) => (m.metadataPending || 0) > 0
+const downloadingMetadata = (m: Mapping) => (m.metadataPending || 0) > (m.metadataFailed || 0)
 const editorDirty = computed(() => !!editor.value && JSON.stringify(editor.value) !== snapshot)
 const settingsDirty = computed(() => JSON.stringify(settingsDraft.value) !== JSON.stringify(savedSettings.value))
 const needsSettingsSave = computed(() => !!settingsDraft.value && (!state.value?.settingsSaved || settingsDirty.value))
 const unsaved = computed(() => editorDirty.value || settingsDirty.value)
 const settingsReady = computed(() => !!state.value?.settingsSaved && !settingsDirty.value)
-const hasSchedule = computed(() => !!state.value && [state.value.settings.eventIntervalSeconds, state.value.settings.reconcileIntervalHours, state.value.settings.fullScanIntervalHours].some(value => value > 0))
+const hasSchedule = computed(() => !!state.value && (state.value.settings.eventIntervalSeconds > 0 || state.value.settings.reconcileEnabled && state.value.settings.reconcileIntervalHours > 0 || state.value.settings.fullScanEnabled && state.value.settings.fullScanIntervalHours > 0))
+const scanEnabled = computed({
+  get: () => !!settingsDraft.value?.[scanMode.value === 'increment' ? 'reconcileEnabled' : 'fullScanEnabled'],
+  set: (value: boolean) => { if (settingsDraft.value) settingsDraft.value[scanMode.value === 'increment' ? 'reconcileEnabled' : 'fullScanEnabled'] = value },
+})
+const scanInterval = computed({
+  get: () => settingsDraft.value?.[scanMode.value === 'increment' ? 'reconcileIntervalHours' : 'fullScanIntervalHours'] || (scanMode.value === 'increment' ? 24 : 720),
+  set: (value: number) => { if (settingsDraft.value) settingsDraft.value[scanMode.value === 'increment' ? 'reconcileIntervalHours' : 'fullScanIntervalHours'] = value },
+})
+const scanIntervals = computed(() => scanMode.value === 'increment' ? [6, 12, 24, 72, 168] : [24, 72, 168, 336, 720])
+const scanName = computed(() => scanMode.value === 'increment' ? '增量核对' : '全量扫描')
+const scanHelp = computed(() => scanMode.value === 'increment' ? '比对目录树，补齐本地缺失文件，减少文件资料请求。' : '读取全部文件资料，核验同路径替换；未变化文件跳过。')
 const canStart = computed(() => settingsReady.value && !!state.value?.accountReady)
 const startHint = computed(() => !state.value?.settingsSaved ? '请先保存基础设置' : settingsDirty.value ? '请先保存或还原基础设置的修改' : !state.value?.accountReady ? '请先配置并登录主账号' : undefined)
 const strmPreview = computed(() => (settingsDraft.value?.baseUrl.trim().replace(/\/+$/, '') || 'http://NAS_IP:8080') + '/api/drive115/ecjq9ichcb40lzlvx/123456789/0123456789ABCDEF0123456789ABCDEF01234567/1073741824/Example.S01E01.mkv')
@@ -46,7 +62,12 @@ const changedAccount = (m: Mapping) => !!state.value && m.accountId !== state.va
 const requestSignal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(60000)])
 const request = <T,>(path = '', init: RequestInit = {}) => p115Request<T>(props.token, 'drive-strm' + path, { ...init, signal: requestSignal() })
 const failure = (e: unknown) => e instanceof Error && e.name === 'TimeoutError' ? '请求超时，请重新加载确认结果后再重试' : e instanceof Error ? e.message : '操作失败'
-function acceptSettings(value: Settings) { savedSettings.value = { ...value }; settingsDraft.value = { ...value } }
+function acceptSettings(value: Settings) {
+  const settings = { ...value }
+  if (settings.reconcileIntervalHours === 0) { settings.reconcileEnabled = false; settings.reconcileIntervalHours = 24 }
+  if (settings.fullScanIntervalHours === 0) { settings.fullScanEnabled = false; settings.fullScanIntervalHours = 720 }
+  savedSettings.value = { ...settings }; settingsDraft.value = settings
+}
 function refresh(): Promise<void> {
   if (pendingRefresh) return pendingRefresh
   if (document.hidden || lifecycle.signal.aborted) return Promise.resolve()
@@ -69,8 +90,8 @@ function refresh(): Promise<void> {
 function poll() {
   window.clearTimeout(timer)
   if (lifecycle.signal.aborted || document.hidden) return
-  const running = state.value?.mappings.some(active)
-  if (!running && !state.value?.mappings.some(m => m.enabled)) return
+  const running = state.value?.mappings.some(m => active(m) || downloadingMetadata(m))
+  if (!running && !state.value?.mappings.some(m => m.enabled || pendingMetadata(m))) return
   timer = window.setTimeout(async () => { await refresh(); poll() }, running ? 4000 : 30000)
 }
 async function act(key: string, fn: () => Promise<void>, dialog = false) {
@@ -83,7 +104,9 @@ async function act(key: string, fn: () => Promise<void>, dialog = false) {
 async function saveSettings() {
   if (!needsSettingsSave.value) return
   await act('settings', async () => {
-    const settings = await request<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settingsDraft.value) })
+    const input = { ...settingsDraft.value! }
+    if (!input.metadataRateEnabled && (!Number.isInteger(input.metadataFilesPerSecond) || input.metadataFilesPerSecond < 1 || input.metadataFilesPerSecond > 10)) input.metadataFilesPerSecond = savedSettings.value?.metadataFilesPerSecond || 2
+    const settings = await request<Settings>('/settings', { method: 'PUT', body: JSON.stringify(input) })
     generation++; acceptSettings(settings)
     if (state.value) { state.value.settings = settings; state.value.settingsSaved = true }
     notice.value = '基础设置已保存，周期将在后续调度中生效；进行中的任务继续，已有 STRM 可通过完整扫描更新。'
@@ -93,7 +116,7 @@ async function saveSettings() {
 function resetSettings() { if (savedSettings.value) acceptSettings(state.value?.settings || savedSettings.value) }
 function edit(m?: Mapping) {
   if (busy.value || !canStart.value) return
-  editor.value = m ? { ...m, stats: { ...m.stats } } : { id: '', name: '', accountId: state.value?.primaryAccountId || '', sourceCID: '', sourcePath: '', outputDir: '', enabled: true, status: 'idle', queued: false, stats: { videos: 0, written: 0, unchanged: 0, metadataWritten: 0, failed: 0 } }
+  editor.value = m ? { ...m, stats: { ...m.stats } } : { id: '', name: '', accountId: state.value?.primaryAccountId || '', sourceCID: '', sourcePath: '', outputDir: '', enabled: true, status: 'idle', queued: false, metadataPending: 0, metadataFailed: 0, stats: { videos: 0, written: 0, unchanged: 0, metadataWritten: 0, failed: 0 } }
   snapshot = JSON.stringify(editor.value); dialogError.value = ''
 }
 function closeEditor() { if (!busy.value && (!editorDirty.value || window.confirm('放弃未保存的修改？'))) editor.value = undefined }
@@ -136,7 +159,8 @@ async function remove() {
   await act('delete', async () => { await request('/' + deleting.value!.id, { method: 'DELETE' }); generation++; deleting.value = undefined; notice.value = '目录配置已删除，本地与网盘文件均已保留'; await refresh(); await nextTick(); addButton.value?.focus() }, true)
 }
 function date(value?: string) { return value && !value.startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检查' }
-function status(m: Mapping) { return m.status === 'running' ? (m.mode === 'changes' ? '正在检查变更' : m.mode === 'tree' ? '正在核对目录' : '正在完整扫描') : m.status === 'stopped' ? '已停止' : m.lastError ? '需检查' : m.queued ? '等待扫描' : !m.enabled ? '已暂停' : hasSchedule.value ? '监控中' : '仅手动' }
+function status(m: Mapping) { return m.status === 'running' ? (m.mode === 'changes' ? '正在检查变更' : m.mode === 'tree' ? '正在核对目录' : '正在完整扫描') : m.status === 'stopped' ? '已停止' : m.lastError ? '需检查' : m.queued ? '等待扫描' : pendingMetadata(m) ? downloadingMetadata(m) ? '附件补齐中' : '附件待重试' : !m.enabled ? '已暂停' : hasSchedule.value ? '监控中' : '仅手动' }
+function intervalLabel(hours: number) { return hours < 24 ? `每 ${hours} 小时` : hours === 24 ? '每天' : hours === 168 ? '每周' : `每 ${hours / 24} 天` }
 async function visible() { window.clearTimeout(timer); if (!document.hidden) await refresh(); poll() }
 function beforeUnload(e: BeforeUnloadEvent) { if (unsaved.value || busy.value) { e.preventDefault(); e.returnValue = '' } }
 onBeforeRouteLeave(() => {
@@ -169,14 +193,28 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
           <div><label class="ds-outlined"><span>视频后缀</span><input v-model="settingsDraft.videoExtensions" required placeholder="mp4,mkv,avi" aria-describedby="ds-video-help" /></label><p id="ds-video-help" class="ds-help">逗号分隔，为匹配的视频生成 STRM。</p></div>
           <div><label class="ds-outlined"><span>元数据后缀</span><input v-model="settingsDraft.metadataExtensions" placeholder="srt,ass,ssa" aria-describedby="ds-metadata-help" /></label><p id="ds-metadata-help" class="ds-help">按原名下载字幕、NFO 或图片，留空不下载；单个最多 32 MB。</p></div>
           <div><label class="ds-outlined"><span>最小文件大小（MB）</span><input v-model.number="settingsDraft.minSizeMB" type="number" required min="0" max="1073741824" step="1" aria-describedby="ds-size-help" /></label><p id="ds-size-help" class="ds-help">0 表示不限制，仅过滤视频，不影响元数据。</p></div>
+          <div class="ds-download-controls">
+            <SettingSwitch v-model="settingsDraft.metadataRateEnabled" label="附件下载限速" :disabled="!!busy" />
+            <label class="ds-outlined ds-rate-input"><span>每秒最多（个）</span><input v-model.number="settingsDraft.metadataFilesPerSecond" type="number" :required="settingsDraft.metadataRateEnabled" min="1" max="10" step="1" :disabled="!settingsDraft.metadataRateEnabled" aria-describedby="ds-rate-help" /></label>
+            <p id="ds-rate-help" class="ds-help">所有目录共用，限制附件下载的启动频率；未变化文件直接跳过。</p>
+          </div>
         </fieldset>
         <fieldset :disabled="!!busy" class="ds-schedules" aria-describedby="ds-schedules-help">
           <legend>自动任务</legend>
-          <p id="ds-schedules-help" class="ds-help">仅用于开启监控的目录；各项独立运行，关闭后仍可手动检查或完整扫描。</p>
+          <p id="ds-schedules-help" class="ds-help">仅用于开启监控的目录；增量与全量分别保存开关和周期，可同时启用。</p>
           <div class="ds-schedule-grid">
             <div><label class="ds-outlined"><span>事件检查间隔</span><select v-model.number="settingsDraft.eventIntervalSeconds" aria-describedby="ds-event-help"><option :value="0">关闭</option><option :value="20">每 20 秒</option><option :value="60">每 1 分钟</option><option :value="300">每 5 分钟</option><option :value="900">每 15 分钟</option><option :value="1800">每 30 分钟</option></select></label><p id="ds-event-help" class="ds-help">共享读取生活事件，按变更更新目录。</p></div>
-            <div><label class="ds-outlined"><span>目录核对周期</span><select v-model.number="settingsDraft.reconcileIntervalHours" aria-describedby="ds-reconcile-help"><option :value="0">关闭</option><option :value="6">每 6 小时</option><option :value="12">每 12 小时</option><option :value="24">每天</option><option :value="72">每 3 天</option><option :value="168">每周</option></select></label><p id="ds-reconcile-help" class="ds-help">比对目录树，补齐本地缺失文件。</p></div>
-            <div><label class="ds-outlined"><span>全量扫描周期</span><select v-model.number="settingsDraft.fullScanIntervalHours" aria-describedby="ds-full-help"><option :value="0">关闭</option><option :value="24">每天</option><option :value="72">每 3 天</option><option :value="168">每周</option><option :value="336">每 14 天</option><option :value="720">每 30 天</option></select></label><p id="ds-full-help" class="ds-help">读取全部文件资料，核验同路径替换。</p></div>
+            <div class="ds-scan-settings">
+              <div class="ds-modes" role="radiogroup" aria-label="定时扫描设置">
+                <label><input v-model="scanMode" type="radio" name="drive-scan-mode" value="increment" /><span>增量核对</span></label>
+                <label><input v-model="scanMode" type="radio" name="drive-scan-mode" value="full" /><span>全量扫描</span></label>
+              </div>
+              <div class="ds-scan-controls">
+                <SettingSwitch v-model="scanEnabled" :label="'自动' + scanName" :disabled="!!busy" />
+                <label class="ds-outlined"><span>{{ scanName }}周期</span><select v-model.number="scanInterval" :disabled="!scanEnabled" aria-describedby="ds-scan-help"><option v-for="hours in scanIntervals" :key="hours" :value="hours">{{ intervalLabel(hours) }}</option></select></label>
+              </div>
+              <p id="ds-scan-help" class="ds-help">{{ scanHelp }}</p>
+            </div>
           </div>
         </fieldset>
         <details class="ds-preview"><summary><IconChevronRight class="ds-chevron" :size="14" aria-hidden="true" /><IconCode :size="16" aria-hidden="true" />STRM 内容预览</summary><code>{{ strmPreview }}</code><p class="ds-help">示例字段，生成时替换为实际文件信息；支持播放器直接播放，也支持通过 Cinema115 的 Emby 反代播放。</p></details>
@@ -191,15 +229,15 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         <div v-if="!state.mappings.length" class="ds-empty"><IconFolder :size="22" aria-hidden="true" /><p>尚未添加目录，选择主网盘来源与本地输出目录即可开始。</p></div>
         <div v-else class="ds-grid">
           <article v-for="m in state.mappings" :key="m.id" class="ds-card ambient-glow" :aria-label="m.name">
-            <header class="ds-heading"><span class="ds-symbol"><IconCloud :size="21" aria-hidden="true" /></span><div class="ds-name"><h3 :title="m.name">{{ m.name }}</h3><span class="ds-status" aria-live="polite" :class="{ running: active(m), attention: !!m.lastError }"><IconLoader2 v-if="active(m)" class="ds-spin" :size="12" aria-hidden="true" />{{ status(m) }}</span></div><button type="button" class="ds-icon" :disabled="!!busy || active(m) || !canStart" :title="startHint || '编辑目录'" :aria-label="'编辑' + m.name" @click="edit(m)"><IconEdit :size="17" aria-hidden="true" /></button><button type="button" class="ds-icon" :disabled="!!busy || active(m)" :aria-label="'删除' + m.name" @click="deleting = m; dialogError = ''"><IconTrash :size="17" aria-hidden="true" /></button></header>
+            <header class="ds-heading"><span class="ds-symbol"><IconCloud :size="21" aria-hidden="true" /></span><div class="ds-name"><h3 :title="m.name">{{ m.name }}</h3><span class="ds-status" aria-live="polite" :class="{ running: active(m) || downloadingMetadata(m), attention: !!m.lastError || !!m.metadataFailed }"><IconLoader2 v-if="active(m) || downloadingMetadata(m)" class="ds-spin" :size="12" aria-hidden="true" />{{ status(m) }}</span></div><button type="button" class="ds-icon" :disabled="!!busy || active(m) || !canStart" :title="startHint || '编辑目录'" :aria-label="'编辑' + m.name" @click="edit(m)"><IconEdit :size="17" aria-hidden="true" /></button><button type="button" class="ds-icon" :disabled="!!busy || active(m)" :aria-label="'删除' + m.name" @click="deleting = m; dialogError = ''"><IconTrash :size="17" aria-hidden="true" /></button></header>
             <dl class="ds-paths"><div><dt><IconCloud :size="15" aria-hidden="true" />来源</dt><dd :title="m.sourcePath">{{ m.sourcePath || m.sourceCID }}</dd></div><div><dt><IconFolderCheck :size="15" aria-hidden="true" />输出</dt><dd :title="strmDirectoryPath(m.outputDir)">{{ strmDirectoryPath(m.outputDir) }}</dd></div></dl>
-            <div class="ds-counts"><span>本次视频 <b>{{ m.stats.videos }}</b></span><span>写入 {{ m.stats.written }}</span><span>未变 {{ m.stats.unchanged }}</span><span v-if="m.stats.metadataWritten">附件 {{ m.stats.metadataWritten }}</span><span v-if="m.stats.failed" class="ds-failed">失败 {{ m.stats.failed }}</span></div>
+            <div class="ds-counts"><span>本次视频 <b>{{ m.stats.videos }}</b></span><span>写入 {{ m.stats.written }}</span><span>未变 {{ m.stats.unchanged }}</span><span v-if="m.stats.metadataWritten">附件 {{ m.stats.metadataWritten }}</span><span v-if="m.metadataPending">待补附件 {{ m.metadataPending }}</span><span v-if="m.metadataFailed" class="ds-retrying">待重试 {{ m.metadataFailed }}</span><span v-if="m.stats.failed" class="ds-failed">失败 {{ m.stats.failed }}</span></div>
             <p v-if="changedAccount(m)" class="ds-failed ds-message">主账号已变化，请重新选择来源目录。</p><p v-else-if="m.lastError" class="ds-failed ds-message">{{ m.lastError }}</p>
-            <div class="ds-meta"><span>最近扫描 {{ date(m.lastScanAt) }}</span><div><button v-if="active(m)" type="button" :disabled="!!busy" :aria-label="'停止' + m.name + '本次扫描'" @click="stop(m)">停止本次</button><button type="button" :disabled="!!busy || !m.enabled && (changedAccount(m) || !canStart)" :title="!m.enabled ? startHint : undefined" :aria-label="(m.enabled ? '暂停' : '开启') + m.name + '监控'" @click="toggle(m, !m.enabled)">{{ m.enabled ? '暂停监控' : '开启监控' }}</button></div></div>
+            <div class="ds-meta"><span>最近扫描 {{ date(m.lastScanAt) }}</span><div><button v-if="active(m) || pendingMetadata(m)" type="button" :disabled="!!busy" :aria-label="'停止' + m.name + (active(m) ? '本次扫描' : '附件补齐')" @click="stop(m)">停止本次</button><button type="button" :disabled="!!busy || !m.enabled && (changedAccount(m) || !canStart)" :title="!m.enabled ? startHint : undefined" :aria-label="(m.enabled ? '暂停' : '开启') + m.name + '监控'" @click="toggle(m, !m.enabled)">{{ m.enabled ? '暂停监控' : '开启监控' }}</button></div></div>
             <footer class="ds-actions"><button type="button" class="ds-button ds-check" :disabled="!!busy || active(m) || changedAccount(m) || !canStart || !m.enabled" :title="startHint || (!m.enabled ? '开启监控后检查事件更新；也可直接完整扫描' : undefined)" @click="run(m, false)"><IconRefresh :size="16" aria-hidden="true" />{{ active(m) ? '检查中…' : '检查更新' }}</button><button type="button" class="ds-button" :disabled="!!busy || active(m) || changedAccount(m) || !canStart" :title="startHint" @click="run(m, true)"><IconSearch :size="16" aria-hidden="true" />完整扫描补齐</button></footer>
           </article>
         </div>
-        <details class="ds-notes"><summary>同步说明</summary><p>事件检查、目录核对和全量扫描按各自周期执行，目录暂停后不参与自动任务。修改设置不额外安排扫描，已经接受的任务会继续；已有 STRM 可手动完整扫描更新。目录树导出 TXT 由系统清理；网盘源文件与旧本地文件均保留。</p></details>
+        <details class="ds-notes"><summary>同步说明</summary><p>事件检查、增量核对和全量扫描按各自周期执行，目录暂停后不参与自动任务。修改设置不额外安排扫描，已经接受的任务会继续；STRM 先生成，附件在后台补齐，失败附件单独重试。停止本次会清除未完成的附件待办，已生成文件保留；已有 STRM 可手动完整扫描更新。同一文件改名或移动后，新输出生成成功才清理旧输出及空目录，不保留手动修改；云端删除不自动删除本地文件。目录树导出 TXT 由系统清理，网盘源文件保留。</p></details>
       </section>
     </template>
     <P115ActionDialog v-if="editor" :title="editor.id ? '编辑目录' : '新增目录'" :busy="!!busy" @close="closeEditor">
@@ -229,13 +267,16 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .ds-save-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
 .ds-help { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.7; margin-top:7px; }
 .ds-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 20px; margin-top:22px; min-width:0; }
-.ds-schedules { margin-top:20px; min-width:0; }.ds-schedules legend { @apply text-slate-700 dark:text-slate-200; font-size:13px; font-weight:500; }.ds-schedule-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; margin-top:20px; }
+.ds-download-controls { @apply bg-slate-50 dark:bg-slate-800/50; grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:14px 18px; border-radius:10px; padding:13px 14px; }.ds-rate-input { width:132px; flex-shrink:0; }.ds-download-controls .ds-help { flex:1; min-width:180px; margin:0; }
+.ds-schedules { margin-top:20px; min-width:0; }.ds-schedules legend { @apply text-slate-700 dark:text-slate-200; font-size:13px; font-weight:500; }.ds-schedule-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:20px; margin-top:20px; }
+.ds-scan-settings { min-width:0; }.ds-modes { @apply bg-slate-100 dark:bg-slate-800; display:flex; padding:3px; border-radius:9px; width:fit-content; }.ds-modes label { position:relative; cursor:pointer; }.ds-modes input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:inherit; z-index:1; }.ds-modes span { @apply text-slate-600 dark:text-slate-300; display:block; padding:6px 15px; border-radius:7px; font-size:13px; line-height:20px; }.ds-modes input:checked+span { @apply bg-blue-600 text-white dark:bg-blue-600 dark:text-white; box-shadow:0 1px 3px rgb(15 23 42 / .12); }.ds-modes input:focus-visible+span { outline:2px solid #3b82f6; outline-offset:2px; }.ds-modes input:disabled+span { cursor:not-allowed; opacity:.45; }.ds-scan-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(140px,1fr); align-items:center; gap:14px; margin-top:17px; }.ds-scan-settings>.ds-help { min-height:3.4em; }
 .ds-outlined { @apply border border-slate-300 dark:border-slate-600; position:relative; display:block; min-width:0; border-radius:8px; transition:border-color .15s; }
 .ds-outlined:focus-within { @apply border-blue-500; box-shadow:0 0 0 1px #3b82f6; }
 .ds-outlined>span { @apply bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300; position:absolute; top:-9px; left:9px; padding:0 5px; font-size:12px; line-height:17px; }
 .ds-outlined>input,.ds-outlined>select { @apply text-slate-800 dark:text-slate-100; display:block; width:100%; min-width:0; height:40px; padding:0 13px; border:0; border-radius:inherit; background:transparent; font-size:13px; outline:none; }
 .ds-outlined>select { @apply dark:[color-scheme:dark]; padding-right:32px; cursor:pointer; }.ds-outlined option { @apply bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100; }
 .ds-outlined>input:focus-visible,.ds-outlined>select:focus-visible { outline:none; }
+.ds-outlined:has(>input:disabled),.ds-outlined:has(>select:disabled) { @apply border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50; }.ds-outlined>input:disabled,.ds-outlined>select:disabled { @apply text-slate-400 dark:text-slate-500; cursor:not-allowed; }
 .ds-preview { margin-top:14px; }.ds-preview summary { @apply text-slate-600 dark:text-slate-300; display:flex; align-items:center; gap:6px; width:fit-content; min-height:32px; cursor:pointer; list-style:none; font-size:12px; }.ds-preview summary::-webkit-details-marker { display:none; }.ds-chevron { transition:transform .15s; }.ds-preview[open] .ds-chevron { transform:rotate(90deg); }.ds-preview code { @apply rounded-lg bg-slate-50 text-slate-700 dark:bg-slate-950 dark:text-slate-300; display:block; padding:10px 12px; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
 .ds-directories { margin-top:24px; }.ds-directories>.ds-section-heading { margin-bottom:14px; }.ds-start-hint { margin:-4px 0 12px; }
 .ds-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); gap:14px; }
@@ -245,12 +286,13 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .ds-icon { @apply text-slate-400 hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-slate-800; display:grid; place-items:center; width:32px; height:36px; border-radius:8px; flex-shrink:0; }
 .ds-paths { display:grid; gap:8px; font-size:13px; }.ds-paths>div { display:flex; align-items:baseline; gap:12px; }.ds-paths dt { @apply text-slate-500 dark:text-slate-400; display:flex; align-items:center; gap:6px; flex-shrink:0; }.ds-paths dd { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ds-counts { @apply bg-slate-50 dark:bg-slate-800/60; display:flex; flex-wrap:wrap; gap:5px 13px; border-radius:9px; padding:9px 10px; font-size:12px; margin-top:14px; }.ds-counts b { font-size:14px; font-variant-numeric:tabular-nums; }
+.ds-retrying { @apply text-amber-700 dark:text-amber-400; }
 .ds-meta { @apply text-slate-500 dark:text-slate-400; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:5px; font-size:12px; margin:10px 0; }.ds-meta button { @apply text-blue-600 dark:text-blue-400; padding:5px 0 5px 8px; }.ds-message { font-size:12px; line-height:1.6; margin-top:8px; overflow-wrap:anywhere; }.ds-failed { @apply text-red-600 dark:text-red-400; }
 .ds-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.ds-button { @apply bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700; display:inline-flex; align-items:center; justify-content:center; gap:6px; border-radius:9px; min-height:36px; padding:7px 11px; font-size:13px; font-weight:500; }.ds-primary { @apply bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-500; }.ds-check { @apply bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60; }.ds-danger { @apply bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:text-white; }.ds-text-button { @apply text-blue-600 dark:text-blue-400; font-size:12px; padding:8px 0; }button:disabled { cursor:not-allowed; opacity:.45; }button:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #3b82f6; outline-offset:3px; }
 .ds-alert { @apply rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300; padding:12px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.ds-notice { @apply text-blue-700 dark:text-blue-300; margin-bottom:12px; font-size:13px; }.ds-empty { @apply rounded-xl bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400; display:flex; align-items:center; gap:10px; padding:18px; font-size:13px; line-height:1.7; }.ds-empty>svg { flex-shrink:0; }
 .ds-notes { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.8; margin-top:12px; }.ds-notes summary { width:fit-content; min-height:32px; cursor:pointer; }.ds-notes p { margin-top:4px; max-width:900px; }
 .ds-form { display:grid; gap:15px; }.ds-form label { display:grid; gap:6px; font-size:13px; }.ds-form input { @apply border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100; border-radius:8px; min-width:0; width:100%; height:36px; padding:0 10px; font-size:13px; }.ds-form small { @apply text-slate-500 dark:text-slate-400; display:block; font-size:12px; line-height:1.6; margin-top:4px; }.ds-label { font-size:13px; display:block; margin-bottom:6px; }.ds-directory { @apply bg-slate-50 dark:bg-slate-800; display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px; border-radius:8px; text-align:left; font-size:13px; }.ds-directory>span:first-of-type { min-width:0; flex:1; overflow-wrap:anywhere; }.ds-link { @apply text-blue-600 dark:text-blue-400; font-size:12px; flex-shrink:0; }.ds-output { display:flex; gap:8px; }.ds-output input { flex:1; }.ds-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }.ds-spin { animation:ds-spin 1s linear infinite; }@keyframes ds-spin { to { transform:rotate(360deg) } }
-@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid,.ds-schedule-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-directory { min-height:44px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-form input,.ds-outlined>input,.ds-outlined>select { height:44px; font-size:16px; } }
-@media(max-width:359px) { .ds-actions { grid-template-columns:1fr; }.ds-settings>.ds-section-heading { flex-wrap:wrap; }.ds-save-actions { margin-left:auto; } }
+@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid,.ds-schedule-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-scan-controls { grid-template-columns:minmax(0,1fr) minmax(118px,1fr); gap:10px; }.ds-modes { width:100%; }.ds-modes label { flex:1; text-align:center; }.ds-modes span { min-height:38px; padding-block:9px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-directory { min-height:44px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-form input,.ds-outlined>input,.ds-outlined>select { height:44px; font-size:16px; } }
+@media(max-width:359px) { .ds-actions,.ds-scan-controls { grid-template-columns:1fr; }.ds-rate-input { width:100%; }.ds-settings>.ds-section-heading { flex-wrap:wrap; }.ds-save-actions { margin-left:auto; } }
 @media(prefers-reduced-motion:reduce) { .ds-spin { animation:none; }.ds-chevron,.ds-outlined { transition:none; } }
 </style>

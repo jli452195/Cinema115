@@ -28,6 +28,7 @@ type driveSTRMTestClient struct {
 	pageErr       error
 	onIdentity    func(context.Context)
 	onMetadata    func()
+	onDownload    func(context.Context)
 	changedCount  bool
 }
 
@@ -71,15 +72,20 @@ func (f *driveSTRMTestClient) DriveFiles(ctx context.Context, cid string, offset
 	return &p115.SharePage{Files: append([]p115.ShareFile(nil), data[offset:min(offset+2, len(data))]...), Count: count, Offset: offset}, nil
 }
 
-func (f *driveSTRMTestClient) ReadDriveMetadata(_ context.Context, file p115.ShareFile, cookie string) ([]byte, error) {
+func (f *driveSTRMTestClient) ReadDriveMetadata(ctx context.Context, file p115.ShareFile, cookie string) ([]byte, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.metadataCalls++
-	if f.onMetadata != nil {
-		f.onMetadata()
-	}
+	hook, download := f.onMetadata, f.onDownload
 	f.calls = append(f.calls, "metadata:"+file.ID+":"+cookie)
-	return append([]byte(nil), f.metadata[file.ID]...), f.metadataErr[file.ID]
+	data, err := append([]byte(nil), f.metadata[file.ID]...), f.metadataErr[file.ID]
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if download != nil {
+		download(ctx)
+	}
+	return data, err
 }
 
 func driveSTRMTestVideo(id, name string) p115.ShareFile {
@@ -115,6 +121,7 @@ func driveSTRMTestSetup(t *testing.T) (*DriveSTRMService, *storage.Store, *drive
 	s := NewDriveSTRMService(db, accounts, client, root)
 	settings := model.DefaultDriveSTRMSettings()
 	settings.BaseURL, settings.VideoExtensions, settings.MetadataExtensions = "https://cinema.example", "mkv,mp4", "ass,nfo,jpg"
+	settings.MetadataRateEnabled = false // Rate behavior is verified separately.
 	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -141,12 +148,17 @@ func driveSTRMTestAttempt(t *testing.T, s *DriveSTRMService) (model.DriveSTRMSta
 func TestDriveSTRMScanPersistsOwnershipAndRepairsMissingOutputs(t *testing.T) {
 	s, db, client, value, root := driveSTRMTestSetup(t)
 	ctx := context.Background()
-	client.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "movie.mkv"), {ID: "200", Name: "Season 01", Directory: true}, {ID: "10", Name: "poster.jpg", Size: 5, SHA1: strings.Repeat("B", 40)}, {ID: "11", Name: "ignored.zip", Size: 3}}
-	client.files["200"] = []p115.ShareFile{driveSTRMTestVideo("2", "Episode 01.mkv"), driveSTRMTestVideo("3", "Episode 02.mp4"), {ID: "12", Name: "Episode 01.ass", Size: 3, SHA1: strings.Repeat("C", 40)}}
+	client.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "movie.mkv"), {ID: "200", Name: "Season 01", Directory: true}, {ID: "10", Name: "poster.jpg", Size: 5, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("B", 40)}, {ID: "11", Name: "ignored.zip", Size: 3}}
+	client.files["200"] = []p115.ShareFile{driveSTRMTestVideo("2", "Episode 01.mkv"), driveSTRMTestVideo("3", "Episode 02.mp4"), {ID: "12", Name: "Episode 01.ass", Size: 3, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("C", 40)}}
 	client.metadata["10"], client.metadata["12"] = []byte("image"), []byte("sub")
 	stats, err := driveSTRMTestAttempt(t, s)
-	if err != nil || stats.Videos != 3 || stats.Written != 3 || stats.MetadataWritten != 2 || stats.Directories != 2 {
+	if err != nil || stats.Videos != 3 || stats.Written != 3 || stats.MetadataWritten != 0 || stats.Directories != 2 {
 		t.Fatalf("stats=%+v err=%v", stats, err)
+	}
+	driveSTRMTestDrainAttachments(t, s)
+	saved, _ := db.GetDriveSTRM(ctx, value.ID)
+	if saved.Stats.MetadataWritten != 2 {
+		t.Fatalf("attachments not counted: %+v", saved.Stats)
 	}
 	filename := filepath.Join(root, "strm", "Season 01", "Episode 01.strm")
 	data, err := os.ReadFile(filename)
@@ -174,7 +186,7 @@ func TestDriveSTRMScanPersistsOwnershipAndRepairsMissingOutputs(t *testing.T) {
 	if err != nil || stats.Written != 1 || stats.Unchanged != 4 {
 		t.Fatalf("repair stats=%+v err=%v", stats, err)
 	}
-	// Update managed bytes after a service-address change, but preserve a hand edit.
+	// Managed outputs follow the current settings, including hand-edited files.
 	settings, err := s.Settings(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -190,12 +202,12 @@ func TestDriveSTRMScanPersistsOwnershipAndRepairsMissingOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats, err = driveSTRMTestAttempt(t, s)
-	if err == nil || stats.Failed != 1 || stats.Written != 2 {
+	if err != nil || stats.Failed != 0 || stats.Written != 3 {
 		t.Fatalf("edit stats=%+v err=%v", stats, err)
 	}
 	data, _ = os.ReadFile(filename)
-	if string(data) != "manual output\n" {
-		t.Fatal("hand-edited file overwritten")
+	if !strings.HasPrefix(string(data), "https://new.example/") {
+		t.Fatal("managed hand-edited file did not follow the new settings")
 	}
 	if err := s.Delete(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -210,21 +222,40 @@ func TestDriveSTRMScanPersistsOwnershipAndRepairsMissingOutputs(t *testing.T) {
 }
 
 func TestDriveSTRMMetadataFailureDoesNotBlockVideosOrRefetchUnchangedAttachments(t *testing.T) {
-	s, _, client, value, _ := driveSTRMTestSetup(t)
-	client.files["100"] = []p115.ShareFile{{ID: "10", Name: "poster.jpg", Size: 5, SHA1: strings.Repeat("B", 40)}, driveSTRMTestVideo("1", "movie.mkv"), {ID: "12", Name: "movie.ass", Size: 3, SHA1: strings.Repeat("C", 40)}}
+	s, db, client, value, _ := driveSTRMTestSetup(t)
+	ctx := context.Background()
+	client.files["100"] = []p115.ShareFile{{ID: "10", Name: "poster.jpg", Size: 5, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("B", 40)}, driveSTRMTestVideo("1", "movie.mkv"), {ID: "12", Name: "movie.ass", Size: 3, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("C", 40)}}
 	client.metadataErr["10"] = errors.New("download failed")
 	client.metadata["12"] = []byte("sub")
 	stats, err := driveSTRMTestAttempt(t, s)
-	if err == nil || stats.Written != 1 || stats.MetadataWritten != 1 || stats.Failed != 1 {
+	if err != nil || stats.Written != 1 || stats.MetadataWritten != 0 || stats.Failed != 0 {
 		t.Fatalf("stats=%+v err=%v", stats, err)
 	}
-	client.metadataErr["10"], client.metadata["10"] = nil, []byte("image")
-	if err := s.Queue(context.Background(), value.ID, true); err != nil {
+	driveSTRMTestDrainAttachments(t, s)
+	saved, _ := db.GetDriveSTRM(ctx, value.ID)
+	jobs, _ := db.ListDriveSTRMAttachments(ctx, 10)
+	if saved.FullScan || saved.FailureCount != 0 || len(jobs) != 1 || jobs[0].Attempts != 1 || client.metadataCalls != 2 {
+		t.Fatalf("attachment failure affected scan: mapping=%+v jobs=%+v calls=%d", saved, jobs, client.metadataCalls)
+	}
+	// A repeat discovery must retain backoff and never redownload the subtitle.
+	if err := s.Queue(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	stats, err = driveSTRMTestAttempt(t, s)
-	if err != nil || stats.Written != 0 || stats.MetadataWritten != 1 || stats.Unchanged != 2 || client.metadataCalls != 3 {
-		t.Fatalf("retry stats=%+v downloads=%d err=%v", stats, client.metadataCalls, err)
+	if _, err := driveSTRMTestAttempt(t, s); err != nil {
+		t.Fatal(err)
+	}
+	driveSTRMTestDrainAttachments(t, s)
+	if client.metadataCalls != 2 {
+		t.Fatal("repeat discovery reset the attachment backoff")
+	}
+	client.metadataErr["10"], client.metadata["10"] = nil, []byte("image")
+	if err := db.RetryDriveSTRMAttachment(ctx, jobs[0], "retry due", time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	before := len(client.calls)
+	driveSTRMTestDrainAttachments(t, s)
+	if client.metadataCalls != 3 || len(client.calls) != before+1 || !strings.HasPrefix(client.calls[before], "metadata:10:") {
+		t.Fatalf("retry listed directories or refetched successful file: %v", client.calls[before:])
 	}
 }
 
@@ -310,7 +341,7 @@ func TestDriveSTRMDirectoryEventsAreScopedAndCoalesced(t *testing.T) {
 		t.Fatal(err)
 	}
 	saved, _ = db.GetDriveSTRM(ctx, value.ID)
-	if !saved.Queued || !saved.FullScan {
+	if !saved.Queued || saved.FullScan {
 		t.Fatal("enabling monitoring failed to repair paused period")
 	}
 }
@@ -459,7 +490,7 @@ func TestDriveSTRMChangedPaginationIsNotReportedComplete(t *testing.T) {
 
 func TestDriveSTRMAllVideosPrecedeAttachmentDownloads(t *testing.T) {
 	s, _, client, _, root := driveSTRMTestSetup(t)
-	client.files["100"] = []p115.ShareFile{{ID: "10", Name: "poster.jpg", Size: 5, SHA1: strings.Repeat("A", 40)}, driveSTRMTestVideo("1", "a.mkv"), driveSTRMTestVideo("2", "last.mkv")}
+	client.files["100"] = []p115.ShareFile{{ID: "10", Name: "poster.jpg", Size: 5, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("A", 40)}, driveSTRMTestVideo("1", "a.mkv"), driveSTRMTestVideo("2", "last.mkv")}
 	client.metadata["10"] = []byte("image")
 	client.onMetadata = func() {
 		if _, err := os.Stat(filepath.Join(root, "strm", "last.strm")); err != nil {
@@ -468,6 +499,10 @@ func TestDriveSTRMAllVideosPrecedeAttachmentDownloads(t *testing.T) {
 	}
 	if _, err := driveSTRMTestAttempt(t, s); err != nil {
 		t.Fatal(err)
+	}
+	driveSTRMTestDrainAttachments(t, s)
+	if client.metadataCalls != 1 {
+		t.Fatal("attachment was not downloaded")
 	}
 }
 

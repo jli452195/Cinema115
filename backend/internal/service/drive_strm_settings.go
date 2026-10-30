@@ -48,6 +48,9 @@ func (s *DriveSTRMService) SaveSettings(ctx context.Context, value model.DriveST
 		!slices.Contains([]int{0, 24, 72, 168, 336, 720}, value.FullScanIntervalHours) {
 		return value, generationInputError("请选择有效的自动监控周期")
 	}
+	if value.MetadataFilesPerSecond < 1 || value.MetadataFilesPerSecond > 10 {
+		return value, generationInputError("附件下载频率应为每秒 1 到 10 个文件")
+	}
 	normalize := func(extensions map[string]bool) string {
 		values := make([]string, 0, len(extensions))
 		for ext := range extensions {

@@ -9,14 +9,17 @@ type DriveSTRMSettings struct {
 	MetadataExtensions     string `json:"metadataExtensions"`
 	MinSizeMB              int64  `json:"minSizeMB"`
 	EventIntervalSeconds   int    `json:"eventIntervalSeconds"`
+	ReconcileEnabled       bool   `json:"reconcileEnabled"`
 	ReconcileIntervalHours int    `json:"reconcileIntervalHours"`
+	FullScanEnabled        bool   `json:"fullScanEnabled"`
 	FullScanIntervalHours  int    `json:"fullScanIntervalHours"`
+	MetadataRateEnabled    bool   `json:"metadataRateEnabled"`
+	MetadataFilesPerSecond int    `json:"metadataFilesPerSecond"`
 }
 
-// Zero periods explicitly disable their automatic job; seed defaults before
-// decoding JSON so an omitted field remains distinct from an explicit zero.
+// Seed defaults before decoding JSON; switches retain their selected periods.
 func DefaultDriveSTRMSettings() DriveSTRMSettings {
-	return DriveSTRMSettings{EventIntervalSeconds: 20, ReconcileIntervalHours: 24, FullScanIntervalHours: 168}
+	return DriveSTRMSettings{EventIntervalSeconds: 20, ReconcileEnabled: true, ReconcileIntervalHours: 24, FullScanIntervalHours: 720, MetadataRateEnabled: true, MetadataFilesPerSecond: 2}
 }
 
 // DriveSTRM mirrors an existing primary-account directory without modifying it.
@@ -41,6 +44,8 @@ type DriveSTRM struct {
 	NextScanAt         time.Time         `json:"nextScanAt,omitempty"`
 	LastError          string            `json:"lastError,omitempty"`
 	FailureCount       int               `json:"failureCount,omitempty"`
+	MetadataPending    int               `json:"metadataPending"`
+	MetadataFailed     int               `json:"metadataFailed"`
 	Stats              DriveSTRMStats    `json:"stats"`
 	UpdatedAt          time.Time         `json:"updatedAt"`
 }
@@ -65,4 +70,33 @@ type DriveSTRMFile struct {
 	Directory bool   `json:"directory"`
 	Digest    string `json:"digest,omitempty"`
 	Signature string `json:"signature,omitempty"`
+}
+
+// DriveSTRMAttachment freezes one accepted download without persisting its
+// credentials. Mutable queue state lives in dedicated database columns.
+type DriveSTRMAttachment struct {
+	ID            int64             `json:"-"`
+	Record        DriveSTRMFile     `json:"record"`
+	AccountID     string            `json:"accountId"`
+	CredentialKey string            `json:"credentialKey"`
+	SourceCID     string            `json:"sourceCID"`
+	OutputDir     string            `json:"outputDir"`
+	Settings      DriveSTRMSettings `json:"settings"`
+	Name          string            `json:"name"`
+	PickCode      string            `json:"pickCode"`
+	SHA1          string            `json:"sha1"`
+	Size          int64             `json:"size"`
+	Attempts      int               `json:"-"`
+	NextAttemptAt time.Time         `json:"-"`
+	LastError     string            `json:"-"`
+}
+
+// DriveSTRMCleanup retains previous local ownership after a successful move.
+// The worker verifies these saved bytes before deleting an obsolete output.
+type DriveSTRMCleanup struct {
+	ID            int64         `json:"-"`
+	Record        DriveSTRMFile `json:"record"`
+	Attempts      int           `json:"-"`
+	NextAttemptAt time.Time     `json:"-"`
+	LastError     string        `json:"-"`
 }

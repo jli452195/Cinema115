@@ -13,8 +13,8 @@ func driveSTRMDeadlines(value model.DriveSTRM, settings model.DriveSTRMSettings,
 	if !value.Enabled {
 		return tree, full
 	}
-	deadline := func(last time.Time, hours int) time.Time {
-		if hours == 0 {
+	deadline := func(last time.Time, hours int, enabled bool) time.Time {
+		if !enabled || hours == 0 {
 			return time.Time{}
 		}
 		// Stopping an attempt leaves successful checkpoints intact, while
@@ -27,7 +27,7 @@ func driveSTRMDeadlines(value model.DriveSTRM, settings model.DriveSTRMSettings,
 		}
 		return last.Add(time.Duration(hours) * time.Hour)
 	}
-	return deadline(value.LastReconcileAt, settings.ReconcileIntervalHours), deadline(value.LastFullScanAt, settings.FullScanIntervalHours)
+	return deadline(value.LastReconcileAt, settings.ReconcileIntervalHours, settings.ReconcileEnabled), deadline(value.LastFullScanAt, settings.FullScanIntervalHours, settings.FullScanEnabled)
 }
 
 func driveSTRMDue(deadline, now time.Time) bool {

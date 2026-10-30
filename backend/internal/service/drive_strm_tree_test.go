@@ -72,12 +72,13 @@ func (c *driveSTRMTreeTestClient) DeleteDriveTreeExport(ctx context.Context, id,
 func driveSTRMTreeSetup(t *testing.T) (*DriveSTRMService, *storage.Store, *driveSTRMTreeTestClient, model.DriveSTRM, string) {
 	t.Helper()
 	s, db, base, value, root := driveSTRMTestSetup(t)
-	base.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "movie.mkv"), {ID: "200", Name: "Season 01", Directory: true}, {ID: "10", Name: "poster.jpg", Size: 5, SHA1: strings.Repeat("B", 40)}}
+	base.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "movie.mkv"), {ID: "200", Name: "Season 01", Directory: true}, {ID: "10", Name: "poster.jpg", Size: 5, PickCode: "ecjq9ichcb40lzlvx", SHA1: strings.Repeat("B", 40)}}
 	base.files["200"] = []p115.ShareFile{driveSTRMTestVideo("2", "E01.mkv")}
 	base.metadata["10"] = []byte("image")
 	if _, err := driveSTRMTestAttempt(t, s); err != nil {
 		t.Fatal(err)
 	}
+	driveSTRMTestDrainAttachments(t, s)
 	client := &driveSTRMTreeTestClient{driveSTRMTestClient: base, leaves: []string{"movie.mkv", "Season 01/E01.mkv", "poster.jpg", "ignored.zip"}}
 	s.Client = client
 	base.calls = nil

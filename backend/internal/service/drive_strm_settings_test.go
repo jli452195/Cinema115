@@ -25,9 +25,12 @@ func TestDriveSTRMSettingsDoNotQueueAndFreezeRunningScan(t *testing.T) {
 	before, _ := db.GetDriveSTRM(ctx, mapping.ID)
 	<-s.wake // The original mapping creation woke the worker.
 	calls := len(client.calls)
-	settings := value.Settings
+	original := value.Settings
+	settings := original
 	settings.BaseURL = "https://new.example"
 	settings.EventIntervalSeconds, settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 6, 24
+	settings.ReconcileEnabled, settings.FullScanEnabled = false, true
+	settings.MetadataRateEnabled, settings.MetadataFilesPerSecond = true, 5
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +38,11 @@ func TestDriveSTRMSettingsDoNotQueueAndFreezeRunningScan(t *testing.T) {
 	if !reflect.DeepEqual(before, after) || len(s.wake) != 0 || len(client.calls) != calls {
 		t.Fatal("saving settings changed, queued or requested the active mapping")
 	}
-	if value.Settings.EventIntervalSeconds != 20 || value.Settings.ReconcileIntervalHours != 24 || value.Settings.FullScanIntervalHours != 168 {
+	if value.Settings != original {
 		t.Fatalf("running attempt's settings changed: %+v", value.Settings)
+	}
+	if saved, err := s.Settings(ctx); err != nil || saved != settings {
+		t.Fatalf("disabled switches lost their selected periods or frequency: %+v err=%v", saved, err)
 	}
 	stats, scanErr := s.scan(scanCtx, value)
 	if scanErr != nil || stats.Written != 1 {
@@ -61,6 +67,9 @@ func TestDriveSTRMSettingsDoNotQueueAndFreezeRunningScan(t *testing.T) {
 	// A new service reads the saved settings; only an explicit full scan
 	// changes already-generated files to use the new service address.
 	s = NewDriveSTRMService(db, s.Accounts, client, root)
+	if saved, err := s.Settings(ctx); err != nil || saved != settings {
+		t.Fatalf("settings changed on restart: %+v err=%v", saved, err)
+	}
 	if err := s.Queue(ctx, mapping.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +126,8 @@ func TestDriveSTRMUnsavedSettingsIdleWithoutCloudRequests(t *testing.T) {
 func TestDriveSTRMSettingsValidationAndNormalization(t *testing.T) {
 	s, _, client, _, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
-	valid := model.DriveSTRMSettings{BaseURL: " https://cinema.example/ ", VideoExtensions: ".MP4,mkv,MP4", MetadataExtensions: ".SRT,ass,SRT", MinSizeMB: 8}
+	valid := model.DefaultDriveSTRMSettings()
+	valid.BaseURL, valid.VideoExtensions, valid.MetadataExtensions, valid.MinSizeMB = " https://cinema.example/ ", ".MP4,mkv,MP4", ".SRT,ass,SRT", 8
 	got, err := s.SaveSettings(ctx, valid)
 	if err != nil || got.BaseURL != "https://cinema.example" || got.VideoExtensions != "mkv,mp4" || got.MetadataExtensions != "ass,srt" {
 		t.Fatalf("normalize=%+v err=%v", got, err)
@@ -134,6 +144,15 @@ func TestDriveSTRMSettingsValidationAndNormalization(t *testing.T) {
 		"event period":     func(v *model.DriveSTRMSettings) { v.EventIntervalSeconds = 1 },
 		"reconcile period": func(v *model.DriveSTRMSettings) { v.ReconcileIntervalHours = -1 },
 		"full period":      func(v *model.DriveSTRMSettings) { v.FullScanIntervalHours = 1 },
+		"zero metadata rate": func(v *model.DriveSTRMSettings) {
+			v.MetadataFilesPerSecond = 0
+		},
+		"negative metadata rate": func(v *model.DriveSTRMSettings) {
+			v.MetadataFilesPerSecond = -1
+		},
+		"excessive metadata rate": func(v *model.DriveSTRMSettings) {
+			v.MetadataFilesPerSecond = 11
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := valid
@@ -146,6 +165,13 @@ func TestDriveSTRMSettingsValidationAndNormalization(t *testing.T) {
 				t.Fatalf("invalid settings replaced saved settings: %+v %v", current, err)
 			}
 		})
+	}
+	for _, rate := range []int{1, 10} {
+		valid.MetadataRateEnabled, valid.MetadataFilesPerSecond = false, rate
+		saved, err := s.SaveSettings(ctx, valid)
+		if err != nil || saved.MetadataRateEnabled || saved.MetadataFilesPerSecond != rate {
+			t.Fatalf("disabled limiter lost valid rate %d: %+v err=%v", rate, saved, err)
+		}
 	}
 	if len(client.calls) != 1 { // Only the original mapping creation read 115.
 		t.Fatalf("settings caused cloud requests: %v", client.calls)
