@@ -25,7 +25,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 async function harness(t) {
   const originalFetch = globalThis.fetch, originalDocument = globalThis.document
   globalThis.document = { title: '' }
-  let row = { id: 'directory', accountId: 'main', sourceCID: '10', sourcePath: '/incoming', stage: 'waiting', running: false, queued: false, hasBatch: false, lastError: '', enabled: false }
+  let row = { id: 'directory', accountId: 'main', sourceCID: '10', sourcePath: '/incoming', stage: 'waiting', running: false, queued: false, hasBatch: false, lastError: '', enabled: false, intervalSeconds: 600 }
   let failure = false, hold = false, resolveHeld
   const requests = []
   globalThis.fetch = async (url, init = {}) => {
@@ -70,15 +70,43 @@ test('selecting a directory saves immediately; failure retains previous binding'
   assert.equal(s.monitor.sourceCID, '20')
 })
 
-test('schedule failure leaves dialog open; save uses selected interval', async t => {
+test('schedule switch restores the saved state when enabling or disabling fails', async t => {
   const { state: s, requests, fail } = await harness(t)
-  s.openSchedule(); s.interval = '1800'; fail(true)
-  await s.saveSchedule(true)
-  assert.equal(s.scheduleDialog, true)
+  fail(true)
+  await s.changeEnabled(true)
+  assert.equal(s.enabled, false)
   assert.equal(s.monitor.enabled, false)
+  assert.match(s.actionError, /保存失败/)
   fail(false)
-  await s.saveSchedule(true)
-  assert.equal(s.scheduleDialog, false)
+  await s.changeEnabled(true)
+  assert.equal(s.enabled, true)
+  assert.equal(s.monitor.enabled, true)
+  assert.deepEqual(requests.at(-1).body, { enabled: true, intervalSeconds: 600 })
+  fail(true)
+  await s.changeEnabled(false)
+  assert.equal(s.enabled, true)
+  assert.equal(s.monitor.enabled, true)
+  fail(false)
+  await s.changeEnabled(false)
+  assert.equal(s.enabled, false)
+  assert.equal(s.monitor.enabled, false)
+})
+
+test('interval selection rolls back on failure and saves the chosen interval on retry', async t => {
+  const { state: s, requests, fail } = await harness(t)
+  await s.changeEnabled(true)
+  const select = { value: '1800' }
+  fail(true)
+  await s.changeInterval({ target: select })
+  assert.equal(select.value, '600')
+  assert.equal(s.interval, '600')
+  assert.equal(s.monitor.intervalSeconds, 600)
+  assert.match(s.actionError, /保存失败/)
+  fail(false)
+  select.value = '1800'
+  await s.changeInterval({ target: select })
+  assert.equal(s.interval, '1800')
+  assert.equal(s.monitor.intervalSeconds, 1800)
   assert.equal(s.monitor.enabled, true)
   assert.deepEqual(requests.at(-1).body, { enabled: true, intervalSeconds: 1800 })
 })
