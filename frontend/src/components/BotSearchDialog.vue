@@ -221,9 +221,9 @@ onBeforeUnmount(() => {
               <svg aria-hidden="true" :class="{ 'bot-spinning': searchBusy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               刷新搜索
             </button>
-            <RouterLink to="/telegram/user" class="bot-tool-button" @click="emit('close')">
+            <RouterLink to="/resources/telegram" class="bot-tool-button" @click="emit('close')">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--bot-container)" /><circle cx="15" cy="17" r="3" fill="var(--bot-container)" /></svg>
-              Telegram 配置
+              搜索配置
             </RouterLink>
           </div>
         </div>
@@ -231,9 +231,9 @@ onBeforeUnmount(() => {
         <div class="bot-body">
           <p v-if="checking" role="status" class="bot-notice bot-info">读取 Telegram 登录状态…</p>
           <div v-else-if="!state?.botConfigured || !state.hasSession" class="bot-setup">
-            <h3>登录 Telegram 后搜索资源</h3>
-            <p>请使用已获资源 Bot 认证的 Telegram 用户账号。</p>
-            <RouterLink to="/telegram/user" class="bot-button bot-primary-button" @click="emit('close')">配置并登录 Telegram</RouterLink>
+            <h3>{{ state?.hasSession ? '先配置资源 Bot' : '登录 Telegram 后搜索资源' }}</h3>
+            <p>{{ state?.hasSession ? '选择已获得使用权限的资源 Bot。' : '请使用已获资源 Bot 认证的 Telegram 用户账号。' }}</p>
+            <RouterLink :to="state?.hasSession ? '/resources/telegram' : '/telegram/user'" class="bot-button bot-primary-button" @click="emit('close')">{{ state?.hasSession ? '配置资源 Bot' : '配置并登录 Telegram' }}</RouterLink>
           </div>
 
           <div v-if="searchBusy" role="status" class="bot-notice bot-info">

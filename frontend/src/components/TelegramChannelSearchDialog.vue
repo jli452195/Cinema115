@@ -90,10 +90,10 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
   <FloatingDialog title="TG 频道搜索" close-label="关闭 TG 频道搜索" size="config" class="tg-channel-search media-search-dialog" @close="emit('close')">
     <template #header>
       <div class="tg-heading"><img :src="telegramIcon" width="32" height="32" alt=""/><div><h3>{{ title }}</h3><p>已配置频道的聚合资源</p></div></div>
-      <div class="tg-toolbar"><label class="tg-filter"><IconSearch :size="17" aria-hidden="true"/><input v-model="query" type="search" aria-label="筛选频道资源" placeholder="筛选已加载的资源" /></label><button class="tg-button" :disabled="!!phase || !enabled || retrySeconds > 0" @click="search(false, true)"><IconRefresh :size="17" aria-hidden="true"/><span>刷新搜索</span></button><RouterLink to="/telegram/channels" class="tg-button" aria-label="TG 频道配置" @click="emit('close')"><IconSettings :size="17" aria-hidden="true"/></RouterLink></div>
+      <div class="tg-toolbar"><label class="tg-filter"><IconSearch :size="17" aria-hidden="true"/><input v-model="query" type="search" aria-label="筛选频道资源" placeholder="筛选已加载的资源" /></label><button class="tg-button" :disabled="!!phase || !enabled || retrySeconds > 0" @click="search(false, true)"><IconRefresh :size="17" aria-hidden="true"/><span>刷新搜索</span></button><RouterLink to="/resources/telegram" class="tg-button" aria-label="Telegram 搜索配置" @click="emit('close')"><IconSettings :size="17" aria-hidden="true"/></RouterLink></div>
     </template>
     <p v-if="phase === 'config'" role="status" class="tg-notice">正在读取频道配置…</p>
-    <div v-else-if="config && !enabled" class="tg-empty"><h3>先选择资源频道</h3><p>使用已登录的 Telegram 账号，选择需要聚合搜索的频道。</p><RouterLink to="/telegram/channels" class="tg-button tg-primary" @click="emit('close')">配置搜索频道</RouterLink></div>
+    <div v-else-if="config && !enabled" class="tg-empty"><h3>先选择资源频道</h3><p>使用已登录的 Telegram 账号，选择需要聚合搜索的频道。</p><RouterLink to="/resources/telegram" class="tg-button tg-primary" @click="emit('close')">配置搜索频道</RouterLink></div>
     <p v-if="phase === 'search'" role="status" class="tg-notice">正在搜索频道资源…</p>
     <div v-if="error" role="alert" class="tg-notice tg-error">{{ error }} <button v-if="!phase && !retrySeconds" class="tg-text" @click="config && enabled ? search(errorCode !== 'channel_search_expired' && !!result?.cursor) : initialize()">{{ errorCode === 'channel_search_expired' ? '重新搜索' : '重试' }}</button></div>
     <p v-if="retrySeconds" role="status" class="tg-notice">Telegram 搜索频率受限，{{ retrySeconds }} 秒后可继续。已加载的资源仍可使用。</p>

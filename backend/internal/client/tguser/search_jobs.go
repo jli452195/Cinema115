@@ -48,6 +48,7 @@ type searchJob struct {
 	hasResult     bool
 	version       uint64
 	err           error
+	release       func() // Lifecycle read held by the job, not its browser waiter.
 }
 
 // Close cancels and joins every search worker, including queries detached from a browser.
@@ -96,6 +97,29 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 	if err := ctx.Err(); err != nil {
 		return SearchResult{}, err
 	}
+	// Local cached results do not need a connection or an account lifecycle lease.
+	c.mu.Lock()
+	if !c.closed && c.searches[key] == nil {
+		cached, ok, err := c.cachedExchangeLocked(action, key, refresh)
+		if err != nil || ok {
+			c.mu.Unlock()
+			return cached, err
+		}
+		if err := c.cooldownErrorLocked(); err != nil {
+			c.mu.Unlock()
+			return SearchResult{}, err
+		}
+	}
+	c.mu.Unlock()
+	release, err := c.read(ctx)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -117,6 +141,7 @@ func (c *Client) exchange(ctx context.Context, action storedAction, key string, 
 			return SearchResult{}, &OperationError{Code: "queue_full", Message: "Bot 搜索队列已满，请稍后重试"}
 		}
 		job = &searchJob{key: key, action: action, refresh: refresh, created: time.Now(), changed: make(chan struct{}), progress: SearchProgress{Stage: "queued", Position: len(c.queue) + 1}}
+		job.release, release = release, nil
 		c.searches[key] = job
 		c.queue = append(c.queue, job)
 	}
@@ -195,6 +220,10 @@ func (c *Client) removeQueuedLocked(job *searchJob, err error) {
 		}
 	}
 	job.done, job.err = true, err
+	if job.release != nil {
+		job.release()
+		job.release = nil
+	}
 	delete(c.searches, job.key)
 	notifySearch(job)
 	c.updateQueueLocked()
@@ -227,30 +256,6 @@ func (c *Client) runSearchJobs() {
 			c.mu.Unlock()
 			continue
 		}
-		c.mu.Unlock()
-		// Login/check operations share the connection gate. Waiting here also has a deadline.
-		gateCtx, gateCancel := context.WithDeadline(c.workerContext, job.created.Add(c.searchTiming.queue))
-		select {
-		case c.gate <- struct{}{}:
-		case <-gateCtx.Done():
-			gateCancel()
-			c.mu.Lock()
-			if !job.done {
-				c.removeQueuedLocked(job, &OperationError{Code: "queue_timeout", Message: "等待 Telegram 连接超时，本次查询尚未发送"})
-			}
-			c.mu.Unlock()
-			continue
-		}
-		gateCancel()
-		c.mu.Lock()
-		if job.done || job.subscribers == 0 || c.closed {
-			if !job.done {
-				c.removeQueuedLocked(job, context.Canceled)
-			}
-			c.mu.Unlock()
-			c.unlock()
-			continue
-		}
 		c.queue = c.queue[1:]
 		job.started = true
 		job.progress = SearchProgress{Stage: "waiting"}
@@ -270,10 +275,11 @@ func (c *Client) runSearchJobs() {
 		cancel()
 		c.mu.Lock()
 		job.result, job.err, job.done = result, err, true
+		job.release()
+		job.release = nil
 		delete(c.searches, job.key)
 		notifySearch(job)
 		c.mu.Unlock()
-		c.unlock()
 		if c.ObserveSearch != nil {
 			code := "complete"
 			var detail *OperationError

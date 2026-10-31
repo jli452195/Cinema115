@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconCheck, IconPlus, IconSearch } from '@tabler/icons-vue'
+import { IconBroadcast, IconPlus, IconRobot, IconSearch } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import FloatingDialog from '../components/AnimeFloatingDialog.vue'
+import TelegramAvatar from '../components/TelegramAvatar.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
-import { telegramUserRequest, TelegramSearchError, type TelegramChannel, type TelegramChannelConfig, type TelegramChannelPage } from '../types/telegramUser'
+import { telegramUserRequest, TelegramSearchError, type TelegramChannel, type TelegramChannelConfig, type TelegramChannelPage, type TelegramUserStatus } from '../types/telegramUser'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const config = ref<TelegramChannelConfig>()
+const bot = ref(''), botBusy = ref(false), botError = ref('')
 const loading = ref(true), loadError = ref(''), notice = ref('')
 const opened = ref(false), busy = ref(''), error = ref(''), query = ref('')
 const channels = ref<TelegramChannel[]>([]), selected = ref<string[]>([])
@@ -20,9 +22,20 @@ const available = computed(() => channels.value.filter(channel => `${channel.tit
 const request = <T,>(path: string, body?: object, signal = lifecycle.signal) => telegramUserRequest<T>(props.token, path, signal, body)
 async function load() {
   loading.value = true; loadError.value = ''
-  try { config.value = await request<TelegramChannelConfig>('channels') }
+  try { const value = await request<TelegramChannelConfig>('channels'); if (!lifecycle.signal.aborted) { config.value = value; bot.value = value.account.bot || '' } }
   catch (e) { if (!lifecycle.signal.aborted) loadError.value = e instanceof Error ? e.message : '读取配置失败' }
   finally { loading.value = false }
+}
+async function saveBot() {
+  if (botBusy.value || !config.value?.account.configured) return
+  botBusy.value = true; botError.value = ''; notice.value = ''
+  try {
+    const value = await request<TelegramUserStatus>('config', { apiId: config.value.account.apiId, apiHash: '', bot: bot.value.trim() })
+    if (lifecycle.signal.aborted) return
+    config.value.account = value; bot.value = value.bot
+    notice.value = '资源 Bot 已保存。'
+  } catch (e) { if (!lifecycle.signal.aborted) botError.value = e instanceof Error ? e.message : '保存失败' }
+  finally { if (!lifecycle.signal.aborted) botBusy.value = false }
 }
 async function readChannels(reset = false) {
   if (busy.value || !picker) return
@@ -80,25 +93,31 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 </script>
 
 <template>
-  <ManagementLayout title="TG 频道配置" description="选择已加入的频道，作为详情页聚合搜索的资源来源。" :parent="{ label: '资源配置', to: '/resources' }" @logout="$emit('logout')">
+  <ManagementLayout title="Telegram 搜索" description="配置资源 Bot 和搜索频道，共用 Telegram 用户账号。" :parent="{ label: '资源配置', to: '/resources' }" @logout="$emit('logout')">
     <div class="channel-settings">
       <p v-if="loadError" role="alert" class="channel-error">{{ loadError }} <button class="channel-button" @click="load">重新加载</button></p>
       <p v-if="notice" role="status" class="channel-notice">{{ notice }}</p>
       <section class="channel-panel channel-account" aria-label="Telegram 账号">
-        <img :src="telegramIcon" width="36" height="36" alt="" />
+        <TelegramAvatar :token="token" peer-id="self" :avatar-id="config?.account.avatarId" :size="40" class="channel-account-avatar"><img :src="telegramIcon" width="24" height="24" alt="" /></TelegramAvatar>
         <div class="channel-account-text"><h2>Telegram 用户账号</h2><p v-if="loading">读取中…</p><p v-else-if="config?.account.hasSession">{{ config.account.name || '已保存登录会话' }}<span v-if="config.account.username"> · @{{ config.account.username }}</span></p><p v-else>请先配置 API 并登录 Telegram</p></div>
         <RouterLink to="/telegram/user" class="channel-button">管理登录</RouterLink>
       </section>
+      <div class="telegram-search-grid">
+      <section class="channel-panel channel-bot" aria-labelledby="search-bot-title">
+        <div class="channel-section-heading"><div class="search-section-title"><span class="search-section-icon"><IconRobot :size="21" aria-hidden="true" /></span><div><h2 id="search-bot-title">资源 Bot</h2><p>详情页和自动追更使用此 Bot 搜索。</p></div></div><span class="search-source-state">{{ config?.account.botConfigured ? '已配置' : '可选' }}</span></div>
+        <form class="search-bot-form" @submit.prevent="saveBot"><label for="search-resource-bot">Bot 用户名</label><input id="search-resource-bot" v-model="bot" type="text" autocomplete="off" spellcheck="false" maxlength="33" pattern="@?[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]" placeholder="@bot_username" :disabled="loading || botBusy || !config?.account.configured" /><p class="search-bot-help">仅使用频道搜索时可留空。请先在 Telegram 中完成该 Bot 的认证。</p><p v-if="botError" role="alert" class="channel-error">{{ botError }}</p><div class="search-bot-actions"><button type="submit" class="channel-button channel-primary" :disabled="loading || botBusy || !config?.account.configured || bot.trim() === (config?.account.bot || '')">{{ botBusy ? '保存中…' : '保存 Bot' }}</button></div></form>
+      </section>
       <section class="channel-panel" aria-labelledby="saved-channels-title">
-        <div class="channel-section-heading"><div><h2 id="saved-channels-title">搜索频道</h2><p>共用上方账号，可选择多个频道。</p></div><button class="channel-button channel-primary" :disabled="loading || !config?.account.hasSession" @click="open"><IconPlus :size="16" aria-hidden="true" />选择频道</button></div>
-        <ul v-if="config?.channels.length" class="channel-list"><li v-for="channel in config.channels" :key="channel.id" class="channel-saved"><span class="channel-avatar"><IconCheck :size="18" aria-hidden="true" /></span><div class="channel-text"><strong>{{ channel.title }}</strong><small>{{ channel.username ? `@${channel.username}` : '私有频道' }}</small></div></li></ul>
+        <div class="channel-section-heading"><div class="search-section-title"><span class="search-section-icon"><IconBroadcast :size="21" aria-hidden="true" /></span><div><h2 id="saved-channels-title">搜索频道</h2><p>搜索已选择的频道，聚合展示资源。</p></div></div><button class="channel-button" :disabled="loading || botBusy || !config?.account.hasSession" @click="open"><IconPlus :size="16" aria-hidden="true" />选择频道</button></div>
+        <ul v-if="config?.channels.length" class="channel-list"><li v-for="channel in config.channels" :key="channel.id" class="channel-saved"><TelegramAvatar :token="token" :peer-id="channel.id" :avatar-id="channel.avatarId" class="channel-avatar"><IconBroadcast :size="18" aria-hidden="true" /></TelegramAvatar><div class="channel-text"><strong>{{ channel.title }}</strong><small>{{ channel.username ? `@${channel.username}` : '私有频道' }}</small></div></li></ul>
         <div v-else class="channel-empty"><p>{{ loading ? '读取中…' : '尚未选择频道' }}</p><small v-if="!loading">登录后，选择账号已加入的资源频道。</small></div>
       </section>
+      </div>
     </div>
     <FloatingDialog v-if="opened" title="选择 Telegram 频道" close-label="关闭频道选择" size="config" :close-disabled="busy === 'save'" class="channel-picker" @close="close">
       <template #header><p class="channel-picker-description">从已加入的频道中选择，包含归档频道。</p><label class="channel-filter"><IconSearch :size="18" aria-hidden="true"/><input v-model="query" type="search" aria-label="筛选已加载的频道" placeholder="筛选已加载的频道" /></label></template>
       <p v-if="error" role="alert" class="channel-error">{{ error }} <button v-if="retry" :disabled="!!busy" class="channel-button" @click="readChannels(retry === 'restart')">{{ retry === 'restart' ? '重新加载频道' : '重试读取' }}</button></p>
-      <fieldset :disabled="busy === 'save' || !selectionToken || expired" class="channel-options"><legend class="sr-only">可选频道</legend><label v-for="channel in available" :key="channel.id" class="channel-option" :class="{ 'is-selected': selected.includes(channel.id) }"><input v-model="selected" type="checkbox" :value="channel.id" :disabled="!selected.includes(channel.id) && selected.length >= 100" /><span class="channel-text"><strong>{{ channel.title }}</strong><small>{{ channel.username ? `@${channel.username}` : '私有频道' }}</small></span></label></fieldset>
+      <fieldset :disabled="busy === 'save' || !selectionToken || expired" class="channel-options"><legend class="sr-only">可选频道</legend><label v-for="channel in available" :key="channel.id" class="channel-option" :class="{ 'is-selected': selected.includes(channel.id) }"><input v-model="selected" type="checkbox" :value="channel.id" :disabled="!selected.includes(channel.id) && selected.length >= 100" /><TelegramAvatar :token="token" :peer-id="channel.id" :avatar-id="channel.avatarId" class="channel-avatar"><IconBroadcast :size="18" aria-hidden="true" /></TelegramAvatar><span class="channel-text"><strong>{{ channel.title }}</strong><small>{{ channel.username ? `@${channel.username}` : '私有频道' }}</small></span></label></fieldset>
       <div v-if="busy === 'list'" role="status" class="channel-empty">正在读取频道…</div>
       <div v-else-if="!available.length" class="channel-empty">{{ query ? '已加载的频道中没有匹配结果' : cursor ? '这一批没有找到频道，可继续加载' : error ? '频道读取未完成' : '账号中未找到可选频道' }}</div>
       <button v-if="cursor && !expired" :disabled="!!busy" class="channel-button channel-more" @click="readChannels()">加载更多频道</button>
@@ -108,8 +127,19 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 </template>
 
 <style scoped>
-:global(dialog.channel-picker) { width: min(680px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 48px)); }
-.channel-settings { @apply text-slate-800 dark:text-slate-200; max-width: 860px; display: grid; gap: 18px; }
+:global(dialog.anime-floating.channel-picker) { width: min(680px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 48px)); }
+.channel-settings { @apply text-slate-800 dark:text-slate-200; max-width: 1120px; display: grid; gap: 16px; }
+.telegram-search-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; gap: 16px; }
+.search-section-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.search-section-icon, .channel-account-avatar { @apply bg-blue-50 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300; display: grid; place-items: center; flex-shrink: 0; }
+.search-section-icon { width: 38px; height: 38px; border-radius: 12px; }
+.search-source-state { @apply bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400; padding: 4px 8px; border-radius: 999px; font-size: 11px; }
+.search-bot-form { display: grid; gap: 8px; margin-top: 24px; }
+.search-bot-form label { font-size: 13px; font-weight: 500; }
+.search-bot-form input { @apply bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-700; min-width: 0; min-height: 42px; width: 100%; padding: 9px 12px; border-width: 1px; border-style: solid; border-radius: 12px; outline: none; font-size: 14px; }
+.search-bot-form input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgb(59 130 246 / .1); }
+.search-bot-help { @apply text-slate-500 dark:text-slate-400; font-size: 12px; line-height: 1.7; }
+.search-bot-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .channel-panel { @apply bg-white dark:bg-slate-900; padding: 20px; border-radius: 16px; box-shadow: 0 2px 14px rgb(15 23 42 / .04); }
 .channel-account, .channel-section-heading { display: flex; align-items: center; gap: 14px; }
 .channel-account-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -124,7 +154,7 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 .channel-button:focus-visible, .channel-filter:focus-within { outline: 2px solid #3b82f6; outline-offset: 2px; }
 .channel-list { margin-top: 14px; display: grid; gap: 6px; }
 .channel-saved { display: flex; gap: 12px; align-items: center; padding: 12px 4px; }
-.channel-avatar { @apply bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300; display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; }
+.channel-avatar { @apply bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300; flex-shrink: 0; border-radius: 50%; }
 .channel-text { min-width: 0; display: grid; gap: 3px; overflow-wrap: anywhere; }
 .channel-text strong { font-size: 13px; line-height: 1.5; font-weight: 500; }
 .channel-text small { @apply text-slate-500 dark:text-slate-400; font-size: 11px; }
@@ -139,11 +169,14 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 .channel-options { min-width: 0; display: grid; gap: 6px; }
 .channel-option { display: flex; gap: 12px; align-items: center; min-height: 60px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
 .channel-option:hover { background: rgb(148 163 184 / .10); }
+.channel-option:focus-within { outline: 2px solid #3b82f6; outline-offset: -2px; }
 .channel-option.is-selected { background: rgb(37 99 235 / .12); }
 .channel-option input { width: 17px; height: 17px; flex-shrink: 0; accent-color: #2563eb; }
 .channel-more { display: flex; margin: 16px auto 0; }
 .channel-picker-footer, .channel-picker-footer > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .channel-picker-footer > span { @apply text-slate-500 dark:text-slate-400; font-size: 12px; }
 @media (max-width: 639px) { .channel-panel { padding: 16px; } .channel-account { gap: 10px; flex-wrap: wrap; } .channel-button { min-height: 44px; } .channel-filter { min-height: 44px; } .channel-filter input { font-size: 16px; } }
-@media (max-width: 639px) { :global(dialog.channel-picker) { width: calc(100vw - 16px); height: min(640px, calc(100dvh - 24px)); } }
+@media (max-width: 639px) { :global(dialog.anime-floating.channel-picker) { width: calc(100vw - 16px); height: min(640px, calc(100dvh - 24px)); } }
+@media (max-width: 760px) { .telegram-search-grid { grid-template-columns: 1fr; } }
+@media (max-width: 639px) { .search-bot-form input { font-size: 16px; } }
 </style>

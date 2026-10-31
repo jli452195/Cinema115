@@ -86,7 +86,11 @@ onBeforeUnmount(() => lifecycle.abort())
       <div v-else class="relay-grid">
         <article v-for="rule in settings.rules" :key="rule.id" class="relay-card" :class="{ 'is-disabled': !rule.enabled }">
           <div class="relay-card-heading"><h2>{{ rule.name || rule.sourceTitle }}</h2><SettingSwitch :model-value="rule.enabled" :label="`启用${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" class="relay-switch" @update:model-value="value => toggle(rule, value)" /></div>
-          <div class="relay-route"><div><span>来源频道</span><strong>{{ rule.sourceTitle }}</strong></div><IconArrowRight :size="17" aria-hidden="true" /><div><span>转发目标</span><strong>{{ rule.targetTitle }}</strong></div></div>
+          <div class="relay-route">
+            <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.sourceId" :avatar-id="peerAvatars.get(rule.sourceId)?.avatarId" :size="32" class="relay-peer-avatar"><IconBroadcast :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>来源频道</span><strong>{{ rule.sourceTitle }}</strong></div></div>
+            <IconArrowRight :size="17" aria-hidden="true" />
+            <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.targetId" :avatar-id="peerAvatars.get(rule.targetId)?.avatarId" :size="32" class="relay-peer-avatar"><IconRobot v-if="rule.targetId.startsWith('user:')" :size="18" aria-hidden="true" /><IconUsers v-else-if="rule.targetId.startsWith('chat:')" :size="18" aria-hidden="true" /><IconBroadcast v-else :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>转发目标</span><strong>{{ rule.targetTitle }}</strong></div></div>
+          </div>
           <footer class="relay-card-footer">
             <div class="relay-tags"><span v-for="kind in rule.linkTypes" :key="kind">{{ kind === '115' ? '115 分享' : 'ed2k' }}</span></div>
             <div class="relay-card-actions"><button type="button" class="relay-icon" :aria-label="`编辑${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="edit(rule)"><IconEdit :size="17" aria-hidden="true" /></button><button type="button" class="relay-icon relay-danger" :aria-label="`删除${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="deleting = rule; error = ''"><IconTrash :size="17" aria-hidden="true" /></button></div>
@@ -106,4 +110,5 @@ onBeforeUnmount(() => lifecycle.abort())
 :global(dialog.relay-editor) { width: min(660px, calc(100vw - 24px)); }
 @media(max-width: 760px) { .relay-grid { grid-template-columns: 1fr; } }@media(max-width: 639px) { .relay-toolbar { align-items: flex-start; }.relay-toolbar > .relay-actions { width: 100%; justify-content: flex-end; }.relay-card { padding: 16px 16px 10px; }.relay-button { min-height: 42px; }.relay-pair { grid-template-columns: 1fr; }.relay-form input:not([type=checkbox]) { font-size: 16px; } }
 .relay-select > .relay-selection-avatar { @apply bg-blue-50 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300; flex: 0 0 32px; border-radius: 50%; }
+.relay-route > .relay-peer { display: flex; align-items: center; gap: 9px; }.relay-peer-copy { display: grid; gap: 4px; min-width: 0; }.relay-route .relay-peer-avatar { @apply bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400; flex: 0 0 32px; }
 </style>

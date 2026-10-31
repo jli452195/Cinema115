@@ -59,7 +59,7 @@ func (c *Client) SavedRelayPeers() []RelayPeer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	result := make([]RelayPeer, 0, len(c.relayPeers.Peers))
-	if !c.authorized || c.userID == 0 || c.relayPeers.OwnerID != c.userID {
+	if c.relayPeers.OwnerID == 0 || c.relayPeers.OwnerID != c.displayOwnerLocked() {
 		return result
 	}
 	for _, peer := range c.relayPeers.Peers {
@@ -71,15 +71,21 @@ func (c *Client) SavedRelayPeers() []RelayPeer {
 // The relay owns a separate picker and saved peer set. Changing resource-search
 // channels cannot add, remove or retarget a forwarding rule.
 func (c *Client) ListRelayPeers(ctx context.Context, cursor string) (RelayPeerPage, error) {
-	if err := c.lock(); err != nil {
+	release, err := c.read(ctx)
+	if err != nil {
 		return RelayPeerPage{}, err
 	}
-	defer c.unlock()
+	defer release()
+	unlock, err := c.acquire(ctx, c.relayPicker, 1)
+	if err != nil {
+		return RelayPeerPage{}, err
+	}
+	defer unlock()
 	if c.sessionStore.Value() == "" {
 		return RelayPeerPage{}, ErrLogin
 	}
 	var result RelayPeerPage
-	err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
+	err = c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
 		}
@@ -152,6 +158,10 @@ func (c *Client) ListRelayPeers(ctx context.Context, cursor string) (RelayPeerPa
 			result.Peers = append(result.Peers, entry.RelayPeer)
 		}
 		c.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return err
+		}
 		c.relayCatalog = &next
 		c.mu.Unlock()
 		return nil
@@ -284,15 +294,21 @@ func (c *Client) PrepareRelay(ctx context.Context, sourceID, targetID, sourceTok
 	if sourceID == targetID {
 		return RelayIdentity{}, ErrInput
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.read(ctx)
+	if err != nil {
 		return RelayIdentity{}, err
 	}
-	defer c.unlock()
+	defer release()
+	unlock, err := c.acquire(ctx, c.relayPicker, 1)
+	if err != nil {
+		return RelayIdentity{}, err
+	}
+	defer unlock()
 	if c.sessionStore.Value() == "" {
 		return RelayIdentity{}, ErrLogin
 	}
 	var result RelayIdentity
-	err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
+	err = c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
 		}
@@ -361,6 +377,9 @@ func (c *Client) PrepareRelay(ctx context.Context, sourceID, targetID, sourceTok
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if c.userID != owner || !c.authorized {
 			return ErrLogin
 		}

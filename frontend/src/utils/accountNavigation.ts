@@ -64,7 +64,7 @@ export const adminAccountGroups: { label: string; links: AccountLink[] }[] = [
   { label: '服务', links: [
     { label: '115 网盘', to: '/115', icon: 'drive', children: managementCategories.p115.features.map(feature => ({ label: feature.title, to: feature.to, icon: feature.menuIcon })) },
     { label: '资源配置', to: '/resources', icon: 'resources', children: resourceSources.map(source => ({ label: source.title, to: source.settings, icon: source.menuIcon })) },
-    { label: 'Telegram 配置', to: '/telegram', icon: 'telegram' },
+    { label: 'Telegram 配置', to: '/telegram', icon: 'telegram', children: managementCategories.telegram.features.map(feature => ({ label: feature.title, to: feature.to, icon: feature.menuIcon })) },
     { label: 'Emby', to: '/emby', icon: 'emby', children: managementCategories.emby.features.map(feature => ({ label: feature.title, to: feature.to, icon: feature.menuIcon })) },
   ] },
 ]

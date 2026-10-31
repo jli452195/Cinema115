@@ -9,6 +9,7 @@ import (
 	_ "image/png"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gotd/td/telegram"
@@ -68,7 +69,8 @@ type avatarFlight struct {
 // Only accept metadata from this account's own dialogs or saved selections.
 // Caller-provided IDs cannot fetch arbitrary peers.
 func (c *Client) avatarPeerLocked(peerID string, photoID int64) (tg.InputPeerClass, avatarPhoto, error) {
-	if c.closed || !c.authorized || c.userID == 0 || c.sessionStore.Value() == "" {
+	owner := c.displayOwnerLocked()
+	if c.closed || owner == 0 {
 		return nil, avatarPhoto{}, ErrLogin
 	}
 	if peerID == "self" {
@@ -79,15 +81,34 @@ func (c *Client) avatarPeerLocked(peerID string, photoID int64) (tg.InputPeerCla
 	}
 	var selected relayPeer
 	found := false
-	if cat := c.relayCatalog; cat != nil && cat.ownerID == c.userID && time.Now().Before(cat.expires) {
+	if cat := c.relayCatalog; cat != nil && cat.ownerID == owner && time.Now().Before(cat.expires) {
 		selected, found = cat.peers[peerID]
+		found = found && selected.PhotoID == photoID
 	}
-	if !found && c.relayPeers.OwnerID == c.userID {
+	if !found && c.relayPeers.OwnerID == owner {
 		for _, peer := range c.relayPeers.Peers {
-			if peer.ID == peerID {
+			if peer.ID == peerID && peer.PhotoID == photoID {
 				selected, found = peer, true
 				break
 			}
+		}
+	}
+	if id, channel := strings.CutPrefix(peerID, "channel:"); !found && channel {
+		var selectedChannel channelPeer
+		if cat := c.channelCatalog; cat != nil && cat.ownerID == owner && time.Now().Before(cat.expires) {
+			selectedChannel, found = cat.peers[id]
+			found = found && selectedChannel.PhotoID == photoID
+		}
+		if !found && c.channels.OwnerID == owner {
+			for _, entry := range c.channels.Peers {
+				if entry.ID == id && entry.PhotoID == photoID {
+					selectedChannel, found = entry, true
+					break
+				}
+			}
+		}
+		if found {
+			selected = relayPeer{RelayPeer: RelayPeer{ID: peerID}, AccessHash: selectedChannel.AccessHash, PhotoID: selectedChannel.PhotoID, DCID: selectedChannel.DCID}
 		}
 	}
 	if !found || selected.PhotoID != photoID || selected.DCID <= 0 {
@@ -95,6 +116,10 @@ func (c *Client) avatarPeerLocked(peerID string, photoID int64) (tg.InputPeerCla
 	}
 	peer, err := selected.input()
 	return peer, avatarPhoto{photoID: selected.PhotoID, dcID: selected.DCID}, err
+}
+
+func (c *Client) avatarOnlineLocked(owner int64) bool {
+	return c.authorized && c.userID == owner && c.sessionStore.Value() != ""
 }
 
 // RelayAvatar downloads the small, clear Telegram profile photo, never the
@@ -107,16 +132,41 @@ func (c *Client) RelayAvatar(ctx context.Context, peerID, avatarID string) ([]by
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
+	if channelID, err := strconv.ParseInt(peerID, 10, 64); err == nil && channelID > 0 && strconv.FormatInt(channelID, 10) == peerID {
+		peerID = "channel:" + peerID
+	}
+	// A cached image is local display data. A pending account writer must not
+	// make it wait behind the Bot exchange it is draining.
+	c.mu.Lock()
+	_, _, err = c.avatarPeerLocked(peerID, photoID)
+	cached, hit := c.avatarCache[avatarKey{owner: c.displayOwnerLocked(), peer: peerID, photo: photoID}]
+	hit = hit && time.Now().Before(cached.expires)
+	c.mu.Unlock()
+	if err != nil {
+		return nil, "", err
+	}
+	if hit {
+		return bytes.Clone(cached.data), cached.mime, nil
+	}
+	release, err := c.read(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
 	c.mu.Lock()
 	peer, photo, err := c.avatarPeerLocked(peerID, photoID)
 	if err != nil {
 		c.mu.Unlock()
 		return nil, "", err
 	}
-	key := avatarKey{owner: c.userID, peer: peerID, photo: photoID}
+	key := avatarKey{owner: c.displayOwnerLocked(), peer: peerID, photo: photoID}
 	if cached, ok := c.avatarCache[key]; ok && time.Now().Before(cached.expires) {
 		c.mu.Unlock()
 		return bytes.Clone(cached.data), cached.mime, nil
+	}
+	if !c.avatarOnlineLocked(key.owner) {
+		c.mu.Unlock()
+		return nil, "", ErrLogin
 	}
 	if flight := c.avatarFlights[key]; flight != nil {
 		c.mu.Unlock()
@@ -127,7 +177,7 @@ func (c *Client) RelayAvatar(ctx context.Context, peerID, avatarID string) ([]by
 		}
 		c.mu.Lock()
 		_, _, valid := c.avatarPeerLocked(peerID, photoID)
-		ownerMatches := c.userID == key.owner
+		ownerMatches := c.avatarOnlineLocked(key.owner)
 		c.mu.Unlock()
 		if !ownerMatches {
 			return nil, "", ErrLogin
@@ -149,12 +199,13 @@ func (c *Client) RelayAvatar(ctx context.Context, peerID, avatarID string) ([]by
 	}
 	flight := &avatarFlight{done: make(chan struct{})}
 	c.avatarFlights[key] = flight
-	connection := c.relayConnection
 	c.mu.Unlock()
-	entry, err := c.loadAvatar(ctx, key, peer, photo, connection)
+	entry, err := c.loadAvatar(ctx, key, peer, photo)
 	c.mu.Lock()
 	_, _, valid := c.avatarPeerLocked(peerID, photoID)
-	if c.userID != key.owner {
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	} else if !c.avatarOnlineLocked(key.owner) {
 		err = ErrLogin
 	} else if valid != nil {
 		err = valid
@@ -189,7 +240,7 @@ func (c *Client) RelayAvatar(ctx context.Context, peerID, avatarID string) ([]by
 	return bytes.Clone(entry.data), entry.mime, err
 }
 
-func (c *Client) loadAvatar(ctx context.Context, key avatarKey, peer tg.InputPeerClass, photo avatarPhoto, connection *relayConnection) (avatarEntry, error) {
+func (c *Client) loadAvatar(ctx context.Context, key avatarKey, peer tg.InputPeerClass, photo avatarPhoto) (avatarEntry, error) {
 	select {
 	case <-ctx.Done():
 		return avatarEntry{}, ctx.Err()
@@ -200,7 +251,7 @@ func (c *Client) loadAvatar(ctx context.Context, key avatarKey, peer tg.InputPee
 	operation := func(ctx context.Context, client *telegram.Client) error {
 		c.mu.Lock()
 		_, _, err := c.avatarPeerLocked(key.peer, key.photo)
-		ownerMatches, connectionMatches := c.userID == key.owner, c.relayConnection == connection
+		ownerMatches := c.avatarOnlineLocked(key.owner)
 		dc := c.avatarDC
 		c.mu.Unlock()
 		if !ownerMatches {
@@ -208,9 +259,6 @@ func (c *Client) loadAvatar(ctx context.Context, key avatarKey, peer tg.InputPee
 		}
 		if err != nil {
 			return err
-		}
-		if !connectionMatches {
-			return ErrBusy
 		}
 		api := client.API()
 		// DC() exports authorization and must only be used across data centers.
@@ -246,19 +294,7 @@ func (c *Client) loadAvatar(ctx context.Context, key avatarKey, peer tg.InputPee
 		entry = avatarEntry{data: bytes.Clone(file.Bytes), mime: mime, expires: time.Now().Add(24 * time.Hour)}
 		return nil
 	}
-	var err error
-	if connection != nil {
-		err = c.runShared(ctx, connection, operation)
-	} else {
-		// Avoid a second session writer during search/login or relay startup.
-		select {
-		case <-ctx.Done():
-			return avatarEntry{}, ctx.Err()
-		case c.gate <- struct{}{}:
-		}
-		err = c.run(ctx, operation)
-		c.unlock()
-	}
+	err := c.run(ctx, operation)
 	if errors.Is(err, ErrAvatarUnavailable) || errors.Is(err, ErrLogin) || errors.Is(err, ErrInput) || errors.Is(err, ErrBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return avatarEntry{}, err
 	}

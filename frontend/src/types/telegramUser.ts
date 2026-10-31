@@ -1,5 +1,5 @@
-export interface TelegramUserStatus { apiId: number; configured: boolean; botConfigured: boolean; hasSession: boolean; authorized: boolean; name: string; username: string; stage: 'idle' | 'code' | 'password'; bot: string }
-export interface TelegramChannel { id: string; title: string; username?: string }
+export interface TelegramUserStatus { apiId: number; configured: boolean; botConfigured: boolean; hasSession: boolean; authorized: boolean; name: string; username: string; avatarId?: string; stage: 'idle' | 'code' | 'password'; bot: string }
+export interface TelegramChannel { id: string; title: string; username?: string; avatarId?: string }
 export interface TelegramChannelConfig { account: TelegramUserStatus; channels: TelegramChannel[] }
 export interface TelegramChannelPage { channels: TelegramChannel[]; selectionToken: string; nextCursor: string; config?: TelegramChannelConfig }
 export interface TelegramChannelMetadata { episode?: string; specs?: string[]; size?: string }

@@ -39,10 +39,10 @@ func TestAccountConfigAndSession(t *testing.T) {
 		t.Fatal("新配置不应预填 Bot")
 	}
 	secret := strings.Repeat("a", 32)
-	if err := c.Save(Config{APIID: 123, APIHash: secret, Bot: testBotUsername}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, APIHash: secret, Bot: testBotUsername}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Save(Config{APIID: 123, Bot: testBotUsername}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: testBotUsername}); err != nil {
 		t.Fatal("留空应保留 hash", err)
 	}
 	data, _ := json.Marshal(c.View())
@@ -53,13 +53,13 @@ func TestAccountConfigAndSession(t *testing.T) {
 	if err != nil || !restored.View().Configured || restored.View().Bot != testBotUsername {
 		t.Fatal("配置不能恢复")
 	}
-	if err := c.Save(Config{APIID: 123, Bot: "@replacement_bot"}); err != nil || c.View().Bot != "replacement_bot" {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: "@replacement_bot"}); err != nil || c.View().Bot != "replacement_bot" {
 		t.Fatal("Bot 用户名不能独立修改", err)
 	}
-	if err := c.Save(Config{APIID: 123, Bot: "not-a-bot"}); !errors.Is(err, ErrInput) {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: "not-a-bot"}); !errors.Is(err, ErrInput) {
 		t.Fatal("无效 Bot 用户名未被拒绝")
 	}
-	if err := c.Save(Config{APIID: 123, Bot: "  "}); err != nil || !c.View().Configured || c.View().BotConfigured {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: "  "}); err != nil || !c.View().Configured || c.View().BotConfigured {
 		t.Fatal("清空 Bot 不应影响 API 配置", err)
 	}
 	store := encryptedSession{c.sessionStore}
@@ -70,16 +70,19 @@ func TestAccountConfigAndSession(t *testing.T) {
 	if err != nil || string(value) != "session-bytes" {
 		t.Fatal("会话不能恢复")
 	}
-	if err := c.Save(Config{APIID: 456, APIHash: secret, Bot: "replacement_bot"}); err == nil {
+	if err := c.Save(context.Background(), Config{APIID: 456, APIHash: secret, Bot: "replacement_bot"}); err == nil {
 		t.Fatal("带会话不能更换 API 身份")
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(c.lock(), ErrBusy) {
-		t.Fatal("没有阻止并发操作")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	if err := c.Check(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("账号变更期间的读取未按调用方期限等待", err)
 	}
-	c.unlock()
+	release()
 	if !errors.Is(publicError(context.Canceled), context.Canceled) {
 		t.Fatal("取消错误丢失")
 	}
@@ -88,6 +91,85 @@ func TestAccountConfigAndSession(t *testing.T) {
 	}
 	if publicError(&tgerr.Error{Type: "PHONE_CODE_INVALID"}).Error() != "验证码不正确" {
 		t.Fatal("验证码错误映射失败")
+	}
+}
+
+func TestAccountOfflineSelectionsSurviveLogoutAndSameOwnerLogin(t *testing.T) {
+	c, f := relayClient(t)
+	ctx := context.Background()
+	f.photo = &tg.UserProfilePhoto{PhotoID: 888, DCID: 2}
+	if err := c.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seedRelay(c)
+	c.relayPeers.Peers[0].AvatarID = "123"
+	c.relayPeers.Peers[0].PhotoID, c.relayPeers.Peers[0].DCID = 123, 2
+	c.channels = channelSettings{OwnerID: 42, Peers: []channelPeer{{Channel: Channel{ID: "100", Title: "saved search", AvatarID: "123"}, AccessHash: 456, PhotoID: 123, DCID: 2}}}
+	if err := c.saveSettingsLocked(c.config, c.channels); err != nil {
+		t.Fatal(err)
+	}
+	key := avatarKey{owner: 42, peer: "channel:100", photo: 123}
+	c.avatarCache = map[avatarKey]avatarEntry{key: {data: []byte("cached-image"), mime: "image/png", expires: time.Now().Add(time.Hour)}}
+	saved := c.configStore.Value()
+	f.user.Store(0)
+	if err := c.Check(ctx); err != nil || c.View().Authorized || c.View().AvatarID != "888" || c.View().Name != "account" {
+		t.Fatal("offline state lost known account display metadata", err)
+	}
+	if c.configStore.Value() != saved || len(c.SavedRelayPeers()) != 3 || len(c.ChannelConfig().Channels) != 1 {
+		t.Fatal("offline status modified saved selections")
+	}
+	starts := f.starts.Load()
+	if data, _, err := c.RelayAvatar(ctx, "100", "123"); err != nil || string(data) != "cached-image" || f.starts.Load() != starts {
+		t.Fatal("offline cache read attempted a Telegram connection", err)
+	}
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	view := c.View()
+	if view.HasSession || view.Authorized || view.Name != "" || view.AvatarID != "" || c.userID != 0 {
+		t.Fatal("logout retained private current-account identity")
+	}
+	if len(c.SavedRelayPeers()) != 3 || len(c.ChannelConfig().Channels) != 1 {
+		t.Fatal("logout erased owner-scoped selections")
+	}
+	starts = f.starts.Load()
+	if data, _, err := c.RelayAvatar(ctx, "channel:100", "123"); err != nil || string(data) != "cached-image" || f.starts.Load() != starts {
+		t.Fatal("saved channel cache became unavailable after logout", err)
+	}
+	if _, err := c.ListRelayPeers(ctx, ""); !errors.Is(err, ErrLogin) {
+		t.Fatal("logout still allowed remote dialogs", err)
+	}
+	if _, err := c.PrepareRelay(ctx, "channel:100", "user:300", "", ""); !errors.Is(err, ErrLogin) {
+		t.Fatal("saved metadata authorized a remote forwarding operation", err)
+	}
+	restored, err := New(c.configStore, c.sessionStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restored.Close)
+	if len(restored.SavedRelayPeers()) != 3 || len(restored.ChannelConfig().Channels) != 1 || restored.View().Authorized {
+		t.Fatal("restart could not show offline saved selections")
+	}
+	if err := c.sessionStore.Save("new-session"); err != nil {
+		t.Fatal(err)
+	}
+	f.user.Store(42)
+	if err := c.Check(ctx); err != nil || !c.View().Authorized || len(c.SavedRelayPeers()) != 3 || len(c.avatarCache) != 1 {
+		t.Fatal("same-owner authentication erased selections or cached image", err)
+	}
+	f.dialogs = func([]tg.InputDialogPeerClass) (*tg.MessagesPeerDialogs, error) { return relayDialogs(), nil }
+	if _, err := c.PrepareRelay(ctx, "channel:100", "user:300", "", ""); err != nil {
+		t.Fatal("same-owner login could not reuse saved source and target", err)
+	}
+	f.user.Store(43)
+	if err := c.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.SavedRelayPeers()) != 0 || len(c.ChannelConfig().Channels) != 0 || len(c.avatarCache) != 0 || c.relayPeers.OwnerID != 0 {
+		t.Fatal("another owner inherited saved access hashes or image cache")
+	}
+	if _, _, err := c.RelayAvatar(ctx, "100", "123"); !errors.Is(err, ErrAvatarUnavailable) {
+		t.Fatal("another account could read the previous owner's cached image", err)
 	}
 }
 func TestBotLinksAndMultipleReplies(t *testing.T) {

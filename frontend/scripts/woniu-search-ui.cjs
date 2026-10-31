@@ -123,7 +123,7 @@ const item = (id, links, status = 'ready') => ({ id, title: id === '35487' ? 'å¤
     await page.waitForTimeout(900)
     assert.equal(await page.locator('dialog[open]').count(), 0)
     await page.goto(base + '/resources')
-    for (const target of ['/gying', '/woniu', '/nanshare', '/telegram/user']) {
+    for (const target of ['/gying', '/woniu', '/nanshare', '/resources/telegram']) {
       const logo = page.locator(`a[href="${target}"] img`).first()
       await logo.waitFor()
       assert.ok(await logo.evaluate(img => img.complete && img.naturalWidth > 0))

@@ -12,7 +12,6 @@ import FolderMonitorView from './views/FolderMonitorView.vue'
 import DownloadOrganizeView from './views/DownloadOrganizeView.vue'
 import TelegramView from './views/TelegramView.vue'
 import TelegramUserView from './views/TelegramUserView.vue'
-import TelegramChannelsView from './views/TelegramChannelsView.vue'
 import LogsView from './views/LogsView.vue'
 import EmbyView from './views/EmbyView.vue'
 import EmbyMissingView from './views/EmbyMissingView.vue'
@@ -95,8 +94,9 @@ export const router = createRouter({
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
     { path: '/telegram/relay', name: 'telegram-relay', component: () => import('./views/TelegramRelayView.vue'), meta: { managementSection: '/telegram' } },
-    { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/resources' } },
-    { path: '/telegram/channels', name: 'telegram-channels', component: TelegramChannelsView, meta: { managementSection: '/resources' } },
+    { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/telegram' } },
+    { path: '/telegram/channels', redirect: '/resources/telegram' },
+    { path: '/resources/telegram', name: 'telegram-search', component: () => import('./views/TelegramSearchView.vue'), meta: { managementSection: '/resources' } },
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },
     { path: '/resources/subtitles', name: 'subtitle-settings', component: SubtitleSettingsView, meta: { managementSection: '/resources' } },
     { path: '/resources/network', name: 'network-proxy', component: () => import('./views/NetworkProxyView.vue'), meta: { managementSection: '/resources' } },

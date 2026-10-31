@@ -139,8 +139,10 @@ func TestSearchDetachedCompletionCachesWithoutViewer(t *testing.T) {
 
 func TestSearchConcurrentViewersShareOneSend(t *testing.T) {
 	c, transport := transportClient(t)
-	if err := c.lock(); err != nil {
-		t.Fatal(err)
+	release := make(chan struct{})
+	transport.reply = func(id, poll int) []*tg.Message {
+		<-release
+		return []*tg.Message{{ID: id + 1, Message: "https://115.com/s/shared"}}
 	}
 	var wg sync.WaitGroup
 	failures := make(chan error, 16)
@@ -162,7 +164,7 @@ func TestSearchConcurrentViewersShareOneSend(t *testing.T) {
 		job := c.searches["search:same"]
 		return job != nil && job.subscribers == 16
 	})
-	c.unlock()
+	close(release)
 	wg.Wait()
 	close(failures)
 	for err := range failures {
@@ -182,20 +184,23 @@ func TestSentMessageIDMatchesRandomID(t *testing.T) {
 
 func TestSearchFIFOAndCancelQueuedWithoutSend(t *testing.T) {
 	c, transport := transportClient(t)
-	if err := c.lock(); err != nil {
-		t.Fatal(err)
+	release := make(chan struct{})
+	transport.reply = func(id, poll int) []*tg.Message {
+		<-release
+		return []*tg.Message{{ID: id + 1, Message: "没有找到资源"}}
 	}
-	t.Cleanup(func() {
-		select {
-		case <-c.gate:
-		default:
-		}
-	})
 	var wg sync.WaitGroup
 	launch := func(title string, ctx context.Context) {
 		wg.Add(1)
 		go func() { defer wg.Done(); _, _ = c.Search(ctx, title, false) }()
 	}
+	launch("first", context.Background())
+	searchEventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		job := c.searches["search:first"]
+		return job != nil && job.started
+	})
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	defer cancelFirst()
 	launch("cancel", firstCtx)
@@ -206,11 +211,11 @@ func TestSearchFIFOAndCancelQueuedWithoutSend(t *testing.T) {
 	searchEventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.queue) == 3 })
 	cancelFirst()
 	searchEventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.queue) == 2 })
-	c.unlock()
+	close(release)
 	wg.Wait()
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
-	if fmt.Sprint(transport.sends) != "[second third]" {
+	if fmt.Sprint(transport.sends) != "[first second third]" {
 		t.Fatalf("send order: %v", transport.sends)
 	}
 }
@@ -218,10 +223,11 @@ func TestSearchFIFOAndCancelQueuedWithoutSend(t *testing.T) {
 func TestSearchCacheReadableDuringBusyAndCooldown(t *testing.T) {
 	c, _ := transportClient(t)
 	c.cacheResult("search:cached", SearchResult{Empty: true}, time.Now())
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.unlock()
+	defer release()
 	c.mu.Lock()
 	c.cooldown = time.Now().Add(time.Minute)
 	c.mu.Unlock()
@@ -239,10 +245,11 @@ func TestSearchCacheReadableDuringBusyAndCooldown(t *testing.T) {
 func TestSearchQueueTimeoutAndCapacity(t *testing.T) {
 	c, transport := transportClient(t)
 	c.searchTiming.queue = 100 * time.Millisecond
-	if err := c.lock(); err != nil {
-		t.Fatal(err)
+	release := make(chan struct{})
+	transport.reply = func(id, poll int) []*tg.Message {
+		<-release
+		return []*tg.Message{{ID: id + 1, Message: "没有找到资源"}}
 	}
-	defer c.unlock()
 	var wg sync.WaitGroup
 	for i := 0; i < searchQueueLimit; i++ {
 		wg.Add(1)
@@ -251,8 +258,10 @@ func TestSearchQueueTimeoutAndCapacity(t *testing.T) {
 	searchEventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.searches) == searchQueueLimit })
 	_, err := c.Search(context.Background(), "overflow", false)
 	requireOperationError(t, err, "queue_full")
+	searchEventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.searches) == 1 })
+	close(release)
 	wg.Wait()
-	if transport.sentCount() != 0 {
+	if transport.sentCount() != 1 {
 		t.Fatal("queued requests were sent")
 	}
 	c.mu.Lock()
@@ -362,7 +371,7 @@ func TestSearchCloseCancelsAndJoinsWorker(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.workerRunning || len(c.searches) != 0 || len(c.gate) != 0 {
+	if c.workerRunning || len(c.searches) != 0 || c.temporaryConnection != nil {
 		t.Fatal("worker not drained")
 	}
 }

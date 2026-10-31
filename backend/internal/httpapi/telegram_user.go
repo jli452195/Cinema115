@@ -91,7 +91,9 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			fail(c, tguser.ErrInput)
 			return
 		}
-		if err := account.SaveChannels(input.SelectionToken, input.ChannelIDs); err != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 40*time.Second)
+		defer cancel()
+		if err := account.SaveChannels(ctx, input.SelectionToken, input.ChannelIDs); err != nil {
 			fail(c, err)
 			return
 		}
@@ -104,7 +106,9 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			fail(c, tguser.ErrInput)
 			return
 		}
-		if err := account.Save(input); err != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+		defer cancel()
+		if err := account.Save(ctx, input); err != nil {
 			fail(c, err)
 			return
 		}

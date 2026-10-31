@@ -20,12 +20,15 @@ type Channel struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`
 	Username string `json:"username,omitempty"`
+	AvatarID string `json:"avatarId,omitempty"`
 }
 
 // Access hashes stay in the encrypted account store and never enter API views.
 type channelPeer struct {
 	Channel
 	AccessHash int64 `json:"accessHash"`
+	PhotoID    int64 `json:"photoId,omitempty"`
+	DCID       int   `json:"dcId,omitempty"`
 }
 
 type channelSettings struct {
@@ -87,7 +90,7 @@ func (c *Client) ChannelConfig() ChannelConfigView {
 func (c *Client) channelConfigLocked() ChannelConfigView {
 	account := c.viewLocked()
 	channels := make([]Channel, 0, len(c.channels.Peers))
-	if account.HasSession && (!c.identityKnown || c.channels.OwnerID == c.userID) {
+	if c.channels.OwnerID != 0 && c.channels.OwnerID == c.displayOwnerLocked() {
 		for _, entry := range c.channels.Peers {
 			channels = append(channels, entry.Channel)
 		}
@@ -106,15 +109,21 @@ func channelToken() (string, error) {
 // ListChannels reads one batch of dialogs, including archived channels after
 // the main folder. The opaque cursor keeps all peer access hashes server-side.
 func (c *Client) ListChannels(ctx context.Context, cursor string) (ChannelPage, error) {
-	if err := c.lock(); err != nil {
+	release, err := c.read(ctx)
+	if err != nil {
 		return ChannelPage{}, err
 	}
-	defer c.unlock()
+	defer release()
+	unlock, err := c.acquire(ctx, c.channelPicker, 1)
+	if err != nil {
+		return ChannelPage{}, err
+	}
+	defer unlock()
 	if c.sessionStore.Value() == "" {
 		return ChannelPage{}, ErrLogin
 	}
 	var result ChannelPage
-	err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
+	err = c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
 		}
@@ -172,6 +181,9 @@ func (c *Client) ListChannels(ctx context.Context, cursor string) (ChannelPage, 
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, entry := range entries {
 			next.peers[entry.ID] = entry
 		}
@@ -210,7 +222,8 @@ func channelBatch(next *channelCatalog, response tg.ModifiedMessagesDialogs, mor
 		}
 		if p, ok := dialog.Peer.(*tg.PeerChannel); ok {
 			if channel := channels[p.ChannelID]; channel != nil {
-				entries = append(entries, channelPeer{Channel: Channel{ID: strconv.FormatInt(channel.ID, 10), Title: channel.Title, Username: channel.Username}, AccessHash: channel.AccessHash})
+				photo := telegramAvatarPhoto(channel.Photo)
+				entries = append(entries, channelPeer{Channel: Channel{ID: strconv.FormatInt(channel.ID, 10), Title: channel.Title, Username: channel.Username, AvatarID: photo.id()}, AccessHash: channel.AccessHash, PhotoID: photo.photoID, DCID: photo.dcID})
 			}
 		}
 	}
@@ -251,16 +264,20 @@ func samePeer(a, b tg.PeerClass) bool {
 	return false
 }
 
-func (c *Client) SaveChannels(token string, ids []string) error {
+func (c *Client) SaveChannels(ctx context.Context, token string, ids []string) error {
 	if len(ids) > 100 {
 		return ErrInput
 	}
-	if err := c.lock(); err != nil {
+	unlock, err := c.acquire(ctx, c.channelPicker, 1)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	catalog := c.channelCatalog
 	if !c.authorized || c.userID == 0 || c.sessionStore.Value() == "" {
 		return ErrLogin

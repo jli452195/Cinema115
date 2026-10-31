@@ -25,7 +25,7 @@ type channelTransport struct {
 func channelClient(t *testing.T) (*Client, *channelTransport) {
 	t.Helper()
 	c := testClient(t)
-	if err := c.Save(Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.sessionStore.Save("session"); err != nil {
@@ -88,28 +88,30 @@ func TestChannelSelectionPersistenceAndAccountIsolation(t *testing.T) {
 		t.Fatal("channel-only account should explain missing Bot", err)
 	}
 	f.list = func(*tg.MessagesGetDialogsRequest) (tg.MessagesDialogsClass, error) {
-		return fullChannels(broadcast(f.userID * 100)), nil
+		channel := broadcast(f.userID * 100)
+		channel.Photo = &tg.ChatPhoto{PhotoID: 777, DCID: 2}
+		return fullChannels(channel), nil
 	}
 	if got := c.ChannelConfig(); len(got.Channels) != 0 || f.calls != 0 {
 		t.Fatal("local view started a Telegram request")
 	}
 	page, err := c.ListChannels(context.Background(), "")
-	if err != nil || len(page.Channels) != 1 || page.SelectionToken == "" || page.NextCursor == "" {
+	if err != nil || len(page.Channels) != 1 || page.Channels[0].AvatarID != "777" || page.SelectionToken == "" || page.NextCursor == "" {
 		t.Fatalf("first page: %+v %v", page, err)
 	}
 	if page.Config == nil || !page.Config.Account.Authorized || len(page.Config.Channels) != 0 {
 		t.Fatal("list did not return refreshed account selection")
 	}
 	for _, ids := range [][]string{{"999"}, {"100", "100"}} {
-		if err := c.SaveChannels(page.SelectionToken, ids); !errors.Is(err, ErrInput) {
+		if err := c.SaveChannels(context.Background(), page.SelectionToken, ids); !errors.Is(err, ErrInput) {
 			t.Fatalf("accepted invalid selection %v: %v", ids, err)
 		}
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{"100"}); err != nil {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"100"}); err != nil {
 		t.Fatal(err)
 	}
 	// A Bot configuration update must not silently erase saved channels.
-	if err := c.Save(Config{APIID: 123, Bot: testBotUsername}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: testBotUsername}); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := New(c.configStore, c.sessionStore)
@@ -118,11 +120,11 @@ func TestChannelSelectionPersistenceAndAccountIsolation(t *testing.T) {
 	}
 	t.Cleanup(restored.Close)
 	view := restored.ChannelConfig()
-	if len(view.Channels) != 1 || view.Channels[0].ID != "100" {
+	if len(view.Channels) != 1 || view.Channels[0].ID != "100" || view.Channels[0].AvatarID != "777" || restored.channels.Peers[0].PhotoID != 777 || restored.channels.Peers[0].DCID != 2 {
 		t.Fatalf("selection lost on restart: %+v", view)
 	}
 	data, _ := json.Marshal(view)
-	if strings.Contains(string(data), "accessHash") || strings.Contains(string(data), strings.Repeat("a", 32)) {
+	if strings.Contains(string(data), "accessHash") || strings.Contains(string(data), "dcId") || strings.Contains(string(data), "photoId") || strings.Contains(string(data), strings.Repeat("a", 32)) {
 		t.Fatal("credentials leaked in config view")
 	}
 	// The same channel owner can reopen and save without loading every page.
@@ -135,7 +137,7 @@ func TestChannelSelectionPersistenceAndAccountIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SaveChannels(oldToken, []string{"100"}); !errors.Is(err, ErrChannelSelection) {
+	if err := c.SaveChannels(context.Background(), oldToken, []string{"100"}); !errors.Is(err, ErrChannelSelection) {
 		t.Fatal("another picker did not invalidate old token", err)
 	}
 	f.userID = 2
@@ -145,17 +147,17 @@ func TestChannelSelectionPersistenceAndAccountIsolation(t *testing.T) {
 	if len(c.ChannelConfig().Channels) != 0 {
 		t.Fatal("another account inherited channels")
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{"100"}); !errors.Is(err, ErrChannelSelection) {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"100"}); !errors.Is(err, ErrChannelSelection) {
 		t.Fatal("old selection token survived account switch", err)
 	}
 	page, err = c.ListChannels(context.Background(), "")
 	if err != nil || page.Channels[0].ID != "200" {
 		t.Fatal("new account list failed", err)
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{"100"}); !errors.Is(err, ErrInput) {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"100"}); !errors.Is(err, ErrInput) {
 		t.Fatal("old account peer accepted", err)
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{}); err != nil {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{}); err != nil {
 		t.Fatal("cannot clear selection", err)
 	}
 }
@@ -169,7 +171,7 @@ func TestChannelLogoutRetainsSelectionOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{"1"}); err != nil {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"1"}); err != nil {
 		t.Fatal(err)
 	}
 	f.logoutErr = errors.New("connection failed")
@@ -180,10 +182,10 @@ func TestChannelLogoutRetainsSelectionOnFailure(t *testing.T) {
 	if err := c.Disconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if c.View().HasSession || c.View().Authorized || len(c.ChannelConfig().Channels) != 0 || c.channelCatalog != nil {
-		t.Fatal("logout left account state")
+	if c.View().HasSession || c.View().Authorized || len(c.ChannelConfig().Channels) != 1 || c.channelCatalog != nil {
+		t.Fatal("logout retained a session or erased saved selections")
 	}
-	if err := c.SaveChannels(page.SelectionToken, []string{"1"}); !errors.Is(err, ErrLogin) {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"1"}); !errors.Is(err, ErrLogin) {
 		t.Fatal("logout allowed stale save", err)
 	}
 }
@@ -246,11 +248,11 @@ func TestChannelPaginationFiltersAndRetry(t *testing.T) {
 	if err != nil || len(archived.Channels) != 1 || archived.Channels[0].ID != "8" || archived.NextCursor != "" {
 		t.Fatalf("archive: %+v %v", archived, err)
 	}
-	if err := c.SaveChannels(archived.SelectionToken, []string{"1", "8"}); err != nil {
+	if err := c.SaveChannels(context.Background(), archived.SelectionToken, []string{"1", "8"}); err != nil {
 		t.Fatal(err)
 	}
 	c.channelCatalog.expires = time.Now().Add(-time.Second)
-	if err := c.SaveChannels(archived.SelectionToken, nil); !errors.Is(err, ErrChannelSelection) {
+	if err := c.SaveChannels(context.Background(), archived.SelectionToken, nil); !errors.Is(err, ErrChannelSelection) {
 		t.Fatal("expired selection accepted", err)
 	}
 }
@@ -269,7 +271,7 @@ func TestChannelSaveFailureAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.configStore = failingChannelStore{c.configStore}
-	if err := c.SaveChannels(page.SelectionToken, []string{"1"}); err == nil || len(c.ChannelConfig().Channels) != 0 {
+	if err := c.SaveChannels(context.Background(), page.SelectionToken, []string{"1"}); err == nil || len(c.ChannelConfig().Channels) != 0 {
 		t.Fatal("failed save published new state")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,8 +279,9 @@ func TestChannelSaveFailureAndCancellation(t *testing.T) {
 	if _, err := c.ListChannels(ctx, ""); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancellation lost", err)
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(context.Background())
+	if err != nil {
 		t.Fatal("canceled call retained the account gate", err)
 	}
-	c.unlock()
+	release()
 }

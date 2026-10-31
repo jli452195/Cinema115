@@ -202,7 +202,7 @@ func (s *TelegramRelay) Save(ctx context.Context, input TelegramRelayRuleInput) 
 	}
 	old := previous.rule
 	identity := tguser.RelayIdentity{OwnerID: old.OwnerID, SourceID: old.SourceID, SourceTitle: old.SourceTitle, TargetID: old.TargetID, TargetTitle: old.TargetTitle}
-	if !exists || old.SourceID != input.SourceID || old.TargetID != input.TargetID || (!old.Enabled && input.Enabled) {
+	if !exists || old.SourceID != input.SourceID || old.TargetID != input.TargetID || (!old.Enabled && input.Enabled) || input.SourceSelectionToken != "" || input.TargetSelectionToken != "" {
 		identity, err = s.transport.PrepareRelay(ctx, input.SourceID, input.TargetID, input.SourceSelectionToken, input.TargetSelectionToken)
 		if err != nil {
 			return model.TelegramRelayRule{}, err
@@ -488,8 +488,11 @@ func (s *TelegramRelay) watch(ctx context.Context) error {
 				message = "Telegram登录已失效，请重新登录"
 			}
 			var operation *tguser.OperationError
-			if errors.As(err, &operation) && operation.Code == "update_gap" {
-				message = "频道积压超出可恢复窗口，已处理可获取的新消息；更早的消息可能缺失"
+			if errors.As(err, &operation) {
+				message = operation.Message
+				if operation.Code == "update_gap" {
+					message = "频道积压超出可恢复窗口，已处理可获取的新消息；更早的消息可能缺失"
+				}
 			}
 			s.mu.Lock()
 			changed := s.lastError != message

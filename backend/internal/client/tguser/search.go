@@ -279,7 +279,7 @@ func (c *Client) Select(ctx context.Context, id string) (SearchResult, error) {
 	return c.exchange(ctx, storedAction{kind: "select"}, "select:"+id, false, nil, nil)
 }
 
-// The tracked worker owns the connection gate and the operation deadline.
+// The single Bot worker owns reply correlation and the operation deadline.
 func (c *Client) performExchange(ctx context.Context, action storedAction, key string, refresh bool, onUpdate func(SearchResult)) (SearchResult, error) {
 	result := SearchResult{Items: []Action{}, Links: []string{}}
 	if err := ctx.Err(); err != nil {

@@ -78,7 +78,7 @@ func relayClient(t *testing.T) (*Client, *relayFakeTransport) {
 		t.Fatal(err)
 	}
 	t.Cleanup(c.Close)
-	if err := c.Save(Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.sessionStore.Save("saved-session"); err != nil {
@@ -189,7 +189,7 @@ func TestRelayPeerSelectionPrivacyAndSearchIsolation(t *testing.T) {
 	if len(c.relayPeers.Peers) != 2 || c.relayPeers.Peers[0].Pts != 20 {
 		t.Fatal("selected access peers or initial channel pts were not saved")
 	}
-	if err := c.Save(Config{APIID: 123, Bot: testBotUsername}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, Bot: testBotUsername}); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := New(c.configStore, c.sessionStore)
@@ -298,10 +298,11 @@ func TestRelaySharedConnectionDoesNotHoldGateAndLogoutJoins(t *testing.T) {
 	if !c.RelayConnected() {
 		t.Fatal("ready callback was fired before connection state")
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(context.Background())
+	if err != nil {
 		t.Fatal("persistent watcher held normal operation gate", err)
 	}
-	c.unlock()
+	release()
 	if err := c.Check(context.Background()); err != nil {
 		t.Fatal("normal operation could not borrow active client", err)
 	}
@@ -316,8 +317,8 @@ func TestRelaySharedConnectionDoesNotHoldGateAndLogoutJoins(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("logout did not join persistent connection")
 	}
-	if c.RelayConnected() || c.View().HasSession || c.relayPeers.OwnerID != 0 {
-		t.Fatal("logout left active connection or forwarding credentials")
+	if c.RelayConnected() || c.View().HasSession || c.View().Authorized || c.relayPeers.OwnerID != 42 {
+		t.Fatal("logout left an active connection or erased forwarding selections")
 	}
 }
 

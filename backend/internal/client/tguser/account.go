@@ -16,6 +16,7 @@ import (
 	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+	"golang.org/x/sync/semaphore"
 
 	"strm115/backend/internal/netproxy"
 )
@@ -49,7 +50,9 @@ type View struct {
 }
 type Client struct {
 	configStore, sessionStore       Store
-	gate                            chan struct{}
+	lifecycle                       *semaphore.Weighted
+	channelPicker, relayPicker      *semaphore.Weighted
+	channelSearchGate               *semaphore.Weighted
 	mu                              sync.Mutex
 	config                          Config
 	channels                        channelSettings
@@ -57,10 +60,10 @@ type Client struct {
 	relayPeers                      relaySettings
 	relayCatalog                    *relayCatalog
 	relayConnection                 *relayConnection
+	temporaryConnection             *relayConnection
 	channelSearches                 map[string]*channelSearch
 	channelRetryAt                  time.Time
-	userID                          int64
-	identityKnown                   bool
+	userID                          int64 // Last verified identity; authorized gates online operations.
 	authorized                      bool
 	name, username, phone, codeHash string
 	avatar                          avatarPhoto
@@ -104,7 +107,7 @@ func (s encryptedSession) StoreSession(ctx context.Context, data []byte) error {
 	return s.Save(base64.StdEncoding.EncodeToString(data))
 }
 func New(configStore, sessionStore Store) (*Client, error) {
-	c := &Client{configStore: configStore, sessionStore: sessionStore, gate: make(chan struct{}, 1), results: make(map[string]storedAction)}
+	c := &Client{configStore: configStore, sessionStore: sessionStore, lifecycle: semaphore.NewWeighted(lifecycleCapacity), channelPicker: semaphore.NewWeighted(1), relayPicker: semaphore.NewWeighted(1), channelSearchGate: semaphore.NewWeighted(1), results: make(map[string]storedAction)}
 	c.workerContext, c.stopWorker = context.WithCancel(context.Background())
 	c.searches = make(map[string]*searchJob)
 	c.searchTiming = defaultSearchTiming
@@ -118,24 +121,22 @@ func New(configStore, sessionStore Store) (*Client, error) {
 	}
 	return c, nil
 }
-func (c *Client) lock() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed || len(c.searches) > 0 {
-		return ErrBusy
-	}
-	select {
-	case c.gate <- struct{}{}:
-		return nil
-	default:
-		return ErrBusy
-	}
-}
-func (c *Client) unlock() { <-c.gate }
 func (c *Client) View() View {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.viewLocked()
+}
+
+// Display metadata remains available while the saved account is offline. This
+// owner is never sufficient to authorize Telegram operations.
+func (c *Client) displayOwnerLocked() int64 {
+	if c.userID != 0 {
+		return c.userID
+	}
+	if c.channels.OwnerID != 0 {
+		return c.channels.OwnerID
+	}
+	return c.relayPeers.OwnerID
 }
 
 func (c *Client) viewLocked() View {
@@ -163,13 +164,17 @@ func validBotUsername(value string) bool {
 	return botPattern.MatchString(value)
 }
 
-func (c *Client) Save(input Config) error {
-	if err := c.lock(); err != nil {
+func (c *Client) Save(ctx context.Context, input Config) error {
+	release, err := c.exclusive(ctx)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer release()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if input.APIHash == "" {
 		input.APIHash = c.config.APIHash
 	}
@@ -187,21 +192,10 @@ func (c *Client) Save(input Config) error {
 	return nil
 }
 
-// Search operations retain their gate. A live relay lends its MTProto client;
-// otherwise Run closes the temporary connection before releasing the gate.
-func (c *Client) run(ctx context.Context, operation func(context.Context, *telegram.Client) error) error {
-	c.mu.Lock()
-	connection := c.relayConnection
-	c.mu.Unlock()
-	if connection != nil {
-		return c.runShared(ctx, connection, operation)
-	}
+func (c *Client) connect(ctx context.Context, cfg Config, operation func(context.Context, *telegram.Client) error) error {
 	if c.runOperation != nil {
 		return c.runOperation(ctx, operation)
 	}
-	c.mu.Lock()
-	cfg := c.config
-	c.mu.Unlock()
 	if cfg.APIID < 1 || cfg.APIHash == "" {
 		return ErrConfig
 	}
@@ -220,17 +214,24 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	previousUser := c.userID
-	c.authorized = state.Authorized
-	c.identityKnown = true
-	c.userID = 0
-	if state.Authorized && state.User != nil {
-		c.userID = state.User.ID
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if previousUser != c.userID {
+	previousOwner := c.displayOwnerLocked()
+	c.authorized = state.Authorized && state.User != nil && state.User.ID != 0
+	if !c.authorized {
+		if c.relayConnection != nil {
+			c.relayConnection.cancel()
+		}
+		c.clearSearchLocked()
+		return nil
+	}
+	c.userID = state.User.ID
+	if previousOwner != c.userID {
 		c.avatarCache = nil
+		c.clearSearchLocked()
 	}
-	if c.relayConnection != nil && (!c.authorized || previousUser != 0 && previousUser != c.userID) {
+	if c.relayConnection != nil && previousOwner != 0 && previousOwner != c.userID {
 		c.relayConnection.cancel()
 	}
 	if c.channels.OwnerID != 0 && c.channels.OwnerID != c.userID {
@@ -256,42 +257,33 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 	if c.relayCatalog != nil && c.relayCatalog.ownerID != c.userID {
 		c.relayCatalog = nil
 	}
-	if !state.Authorized {
-		c.clearSearchLocked()
-	}
-	c.name = ""
-	c.username = ""
-	c.avatar = avatarPhoto{}
-	if state.User != nil {
-		c.name = state.User.FirstName
-		c.username = state.User.Username
-		if state.Authorized {
-			c.avatar = telegramAvatarPhoto(state.User.Photo)
-		}
-	}
-	if state.Authorized {
-		c.codeHash = ""
-		c.phone = ""
-		c.passwordNeeded = false
-		c.expires = time.Time{}
-	}
+	c.name = state.User.FirstName
+	c.username = state.User.Username
+	c.avatar = telegramAvatarPhoto(state.User.Photo)
+	c.codeHash = ""
+	c.phone = ""
+	c.passwordNeeded = false
+	c.expires = time.Time{}
 	return nil
 }
 func (c *Client) Check(ctx context.Context) error {
-	if err := c.lock(); err != nil {
+	release, err := c.read(ctx)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer release()
 	return publicError(c.run(ctx, c.status))
 }
 func (c *Client) SendCode(ctx context.Context, phone string) error {
 	if !phonePattern.MatchString(phone) {
 		return ErrInput
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(ctx)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer release()
+	c.stopRelay()
 	return publicError(c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
@@ -320,10 +312,12 @@ func (c *Client) SendCode(ctx context.Context, phone string) error {
 	}))
 }
 func (c *Client) SignIn(ctx context.Context, code, password string) error {
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(ctx)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer release()
+	c.stopRelay()
 	c.mu.Lock()
 	phone, hash, need, expires := c.phone, c.codeHash, c.passwordNeeded, c.expires
 	c.mu.Unlock()
@@ -356,10 +350,12 @@ func (c *Client) SignIn(ctx context.Context, code, password string) error {
 	}))
 }
 func (c *Client) Disconnect(ctx context.Context) error {
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(ctx)
+	if err != nil {
 		return err
 	}
-	defer c.unlock()
+	defer release()
+	c.stopRelay()
 	if c.sessionStore.Value() != "" {
 		if err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 			_, err := client.API().AuthLogOut(ctx)
@@ -371,28 +367,24 @@ func (c *Client) Disconnect(ctx context.Context) error {
 			return publicError(err)
 		}
 	}
-	c.stopRelay()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.authorized = false
 	c.userID = 0
-	c.identityKnown = true
 	c.channelCatalog = nil
 	c.relayCatalog = nil
-	c.relayPeers = relaySettings{}
 	c.channelSearches = nil
 	c.channelRetryAt = time.Time{}
 	c.name = ""
 	c.username = ""
 	c.avatar = avatarPhoto{}
-	c.avatarCache = nil
 	c.phone = ""
 	c.codeHash = ""
 	c.passwordNeeded = false
 	c.expires = time.Time{}
 	c.clearSearchLocked()
 	sessionErr := c.sessionStore.Save("")
-	configErr := c.saveSettingsLocked(c.config, channelSettings{})
+	configErr := c.saveSettingsLocked(c.config, c.channels)
 	if sessionErr != nil {
 		return errors.New("清除 Telegram 登录会话失败")
 	}

@@ -19,8 +19,9 @@ export const managementCategories = {
     ],
   },
   telegram: {
-    title: 'Telegram 配置', description: '连接机器人，管理消息接收与自动处理。',
+    title: 'Telegram 配置', description: '管理 Telegram 用户账号、机器人与频道转发。',
     features: [
+      { title: '用户账号', description: '配置 Telegram API，登录共用的用户账号。', to: '/telegram/user', icon: 'telegram', menuIcon: 'telegram' },
       { title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram', menuIcon: 'telegram' },
       { title: '频道转发', description: '选择来源频道与目标，将资源链接自动投递到机器人、频道或群组。', to: '/telegram/relay', icon: 'telegram', menuIcon: 'telegram' },
     ],
@@ -40,8 +41,7 @@ export const resourceSources = [
   { id: 'gying', title: '观影配置', description: '管理观影站地址、账号登录与资源优先级。', settings: '/gying', menuIcon: 'film' },
   { id: 'woniu', title: '蜗牛配置', description: '登录蜗牛 I 4K，配置详情页网盘搜索。', settings: '/woniu', menuIcon: 'search' },
   { id: 're0', title: 'RE0 配置', description: '管理 NanShare 连接，检查 RE0 搜索与分享 STRM 配置。', settings: '/nanshare', menuIcon: 'link' },
-  { id: 'telegram', title: 'Telegram 搜索配置', description: '配置 Telegram API、用户账号登录与资源 Bot。', settings: '/telegram/user', menuIcon: 'telegram' },
-  { id: 'telegramChannels', title: 'TG 频道配置', description: '选择已加入的频道，配置聚合资源搜索来源。', settings: '/telegram/channels', menuIcon: 'telegram' },
+  { id: 'telegram', title: 'Telegram 搜索', description: '配置资源 Bot 与频道，管理详情页的聚合搜索来源。', settings: '/resources/telegram', menuIcon: 'telegram' },
   { id: 'subtitles', title: '字幕', description: '管理字幕库、射手网及在线字幕 API 配置。', settings: '/resources/subtitles', menuIcon: 'subtitles' },
   { id: 'network', title: '网络代理', description: '配置 NAS 访问外部资源服务的代理与服务范围。', settings: '/resources/network', menuIcon: 'proxy' },
 ] as const

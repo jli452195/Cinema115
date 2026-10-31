@@ -41,7 +41,7 @@ func TestAccountConnectionUsesTelegramUserProxy(t *testing.T) {
 		manager.CloseIdleConnections()
 	})
 	c := testClient(t)
-	if err := c.Save(Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
+	if err := c.Save(context.Background(), Config{APIID: 123, APIHash: strings.Repeat("a", 32)}); err != nil {
 		t.Fatal(err)
 	}
 	// The SDK may return nil when cancellation ends its connection loop before

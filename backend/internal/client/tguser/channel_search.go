@@ -77,6 +77,42 @@ func channelFingerprint(settings channelSettings) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// Caller holds mu. Local results are available even while a remote search or
+// an account writer is waiting; only a matching current owner may reuse them.
+func (c *Client) channelSearchStateLocked(title, cursor string, refresh bool) (*channelSearch, bool, error) {
+	if c.closed {
+		return nil, false, context.Canceled
+	}
+	if c.sessionStore.Value() == "" {
+		return nil, false, ErrLogin
+	}
+	now := time.Now()
+	fingerprint, owner := channelFingerprint(c.channels), c.displayOwnerLocked()
+	for key, search := range c.channelSearches {
+		if now.After(search.expires) || search.fingerprint != fingerprint || search.ownerID != owner {
+			delete(c.channelSearches, key)
+		}
+	}
+	var search *channelSearch
+	for _, candidate := range c.channelSearches {
+		if candidate.key == title && ((cursor != "" && (candidate.cursor == cursor || candidate.previousCursor == cursor)) || (cursor == "" && !refresh)) {
+			search = candidate
+			break
+		}
+	}
+	if search != nil && (cursor == "" || cursor == search.previousCursor) {
+		return search, true, nil
+	}
+	if cursor != "" && search == nil {
+		return nil, false, &OperationError{Code: "channel_search_expired", Message: "频道搜索已过期或配置已改变，请重新搜索"}
+	}
+	if now.Before(c.channelRetryAt) {
+		retryAt := c.channelRetryAt
+		return nil, false, &OperationError{Code: "channel_search_limited", Message: "Telegram 搜索频率受限，请稍后再试", RetryAt: &retryAt}
+	}
+	return search, false, nil
+}
+
 // SearchChannels never sends messages or invokes callbacks. Each request reads
 // a bounded batch; pagination and failed channels retain their own offsets.
 func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refresh bool) (ChannelSearchResult, error) {
@@ -87,55 +123,42 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 	if err := ctx.Err(); err != nil {
 		return ChannelSearchResult{}, err
 	}
-	if err := c.lock(); err != nil {
+	c.mu.Lock()
+	search, cached, err := c.channelSearchStateLocked(title, cursor, refresh)
+	if err != nil || cached {
+		c.mu.Unlock()
+		if cached {
+			result := search.result
+			result.Cached = true
+			return result, nil
+		}
 		return ChannelSearchResult{}, err
 	}
-	defer c.unlock()
+	c.mu.Unlock()
+	release, err := c.read(ctx)
+	if err != nil {
+		return ChannelSearchResult{}, err
+	}
+	defer release()
+	unlock, err := c.acquire(ctx, c.channelSearchGate, 1)
+	if err != nil {
+		return ChannelSearchResult{}, err
+	}
+	defer unlock()
 	c.mu.Lock()
-	if c.sessionStore.Value() == "" {
-		c.mu.Unlock()
-		return ChannelSearchResult{}, ErrLogin
+	search, cached, err = c.channelSearchStateLocked(title, cursor, refresh)
+	c.mu.Unlock()
+	if err != nil {
+		return ChannelSearchResult{}, err
 	}
-	now := time.Now()
-	fingerprint := channelFingerprint(c.channels)
-	for key, search := range c.channelSearches {
-		if now.After(search.expires) || search.fingerprint != fingerprint {
-			delete(c.channelSearches, key)
-		}
-	}
-	var search *channelSearch
-	for _, candidate := range c.channelSearches {
-		if candidate.key != title {
-			continue
-		}
-		if cursor != "" && (candidate.cursor == cursor || candidate.previousCursor == cursor) {
-			search = candidate
-			break
-		}
-		if cursor == "" && !refresh {
-			search = candidate
-			break
-		}
-	}
-	if search != nil && (cursor == "" || cursor == search.previousCursor) {
+	if cached {
 		result := search.result
 		result.Cached = true
-		c.mu.Unlock()
 		return result, nil
 	}
-	if cursor != "" && search == nil {
-		c.mu.Unlock()
-		return ChannelSearchResult{}, &OperationError{Code: "channel_search_expired", Message: "频道搜索已过期或配置已改变，请重新搜索"}
-	}
-	if now.Before(c.channelRetryAt) {
-		retryAt := c.channelRetryAt
-		c.mu.Unlock()
-		return ChannelSearchResult{}, &OperationError{Code: "channel_search_limited", Message: "Telegram 搜索频率受限，请稍后再试", RetryAt: &retryAt}
-	}
-	c.mu.Unlock()
 
 	var result ChannelSearchResult
-	err := c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
+	err = c.run(ctx, func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
 			return err
 		}
@@ -272,6 +295,12 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !c.authorized || c.userID != next.ownerID || channelFingerprint(c.channels) != next.fingerprint {
+			return &OperationError{Code: "channel_search_expired", Message: "频道账号或配置已改变，请重新搜索"}
+		}
 		if c.channelSearches == nil {
 			c.channelSearches = make(map[string]*channelSearch)
 		}

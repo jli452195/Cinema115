@@ -39,27 +39,44 @@ type relayConnection struct {
 	cancel      context.CancelFunc
 	ready, done chan struct{}
 	connected   bool // protected by Client.mu
+	borrowers   int  // temporary connections only; protected by Client.mu
+	writers     int  // account changes draining an unready relay; protected by Client.mu
+	closing     bool
+	err         error
 }
 
 func (c *Client) RelayConnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.relayConnection != nil && c.relayConnection.connected
+	return c.relayConnection != nil && c.relayConnection.connected && !c.relayConnection.closing && c.relayConnection.ctx.Err() == nil
 }
 
-// A live relay owns the encrypted MTProto session. Ordinary operations borrow
-// its client but retain their existing short-lived operation/search gate.
+// The same MTProto client handles independent RPCs concurrently. Each borrowed
+// operation inherits connection cancellation without taking the Bot queue lock.
 func (c *Client) runShared(ctx context.Context, connection *relayConnection, operation func(context.Context, *telegram.Client) error) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-connection.done:
+		c.mu.Lock()
+		err, closing := connection.err, connection.closing
+		c.mu.Unlock()
+		if closing {
+			return context.Canceled
+		}
+		if err != nil {
+			return err
+		}
 		return ErrBusy
 	case <-connection.ready:
 	}
 	c.mu.Lock()
-	ready := connection.connected && !c.closed
+	ready := connection.connected && !c.closed && connection.ctx.Err() == nil
+	closing := connection.closing
 	c.mu.Unlock()
+	if closing {
+		return context.Canceled
+	}
 	if !ready {
 		return ErrBusy
 	}
@@ -86,44 +103,61 @@ func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle fun
 	if store == nil || handle == nil {
 		return ErrInput
 	}
-	// Wait for an in-flight standalone operation to close its MTProto client.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case c.gate <- struct{}{}:
+	release, err := c.read(ctx)
+	if err != nil {
+		return err
 	}
-	c.mu.Lock()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	// Never open a relay client beside a temporary client writing the same
+	// session. Existing borrowers finish normally before ownership transfers.
+	for {
+		c.mu.Lock()
+		connection := c.temporaryConnection
+		if connection == nil {
+			break // Keep mu until this relay has reserved the session.
+		}
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-connection.done:
+		}
+	}
 	if c.closed {
 		c.mu.Unlock()
-		c.unlock()
 		return context.Canceled
 	}
 	if c.relayConnection != nil {
 		c.mu.Unlock()
-		c.unlock()
 		return ErrBusy
 	}
 	cfg := c.config
 	if cfg.APIID <= 0 || cfg.APIHash == "" {
 		c.mu.Unlock()
-		c.unlock()
 		return ErrConfig
 	}
 	if c.sessionStore.Value() == "" {
 		c.mu.Unlock()
-		c.unlock()
 		return ErrLogin
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	connection := &relayConnection{ctx: runCtx, cancel: cancel, ready: make(chan struct{}), done: make(chan struct{})}
 	c.relayConnection = connection
 	c.mu.Unlock()
-	c.unlock()
+	// Account changes can now stop and join this reserved connection, including
+	// a startup that has not reached ready yet. Do not hold a read lease while
+	// waiting for network initialization, or logout could not reach stopRelay.
+	release()
+	release = nil
 	defer func() {
 		cancel()
 		c.mu.Lock()
 		connection.connected = false
-		if c.relayConnection == connection {
+		if c.relayConnection == connection && connection.writers == 0 {
 			c.relayConnection = nil
 		}
 		close(connection.done)
@@ -145,8 +179,11 @@ func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle fun
 		authorized := c.authorized
 		saved := c.relayPeers
 		c.mu.Unlock()
-		if !authorized || owner == 0 || saved.OwnerID != owner {
+		if !authorized || owner == 0 {
 			return ErrLogin
+		}
+		if saved.OwnerID != owner {
+			return &OperationError{Code: "selection_required", Message: "转发频道资料缺失，请编辑规则重新选择来源和目标"}
 		}
 		rules, err := store.ListTelegramRelayRules(ctx)
 		if err != nil {
@@ -185,16 +222,24 @@ func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle fun
 		c.mu.Unlock()
 		return manager.Run(ctx, relayUpdatesAPI{Client: client.API(), state: state, handle: handle}, owner, updates.AuthOptions{OnStart: func(ctx context.Context) {
 			c.mu.Lock()
+			if connection.closing || ctx.Err() != nil || c.relayConnection != connection {
+				c.mu.Unlock()
+				return
+			}
 			connection.connected = true
 			c.mu.Unlock()
 			if err := handle(ctx, owner, nil); err != nil {
 				state.fail(err)
 				return
 			}
-			close(connection.ready)
+			c.mu.Lock()
+			if !connection.closing && ctx.Err() == nil && c.relayConnection == connection {
+				close(connection.ready)
+			}
+			c.mu.Unlock()
 		}})
 	}
-	var err error
+	err = nil
 	if c.runOperation != nil {
 		err = c.runOperation(runCtx, operation)
 	} else {
@@ -213,6 +258,11 @@ func (c *Client) RelaySend(ctx context.Context, ownerID int64, targetID string, 
 	if randomID == 0 || payload.Text == "" || len(utf16.Encode([]rune(payload.Text))) > 4096 {
 		return ErrInput
 	}
+	release, err := c.read(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	c.mu.Lock()
 	if !c.authorized || c.userID != ownerID || c.relayPeers.OwnerID != ownerID {
 		c.mu.Unlock()

@@ -307,10 +307,11 @@ func TestChannelSearchBoundedParallelismAndCancellation(t *testing.T) {
 	if err := <-finished; !errors.Is(err, context.Canceled) {
 		t.Fatal("cancellation lost", err)
 	}
-	if err := c.lock(); err != nil {
+	release, err := c.exclusive(context.Background())
+	if err != nil {
 		t.Fatal("connection gate stuck", err)
 	}
-	c.unlock()
+	release()
 }
 
 func TestChannelSearchFloodWaitAndAccountChange(t *testing.T) {

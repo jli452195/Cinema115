@@ -99,13 +99,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.locator('.relay-symbol').evaluate(element => element.offsetWidth === 40 && element.offsetHeight === 40), true)
     assert.equal(await page.locator('.relay-symbol img').evaluate(image => image.naturalWidth), 160)
     assert.equal(await page.locator('.relay-symbol').evaluate(element => getComputedStyle(element).borderRadius), '50%')
+    await card('动画转存').locator('.relay-peer-avatar img').nth(1).waitFor()
+    await card('动画转存').locator('.relay-peer-avatar img').evaluateAll(images => Promise.all(images.map(image => image.decode())))
+    assert.equal(await card('动画转存').locator('.relay-peer-avatar img').count(), 2)
+    assert.equal(await page.locator('.relay-peer-avatar').evaluateAll(elements => elements.every(element => element.offsetWidth === 32 && element.offsetHeight === 32 && getComputedStyle(element).borderRadius === '50%')), true)
     const readsBeforeEditor = peerReads().length
     await card('动画转存').getByRole('button', { name: '编辑动画转存', exact: true }).click()
     await page.waitForFunction(() => [...document.querySelectorAll('.relay-selection-avatar img')].filter(image => image.naturalWidth === 160).length === 2)
     assert.equal(await editor().locator('.relay-selection-avatar').evaluateAll(elements => elements.every(element => element.offsetWidth === 32 && element.offsetHeight === 32 && getComputedStyle(element).borderRadius === '50%')), true)
     assert.equal(peerReads().length, readsBeforeEditor)
     await editor().getByRole('button', { name: '取消', exact: true }).click()
-    passed.push('account and picker avatars are round; saved source and target avatars appear in the editor without loading the Telegram dialog list')
+    passed.push('account, rule cards and picker avatars are round; saved source and target avatars appear without loading the Telegram dialog list')
     for (const photo of ['999', '777', '776']) {
       accountAvatarId = photo; await page.getByRole('button', { name: '刷新', exact: true }).click()
       await page.waitForTimeout(160); await page.locator('.relay-symbol svg').waitFor()

@@ -63,6 +63,14 @@ func TestRelayAvatarMetadataDoesNotDownloadPreviews(t *testing.T) {
 	if err != nil || strings.Contains(string(encoded), "data:image") || strings.Contains(string(encoded), "accessHash") || strings.Contains(string(encoded), "dcId") {
 		t.Fatal("private peer metadata or inline bytes leaked", err)
 	}
+	f.user.Store(0)
+	if err := c.Check(ctx); err != nil || c.View().Authorized || c.View().AvatarID != "888" || len(c.SavedRelayPeers()) != 2 {
+		t.Fatal("expired login erased local display metadata", err)
+	}
+	f.user.Store(42)
+	if err := c.Check(ctx); err != nil || !c.View().Authorized || len(c.SavedRelayPeers()) != 2 {
+		t.Fatal("same-account login lost forwarding selections", err)
+	}
 	f.photo = nil
 	if err := c.Check(ctx); err != nil || c.View().AvatarID != "" {
 		t.Fatal("removed photo stayed visible", err)
@@ -71,8 +79,8 @@ func TestRelayAvatarMetadataDoesNotDownloadPreviews(t *testing.T) {
 	if err := c.Check(ctx); err != nil || c.View().AvatarID != "" {
 		t.Fatal("invalid login retained photo", err)
 	}
-	if len(c.SavedRelayPeers()) != 0 {
-		t.Fatal("invalid login retained saved peer metadata")
+	if len(c.SavedRelayPeers()) != 2 {
+		t.Fatal("invalid login erased saved peer metadata")
 	}
 }
 
@@ -151,10 +159,18 @@ func TestRelayAvatarCrossDCCache(t *testing.T) {
 	if err != nil || !bytes.Equal(cached, expected) || calls.Load() != 1 || closed.Load() != 1 {
 		t.Fatal("cache changed, redownloaded or wrong connection closed", err)
 	}
+	c.authorized = false
+	if cached, _, err := c.RelayAvatar(context.Background(), "self", "123"); err != nil || !bytes.Equal(cached, expected) || calls.Load() != 1 {
+		t.Fatal("offline account could not display cached avatar", err)
+	}
 	key := avatarKey{owner: 42, peer: "self", photo: 123}
 	entry := c.avatarCache[key]
 	entry.expires = time.Now().Add(-time.Second)
 	c.avatarCache[key] = entry
+	if _, _, err := c.RelayAvatar(context.Background(), "self", "123"); !errors.Is(err, ErrLogin) || calls.Load() != 1 {
+		t.Fatal("offline cache miss attempted a Telegram download", err)
+	}
+	c.authorized = true
 	if _, _, err := c.RelayAvatar(context.Background(), "self", "123"); err != nil || calls.Load() != 2 {
 		t.Fatal("expired avatar did not reload", err)
 	}
@@ -165,9 +181,38 @@ func TestRelayAvatarCrossDCCache(t *testing.T) {
 	if _, _, err := c.RelayAvatar(context.Background(), "user:999", "123"); !errors.Is(err, ErrAvatarUnavailable) {
 		t.Fatal("unknown peer accepted", err)
 	}
+}
+
+func TestSearchChannelAvatarsShareOwnerScopedCache(t *testing.T) {
+	c, calls, _, expected := avatarTestClient(t, true, false, nil)
+	entry := channelPeer{Channel: Channel{ID: "100", AvatarID: "123"}, AccessHash: 456, PhotoID: 123, DCID: c.avatar.dcID}
+	c.channels = channelSettings{OwnerID: 42, Peers: []channelPeer{entry}}
+	for _, id := range []string{"100", "channel:100"} {
+		if data, _, err := c.RelayAvatar(context.Background(), id, "123"); err != nil || !bytes.Equal(data, expected) || calls.Load() != 1 {
+			t.Fatal("search and relay channel IDs did not share cached avatar", id, err)
+		}
+	}
 	c.authorized = false
-	if _, _, err := c.RelayAvatar(context.Background(), "self", "123"); !errors.Is(err, ErrLogin) {
-		t.Fatal("unauthorized cache access", err)
+	if _, _, err := c.RelayAvatar(context.Background(), "100", "123"); err != nil || calls.Load() != 1 {
+		t.Fatal("saved search-channel avatar required online login", err)
+	}
+	c.avatarCache = nil
+	if _, _, err := c.RelayAvatar(context.Background(), "100", "123"); !errors.Is(err, ErrLogin) || calls.Load() != 1 {
+		t.Fatal("offline search-channel avatar miss made a remote request", err)
+	}
+	c.authorized = true
+	c.channelCatalog = &channelCatalog{ownerID: 42, expires: time.Now().Add(time.Minute), peers: map[string]channelPeer{"200": {Channel: Channel{ID: "200", AvatarID: "123"}, AccessHash: 789, PhotoID: 123, DCID: c.avatar.dcID}}}
+	if _, _, err := c.RelayAvatar(context.Background(), "200", "123"); err != nil || calls.Load() != 2 {
+		t.Fatal("visible search picker could not load its trusted channel avatar", err)
+	}
+	for _, id := range []string{"999", "0100", "channel:999"} {
+		if _, _, err := c.RelayAvatar(context.Background(), id, "123"); !errors.Is(err, ErrAvatarUnavailable) || calls.Load() != 2 {
+			t.Fatal("unknown channel reached the Telegram downloader", id, err)
+		}
+	}
+	c.userID = 43
+	if _, _, err := c.RelayAvatar(context.Background(), "100", "123"); !errors.Is(err, ErrAvatarUnavailable) || calls.Load() != 2 {
+		t.Fatal("different account reused old channel metadata or cache", err)
 	}
 }
 
@@ -182,8 +227,11 @@ func TestRelayAvatarSharedConnectionAndOwnerChange(t *testing.T) {
 			return nil, nil
 		}
 	})
-	c.gate <- struct{}{}
-	defer c.unlock()
+	releaseLifecycle, err := c.read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseLifecycle()
 	result := make(chan error, 1)
 	go func() { _, _, err := c.RelayAvatar(context.Background(), "self", "123"); result <- err }()
 	select {
@@ -225,8 +273,11 @@ func TestRelayAvatarRejectsInvalidImagesAndInputs(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	c.gate <- struct{}{}
-	defer c.unlock()
+	release, err := c.exclusive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
 	if _, _, err := c.RelayAvatar(ctx, "self", "123"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("standalone request ignored cancellation", err)
 	}
