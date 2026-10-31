@@ -35,7 +35,7 @@ defineExpose({ body, scrollTo: (top: number) => body.value?.scrollTo({ top, beha
 
 <style scoped>
 .anime-floating { --scrollbar-track: transparent; --scrollbar-thumb: rgb(100 116 139 / .4); --ae-control-height: 36px; --ae-control-font: 13px; --ae-control-padding: 6px 10px; width: min(760px, calc(100vw - 32px)); max-height: min(880px, calc(100dvh - 48px)); margin: auto; padding: 0; overflow: clip; border-radius: 18px; color: var(--floating-surface-text); }
-:global(.dark) .anime-floating { --scrollbar-thumb: rgb(184 196 212 / .4); }
+.dark .anime-floating { --scrollbar-thumb: rgb(184 196 212 / .4); }
 .anime-floating[open] { display: flex; flex-direction: column; }
 .anime-floating-config { width: min(820px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); }
 .anime-floating-config .anime-floating-body { scrollbar-gutter: stable; }

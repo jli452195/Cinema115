@@ -76,7 +76,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await category('/resources').hover()
     await page.locator('#account-submenu-resources').waitFor()
     await flyout()
-    assert.equal(await page.locator('.account-submenu .account-row').count(), 6)
+    assert.equal(await page.locator('.account-submenu .account-row').count(), 7)
     assert.equal(await page.locator('.account-submenu a[href="/resources/subtitles"]').textContent().then(text => text.trim()), '字幕')
     await screenshot('submenu-resources-light')
     assert(requests.slice(requestStart).every(endpoint => endpoint === '/api/me/notifications/unread'))

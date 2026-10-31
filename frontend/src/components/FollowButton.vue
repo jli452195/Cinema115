@@ -267,9 +267,9 @@ onBeforeUnmount(() => { closePanel(); controller?.abort(); clearTimeout(cooldown
 .movie-follow-footer { margin-top: 16px; }
 .movie-follow-footer p { margin-bottom: 4px; }
 .movie-follow-cancel { display: inline-flex; min-height: 44px; align-items: center; color: #be123c; font-size: 13px; }
-:global(.dark) .movie-follow-cancel { color: #fda4af; }
+.dark .movie-follow-cancel { color: #fda4af; }
 .movie-follow-error { margin-top: 12px; color: #be123c; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-:global(.dark) .movie-follow-error { color: #fda4af; }
+.dark .movie-follow-error { color: #fda4af; }
 .movie-follow-panel:popover-open { animation: movie-follow-enter 140ms ease-out; }
 @keyframes movie-follow-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) {

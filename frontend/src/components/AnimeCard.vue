@@ -33,11 +33,11 @@ watch(() => [props.item.id, props.item.coverUrl], () => { failed.value = false }
 .anime-card-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; min-height: 40px; margin-top: 12px; line-height: 20px; font-size: 14px; font-weight: 600; color: rgb(var(--color-slate-800)); }
 .anime-card-date { display: block; margin-top: 4px; font-size: 11px; line-height: 18px; color: rgb(var(--color-slate-500)); }
 .anime-card:focus-visible { outline: 2px solid #60a5fa; outline-offset: 5px; }
-:global(.dark) .anime-poster { background: rgb(var(--color-slate-800)); }
-:global(.dark) .anime-card-title { color: rgb(var(--color-slate-100)); }
-:global(.dark) .anime-card-date, :global(.dark) .anime-poster-empty { color: rgb(var(--color-slate-400)); }
+.dark .anime-poster { background: rgb(var(--color-slate-800)); }
+.dark .anime-card-title { color: rgb(var(--color-slate-100)); }
+.dark .anime-card-date, .dark .anime-poster-empty { color: rgb(var(--color-slate-400)); }
 @media (hover: hover) and (pointer: fine) { .anime-card:hover .anime-poster { box-shadow: 0 16px 28px -12px rgb(15 23 42 / .3); } .anime-card-highlight:hover .anime-card-title { color: #3b82f6; } }
-:global(.dark) .anime-card-highlight:hover .anime-card-title { color: #93c5fd; }
+.dark .anime-card-highlight:hover .anime-card-title { color: #93c5fd; }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) { .anime-card:hover .anime-poster { transform: translateY(-3px); } }
 @media (prefers-reduced-motion: reduce) { .anime-poster { transition: none; } }
 </style>

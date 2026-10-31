@@ -240,7 +240,7 @@ button:disabled { opacity:.45;cursor:default; }
 input { accent-color:#2563eb; }
 .picker-apply { background:#2563eb;color:#fff; }
 .picker-error { color:#dc2626;margin-top:8px;font-size:12px;overflow-wrap:anywhere; }
-:global(.dark) .picker-import,:global(.dark) .picker-version a,:global(.dark) .picker-note a { color:#93c5fd; }
-:global(.dark) .picker-error { color:#f87171; }
+.dark .picker-import,.dark .picker-version a,.dark .picker-note a { color:#93c5fd; }
+.dark .picker-error { color:#f87171; }
 @media(max-width:639px) { button,.picker-search input { min-height:44px; } .picker-search input { font-size:16px; } .picker-actions { flex-wrap:wrap; } .picker-search { flex-basis:100%; } .picker-footer>div { margin-left:auto; } }
 </style>

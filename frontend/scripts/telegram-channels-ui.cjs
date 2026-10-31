@@ -6,7 +6,23 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
  try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   page.setDefaultTimeout(10000)
-  await page.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
+  await page.addInitScript(() => { localStorage.setItem('admin_token', 'mock'); localStorage.setItem('cinema115-theme', 'light') })
+  const checkTheme = async dark => {
+   const colors = await page.evaluate(dark => {
+    document.documentElement.classList.toggle('dark', dark)
+    const root = getComputedStyle(document.documentElement)
+    const rgb = shade => 'rgb(' + root.getPropertyValue('--color-slate-' + shade).trim().split(/\s+/).join(', ') + ')'
+    const background = rgb(dark ? 950 : 50)
+    return { root: root.backgroundColor, background, scrollbar: root.scrollbarColor, expectedScrollbar: rgb(dark ? 600 : 300) + ' ' + background,
+     panels: [...document.querySelectorAll('.channel-panel')].map(panel => getComputedStyle(panel).backgroundColor), panel: dark ? rgb(900) : 'rgb(255, 255, 255)',
+     text: getComputedStyle(document.querySelector('.channel-settings')).color, expectedText: rgb(dark ? 200 : 800) }
+   }, dark)
+   assert.equal(colors.root, colors.background, 'Root and reserved scrollbar gutter must match the page theme')
+   assert.equal(colors.scrollbar, colors.expectedScrollbar, 'Dialog styles must not override the root scrollbar')
+   assert.equal(colors.panels.length, 2)
+   assert(colors.panels.every(color => color === colors.panel), 'Both settings panels must follow the active theme')
+   assert.equal(colors.text, colors.expectedText)
+  }
   const account = { apiId: 123, configured: true, botConfigured: false, hasSession: true, authorized: false, name: '', username: '', stage: 'idle', bot: '' }
   const first = { id: '4358697065', title: '115网盘热更频道', username: 'test_channel' }
   const second = { id: '2769844611', title: '爱影热更频道' }
@@ -79,6 +95,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   expired = false
   await dialog.getByRole('button', { name: '重新加载频道', exact: true }).click()
   await dialog.getByRole('alert').waitFor({ state: 'hidden' })
+  await dialog.locator('.channel-options:enabled').waitFor()
   assert.equal(await dialog.getByRole('checkbox').isChecked(), false, 'Reload must synchronize with saved config')
   await dialog.getByRole('checkbox', { name: /115网盘/ }).check()
   await dialog.getByRole('button', { name: '加载更多频道' }).click()
@@ -89,6 +106,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(saved.length, 2)
   await page.reload()
   await page.locator('.channel-saved').filter({ hasText: '爱影' }).waitFor()
+  for (const dark of [false, true]) {
+   await checkTheme(dark)
+   if (process.env.CINEMA_UI_SCREENSHOTS) {
+    fs.mkdirSync(process.env.CINEMA_UI_SCREENSHOTS, { recursive: true })
+    await page.screenshot({ path: path.join(process.env.CINEMA_UI_SCREENSHOTS, `channels-settings-${dark ? 'dark' : 'light'}.png`) })
+   }
+  }
+  await checkTheme(false)
   // An archived saved channel stays visible and selected before that page is fetched.
   await open()
   assert.equal(await dialog.getByRole('checkbox', { name: /爱影/ }).isChecked(), true)
@@ -98,7 +123,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   for (const width of [390, 320]) {
    await page.setViewportSize({ width, height: 780 })
-   await page.evaluate(() => document.documentElement.classList.add('dark'))
+   await checkTheme(true)
    const fits = await page.evaluate(() => {
     const el = document.querySelector('dialog.channel-picker'), box = el.getBoundingClientRect()
     return box.left >= 0 && box.right <= innerWidth && el.scrollWidth <= el.clientWidth && document.documentElement.scrollWidth <= innerWidth

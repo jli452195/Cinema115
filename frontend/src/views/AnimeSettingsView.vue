@@ -149,7 +149,7 @@ onBeforeUnmount(() => { generation++; controller.abort(); window.removeEventList
 .ars-unsaved { margin-top: 18px; }
 .ars-discard { font-size: 13px; line-height: 1.8; color: rgb(var(--color-slate-600)); }
 .ars-discard-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 10px; }
-:global(.dark) .ars-settings { --ae-blue: #93c5fd; }
+.dark .ars-settings { --ae-blue: #93c5fd; }
 @media(max-width: 900px) { .ars-settings { grid-template-columns: 1fr; gap: 16px; max-width: 800px; } .ars-tabs { flex-direction: row; } .ars-tabs button { flex: 1; } }
 @media(max-width: 639px) { .ars-layout :deep(.management-heading) { grid-template-columns: minmax(0, 1fr); } .ars-layout :deep(.management-heading > *) { grid-column: 1 / -1; } .ars-panel { padding: 20px 16px; border-radius: 14px; } .ars-row { flex-wrap: wrap; gap: 12px; padding: 18px 0; } .ars-row > div:first-child { flex: 1; min-width: 160px; } .ars-options { flex-basis: 100%; } .ars-options label { flex: 1; min-height: 44px; } .ars-footer { flex-wrap: wrap; } .ars-tabs button { padding-inline: 12px; } }
 @media(prefers-reduced-motion: reduce) { .ars-switch, .ars-switch::after { transition: none; } }

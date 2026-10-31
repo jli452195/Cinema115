@@ -2,13 +2,12 @@
 import { useTheme } from '../composables/useTheme'
 
 defineProps<{ showLabel?: boolean }>()
-const { currentTheme } = useTheme()
+const { currentTheme, setTheme } = useTheme()
 const themeLabels = { system: '跟随系统', light: '浅色', dark: '深色' }
 
-function cycleTheme() {
-  if (currentTheme.value === 'system') currentTheme.value = 'light'
-  else if (currentTheme.value === 'light') currentTheme.value = 'dark'
-  else currentTheme.value = 'system'
+function cycleTheme(event: MouseEvent) {
+  const next = currentTheme.value === 'system' ? 'light' : currentTheme.value === 'light' ? 'dark' : 'system'
+  void setTheme(next, event)
 }
 </script>
 

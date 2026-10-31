@@ -200,13 +200,13 @@ function updateProgress(progress: Record<string, AnimeSourceProgress>) {
 .ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; gap: 4px; }
 .ac-tabs button { min-height: var(--ae-control-height); padding: 5px 13px; border-radius: 8px; font-size: 12px; color: var(--floating-surface-muted); white-space: nowrap; }
 .ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
-:global(.dark) .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
+.dark .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
 .ac-tabs small { margin-left: 4px; opacity: .75; }
 .ac-editor { width: 100%; max-width: none; margin: 0; }
 .ac-panels { min-width: 0; margin: 0; padding: 0; border: 0; }
 .ac-controls { align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .ac-delete { color: #b91c1c; }
-:global(.dark) .ac-delete { color: #fca5a5; }
+.dark .ac-delete { color: #fca5a5; }
 .ac-editor :deep(.ae-naming-target) { margin: 0 0 16px; padding: 0; background: none; border: 0; box-shadow: none; }
 .ac-editor :deep(.ae-target-controls) { align-items: start; gap: 8px 18px; margin-top: 8px; }
 .ac-editor :deep(.ae-target-season) { gap: 8px; }
@@ -258,7 +258,7 @@ function updateProgress(progress: Record<string, AnimeSourceProgress>) {
 .ac-footer > div { display: flex; flex: none; gap: 8px; }
 .ac-confirm { position: sticky; top: 0; z-index: 2; padding: 16px; margin: 0 0 18px; border-radius: 12px; color: var(--ae-ink); background: var(--ae-surface); box-shadow: 0 4px 18px rgb(15 23 42 / .10); font-size: 13px; line-height: 1.7; }
 .ac-confirm .ae-danger { color: #b91c1c; background: #fef2f2; }
-:global(.dark) .ac-confirm .ae-danger { color: #fecaca; background: #4b2f38; }
+.dark .ac-confirm .ae-danger { color: #fecaca; background: #4b2f38; }
 .ac-confirm > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .ac-feedback { font-size: 12px; color: var(--floating-surface-muted); margin-bottom: 12px; }
 .ac-feedback button { margin: 8px 6px 0 0; }

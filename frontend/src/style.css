@@ -6,6 +6,7 @@
   html {
     /* Reserve scrollbar space so long/short routes keep the same layout width. */
     scrollbar-gutter: stable;
+    background-color: var(--scrollbar-track);
   }
   @supports not (scrollbar-gutter: stable) {
     html {
@@ -72,6 +73,33 @@
     /* Fixed header, its bottom border, and a compact content gap. */
     padding-top: calc(var(--workbench-header-height) + 1px + 1rem);
   }
+}
+
+/* Capture both themes at identical geometry, then reveal only the new snapshot. */
+html.theme-reveal *,
+html.theme-reveal *::before,
+html.theme-reveal *::after {
+  transition: none !important;
+}
+html.theme-reveal::view-transition-group(root) {
+  animation: none;
+}
+html.theme-reveal::view-transition-old(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  z-index: 1;
+}
+html.theme-reveal::view-transition-new(root) {
+  animation: theme-reveal 450ms cubic-bezier(.2, .7, .2, 1) both;
+  mix-blend-mode: normal;
+  z-index: 2;
+}
+@keyframes theme-reveal {
+  from { clip-path: circle(0px at var(--theme-reveal-origin)); }
+  to { clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body { transition: none; }
 }
 
 /* Include the root scrollbar and use the same sizing in both themes. */
