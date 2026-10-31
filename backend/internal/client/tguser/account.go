@@ -43,6 +43,7 @@ type View struct {
 	Authorized    bool   `json:"authorized"`
 	Name          string `json:"name"`
 	Username      string `json:"username"`
+	AvatarID      string `json:"avatarId,omitempty"`
 	Stage         string `json:"stage"`
 	Bot           string `json:"bot"`
 }
@@ -53,12 +54,20 @@ type Client struct {
 	config                          Config
 	channels                        channelSettings
 	channelCatalog                  *channelCatalog
+	relayPeers                      relaySettings
+	relayCatalog                    *relayCatalog
+	relayConnection                 *relayConnection
 	channelSearches                 map[string]*channelSearch
 	channelRetryAt                  time.Time
 	userID                          int64
 	identityKnown                   bool
 	authorized                      bool
 	name, username, phone, codeHash string
+	avatar                          avatarPhoto
+	avatarCache                     map[avatarKey]avatarEntry
+	avatarFlights                   map[avatarKey]*avatarFlight
+	avatarGate                      chan struct{}
+	avatarDC                        func(context.Context, *telegram.Client, int) (telegram.CloseInvoker, error)
 	expires                         time.Time
 	passwordNeeded                  bool
 	results                         map[string]storedAction
@@ -105,6 +114,7 @@ func New(configStore, sessionStore Store) (*Client, error) {
 			return nil, errors.New("Telegram 用户配置无法读取")
 		}
 		c.config, c.channels = saved.Config, saved.Channels
+		c.relayPeers = saved.Relay
 	}
 	return c, nil
 }
@@ -138,7 +148,7 @@ func (c *Client) viewLocked() View {
 		}
 	}
 	configured := c.config.APIID > 0 && c.config.APIHash != ""
-	return View{APIID: c.config.APIID, Configured: configured, BotConfigured: configured && validBotUsername(c.config.Bot), HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, Stage: stage, Bot: c.config.Bot}
+	return View{APIID: c.config.APIID, Configured: configured, BotConfigured: configured && validBotUsername(c.config.Bot), HasSession: c.sessionStore.Value() != "", Authorized: c.authorized, Name: c.name, Username: c.username, AvatarID: c.avatar.id(), Stage: stage, Bot: c.config.Bot}
 }
 
 var hashPattern = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
@@ -177,8 +187,15 @@ func (c *Client) Save(input Config) error {
 	return nil
 }
 
-// 每项操作持有独占名额，Run 返回前关闭连接并回收内部协程；配置和登录会话分开加密保存。
+// Search operations retain their gate. A live relay lends its MTProto client;
+// otherwise Run closes the temporary connection before releasing the gate.
 func (c *Client) run(ctx context.Context, operation func(context.Context, *telegram.Client) error) error {
+	c.mu.Lock()
+	connection := c.relayConnection
+	c.mu.Unlock()
+	if connection != nil {
+		return c.runShared(ctx, connection, operation)
+	}
 	if c.runOperation != nil {
 		return c.runOperation(ctx, operation)
 	}
@@ -203,11 +220,18 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	previousUser := c.userID
 	c.authorized = state.Authorized
 	c.identityKnown = true
 	c.userID = 0
 	if state.Authorized && state.User != nil {
 		c.userID = state.User.ID
+	}
+	if previousUser != c.userID {
+		c.avatarCache = nil
+	}
+	if c.relayConnection != nil && (!c.authorized || previousUser != 0 && previousUser != c.userID) {
+		c.relayConnection.cancel()
 	}
 	if c.channels.OwnerID != 0 && c.channels.OwnerID != c.userID {
 		c.channelSearches = nil
@@ -220,14 +244,30 @@ func (c *Client) status(ctx context.Context, client *telegram.Client) error {
 	if c.channelCatalog != nil && c.channelCatalog.ownerID != c.userID {
 		c.channelCatalog = nil
 	}
+	if c.relayPeers.OwnerID != 0 && c.relayPeers.OwnerID != c.userID {
+		previous := c.relayPeers
+		c.relayPeers = relaySettings{}
+		c.relayCatalog = nil
+		if err := c.saveSettingsLocked(c.config, c.channels); err != nil {
+			c.relayPeers = previous
+			return err
+		}
+	}
+	if c.relayCatalog != nil && c.relayCatalog.ownerID != c.userID {
+		c.relayCatalog = nil
+	}
 	if !state.Authorized {
 		c.clearSearchLocked()
 	}
 	c.name = ""
 	c.username = ""
+	c.avatar = avatarPhoto{}
 	if state.User != nil {
 		c.name = state.User.FirstName
 		c.username = state.User.Username
+		if state.Authorized {
+			c.avatar = telegramAvatarPhoto(state.User.Photo)
+		}
 	}
 	if state.Authorized {
 		c.codeHash = ""
@@ -331,16 +371,21 @@ func (c *Client) Disconnect(ctx context.Context) error {
 			return publicError(err)
 		}
 	}
+	c.stopRelay()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.authorized = false
 	c.userID = 0
 	c.identityKnown = true
 	c.channelCatalog = nil
+	c.relayCatalog = nil
+	c.relayPeers = relaySettings{}
 	c.channelSearches = nil
 	c.channelRetryAt = time.Time{}
 	c.name = ""
 	c.username = ""
+	c.avatar = avatarPhoto{}
+	c.avatarCache = nil
 	c.phone = ""
 	c.codeHash = ""
 	c.passwordNeeded = false

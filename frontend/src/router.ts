@@ -94,6 +94,7 @@ export const router = createRouter({
     { path: '/115/download-organize', name: 'download-organize', component: DownloadOrganizeView },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView },
+    { path: '/telegram/relay', name: 'telegram-relay', component: () => import('./views/TelegramRelayView.vue'), meta: { managementSection: '/telegram' } },
     { path: '/telegram/user', name: 'telegram-user', component: TelegramUserView, meta: { managementSection: '/resources' } },
     { path: '/telegram/channels', name: 'telegram-channels', component: TelegramChannelsView, meta: { managementSection: '/resources' } },
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources' } },

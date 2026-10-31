@@ -36,6 +36,7 @@ type channelSettings struct {
 type accountSettings struct {
 	Config
 	Channels channelSettings `json:"channels"`
+	Relay    relaySettings   `json:"relay,omitempty"`
 }
 
 type ChannelConfigView struct {
@@ -62,7 +63,7 @@ type channelCatalog struct {
 }
 
 func (c *Client) saveSettingsLocked(cfg Config, channels channelSettings) error {
-	data, err := json.Marshal(accountSettings{Config: cfg, Channels: channels})
+	data, err := json.Marshal(accountSettings{Config: cfg, Channels: channels, Relay: c.relayPeers})
 	if err != nil {
 		return err
 	}

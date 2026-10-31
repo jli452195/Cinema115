@@ -56,6 +56,7 @@ func (c *Client) Close() {
 	c.closed = true
 	c.stopWorker()
 	c.mu.Unlock()
+	c.stopRelay()
 	c.workers.Wait()
 }
 

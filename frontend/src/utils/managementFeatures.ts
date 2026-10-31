@@ -20,7 +20,10 @@ export const managementCategories = {
   },
   telegram: {
     title: 'Telegram 配置', description: '连接机器人，管理消息接收与自动处理。',
-    features: [{ title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram', menuIcon: 'telegram' }],
+    features: [
+      { title: 'Bot 配置', description: '配置机器人 Token、允许的聊天与消息接收。', to: '/telegram/bot', icon: 'telegram', menuIcon: 'telegram' },
+      { title: '频道转发', description: '选择来源频道与目标，将资源链接自动投递到机器人、频道或群组。', to: '/telegram/relay', icon: 'telegram', menuIcon: 'telegram' },
+    ],
   },
   emby: {
     title: 'Emby', description: '连接媒体服务器，管理媒体库与入库检测。',

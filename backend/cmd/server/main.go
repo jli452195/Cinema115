@@ -504,6 +504,13 @@ func main() {
 	follows.GenerationSettings = automation
 	follows.Logs = generationLogs
 	httpapi.RegisterTelegramUser(admin, telegramUser, tmdbService, generationLogs)
+	relayInitCtx, cancelRelayInit := context.WithTimeout(context.Background(), 10*time.Second)
+	telegramRelay, err := service.NewTelegramRelay(relayInitCtx, database, telegramUser, generationLogs)
+	cancelRelayInit()
+	if err != nil {
+		log.Fatalf("创建 Telegram 频道转发: %v", err)
+	}
+	httpapi.RegisterTelegramRelay(admin, telegramRelay)
 	shareAPI.Register(r, admin)
 	if directory := os.Getenv("FRONTEND_DIST"); directory != "" {
 		if err := httpapi.RegisterFrontend(r, directory); err != nil {
@@ -633,6 +640,13 @@ func main() {
 		}()
 	}
 	log.Printf("Cinema115 已启动，监听 :%s", httpPort)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := telegramRelay.Run(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	select {
 	case <-ctx.Done():
 	case err := <-workerErrors:
