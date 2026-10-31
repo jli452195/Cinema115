@@ -57,6 +57,9 @@ func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaO
 			}
 			group := run.Groups[old]
 			group.ID = "task:" + input.FileID
+			if input.Season != nil {
+				group.Identity.Season, group.Identity.SeasonExplicit = *input.Season, true
+			}
 			if input.TMDBID > 0 {
 				group.Kind, group.TMDBID = input.Kind, input.TMDBID
 				group.Title, group.Message = "", ""

@@ -77,7 +77,7 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 		return err
 	}
 	files.scanned = entries
-	indices := make(map[string]int)
+	indices := make(map[mediafacts.Identity]int)
 	for _, e := range entries {
 		if e.File.MediaType != "video" {
 			run.Entries = append(run.Entries, e)
@@ -93,13 +93,20 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 		identity := mediafacts.ParseIdentity(e.File.Name, reverse...)
 		if e.File.Episode > 0 {
 			identity.Kind = "tv"
+			if e.File.Season == 0 {
+				identity.Season, identity.SeasonExplicit = 0, true
+			}
 			if e.File.Season != 0 && !organizeFileSeason.MatchString(e.File.Name) {
 				e.File.Season = identity.Season
 			}
 		}
-		key := mediafacts.NameKey(identity.Name) + ":" + identity.Year + ":" + identity.Kind + ":" + strconv.Itoa(identity.TMDBID) + ":" + strconv.Itoa(identity.Season)
+		key := identity
+		key.Name, key.ParentName = mediafacts.NameKey(identity.Name), mediafacts.NameKey(identity.ParentName)
+		if e.File.Episode == 0 && identity.Kind == "tv" && organizeSpecialFile.MatchString(e.File.Name) {
+			key.Name += ":special"
+		}
 		if identity.Name == "" && identity.TMDBID == 0 {
-			key = e.File.ParentID + ":" + key
+			key.Name = e.File.ParentID
 		}
 		if _, ok := indices[key]; !ok {
 			indices[key] = len(run.Groups)
@@ -125,6 +132,12 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 }
 
 func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) error {
+	byGroup := make(map[string][]int, len(run.Groups))
+	for i, entry := range run.Entries {
+		if entry.File.MediaType == "video" && mediaInTask(entry, run.TaskFileID) {
+			byGroup[entry.Group] = append(byGroup[entry.Group], i)
+		}
+	}
 	for i := range run.Groups {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -133,29 +146,38 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) e
 		if g.TMDBID > 0 {
 			continue
 		}
-		if run.TaskFileID != "" {
-			selected := false
-			for _, e := range run.Entries {
-				if e.File.ID == run.TaskFileID && e.Group == g.ID {
-					selected = true
-				}
-			}
-			if !selected {
-				continue
-			}
+		indices := byGroup[g.ID]
+		if len(indices) == 0 {
+			continue
+		}
+		numbered, special := false, false
+		for _, index := range indices {
+			e := &run.Entries[index]
+			numbered = numbered || e.File.Episode > 0
+			special = special || organizeSpecialFile.MatchString(e.File.Name)
+		}
+		if special && !numbered && g.Identity.Kind == "tv" {
+			g.Message = "特殊内容需确认对应作品与季集"
+			continue
 		}
 		lookup, cancel := context.WithTimeout(ctx, 25*time.Second)
-		detail, err := recognizeMedia(lookup, s.metadata, g.Identity)
+		match, err := recognizeMedia(lookup, s.metadata, g.Identity)
 		cancel()
 		if err != nil {
 			g.Message = "查询暂未完成：" + err.Error()
 			continue
 		}
-		if detail == nil {
+		if match == nil {
 			g.Message = "未找到唯一匹配，请选择作品"
 			continue
 		}
-		g.Kind, g.TMDBID, g.Title = detail.Kind, detail.ID, detail.Title
+		g.Kind, g.TMDBID, g.Title = match.Detail.Kind, match.Detail.ID, match.Detail.Title
+		g.Identity.Season = match.Season
+		if g.Kind == "tv" {
+			for _, index := range indices {
+				run.Entries[index].File.Season = match.Season
+			}
+		}
 	}
 	return nil
 }

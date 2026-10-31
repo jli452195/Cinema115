@@ -38,7 +38,13 @@ func (f *mediaRecognitionFake) Browse(context.Context, tmdb.Options) (*tmdb.Page
 	return &tmdb.Page{Items: f.items}, f.err
 }
 func (f *mediaRecognitionFake) Details(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
-	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品", OriginalTitle: "Work", Date: "2024-01-01"}, OriginalLanguage: "zh"}, nil
+	date := "2024-01-01"
+	for _, item := range f.items {
+		if item.ID == id && item.Kind == kind {
+			date = item.Date
+		}
+	}
+	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品", OriginalTitle: "Work", Date: date}, OriginalLanguage: "zh"}, nil
 }
 func (f *mediaRecognitionFake) AlternativeNames(context.Context, string, int) ([]string, error) {
 	return []string{"作品别名"}, nil
