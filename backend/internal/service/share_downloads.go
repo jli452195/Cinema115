@@ -19,12 +19,11 @@ import (
 
 // DownloadShare keeps generation settings pinned without storing credentials.
 type DownloadShare struct {
-	HandedOff  bool               `json:"handedOff,omitempty"`
-	Directory  string             `json:"directory"`
-	Settings   AutomationSettings `json:"settings"`
-	ReadyAt    time.Time          `json:"readyAt,omitempty"`
-	LeaderID   string             `json:"leaderId,omitempty"`
-	SourceDirs []string           `json:"sourceDirs,omitempty"`
+	HandedOff bool               `json:"handedOff,omitempty"`
+	Directory string             `json:"directory"`
+	Settings  AutomationSettings `json:"settings"`
+	ReadyAt   time.Time          `json:"readyAt,omitempty"`
+	LeaderID  string             `json:"leaderId,omitempty"`
 }
 
 type downloadShareQueue interface {

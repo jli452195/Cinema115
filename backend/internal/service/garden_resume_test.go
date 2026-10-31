@@ -90,10 +90,12 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 				t.Fatal("resume lost companion subtitle identity or naming", p.job.Items)
 			}
 			delete(s.live, id)
-			if job, err = s.Resume(id); err != nil || job.Status != "completed" || len(s.live) != 0 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {
-				t.Fatal("completed recovery replayed", err)
+			// Media finished with the pinned credentials, but cleanup is a new
+			// write: the changed account must not resume that pending tail.
+			if _, err = s.Resume(id); err == nil || len(s.live) != 0 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {
+				t.Fatal("cleanup resumed after account replacement", err)
 			}
-			if s.History()[0].Resumable || strings.Contains(s.Organize.store.Value(), cookie) {
+			if !s.History()[0].Resumable || strings.Contains(s.Organize.store.Value(), cookie) {
 				t.Fatal("invalid history or persisted credential")
 			}
 		})

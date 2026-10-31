@@ -17,6 +17,7 @@ import (
 // ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
 // Credentials only live in downloadPending and never enter plans/history.
 type ResourceDownload struct {
+	CleanupDirs []string           `json:"cleanupDirs,omitempty"`
 	Subtitles   []DownloadSubtitle `json:"subtitles,omitempty"`
 	BatchID     string             `json:"batchId,omitempty"`
 	Hash        string             `json:"hash"`
@@ -125,7 +126,7 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	}
 	job = cloneOrganizeJob(job)
 	job.Status, job.UpdatedAt = "queued", time.Now()
-	job.Message = "等待提交 115，整条磁力下载后仅整理所选文件"
+	job.Message = "等待提交 115，整理所选文件后清理本次下载目录"
 	doc := o.doc
 	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
 	if job.Download.Share == nil {
@@ -233,10 +234,10 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		if saved.ID != id || saved.Download == nil {
 			continue
 		}
-		if s.live[id] != nil || saved.Status == "completed" && !pendingDownloadShare(saved) && !pendingDownloadSubtitles(saved) {
+		if s.live[id] != nil || saved.Status == "completed" && !pendingDownloadShare(saved) && !pendingDownloadSubtitles(saved) && !pendingDownloadCleanup(saved) {
 			return cloneOrganizeJob(saved), nil
 		}
-		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved) || pendingDownloadSubtitles(saved)
+		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved) || pendingDownloadSubtitles(saved) || pendingDownloadCleanup(saved)
 		queued := canQueueDownload(saved)
 		if !continuing && !canResumeDownload(saved) {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
@@ -251,6 +252,9 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		job.Message = "正在检查原 115 任务，确认后继续整理；不会重新提交离线"
 		if continuing {
 			job.Status, job.Message = "running", "正在检查原任务剩余文件，确认后继续整理；不会重新下载"
+			if downloadItemsDone(saved) {
+				job.Message = "所选文件已整理，正在继续清理和分享收尾"
+			}
 		}
 		if queued {
 			job.Status, job.Message = "queued", "原任务尚未开始，已重新加入下载整理队列"
@@ -456,6 +460,7 @@ func (s *DownloadOrganize) submit(ctx context.Context, p *downloadPending) (bool
 		return s.stop(p, "blocked", "115 返回的下载目录无效，未提交离线")
 	}
 	job.Download.DirectoryID = dir
+	job.Download.CleanupDirs = []string{dir}
 	job.Config.SourceCID, job.Config.SourcePath = dir, path.Join(job.Download.ParentPath, "garden-"+job.ID)
 	if err = o.checkpoint(job); err != nil {
 		return false, err
@@ -492,6 +497,13 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 			o.OnCompleted(ctx, job.Config)
 		}
 	}()
+	// Completed file receipts survive restart and cleanup/handoff failures.
+	// Their source folders may already be recycled: continue only the tail.
+	if downloadItemsDone(*job) {
+		done, err := s.finishDownload(ctx, p)
+		notify = err == nil && job.Status == "completed" && job.Download.Share == nil
+		return done, err
+	}
 	scanCtx, cancelScan := context.WithTimeout(ctx, 90*time.Second)
 	var files []OrganizeFile
 	var dirs []string
@@ -518,9 +530,6 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 	if share := job.Download.Share; share != nil && job.Download.BatchID != "" && share.LeaderID == "" {
 		// Ready resources are collected locally before any result-directory write.
 		// A dead magnet never joins the sealed organization/share plan.
-		if !p.continuing {
-			share.SourceDirs = dirs
-		}
 		share.ReadyAt = time.Now()
 		job.Status, job.Message = "running", "下载文件已确认，等待同批就绪资源合并整理与分享"
 		return true, o.checkpoint(job)
@@ -531,46 +540,9 @@ func (s *DownloadOrganize) organize(ctx context.Context, p *downloadPending) (bo
 		return false, err
 	}
 	if job.Status == "completed" {
-		if err := s.uploadSubtitles(ctx, job, cookie); err != nil {
-			return false, err
-		}
-		if job.Status != "completed" {
-			return true, nil
-		}
-		job.Message = "所选文件已整理；未选文件保留在下载目录"
-		if job.Download.Share != nil && job.Download.Share.LeaderID == job.ID {
-			dirs = job.Download.Share.SourceDirs
-		} else if p.continuing {
-			_, dirs, _ = s.downloadFiles(ctx, job, cookie)
-		}
-		// Remove only directories observed empty, deepest first, never leftovers.
-		if recycle, ok := o.drive.(organizeRecycleDrive); ok {
-			for i := len(dirs) - 1; i >= 0; i-- {
-				children, e := o.list(ctx, dirs[i], cookie)
-				if e != nil {
-					break
-				}
-				if len(children) == 0 {
-					if e = recycle.DeleteEntries(ctx, []string{dirs[i]}, cookie); e != nil {
-						break
-					}
-				}
-			}
-		}
-		if job.Download.Share != nil {
-			if s.Shares == nil {
-				return s.stop(p, "interrupted", "文件已整理，分享队列尚未初始化；可继续原任务交接分享")
-			}
-			if err = s.Shares.EnqueueDownloadShare(ctx, *job, cookie); err != nil {
-				return s.stop(p, "interrupted", "文件已整理，交接分享队列失败；可继续原任务，不会重新下载："+organizePublicError(err, cookie))
-			}
-			job.Message = "文件已整理并交给 115 分享 STRM；生成进度和重试请查看分享日志"
-			job.Download.Share.HandedOff = true
-		}
-		if err = o.checkpoint(job); err != nil {
-			return false, err
-		}
-		notify = job.Download.Share == nil
+		done, err := s.finishDownload(ctx, p)
+		notify = err == nil && job.Status == "completed" && job.Download.Share == nil
+		return done, err
 	}
 	return true, nil
 }

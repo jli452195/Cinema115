@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 )
@@ -96,7 +97,7 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 		}
 		leader.Items = make([]OrganizeItem, 0, itemCount)
 		leader.Download.Subtitles = nil
-		leader.Download.Share.SourceDirs = nil
+		leader.Download.CleanupDirs = nil
 		leader.Download.Share.Directory = "Cinema115-" + leader.ID
 		leader.Download.Share.LeaderID = leader.ID
 		// Every bound path remains below this original download parent, while
@@ -127,7 +128,7 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 				leader.Download.Subtitles = append(leader.Download.Subtitles, sub)
 			}
 			leader.Items = append(leader.Items, member.Items...)
-			leader.Download.Share.SourceDirs = append(leader.Download.Share.SourceDirs, member.Download.Share.SourceDirs...)
+			leader.Download.CleanupDirs = append(leader.Download.CleanupDirs, member.Download.CleanupDirs...)
 			member.Download.Share.Directory = leader.Download.Share.Directory
 			member.Download.Share.LeaderID = leader.ID
 			member.Status, member.Message = leader.Status, leader.Message
@@ -165,6 +166,10 @@ func updateDownloadShareMembers(doc *organizeDocument, leader OrganizeJob) {
 			continue
 		}
 		member = cloneOrganizeJob(member)
+		member.Download.CleanupDirs = nil
+		if slices.Contains(leader.Download.CleanupDirs, member.Download.DirectoryID) {
+			member.Download.CleanupDirs = []string{member.Download.DirectoryID}
+		}
 		member.Status, member.Message, member.UpdatedAt = leader.Status, leader.Message, leader.UpdatedAt
 		member.Download.Share.HandedOff = leader.Download.Share.HandedOff
 		for j, sub := range member.Download.Subtitles {

@@ -307,22 +307,31 @@ func TestDownloadShareCollectionRejectsChangedCredentialsWithoutWrites(t *testin
 	}
 }
 
-func TestDownloadShareCollectionCleanupLeavesUnselectedFilesAndOtherDownloads(t *testing.T) {
+func TestDownloadShareCollectionCleanupRecyclesMemberRootsAndKeepsOtherDownloads(t *testing.T) {
 	f := newDownloadCollectionFixture(t, 2)
 	f.ready(t, 0)
 	f.ready(t, 1)
 	f.drive.dirs["20000"] = append(f.drive.dirs["20000"], p115.ShareFile{ID: "50000", Name: "unselected.mkv", Size: 10})
 	parent := f.jobs[0].Download.ParentCID
+	roots := []string{}
+	for _, job := range f.s.History() {
+		roots = append(roots, job.Download.DirectoryID)
+	}
 	reads := f.drive.listCalls[parent]
 	if err := f.s.sealShareCollections(time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	f.finish(t, f.leader(t))
 	if f.drive.listCalls[parent] != reads || slices.Contains(f.client.deleted, parent) || slices.Contains(f.client.deleted, "20000") || slices.Contains(f.client.deleted, "50000") {
-		t.Fatal("collection scanned or cleaned outside its empty sources", f.client.deleted)
+		t.Fatal("collection added scans or cleaned the common parent", f.client.deleted)
 	}
-	if !slices.Contains(f.client.deleted, "20001") || len(f.drive.dirs["20000"]) != 1 || f.drive.dirs["20000"][0].ID != "50000" {
-		t.Fatal("empty sources were retained or unselected files were removed", f.client.deleted)
+	for _, root := range roots {
+		if !slices.Contains(f.client.deleted, root) {
+			t.Fatal("member staging root was not recycled", f.client.deleted)
+		}
+	}
+	if _, exists := f.drive.dirs["20000"]; exists {
+		t.Fatal("unselected files survived collection cleanup")
 	}
 }
 

@@ -621,7 +621,7 @@ func TestGardenPreviewConflictsUnsupportedAndRestart(t *testing.T) {
 	}
 }
 
-func TestGardenCleanupOnlyEmptyDirectoriesAndNotifiesAfterRelease(t *testing.T) {
+func TestGardenCleanupRecyclesTaskRootAndNotifiesAfterRelease(t *testing.T) {
 	for _, leftover := range []bool{false, true} {
 		t.Run(map[bool]string{false: "empty", true: "leftover"}[leftover], func(t *testing.T) {
 			s, base, _, tracker, _, in := gardenFixture(t)
@@ -659,11 +659,11 @@ func TestGardenCleanupOnlyEmptyDirectoriesAndNotifiesAfterRelease(t *testing.T) 
 			if done, err := s.advance(context.Background(), p); err != nil || !done || notified != 1 {
 				t.Fatal(done, err, notified)
 			}
-			if leftover && len(drive.deleted) != 0 {
-				t.Fatal("deleted leftover folder", drive.deleted)
+			if len(drive.deleted) != 1 || drive.deleted[0] != dir || len(p.job.Download.CleanupDirs) != 0 {
+				t.Fatal("cleanup did not recycle only the staging root", drive.deleted)
 			}
-			if !leftover && (len(drive.deleted) != 2 || drive.deleted[0] != "801" || drive.deleted[1] != dir) {
-				t.Fatal("empty cleanup order", drive.deleted)
+			if _, exists := drive.dirs["801"]; exists {
+				t.Fatal("staging descendants survived root cleanup")
 			}
 		})
 	}

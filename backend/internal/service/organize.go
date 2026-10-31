@@ -384,7 +384,7 @@ func (s *OrganizeEngine) history() []OrganizeJob {
 			continue
 		}
 		copy := cloneOrganizeJob(job)
-		copy.Resumable = canContinueOrganize(job) || canResumeDownload(job) || pendingDownloadShare(job) || pendingDownloadSubtitles(job)
+		copy.Resumable = canContinueOrganize(job) || canResumeDownload(job) || pendingDownloadShare(job) || pendingDownloadSubtitles(job) || pendingDownloadCleanup(job)
 		jobs = append(jobs, copy)
 	}
 	return jobs
@@ -399,10 +399,10 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	}
 	if job.Download != nil {
 		d := *job.Download
+		d.CleanupDirs = append([]string(nil), d.CleanupDirs...)
 		d.Subtitles = append([]DownloadSubtitle(nil), d.Subtitles...)
 		if d.Share != nil {
 			share := *d.Share
-			share.SourceDirs = append([]string(nil), share.SourceDirs...)
 			d.Share = &share
 		}
 		job.Download = &d
@@ -416,7 +416,7 @@ func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
 	out = append(out, job)
 	for _, old := range jobs {
 		sealed := unhandedDownloadShare(old) && old.Download.Share.LeaderID != ""
-		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed {
+		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed || pendingDownloadCleanup(old) {
 			out = append(out, old)
 		}
 	}

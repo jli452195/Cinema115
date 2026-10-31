@@ -15,6 +15,13 @@ const counts = computed(() => taskCounts(props.task))
 const items = computed(() => props.task.items.filter(item => filter.value !== 'attention' || needsAttention(item, props.task)))
 const stats = computed(() => props.task.organize?.stats)
 const resumable = computed(() => !!props.task.organize?.resumable)
+const cleanupOnly = computed(() => {
+  const job = props.task.organize, download = job?.download
+  return job?.status === 'completed' && !!download?.cleanupDirs?.length && job.items.length > 0
+    && job.items.every(item => item.status === 'done')
+    && !download.subtitles?.some(sub => sub.status !== 'done' && sub.status !== 'skipped')
+    && (!download.share || download.share.handedOff)
+})
 const folders = computed(() => [{ label: '来源目录', path: props.task.source }, { label: '目标目录', path: props.task.target }].filter(row => row.path))
 watch(() => props.resumeError, async message => {
   if (message) { await nextTick(); resumeAlert.value?.scrollIntoView({ block: 'nearest' }) }
@@ -62,10 +69,10 @@ async function copy(value: string) {
         <dl class="task-detail-meta"><div><dt>账号</dt><dd>{{ accountName }}</dd></div><div><dt>创建时间</dt><dd>{{ historyTime(task.createdAt, true) }}</dd></div></dl>
       </section>
 
-      <div v-if="counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-        <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
+      <div v-if="cleanupOnly || counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ cleanupOnly ? '文件已整理，临时目录尚未清理完成' : counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
         <p v-if="task.message" class="mt-1 break-all">{{ task.message }}</p>
-        <p>{{ resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : '请核对原位置与目标位置的实际文件，再重新预览。待核实条目不会自动重复执行。' }}</p>
+        <p>{{ cleanupOnly ? '点击“重试清理”回收本任务临时目录，已整理文件保持原位。' : resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : '请核对原位置与目标位置的实际文件，再重新预览。待核实条目不会自动重复执行。' }}</p>
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
@@ -98,7 +105,7 @@ async function copy(value: string) {
         </ul>
       </section>
     </div>
-    <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? '正在恢复原任务…' : feedback || (resumable ? (task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? '检查中…' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
+    <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? (cleanupOnly ? '正在重试清理…' : '正在恢复原任务…') : feedback || (resumable ? (cleanupOnly ? '仅回收本任务临时目录' : task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? (cleanupOnly ? '清理中…' : '检查中…') : cleanupOnly ? '重试清理' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
   </AnimeFloatingDialog>
 </template>
 

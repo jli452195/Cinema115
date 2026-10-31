@@ -52,7 +52,7 @@ export interface OrganizeItem {
 export interface OrganizeJob {
 	naming?: NamingRecord
 	resumable?: boolean
-  download?: { hash: string; directoryId?: string; share?: { directory: string; handedOff?: boolean }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
+  download?: { hash: string; directoryId?: string; cleanupDirs?: string[]; share?: { directory: string; handedOff?: boolean }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig

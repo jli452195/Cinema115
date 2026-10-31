@@ -23,6 +23,15 @@ func (d *cleanupFakeDrive) DeleteEntries(ctx context.Context, ids []string, cook
 		d.beforeDelete()
 	}
 	if !d.noDelete && (d.deleteErr == nil || d.applyOnError) {
+		var remove func(string)
+		remove = func(id string) {
+			for _, child := range d.dirs[id] {
+				if child.Directory {
+					remove(child.ID)
+				}
+			}
+			delete(d.dirs, id)
+		}
 		for _, id := range ids {
 			for parent, files := range d.dirs {
 				for i, file := range files {
@@ -32,7 +41,7 @@ func (d *cleanupFakeDrive) DeleteEntries(ctx context.Context, ids []string, cook
 					}
 				}
 			}
-			delete(d.dirs, id)
+			remove(id)
 		}
 	}
 	return d.deleteErr

@@ -45,13 +45,8 @@ type DownloadSubtitle struct {
 }
 
 func pendingDownloadSubtitles(job OrganizeJob) bool {
-	if job.Download == nil || len(job.Download.Subtitles) == 0 {
+	if job.Download == nil || !downloadItemsDone(job) {
 		return false
-	}
-	for _, item := range job.Items {
-		if item.Status != "done" {
-			return false
-		}
 	}
 	for _, sub := range job.Download.Subtitles {
 		if sub.Status != "done" && sub.Status != "skipped" {

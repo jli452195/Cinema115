@@ -296,7 +296,7 @@ onBeforeUnmount(() => lifecycle.abort())
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
     <template v-if="job">
-      <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，另上传 {{ selectedExternal.length }} 个外部字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>关闭弹窗后继续执行。</p>
+      <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，另上传 {{ selectedExternal.length }} 个外部字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>整理成功后回收本任务临时目录及所有残留。关闭弹窗后继续执行。</p>
       <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
       <p v-if="shareAction" class="notice"><span v-if="batch">同批就绪资源合并整理并生成分享 STRM，慢资源随后自动补批，各批使用独立的 Cinema115-任务编号 文件夹。</span><span v-else>文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM。</span>生成进度和重试请查看分享日志。</p>
       <RouterLink v-if="shareAction" to="/115/share/logs" class="task-link block">查看分享 STRM 日志</RouterLink>
@@ -351,7 +351,7 @@ onBeforeUnmount(() => lifecycle.abort())
             <div v-for="sub in subtitlesByVideo[row.id]" :key="sub.file.id" class="subtitle-file">
               <p>{{ sub.file.name }}</p>
               <p v-if="row.selected && !namingPreview.errors.value[sub.file.id]" class="subtitle-target">整理后：{{ subtitleName(sub) }}</p>
-              <p v-else>随视频选择，当前保留原位</p>
+              <p v-else>随视频选择，未选字幕整理成功后清理</p>
               <p v-if="row.selected && displayedConflicts[sub.file.id]" role="alert" class="error">{{ displayedConflicts[sub.file.id] }}</p>
             </div>
           </details>
@@ -359,13 +359,13 @@ onBeforeUnmount(() => lifecycle.abort())
       </OrganizeFileSelection>
       </section>
       <details v-if="unmatchedSubtitles.length" class="subtitle-details">
-        <summary><IconChevronDown :size="13" aria-hidden="true" />{{ unmatchedSubtitles.length }} 个字幕未能唯一匹配，保留原位</summary>
+        <summary><IconChevronDown :size="13" aria-hidden="true" />{{ unmatchedSubtitles.length }} 个字幕未能唯一匹配，整理成功后清理</summary>
         <p v-for="sub in unmatchedSubtitles" :key="sub.file.id" class="subtitle-file">{{ sub.file.sourcePath }}</p>
       </details>
       <details class="organize-help">
         <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
         <div>
-          <p class="scope-note">整条磁力下载，整理已暂存和当前勾选的视频及其关联字幕；未选和排除的文件保留在下载目录。暂存只保留本次映射，最终提交后才执行网盘操作。</p>
+          <p class="scope-note">整条磁力下载，整理已暂存和当前勾选的视频及其关联字幕；全部整理成功后，临时目录连同未选、排除及其他残留文件一并回收。暂存只保留本次映射，最终提交后才执行网盘操作。</p>
           <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。设置与日志沿用 115 分享 STRM 页面。</p>
           <p v-if="titleOnlyCount" class="scope-note">{{ titleOnlyCount }} 项单集按标题预览命名，扩展名与关联字幕下载后确认；合集及不明确的资源读取文件清单。</p>
           <div class="reference"><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>

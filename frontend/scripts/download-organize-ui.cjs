@@ -575,7 +575,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const subtitleToggle = first.locator('.subtitle-details > summary')
     await subtitleToggle.focus(); await page.keyboard.press('Enter')
     assert.equal(await first.getByRole('checkbox').isChecked(), false)
-    await first.getByText('随视频选择，当前保留原位').first().waitFor()
+    await first.getByText('随视频选择，未选字幕整理成功后清理').first().waitFor()
     await first.getByRole('checkbox').click(); await second.getByRole('checkbox').click()
     await page.getByText('待处理 3 个视频 · 已勾选 2 个', { exact: true }).waitFor()
     await first.getByRole('checkbox').click()
@@ -673,7 +673,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await first.locator('.subtitle-details').getAttribute('open'), '')
     await first.getByText('整理后：百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
     assert.equal(count('/download-organize/preview'), 0)
-    await page.getByText('1 个字幕未能唯一匹配，保留原位', { exact: true }).click()
+    await page.getByText('1 个字幕未能唯一匹配，整理成功后清理', { exact: true }).click()
     await page.getByText('/subtitles/unmatched.ass', { exact: true }).waitFor()
     if (process.env.CINEMA_UI_SHOTS) { await fs.mkdir(process.env.CINEMA_UI_SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, 'download-organize-desktop.png') }) }
     await page.getByRole('button', { name: '撤销', exact: true }).click()
@@ -845,6 +845,65 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await page.locator('dialog[open]').count(), 0)
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')
     passed.push('browser history navigation with directory picker open releases all three dialogs and scroll locks')
+    if (source === 'garden' && !process.argv[3]) {
+      const baseCleanupJob = {
+        id: 'cleanup-recovery', title: '任务目录清理回归', status: 'completed', resumable: true,
+        createdAt: '2026-10-31T00:00:00Z', message: '所选文件已整理，临时目录清理失败，可重试清理',
+        config: { accountId: 'primary', sourceCID: '310', sourcePath: '/下载/garden-cleanup-recovery', targetCID: '20', targetPath: '/动漫' },
+        download: { hash: '1'.repeat(40), directoryId: '310', cleanupDirs: ['310'] },
+        items: [{ file: { id: '901', name: 'Show.mkv', sourcePath: '/下载/garden-cleanup-recovery/Show.mkv', mediaType: 'video', size: 1200 }, name: 'Show.S01E01.mkv', targetPath: '/动漫/Show.S01E01.mkv', targetCID: '20', status: 'done' }],
+      }
+      let cleanupJob = structuredClone(baseCleanupJob)
+      const cleanupEndpoints = /\/api\/admin\/p115\/(?:accounts|download-organize\/(?:jobs|resume))$/
+      const cleanupWrites = []
+      const recordCleanupWrite = request => {
+        if (request.method() !== 'GET' && new URL(request.url()).pathname.startsWith('/api/')) cleanupWrites.push({ endpoint: new URL(request.url()).pathname, body: request.postDataJSON() })
+      }
+      const cleanupRoute = async route => {
+        const req = route.request(), endpoint = new URL(req.url()).pathname, body = req.postDataJSON()
+        calls.push({ endpoint, body })
+        let data
+        if (endpoint.endsWith('/accounts')) data = { accounts: [{ id: 'primary', name: '主账号', uid: '123', configured: true, primary: true, revision: 1 }] }
+        else if (endpoint.endsWith('/download-organize/jobs')) data = { jobs: [cleanupJob] }
+        else {
+          assert.equal(req.method(), 'POST')
+          assert.deepEqual(body, { jobId: cleanupJob.id })
+          cleanupJob.download.cleanupDirs = []; cleanupJob.resumable = false; cleanupJob.message = '所选文件已整理，本任务临时目录已回收'
+          data = cleanupJob
+        }
+        await route.fulfill({ status: endpoint.endsWith('/resume') ? 202 : 200, contentType: 'application/json', body: JSON.stringify(data) })
+      }
+      await page.route(cleanupEndpoints, cleanupRoute)
+      page.on('request', recordCleanupWrite)
+      try {
+        for (const pending of ['subtitle', 'share', 'cleanup']) {
+          cleanupJob = structuredClone(baseCleanupJob)
+          if (pending === 'subtitle') cleanupJob.download.subtitles = [{ file: { name: 'Show.ass', path: 'subs/Show.ass' }, name: 'Show.zh-CN.ass', targetPath: '/动漫/Show.zh-CN.ass', language: 'zh-CN', status: 'uncertain', videoIndex: 0 }]
+          if (pending === 'share') cleanupJob.download.share = { directory: 'Cinema115-cleanup-recovery', handedOff: false }
+          await page.reload()
+          await page.getByRole('button', { name: `查看${cleanupJob.title}的详情`, exact: true }).click()
+          const details = page.getByRole('dialog', { name: '整理历史详情', exact: true })
+          if (pending !== 'cleanup') {
+            assert.equal(await details.getByRole('button', { name: '检查并继续', exact: true }).isEnabled(), true)
+            assert.equal(await details.getByRole('button', { name: '重试清理', exact: true }).count(), 0)
+          } else {
+            await details.getByText('文件已整理，临时目录尚未清理完成', { exact: true }).waitFor()
+            const resumed = page.waitForResponse('**/download-organize/resume')
+            await details.getByRole('button', { name: '重试清理', exact: true }).click()
+            await resumed
+            await details.getByText('所选文件已整理，本任务临时目录已回收', { exact: true }).waitFor()
+            await details.getByRole('button', { name: '重试清理', exact: true }).waitFor({ state: 'detached' })
+            assert.equal(await details.getByRole('button', { name: '检查并继续', exact: true }).count(), 0)
+          }
+          await details.getByRole('button', { name: '关闭详情', exact: true }).click()
+        }
+        assert.deepEqual(cleanupWrites, [{ endpoint: '/api/admin/p115/download-organize/resume', body: { jobId: baseCleanupJob.id } }])
+        passed.push('completed cleanup retries use the original resume endpoint only; completed retry removes the action; pending subtitles/share retain normal recovery')
+      } finally {
+        page.off('request', recordCleanupWrite)
+        await page.unroute(cleanupEndpoints, cleanupRoute)
+      }
+    }
     if (source === 'garden') {
       nestedMode = true
       await page.goto(`${origin}/tv/12501`)
