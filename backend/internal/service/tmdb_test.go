@@ -29,6 +29,26 @@ type englishTMDBFake struct {
 	englishError error
 }
 
+func TestCachedDetailsNeverFetchesAndPreservesNormalLoading(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "metadata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	source := &cacheTMDBFake{}
+	s := NewTMDBService(source, db)
+	if detail, err := s.CachedDetails(ctx, "tv", 42); err != nil || detail != nil || source.detailCalls.Load() != 0 {
+		t.Fatal("cache miss triggered a remote request", detail, err)
+	}
+	if detail, err := s.Details(ctx, "tv", 42); err != nil || detail == nil || source.detailCalls.Load() != 1 {
+		t.Fatal("normal detail loading changed", detail, err)
+	}
+	if detail, err := s.CachedDetails(ctx, "tv", 42); err != nil || detail == nil || detail.Numbering == nil || source.detailCalls.Load() != 1 {
+		t.Fatal("cached detail did not reuse saved metadata and numbering", detail, err)
+	}
+}
+
 func (f *englishTMDBFake) EnglishTitle(_ context.Context, kind string, _ int) (string, error) {
 	f.englishCalls.Add(1)
 	if f.englishError != nil {
@@ -240,5 +260,55 @@ func TestTMDBCacheCoalescesAndCancelsWaiter(t *testing.T) {
 	}
 	if source.calls.Load() != 1 {
 		t.Fatalf("同一缓存键应合并请求，实际 %d", source.calls.Load())
+	}
+}
+
+type cancelTMDBOwnerOnWait struct {
+	context.Context
+	cancelOwner context.CancelFunc
+}
+
+func (c cancelTMDBOwnerOnWait) Done() <-chan struct{} {
+	// Cancel exactly when the second request starts waiting, without sleeps.
+	c.cancelOwner()
+	return c.Context.Done()
+}
+
+func TestTMDBShortOwnerDoesNotCancelValidWaiter(t *testing.T) {
+	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "metadata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := NewTMDBService(&cacheTMDBFake{}, db)
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	defer cancelOwner()
+	entered, ownerResult := make(chan struct{}), make(chan error, 1)
+	var calls atomic.Int32
+	load := func(ctx context.Context) (any, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return &tmdb.Detail{Item: tmdb.Item{Title: "loaded"}}, nil
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _, err := s.fetch(ownerCtx, "short-owner", 0, load, true)
+		ownerResult <- err
+	}()
+	defer wg.Wait()
+	<-entered
+	waiterCtx, cancelWaiter := context.WithTimeout(context.Background(), time.Second)
+	defer cancelWaiter()
+	data, _, err := s.fetch(cancelTMDBOwnerOnWait{Context: waiterCtx, cancelOwner: cancelOwner}, "short-owner", 0, load, true)
+	if err != nil || len(data) == 0 || calls.Load() != 2 {
+		t.Fatal("short owner prevented a valid detail request from loading", len(data), calls.Load(), err)
+	}
+	if err := <-ownerResult; !errors.Is(err, context.Canceled) {
+		t.Fatal("owner cancellation was lost", err)
 	}
 }

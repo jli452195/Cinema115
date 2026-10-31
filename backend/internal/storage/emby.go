@@ -20,9 +20,9 @@ func (s *Store) embyExec(ctx context.Context, query string, args ...any) error {
 func (s *Store) EmbyState(ctx context.Context, scope string) (model.EmbyState, error) {
 	v := model.EmbyState{Scope: scope, Status: "idle"}
 	err := s.db.QueryRowContext(ctx, `SELECT active,status,count,scanned,synced_at,last_error,webhook_at,webhook_event,webhook_error,
-staging_generation,staging_complete,staging_cutoff,updates_generation,updates_cursor,updates_started_at,updates_ready,updates_error
+staging_generation,staging_complete,staging_cutoff,updates_generation,updates_ready,updates_error
 FROM emby_state WHERE scope=?`, scope).Scan(&v.Active, &v.Status, &v.Count, &v.Scanned, &v.SyncedAt, &v.LastError, &v.WebhookAt, &v.WebhookEvent, &v.WebhookError,
-		&v.StagingGeneration, &v.StagingComplete, &v.StagingCutoff, &v.UpdatesGeneration, &v.UpdatesCursor, &v.UpdatesStartedAt, &v.UpdatesReady, &v.UpdatesError)
+		&v.StagingGeneration, &v.StagingComplete, &v.StagingCutoff, &v.UpdatesGeneration, &v.UpdatesReady, &v.UpdatesError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -165,14 +165,17 @@ func (s *Store) EmbyPublish(ctx context.Context, scope, generation string, cutof
 		return fmt.Errorf("待发布 Emby 快照不存在，请重新执行全量同步")
 	}
 	now := time.Now().UTC()
+	if err := buildMediaUpdates(ctx, tx, scope, generation, now.Unix()); err != nil {
+		return err
+	}
 	for _, q := range []struct {
 		sql  string
 		args []any
 	}{
 		{`UPDATE emby_state SET active=?,status='idle',count=(SELECT COUNT(*) FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)),synced_at=?,last_error='',
 staging_generation='',staging_complete=0,staging_cutoff=0,
-updates_generation=?,updates_cursor='',updates_started_at=?,updates_ready=0,updates_error=''
-WHERE scope=?`, []any{generation, scope, generation, now.Format(time.RFC3339), generation, now.Unix(), scope}},
+updates_generation=?,updates_ready=1,updates_error=''
+WHERE scope=?`, []any{generation, scope, generation, now.Format(time.RFC3339), generation, scope}},
 		{`DELETE FROM emby_snapshots WHERE scope=? AND generation<>?`, []any{scope, generation}},
 		// 同步开始前已失败的通知由完整快照修复；同步期间的通知仍须重放。
 		{`DELETE FROM emby_events WHERE scope=? AND id<=? AND attempts>=6`, []any{scope, cutoff}},
@@ -312,10 +315,12 @@ func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, ev
 	if exists == 0 {
 		return nil
 	}
+	changedSeries := make(map[string]bool, len(items))
 	changedIDs := make([]string, 0, len(items)+1)
 	changedIDs = append(changedIDs, event.ItemID)
 	for _, item := range items {
 		changedIDs = append(changedIDs, item.ID)
+		addEmbyMissingSource(changedSeries, item.Type, item.ID, item.SeriesID)
 	}
 	changedJSON, err := json.Marshal(changedIDs)
 	if err != nil {
@@ -333,11 +338,11 @@ func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, ev
 		if err := deleteMediaUpdates(ctx, tx, scope, event.ItemID, time.Now().UTC().Unix()); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND (id=? OR series_id=? OR parent_id=? OR library_id=?)`, scope, generation, event.ItemID, event.ItemID, event.ItemID, event.ItemID)
+		rows, err := tx.QueryContext(ctx, `DELETE FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND (id=? OR series_id=? OR parent_id=? OR library_id=?) RETURNING type,id,series_id`, scope, generation, event.ItemID, event.ItemID, event.ItemID, event.ItemID)
 		if err != nil {
 			return fmt.Errorf("移除 Emby 条目: %w", err)
 		}
-		removed, err := result.RowsAffected()
+		removed, err := scanEmbyMissingSources(rows, changedSeries)
 		if err != nil {
 			return fmt.Errorf("读取移除数量: %w", err)
 		}
@@ -355,8 +360,12 @@ func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, ev
 		if err != nil {
 			return fmt.Errorf("编码条目 ID: %w", err)
 		}
-		var existing int64
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND id IN (SELECT value FROM json_each(?))`, scope, generation, string(data)).Scan(&existing); err != nil {
+		rows, err := tx.QueryContext(ctx, `SELECT type,id,series_id FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND id IN (SELECT value FROM json_each(?))`, scope, generation, string(data))
+		if err != nil {
+			return fmt.Errorf("读取现有条目: %w", err)
+		}
+		existing, err := scanEmbyMissingSources(rows, changedSeries)
+		if err != nil {
 			return fmt.Errorf("读取现有条目数: %w", err)
 		}
 		if err := insertEmby(ctx, tx, scope, generation, items); err != nil {
@@ -386,6 +395,7 @@ func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, ev
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交 Emby 通知: %w", err)
 	}
+	s.changedEmbyMissing(scope, generation, changedSeries)
 	return nil
 }
 func (s *Store) EmbyMatch(ctx context.Context, scope, generation, kind, tmdb string, episodes bool) ([]model.EmbyItem, error) {

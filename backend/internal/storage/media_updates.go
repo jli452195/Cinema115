@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,7 +16,14 @@ const mediaUpdateUpsert = `ON CONFLICT(scope,item_id) DO UPDATE SET
  season=excluded.season,episode=excluded.episode,end_episode=excluded.end_episode,
  added_at=CASE WHEN media_update_items.deleted_at>0 THEN excluded.added_at WHEN media_update_items.date_created='' AND excluded.date_created<>'' THEN excluded.added_at ELSE media_update_items.added_at END,
  date_created=CASE WHEN media_update_items.deleted_at>0 THEN excluded.date_created WHEN media_update_items.date_created='' AND excluded.date_created<>'' THEN excluded.date_created ELSE media_update_items.date_created END,
- last_seen_at=excluded.last_seen_at,deleted_at=0`
+ last_seen_at=excluded.last_seen_at,deleted_at=0
+ WHERE media_update_items.deleted_at>0
+ OR (media_update_items.library_id,media_update_items.item_type,media_update_items.tmdb,
+ media_update_items.series_id,media_update_items.parent_id,media_update_items.name,
+ media_update_items.season,media_update_items.episode,media_update_items.end_episode)
+ <> (excluded.library_id,excluded.item_type,excluded.tmdb,excluded.series_id,excluded.parent_id,
+ excluded.name,excluded.season,excluded.episode,excluded.end_episode)
+ OR (media_update_items.date_created='' AND excluded.date_created<>'')`
 
 func upsertMediaUpdates(ctx context.Context, tx *sql.Tx, scope string, items []model.EmbyItem, now int64) error {
 	query := `INSERT INTO media_update_items(
@@ -37,77 +43,54 @@ func upsertMediaUpdates(ctx context.Context, tx *sql.Tx, scope string, items []m
 	return nil
 }
 
-// EmbyBuildMediaUpdates incrementally derives the update timeline from an already-published snapshot.
-func (s *Store) EmbyBuildMediaUpdates(ctx context.Context, scope, generation string, batch int) (bool, error) {
-	if batch < 1 || batch > 5000 {
-		return false, fmt.Errorf("最近更新构建批量无效")
+// Build the snapshot's timeline in SQLite without transferring all rows to Go.
+// Stable entries keep their original dates and do not cause redundant updates.
+func buildMediaUpdates(ctx context.Context, tx *sql.Tx, scope, generation string, now int64) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO media_update_items(
+ scope,item_id,library_id,item_type,tmdb,series_id,parent_id,name,season,episode,end_episode,
+ date_created,added_at,first_seen_at,last_seen_at,deleted_at)
+ SELECT ?,id,library_id,type,tmdb,series_id,parent_id,name,season,episode,end_episode,
+ date_created,COALESCE(unixepoch(NULLIF(date_created,'')),?),?,?,0
+ FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) `+mediaUpdateUpsert,
+		scope, now, now, now, scope, generation); err != nil {
+		return fmt.Errorf("构建最近更新索引: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE media_update_items SET deleted_at=?
+ WHERE scope=? AND deleted_at=0 AND item_id NOT IN (
+ SELECT id FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?))`, now, scope, scope, generation); err != nil {
+		return fmt.Errorf("隐藏已移除的最近更新: %w", err)
+	}
+	return nil
+}
+
+// EmbyBuildMediaUpdates retries an unfinished timeline for a published snapshot.
+// New full synchronizations publish the timeline and snapshot in one transaction.
+func (s *Store) EmbyBuildMediaUpdates(ctx context.Context, scope, generation string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("开始构建最近更新: %w", err)
 	}
 	defer tx.Rollback()
-	var active, target, cursor string
+	var active, target string
 	var started int64
 	var ready bool
-	if err := tx.QueryRowContext(ctx, `SELECT active,updates_generation,updates_cursor,updates_started_at,updates_ready FROM emby_state WHERE scope=?`, scope).Scan(&active, &target, &cursor, &started, &ready); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT active,updates_generation,updates_ready,
+ COALESCE(unixepoch(NULLIF(synced_at,'')),?) FROM emby_state WHERE scope=?`, time.Now().UTC().Unix(), scope).Scan(&active, &target, &ready, &started); err != nil {
 		return false, fmt.Errorf("读取最近更新构建状态: %w", err)
 	}
 	if active != generation || target != generation || ready {
 		return true, nil
 	}
-	if started <= 0 {
-		started = time.Now().UTC().Unix()
-		if _, err := tx.ExecContext(ctx, `UPDATE emby_state SET updates_started_at=? WHERE scope=? AND active=? AND updates_generation=?`, started, scope, generation, generation); err != nil {
-			return false, fmt.Errorf("修复最近更新构建时间: %w", err)
-		}
+	if err := buildMediaUpdates(ctx, tx, scope, generation, started); err != nil {
+		return false, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT i.id,i.library_id,i.type,i.tmdb,i.series_id,i.parent_id,i.name,i.season,i.episode,i.end_episode,i.date_created
-FROM emby_items i JOIN emby_snapshots p ON p.id=i.snapshot_id
-WHERE p.scope=? AND p.generation=? AND i.id>? ORDER BY i.id LIMIT ?`, scope, generation, cursor, batch)
-	if err != nil {
-		return false, fmt.Errorf("读取最近更新构建批次: %w", err)
-	}
-	items := make([]model.EmbyItem, 0, batch)
-	for rows.Next() {
-		var item model.EmbyItem
-		if err := rows.Scan(&item.ID, &item.LibraryID, &item.Type, &item.TMDB, &item.SeriesID, &item.ParentID, &item.Name, &item.Season, &item.Episode, &item.EndEpisode, &item.DateCreated); err != nil {
-			_ = rows.Close()
-			return false, fmt.Errorf("读取最近更新构建条目: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return false, fmt.Errorf("遍历最近更新构建批次: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return false, fmt.Errorf("关闭最近更新构建批次: %w", err)
-	}
-	if len(items) > 0 {
-		if err := upsertMediaUpdates(ctx, tx, scope, items, started); err != nil {
-			return false, err
-		}
-		cursor = items[len(items)-1].ID
-		if _, err := tx.ExecContext(ctx, `UPDATE emby_state SET updates_cursor=?,updates_error='' WHERE scope=? AND active=? AND updates_generation=?`, cursor, scope, generation, generation); err != nil {
-			return false, fmt.Errorf("保存最近更新构建进度: %w", err)
-		}
-	}
-	done := len(items) < batch
-	if done {
-		if _, err := tx.ExecContext(ctx, `UPDATE media_update_items SET deleted_at=? WHERE scope=? AND deleted_at=0 AND NOT EXISTS (
- SELECT 1 FROM emby_items i JOIN emby_snapshots p ON p.id=i.snapshot_id
- WHERE p.scope=? AND p.generation=? AND i.id=media_update_items.item_id)`, started, scope, scope, generation); err != nil {
-			return false, fmt.Errorf("隐藏已移除的最近更新: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE emby_state SET updates_ready=1,updates_cursor='',updates_error='' WHERE scope=? AND active=? AND updates_generation=?`, scope, generation, generation); err != nil {
-			return false, fmt.Errorf("完成最近更新构建: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, `UPDATE emby_state SET updates_ready=1,updates_error='' WHERE scope=? AND active=? AND updates_generation=?`, scope, generation, generation); err != nil {
+		return false, fmt.Errorf("完成最近更新构建: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("提交最近更新构建批次: %w", err)
+		return false, fmt.Errorf("提交最近更新构建: %w", err)
 	}
-	return done, nil
+	return true, nil
 }
 
 func (s *Store) EmbyMediaUpdatesError(ctx context.Context, scope, generation, message string) error {
@@ -119,18 +102,6 @@ func deleteMediaUpdates(ctx context.Context, tx *sql.Tx, scope, itemID string, n
 		return fmt.Errorf("移除最近更新条目: %w", err)
 	}
 	return nil
-}
-
-func (s *Store) MediaUpdatesReady(ctx context.Context, scope, generation string) (bool, error) {
-	var ready bool
-	err := s.db.QueryRowContext(ctx, `SELECT updates_ready FROM emby_state WHERE scope=? AND active=? AND updates_generation=active`, scope, generation).Scan(&ready)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("检查最近更新索引: %w", err)
-	}
-	return ready, nil
 }
 
 func (s *Store) MediaUpdateGroups(ctx context.Context, scope string, start, end int64, limit, offset int) ([]model.MediaUpdateGroup, error) {

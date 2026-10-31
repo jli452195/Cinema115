@@ -100,40 +100,29 @@ func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuer
 		return page, nil
 	}
 	scope := embyScope(s.config)
-	incomplete, err := s.db.EmbyMissingIncompleteEpisodes(ctx, scope, status.Active)
-	if err != nil {
-		s.mu.RUnlock()
-		return page, err
-	}
-	items, err := s.db.EmbyMissingItems(ctx, scope, status.Active)
+	report, err := s.missingReportLocked(ctx, status.Active, exclusions)
 	s.mu.RUnlock()
 	if err != nil {
 		return page, err
 	}
-	items = filterEmbyMissingExclusions(items, exclusions)
-	page.Notices = embyMissingNotices(status, incomplete)
-	groups, checked, err := buildEmbyMissing(ctx, items)
-	if err != nil {
-		return page, err
-	}
-	page.CheckedSeries = checked
-	filtered := make([]EmbyMissingSeries, 0, len(groups))
+	page.Notices = embyMissingNotices(status, report.incomplete)
+	page.CheckedSeries = report.checked
 	search = strings.ToLower(search)
-	for _, group := range groups {
+	filtered := report.groups
+	if search != "" {
+		filtered = make([]EmbyMissingSeries, 0, embyMissingPageSize)
+	}
+	for _, group := range report.groups {
 		if search != "" && !strings.Contains(strings.ToLower(group.Title), search) && !strings.Contains(group.TMDBID, search) {
 			continue
 		}
-		filtered = append(filtered, group)
+		if search != "" {
+			filtered = append(filtered, group)
+		}
 		page.Summary.Series++
 		page.Summary.Seasons += len(group.Seasons)
 		page.Summary.Episodes += group.MissingCount
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		if filtered[i].Title != filtered[j].Title {
-			return filtered[i].Title < filtered[j].Title
-		}
-		return filtered[i].Key < filtered[j].Key
-	})
 	page.Total = len(filtered)
 	page.Offset = query.Offset
 	if page.Total > 0 && page.Offset >= page.Total {
@@ -144,7 +133,8 @@ func (s *EmbyService) MissingEpisodes(ctx context.Context, query EmbyMissingQuer
 		return page, nil
 	}
 	end := min(page.Offset+embyMissingPageSize, page.Total)
-	page.Items = filtered[page.Offset:end]
+	// Copy only this page before adding request-specific poster information.
+	page.Items = append(page.Items, filtered[page.Offset:end]...)
 	page.NextOffset = end
 	page.HasMore = end < page.Total
 	// Posters are optional presentation data. Read cached details only for the current page;

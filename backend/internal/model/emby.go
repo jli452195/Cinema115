@@ -30,8 +30,6 @@ type EmbyState struct {
 	StagingComplete   bool   `json:"-"`
 	StagingCutoff     int64  `json:"-"`
 	UpdatesGeneration string `json:"-"`
-	UpdatesCursor     string `json:"-"`
-	UpdatesStartedAt  int64  `json:"-"`
 	UpdatesReady      bool   `json:"updatesReady"`
 	UpdatesError      string `json:"updatesError"`
 }

@@ -37,7 +37,7 @@ func TestEmbyRecoveryPreservesOnlyCompletedStagingSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err = s.EmbyState(ctx, scope)
-	if err != nil || state.Active != "complete" || state.StagingGeneration != "" || state.UpdatesGeneration != "complete" || state.UpdatesReady {
+	if err != nil || state.Active != "complete" || state.StagingGeneration != "" || state.UpdatesGeneration != "complete" || !state.UpdatesReady {
 		t.Fatalf("重试发布状态错误: %+v %v", state, err)
 	}
 

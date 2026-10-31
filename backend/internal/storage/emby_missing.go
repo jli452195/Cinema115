@@ -2,21 +2,11 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"strm115/backend/internal/model"
 )
-
-func (s *Store) EmbyMissingIncompleteEpisodes(ctx context.Context, scope, generation string) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM emby_items
- WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)
- AND type='Episode' AND season<>0 AND (series_id='' OR season<0 OR episode<0)`, scope, generation).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("读取缺集检测分集资料状态: %w", err)
-	}
-	return count, nil
-}
 
 func (s *Store) EmbyPublishedSeries(ctx context.Context, scope, id string) (bool, error) {
 	var exists bool
@@ -31,14 +21,42 @@ func (s *Store) EmbyPublishedSeries(ctx context.Context, scope, id string) (bool
 	return exists, nil
 }
 
-// EmbyMissingItems reads only the published generation; staging rows never enter a report.
-// Episode TMDB IDs identify episodes, so show identity always comes from the Series row.
-func (s *Store) EmbyMissingItems(ctx context.Context, scope, generation string) ([]model.EmbyItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,type,tmdb,series_id,library_id,
+// A nil selection builds the report once. Incremental selections include the
+// current same-TMDB sources, including versions in another selected library.
+// Incomplete episodes are included so their notice count is cached as well.
+func (s *Store) EmbyMissingItems(ctx context.Context, scope, generation string, seriesIDs []string) ([]model.EmbyItem, error) {
+	const columns = `id,type,tmdb,series_id,library_id,
  CASE WHEN type='Series' THEN name ELSE '' END,season,episode,end_episode
- FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)
- AND (type='Series' OR (type='Episode' AND series_id<>'' AND season>0 AND episode>0))
- ORDER BY id`, scope, generation)
+ FROM emby_items`
+	query := `WITH snapshot AS (SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)
+ SELECT ` + columns + ` WHERE snapshot_id=(SELECT id FROM snapshot)
+ AND type IN ('Series','Episode') ORDER BY id`
+	args := []any{scope, generation}
+	if seriesIDs != nil {
+		data, err := json.Marshal(seriesIDs)
+		if err != nil {
+			return nil, fmt.Errorf("编码缺集检测来源: %w", err)
+		}
+		// ORDER BY id can otherwise make SQLite scan the whole snapshot's primary
+		// key. Keep episode reads on the selected sources' series index.
+		query = `WITH snapshot AS (SELECT id FROM emby_snapshots WHERE scope=? AND generation=?),
+ requested AS (SELECT value AS id FROM json_each(?)),
+ sources AS (
+ SELECT id FROM requested UNION
+ SELECT id FROM emby_items WHERE snapshot_id=(SELECT id FROM snapshot) AND type='Series'
+ AND tmdb IN (
+ SELECT i.tmdb FROM requested CROSS JOIN emby_items i
+ WHERE i.snapshot_id=(SELECT id FROM snapshot) AND i.id=requested.id AND i.type='Series'
+ AND CAST(i.tmdb AS INTEGER)>0 AND CAST(CAST(i.tmdb AS INTEGER) AS TEXT)=i.tmdb
+ ))
+ SELECT ` + columns + ` WHERE snapshot_id=(SELECT id FROM snapshot)
+ AND type='Series' AND id IN (SELECT id FROM sources)
+ UNION ALL SELECT ` + columns + ` INDEXED BY emby_series WHERE snapshot_id=(SELECT id FROM snapshot)
+ AND type='Episode' AND series_id IN (SELECT id FROM sources)
+ ORDER BY id`
+		args = append(args, string(data))
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("读取缺集检测索引: %w", err)
 	}

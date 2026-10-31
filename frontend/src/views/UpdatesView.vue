@@ -41,11 +41,12 @@ const selectedDay = computed(() => days.value.find(day => day.date === route.que
 const selectedDate = computed(() => selectedDay.value.date)
 const hasSnapshot = computed(() => !!loadedDate.value)
 const staleResults = computed(() => hasSnapshot.value && loadedDate.value !== selectedDate.value)
+const timelineMessage = computed(() => timelineStatus.value === 'building' ? '最近更新时间线正在后台构建。' : timelineStatus.value === 'failed' ? '最近更新时间线暂时构建失败。' : '最近更新时间线尚未建立。')
 const resultStatus = computed(() => {
   if (loading.value) return staleResults.value ? `正在加载 · 暂显 ${loadedDate.value}` : '正在加载…'
   if (error.value && errorScope.value === 'date') return staleResults.value ? `${loadedDate.value} 结果 · 加载失败` : '加载失败'
   if (staleResults.value) return `${loadedDate.value} 暂存结果`
-  if (!ready.value) return '时间线准备中'
+  if (!ready.value) return timelineStatus.value === 'failed' ? '时间线构建失败' : timelineStatus.value === 'waiting' ? '等待时间线' : '时间线准备中'
   return `${hasMore.value ? '已加载' : '更新'} ${items.value.length} 项`
 })
 
@@ -65,12 +66,14 @@ function selectDate(date: string) {
 }
 function applySnapshot(date: string, data: DaySnapshot | RecentUpdatesPage) {
   items.value = [...data.items]
-  ready.value = data.ready
+  ready.value = data.ready && data.status === 'ready'
   timelineStatus.value = data.status
   hasMore.value = data.hasMore
   nextCursor.value = data.nextCursor || ''
   loadedDate.value = date
+  if (!ready.value) dayCache.delete(date)
 }
+function itemKey(item: RecentUpdateItem) { return `${item.date}:${item.kind}:${item.tmdbId}:${item.season ?? -1}` }
 function pruneCache() {
   const validDates = new Set(days.value.map(day => day.date))
   for (const date of dayCache.keys()) if (!validDates.has(date)) dayCache.delete(date)
@@ -142,7 +145,22 @@ async function loadMore() {
   try {
     const data = await request(loadedDate.value, current.signal, nextCursor.value)
     if (!mounted || current.signal.aborted || controller !== current) return
-    items.value.push(...data.items)
+    ready.value = data.ready && data.status === 'ready'
+    timelineStatus.value = data.status
+    if (!ready.value) {
+      hasMore.value = false
+      nextCursor.value = ''
+      dayCache.delete(loadedDate.value)
+      return
+    }
+    const positions = new Map(items.value.map((item, index) => [itemKey(item), index]))
+    for (const item of data.items) {
+      const key = itemKey(item), index = positions.get(key)
+      if (index === undefined) {
+        positions.set(key, items.value.length)
+        items.value.push(item)
+      } else items.value[index] = item
+    }
     hasMore.value = data.hasMore
     nextCursor.value = data.nextCursor || ''
     rememberSnapshot(dayCache.get(loadedDate.value)?.cachedAt)
@@ -182,14 +200,15 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
       </div>
       <div v-if="error" role="alert" class="updates-error"><p>{{ error }}</p><button type="button" class="catalog-chip" @click="errorScope === 'more' ? loadMore() : load(true)">{{ errorScope === 'more' ? '重试加载更多' : '重新加载' }}</button></div>
       <section class="updates-results" aria-label="更新列表" :aria-busy="loading || loadingMore">
+        <p v-if="hasSnapshot && !ready && items.length" role="status" class="updates-pending">{{ timelineMessage }}暂时保留 {{ loadedDate }} 已加载结果，刷新页面后可重新加载。</p>
         <div v-if="loading && hasSnapshot" class="updates-progress" aria-hidden="true"></div>
         <div v-if="loading && !hasSnapshot" aria-label="正在加载最近更新" class="catalog-card-grid">
           <div v-for="index in 36" :key="index" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-2.5 h-10 w-4/5 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-1 h-[18px] w-12 rounded bg-slate-100 dark:bg-slate-800"></div></div>
         </div>
-        <div v-else-if="hasSnapshot && !ready" class="updates-empty"><p>{{ timelineStatus === 'building' ? '最近更新时间线正在后台构建。' : timelineStatus === 'failed' ? '最近更新时间线暂时构建失败。' : '最近更新时间线尚未建立。' }}</p><p class="mt-2 text-xs">{{ timelineStatus === 'building' ? '通常只需片刻，完成后刷新页面即可查看。' : timelineStatus === 'failed' ? '后台将在稍后自动重试。' : '请由管理员在 Emby 媒体库同步页面执行一次全量同步。' }}</p></div>
+        <div v-else-if="hasSnapshot && !ready && !items.length" class="updates-empty"><p>{{ timelineMessage }}</p><p class="mt-2 text-xs">{{ timelineStatus === 'building' ? '通常只需片刻，完成后刷新页面即可查看。' : timelineStatus === 'failed' ? '后台将在稍后自动重试。' : '请由管理员在 Emby 媒体库同步页面执行一次全量同步。' }}</p></div>
         <div v-else-if="hasSnapshot && !items.length" class="updates-empty">{{ staleResults ? loadedDate + ' 暂无更新。' : '这一天暂无更新，试试其他日期。' }}</div>
         <div v-else-if="items.length" class="catalog-card-grid updates-grid" :class="{ 'is-updating': loading || staleResults }">
-          <UpdateCard v-for="item in items" :key="item.date + ':' + item.kind + ':' + item.tmdbId + ':' + (item.season ?? -1)" :item="item" />
+          <UpdateCard v-for="item in items" :key="itemKey(item)" :item="item" />
         </div>
       </section>
       <div v-if="items.length && hasMore" class="updates-more">
@@ -219,6 +238,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
 .updates-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding: 12px 16px; border-radius: 16px; background: color-mix(in srgb, #b34a4a 7%, var(--filter-surface)); color: var(--filter-text); font-size: 13px; }
 .updates-error p { margin: 0; overflow-wrap: anywhere; }
 .updates-results { position: relative; }
+.updates-pending { margin: 0 0 16px; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
 .updates-grid { transition: opacity 160ms ease; }
 .updates-grid.is-updating { opacity: 0.65; }
 .updates-progress { position: absolute; top: -8px; left: 0; right: 0; height: 2px; overflow: hidden; border-radius: 2px; background: var(--filter-track); }

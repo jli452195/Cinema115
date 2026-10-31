@@ -136,11 +136,11 @@ func (s *EmbyService) missingExclusionPreviewLocked(ctx context.Context, key str
 	if !status.Configured || len(s.config.LibraryIDs) == 0 || status.Active == "" {
 		return preview, ErrEmbyMissingChanged
 	}
-	items, err := s.db.EmbyMissingItems(ctx, preview.Scope, status.Active)
+	exclusions, err := s.db.EmbyMissingExclusions(ctx, embyMissingService(s.config))
 	if err != nil {
 		return preview, err
 	}
-	exclusions, err := s.db.EmbyMissingExclusions(ctx, embyMissingService(s.config))
+	items, err := s.missingGroupItemsLocked(ctx, status.Active, key, exclusions)
 	if err != nil {
 		return preview, err
 	}

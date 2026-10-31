@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,5 +56,53 @@ func TestRecentUpdatesListUsesSeasonCardsAndStableLabels(t *testing.T) {
 	}
 	if _, err := updates.List(context.Background(), RecentUpdatesQuery{Date: "2026-02-30"}); !errors.Is(err, ErrRecentUpdatesInput) {
 		t.Fatal("未拒绝无效日期", err)
+	}
+}
+
+type recentUpdatesBudgetMetadata struct {
+	cachedCalls  atomic.Int32
+	networkCalls atomic.Int32
+	t            *testing.T
+}
+
+func (f *recentUpdatesBudgetMetadata) CachedDetails(_ context.Context, kind string, id int) (*tmdb.Detail, error) {
+	f.cachedCalls.Add(1)
+	if id <= 2 {
+		return nil, nil
+	}
+	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "cached"}}, nil
+}
+
+func (f *recentUpdatesBudgetMetadata) Details(ctx context.Context, _ string, _ int) (*tmdb.Detail, error) {
+	f.networkCalls.Add(1)
+	if f.cachedCalls.Load() != recentUpdatesPageSize {
+		f.t.Error("optional network requests started before cached cards were read")
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 2*time.Second {
+		f.t.Error("optional metadata inherited the full page timeout")
+	}
+	return nil, errors.New("metadata unavailable")
+}
+
+func TestRecentUpdatesReadsCacheBeforeBoundedOptionalMetadata(t *testing.T) {
+	groups := make([]model.MediaUpdateGroup, 0, recentUpdatesPageSize)
+	for id := 1; id <= recentUpdatesPageSize; id++ {
+		groups = append(groups, model.MediaUpdateGroup{Kind: "movie", TMDBID: id, FallbackTitle: fmt.Sprint(id), UpdatedAt: 1})
+	}
+	metadata := &recentUpdatesBudgetMetadata{t: t}
+	s := &RecentUpdatesService{Source: recentUpdatesSourceFake{ready: true, groups: groups}, Metadata: metadata}
+	page, err := s.List(context.Background(), RecentUpdatesQuery{})
+	if err != nil || len(page.Items) != recentUpdatesPageSize || metadata.networkCalls.Load() != 2 {
+		t.Fatal(len(page.Items), metadata.networkCalls.Load(), err)
+	}
+	for _, item := range page.Items {
+		if item.TMDBID <= 2 {
+			if !item.MetadataMissing || item.Title != fmt.Sprint(item.TMDBID) {
+				t.Fatal("local timeline was lost after optional metadata failed", item)
+			}
+		} else if item.MetadataMissing || item.Title != "cached" {
+			t.Fatal("cached metadata was blocked by uncached cards", item)
+		}
 	}
 }

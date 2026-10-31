@@ -16,7 +16,10 @@ import (
 const schemaVersion = 65
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
-type Store struct{ db *sql.DB }
+type Store struct {
+	db          *sql.DB
+	embyChanges embyMissingChanges
+}
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	abs, err := filepath.Abs(path)

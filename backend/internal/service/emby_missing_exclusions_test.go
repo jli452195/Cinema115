@@ -65,7 +65,7 @@ func TestMissingExclusionsExactBindingPersistenceAndRestore(t *testing.T) {
 	}
 	assertCorrectOnly()
 	// Raw indexed media remains available to all other features.
-	raw, err := f.db.EmbyMissingItems(ctx, input.Scope, "one")
+	raw, err := f.db.EmbyMissingItems(ctx, input.Scope, "one", nil)
 	if err != nil || len(raw) != len(items) {
 		t.Fatal(raw, err)
 	}
@@ -201,7 +201,7 @@ func TestMissingExclusionsStalePreviewAndGroupedSources(t *testing.T) {
 	if err != nil || page.ExcludedCount != 1 {
 		t.Fatal(page, err)
 	}
-	raw, err := f.db.EmbyMissingItems(ctx, embyScope(f.service.snapshot()), "base-again")
+	raw, err := f.db.EmbyMissingItems(ctx, embyScope(f.service.snapshot()), "base-again", nil)
 	if err != nil || len(raw) != 4 {
 		t.Fatal(raw, err)
 	}

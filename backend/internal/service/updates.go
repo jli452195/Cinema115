@@ -169,12 +169,35 @@ func (s *RecentUpdatesService) loadDetails(ctx context.Context, groups []model.M
 	if s.Metadata == nil {
 		return result
 	}
+	// Titles from the local media index remain usable if optional TMDB metadata
+	// is slow. Read all cached cards before starting any bounded network work.
+	metadataCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if cached, ok := s.Metadata.(interface {
+		CachedDetails(context.Context, string, int) (*tmdb.Detail, error)
+	}); ok {
+		for key := range keys {
+			if metadataCtx.Err() != nil {
+				break
+			}
+			if detail, err := cached.CachedDetails(metadataCtx, key.kind, key.id); err == nil && detail != nil {
+				result[key] = detail
+				delete(keys, key)
+			}
+		}
+	}
 	var mu sync.Mutex
-	work, workCtx := errgroup.WithContext(ctx)
+	work, workCtx := errgroup.WithContext(metadataCtx)
 	work.SetLimit(4)
 	for key := range keys {
+		if workCtx.Err() != nil {
+			break
+		}
 		key := key
 		work.Go(func() error {
+			if workCtx.Err() != nil {
+				return nil
+			}
 			detail, err := s.Metadata.Details(workCtx, key.kind, key.id)
 			if err == nil && detail != nil {
 				mu.Lock()

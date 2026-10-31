@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -40,6 +41,7 @@ type tmdbFlight struct {
 	err     error
 }
 type tmdbPrewarmKey struct{}
+type tmdbCacheOnlyKey struct{}
 type TMDBService struct {
 	source  TMDBSource
 	db      TMDBCacheStore
@@ -109,7 +111,7 @@ func decodeTMDB[T any](data []byte) (*T, error) {
 }
 
 // 请求合并不创建游离协程；首个请求负责加载，其他请求可独立取消等待。
-func (s *TMDBService) fetch(ctx context.Context, key string, observed int64, load func(context.Context) (any, error)) ([]byte, int64, error) {
+func (s *TMDBService) fetch(ctx context.Context, key string, observed int64, load func(context.Context) (any, error), retryCanceledOwner bool) ([]byte, int64, error) {
 	s.mu.Lock()
 	if flight, ok := s.flights[key]; ok {
 		s.mu.Unlock()
@@ -117,6 +119,10 @@ func (s *TMDBService) fetch(ctx context.Context, key string, observed int64, loa
 		case <-ctx.Done():
 			return nil, 0, ctx.Err()
 		case <-flight.done:
+			// An optional card request may have a shorter budget than this waiter.
+			if retryCanceledOwner && ctx.Err() == nil && (errors.Is(flight.err, context.Canceled) || errors.Is(flight.err, context.DeadlineExceeded)) {
+				return s.fetch(ctx, key, observed, load, false)
+			}
 			return flight.data, flight.fetched, flight.err
 		}
 	}
@@ -179,10 +185,13 @@ func cachedTMDB[T any](ctx context.Context, s *TMDBService, key string, ttl time
 		ttl = scheduleTTL(schedule, s.now(), ttl)
 	}
 	stale := fetched == 0 || s.now().Sub(time.Unix(fetched, 0)) >= ttl
+	if cacheOnly, _ := ctx.Value(tmdbCacheOnlyKey{}).(bool); cacheOnly {
+		return cached, tmdb.CacheInfo{FetchedAt: fetched, CacheStale: stale}, nil
+	}
 	if cached != nil && !tmdb.WantsFresh(ctx) && (!warm || !stale) {
 		return cached, tmdb.CacheInfo{FetchedAt: fetched, CacheStale: stale}, nil
 	}
-	data, fetched, err = s.fetch(ctx, key, fetched, load)
+	data, fetched, err = s.fetch(ctx, key, fetched, load, true)
 	if err != nil {
 		return nil, tmdb.CacheInfo{}, err
 	}
@@ -203,6 +212,13 @@ func scheduleTTL(value *tmdb.Schedule, now time.Time, fallback time.Duration) ti
 	}
 	return 7 * 24 * time.Hour
 }
+
+// CachedDetails uses the same detail decoding and saved numbering as Details,
+// without making optional card metadata depend on a network request.
+func (s *TMDBService) CachedDetails(ctx context.Context, kind string, id int) (*tmdb.Detail, error) {
+	return s.Details(context.WithValue(ctx, tmdbCacheOnlyKey{}, true), kind, id)
+}
+
 func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.Detail, error) {
 	if (kind != "tv" && kind != "movie") || id < 1 {
 		return nil, tmdb.ErrInput
@@ -218,7 +234,7 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 	// v3 also includes ISO country codes used by the subtitle-library entry.
 	// Keeping the version in the key makes legacy detail records expire naturally.
 	value, info, err := cachedTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+kind+":"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, kind, id) })
-	if err != nil {
+	if err != nil || value == nil {
 		return nil, err
 	}
 	value.CacheInfo = info

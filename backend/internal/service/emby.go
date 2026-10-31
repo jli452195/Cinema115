@@ -69,6 +69,9 @@ type EmbyService struct {
 	syncLogScope    string
 	syncLogTask     string
 	webhookRejectAt time.Time
+	// Service locks precede missingMu; cache construction shares the published-index read lock.
+	missingMu sync.Mutex
+	missing   embyMissingCache
 }
 
 func NewEmbyService(secrets *SessionStore, db *storage.Store) (*EmbyService, error) {
@@ -440,7 +443,7 @@ func (s *EmbyService) Run(ctx context.Context) (resultErr error) {
 				updatesRetryAt = time.Time{}
 			}
 			if !time.Now().Before(updatesRetryAt) {
-				ready, buildErr := s.db.EmbyBuildMediaUpdates(ctx, scope, state.Active, 1000)
+				ready, buildErr := s.db.EmbyBuildMediaUpdates(ctx, scope, state.Active)
 				if ctx.Err() != nil {
 					return nil
 				}

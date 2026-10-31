@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { RecentUpdateItem } from '../types/updates'
 import { tmdbImageURL } from '../utils/tmdbImage'
@@ -31,7 +31,11 @@ function toggleRange() { if (expandable.value) expanded.value = !expanded.value 
 watch(() => [props.item.kind, props.item.tmdbId, props.item.posterUrl], () => { imageFailed.value = false })
 watch(rangeLabel, () => { expanded.value = false; rangeOverflow.value = false; void nextTick(measureRange) })
 watch([rangeText, expanded], () => { void nextTick(measureRange) }, { flush: 'post' })
-onMounted(() => { resizeObserver = new ResizeObserver(measureRange); if (rangeRow.value) resizeObserver.observe(rangeRow.value); measureRange() })
+watch(rangeRow, row => {
+  resizeObserver?.disconnect()
+  resizeObserver = row ? new ResizeObserver(measureRange) : undefined
+  if (row) resizeObserver?.observe(row)
+}, { flush: 'post' })
 onBeforeUnmount(() => resizeObserver?.disconnect())
 </script>
 

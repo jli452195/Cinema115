@@ -24,11 +24,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         const item = id => ({ date: query.date, kind: 'movie', tmdbId: id, title: '示例电影 ' + id, posterUrl: '', releaseDate: '2026-01-01', rating: 8, votes: 10 })
         const today = query.date === '2027-01-02'
         data = { ready: true, status: 'ready', items: today ? [item(query.cursor ? 2 : 1)] : [], hasMore: today && !query.cursor, nextCursor: today && !query.cursor ? '1' : '', from: query.date, to: query.date }
+        if (mode === 'duplicate-page' && today && query.cursor) {
+          data = { ...data, items: query.cursor === '1' ? [item(1), item(2), item(2)] : [item(3)], hasMore: query.cursor === '1', nextCursor: query.cursor === '1' ? '7' : '' }
+        }
         if (mode === 'rich' || mode === 'slow-rich' || (mode === 'race' && query.date === '2026-12-31')) {
           const labels = ['S01 E01', 'S01 E01-E08', 'S01 E01, E03, E05, E07, E09, E11', 'S00 E01, E03, E05, E07, E09, E11', 'S01 更新10集', '']
           data = { ...data, hasMore: false, nextCursor: '', items: Array.from({ length: 23 }, (_, i) => ({ ...item(100 + i), kind: i % 4 === 0 ? 'movie' : 'tv', title: i % 2 ? `示例剧集 ${i}（第 1 季）` : `较长的测试片名用于检查两行标题与下方更新信息的对齐 ${i}`, season: i === 3 ? 0 : 1, episodeLabel: i % 4 === 0 ? '' : labels[i % labels.length], episodeCount: i === 5 ? 0 : i === 4 ? 10 : 6, metadataMissing: i === 5, rating: i === 5 ? 0 : 8, votes: i === 5 ? 0 : 100 })) }
         }
-        if (mode === 'building') data = { ...data, ready: false, status: 'building', items: [], hasMore: false, nextCursor: '' }
+        if (mode === 'building' || mode === 'failed') data = { ...data, ready: false, status: mode, items: [], hasMore: false, nextCursor: '' }
         if (mode === 'error') { status = 503; data = { error: '模拟更新加载失败' } }
       }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
@@ -88,6 +91,44 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '重试加载更多', exact: true }).click()
     await page.getByText('更新 2 项', { exact: false }).waitFor()
     assert.deepEqual(calls.at(-1), { date: '2027-01-02', cursor: '1' })
+    // Reordered offset pages can overlap. Keep one card per key and use the server cursor.
+    await expireCache()
+    await strip.getByRole('button', { name: '2027-01-01 昨天' }).click()
+    await page.getByText('这一天暂无更新，试试其他日期。').waitFor()
+    await strip.getByRole('button').first().click()
+    await page.getByText('已加载 1 项', { exact: false }).waitFor()
+    responseMode = 'duplicate-page'
+    await page.getByRole('button', { name: '加载更多', exact: true }).click()
+    await page.getByText('已加载 2 项', { exact: false }).waitFor()
+    assert.equal(await page.locator('.update-card').count(), 2)
+    await page.getByRole('button', { name: '加载更多', exact: true }).click()
+    await page.getByText('更新 3 项', { exact: false }).waitFor()
+    assert.deepEqual(calls.at(-1), { date: '2027-01-02', cursor: '7' })
+    assert.equal(await page.locator('.update-card').count(), 3)
+    // A pending/failed continuation keeps dated cards, stops pagination and invalidates ready cache.
+    for (const mode of ['building', 'failed']) {
+      await expireCache()
+      responseMode = 'normal'
+      await strip.getByRole('button', { name: '2027-01-01 昨天' }).click()
+      await page.getByText('这一天暂无更新，试试其他日期。').waitFor()
+      await strip.getByRole('button').first().click()
+      await page.getByText('已加载 1 项', { exact: false }).waitFor()
+      responseMode = mode
+      await page.getByRole('button', { name: '加载更多', exact: true }).click()
+      await page.locator('.updates-pending').waitFor()
+      assert.match(await page.locator('.updates-pending').innerText(), /2027-01-02 已加载结果/)
+      assert.match(await page.locator('.updates-pending').innerText(), mode === 'building' ? /正在后台构建/ : /暂时构建失败/)
+      assert.equal(await page.locator('.update-card').count(), 1)
+      assert.equal(await page.getByRole('button', { name: '加载更多', exact: true }).count(), 0)
+      responseMode = 'normal'
+      await strip.getByRole('button', { name: '2027-01-01 昨天' }).click()
+      await page.getByText('这一天暂无更新，试试其他日期。').waitFor()
+      const beforeReadyReload = calls.length
+      await strip.getByRole('button').first().click()
+      await page.getByText('已加载 1 项', { exact: false }).waitFor()
+      assert.equal(calls.length, beforeReadyReload + 1)
+      assert.equal(await page.locator('.updates-pending').count(), 0)
+    }
     // A superseded slower response cannot replace the newest day's data.
     await expireCache()
     await page.setViewportSize({ width: 1280, height: 900 })
@@ -205,6 +246,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.doesNotMatch(await page.locator('.updates-summary').innerText(), /更新 0 项/)
     assert.ok(calls.every(query => query.date && !('range' in query)))
     assert.deepEqual(errors, [])
-    console.log(JSON.stringify({ passed: true, cases: ['Shanghai-calendar-history', 'cursor-pagination-retry', 'date-cache-pagination-expiry', 'cached-return-aborts-request', 'retained-dated-results', 'request-cancellation', 'responsive-light-dark', 'selection-no-layout-jump', 'poster-hover-colors', 'range-touch-keyboard', 'specials-missing-metadata', 'reduced-motion', 'building-initial-failure'], layouts, pageErrors: errors }))
+    console.log(JSON.stringify({ passed: true, cases: ['Shanghai-calendar-history', 'cursor-pagination-retry', 'duplicate-page-server-cursor', 'pending-page-keeps-dated-results', 'date-cache-pagination-expiry', 'cached-return-aborts-request', 'retained-dated-results', 'request-cancellation', 'responsive-light-dark', 'selection-no-layout-jump', 'poster-hover-colors', 'range-touch-keyboard', 'specials-missing-metadata', 'reduced-motion', 'building-initial-failure'], layouts, pageErrors: errors }))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })
