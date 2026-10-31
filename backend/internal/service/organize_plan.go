@@ -31,7 +31,7 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			return OrganizeJob{}, fmt.Errorf("%w：季集方案已变化，请重新选择作品并预览", ErrOrganizeConflict)
 		}
 	}
-	job := OrganizeJob{Naming: &p.snapshot, Config: scan.Config, Revision: scan.Revision, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, len(input.Files))}
+	job := OrganizeJob{Naming: &p.snapshot, Config: scan.Config, Kind: input.Kind, TMDBID: input.TMDBID, Title: detail.Title, Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, len(input.Files))}
 	job.Numbering = detail.Numbering
 	files := make(map[string]OrganizeFile, len(scan.Files))
 	for _, f := range scan.Files {

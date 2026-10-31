@@ -221,12 +221,10 @@ type AnimeReleaseRecord struct {
 }
 
 type AnimeSettings struct {
-	Revision        int64   `json:"revision"`
-	AccountID       *string `json:"accountId"`
-	AccountRevision *int64  `json:"accountRevision"`
-	UID             *string `json:"uid"`
-	DownloadCID     *string `json:"downloadCid"`
-	DownloadPath    *string `json:"downloadPath"`
-	OrganizeCID     *string `json:"organizeCid"`
-	OrganizePath    *string `json:"organizePath"`
+	Revision     int64   `json:"revision"`
+	AccountID    *string `json:"accountId"`
+	DownloadCID  *string `json:"downloadCid"`
+	DownloadPath *string `json:"downloadPath"`
+	OrganizeCID  *string `json:"organizeCid"`
+	OrganizePath *string `json:"organizePath"`
 }

@@ -36,6 +36,9 @@ func (s *AnimeAdminService) submitAnimeRedownload(ctx context.Context, session *
 		if err := session.Validate(ctx); err != nil {
 			return err
 		}
+		if dispatched {
+			return nil
+		}
 		if err := s.Store.DispatchAnimeSubmit(ctx, op.ID, session.leaseToken()); err != nil {
 			return err
 		}

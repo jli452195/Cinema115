@@ -209,7 +209,7 @@ func copyMonitorRuntime(dst *model.FolderMonitor, src model.FolderMonitor) {
 	dst.BatchDirectoryID, dst.BatchDirectoryName, dst.BatchMoveIndex = src.BatchDirectoryID, src.BatchDirectoryName, src.BatchMoveIndex
 	dst.BatchCreationPending, dst.RecoveryMessage = src.BatchCreationPending, src.RecoveryMessage
 	dst.BatchParentCID = src.BatchParentCID
-	dst.BatchAccountRevision, dst.BatchCredentialHash, dst.CleanupIndex = src.BatchAccountRevision, src.BatchCredentialHash, src.CleanupIndex
+	dst.CleanupIndex = src.CleanupIndex
 	dst.StableFingerprint, dst.StableScans = src.StableFingerprint, src.StableScans
 	dst.LastScanAt, dst.NextScanAt, dst.LastError = src.LastScanAt, src.NextScanAt, src.LastError
 }
@@ -501,7 +501,7 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 	}
 	account, err := s.Accounts.Primary(value.AccountID)
 	if err != nil || account.Cookie == "" {
-		return s.fail(root, &value, "所选 115 账号已删除或未登录")
+		return s.failAt(root, &value, value.Stage, "所选 115 账号已删除或未登录")
 	}
 	ctx, cancel := context.WithTimeout(root, 10*time.Minute)
 	defer cancel()
@@ -511,9 +511,6 @@ func (s *FolderMonitorService) runOne(root context.Context, id string) error {
 	}})
 	ctx = p115.WithRequestProgress(ctx, func(message string) { logGeneration(ctx, "WARNING", message) })
 	logGeneration(ctx, "INFO", "已固定本次执行的账号凭据："+account.Name)
-	if value.BatchAccountRevision != 0 && (value.BatchAccountRevision != account.Revision || value.BatchCredentialHash != cookieHash(account.Cookie)) {
-		return s.failAt(ctx, &value, "blocked", "本批次启动后账号凭据已经变化，已停止；请人工核对")
-	}
 	switch value.Stage {
 	case "creating":
 		return s.failAt(ctx, &value, "blocked", "临时目录创建结果尚未确认，正在核对残留；不会重复创建")
@@ -637,9 +634,11 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 			return s.fail(ctx, value, "临时目录名称已存在，请重新提交")
 		}
 	}
+	if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+		return s.fail(ctx, value, err.Error())
+	}
 	value.BatchIDs, value.BatchFingerprint = ids, manifestFingerprint(manifest)
 	value.BatchDirectoryName, value.BatchParentCID = name, parent
-	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
 	value.BatchCreationPending, value.Stage = true, "creating"
 	value.SharePassword = password
 	value.ShareURL, value.CleanupIndex, value.BatchMoveIndex = "", 0, 0
@@ -659,7 +658,6 @@ func (s *FolderMonitorService) discover(ctx context.Context, value *model.Folder
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex = directoryID, name, 0
 	value.BatchCreationPending = false
 	value.BatchParentCID = parent
-	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
 	value.CleanupIndex, value.ShareURL, value.SharePassword, value.LastError = 0, "", password, ""
 	value.StableFingerprint, value.StableScans, value.Stage = "", 0, "moving"
 	logGeneration(ctx, "INFO", "临时目录创建完成："+directoryID)
@@ -739,6 +737,9 @@ func (s *FolderMonitorService) moveSelected(ctx context.Context, value *model.Fo
 			}
 		}
 		if len(ids) > 0 {
+			if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+				return s.failAt(ctx, value, "moving", err.Error())
+			}
 			if err := s.Client.MoveEntries(ctx, ids, value.BatchDirectoryID, account.Cookie); err != nil {
 				return s.failAt(ctx, value, "moving", "移动到临时目录失败："+err.Error())
 			}
@@ -817,6 +818,9 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 		if len(roots) > 1000 {
 			return s.failAt(ctx, value, "sharing", "单次分享最多支持 1000 个顶层条目")
 		}
+		if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+			return s.failAt(ctx, value, "sharing", err.Error())
+		}
 		// Persist the uncertainty boundary before a non-idempotent share call.
 		value.Stage = "sharing_legacy"
 		if err := s.checkpoint(ctx, value); err != nil {
@@ -845,6 +849,9 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 	}
 	if value.Stage == "configuring" {
 		logGeneration(ctx, "INFO", "开始设置长期分享与提取码")
+		if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+			return s.failAt(ctx, value, "configuring", err.Error())
+		}
 		if err := s.Client.ConfigureShare(ctx, share, value.SharePassword, account.Cookie); err != nil {
 			return s.failAt(ctx, value, "configuring", "设置长期分享失败，源文件已保留："+err.Error())
 		}
@@ -955,6 +962,9 @@ func (s *FolderMonitorService) resume(ctx context.Context, value *model.FolderMo
 			if value.BatchFingerprint == "" || !manifestMatchesFingerprint(manifest, value.BatchFingerprint) {
 				return s.failAt(ctx, value, "cleaning", "临时目录内容已变化，已停止清理，请核对残留")
 			}
+			if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+				return s.failAt(ctx, value, "cleaning", err.Error())
+			}
 			if err := s.Client.DeleteEntries(ctx, []string{id}, account.Cookie); err != nil {
 				return s.failAt(ctx, value, "cleaning", "STRM 已生成，但部分源文件移入回收站失败："+err.Error())
 			}
@@ -984,7 +994,7 @@ func (s *FolderMonitorService) completeCleanedBatch(ctx context.Context, value *
 	value.BatchIDs, value.BatchFingerprint = nil, ""
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchMoveIndex, value.BatchParentCID = "", "", 0, ""
 	value.BatchCreationPending = false
-	value.BatchAccountRevision, value.BatchCredentialHash, value.CleanupIndex = 0, "", 0
+	value.CleanupIndex = 0
 	value.ShareReviewing = false
 	value.ScheduleMessage = "本批处理完成，立即检查下一批"
 	value.NextScanAt = time.Now().UTC()

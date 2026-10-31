@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -78,6 +79,52 @@ func removeAnimeFirstEpisode(ctx context.Context, tx *sql.Tx) error {
 	} {
 		if _, err := tx.ExecContext(ctx, query); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Remove credential revisions from durable account ownership. Keep existing
+// subscriptions, task progress and directories; runtime DTOs need no legacy fields.
+func simplifyAnimeAccountBindings(ctx context.Context, tx *sql.Tx) error {
+	var settingsColumn, jobColumn int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_settings') WHERE name='account_revision'`).Scan(&settingsColumn); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('anime_download_jobs') WHERE name='account_revision'`).Scan(&jobColumn); err != nil {
+		return err
+	}
+	if settingsColumn == 0 && jobColumn == 0 {
+		return nil
+	}
+	if settingsColumn != 0 {
+		const columns = "id,revision,account_id,download_cid,download_path,organize_cid,organize_path"
+		for _, query := range []string{
+			strings.Replace(animeSettingsSchema, "anime_settings (", "anime_settings_current (", 1),
+			`INSERT INTO anime_settings_current(` + columns + `) SELECT ` + columns + ` FROM anime_settings`,
+			`DROP TABLE anime_settings`,
+			`ALTER TABLE anime_settings_current RENAME TO anime_settings`,
+		} {
+			if _, err := tx.ExecContext(ctx, query); err != nil {
+				return fmt.Errorf("simplify anime account settings: %w", err)
+			}
+		}
+	}
+	if jobColumn != 0 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE anime_download_jobs DROP COLUMN account_revision`); err != nil {
+			return fmt.Errorf("remove anime task account revision: %w", err)
+		}
+	}
+	for _, query := range []string{
+		`UPDATE anime_preview_batches SET snapshot_json=json_remove(snapshot_json,'$.settings.accountRevision','$.settings.uid')`,
+		`UPDATE anime_release_decisions SET snapshot_json=json_remove(snapshot_json,'$.selection.target.accountRevision','$.selection.target.uid')`,
+		`UPDATE anime_download_jobs SET snapshot_json=json_remove(snapshot_json,'$.target.accountRevision','$.target.uid','$.decision.selection.target.accountRevision','$.decision.selection.target.uid','$.organization.target.accountRevision','$.organization.target.uid')`,
+		`UPDATE anime_job_selections SET snapshot_json=json_remove(snapshot_json,'$.target.accountRevision','$.target.uid','$.decision.selection.target.accountRevision','$.decision.selection.target.uid','$.organization.target.accountRevision','$.organization.target.uid')`,
+		`UPDATE anime_drive_operations SET request_json=json_remove(request_json,'$.target.accountRevision','$.target.uid')`,
+		`UPDATE anime_request_keys SET receipt_json=json_remove(receipt_json,'$.accountRevision','$.uid','$.settings.accountRevision','$.settings.uid')`,
+	} {
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("remove anime account snapshot fields: %w", err)
 		}
 	}
 	return nil

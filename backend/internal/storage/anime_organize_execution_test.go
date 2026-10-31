@@ -206,7 +206,7 @@ func TestAnimeOrganizeRejectsUnauthorizedAndUnplannedWrites(t *testing.T) {
 			case "withdrawn":
 				_, err = f.store.db.Exec(`UPDATE anime_job_selections SET status='withdrawn'`)
 			case "account":
-				_, err = f.store.db.Exec(`UPDATE p115_accounts SET revision=revision+1 WHERE id=?`, job.AccountID)
+				_, err = f.store.db.Exec(`UPDATE p115_accounts SET is_primary=0 WHERE id=?`, job.AccountID)
 			case "generation":
 				_, err = f.store.db.Exec(`UPDATE anime_download_jobs SET generation=generation+1 WHERE id=?`, job.ID)
 			case "unknown id":

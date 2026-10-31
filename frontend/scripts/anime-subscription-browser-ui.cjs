@@ -52,7 +52,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
         } else if (state.failDetail) { status = 503; data = { error: '模拟详情读取失败' } }
         else data = item
       } else if (endpoint.endsWith('/jobs')) data = { items: [], total: 0, page: Number(url.searchParams.get('page') || 1), pageSize: 20, dataVersion: 'jobs-empty' }
-      else if (endpoint.endsWith('/settings')) data = { settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载' }, primaryAccount: { id: 'primary', name: '115 主网盘', uid: '10001', revision: 2 }, readiness: { ready: true, issues: [] } }
+      else if (endpoint.endsWith('/settings')) data = { settings: { revision: 1, accountId: 'primary', downloadCid: '100', downloadPath: '/动漫下载' }, primaryAccount: { id: 'primary', name: '115 主网盘' }, readiness: { ready: true, issues: [] } }
       else if (endpoint.endsWith('/discovery/calendar')) data = { ...meta(), days: Array.from({ length: 7 }, (_, n) => ({ weekday: n + 1, items: Array.from({ length: 20 }, (_, i) => card(n * 100 + i + 1)) })) }
       else if (endpoint.endsWith('/discovery/search')) data = { ...meta(), total: 60, items: Array.from({ length: 20 }, (_, i) => card(8000 + body.offset + i)), limit: 20, offset: body.offset }
       else if (endpoint.endsWith('/catalog/mikan')) data = { ...meta(), provider:'mikan', days:Array.from({length:9},(_,n)=>({day:n+1,items:Array.from({length:20},(_,i)=>({...card(n*100+i+1),updatedDate:'2026-10-16'}))})),items:Array.from({length:60},(_,i)=>({...card(8000+i),updatedDate:'2026-10-16'})) }

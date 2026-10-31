@@ -71,7 +71,7 @@ func animeAdminFixture(t *testing.T) (*AnimeAdminService, *bindingMikanFake, *an
 }
 func animeSaveReadySettings(t *testing.T, s *AnimeAdminService) model.AnimeSettings {
 	t.Helper()
-	v, err := s.SaveSettings(context.Background(), "admin", "settings_001", AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: bindingPtr("200"), ExpectedPrimaryAccountID: "primary", ExpectedPrimaryAccountRevision: 1})
+	v, err := s.SaveSettings(context.Background(), "admin", "settings_001", AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: bindingPtr("200"), ExpectedPrimaryAccountID: "primary"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func animeSaveReadySettings(t *testing.T, s *AnimeAdminService) model.AnimeSetti
 func TestAnimeAdminSettingsReadbackReplayAndAccountChange(t *testing.T) {
 	s, _, d, _ := animeAdminFixture(t)
 	ctx := context.Background()
-	in := AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: bindingPtr("100"), ExpectedPrimaryAccountID: "primary", ExpectedPrimaryAccountRevision: 1}
+	in := AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: bindingPtr("100"), ExpectedPrimaryAccountID: "primary"}
 	first, err := s.SaveSettings(ctx, "admin", "settings_same", in)
 	if err != nil || d.calls != 1 || *first.DownloadPath != "/server/100" || *first.OrganizePath != "/server/100" {
 		t.Fatal(first, d.calls, err)
@@ -103,6 +103,7 @@ func TestAnimeAdminSettingsReadbackReplayAndAccountChange(t *testing.T) {
 			t.Fatal(e)
 		}
 		state.Accounts[0].Revision++
+		state.Accounts[0].ID = "new-primary"
 		if e := s.Store.SaveP115Accounts(ctx, state); e != nil {
 			t.Fatal(e)
 		}

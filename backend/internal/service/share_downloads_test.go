@@ -262,13 +262,20 @@ func TestDownloadShareUncertainCreationNeverRepeats(t *testing.T) {
 	}
 }
 
-func TestDownloadShareRejectsChangedTreeAndCredentials(t *testing.T) {
-	for _, mode := range []string{"extra-file", "changed-cookie"} {
+func TestDownloadShareRejectsChangedTreeAndAccount(t *testing.T) {
+	for _, mode := range []string{"extra-file", "changed-account"} {
 		t.Run(mode, func(t *testing.T) {
 			s, tasks, db, client, in := downloadShareFixture(t)
 			job := completeDownloadShare(t, s, in)
-			if mode == "changed-cookie" {
-				tasks.AccountCookie = func(string) string { return "UID=456_changed" }
+			if mode == "changed-account" {
+				account, err := s.Organize.accounts.Primary(in.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cookie := "UID=456_A; SEID=other-account"
+				if err := s.Organize.accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				cid := job.Items[0].TargetCID
 				client.dirs[cid] = append(client.dirs[cid], p115.ShareFile{ID: "999", Name: "unrelated.mkv", Size: 1})
@@ -559,20 +566,47 @@ func TestDownloadShareCleanupRecovery(t *testing.T) {
 	}
 }
 
-func TestDownloadShareCleanupRetryRejectsChangedCredentials(t *testing.T) {
-	s, tasks, db, client, in := downloadShareFixture(t)
-	job := completeDownloadShare(t, s, in)
-	client.deleteErr = errors.New("unavailable")
-	if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	client.deleteErr = nil
-	tasks.AccountCookie = func(string) string { return "UID=456_changed" }
-	record, _ := db.GetShareTask(context.Background(), job.ID)
-	if reason := tasks.RetryReason(record); !strings.Contains(reason, "凭据已变化") {
-		t.Fatal(reason)
-	}
-	if results, err := tasks.RetryTasks(context.Background(), []string{job.ID}); err != nil || results[0].Accepted || len(client.deleted) != 1 {
-		t.Fatal(results, err, client.deleted)
+func TestDownloadShareCleanupRetryFollowsOriginalAccount(t *testing.T) {
+	for _, action := range []string{"refresh", "replace", "clear"} {
+		t.Run(action, func(t *testing.T) {
+			s, tasks, db, client, in := downloadShareFixture(t)
+			job := completeDownloadShare(t, s, in)
+			client.deleteErr = errors.New("unavailable")
+			if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			client.deleteErr = nil
+			account, err := s.Organize.accounts.Primary(in.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cookie := "UID=" + account.UID + "_B; SEID=refreshed"
+			if action == "replace" {
+				cookie = "UID=456_A; SEID=other-account"
+			} else if action == "clear" {
+				cookie = ""
+			}
+			if err := s.Organize.accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
+				t.Fatal(err)
+			}
+			results, err := tasks.RetryTasks(context.Background(), []string{job.ID})
+			if err != nil || len(results) != 1 || results[0].Accepted != (action == "refresh") {
+				t.Fatal(results, err)
+			}
+			if err := tasks.retryDue(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			record, err := db.GetShareTask(context.Background(), job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "refresh" {
+				if record.Status != "success" || len(client.deleted) != 2 || client.sends != 1 {
+					t.Fatal("same-account refresh prevented cleanup or repeated share", record, client.deleted)
+				}
+			} else if record.Status == "success" || len(client.deleted) != 1 {
+				t.Fatal("unavailable original account permitted cleanup", record, client.deleted)
+			}
+		})
 	}
 }

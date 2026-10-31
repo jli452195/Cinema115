@@ -173,7 +173,7 @@ func TestAnimeDownloadRechecksAfterUIDQueue(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cookie := "UID=123_B; SEID=changed"
+				cookie := "UID=999_B; SEID=changed"
 				if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 					t.Fatal(err)
 				}

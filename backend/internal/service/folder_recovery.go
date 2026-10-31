@@ -54,8 +54,8 @@ func (s *FolderMonitorService) Recover(ctx context.Context, id, expectedTaskID s
 		return value, generationInputError("残留核对服务尚未初始化")
 	}
 	account, err := s.Accounts.Primary(value.AccountID)
-	if err != nil || account.Cookie == "" || value.BatchAccountRevision == 0 || value.BatchAccountRevision != account.Revision || value.BatchCredentialHash != cookieHash(account.Cookie) {
-		return value, generationInputError("原批次账号凭据无法核验，保留目录，请人工核对")
+	if err != nil {
+		return value, generationInputError("原批次主账号已变化或未登录，保留目录，请检查账号配置")
 	}
 	parent := s.sharedParentCID(&value)
 	entries, err := s.listRootEntries(ctx, parent, account.Cookie)
@@ -126,6 +126,9 @@ func (s *FolderMonitorService) Recover(ctx context.Context, id, expectedTaskID s
 		contents, err := s.listRootEntries(ctx, value.BatchDirectoryID, account.Cookie)
 		if err != nil || len(contents) != 0 {
 			return value, generationInputError("清理前目录内容发生变化或无法读取，已保留目录")
+		}
+		if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
+			return value, err
 		}
 		if err := s.Client.DeleteEntries(ctx, []string{value.BatchDirectoryID}, account.Cookie); err != nil {
 			return value, fmt.Errorf("回收空临时目录: %w", err)

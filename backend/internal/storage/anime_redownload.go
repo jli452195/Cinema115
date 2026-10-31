@@ -148,7 +148,7 @@ func (s *Store) RedownloadAnime(ctx context.Context, id string, in AnimeRedownlo
 		if _, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET workflow_state='cancelled',generation=generation+1,next_run_at=NULL,lease_token=NULL,lease_until=NULL,revision=revision+1,updated_at=? WHERE id=? AND workflow_state='active'`, now, old.ID); err != nil {
 			return out, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_download_jobs(id,claim_id,attempt,account_id,account_revision,uid,settings_revision,parent_cid,directory_name,snapshot_json,download_state,file_state,workflow_state,revision,generation,created_at,updated_at,next_run_at) VALUES(?,?,?,?,?,?,?,?,?,?,'queued','pending','active',1,1,?,?,?)`, jobID, old.ClaimID, old.Attempt+1, target.AccountID, target.AccountRevision, target.UID, target.SettingsRevision, target.ParentCID, "anime-"+jobID, encoded, now, now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_download_jobs(id,claim_id,attempt,account_id,uid,settings_revision,parent_cid,directory_name,snapshot_json,download_state,file_state,workflow_state,revision,generation,created_at,updated_at,next_run_at) VALUES(?,?,?,?,?,?,?,?,?,'queued','pending','active',1,1,?,?,?)`, jobID, old.ClaimID, old.Attempt+1, target.AccountID, old.UID, target.SettingsRevision, target.ParentCID, "anime-"+jobID, encoded, now, now, now); err != nil {
 			return out, animeDBError("create anime redownload attempt", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_job_selections(job_id,source_id,release_id,status,source_revision,snapshot_json,created_at) SELECT ?,source_id,release_id,status,source_revision,snapshot_json,? FROM anime_job_selections WHERE job_id=? AND status='authorized'`, jobID, now, old.ID); err != nil {

@@ -108,7 +108,7 @@ func TestAnimeOrganizationRetryKeepsWriteHistoryAndRollsBackFailedReceipt(t *tes
 				"paused":            `UPDATE anime_subscriptions SET status='paused'`,
 				"source paused":     `UPDATE anime_subscription_sources SET status='paused'`,
 				"source disabled":   `UPDATE anime_subscription_sources SET run_when_enabled=0`,
-				"changed account":   `UPDATE p115_accounts SET revision=revision+1`,
+				"changed account":   `UPDATE p115_accounts SET is_primary=0`,
 				"active lease":      `UPDATE anime_download_jobs SET lease_token='busy',lease_until=9999999999999`,
 				"receipt failure":   `CREATE TRIGGER retry_receipt_failure BEFORE INSERT ON anime_request_keys BEGIN SELECT RAISE(ABORT,'injected'); END`,
 			}[mode]

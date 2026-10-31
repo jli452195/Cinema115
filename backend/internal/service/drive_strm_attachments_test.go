@@ -55,7 +55,8 @@ func TestDriveSTRMAttachmentsRestartWithoutRescanAndRenameWithoutRequests(t *tes
 		t.Fatal("rename queried the cloud")
 	}
 	account, _ := s.Accounts.Get(mapping.AccountID)
-	if err := s.Accounts.Update(account.ID, account.Revision, "renamed account", nil); err != nil {
+	refreshed := "UID=42_B"
+	if err := s.Accounts.Update(account.ID, account.Revision, "renamed account", &refreshed); err != nil {
 		t.Fatal(err)
 	}
 	s = NewDriveSTRMService(db, s.Accounts, client, root)
@@ -67,6 +68,9 @@ func TestDriveSTRMAttachmentsRestartWithoutRescanAndRenameWithoutRequests(t *tes
 	if len(client.calls) != before+1 || !strings.HasPrefix(client.calls[before], "metadata:") {
 		t.Fatalf("restart triggered a rescan: %v", client.calls[before:])
 	}
+	if !strings.HasSuffix(client.calls[before], ":"+refreshed) {
+		t.Fatal("queued attachment did not use refreshed primary credentials")
+	}
 	if _, _, found, err := s.next(ctx); err != nil || found {
 		t.Fatalf("restart queued a scan: found=%v err=%v", found, err)
 	}
@@ -77,7 +81,7 @@ func TestDriveSTRMAttachmentsRestartWithoutRescanAndRenameWithoutRequests(t *tes
 }
 
 func TestDriveSTRMAttachmentLifecycleGuardsFinalWrite(t *testing.T) {
-	for _, action := range []string{"pause", "stop", "delete", "root", "credentials"} {
+	for _, action := range []string{"pause", "stop", "delete", "root", "refresh", "clear", "replace", "delete-account"} {
 		t.Run(action, func(t *testing.T) {
 			s, db, client, mapping, root := driveSTRMTestSetup(t)
 			ctx := context.Background()
@@ -98,10 +102,20 @@ func TestDriveSTRMAttachmentLifecycleGuardsFinalWrite(t *testing.T) {
 				case "root":
 					mapping.OutputDir = "other-strm"
 					_, err = s.Save(ctx, mapping)
-				case "credentials":
+				case "refresh", "clear", "replace", "delete-account":
 					account, _ := s.Accounts.Get(mapping.AccountID)
 					cookie := "UID=42_B"
-					err = s.Accounts.Update(account.ID, account.Revision, account.Name, &cookie)
+					switch action {
+					case "clear":
+						cookie = ""
+					case "replace":
+						cookie = "UID=99_A"
+					}
+					if action == "delete-account" {
+						err = s.Accounts.Delete(account.ID, account.Revision)
+					} else {
+						err = s.Accounts.Update(account.ID, account.Revision, account.Name, &cookie)
+					}
 				}
 				if err != nil {
 					t.Error(err)
@@ -109,9 +123,9 @@ func TestDriveSTRMAttachmentLifecycleGuardsFinalWrite(t *testing.T) {
 			}
 			driveSTRMTestDrainAttachments(t, s)
 			_, err := os.Stat(filepath.Join(root, "strm", "poster.jpg"))
-			if action == "pause" {
+			if action == "pause" || action == "refresh" {
 				if err != nil {
-					t.Fatalf("pausing monitoring canceled accepted work: %v", err)
+					t.Fatalf("%s canceled accepted work: %v", action, err)
 				}
 			} else if !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("stale attachment was written: %v", err)
@@ -120,12 +134,15 @@ func TestDriveSTRMAttachmentLifecycleGuardsFinalWrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if action == "credentials" {
+			if action == "clear" || action == "replace" || action == "delete-account" {
 				if counts[mapping.ID] != [2]int{1, 1} || client.metadataCalls != 1 {
-					t.Fatalf("changed credentials were reused: counts=%v requests=%d", counts, client.metadataCalls)
+					t.Fatalf("unavailable account continued: counts=%v requests=%d", counts, client.metadataCalls)
 				}
 			} else if counts[mapping.ID][0] != 0 {
 				t.Fatalf("pending work survived %s: %v", action, counts)
+			}
+			if client.metadataCalls != 1 || !strings.HasSuffix(client.calls[len(client.calls)-1], ":UID=42_A") {
+				t.Fatal("active attachment replaced its fixed credentials")
 			}
 		})
 	}

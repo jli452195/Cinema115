@@ -169,12 +169,8 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, err := s.Accounts.Primary(value.AccountID)
-	if err != nil {
+	if _, err := s.Accounts.Primary(value.AccountID); err != nil {
 		return value, err
-	}
-	if current.Revision != account.Revision {
-		return value, ErrAccountChanged
 	}
 	if value.ID != "" {
 		old, err = s.Store.GetDriveSTRM(ctx, value.ID)

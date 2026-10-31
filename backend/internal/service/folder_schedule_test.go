@@ -325,8 +325,8 @@ func TestFolderScheduleDisablePreservesSubmittedBatch(t *testing.T) {
 	}
 }
 
-func TestFolderScheduleCredentialChangeAfterSubmitBlocks(t *testing.T) {
-	svc, client, _, value := newMonitorScheduleTest(t)
+func TestFolderScheduleSameAccountRefreshKeepsQueuedBatch(t *testing.T) {
+	svc, client, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
@@ -341,11 +341,118 @@ func TestFolderScheduleCredentialChangeAfterSubmitBlocks(t *testing.T) {
 	if err := svc.Accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.runOne(ctx, value.ID); err == nil {
-		t.Fatal("accepted changed credentials")
+	client.driveHook = func(_ context.Context, _ string, _ int, got string) error {
+		if got != cookie {
+			t.Fatal("queued execution did not take current credentials")
+		}
+		return nil
+	}
+	if err := svc.runOne(ctx, value.ID); err != nil {
+		t.Fatal(err)
 	}
 	got := loadMonitor(t, svc, value.ID)
-	if got.Stage != "blocked" || got.SchedulePaused == "" || len(client.createdNames) != 0 {
-		t.Fatalf("credential change=%+v", got)
+	if got.Stage != "completed" || got.SchedulePaused != "" || len(client.createdNames) != 1 || generator.calls != 1 {
+		t.Fatalf("same-account refresh stopped queued batch: %+v", got)
+	}
+}
+
+func TestFolderRunningBatchKeepsCookieAndChecksOriginalAccount(t *testing.T) {
+	for _, action := range []string{"refresh", "replace", "clear"} {
+		t.Run(action, func(t *testing.T) {
+			svc, client, _, value := newMonitorScheduleTest(t)
+			account, err := svc.Accounts.Primary(value.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.onMove = func() {
+				cookie := "UID=42_B; SEID=refreshed"
+				if action == "replace" {
+					cookie = "UID=99_A; SEID=other-account"
+				} else if action == "clear" {
+					cookie = ""
+				}
+				if err := svc.Accounts.Update(account.ID, account.Revision, "renamed", &cookie); err != nil {
+					t.Fatal(err)
+				}
+			}
+			client.driveHook = func(_ context.Context, _ string, _ int, got string) error {
+				if got != account.Cookie {
+					t.Fatal("running batch switched credentials")
+				}
+				return nil
+			}
+			generated := 0
+			svc.Generator = generateFunc(func(ctx context.Context, _ GenerateInput) (*GenerationResult, error) {
+				generated++
+				if generationCookie(ctx, nil) != account.Cookie {
+					t.Fatal("generation switched credentials")
+				}
+				return &GenerationResult{Written: 1}, nil
+			})
+			ctx := context.Background()
+			if err := svc.ScanNow(ctx, value.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.runDue(ctx); err != nil {
+				t.Fatal(err)
+			}
+			got := loadMonitor(t, svc, value.ID)
+			if action == "refresh" {
+				if got.Stage != "completed" || generated != 1 || len(client.deleted) != 1 {
+					t.Fatal("same-account refresh stopped running batch", got.Stage, got.LastError)
+				}
+			} else if got.LastError == "" || generated != 0 || len(client.deleted) != 0 || len(client.shareCalls) != 0 {
+				t.Fatal("unavailable original account permitted another cloud write", got.Stage)
+			}
+		})
+	}
+}
+
+func TestFolderMovingBatchCanResumeAfterSigningBackIntoSameAccount(t *testing.T) {
+	svc, client, generator, value := newMonitorScheduleTest(t)
+	account, err := svc.Accounts.Primary(value.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared := false
+	client.driveHook = func(_ context.Context, cid string, _ int, _ string) error {
+		if cid == "900" && !cleared {
+			cleared = true
+			cookie := ""
+			if err := svc.Accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	ctx := context.Background()
+	if err := svc.ScanNow(ctx, value.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	paused := loadMonitor(t, svc, value.ID)
+	if paused.Stage != "moving" || paused.LastError == "" || len(client.moveCalls) != 0 || len(client.createdNames) != 1 {
+		t.Fatal("sign-out lost the resumable moving stage", paused.Stage, paused.LastError)
+	}
+	account, err = svc.Accounts.Get(account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=42_B; SEID=refreshed"
+	if err := svc.Accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
+		t.Fatal(err)
+	}
+	client.driveHook = nil
+	if err := svc.ScanNow(ctx, value.ID); err != nil {
+		t.Fatal("same-account login could not resume original batch", err)
+	}
+	if err := svc.runDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	completed := loadMonitor(t, svc, value.ID)
+	if completed.Stage != "completed" || len(client.createdNames) != 1 || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 || len(client.deleted) != 1 || generator.calls != 1 {
+		t.Fatal("resume repeated or skipped original work", completed.Stage)
 	}
 }

@@ -470,10 +470,8 @@ type AnimeSettingsView struct {
 	Readiness      AnimeReadiness       `json:"readiness"`
 }
 type AnimePrimarySummary struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	UID      string `json:"uid"`
-	Revision uint64 `json:"revision"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (s *AnimeAdminService) settingsReadiness(v model.AnimeSettings) AnimeReadiness {
@@ -485,9 +483,9 @@ func (s *AnimeAdminService) settingsReadiness(v model.AnimeSettings) AnimeReadin
 	} else {
 		a, err = s.Accounts.Primary("")
 	}
-	if err != nil || a.UID == "" {
+	if err != nil {
 		out.Issues = append(out.Issues, "PRIMARY_ACCOUNT_REQUIRED")
-	} else if v.AccountID == nil || v.UID == nil || v.AccountRevision == nil || *v.AccountID != a.ID || *v.UID != a.UID || uint64(*v.AccountRevision) != a.Revision {
+	} else if v.AccountID == nil || *v.AccountID != a.ID {
 		out.Issues = append(out.Issues, "ACCOUNT_SNAPSHOT_CHANGED")
 	}
 	if v.DownloadCID == nil || v.DownloadPath == nil {
@@ -504,18 +502,17 @@ func (s *AnimeAdminService) Settings(ctx context.Context) (AnimeSettingsView, er
 	out := AnimeSettingsView{Settings: v, Readiness: s.settingsReadiness(v)}
 	if s.Accounts != nil {
 		if a, e := s.Accounts.Primary(""); e == nil {
-			out.PrimaryAccount = &AnimePrimarySummary{a.ID, a.Name, a.UID, a.Revision}
+			out.PrimaryAccount = &AnimePrimarySummary{ID: a.ID, Name: a.Name}
 		}
 	}
 	return out, nil
 }
 
 type AnimeSettingsInput struct {
-	ExpectedRevision               int64   `json:"expectedRevision"`
-	DownloadCID                    string  `json:"downloadCid"`
-	OrganizeCID                    *string `json:"organizeCid"`
-	ExpectedPrimaryAccountID       string  `json:"expectedPrimaryAccountId"`
-	ExpectedPrimaryAccountRevision int64   `json:"expectedPrimaryAccountRevision"`
+	ExpectedRevision         int64   `json:"expectedRevision"`
+	DownloadCID              string  `json:"downloadCid"`
+	OrganizeCID              *string `json:"organizeCid"`
+	ExpectedPrimaryAccountID string  `json:"expectedPrimaryAccountId"`
 }
 
 func (s *AnimeAdminService) SaveSettings(ctx context.Context, actor, key string, in AnimeSettingsInput) (out model.AnimeSettings, resultErr error) {
@@ -533,7 +530,7 @@ func (s *AnimeAdminService) SaveSettings(ctx context.Context, actor, key string,
 	}
 	defer s.replayAnimeConcurrentWrite(ctx, k, &out, &resultErr)
 	validCID := func(v string) bool { return v == "0" || model.ValidAnimeExternalID(v) }
-	if in.ExpectedRevision < 1 || in.ExpectedRevision >= model.AnimeMaxRevision || !validCID(in.DownloadCID) || in.OrganizeCID != nil && !validCID(*in.OrganizeCID) || !model.ValidAnimeID(in.ExpectedPrimaryAccountID) || in.ExpectedPrimaryAccountRevision < 1 || in.ExpectedPrimaryAccountRevision > model.AnimeMaxRevision {
+	if in.ExpectedRevision < 1 || in.ExpectedRevision >= model.AnimeMaxRevision || !validCID(in.DownloadCID) || in.OrganizeCID != nil && !validCID(*in.OrganizeCID) || !model.ValidAnimeID(in.ExpectedPrimaryAccountID) {
 		return out, storage.ErrAnimeInvalid
 	}
 	settings, err := s.Store.GetAnimeSettings(ctx)
@@ -547,7 +544,7 @@ func (s *AnimeAdminService) SaveSettings(ctx context.Context, actor, key string,
 		return out, &AnimeConfigError{Code: "CONFIG_INCOMPLETE", Issues: []string{"PRIMARY_ACCOUNT_REQUIRED"}}
 	}
 	a, err := s.Accounts.Primary(in.ExpectedPrimaryAccountID)
-	if err != nil || a.Revision != uint64(in.ExpectedPrimaryAccountRevision) || !model.ValidAnimeExternalID(a.UID) {
+	if err != nil {
 		return out, storage.ErrAnimeAccountChanged
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -559,8 +556,7 @@ func (s *AnimeAdminService) SaveSettings(ctx context.Context, actor, key string,
 	if d.CID != in.DownloadCID || d.Path == "" {
 		return out, &AnimeConfigError{Code: "UPSTREAM_INVALID"}
 	}
-	revision := int64(a.Revision)
-	out = model.AnimeSettings{Revision: in.ExpectedRevision, AccountID: &a.ID, AccountRevision: &revision, UID: &a.UID, DownloadCID: &d.CID, DownloadPath: &d.Path}
+	out = model.AnimeSettings{Revision: in.ExpectedRevision, AccountID: &a.ID, DownloadCID: &d.CID, DownloadPath: &d.Path}
 	if in.OrganizeCID != nil {
 		o := d
 		if *in.OrganizeCID != d.CID {

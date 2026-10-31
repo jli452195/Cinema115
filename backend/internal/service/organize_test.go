@@ -191,12 +191,8 @@ func organizeTestFiles(files []p115.ShareFile, parent, prefix string) []Organize
 
 func organizeTestSource(t *testing.T, s *OrganizeEngine, account string) OrganizeScan {
 	t.Helper()
-	a, err := s.accounts.Get(account)
-	if err != nil {
-		t.Fatal(err)
-	}
 	drive := s.drive.(*organizeFakeDrive)
-	return OrganizeScan{Config: organizeTestConfig(account), Revision: a.Revision,
+	return OrganizeScan{Config: organizeTestConfig(account),
 		Files: organizeTestFiles(drive.dirs["30"], "30", path.Join("/来源", drive.dirs["10"][0].Name))}
 }
 

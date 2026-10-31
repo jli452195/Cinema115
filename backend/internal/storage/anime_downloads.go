@@ -21,7 +21,7 @@ var (
 	ErrAnimeResourceSource     = errors.New("anime resource publisher conflict")
 )
 
-const animeJobColumns = `id,claim_id,attempt,account_id,account_revision,uid,settings_revision,parent_cid,directory_name,directory_cid,snapshot_json,download_state,file_state,workflow_state,block_code,revision,generation,created_at,updated_at,raw_status_json,result_object_id,result_object_kind,next_run_at,directory_operation_json,files_json`
+const animeJobColumns = `id,claim_id,attempt,account_id,uid,settings_revision,parent_cid,directory_name,directory_cid,snapshot_json,download_state,file_state,workflow_state,block_code,revision,generation,created_at,updated_at,raw_status_json,result_object_id,result_object_kind,next_run_at,directory_operation_json,files_json`
 
 // FindAnimeVerifiedRelease reuses only an exact, committed observation proof.
 // New content or a new verifier version cannot inherit an old post's identity.
@@ -65,7 +65,7 @@ func scanAnimeDownloadJob(row animeScanner) (model.AnimeDownloadJob, error) {
 	var raw string
 	var tracking *string
 	var directory, files *string
-	err := row.Scan(&job.ID, &job.ClaimID, &job.Attempt, &job.AccountID, &job.AccountRevision, &job.UID, &job.SettingsRevision, &job.ParentCID, &job.DirectoryName, &job.DirectoryCID, &raw, &job.DownloadState, &job.FileState, &job.WorkflowState, &job.BlockCode, &job.Revision, &job.Generation, &job.CreatedAt, &job.UpdatedAt, &tracking, &job.ResultObjectID, &job.ResultObjectKind, &job.NextRunAt, &directory, &files)
+	err := row.Scan(&job.ID, &job.ClaimID, &job.Attempt, &job.AccountID, &job.UID, &job.SettingsRevision, &job.ParentCID, &job.DirectoryName, &job.DirectoryCID, &raw, &job.DownloadState, &job.FileState, &job.WorkflowState, &job.BlockCode, &job.Revision, &job.Generation, &job.CreatedAt, &job.UpdatedAt, &tracking, &job.ResultObjectID, &job.ResultObjectKind, &job.NextRunAt, &directory, &files)
 	if err != nil {
 		return job, err
 	}
@@ -269,8 +269,12 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 	if _, err := tx.ExecContext(ctx, `UPDATE anime_releases SET resource_id=? WHERE id=?`, resourceID, releaseID); err != nil {
 		return out, animeDBError("associate anime verified resource", err)
 	}
+	var uid string
+	if err := tx.QueryRowContext(ctx, `SELECT uid FROM p115_accounts WHERE id=?`, target.AccountID).Scan(&uid); err != nil {
+		return out, fmt.Errorf("read anime download account UID: %w", err)
+	}
 	var claimID, claimAccount, claimCID string
-	err = tx.QueryRowContext(ctx, `SELECT id,account_id,target_cid FROM anime_resource_claims WHERE uid=? AND resource_id=?`, target.UID, resourceID).Scan(&claimID, &claimAccount, &claimCID)
+	err = tx.QueryRowContext(ctx, `SELECT id,account_id,target_cid FROM anime_resource_claims WHERE uid=? AND resource_id=?`, uid, resourceID).Scan(&claimID, &claimAccount, &claimCID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, fmt.Errorf("find anime resource claim: %w", err)
 	}
@@ -282,7 +286,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		if err != nil {
 			return out, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_resource_claims(id,uid,resource_id,account_id,target_cid,created_at) VALUES(?,?,?,?,?,?)`, claimID, target.UID, resourceID, target.AccountID, target.ParentCID, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO anime_resource_claims(id,uid,resource_id,account_id,target_cid,created_at) VALUES(?,?,?,?,?,?)`, claimID, uid, resourceID, target.AccountID, target.ParentCID, now); err != nil {
 			return out, animeDBError("claim anime resource", err)
 		}
 		out.Created = true
@@ -319,7 +323,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		if err != nil {
 			return out, err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO anime_download_jobs(id,claim_id,attempt,account_id,account_revision,uid,settings_revision,parent_cid,directory_name,snapshot_json,download_state,file_state,workflow_state,revision,generation,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,?,'queued','pending','active',1,1,?,?)`, id, claimID, target.AccountID, target.AccountRevision, target.UID, target.SettingsRevision, target.ParentCID, "anime-"+id, raw, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO anime_download_jobs(id,claim_id,attempt,account_id,uid,settings_revision,parent_cid,directory_name,snapshot_json,download_state,file_state,workflow_state,revision,generation,created_at,updated_at) VALUES(?,?,1,?,?,?,?,?,?,'queued','pending','active',1,1,?,?)`, id, claimID, target.AccountID, uid, target.SettingsRevision, target.ParentCID, "anime-"+id, raw, now, now)
 		if err != nil {
 			return out, animeDBError("create anime download intent", err)
 		}
@@ -345,7 +349,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 			}
 		}
 	}
-	if job.AccountID != target.AccountID || job.AccountRevision != target.AccountRevision || job.UID != target.UID || job.ParentCID != target.ParentCID || job.Snapshot.InfoHash != verified.Hash() || job.Snapshot.Protocol != "bt_v1" {
+	if job.AccountID != target.AccountID || job.ParentCID != target.ParentCID || job.Snapshot.InfoHash != verified.Hash() || job.Snapshot.Protocol != "bt_v1" {
 		return out, ErrAnimeResourceTarget
 	}
 	if job.Snapshot.Source.GroupName != *source.GroupName {

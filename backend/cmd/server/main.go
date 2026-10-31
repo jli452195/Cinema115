@@ -345,13 +345,23 @@ func main() {
 	shareAPI.BaseURL = func() string { return automation.Value().Generation.BaseURL }
 	automation.PrimaryID = accounts.PrimaryID
 	automation.ValidateAccount = accounts.ValidatePrimary
-	shareCookie := func() string { return accounts.CookieFor(automation.Value().AccountID) }
+	primaryCookie := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		account, err := accounts.Primary(id)
+		if err != nil {
+			return ""
+		}
+		return account.Cookie
+	}
+	shareCookie := func() string { return primaryCookie(automation.Value().AccountID) }
 	shareAPI.Cookie = shareCookie
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, shareCookie, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)
 	loggedGenerator := &service.LoggedGenerator{Generator: workflow, Logs: generationLogs, Root: shareAPI.OutputRoot}
-	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: accounts.CookieFor}
+	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: primaryCookie}
 	shareTasks.OwnClient = shareAPI.Client
 	downloadOrganize.Shares = shareTasks
 	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)

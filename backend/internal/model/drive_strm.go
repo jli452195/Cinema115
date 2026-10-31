@@ -78,7 +78,6 @@ type DriveSTRMAttachment struct {
 	ID            int64             `json:"-"`
 	Record        DriveSTRMFile     `json:"record"`
 	AccountID     string            `json:"accountId"`
-	CredentialKey string            `json:"credentialKey"`
 	SourceCID     string            `json:"sourceCID"`
 	OutputDir     string            `json:"outputDir"`
 	Settings      DriveSTRMSettings `json:"settings"`

@@ -116,8 +116,8 @@ func TestShareTaskPinsAccountAtStart(t *testing.T) {
 			if err := json.Unmarshal(taskHistory(t, db)[0].Request, &saved); err != nil {
 				t.Fatal(err)
 			}
-			if calls != 1 || saved.CookieHash != cookieHash(initial) {
-				t.Fatal("任务指纹与执行凭据不一致")
+			if calls != 1 || saved.Settings.AccountID != s.Settings.ShareValue().AccountID {
+				t.Fatal("任务没有固定读取一次凭据并保存原账号编号")
 			}
 		})
 	}

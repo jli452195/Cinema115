@@ -153,7 +153,8 @@ func TestOrganizeContinueAccountPersistenceAndWriterGuards(t *testing.T) {
 			switch mode {
 			case "account":
 				a, _ := s.accounts.Get(account)
-				if err := s.accounts.Update(account, a.Revision, "changed", nil); err != nil {
+				cookie := "UID=456_other; SEID=changed-account"
+				if err := s.accounts.Update(account, a.Revision, "changed", &cookie); err != nil {
 					t.Fatal(err)
 				}
 			case "persist":
@@ -165,6 +166,43 @@ func TestOrganizeContinueAccountPersistenceAndWriterGuards(t *testing.T) {
 			}
 			if drive.renames != 0 || drive.moves != 0 {
 				t.Fatal("rejected resume wrote files")
+			}
+		})
+	}
+}
+
+func TestOrganizeContinueAcceptsSameAccountUpdates(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(fmt.Sprint("refresh=", refresh), func(t *testing.T) {
+			s, drive, accountID, plan := organizeResumeFixture(t, 1)
+			plan.Status = "interrupted"
+			if err := s.saveLocked(organizeDocument{Version: 1, Jobs: []OrganizeJob{plan}}); err != nil {
+				t.Fatal(err)
+			}
+			account, err := s.accounts.Primary(accountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cookie *string
+			updatedCookie := "UID=123_other_device; SEID=refreshed"
+			if refresh {
+				cookie = &updatedCookie
+			}
+			if err := s.accounts.Update(account.ID, account.Revision, "renamed account", cookie); err != nil {
+				t.Fatal(err)
+			}
+			job := runResumedDownload(t, s, plan.ID)
+			if job.Status != "completed" || drive.moves != 1 || drive.renames != 1 {
+				t.Fatal("same-account edit blocked or repeated organization", job.Status, drive.moves, drive.renames)
+			}
+			want := account.Cookie
+			if refresh {
+				want = updatedCookie
+			}
+			for _, got := range drive.cookies {
+				if got != want {
+					t.Fatal("resumed execution did not use current credentials")
+				}
 			}
 		})
 	}

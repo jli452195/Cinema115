@@ -46,8 +46,6 @@ type FolderMonitor struct {
 	RecoveryMessage      string             `json:"recoveryMessage,omitempty"`
 	BatchMoveIndex       int                `json:"batchMoveIndex,omitempty"`
 	BatchParentCID       string             `json:"batchParentCID,omitempty"`
-	BatchAccountRevision uint64             `json:"batchAccountRevision,omitempty"`
-	BatchCredentialHash  string             `json:"batchCredentialHash,omitempty"`
 	CleanupIndex         int                `json:"cleanupIndex,omitempty"`
 	StableFingerprint    string             `json:"stableFingerprint,omitempty"`
 	StableScans          int                `json:"stableScans,omitempty"`

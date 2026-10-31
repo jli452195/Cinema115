@@ -39,7 +39,7 @@ func TestAnimeDownloadHTTPDefinitionAuthReceiptAndLifecycle(t *testing.T) {
 	f.s.StatusGateway = cloud
 	f.s.FileGateway = p115.NewShareClient()
 	f.s.DownloadCoordinator = &service.CloudDownloadCoordinator{}
-	settings, err := f.s.SaveSettings(ctx, "admin", "http_settings", service.AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: animeHTTPPtr("200"), ExpectedPrimaryAccountID: id, ExpectedPrimaryAccountRevision: 2})
+	settings, err := f.s.SaveSettings(ctx, "admin", "http_settings", service.AnimeSettingsInput{ExpectedRevision: 1, DownloadCID: "100", OrganizeCID: animeHTTPPtr("200"), ExpectedPrimaryAccountID: id})
 	if err != nil {
 		t.Fatal(err)
 	}

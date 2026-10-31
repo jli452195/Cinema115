@@ -183,7 +183,7 @@ func TestAnimeFilesInvalidFactsAndLostGenerationNeverCommit(t *testing.T) {
 			case "submit unconfirmed":
 				_, _ = f.store.db.Exec(`UPDATE anime_drive_operations SET state='unknown'`)
 			case "account":
-				_, _ = f.store.db.Exec(`UPDATE p115_accounts SET revision=revision+1 WHERE id=?`, job.AccountID)
+				_, _ = f.store.db.Exec(`UPDATE p115_accounts SET is_primary=0 WHERE id=?`, job.AccountID)
 			}
 			before := animeMigrationRows(t, f.store.db, "anime_download_jobs")
 			if err := f.store.SaveAnimeFiles(context.Background(), job, manifest); err == nil {

@@ -30,6 +30,14 @@ func TestDownloadLocalSubtitlesPersistRestartAndLostUploadReceipt(t *testing.T) 
 	if _, err = s.Start(plan.ID); !errors.Is(err, ErrOrganizeConflict) || len(s.History()) != 0 {
 		t.Fatal("started before local bytes were saved", err)
 	}
+	account, err := s.Organize.account(plan.Config.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=123_refreshed; SEID=subtitle-refresh"
+	if err = s.Organize.accounts.Update(account.ID, account.Revision, "renamed account", &cookie); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.SaveSubtitleAttachments(ctx, plan.ID, map[string][]byte{in.Subtitles[0].LocalID: []byte("changed")}); !errors.Is(err, ErrOrganizeInput) {
 		t.Fatal("accepted changed bytes", err)
 	}

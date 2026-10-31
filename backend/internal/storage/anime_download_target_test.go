@@ -15,11 +15,11 @@ func animeDownloadTargetFixture(t *testing.T) (*Store, model.AnimeDownloadTarget
 	if err := s.SaveP115Accounts(ctx, P115AccountState{Accounts: []P115AccountRow{{ID: "main", Name: "主账号", UID: "123", Primary: true, Ownership: "admin", Revision: 2, Cookie: []byte("encrypted")}}}); err != nil {
 		t.Fatal(err)
 	}
-	settings := model.AnimeSettings{Revision: 1, AccountID: animePtr("main"), AccountRevision: animePtr(int64(2)), UID: animePtr("123"), OrganizeCID: animePtr("900"), OrganizePath: animePtr("/organized"), DownloadCID: animePtr("100"), DownloadPath: animePtr("/动漫")}
+	settings := model.AnimeSettings{Revision: 1, AccountID: animePtr("main"), OrganizeCID: animePtr("900"), OrganizePath: animePtr("/organized"), DownloadCID: animePtr("100"), DownloadPath: animePtr("/动漫")}
 	if _, err := s.SaveAnimeSettings(ctx, settings, animeAdminKey("target_settings")); err != nil {
 		t.Fatal(err)
 	}
-	return s, model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", AccountRevision: 2, UID: "123", ParentCID: "100", ParentPath: "/动漫"}
+	return s, model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", ParentCID: "100", ParentPath: "/动漫"}
 }
 
 func TestAnimeDownloadTargetNewSettingsAndPinnedAccountGuards(t *testing.T) {
@@ -50,15 +50,14 @@ func TestAnimeDownloadTargetNewSettingsAndPinnedAccountGuards(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `UPDATE p115_accounts SET revision=revision+1 WHERE id='main'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkAnimeDownloadTargetTx(ctx, tx, target, false); !errors.Is(err, ErrAnimeAccountChanged) {
-		t.Fatal("transaction missed changed credential version", err)
+	if err := checkAnimeDownloadTargetTx(ctx, tx, target, false); err != nil {
+		t.Fatal("same account revision invalidated target", err)
 	}
 }
 
 func TestAnimeDownloadTargetPersistentAccountMismatch(t *testing.T) {
 	for _, change := range []string{
-		`UPDATE p115_accounts SET revision=revision+1`,
-		`UPDATE p115_accounts SET uid='999'`,
+		`UPDATE p115_accounts SET id='new-main',uid='999'`,
 		`UPDATE p115_accounts SET is_primary=0`,
 		`UPDATE p115_accounts SET ownership='member'`,
 		`UPDATE p115_accounts SET cookie_enc=X''`,
@@ -82,8 +81,6 @@ func TestAnimeDownloadTargetPersistentAccountMismatch(t *testing.T) {
 func TestAnimeDownloadTargetPersistentBindingMismatch(t *testing.T) {
 	for _, change := range []string{
 		`UPDATE anime_settings SET account_id='other'`,
-		`UPDATE anime_settings SET account_revision=99`,
-		`UPDATE anime_settings SET uid='999'`,
 		`UPDATE anime_settings SET download_cid='0'`,
 		`UPDATE anime_settings SET download_path='/other'`,
 	} {

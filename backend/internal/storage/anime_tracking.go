@@ -14,7 +14,7 @@ import (
 const animeStatusEligible = `j.workflow_state='active' AND j.file_state IN ('pending','checking')
  AND j.download_state IN ('accepted','downloading','unknown','completed')
  AND NOT (j.download_state='completed' AND j.file_state='checking' AND j.result_object_id IS NOT NULL)
- AND (j.block_code IS NULL OR j.block_code IN ('TASK_READ_FAILED','TASK_STATUS_UNKNOWN','TASK_MISSING','TASK_RATE_LIMITED','TASK_POLL_CANCELLED','TASK_RESULT_PENDING'))
+ AND (j.block_code IS NULL OR j.block_code IN ('TASK_READ_FAILED','TASK_STATUS_UNKNOWN','TASK_MISSING','TASK_RATE_LIMITED','TASK_POLL_CANCELLED','TASK_RESULT_PENDING','TASK_ACCESS_DENIED'))
  AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state='confirmed' AND o.generation=j.generation AND o.authorized_at IS NOT NULL)`
 
 // Status reads have their own short reservation. They cannot authorize a drive
@@ -49,9 +49,8 @@ func (s *Store) reserveAnimeStatusPoll(ctx context.Context, now int64, excludeUI
 	args := []any{now, now, now, now, now - 5000}
 	query := `SELECT ` + animeJobColumns + ` FROM anime_download_jobs j WHERE ` + animeStatusEligible + ` AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>j.id)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED' AND denied.workflow_state='active')`
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code IN ('TASK_RATE_LIMITED','TASK_ACCESS_DENIED') AND limited.next_run_at>?)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>j.id)`
 	if jobID != "" {
 		query += ` AND j.id=?`
 		args = append(args, jobID)
@@ -71,6 +70,9 @@ func (s *Store) reserveAnimeStatusPoll(ctx context.Context, now int64, excludeUI
 		return out, false, err
 	}
 	defer tx.Rollback()
+	if err := resumeAnimeAccountJobsTx(ctx, tx, now); err != nil {
+		return out, false, err
+	}
 	out.Job, err = scanAnimeDownloadJob(tx.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, tx.Commit()
@@ -152,6 +154,9 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 		tracking = *job.Tracking
 	}
 	tracking.AttemptedAt = now
+	if code == "TASK_ACCESS_DENIED" {
+		retryAt = max(retryAt, now+(5*time.Minute).Milliseconds())
+	}
 	state := job.DownloadState
 	resultID := job.ResultObjectID
 	if resultID == nil && op.Result.ResultID != "" {
@@ -193,7 +198,7 @@ func (s *Store) CompleteAnimeStatusPoll(ctx context.Context, poll AnimeStatusPol
 		}
 	}
 	var next *int64
-	stop := code == "TASK_TARGET_CONFLICT" || code == "TASK_RESULT_CHANGED" || code == "TASK_STATUS_CONFLICT" || code == "DOWNLOAD_ACCOUNT_CHANGED" || code == "TASK_ACCESS_DENIED"
+	stop := code == "TASK_TARGET_CONFLICT" || code == "TASK_RESULT_CHANGED" || code == "TASK_STATUS_CONFLICT" || code == "DOWNLOAD_ACCOUNT_CHANGED"
 	// During the first seconds 115 can return an exact present task with
 	// status=0, file_id:"" and two different progress values (100/99).
 	// Completion stays unknown; allow only the existing early read slots before

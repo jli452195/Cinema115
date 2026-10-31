@@ -111,19 +111,12 @@ func (s *FolderMonitorService) inspectScheduled(root context.Context, id string)
 		defer cancel()
 		return s.checkpoint(saveCtx, &value)
 	}
-	previousRevision, previousCredential := value.BatchAccountRevision, value.BatchCredentialHash
 	if err := s.pinSettings(&value); err != nil {
 		return pause("主账号或生成设置不可用，请检查后重新开启")
 	}
 	account, err := s.Accounts.Primary(value.AccountID)
 	if err != nil || account.Cookie == "" {
 		return pause("主账号未登录，请登录后重新开启")
-	}
-	if account.Revision != value.BatchAccountRevision || cookieHash(account.Cookie) != value.BatchCredentialHash {
-		return pause("主账号凭据发生变化，请重新开启自动执行")
-	}
-	if previousRevision != value.BatchAccountRevision || previousCredential != value.BatchCredentialHash {
-		value.StableFingerprint, value.StableScans = "", 0
 	}
 	roots, err := s.listRootEntries(ctx, value.SourceCID, account.Cookie)
 	if err != nil {

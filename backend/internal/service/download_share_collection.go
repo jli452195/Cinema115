@@ -77,13 +77,13 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 		}
 		leader := cloneOrganizeJob(o.doc.Jobs[group.ready[0]])
 		account, err := o.account(leader.Config.AccountID)
-		if err != nil || account.Revision != leader.Revision {
+		if err != nil {
 			// Stop this collection only. Other batches and healthy downloads run on.
 			doc := o.doc
 			doc.Jobs = append([]OrganizeJob(nil), doc.Jobs...)
 			for _, i := range group.ready {
 				job := cloneOrganizeJob(doc.Jobs[i])
-				job.Status, job.Message = "interrupted", "原任务主账号或凭据已变化，已保留文件；请核对账号后继续原任务"
+				job.Status, job.Message = "interrupted", "原任务主账号不可用，已保留文件；请恢复登录或核对账号后继续原任务"
 				doc.Jobs[i] = job
 			}
 			if err := o.saveLocked(doc); err != nil {

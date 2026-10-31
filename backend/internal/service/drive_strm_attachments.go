@@ -119,9 +119,6 @@ func (s *DriveSTRMService) attachmentCurrent(ctx context.Context, job model.Driv
 	if err != nil {
 		return value, "", err
 	}
-	if DirectLinkKey(account.Cookie) != job.CredentialKey {
-		return value, "", ErrAccountChanged
-	}
 	return value, account.Cookie, nil
 }
 

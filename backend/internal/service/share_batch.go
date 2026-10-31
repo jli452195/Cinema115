@@ -38,6 +38,9 @@ type preparedShare struct {
 func (w *ShareWorkflow) receiveRoots(ctx context.Context, share *p115.ShareInfo, roots []p115.ShareFile, cid, cookie string) error {
 	ids := fileIDs(roots)
 	for start := 0; start < len(ids); start += 100 {
+		if err := checkGenerationAccount(ctx); err != nil {
+			return err
+		}
 		if err := w.Client.ReceiveShare(ctx, share, ids[start:min(start+100, len(ids))], cid, cookie); err != nil {
 			return err
 		}
@@ -183,6 +186,9 @@ func (w *ShareWorkflow) GenerateBatch(ctx context.Context, inputs []GenerateInpu
 		func(ctx context.Context, parent string) error {
 			seen := map[string]bool{parent: true, settings.ParentCID: true, "0": true, "": true}
 			for _, item := range prepared {
+				if err := checkGenerationAccount(ctx); err != nil {
+					return err
+				}
 				cid, err := w.Client.CreateDirectory(ctx, parent, item.name, cookie)
 				if err != nil {
 					return fmt.Errorf("创建来源目录 %s: %w", item.name, err)

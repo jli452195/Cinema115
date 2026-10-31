@@ -544,16 +544,15 @@ func TestDriveSTRMAttachmentsRespectMappingLifecycle(t *testing.T) {
 func driveSTRMStoredAttachment(mappingID, fileID string) model.DriveSTRMAttachment {
 	sha1 := strings.Repeat("A", 40)
 	return model.DriveSTRMAttachment{
-		Record:        model.DriveSTRMFile{MappingID: mappingID, FileID: fileID, ParentCID: "100", Path: fileID + ".ass", Signature: sha1 + ":12"},
-		AccountID:     "primary",
-		CredentialKey: "credential-fingerprint",
-		SourceCID:     "100",
-		OutputDir:     "strm",
-		Settings:      model.DefaultDriveSTRMSettings(),
-		Name:          fileID + ".ass",
-		PickCode:      "abcdef",
-		SHA1:          sha1,
-		Size:          12,
+		Record:    model.DriveSTRMFile{MappingID: mappingID, FileID: fileID, ParentCID: "100", Path: fileID + ".ass", Signature: sha1 + ":12"},
+		AccountID: "primary",
+		SourceCID: "100",
+		OutputDir: "strm",
+		Settings:  model.DefaultDriveSTRMSettings(),
+		Name:      fileID + ".ass",
+		PickCode:  "abcdef",
+		SHA1:      sha1,
+		Size:      12,
 	}
 }
 

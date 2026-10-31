@@ -144,15 +144,12 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	return cloneOrganizeJob(job), nil
 }
 
-// Called with s.mu held; both creation and explicit recovery pin credentials
-// and share the same concurrency/hash gate without making network requests.
+// Called with s.mu held; creation and explicit recovery validate the original
+// account and share the same concurrency/hash gate without network requests.
 func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 	a, err := s.Organize.account(job.Config.AccountID)
 	if err != nil {
 		return a, err
-	}
-	if a.Revision != job.Revision {
-		return a, fmt.Errorf("%w：账号配置已变化，请重新确认账号和目录", ErrOrganizeConflict)
 	}
 	if s.trackedDownloadsLocked() >= 100 {
 		return a, fmt.Errorf("%w：下载整理队列已满（100 项），请等待完成", ErrOrganizeConflict)
@@ -371,7 +368,7 @@ func (s *DownloadOrganize) stop(p *downloadPending, status, message string) (boo
 }
 
 func (s *DownloadOrganize) advance(ctx context.Context, p *downloadPending) (bool, error) {
-	o, job, cookie := s.Organize, &p.job, p.account.Cookie
+	o, job := s.Organize, &p.job
 	if job.Stats.StartedAt.IsZero() {
 		job.Stats.StartedAt = time.Now()
 	}
@@ -379,6 +376,14 @@ func (s *DownloadOrganize) advance(ctx context.Context, p *downloadPending) (boo
 	if ctx.Err() != nil {
 		return s.stop(p, "interrupted", "服务停止，任务已中断；请核对任务记录后继续")
 	}
+	account, err := o.account(job.Config.AccountID)
+	if err != nil {
+		return s.stop(p, "interrupted", "原任务主账号不可用，请恢复登录或核对账号后继续")
+	}
+	// Polling can outlive a login. Refresh between steps, keeping every read
+	// and write within this step on the same account credential snapshot.
+	p.account = account
+	cookie := account.Cookie
 	if p.waitUntil.IsZero() {
 		p.waitUntil = job.CreatedAt.Add(24 * time.Hour)
 	}

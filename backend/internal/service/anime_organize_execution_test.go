@@ -572,8 +572,8 @@ func TestAnimeOrganizeReadFailureCooldownAndCredentialDenial(t *testing.T) {
 			if status == 429 && (op.Progress.Code != "TASK_RATE_LIMITED" || got.NextRunAt == nil || *got.NextRunAt < time.Now().Add(59*time.Minute).UnixMilli()) {
 				t.Fatal("Retry-After lost", op.Progress, got.NextRunAt)
 			}
-			if status == 403 && (op.Progress.State != "needs_review" || op.Progress.Code != "TASK_ACCESS_DENIED" || got.NextRunAt != nil) {
-				t.Fatal("denied credentials were retried", op.Progress)
+			if status == 403 && (op.Progress.State != "working" || op.Progress.Code != "TASK_ACCESS_DENIED" || got.NextRunAt == nil || *got.NextRunAt < time.Now().Add(4*time.Minute).UnixMilli()) {
+				t.Fatal("credential denial lost its recovery cooldown", op.Progress)
 			}
 			r := &AnimeStatusRunner{Admin: f.service, now: func() time.Time { return time.Now().Add(time.Minute) }}
 			if err := r.PollOnce(context.Background()); err != nil {
@@ -586,7 +586,7 @@ func TestAnimeOrganizeReadFailureCooldownAndCredentialDenial(t *testing.T) {
 	}
 }
 
-func TestAnimeOrganizeCredentialChangeAfterReceiptStopsNextWrite(t *testing.T) {
+func TestAnimeOrganizeAccountChangeAfterReceiptStopsNextWrite(t *testing.T) {
 	f, _, session, job, d := animeOrganizeFixture(t)
 	d.hook = func(kind string) {
 		if kind == "rename" {
@@ -594,7 +594,7 @@ func TestAnimeOrganizeCredentialChangeAfterReceiptStopsNextWrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cookie := "UID=123_A; SEID=changed"
+			cookie := "UID=999_A; SEID=changed"
 			if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 				t.Fatal(err)
 			}
@@ -606,5 +606,31 @@ func TestAnimeOrganizeCredentialChangeAfterReceiptStopsNextWrite(t *testing.T) {
 	op, err := f.service.Store.GetAnimeOrganization(context.Background(), job.ID)
 	if err != nil || !op.Progress.Files[0].Renamed || d.moves != 0 || d.renames != 1 {
 		t.Fatal("new credential replaced task identity", op.Progress, err, d)
+	}
+}
+
+func TestAnimeOrganizeSameUIDRefreshKeepsPinnedCredentials(t *testing.T) {
+	f, _, session, job, drive := animeOrganizeFixture(t)
+	refreshed := false
+	drive.hook = func(kind string) {
+		if kind != "rename" || refreshed {
+			return
+		}
+		refreshed = true
+		account, err := f.accounts.Primary(job.AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cookie := "UID=123_B; SEID=new-login"
+		if err := f.accounts.Update(account.ID, account.Revision, "new display name", &cookie); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.service.OrganizeDownloadedFiles(context.Background(), session, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.service.Store.GetAnimeDownloadJob(context.Background(), job.ID)
+	if err != nil || !refreshed || got.WorkflowState != "organized" || drive.moves == 0 || session.cookie != animeDownloadTestCookie {
+		t.Fatal("same-account login stopped organization or changed its credential", got.WorkflowState, err)
 	}
 }

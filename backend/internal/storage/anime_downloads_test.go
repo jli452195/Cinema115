@@ -303,7 +303,7 @@ func TestAnimeDownloadClaimRejectsStaleOrWithdrawnAuthorization(t *testing.T) {
 		`UPDATE anime_release_decisions SET disposition='seen'`,
 		`UPDATE anime_releases SET content_fingerprint='changed'`,
 		`UPDATE anime_settings SET revision=revision+1,download_cid='999'`,
-		`UPDATE p115_accounts SET revision=revision+1`,
+		`UPDATE p115_accounts SET is_primary=0`,
 	} {
 		t.Run(change, func(t *testing.T) {
 			f := newDownloadClaimFixture(t)
@@ -435,10 +435,10 @@ func TestAnimeDownloadClaimDatabaseReopenAndIndependentUID(t *testing.T) {
 		t.Fatal("committed verification did not survive restart", err)
 	}
 	// A different actual UID has its own claim; no data/target migration occurs.
-	if _, err := reopened.db.ExecContext(context.Background(), `UPDATE p115_accounts SET uid='789'; UPDATE anime_settings SET uid='789'`); err != nil {
+	if _, err := reopened.db.ExecContext(context.Background(), `UPDATE p115_accounts SET id='new-main',uid='789'; UPDATE anime_settings SET account_id='new-main'`); err != nil {
 		t.Fatal(err)
 	}
-	f.target.UID = "789"
+	f.target.AccountID = "new-main"
 	d, err := reopened.GetAnimeReleaseDecision(context.Background(), f.sub.Sources[0].ID, r.ID)
 	if err != nil {
 		t.Fatal(err)

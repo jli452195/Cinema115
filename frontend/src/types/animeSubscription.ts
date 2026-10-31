@@ -23,13 +23,13 @@ export interface AnimeSourceConfig {
   binding: AnimeBinding; rules: AnimeRules
 }
 export interface AnimeSettings {
-  revision: number; accountId: string | null; accountRevision: number | null; uid: string | null
+  revision: number; accountId: string | null
   downloadCid: string | null; downloadPath: string | null
   organizeCid: string | null; organizePath: string | null
 }
 export interface AnimeSettingsView {
   settings: AnimeSettings
-  primaryAccount: { id: string; name: string; uid: string; revision: number } | null
+  primaryAccount: { id: string; name: string } | null
   readiness: { ready: boolean; issues: string[] }
 }
 export interface MikanEntry { id: string; title: string; coverUrl?: string; airDate?: string; groups: { id: string; name: string; origin?: string; originName?: string; kind?: string }[]; groupsPartial?: boolean; bangumiIds: string[] }

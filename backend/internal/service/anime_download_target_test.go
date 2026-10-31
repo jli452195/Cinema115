@@ -94,7 +94,7 @@ func (f *animeDownloadFixture) saveSettings(t *testing.T, cid string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err := f.service.SaveSettings(context.Background(), "admin", fmt.Sprintf("settings_%d", old.Revision), AnimeSettingsInput{ExpectedRevision: old.Revision, DownloadCID: cid, ExpectedPrimaryAccountID: a.ID, ExpectedPrimaryAccountRevision: int64(a.Revision)})
+	settings, err := f.service.SaveSettings(context.Background(), "admin", fmt.Sprintf("settings_%d", old.Revision), AnimeSettingsInput{ExpectedRevision: old.Revision, DownloadCID: cid, ExpectedPrimaryAccountID: a.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestAnimeDownloadTargetSafeFixedSnapshot(t *testing.T) {
 	f := newAnimeDownloadFixture(t)
 	session := f.prepare(t)
 	target := session.Target()
-	if target.AccountID != *f.settings.AccountID || target.AccountRevision != 2 || target.UID != "123" || target.SettingsRevision != f.settings.Revision || target.ParentCID != "100" || target.ParentPath != "/动漫/100" || session.cookie != animeDownloadTestCookie {
+	if target.AccountID != *f.settings.AccountID || target.SettingsRevision != f.settings.Revision || target.ParentCID != "100" || target.ParentPath != "/动漫/100" || session.cookie != animeDownloadTestCookie {
 		t.Fatal("incorrect task snapshot")
 	}
 	copy := session.Target()
@@ -178,7 +178,7 @@ func TestAnimeDownloadTargetDirectoryRenameKeepsCIDAndOriginalSnapshot(t *testin
 }
 
 func TestAnimeDownloadTargetAccountChangesRejectWithoutFallback(t *testing.T) {
-	for _, action := range []string{"refresh", "replace UID", "clear", "delete"} {
+	for _, action := range []string{"replace UID", "clear", "delete"} {
 		t.Run(action, func(t *testing.T) {
 			f := newAnimeDownloadFixture(t)
 			session := f.prepare(t)
@@ -229,13 +229,69 @@ func TestAnimeDownloadTargetAccountChangesRejectWithoutFallback(t *testing.T) {
 	}
 }
 
+func TestAnimeDownloadTargetSameAccountUpdatesKeepDirectoriesAndResume(t *testing.T) {
+	for _, action := range []string{"rename", "same cookie", "login refresh", "clear and login"} {
+		t.Run(action, func(t *testing.T) {
+			f := newAnimeDownloadFixture(t)
+			ctx := context.Background()
+			session := f.prepare(t)
+			target := session.Target()
+			account, err := f.accounts.Primary(target.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cookie := animeDownloadTestCookie
+			var updated *string
+			if action != "rename" {
+				if action != "same cookie" {
+					cookie = "UID=123_B; SEID=refreshed"
+				}
+				updated = &cookie
+			}
+			if action == "clear and login" {
+				empty := ""
+				if err := f.accounts.Update(account.ID, account.Revision, account.Name, &empty); err != nil {
+					t.Fatal(err)
+				}
+				if err := session.Validate(ctx); !errors.Is(err, storage.ErrAnimeAccountChanged) {
+					t.Fatal("cleared login remained usable", err)
+				}
+				account, err = f.accounts.Get(account.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.accounts.Update(account.ID, account.Revision, "renamed primary", updated); err != nil {
+				t.Fatal(err)
+			}
+			view, err := f.service.Settings(ctx)
+			if err != nil || !view.Readiness.Ready || !reflect.DeepEqual(view.Settings, f.settings) {
+				t.Fatal("same-account edit invalidated saved directories", view.Readiness, err)
+			}
+			if err := session.Validate(ctx); err != nil || session.cookie != animeDownloadTestCookie || session.Target() != target {
+				t.Fatal("existing execution changed credentials or target", err)
+			}
+			resumed, err := f.service.ResumeDownloadTarget(ctx, target)
+			if err != nil || resumed.Target() != target || resumed.cookie != cookie {
+				t.Fatal("same-account task could not use refreshed login on resume", err)
+			}
+			if fresh := f.prepare(t); fresh.cookie != cookie || fresh.Target() != target {
+				t.Fatal("new execution retained stale credentials")
+			}
+			serialized, err := json.Marshal(target)
+			if err != nil || strings.Contains(string(serialized), "accountRevision") || strings.Contains(string(serialized), "uid") || strings.Contains(string(serialized), "SEID") {
+				t.Fatal("target retained credential identity fields", err)
+			}
+		})
+	}
+}
+
 func TestAnimeDownloadTargetRejectsUntrustedAccountSnapshot(t *testing.T) {
 	for _, change := range []func(*P115Account){
-		func(a *P115Account) { a.Cookie = "UID=999_A; SEID=other" },
+		func(a *P115Account) { a.Cookie = "" },
 		func(a *P115Account) { a.Primary = false },
 		func(a *P115Account) { a.Ownership = "member" },
 		func(a *P115Account) { a.OwnerUserID = strings.Repeat("a", 64) },
-		func(a *P115Account) { a.Revision++ },
 	} {
 		f := newAnimeDownloadFixture(t)
 		a, err := f.accounts.Primary("")
@@ -310,7 +366,7 @@ func TestAnimeDownloadTargetChangesDuringDirectoryRead(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					updated := "UID=123_A; SEID=changed-during-read"
+					updated := "UID=999_A; SEID=changed-during-read"
 					if err := f.accounts.Update(a.ID, a.Revision, a.Name, &updated); err != nil {
 						t.Fatal(err)
 					}
@@ -352,7 +408,7 @@ func TestAnimeDownloadTargetRejectsStaleAccountMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := "UID=123_A; SEID=other-instance"
+	cookie := "UID=999_A; SEID=other-instance"
 	if err := other.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}
@@ -401,8 +457,9 @@ func TestAnimeDownloadTargetRestoreAfterActualDatabaseReopen(t *testing.T) {
 	if err := accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ResumeDownloadTarget(context.Background(), saved); !errors.Is(err, storage.ErrAnimeAccountChanged) {
-		t.Fatal("restart silently refreshed old task credential", err)
+	fresh, err := s.ResumeDownloadTarget(context.Background(), saved)
+	if err != nil || fresh.cookie != cookie || fresh.Target() != target || resumed.cookie != animeDownloadTestCookie {
+		t.Fatal("same account could not resume with refreshed credentials", err)
 	}
 }
 
@@ -495,7 +552,7 @@ func TestAnimeDownloadTargetNewAccountOnlyNeedsDirectorySelection(t *testing.T) 
 	})
 	f.saveSettings(t, "200")
 	session := f.prepare(t)
-	if reads != 1 || session.Target().UID != "999" || session.Target().AccountID == old.AccountID || session.Target().ParentCID != "200" {
+	if reads != 1 || session.Target().AccountID == old.AccountID || session.Target().ParentCID != "200" {
 		t.Fatal("account replacement required extra probes", reads)
 	}
 	if _, err := f.service.ResumeDownloadTarget(context.Background(), old); !errors.Is(err, storage.ErrAnimeAccountChanged) || reads != 1 {

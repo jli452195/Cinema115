@@ -26,7 +26,7 @@ type shareRunAccepted struct {
 	taskIDs     []string
 }
 
-func shareCollectionKey(ctx context.Context, settings AutomationSettings, cookie string, inputs []GenerateInput) (string, error) {
+func shareCollectionKey(ctx context.Context, settings AutomationSettings, inputs []GenerateInput) (string, error) {
 	scope, _ := ctx.Value(shareCollectionContextKey{}).(string)
 	if scope == "" || settings.TGBatchWaitSeconds <= 0 {
 		return "", nil
@@ -38,7 +38,7 @@ func shareCollectionKey(ctx context.Context, settings AutomationSettings, cookie
 			return "", nil
 		}
 		input.URL, input.Password, input.CID = "https://115cdn.com/s/collection", "", "0"
-		key, err := shareRunFingerprint(settings, cookieHash(cookie), []GenerateInput{input})
+		key, err := shareRunFingerprint(settings, []GenerateInput{input})
 		if err != nil {
 			return "", err
 		}
@@ -86,7 +86,7 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 	known := make(map[string]ShareRunItem, len(run.requests)+len(inputs))
 	for i, req := range run.requests {
 		combined = append(combined, req.Input)
-		key, err := shareRunFingerprint(settings, "", []GenerateInput{req.Input})
+		key, err := shareRunFingerprint(settings, []GenerateInput{req.Input})
 		if err != nil {
 			return ShareRunView{}, err
 		}
@@ -99,7 +99,7 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 	saveCtx, cancel := context.WithTimeout(run.ctx, 10*time.Second)
 	defer cancel()
 	for _, input := range inputs {
-		key, err := shareRunFingerprint(settings, "", []GenerateInput{input})
+		key, err := shareRunFingerprint(settings, []GenerateInput{input})
 		if err != nil {
 			return ShareRunView{}, err
 		}
@@ -121,14 +121,14 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 		known[key] = item
 		combined = append(combined, input)
 	}
-	cacheKey, err := shareRunFingerprint(settings, "", combined)
+	combinedFingerprint, err := shareRunFingerprint(settings, combined)
 	if err != nil {
 		return ShareRunView{}, err
 	}
 	run.tasks = append(run.tasks, tasks...)
 	run.requests = append(run.requests, requests...)
 	run.view.Items = append(run.view.Items, items...)
-	run.cacheKey = cacheKey
+	run.fingerprint = combinedFingerprint
 	// Only newly accepted resources reset the quiet period. Retries and
 	// duplicate-only submissions retain the original deadline.
 	if len(items) > 0 {
@@ -136,6 +136,7 @@ func (s *ShareRuns) appendCollected(ctx context.Context, run *shareRun, id strin
 		run.view.ReadyAt = run.readyAt
 	}
 	s.activeByFingerprint[fingerprint] = run.view.ID
+	s.activeByFingerprint[combinedFingerprint] = run.view.ID
 	s.tasks.Logs.Append("STRM", run.view.ID, "网页", "INFO", fmt.Sprintf("加入收集批次：新增 %d 个链接，批次累计 %d 个链接", len(items), len(run.tasks)))
 	return s.rememberSubmission(id, digest, fingerprint, run, selected), nil
 }

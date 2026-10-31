@@ -80,16 +80,16 @@ func (s *Store) SaveAnimeConfiguration(ctx context.Context, in model.AnimeSubscr
 
 func readAnimeSettingsTx(ctx context.Context, tx *sql.Tx) (model.AnimeSettings, error) {
 	var v model.AnimeSettings
-	err := tx.QueryRowContext(ctx, `SELECT revision,account_id,account_revision,uid,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&v.Revision, &v.AccountID, &v.AccountRevision, &v.UID, &v.DownloadCID, &v.DownloadPath, &v.OrganizeCID, &v.OrganizePath)
+	err := tx.QueryRowContext(ctx, `SELECT revision,account_id,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&v.Revision, &v.AccountID, &v.DownloadCID, &v.DownloadPath, &v.OrganizeCID, &v.OrganizePath)
 	return v, err
 }
 
 func checkAnimePrimaryTx(ctx context.Context, tx *sql.Tx, v model.AnimeSettings) error {
-	if v.AccountID == nil || v.AccountRevision == nil || v.UID == nil {
+	if v.AccountID == nil {
 		return ErrAnimeAccountChanged
 	}
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM p115_accounts WHERE id=? AND revision=? AND uid=? AND is_primary=1 AND ownership='admin' AND length(cookie_enc)>0)`, *v.AccountID, *v.AccountRevision, *v.UID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM p115_accounts WHERE id=? AND is_primary=1 AND ownership='admin' AND owner_user_id='' AND length(cookie_enc)>0)`, *v.AccountID).Scan(&exists); err != nil {
 		return fmt.Errorf("check anime primary account: %w", err)
 	}
 	if !exists {
@@ -185,7 +185,7 @@ func (s *Store) SaveAnimeSettings(ctx context.Context, v model.AnimeSettings, ke
 	if err := checkAnimePrimaryTx(ctx, tx, v); err != nil {
 		return model.AnimeSettings{}, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE anime_settings SET revision=revision+1,account_id=?,account_revision=?,uid=?,download_cid=?,download_path=?,organize_cid=?,organize_path=? WHERE id=1 AND revision=?`, v.AccountID, v.AccountRevision, v.UID, v.DownloadCID, v.DownloadPath, v.OrganizeCID, v.OrganizePath, v.Revision)
+	res, err := tx.ExecContext(ctx, `UPDATE anime_settings SET revision=revision+1,account_id=?,download_cid=?,download_path=?,organize_cid=?,organize_path=? WHERE id=1 AND revision=?`, v.AccountID, v.DownloadCID, v.DownloadPath, v.OrganizeCID, v.OrganizePath, v.Revision)
 	if err != nil {
 		return model.AnimeSettings{}, animeDBError("save anime settings", err)
 	}

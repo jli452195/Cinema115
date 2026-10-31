@@ -96,11 +96,10 @@ func TestManualRetrySafetyAndAtomicClaim(t *testing.T) {
 	s.AccountCookie = func(string) string { return cookie }
 	_, _ = s.Generate(context.Background(), input)
 	task := taskHistory(t, db)[0]
-	cookie = "changed"
-	if s.RetryReason(task) == "" {
-		t.Fatal("凭据变化未拦截")
+	cookie = "UID=42_B; SEID=refreshed"
+	if reason := s.RetryReason(task); reason != "" {
+		t.Fatal("同账号重新登录不应限制重试", reason)
 	}
-	cookie = s.Cookie()
 	unsafe := task
 	unsafe.Status = "interrupted"
 	if s.RetryReason(unsafe) == "" {
@@ -148,12 +147,57 @@ func TestManualRetrySafetyAndAtomicClaim(t *testing.T) {
 	if ok, err := db.CompareShareTask(context.Background(), task, stale); err != nil || ok {
 		t.Fatal("自动调度覆盖队列", ok, err)
 	}
-	cookie = "changed-after-enqueue"
+	cookie = ""
 	if err := s.retryDue(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || taskHistory(t, db)[0].Status != "cancelled" {
-		t.Fatal("执行前没有复核凭据")
+		t.Fatal("账号退出登录后仍然执行")
+	}
+}
+
+func TestShareRetrySameAccountRefreshPinsCurrentCredentials(t *testing.T) {
+	cookie := "UID=42_A; SEID=original"
+	calls := 0
+	s, db, input := setupShareTasks(t, generateFunc(func(ctx context.Context, _ GenerateInput) (*GenerationResult, error) {
+		calls++
+		if generationCookie(ctx, nil) != cookie {
+			t.Fatal("execution did not pin current account credentials")
+		}
+		if calls == 1 {
+			return nil, p115.ErrShareUnderReview
+		}
+		pinned := cookie
+		cookie = "UID=42_C; SEID=next-login"
+		if generationCookie(ctx, nil) != pinned {
+			t.Fatal("execution hot-swapped credentials")
+		}
+		return &GenerationResult{Written: 1}, nil
+	}))
+	settings := s.Settings.Value()
+	settings.AccountID = "original-account"
+	if err := s.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	s.AccountCookie = func(id string) string {
+		if id != "original-account" {
+			t.Fatal("retry changed account binding")
+		}
+		return cookie
+	}
+	if _, err := s.Generate(context.Background(), input); !errors.Is(err, p115.ErrShareUnderReview) {
+		t.Fatal(err)
+	}
+	task := taskHistory(t, db)[0]
+	cookie = "UID=42_B; SEID=refreshed"
+	if result, err := s.RetryTasks(context.Background(), []string{task.ID}); err != nil || !result[0].Accepted {
+		t.Fatal(result, err)
+	}
+	if err := s.retryDue(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := taskHistory(t, db)[0]; calls != 2 || got.Status != "success" {
+		t.Fatal("same-account login prevented retry", got.Status, calls)
 	}
 }
 

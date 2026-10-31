@@ -57,6 +57,69 @@ func cloudWorkflowAccounts(t *testing.T) (*P115Accounts, CloudDownloadConfig) {
 	return accounts, CloudDownloadConfig{AccountID: id, TargetCID: "9", TargetPath: "/新目录"}
 }
 
+func TestCloudSubmitAccountChangesBeforeWrites(t *testing.T) {
+	for _, phase := range []string{"lookup", "remove"} {
+		for _, action := range []string{"rename", "refresh", "clear", "replace", "delete"} {
+			t.Run(phase+"/"+action, func(t *testing.T) {
+				accounts, config := cloudWorkflowAccounts(t)
+				original, err := accounts.Primary(config.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writes := 0
+				change := func() {
+					cookie := "UID=123_B; CID=refreshed"
+					var changed error
+					switch action {
+					case "rename":
+						changed = accounts.Update(original.ID, original.Revision, "renamed", nil)
+					case "delete":
+						changed = accounts.Delete(original.ID, original.Revision)
+					default:
+						if action == "clear" {
+							cookie = ""
+						} else if action == "replace" {
+							cookie = "UID=999_A"
+						}
+						changed = accounts.Update(original.ID, original.Revision, original.Name, &cookie)
+					}
+					if changed != nil {
+						t.Fatal(changed)
+					}
+				}
+				client := &cloudWorkflowStub{
+					lookup: func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
+						if phase == "lookup" {
+							change()
+						}
+						return p115.CloudTask{InfoHash: strings.Repeat("a", 40), DisplayStatus: "finished"}, phase == "remove", nil
+					},
+					remove: func(context.Context, string, string) error {
+						change()
+						return nil
+					},
+					add: func(_ context.Context, cookie, _ string, cid string) (json.RawMessage, error) {
+						writes++
+						if cookie != original.Cookie || cid != config.TargetCID {
+							t.Fatal("running request changed its credentials or destination")
+						}
+						return json.RawMessage(`{}`), nil
+					},
+				}
+				s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
+				receipt, err := s.Submit(context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
+				allowed := action == "rename" || action == "refresh"
+				if allowed && (err != nil || writes != 1) || !allowed && (err == nil || writes != 0) {
+					t.Fatalf("account change %s: writes=%d err=%v", action, writes, err)
+				}
+				if receipt.RemovedOldTask != (phase == "remove") {
+					t.Fatal("lost the completed removal checkpoint")
+				}
+			})
+		}
+	}
+}
+
 func TestCloudSubmitDefaultWorkflow(t *testing.T) {
 	const hash = "0123456789abcdef0123456789abcdef01234567"
 	const link = "magnet:?xt=urn:btih:" + hash

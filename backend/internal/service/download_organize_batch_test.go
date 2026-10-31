@@ -178,7 +178,7 @@ func TestDownloadManifestIdentityExpiryAndIsolation(t *testing.T) {
 	}
 }
 
-func TestDownloadBatchCapacityRevisionAndDuplicateHash(t *testing.T) {
+func TestDownloadBatchCapacitySameAccountRefreshAndDuplicateHash(t *testing.T) {
 	s, _, input, _ := downloadBatchFixture(t, 100)
 	preview, err := s.PreviewBatch(context.Background(), input)
 	if err != nil {
@@ -208,8 +208,52 @@ func TestDownloadBatchCapacityRevisionAndDuplicateHash(t *testing.T) {
 	if err = s.Organize.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.StartBatch(preview.ID); !errors.Is(err, ErrOrganizeConflict) || len(s.live) != 0 {
-		t.Fatal("batch accepted changed account credentials", err)
+	if _, err = s.StartBatch(preview.ID); err != nil || len(s.live) != 2 {
+		t.Fatal("same-account refresh invalidated confirmed batch", err)
+	}
+	for _, p := range s.live {
+		if p.account.Cookie != cookie {
+			t.Fatal("new execution did not use current account credentials")
+		}
+	}
+}
+
+func TestDownloadOriginalAccountUnavailableStopsBeforeCloudWork(t *testing.T) {
+	for _, action := range []string{"clear", "replace", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			s, drive, adder, tracker, _, input := gardenFixture(t)
+			plan, err := s.Preview(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := s.Start(plan.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			account, err := s.Organize.account(job.Config.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "delete" {
+				err = s.Organize.accounts.Delete(account.ID, account.Revision)
+			} else {
+				cookie := ""
+				if action == "replace" {
+					cookie = "UID=456_other; SEID=other-account"
+				}
+				err = s.Organize.accounts.Update(account.ID, account.Revision, account.Name, &cookie)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := s.live[job.ID]
+			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "interrupted" {
+				t.Fatal("unavailable original account did not stop its task", done, err, p.job.Status)
+			}
+			if drive.creates != 0 || adder.url != "" || tracker.calls != 0 {
+				t.Fatal("unavailable original account reached remote cloud work")
+			}
+		})
 	}
 }
 

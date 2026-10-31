@@ -26,6 +26,7 @@ type batchTransferFake struct {
 	ownListCalls             int
 	password                 string
 	driveReads               map[string]int
+	afterReceive             func()
 }
 
 func (f *batchTransferFake) ListForTransfer(_ context.Context, share *p115.ShareInfo, _ string, _ int, cookie string) (*p115.SharePage, error) {
@@ -97,7 +98,54 @@ func (f *batchTransferFake) ReceiveShare(_ context.Context, share *p115.ShareInf
 		return p115.ErrShareUnderReview
 	}
 	f.drive[cid] = append(f.drive[cid], p115.ShareFile{ID: strconv.Itoa(1000 + len(f.received)), Name: "同名电影.mkv", SHA1: "0123456789ABCDEF0123456789ABCDEF01234567", Size: 100})
+	if f.afterReceive != nil {
+		f.afterReceive()
+	}
 	return nil
+}
+
+func TestMergedShareChecksAccountBetweenSourcesWithoutSwitchingCookie(t *testing.T) {
+	for _, action := range []string{"refresh", "sign-out"} {
+		t.Run(action, func(t *testing.T) {
+			fake := &batchTransferFake{}
+			tasks, db, input := setupShareTasks(t, nil)
+			settings := tasks.Settings.Value()
+			settings.AccountID = "primary"
+			if err := tasks.Settings.Save(settings); err != nil {
+				t.Fatal(err)
+			}
+			cookie := tasks.Cookie()
+			tasks.AccountCookie = func(id string) string {
+				if id != "primary" {
+					t.Fatal("batch switched account")
+				}
+				return cookie
+			}
+			fake.afterReceive = func() {
+				cookie = "UID=42_B; SEID=refreshed"
+				if action == "sign-out" {
+					cookie = ""
+				}
+			}
+			tasks.Generator = NewShareWorkflow(fake, generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
+				return &GenerationResult{Written: 1}, nil
+			}), tasks.Cookie, tasks.Settings, tasks.Settings.root, db)
+			inputs := []GenerateInput{input, input}
+			inputs[0].URL, inputs[0].Mode = "https://115.com/s/a", "reshare"
+			inputs[1].URL, inputs[1].Mode = "https://115.com/s/b", "reshare"
+			outcomes, err := tasks.GenerateBatch(context.Background(), inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "refresh" {
+				if fake.creates != 3 || len(fake.received) != 2 || fake.shares != 1 || fake.deletes != 1 || outcomes[0].Err != nil || outcomes[1].Err != nil {
+					t.Fatal("same-account refresh stopped or changed batch", fake.creates, fake.received, outcomes)
+				}
+			} else if fake.creates != 2 || len(fake.received) != 1 || fake.shares != 0 || fake.deletes != 0 || outcomes[0].Err == nil {
+				t.Fatal("sign-out allowed another source write", fake.creates, fake.received, outcomes)
+			}
+		})
+	}
 }
 
 func (f *batchTransferFake) DriveFiles(_ context.Context, cid string, _ int, cookie string) (*p115.SharePage, error) {

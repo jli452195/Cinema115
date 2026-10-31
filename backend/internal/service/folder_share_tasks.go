@@ -28,13 +28,12 @@ func (s *FolderMonitorService) pinSettings(value *model.FolderMonitor) error {
 	if err := s.validate(*value); err != nil {
 		return err
 	}
-	account, err := s.Accounts.Primary(value.AccountID)
-	if err != nil {
+	if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
 		return err
 	}
-	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
 	settings.Generation = s.generationInput(*value, "")
 	settings.ReshareEnabled = false
+	var err error
 	value.GenerationSettings, err = json.Marshal(settings)
 	return err
 }

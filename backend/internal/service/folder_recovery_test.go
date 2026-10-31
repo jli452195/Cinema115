@@ -106,12 +106,7 @@ func (c *recoveryClient) DriveFiles(ctx context.Context, id string, offset int, 
 func failedRecoveryBatch(t *testing.T) (*FolderMonitorService, *recoveryClient, model.FolderMonitor) {
 	t.Helper()
 	svc, fake, _, value := newMonitorScheduleTest(t)
-	account, err := svc.Accounts.Primary(value.AccountID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchParentCID = "900", "Cinema115-临时-owned", "0"
-	value.BatchAccountRevision, value.BatchCredentialHash = account.Revision, cookieHash(account.Cookie)
 	value.Stage, value.LastError, value.LogTaskID = "blocked", "failed", "test-batch"
 	fake.drive["0"] = []p115.ShareFile{{ID: "900", Name: value.BatchDirectoryName, Directory: true}}
 	fake.drive["900"] = nil
@@ -149,7 +144,7 @@ func TestFolderRecoveryOnlyRecyclesEmptyOwnedDirectory(t *testing.T) {
 }
 
 func TestFolderRecoveryPreservesNonemptyMovedAndUnknownDirectory(t *testing.T) {
-	for _, scenario := range []string{"nonempty", "moved", "unknown", "credential", "stale", "running", "new-arrival"} {
+	for _, scenario := range []string{"nonempty", "moved", "unknown", "account-cleared", "account-replaced", "stale", "running", "new-arrival"} {
 		t.Run(scenario, func(t *testing.T) {
 			svc, client, value := failedRecoveryBatch(t)
 			taskID := value.LogTaskID
@@ -161,9 +156,16 @@ func TestFolderRecoveryPreservesNonemptyMovedAndUnknownDirectory(t *testing.T) {
 			case "unknown":
 				client.drive["0"] = nil
 				client.missingErr = errors.New("timeout")
-			case "credential":
-				value.BatchCredentialHash = "different"
-				if err := svc.Store.SaveFolderMonitor(context.Background(), value); err != nil {
+			case "account-cleared", "account-replaced":
+				account, err := svc.Accounts.Primary(value.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cookie := ""
+				if scenario == "account-replaced" {
+					cookie = "UID=99_A; SEID=replacement"
+				}
+				if err := svc.Accounts.Update(account.ID, account.Revision, account.Name, &cookie); err != nil {
 					t.Fatal(err)
 				}
 			case "stale":
@@ -205,13 +207,35 @@ func TestFolderRecoveryConfirmedMissingReleasesWithoutSuccess(t *testing.T) {
 	}
 }
 
+func TestFolderRecoveryAfterSameAccountLoginRefresh(t *testing.T) {
+	svc, client, value := failedRecoveryBatch(t)
+	account, err := svc.Accounts.Primary(value.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=42_B; SEID=refreshed"
+	if err := svc.Accounts.Update(account.ID, account.Revision, "renamed", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	client.driveHook = func(_ context.Context, _ string, _ int, got string) error {
+		if got != cookie {
+			t.Fatal("recovery did not use refreshed credentials")
+		}
+		return nil
+	}
+	recovered, err := svc.Recover(context.Background(), value.ID, value.LogTaskID)
+	if err != nil || recovered.Stage != "ended" || len(client.deleted) != 1 {
+		t.Fatal("same-account refresh prevented recovery", recovered.Stage, err)
+	}
+}
+
 func TestFolderCreationIntentSurvivesLostResponse(t *testing.T) {
 	svc, fake, _, value := newMonitorScheduleTest(t)
 	client := &recoveryClient{folderMonitorClientFake: fake, lostCreate: true}
 	svc.Client = client
 	client.beforeCreate = func() {
 		v := loadMonitor(t, svc, value.ID)
-		if v.Stage != "creating" || !v.BatchCreationPending || v.BatchDirectoryName == "" || v.BatchCredentialHash == "" {
+		if v.Stage != "creating" || !v.BatchCreationPending || v.BatchDirectoryName == "" || v.AccountID != value.AccountID {
 			t.Fatal("intent not durable before creation")
 		}
 	}

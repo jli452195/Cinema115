@@ -59,7 +59,6 @@ type AnimeDownloadJob struct {
 	ClaimID            string                   `json:"claimId"`
 	Attempt            int64                    `json:"attempt"`
 	AccountID          string                   `json:"accountId"`
-	AccountRevision    int64                    `json:"accountRevision"`
 	UID                string                   `json:"uid"`
 	SettingsRevision   int64                    `json:"settingsRevision"`
 	ParentCID          string                   `json:"parentCid"`

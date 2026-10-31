@@ -11,8 +11,8 @@ func TestAnimeOrganizationFreezesDefaultTargetWithoutPreference(t *testing.T) {
 	n := namingPlan()
 	template, _ := naming.Default(naming.TV)
 	snapshot := naming.Snapshot{Revision: 4, Template: template}
-	download := AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", AccountRevision: 2, UID: "123", ParentCID: "100", ParentPath: "/下载"}
-	s := AnimeSettings{Revision: 3, AccountID: &download.AccountID, AccountRevision: &download.AccountRevision, UID: &download.UID, DownloadCID: &download.ParentCID, DownloadPath: &download.ParentPath, OrganizeCID: organizationPtr("900"), OrganizePath: organizationPtr("/整理")}
+	download := AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", ParentCID: "100", ParentPath: "/下载"}
+	s := AnimeSettings{Revision: 3, AccountID: &download.AccountID, DownloadCID: &download.ParentCID, DownloadPath: &download.ParentPath, OrganizeCID: organizationPtr("900"), OrganizePath: organizationPtr("/整理")}
 	o, err := FreezeAnimeOrganization(&n, s, 7, download, snapshot)
 	if err != nil || o == nil || o.Target.ParentCID != "900" || o.Target.SettingsRevision != 3 || o.PlanRevision != 7 {
 		t.Fatal(o, err)
@@ -29,7 +29,6 @@ func TestAnimeOrganizationFreezesDefaultTargetWithoutPreference(t *testing.T) {
 		func(s *AnimeSettings) { s.OrganizeCID = nil },
 		func(s *AnimeSettings) { s.OrganizeCID = organizationPtr("100") },
 		func(s *AnimeSettings) { s.AccountID = organizationPtr("other") },
-		func(s *AnimeSettings) { s.UID = organizationPtr("999") },
 		func(s *AnimeSettings) { s.DownloadCID = organizationPtr("101") },
 	} {
 		bad := s

@@ -191,7 +191,7 @@ func (s *Store) FindAnimeEntry(ctx context.Context, bangumiID, editionKey string
 // and directory. An unconfigured database has revision=1 and null bindings.
 func (s *Store) GetAnimeSettings(ctx context.Context) (model.AnimeSettings, error) {
 	var v model.AnimeSettings
-	err := s.db.QueryRowContext(ctx, `SELECT revision,account_id,account_revision,uid,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&v.Revision, &v.AccountID, &v.AccountRevision, &v.UID, &v.DownloadCID, &v.DownloadPath, &v.OrganizeCID, &v.OrganizePath)
+	err := s.db.QueryRowContext(ctx, `SELECT revision,account_id,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&v.Revision, &v.AccountID, &v.DownloadCID, &v.DownloadPath, &v.OrganizeCID, &v.OrganizePath)
 	if err != nil {
 		return v, fmt.Errorf("get anime settings: %w", err)
 	}

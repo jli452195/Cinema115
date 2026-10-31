@@ -201,7 +201,16 @@ func TestAnimeFilesScheduledRetriesSurviveRestartAndStayBounded(t *testing.T) {
 				if got.Tracking == nil || got.Tracking.FileReadFailures != attempt || got.Files != nil {
 					t.Fatal("file retry count or incomplete facts lost", got)
 				}
-				if attempt == 3 || mode == "access denied" {
+				if mode == "access denied" {
+					if got.FileState != "checking" || got.NextRunAt == nil || *got.NextRunAt < before+(5*time.Minute).Milliseconds() {
+						t.Fatal("credential denial lost its bounded cooldown", got)
+					}
+					if err := runner.PollOnce(ctx); err != nil || attempts != attempt {
+						t.Fatal("credential denial retried before cooldown", attempts, err)
+					}
+					break
+				}
+				if attempt == 3 {
 					if got.FileState != "needs_review" || mode != "rate limited" && got.NextRunAt != nil {
 						t.Fatal("file retries did not stop", got)
 					}
@@ -242,7 +251,11 @@ func TestAnimeFilesScheduledRetriesSurviveRestartAndStayBounded(t *testing.T) {
 				t.Fatal("terminal file state kept polling", pages, err)
 			}
 			warnings := f.service.Logs.Snapshot("WARNING")
-			if (mode == "recovers" && len(warnings) != 0) || (mode != "recovers" && len(warnings) != 1) {
+			wantWarnings := 0
+			if mode == "exhausted" || mode == "rate limited" {
+				wantWarnings = 1
+			}
+			if len(warnings) != wantWarnings {
 				t.Fatal("temporary failures flooded warnings or exhaustion was silent", warnings)
 			}
 		})

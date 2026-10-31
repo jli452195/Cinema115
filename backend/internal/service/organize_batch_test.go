@@ -18,12 +18,8 @@ import (
 func organizeBatchFixture(t *testing.T, count int) (*OrganizeEngine, *organizeFakeDrive, string, OrganizeJob) {
 	t.Helper()
 	s, drive, id, _ := newOrganizeTest(t)
-	account, err := s.accounts.Get(id)
-	if err != nil {
-		t.Fatal(err)
-	}
 	const folder = "测试作品 (2024) {tmdb-42}"
-	job := OrganizeJob{ID: "batch-plan", Config: organizeTestConfig(id), Revision: account.Revision, Kind: "tv", TMDBID: 42, Title: "测试作品", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
+	job := OrganizeJob{ID: "batch-plan", Config: organizeTestConfig(id), Kind: "tv", TMDBID: 42, Title: "测试作品", Status: "preview", CreatedAt: time.Now(), Items: make([]OrganizeItem, 0, count)}
 	drive.dirs["30"] = make([]p115.ShareFile, 0, count)
 	drive.dirs["20"] = []p115.ShareFile{{ID: "40", Name: folder, Directory: true}}
 	drive.dirs["40"] = []p115.ShareFile{{ID: "50", Name: "Season 01", Directory: true}}
@@ -63,6 +59,53 @@ func TestOrganizeBatchRequestReduction(t *testing.T) {
 		}
 	}
 	t.Logf("100 files, existing folders, single-page directories: 900 -> %d drive requests; 502 -> %d execution checkpoints", requests, job.Stats.Checkpoints)
+}
+
+func TestOrganizeExecutionAccountUpdatesKeepPinnedCredentials(t *testing.T) {
+	for _, action := range []string{"rename", "refresh", "clear", "replace", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			s, drive, id, plan := organizeBatchFixture(t, 1)
+			account, err := s.accounts.Primary(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			drive.afterRename = func() {
+				var cookie *string
+				value := ""
+				switch action {
+				case "refresh":
+					value = "UID=123_new_device; SEID=refreshed"
+					cookie = &value
+				case "clear":
+					cookie = &value
+				case "replace":
+					value = "UID=456_other; SEID=other-account"
+					cookie = &value
+				case "delete":
+					if err := s.accounts.Delete(id, account.Revision); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if err := s.accounts.Update(id, account.Revision, "renamed account", cookie); err != nil {
+					t.Fatal(err)
+				}
+			}
+			job := organizeTestRun(t, s, id, plan)
+			if action == "rename" || action == "refresh" {
+				if job.Status != "completed" || drive.moves != 1 {
+					t.Fatal("same-account edit interrupted execution", job.Status, drive.moves)
+				}
+			} else if job.Status != "partial" || drive.moves != 0 {
+				t.Fatal("unavailable original account allowed another mutation", job.Status, drive.moves)
+			}
+			for _, cookie := range drive.cookies {
+				if cookie != account.Cookie {
+					t.Fatal("running execution switched credentials")
+				}
+			}
+		})
+	}
 }
 
 func TestOrganizeBatchPartialOutcomes(t *testing.T) {

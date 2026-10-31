@@ -16,7 +16,7 @@ type AnimeOrganizationSnapshot struct {
 }
 
 func (s AnimeOrganizationSnapshot) Validate(download AnimeDownloadTarget) error {
-	if s.SchemaVersion != 1 || s.PolicyVersion != 1 || s.PlanRevision < 1 || s.PlanRevision > AnimeMaxRevision || s.Target.Validate() != nil || s.Target.AccountID != download.AccountID || s.Target.AccountRevision != download.AccountRevision || s.Target.UID != download.UID || s.Target.ParentCID == download.ParentCID {
+	if s.SchemaVersion != 1 || s.PolicyVersion != 1 || s.PlanRevision < 1 || s.PlanRevision > AnimeMaxRevision || s.Target.Validate() != nil || s.Target.AccountID != download.AccountID || s.Target.ParentCID == download.ParentCID {
 		return fmt.Errorf("invalid anime organization snapshot")
 	}
 	if s.Naming.Revision < 0 || s.Naming.Revision > AnimeMaxRevision || s.Naming.Template.Kind != naming.TV {
@@ -32,7 +32,7 @@ func FreezeAnimeOrganization(plan *AnimeNamingPlan, settings AnimeSettings, revi
 	if plan == nil {
 		return nil, nil
 	}
-	if plan.Validate() != nil || settings.AccountID == nil || settings.AccountRevision == nil || settings.UID == nil || settings.OrganizeCID == nil || settings.OrganizePath == nil || settings.DownloadCID == nil || settings.DownloadPath == nil || *settings.DownloadCID != download.ParentCID || *settings.DownloadPath != download.ParentPath || *settings.AccountID != download.AccountID || *settings.AccountRevision != download.AccountRevision || *settings.UID != download.UID {
+	if plan.Validate() != nil || settings.AccountID == nil || settings.OrganizeCID == nil || settings.OrganizePath == nil || settings.DownloadCID == nil || settings.DownloadPath == nil || *settings.DownloadCID != download.ParentCID || *settings.DownloadPath != download.ParentPath || *settings.AccountID != download.AccountID {
 		return nil, fmt.Errorf("organization target required")
 	}
 	target := download

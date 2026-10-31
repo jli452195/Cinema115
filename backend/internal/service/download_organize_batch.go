@@ -227,7 +227,7 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 			selections = append(selections, selection)
 		}
 	}
-	combined, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Revision: a.Revision, Files: files}, OrganizePreviewInput{NamingRevision: common.NamingRevision, Kind: common.Kind, TMDBID: common.TMDBID, Files: selections, Subtitles: true})
+	combined, err := s.Organize.buildPlan(ctx, OrganizeScan{Config: c, Files: files}, OrganizePreviewInput{NamingRevision: common.NamingRevision, Kind: common.Kind, TMDBID: common.TMDBID, Files: selections, Subtitles: true})
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +335,7 @@ func (s *DownloadOrganize) StartBatch(id string) (DownloadBatchResult, error) {
 		if err != nil {
 			return DownloadBatchResult{}, err
 		}
-		if i > 0 && (account.ID != a.ID || account.Revision != a.Revision) {
+		if i > 0 && account.ID != a.ID {
 			return DownloadBatchResult{}, ErrOrganizeConflict
 		}
 		account = a

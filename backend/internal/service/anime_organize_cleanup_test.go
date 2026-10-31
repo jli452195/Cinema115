@@ -173,7 +173,7 @@ func TestAnimeCleanupPauseAndAccountChangePreventNewDelete(t *testing.T) {
 				}
 				statement := `UPDATE anime_subscriptions SET status='paused'`
 				if accountChange {
-					statement = `UPDATE p115_accounts SET revision=revision+1`
+					statement = `UPDATE p115_accounts SET is_primary=0`
 				}
 				if _, err := db.Exec(statement); err != nil {
 					t.Fatal(err)

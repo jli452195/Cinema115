@@ -282,7 +282,7 @@ func TestDownloadShareCollectionReadyFilesSurviveRestartAndHistoryPruning(t *tes
 	}
 }
 
-func TestDownloadShareCollectionRejectsChangedCredentialsWithoutWrites(t *testing.T) {
+func TestDownloadShareCollectionRejectsChangedAccountWithoutWrites(t *testing.T) {
 	f := newDownloadCollectionFixture(t, 2)
 	f.ready(t, 0)
 	f.ready(t, 1)
@@ -290,7 +290,7 @@ func TestDownloadShareCollectionRejectsChangedCredentialsWithoutWrites(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := "UID=123_changed; SEID=changed-secret"
+	cookie := "UID=456_other; SEID=changed-account"
 	if err := f.s.Organize.accounts.Update(account.ID, account.Revision, "changed", &cookie); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +304,31 @@ func TestDownloadShareCollectionRejectsChangedCredentialsWithoutWrites(t *testin
 		if job.Status != "interrupted" {
 			t.Fatal("changed account did not stop original collection")
 		}
+	}
+}
+
+func TestDownloadShareCollectionAcceptsSameAccountRefresh(t *testing.T) {
+	f := newDownloadCollectionFixture(t, 2)
+	f.ready(t, 0)
+	f.ready(t, 1)
+	account, err := f.s.Organize.account(f.jobs[0].Config.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=123_new_device; SEID=refreshed-secret"
+	if err := f.s.Organize.accounts.Update(account.ID, account.Revision, "renamed account", &cookie); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.sealShareCollections(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	p := f.leader(t)
+	if p.account.ID != account.ID || p.account.Cookie != cookie {
+		t.Fatal("collection lost its original account or retained stale credentials")
+	}
+	f.finish(t, p)
+	if f.client.sends != 1 || len(taskHistory(t, f.db)) != 1 {
+		t.Fatal("same-account refresh split or blocked the original collection")
 	}
 }
 

@@ -63,7 +63,6 @@ func TestAnimePreviewServiceCachedSnapshotAndServerMetadata(t *testing.T) {
 	s, f, _, c, at := previewService(t)
 	ctx := context.Background()
 	c.Settings.AccountID = bindingPtr("browser-account")
-	c.Settings.UID = bindingPtr("browser-uid")
 	out, err := s.Generate(ctx, "admin-a", AnimePreviewInput{Config: c, SourceRef: "main"})
 	if err != nil {
 		t.Fatal(err)

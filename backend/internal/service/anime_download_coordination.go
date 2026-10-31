@@ -91,5 +91,5 @@ func (s *AnimeAdminService) withDownloadResource(ctx context.Context, session *A
 }
 
 func animeDownloadJobMatches(job model.AnimeDownloadJob, target model.AnimeDownloadTarget) bool {
-	return target.Validate() == nil && job.Snapshot.SchemaVersion == model.AnimeSchemaVersion && job.Snapshot.Target == target && job.AccountID == target.AccountID && job.AccountRevision == target.AccountRevision && job.UID == target.UID && job.SettingsRevision == target.SettingsRevision && job.ParentCID == target.ParentCID && job.Snapshot.Protocol == "bt_v1"
+	return target.Validate() == nil && job.Snapshot.SchemaVersion == model.AnimeSchemaVersion && job.Snapshot.Target == target && job.AccountID == target.AccountID && job.SettingsRevision == target.SettingsRevision && job.ParentCID == target.ParentCID && job.Snapshot.Protocol == "bt_v1"
 }

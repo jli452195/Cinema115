@@ -70,7 +70,6 @@ type shareRun struct {
 	view          ShareRunView
 	digest        [32]byte
 	fingerprint   string
-	cacheKey      string
 	ctx           context.Context
 	cancel        context.CancelFunc
 	tasks         []*model.ShareTask
@@ -112,7 +111,6 @@ type shareRunFingerprintInput struct {
 	Format             string `json:"format"`
 	SharePath          string `json:"sharePath,omitempty"`
 	AccountID          string `json:"accountId"`
-	CredentialHash     string `json:"credentialHash"`
 	ShareURL           string `json:"shareUrl"`
 	CID                string `json:"cid"`
 	Mode               string `json:"mode"`
@@ -148,8 +146,9 @@ func normalizedExtensionList(raw, fallback string) string {
 	return strings.Join(items, ",")
 }
 
-// shareRunFingerprint 同时用于活动队列和成功快照；调用方决定是否传入 Cookie 摘要。
-func shareRunFingerprint(settings AutomationSettings, credentialHash string, inputs []GenerateInput) (string, error) {
+// shareRunFingerprint identifies the account and generation options for both
+// the active queue and successful snapshots, independently of login refreshes.
+func shareRunFingerprint(settings AutomationSettings, inputs []GenerateInput) (string, error) {
 	items := make([]shareRunFingerprintInput, len(inputs))
 	for i, input := range inputs {
 		share, err := p115.ParseShareURL(input.URL)
@@ -187,7 +186,7 @@ func shareRunFingerprint(settings AutomationSettings, credentialHash string, inp
 		items[i] = shareRunFingerprintInput{
 			Format:    strm.ShareFormat,
 			SharePath: input.SharePath,
-			AccountID: settings.AccountID, CredentialHash: credentialHash, ShareURL: canonical.String(), CID: cid,
+			AccountID: settings.AccountID, ShareURL: canonical.String(), CID: cid,
 			Mode: mode, OutputDir: strings.TrimSpace(input.OutputDir), BaseURL: strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
 			VideoExtensions: normalizedExtensionList(input.VideoExtensions, DefaultVideoExtensions), MetadataExtensions: normalizedExtensionList(input.MetadataExtensions, ""),
 			MinSizeMB: input.MinSizeMB, Recursive: input.Recursive, ParentCID: parentCID,
@@ -291,14 +290,14 @@ func appendCachedRunPath(paths []string, seen map[string]bool, root, directory, 
 	return paths
 }
 
-func (s *ShareRuns) restoreSuccessfulRun(ctx context.Context, id string, digest [32]byte, fingerprint, cacheKey string, inputCount int, source string) (ShareRunView, bool) {
+func (s *ShareRuns) restoreSuccessfulRun(ctx context.Context, id string, digest [32]byte, fingerprint string, inputCount int, source string) (ShareRunView, bool) {
 	store, ok := s.tasks.Store.(shareRunCacheStore)
 	if !ok {
 		return ShareRunView{}, false
 	}
 	cacheCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	raw, found, err := store.LoadShareRunCache(cacheCtx, cacheKey)
+	raw, found, err := store.LoadShareRunCache(cacheCtx, fingerprint)
 	if err != nil {
 		if s.tasks.Logs != nil {
 			s.tasks.Logs.Append("STRM", id, source, "WARNING", "读取分享快照缓存失败，已改为正常生成："+err.Error())
@@ -322,7 +321,7 @@ func (s *ShareRuns) restoreSuccessfulRun(ctx context.Context, id string, digest 
 		}
 	}
 	if !valid {
-		if err := store.DeleteShareRunCache(cacheCtx, cacheKey); err != nil && s.tasks.Logs != nil {
+		if err := store.DeleteShareRunCache(cacheCtx, fingerprint); err != nil && s.tasks.Logs != nil {
 			s.tasks.Logs.Append("STRM", id, source, "WARNING", "清理失效分享快照缓存失败："+err.Error())
 		}
 		return ShareRunView{}, false
@@ -330,14 +329,14 @@ func (s *ShareRuns) restoreSuccessfulRun(ctx context.Context, id string, digest 
 	done := make(chan struct{})
 	close(done)
 	view := ShareRunView{ID: id, Status: "success", Items: record.Items}
-	s.runs[id] = &shareRun{view: view, digest: digest, fingerprint: fingerprint, cacheKey: cacheKey, finished: time.Now(), done: done}
+	s.runs[id] = &shareRun{view: view, digest: digest, fingerprint: fingerprint, finished: time.Now(), done: done}
 	if s.tasks.Logs != nil {
 		s.tasks.Logs.Append("STRM", id, source, "INFO", "本地文件完整，已复用成功分享快照，未再次请求 115")
 	}
 	return cloneShareRun(view), true
 }
 
-func (s *ShareRuns) saveSuccessfulRun(cacheKey string, view ShareRunView, outcomes []BatchOutcome) error {
+func (s *ShareRuns) saveSuccessfulRun(fingerprint string, view ShareRunView, outcomes []BatchOutcome) error {
 	store, ok := s.tasks.Store.(shareRunCacheStore)
 	if !ok {
 		return nil
@@ -352,7 +351,7 @@ func (s *ShareRuns) saveSuccessfulRun(cacheKey string, view ShareRunView, outcom
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.root), 5*time.Second)
 	defer cancel()
-	return store.SaveShareRunCache(ctx, cacheKey, string(record))
+	return store.SaveShareRunCache(ctx, fingerprint, string(record))
 }
 
 // Submit 在返回接收成功前保存全部子任务，并固定账号凭据、模式和设置。
@@ -451,17 +450,17 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 		}
 	}
 	settings, _ := pinned.Value(automationContextKey{}).(AutomationSettings)
-	fingerprint, err := shareRunFingerprint(settings, cookieHash(generationCookie(pinned, s.tasks.Cookie)), inputs)
-	if err != nil {
-		return ShareRunView{}, err
-	}
-	cacheKey, err := shareRunFingerprint(settings, "", inputs)
+	fingerprint, err := shareRunFingerprint(settings, inputs)
 	if err != nil {
 		return ShareRunView{}, err
 	}
 	if existingID := s.activeByFingerprint[fingerprint]; existingID != "" {
 		if existing := s.runs[existingID]; existing != nil && existing.finished.IsZero() {
 			view := cloneShareRun(existing.view)
+			view.SelectedTaskIDs = make([]string, 0, len(view.Items))
+			for _, item := range view.Items {
+				view.SelectedTaskIDs = append(view.SelectedTaskIDs, item.TaskID)
+			}
 			for _, accepted := range s.accepted {
 				if accepted.runID == existingID && accepted.fingerprint == fingerprint {
 					view.SelectedTaskIDs = append([]string(nil), accepted.taskIDs...)
@@ -473,11 +472,11 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 		}
 		delete(s.activeByFingerprint, fingerprint)
 	}
-	if cached, ok := s.restoreSuccessfulRun(pinned, id, digest, fingerprint, cacheKey, len(inputs), source); ok {
+	if cached, ok := s.restoreSuccessfulRun(pinned, id, digest, fingerprint, len(inputs), source); ok {
 		return cached, nil
 	}
-	// 只在显式网页收集范围内合并，账号、凭据及所有设置不同的任务必须隔离。
-	collectionKey, err := shareCollectionKey(ctx, settings, generationCookie(pinned, s.tasks.Cookie), inputs)
+	// 只在显式网页收集范围内合并，不同账号或生成设置的任务保持独立。
+	collectionKey, err := shareCollectionKey(ctx, settings, inputs)
 	if err != nil {
 		return ShareRunView{}, err
 	}
@@ -498,7 +497,7 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	if source == "订阅" || collectionKey != "" {
 		readyAt = readyAt.Add(time.Duration(settings.TGBatchWaitSeconds) * time.Second)
 	}
-	run := &shareRun{view: ShareRunView{ID: id, Status: "queued", Items: make([]ShareRunItem, len(inputs))}, digest: digest, fingerprint: fingerprint, cacheKey: cacheKey, ctx: runCtx, cancel: cancel, tasks: make([]*model.ShareTask, len(inputs)), requests: make([]shareTaskRequest, len(inputs)), readyAt: readyAt, done: make(chan struct{})}
+	run := &shareRun{view: ShareRunView{ID: id, Status: "queued", Items: make([]ShareRunItem, len(inputs))}, digest: digest, fingerprint: fingerprint, ctx: runCtx, cancel: cancel, tasks: make([]*model.ShareTask, len(inputs)), requests: make([]shareTaskRequest, len(inputs)), readyAt: readyAt, done: make(chan struct{})}
 	run.collectionKey, run.view.ReadyAt = collectionKey, readyAt
 	// 入队只写本地数据库，浏览器断开不会撤销已经接收的任务。
 	saveCtx, saveCancel := context.WithTimeout(runCtx, 10*time.Second)
@@ -702,6 +701,11 @@ func (s *ShareRuns) execute(run *shareRun) {
 	}
 	s.mu.Unlock()
 	itemCtx, cancel := context.WithTimeout(run.ctx, ShareGenerationTimeout)
+	if s.tasks.AccountCookie != nil && len(run.requests) > 0 {
+		// Queueing pins ownership and options; execution takes the latest login
+		// for that same account, then keeps it fixed until this attempt ends.
+		itemCtx = context.WithValue(itemCtx, generationCookieKey{}, s.tasks.AccountCookie(run.requests[0].Settings.AccountID))
+	}
 	itemCtx = WithGenerationProgress(itemCtx, func(progress GenerationProgress) {
 		s.mu.Lock()
 		for i := range run.view.Items {
@@ -753,7 +757,7 @@ func (s *ShareRuns) execute(run *shareRun) {
 		source, _ := run.ctx.Value(generationSourceKey{}).(string)
 		s.mu.Unlock()
 		if cacheable {
-			if err := s.saveSuccessfulRun(run.cacheKey, cacheView, outcomes); err != nil && s.tasks.Logs != nil {
+			if err := s.saveSuccessfulRun(run.fingerprint, cacheView, outcomes); err != nil && s.tasks.Logs != nil {
 				s.tasks.Logs.Append("STRM", taskID, source, "WARNING", "保存分享快照缓存失败："+err.Error())
 			}
 		}

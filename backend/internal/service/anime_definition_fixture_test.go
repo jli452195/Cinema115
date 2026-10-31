@@ -29,7 +29,7 @@ func newAnimeDefinitionService(t *testing.T) (*AnimeAdminService, *bindingMikanF
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err := s.SaveSettings(context.Background(), "admin", "start_settings", AnimeSettingsInput{ExpectedRevision: f.settings.Revision, DownloadCID: "100", OrganizeCID: bindingPtr("200"), ExpectedPrimaryAccountID: a.ID, ExpectedPrimaryAccountRevision: int64(a.Revision)})
+	settings, err := s.SaveSettings(context.Background(), "admin", "start_settings", AnimeSettingsInput{ExpectedRevision: f.settings.Revision, DownloadCID: "100", OrganizeCID: bindingPtr("200"), ExpectedPrimaryAccountID: a.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

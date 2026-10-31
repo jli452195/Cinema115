@@ -96,8 +96,8 @@ func archiveFolderBatch(value *model.FolderMonitor) {
 	value.BatchIDs, value.BatchFingerprint = nil, ""
 	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchParentCID = "", "", ""
 	value.BatchCreationPending = false
-	value.BatchMoveIndex, value.CleanupIndex, value.BatchAccountRevision = 0, 0, 0
-	value.BatchCredentialHash, value.StableFingerprint, value.StableScans = "", "", 0
+	value.BatchMoveIndex, value.CleanupIndex = 0, 0
+	value.StableFingerprint, value.StableScans = "", 0
 	value.ShareURL, value.SharePassword, value.ShareReviewing = "", "", false
 	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
 	value.SchedulePaused, value.ScheduleMessage = "", ""

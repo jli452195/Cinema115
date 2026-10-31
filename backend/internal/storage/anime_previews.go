@@ -35,7 +35,7 @@ func validAnimeActor(actor string) bool {
 
 func validateAnimePreviewConfigTx(ctx context.Context, tx *sql.Tx, c preview.Config) error {
 	var settings model.AnimeSettings
-	if err := tx.QueryRowContext(ctx, `SELECT revision,account_id,account_revision,uid,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&settings.Revision, &settings.AccountID, &settings.AccountRevision, &settings.UID, &settings.DownloadCID, &settings.DownloadPath, &settings.OrganizeCID, &settings.OrganizePath); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revision,account_id,download_cid,download_path,organize_cid,organize_path FROM anime_settings WHERE id=1`).Scan(&settings.Revision, &settings.AccountID, &settings.DownloadCID, &settings.DownloadPath, &settings.OrganizeCID, &settings.OrganizePath); err != nil {
 		return fmt.Errorf("read preview settings: %w", err)
 	}
 	if !reflect.DeepEqual(settings, c.Settings) {

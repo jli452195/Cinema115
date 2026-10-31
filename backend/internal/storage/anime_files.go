@@ -48,7 +48,7 @@ func (s *Store) StartAnimeDirectory(ctx context.Context, jobID string, generatio
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM anime_resource_claims c JOIN anime_resources r ON r.id=c.resource_id WHERE c.id=? AND c.uid=? AND c.account_id=? AND c.target_cid=? AND r.protocol='bt_v1' AND r.info_hash=?)`, job.ClaimID, job.UID, job.AccountID, job.ParentCID, job.Snapshot.InfoHash).Scan(&valid); err != nil {
 		return empty, false, err
 	}
-	if !valid || job.AccountID != target.AccountID || job.AccountRevision != target.AccountRevision || job.UID != target.UID || job.ParentCID != target.ParentCID {
+	if !valid || job.AccountID != target.AccountID || job.ParentCID != target.ParentCID {
 		return empty, false, ErrAnimeIdentity
 	}
 	operation := model.AnimeDirectoryOperation{SchemaVersion: 1, State: "dispatched", Generation: generation, AuthorizedAt: time.Now().UnixMilli()}
@@ -192,8 +192,8 @@ func (s *Store) RecordAnimeFilesFailure(ctx context.Context, expected model.Anim
 		return ErrAnimeInvalid
 	}
 	switch code {
-	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "TASK_RATE_LIMITED", "TASK_POLL_CANCELLED":
-	case "FILES_OUTSIDE_TASK", "DOWNLOAD_ACCOUNT_CHANGED", "TASK_ACCESS_DENIED":
+	case "FILES_READ_FAILED", "FILES_INCOMPLETE", "TASK_RATE_LIMITED", "TASK_POLL_CANCELLED", "TASK_ACCESS_DENIED":
+	case "FILES_OUTSIDE_TASK", "DOWNLOAD_ACCOUNT_CHANGED":
 		if retryAt != 0 {
 			return ErrAnimeInvalid
 		}
@@ -208,6 +208,9 @@ func (s *Store) RecordAnimeFilesFailure(ctx context.Context, expected model.Anim
 		token = leaseToken[0]
 	}
 	now := time.Now().UnixMilli()
+	if code == "TASK_ACCESS_DENIED" {
+		retryAt = max(retryAt, now+(5*time.Minute).Milliseconds())
+	}
 	tracking := model.AnimeDownloadTracking{SchemaVersion: 1}
 	if expected.Tracking != nil {
 		tracking = *expected.Tracking
@@ -219,6 +222,9 @@ func (s *Store) RecordAnimeFilesFailure(ctx context.Context, expected model.Anim
 	if retryAt > 0 && tracking.FileReadFailures <= 2 {
 		delay := [...]time.Duration{5 * time.Second, 30 * time.Second}[tracking.FileReadFailures-1]
 		due := max(now+delay.Milliseconds(), retryAt)
+		next, state = &due, "checking"
+	} else if code == "TASK_ACCESS_DENIED" && retryAt > now {
+		due := max(now+(5*time.Minute).Milliseconds(), retryAt)
 		next, state = &due, "checking"
 	} else if code == "TASK_RATE_LIMITED" && retryAt > now {
 		// Retain the UID-wide cooldown even when this job exhausts its budget.

@@ -142,7 +142,7 @@ func (s *ShareTasks) EnqueueDownloadShare(ctx context.Context, job OrganizeJob, 
 		}
 	}
 	input.Mode, input.URL, input.Password, input.CID, input.SharePath = "direct", "", "", "0", ""
-	req := shareTaskRequest{Download: download, Input: input, Settings: share.Settings, CookieHash: cookieHash(cookie)}
+	req := shareTaskRequest{Download: download, Input: input, Settings: share.Settings}
 	now := time.Now().UTC()
 	task := model.ShareTask{ID: job.ID, Source: "磁力整理", Mode: "direct", Status: "queued", Note: path.Join(job.Config.TargetPath, share.Directory), CreatedAt: now, UpdatedAt: now, MaxRetries: share.Settings.ReviewRetryMax, RetryMinutes: share.Settings.ReviewRetryMinutes}
 	if err := s.save(ctx, &task, req); err != nil {
@@ -192,6 +192,9 @@ func (s *ShareTasks) prepareDownloadShare(ctx context.Context, task *model.Share
 			return ctx, errors.New("整理目录与所选文件不一致，未创建分享；请核对目录")
 		}
 		d.DirectoryID = rootID
+		if err := checkGenerationAccount(ctx); err != nil {
+			return ctx, err
+		}
 		d.Attempted = true
 		if err := s.save(ctx, task, *req); err != nil {
 			return ctx, &shareCheckpointError{err}
@@ -217,6 +220,9 @@ func (s *ShareTasks) prepareDownloadShare(ctx context.Context, task *model.Share
 	}
 	share.Password = req.Input.Password
 	if !d.Configured {
+		if err := checkGenerationAccount(ctx); err != nil {
+			return ctx, err
+		}
 		if err = s.OwnClient.ConfigureShare(ctx, share, req.Settings.FixedSharePassword, cookie); err != nil {
 			return ctx, fmt.Errorf("设置分享有效期与提取码: %w", err)
 		}
@@ -266,7 +272,7 @@ func (s *ShareTasks) cleanupDownloadShare(ctx context.Context, task *model.Share
 	if s.OwnClient == nil {
 		return errors.New("STRM 已生成，目录尚未回收：分享 STRM 服务尚未初始化")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := checkGenerationAccount(ctx); err != nil {
 		return err
 	}
 	reportGeneration(ctx, "deleting", "STRM 与元数据已生成，正在将本次整理目录移入回收站")

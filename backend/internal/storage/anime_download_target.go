@@ -9,15 +9,15 @@ import (
 )
 
 func animeTargetFromSettings(v model.AnimeSettings) (model.AnimeDownloadTarget, error) {
-	if v.AccountID == nil || v.AccountRevision == nil || v.UID == nil || v.DownloadCID == nil || v.DownloadPath == nil || v.OrganizeCID == nil {
+	if v.AccountID == nil || v.DownloadCID == nil || v.DownloadPath == nil || v.OrganizeCID == nil {
 		return model.AnimeDownloadTarget{}, ErrAnimeDirectoryRequired
 	}
-	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: v.Revision, AccountID: *v.AccountID, AccountRevision: *v.AccountRevision, UID: *v.UID, ParentCID: *v.DownloadCID, ParentPath: *v.DownloadPath}
+	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: v.Revision, AccountID: *v.AccountID, ParentCID: *v.DownloadCID, ParentPath: *v.DownloadPath}
 	return target, target.Validate()
 }
 
 // The settings revision also advances for organization-only edits. Actual
-// download account, credentials and directory must stay fixed independently.
+// download account and directory must stay fixed independently.
 func sameAnimeDownloadBinding(a, b model.AnimeDownloadTarget) bool {
 	a.SettingsRevision = b.SettingsRevision
 	return a == b
@@ -32,7 +32,7 @@ func (s *Store) CheckAnimeDownloadSettings(ctx context.Context, v model.AnimeDow
 }
 
 // CheckAnimeDownloadAccount permits an existing task to keep its original
-// directory after defaults change. Credential/account changes always fail.
+// directory after defaults change. Refreshing login for that account is harmless.
 func (s *Store) CheckAnimeDownloadAccount(ctx context.Context, v model.AnimeDownloadTarget) error {
 	return s.checkAnimeDownloadTarget(ctx, v, false)
 }
@@ -53,7 +53,7 @@ func checkAnimeDownloadTargetTx(ctx context.Context, tx *sql.Tx, v model.AnimeDo
 	if err := v.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrAnimeInvalid, err)
 	}
-	account := model.AnimeSettings{AccountID: &v.AccountID, AccountRevision: &v.AccountRevision, UID: &v.UID}
+	account := model.AnimeSettings{AccountID: &v.AccountID}
 	if err := checkAnimePrimaryTx(ctx, tx, account); err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func checkAnimeDownloadTargetTx(ctx context.Context, tx *sql.Tx, v model.AnimeDo
 	}
 	// Organization-only changes advance the shared settings revision without
 	// changing this download authorization. Compare the actual fixed binding.
-	if !sameAnimeString(settings.AccountID, &v.AccountID) || settings.AccountRevision == nil || *settings.AccountRevision != v.AccountRevision || !sameAnimeString(settings.UID, &v.UID) || !sameAnimeString(settings.DownloadCID, &v.ParentCID) || !sameAnimeString(settings.DownloadPath, &v.ParentPath) {
+	if !sameAnimeString(settings.AccountID, &v.AccountID) || !sameAnimeString(settings.DownloadCID, &v.ParentCID) || !sameAnimeString(settings.DownloadPath, &v.ParentPath) {
 		return ErrAnimeSettingsChanged
 	}
 	return nil

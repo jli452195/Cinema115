@@ -73,14 +73,14 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 			p := s.live[id]
 			cookie := p.account.Cookie
 			a, _ := s.Organize.accounts.Get(job.Config.AccountID)
-			replacement := "UID=456_new; SEID=replacement"
+			replacement := "UID=123_new_device; SEID=replacement"
 			if err = s.Organize.accounts.Update(a.ID, a.Revision, a.Name, &replacement); err != nil {
 				t.Fatal(err)
 			}
 			if done, err := s.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" {
 				t.Fatal("recovery did not complete", done, err, p.job)
 			}
-			if adder.cookie != "" || adder.url != "" || adder.deleted != "" || drive.creates != 3 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] || !bound && tracker.cookie != cookie {
+			if adder.cookie != "" || adder.url != "" || adder.deleted != "" || drive.creates != 3 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] || !bound && tracker.cookie != replacement {
 				t.Fatal("recovery resubmitted, recreated staging, or rebound account", adder, drive.creates, tracker.calls)
 			}
 			if len(drive.dirs["801"]) != 1 || drive.dirs["801"][0].ID != "902" || drive.renames != 1 || drive.moves != 1 {
@@ -90,10 +90,10 @@ func TestGardenResumeAfterRestartWithoutResubmission(t *testing.T) {
 				t.Fatal("resume lost companion subtitle identity or naming", p.job.Items)
 			}
 			delete(s.live, id)
-			// Media finished with the pinned credentials, but cleanup is a new
-			// write: the changed account must not resume that pending tail.
-			if _, err = s.Resume(id); err == nil || len(s.live) != 0 || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {
-				t.Fatal("cleanup resumed after account replacement", err)
+			// Both the worker round and a later recovery accept refreshed login
+			// credentials without replacing the original account identity.
+			if _, err = s.Resume(id); err != nil || len(s.live) != 1 || s.live[id].account.Cookie != replacement || tracker.calls != map[bool]int{false: 1, true: 0}[bound] {
+				t.Fatal("same-account refresh blocked cleanup recovery", err)
 			}
 			if !s.History()[0].Resumable || strings.Contains(s.Organize.store.Value(), cookie) {
 				t.Fatal("invalid history or persisted credential")
@@ -116,7 +116,8 @@ func TestGardenResumeRefusesFileWriteIntentAndInvalidState(t *testing.T) {
 				job.Download = nil
 			case "account-changed":
 				a, _ := s.Organize.accounts.Get(job.Config.AccountID)
-				if err := s.Organize.accounts.Update(a.ID, a.Revision, a.Name+" updated", nil); err != nil {
+				cookie := "UID=456_other; SEID=other-account"
+				if err := s.Organize.accounts.Update(a.ID, a.Revision, a.Name+" updated", &cookie); err != nil {
 					t.Fatal(err)
 				}
 			case "persistence-failure":

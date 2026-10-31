@@ -85,7 +85,7 @@ func TestAnimeAdminSettingsAccountCASAndReplay(t *testing.T) {
 	if err := s.SaveP115Accounts(ctx, state); err != nil {
 		t.Fatal(err)
 	}
-	v := model.AnimeSettings{Revision: 1, AccountID: animePtr("primary"), AccountRevision: animePtr(int64(2)), UID: animePtr("1234"), DownloadCID: animePtr("0"), DownloadPath: animePtr("/")}
+	v := model.AnimeSettings{Revision: 1, AccountID: animePtr("primary"), DownloadCID: animePtr("0"), DownloadPath: animePtr("/")}
 	k := animeAdminKey("settings_good")
 	k.Operation = "PATCH /api/admin/anime/settings"
 	first, err := s.SaveAnimeSettings(ctx, v, k)
@@ -94,6 +94,7 @@ func TestAnimeAdminSettingsAccountCASAndReplay(t *testing.T) {
 	}
 	state.Revision = 1
 	state.Accounts[0].Revision++
+	state.Accounts[0].ID = "new-primary"
 	if err := s.SaveP115Accounts(ctx, state); err != nil {
 		t.Fatal(err)
 	}

@@ -31,6 +31,9 @@ func (s *ShareTasks) GenerateBatch(ctx context.Context, inputs []GenerateInput) 
 
 // executePreparedBatch 执行已在接收阶段落盘的批次，供网页、Telegram 和订阅共用同一后台队列。
 func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.ShareTask, requests []shareTaskRequest, inputs []GenerateInput) ([]BatchOutcome, error) {
+	if len(tasks) != len(inputs) || len(requests) != len(inputs) {
+		return nil, fmt.Errorf("后台批次任务数量不一致")
+	}
 	_, mergeNotifications := s.Notifier.(ShareBatchSuccessNotifier)
 	mergeNotifications = mergeNotifications && len(inputs) > 1
 	executionCtx := ctx
@@ -50,6 +53,18 @@ func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.Sh
 		defer cancel()
 		s.notifyBatchSuccess(notifyCtx, "batch:"+tasks[0].ID, requests, outcomes)
 	}
+	if len(requests) > 0 {
+		executionCtx = context.WithValue(executionCtx, automationContextKey{}, requests[0].Settings)
+		executionCtx = s.withAccountCheck(executionCtx, requests[0].Settings.AccountID)
+	}
+	if err := checkGenerationAccount(executionCtx); err != nil {
+		outcomes := make([]BatchOutcome, len(inputs))
+		for i := range outcomes {
+			outcomes[i].Result, outcomes[i].Err = s.finish(executionCtx, tasks[i], requests[i], nil, err, 0)
+		}
+		notifyBatch(outcomes)
+		return outcomes, nil
+	}
 	batch, ok := s.Generator.(BatchGenerator)
 	if !ok {
 		outcomes := make([]BatchOutcome, len(inputs))
@@ -63,13 +78,7 @@ func (s *ShareTasks) executePreparedBatch(ctx context.Context, tasks []*model.Sh
 		notifyBatch(outcomes)
 		return outcomes, nil
 	}
-	if len(tasks) != len(inputs) || len(requests) != len(inputs) {
-		return nil, fmt.Errorf("后台批次任务数量不一致")
-	}
 	started := time.Now()
-	if len(requests) > 0 {
-		executionCtx = context.WithValue(executionCtx, automationContextKey{}, requests[0].Settings)
-	}
 	outcomes, batchErr := batch.GenerateBatch(executionCtx, inputs)
 	if len(outcomes) != len(inputs) {
 		outcomes = make([]BatchOutcome, len(inputs))

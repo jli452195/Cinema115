@@ -251,6 +251,9 @@ func (s *DownloadOrganize) uploadSubtitles(ctx context.Context, job *OrganizeJob
 		if err = s.Organize.checkpoint(job); err != nil {
 			return err
 		}
+		if _, err = s.Organize.account(job.Config.AccountID); err != nil {
+			return fail(sub, err)
+		}
 		if err = uploader.UploadSubtitle(ctx, video.TargetCID, name, data, cookie); err != nil {
 			return fail(sub, err)
 		}

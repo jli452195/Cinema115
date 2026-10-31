@@ -48,6 +48,78 @@ func runShareWorker(t *testing.T, runs *ShareRuns, cancel context.CancelFunc) {
 	})
 }
 
+func TestQueuedShareRefreshReusesRunAndPinsLoginAtExecution(t *testing.T) {
+	cookie := "UID=42_A; SEID=original"
+	refreshed := "UID=42_B; SEID=refreshed"
+	calls := 0
+	tasks, db, input := setupShareTasks(t, generateFunc(func(ctx context.Context, _ GenerateInput) (*GenerationResult, error) {
+		calls++
+		if got := generationCookie(ctx, nil); got != refreshed {
+			t.Fatal("queued run did not take the current login", got == "")
+		}
+		cookie = "UID=42_C; SEID=next-login"
+		if generationCookie(ctx, nil) != refreshed {
+			t.Fatal("running execution changed its pinned login")
+		}
+		return &GenerationResult{Written: 1}, nil
+	}))
+	settings := tasks.Settings.Value()
+	settings.AccountID = "original-account"
+	if err := tasks.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	tasks.AccountCookie = func(id string) string {
+		if id != settings.AccountID {
+			t.Fatal("queue changed account binding")
+		}
+		return cookie
+	}
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs := NewShareRuns(root, tasks)
+	first, err := runs.Submit(context.Background(), strings.Repeat("a", 32), []GenerateInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie = refreshed
+	second, err := runs.Submit(context.Background(), strings.Repeat("b", 32), []GenerateInput{input})
+	if err != nil || second.ID != first.ID || len(taskHistory(t, db)) != 1 {
+		t.Fatal("same-account login created duplicate work", first.ID, second.ID, err)
+	}
+	runShareWorker(t, runs, cancel)
+	completed := awaitRun(t, runs, first.ID)
+	if completed.Status != "success" || calls != 1 {
+		t.Fatal("refreshed run did not complete once", completed.Status, calls)
+	}
+}
+
+func TestQueuedBatchChecksAccountBeforeCallingBatchGenerator(t *testing.T) {
+	generator := &collectedGenerator{}
+	tasks, _, input := setupShareTasks(t, generator)
+	settings := tasks.Settings.Value()
+	settings.AccountID = "primary"
+	if err := tasks.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	cookie := tasks.Cookie()
+	tasks.AccountCookie = func(string) string { return cookie }
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs := NewShareRuns(root, tasks)
+	queued, err := runs.Submit(context.Background(), strings.Repeat("a", 32), []GenerateInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie = ""
+	runShareWorker(t, runs, cancel)
+	completed := awaitRun(t, runs, queued.ID)
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	if completed.Status != "failed" || len(generator.sizes) != 0 {
+		t.Fatal("signed-out account reached batch generator", completed.Status, generator.sizes)
+	}
+}
+
 func TestBackgroundRunSurvivesPageCloseAndPinsWholeSubmission(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -362,17 +434,17 @@ func TestSuccessfulSnapshotCacheSurvivesNewQueueAndInvalidatesWhenMoved(t *testi
 	if first.Status != "success" || calls.Load() != 1 || len(taskHistory(t, db)) != 1 {
 		t.Fatal("首个快照任务未成功")
 	}
-	cacheKey, err := shareRunFingerprint(settings, "", []GenerateInput{input})
+	cacheKey, err := shareRunFingerprint(settings, []GenerateInput{input})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record, found, err := db.LoadShareRunCache(context.Background(), cacheKey)
-	if err != nil || !found || strings.Contains(record, "private-cookie") || strings.Contains(record, cookieHash("UID=42_A; SEID=private-cookie")) {
+	if err != nil || !found || strings.Contains(record, "private-cookie") || strings.Contains(record, "credentialHash") {
 		t.Fatal("成功快照未保存或包含账号凭据", found, err)
 	}
 	otherAccount := settings
 	otherAccount.AccountID = "other-account"
-	otherKey, err := shareRunFingerprint(otherAccount, "", []GenerateInput{input})
+	otherKey, err := shareRunFingerprint(otherAccount, []GenerateInput{input})
 	if err != nil || otherKey == cacheKey {
 		t.Fatal("不同账号错误共享成功快照", err)
 	}

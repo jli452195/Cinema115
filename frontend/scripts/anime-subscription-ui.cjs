@@ -15,7 +15,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
     page.on('pageerror', e => errors.push(e.stack))
     page.on('dialog', dialog => dialog.accept())
     const calls = [], state = { role, naming: true, primary: true, ready: true, empty: false, zeroMatch: false, failPreview: false, failSearch: false, expired: false, saveMode: '', settingsMode: '', loseSelection: false, conflict: false, batch: 0, batches: new Map(), saved: undefined, regularEpisodes: 12,
-      settings: { revision: 1, accountId: 'primary', accountRevision: 2, uid: '10001', downloadCid: '100', downloadPath: '/动漫下载', organizeCid: '200', organizePath: '/动漫整理' } }
+      settings: { revision: 1, accountId: 'primary', downloadCid: '100', downloadPath: '/动漫下载', organizeCid: '200', organizePath: '/动漫整理' } }
     const card = id => ({ id, title: '从零开始的异世界生活 第三季', originalTitle: 'Re:ZERO', coverUrl: '', date: '2026-10-01', weekday: 1 })
     function item(ref, index) {
       const review = index === 2, filtered = state.zeroMatch || index === 3, ep = 25 + Math.floor(index / 2)
@@ -86,7 +86,7 @@ const wait = async (fn, label) => { for (let i = 0; i < 100; i++) { if (await fn
         if (url.searchParams.has('includeRelations')) data.relations = { items: [{ ...card('456'), title: '独立续篇', relation: '续集' }], expiresAt: Date.now() + 600000 }
       } else if (endpoint.endsWith('/settings') && method === 'GET') {
         if (state.settingsReadFailure) { status = 503; data = { error: '模拟目录设置读取失败' } }
-        else data = { settings: state.settings, primaryAccount: state.primary ? { id: 'primary', name: '115 主网盘', uid: '10001', revision: 2 } : null, readiness: { ready: state.ready && state.primary, issues: state.primary ? state.ready ? [] : ['DOWNLOAD_DIRECTORY_REQUIRED'] : ['PRIMARY_ACCOUNT_REQUIRED'] } }
+        else data = { settings: state.settings, primaryAccount: state.primary ? { id: 'primary', name: '115 主网盘' } : null, readiness: { ready: state.ready && state.primary, issues: state.primary ? state.ready ? [] : ['DOWNLOAD_DIRECTORY_REQUIRED'] : ['PRIMARY_ACCOUNT_REQUIRED'] } }
       }
       else if (endpoint.endsWith('/settings') && method === 'PATCH') {
         state.settings = { ...state.settings, revision: 2, downloadCid: body.downloadCid, downloadPath: '/新动漫目录' }; state.ready = true

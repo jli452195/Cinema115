@@ -345,7 +345,7 @@ func TestAnimeFilesIncompleteOrForeignTreeNeverBecomesVerified(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					replacement := "UID=123_B; SEID=replaced"
+					replacement := "UID=999_B; SEID=replaced"
 					if err := f.accounts.Update(a.ID, a.Revision, a.Name, &replacement); err != nil {
 						t.Fatal(err)
 					}

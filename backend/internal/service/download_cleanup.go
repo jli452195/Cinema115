@@ -43,7 +43,7 @@ func (s *DownloadOrganize) ownsCleanupRoot(job OrganizeJob, root string) bool {
 	defer s.Organize.mu.Unlock()
 	for _, member := range s.Organize.doc.Jobs {
 		m := member.Download
-		if m != nil && m.Share != nil && m.Share.LeaderID == job.ID && m.BatchID == d.BatchID && m.ParentCID == d.ParentCID && m.DirectoryID == root && member.Config.AccountID == job.Config.AccountID && member.Revision == job.Revision {
+		if m != nil && m.Share != nil && m.Share.LeaderID == job.ID && m.BatchID == d.BatchID && m.ParentCID == d.ParentCID && m.DirectoryID == root && member.Config.AccountID == job.Config.AccountID {
 			return true
 		}
 	}
@@ -67,7 +67,7 @@ func (s *DownloadOrganize) cleanupDownload(ctx context.Context, p *downloadPendi
 	for len(job.Download.CleanupDirs) > 0 {
 		root := job.Download.CleanupDirs[0]
 		account, err := o.account(job.Config.AccountID)
-		if err != nil || account.Revision != job.Revision || account.ID != p.account.ID || account.Revision != p.account.Revision {
+		if err != nil || account.ID != p.account.ID {
 			return "原任务账号配置已变化，下载目录未清理", nil
 		}
 		if !s.ownsCleanupRoot(*job, root) {
@@ -109,6 +109,9 @@ func (s *DownloadOrganize) finishDownload(ctx context.Context, p *downloadPendin
 	job.Message = "所选文件已整理，下载目录已清理"
 	if share := job.Download.Share; share != nil {
 		if !share.HandedOff {
+			if _, err := o.account(job.Config.AccountID); err != nil {
+				return s.stop(p, "interrupted", "文件已整理，原任务主账号不可用；请恢复登录或核对账号后继续原任务")
+			}
 			if s.Shares == nil {
 				return s.stop(p, "interrupted", "文件已整理，分享队列尚未初始化；可继续原任务交接分享")
 			}

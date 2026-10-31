@@ -35,7 +35,7 @@ func animeEnabledStageWithConfig(t *testing.T, configure func(*animeDownloadFixt
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.settings, err = f.service.SaveSettings(ctx, "admin", "stage_settings_01", AnimeSettingsInput{ExpectedRevision: f.settings.Revision, DownloadCID: *f.settings.DownloadCID, OrganizeCID: bindingPtr("900"), ExpectedPrimaryAccountID: account.ID, ExpectedPrimaryAccountRevision: int64(account.Revision)})
+	f.settings, err = f.service.SaveSettings(ctx, "admin", "stage_settings_01", AnimeSettingsInput{ExpectedRevision: f.settings.Revision, DownloadCID: *f.settings.DownloadCID, OrganizeCID: bindingPtr("900"), ExpectedPrimaryAccountID: account.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

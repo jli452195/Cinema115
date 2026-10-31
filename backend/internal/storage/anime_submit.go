@@ -47,7 +47,7 @@ func (s *Store) GetAnimeSubmitOperation(ctx context.Context, jobID string) (mode
 
 func animeSubmitRequest(job model.AnimeDownloadJob, target model.AnimeDownloadTarget) (model.AnimeSubmitRequest, error) {
 	var empty model.AnimeSubmitRequest
-	if target.Validate() != nil || job.Snapshot.Target != target || job.AccountID != target.AccountID || job.UID != target.UID || job.AccountRevision != target.AccountRevision || job.SettingsRevision != target.SettingsRevision || job.ParentCID != target.ParentCID || job.Snapshot.Protocol != "bt_v1" {
+	if target.Validate() != nil || job.Snapshot.Target != target || job.AccountID != target.AccountID || job.SettingsRevision != target.SettingsRevision || job.ParentCID != target.ParentCID || job.Snapshot.Protocol != "bt_v1" {
 		return empty, ErrAnimeResourceTarget
 	}
 	if job.DirectoryCID == nil || !model.ValidAnimeExternalID(*job.DirectoryCID) || *job.DirectoryCID == job.ParentCID || job.DirectoryName != "anime-"+job.ID {

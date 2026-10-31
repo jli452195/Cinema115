@@ -66,7 +66,7 @@ func TestAnimeSchemaUpgradeAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings, err := upgraded.GetAnimeSettings(ctx)
-	if err != nil || settings.Revision != 1 || settings.AccountID != nil || settings.UID != nil {
+	if err != nil || settings.Revision != 1 || settings.AccountID != nil {
 		t.Fatalf("unexpected settings: %+v %v", settings, err)
 	}
 	e := createAnimeEntry(t, upgraded, animePtr("123"))

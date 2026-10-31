@@ -90,7 +90,7 @@ func (s *OrganizeEngine) runJob(ctx context.Context, job *OrganizeJob, cookie st
 
 // Directory creation is covered by the persisted preparing intent. Resolve
 // each path prefix only once and verify each newly created directory by ID.
-func (s *OrganizeEngine) resolveDirectory(ctx context.Context, directory string, directories map[string]string, cookie string, create bool) (string, error) {
+func (s *OrganizeEngine) resolveDirectory(ctx context.Context, directory, accountID string, directories map[string]string, cookie string, create bool) (string, error) {
 	cid, prefix := directories[""], ""
 	if directory == "" {
 		return cid, nil
@@ -116,6 +116,9 @@ func (s *OrganizeEngine) resolveDirectory(ctx context.Context, directory string,
 		if next == "" {
 			if !create {
 				return "", fmt.Errorf("原定目标目录不存在，未创建替代目录")
+			}
+			if _, err := s.account(accountID); err != nil {
+				return "", err
 			}
 			started := time.Now()
 			next, err = s.drive.CreateDirectory(ctx, cid, part, cookie)
@@ -170,6 +173,9 @@ func (s *OrganizeEngine) listBatchResult(ctx context.Context, job *OrganizeJob, 
 }
 
 func (s *OrganizeEngine) runBatch(ctx context.Context, job *OrganizeJob, batch organizeBatch, directories map[string]string, cookie string) (bool, error) {
+	if _, err := s.account(job.Config.AccountID); err != nil {
+		return s.stopBatch(job, batch, organizePublicError(err, cookie))
+	}
 	source, err := s.list(ctx, batch.source, cookie)
 	if err != nil {
 		return s.stopBatch(job, batch, organizePublicError(err, cookie))
@@ -186,7 +192,7 @@ func (s *OrganizeEngine) runBatch(ctx context.Context, job *OrganizeJob, batch o
 			create = false
 		}
 	}
-	cid, err := s.resolveDirectory(ctx, batch.directory, directories, cookie, create)
+	cid, err := s.resolveDirectory(ctx, batch.directory, job.Config.AccountID, directories, cookie, create)
 	if err != nil {
 		return s.stopBatch(job, batch, organizePublicError(err, cookie))
 	}
@@ -242,6 +248,9 @@ func (s *OrganizeEngine) runBatch(ctx context.Context, job *OrganizeJob, batch o
 	if len(renames) > 0 {
 		if err := s.checkpoint(job); err != nil {
 			return false, err
+		}
+		if _, err := s.account(job.Config.AccountID); err != nil {
+			return s.stopBatch(job, batch, organizePublicError(err, cookie))
 		}
 		started := time.Now()
 		writeErr := s.drive.RenameEntries(ctx, renames, cookie)
@@ -302,6 +311,9 @@ func (s *OrganizeEngine) runBatch(ctx context.Context, job *OrganizeJob, batch o
 	// This checkpoint includes all rename outcomes and precise move intent.
 	if err := s.checkpoint(job); err != nil {
 		return false, err
+	}
+	if _, err := s.account(job.Config.AccountID); err != nil {
+		return s.stopBatch(job, batch, organizePublicError(err, cookie))
 	}
 	started := time.Now()
 	writeErr := s.drive.MoveEntriesBatch(ctx, ids, cid, cookie)

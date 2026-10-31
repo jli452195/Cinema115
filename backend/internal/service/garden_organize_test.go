@@ -352,7 +352,7 @@ func TestDownloadFilesCacheAliasesAndConservativeSuggestions(t *testing.T) {
 	}
 }
 
-func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T) {
+func TestResourceDownloadOrganizeRefreshesBetweenRoundsAndPinsEachRound(t *testing.T) {
 	s, drive, adder, tracker, _, in := gardenFixture(t)
 	ctx := context.Background()
 	preview, err := s.Preview(ctx, in)
@@ -371,13 +371,17 @@ func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T)
 	}
 	p := s.live[job.ID]
 	oldCookie := p.account.Cookie
-	account, _ := s.Organize.accounts.Get(in.AccountID)
-	replacement := "UID=456_other; SEID=replacement"
-	if err = s.Organize.accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
-		t.Fatal(err)
-	}
+	tracker.err = errors.New("HTTP 401")
 	if done, err := s.advance(ctx, p); err != nil || done || adder.cookie != oldCookie || adder.cid != p.job.Download.DirectoryID {
 		t.Fatal("submit did not pin", done, err, adder)
+	}
+	if p.job.Status != "downloading" || tracker.calls != 1 || tracker.cookie != oldCookie {
+		t.Fatal("expired login did not retain the submitted task", p.job.Status, tracker.calls)
+	}
+	for _, cookie := range drive.cookies {
+		if cookie != oldCookie {
+			t.Fatal("first round changed credentials")
+		}
 	}
 	if release, err := s.Organize.ReserveDirectoryWork(); err != nil {
 		t.Fatal("download wait held organize lock", err)
@@ -389,10 +393,25 @@ func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T)
 	drive.dirs[dir] = []p115.ShareFile{{ID: "801", Name: "show", Directory: true}}
 	drive.dirs["801"] = []p115.ShareFile{{ID: "901", Name: "[Group] Show [01].mkv", Size: 1200}, {ID: "902", Name: "[Group] Show [02].mkv", Size: 1300}, {ID: "903", Name: "subtitles.zip", Size: 10}}
 	tracker.cid = dir
+	account, _ := s.Organize.accounts.Get(in.AccountID)
+	replacement := "UID=123_new_device; SEID=replacement"
+	if err = s.Organize.accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
+		t.Fatal(err)
+	}
+	tracker.err = nil
+	tracker.beforeRead = func() {
+		// A second login during this round is available only to later rounds.
+		current, _ := s.Organize.accounts.Get(in.AccountID)
+		latest := "UID=123_latest_device; SEID=latest"
+		if err := s.Organize.accounts.Update(current.ID, current.Revision, current.Name, &latest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drive.cookies = nil
 	if done, err := s.advance(ctx, p); err != nil || !done || p.job.Status != "completed" {
 		t.Fatal("organize failed", done, err, p.job)
 	}
-	if tracker.cookie != oldCookie || len(drive.moveBatches) != 1 || len(drive.moveBatches[0]) != 1 || drive.moveBatches[0][0] != "901" {
+	if tracker.calls != 2 || tracker.cookie != replacement || adder.cookie != oldCookie || len(drive.moveBatches) != 1 || len(drive.moveBatches[0]) != 1 || drive.moveBatches[0][0] != "901" {
 		t.Fatal("wrong selection/account", drive.moveBatches, tracker.cookie)
 	}
 	if len(drive.dirs["801"]) != 2 || drive.dirs["801"][0].ID != "902" {
@@ -402,8 +421,8 @@ func TestResourceDownloadOrganizePinsAccountAndPreservesUnselected(t *testing.T)
 		t.Fatal("credential persisted")
 	}
 	for _, cookie := range drive.cookies {
-		if cookie != oldCookie {
-			t.Fatal("drive rebound account")
+		if cookie != replacement {
+			t.Fatal("second round changed its credential snapshot")
 		}
 	}
 	if _, err = s.Start(preview.ID); err != nil || drive.creates != 3 {

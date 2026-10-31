@@ -67,7 +67,7 @@ func TestAnimeJobActionReadFailureRetryAndImmutableTerminal(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "account":
-				if _, err := f.store.db.Exec(`UPDATE p115_accounts SET uid='999'`); err != nil {
+				if _, err := f.store.db.Exec(`UPDATE p115_accounts SET id='new-primary',uid='999'`); err != nil {
 					t.Fatal(err)
 				}
 			case "conflict":

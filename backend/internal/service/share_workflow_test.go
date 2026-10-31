@@ -229,6 +229,45 @@ func TestShareWorkflowWaitsForSnapshotAndCleansOnlyOwnedDirectory(t *testing.T) 
 	}
 }
 
+func TestShareWorkflowRefreshKeepsPinnedCookieAndSignOutStopsCleanup(t *testing.T) {
+	for _, action := range []string{"refresh", "sign-out"} {
+		t.Run(action, func(t *testing.T) {
+			fake := &transferFake{}
+			workflow, input := setupWorkflow(t, fake)
+			settings := workflow.Settings.Value()
+			settings.AccountID = "original-account"
+			if err := workflow.Settings.Save(settings); err != nil {
+				t.Fatal(err)
+			}
+			cookie := workflow.Cookie()
+			generator := workflow.Generator
+			workflow.Generator = generateFunc(func(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
+				result, err := generator.Generate(ctx, input)
+				if action == "refresh" {
+					cookie = "UID=42_B; SEID=refreshed"
+				} else {
+					cookie = ""
+				}
+				return result, err
+			})
+			tasks := &ShareTasks{Generator: workflow, Settings: workflow.Settings, Store: workflow.Jobs.(*storage.Store), AccountCookie: func(id string) string {
+				if id != settings.AccountID {
+					t.Fatal("execution switched account binding")
+				}
+				return cookie
+			}}
+			result, err := tasks.Generate(context.Background(), input)
+			if action == "refresh" {
+				if err != nil || result == nil || !result.Cleaned || !fake.deleted {
+					t.Fatal("same-account refresh blocked cleanup", result, err)
+				}
+			} else if err == nil || fake.deleted || strings.Contains(strings.Join(fake.calls, ","), "delete") {
+				t.Fatal("sign-out allowed another cloud write", result, err)
+			}
+		})
+	}
+}
+
 func TestShareWorkflowWaitsForAllTransferredChildrenBeforeSharing(t *testing.T) {
 	fake := &transferFake{missingChildren: 2}
 	w, input := setupWorkflow(t, fake)

@@ -96,7 +96,7 @@ func TestDownloadCleanupRetainsFailedSelection(t *testing.T) {
 	}
 }
 
-func TestDownloadCleanupFailureRestartsAndResumesOnlyCleanup(t *testing.T) {
+func TestDownloadCleanupFailureRestartsRefreshesAndResumesOnlyCleanup(t *testing.T) {
 	f := newDownloadCleanupFixture(t)
 	f.drive.deleteErr = errors.New("delete unavailable")
 	f.finish(t)
@@ -120,6 +120,14 @@ func TestDownloadCleanupFailureRestartsAndResumesOnlyCleanup(t *testing.T) {
 	}
 	f.drive.deleteErr = nil
 	f.adder.url = ""
+	account, err := engine.accounts.Primary(f.p.account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=123_refreshed; SEID=cleanup-refresh"
+	if err := engine.accounts.Update(account.ID, account.Revision, "renamed account", &cookie); err != nil {
+		t.Fatal(err)
+	}
 	reads, creates, renames, moves, polls := 0, f.drive.creates, f.drive.renames, f.drive.moves, f.tracker.calls
 	f.drive.beforeRead = func(cid string, _ int) error {
 		reads++
@@ -129,8 +137,8 @@ func TestDownloadCleanupFailureRestartsAndResumesOnlyCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := restarted.live[f.p.job.ID]
-	if p == nil {
-		t.Fatal("cleanup recovery did not join original task")
+	if p == nil || p.account.Cookie != cookie {
+		t.Fatal("cleanup recovery did not use the original account's current credentials")
 	}
 	if done, err := restarted.advance(context.Background(), p); err != nil || !done || p.job.Status != "completed" || len(p.job.Download.CleanupDirs) != 0 {
 		t.Fatal("cleanup recovery did not finish", done, err, p.job)

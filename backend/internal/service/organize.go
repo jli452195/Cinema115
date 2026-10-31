@@ -55,9 +55,8 @@ type OrganizeFile struct {
 }
 
 type OrganizeScan struct {
-	Files    []OrganizeFile `json:"files"`
-	Config   OrganizeConfig `json:"-"`
-	Revision uint64         `json:"-"`
+	Files  []OrganizeFile `json:"files"`
+	Config OrganizeConfig `json:"-"`
 }
 
 type OrganizeSelection struct {
@@ -94,7 +93,6 @@ type OrganizeJob struct {
 	Numbering *tmdb.NumberingInfo `json:"numbering,omitempty"`
 	ID        string              `json:"id"`
 	Config    OrganizeConfig      `json:"config"`
-	Revision  uint64              `json:"revision"`
 	Kind      string              `json:"kind"`
 	TMDBID    int                 `json:"tmdbId"`
 	Title     string              `json:"title"`
@@ -200,14 +198,7 @@ func (s *OrganizeEngine) account(id string) (P115Account, error) {
 	if id == "" {
 		return P115Account{}, fmt.Errorf("%w：请先配置整理使用的主账号", ErrOrganizeInput)
 	}
-	a, err := s.accounts.Primary(id)
-	if err != nil {
-		return a, err
-	}
-	if a.Cookie == "" {
-		return a, fmt.Errorf("%w：所选账号未登录，请配置凭据", ErrOrganizeInput)
-	}
-	return a, nil
+	return s.accounts.Primary(id)
 }
 
 // Exhaust pagination before checking names; an incomplete directory must never

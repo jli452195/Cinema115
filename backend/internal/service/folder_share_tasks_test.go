@@ -100,7 +100,7 @@ func TestDirectoryShareUsesDurableCommonTaskAndPreservesMetadataFailure(t *testi
 	}
 }
 
-func TestDirectorySharePinsBindingAndRejectsCredentialChanges(t *testing.T) {
+func TestDirectorySharePinsBindingAndAcceptsSameAccountLoginRefresh(t *testing.T) {
 	svc, client, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	tasks := directorySharedTasks(t, svc, generator, value)
@@ -128,8 +128,17 @@ func TestDirectorySharePinsBindingAndRejectsCredentialChanges(t *testing.T) {
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.createdNames) != 0 || generator.calls != 0 || loadMonitor(t, svc, value.ID).Stage != "blocked" {
-		t.Fatal("queued task changed credentials")
+	if len(client.createdNames) != 1 || loadMonitor(t, svc, value.ID).Stage != "generating" {
+		t.Fatal("same-account login blocked queued task")
+	}
+	if err := tasks.retryDue(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 1 || loadMonitor(t, svc, value.ID).Stage != "completed" || len(client.deleted) != 1 {
+		t.Fatal("same-account login blocked generation or cleanup")
 	}
 }
 

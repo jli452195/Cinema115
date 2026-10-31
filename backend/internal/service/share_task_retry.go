@@ -41,8 +41,8 @@ func (s *ShareTasks) RetryReason(task model.ShareTask) string {
 		return "原任务未绑定明确的 115 账号"
 	}
 	cookie := s.AccountCookie(req.Settings.AccountID)
-	if strings.TrimSpace(cookie) == "" || cookieHash(cookie) != req.CookieHash {
-		return "原任务账号不存在或登录凭据已变化，请检查账号配置"
+	if strings.TrimSpace(cookie) == "" {
+		return "原任务主账号已变化或未登录，请检查账号配置"
 	}
 	return ""
 }

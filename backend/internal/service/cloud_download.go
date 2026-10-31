@@ -82,6 +82,9 @@ func (s *CloudDownloadService) Submit(ctx context.Context, config CloudDownloadC
 func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudDownloadConfig, account P115Account, rawURL string) (CloudDownloadReceipt, error) {
 	ctx, cancel := context.WithTimeout(ctx, CloudDownloadTimeout)
 	defer cancel()
+	if err := s.Accounts.ValidatePrimary(account.ID); err != nil {
+		return CloudDownloadReceipt{}, err
+	}
 	resource, err := p115.ParseCloudResource(rawURL)
 	if err != nil {
 		return CloudDownloadReceipt{}, err
@@ -94,7 +97,9 @@ func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudD
 		return receipt, err
 	}
 	defer release()
-	result, err := submitCloudResource(ctx, s.Client, account.Cookie, resource, rawURL, strings.TrimSpace(config.TargetCID), nil)
+	result, err := submitCloudResource(ctx, s.Client, account.Cookie, resource, rawURL, strings.TrimSpace(config.TargetCID), func() error {
+		return s.Accounts.ValidatePrimary(account.ID)
+	})
 	result.AccountName, result.TargetPath = receipt.AccountName, receipt.TargetPath
 	return result, err
 }
@@ -139,6 +144,11 @@ func submitCloudResource(ctx context.Context, client CloudURLAdder, cookie strin
 	}
 	if err := ctx.Err(); err != nil {
 		return receipt, err
+	}
+	if found && beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return receipt, err
+		}
 	}
 	raw, err := client.AddURL(ctx, cookie, rawURL, cid)
 	if err != nil {

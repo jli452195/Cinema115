@@ -150,8 +150,8 @@ func TestAnimeStatusRunnerRateLimitAndReadErrorsAreRedacted(t *testing.T) {
 					t.Fatal("Retry-After ignored", next)
 				}
 			}
-			if mode == "403" && next != nil {
-				t.Fatal("access denied kept polling")
+			if mode == "403" && (next == nil || *next < *now+(5*time.Minute).Milliseconds()) {
+				t.Fatal("access denied lost its recovery cooldown")
 			}
 		})
 	}
@@ -166,7 +166,7 @@ func TestAnimeStatusRunnerRejectsChangedCredentialBeforeAndAfterRead(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
-				cookie := "UID=123_B; SEID=replaced"
+				cookie := "UID=999_B; SEID=replaced"
 				if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 					t.Fatal(err)
 				}
@@ -191,6 +191,38 @@ func TestAnimeStatusRunnerRejectsChangedCredentialBeforeAndAfterRead(t *testing.
 				t.Fatal("stale credential response accepted", got, reads)
 			}
 		})
+	}
+}
+
+func TestAnimeStatusRunnerSameAccountLoginResumesOldAccountBlock(t *testing.T) {
+	f, db, job, runner, now := animeStatusFixture(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`UPDATE anime_download_jobs SET file_state='needs_review',block_code='DOWNLOAD_ACCOUNT_CHANGED',next_run_at=NULL WHERE id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	account, err := f.accounts.Primary(job.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCookie := "UID=123_B; SEID=restored-login"
+	if err := f.accounts.Update(account.ID, account.Revision, account.Name, &newCookie); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	f.service.StatusGateway = animeStatusReaderFunc(func(_ context.Context, cookie, hash string) (model.AnimeOfflineStatus, error) {
+		reads++
+		if cookie != newCookie || hash != job.Snapshot.InfoHash {
+			t.Fatal("recovery did not use this account's refreshed credential")
+		}
+		return serviceAnimeStatus(job, "running", 20), nil
+	})
+	*now += 6000
+	if err := runner.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.service.Store.GetAnimeDownloadJob(ctx, job.ID)
+	if err != nil || reads != 1 || got.BlockCode != nil || got.FileState != "pending" || got.DownloadState != "downloading" || got.ClaimID != job.ClaimID {
+		t.Fatal("old account-version block did not resume original task", reads, err)
 	}
 }
 

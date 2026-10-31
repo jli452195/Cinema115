@@ -253,7 +253,7 @@ func animeStatusReadFailure(err error, now int64) (string, int64) {
 	var response *p115.HTTPError
 	if errors.As(err, &response) {
 		if response.Status == 401 || response.Status == 403 {
-			return "TASK_ACCESS_DENIED", 0
+			return "TASK_ACCESS_DENIED", now + (5 * time.Minute).Milliseconds()
 		}
 		if response.Status == 429 || response.Status == 503 && response.RetryAfter > 0 {
 			return "TASK_RATE_LIMITED", now + max(int64(response.RetryAfter/time.Millisecond), 0)

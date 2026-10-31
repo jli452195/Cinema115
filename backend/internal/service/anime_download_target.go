@@ -52,7 +52,7 @@ func (s *AnimeAdminService) PrepareDownloadTarget(ctx context.Context, expectedS
 		return nil, storage.ErrAnimeSettingsChanged
 	}
 	issues := make([]string, 0, 2)
-	if settings.AccountID == nil || settings.AccountRevision == nil || settings.UID == nil {
+	if settings.AccountID == nil {
 		issues = append(issues, "PRIMARY_ACCOUNT_REQUIRED")
 	}
 	if settings.DownloadCID == nil || settings.DownloadPath == nil {
@@ -63,7 +63,7 @@ func (s *AnimeAdminService) PrepareDownloadTarget(ctx context.Context, expectedS
 	}
 	target := model.AnimeDownloadTarget{
 		SchemaVersion: model.AnimeSchemaVersion, SettingsRevision: settings.Revision,
-		AccountID: *settings.AccountID, AccountRevision: *settings.AccountRevision, UID: *settings.UID,
+		AccountID: *settings.AccountID,
 		ParentCID: *settings.DownloadCID, ParentPath: *settings.DownloadPath,
 	}
 	session, err := s.ResumeDownloadTarget(ctx, target)
@@ -78,7 +78,7 @@ func (s *AnimeAdminService) PrepareDownloadTarget(ctx context.Context, expectedS
 	return session, nil
 }
 
-// ResumeDownloadTarget reads only the saved account/revision/UID and CID.
+// ResumeDownloadTarget reads only the saved account and CID.
 // A change to current defaults cannot retarget an existing task. A directory
 // rename is harmless: the original display path remains part of its snapshot.
 func (s *AnimeAdminService) ResumeDownloadTarget(ctx context.Context, target model.AnimeDownloadTarget) (*AnimeDownloadSession, error) {
@@ -102,11 +102,12 @@ func (s *AnimeAdminService) ResumeDownloadTarget(ctx context.Context, target mod
 }
 
 func animeDownloadAccountMatches(a P115Account, v model.AnimeDownloadTarget) bool {
-	return a.Primary && a.Ownership == "admin" && a.OwnerUserID == "" && a.ID == v.AccountID && a.UID == v.UID && a.Revision == uint64(v.AccountRevision) && a.Cookie != "" && accountUID(a.Cookie) == v.UID
+	return a.Primary && a.Ownership == "admin" && a.OwnerUserID == "" && a.ID == v.AccountID && a.Cookie != ""
 }
 
-// Validate rejects changed or removed credentials without replacing the pinned
-// Cookie. Workers must call it before new I/O. Already-issued requests cannot
+// Validate rejects a removed, cleared or replaced account without replacing
+// the pinned Cookie. Same-account login refreshes do not retarget a running
+// session. Workers must call it before new I/O. Already-issued requests cannot
 // be undone; unknown outcomes are reconciled by the later job lifecycle.
 func (s *AnimeDownloadSession) Validate(ctx context.Context) error {
 	if s == nil || s.store == nil || s.accounts == nil || s.directories == nil {
@@ -116,7 +117,7 @@ func (s *AnimeDownloadSession) Validate(ctx context.Context) error {
 		return err
 	}
 	a, err := s.accounts.Primary(s.target.AccountID)
-	if err != nil || !animeDownloadAccountMatches(a, s.target) || a.Cookie != s.cookie {
+	if err != nil || !animeDownloadAccountMatches(a, s.target) {
 		return storage.ErrAnimeAccountChanged
 	}
 	if err := s.store.CheckAnimeDownloadAccount(ctx, s.target); err != nil {

@@ -248,7 +248,7 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 					continue
 				}
 				attachments = append(attachments, model.DriveSTRMAttachment{
-					Record: item.record, AccountID: r.value.AccountID, CredentialKey: DirectLinkKey(r.cookie),
+					Record: item.record, AccountID: r.value.AccountID,
 					SourceCID: r.value.SourceCID, OutputDir: r.value.OutputDir, Settings: r.value.Settings,
 					Name: item.file.Name, PickCode: item.file.PickCode, SHA1: item.file.SHA1, Size: item.file.Size,
 				})

@@ -379,7 +379,7 @@ func (s *Store) QueueDriveSTRMAttachments(ctx context.Context, values []model.Dr
 	}
 	defer stmt.Close()
 	for _, value := range values {
-		if value.Record.MappingID == "" || value.Record.FileID == "" || value.Record.Directory || value.Record.Path == "" || value.AccountID == "" || value.CredentialKey == "" || value.SourceCID == "" || value.Name == "" {
+		if value.Record.MappingID == "" || value.Record.FileID == "" || value.Record.Directory || value.Record.Path == "" || value.AccountID == "" || value.SourceCID == "" || value.Name == "" {
 			return fmt.Errorf("目录 STRM 附件待办缺少文件或来源信息")
 		}
 		value.Record.Digest = ""

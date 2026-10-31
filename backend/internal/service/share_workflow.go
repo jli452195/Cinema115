@@ -216,6 +216,9 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 			}
 		}
 	}()
+	if err := checkGenerationAccount(ctx); err != nil {
+		return nil, err
+	}
 	job.DirectoryID, err = w.Client.CreateDirectory(ctx, settings.ParentCID, job.DirectoryName, cookie)
 	if err != nil {
 		return nil, fmt.Errorf("创建临时目录失败，若请求已在 115 执行请按名称 %s 检查: %w", job.DirectoryName, err)
@@ -266,12 +269,18 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 			return nil, err
 		}
 	}
+	if err := checkGenerationAccount(ctx); err != nil {
+		return nil, err
+	}
 	own, err := w.Client.SendShare(ctx, fileIDs(transferred), cookie)
 	if err != nil {
 		return nil, fmt.Errorf("创建分享失败，保留临时目录: %w", err)
 	}
 	job.ShareURL = own.URL
 	if err := persist("setting_duration"); err != nil {
+		return nil, err
+	}
+	if err := checkGenerationAccount(ctx); err != nil {
 		return nil, err
 	}
 	configureErr := w.Client.ConfigureShare(ctx, own, sharePassword, cookie)
@@ -311,7 +320,7 @@ func (w *ShareWorkflow) resharePrepared(ctx context.Context, settings Automation
 	if err != nil {
 		return result, fmt.Errorf("新分享已创建，但 STRM 生成失败，保留临时目录: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := checkGenerationAccount(ctx); err != nil {
 		return result, err
 	}
 	// Cookie 在任务内固定，避免用户切换账号后误删另一个账号的同名目录。

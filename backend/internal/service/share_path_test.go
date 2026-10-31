@@ -74,12 +74,12 @@ func TestSharePathGenerationAndFingerprint(t *testing.T) {
 	if err != nil || result.Written != 1 {
 		t.Fatalf("generation %+v: %v", result, err)
 	}
-	first, err := shareRunFingerprint(AutomationSettings{}, "cookie", []GenerateInput{input})
+	first, err := shareRunFingerprint(AutomationSettings{}, []GenerateInput{input})
 	if err != nil {
 		t.Fatal(err)
 	}
 	input.SharePath = "/"
-	second, err := shareRunFingerprint(AutomationSettings{}, "cookie", []GenerateInput{input})
+	second, err := shareRunFingerprint(AutomationSettings{}, []GenerateInput{input})
 	if err != nil || first == second {
 		t.Fatal("different scopes shared task cache", err)
 	}

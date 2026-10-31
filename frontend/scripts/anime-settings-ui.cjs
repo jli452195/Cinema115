@@ -10,7 +10,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   page.setDefaultTimeout(10000); page.on('pageerror', e => errors.push(e.message))
   const state = { primary: true, stale: false, failRead: false, loseRSS: false, loseDirectory: false, conflict: false, gate: null, rssWrites: 0, directoryWrites: 0 }
   let rss = { revision: 1, pollMinutes: 15, autoArchive: true, inactiveArchiveDays: 60 }
-  let settings = { revision: 1, accountId: 'main', accountRevision: 2, uid: '123', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
+  let settings = { revision: 1, accountId: 'main', downloadCid: '100', downloadPath: '/下载', organizeCid: '900', organizePath: '/整理' }
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), endpoint = url.pathname, method = req.method(), body = req.postDataJSON(), key = req.headers()['idempotency-key']
     calls.push({ endpoint, method, body, key, query: url.search }); let data = {}, status = 200
@@ -32,13 +32,13 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       }
     } else if (endpoint.endsWith('/settings') && method === 'GET') {
       if (state.failRead) { status = 503; data = { error: '模拟配置读取失败' } }
-      else data = { settings, primaryAccount: state.primary ? { id: 'main', name: '主网盘', uid: '123', revision: 2 } : null, readiness: { ready: state.primary && !state.stale, issues: !state.primary ? ['PRIMARY_ACCOUNT_REQUIRED'] : state.stale ? ['ACCOUNT_SNAPSHOT_CHANGED'] : [] } }
+      else data = { settings, primaryAccount: state.primary ? { id: state.stale ? 'other-main' : 'main', name: '主网盘' } : null, readiness: { ready: state.primary && !state.stale, issues: !state.primary ? ['PRIMARY_ACCOUNT_REQUIRED'] : state.stale ? ['ACCOUNT_SNAPSHOT_CHANGED'] : [] } }
     } else if (method === 'PATCH' && /\/settings(?:\/organize-directory)?$/.test(endpoint)) {
       if (receipts.has(key)) { assert.deepEqual(body, receipts.get(key).body); data = receipts.get(key).data }
       else {
         assert.equal(body.expectedRevision, settings.revision)
         const organize = endpoint.endsWith('/organize-directory')
-        if (!organize) { assert.equal(body.expectedPrimaryAccountId, 'main'); assert.equal(body.expectedPrimaryAccountRevision, 2) }
+        if (!organize) { assert.equal(body.expectedPrimaryAccountId, 'main'); assert.equal('expectedPrimaryAccountRevision' in body, false) }
         state.directoryWrites++; settings = { ...settings, revision: settings.revision + 1, ...(organize ? { organizeCid: body.cid, organizePath: '/新整理' } : { downloadCid: body.downloadCid, downloadPath: '/新下载' }) }
         data = organize ? { id: 'anime-settings', revision: settings.revision, settings } : settings
         receipts.set(key, { body, data })

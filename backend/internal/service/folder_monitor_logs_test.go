@@ -205,7 +205,6 @@ func TestFolderMonitorLegacyPostCleanupResumesLocally(t *testing.T) {
 			value.Stage, value.CleanupIndex = stage, 1
 			value.BatchDirectoryID, value.LogTaskID = "900", "legacy-log"
 			value.ShareURL, value.LastError = "no-longer-readable", "old post-cleanup failure"
-			value.BatchCredentialHash, value.BatchAccountRevision = "old-credentials", 999
 			if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 				t.Fatal(err)
 			}

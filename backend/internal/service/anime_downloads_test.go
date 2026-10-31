@@ -156,7 +156,7 @@ func TestAnimeClaimDownloadMutationDuringVerificationRollsBack(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					cookie := "UID=123_A; SEID=updated"
+					cookie := "UID=999_A; SEID=updated"
 					if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 						t.Fatal(err)
 					}

@@ -53,7 +53,7 @@ func takeAnimeStatusPoll(t *testing.T, f *downloadClaimFixture, now int64) Anime
 
 func TestAnimeContinuationsRespectOtherStagesUIDGuards(t *testing.T) {
 	for _, kind := range []string{"status", "execution"} {
-		for _, guard := range []string{"lease", "rate limit", "credentials"} {
+		for _, guard := range []string{"lease", "rate limit"} {
 			t.Run(kind+"/"+guard, func(t *testing.T) {
 				var f *downloadClaimFixture
 				var job model.AnimeDownloadJob
@@ -81,11 +81,6 @@ func TestAnimeContinuationsRespectOtherStagesUIDGuards(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-				case "credentials":
-					_, err := f.store.db.Exec(`UPDATE anime_download_jobs SET block_code='TASK_ACCESS_DENIED' WHERE id=?`, other.ID)
-					if err != nil {
-						t.Fatal(err)
-					}
 				}
 				reserve := func() (bool, error) {
 					if kind == "status" {
@@ -106,6 +101,58 @@ func TestAnimeContinuationsRespectOtherStagesUIDGuards(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAnimeStatusAccountErrorsRecoverWithSameAccountAndBackoff(t *testing.T) {
+	for _, code := range []string{"DOWNLOAD_ACCOUNT_CHANGED", "TASK_ACCESS_DENIED"} {
+		t.Run(code, func(t *testing.T) {
+			f, job, now := animeStatusStoreFixture(t)
+			ctx := context.Background()
+			if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET file_state='needs_review',block_code=?,next_run_at=NULL WHERE id=?; UPDATE p115_accounts SET cookie_enc=x''`, code, job.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := f.store.ReserveAnimeStatusPoll(ctx, now, nil); err != nil || found {
+				t.Fatal("cleared account resumed a task", found, err)
+			}
+			if _, err := f.store.db.Exec(`UPDATE p115_accounts SET revision=revision+1,cookie_enc=x'1234'`); err != nil {
+				t.Fatal(err)
+			}
+			poll := takeAnimeStatusPoll(t, f, now)
+			if poll.Job.ID != job.ID || poll.Job.BlockCode != nil || poll.Job.FileState != "pending" {
+				t.Fatal("same-account login lost the original task", poll.Job)
+			}
+			retryAt := now + (5 * time.Minute).Milliseconds()
+			got, err := f.store.CompleteAnimeStatusPoll(ctx, poll, nil, "TASK_ACCESS_DENIED", retryAt, now)
+			if err != nil || got.NextRunAt == nil || *got.NextRunAt < retryAt || got.FileState != "pending" {
+				t.Fatal("denied login was permanently blocked or retried too soon", err)
+			}
+			if _, found, err := f.store.ReserveAnimeStatusPoll(ctx, retryAt-1, nil); err != nil || found {
+				t.Fatal("access-denied cooldown was bypassed", found, err)
+			}
+			poll = takeAnimeStatusPoll(t, f, *got.NextRunAt)
+			observation := animeStatusObservation(job, "running", 52)
+			if _, err := f.store.CompleteAnimeStatusPoll(ctx, poll, &observation, "", 0, *got.NextRunAt); err != nil {
+				t.Fatal("same task could not resume after credential recovery", err)
+			}
+		})
+	}
+}
+
+func TestAnimeCredentialDenialHasBoundedSharedCooldown(t *testing.T) {
+	f, job, now := animeStatusStoreFixture(t)
+	release, verified := f.selectTitle(t, 0, "rel_denied_other", strings.Repeat("b", 40), "[字幕组] 测试 - 31 [1080p][HEVC]")
+	other := f.claim(t, 0, release, verified).Job
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET block_code='TASK_ACCESS_DENIED',next_run_at=? WHERE id=?`, now+(5*time.Minute).Milliseconds(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, found, err := f.store.ReserveAnimeDownloadContinuation(ctx, now, other.ID, true); err != nil || found {
+		t.Fatal("same account bypassed credential cooldown", found, err)
+	}
+	work, found, err := f.store.ReserveAnimeDownloadContinuation(ctx, now+(5*time.Minute).Milliseconds(), other.ID, true)
+	if err != nil || !found || work.Job.ID != other.ID {
+		t.Fatal("credential cooldown permanently froze another task", found, err)
 	}
 }
 
@@ -322,6 +369,9 @@ func TestAnimeStatusIdentityConflictsStopWithoutReplacingEvidence(t *testing.T) 
 				observation.TargetCID, observation.ResultID = "", ""
 			case "credential":
 				code = "DOWNLOAD_ACCOUNT_CHANGED"
+				if _, err := f.store.db.Exec(`UPDATE p115_accounts SET is_primary=0`); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var remote *model.AnimeOfflineStatus = &observation
 			if mode == "credential" {
@@ -462,10 +512,10 @@ func TestAnimeStatusUIDBudgetAndSharedCooldown(t *testing.T) {
 				when = retry
 			}
 			if mode == "access denied" {
-				when = now + 86400000
+				when = now + 1 + (5 * time.Minute).Milliseconds()
 			}
 			next, found, err := f.store.ReserveAnimeStatusPoll(context.Background(), when, nil)
-			if err != nil || found != (mode != "access denied") || found && next.Job.ID == poll.Job.ID {
+			if err != nil || !found || next.Job.ID == poll.Job.ID {
 				t.Fatal("incorrect UID cooldown/fairness", next.Job.ID, found, err)
 			}
 		})

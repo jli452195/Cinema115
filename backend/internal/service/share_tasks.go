@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +17,7 @@ import (
 )
 
 type automationContextKey struct{}
+type generationAccountCheckKey struct{}
 
 var errSourceShareReview = errors.New("原分享审核中，尚未执行转存")
 
@@ -40,7 +40,6 @@ type shareTaskRequest struct {
 	OwnRootIDs           []string              `json:"ownRootIDs,omitempty"`
 	Input                GenerateInput         `json:"input"`
 	Settings             AutomationSettings    `json:"settings"`
-	CookieHash           string                `json:"cookieHash"`
 }
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
@@ -56,11 +55,6 @@ type ShareTasks struct {
 	AccountCookie    func(string) string
 	Notifier         ShareSuccessNotifier
 	Logs             *GenerationLogs
-}
-
-func cookieHash(cookie string) string {
-	sum := sha256.Sum256([]byte(cookie))
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
@@ -112,7 +106,7 @@ func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput,
 	}
 	now := time.Now().UTC()
 	task := model.ShareTask{ID: id, Source: source, SourceURL: link, Mode: mode, Status: status, CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
-	req := shareTaskRequest{Input: input, Settings: settings, CookieHash: cookieHash(generationCookie(ctx, s.Cookie))}
+	req := shareTaskRequest{Input: input, Settings: settings}
 	req.DirectoryLogID, _ = ctx.Value(directoryGenerationKey{}).(string)
 	req.DirectoryFingerprint, _ = ctx.Value(directoryFingerprintKey{}).(string)
 	req.DirectoryID, _ = ctx.Value(directoryIDKey{}).(string)
@@ -133,7 +127,32 @@ func (s *ShareTasks) pinAccount(ctx context.Context) context.Context {
 		current = func() string { return s.AccountCookie(settings.AccountID) }
 	}
 	ctx = context.WithValue(ctx, automationContextKey{}, settings)
-	return context.WithValue(ctx, generationCookieKey{}, generationCookie(ctx, current))
+	ctx = context.WithValue(ctx, generationCookieKey{}, generationCookie(ctx, current))
+	return s.withAccountCheck(ctx, settings.AccountID)
+}
+
+// The account ID owns the task. Login refreshes may change credentials while
+// the current execution keeps its pinned cookie; removal still stops writes.
+func (s *ShareTasks) withAccountCheck(ctx context.Context, accountID string) context.Context {
+	if s.AccountCookie == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, generationAccountCheckKey{}, func() error {
+		if accountID == "" || strings.TrimSpace(s.AccountCookie(accountID)) == "" {
+			return generationInputError("原任务主账号已变化或未登录，请检查账号配置")
+		}
+		return nil
+	})
+}
+
+func checkGenerationAccount(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if check, ok := ctx.Value(generationAccountCheckKey{}).(func() error); ok {
+		return check()
+	}
+	return nil
 }
 
 func (s *ShareTasks) save(ctx context.Context, task *model.ShareTask, req shareTaskRequest) error {
@@ -148,6 +167,10 @@ func (s *ShareTasks) save(ctx context.Context, task *model.ShareTask, req shareT
 func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req shareTaskRequest) (*GenerationResult, error) {
 	started := time.Now()
 	ctx = context.WithValue(ctx, automationContextKey{}, req.Settings)
+	ctx = s.withAccountCheck(ctx, req.Settings.AccountID)
+	if err := checkGenerationAccount(ctx); err != nil {
+		return s.finish(ctx, task, req, nil, err, time.Since(started))
+	}
 	if len(req.OwnRootIDs) > 0 {
 		ctx = context.WithValue(ctx, generationRootIDsKey{}, req.OwnRootIDs)
 	}
@@ -296,7 +319,7 @@ func (s *ShareTasks) retryDue(ctx context.Context, now time.Time) error {
 		} else if s.Cookie != nil {
 			cookie = s.Cookie()
 		}
-		if (!manual && !initial && !s.Settings.Value().ReviewRetryEnabled) || (s.AccountCookie != nil && req.Settings.AccountID == "") || strings.TrimSpace(cookie) == "" || req.CookieHash != cookieHash(cookie) {
+		if (!manual && !initial && !s.Settings.Value().ReviewRetryEnabled) || (s.AccountCookie != nil && req.Settings.AccountID == "") || strings.TrimSpace(cookie) == "" {
 			task.Status, task.NextRetryAt = "cancelled", nil
 			task.Error = "审核重试已关闭，或原任务的 115 账号及登录凭据不可用，本次重试已停止"
 			task.UpdatedAt = time.Now().UTC()

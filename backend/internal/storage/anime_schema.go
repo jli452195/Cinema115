@@ -2,21 +2,18 @@ package storage
 
 // The current anime schema is created as one unit; prototype runtime data is
 // discarded before first use, without compatibility with retired workflows.
-const animeSchema = `
+const animeSettingsSchema = `
 CREATE TABLE IF NOT EXISTS anime_settings (
  id INTEGER PRIMARY KEY CHECK(id=1),
  revision INTEGER NOT NULL CHECK(revision>0),
  account_id TEXT,
- account_revision INTEGER CHECK(account_revision>0),
- uid TEXT,
  download_cid TEXT,
  download_path TEXT,
  organize_cid TEXT,
  organize_path TEXT,
- CHECK((account_id IS NULL AND account_revision IS NULL AND uid IS NULL
+ CHECK((account_id IS NULL
         AND download_cid IS NULL AND download_path IS NULL)
     OR (account_id IS NOT NULL AND length(account_id)>0
-        AND account_revision IS NOT NULL AND uid IS NOT NULL AND length(uid)>0
         AND download_cid IS NOT NULL AND length(download_cid)>0
         AND download_path IS NOT NULL)),
  CHECK((organize_cid IS NULL AND organize_path IS NULL)
@@ -24,6 +21,9 @@ CREATE TABLE IF NOT EXISTS anime_settings (
         AND length(organize_cid)>0 AND organize_path IS NOT NULL))
 );
 
+`
+
+const animeSchema = animeSettingsSchema + `
 CREATE TABLE IF NOT EXISTS anime_entries (
  id TEXT PRIMARY KEY NOT NULL,
  bangumi_id TEXT,
@@ -218,7 +218,6 @@ CREATE TABLE IF NOT EXISTS anime_download_jobs (
  claim_id TEXT NOT NULL REFERENCES anime_resource_claims(id),
  attempt INTEGER NOT NULL CHECK(attempt>0),
  account_id TEXT NOT NULL,
- account_revision INTEGER NOT NULL CHECK(account_revision>0),
  uid TEXT NOT NULL,
  settings_revision INTEGER NOT NULL CHECK(settings_revision>0),
  parent_cid TEXT NOT NULL,

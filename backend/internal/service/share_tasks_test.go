@@ -133,7 +133,7 @@ func TestReviewRetryReusesOwnShare(t *testing.T) {
 }
 
 func TestReviewRetryStopsForOtherFailuresAndSettings(t *testing.T) {
-	for _, kind := range []string{"http405", "unsafe-transfer", "disabled", "cookie-change"} {
+	for _, kind := range []string{"http405", "unsafe-transfer", "disabled", "signed-out"} {
 		t.Run(kind, func(t *testing.T) {
 			calls := 0
 			s, db, input := setupShareTasks(t, generateFunc(func(context.Context, GenerateInput) (*GenerationResult, error) {
@@ -154,8 +154,8 @@ func TestReviewRetryStopsForOtherFailuresAndSettings(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if kind == "cookie-change" {
-				s.Cookie = func() string { return "different-cookie" }
+			if kind == "signed-out" {
+				s.Cookie = func() string { return "" }
 			}
 			if err := s.retryDue(context.Background(), time.Now().Add(time.Hour)); err != nil {
 				t.Fatal(err)

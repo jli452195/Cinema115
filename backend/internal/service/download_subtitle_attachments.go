@@ -51,12 +51,8 @@ func (s *DownloadOrganize) SaveSubtitleAttachments(ctx context.Context, previewI
 	seen := make(map[string]bool)
 	var total int64
 	for _, job := range jobs {
-		a, err := s.Organize.account(job.Config.AccountID)
-		if err != nil {
+		if _, err := s.Organize.account(job.Config.AccountID); err != nil {
 			return err
-		}
-		if a.Revision != job.Revision {
-			return fmt.Errorf("%w：主账号已变化，请重新预览", ErrOrganizeConflict)
 		}
 		for _, sub := range job.Download.Subtitles {
 			if sub.LocalID == "" {

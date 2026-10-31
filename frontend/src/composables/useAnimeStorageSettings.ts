@@ -43,7 +43,7 @@ export function useAnimeStorageSettings(token: string, changed: (settings: Anime
       if (owns()) {
         if (settings.value) {
           const primary = settings.value.primaryAccount
-          const ready = !!primary && primary.id === result.accountId && primary.revision === result.accountRevision && primary.uid === result.uid
+          const ready = !!primary && primary.id === result.accountId
           settings.value = { ...settings.value, settings: result, readiness: { ready, issues: ready ? [] : ['ACCOUNT_SNAPSHOT_CHANGED'] } }
         }
         notice.value = '目录已保存'
@@ -63,7 +63,7 @@ export function useAnimeStorageSettings(token: string, changed: (settings: Anime
     pending.value = { kind, accountId: primary.id, cid, key: animeRequestKey(),
       path: kind === 'organize' ? 'settings/organize-directory' : 'settings',
       body: kind === 'organize' ? { expectedRevision: view.settings.revision, cid }
-        : { expectedRevision: view.settings.revision, downloadCid: cid, organizeCid: view.settings.organizeCid, expectedPrimaryAccountId: primary.id, expectedPrimaryAccountRevision: primary.revision } }
+        : { expectedRevision: view.settings.revision, downloadCid: cid, organizeCid: view.settings.organizeCid, expectedPrimaryAccountId: primary.id } }
     return confirmPending()
   }
   onBeforeUnmount(() => { disposed = true; controller.abort() })

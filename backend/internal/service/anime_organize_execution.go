@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -167,7 +166,7 @@ func (r *animeOrganizationRun) directoryCID(relative string) string {
 }
 func (r *animeOrganizationRun) cacheKey(relative string) string {
 	t := r.op.Request.Target
-	return t.UID + ":" + t.AccountID + ":" + strconv.FormatInt(t.AccountRevision, 10) + ":" + t.ParentCID + ":" + relative
+	return t.AccountID + ":" + t.ParentCID + ":" + relative
 }
 func (r *animeOrganizationRun) rememberDirectory(ctx context.Context, relative, cid string) error {
 	p := r.progress()
@@ -264,7 +263,7 @@ func (r *animeOrganizationRun) unknown(ctx context.Context, writeErr error) erro
 			p.Code, p.RetryAt = code, retryAt
 		}
 		if code == "TASK_ACCESS_DENIED" {
-			p.State, p.Code = "needs_review", code
+			p.Code, p.RetryAt = code, retryAt
 		}
 	}
 	return r.save(ctx, p, false)
@@ -556,9 +555,6 @@ func (r *animeOrganizationRun) readFailure(ctx context.Context, e *animeOrganiza
 	p.State = "working"
 	if p.Step != nil {
 		p.State = "unknown"
-	}
-	if e.code == "TASK_ACCESS_DENIED" {
-		p.State = "needs_review"
 	}
 	return r.save(ctx, p, false)
 }

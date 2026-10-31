@@ -65,7 +65,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if (endpoint.endsWith('/subscriptions')) data = {items:state.saved?[state.saved]:[],total:state.saved?1:0,page:1,pageSize:20}
       else if (endpoint.endsWith('/subscriptions/cross-site-sub')) data=state.saved
       else if (endpoint.endsWith('/subscriptions/cross-site-sub/jobs')) data={items:[],total:0,page:1,pageSize:20,dataVersion:'empty-jobs'}
-      else if (endpoint.endsWith('/settings')) data = state.statusEnabled ? {settings:{revision:1,accountId:'primary',accountRevision:2,uid:'123',downloadCid:'100',downloadPath:'/下载',organizeCid:'200',organizePath:'/整理'},primaryAccount:{id:'primary',name:'主账号',uid:'123',revision:2},readiness:{ready:true,issues:[]}} : { settings:{revision:1,downloadCid:null},primaryAccount:null,readiness:{ready:false,issues:['PRIMARY_ACCOUNT_REQUIRED']} }
+      else if (endpoint.endsWith('/settings')) data = state.statusEnabled ? {settings:{revision:1,accountId:'primary',downloadCid:'100',downloadPath:'/下载',organizeCid:'200',organizePath:'/整理'},primaryAccount:{id:'primary',name:'主账号'},readiness:{ready:true,issues:[]}} : { settings:{revision:1,downloadCid:null},primaryAccount:null,readiness:{ready:false,issues:['PRIMARY_ACCOUNT_REQUIRED']} }
       else if (endpoint.includes('/discovery/subjects/')) {
         const id=endpoint.split('/').pop(); data={subject:{id,title:'原站关联的 Bangumi 篇章',coverUrl:'',date:'2026-10-01'},metadata:{expiresAt:Date.now()+600000}}
       } else if (endpoint.endsWith('/naming/search')) data=state.statusEnabled?{items:[{id:123,title:'测试番剧',date:'2026-10-01'}],recommendedId:'123'}:{items:[]}

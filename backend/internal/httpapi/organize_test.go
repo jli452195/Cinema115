@@ -30,7 +30,7 @@ func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := service.OrganizeConfig{AccountID: accountID, SourceCID: "10", SourcePath: "/source", TargetCID: "20", TargetPath: "/manual"}
-	manualJob := service.OrganizeJob{ID: "manual", Config: config, Revision: a.Revision, Status: "interrupted", Items: []service.OrganizeItem{{File: service.OrganizeFile{ShareFile: p115.ShareFile{ID: "101", Name: "file.mkv", Size: 1}, ParentID: "10", SourcePath: "/source/file.mkv"}, Directory: "Show", Name: "show.mkv", Status: "pending"}}}
+	manualJob := service.OrganizeJob{ID: "manual", Config: config, Status: "interrupted", Items: []service.OrganizeItem{{File: service.OrganizeFile{ShareFile: p115.ShareFile{ID: "101", Name: "file.mkv", Size: 1}, ParentID: "10", SourcePath: "/source/file.mkv"}, Directory: "Show", Name: "show.mkv", Status: "pending"}}}
 	downloadJob := manualJob
 	downloadJob.ID = "download"
 	downloadJob.Download = &service.ResourceDownload{Hash: strings.Repeat("a", 40), DirectoryID: "10", ParentCID: "0", ParentPath: "/"}

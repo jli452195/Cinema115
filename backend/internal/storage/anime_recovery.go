@@ -45,12 +45,11 @@ func (s *Store) reserveAnimeDownloadWork(ctx context.Context, now int64, exclude
  AND ((j.download_state='queued' AND NOT EXISTS(SELECT 1 FROM anime_drive_operations done WHERE done.download_job_id=j.id AND done.kind='submit' AND done.state IN ('confirmed','failed'))) OR (j.download_state IN ('submitting','unknown') AND EXISTS(SELECT 1 FROM anime_drive_operations o WHERE o.download_job_id=j.id AND o.kind='submit' AND o.state IN ('dispatched','unknown') AND o.generation=j.generation)) OR (j.download_state='completed' AND j.result_object_id IS NOT NULL))
  AND (j.download_state<>'queued' OR json_extract(j.directory_operation_json,'$.state') IN ('dispatched','unknown') OR json_extract(j.snapshot_json,'$.redownload')=1 OR EXISTS(SELECT 1 FROM anime_job_selections x JOIN anime_subscription_sources s ON s.id=x.source_id JOIN anime_subscriptions p ON p.id=s.subscription_id WHERE x.job_id=j.id AND x.status='authorized' AND s.status='enabled' AND s.run_when_enabled=1 AND p.status='enabled' AND p.first_enabled_at IS NOT NULL))
  ))
- AND (j.block_code IS NULL OR j.block_code IN ('SUBMIT_UNCERTAIN','TASK_READ_FAILED','TASK_MISSING','TASK_POLL_CANCELLED','DIRECTORY_CREATE_UNCERTAIN','DIRECTORY_READ_FAILED','ORGANIZE_UNCERTAIN','ORGANIZE_READ_FAILED','DOWNLOAD_PAUSED','TASK_RATE_LIMITED','FILES_READ_FAILED','FILES_INCOMPLETE'))
+ AND (j.block_code IS NULL OR j.block_code IN ('SUBMIT_UNCERTAIN','TASK_READ_FAILED','TASK_MISSING','TASK_POLL_CANCELLED','DIRECTORY_CREATE_UNCERTAIN','DIRECTORY_READ_FAILED','ORGANIZE_UNCERTAIN','ORGANIZE_READ_FAILED','DOWNLOAD_PAUSED','TASK_RATE_LIMITED','FILES_READ_FAILED','FILES_INCOMPLETE','TASK_ACCESS_DENIED'))
  AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
  AND NOT EXISTS(SELECT 1 FROM anime_download_jobs busy WHERE busy.uid=j.uid AND busy.lease_until>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code='TASK_RATE_LIMITED' AND limited.next_run_at>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>?)
- AND NOT EXISTS(SELECT 1 FROM anime_download_jobs denied WHERE denied.account_id=j.account_id AND denied.account_revision=j.account_revision AND denied.block_code='TASK_ACCESS_DENIED' AND denied.workflow_state='active')`
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs limited WHERE limited.uid=j.uid AND limited.workflow_state='active' AND limited.block_code IN ('TASK_RATE_LIMITED','TASK_ACCESS_DENIED') AND limited.next_run_at>?)
+ AND NOT EXISTS(SELECT 1 FROM anime_download_jobs recent WHERE recent.uid=j.uid AND recent.workflow_state='active' AND json_extract(recent.raw_status_json,'$.attemptedAt')>? AND recent.id<>?)`
 	args := []any{now, now, now, now, now - 5000, jobID}
 	if jobID != "" {
 		query += ` AND j.id=?`
@@ -76,6 +75,9 @@ func (s *Store) reserveAnimeDownloadWork(ctx context.Context, now int64, exclude
 		return out, false, err
 	}
 	defer tx.Rollback()
+	if err := resumeAnimeAccountJobsTx(ctx, tx, now); err != nil {
+		return out, false, err
+	}
 	out.Job, err = scanAnimeDownloadJob(tx.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, tx.Commit()
@@ -204,7 +206,7 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 				due = max(due, *next)
 			}
 			next = &due
-		case "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED":
+		case "ORGANIZE_READ_FAILED", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "TASK_RATE_LIMITED", "TASK_ACCESS_DENIED":
 			due := now + int64(5*time.Minute/time.Millisecond)
 			if next != nil {
 				due = max(due, *next)
@@ -217,7 +219,7 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		next = nil
 	} else {
 		switch code {
-		case "", "SUBMIT_UNCERTAIN", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "DIRECTORY_CREATE_UNCERTAIN", "DIRECTORY_READ_FAILED":
+		case "", "SUBMIT_UNCERTAIN", "TASK_READ_FAILED", "TASK_POLL_CANCELLED", "DIRECTORY_CREATE_UNCERTAIN", "DIRECTORY_READ_FAILED", "TASK_ACCESS_DENIED":
 			delay := int64(5 * time.Minute / time.Millisecond)
 			if code == "" && job.DownloadState == "accepted" {
 				delay = 0
@@ -244,4 +246,21 @@ func (s *Store) CompleteAnimeDownloadWork(ctx context.Context, work AnimeDownloa
 		return fmt.Errorf("complete anime download step: %w", err)
 	}
 	return tx.Commit()
+}
+
+// Login refresh is not a task identity change. Resume only tasks still owned by
+// the current, logged-in primary account, preserving uncertain writes for reads.
+func resumeAnimeAccountJobsTx(ctx context.Context, tx *sql.Tx, now int64) error {
+	const owned = `SELECT j.id FROM anime_download_jobs j WHERE j.workflow_state='active'
+ AND j.block_code IN ('DOWNLOAD_ACCOUNT_CHANGED','TASK_ACCESS_DENIED')
+ AND (j.next_run_at IS NULL OR j.next_run_at<=?) AND (j.lease_until IS NULL OR j.lease_until<=?)
+ AND EXISTS(SELECT 1 FROM p115_accounts a WHERE a.id=j.account_id AND a.is_primary=1 AND a.ownership='admin' AND a.owner_user_id='' AND length(a.cookie_enc)>0)`
+	if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET state=CASE WHEN json_extract(result_json,'$.step') IS NULL THEN 'prepared' ELSE 'unknown' END,error_code=NULL,result_json=json_set(result_json,'$.state',CASE WHEN json_extract(result_json,'$.step') IS NULL THEN 'working' ELSE 'unknown' END,'$.code','','$.retryAt',0) WHERE kind='organize' AND state='failed' AND error_code='TASK_ACCESS_DENIED' AND download_job_id IN (`+owned+`)`, now, now); err != nil {
+		return fmt.Errorf("resume anime account operation: %w", err)
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE anime_download_jobs SET block_code=NULL,file_state=CASE WHEN file_state='needs_review' THEN CASE WHEN files_json IS NULL THEN 'pending' ELSE 'verified' END ELSE file_state END,directory_operation_json=CASE WHEN json_extract(directory_operation_json,'$.errorCode')='DOWNLOAD_ACCOUNT_CHANGED' AND json_extract(directory_operation_json,'$.state')='failed' THEN json_set(directory_operation_json,'$.state','unknown') ELSE directory_operation_json END,next_run_at=?,revision=revision+1,updated_at=? WHERE id IN (`+owned+`)`, now, now, now, now)
+	if err != nil {
+		return fmt.Errorf("resume anime account tasks: %w", err)
+	}
+	return nil
 }

@@ -175,7 +175,7 @@ func animePollConfig(p AnimeSourcePoll) preview.Config {
 	s := p.Source
 	t := p.Target
 	return preview.Config{Chapter: preview.Chapter{ID: p.Entry.ID, BangumiID: p.Entry.BangumiID, EditionKey: p.Entry.EditionKey, Revision: p.Entry.Revision}, SubscriptionID: p.Subscription.ID, Revision: p.Subscription.Revision,
-		Settings: model.AnimeSettings{Revision: t.SettingsRevision, AccountID: &t.AccountID, AccountRevision: &t.AccountRevision, UID: &t.UID, DownloadCID: &t.ParentCID, DownloadPath: &t.ParentPath},
+		Settings: model.AnimeSettings{Revision: t.SettingsRevision, AccountID: &t.AccountID, DownloadCID: &t.ParentCID, DownloadPath: &t.ParentPath},
 		Sources:  []model.AnimeSourceConfig{{Ref: "poll", ID: s.ID, ExpectedRevision: s.Revision, Role: "main", Status: "paused", RunWhenEnabled: true, Provider: s.Provider, ItemID: s.ItemID, GroupID: s.GroupID, GroupName: s.GroupName, Binding: s.Binding, Rules: s.Rules}}}
 }
 

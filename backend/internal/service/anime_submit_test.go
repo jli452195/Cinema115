@@ -185,7 +185,7 @@ func TestAnimeEnsureUnknownOnlyReconciles(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						cookie := "UID=123_B; SEID=replaced"
+						cookie := "UID=999_B; SEID=replaced"
 						if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 							t.Fatal(err)
 						}
@@ -307,7 +307,7 @@ func TestAnimeEnsureSubmissionFailureWindows(t *testing.T) {
 }
 
 func TestAnimeEnsureRevalidatesAuthorizationBeforeDispatch(t *testing.T) {
-	for _, mode := range []string{"parent paused", "source paused", "parent generation", "source generation", "source revision", "withdrawn", "dismissed", "account revision", "target changed"} {
+	for _, mode := range []string{"parent paused", "source paused", "parent generation", "source generation", "source revision", "withdrawn", "dismissed", "account replaced", "target changed"} {
 		t.Run(mode, func(t *testing.T) {
 			f, db, session, job := animeSubmitFixture(t)
 			f.service.SubmitGateway = &animeSubmitGatewayStub{
@@ -328,12 +328,12 @@ func TestAnimeEnsureRevalidatesAuthorizationBeforeDispatch(t *testing.T) {
 						statement = `UPDATE anime_job_selections SET status='withdrawn'`
 					case "dismissed":
 						statement = `UPDATE anime_release_decisions SET disposition='dismissed'`
-					case "account revision":
+					case "account replaced":
 						a, err := f.accounts.Primary(job.AccountID)
 						if err != nil {
 							t.Fatal(err)
 						}
-						cookie := "UID=123_B"
+						cookie := "UID=999_B"
 						if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
 							t.Fatal(err)
 						}

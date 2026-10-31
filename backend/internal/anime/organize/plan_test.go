@@ -15,7 +15,7 @@ import (
 func planJob(names ...string) model.AnimeDownloadJob {
 	cid, result := "200", "200"
 	n := 30
-	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", AccountRevision: 2, UID: "123", ParentCID: "100", ParentPath: "/下载"}
+	target := model.AnimeDownloadTarget{SchemaVersion: 1, SettingsRevision: 2, AccountID: "main", ParentCID: "100", ParentPath: "/下载"}
 	organized := target
 	organized.ParentCID, organized.ParentPath = "900", "/整理"
 	episodes := make([]model.AnimeNamingEpisode, 12)
@@ -158,7 +158,7 @@ func TestAnimeOrganizationCleansAndBoundsUTF8Names(t *testing.T) {
 
 func TestAnimeOrganizationRejectsBrokenSnapshotAndManifest(t *testing.T) {
 	for _, change := range []func(*model.AnimeDownloadJob){
-		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Target.UID = "999" },
+		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Target.AccountID = "other" },
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Target.ParentCID = j.ParentCID },
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Naming = nil },
 		func(j *model.AnimeDownloadJob) { j.Snapshot.Organization.Naming.Template.Kind = naming.Movie },

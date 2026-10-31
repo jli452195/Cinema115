@@ -28,7 +28,7 @@ func TestCloudBatchSnapshotsAndContinuesKnownFailure(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				replacement := "UID=changed"
+				replacement := "UID=123_B; CID=refreshed"
 				if err := accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
 					t.Fatal(err)
 				}

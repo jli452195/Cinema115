@@ -15,6 +15,41 @@ type collectedGenerator struct {
 	sizes []int
 }
 
+func TestWebCollectionSameAccountRefreshKeepsExistingBatch(t *testing.T) {
+	tasks, db, input := setupShareTasks(t, &collectedGenerator{})
+	settings := tasks.Settings.Value()
+	settings.AccountID, settings.ReshareEnabled, settings.TGBatchWaitSeconds = "primary", true, 5
+	if err := tasks.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	cookie := "UID=42_A; SEID=original"
+	tasks.AccountCookie = func(id string) string {
+		if id != "primary" {
+			t.Fatal("collection changed account")
+		}
+		return cookie
+	}
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs := NewShareRuns(root, tasks)
+	ctx := WithShareCollectionScope(context.Background(), "same-dialog")
+	first, err := runs.Submit(ctx, strings.Repeat("a", 32), []GenerateInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstInput := input
+	cookie = "UID=42_B; SEID=refreshed"
+	input.URL = "https://115cdn.com/s/another"
+	second, err := runs.Submit(ctx, strings.Repeat("b", 32), []GenerateInput{input})
+	if err != nil || second.ID != first.ID || len(second.Items) != 2 || len(taskHistory(t, db)) != 2 {
+		t.Fatal("same-account login split the collection", second, err)
+	}
+	combined, err := runs.Submit(ctx, strings.Repeat("c", 32), []GenerateInput{firstInput, input})
+	if err != nil || combined.ID != first.ID || len(combined.SelectedTaskIDs) != 2 || len(taskHistory(t, db)) != 2 {
+		t.Fatal("complete collection submission was duplicated or lost selection", combined, err)
+	}
+}
+
 func (g *collectedGenerator) Generate(context.Context, GenerateInput) (*GenerationResult, error) {
 	return &GenerationResult{Written: 1}, nil
 }
