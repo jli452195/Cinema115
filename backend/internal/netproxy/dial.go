@@ -118,8 +118,11 @@ func dialHTTPProxy(ctx context.Context, dialer *net.Dialer, u *url.URL, proxyAdd
 	if !stop() {
 		<-done
 	}
-	if ctx.Err() != nil {
-		err = ctx.Err()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	} else if deadline, ok := ctx.Deadline(); err != nil && ok && !time.Now().Before(deadline) {
+		// The socket deadline can fire before the context timer is scheduled.
+		err = context.DeadlineExceeded
 	}
 	if err == nil {
 		err = conn.SetDeadline(time.Time{})
