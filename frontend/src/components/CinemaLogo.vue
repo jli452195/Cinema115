@@ -1,53 +1,52 @@
-<template>
-  <span class="group inline-flex min-w-0 select-none items-center gap-3">
-    <svg class="h-7 w-[72px] shrink-0 overflow-visible drop-shadow-[0_4px_10px_rgba(14,165,233,0.16)] transition duration-[600ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.035] group-hover:drop-shadow-[0_5px_14px_rgba(14,165,233,0.34)]" viewBox="0 0 72 28" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="cinema-lockup-mark" x1="3" y1="4" x2="69" y2="25" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#2563EB" />
-          <stop offset="1" stop-color="#06B6D4" />
-        </linearGradient>
-      </defs>
-      <path d="M20 4.5A10.5 10.5 0 1 0 20 23.5" stroke="url(#cinema-lockup-mark)" stroke-width="2.5" stroke-linecap="round" />
-      <path d="m12.5 8.5 9 5.5-9 5.5v-11Z" fill="url(#cinema-lockup-mark)" />
-      <circle cx="7.2" cy="9.5" r="1" fill="currentColor" fill-opacity="0.7" />
-      <circle cx="5" cy="15.2" r="1" fill="currentColor" fill-opacity="0.7" />
-      <circle cx="8.2" cy="20.6" r="1" fill="currentColor" fill-opacity="0.7" />
-      <path d="m27.5 9 5.5-4.5v19M39 9l5.5-4.5v19" stroke="url(#cinema-lockup-mark)" stroke-width="3" stroke-linecap="square" stroke-linejoin="bevel" />
-      <path d="M68 4.8H52.5v9h6.2c6.3 0 9.7 2.2 9.7 6.2 0 3.1-2.1 5-5.6 5.9-3.2.8-7 .1-10.8-2.1" stroke="url(#cinema-lockup-mark)" stroke-width="2.8" stroke-linecap="square" stroke-linejoin="bevel" />
-      <path d="M53 10.2h12" stroke="url(#cinema-lockup-mark)" stroke-width="1" opacity="0.42" />
-    </svg>
+<script setup lang="ts">
+defineProps<{ compact?: boolean; sidebar?: boolean; large?: boolean }>()
+</script>
 
-    <span class="hidden flex-col justify-center sm:flex">
-      <span class="brand-spectrum whitespace-nowrap font-mono text-[15px] font-black uppercase leading-[1]">Cinema115</span>
-      <span class="brand-caption mt-1 whitespace-nowrap text-[9px] font-semibold leading-[1] text-slate-500 dark:text-slate-300">
-        影视资源与媒体自动化
-      </span>
-    </span>
+<template>
+  <span class="cinema-logo" :class="{ 'is-compact': compact, 'in-sidebar': sidebar, 'is-large': large }" role="img" aria-label="Cinema115">
+    <img class="cinema-logo-mark" src="/brand/cinema115-mark.svg" width="128" height="123" alt="" aria-hidden="true" draggable="false" />
+    <span v-if="!compact" class="cinema-logo-wordmark" aria-hidden="true">Cinema<span class="cinema-logo-number">115</span></span>
   </span>
 </template>
 
 <style scoped>
-.brand-spectrum {
-  color: transparent;
-  background: linear-gradient(100deg, #1d4ed8, #0891b2 28%, #d97706 52%, #0891b2 74%, #1d4ed8);
-  background-size: 260% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 1px 1px rgb(15 23 42 / 0.12));
-  animation: cinema-brand-spectrum 9s linear infinite;
+@font-face {
+  font-family: 'Cinema115 Brand';
+  src: url('/brand/inter-medium.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
 }
 
-.dark .brand-spectrum {
-  background-image: linear-gradient(100deg, #93c5fd, #67e8f9 28%, #fcd34d 52%, #67e8f9 74%, #93c5fd);
+.cinema-logo {
+  --cinema-logo-mark-width: 40px;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--cinema-logo-mark-width) * 0.2578125);
+  vertical-align: middle;
+  user-select: none;
 }
-
-@keyframes cinema-brand-spectrum {
-  from { background-position: 0 center; }
-  to { background-position: 260% center; }
+.cinema-logo-mark { display: block; width: var(--cinema-logo-mark-width); height: auto; flex-shrink: 0; }
+.cinema-logo-wordmark {
+  color: var(--cinema-logo-ink, #192235);
+  font-family: 'Cinema115 Brand', Inter, Arial, sans-serif;
+  font-size: calc(var(--cinema-logo-mark-width) * 0.4609375);
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.20339;
+  white-space: nowrap;
 }
+.cinema-logo-number { color: var(--cinema-logo-blue, #3165ee); }
+.dark .cinema-logo-wordmark { color: var(--cinema-logo-ink, #f1f4fc); }
+.dark .cinema-logo-number { color: var(--cinema-logo-blue, #7595ff); }
+.cinema-logo.in-sidebar { --cinema-logo-mark-width: 36px; }
+.cinema-logo.is-compact { --cinema-logo-mark-width: 32px; gap: 0; }
+.cinema-logo.is-large { --cinema-logo-mark-width: 56px; }
 
-@media (prefers-reduced-motion: reduce) {
-  .brand-spectrum { animation: none; background-position: 50% center; }
+@media (max-width: 639px) {
+  .cinema-logo:not(.is-large) { --cinema-logo-mark-width: 32px; }
+  .cinema-logo:not(.in-sidebar):not(.is-large) .cinema-logo-wordmark { display: none; }
 }
 </style>

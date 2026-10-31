@@ -1,0 +1,11 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="128" height="123" viewBox="0 0 128 123" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path id="&#230;&#152;&#159;&#232;&#138;&#146; &#195;&#151; &#230;&#146;&#173;&#230;&#148;&#190; &#194;&#183; &#229;&#143;&#175;&#231;&#188;&#150;&#232;&#190;&#145;&#231;&#159;&#162;&#233;&#135;&#143;" d="M64 0C72.4528 36.1765 86.9434 49.4412 128 59.0882C90.566 67.5294 74.8679 83.2059 64 123C54.3396 84.4118 37.434 68.7353 0 59.0882C38.6415 50.6471 53.1321 34.9706 64 0ZM55.5472 42.2059C53.1321 40.598 51.9245 41.402 51.9245 44.6176V78.3823C51.9245 81.598 53.1321 82.402 55.5472 80.7941L82.1132 63.9118C84.5283 62.3039 84.5283 60.6961 82.1132 59.0882L55.5472 42.2059Z" fill-rule="evenodd" clip-rule="evenodd" fill="url(#paint0_linear_0_4)"/>
+<defs>
+<linearGradient id="paint0_linear_0_4" x1="9.69541" y1="20.021" x2="107.13" y2="100.617" gradientUnits="userSpaceOnUse">
+<stop stop-color="#43C9F2"/>
+<stop offset="0.427902" stop-color="#5274EE"/>
+<stop offset="0.77" stop-color="#8B5BE7"/>
+<stop offset="1" stop-color="#C67BD9"/>
+</linearGradient>
+</defs>
+</svg>

@@ -11,7 +11,7 @@ import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigat
 
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
-const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean }>()
+const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean }>()
 const emit = defineEmits<{ logout: [] }>()
 const route = useRoute()
 const notificationController = new AbortController()
@@ -125,11 +125,11 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop, 'with-management-sidebar': sidebarLayout }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative mx-auto flex h-[var(--workbench-header-height)] max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:px-10">
-      <RouterLink to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
+      <RouterLink v-if="!sidebarLayout" to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
         <CinemaLogo />
       </RouterLink>
       <nav ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2">
@@ -172,6 +172,14 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 </style>
 <style scoped>
+.workbench-header.with-management-sidebar { left: var(--management-sidebar-width); right: 0; width: auto; }
+.with-management-sidebar .header-inner { justify-content: flex-end; }
+.workbench-header.over-backdrop { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
+.workbench-header.immersive-surface {
+  --cinema-logo-ink: color-mix(in srgb, #192235 calc(var(--header-surface-progress) * 100%), #f1f4fc);
+  --cinema-logo-blue: color-mix(in srgb, #3165ee calc(var(--header-surface-progress) * 100%), #7595ff);
+}
+.dark .workbench-header.immersive-surface { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
 .workbench-header.tonal-surface {
   --header-tonal-bg: 248 250 252;
   --header-tonal-alpha: 0.9;
@@ -224,6 +232,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.over-backdrop .nav-indicator { background: rgb(255 255 255 / 8%); }
 .workbench-header.over-backdrop .nav-indicator::after { height: 2px; opacity: 0.75; box-shadow: none; }
 .workbench-header.backdrop-at-top .top-link { text-shadow: 0 1px 3px rgb(0 0 0 / 65%); }
+.workbench-header.backdrop-at-top .brand-link { filter: drop-shadow(0 1px 2px rgb(0 0 0 / 65%)); }
 .workbench-header.backdrop-at-top .icon-button svg { filter: drop-shadow(0 1px 2px rgb(0 0 0 / 65%)); }
 .workbench-header.over-backdrop .top-link:hover,
 .workbench-header.over-backdrop .icon-button:hover,

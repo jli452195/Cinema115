@@ -3,8 +3,10 @@ import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, useRouter } from 'vue-router'
 import ManagementNavigation from './ManagementNavigation.vue'
 import NavigationIcon from './NavigationIcon.vue'
+import CinemaLogo from './CinemaLogo.vue'
 
-const props = defineProps<{ desktop: boolean }>()
+const props = defineProps<{ desktop: boolean; collapsed?: boolean }>()
+defineEmits<{ toggle: [] }>()
 const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>(), desktopNavigation = ref<HTMLElement>()
 const titleID = useId()
 let trigger: HTMLElement | undefined, previousOverflow = '', backdropStarted = false
@@ -56,9 +58,12 @@ defineExpose({ openDrawer, opened })
 </script>
 
 <template>
-  <aside v-if="desktop" ref="desktopNavigation" class="management-sidebar" aria-label="管理侧栏">
-    <div class="management-sidebar-heading"><span>功能导航</span></div>
-    <ManagementNavigation />
+  <aside v-if="desktop" ref="desktopNavigation" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="管理侧栏">
+    <div class="management-sidebar-brand">
+      <RouterLink to="/" class="management-brand-link" aria-label="Cinema115 首页" title="Cinema115 首页"><CinemaLogo sidebar :compact="collapsed" /></RouterLink>
+      <button type="button" class="management-sidebar-control management-collapse-control" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="$emit('toggle')"><NavigationIcon name="sidebar" /></button>
+    </div>
+    <ManagementNavigation id="management-desktop-navigation" :collapsed="collapsed" />
   </aside>
   <Teleport to="body">
     <dialog v-if="opened" ref="drawer" class="management-drawer" :aria-labelledby="titleID" @cancel.prevent="closeDrawer()" @keydown="trapFocus" @pointerdown="pointerDown" @click="backdropClick">
@@ -71,13 +76,21 @@ defineExpose({ openDrawer, opened })
 </template>
 
 <style scoped>
-.management-sidebar { position: sticky; top: var(--management-content-top); display: flex; flex-direction: column; align-self: start; height: calc(100dvh - var(--management-content-top) - 16px); min-height: 0; margin-top: var(--management-content-top); border-radius: 16px; background: rgb(var(--color-slate-100) / 85%); box-shadow: 0 4px 20px -2px rgb(15 23 42 / 4%), 0 1px 3px rgb(15 23 42 / 3%); }
+.management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / 60%); background: #f1f4f9; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.management-sidebar-brand { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; gap: 8px; padding: 0 12px 0 18px; }
+.management-brand-link { display: inline-flex; min-width: 0; min-height: 44px; flex: 1; align-items: center; border-radius: 10px; }
+.management-brand-link:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
+.management-sidebar.is-collapsed .management-sidebar-brand { flex-direction: column; gap: 0; padding: 14px 9px 10px; }
+.management-sidebar.is-collapsed .management-brand-link { flex: none; justify-content: center; width: 44px; }
+.management-sidebar.is-collapsed .management-collapse-control { margin-top: 4px; }
 .management-sidebar-heading { display: flex; min-height: 52px; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 20px; color: rgb(var(--color-slate-600)); font-size: 12px; font-weight: 600; }
 .management-sidebar-control { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; color: rgb(var(--color-slate-500)); cursor: pointer; }.management-sidebar-control svg { width: 19px; height: 19px; }.management-sidebar-control:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
+.management-collapse-control { width: 32px; height: 36px; }
+.is-collapsed .management-collapse-control { width: 44px; height: 40px; }
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
 .management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }.management-drawer .management-sidebar-heading { min-height: 68px; padding-inline: 20px 8px; font-size: 14px; color: rgb(var(--color-slate-700)); }
-.dark .management-sidebar { background: rgb(var(--color-slate-900) / 72%); box-shadow: 0 4px 20px -2px rgb(0 0 0 / 25%); }.dark .management-sidebar .management-sidebar-heading { color: rgb(var(--color-slate-300)); }.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }.dark .management-drawer .management-sidebar-heading { color: rgb(var(--color-slate-200)); }
+.dark .management-sidebar { background: #1d2025; border-color: rgb(var(--color-slate-700) / 55%); }.dark .management-sidebar .management-sidebar-heading { color: rgb(var(--color-slate-300)); }.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }.dark .management-drawer .management-sidebar-heading { color: rgb(var(--color-slate-200)); }
 @media (hover: hover) { .management-sidebar-control:hover { background: rgb(116 143 180 / 9%); color: #4775b0; } }
 @keyframes management-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }@keyframes management-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .management-drawer[open], .management-drawer::backdrop { animation: none; } }

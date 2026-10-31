@@ -67,14 +67,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           const layout = await page.evaluate(() => {
             const card = document.querySelector('.auth-card').getBoundingClientRect()
             const input = document.querySelector('input')
-            return { width: innerWidth, scroll: document.documentElement.scrollWidth, left: card.left, right: card.right, top: card.top, font: parseFloat(getComputedStyle(input).fontSize), svg: !!document.querySelector('.auth-brand-logo path') }
+            const logo = document.querySelector('.auth-brand .cinema-logo-mark')
+            return { width: innerWidth, scroll: document.documentElement.scrollWidth, left: card.left, right: card.right, top: card.top, font: parseFloat(getComputedStyle(input).fontSize), logo: !!logo && logo.complete && logo.naturalWidth > 0 }
           })
           assert(layout.scroll <= layout.width && layout.left >= 0 && layout.right <= width && layout.top >= 0)
-          assert(layout.font >= 16 && layout.svg)
+          assert(layout.font >= 16 && layout.logo)
         }
       }
     }
-    passed.push('desktop-mobile-themes-no-overflow-svg-and-16px-inputs')
+    passed.push('desktop-mobile-themes-no-overflow-brand-asset-and-16px-inputs')
 
     await go('/login?redirect=%2Ffollows')
     await page.getByLabel('Emby 用户名', { exact: true }).fill('testuser')

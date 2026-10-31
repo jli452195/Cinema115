@@ -7,8 +7,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const context = await browser.newContext({ viewport: { width: 1920, height: 1000 }, serviceWorkers: 'block' })
   await context.addInitScript(() => {
    localStorage.setItem('admin_token', 'mock-sidebar')
-   // A previously saved collapsed preference must not hide the navigation labels.
-   localStorage.setItem('cinema115-management-sidebar', 'collapsed')
   })
   const errors = [], requests = [], writes = []
   let role = 'admin'
@@ -39,6 +37,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const nav = () => page.getByRole('navigation', { name: '管理功能', exact: true })
   const drawer = () => page.getByRole('dialog', { name: '功能导航', exact: true })
   const open = () => page.getByRole('button', { name: '打开功能导航', exact: true })
+  const toggle = () => sidebar().getByRole('button', { name: /^(收起|展开)侧栏$/ })
   const link = to => nav().locator(`a[href="${to}"]`)
   const active = async (to, current = 'location') => {
    assert.equal(await link(to).getAttribute('aria-current'), current)
@@ -46,6 +45,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    assert.equal(await nav().locator('[aria-current]').count(), 1)
   }
   const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+  const desktopState = async collapsed => {
+   const width = collapsed ? 64 : 240
+   await page.waitForFunction(width => {
+    const sidebar = document.querySelector('.management-sidebar')?.getBoundingClientRect()
+    const header = document.querySelector('.workbench-header')?.getBoundingClientRect()
+    return sidebar && header && Math.abs(sidebar.width - width) < 0.5 && Math.abs(header.x - width) < 0.5
+   }, width)
+   const bounds = await sidebar().boundingBox()
+   assert.equal(bounds.x, 0); assert.equal(bounds.y, 0)
+   assert.equal(Math.round(bounds.width), width); assert.equal(Math.round(bounds.height), page.viewportSize().height)
+   assert.equal(await toggle().getAttribute('aria-expanded'), String(!collapsed))
+   assert.equal(await toggle().getAttribute('aria-label'), collapsed ? '展开侧栏' : '收起侧栏')
+   assert.equal(await nav().getAttribute('id'), 'management-desktop-navigation')
+   assert.equal(await page.locator('.workbench-header .brand-link').count(), 0)
+   assert.equal(await sidebar().getByRole('link', { name: 'Cinema115 首页', exact: true }).count(), 1)
+   assert.equal(await page.locator('main.management-content').evaluate((el, width) => el.getBoundingClientRect().x >= width, width), true)
+   await noOverflow()
+  }
   const screenshot = async name => {
    fs.mkdirSync('test-results', { recursive: true })
    await page.mouse.move(0, 0); await page.waitForTimeout(350)
@@ -53,21 +70,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   await go('/helper115')
   await sidebar().waitFor(); await active('/115')
-  assert.equal(await sidebar().evaluate(el => Math.round(el.getBoundingClientRect().width)), 216)
+  await desktopState(false)
   assert.equal(await page.locator('main.management-content').evaluate(el => el.clientWidth >= 1200), true)
-  // Hover keeps the list still, shows the marker and does not fetch or open a duplicate menu.
+  // Hover keeps the list still and does not fetch or open a duplicate menu.
   const before = requests.length, embyBefore = await link('/emby').boundingBox()
   await link('/115').hover(); await page.waitForTimeout(250)
   assert.equal(await page.locator('.management-nav-flyout').count(), 0)
   assert.equal(await nav().getByRole('button').count(), 0)
   assert.equal(requests.length, before)
   assert.deepEqual(await link('/emby').boundingBox(), embyBefore)
-  const hover = await nav().locator('[data-section="/115"]').evaluate(el => ({
-   opacity: getComputedStyle(el.querySelector('.management-nav-marker')).opacity,
-   text: getComputedStyle(el.querySelector('a > span')).transform,
-   icon: getComputedStyle(el.querySelector('a > svg')).transform,
-  }))
-  assert.equal(hover.opacity, '1'); assert.notEqual(hover.text, 'none'); assert.notEqual(hover.icon, 'none')
   fs.mkdirSync('test-results', { recursive: true })
   await page.screenshot({ path: 'test-results/sidebar-desktop-hover.png' })
   // Native links keep their natural Tab order and Enter navigation.
@@ -78,9 +89,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.locator('main a[href="/helper115"]').click(); await page.waitForURL('**/helper115'); await active('/115')
   await screenshot('1920-light-helper')
   await page.evaluate(() => window.scrollTo(0, 500)); await page.waitForTimeout(100)
-  const sticky = await sidebar().boundingBox()
-  const header = await page.locator('.workbench-header').boundingBox()
-  assert.ok(sticky.y - (header.y + header.height) >= 7 && sticky.y - (header.y + header.height) <= 10 && sticky.y + sticky.height <= 1000)
+  await desktopState(false)
   await page.evaluate(() => window.scrollTo(0, 0))
   await link('/resources').click(); await page.waitForURL('**/resources'); await active('/resources', 'page')
   await link('/resources').hover(); await page.waitForTimeout(220)
@@ -88,17 +97,35 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.locator('main a[href="/gying"]').click(); await page.waitForURL('**/gying'); await active('/resources')
   await link('/users').click(); await page.waitForURL('**/users')
   await page.locator('main a[href="/users/list"]').click(); await page.waitForURL('**/users/list'); await active('/users')
-  assert.equal(await sidebar().getByRole('button').count(), 0)
+  assert.equal(await sidebar().getByRole('button').count(), 1)
   await page.reload(); await sidebar().waitFor()
-  assert.equal(await sidebar().evaluate(el => Math.round(el.getBoundingClientRect().width)), 216)
-  assert.equal(await link('/115').getAttribute('title'), '115 网盘')
+  await desktopState(false)
   assert.equal(await link('/115').getAttribute('aria-label'), '115 网盘')
+  // The icon rail keeps accessible names, keyboard use and visible name hints.
+  const expandedContent = await page.locator('main.management-content').boundingBox()
+  const collapseRequests = requests.length
+  await toggle().click(); await desktopState(true)
+  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'collapsed')
+  const collapsedContent = await page.locator('main.management-content').boundingBox()
+  assert.ok(collapsedContent.width >= expandedContent.width)
+  assert.equal(requests.length, collapseRequests)
+  await link('/115').hover()
+  await page.getByRole('tooltip', { name: '115 网盘', exact: true }).waitFor()
+  await page.mouse.move(500, 100)
+  await link('/resources').focus()
+  await page.getByRole('tooltip', { name: '资源配置', exact: true }).waitFor()
+  await page.keyboard.press('Enter'); await page.waitForURL('**/resources'); await active('/resources', 'page')
+  await desktopState(true)
+  await page.reload(); await sidebar().waitFor(); await desktopState(true)
+  await screenshot('1920-collapsed')
   await link('/115').click(); await page.waitForURL('**/115'); await active('/115', 'page')
   await page.locator('main a[href="/helper115"]').click(); await page.waitForURL('**/helper115'); await active('/115')
-  assert.equal(await sidebar().evaluate(el => Math.round(el.getBoundingClientRect().width)), 216)
-  // Desktop navigation stays fully labelled at narrower desktop widths as well.
+  await desktopState(true)
+  await toggle().click(); await desktopState(false)
+  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'expanded')
+  // Both desktop sizes are usable and retain the saved state after refresh.
   await page.setViewportSize({ width: 1280, height: 800 }); await page.reload(); await sidebar().waitFor()
-  assert.equal(await sidebar().evaluate(el => Math.round(el.getBoundingClientRect().width)), 216)
+  await desktopState(false)
   await screenshot('1280-expanded')
   await page.setViewportSize({ width: 1440, height: 900 })
   await sidebar().waitFor()
@@ -133,6 +160,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const scroll = await nav().evaluate(el => el.scrollTop)
   await link('/emby').click(); await page.waitForURL('**/emby')
   assert.ok(Math.abs(await nav().evaluate(el => el.scrollTop) - scroll) < 2)
+  // Short icon rails keep the focused link's hint after Tab scrolls it into view.
+  await toggle().click(); await desktopState(true)
+  await link('/follows/manage').focus()
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  const topBeforeTab = await nav().evaluate(el => el.scrollTop)
+  for (let i = 0; i < 8; i++) await page.keyboard.press('Tab')
+  assert.equal(await link('/emby').evaluate(el => el === document.activeElement), true)
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  assert.ok(await nav().evaluate(el => el.scrollTop) > topBeforeTab)
+  assert.equal(await page.getByRole('tooltip', { name: 'Emby', exact: true }).isVisible(), true)
+  await toggle().click(); await desktopState(false)
   // Mobile route success closes the drawer; existing unsaved-leave rejection keeps it.
   await go('/emby/proxy'); await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('spinbutton', { name: /反代监听端口/ }).fill('8098')
@@ -160,15 +198,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      await drawer().evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
     }
     const b = await nav().boundingBox(); assert.ok(b.x >= 0 && b.x + b.width <= width)
-    if (width >= 1024) {
-     assert.equal(await sidebar().evaluate(el => Math.round(el.getBoundingClientRect().width)), 216)
-     assert.equal(await sidebar().getByRole('button').count(), 0)
-    }
+    if (width >= 1024) await desktopState(false)
     assert.equal(await nav().locator('a > span:visible').count(), await nav().getByRole('link').count())
     await active('/115', 'page')
     await screenshot(`${width}-${dark ? 'dark' : 'light'}`)
     assert.equal(await page.locator('.management-nav-flyout').count(), 0)
     if (width < 1024) { await page.keyboard.press('Escape'); await drawer().waitFor({ state: 'detached' }) }
+    else {
+     await toggle().click(); await desktopState(true); await active('/115', 'page')
+     assert.equal(await nav().getByRole('link').count(), 9)
+     await screenshot(`${width}-${dark ? 'dark' : 'light'}-collapsed`)
+     await toggle().click(); await desktopState(false)
+    }
    }
   }
   await page.setViewportSize({ width: 390, height: 568 }); await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -179,6 +220,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await go('/movie'); assert.equal(await sidebar().count(), 0); assert.equal(await open().count(), 0)
   role = 'user'; await go('/follows'); assert.equal(await sidebar().count(), 0); assert.equal(await open().count(), 0)
   assert.deepEqual(writes, []); assert.deepEqual(errors, [])
-  console.log('Management sidebar passed: no collapse button, full desktop labels despite old preference, direct category links, no duplicate flyouts or hover requests, preserved marker/scale, native Tab/Enter, card routing, resource aliases, sticky/independent scroll, mobile Escape/focus/backdrop/resize/current-link focus/route guards, no writes, role scope, 8 widths, both themes and reduced motion')
+  console.log('Management sidebar passed: top-to-bottom 240px/64px navigation, offset header and content, saved collapse state across routes/reload, hover/focus name hints, direct links, no hover/collapse requests, native Tab/Enter, card routing, resource aliases, independent scroll, mobile Escape/focus/backdrop/resize/current-link focus/route guards, no writes, role scope, 8 widths, both themes and reduced motion')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

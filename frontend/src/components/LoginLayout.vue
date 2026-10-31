@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '../styles/auth.css'
+import CinemaLogo from './CinemaLogo.vue'
 
 defineProps<{ subtitle: string }>()
 </script>
@@ -9,8 +10,7 @@ defineProps<{ subtitle: string }>()
     <div class="auth-content">
       <header class="auth-brand">
         <div class="auth-brand-name">
-          <svg class="auth-brand-logo" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect width="48" height="48" rx="13" fill="currentColor" /><rect x="10" y="13" width="28" height="22" rx="3" stroke="white" stroke-width="2" /><path d="M16 13v22M32 13v22M10 20h6M10 28h6M32 20h6M32 28h6" stroke="white" stroke-width="2" /><path d="m21 19 8 5-8 5V19Z" fill="white" /></svg>
-          <h1>Cinema115</h1>
+          <h1><CinemaLogo large /></h1>
         </div>
         <p>{{ subtitle }}</p>
       </header>
