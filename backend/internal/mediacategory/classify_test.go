@@ -31,19 +31,18 @@ func TestDefaultCategories(t *testing.T) {
 		{"Cantonese movie", mediacategory.Facts{Kind: "movie", OriginalLanguage: "cn"}, "电影/华语电影", "华语电影"},
 		{"foreign movie", mediacategory.Facts{Kind: "movie", OriginalLanguage: "en"}, "电影/其他电影", ""},
 		{"missing movie facts", mediacategory.Facts{Kind: "movie"}, "电影/其他电影", ""},
-		{"animation before documentary", mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, OriginCountries: []string{"JP"}}, "剧集/动漫", "动漫"},
-		{"documentary before region", mediacategory.Facts{Kind: "tv", Genres: []int{99}, OriginCountries: []string{"CN"}}, "剧集/纪录片", "纪录片"},
+		{"animation before documentary", mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, Countries: []string{"JP"}}, "剧集/动漫", "动漫"},
+		{"documentary before region", mediacategory.Facts{Kind: "tv", Genres: []int{99}, Countries: []string{"CN"}}, "剧集/纪录片", "纪录片"},
 		{"reality", mediacategory.Facts{Kind: "tv", Genres: []int{10764}}, "剧集/综艺", "综艺"},
 		{"talk show", mediacategory.Facts{Kind: "tv", Genres: []int{10767}}, "剧集/综艺", "综艺"},
-		{"Chinese series", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"TW"}}, "剧集/国产剧", "国产剧"},
-		{"Japanese series", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"JP"}}, "剧集/日韩剧", "日韩剧"},
-		{"Korean series", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"KR"}}, "剧集/日韩剧", "日韩剧"},
-		{"Western series", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"DE"}}, "剧集/欧美剧", "欧美剧"},
-		{"joint production", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"JP", "CN"}}, "剧集/国产剧", "国产剧"},
-		{"reversed countries", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"CN", "JP"}}, "剧集/国产剧", "国产剧"},
-		{"region priority", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"US", "KR"}}, "剧集/日韩剧", "日韩剧"},
-		{"missing origin does not use production", mediacategory.Facts{Kind: "tv", ProductionCountries: []string{"JP"}, OriginalLanguage: "ja"}, "剧集/其他剧集", ""},
-		{"other region", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"TH"}}, "剧集/其他剧集", ""},
+		{"Chinese series", mediacategory.Facts{Kind: "tv", Countries: []string{"TW"}}, "剧集/国产剧", "国产剧"},
+		{"Japanese series", mediacategory.Facts{Kind: "tv", Countries: []string{"JP"}}, "剧集/日韩剧", "日韩剧"},
+		{"Korean series", mediacategory.Facts{Kind: "tv", Countries: []string{"KR"}}, "剧集/日韩剧", "日韩剧"},
+		{"Western series", mediacategory.Facts{Kind: "tv", Countries: []string{"DE"}}, "剧集/欧美剧", "欧美剧"},
+		{"joint production", mediacategory.Facts{Kind: "tv", Countries: []string{"JP", "CN"}}, "剧集/国产剧", "国产剧"},
+		{"reversed countries", mediacategory.Facts{Kind: "tv", Countries: []string{"CN", "JP"}}, "剧集/国产剧", "国产剧"},
+		{"region priority", mediacategory.Facts{Kind: "tv", Countries: []string{"US", "KR"}}, "剧集/日韩剧", "日韩剧"},
+		{"other region", mediacategory.Facts{Kind: "tv", Countries: []string{"TH"}}, "剧集/其他剧集", ""},
 		{"unknown facts", mediacategory.Facts{Kind: "tv"}, "剧集/其他剧集", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,20 +55,16 @@ func TestDefaultCategories(t *testing.T) {
 	}
 }
 
-const customYAML = `version: 1
-movie: {fallback: 电影/其他电影, rules: []}
+const customYAML = `movie: {fallback: 其他电影, rules: []}
 tv:
-  fallback: 剧集/其他剧集
+  fallback: 其他剧集
   rules:
     - name: 完整条件
-      path: 剧集/指定分类
       match:
         genres: [16, 18]
-        origin_countries: [JP, KR]
-        production_countries: [US, JP]
+        countries: [JP, KR]
         languages: [ja, ko]
     - name: 其他动漫
-      path: 剧集/其他动漫
       match:
         genres: [16]
 `
@@ -81,18 +76,16 @@ func TestConditionsAndMissingFacts(t *testing.T) {
 		facts mediacategory.Facts
 		want  string
 	}{
-		{"every condition", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}, ProductionCountries: []string{"US"}, OriginalLanguage: "ja"}, "完整条件"},
-		{"OR within lists", mediacategory.Facts{Kind: "tv", Genres: []int{99, 18}, OriginCountries: []string{"CN", "KR"}, ProductionCountries: []string{"CA", "JP"}, OriginalLanguage: "ko"}, "完整条件"},
-		{"normalize incoming facts", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{" jp "}, ProductionCountries: []string{" us "}, OriginalLanguage: " JA "}, "完整条件"},
-		{"origin mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"CN"}, ProductionCountries: []string{"US"}, OriginalLanguage: "ja"}, "其他动漫"},
-		{"missing origin", mediacategory.Facts{Kind: "tv", Genres: []int{16}, ProductionCountries: []string{"JP"}, OriginalLanguage: "ja"}, "其他动漫"},
-		{"production mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}, ProductionCountries: []string{"CA"}, OriginalLanguage: "ja"}, "其他动漫"},
-		{"missing production", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"US", "JP"}, OriginalLanguage: "ja"}, "其他动漫"},
-		{"language mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}, ProductionCountries: []string{"US"}, OriginalLanguage: "en"}, "其他动漫"},
-		{"missing language", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}, ProductionCountries: []string{"US"}}, "其他动漫"},
-		{"invalid facts are not codes", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"Japan", "日本"}, ProductionCountries: []string{"US"}, OriginalLanguage: "ja"}, "其他动漫"},
-		{"genre mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{99}, OriginCountries: []string{"JP"}, ProductionCountries: []string{"US"}, OriginalLanguage: "ja"}, ""},
-		{"missing genres", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"JP"}, ProductionCountries: []string{"US"}, OriginalLanguage: "ja"}, ""},
+		{"every condition", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"JP"}, OriginalLanguage: "ja"}, "完整条件"},
+		{"OR within lists", mediacategory.Facts{Kind: "tv", Genres: []int{99, 18}, Countries: []string{"CN", "KR"}, OriginalLanguage: "ko"}, "完整条件"},
+		{"normalize incoming facts", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{" jp "}, OriginalLanguage: " JA "}, "完整条件"},
+		{"country mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"CN"}, OriginalLanguage: "ja"}, "其他动漫"},
+		{"missing country", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginalLanguage: "ja"}, "其他动漫"},
+		{"language mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"JP"}, OriginalLanguage: "en"}, "其他动漫"},
+		{"missing language", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"JP"}}, "其他动漫"},
+		{"invalid facts are not codes", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"Japan", "日本"}, OriginalLanguage: "ja"}, "其他动漫"},
+		{"genre mismatch", mediacategory.Facts{Kind: "tv", Genres: []int{99}, Countries: []string{"JP"}, OriginalLanguage: "ja"}, ""},
+		{"missing genres", mediacategory.Facts{Kind: "tv", Countries: []string{"JP"}, OriginalLanguage: "ja"}, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := classifier.Classify(tt.facts)
@@ -104,10 +97,10 @@ func TestConditionsAndMissingFacts(t *testing.T) {
 }
 
 func TestRuleOrderAndNormalization(t *testing.T) {
-	narrow := "    - name: 日本动漫\n      path: 剧集/日本动漫\n      match: {genres: [16], origin_countries: [' jp ']}\n"
-	broad := "    - name: 动漫\n      path: 剧集/动漫\n      match: {genres: [16]}\n"
-	header := "version: 1\nmovie: {fallback: 电影/其他电影, rules: []}\ntv:\n  fallback: 剧集/其他剧集\n  rules:\n"
-	facts := mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}}
+	narrow := "    - name: 日本动漫\n      match: {genres: [16], countries: [' jp ']}\n"
+	broad := "    - name: 动漫\n      match: {genres: [16]}\n"
+	header := "movie: {fallback: 其他电影, rules: []}\ntv:\n  fallback: 其他剧集\n  rules:\n"
+	facts := mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"JP"}}
 	for _, tt := range []struct{ rules, want string }{{narrow + broad, "日本动漫"}, {broad + narrow, "动漫"}} {
 		result, err := compile(t, header+tt.rules).Classify(facts)
 		if err != nil || result.RuleName != tt.want {
@@ -115,21 +108,20 @@ func TestRuleOrderAndNormalization(t *testing.T) {
 		}
 	}
 	source := strings.ReplaceAll(customYAML, "[JP, KR]", "[' jp ', kr]")
-	source = strings.ReplaceAll(source, "[US, JP]", "[us, ' jp ']")
 	source = strings.ReplaceAll(source, "[ja, ko]", "[' JA ', KO]")
 	source = strings.ReplaceAll(source, "name: 完整条件", "name: ' 完整条件 '")
-	facts.ProductionCountries, facts.OriginalLanguage = []string{"US"}, "ja"
+	facts.OriginalLanguage = "ja"
 	result, err := compile(t, source).Classify(facts)
-	if err != nil || result.RuleName != "完整条件" {
+	if err != nil || result.RuleName != "完整条件" || result.Path != "剧集/完整条件" {
 		t.Fatalf("configuration codes or names were not normalized: %+v, %v", result, err)
 	}
 }
 
 func TestFallbacksAndInvalidKinds(t *testing.T) {
-	classifier := compile(t, "version: 1\nmovie: {fallback: 电影/全部, rules: []}\ntv: {fallback: 剧集/全部, rules: []}\n")
-	for _, kind := range []string{"movie", "tv"} {
+	classifier := compile(t, "movie: {fallback: 全部, rules: []}\ntv: {fallback: 全部, rules: []}\n")
+	for kind, want := range map[string]string{"movie": "电影/全部", "tv": "剧集/全部"} {
 		result, err := classifier.Classify(mediacategory.Facts{Kind: kind, Genres: []int{16}})
-		if err != nil || !result.Fallback || result.RuleName != "" || result.Path == "" {
+		if err != nil || !result.Fallback || result.RuleName != "" || result.Path != want {
 			t.Fatalf("empty rule list must use fallback: %+v, %v", result, err)
 		}
 	}
@@ -147,8 +139,8 @@ func TestFallbacksAndInvalidKinds(t *testing.T) {
 
 func TestClassifierDoesNotMutateFactsAndCanBeShared(t *testing.T) {
 	classifier := compile(t, customYAML)
-	facts := mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, OriginCountries: []string{" jp "}, ProductionCountries: []string{" us "}, OriginalLanguage: " JA "}
-	want := mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, OriginCountries: []string{" jp "}, ProductionCountries: []string{" us "}, OriginalLanguage: " JA "}
+	facts := mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, Countries: []string{" jp "}, OriginalLanguage: " JA "}
+	want := mediacategory.Facts{Kind: "tv", Genres: []int{99, 16}, Countries: []string{" jp "}, OriginalLanguage: " JA "}
 	var workers sync.WaitGroup
 	for range 8 {
 		workers.Add(1)
@@ -175,9 +167,9 @@ func BenchmarkClassify(b *testing.B) {
 		name  string
 		facts mediacategory.Facts
 	}{
-		{"first_rule", mediacategory.Facts{Kind: "tv", Genres: []int{16}, OriginCountries: []string{"JP"}}},
-		{"last_rule", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"US"}}},
-		{"fallback", mediacategory.Facts{Kind: "tv", OriginCountries: []string{"TH"}}},
+		{"first_rule", mediacategory.Facts{Kind: "tv", Genres: []int{16}, Countries: []string{"JP"}}},
+		{"last_rule", mediacategory.Facts{Kind: "tv", Countries: []string{"US"}}},
+		{"fallback", mediacategory.Facts{Kind: "tv", Countries: []string{"TH"}}},
 	} {
 		b.Run(tt.name, func(b *testing.B) {
 			b.ReportAllocs()

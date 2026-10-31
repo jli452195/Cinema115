@@ -37,16 +37,19 @@ type ClassificationDocument struct {
 	Diagnostic     *mediacategory.ConfigError `json:"diagnostic,omitempty"`
 }
 
-// Use already loaded metadata; origin and production countries never substitute
-// for one another, and classification adds no metadata requests.
+// Select the country field by media kind using already loaded metadata;
+// classification adds no metadata requests.
 func mediaClassificationFacts(detail *tmdb.Detail) mediacategory.Facts {
 	genres := make([]int, 0, len(detail.Genres))
 	for _, genre := range detail.Genres {
 		genres = append(genres, genre.ID)
 	}
+	countries := detail.CountryCodes
+	if detail.Kind == "tv" {
+		countries = detail.OriginCountryCodes
+	}
 	return mediacategory.Facts{
-		Kind: detail.Kind, Genres: genres, OriginCountries: detail.OriginCountryCodes,
-		ProductionCountries: detail.CountryCodes, OriginalLanguage: detail.OriginalLanguage,
+		Kind: detail.Kind, Genres: genres, Countries: countries, OriginalLanguage: detail.OriginalLanguage,
 	}
 }
 

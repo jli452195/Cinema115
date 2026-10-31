@@ -33,38 +33,31 @@ func (m *classificationMetadata) Details(_ context.Context, kind string, id int)
 func TestMediaOrganizerClassificationLocalFiles(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
 	settings, _, initial := classificationTestStore(t)
-	const source = `version: 1
-movie:
-  fallback: 影院/其他
+	const source = `movie:
+  fallback: 其他
   rules:
     - name: 动画
-      path: 影院/动画
       match:
         genres: [16]
     - name: 华语
-      path: 影院/华语
       match:
         languages: [zh, cn]
     - name: 日本制作
-      path: 影院/日本制作
       match:
-        production_countries: [JP]
+        countries: [JP]
 tv:
-  fallback: 剧集/其他
+  fallback: 其他
   rules:
     - name: 日本动画
-      path: 剧集/日本动画
       match:
         genres: [16]
-        origin_countries: [JP]
+        countries: [JP]
     - name: 其他动画
-      path: 剧集/其他动画
       match:
         genres: [16]
     - name: 国产
-      path: 剧集/国产
       match:
-        origin_countries: [CN]
+        countries: [CN]
 `
 	if _, err := settings.Save(context.Background(), source, initial.Revision); err != nil {
 		t.Fatal(err)
@@ -78,13 +71,15 @@ tv:
 		origin, production   []string
 		category             string
 	}{
-		{"Animation", "movie", "zh", []tmdb.Genre{{ID: 16}}, nil, nil, "影院/动画"},
-		{"Chinese", "movie", "cn", nil, nil, nil, "影院/华语"},
-		{"Production", "movie", "en", nil, []string{"US"}, []string{"JP"}, "影院/日本制作"},
-		{"OriginOnly", "movie", "ja", nil, []string{"JP"}, nil, "影院/其他"},
+		{"Animation", "movie", "zh", []tmdb.Genre{{ID: 16}}, nil, nil, "电影/动画"},
+		{"Chinese", "movie", "cn", nil, nil, nil, "电影/华语"},
+		{"Production", "movie", "en", nil, []string{"US"}, []string{"JP"}, "电影/日本制作"},
+		{"OriginOnly", "movie", "ja", nil, []string{"JP"}, nil, "电影/其他"},
+		{"OriginConflict", "movie", "ja", nil, []string{"JP"}, []string{"US"}, "电影/其他"},
 		{"Japanese", "tv", "ja", []tmdb.Genre{{ID: 16}}, []string{"JP"}, []string{"US"}, "剧集/日本动画"},
 		{"UnknownOrigin", "tv", "ja", []tmdb.Genre{{ID: 16}}, nil, []string{"JP"}, "剧集/其他动画"},
 		{"Coproduction", "tv", "en", nil, []string{"JP", "CN"}, nil, "剧集/国产"},
+		{"ProductionConflict", "tv", "en", nil, []string{"US"}, []string{"CN"}, "剧集/其他"},
 		{"Fallback", "tv", "", nil, nil, nil, "剧集/其他"},
 	}
 	for i, tc := range cases {
@@ -148,7 +143,7 @@ func TestMediaOrganizerClassificationPinnedForCorrectionAndRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := strings.ReplaceAll(strings.ReplaceAll(initial.YAML, "剧集/其他剧集", "新剧集/其他"), "电影/华语电影", "新电影/华语")
+	changed := strings.ReplaceAll(strings.ReplaceAll(initial.YAML, "其他剧集", "新其他"), "name: 华语电影", "name: 新华语")
 	if _, err := settings.Save(context.Background(), changed, initial.Revision); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +209,7 @@ func TestMediaOrganizerClassificationPinnedForCorrectionAndRestart(t *testing.T)
 		t.Fatal(err)
 	}
 	mediaTestProcess(t, restarted, &next, "auto")
-	if next.Classification.Revision == initial.Revision || next.Status != "completed" || !strings.HasPrefix(next.Entries[0].Relative, "新剧集/其他/") {
+	if next.Classification.Revision == initial.Revision || next.Status != "completed" || !strings.HasPrefix(next.Entries[0].Relative, "剧集/新其他/") {
 		t.Fatal("new batch failed to use updated rules", next)
 	}
 }

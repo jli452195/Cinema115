@@ -59,7 +59,7 @@ func TestMediaClassificationPersistsExactYAMLAndSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "# keep this editor comment\r\n" + strings.ReplaceAll(strings.Replace(original.YAML, "电影/其他电影", "电影/新目录", 1), "\n", "\r\n")
+	source := "# keep this editor comment\r\n" + strings.ReplaceAll(strings.Replace(original.YAML, "其他电影", "新目录", 1), "\n", "\r\n")
 	saved, err := s.Save(context.Background(), source, original.Revision)
 	if err != nil || saved.YAML != source || saved.Revision == original.Revision || saved.ActiveRevision != saved.Revision {
 		t.Fatal("save failed", saved, err)
@@ -95,7 +95,7 @@ func TestMediaClassificationPersistsExactYAMLAndSnapshots(t *testing.T) {
 
 func TestMediaClassificationConflictsAndExternalReload(t *testing.T) {
 	s, path, original := classificationTestStore(t)
-	external := strings.Replace(original.YAML, "剧集/其他剧集", "剧集/外部修改", 1)
+	external := strings.Replace(original.YAML, "其他剧集", "外部修改", 1)
 	if err := os.WriteFile(path, []byte(external), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestMediaClassificationConflictsAndExternalReload(t *testing.T) {
 	if document.YAML != external || document.Revision == document.ActiveRevision || pinned.YAML != original.YAML {
 		t.Fatal("reading external edits must not silently activate them", document, pinned)
 	}
-	proposed := strings.Replace(original.YAML, "剧集/其他剧集", "剧集/页面修改", 1)
+	proposed := strings.Replace(original.YAML, "其他剧集", "页面修改", 1)
 	if _, err := s.Save(context.Background(), proposed, original.Revision); !errors.Is(err, ErrClassificationConflict) {
 		t.Fatal("stale page overwrote external edits", err)
 	}

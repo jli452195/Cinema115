@@ -18,14 +18,13 @@ var (
 	ErrFacts  = errors.New("分类信息无效")
 )
 
-// Facts keeps origin and production countries separate. Missing facts never
-// inherit another field; the caller may pass the metadata it already has.
+// Facts contains metadata already loaded by the caller. Countries are production
+// countries for movies and origin countries for TV, selected by the caller.
 type Facts struct {
-	Kind                string   `json:"kind"`
-	Genres              []int    `json:"genres"`
-	OriginCountries     []string `json:"originCountries"`
-	ProductionCountries []string `json:"productionCountries"`
-	OriginalLanguage    string   `json:"originalLanguage"`
+	Kind             string   `json:"kind"`
+	Genres           []int    `json:"genres"`
+	Countries        []string `json:"countries"`
+	OriginalLanguage string   `json:"originalLanguage"`
 }
 
 type Result struct {
@@ -35,15 +34,14 @@ type Result struct {
 }
 
 type conditions struct {
-	genres              []int
-	originCountries     []string
-	productionCountries []string
-	languages           []string
+	genres    []int
+	countries []string
+	languages []string
 }
 
 type rule struct {
-	name, path string
-	match      conditions
+	name  string
+	match conditions
 }
 
 type section struct {
@@ -63,11 +61,14 @@ func (c *Classifier) Classify(facts Facts) (Result, error) {
 		return Result{}, fmt.Errorf("%w：请先加载规则", ErrConfig)
 	}
 	var selected *section
+	var prefix string
 	switch facts.Kind {
 	case "movie":
 		selected = &c.movie
+		prefix = "电影/"
 	case "tv":
 		selected = &c.tv
+		prefix = "剧集/"
 	default:
 		return Result{}, fmt.Errorf("%w：不支持的作品类型 %q", ErrFacts, facts.Kind)
 	}
@@ -76,10 +77,10 @@ func (c *Classifier) Classify(facts Facts) (Result, error) {
 	}
 	for _, rule := range selected.rules {
 		if rule.match.matches(facts) {
-			return Result{Path: rule.path, RuleName: rule.name}, nil
+			return Result{Path: prefix + rule.name, RuleName: rule.name}, nil
 		}
 	}
-	return Result{Path: selected.fallback, Fallback: true}, nil
+	return Result{Path: prefix + selected.fallback, Fallback: true}, nil
 }
 
 func (m conditions) matches(f Facts) bool {
@@ -95,8 +96,7 @@ func (m conditions) matches(f Facts) bool {
 			return false
 		}
 	}
-	return matchesCodes(m.originCountries, f.OriginCountries...) &&
-		matchesCodes(m.productionCountries, f.ProductionCountries...) &&
+	return matchesCodes(m.countries, f.Countries...) &&
 		matchesCodes(m.languages, f.OriginalLanguage)
 }
 

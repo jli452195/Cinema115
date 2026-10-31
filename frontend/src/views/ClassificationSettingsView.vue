@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { IconCode, IconDeviceFloppy, IconRefresh, IconRestore } from '@tabler/icons-vue'
+import { IconCode, IconDeviceFloppy, IconRefresh, IconRestore, IconUpload } from '@tabler/icons-vue'
 import ClassificationRuleEditor from '../components/ClassificationRuleEditor.vue'
+import ClassificationImportDialog from '../components/ClassificationImportDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { portalUser } from '../composables/usePortalAuth'
 import { classificationRequest } from '../lib/classification-api'
@@ -24,7 +25,7 @@ const dirty = computed(() => !!settings.value && (workingSource.value !== settin
 const fileNotActive = computed(() => !!settings.value && settings.value.record.revision !== settings.value.record.activeRevision)
 const issue = computed(() => editor.value ? classificationIssue(drafts.value) : undefined)
 const diagnostic = ref<ClassificationDiagnostic>(), invalidKey = ref('')
-const dialog = ref<'leave' | 'read' | 'reset' | ''>('')
+const dialog = ref<'leave' | 'read' | 'reset' | 'import' | ''>(''), importing = ref(false), importedYAML = ref('')
 let lifecycle = new AbortController(), leaveDecision: ((value: boolean) => void) | undefined
 const message = (reason: unknown) => reason instanceof Error ? reason.message : '操作失败，请重试'
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
@@ -132,10 +133,23 @@ async function activateFile() {
   } finally { if (!session.aborted) loading.value = false }
 }
 function reread() { if (!locked.value) dirty.value ? dialog.value = 'read' : void read() }
+function applyImport() {
+  if (locked.value || !importedYAML.value) return
+  setDocument(importedYAML.value); mode.value = 'visual'; kind.value = 'movie'
+  error.value = ''; notice.value = 'MP 分类已载入，保存规则后生效'
+  importing.value = false; importedYAML.value = ''
+}
+function requestImport(yaml: string) {
+  if (locked.value) return
+  importedYAML.value = yaml
+  if (dirty.value) dialog.value = 'import'
+  else applyImport()
+}
 function decide(value: boolean) {
   const action = dialog.value; dialog.value = ''
   if (action === 'leave') { if (value) pending.value = undefined; leaveDecision?.(value); leaveDecision = undefined }
   if (value && action === 'read') { pending.value = undefined; void read() }
+  if (action === 'import') { if (value) applyImport(); else importedYAML.value = '' }
   if (value && action === 'reset' && settings.value) {
     setDocument(settings.value.defaultYAML); error.value = ''; diagnostic.value = undefined
     notice.value = '电影和剧集均已恢复默认，保存后生效'
@@ -153,7 +167,7 @@ watch(() => classificationSignature(drafts.value), () => { invalidKey.value = ''
 watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   lifecycle.abort(); lifecycle = new AbortController(); settings.value = undefined; editor.value = undefined; pending.value = undefined
   drafts.value = { movie: { fallback: '', rules: [] }, tv: { fallback: '', rules: [] } }
-  workingSource.value = ''; parseError.value = ''; diagnostic.value = undefined; mode.value = 'visual'; saving.value = false; dialog.value = ''; leaveDecision?.(false); leaveDecision = undefined
+  workingSource.value = ''; parseError.value = ''; diagnostic.value = undefined; mode.value = 'visual'; saving.value = false; dialog.value = ''; importing.value = false; importedYAML.value = ''; leaveDecision?.(false); leaveDecision = undefined
   if (portalUser.value?.role === 'admin') void read()
 })
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void read() })
@@ -167,7 +181,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
         <p v-else class="cs-scope-label">完整分类配置<span>电影和剧集</span></p>
         <div class="cs-tools">
           <div class="cs-mode" role="group" aria-label="编辑模式"><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'visual'" @click="chooseMode('visual')">可视化</button><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'source'" @click="chooseMode('source')">YAML</button></div>
-          <div class="cs-actions"><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="dialog = 'reset'"><IconRestore :size="15" aria-hidden="true" />恢复默认</button><button class="cs-button cs-primary" type="button" :disabled="locked || !settings || !dirty" @click="save"><IconDeviceFloppy :size="15" aria-hidden="true" />{{ saving ? '保存中…' : '保存规则' }}</button></div>
+          <div class="cs-actions"><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="importing = true"><IconUpload :size="15" aria-hidden="true" />导入 MP YAML</button><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="dialog = 'reset'"><IconRestore :size="15" aria-hidden="true" />恢复默认</button><button class="cs-button cs-primary" type="button" :disabled="locked || !settings || !dirty" @click="save"><IconDeviceFloppy :size="15" aria-hidden="true" />{{ saving ? '保存中…' : '保存规则' }}</button></div>
         </div>
       </header>
       <p v-if="loading" class="cs-status" role="status">正在读取分类规则…</p>
@@ -190,10 +204,11 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
         <div class="cs-feedback-actions"><div v-if="pending" class="cs-actions"><button class="cs-button" type="button" :disabled="saving" @click="confirmSave">确认保存结果</button><button class="cs-read" type="button" :disabled="saving" @click="dialog = 'read'">放弃等待并重读</button></div><button v-else class="cs-read" type="button" :disabled="locked" @click="reread"><IconRefresh :size="14" aria-hidden="true" />重新读取文件</button><span>classification.yaml</span></div>
       </div>
     </div>
-    <P115ActionDialog v-if="dialog" :title="dialog === 'reset' ? '恢复全部默认分类？' : dialog === 'read' ? '重新读取分类文件？' : pending ? '放弃确认并离开？' : '放弃未保存的修改？'" @close="decide(false)">
+    <ClassificationImportDialog v-if="importing" :disabled="locked" @close="importing = false" @import="requestImport" />
+    <P115ActionDialog v-if="dialog" :title="dialog === 'reset' ? '恢复全部默认分类？' : dialog === 'read' ? '重新读取分类文件？' : dialog === 'import' ? '替换未保存的分类规则？' : pending ? '放弃确认并离开？' : '放弃未保存的修改？'" @close="decide(false)">
       <p v-if="pending">保存结果尚未确认，规则可能已经生效。{{ dialog === 'read' ? '重新读取将放弃本地编辑，以文件当前内容为准。' : '离开后本地编辑会丢失，下次进入将读取文件当前内容。' }}</p>
-      <p v-else>{{ dialog === 'reset' ? '电影和剧集规则均会替换为默认配置，保存后才生效。' : dialog === 'read' ? '电影和剧集的本地修改会被文件内容替换。' : '电影和剧集的本地修改尚未保存，离开后会丢失。' }}</p>
-      <template #footer><button class="cs-button" type="button" @click="decide(false)">取消</button><button class="cs-button cs-primary" type="button" @click="decide(true)">{{ dialog === 'reset' ? '恢复默认' : dialog === 'read' ? '重新读取' : '放弃并离开' }}</button></template>
+      <p v-else>{{ dialog === 'reset' ? '电影和剧集规则均会替换为默认配置，保存后才生效。' : dialog === 'read' ? '电影和剧集的本地修改会被文件内容替换。' : dialog === 'import' ? '导入将替换电影和剧集尚未保存的修改，保存规则后才会生效。' : '电影和剧集的本地修改尚未保存，离开后会丢失。' }}</p>
+      <template #footer><button class="cs-button" type="button" @click="decide(false)">取消</button><button class="cs-button cs-primary" type="button" @click="decide(true)">{{ dialog === 'reset' ? '恢复默认' : dialog === 'read' ? '重新读取' : dialog === 'import' ? '替换并载入' : '放弃并离开' }}</button></template>
     </P115ActionDialog>
 </template>
 
@@ -241,7 +256,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
   .cs-mode { justify-self: end; }
   .cs-kind button { min-height: 42px; padding-inline: 12px; }
   .cs-mode button { min-height: 36px; padding-inline: 9px; }
-  .cs-actions { grid-column: 1 / -1; justify-content: flex-end; gap: 8px; }
+  .cs-actions { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   .cs-feedback .cs-actions { justify-content: flex-start; }
   .cs-scope-label { font-size: 13px; gap: 2px 8px; }
   .cs-scope-label span { font-size: 11px; }

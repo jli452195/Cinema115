@@ -1,9 +1,8 @@
 export type ClassificationKind = 'movie' | 'tv'
-export type ClassificationCondition = 'genres' | 'origin_countries' | 'production_countries' | 'languages'
+export type ClassificationCondition = 'genres' | 'countries' | 'languages'
 export interface ClassificationRule {
   key: string
   name: string
-  path: string
   match: Partial<Record<ClassificationCondition, (string | number)[]>>
 }
 export interface ClassificationSection { fallback: string; rules: ClassificationRule[] }

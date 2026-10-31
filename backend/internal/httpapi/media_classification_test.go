@@ -81,7 +81,7 @@ func TestMediaClassificationHTTP(t *testing.T) {
 		t.Fatal("missing initial editor state", initial)
 	}
 	original := initial.Record
-	source := "# retain comment\r\n" + strings.ReplaceAll(strings.Replace(original.YAML, "电影/其他电影", "电影/测试", 1), "\n", "\r\n")
+	source := "# retain comment\r\n" + strings.ReplaceAll(strings.Replace(original.YAML, "其他电影", "测试", 1), "\n", "\r\n")
 	var saved service.ClassificationDocument
 	body := payload(source, original.Revision)
 	decode(call("PUT", "", admin, body, 200), &saved)

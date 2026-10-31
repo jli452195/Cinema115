@@ -56,16 +56,9 @@ func Compile(source string) (*Classifier, error) {
 	if len(document.Content) != 1 {
 		return nil, problem(&document, "$", "须提供完整的分类配置")
 	}
-	root, err := object(document.Content[0], "$", []string{"version", "movie", "tv"}, "version", "movie", "tv")
+	root, err := object(document.Content[0], "$", []string{"movie", "tv"}, "movie", "tv")
 	if err != nil {
 		return nil, err
-	}
-	version, err := positiveInteger(root["version"], "version")
-	if err != nil {
-		return nil, err
-	}
-	if version != 1 {
-		return nil, problem(root["version"], "version", "仅支持整数版本 1")
 	}
 	movie, err := compileSection(root["movie"], "movie")
 	if err != nil {
@@ -163,7 +156,7 @@ func compileSection(node *yaml.Node, field string) (section, error) {
 	names := make(map[string]bool, len(list.Content))
 	for i, item := range list.Content {
 		itemField := field + ".rules[" + strconv.Itoa(i) + "]"
-		fields, err := object(item, itemField, []string{"name", "path", "match"}, "name", "path", "match")
+		fields, err := object(item, itemField, []string{"name", "match"}, "name", "match")
 		if err != nil {
 			return section{}, err
 		}
@@ -172,25 +165,24 @@ func compileSection(node *yaml.Node, field string) (section, error) {
 			return section{}, err
 		}
 		name = strings.TrimSpace(name)
+		if err := naming.ValidateDirectory(name); err != nil {
+			return section{}, fmt.Errorf("%w: %w", problem(fields["name"], itemField+".name", "分类名称无效"), err)
+		}
 		if names[name] {
 			return section{}, problem(fields["name"], itemField+".name", "当前作品类型内规则名称重复")
 		}
 		names[name] = true
-		path, err := directory(fields["path"], itemField+".path")
-		if err != nil {
-			return section{}, err
-		}
 		match, err := compileConditions(fields["match"], itemField+".match")
 		if err != nil {
 			return section{}, err
 		}
-		rules = append(rules, rule{name: name, path: path, match: match})
+		rules = append(rules, rule{name: name, match: match})
 	}
 	return section{fallback: fallback, rules: rules}, nil
 }
 
 func compileConditions(node *yaml.Node, field string) (conditions, error) {
-	allowed := []string{"genres", "origin_countries", "production_countries", "languages"}
+	allowed := []string{"genres", "countries", "languages"}
 	fields, err := object(node, field, allowed)
 	if err != nil {
 		return conditions{}, err
@@ -255,10 +247,8 @@ func compileConditions(node *yaml.Node, field string) (conditions, error) {
 			codes = append(codes, value)
 		}
 		switch key {
-		case "origin_countries":
-			match.originCountries = codes
-		case "production_countries":
-			match.productionCountries = codes
+		case "countries":
+			match.countries = codes
 		case "languages":
 			match.languages = codes
 		}
