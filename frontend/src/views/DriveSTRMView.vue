@@ -31,7 +31,10 @@ const state = ref<State>(), editor = ref<Mapping>(), deleting = ref<Mapping>()
 const settingsDraft = ref<Settings>(), savedSettings = ref<Settings>()
 const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true)
 const sourceDialog = ref(false), outputDialog = ref(false)
-const scanMode = ref<'increment' | 'full'>('increment')
+const scanSchedules = [
+  { enabled: 'reconcileEnabled', interval: 'reconcileIntervalHours', name: '增量核对', intervals: [6, 12, 24, 72, 168], help: '比对目录树、补齐缺失，减少文件资料请求。' },
+  { enabled: 'fullScanEnabled', interval: 'fullScanIntervalHours', name: '全量扫描', intervals: [24, 72, 168, 336, 720], help: '读取全部文件资料，核验同路径替换。' },
+] as const
 const lifecycle = new AbortController()
 const addButton = ref<HTMLButtonElement>()
 let timer: number | undefined, pendingRefresh: Promise<void> | undefined, generation = 0, snapshot = ''
@@ -44,17 +47,6 @@ const needsSettingsSave = computed(() => !!settingsDraft.value && (!state.value?
 const unsaved = computed(() => editorDirty.value || settingsDirty.value)
 const settingsReady = computed(() => !!state.value?.settingsSaved && !settingsDirty.value)
 const hasSchedule = computed(() => !!state.value && (state.value.settings.eventIntervalSeconds > 0 || state.value.settings.reconcileEnabled && state.value.settings.reconcileIntervalHours > 0 || state.value.settings.fullScanEnabled && state.value.settings.fullScanIntervalHours > 0))
-const scanEnabled = computed({
-  get: () => !!settingsDraft.value?.[scanMode.value === 'increment' ? 'reconcileEnabled' : 'fullScanEnabled'],
-  set: (value: boolean) => { if (settingsDraft.value) settingsDraft.value[scanMode.value === 'increment' ? 'reconcileEnabled' : 'fullScanEnabled'] = value },
-})
-const scanInterval = computed({
-  get: () => settingsDraft.value?.[scanMode.value === 'increment' ? 'reconcileIntervalHours' : 'fullScanIntervalHours'] || (scanMode.value === 'increment' ? 24 : 720),
-  set: (value: number) => { if (settingsDraft.value) settingsDraft.value[scanMode.value === 'increment' ? 'reconcileIntervalHours' : 'fullScanIntervalHours'] = value },
-})
-const scanIntervals = computed(() => scanMode.value === 'increment' ? [6, 12, 24, 72, 168] : [24, 72, 168, 336, 720])
-const scanName = computed(() => scanMode.value === 'increment' ? '增量核对' : '全量扫描')
-const scanHelp = computed(() => scanMode.value === 'increment' ? '比对目录树，补齐本地缺失文件，减少文件资料请求。' : '读取全部文件资料，核验同路径替换；未变化文件跳过。')
 const canStart = computed(() => settingsReady.value && !!state.value?.accountReady)
 const startHint = computed(() => !state.value?.settingsSaved ? '请先保存基础设置' : settingsDirty.value ? '请先保存或还原基础设置的修改' : !state.value?.accountReady ? '请先配置并登录主账号' : undefined)
 const strmPreview = computed(() => (settingsDraft.value?.baseUrl.trim().replace(/\/+$/, '') || 'http://NAS_IP:8080') + '/api/drive115/ecjq9ichcb40lzlvx/123456789/0123456789ABCDEF0123456789ABCDEF01234567/1073741824/Example.S01E01.mkv')
@@ -201,19 +193,17 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
         </fieldset>
         <fieldset :disabled="!!busy" class="ds-schedules" aria-describedby="ds-schedules-help">
           <legend>自动任务</legend>
-          <p id="ds-schedules-help" class="ds-help">仅用于开启监控的目录；增量与全量分别保存开关和周期，可同时启用。</p>
+          <p id="ds-schedules-help" class="ds-help">仅用于开启监控的目录；三项独立执行，可同时启用。未变化文件跳过。</p>
           <div class="ds-schedule-grid">
-            <div><label class="ds-outlined"><span>事件检查间隔</span><select v-model.number="settingsDraft.eventIntervalSeconds" aria-describedby="ds-event-help"><option :value="0">关闭</option><option :value="20">每 20 秒</option><option :value="60">每 1 分钟</option><option :value="300">每 5 分钟</option><option :value="900">每 15 分钟</option><option :value="1800">每 30 分钟</option></select></label><p id="ds-event-help" class="ds-help">共享读取生活事件，按变更更新目录。</p></div>
-            <div class="ds-scan-settings">
-              <div class="ds-modes" role="radiogroup" aria-label="定时扫描设置">
-                <label><input v-model="scanMode" type="radio" name="drive-scan-mode" value="increment" /><span>增量核对</span></label>
-                <label><input v-model="scanMode" type="radio" name="drive-scan-mode" value="full" /><span>全量扫描</span></label>
-              </div>
-              <div class="ds-scan-controls">
-                <SettingSwitch v-model="scanEnabled" :label="'自动' + scanName" :disabled="!!busy" />
-                <label class="ds-outlined"><span>{{ scanName }}周期</span><select v-model.number="scanInterval" :disabled="!scanEnabled" aria-describedby="ds-scan-help"><option v-for="hours in scanIntervals" :key="hours" :value="hours">{{ intervalLabel(hours) }}</option></select></label>
-              </div>
-              <p id="ds-scan-help" class="ds-help">{{ scanHelp }}</p>
+            <div class="ds-schedule-item">
+              <span class="ds-schedule-heading">事件检查</span>
+              <label class="ds-outlined"><span>事件检查间隔</span><select v-model.number="settingsDraft.eventIntervalSeconds" aria-describedby="ds-event-help"><option :value="0">关闭</option><option :value="20">每 20 秒</option><option :value="60">每 1 分钟</option><option :value="300">每 5 分钟</option><option :value="900">每 15 分钟</option><option :value="1800">每 30 分钟</option></select></label>
+              <p id="ds-event-help" class="ds-help">共享读取生活事件，按变更更新目录。</p>
+            </div>
+            <div v-for="schedule in scanSchedules" :key="schedule.enabled" class="ds-schedule-item">
+              <SettingSwitch v-model="settingsDraft[schedule.enabled]" class="ds-schedule-heading" :label="'自动' + schedule.name" :disabled="!!busy" />
+              <label class="ds-outlined"><span>{{ schedule.name }}周期</span><select v-model.number="settingsDraft[schedule.interval]" :disabled="!settingsDraft[schedule.enabled]" :aria-describedby="'ds-' + schedule.enabled + '-help'"><option v-for="hours in schedule.intervals" :key="hours" :value="hours">{{ intervalLabel(hours) }}</option></select></label>
+              <p :id="'ds-' + schedule.enabled + '-help'" class="ds-help">{{ schedule.help }}</p>
             </div>
           </div>
         </fieldset>
@@ -268,8 +258,8 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .ds-help { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.7; margin-top:7px; }
 .ds-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 20px; margin-top:22px; min-width:0; }
 .ds-download-controls { @apply bg-slate-50 dark:bg-slate-800/50; grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:14px 18px; border-radius:10px; padding:13px 14px; }.ds-rate-input { width:132px; flex-shrink:0; }.ds-download-controls .ds-help { flex:1; min-width:180px; margin:0; }
-.ds-schedules { margin-top:20px; min-width:0; }.ds-schedules legend { @apply text-slate-700 dark:text-slate-200; font-size:13px; font-weight:500; }.ds-schedule-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:20px; margin-top:20px; }
-.ds-scan-settings { min-width:0; }.ds-modes { @apply bg-slate-100 dark:bg-slate-800; display:flex; padding:3px; border-radius:9px; width:fit-content; }.ds-modes label { position:relative; cursor:pointer; }.ds-modes input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:inherit; z-index:1; }.ds-modes span { @apply text-slate-600 dark:text-slate-300; display:block; padding:6px 15px; border-radius:7px; font-size:13px; line-height:20px; }.ds-modes input:checked+span { @apply bg-blue-600 text-white dark:bg-blue-600 dark:text-white; box-shadow:0 1px 3px rgb(15 23 42 / .12); }.ds-modes input:focus-visible+span { outline:2px solid #3b82f6; outline-offset:2px; }.ds-modes input:disabled+span { cursor:not-allowed; opacity:.45; }.ds-scan-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(140px,1fr); align-items:center; gap:14px; margin-top:17px; }.ds-scan-settings>.ds-help { min-height:3.4em; }
+.ds-schedules { margin-top:20px; min-width:0; }.ds-schedules legend { @apply text-slate-700 dark:text-slate-200; font-size:13px; font-weight:500; }.ds-schedule-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:16px; }
+.ds-schedule-item { min-width:0; padding:0 20px; }.ds-schedule-item:first-child { padding-left:0; }.ds-schedule-item:last-child { padding-right:0; }.ds-schedule-item+.ds-schedule-item { @apply border-l border-slate-200 dark:border-slate-700; }.ds-schedule-heading { @apply text-slate-700 dark:text-slate-300; display:flex; align-items:center; min-height:24px; font-size:14px; font-weight:500; }.ds-schedule-heading+.ds-outlined { margin-top:16px; }
 .ds-outlined { @apply border border-slate-300 dark:border-slate-600; position:relative; display:block; min-width:0; border-radius:8px; transition:border-color .15s; }
 .ds-outlined:focus-within { @apply border-blue-500; box-shadow:0 0 0 1px #3b82f6; }
 .ds-outlined>span { @apply bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300; position:absolute; top:-9px; left:9px; padding:0 5px; font-size:12px; line-height:17px; }
@@ -292,7 +282,8 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .ds-alert { @apply rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300; padding:12px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.ds-notice { @apply text-blue-700 dark:text-blue-300; margin-bottom:12px; font-size:13px; }.ds-empty { @apply rounded-xl bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400; display:flex; align-items:center; gap:10px; padding:18px; font-size:13px; line-height:1.7; }.ds-empty>svg { flex-shrink:0; }
 .ds-notes { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.8; margin-top:12px; }.ds-notes summary { width:fit-content; min-height:32px; cursor:pointer; }.ds-notes p { margin-top:4px; max-width:900px; }
 .ds-form { display:grid; gap:15px; }.ds-form label { display:grid; gap:6px; font-size:13px; }.ds-form input { @apply border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100; border-radius:8px; min-width:0; width:100%; height:36px; padding:0 10px; font-size:13px; }.ds-form small { @apply text-slate-500 dark:text-slate-400; display:block; font-size:12px; line-height:1.6; margin-top:4px; }.ds-label { font-size:13px; display:block; margin-bottom:6px; }.ds-directory { @apply bg-slate-50 dark:bg-slate-800; display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px; border-radius:8px; text-align:left; font-size:13px; }.ds-directory>span:first-of-type { min-width:0; flex:1; overflow-wrap:anywhere; }.ds-link { @apply text-blue-600 dark:text-blue-400; font-size:12px; flex-shrink:0; }.ds-output { display:flex; gap:8px; }.ds-output input { flex:1; }.ds-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }.ds-spin { animation:ds-spin 1s linear infinite; }@keyframes ds-spin { to { transform:rotate(360deg) } }
-@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid,.ds-schedule-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-scan-controls { grid-template-columns:minmax(0,1fr) minmax(118px,1fr); gap:10px; }.ds-modes { width:100%; }.ds-modes label { flex:1; text-align:center; }.ds-modes span { min-height:38px; padding-block:9px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-directory { min-height:44px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-form input,.ds-outlined>input,.ds-outlined>select { height:44px; font-size:16px; } }
-@media(max-width:359px) { .ds-actions,.ds-scan-controls { grid-template-columns:1fr; }.ds-rate-input { width:100%; }.ds-settings>.ds-section-heading { flex-wrap:wrap; }.ds-save-actions { margin-left:auto; } }
+@media(max-width:767px) { .ds-schedule-grid { grid-template-columns:minmax(0,1fr); }.ds-schedule-item { display:grid; grid-template-columns:minmax(0,1fr) minmax(128px,1fr); align-items:center; gap:8px 14px; padding:18px 0; }.ds-schedule-item:first-child { padding-top:0; }.ds-schedule-item:last-child { padding-bottom:0; }.ds-schedule-item+.ds-schedule-item { @apply border-l-0 border-t; }.ds-schedule-heading+.ds-outlined { margin-top:0; }.ds-schedule-item>.ds-help { grid-column:1/-1; margin-top:0; } }
+@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-directory { min-height:44px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-form input,.ds-outlined>input,.ds-outlined>select { height:44px; font-size:16px; } }
+@media(max-width:359px) { .ds-actions,.ds-schedule-item { grid-template-columns:1fr; }.ds-schedule-heading+.ds-outlined { margin-top:8px; }.ds-rate-input { width:100%; }.ds-settings>.ds-section-heading { flex-wrap:wrap; }.ds-save-actions { margin-left:auto; } }
 @media(prefers-reduced-motion:reduce) { .ds-spin { animation:none; }.ds-chevron,.ds-outlined { transition:none; } }
 </style>

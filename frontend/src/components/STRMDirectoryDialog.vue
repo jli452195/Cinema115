@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { p115Request } from '../lib/p115-api'
 import { STRM_ROOT } from '../utils/strmDirectory'
+import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
 
 interface DirectoryEntry {
   name: string
@@ -28,7 +29,7 @@ const truncated = ref(false)
 let controller: AbortController | undefined
 let requestID = 0
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-const previousOverflow = document.body.style.overflow
+let unlock: (() => void) | undefined
 
 async function openDirectory(path: string) {
   const id = ++requestID
@@ -68,7 +69,7 @@ function select() {
 }
 
 onMounted(() => {
-  document.body.style.overflow = 'hidden'
+  unlock = lockAnimeDialogScroll()
   dialog.value?.showModal()
   void openDirectory('')
 })
@@ -77,7 +78,7 @@ onBeforeUnmount(() => {
   requestID++
   controller?.abort()
   dialog.value?.close()
-  document.body.style.overflow = previousOverflow
+  unlock?.()
   if (previousFocus?.isConnected) previousFocus.focus()
 })
 </script>

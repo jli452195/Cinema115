@@ -15,7 +15,7 @@ export const managementCategories = {
       { title: '115网盘STRM', description: '监控主网盘目录，保留层级生成本地 STRM，按需下载字幕与图片。', to: '/115/drive-strm', icon: 'monitor', menuIcon: 'folder' },
       { title: '115 云下载', description: '提交磁力或 ED2K 到指定网盘目录。', to: '/115/cloud-download', icon: 'download', menuIcon: 'download' },
       { title: '下载整理', description: '查看详情页发起的下载整理任务，检查进度并继续未完成的文件。', to: '/115/download-organize', icon: 'download', menuIcon: 'organize' },
-      { title: '115 目录分享', description: '手动或定时分享目录并生成 STRM，完成后回收临时目录。', to: '/115/folder-monitor', icon: 'monitor', menuIcon: 'folder' },
+      { title: '115 监控分享', description: '监控指定网盘目录，自动创建分享并生成本地 STRM。', to: '/115/folder-monitor', icon: 'monitor', menuIcon: 'folder' },
     ],
   },
   telegram: {

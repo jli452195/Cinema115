@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:folder-monitor-ui": "node scripts/folder-monitor-ui.cjs",
     "test:drive-strm-ui": "node scripts/drive-strm-ui.cjs",
     "test:classification": "node --test tests/classification-document.test.mjs",
     "test:classification-ui": "node scripts/classification-settings-ui.cjs",
