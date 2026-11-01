@@ -15,19 +15,20 @@ import (
 
 // Hub 管理 Bot 配置库及运行实例。每个 Bot 最多启动一个 getUpdates 消费者。
 type Hub struct {
-	mu             sync.RWMutex
-	moduleMu       sync.Mutex
-	profiles       *BotProfiles
-	dataDir        string
-	generator      ShareGenerator
-	settings       *service.AutomationStore
-	runtimes       map[string]*Manager
-	wake           chan struct{}
-	Logs           *service.GenerationLogs
-	Notifications  NotificationStore
-	CloudDownloads *service.CloudDownloadService
-	Follows        *service.FollowService
-	Playback       *service.MemberPlaybackService
+	mu                    sync.RWMutex
+	moduleMu              sync.Mutex
+	profiles              *BotProfiles
+	dataDir               string
+	generator             ShareGenerator
+	settings              *service.AutomationStore
+	CloudDownloadSettings *service.CloudDownloadSettings
+	runtimes              map[string]*Manager
+	wake                  chan struct{}
+	Logs                  *service.GenerationLogs
+	Notifications         NotificationStore
+	CloudDownloads        *service.CloudDownloadService
+	Follows               *service.FollowService
+	Playback              *service.MemberPlaybackService
 }
 
 func NewHub(dataDir, secret string, generator ShareGenerator, settings *service.AutomationStore) (*Hub, error) {
@@ -48,19 +49,56 @@ func (h *Hub) Refresh() {
 }
 
 func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
-	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || profile.CloudDownload.Enabled, Identity: profile.Identity}
+	cloudTargets := h.cloudTargets(profile.ID)
+	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || len(cloudTargets) > 0, Identity: profile.Identity}
 	m := &Manager{config: cfg, source: "web", wake: make(chan struct{}, 1)}
 	m.newWorker = func(value BotConfig) (*Telegram, error) {
 		worker, err := NewTelegram(value.Token, value.AllowedChatIDs, h.dataDir, h.generator, h.settings)
 		if worker != nil {
 			worker.ShareEnabled = receiveShare
 			worker.CloudDownloads = h.CloudDownloads
-			worker.CloudDownloadConfig = profile.CloudDownload
+			worker.CloudDownloadTargets = append([]TelegramCloudTarget{}, cloudTargets...)
+			worker.CurrentCloudTarget = func(id string) (TelegramCloudTarget, bool) { return h.cloudTarget(profile.ID, id) }
 		}
 		return worker, err
 	}
 	m.Logs, m.Notifications = h.Logs, h.Notifications
 	return m
+}
+
+func (h *Hub) cloudTargets(botID string) []TelegramCloudTarget {
+	if h.CloudDownloadSettings == nil {
+		return nil
+	}
+	targets := h.CloudDownloadSettings.Targets()
+	result := make([]TelegramCloudTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.AssignedBotID != botID {
+			continue
+		}
+		view := h.cloudTargetFromConfig(target)
+		result = append(result, view)
+	}
+	return result
+}
+
+func (h *Hub) cloudTarget(botID, targetID string) (TelegramCloudTarget, bool) {
+	if h.CloudDownloadSettings == nil {
+		return TelegramCloudTarget{}, false
+	}
+	target, ok := h.CloudDownloadSettings.Target(targetID)
+	if !ok || target.AssignedBotID != botID {
+		return TelegramCloudTarget{}, false
+	}
+	return h.cloudTargetFromConfig(target), true
+}
+
+func (h *Hub) cloudTargetFromConfig(target service.CloudDownloadTarget) TelegramCloudTarget {
+	view := TelegramCloudTarget{ID: target.ID, Name: target.Name, AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath, Ready: h.CloudDownloadSettings.TargetReady(target)}
+	if !view.Ready {
+		view.SetupHint = "主账号或下载目录已变化，请到磁力转存页面重新选择目录"
+	}
+	return view
 }
 
 func (h *Hub) tester() *Manager {
@@ -81,7 +119,7 @@ func (h *Hub) List() []BotProfileView {
 	defer h.mu.RUnlock()
 	result := make([]BotProfileView, 0, len(profiles))
 	for _, profile := range profiles {
-		view := BotProfileView{ID: profile.ID, Name: profile.Name, Configured: profile.Token != "", Enabled: profile.Enabled, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, CloudDownload: profile.CloudDownload, Identity: profile.Identity, Revision: profile.Revision}
+		view := BotProfileView{ID: profile.ID, Name: profile.Name, Configured: profile.Token != "", Enabled: profile.Enabled, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Identity: profile.Identity, Revision: profile.Revision}
 		if runtime := h.runtimes[profile.ID]; runtime != nil {
 			state := runtime.View()
 			view.Running, view.Connected, view.LastError = state.Running, state.Connected, state.LastError
@@ -96,9 +134,6 @@ func normalizeBotProfile(profile BotProfile) (BotProfile, error) {
 	profile.Token = strings.TrimSpace(profile.Token)
 	profile.AllowedChatIDs = normalizeChats(profile.AllowedChatIDs)
 	profile.NotificationChatID = strings.TrimSpace(profile.NotificationChatID)
-	profile.CloudDownload.AccountID = strings.TrimSpace(profile.CloudDownload.AccountID)
-	profile.CloudDownload.TargetCID = strings.TrimSpace(profile.CloudDownload.TargetCID)
-	profile.CloudDownload.TargetPath = strings.TrimSpace(profile.CloudDownload.TargetPath)
 	if !validBotName(profile.Name) {
 		return profile, fmt.Errorf("%w：名称应为 1～50 字", ErrConfig)
 	}
@@ -133,8 +168,6 @@ func (h *Hub) Update(ctx context.Context, input BotProfile, revision uint64) err
 	if input.Token == "" {
 		input.Token = current.Token
 	}
-	// Bot profile edits cannot change the cloud-download module assignment.
-	input.CloudDownload.Enabled = current.CloudDownload.Enabled
 	input, err = normalizeBotProfile(input)
 	if err != nil {
 		return err
@@ -221,7 +254,7 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 		wg.Add(1)
 		go func(m *Manager) { defer wg.Done(); m.RunNotifications(workerCtx) }(runtime)
 		profile, _ := h.profiles.Get(id)
-		if pollsMessages(profile, receiverID) {
+		if pollsMessages(profile, receiverID, len(h.cloudTargets(id)) > 0) {
 			wg.Add(1)
 			go func(m *Manager) {
 				defer wg.Done()
@@ -242,8 +275,8 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	}
 }
 
-func pollsMessages(profile BotProfile, receiverID string) bool {
-	return profile.ID == receiverID || profile.CloudDownload.Enabled
+func pollsMessages(profile BotProfile, receiverID string, cloudDownloadEnabled bool) bool {
+	return profile.ID == receiverID || cloudDownloadEnabled
 }
 
 func (h *Hub) Run(ctx context.Context) error {

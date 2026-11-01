@@ -8,15 +8,13 @@ import TelegramModuleCard from '../components/TelegramModuleCard.vue'
 import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
-import { p115Request } from '../lib/p115-api'
 import { useToast } from '../composables/useToast'
 import type { TelegramBotConfig, TelegramBotIdentity, TelegramBotModule } from '../types/telegramBots'
-import type { P115Account } from '../types/p115Accounts'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 const toast = useToast()
-const bots = ref<TelegramBotConfig[]>([]), modules = ref<TelegramBotModule[]>([]), accounts = ref<P115Account[]>([])
+const bots = ref<TelegramBotConfig[]>([]), modules = ref<TelegramBotModule[]>([])
 const loading = ref(true), refreshing = ref(false), adding = ref(false), deleting = ref(false)
 const editingBot = ref<TelegramBotConfig>(), deletingBot = ref<TelegramBotConfig>()
 const busyModules = ref(new Set<string>()), testingBots = ref(new Set<string>())
@@ -52,12 +50,6 @@ async function refresh(notify = false) {
   } finally { if (current === sequence) { loading.value = false; refreshing.value = false } }
 }
 
-async function loadAccounts() {
-  try {
-    const data = await p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: signal() })
-    if (!lifecycle.signal.aborted) accounts.value = data.accounts
-  } catch (reason) { if (!lifecycle.signal.aborted) toast.error(message(reason), { title: '读取主账号失败' }) }
-}
 function setBusy(target: typeof busyModules, id: string, busy: boolean) {
   const next = new Set(target.value)
   busy ? next.add(id) : next.delete(id)
@@ -73,7 +65,7 @@ async function updateModule(module: TelegramBotModule, botId: string) {
   draggingModuleId.value = ''
   poolDropTarget.value = false
   try {
-    await telegramRequest(props.token, 'modules/' + module.id, { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() })
+    await telegramRequest(props.token, 'modules/' + encodeURIComponent(module.id), { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() })
     if (lifecycle.signal.aborted) return
     await refresh()
     const botName = bots.value.find(bot => bot.id === botId)?.name || 'Bot'
@@ -154,7 +146,7 @@ async function removeBot() {
 async function edited() { editingBot.value = undefined; await refresh() }
 
 onMounted(async () => {
-  await Promise.all([refresh(), loadAccounts()])
+  await refresh()
   const poll = async () => {
     if (!lifecycle.signal.aborted && !document.hidden && !editingBot.value && !deletingBot.value && !busyModules.value.size && !draggingModuleId.value && !refreshing.value) await refresh()
     if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 8000)
@@ -198,7 +190,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
         <footer class="flex items-center gap-2 px-4 py-3 text-[11px] text-slate-500 dark:text-slate-400"><IconHandMove :size="14" aria-hidden="true" /><span>支持拖拽或点选分配</span><span class="ml-auto tabular-nums">共 {{ modules.length }} 项功能</span></footer>
       </aside>
     </div>
-    <FloatingDialog v-if="editingBot" title="编辑 Bot 配置" close-label="关闭 Bot 配置" size="config" @close="editingBot = undefined"><TelegramBotEditor :key="editingBot.id" :bot="editingBot" :token="token" :accounts="accounts" embedded @changed="edited" /></FloatingDialog>
+    <FloatingDialog v-if="editingBot" title="编辑 Bot 配置" close-label="关闭 Bot 配置" size="config" @close="editingBot = undefined"><TelegramBotEditor :key="editingBot.id" :bot="editingBot" :token="token" embedded @changed="edited" /></FloatingDialog>
     <P115ActionDialog v-if="deletingBot" title="删除 Bot 配置？" :busy="deleting" @close="deletingBot = undefined">
       <p>确定删除“{{ deletingBot.name }}”？</p><p v-if="deletingModules.length" class="mt-2">它当前分配了 {{ deletingModules.length }} 项功能。这些功能会解除分配并返回待分配区域，不会自动改派到其他 Bot。</p><p v-else class="mt-2">该 Bot 没有已分配的功能。</p>
       <template #footer><button type="button" class="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700" :disabled="deleting" @click="deletingBot = undefined">取消</button><button type="button" class="rounded-xl bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40" :disabled="deleting || busyModules.size > 0" @click="removeBot">{{ deleting ? '删除中' : '确认删除' }}</button></template>

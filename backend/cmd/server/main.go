@@ -460,6 +460,8 @@ func main() {
 		log.Fatal(err)
 	}
 	telegram.CloudDownloads = cloudDownloads
+	telegram.CloudDownloadSettings = cloudDownloadSettings
+	cloudDownloadSettings.OnChange = telegram.Refresh
 	telegram.Follows = follows
 	telegram.Playback = memberPlayback
 	automation.ValidateBot = telegram.ValidateSelection

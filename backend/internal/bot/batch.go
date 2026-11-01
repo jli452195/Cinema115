@@ -9,17 +9,20 @@ import (
 )
 
 type messageBatch struct {
-	SourceMessageIDs []int64        `json:"sourceMessageIDs,omitempty"`
-	ReadyAt          time.Time      `json:"readyAt,omitempty"`
-	Mode             string         `json:"mode,omitempty"`
-	CloudRedo        bool           `json:"cloudRedo,omitempty"`
-	UpdateID         int64          `json:"updateID"`
-	ChatID           int64          `json:"chatID"`
-	Items            []messageShare `json:"items"`
-	Next             int            `json:"next"`
-	MessageID        int64          `json:"messageID,omitempty"`
-	ThreadID         int64          `json:"threadID,omitempty"`
-	StatusMessageID  int64          `json:"statusMessageID,omitempty"`
+	SourceMessageIDs []int64                     `json:"sourceMessageIDs,omitempty"`
+	ReadyAt          time.Time                   `json:"readyAt,omitempty"`
+	Mode             string                      `json:"mode,omitempty"`
+	CloudRedo        bool                        `json:"cloudRedo,omitempty"`
+	CloudTargetID    string                      `json:"cloudTargetID,omitempty"`
+	CloudTargetName  string                      `json:"cloudTargetName,omitempty"`
+	CloudTarget      service.CloudDownloadConfig `json:"cloudTarget,omitempty"`
+	UpdateID         int64                       `json:"updateID"`
+	ChatID           int64                       `json:"chatID"`
+	Items            []messageShare              `json:"items"`
+	Next             int                         `json:"next"`
+	MessageID        int64                       `json:"messageID,omitempty"`
+	ThreadID         int64                       `json:"threadID,omitempty"`
+	StatusMessageID  int64                       `json:"statusMessageID,omitempty"`
 }
 
 // 每个链接分别保存开始与结束状态；重启只继续尚未开始的链接，不重复转存。

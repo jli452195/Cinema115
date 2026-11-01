@@ -15,12 +15,17 @@ func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, m
 
 // 每次新增资源重置等待时间；不同聊天和话题各自收集，不设最长收集时间。
 func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
+	state.CloudSelections = pruneCloudSelections(state.CloudSelections, now)
 	settings := b.Settings.ShareValue()
 	for _, update := range updates {
 		if update.ID < state.Offset {
 			continue
 		}
 		state.Offset = update.ID + 1
+		if update.CallbackQuery != nil {
+			b.enqueueCloudCallback(state, update, update.CallbackQuery, now)
+			continue
+		}
 		m := update.Message
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
@@ -32,16 +37,7 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		text := telegramMessageText(m)
 		cloudItems := parseCloudLinks(text)
 		if len(cloudItems) > 0 || isCloudCommand(text) {
-			switch {
-			case m.Chat.Type != "" && m.Chat.Type != "private":
-				b.queueTextReply(state, update, m, "⚠️ 磁力转存只允许在 Bot 私聊中使用，请私聊发送 /cloud。")
-				cloudItems = nil
-			case !b.CloudDownloadConfig.Enabled || b.CloudDownloads == nil:
-				b.queueTextReply(state, update, m, "⚠️ 此 Bot 尚未配置磁力转存，请先在管理页面为它选择 115 账号和下载目录。")
-				cloudItems = nil
-			case len(cloudItems) == 0:
-				b.queueTextReply(state, update, m, "请发送 magnet 磁力链接或 ED2K 链接。\n\n直接发送或使用 /cloud <链接>，都会默认执行智能删除重试。")
-			}
+			b.enqueueCloudMessage(state, update, m, cloudItems, now)
 		}
 		if len(items) > 0 {
 			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "Bot", "INFO", fmt.Sprintf("收到分享消息，识别 %d 个链接并加入队列", len(items)))
@@ -51,12 +47,6 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 			// Cloud download is administrator-only, so every new input uses the
 			// safe smart-redo path: exact terminal tasks are removed while files
 			// are kept; running or unverifiable tasks are untouched.
-			batch := &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: "cloud", CloudRedo: true, ReadyAt: now}
-			for _, link := range cloudItems {
-				batch.Items = append(batch.Items, messageShare{URL: link})
-				batch.SourceMessageIDs = append(batch.SourceMessageIDs, m.ID)
-			}
-			state.Queue = append(state.Queue, batch)
 		}
 		for _, item := range items {
 			mode := telegramShareMode(settings, item)
@@ -155,7 +145,7 @@ func (b *Telegram) collectUpdates(ctx context.Context, state *telegramState) err
 	}
 	timeout := min(25, max(0, int(time.Until(deadline).Seconds())))
 	var updates []telegramUpdate
-	if err := b.call(pollCtx, "getUpdates", map[string]any{"offset": state.Offset, "timeout": timeout, "limit": 10, "allowed_updates": []string{"message"}}, &updates); err != nil {
+	if err := b.call(pollCtx, "getUpdates", map[string]any{"offset": state.Offset, "timeout": timeout, "limit": 10, "allowed_updates": []string{"message", "callback_query"}}, &updates); err != nil {
 		if pollCtx.Err() != nil {
 			return nil
 		}

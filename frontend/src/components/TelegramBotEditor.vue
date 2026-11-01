@@ -1,23 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref } from 'vue'
 import SettingSwitch from './SettingSwitch.vue'
-import P115PrimaryStatus from './P115PrimaryStatus.vue'
-import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig, TelegramBotIdentity } from '../types/telegramBots'
-import type { P115Account } from '../types/p115Accounts'
 
-const props = defineProps<{ bot: TelegramBotConfig; token: string; accounts: P115Account[]; embedded?: boolean }>()
+const props = defineProps<{ bot: TelegramBotConfig; token: string; embedded?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const name = ref(props.bot.name)
 const botToken = ref('')
 const allowedChatIDs = ref(props.bot.allowedChatIDs)
 const notificationChatID = ref(props.bot.notificationChatID)
 const enabled = ref(props.bot.enabled)
-const cloudAccountId = computed(() => props.accounts.find(account => account.primary)?.id || '')
-const cloudTargetCID = ref(props.bot.cloudDownload?.accountId === cloudAccountId.value ? props.bot.cloudDownload?.targetCID ?? '' : '')
-const cloudTargetPath = ref(props.bot.cloudDownload?.accountId === cloudAccountId.value ? props.bot.cloudDownload?.targetPath ?? '' : '')
-const directoryDialogOpen = ref(false)
 const showToken = ref(false)
 const busy = ref('')
 const error = ref('')
@@ -39,28 +32,10 @@ async function save() {
   if (busy.value) return
   busy.value = 'save'; error.value = ''; notice.value = ''
   try {
-    await telegramRequest(props.token, `bots/${props.bot.id}`, { method: 'PUT', body: JSON.stringify({ name: name.value, token: botToken.value.trim(), allowedChatIDs: allowedChatIDs.value, notificationChatID: notificationChatID.value, enabled: enabled.value, cloudDownload: { enabled: props.bot.cloudDownload?.enabled ?? false, accountId: cloudAccountId.value, targetCID: cloudTargetCID.value, targetPath: cloudTargetPath.value }, revision: props.bot.revision }) })
+    await telegramRequest(props.token, `bots/${props.bot.id}`, { method: 'PUT', body: JSON.stringify({ name: name.value, token: botToken.value.trim(), allowedChatIDs: allowedChatIDs.value, notificationChatID: notificationChatID.value, enabled: enabled.value, revision: props.bot.revision }) })
     botToken.value = ''; showToken.value = false; tested.value = undefined; emit('changed')
   } catch (e) { error.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = '' }
-}
-
-function openDirectory() {
-  error.value = ''
-  if (!props.accounts.some(account => account.id === cloudAccountId.value && account.configured)) { error.value = '请先在 115 助手中登录主账号'; return }
-  directoryDialogOpen.value = true
-}
-
-watch(cloudAccountId, (value, previous) => {
-  if (value === previous) return
-  cloudTargetCID.value = ''
-  cloudTargetPath.value = ''
-})
-
-function selectDirectory(value: { id: string; path: string }) {
-  cloudTargetCID.value = value.id
-  cloudTargetPath.value = value.path
-  directoryDialogOpen.value = false
 }
 
 async function clearToken() {
@@ -86,21 +61,11 @@ async function clearToken() {
         <label class="block text-sm text-slate-700 dark:text-slate-300">允许的聊天 ID<textarea v-model="allowedChatIDs" rows="3" class="mt-2 w-full resize-y rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" placeholder="123456789&#10;-1001234567890" /></label>
         <label class="block text-sm text-slate-700 dark:text-slate-300">独立通知聊天 ID<input v-model="notificationChatID" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3" placeholder="单个数字 Chat ID" /></label>
         <SettingSwitch v-model="enabled" label="启用 Bot 配置" description="启用后，绑定此配置的功能可以接收消息和发送通知。" />
-        <section v-if="bot.cloudDownload?.enabled" class="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/70">
-          <div class="text-sm font-medium text-slate-800 dark:text-slate-200">磁力与 ED2K 转存目录</div>
-          <div class="mt-4 space-y-4">
-            <P115PrimaryStatus :accounts="accounts" />
-            <p v-if="bot.cloudDownload?.accountId && bot.cloudDownload.accountId !== cloudAccountId && !cloudTargetCID" class="text-xs leading-5 text-amber-700 dark:text-amber-300">主账号已变化，请重新选择下载目录。</p>
-            <div><label class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</label><div class="mt-2 flex min-w-0 items-center gap-3"><div class="min-w-0 flex-1 truncate rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-700 dark:text-slate-300">{{ cloudTargetPath || '尚未选择' }}</div><button type="button" class="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-sm text-blue-600" @click="openDirectory">选择目录</button></div></div>
-            <p class="text-xs leading-5 text-slate-500 dark:text-slate-400 dark:text-slate-500">直接发送 magnet / ED2K 或使用 <code>/cloud &lt;链接&gt;</code> 即可。Bot 会自动移除完全匹配且已经结束的旧任务记录后重新提交，始终保留网盘文件；运行中或状态不明的任务不会删除。Bot 只回复提交结果，不跟踪下载进度。</p>
-          </div>
-        </section>
       </fieldset>
       <p v-if="bot.lastError" class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{{ bot.lastError }}</p>
       <p v-if="notice" class="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{{ notice }}</p>
       <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ error }}</p>
       <div class="flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800"><button type="submit" :disabled="!!busy" class="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">{{ busy === 'save' ? '保存中…' : '保存配置' }}</button><button type="button" :disabled="!!busy || (!botToken.trim() && !bot.configured)" class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" @click="test">{{ busy === 'test' ? '测试中…' : '测试连接' }}</button><button type="button" :disabled="!!busy || !bot.configured" class="rounded-md px-2 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-40 dark:text-amber-300 dark:hover:bg-amber-950/40" @click="clearToken">清空 Token</button></div>
     </form>
-    <P115DirectoryDialog v-if="directoryDialogOpen" :token="token" :account-id="cloudAccountId" @close="directoryDialogOpen = false" @select="selectDirectory" />
   </article>
 </template>

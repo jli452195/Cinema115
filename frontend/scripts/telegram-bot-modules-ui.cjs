@@ -15,12 +15,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     page.on('console', message => { if (message.text().includes('[Vue warn]')) errors.push(message.text()) })
 
     const bots = [
-      { id: 'bot-one', name: 'Bot One', configured: true, enabled: true, allowedChatIDs: '42', notificationChatID: '42', cloudDownload: { enabled: false, accountId: '', targetCID: '', targetPath: '' }, identity: { id: 1, first_name: 'Bot One', username: 'bot_one' }, revision: 1, running: true, connected: true, lastError: '' },
-      { id: 'bot-two', name: 'Bot Two', configured: false, enabled: false, allowedChatIDs: '', notificationChatID: '', cloudDownload: { enabled: false, accountId: '', targetCID: '', targetPath: '' }, identity: { id: 0, first_name: '', username: '' }, revision: 1, running: false, connected: false, lastError: '' },
+      { id: 'bot-one', name: 'Bot One', configured: true, enabled: true, allowedChatIDs: '42', notificationChatID: '42', identity: { id: 1, first_name: 'Bot One', username: 'bot_one' }, revision: 1, running: true, connected: true, lastError: '' },
+      { id: 'bot-two', name: 'Bot Two', configured: false, enabled: false, allowedChatIDs: '', notificationChatID: '', identity: { id: 0, first_name: '', username: '' }, revision: 1, running: false, connected: false, lastError: '' },
     ]
     const modules = [
       { id: 'share_notifications', name: '分享入口与结果通知', description: '接收分享链接并发送处理结果。', assignedBotId: '' },
-      { id: 'cloud_download', name: '磁力与 ED2K 转存', description: '将白名单用户提交的链接转存到主网盘。', assignedBotId: '' },
+      { id: 'cloud_download:target-xx', kind: 'cloud_download', name: '磁力转存 XX', description: '将白名单用户提交的链接转存到指定目录。', assignedBotId: '' },
+      { id: 'cloud_download:target-xc', kind: 'cloud_download', name: '磁力转存 XC', description: '将白名单用户提交的链接转存到指定目录。', assignedBotId: '' },
       { id: 'follow_notifications', name: '追更通知', description: '通知管理员新的追更申请与处理结果。', assignedBotId: '' },
       { id: 'pool_notifications', name: '播放池健康通知', description: '报告动态播放池账号的异常状态。', assignedBotId: '' },
     ]
@@ -36,7 +37,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       if (endpoint === '/api/admin/telegram/bots' && method === 'GET') return route.fulfill({ json: { bots } })
       if (endpoint === '/api/admin/telegram/bots' && method === 'POST') {
         const id = `new-${++nextId}`
-        bots.push({ id, name: body.name, configured: false, enabled: false, allowedChatIDs: '', notificationChatID: '', cloudDownload: { enabled: false, accountId: '', targetCID: '', targetPath: '' }, identity: { id: 0, first_name: '', username: '' }, revision: 1, running: false, connected: false, lastError: '' })
+        bots.push({ id, name: body.name, configured: false, enabled: false, allowedChatIDs: '', notificationChatID: '', identity: { id: 0, first_name: '', username: '' }, revision: 1, running: false, connected: false, lastError: '' })
         return route.fulfill({ json: { id, bots } })
       }
       if (endpoint.startsWith('/api/admin/telegram/bots/') && method === 'PUT') {
@@ -53,7 +54,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
       if (endpoint === '/api/admin/telegram/modules' && method === 'GET') return route.fulfill({ json: { modules } })
       if (endpoint.startsWith('/api/admin/telegram/modules/') && method === 'PUT') {
-        const item = modules.find(value => value.id === endpoint.split('/').at(-1))
+        const item = modules.find(value => value.id === decodeURIComponent(endpoint.split('/').at(-1)))
         if (!item) return route.fulfill({ status: 404, json: { error: '功能不存在' } })
         if (body.botId && rejectNextAssignment) { rejectNextAssignment = false; return route.fulfill({ status: 409, json: { error: '此功能刚刚分配给其他 Bot，请刷新后重试' } }) }
         if (body.expectedBotId !== item.assignedBotId) return route.fulfill({ status: 409, json: { error: '此功能刚刚转移，请刷新后重试' } })
@@ -66,7 +67,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/telegram/bot')
     await page.getByRole('heading', { name: '待分配功能', exact: true }).waitFor()
     assert.equal(await page.locator('.telegram-bot-card').count(), 2)
-    assert.equal(await page.locator('.telegram-module-card').count(), 4)
+    assert.equal(await page.locator('.telegram-module-card').count(), 5)
     assert.equal(await page.getByRole('heading', { name: '分享入口与结果通知', exact: true }).count(), 1)
 
     const shareModule = page.locator('.telegram-module-card').filter({ hasText: '分享入口与结果通知' })
@@ -98,12 +99,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.locator('.telegram-module-card').filter({ hasText: '分享入口与结果通知' }).getByRole('button', { name: '选择 Bot' }).waitFor()
     assert.equal(modules[0].assignedBotId, '', 'Dragging an assigned feature to the pool must unassign it.')
 
-    const cloudModule = page.locator('.telegram-module-card').filter({ hasText: '磁力与 ED2K 转存' })
+    const cloudModule = page.locator('.telegram-module-card').filter({ hasText: '磁力转存 XX' })
     await cloudModule.dragTo(page.locator('.telegram-bot-card').filter({ hasText: 'Bot Two' }))
     await page.waitForTimeout(250)
-    await page.getByRole('button', { name: '解除磁力与 ED2K 转存分配' }).waitFor()
+    await page.getByRole('button', { name: '解除磁力转存 XX分配' }).waitFor()
     assert.equal(modules[1].assignedBotId, 'bot-two', 'Dragging must assign a module to an unconfigured, disabled Bot.')
-    const assignedCloud = page.locator('.telegram-bot-card').filter({ hasText: 'Bot Two' }).locator('.module-assigned')
+    const cloudModuleTwo = page.locator('.telegram-module-card').filter({ hasText: '磁力转存 XC' })
+    await cloudModuleTwo.dragTo(page.locator('.telegram-bot-card').filter({ hasText: 'Bot Two' }))
+    await page.getByRole('button', { name: '解除磁力转存 XC分配' }).waitFor()
+    assert.equal(modules[2].assignedBotId, 'bot-two', 'Each named cloud-download target must be independently assignable.')
+    const assignedCloud = page.locator('.telegram-bot-card').filter({ hasText: 'Bot Two' }).locator('.module-assigned').first()
     const rowCenters = await assignedCloud.evaluate(card => ['h3', 'p', 'button'].map(selector => {
       const element = card.querySelector(selector)
       if (!element) return NaN
@@ -116,15 +121,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await followModule.getByRole('combobox', { name: '选择使用追更通知的 Bot' }).selectOption('bot-two')
     await followModule.getByRole('button', { name: '分配', exact: true }).click()
     await page.getByRole('button', { name: '解除追更通知分配' }).waitFor()
-    assert.equal(modules[2].assignedBotId, 'bot-two', 'Click-to-select assignment must include unconfigured Bots.')
+    assert.equal(modules[3].assignedBotId, 'bot-two', 'Click-to-select assignment must include unconfigured Bots.')
 
     await page.locator('.telegram-bot-card').filter({ hasText: 'Bot Two' }).getByRole('button', { name: '删除Bot Two' }).click()
     await page.getByRole('dialog', { name: '删除 Bot 配置？' }).getByRole('button', { name: '确认删除' }).click()
     await page.locator('.toast-card[role="status"]').filter({ hasText: '关联功能已退回待分配区' }).waitFor()
     assert.equal(bots.some(bot => bot.id === 'bot-two'), false)
     assert.equal(modules[1].assignedBotId, '', 'Deleting a Bot must explicitly release its features.')
-    assert.equal(modules[2].assignedBotId, '', 'Deleting a Bot must release every bound feature.')
-    assert.equal(await page.locator('.telegram-module-card').filter({ hasText: '磁力与 ED2K 转存' }).getByRole('button', { name: '选择 Bot' }).count(), 1)
+    assert.equal(modules[2].assignedBotId, '', 'Deleting a Bot must release every named cloud-download target.')
+    assert.equal(modules[3].assignedBotId, '', 'Deleting a Bot must release every bound feature.')
+    assert.equal(await page.locator('.telegram-module-card').filter({ hasText: '磁力转存 XX' }).getByRole('button', { name: '选择 Bot' }).count(), 1)
+    assert.equal(await page.locator('.telegram-module-card').filter({ hasText: '磁力转存 XC' }).getByRole('button', { name: '选择 Bot' }).count(), 1)
 
     await page.getByRole('button', { name: '新增 Bot' }).first().click()
     const editor = page.getByRole('dialog', { name: '编辑 Bot 配置' })

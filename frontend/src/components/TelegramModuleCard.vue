@@ -14,14 +14,16 @@ const choosing = ref(false)
 const target = ref('')
 const dragging = ref(false)
 const availableBots = computed(() => props.bots)
-const icon = computed(() => ({ share_notifications: IconShare, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat }[props.module.id]))
+const moduleKind = computed(() => props.module.kind || (props.module.id.startsWith('cloud_download:') ? 'cloud_download' : props.module.id))
+const isCloudDownload = computed(() => moduleKind.value === 'cloud_download')
+const icon = computed(() => ({ share_notifications: IconShare, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat }[moduleKind.value as 'share_notifications' | 'cloud_download' | 'follow_notifications' | 'pool_notifications']))
 const setupHint = computed(() => {
   const bot = props.assignedBot
   if (!bot) return ''
   if (!bot.configured) return '待配置 Token'
   if (!bot.enabled) return 'Bot 已停用'
-  if (props.module.id === 'cloud_download') {
-    if (!bot.cloudDownload.accountId || !bot.cloudDownload.targetCID || !bot.cloudDownload.targetPath) return '待配置下载目录'
+  if (isCloudDownload.value) {
+    return props.module.setupHint || (props.module.ready === false ? '待配置转存目标' : '')
   } else if (!bot.notificationChatID) return '待配置通知聊天 ID'
   return ''
 })

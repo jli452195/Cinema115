@@ -55,6 +55,48 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 	group.GET("/config", func(c *gin.Context) {
 		c.JSON(http.StatusOK, settings.View())
 	})
+	group.GET("/profiles", func(c *gin.Context) {
+		profiles := settings.Targets()
+		views := make([]gin.H, 0, len(profiles))
+		for _, profile := range profiles {
+			views = append(views, cloudDownloadTargetView(profile))
+		}
+		c.JSON(http.StatusOK, gin.H{"profiles": views})
+	})
+	group.POST("/profiles", func(c *gin.Context) {
+		var input service.CloudDownloadTarget
+		if err := c.ShouldBindJSON(&input); err != nil || input.ID != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "转存配置参数无效"})
+			return
+		}
+		profile, err := settings.SaveTarget(input)
+		if err != nil {
+			cloudDownloadProfileError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"profile": cloudDownloadTargetView(profile)})
+	})
+	group.PUT("/profiles/:profileID", func(c *gin.Context) {
+		var input service.CloudDownloadTarget
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "转存配置参数无效"})
+			return
+		}
+		input.ID = c.Param("profileID")
+		profile, err := settings.SaveTarget(input)
+		if err != nil {
+			cloudDownloadProfileError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"profile": cloudDownloadTargetView(profile)})
+	})
+	group.DELETE("/profiles/:profileID", func(c *gin.Context) {
+		if err := settings.DeleteTarget(c.Param("profileID")); err != nil {
+			cloudDownloadProfileError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	group.PUT("/config", func(c *gin.Context) {
 		var input service.CloudDownloadConfig
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -248,6 +290,20 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		}
 		c.JSON(http.StatusOK, gin.H{"tasks": tasks, "total": result.Total, "page": page})
 	})
+}
+
+func cloudDownloadTargetView(profile service.CloudDownloadTarget) gin.H {
+	return gin.H{"id": profile.ID, "name": profile.Name, "accountId": profile.AccountID, "targetCID": profile.TargetCID, "targetPath": profile.TargetPath}
+}
+
+func cloudDownloadProfileError(c *gin.Context, err error) {
+	status := http.StatusConflict
+	if errors.Is(err, service.ErrAccountInput) || errors.Is(err, service.ErrGenerationInput) {
+		status = http.StatusBadRequest
+	} else if errors.Is(err, service.ErrAccountMissing) {
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }
 
 func taskView(task p115.CloudTask) gin.H {

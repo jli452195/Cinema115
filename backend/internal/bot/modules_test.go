@@ -129,7 +129,36 @@ func TestModuleAssignmentEnablesAndUnassigningDisables(t *testing.T) {
 	}
 }
 
-func TestUnconfiguredDisabledBotCanHoldModules(t *testing.T) {
+func newCloudTargetSettings(t *testing.T, path string) *service.CloudDownloadSettings {
+	t.Helper()
+	store, err := service.NewSessionStore(path, "test-cloud-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := service.NewCloudDownloadSettings(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.PrimaryID = func() string { return "account" }
+	settings.ValidateAccount = func(id string) error {
+		if id != "account" {
+			return service.ErrAccountMissing
+		}
+		return nil
+	}
+	return settings
+}
+
+func addCloudTarget(t *testing.T, settings *service.CloudDownloadSettings, name, path string) service.CloudDownloadTarget {
+	t.Helper()
+	target, err := settings.SaveTarget(service.CloudDownloadTarget{Name: name, AccountID: "account", TargetCID: "88", TargetPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
+func TestUnconfiguredDisabledBotCanHoldCloudTarget(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
 	if err != nil {
@@ -139,134 +168,69 @@ func TestUnconfiguredDisabledBotCanHoldModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err := service.NewAutomationStore(filepath.Join(dir, "automation.json"), dir, "http://nas:8115")
-	if err != nil {
-		t.Fatal(err)
+	hub.CloudDownloadSettings = newCloudTargetSettings(t, filepath.Join(dir, "cloud-download.enc"))
+	target := addCloudTarget(t, hub.CloudDownloadSettings, "转存 XX", "/XX")
+	if err := hub.SetModule(context.Background(), cloudDownloadModuleID(target.ID), "", id); err != nil {
+		t.Fatalf("cloud target assignment should not require an enabled Bot: %v", err)
 	}
-	settings.ValidateBot = func(string, bool) error { return errors.New("runtime config is incomplete") }
-	hub.settings = settings
-
-	if err := hub.SetModule(context.Background(), "share_notifications", "", id); err != nil {
-		t.Fatalf("share notification placeholder should not require a ready Bot: %v", err)
-	}
-	if err := hub.SetModule(context.Background(), "cloud_download", "", id); err != nil {
-		t.Fatalf("cloud-download placeholder should not require a ready service or directory: %v", err)
-	}
-
 	profile, err := hub.Profiles().Get(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Enabled || profile.Token != "" || !profile.CloudDownload.Enabled {
-		t.Fatalf("placeholder assignment unexpectedly enabled or rewrote Bot credentials: %+v", profile)
+	if profile.Enabled || profile.Token != "" {
+		t.Fatalf("placeholder assignment rewrote Bot credentials: %+v", profile)
 	}
-	profile.Name = "Placeholder Bot Edited"
-	if err := hub.Update(context.Background(), profile, profile.Revision); err != nil {
-		t.Fatalf("editing an incomplete assigned Bot should remain possible: %v", err)
-	}
-
 	modules, err := hub.Modules(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, module := range modules {
-		if (module.ID == "share_notifications" || module.ID == "cloud_download") && module.AssignedBotID != id {
-			t.Fatalf("module %q placeholder was not preserved: %+v", module.ID, module)
-		}
+	if len(modules) != 4 || modules[3].ID != cloudDownloadModuleID(target.ID) || modules[3].AssignedBotID != id {
+		t.Fatalf("cloud target was not exposed as its own module: %+v", modules)
 	}
 }
 
-func TestCloudDownloadTransfersAtomicallyBetweenBots(t *testing.T) {
+func TestCloudTargetCanBeAssignedAndTransferredWithoutCopyingPath(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstID, err := hub.Add("Original Bot")
-	if err != nil {
+	hub.CloudDownloadSettings = newCloudTargetSettings(t, filepath.Join(dir, "cloud-download.enc"))
+	target := addCloudTarget(t, hub.CloudDownloadSettings, "转存 XX", "/XX")
+	firstID, _ := hub.Add("Original Bot")
+	secondID, _ := hub.Add("Target Bot")
+	moduleID := cloudDownloadModuleID(target.ID)
+	if err := hub.SetModule(context.Background(), moduleID, "", firstID); err != nil {
 		t.Fatal(err)
 	}
-	secondID, err := hub.Add("Target Bot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, _ := hub.Profiles().Get(firstID)
-	first.CloudDownload = BotCloudDownloadConfig{AccountID: "source-account", TargetCID: "101", TargetPath: "/source"}
-	if err := hub.Profiles().Update(first, first.Revision); err != nil {
-		t.Fatal(err)
-	}
-	second, _ := hub.Profiles().Get(secondID)
-	second.CloudDownload = BotCloudDownloadConfig{AccountID: "target-account", TargetCID: "202", TargetPath: "/target"}
-	if err := hub.Profiles().Update(second, second.Revision); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := hub.SetModule(context.Background(), "cloud_download", "", firstID); err != nil {
-		t.Fatal(err)
-	}
-	if err := hub.SetModule(context.Background(), "cloud_download", firstID, secondID); err != nil {
+	if err := hub.SetModule(context.Background(), moduleID, firstID, secondID); err != nil {
 		t.Fatalf("direct Bot-to-Bot transfer failed: %v", err)
 	}
-	first, _ = hub.Profiles().Get(firstID)
-	second, _ = hub.Profiles().Get(secondID)
-	if first.CloudDownload.Enabled || first.CloudDownload.AccountID != "source-account" || first.CloudDownload.TargetCID != "101" || first.CloudDownload.TargetPath != "/source" {
-		t.Fatalf("source Bot assignment/configuration was not preserved correctly: %+v", first.CloudDownload)
+	current, ok := hub.CloudDownloadSettings.Target(target.ID)
+	if !ok || current.AssignedBotID != secondID || current.TargetPath != "/XX" {
+		t.Fatalf("target assignment/path was not preserved: %+v", current)
 	}
-	if !second.CloudDownload.Enabled || second.CloudDownload.AccountID != "target-account" || second.CloudDownload.TargetCID != "202" || second.CloudDownload.TargetPath != "/target" {
-		t.Fatalf("target Bot did not keep its own download config: %+v", second.CloudDownload)
+	if err := hub.SetModule(context.Background(), moduleID, firstID, ""); !errors.Is(err, ErrModuleChanged) {
+		t.Fatalf("stale owner was allowed to release transferred target: %v", err)
 	}
-
-	modules, err := hub.Modules(context.Background())
-	if err != nil {
+	if err := hub.SetModule(context.Background(), moduleID, secondID, secondID); err != nil {
 		t.Fatal(err)
 	}
-	for _, module := range modules {
-		if module.ID == "cloud_download" && module.AssignedBotID != secondID {
-			t.Fatalf("cloud-download owner after transfer = %q, want %q", module.AssignedBotID, secondID)
-		}
-	}
-	if err := hub.SetModule(context.Background(), "cloud_download", firstID, ""); !errors.Is(err, ErrModuleChanged) {
-		t.Fatalf("stale owner was allowed to release the transferred module: %v", err)
-	}
-
-	select {
-	case <-hub.wake:
-	default:
-	}
-	secondRevision := second.Revision
-	if err := hub.SetModule(context.Background(), "cloud_download", secondID, secondID); err != nil {
-		t.Fatal(err)
-	}
-	second, _ = hub.Profiles().Get(secondID)
-	if second.Revision != secondRevision {
-		t.Fatalf("no-op assignment wrote the profile: revision %d -> %d", secondRevision, second.Revision)
-	}
-	select {
-	case <-hub.wake:
-		t.Fatal("no-op assignment restarted Bot workers")
-	default:
-	}
-
-	restarted, err := NewHub(dir, "test-secret", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	modules, err = restarted.Modules(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, module := range modules {
-		if module.ID == "cloud_download" && module.AssignedBotID != secondID {
-			t.Fatalf("cloud-download transfer did not persist after restart: %+v", module)
-		}
+	reopened := newCloudTargetSettings(t, filepath.Join(dir, "cloud-download.enc"))
+	stored, ok := reopened.Target(target.ID)
+	if !ok || stored.AssignedBotID != secondID || stored.TargetPath != "/XX" {
+		t.Fatalf("target assignment did not persist across restart: %+v", stored)
 	}
 }
 
-func TestCloudDownloadTransferConflictKeepsOriginalOwner(t *testing.T) {
-	hub, err := NewHub(t.TempDir(), "test-secret", nil, nil)
+func TestCloudTargetTransferConflictKeepsSingleOwner(t *testing.T) {
+	dir := t.TempDir()
+	hub, err := NewHub(dir, "test-secret", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	hub.CloudDownloadSettings = newCloudTargetSettings(t, filepath.Join(dir, "cloud-download.enc"))
+	target := addCloudTarget(t, hub.CloudDownloadSettings, "转存 XX", "/XX")
 	ids := make([]string, 3)
 	for i, name := range []string{"Owner", "Target A", "Target B"} {
 		ids[i], err = hub.Add(name)
@@ -274,10 +238,10 @@ func TestCloudDownloadTransferConflictKeepsOriginalOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := hub.SetModule(context.Background(), "cloud_download", "", ids[0]); err != nil {
+	moduleID := cloudDownloadModuleID(target.ID)
+	if err := hub.SetModule(context.Background(), moduleID, "", ids[0]); err != nil {
 		t.Fatal(err)
 	}
-
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var workers sync.WaitGroup
@@ -286,7 +250,7 @@ func TestCloudDownloadTransferConflictKeepsOriginalOwner(t *testing.T) {
 		go func(id string) {
 			defer workers.Done()
 			<-start
-			results <- hub.SetModule(context.Background(), "cloud_download", ids[0], id)
+			results <- hub.SetModule(context.Background(), moduleID, ids[0], id)
 		}(targetID)
 	}
 	close(start)
@@ -296,55 +260,48 @@ func TestCloudDownloadTransferConflictKeepsOriginalOwner(t *testing.T) {
 	for err := range results {
 		if err == nil {
 			wins++
-		} else if !errors.Is(err, ErrModuleChanged) {
+			continue
+		}
+		if !errors.Is(err, ErrModuleChanged) {
 			t.Fatalf("unexpected transfer conflict: %v", err)
 		}
 	}
 	if wins != 1 {
-		t.Fatalf("expected exactly one transfer winner, got %d", wins)
+		t.Fatalf("expected one transfer winner, got %d", wins)
 	}
-	ownerCount := 0
-	for _, profile := range hub.Profiles().List() {
-		if profile.CloudDownload.Enabled {
-			ownerCount++
-		}
-	}
-	if ownerCount != 1 {
-		t.Fatalf("expected one cloud-download owner after concurrent transfers, got %d", ownerCount)
+	stored, _ := hub.CloudDownloadSettings.Target(target.ID)
+	if stored.AssignedBotID == "" {
+		t.Fatal("concurrent transfer left target unassigned")
 	}
 }
 
-func TestCloudDownloadCommitFailureKeepsOriginalOwner(t *testing.T) {
+func TestCloudTargetCommitFailureKeepsOriginalOwner(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstID, err := hub.Add("Owner")
-	if err != nil {
+	settingsPath := filepath.Join(dir, "cloud-download.enc")
+	hub.CloudDownloadSettings = newCloudTargetSettings(t, settingsPath)
+	target := addCloudTarget(t, hub.CloudDownloadSettings, "转存 XX", "/XX")
+	firstID, _ := hub.Add("Owner")
+	secondID, _ := hub.Add("Target")
+	moduleID := cloudDownloadModuleID(target.ID)
+	if err := hub.SetModule(context.Background(), moduleID, "", firstID); err != nil {
 		t.Fatal(err)
 	}
-	secondID, err := hub.Add("Target")
-	if err != nil {
+	if err := os.Remove(settingsPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.SetModule(context.Background(), "cloud_download", "", firstID); err != nil {
+	if err := os.Mkdir(settingsPath, 0700); err != nil {
 		t.Fatal(err)
 	}
-	profilePath := filepath.Join(dir, "telegram-bots.enc")
-	if err := os.Remove(profilePath); err != nil {
-		t.Fatal(err)
+	if err := hub.SetModule(context.Background(), moduleID, firstID, secondID); err == nil {
+		t.Fatal("expected config commit failure")
 	}
-	if err := os.Mkdir(profilePath, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := hub.SetModule(context.Background(), "cloud_download", firstID, secondID); err == nil {
-		t.Fatal("expected profile commit failure")
-	}
-	first, _ := hub.Profiles().Get(firstID)
-	second, _ := hub.Profiles().Get(secondID)
-	if !first.CloudDownload.Enabled || second.CloudDownload.Enabled {
-		t.Fatalf("failed transfer changed module ownership: old=%v new=%v", first.CloudDownload.Enabled, second.CloudDownload.Enabled)
+	stored, _ := hub.CloudDownloadSettings.Target(target.ID)
+	if stored.AssignedBotID != firstID {
+		t.Fatalf("failed commit changed target owner: %+v", stored)
 	}
 }
 
@@ -365,13 +322,13 @@ func TestPoolNotificationsAreDisabledByUnassigning(t *testing.T) {
 }
 
 func TestCloudOnlyBotStartsMessagePollingWithoutShareProcessing(t *testing.T) {
-	if !pollsMessages(BotProfile{ID: "cloud-bot", CloudDownload: BotCloudDownloadConfig{Enabled: true}}, "") {
+	if !pollsMessages(BotProfile{ID: "cloud-bot"}, "", true) {
 		t.Fatal("cloud-only Bot must start getUpdates")
 	}
-	if pollsMessages(BotProfile{ID: "notifications-only"}, "") {
+	if pollsMessages(BotProfile{ID: "notifications-only"}, "", false) {
 		t.Fatal("notification-only Bot must not start a getUpdates consumer")
 	}
-	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot") {
+	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot", false) {
 		t.Fatal("share Bot must start getUpdates")
 	}
 }

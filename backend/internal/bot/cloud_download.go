@@ -40,7 +40,7 @@ func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramStat
 
 		taskCtx, cancel := context.WithTimeout(ctx, service.CloudDownloadTimeout)
 		// 旧批次的 CloudRedo 标记不再控制策略，所有入口默认安全重提。
-		receipt, err := b.CloudDownloads.Submit(taskCtx, b.CloudDownloadConfig.ServiceConfig(), item.URL)
+		receipt, err := b.CloudDownloads.Submit(taskCtx, batch.CloudTarget, item.URL)
 		cancel()
 		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), removed: receipt.RemovedOldTask, err: err})
 		if err != nil {
@@ -53,7 +53,11 @@ func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramStat
 			b.Logs.Append("Telegram", fmt.Sprintf("云下载-%d", batch.UpdateID), "云下载", "INFO", fmt.Sprintf("第 %d/%d 个任务已%s到 115", index+1, len(batch.Items), operation))
 		}
 	}
-	state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: formatCloudBatchReply(outcomes, b.CloudDownloadConfig.TargetPath)}
+	result := formatCloudBatchReply(outcomes, batch.CloudTarget.TargetPath)
+	if batch.CloudTargetName != "" {
+		result = "转存目标：" + batch.CloudTargetName + "\n" + result
+	}
+	state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: result}
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("保存 Telegram 云下载结果: %w", err)
 	}

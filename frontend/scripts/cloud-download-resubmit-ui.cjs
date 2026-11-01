@@ -14,7 +14,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const errors = [], calls = [], passed = []
     page.on('pageerror', err => errors.push(err.message))
     const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40)
-    let scenario = 'new', accountId = 'selected-account'
+    let scenario = 'new', accountId = 'selected-account', profileID = 0
+    const profiles = []
     const failures = {
       running: '相同任务仍在 115 中运行或等待，未删除或重新提交',
       failed: '旧任务记录已移除，但重新提交失败；原有网盘文件已保留。提交被拒绝',
@@ -25,6 +26,21 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       let data = {}, status = 200
       if (url.pathname === '/api/auth/me') data = { user: { id: 'mock', role: 'admin', username: 'mock', disabled: false } }
       else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '主账号', primary: true, configured: true, revision: 1 }] }
+      else if (url.pathname.endsWith('/cloud-download/profiles') && route.request().method() === 'GET') data = { profiles }
+      else if (url.pathname.endsWith('/cloud-download/profiles') && route.request().method() === 'POST') {
+        const profile = { id: `profile-${++profileID}`, ...route.request().postDataJSON() }
+        profiles.push(profile); data = { profile }
+      }
+      else if (/\/cloud-download\/profiles\/[^/]+$/.test(url.pathname) && route.request().method() === 'PUT') {
+        const id = url.pathname.split('/').at(-1), index = profiles.findIndex(profile => profile.id === id)
+        profiles[index] = { ...profiles[index], ...route.request().postDataJSON() }; data = { profile: profiles[index] }
+      }
+      else if (/\/cloud-download\/profiles\/[^/]+$/.test(url.pathname) && route.request().method() === 'DELETE') {
+        const id = url.pathname.split('/').at(-1), index = profiles.findIndex(profile => profile.id === id)
+        if (index >= 0) profiles.splice(index, 1)
+        return route.fulfill({ status: 204, body: '' })
+      }
+      else if (url.pathname.endsWith('/cloud-download/paths')) data = { cid: '0', directories: [], count: 0, hasMore: false }
       else if (url.pathname.endsWith('/cloud-download/config')) data = { accountId, targetCID: '987', targetPath: '/测试目标' }
       else if (url.pathname.endsWith('/cloud-download/tasks')) {
         calls.push({ accountId: url.searchParams.get('accountId'), ...route.request().postDataJSON() })
@@ -42,6 +58,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
     })
     const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
+    await page.goto(origin + '/115/cloud-download')
+    await page.getByRole('button', { name: '新增配置' }).click()
+    const profileEditor = page.getByRole('dialog', { name: '新增转存配置' })
+    await profileEditor.getByLabel('配置名称').fill('转存 XX')
+    await profileEditor.getByRole('button', { name: '选择目录' }).click()
+    await page.getByRole('dialog', { name: '选择下载目录' }).getByRole('button', { name: '选择此目录' }).click()
+    await profileEditor.getByRole('button', { name: '保存配置' }).click()
+    assert.equal(profiles.length, 1)
+    assert.deepEqual({ name: profiles[0].name, targetCID: profiles[0].targetCID, targetPath: profiles[0].targetPath }, { name: '转存 XX', targetCID: '0', targetPath: '/' })
+    await page.getByRole('button', { name: '编辑转存 XX' }).click()
+    await page.getByRole('dialog', { name: '编辑转存配置' }).getByLabel('配置名称').fill('转存 XC')
+    await page.getByRole('button', { name: '保存配置' }).click()
+    assert.equal(profiles[0].name, '转存 XC')
+    await page.getByRole('button', { name: '删除转存 XC' }).click()
+    await page.getByRole('dialog', { name: '删除转存配置？' }).getByRole('button', { name: '删除配置' }).click()
+    assert.equal(profiles.length, 0)
+    if (process.argv.includes('--profiles-only')) {
+      assert.deepEqual(errors, [])
+      console.log('PASS: named cloud-download profile create, edit, directory selection, and delete.')
+      await context.close()
+      return
+    }
     for (const source of ['web', 'gying', 'mikan']) {
       for (const mode of ['new', 'redo', 'running', 'failed', 'uncertain', 'gateway', 'unconfigured']) {
         scenario = mode

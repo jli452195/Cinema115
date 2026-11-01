@@ -121,6 +121,54 @@ func TestCloudDownloadRequiresConfiguredPrimary(t *testing.T) {
 	}
 }
 
+func TestCloudDownloadNamedTargetProfilesCRUD(t *testing.T) {
+	r, accounts, accountID := setupAccountsAPI(t, nil, nil)
+	settings := testCloudDownloadSettings(t, accounts)
+	cloud := p115.NewCloudClient()
+	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud, Coordinator: &service.CloudDownloadCoordinator{}}, cloud, p115.NewShareClient())
+	base := "/api/admin/p115/cloud-download/profiles"
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return w
+	}
+	created := call(http.MethodPost, base, `{"name":"转存 XX","accountId":"`+accountID+`","targetCID":"0","targetPath":"/"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var response struct {
+		Profile struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			TargetPath string `json:"targetPath"`
+		} `json:"profile"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Profile.ID == "" || response.Profile.Name != "转存 XX" || response.Profile.TargetPath != "/" || strings.Contains(created.Body.String(), `"revision"`) || strings.Contains(created.Body.String(), `"assignedBotId"`) {
+		t.Fatalf("unexpected target response, including bot-owned metadata: %+v", response.Profile)
+	}
+	id := response.Profile.ID
+	updated := call(http.MethodPut, base+"/"+id, `{"name":"转存 XC","accountId":"`+accountID+`","targetCID":"88","targetPath":"/XC"}`)
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"name":"转存 XC"`) {
+		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body.String())
+	}
+	listed := call(http.MethodGet, base, "")
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"targetPath":"/XC"`) {
+		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	deleted := call(http.MethodDelete, base+"/"+id, "")
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	listed = call(http.MethodGet, base, "")
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"profiles":[]`) {
+		t.Fatalf("empty list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+}
+
 func TestCloudDownloadDirectoryAndTaskUseSelectedAccount(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
