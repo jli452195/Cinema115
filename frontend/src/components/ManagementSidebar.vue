@@ -6,10 +6,15 @@ import NavigationIcon from './NavigationIcon.vue'
 import CinemaLogo from './CinemaLogo.vue'
 
 const props = defineProps<{ desktop: boolean; collapsed?: boolean }>()
-defineEmits<{ toggle: [] }>()
+const emit = defineEmits<{ toggle: [] }>()
 const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>(), desktopNavigation = ref<HTMLElement>()
-const titleID = useId()
+const desktopBrandToggle = ref<HTMLButtonElement>()
+const titleID = useId(), drawerID = useId()
 let trigger: HTMLElement | undefined, previousOverflow = '', backdropStarted = false
+function collapseSidebar() {
+  emit('toggle')
+  void nextTick(() => desktopBrandToggle.value?.focus({ preventScroll: true }))
+}
 async function openDrawer(event: MouseEvent) {
   if (props.desktop || opened.value) return
   trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
@@ -28,6 +33,10 @@ function closeDrawer(returnFocus = true) {
       : desktopNavigation.value?.querySelector<HTMLElement>('a[aria-current]') || desktopNavigation.value?.querySelector<HTMLElement>('a[href]')
     target?.focus({ preventScroll: true })
   })
+}
+function toggleDrawer(event: MouseEvent) {
+  if (opened.value) closeDrawer()
+  else void openDrawer(event)
 }
 function outside(event: PointerEvent | MouseEvent) {
   if (event.target !== drawer.value || !drawer.value) return false
@@ -54,21 +63,21 @@ const removeNavigationHook = router.afterEach((_to, _from, failure) => {
 watch(() => props.desktop, desktop => { if (desktop) closeDrawer() })
 // A rejected route change leaves the drawer open so the current page is usable.
 onBeforeUnmount(() => { removeNavigationHook(); closeDrawer(false) })
-defineExpose({ openDrawer, opened })
+defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 </script>
 
 <template>
-  <aside v-if="desktop" ref="desktopNavigation" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="管理侧栏">
+  <aside v-if="desktop" ref="desktopNavigation" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="功能侧栏">
     <div class="management-sidebar-brand">
-      <RouterLink to="/" class="management-brand-link" aria-label="Cinema115 首页" title="Cinema115 首页"><CinemaLogo sidebar :compact="collapsed" /></RouterLink>
-      <button type="button" class="management-sidebar-control management-collapse-control" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="$emit('toggle')"><NavigationIcon name="sidebar" /></button>
+      <button ref="desktopBrandToggle" type="button" class="management-brand-toggle" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="$emit('toggle')"><CinemaLogo sidebar /></button>
+      <button type="button" class="management-sidebar-control management-collapse-control" aria-label="收起侧栏" title="收起侧栏" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="collapseSidebar"><NavigationIcon name="sidebarCollapse" /></button>
     </div>
     <ManagementNavigation id="management-desktop-navigation" :collapsed="collapsed" />
   </aside>
   <Teleport to="body">
-    <dialog v-if="opened" ref="drawer" class="management-drawer" :aria-labelledby="titleID" @cancel.prevent="closeDrawer()" @keydown="trapFocus" @pointerdown="pointerDown" @click="backdropClick">
+    <dialog v-if="opened" :id="drawerID" ref="drawer" class="management-drawer" :aria-labelledby="titleID" @cancel.prevent="closeDrawer()" @keydown="trapFocus" @pointerdown="pointerDown" @click="backdropClick">
       <div class="management-drawer-body">
-        <header class="management-sidebar-heading"><h2 :id="titleID">功能导航</h2><button ref="closeButton" type="button" class="management-sidebar-control" aria-label="关闭功能导航" @click="closeDrawer()"><NavigationIcon name="close" /></button></header>
+        <header class="management-drawer-heading"><h2 :id="titleID" class="sr-only">功能导航</h2><button type="button" class="management-brand-toggle" aria-label="关闭侧栏" title="关闭侧栏" aria-expanded="true" :aria-controls="drawerID" @click="closeDrawer()"><CinemaLogo sidebar /></button><button ref="closeButton" type="button" class="management-sidebar-control" aria-label="关闭功能导航" @click="closeDrawer()"><NavigationIcon name="close" /></button></header>
         <ManagementNavigation mobile />
       </div>
     </dialog>
@@ -76,21 +85,22 @@ defineExpose({ openDrawer, opened })
 </template>
 
 <style scoped>
-.management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / 60%); background: #f1f4f9; padding-bottom: env(safe-area-inset-bottom, 0px); }
-.management-sidebar-brand { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; gap: 8px; padding: 0 12px 0 18px; }
-.management-brand-link { display: inline-flex; min-width: 0; min-height: 44px; flex: 1; align-items: center; border-radius: 10px; }
-.management-brand-link:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
-.management-sidebar.is-collapsed .management-sidebar-brand { flex-direction: column; gap: 0; padding: 14px 9px 10px; }
-.management-sidebar.is-collapsed .management-brand-link { flex: none; justify-content: center; width: 44px; }
-.management-sidebar.is-collapsed .management-collapse-control { margin-top: 4px; }
-.management-sidebar-heading { display: flex; min-height: 52px; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 20px; color: rgb(var(--color-slate-600)); font-size: 12px; font-weight: 600; }
+.management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / 60%); background: #f1f4f9; padding-bottom: env(safe-area-inset-bottom, 0px); transition: width var(--management-sidebar-motion), background-color var(--management-sidebar-motion), border-color var(--management-sidebar-motion); }
+.management-sidebar-brand { display: flex; width: 100%; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; }
+.management-brand-toggle { display: inline-flex; min-width: 0; min-height: 44px; align-items: center; border-radius: 10px; cursor: pointer; }
+.management-brand-toggle:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
+.management-sidebar .management-brand-toggle { flex-shrink: 0; padding-inline: 4px; }
+.management-sidebar.is-collapsed { background: transparent; border-color: transparent; }
+.management-drawer-heading { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 16px; }
 .management-sidebar-control { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; color: rgb(var(--color-slate-500)); cursor: pointer; }.management-sidebar-control svg { width: 19px; height: 19px; }.management-sidebar-control:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
-.management-collapse-control { width: 32px; height: 36px; }
-.is-collapsed .management-collapse-control { width: 44px; height: 40px; }
+.management-collapse-control { width: 36px; height: 36px; visibility: hidden; transition: none; }
+/* Reveal instantly after expansion; hide immediately when collapse begins. */
+.management-sidebar:not(.is-collapsed) .management-collapse-control { visibility: visible; transition: visibility 0s var(--management-sidebar-motion); }
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
-.management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }.management-drawer .management-sidebar-heading { min-height: 68px; padding-inline: 20px 8px; font-size: 14px; color: rgb(var(--color-slate-700)); }
-.dark .management-sidebar { background: #1d2025; border-color: rgb(var(--color-slate-700) / 55%); }.dark .management-sidebar .management-sidebar-heading { color: rgb(var(--color-slate-300)); }.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }.dark .management-drawer .management-sidebar-heading { color: rgb(var(--color-slate-200)); }
+.management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }
+.dark .management-sidebar { background: #1d2025; border-color: rgb(var(--color-slate-700) / 55%); }.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }
+.dark .management-sidebar.is-collapsed { background: transparent; border-color: transparent; }
 @media (hover: hover) { .management-sidebar-control:hover { background: rgb(116 143 180 / 9%); color: #4775b0; } }
 @keyframes management-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }@keyframes management-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .management-drawer[open], .management-drawer::backdrop { animation: none; } }

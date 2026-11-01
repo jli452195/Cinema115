@@ -4,15 +4,26 @@ import { RouterLink, useRoute } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import HeaderAccountMenu from './HeaderAccountMenu.vue'
-import { isPortalAdmin } from '../composables/usePortalAuth'
+import ManagementSidebar from './ManagementSidebar.vue'
 import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
-import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigation'
 
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
+import { useManagementSidebar } from '../composables/useManagementSidebar'
 
-const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean }>()
-const emit = defineEmits<{ logout: [] }>()
+const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string }>()
+const emit = defineEmits<{ logout: []; toggleSidebar: [event: MouseEvent] }>()
+const { desktop, collapsed, toggleCollapsed } = useManagementSidebar()
+const desktopSidebar = computed(() => props.sidebarLayout || !props.managedSidebar && desktop.value)
+const navigationSidebar = ref<InstanceType<typeof ManagementSidebar>>()
+const navigationOpen = computed(() => props.managedSidebar ? !!props.sidebarOpen : !!navigationSidebar.value?.opened)
+const navigationControls = computed(() => props.managedSidebar ? props.sidebarControls : navigationSidebar.value?.drawerID)
+function toggleNavigation(event: MouseEvent) {
+  closePanels()
+  if (props.managedSidebar) emit('toggleSidebar', event)
+  else navigationSidebar.value?.toggleDrawer(event)
+}
+function toggleDesktopNavigation() { closePanels(); toggleCollapsed() }
 const route = useRoute()
 const notificationController = new AbortController()
 useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
@@ -78,8 +89,6 @@ const headerStyle = computed(() => {
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const updatesActive = computed(() => route.path === '/updates')
-const managementActive = computed(() => isPortalAdmin.value && adminAccountGroups.some(group =>
-  group.links.some(link => isAccountLinkActive(route, link))))
 
 const navContainerRef = ref<HTMLElement>()
 const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
@@ -125,13 +134,13 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop, 'with-management-sidebar': sidebarLayout }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
-    <div class="header-inner relative mx-auto flex h-[var(--workbench-header-height)] max-w-[1600px] items-center gap-2 px-4 sm:gap-5 sm:px-8 lg:px-10">
-      <RouterLink v-if="!sidebarLayout" to="/" aria-label="Cinema115 首页" class="brand-link mr-auto shrink-0 rounded-xl outline-none">
+    <div class="header-inner relative flex h-[var(--workbench-header-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
+      <button v-if="!desktopSidebar" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" :title="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
-      </RouterLink>
+      </button>
       <nav ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2">
         <div class="nav-indicator absolute inset-y-0 z-0 rounded-[0.6rem] bg-[#f1f5f9] dark:bg-slate-800" :style="navIndicatorStyle"></div>
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: movieActive }">电影</RouterLink>
@@ -147,7 +156,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </RouterLink>
         <div class="hidden sm:block"><ThemeSwitcher /></div>
-        <button ref="accountButton" type="button" class="icon-button relative" :class="{ selected: managementActive || accountOpen }" :aria-label="websiteUnread ? `更多功能，${websiteUnread} 条未读通知` : '更多功能'" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
+        <button ref="accountButton" type="button" class="icon-button relative" :class="{ selected: accountOpen }" :aria-label="websiteUnread ? `更多功能，${websiteUnread} 条未读通知` : '更多功能'" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
           <svg class="h-5 w-5 sm:hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
           <svg class="hidden h-6 w-6 sm:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
           <span v-if="websiteUnread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 sm:hidden" aria-hidden="true"></span>
@@ -158,6 +167,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
       </Transition>
     </div>
   </header>
+  <ManagementSidebar v-if="!managedSidebar && !sidebarLayout" ref="navigationSidebar" :desktop="desktop" :collapsed="collapsed" @toggle="toggleDesktopNavigation" />
 </template>
 
 
@@ -172,7 +182,6 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 </style>
 <style scoped>
-.workbench-header.with-management-sidebar { left: var(--management-sidebar-width); right: 0; width: auto; }
 .with-management-sidebar .header-inner { justify-content: flex-end; }
 .workbench-header.over-backdrop { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
 .workbench-header.immersive-surface {
@@ -258,6 +267,9 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.tonal-surface .top-link { text-shadow: none; }
 .workbench-header.tonal-surface .icon-button svg { filter: none; }
 .workbench-header.tonal-surface :is(a, button):focus-visible { outline-color: rgb(var(--color-accent)); }
+.workbench-header.with-management-sidebar { left: var(--management-sidebar-width); right: 0; width: auto; transition: left var(--management-sidebar-motion); }
+.with-management-sidebar :is(.header-background, .header-surface) { position: fixed; inset: 0 0 auto; height: var(--workbench-header-height); }
+.workbench-header.with-management-sidebar::after { position: fixed; inset: var(--workbench-header-height) 0 auto; }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
 .account-menu-motion-enter-active, .account-menu-motion-leave-active { transition: transform 140ms ease; }
 .account-menu-motion-enter-active :deep(.account-surface), .account-menu-motion-leave-active :deep(.account-surface) { transition: opacity 140ms ease; }

@@ -4,10 +4,12 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
 import GlobalToast from './components/GlobalToast.vue'
+import { useManagementSidebar } from './composables/useManagementSidebar'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
 const router = useRouter()
+const { desktop, collapsed } = useManagementSidebar()
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
   registeredUsername.value = name
@@ -77,9 +79,17 @@ onBeforeUnmount(() => {
     <button v-if="portalAuthError" class="text-blue-600" @click="ensurePortalSession(true)">重新验证</button>
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>
   </main>
-  <RouterView v-else v-slot="{ Component }">
-    <component :is="Component" v-bind="viewProps" @home="router.push('/')" @back="back" @category="openCategory" @open-dashboard="router.push('/')" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
-  </RouterView>
+  <div v-else class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': collapsed ? '64px' : '240px' }">
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" v-bind="viewProps" @home="router.push('/')" @back="back" @category="openCategory" @open-dashboard="router.push('/')" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
+    </RouterView>
+  </div>
   <ReloadPrompt />
   <GlobalToast />
 </template>
+
+<style scoped>
+.portal-workspace { --management-sidebar-motion: 300ms cubic-bezier(0.2, 0, 0, 1); min-width: 0; }
+.has-navigation-sidebar { padding-left: var(--management-sidebar-width); transition: padding-left var(--management-sidebar-motion); }
+@media (prefers-reduced-motion: reduce) { .portal-workspace { --management-sidebar-motion: 0s linear; } }
+</style>

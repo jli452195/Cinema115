@@ -506,6 +506,20 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     color-mix(in srgb, var(--md-sys-color-surface) 98%, transparent) 92%,
     var(--md-sys-color-surface) 96%);
 }
+@media (min-width: 1024px) {
+  /* Paint beneath the transparent rail while keeping the reading column inset. */
+  .detail-page::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--md-sys-color-surface);
+    pointer-events: none;
+  }
+  .detail-page::before, .detail-backdrop {
+    left: calc(0px - var(--management-sidebar-width, 0px));
+    transition: left var(--management-sidebar-motion);
+  }
+}
 @media (max-width: 639px) {
   .detail-backdrop {
     height: calc(var(--workbench-header-height) + 350px);
