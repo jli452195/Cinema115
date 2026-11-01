@@ -58,12 +58,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    }), true)
    const mark = await brand.locator('.cinema-logo-mark').boundingBox()
    assert.equal(Math.round(mark.x), 14); assert.equal(Math.round(mark.width), 36)
-   const label = await page.locator('.management-sidebar .management-nav-link > span').first().boundingBox()
-   assert.ok(Math.abs(label.x - (await wordmark.boundingBox()).x) < 1)
+   if (!await sidebar().evaluate(el => el.classList.contains('is-collapsed'))) {
+    const label = await page.locator('.management-sidebar .management-nav-link > span').first().boundingBox()
+    assert.ok(Math.abs(label.x - (await wordmark.boundingBox()).x) < 1)
+   }
    const headerSurface = await page.locator('.workbench-header .header-background, .workbench-header .header-surface').boundingBox()
    assert.ok(Math.abs(headerSurface.x) < 1)
   }
   const desktopState = async collapsed => {
+   // Pointer-driven magnification is checked separately; layout contracts use its resting size.
+   await page.mouse.move(500, 60)
    const width = collapsed ? 64 : 240
    await page.waitForFunction(width => {
     const sidebar = document.querySelector('.management-sidebar')?.getBoundingClientRect()
@@ -89,6 +93,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     .flatMap(el => el.getAnimations()).filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
     .map(animation => animation.finished.catch(() => {}))))
    if (collapsed) {
+    await page.waitForFunction(() => [...document.querySelectorAll('.management-nav-link')]
+     .every(el => Math.abs(el.getBoundingClientRect().height - 36) < .1))
     assert.equal(await sidebar().evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
     assert.equal(await sidebar().evaluate(el => getComputedStyle(el).borderRightColor), 'rgba(0, 0, 0, 0)')
     assert.equal(await nav().locator('a > span:visible').count(), 0)
@@ -146,7 +152,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const sharedNavigation = await navigationLayout()
   assert.deepEqual(sharedNavigation.groups.map(group => group.label), ['个人', '管理', '服务'])
   for (const [to, name] of [['/movie?sort=rating', 'homepage'], ['/follows/manage', 'follows-management'], ['/media/organize', 'organize'], ['/115', 'drive']]) {
-   await go(to); await sidebar().waitFor(); await desktopState(false)
+   await go(to); await sidebar().waitFor()
+   if (await toggle().getAttribute('aria-expanded') === 'false') await toggle().click()
+   await desktopState(false)
    assert.deepEqual(await navigationLayout(), sharedNavigation, `Navigation moved or changed on ${to}`)
    for (const dark of [false, true]) {
     await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
@@ -208,7 +216,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.ok(motion.width > 64 && motion.width < 240)
   assert.ok(Math.abs(motion.header - motion.width) < 1 && Math.abs(motion.content - motion.width) < 1)
   assert.equal(page.url(), beforeLogoToggle)
-  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'collapsed')
+  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), null)
   const collapsedContent = await page.locator('main.management-content').boundingBox()
   assert.ok(collapsedContent.width >= expandedContent.width)
   assert.equal(requests.length, collapseRequests)
@@ -219,15 +227,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await link('/resources').focus()
   await page.getByRole('tooltip', { name: '资源配置', exact: true }).waitFor()
   await page.keyboard.press('Enter'); await page.waitForURL('**/resources'); await active('/resources', 'page')
-  await desktopState(true)
-  await page.reload(); await sidebar().waitFor(); await desktopState(true)
+  await desktopState(false)
+  await toggle().click(); await desktopState(true)
+  await page.reload(); await sidebar().waitFor(); await desktopState(false)
+  await toggle().click(); await desktopState(true)
   await screenshot('1920-collapsed')
   await link('/115').click(); await page.waitForURL('**/115'); await active('/115', 'page')
   await page.locator('main a[href="/helper115"]').click(); await page.waitForURL('**/helper115'); await active('/115')
-  await desktopState(true)
-  await toggle().click(); await desktopState(false)
-  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'expanded')
-  // Both desktop sizes are usable and retain the saved state after refresh.
+  await desktopState(false)
+  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), null)
+  // Both desktop sizes use the management default after refresh.
   await page.setViewportSize({ width: 1280, height: 800 }); await page.reload(); await sidebar().waitFor()
   await desktopState(false)
   await screenshot('1280-expanded')
@@ -407,7 +416,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   await page.setViewportSize({ width: 1920, height: 900 })
   await settleHomeSidebar()
-  // Rapid reversals settle correctly and the preference follows browsing to management and back.
+  // Rapid reversals settle correctly; navigation uses the destination default.
   await homeToggle().click(); await homeToggle().click(); await settleHomeSidebar()
   assert.equal(await homeToggle().getAttribute('aria-expanded'), 'false')
   await page.getByRole('link', { name: '剧集', exact: true }).click()
@@ -416,7 +425,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await homeSidebar().getByRole('link', { name: '115 网盘', exact: true }).click()
   await page.waitForURL('**/115'); await drawer().waitFor({ state: 'detached' })
   await sidebar().waitFor()
-  await desktopState(true)
+  await desktopState(false)
   assert.equal(await page.evaluate(() => document.body.style.overflow), '')
   // The media background reaches under the transparent rail, including below its icons.
   await go('/movie/1452')
@@ -458,6 +467,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await drawer().waitFor({ state: 'detached' })
   assert.equal(await headerLogo().evaluate(el => el === document.activeElement), true)
   assert.deepEqual(writes, []); assert.deepEqual(errors, [])
-  console.log('Sidebar passed: identical groups, links, brand and row positions on homepage, follows management, organize and drive pages; persistent Cinema115 brand, full-bleed detail background, synchronized motion, cross-route preference, reduced motion, mobile drawer, role scope, focus/Escape/backdrop/resize/route guards, both themes and no service writes')
+  console.log('Sidebar passed: identical groups, links, brand and row positions on homepage, follows management, organize and drive pages; persistent Cinema115 brand, full-bleed detail background, synchronized motion, route defaults and temporary manual state, reduced motion, mobile drawer, role scope, focus/Escape/backdrop/resize/route guards, both themes and no service writes')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

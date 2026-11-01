@@ -10,6 +10,10 @@ import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, 
 const route = useRoute()
 const router = useRouter()
 const { desktop, collapsed } = useManagementSidebar()
+// Reset on confirmed page changes, preserving manual state for query/hash edits.
+watch(() => route.path, () => {
+  collapsed.value = route.meta.defaultSidebarCollapsed ?? true
+}, { immediate: true })
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
   registeredUsername.value = name
