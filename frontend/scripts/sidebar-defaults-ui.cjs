@@ -35,7 +35,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   page.on('pageerror', e => errors.push(e.message))
   const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const rail = () => page.getByRole('complementary', { name: '功能侧栏', exact: true })
-  const toggle = () => rail().locator('.management-brand-toggle')
   const state = async collapsed => {
    await page.waitForFunction(collapsed => document.querySelector('.management-sidebar')?.classList.contains('is-collapsed') === collapsed, collapsed)
    await page.waitForFunction(collapsed => {
@@ -46,8 +45,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      && Math.abs(Number(getComputedStyle(navigation).opacity) - 1) < .001
      && !navigation.getAnimations({ subtree: true }).some(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime))
    }, collapsed)
-   assert.equal(await toggle().isVisible(), !collapsed)
-   if (!collapsed) assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
+   assert.equal(await rail().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
    assert.equal(Math.round((await rail().boundingBox()).width), collapsed ? 64 : 240)
    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   }
@@ -63,19 +61,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   // Stale collapsed preference cannot shrink management pages, even on first paint/reload.
   await direct('/helper115', false)
-  await toggle().click(); await state(true)
   await page.reload({ waitUntil: 'networkidle' }); await state(false)
-  await toggle().click(); await state(true)
   await push('/resources'); await state(false) // Same meta value, new path resets.
-  await toggle().click(); await state(true)
-  await push('/resources?sort=desc#details'); await state(true)
+  await push('/resources?sort=desc#details'); await state(false)
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await rail().count(), 0)
   await page.locator('.workbench-header .brand-link').click()
   await page.getByRole('dialog', { name: '功能导航', exact: true }).waitFor()
   await page.keyboard.press('Escape')
   await page.getByRole('dialog', { name: '功能导航', exact: true }).waitFor({ state: 'detached' })
-  await page.setViewportSize({ width: 1024, height: 800 }); await state(true)
+  await page.setViewportSize({ width: 1024, height: 800 }); await state(false)
   assert.equal(await page.evaluate(() => document.body.style.overflow), '')
   // Stale expanded preference cannot enlarge a detail page.
   await page.evaluate(() => localStorage.setItem('cinema115-management-sidebar', 'expanded'))
@@ -84,23 +79,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await push('/movie/1453?tab=cast#cast'); await state(true)
   await page.reload({ waitUntil: 'networkidle' }); await state(true)
   await push('/media/organize/history'); await state(false) // Inherited parent meta.
-  await toggle().click(); await state(true)
   await push('/media/organize'); await state(false)
-  await toggle().click(); await state(true)
   await push('/115/pool?source=test'); await state(false) // Final redirect target.
   assert.equal(new URL(page.url()).pathname, '/helper115')
   await push('/emby/proxy'); await state(false)
   await page.getByRole('spinbutton', { name: /反代监听端口/ }).fill('8098')
-  await toggle().click(); await state(true)
   page.once('dialog', dialog => dialog.dismiss())
   await rail().getByRole('link', { name: '115 网盘', exact: true }).click()
-  assert.equal(new URL(page.url()).pathname, '/emby/proxy'); await state(true)
+  assert.equal(new URL(page.url()).pathname, '/emby/proxy'); await state(false)
   page.once('dialog', dialog => dialog.accept())
   await rail().getByRole('link', { name: '115 网盘', exact: true }).click()
   await page.waitForURL('**/115'); await state(false)
   // Browse routes, including notifications/updates, all start folded.
   for (const to of ['/movie', '/tv', '/notifications', '/updates']) { await push(to); await state(true) }
-  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'expanded', 'Manual actions do not persist a global preference')
+  assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), 'expanded', 'Automatic route layouts do not overwrite stale preferences')
   assert.deepEqual(writes, [])
   assert.deepEqual(errors, [])
   console.log('Sidebar defaults passed: initial paint, stale storage, refresh, same-meta/new-path, reused detail, query/hash, nested meta, redirects, rejected navigation, mobile drawer and viewport; no service writes')

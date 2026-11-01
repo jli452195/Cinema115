@@ -7,12 +7,13 @@ import GlobalToast from './components/GlobalToast.vue'
 import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
+import { rememberedDashboardHome } from './utils/dashboardPreferences'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
 const router = useRouter()
-const { desktop, collapsed, toggleCollapsed } = useManagementSidebar()
-// Reset on confirmed page changes, preserving manual state for query/hash edits.
+const { desktop, collapsed } = useManagementSidebar()
+// Apply page defaults on confirmed path changes; query/hash edits keep the layout.
 watch(() => route.path, () => {
   collapsed.value = route.meta.defaultSidebarCollapsed ?? true
 }, { immediate: true })
@@ -88,9 +89,9 @@ onBeforeUnmount(() => {
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>
   </main>
   <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
-    <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" @toggle="toggleCollapsed" />
+    <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" />
     <RouterView v-slot="{ Component }">
-      <component :is="Component" v-bind="viewProps" @home="router.push('/')" @back="back" @category="openCategory" @open-dashboard="router.push('/')" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
+      <component :is="Component" v-bind="viewProps" @home="router.push(rememberedDashboardHome)" @back="back" @category="openCategory" @open-dashboard="router.push(rememberedDashboardHome)" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
     </RouterView>
   </div>
   <ReloadPrompt />

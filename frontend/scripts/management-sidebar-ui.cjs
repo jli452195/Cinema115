@@ -36,11 +36,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   page.on('pageerror', error => errors.push(error.message))
   const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const go = to => page.goto(origin + to, { waitUntil: 'networkidle' })
+  const push = to => page.evaluate(async to => { await document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(to) }, to)
   const sidebar = () => page.getByRole('complementary', { name: '功能侧栏', exact: true })
   const nav = () => page.getByRole('navigation', { name: '功能导航', exact: true })
   const drawer = () => page.getByRole('dialog', { name: '功能导航', exact: true })
   const open = () => page.getByRole('button', { name: '打开功能导航', exact: true })
-  const toggle = () => sidebar().locator('.management-brand-toggle')
   const link = to => nav().locator(`a[href="${to}"]`)
   const settleNavigation = async collapsed => page.waitForFunction(collapsed => {
    const navigation = document.querySelector('#management-desktop-navigation')
@@ -57,7 +57,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   const brandState = async () => {
    const brand = page.locator('.management-sidebar .management-sidebar-home'), wordmark = brand.locator('.cinema-logo-wordmark')
-   assert.equal(await brand.getAttribute('href'), '/')
+   assert.match(await brand.getAttribute('href'), /^\/(?:movie|tv)(?:\?|$)/)
    assert.equal(await wordmark.isVisible(), true)
    assert.equal(await wordmark.innerText(), 'Cinema115')
    assert.equal(await wordmark.evaluate(el => {
@@ -110,15 +110,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    const bounds = await sidebar().boundingBox()
    assert.equal(bounds.x, 0); assert.equal(bounds.y, 0)
    assert.equal(Math.round(bounds.width), width); assert.equal(Math.round(bounds.height), page.viewportSize().height)
-   assert.equal(await toggle().isVisible(), !collapsed)
-   assert.equal(await toggle().getAttribute('aria-label'), '收起侧栏')
-   if (!collapsed) assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
+   assert.equal(await sidebar().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
    assert.equal(await nav().getAttribute('id'), 'management-desktop-navigation')
    assert.equal(await page.locator('.workbench-header .brand-link').count(), 0)
    assert.equal(await sidebar().getByRole('link', { name: 'Cinema115 首页', exact: true }).count(), 1)
-   assert.equal(await toggle().locator('.cinema-logo').count(), 0)
-   assert.equal(await toggle().locator('svg').count(), 1)
-   assert.equal(await sidebar().locator('.management-collapse-control:visible').count(), collapsed ? 0 : 1)
    await brandState()
    assert.equal(await page.locator('main').evaluate((el, width) => el.getBoundingClientRect().x >= width, width), true)
    await nav().locator('.management-nav-row, .management-nav-link > svg').evaluateAll(elements => Promise.all(elements
@@ -143,7 +138,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }))
     const activeColors = await page.locator('html').evaluate(el => el.classList.contains('dark'))
      ? ['rgb(96, 165, 250)', 'rgb(147, 197, 253)'] : ['rgb(37, 99, 235)', 'rgb(29, 78, 216)']
-    assert.equal(icons.filter(icon => icon.active).length, 1)
+    assert.equal(icons.filter(icon => icon.active).length, await nav().locator('[aria-current]').count())
     for (const icon of icons) {
      assert.equal(icon.stroke, icon.active ? 2.25 : 1.75)
      assert.equal(activeColors.includes(icon.color), icon.active)
@@ -161,14 +156,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await go('/helper115')
   await sidebar().waitFor(); await active('/115')
   await desktopState(false)
-  const collapseControl = sidebar().locator('.management-collapse-control')
-  const initialURL = page.url(), controlRequests = requests.length
-  const brandBounds = await sidebar().locator('.management-sidebar-home .cinema-logo').boundingBox(), controlBounds = await collapseControl.boundingBox()
-  assert.ok(controlBounds.x > brandBounds.x + brandBounds.width)
-  assert.ok(controlBounds.x + controlBounds.width <= 240)
-  await collapseControl.focus(); await page.keyboard.press('Enter'); await desktopState(true)
-  assert.equal(await sidebar().locator('.management-sidebar-home').evaluate(el => el === document.activeElement), true)
-  assert.equal(page.url(), initialURL); assert.equal(requests.length, controlRequests)
+  assert.equal(await sidebar().getByRole('button').count(), 0)
   await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
   // Every page must keep the same groups, destinations, logo and row positions.
   const navigationLayout = () => sidebar().evaluate(el => {
@@ -219,37 +207,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.locator('main a[href="/gying"]').click(); await page.waitForURL('**/gying'); await active('/resources')
   await link('/users').click(); await page.waitForURL('**/users')
   await page.locator('main a[href="/users/list"]').click(); await page.waitForURL('**/users/list'); await active('/users')
-  assert.equal(await sidebar().getByRole('button').count(), 1)
+  assert.equal(await sidebar().getByRole('button').count(), 0)
   await page.reload(); await sidebar().waitFor()
   await desktopState(false)
   assert.equal(await link('/115').getAttribute('aria-label'), '115 网盘')
   // The icon rail keeps accessible names, keyboard use and visible name hints.
-  const expandedContent = await page.locator('main.management-content').boundingBox()
-  const collapseRequests = requests.length
-  const beforeLogoToggle = page.url()
-  // Sample actual geometry while the shared width moves, independently of its animation mechanism.
+  // Returning home automatically folds the persistent sidebar while geometry stays synchronized.
+  const browseHome = await sidebar().locator('.management-sidebar-home').getAttribute('href')
   await page.evaluate(() => {
    window.sidebarMotionSample = new Promise(resolve => {
-    document.querySelector('.management-sidebar .management-brand-toggle').addEventListener('click', () => {
-     const sample = () => {
-      const sidebar = document.querySelector('.management-sidebar'), header = document.querySelector('.workbench-header'), shell = document.querySelector('.portal-workspace')
-      const width = sidebar.getBoundingClientRect().width
-      if (width > 90 && width < 220) resolve({ width, header: header.getBoundingClientRect().x, content: parseFloat(getComputedStyle(shell).paddingLeft) })
-      else requestAnimationFrame(sample)
-     }
-     requestAnimationFrame(sample)
-    }, { once: true })
+    const sample = () => {
+     const sidebar = document.querySelector('.management-sidebar'), header = document.querySelector('.workbench-header'), shell = document.querySelector('.portal-workspace')
+     const width = sidebar.getBoundingClientRect().width
+     if (width > 90 && width < 220) resolve({ width, header: header.getBoundingClientRect().x, content: parseFloat(getComputedStyle(shell).paddingLeft) })
+     else requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
    })
   })
-  await toggle().click(); await desktopState(true)
+  await sidebar().locator('.management-sidebar-home').click(); await page.waitForURL(origin + browseHome); await desktopState(true)
   const motion = await page.evaluate(() => window.sidebarMotionSample)
   assert.ok(motion.width > 64 && motion.width < 240)
   assert.ok(Math.abs(motion.header - motion.width) < 1 && Math.abs(motion.content - motion.width) < 1)
-  assert.equal(page.url(), beforeLogoToggle)
   assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-management-sidebar')), null)
-  const collapsedContent = await page.locator('main.management-content').boundingBox()
-  assert.ok(collapsedContent.width >= expandedContent.width)
-  assert.equal(requests.length, collapseRequests)
   await link('/115').hover()
   await page.getByRole('tooltip', { name: '115 网盘', exact: true }).waitFor()
   await desktopState(true)
@@ -258,9 +238,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.getByRole('tooltip', { name: '资源配置', exact: true }).waitFor()
   await page.keyboard.press('Enter'); await page.waitForURL('**/resources'); await active('/resources', 'page')
   await desktopState(false)
-  await toggle().click(); await desktopState(true)
-  await page.reload(); await sidebar().waitFor(); await desktopState(false)
-  await toggle().click(); await desktopState(true)
+  await push('/movie'); await desktopState(true)
+  await page.reload(); await sidebar().waitFor(); await desktopState(true)
   await screenshot('1920-collapsed')
   await link('/115').click(); await page.waitForURL('**/115'); await active('/115', 'page')
   await page.locator('main a[href="/helper115"]').click(); await page.waitForURL('**/helper115'); await active('/115')
@@ -317,7 +296,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await link('/emby').click(); await page.waitForURL('**/emby')
   assert.ok(Math.abs(await nav().evaluate(el => el.scrollTop) - scroll) < 2)
   // Short icon rails keep the focused link's hint after Tab scrolls it into view.
-  await toggle().click(); await desktopState(true)
+  await push('/movie'); await desktopState(true)
   await link('/follows/manage').focus()
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const topBeforeTab = await nav().evaluate(el => el.scrollTop)
@@ -326,7 +305,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   assert.ok(await nav().evaluate(el => el.scrollTop) > topBeforeTab)
   assert.equal(await page.getByRole('tooltip', { name: 'Emby', exact: true }).isVisible(), true)
-  await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
+  await page.reload({ waitUntil: 'networkidle' }); await desktopState(true)
   // Mobile route success closes the drawer; existing unsaved-leave rejection keeps it.
   await go('/emby/proxy'); await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('spinbutton', { name: /反代监听端口/ }).fill('8098')
@@ -361,10 +340,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.locator('.management-nav-flyout').count(), 0)
     if (width < 1024) { await page.keyboard.press('Escape'); await drawer().waitFor({ state: 'detached' }) }
     else {
-     await toggle().click(); await desktopState(true); await active('/115', 'page')
+     await push('/movie'); await desktopState(true)
      assert.equal(await nav().getByRole('link').count(), 10)
      await screenshot(`${width}-${dark ? 'dark' : 'light'}-collapsed`)
-     await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
+     await push('/115'); await desktopState(false)
     }
    }
   }
@@ -373,9 +352,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await drawer().evaluate(el => getComputedStyle(el).animationName), 'none')
   await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 1280, height: 800 }); await sidebar().waitFor()
-  await toggle().click(); await desktopState(true)
+  await push('/movie'); await desktopState(true)
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('.management-sidebar, .workbench-header, .portal-workspace')].flatMap(element => element.getAnimations()).length), 0)
-  await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
+  await page.reload({ waitUntil: 'networkidle' }); await desktopState(true)
   // Homepage browsing shares the same desktop SVG rail and animation; mobile keeps its drawer.
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await go('/movie?sort=rating')
@@ -413,7 +392,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      await brandState()
      assert.equal(await nav().locator('a > span:visible').count(), 0)
      assert.equal(await homeSidebar().locator('nav svg').count(), 10)
-     assert.equal(await homeToggle().isVisible(), false)
+     assert.equal(await homeToggle().count(), 0)
      assert.equal(await page.getByRole('dialog').count(), 0)
      assert.equal(await page.evaluate(() => document.body.style.overflow), '')
     } else {
@@ -445,10 +424,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await router.push('/115'); await router.push('/movie')
   })
   await settleHomeSidebar()
-  assert.equal(await homeToggle().isVisible(), false)
+  assert.equal(await homeToggle().count(), 0)
   await page.getByRole('link', { name: '剧集', exact: true }).click()
   await page.waitForURL(/\/(tv)?$/); await homeSidebar().waitFor()
-  assert.equal(await homeToggle().isVisible(), false)
+  assert.equal(await homeToggle().count(), 0)
   await homeSidebar().getByRole('link', { name: '115 网盘', exact: true }).click()
   await page.waitForURL('**/115'); await drawer().waitFor({ state: 'detached' })
   await sidebar().waitFor()
@@ -493,6 +472,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await drawer().waitFor({ state: 'detached' })
   assert.equal(await headerLogo().evaluate(el => el === document.activeElement), true)
   assert.deepEqual(writes, []); assert.deepEqual(errors, [])
-  console.log('Sidebar passed: identical groups, links, brand and row positions on homepage, follows management, organize and drive pages; persistent Cinema115 brand, full-bleed detail background, synchronized motion, route defaults and temporary manual state, reduced motion, mobile drawer, role scope, focus/Escape/backdrop/resize/route guards, both themes and no service writes')
+  console.log('Sidebar passed: identical groups, links, brand and row positions on homepage, follows management, organize and drive pages; persistent Cinema115 brand, no desktop collapse control, full-bleed detail background, synchronized automatic route layouts, reduced motion, mobile drawer, role scope, focus/Escape/backdrop/resize/route guards, both themes and no service writes')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

@@ -4,10 +4,6 @@ export const managementNavigationScroll = { top: 0 }
 // App.vue initializes this from the confirmed route before rendering.
 const collapsed = ref(true)
 
-function toggleCollapsed() {
-  collapsed.value = !collapsed.value
-}
-
 export function useManagementSidebar() {
   const desktopQuery = window.matchMedia('(min-width: 1024px)')
   const desktop = ref(desktopQuery.matches)
@@ -18,5 +14,5 @@ export function useManagementSidebar() {
   onBeforeUnmount(() => {
     desktopQuery.removeEventListener('change', updateViewport)
   })
-  return { desktop, collapsed, toggleCollapsed }
+  return { desktop, collapsed }
 }

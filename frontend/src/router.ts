@@ -36,6 +36,8 @@ import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
 import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
+import { rememberedDashboardHome } from './utils/dashboardPreferences'
+import { dashboardScrollPosition, isDashboardPath, prepareDashboardNavigation } from './utils/dashboardBrowseState'
 import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
@@ -113,6 +115,7 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: (to, from, savedPosition) => {
+    if (isDashboardPath(to.path)) return to.fullPath === from.fullPath ? false : dashboardScrollPosition(to.fullPath, savedPosition)
     // The missing view restores its per-view/page scroll after installing cached rows.
     if (to.name === 'emby-missing') return false
     // Anime installs cached rows before restoring each filter/page's scroll.
@@ -125,7 +128,7 @@ export const router = createRouter({
 
 // 兼容旧看板搜索地址，搜索统一进入独立页面。
 router.beforeEach(async (to, from) => {
-  if (to.meta.public) return
+  if (to.meta.public) { prepareDashboardNavigation(); return }
   // Calendar filters stay local. Periodic verification and API authorization
   // still apply; entering another page continues to verify the session.
   const localCatalogNavigation = to.name === 'anime-discovery' && from.name === to.name && portalUser.value?.role === 'admin' && !portalAuthError.value
@@ -139,6 +142,11 @@ router.beforeEach(async (to, from) => {
   if (['/', '/movie', '/tv'].includes(to.path) && typeof to.query.q === 'string' && to.query.q.trim()) {
     return { path: '/search', query: { q: to.query.q.trim(), scope: to.path === '/movie' ? 'movie' : 'tv' }, replace: true }
   }
+  if (to.path === '/') {
+    const target = router.resolve(rememberedDashboardHome.value)
+    return { path: target.path, query: Object.keys(to.query).length ? to.query : target.query, hash: to.hash, replace: true }
+  }
+  prepareDashboardNavigation(isDashboardPath(to.path) ? to.fullPath : undefined)
 })
 
 // 只允许返回已知的站内业务页面，登录、注册及外部地址不能作为跳转目标。

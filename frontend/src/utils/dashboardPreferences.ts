@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 
 export type DashboardKind = 'movie' | 'tv'
 export interface DashboardGenre { id: number; name: string }
@@ -7,6 +7,7 @@ const dashboardPathKeys: Record<DashboardKind, string> = {
   movie: 'cinema115.dashboard.movie.v1',
   tv: 'cinema115.dashboard.tv.v1',
 }
+const lastKindKey = 'cinema115.dashboard.last-kind.v1'
 const genreCacheKeys: Record<DashboardKind, string> = {
   movie: 'cinema115.tmdb.genres.movie.v1',
   tv: 'cinema115.tmdb.genres.tv.v1',
@@ -57,6 +58,8 @@ export const rememberedDashboardPaths = reactive<Record<DashboardKind, string>>(
   movie: readDashboardPath('movie'),
   tv: readDashboardPath('tv'),
 })
+const lastDashboardKind = ref<DashboardKind>(storageGet(lastKindKey) === 'movie' ? 'movie' : 'tv')
+export const rememberedDashboardHome = computed(() => rememberedDashboardPaths[lastDashboardKind.value])
 
 export function rememberDashboardPath(kind: DashboardKind, fullPath: string) {
   const expectedPath = `/${kind}`
@@ -66,6 +69,8 @@ export function rememberDashboardPath(kind: DashboardKind, fullPath: string) {
     const value = `${url.pathname}${url.search}`
     rememberedDashboardPaths[kind] = value
     storageSet(dashboardPathKeys[kind], value)
+    lastDashboardKind.value = kind
+    storageSet(lastKindKey, kind)
   } catch { /* 忽略无法解析的路由。 */ }
 }
 

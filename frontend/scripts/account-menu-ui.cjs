@@ -88,12 +88,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     // Management destinations remain reachable through the left navigation and category cards.
     await go('/movie/123'); await open()
     const desktopSidebar = page.getByRole('complementary', { name: '功能侧栏', exact: true })
-    await desktopSidebar.locator('.management-brand-toggle').click()
     const drawer = page.getByRole('dialog', { name: '功能导航', exact: true })
-    await menu().waitFor({ state: 'detached' })
     for (const to of adminDestinations) assert.equal(await desktopSidebar.locator(`a[href="${to}"]`).count(), 1)
     await desktopSidebar.getByRole('link', { name: '用户与邀请', exact: true }).click()
     await page.waitForURL('**/users'); await drawer.waitFor({ state: 'detached' })
+    await menu().waitFor({ state: 'detached' })
     assert.deepEqual(await page.locator('.navigation-card').evaluateAll(cards => cards.map(card => card.getAttribute('href'))), ['/users/list', '/users/invites'])
     assert.equal(await trigger().evaluate(el => el.classList.contains('selected')), false)
     await open(); await personalMenu(false); await close()
@@ -155,7 +154,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const ordinaryStart = requests.length
     for (const destination of ['/users', '/users/list', '/users/invites', '/emby/users']) {
       await go(destination)
-      assert.equal(new URL(page.url()).pathname, '/')
+      assert.equal(new URL(page.url()).pathname, '/tv')
       assert.equal(await page.getByRole('heading', { name: '用户与邀请', exact: true }).count(), 0)
     }
     assert(requests.slice(ordinaryStart).every(endpoint => !endpoint.startsWith('/api/admin/')))

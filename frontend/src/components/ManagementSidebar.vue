@@ -4,22 +4,12 @@ import { isNavigationFailure, NavigationFailureType, RouterLink, useRouter } fro
 import ManagementNavigation from './ManagementNavigation.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import CinemaLogo from './CinemaLogo.vue'
+import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 
 const props = defineProps<{ desktop: boolean; collapsed?: boolean; mobileOnly?: boolean }>()
-const emit = defineEmits<{ toggle: [] }>()
 const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>()
-const desktopToggle = ref<HTMLButtonElement>()
 const titleID = useId(), drawerID = useId()
 let trigger: HTMLElement | undefined, previousOverflow = '', backdropStarted = false
-function toggleSidebar() {
-  emit('toggle')
-  void nextTick(() => {
-    const target = props.collapsed
-      ? desktopToggle.value?.closest('.management-sidebar')?.querySelector<HTMLElement>('.management-sidebar-home')
-      : desktopToggle.value
-    target?.focus({ preventScroll: true })
-  })
-}
 async function openDrawer(event: MouseEvent) {
   if (props.desktop || opened.value) return
   trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
@@ -74,8 +64,7 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 <template>
   <aside v-if="desktop && !mobileOnly" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="功能侧栏">
     <div class="management-sidebar-brand">
-      <RouterLink to="/" class="management-sidebar-home" aria-label="Cinema115 首页" title="返回首页"><CinemaLogo sidebar /></RouterLink>
-      <button ref="desktopToggle" type="button" class="management-brand-toggle management-sidebar-control management-collapse-control" aria-label="收起侧栏" title="收起侧栏" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="toggleSidebar"><NavigationIcon name="sidebarCollapse" /></button>
+      <RouterLink :to="rememberedDashboardHome" class="management-sidebar-home" aria-label="Cinema115 首页" title="返回首页"><CinemaLogo sidebar /></RouterLink>
     </div>
     <ManagementNavigation id="management-desktop-navigation" :collapsed="collapsed" />
   </aside>
@@ -96,11 +85,8 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 .management-sidebar-home:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
 .management-brand-toggle { display: inline-flex; min-width: 0; min-height: 44px; align-items: center; border-radius: 10px; cursor: pointer; }
 .management-brand-toggle:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
-.management-sidebar .management-brand-toggle { flex-shrink: 0; padding-inline: 4px; }
 .management-drawer-heading { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 16px; }
 .management-sidebar-control { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; color: rgb(var(--color-slate-500)); cursor: pointer; }.management-sidebar-control svg { width: 19px; height: 19px; }.management-sidebar-control:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
-.management-collapse-control { position: absolute; top: 50%; right: 10px; width: 36px; height: 36px; min-height: 36px; visibility: hidden; transform: translateY(-50%); }
-.management-sidebar:not(.is-collapsed) .management-collapse-control { visibility: visible; transition: visibility 0s var(--management-sidebar-motion); }
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
 .management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }

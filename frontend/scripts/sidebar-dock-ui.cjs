@@ -32,7 +32,6 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const sidebar = () => page.getByRole('complementary', { name: '功能侧栏', exact: true })
   const nav = () => sidebar().getByRole('navigation', { name: '功能导航', exact: true })
   const links = () => nav().getByRole('link')
-  const toggle = () => sidebar().locator('.management-brand-toggle')
   const expanded = () => page.waitForFunction(() => {
    const navigation = document.querySelector('#management-desktop-navigation')
    return navigation && !navigation.classList.contains('is-collapsed') && Number(getComputedStyle(navigation).opacity) === 1
@@ -71,8 +70,9 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
    fs.mkdirSync('test-results', { recursive: true })
    await page.screenshot({ path: `test-results/sidebar-dock-${name}.png` })
   }
-  await page.goto(origin + '/115', { waitUntil: 'networkidle' })
-  await toggle().click(); await resting()
+  await page.goto(origin + '/movie', { waitUntil: 'networkidle' })
+  await resting()
+  assert.equal(await sidebar().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
   await page.waitForFunction(() => Math.abs(document.querySelector('.management-sidebar').getBoundingClientRect().width - 64) < .1)
   assert.equal(await links().count(), 10)
   const baseline = await boxes(), rail = await nav().boundingBox()
@@ -127,7 +127,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const clickGrown = (await boxes())[4]
   await page.mouse.click(clickGrown.x + clickGrown.width - 3, clickGrown.y + clickGrown.height / 2)
   await page.waitForURL('**/users')
-  assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
+  await expanded()
+  assert.equal(await sidebar().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
   await page.goto(origin + '/movie', { waitUntil: 'networkidle' }); await resting()
   // Keyboard focus shows names without magnification, and native Enter navigation remains available.
   await links().first().focus(); await page.keyboard.press('Tab')
@@ -136,7 +137,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   for (const box of await boxes()) close(box.height, 44)
   await page.keyboard.press('Enter'); await page.waitForURL('**/follows/manage')
   await expanded()
-  assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
+  assert.equal(await sidebar().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
   assert.equal(await nav().locator('a > span:visible').count(), 10)
   // Route changes and window blur clear an active effect and its tooltip.
   await page.goto(origin + '/movie', { waitUntil: 'networkidle' }); await resting()
@@ -203,7 +204,6 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await nav().locator('a[href="/115"]').click(); await page.waitForURL('**/115')
   await expanded()
   assert.equal(await nav().locator('a > span:visible').count(), 10)
-  await toggle().click(); await resting()
   // Role scope stays unchanged, and the mobile drawer keeps its ordinary layout.
   role = 'user'
   await page.goto(origin + '/movie', { waitUntil: 'networkidle' }); await resting()

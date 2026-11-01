@@ -152,7 +152,7 @@ const waitUntil = async predicate => {
     const reads = downgraded.count('/catalog/anibt')
     await downgraded.navigate('/anime?source=anibt&season=2026-07&day=1')
     assert.equal(downgraded.count('/catalog/anibt'), reads)
-    assert.equal(new URL(downgraded.page.url()).pathname, '/')
+    assert.equal(new URL(downgraded.page.url()).pathname, '/tv')
     await downgraded.context.close()
     const initial = await session('server')
     assert.equal(await initial.page.locator('.anibt-anime-card').count(), 0)

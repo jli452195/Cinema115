@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/usePortalAuth'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import DashboardFilterDialog from '../components/DashboardFilterDialog.vue'
 import DashboardYearMenu from '../components/DashboardYearMenu.vue'
@@ -11,6 +11,7 @@ import PaginationControl from '../components/PaginationControl.vue'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 import { cacheGenres, cachedGenres, rememberDashboardPath, type DashboardGenre, type DashboardKind } from '../utils/dashboardPreferences'
+import { cacheDashboard, cachedDashboard, dashboardBrowseScope, dashboardCacheLifetime, dashboardLayoutReady, isDashboardPath, rememberDashboardScroll } from '../utils/dashboardBrowseState'
 
 const props = defineProps<{ token: string; kind: 'tv' | 'movie' }>()
 const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
@@ -28,8 +29,10 @@ function setFilters(values: Partial<Record<FilterKey, string>>) {
   }
   if (Object.keys(values).some(key => key !== 'page')) delete query.page
   if ('category' in values) delete query.genre
-  rememberDashboardPath(kind.value, router.resolve({ path: `/${kind.value}`, query }).fullPath)
-  void router.push({ path: route.path, query })
+  const target = router.resolve({ path: route.path, query })
+  if (target.fullPath === route.fullPath) return
+  rememberDashboardScroll(target.fullPath, { left: 0, top: 0 })
+  void router.push(target.fullPath)
 }
 function setFilter(key: FilterKey, value: string) { setFilters({ [key]: value }) }
 function filter(key: FilterKey, fallback: string, valid: (value: string) => boolean) {
@@ -89,6 +92,7 @@ const activeMobileFilters = computed(() => {
 let controller: AbortController | undefined
 const genreControllers: Partial<Record<DashboardKind, AbortController>> = {}
 let mounted = true
+let displayedKind = kind.value
 const resultSummary = computed(() => {
   const labels = [...activeMobileFilters.value]
   if (category.value) labels.unshift(categories.value.find(item => item.id === category.value)?.name || '')
@@ -127,32 +131,59 @@ function clearMobileFilters() {
   setFilters({ genre: '', region: '', year: '', sort: 'popular' })
 }
 async function loadPage() {
+  if (route.path !== `/${kind.value}`) return
   controller?.abort()
   const current = new AbortController(); controller = current
+  if (displayedKind !== kind.value) {
+    displayedKind = kind.value
+    items.value = []; total.value = 0; totalPages.value = 0; hasLoaded.value = false
+    loadGenres()
+  }
+  const requestedPath = route.fullPath, requestedScope = dashboardBrowseScope()
   loading.value = true; error.value = ''
   const requestedPage = page.value, requestedSummary = resultSummary.value
+  const ready = async () => {
+    await nextTick()
+    if (mounted && controller === current && !current.signal.aborted && dashboardBrowseScope() === requestedScope) dashboardLayoutReady(requestedPath)
+  }
+  const cached = cachedDashboard(requestedPath)
+  if (cached) {
+    items.value = cached.items; totalPages.value = cached.totalPages; total.value = cached.total
+    loadedPage.value = requestedPage; loadedSummary.value = cached.summary; hasLoaded.value = true
+    if (Date.now() - cached.cachedAt < dashboardCacheLifetime) { loading.value = false; await ready(); return }
+    void ready()
+  }
   try {
     const params = new URLSearchParams({ kind: kind.value, page: String(page.value) })
     if (category.value) params.set('category', category.value)
     params.set('genre', genre.value); params.set('region', region.value); params.set('year', year.value); params.set('sort', sort.value)
     const data = await request(`browse?${params}`, current.signal)
     if (!Array.isArray(data.items)) throw new Error('影视数据格式不正确')
-    if (!mounted || current.signal.aborted) return
+    if (!mounted || current.signal.aborted || dashboardBrowseScope() !== requestedScope) return
     items.value = data.items; totalPages.value = data.totalPages; total.value = data.total
     loadedPage.value = requestedPage; loadedSummary.value = requestedSummary; hasLoaded.value = true
+    cacheDashboard(requestedPath, { items: data.items, totalPages: data.totalPages, total: data.total, summary: requestedSummary, cachedAt: Date.now() })
   } catch (e) { if (mounted && !current.signal.aborted) error.value = e instanceof Error ? e.message : '看板加载失败' }
-  finally { if (mounted && controller === current) loading.value = false }
+  finally { if (mounted && controller === current) { loading.value = false; await ready() } }
 }
-watch(kind, () => { items.value = []; total.value = 0; totalPages.value = 0; hasLoaded.value = false; loadGenres() })
-watch(() => route.fullPath, fullPath => {
-  if (route.path === `/${kind.value}`) rememberDashboardPath(kind.value, fullPath)
-}, { immediate: true })
-watch([kind, category, genre, region, year, sort, page], () => { void loadPage() }, { immediate: true })
+watch(() => [dashboardBrowseScope(), kind.value, route.fullPath], () => {
+  if (route.path !== `/${kind.value}`) return
+  rememberDashboardPath(kind.value, route.fullPath)
+  void loadPage()
+}, { immediate: true, flush: 'post' })
+function saveScroll(path = route.fullPath) {
+  if (isDashboardPath(path.split('?')[0]!.split('#')[0]!) && hasLoaded.value) rememberDashboardScroll(path, { left: window.scrollX, top: window.scrollY })
+}
+onBeforeRouteLeave((_to, from) => { saveScroll(from.fullPath) })
+onBeforeRouteUpdate((_to, from) => { saveScroll(from.fullPath) })
+function pageHidden() { saveScroll() }
 onMounted(() => {
+  window.addEventListener('pagehide', pageHidden)
   loadGenres()
   void refreshGenres(kind.value === 'movie' ? 'tv' : 'movie')
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', pageHidden)
   mounted = false
   controller?.abort()
   Object.values(genreControllers).forEach(current => current?.abort())
