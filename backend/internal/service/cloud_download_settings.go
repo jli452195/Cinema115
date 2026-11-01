@@ -53,7 +53,7 @@ func NewCloudDownloadSettings(store *SessionStore) (*CloudDownloadSettings, erro
 	if err := json.Unmarshal([]byte(store.Value()), &s.value); err != nil || s.value.Version != 1 {
 		return nil, fmt.Errorf("云下载配置无法解析")
 	}
-	if err := validateCloudDownloadTarget(s.value.TargetCID, s.value.TargetPath); err != nil {
+	if err := validateP115TargetDirectory(s.value.TargetCID, s.value.TargetPath); err != nil {
 		return nil, fmt.Errorf("云下载配置损坏: %w", err)
 	}
 	if s.value.Targets == nil {
@@ -78,7 +78,7 @@ func validateCloudDownloadTargets(targets []CloudDownloadTarget) error {
 		if seenNames[strings.ToLower(name)] {
 			return fmt.Errorf("云下载目标名称不能重复")
 		}
-		if err := validateCloudDownloadTarget(target.TargetCID, target.TargetPath); err != nil {
+		if err := validateP115TargetDirectory(target.TargetCID, target.TargetPath); err != nil {
 			return err
 		}
 		seenIDs[target.ID], seenNames[strings.ToLower(name)] = true, true
@@ -105,7 +105,7 @@ func (s *CloudDownloadSettings) TargetReady(target CloudDownloadTarget) bool {
 	if s.PrimaryID != nil && target.AccountID != s.PrimaryID() {
 		return false
 	}
-	return s.ValidateAccount != nil && s.ValidateAccount(target.AccountID) == nil && validateCloudDownloadTarget(target.TargetCID, target.TargetPath) == nil
+	return s.ValidateAccount != nil && s.ValidateAccount(target.AccountID) == nil && validateP115TargetDirectory(target.TargetCID, target.TargetPath) == nil
 }
 
 func (s *CloudDownloadSettings) SaveTarget(input CloudDownloadTarget) (CloudDownloadTarget, error) {
@@ -129,7 +129,7 @@ func (s *CloudDownloadSettings) SaveTarget(input CloudDownloadTarget) (CloudDown
 	if err := s.ValidateAccount(input.AccountID); err != nil {
 		return CloudDownloadTarget{}, err
 	}
-	if err := validateCloudDownloadTarget(input.TargetCID, input.TargetPath); err != nil {
+	if err := validateP115TargetDirectory(input.TargetCID, input.TargetPath); err != nil {
 		return CloudDownloadTarget{}, err
 	}
 	s.mu.Lock()
@@ -251,7 +251,7 @@ func (s *CloudDownloadSettings) Save(input CloudDownloadConfig) (CloudDownloadCo
 	if err := s.ValidateAccount(input.AccountID); err != nil {
 		return CloudDownloadConfig{}, err
 	}
-	if err := validateCloudDownloadTarget(input.TargetCID, input.TargetPath); err != nil {
+	if err := validateP115TargetDirectory(input.TargetCID, input.TargetPath); err != nil {
 		return CloudDownloadConfig{}, err
 	}
 	document := cloudDownloadDocument{Version: 1, CloudDownloadConfig: input}
@@ -277,12 +277,12 @@ func (s *CloudDownloadSettings) commit(document cloudDownloadDocument) error {
 	return nil
 }
 
-func validateCloudDownloadTarget(cid, path string) error {
+func validateP115TargetDirectory(cid, path string) error {
 	if _, err := strconv.ParseUint(cid, 10, 64); err != nil {
-		return fmt.Errorf("%w：云下载目标目录编号无效", ErrAccountInput)
+		return fmt.Errorf("%w：115 目标目录编号无效", ErrAccountInput)
 	}
 	if path == "" || len([]rune(path)) > 1024 || strings.ContainsAny(path, "\r\n\x00") {
-		return fmt.Errorf("%w：云下载目标目录路径无效", ErrAccountInput)
+		return fmt.Errorf("%w：115 目标目录路径无效", ErrAccountInput)
 	}
 	return nil
 }

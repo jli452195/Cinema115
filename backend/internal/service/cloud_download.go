@@ -40,6 +40,10 @@ type CloudDownloadReceipt struct {
 	RemovedOldTask bool
 }
 
+// CloudDownloadSubmission pins the credentials and destination of one task in
+// memory. It must never be persisted as part of a resumable task record.
+type CloudDownloadSubmission func(context.Context, string) (CloudDownloadReceipt, error)
+
 // CloudDownloadService is shared by the administrator page and Telegram.
 // Each call resolves one explicit account and snapshots its cookie before the
 // upstream request; it never falls back to another account.
@@ -59,7 +63,7 @@ func (s *CloudDownloadService) ValidateConfig(config CloudDownloadConfig) error 
 	if err := s.Accounts.ValidatePrimary(config.AccountID); err != nil {
 		return err
 	}
-	if err := validateCloudDownloadTarget(config.TargetCID, config.TargetPath); err != nil {
+	if err := validateP115TargetDirectory(config.TargetCID, config.TargetPath); err != nil {
 		return generationInputError(err.Error())
 	}
 	return nil
@@ -72,11 +76,22 @@ func (s *CloudDownloadService) Redo(ctx context.Context, config CloudDownloadCon
 
 // 先精确查询；仅删除已结束的任务记录，始终保留文件，不自动循环重试。
 func (s *CloudDownloadService) Submit(ctx context.Context, config CloudDownloadConfig, rawURL string) (CloudDownloadReceipt, error) {
-	account, err := s.snapshot(config)
+	submit, err := s.PrepareSubmission(config)
 	if err != nil {
 		return CloudDownloadReceipt{}, err
 	}
-	return s.submitSnapshot(ctx, config, account, rawURL)
+	return submit(ctx, rawURL)
+}
+
+// PrepareSubmission fixes the account once for all links in a Telegram task.
+func (s *CloudDownloadService) PrepareSubmission(config CloudDownloadConfig) (CloudDownloadSubmission, error) {
+	account, err := s.snapshot(config)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, rawURL string) (CloudDownloadReceipt, error) {
+		return s.submitSnapshot(ctx, config, account, rawURL)
+	}, nil
 }
 
 func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudDownloadConfig, account P115Account, rawURL string) (CloudDownloadReceipt, error) {

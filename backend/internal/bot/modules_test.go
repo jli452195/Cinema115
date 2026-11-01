@@ -158,6 +158,35 @@ func addCloudTarget(t *testing.T, settings *service.CloudDownloadSettings, name,
 	return target
 }
 
+func newShareTransferTargetSettings(t *testing.T, path string) *service.ShareTransferSettings {
+	t.Helper()
+	store, err := service.NewSessionStore(path, "test-share-transfer-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := service.NewShareTransferSettings(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.PrimaryID = func() string { return "account" }
+	settings.ValidateAccount = func(id string) error {
+		if id != "account" {
+			return service.ErrAccountMissing
+		}
+		return nil
+	}
+	return settings
+}
+
+func addShareTransferTarget(t *testing.T, settings *service.ShareTransferSettings, name, path string) service.ShareTransferTarget {
+	t.Helper()
+	target, err := settings.SaveTarget(service.ShareTransferTarget{Name: name, AccountID: "account", TargetCID: "88", TargetPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
 func TestUnconfiguredDisabledBotCanHoldCloudTarget(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
@@ -275,6 +304,50 @@ func TestCloudTargetTransferConflictKeepsSingleOwner(t *testing.T) {
 	}
 }
 
+func TestShareTransferModuleHasExclusiveBotAssignment(t *testing.T) {
+	dir := t.TempDir()
+	hub, err := NewHub(dir, "test-secret", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := service.NewAutomationStore(filepath.Join(dir, "automation.json"), dir, "http://nas:8115")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.settings = settings
+	hub.ShareTransferSettings = newShareTransferTargetSettings(t, filepath.Join(dir, "share-transfer.enc"))
+	first, _ := hub.Add("Share notifications")
+	second, _ := hub.Add("Share transfer")
+	firstTarget := addShareTransferTarget(t, hub.ShareTransferSettings, "动画", "/动画")
+	secondTarget := addShareTransferTarget(t, hub.ShareTransferSettings, "电影", "/电影")
+	if err := hub.SetModule(context.Background(), shareTransferModuleID(firstTarget.ID), "", second); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.SetModule(context.Background(), shareTransferModuleID(secondTarget.ID), "", second); err != nil {
+		t.Fatalf("a Bot should hold more than one receive target: %v", err)
+	}
+	if err := hub.SetModule(context.Background(), "share_notifications", "", second); !errors.Is(err, service.ErrTelegramModuleConflict) {
+		t.Fatalf("same Bot accepted two handlers for the same share URL: %v", err)
+	}
+	if err := hub.SetModule(context.Background(), "share_notifications", "", first); err != nil {
+		t.Fatal(err)
+	}
+	modules, err := hub.Modules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]string{}
+	for _, module := range modules {
+		owners[module.ID] = module.AssignedBotID
+	}
+	if owners[shareTransferModuleID(firstTarget.ID)] != second || owners[shareTransferModuleID(secondTarget.ID)] != second || owners["share_notifications"] != first {
+		t.Fatalf("share features did not persist separate Bot ownership: %+v", owners)
+	}
+	if err := hub.SetModule(context.Background(), "share_notifications", first, second); !errors.Is(err, service.ErrTelegramModuleConflict) {
+		t.Fatalf("share notification transfer bypassed target exclusivity: %v", err)
+	}
+}
+
 func TestCloudTargetCommitFailureKeepsOriginalOwner(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
@@ -322,13 +395,16 @@ func TestPoolNotificationsAreDisabledByUnassigning(t *testing.T) {
 }
 
 func TestCloudOnlyBotStartsMessagePollingWithoutShareProcessing(t *testing.T) {
-	if !pollsMessages(BotProfile{ID: "cloud-bot"}, "", true) {
+	if !pollsMessages(BotProfile{ID: "cloud-bot"}, "", true, false) {
 		t.Fatal("cloud-only Bot must start getUpdates")
 	}
-	if pollsMessages(BotProfile{ID: "notifications-only"}, "", false) {
+	if pollsMessages(BotProfile{ID: "notifications-only"}, "", false, false) {
 		t.Fatal("notification-only Bot must not start a getUpdates consumer")
 	}
-	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot", false) {
+	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot", false, false) {
 		t.Fatal("share Bot must start getUpdates")
+	}
+	if !pollsMessages(BotProfile{ID: "transfer-bot"}, "", false, true) {
+		t.Fatal("share-transfer Bot must start getUpdates")
 	}
 }

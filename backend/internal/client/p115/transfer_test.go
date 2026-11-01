@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestReceiveShareToRootDirectory(t *testing.T) {
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/share/receive" || r.Form.Get("cid") != "0" || r.Form.Get("file_id") != "12" || r.Form.Get("share_code") != "source" || r.Form.Get("receive_code") != "abcd" {
+			t.Errorf("unexpected transfer form: %s %s %v", r.Method, r.URL.Path, r.Form)
+		}
+		w.Write([]byte(`{"state":true}`))
+	}))
+	defer upstream.Close()
+	client := newTestShareClient()
+	client.WebURL = upstream.URL
+	if err := client.ReceiveShare(context.Background(), &ShareInfo{Code: "source", Password: "abcd"}, []string{"12"}, "0", "test-cookie"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("root directory transfer requests=%d, want 1", requests)
+	}
+}
+
 func TestTransferAPIFormsAndLargeIDs(t *testing.T) {
 	const id = "3516637914517734609"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -39,11 +39,11 @@ onBeforeUnmount(clear)
 </template>
 
 <style scoped>
-.toast-container { right: max(1rem, env(safe-area-inset-right, 0px)); bottom: max(1rem, env(safe-area-inset-bottom, 0px)); width: min(24rem, calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))); }
+.toast-container { right: max(1rem, env(safe-area-inset-right, 0px)); top: max(1rem, env(safe-area-inset-top, 0px)); width: min(24rem, calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))); }
 .toast-stack { position: relative; display: flex; flex-direction: column; gap: .625rem; }
 .toast-copy { overflow-wrap: anywhere; }
 .toast-enter-active, .toast-leave-active, .toast-move { transition: opacity 220ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1); }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(12px) scale(.96); }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-12px) scale(.96); }
 .toast-leave-active { position: absolute; }
 @media (prefers-reduced-motion: reduce) {
   .toast-enter-active, .toast-leave-active, .toast-move { transition: none; }

@@ -285,6 +285,16 @@ func main() {
 	}
 	cloudDownloadSettings.ValidateAccount = accounts.ValidatePrimary
 	cloudDownloadSettings.PrimaryID = accounts.PrimaryID
+	shareTransferStore, err := service.NewSessionStore(filepath.Join(dataDir, "share-transfer-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	shareTransferSettings, err := service.NewShareTransferSettings(shareTransferStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	shareTransferSettings.ValidateAccount = accounts.ValidatePrimary
+	shareTransferSettings.PrimaryID = accounts.PrimaryID
 	cloudDownloads := &service.CloudDownloadService{Accounts: accounts, Client: cloudClient, Coordinator: downloadCoordinator}
 	httpapi.RegisterCloudDownload(admin, accounts, cloudDownloadSettings, cloudDownloads, cloudClient, p115.NewShareClient())
 	organizeStore, err := service.NewSessionStore(filepath.Join(dataDir, "manual-organize.enc"), secret)
@@ -357,6 +367,8 @@ func main() {
 	}
 	shareCookie := func() string { return primaryCookie(automation.Value().AccountID) }
 	shareAPI.Cookie = shareCookie
+	shareTransfers := &service.ShareLinkTransferService{Accounts: accounts, Settings: shareTransferSettings, Client: shareAPI.Client}
+	httpapi.RegisterShareLinkTransfer(admin, shareTransferSettings)
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, shareCookie, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)
@@ -460,8 +472,11 @@ func main() {
 		log.Fatal(err)
 	}
 	telegram.CloudDownloads = cloudDownloads
+	telegram.ShareTransfers = shareTransfers
 	telegram.CloudDownloadSettings = cloudDownloadSettings
+	telegram.ShareTransferSettings = shareTransferSettings
 	cloudDownloadSettings.OnChange = telegram.Refresh
+	shareTransferSettings.OnChange = telegram.Refresh
 	telegram.Follows = follows
 	telegram.Playback = memberPlayback
 	automation.ValidateBot = telegram.ValidateSelection

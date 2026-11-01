@@ -128,3 +128,53 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 		})
 	}
 }
+
+func TestCloudDownloadPreparedSubmissionKeepsCredentialsAndDestination(t *testing.T) {
+	accounts, config := cloudWorkflowAccounts(t)
+	var cookies, directories []string
+	client := &cloudWorkflowStub{
+		lookup: func(_ context.Context, cookie string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+			cookies = append(cookies, cookie)
+			return p115.CloudTask{}, false, nil
+		},
+		add: func(_ context.Context, cookie, _ string, cid string) (json.RawMessage, error) {
+			cookies = append(cookies, cookie)
+			directories = append(directories, cid)
+			return json.RawMessage(`{}`), nil
+		},
+	}
+	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
+	submit, err := downloads.PrepareSubmission(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := submit(context.Background(), "magnet:?xt=urn:btih:"+strings.Repeat("a", 40)); err != nil {
+		t.Fatal(err)
+	}
+	account, err := accounts.Get(config.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := "UID=123_B; CID=refreshed"
+	if err := accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
+		t.Fatal(err)
+	}
+	config.TargetCID, config.TargetPath = "99", "/新的目录"
+	receipt, err := submit(context.Background(), "magnet:?xt=urn:btih:"+strings.Repeat("b", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.TargetPath != "/新目录" || len(directories) != 2 {
+		t.Fatalf("prepared task changed destination: receipt=%+v directories=%v", receipt, directories)
+	}
+	for _, cookie := range cookies {
+		if cookie != "UID=123_A; CID=original" {
+			t.Fatal("prepared task changed credentials")
+		}
+	}
+	for _, cid := range directories {
+		if cid != "9" {
+			t.Fatal("prepared task changed directory")
+		}
+	}
+}

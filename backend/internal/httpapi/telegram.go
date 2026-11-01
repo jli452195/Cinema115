@@ -71,7 +71,7 @@ func RegisterTelegramHub(admin *gin.RouterGroup, hub *bot.Hub, sinks ...*service
 			code = http.StatusNotFound
 		case errors.Is(err, bot.ErrBotChanged):
 			code = http.StatusConflict
-		case errors.Is(err, bot.ErrModuleAssigned), errors.Is(err, bot.ErrModuleChanged):
+		case errors.Is(err, bot.ErrModuleAssigned), errors.Is(err, bot.ErrModuleChanged), errors.Is(err, service.ErrTelegramModuleConflict):
 			code = http.StatusConflict
 		case errors.Is(err, bot.ErrConfig):
 			code = http.StatusBadRequest

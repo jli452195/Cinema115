@@ -38,7 +38,7 @@ func (c *ShareClient) CreateDirectory(ctx context.Context, parent, name, cookie 
 }
 
 func (c *ShareClient) ReceiveShare(ctx context.Context, share *ShareInfo, ids []string, cid, cookie string) error {
-	if !validDriveID(cid, false) || len(ids) == 0 || len(ids) > 100 {
+	if !validDriveID(cid, true) || len(ids) == 0 || len(ids) > 100 {
 		return fmt.Errorf("转存参数无效")
 	}
 	for _, id := range ids {

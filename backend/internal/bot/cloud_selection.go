@@ -13,15 +13,15 @@ const cloudSelectionLifetime = 10 * time.Minute
 const maxPendingCloudSelections = 50
 
 type pendingCloudSelection struct {
-	UpdateID        int64                 `json:"updateID"`
-	ChatID          int64                 `json:"chatID"`
-	UserID          int64                 `json:"userID"`
-	MessageID       int64                 `json:"messageID"`
-	PromptMessageID int64                 `json:"promptMessageID"`
-	ThreadID        int64                 `json:"threadID,omitempty"`
-	Expires         time.Time             `json:"expires"`
-	Items           []messageShare        `json:"items"`
-	Targets         []TelegramCloudTarget `json:"targets"`
+	UpdateID        int64                    `json:"updateID"`
+	ChatID          int64                    `json:"chatID"`
+	UserID          int64                    `json:"userID"`
+	MessageID       int64                    `json:"messageID"`
+	PromptMessageID int64                    `json:"promptMessageID"`
+	ThreadID        int64                    `json:"threadID,omitempty"`
+	Expires         time.Time                `json:"expires"`
+	Items           []messageShare           `json:"items"`
+	Targets         []TelegramTransferTarget `json:"targets"`
 }
 
 type pendingCallbackAnswer struct {
@@ -42,7 +42,7 @@ func (b *Telegram) enqueueCloudMessage(state *telegramState, update telegramUpda
 		b.queueTextReply(state, update, message, "请发送 magnet 磁力链接或 ED2K 链接。\n\n直接发送或使用 /cloud <链接>，都会默认执行智能删除重试。")
 		return
 	}
-	ready := make([]TelegramCloudTarget, 0, len(b.CloudDownloadTargets))
+	ready := make([]TelegramTransferTarget, 0, len(b.CloudDownloadTargets))
 	for _, target := range b.CloudDownloadTargets {
 		if target.Ready {
 			ready = append(ready, target)
@@ -51,12 +51,16 @@ func (b *Telegram) enqueueCloudMessage(state *telegramState, update telegramUpda
 	if len(ready) == 0 {
 		hint := b.CloudDownloadTargets[0].SetupHint
 		if hint == "" {
-			hint = "请到磁力转存页面检查转存目标配置"
+			hint = "请到磁力/ED2K 转存页面检查转存目标配置"
 		}
 		b.queueTextReply(state, update, message, "⚠️ 没有可用的磁力转存目标。"+hint)
 		return
 	}
-	if len(b.CloudDownloadTargets) == 1 {
+	if len(state.Queue) >= 100 {
+		b.queueTextReply(state, update, message, "Bot 任务队列已满，请稍后重新发送。")
+		return
+	}
+	if len(ready) == 1 {
 		b.enqueueCloudBatch(state, update.ID, message, links, ready[0], now)
 		return
 	}
@@ -81,7 +85,7 @@ func (b *Telegram) enqueueCloudMessage(state *telegramState, update telegramUpda
 	})
 }
 
-func (b *Telegram) enqueueCloudBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target TelegramCloudTarget, now time.Time) {
+func (b *Telegram) enqueueCloudBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target TelegramTransferTarget, now time.Time) {
 	batch := &messageBatch{
 		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
 		Mode: "cloud", CloudRedo: true, ReadyAt: now, CloudTargetID: target.ID, CloudTargetName: target.Name,
@@ -144,7 +148,7 @@ func (b *Telegram) enqueueCloudCallback(state *telegramState, update telegramUpd
 		answer("选择已超时，请重新发送链接")
 		return
 	}
-	var selected TelegramCloudTarget
+	var selected TelegramTransferTarget
 	found := false
 	for _, target := range selection.Targets {
 		if target.ID == parts[2] {
@@ -178,11 +182,11 @@ func (b *Telegram) enqueueCloudCallback(state *telegramState, update telegramUpd
 	answer("已选择：" + current.Name)
 }
 
-func sameCloudTarget(a, b TelegramCloudTarget) bool {
+func sameCloudTarget(a, b TelegramTransferTarget) bool {
 	return a.ID == b.ID && a.Name == b.Name && a.AccountID == b.AccountID && a.TargetCID == b.TargetCID && a.TargetPath == b.TargetPath
 }
 
-func (b *Telegram) currentCloudTarget(id string) (TelegramCloudTarget, bool) {
+func (b *Telegram) currentCloudTarget(id string) (TelegramTransferTarget, bool) {
 	if b.CurrentCloudTarget != nil {
 		return b.CurrentCloudTarget(id)
 	}
@@ -191,7 +195,7 @@ func (b *Telegram) currentCloudTarget(id string) (TelegramCloudTarget, bool) {
 			return target, true
 		}
 	}
-	return TelegramCloudTarget{}, false
+	return TelegramTransferTarget{}, false
 }
 
 func removeCloudSelection(selections []*pendingCloudSelection, index int) []*pendingCloudSelection {

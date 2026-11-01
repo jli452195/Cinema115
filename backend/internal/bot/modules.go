@@ -21,7 +21,7 @@ type TelegramModuleView struct {
 }
 
 var telegramModules = []TelegramModuleView{
-	{ID: "share_notifications", Name: "115 分享通知", Description: "接收 115 分享链接并生成分享 STRM。"},
+	{ID: "share_notifications", Name: "115 分享 STRM", Description: "接收 115 分享链接，生成 STRM 并发送处理结果。"},
 	{ID: "follow_notifications", Name: "追更通知", Description: "发送追更申请和订阅生成结果。"},
 	{ID: "pool_notifications", Name: "播放池通知", Description: "发送动态播放池健康状态通知；解除分配即可停用。"},
 }
@@ -45,9 +45,18 @@ func (h *Hub) Modules(ctx context.Context) ([]TelegramModuleView, error) {
 	}
 	if h.CloudDownloadSettings != nil {
 		for _, target := range h.CloudDownloadSettings.Targets() {
-			module := TelegramModuleView{ID: cloudDownloadModuleID(target.ID), Name: target.Name, Description: "转存目录：" + target.TargetPath, AssignedBotID: target.AssignedBotID}
+			module := TelegramModuleView{ID: cloudDownloadModuleID(target.ID), Name: "磁力/ED2K 转存：" + target.Name, Description: "转存目录：" + target.TargetPath, AssignedBotID: target.AssignedBotID}
 			if !h.CloudDownloadSettings.TargetReady(target) {
-				module.SetupHint = "主账号或下载目录已变化，请到磁力转存页面重新选择目录"
+				module.SetupHint = "主账号或下载目录已变化，请到磁力/ED2K 转存页面重新选择目录"
+			}
+			modules = append(modules, module)
+		}
+	}
+	if h.ShareTransferSettings != nil {
+		for _, target := range h.ShareTransferSettings.Targets() {
+			module := TelegramModuleView{ID: shareTransferModuleID(target.ID), Name: "115 链接转存：" + target.Name, Description: "接收目录：" + target.TargetPath, AssignedBotID: target.AssignedBotID}
+			if !h.ShareTransferSettings.TargetReady(target) {
+				module.SetupHint = "主账号或接收目录已变化，请到 115 链接转存页面重新选择目录"
 			}
 			modules = append(modules, module)
 		}
@@ -66,9 +75,35 @@ func setStaticModuleOwner(modules []TelegramModuleView, id, owner string) {
 
 func cloudDownloadModuleID(targetID string) string { return "cloud_download:" + targetID }
 
+func shareTransferModuleID(targetID string) string { return "share_transfer:" + targetID }
+
 func cloudDownloadTargetID(moduleID string) (string, bool) {
 	id, ok := strings.CutPrefix(moduleID, "cloud_download:")
 	return id, ok && id != ""
+}
+
+func shareTransferTargetID(moduleID string) (string, bool) {
+	id, ok := strings.CutPrefix(moduleID, "share_transfer:")
+	return id, ok && id != ""
+}
+
+func (h *Hub) shareNotificationBotID() string {
+	if h.settings == nil {
+		return ""
+	}
+	return h.settings.Value().BotID
+}
+
+func (h *Hub) hasShareTransferTarget(botID string) bool {
+	if h.ShareTransferSettings == nil {
+		return false
+	}
+	for _, target := range h.ShareTransferSettings.Targets() {
+		if target.AssignedBotID == botID {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Hub) SetModule(ctx context.Context, moduleID, expectedBotID, botID string) error {
@@ -110,6 +145,10 @@ func (h *Hub) setModuleLocked(ctx context.Context, moduleID, expectedBotID, botI
 		if err != nil {
 			return false, err
 		}
+		_, isShareTransfer := shareTransferTargetID(moduleID)
+		if moduleID == "share_notifications" && h.hasShareTransferTarget(botID) || isShareTransfer && h.shareNotificationBotID() == botID {
+			return false, service.ErrTelegramModuleConflict
+		}
 	}
 
 	var bindErr error
@@ -130,16 +169,29 @@ func (h *Hub) setModuleLocked(ctx context.Context, moduleID, expectedBotID, botI
 		}
 		bindErr = h.Playback.Pool.BindNotificationBot(ctx, expectedBotID, botID)
 	default:
-		targetID, ok := cloudDownloadTargetID(moduleID)
-		if !ok || h.CloudDownloadSettings == nil {
-			return false, fmt.Errorf("%w：未知功能模块", ErrConfig)
-		}
-		bindErr = h.CloudDownloadSettings.BindTarget(targetID, expectedBotID, botID)
-		if errors.Is(bindErr, service.ErrCloudTargetChanged) {
-			return false, ErrModuleChanged
-		}
-		if errors.Is(bindErr, service.ErrCloudTargetMissing) {
-			return false, fmt.Errorf("%w：转存目标不存在", ErrConfig)
+		if targetID, ok := shareTransferTargetID(moduleID); ok {
+			if h.ShareTransferSettings == nil {
+				return false, fmt.Errorf("%w：115 分享转存设置尚未初始化", ErrConfig)
+			}
+			bindErr = h.ShareTransferSettings.BindTarget(targetID, expectedBotID, botID)
+			if errors.Is(bindErr, service.ErrShareTransferTargetChanged) {
+				return false, ErrModuleChanged
+			}
+			if errors.Is(bindErr, service.ErrShareTransferTargetMissing) {
+				return false, fmt.Errorf("%w：分享转存目标不存在", ErrConfig)
+			}
+		} else {
+			targetID, ok := cloudDownloadTargetID(moduleID)
+			if !ok || h.CloudDownloadSettings == nil {
+				return false, fmt.Errorf("%w：未知功能模块", ErrConfig)
+			}
+			bindErr = h.CloudDownloadSettings.BindTarget(targetID, expectedBotID, botID)
+			if errors.Is(bindErr, service.ErrCloudTargetChanged) {
+				return false, ErrModuleChanged
+			}
+			if errors.Is(bindErr, service.ErrCloudTargetMissing) {
+				return false, fmt.Errorf("%w：转存目标不存在", ErrConfig)
+			}
 		}
 	}
 	if bindErr != nil {

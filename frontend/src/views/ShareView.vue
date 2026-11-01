@@ -373,7 +373,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                   <div class="space-y-1.5">
                     <div class="automation-row"><strong class="text-sm font-medium text-slate-700 dark:text-slate-300">分享 Bot 功能</strong><RouterLink to="/telegram/bot" class="settings-link">管理与分配</RouterLink></div>
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p class="settings-help">在 Bot 配置页分配“分享入口与结果通知”，并在那里控制启停。</p>
+                      <p class="settings-help">在 Bot 配置页分配“115 分享 STRM”，并在那里控制启停。</p>
                       <span class="rounded px-2 py-0.5 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'">{{ botConfigured ? '功能可用' : telegramEnabled ? 'Bot 未就绪' : '功能未启用' }}</span>
                     </div>
                     <details class="settings-details"><summary>Bot 使用说明</summary><p>{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在 Telegram Bot 配置中填写 Token 和允许的聊天 ID，再将分享功能分配给该 Bot。' }} Bot 绑定与启停在<a href="/telegram/bot" class="settings-link ml-1">Bot 配置</a>中统一管理。</p></details>

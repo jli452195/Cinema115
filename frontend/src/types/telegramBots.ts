@@ -24,7 +24,7 @@ export interface TelegramBotModule {
   name: string
   description: string
   assignedBotId: string
-  kind?: 'share_notifications' | 'cloud_download' | 'follow_notifications' | 'pool_notifications'
+  kind?: 'share_notifications' | 'share_transfer' | 'cloud_download' | 'follow_notifications' | 'pool_notifications'
   ready?: boolean
   setupHint?: string
 }

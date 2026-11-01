@@ -12,6 +12,8 @@ import (
 	"sync"
 )
 
+var ErrTelegramModuleConflict = errors.New("同一 Bot 不能同时处理分享 STRM 和 115 链接转存")
+
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
 	AccountID          string        `json:"accountId"`

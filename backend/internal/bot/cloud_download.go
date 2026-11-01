@@ -25,8 +25,22 @@ type cloudBatchOutcome struct {
 // deletion or submission.
 func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramState) error {
 	batch := state.Batch
+	submission, err := b.cloudBatchSubmission(batch)
+	if err != nil {
+		remaining := len(batch.Items) - batch.Next
+		batch.Next = len(batch.Items)
+		state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID,
+			Text: fmt.Sprintf("115 云下载批次已停止，%d 个尚未开始的链接未提交。\n原因：%s", remaining, cloudDownloadError(err))}
+		if err := b.save(*state); err != nil {
+			return fmt.Errorf("保存 Telegram 云下载停止状态: %w", err)
+		}
+		return nil
+	}
 	outcomes := make([]cloudBatchOutcome, 0, len(batch.Items)-batch.Next)
 	for batch.Next < len(batch.Items) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		index := batch.Next
 		item := batch.Items[index]
 		batch.Next++
@@ -40,7 +54,7 @@ func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramStat
 
 		taskCtx, cancel := context.WithTimeout(ctx, service.CloudDownloadTimeout)
 		// 旧批次的 CloudRedo 标记不再控制策略，所有入口默认安全重提。
-		receipt, err := b.CloudDownloads.Submit(taskCtx, batch.CloudTarget, item.URL)
+		receipt, err := submission(taskCtx, item.URL)
 		cancel()
 		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), removed: receipt.RemovedOldTask, err: err})
 		if err != nil {

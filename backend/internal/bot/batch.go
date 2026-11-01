@@ -9,6 +9,8 @@ import (
 )
 
 type messageBatch struct {
+	cloudSubmission  service.CloudDownloadSubmission
+	shareExecution   service.ShareLinkTransferExecution
 	SourceMessageIDs []int64                     `json:"sourceMessageIDs,omitempty"`
 	ReadyAt          time.Time                   `json:"readyAt,omitempty"`
 	Mode             string                      `json:"mode,omitempty"`
@@ -16,6 +18,7 @@ type messageBatch struct {
 	CloudTargetID    string                      `json:"cloudTargetID,omitempty"`
 	CloudTargetName  string                      `json:"cloudTargetName,omitempty"`
 	CloudTarget      service.CloudDownloadConfig `json:"cloudTarget,omitempty"`
+	ShareTarget      service.ShareTransferTarget `json:"shareTarget,omitempty"`
 	UpdateID         int64                       `json:"updateID"`
 	ChatID           int64                       `json:"chatID"`
 	Items            []messageShare              `json:"items"`
@@ -25,11 +28,14 @@ type messageBatch struct {
 	StatusMessageID  int64                       `json:"statusMessageID,omitempty"`
 }
 
-// 每个链接分别保存开始与结束状态；重启只继续尚未开始的链接，不重复转存。
+// 每个链接分别保存开始与结束状态；需要凭据快照的转存批次在重启后停止剩余链接。
 func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) error {
 	batch := state.Batch
 	if batch.Mode == "cloud" {
 		return b.processCloudDownload(ctx, state)
+	}
+	if batch.Mode == "share_transfer" {
+		return b.processShareLinkTransfer(ctx, state)
 	}
 	if generator, ok := b.Generator.(service.BatchGenerator); ok && batch.Mode == "reshare" && batch.Next == 0 {
 		return b.processMergedBatch(ctx, state, generator)

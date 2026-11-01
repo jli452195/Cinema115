@@ -22,11 +22,13 @@ type Hub struct {
 	generator             ShareGenerator
 	settings              *service.AutomationStore
 	CloudDownloadSettings *service.CloudDownloadSettings
+	ShareTransferSettings *service.ShareTransferSettings
 	runtimes              map[string]*Manager
 	wake                  chan struct{}
 	Logs                  *service.GenerationLogs
 	Notifications         NotificationStore
 	CloudDownloads        *service.CloudDownloadService
+	ShareTransfers        *service.ShareLinkTransferService
 	Follows               *service.FollowService
 	Playback              *service.MemberPlaybackService
 }
@@ -50,15 +52,19 @@ func (h *Hub) Refresh() {
 
 func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
 	cloudTargets := h.cloudTargets(profile.ID)
-	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || len(cloudTargets) > 0, Identity: profile.Identity}
+	shareTargets := h.shareTransferTargets(profile.ID)
+	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || len(cloudTargets) > 0 || len(shareTargets) > 0, Identity: profile.Identity}
 	m := &Manager{config: cfg, source: "web", wake: make(chan struct{}, 1)}
 	m.newWorker = func(value BotConfig) (*Telegram, error) {
 		worker, err := NewTelegram(value.Token, value.AllowedChatIDs, h.dataDir, h.generator, h.settings)
 		if worker != nil {
 			worker.ShareEnabled = receiveShare
 			worker.CloudDownloads = h.CloudDownloads
-			worker.CloudDownloadTargets = append([]TelegramCloudTarget{}, cloudTargets...)
-			worker.CurrentCloudTarget = func(id string) (TelegramCloudTarget, bool) { return h.cloudTarget(profile.ID, id) }
+			worker.ShareTransfers = h.ShareTransfers
+			worker.CloudDownloadTargets = append([]TelegramTransferTarget{}, cloudTargets...)
+			worker.CurrentCloudTarget = func(id string) (TelegramTransferTarget, bool) { return h.cloudTarget(profile.ID, id) }
+			worker.ShareTransferTargets = append([]TelegramTransferTarget{}, shareTargets...)
+			worker.CurrentShareTransferTarget = func(id string) (TelegramTransferTarget, bool) { return h.shareTransferTarget(profile.ID, id) }
 		}
 		return worker, err
 	}
@@ -66,12 +72,12 @@ func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
 	return m
 }
 
-func (h *Hub) cloudTargets(botID string) []TelegramCloudTarget {
+func (h *Hub) cloudTargets(botID string) []TelegramTransferTarget {
 	if h.CloudDownloadSettings == nil {
 		return nil
 	}
 	targets := h.CloudDownloadSettings.Targets()
-	result := make([]TelegramCloudTarget, 0, len(targets))
+	result := make([]TelegramTransferTarget, 0, len(targets))
 	for _, target := range targets {
 		if target.AssignedBotID != botID {
 			continue
@@ -82,21 +88,55 @@ func (h *Hub) cloudTargets(botID string) []TelegramCloudTarget {
 	return result
 }
 
-func (h *Hub) cloudTarget(botID, targetID string) (TelegramCloudTarget, bool) {
+func (h *Hub) cloudTarget(botID, targetID string) (TelegramTransferTarget, bool) {
 	if h.CloudDownloadSettings == nil {
-		return TelegramCloudTarget{}, false
+		return TelegramTransferTarget{}, false
 	}
 	target, ok := h.CloudDownloadSettings.Target(targetID)
 	if !ok || target.AssignedBotID != botID {
-		return TelegramCloudTarget{}, false
+		return TelegramTransferTarget{}, false
 	}
 	return h.cloudTargetFromConfig(target), true
 }
 
-func (h *Hub) cloudTargetFromConfig(target service.CloudDownloadTarget) TelegramCloudTarget {
-	view := TelegramCloudTarget{ID: target.ID, Name: target.Name, AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath, Ready: h.CloudDownloadSettings.TargetReady(target)}
+func (h *Hub) cloudTargetFromConfig(target service.CloudDownloadTarget) TelegramTransferTarget {
+	view := TelegramTransferTarget{ID: target.ID, Name: target.Name, AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath, AssignedBotID: target.AssignedBotID, Ready: h.CloudDownloadSettings.TargetReady(target)}
 	if !view.Ready {
-		view.SetupHint = "主账号或下载目录已变化，请到磁力转存页面重新选择目录"
+		view.SetupHint = "主账号或下载目录已变化，请到磁力/ED2K 转存页面重新选择目录"
+	}
+	return view
+}
+
+func (h *Hub) shareTransferTargets(botID string) []TelegramTransferTarget {
+	if h.ShareTransferSettings == nil {
+		return nil
+	}
+	targets := h.ShareTransferSettings.Targets()
+	result := make([]TelegramTransferTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.AssignedBotID != botID {
+			continue
+		}
+		result = append(result, h.shareTransferTargetFromConfig(target))
+	}
+	return result
+}
+
+func (h *Hub) shareTransferTarget(botID, targetID string) (TelegramTransferTarget, bool) {
+	if h.ShareTransferSettings == nil {
+		return TelegramTransferTarget{}, false
+	}
+	target, ok := h.ShareTransferSettings.Target(targetID)
+	if !ok || target.AssignedBotID != botID {
+		return TelegramTransferTarget{}, false
+	}
+	return h.shareTransferTargetFromConfig(target), true
+}
+
+func (h *Hub) shareTransferTargetFromConfig(target service.ShareTransferTarget) TelegramTransferTarget {
+	view := TelegramTransferTarget{ID: target.ID, Name: target.Name, AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath, AssignedBotID: target.AssignedBotID, Ready: h.ShareTransferSettings.TargetReady(target)}
+	if !view.Ready {
+		view.SetupHint = "主账号或接收目录已变化，请重新选择目标目录"
 	}
 	return view
 }
@@ -254,7 +294,7 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 		wg.Add(1)
 		go func(m *Manager) { defer wg.Done(); m.RunNotifications(workerCtx) }(runtime)
 		profile, _ := h.profiles.Get(id)
-		if pollsMessages(profile, receiverID, len(h.cloudTargets(id)) > 0) {
+		if pollsMessages(profile, receiverID, len(h.cloudTargets(id)) > 0, len(h.shareTransferTargets(id)) > 0) {
 			wg.Add(1)
 			go func(m *Manager) {
 				defer wg.Done()
@@ -275,8 +315,8 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	}
 }
 
-func pollsMessages(profile BotProfile, receiverID string, cloudDownloadEnabled bool) bool {
-	return profile.ID == receiverID || cloudDownloadEnabled
+func pollsMessages(profile BotProfile, receiverID string, cloudDownloadEnabled, shareTransferEnabled bool) bool {
+	return profile.ID == receiverID || cloudDownloadEnabled || shareTransferEnabled
 }
 
 func (h *Hub) Run(ctx context.Context) error {

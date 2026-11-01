@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { IconBell, IconChevronDown, IconCloudDownload, IconGripVertical, IconHeartbeat, IconShare, IconUnlink } from '@tabler/icons-vue'
+import { IconBell, IconChevronDown, IconCloudDownload, IconDownload, IconGripVertical, IconHeartbeat, IconShare, IconUnlink } from '@tabler/icons-vue'
 import type { TelegramBotConfig, TelegramBotModule } from '../types/telegramBots'
 
 const props = defineProps<{ module: TelegramBotModule; bots: TelegramBotConfig[]; placement: 'pool' | 'assigned'; assignedBot?: TelegramBotConfig; busy?: boolean }>()
@@ -14,9 +14,10 @@ const choosing = ref(false)
 const target = ref('')
 const dragging = ref(false)
 const availableBots = computed(() => props.bots)
-const moduleKind = computed(() => props.module.kind || (props.module.id.startsWith('cloud_download:') ? 'cloud_download' : props.module.id))
+const moduleKind = computed(() => props.module.kind || (props.module.id.startsWith('cloud_download:') ? 'cloud_download' : props.module.id.startsWith('share_transfer:') ? 'share_transfer' : props.module.id))
 const isCloudDownload = computed(() => moduleKind.value === 'cloud_download')
-const icon = computed(() => ({ share_notifications: IconShare, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat }[moduleKind.value as 'share_notifications' | 'cloud_download' | 'follow_notifications' | 'pool_notifications']))
+const isShareTransfer = computed(() => moduleKind.value === 'share_transfer')
+const icon = computed(() => ({ share_notifications: IconShare, share_transfer: IconDownload, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat }[moduleKind.value as 'share_notifications' | 'share_transfer' | 'cloud_download' | 'follow_notifications' | 'pool_notifications']))
 const setupHint = computed(() => {
   const bot = props.assignedBot
   if (!bot) return ''
@@ -24,6 +25,8 @@ const setupHint = computed(() => {
   if (!bot.enabled) return 'Bot 已停用'
   if (isCloudDownload.value) {
     return props.module.setupHint || (props.module.ready === false ? '待配置转存目标' : '')
+  } else if (isShareTransfer.value) {
+    return props.module.setupHint || ''
   } else if (!bot.notificationChatID) return '待配置通知聊天 ID'
   return ''
 })
@@ -53,11 +56,13 @@ function assign() {
     @dragstart="dragStart" @dragend="dragEnd">
     <div v-if="placement === 'assigned'" class="flex min-w-0 items-center gap-2">
       <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/60 dark:text-blue-300"><component :is="icon" :size="16" aria-hidden="true" /></span>
-      <div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-        <h3 class="max-w-[10rem] shrink truncate text-sm font-semibold text-slate-800 dark:text-slate-100" :title="module.name">{{ module.name }}</h3>
-        <span v-if="setupHint" class="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300" :title="setupHint">待配置</span>
-        <span v-else class="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-300">{{ assignedBot?.connected ? '已连接' : assignedBot?.enabled ? '已启用' : '已停用' }}</span>
-        <p class="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400" :title="module.description">{{ module.description }}</p>
+      <div class="min-w-0 flex-1 space-y-1">
+        <div class="flex min-w-0 items-start gap-2">
+          <h3 class="min-w-0 flex-1 line-clamp-2 break-words text-sm font-semibold leading-5 text-slate-800 dark:text-slate-100" :title="module.name">{{ module.name }}</h3>
+          <span v-if="setupHint" class="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300" :title="setupHint">待配置</span>
+          <span v-else class="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-300">{{ assignedBot?.connected ? '已连接' : assignedBot?.enabled ? '已启用' : '已停用' }}</span>
+        </div>
+        <p class="min-w-0 truncate text-xs text-slate-500 dark:text-slate-400" :title="module.description">{{ module.description }}</p>
       </div>
       <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-slate-100 px-2 text-xs text-slate-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-red-950/40 dark:hover:text-red-300" :disabled="busy" :aria-label="`解除${module.name}分配`" title="解除分配" @click="emit('unassign', module)"><IconUnlink :size="13" aria-hidden="true" />解除</button>
     </div>

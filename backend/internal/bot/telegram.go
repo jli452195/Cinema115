@@ -20,29 +20,37 @@ import (
 )
 
 type Telegram struct {
-	Token                string
-	AllowedChats         map[int64]bool
-	HTTP                 *http.Client
-	BaseURL              string
-	StatePath            string
-	Generator            ShareGenerator
-	Settings             *service.AutomationStore
-	OnStatus             func(bool, string)
-	Logs                 *service.GenerationLogs
-	ShareEnabled         bool
-	CloudDownloads       CloudDownloadSubmitter
-	CloudDownloadTargets []TelegramCloudTarget
-	CurrentCloudTarget   func(string) (TelegramCloudTarget, bool)
+	Token                      string
+	AllowedChats               map[int64]bool
+	HTTP                       *http.Client
+	BaseURL                    string
+	StatePath                  string
+	Generator                  ShareGenerator
+	Settings                   *service.AutomationStore
+	OnStatus                   func(bool, string)
+	Logs                       *service.GenerationLogs
+	ShareEnabled               bool
+	CloudDownloads             CloudDownloadSubmitter
+	ShareTransfers             ShareLinkTransferer
+	CloudDownloadTargets       []TelegramTransferTarget
+	CurrentCloudTarget         func(string) (TelegramTransferTarget, bool)
+	ShareTransferTargets       []TelegramTransferTarget
+	CurrentShareTransferTarget func(string) (TelegramTransferTarget, bool)
 }
 
-type TelegramCloudTarget struct {
-	ID         string
-	Name       string
-	AccountID  string
-	TargetCID  string
-	TargetPath string
-	Ready      bool
-	SetupHint  string
+type TelegramTransferTarget struct {
+	ID            string
+	Name          string
+	AccountID     string
+	TargetCID     string
+	TargetPath    string
+	AssignedBotID string
+	Ready         bool
+	SetupHint     string
+}
+
+type ShareLinkTransferer interface {
+	Transfer(context.Context, service.ShareTransferTarget, string, string) (service.ShareLinkTransferReceipt, error)
 }
 
 func NewTelegram(token, chats, dataDir string, generator ShareGenerator, settings *service.AutomationStore) (*Telegram, error) {
@@ -102,16 +110,17 @@ type telegramCallbackMessage struct {
 	} `json:"chat"`
 }
 type pendingReply struct {
-	UpdateID               int64  `json:"updateID"`
-	ChatID                 int64  `json:"chatID"`
-	Text                   string `json:"text"`
-	MessageID              int64  `json:"messageID,omitempty"`
-	ThreadID               int64  `json:"threadID,omitempty"`
-	PreviewURL             string `json:"previewURL,omitempty"`
-	EditMessageID          int64  `json:"editMessageID,omitempty"`
-	ReplyMarkup            any    `json:"replyMarkup,omitempty"`
-	CaptureMessageID       bool   `json:"captureMessageID,omitempty"`
-	CloudSelectionUpdateID int64  `json:"cloudSelectionUpdateID,omitempty"`
+	UpdateID                       int64  `json:"updateID"`
+	ChatID                         int64  `json:"chatID"`
+	Text                           string `json:"text"`
+	MessageID                      int64  `json:"messageID,omitempty"`
+	ThreadID                       int64  `json:"threadID,omitempty"`
+	PreviewURL                     string `json:"previewURL,omitempty"`
+	EditMessageID                  int64  `json:"editMessageID,omitempty"`
+	ReplyMarkup                    any    `json:"replyMarkup,omitempty"`
+	CaptureMessageID               bool   `json:"captureMessageID,omitempty"`
+	CloudSelectionUpdateID         int64  `json:"cloudSelectionUpdateID,omitempty"`
+	ShareTransferSelectionUpdateID int64  `json:"shareTransferSelectionUpdateID,omitempty"`
 }
 
 // 引用当前聊天收到的原消息，转发来源的消息编号不能用于当前聊天的回复。
@@ -140,13 +149,14 @@ func (p *pendingReply) request() map[string]any {
 var errTelegramEditMessageMissing = errors.New("待更新的 Telegram 消息已删除")
 
 type telegramState struct {
-	CloudSelections []*pendingCloudSelection `json:"cloudSelections,omitempty"`
-	CallbackAnswers []*pendingCallbackAnswer `json:"callbackAnswers,omitempty"`
-	Replies         []*pendingReply          `json:"replies,omitempty"`
-	Queue           []*messageBatch          `json:"queue,omitempty"`
-	Offset          int64                    `json:"offset"`
-	Pending         *pendingReply            `json:"pending,omitempty"`
-	Batch           *messageBatch            `json:"batch,omitempty"`
+	CloudSelections         []*pendingCloudSelection         `json:"cloudSelections,omitempty"`
+	ShareTransferSelections []*pendingShareTransferSelection `json:"shareTransferSelections,omitempty"`
+	CallbackAnswers         []*pendingCallbackAnswer         `json:"callbackAnswers,omitempty"`
+	Replies                 []*pendingReply                  `json:"replies,omitempty"`
+	Queue                   []*messageBatch                  `json:"queue,omitempty"`
+	Offset                  int64                            `json:"offset"`
+	Pending                 *pendingReply                    `json:"pending,omitempty"`
+	Batch                   *messageBatch                    `json:"batch,omitempty"`
 }
 
 func (b *Telegram) call(ctx context.Context, method string, input, output any) error {
@@ -347,6 +357,12 @@ func (b *Telegram) Run(ctx context.Context) error {
 				}
 				for _, selection := range state.CloudSelections {
 					if selection != nil && selection.UpdateID == pending.CloudSelectionUpdateID {
+						selection.PromptMessageID = sent.ID
+						break
+					}
+				}
+				for _, selection := range state.ShareTransferSelections {
+					if selection != nil && selection.UpdateID == pending.ShareTransferSelectionUpdateID {
 						selection.PromptMessageID = sent.ID
 						break
 					}

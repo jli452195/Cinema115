@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"strm115/backend/internal/service"
@@ -16,6 +17,7 @@ func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, m
 // 每次新增资源重置等待时间；不同聊天和话题各自收集，不设最长收集时间。
 func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
 	state.CloudSelections = pruneCloudSelections(state.CloudSelections, now)
+	state.ShareTransferSelections = pruneShareTransferSelections(state.ShareTransferSelections, now)
 	settings := b.Settings.ShareValue()
 	for _, update := range updates {
 		if update.ID < state.Offset {
@@ -23,7 +25,11 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		}
 		state.Offset = update.ID + 1
 		if update.CallbackQuery != nil {
-			b.enqueueCloudCallback(state, update, update.CallbackQuery, now)
+			if strings.HasPrefix(update.CallbackQuery.Data, "share:") {
+				b.enqueueShareTransferCallback(state, update.CallbackQuery, now)
+			} else {
+				b.enqueueCloudCallback(state, update, update.CallbackQuery, now)
+			}
 			continue
 		}
 		m := update.Message
@@ -31,8 +37,17 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 			continue
 		}
 		var items []messageShare
-		if b.ShareEnabled {
+		if b.ShareEnabled || len(b.ShareTransferTargets) > 0 {
 			items = parseTelegramMessage(m)
+		}
+		if len(b.ShareTransferTargets) > 0 && len(items) > 0 {
+			if b.ShareEnabled {
+				b.queueTextReply(state, update, m, "此 Bot 同时分配了分享 STRM 与 115 链接转存，处理方式冲突，请先解除其中一个功能。")
+			} else {
+				b.enqueueShareTransferMessage(state, update, m, items, now)
+			}
+			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "115 转存", "INFO", fmt.Sprintf("收到分享转存消息，识别 %d 个链接", len(items)))
+			items = nil
 		}
 		text := telegramMessageText(m)
 		cloudItems := parseCloudLinks(text)
@@ -97,7 +112,7 @@ func telegramShareMode(settings service.AutomationSettings, _ messageShare) stri
 // 普通分享可越过尚未到期的转存批次，执行中的云端操作仍保持串行。
 func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 	// 普通分享与云下载不等待合并窗口；同一 Bot 仍串行执行云端操作。
-	for _, selectedMode := range []string{"direct", "cloud", "reshare"} {
+	for _, selectedMode := range []string{"direct", "cloud", "share_transfer", "reshare"} {
 		for i, batch := range state.Queue {
 			if batch.Mode != selectedMode {
 				continue
@@ -110,7 +125,7 @@ func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 				return true
 			}
 			state.Batch = batch
-			mode := map[string]string{"direct": "普通分享", "cloud": "115 云下载", "reshare": "合并转存再分享"}[batch.Mode]
+			mode := map[string]string{"direct": "普通分享", "cloud": "115 云下载", "share_transfer": "115 分享转存", "reshare": "合并转存再分享"}[batch.Mode]
 			b.Logs.Append("Telegram", fmt.Sprintf("批次-%d", batch.UpdateID), "Bot", "INFO", fmt.Sprintf("开始处理批次：%d 个链接，%s", len(batch.Items), mode))
 			if batch.Mode == "cloud" {
 				// Cloud submissions produce one final summary only. The batch itself

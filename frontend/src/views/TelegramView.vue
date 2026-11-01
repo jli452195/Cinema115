@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { IconHandMove, IconInfoCircle, IconPlus, IconPuzzle, IconRefresh } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import TelegramBotEditor from '../components/TelegramBotEditor.vue'
@@ -20,6 +20,8 @@ const editingBot = ref<TelegramBotConfig>(), deletingBot = ref<TelegramBotConfig
 const busyModules = ref(new Set<string>()), testingBots = ref(new Set<string>())
 const draggingModuleId = ref(''), readError = ref('')
 const poolDropTarget = ref(false)
+const poolContent = ref<HTMLElement>()
+let poolScrollFrame: number | undefined, poolScrollSpeed = 0
 const lifecycle = new AbortController()
 let timer: number | undefined, sequence = 0
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
@@ -88,17 +90,45 @@ function dropModule(moduleId: string, botId: string) {
 }
 function unassignModule(module: TelegramBotModule) { void updateModule(module, '') }
 
+function stopPoolScroll() {
+  if (poolScrollFrame !== undefined) window.cancelAnimationFrame(poolScrollFrame)
+  poolScrollFrame = undefined
+  poolScrollSpeed = 0
+}
+function scrollPool() {
+  poolScrollFrame = undefined
+  const list = poolContent.value
+  if (!list || !draggingModuleId.value || deleting.value || !window.matchMedia('(min-width: 1280px)').matches) { stopPoolScroll(); return }
+  const previous = list.scrollTop
+  list.scrollTop += poolScrollSpeed
+  if (list.scrollTop !== previous) poolScrollFrame = window.requestAnimationFrame(scrollPool)
+  else stopPoolScroll()
+}
+function updatePoolScroll(event: DragEvent) {
+  const list = poolContent.value
+  if (!list || !window.matchMedia('(min-width: 1280px)').matches || list.scrollHeight <= list.clientHeight) { stopPoolScroll(); return }
+  const bounds = list.getBoundingClientRect(), edge = Math.min(56, bounds.height / 3)
+  const y = event.clientY - bounds.top
+  if (y < 0 || y > bounds.height) { stopPoolScroll(); return }
+  poolScrollSpeed = y < edge ? -12 * (1 - y / edge) : y > bounds.height - edge ? 12 * (1 - (bounds.height - y) / edge) : 0
+  if (!poolScrollSpeed) { stopPoolScroll(); return }
+  if (poolScrollFrame === undefined) poolScrollFrame = window.requestAnimationFrame(scrollPool)
+}
+watch(draggingModuleId, id => { if (!id) stopPoolScroll() })
+
 function poolDragOver(event: DragEvent) {
   if (!draggingModuleId.value || !event.dataTransfer?.types.includes('application/x-cinema115-telegram-module') || deleting.value) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'move'
   poolDropTarget.value = true
+  updatePoolScroll(event)
 }
 function poolDragLeave(event: DragEvent) {
-  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) poolDropTarget.value = false
+  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) { poolDropTarget.value = false; stopPoolScroll() }
 }
 function dropToPool(event: DragEvent) {
   event.preventDefault()
+  stopPoolScroll()
   const moduleId = event.dataTransfer?.getData('application/x-cinema115-telegram-module') || draggingModuleId.value
   poolDropTarget.value = false
   const module = modules.value.find(item => item.id === moduleId)
@@ -153,7 +183,7 @@ onMounted(async () => {
   }
   if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 8000)
 })
-onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer) })
+onBeforeUnmount(() => { lifecycle.abort(); stopPoolScroll(); if (timer) window.clearTimeout(timer) })
 </script>
 
 <template>
@@ -181,7 +211,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
       <aside aria-labelledby="pending-modules-title" class="module-pool-panel min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900" :class="{ 'is-pool-drop-target': poolDropTarget && !!draggingModuleId }" @dragover="poolDragOver" @dragleave="poolDragLeave" @drop="dropToPool">
         <header class="flex items-center gap-3 px-4 pb-3 pt-4"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconPuzzle :size="19" aria-hidden="true" /></span><div class="min-w-0 flex-1"><h2 id="pending-modules-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">待分配功能</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot</p></div><span class="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs tabular-nums text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300">{{ unassigned.length }} 项</span></header>
         <p class="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:bg-slate-950/50 dark:text-slate-400"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />拖入 Bot 或点击“选择 Bot”分配。解除分配后才会返回此处。</p>
-        <div class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 dark:border-slate-800 dark:bg-zinc-900">
+        <div ref="poolContent" role="region" aria-label="待分配功能列表" tabindex="0" class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 dark:border-slate-800 dark:bg-zinc-900">
           <div class="relative space-y-3">
             <TelegramModuleCard v-for="module in unassigned" :key="module.id" :module="module" :bots="bots" placement="pool" :busy="deleting || busyModules.has(module.id)" @assign="assign" @drag-start="draggingModuleId = $event" @drag-end="draggingModuleId = ''" />
           </div>
@@ -203,13 +233,19 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
 .bot-primary { container-type: inline-size; }
 .bot-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .module-pool-panel { display: flex; flex-direction: column; border-color: #e4e4e7; box-shadow: 0 2px 15px rgb(0 0 0 / .04), 0 0 1px rgb(0 0 0 / .1); }
-.module-pool-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.module-pool-content { min-height: 0; }
 .module-pool-panel.is-pool-drop-target .module-pool-content { background: rgb(59 130 246 / .06); }
 .module-pool-panel.is-pool-drop-target { border-color: rgb(59 130 246); box-shadow: 0 0 0 3px rgb(59 130 246 / .14), 0 8px 24px rgb(37 99 235 / .08); }
 :global(.dark) .module-pool-panel { border-color: rgb(255 255 255 / .08); background: #18181b; }
 :global(.dark) .module-pool-panel.is-pool-drop-target { border-color: rgb(96 165 250); }
 @container (min-width: 760px) { .bot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 1280px) { .bot-workspace { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); } .module-pool-panel { position: sticky; top: 5rem; max-height: calc(100dvh - 6rem); } .module-pool-panel > header, .module-pool-panel > p, .module-pool-panel > footer { flex-shrink: 0; } }
+@media (min-width: 1280px) {
+  .bot-workspace { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); }
+  .module-pool-panel { position: sticky; top: 5rem; max-height: min(640px, calc(100dvh - 6rem)); }
+  .module-pool-content { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #94a3b8 transparent; }
+  :global(.dark) .module-pool-content { scrollbar-color: #64748b transparent; }
+  .module-pool-panel > header, .module-pool-panel > p, .module-pool-panel > footer { flex-shrink: 0; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .bot-action { transition: background-color 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
   .bot-action:not(:disabled):active { transform: scale(.97); }

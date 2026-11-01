@@ -135,6 +135,36 @@ func TestTelegramModuleAssignmentIsExclusiveAndDeleteReleases(t *testing.T) {
 		t.Fatalf("module assignment should bind and activate the feature: %+v", share)
 	}
 
+	transferStore, err := service.NewSessionStore(filepath.Join(dir, "share-transfer.enc"), "test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transfers, err := service.NewShareTransferSettings(transferStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transfers.PrimaryID = func() string { return "primary" }
+	transfers.ValidateAccount = func(string) error { return nil }
+	target, err := transfers.SaveTarget(service.ShareTransferTarget{Name: "接收目录", TargetCID: "88", TargetPath: "/接收"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.ShareTransferSettings = transfers
+	transferPath := "/api/admin/telegram/modules/share_transfer:" + target.ID
+	telegramHubRequest(t, router, http.MethodPut, transferPath, `{"botId":"`+first.ID+`","expectedBotId":""}`, http.StatusOK)
+	for _, assignment := range []struct{ path, body string }{
+		{modulePath, `{"botId":"` + first.ID + `","expectedBotId":"` + second.ID + `"}`},
+		{transferPath, `{"botId":"` + second.ID + `","expectedBotId":"` + first.ID + `"}`},
+	} {
+		raw := telegramHubRequest(t, router, http.MethodPut, assignment.path, assignment.body, http.StatusConflict)
+		if !strings.Contains(string(raw), service.ErrTelegramModuleConflict.Error()) {
+			t.Fatalf("missing module conflict explanation: %s", raw)
+		}
+	}
+	if current, _ := transfers.Target(target.ID); current.AssignedBotID != first.ID || settings.Value().BotID != second.ID {
+		t.Fatal("a conflicting assignment changed an existing feature owner")
+	}
+
 	profile, err := hub.Profiles().Get(second.ID)
 	if err != nil {
 		t.Fatal(err)
