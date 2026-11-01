@@ -38,8 +38,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const toggle = () => rail().locator('.management-brand-toggle')
   const state = async collapsed => {
    await page.waitForFunction(collapsed => document.querySelector('.management-sidebar')?.classList.contains('is-collapsed') === collapsed, collapsed)
-   await page.evaluate(() => Promise.all([...document.querySelectorAll('.management-sidebar, .workbench-header, .portal-workspace')].flatMap(el => el.getAnimations()).map(a => a.finished.catch(() => {}))))
-   assert.equal(await toggle().getAttribute('aria-expanded'), String(!collapsed))
+   await page.waitForFunction(collapsed => {
+    const sidebar = document.querySelector('.management-sidebar'), navigation = document.querySelector('#management-desktop-navigation')
+    return sidebar && Math.abs(sidebar.getBoundingClientRect().width - (collapsed ? 64 : 240)) < .1
+     && navigation && navigation.classList.contains('is-collapsed') === collapsed
+     && !navigation.classList.contains('is-transitioning')
+     && Math.abs(Number(getComputedStyle(navigation).opacity) - 1) < .001
+     && !navigation.getAnimations({ subtree: true }).some(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime))
+   }, collapsed)
+   assert.equal(await toggle().isVisible(), !collapsed)
+   if (!collapsed) assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
    assert.equal(Math.round((await rail().boundingBox()).width), collapsed ? 64 : 240)
    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   }
@@ -72,10 +80,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   // Stale expanded preference cannot enlarge a detail page.
   await page.evaluate(() => localStorage.setItem('cinema115-management-sidebar', 'expanded'))
   await direct('/movie/1452', true)
-  await toggle().click(); await state(false)
   await push('/movie/1453'); await state(true) // Reused detail component and identical meta.
-  await toggle().click(); await state(false)
-  await push('/movie/1453?tab=cast#cast'); await state(false)
+  await push('/movie/1453?tab=cast#cast'); await state(true)
   await page.reload({ waitUntil: 'networkidle' }); await state(true)
   await push('/media/organize/history'); await state(false) // Inherited parent meta.
   await toggle().click(); await state(true)

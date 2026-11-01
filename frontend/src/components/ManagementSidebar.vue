@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
-import { isNavigationFailure, NavigationFailureType, useRouter } from 'vue-router'
+import { isNavigationFailure, NavigationFailureType, RouterLink, useRouter } from 'vue-router'
 import ManagementNavigation from './ManagementNavigation.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import CinemaLogo from './CinemaLogo.vue'
 
-const props = defineProps<{ desktop: boolean; collapsed?: boolean }>()
+const props = defineProps<{ desktop: boolean; collapsed?: boolean; mobileOnly?: boolean }>()
 const emit = defineEmits<{ toggle: [] }>()
-const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>(), desktopNavigation = ref<HTMLElement>()
-const desktopBrandToggle = ref<HTMLButtonElement>()
+const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>()
+const desktopToggle = ref<HTMLButtonElement>()
 const titleID = useId(), drawerID = useId()
 let trigger: HTMLElement | undefined, previousOverflow = '', backdropStarted = false
-function collapseSidebar() {
+function toggleSidebar() {
   emit('toggle')
-  void nextTick(() => desktopBrandToggle.value?.focus({ preventScroll: true }))
+  void nextTick(() => {
+    const target = props.collapsed
+      ? desktopToggle.value?.closest('.management-sidebar')?.querySelector<HTMLElement>('.management-sidebar-home')
+      : desktopToggle.value
+    target?.focus({ preventScroll: true })
+  })
 }
 async function openDrawer(event: MouseEvent) {
   if (props.desktop || opened.value) return
@@ -30,7 +35,7 @@ function closeDrawer(returnFocus = true) {
   document.body.style.overflow = previousOverflow
   if (returnFocus) void nextTick(() => {
     const target = trigger?.isConnected && trigger.getClientRects().length ? trigger
-      : desktopNavigation.value?.querySelector<HTMLElement>('a[aria-current]') || desktopNavigation.value?.querySelector<HTMLElement>('a[href]')
+      : document.querySelector<HTMLElement>('#management-desktop-navigation a[aria-current]') || document.querySelector<HTMLElement>('#management-desktop-navigation a[href]')
     target?.focus({ preventScroll: true })
   })
 }
@@ -67,10 +72,10 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 </script>
 
 <template>
-  <aside v-if="desktop" ref="desktopNavigation" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="功能侧栏">
+  <aside v-if="desktop && !mobileOnly" class="management-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="功能侧栏">
     <div class="management-sidebar-brand">
-      <button ref="desktopBrandToggle" type="button" class="management-brand-toggle" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="$emit('toggle')"><CinemaLogo sidebar /></button>
-      <button type="button" class="management-sidebar-control management-collapse-control" aria-label="收起侧栏" title="收起侧栏" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="collapseSidebar"><NavigationIcon name="sidebarCollapse" /></button>
+      <RouterLink to="/" class="management-sidebar-home" aria-label="Cinema115 首页" title="返回首页"><CinemaLogo sidebar /></RouterLink>
+      <button ref="desktopToggle" type="button" class="management-brand-toggle management-sidebar-control management-collapse-control" aria-label="收起侧栏" title="收起侧栏" :aria-expanded="!collapsed" aria-controls="management-desktop-navigation" @click="toggleSidebar"><NavigationIcon name="sidebarCollapse" /></button>
     </div>
     <ManagementNavigation id="management-desktop-navigation" :collapsed="collapsed" />
   </aside>
@@ -85,22 +90,22 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 </template>
 
 <style scoped>
-.management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / 60%); background: #f1f4f9; padding-bottom: env(safe-area-inset-bottom, 0px); transition: width var(--management-sidebar-motion), background-color var(--management-sidebar-motion), border-color var(--management-sidebar-motion); }
-.management-sidebar-brand { display: flex; width: 100%; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; }
+.management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / calc(0.6 * var(--management-sidebar-progress))); background: rgb(241 244 249 / var(--management-sidebar-progress)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.management-sidebar-brand { position: relative; display: grid; width: 100%; min-width: 0; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-items: start; padding: 0 14px; }
+.management-sidebar-home { display: inline-flex; min-height: 44px; align-items: center; border-radius: 10px; }
+.management-sidebar-home:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
 .management-brand-toggle { display: inline-flex; min-width: 0; min-height: 44px; align-items: center; border-radius: 10px; cursor: pointer; }
 .management-brand-toggle:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
 .management-sidebar .management-brand-toggle { flex-shrink: 0; padding-inline: 4px; }
-.management-sidebar.is-collapsed { background: transparent; border-color: transparent; }
 .management-drawer-heading { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 16px; }
 .management-sidebar-control { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; color: rgb(var(--color-slate-500)); cursor: pointer; }.management-sidebar-control svg { width: 19px; height: 19px; }.management-sidebar-control:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
-.management-collapse-control { width: 36px; height: 36px; visibility: hidden; transition: none; }
-/* Reveal instantly after expansion; hide immediately when collapse begins. */
+.management-collapse-control { position: absolute; top: 50%; right: 10px; width: 36px; height: 36px; min-height: 36px; visibility: hidden; transform: translateY(-50%); }
 .management-sidebar:not(.is-collapsed) .management-collapse-control { visibility: visible; transition: visibility 0s var(--management-sidebar-motion); }
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
 .management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }
-.dark .management-sidebar { background: #1d2025; border-color: rgb(var(--color-slate-700) / 55%); }.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }
-.dark .management-sidebar.is-collapsed { background: transparent; border-color: transparent; }
+.dark .management-sidebar { background: rgb(29 32 37 / var(--management-sidebar-progress)); border-color: rgb(var(--color-slate-700) / calc(0.55 * var(--management-sidebar-progress))); }
+.dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }
 @media (hover: hover) { .management-sidebar-control:hover { background: rgb(116 143 180 / 9%); color: #4775b0; } }
 @keyframes management-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }@keyframes management-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .management-drawer[open], .management-drawer::backdrop { animation: none; } }

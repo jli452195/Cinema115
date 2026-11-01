@@ -4,16 +4,20 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
 import GlobalToast from './components/GlobalToast.vue'
+import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
+import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
 const router = useRouter()
-const { desktop, collapsed } = useManagementSidebar()
+const { desktop, collapsed, toggleCollapsed } = useManagementSidebar()
 // Reset on confirmed page changes, preserving manual state for query/hash edits.
 watch(() => route.path, () => {
   collapsed.value = route.meta.defaultSidebarCollapsed ?? true
 }, { immediate: true })
+const workspace = ref<HTMLElement>()
+const sidebarWidth = useSidebarWidthMotion(collapsed, desktop, workspace)
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
   registeredUsername.value = name
@@ -83,7 +87,8 @@ onBeforeUnmount(() => {
     <button v-if="portalAuthError" class="text-blue-600" @click="ensurePortalSession(true)">重新验证</button>
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>
   </main>
-  <div v-else class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': collapsed ? '64px' : '240px' }">
+  <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
+    <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" @toggle="toggleCollapsed" />
     <RouterView v-slot="{ Component }">
       <component :is="Component" v-bind="viewProps" @home="router.push('/')" @back="back" @category="openCategory" @open-dashboard="router.push('/')" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
     </RouterView>
@@ -94,6 +99,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .portal-workspace { --management-sidebar-motion: 300ms cubic-bezier(0.2, 0, 0, 1); min-width: 0; }
-.has-navigation-sidebar { padding-left: var(--management-sidebar-width); transition: padding-left var(--management-sidebar-motion); }
+.has-navigation-sidebar { padding-left: var(--management-sidebar-width); }
 @media (prefers-reduced-motion: reduce) { .portal-workspace { --management-sidebar-motion: 0s linear; } }
 </style>

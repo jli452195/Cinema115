@@ -33,15 +33,24 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const nav = () => sidebar().getByRole('navigation', { name: '功能导航', exact: true })
   const links = () => nav().getByRole('link')
   const toggle = () => sidebar().locator('.management-brand-toggle')
+  const expanded = () => page.waitForFunction(() => {
+   const navigation = document.querySelector('#management-desktop-navigation')
+   return navigation && !navigation.classList.contains('is-collapsed') && Number(getComputedStyle(navigation).opacity) === 1
+    && !navigation.classList.contains('is-transitioning')
+    && !navigation.getAnimations({ subtree: true }).some(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime))
+  })
   const boxes = () => links().evaluateAll(elements => elements.map(element => {
    const b = element.getBoundingClientRect()
-   return { x: b.x, y: b.y, width: b.width, height: b.height }
+   return { x: b.x, y: b.y, width: b.width, height: b.height, group: element.closest('.management-nav-group').getAttribute('aria-label') }
   }))
   const close = (actual, expected, tolerance = .5) => assert.ok(Math.abs(actual - expected) < tolerance, `${actual} differs from ${expected}`)
   const baseSizes = async () => {
    await page.waitForFunction(() => [...document.querySelectorAll('.management-navigation.is-collapsed .management-nav-link')]
     .length > 0 && [...document.querySelectorAll('.management-navigation.is-collapsed .management-nav-link')]
-    .every(element => Math.abs(element.getBoundingClientRect().height - 36) < .1))
+    .every(element => Math.abs(element.getBoundingClientRect().height - 44) < .1)
+    && !document.querySelector('.management-navigation.is-collapsed').classList.contains('is-transitioning')
+    && !document.querySelector('.management-navigation.is-collapsed').getAnimations({ subtree: true })
+     .some(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime)))
   }
   const resting = async () => { await page.mouse.move(500, 60); await baseSizes() }
   const stationaryLayout = () => page.evaluate(() => {
@@ -66,14 +75,18 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await toggle().click(); await resting()
   await page.waitForFunction(() => Math.abs(document.querySelector('.management-sidebar').getBoundingClientRect().width - 64) < .1)
   assert.equal(await links().count(), 10)
-  const baseline = await boxes(), capsule = await nav().boundingBox()
-  close(capsule.x, 8)
-  assert.ok(capsule.height < 450, 'Folded navigation should be a compact capsule')
-  const headerHeight = await page.locator('.workbench-header').evaluate(el => el.getBoundingClientRect().height)
-  close(capsule.y + capsule.height / 2, headerHeight + (900 - headerHeight) / 2, 1)
+  const baseline = await boxes(), rail = await nav().boundingBox()
+  const headerHeight = await page.locator('.workbench-header .header-inner').evaluate(el => el.getBoundingClientRect().height)
+  close(rail.x, 0)
+  close(rail.y, headerHeight)
+  close(rail.y + rail.height, 900)
+  assert.deepEqual(await nav().evaluate(element => {
+   const style = getComputedStyle(element)
+   return { background: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow, blur: style.backdropFilter, padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft] }
+  }), { background: 'rgba(0, 0, 0, 0)', border: '0px', shadow: 'none', blur: 'none', padding: ['14px', '10px', '16px', '10px'] })
   for (let i = 0; i < baseline.length; i++) {
-   close(baseline[i].height, 36); close(baseline[i].width, 36)
-   if (i) close(baseline[i].y - baseline[i - 1].y - baseline[i - 1].height, 6)
+   close(baseline[i].height, 44); close(baseline[i].width, 44)
+   if (i) close(baseline[i].y - baseline[i - 1].y - baseline[i - 1].height, baseline[i].group === baseline[i - 1].group ? 4 : 18)
   }
   assert.equal(await nav().locator('a > span:visible').count(), 0)
   const layout = await stationaryLayout(), hovered = 4
@@ -84,15 +97,14 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
    await resting(); await screenshot(`1440-${dark ? 'dark' : 'light'}-rest`)
    const before = await boxes(), target = before[hovered]
    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2)
-   await page.waitForFunction(index => document.querySelectorAll('.management-nav-link')[index].getBoundingClientRect().height > 52, hovered)
+   await page.waitForFunction(index => document.querySelectorAll('.management-nav-link')[index].getBoundingClientRect().height > 63, hovered)
    await page.waitForTimeout(650)
    const after = await boxes()
-   assert.ok(after[hovered].height <= 56.1)
-   assert.ok(after[hovered - 1].height > 38 && after[hovered + 1].height > 38, 'Nearby controls should participate in magnification')
-   assert.ok(after[hovered - 1].y < before[hovered - 1].y - 1)
+   assert.ok(after[hovered].height <= 68.1)
+   assert.ok(after[hovered - 1].height > 46 && after[hovered + 1].height > 46, 'Nearby controls should participate in magnification')
    assert.ok(after[hovered + 1].y > before[hovered + 1].y + 1, 'Real dimensions must push the next control down')
    for (const box of after) close(box.x, before[0].x)
-   for (let i = 1; i < after.length; i++) assert.ok(after[i].y >= after[i - 1].y + after[i - 1].height + 5.5, 'Controls must never overlap')
+   for (let i = 1; i < after.length; i++) assert.ok(after[i].y >= after[i - 1].y + after[i - 1].height + 3.5, 'Controls must never overlap')
    assert.deepEqual(await stationaryLayout(), layout, 'Magnification must not move the header or page content')
    const tooltip = page.getByRole('tooltip', { name: label, exact: true })
    await tooltip.waitFor()
@@ -110,7 +122,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   // Click the enlarged area outside the resting hitbox: mouse focus must not shrink it on mousedown.
   const clickRest = (await boxes())[4]
   await page.mouse.move(clickRest.x + clickRest.width / 2, clickRest.y + clickRest.height / 2)
-  await page.waitForFunction(() => document.querySelectorAll('.management-nav-link')[4].getBoundingClientRect().width > 52)
+  await page.waitForFunction(() => document.querySelectorAll('.management-nav-link')[4].getBoundingClientRect().width > 63)
   await page.waitForTimeout(400)
   const clickGrown = (await boxes())[4]
   await page.mouse.click(clickGrown.x + clickGrown.width - 3, clickGrown.y + clickGrown.height / 2)
@@ -121,8 +133,9 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await links().first().focus(); await page.keyboard.press('Tab')
   assert.equal(await links().nth(1).evaluate(el => el === document.activeElement), true)
   await page.getByRole('tooltip', { name: await links().nth(1).getAttribute('aria-label'), exact: true }).waitFor()
-  for (const box of await boxes()) close(box.height, 36)
+  for (const box of await boxes()) close(box.height, 44)
   await page.keyboard.press('Enter'); await page.waitForURL('**/follows/manage')
+  await expanded()
   assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
   assert.equal(await nav().locator('a > span:visible').count(), 10)
   // Route changes and window blur clear an active effect and its tooltip.
@@ -130,7 +143,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const hoverAgain = async () => {
    const box = (await boxes())[4]
    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-   await page.waitForFunction(() => [...document.querySelectorAll('.management-nav-link')].some(el => el.getBoundingClientRect().height > 45))
+   await page.waitForFunction(() => [...document.querySelectorAll('.management-nav-link')].some(el => el.getBoundingClientRect().height > 55))
   }
   await hoverAgain()
   await page.evaluate(() => window.dispatchEvent(new Event('blur')))
@@ -156,8 +169,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await rafStops()
   // Short desktops retain all links through scrolling and use static buttons.
   await hoverAgain(); await page.setViewportSize({ width: 1024, height: 360 }); await resting()
-  const shortCapsule = await nav().boundingBox()
-  assert.ok(shortCapsule.y >= headerHeight + 4 && shortCapsule.y + shortCapsule.height <= 356)
+  const shortRail = await nav().boundingBox()
+  assert.ok(shortRail.y >= headerHeight - .5 && shortRail.y + shortRail.height <= 360.5)
   assert.equal(await nav().evaluate(el => el.scrollWidth <= el.clientWidth), true)
   for (let i = 0; i < await links().count(); i++) {
    await links().nth(i).scrollIntoViewIfNeeded()
@@ -167,15 +180,15 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const last = await links().last().boundingBox()
   await page.mouse.move(last.x + last.width / 2, last.y + last.height / 2)
   await page.waitForTimeout(250)
-  for (const box of await boxes()) close(box.height, 36)
+  for (const box of await boxes()) close(box.height, 44)
   close(await page.evaluate(() => scrollY), 0)
   await screenshot('1024-short-scroll')
-  // When the resting capsule fits but full magnification would not, all controls remain visible.
-  await page.setViewportSize({ width: 1440, height: 540 }); await resting()
+  // When the resting list fits but full magnification would not, all controls remain visible.
+  await page.setViewportSize({ width: 1440, height: 640 }); await resting()
   const mediumTarget = (await boxes())[4]
-  await page.mouse.move(mediumTarget.x + 18, mediumTarget.y + 18); await page.waitForTimeout(650)
+  await page.mouse.move(mediumTarget.x + 22, mediumTarget.y + 22); await page.waitForTimeout(650)
   const mediumCapsule = await nav().boundingBox(), mediumLinks = await boxes()
-  assert.ok(mediumCapsule.y >= headerHeight + 4 && mediumCapsule.y + mediumCapsule.height <= 536)
+  assert.ok(mediumCapsule.y >= headerHeight - .5 && mediumCapsule.y + mediumCapsule.height <= 640.5)
   assert.equal(await nav().evaluate(el => el.scrollHeight <= el.clientHeight + 1), true)
   assert.ok(mediumLinks[0].y >= mediumCapsule.y && mediumLinks.at(-1).y + mediumLinks.at(-1).height <= mediumCapsule.y + mediumCapsule.height)
   await rafStops()
@@ -183,17 +196,20 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await page.setViewportSize({ width: 1440, height: 900 }); await resting()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const reducedTarget = (await boxes())[4]
-  await page.mouse.move(reducedTarget.x + 18, reducedTarget.y + 18); await page.waitForTimeout(250)
-  for (const box of await boxes()) close(box.height, 36)
+  await page.mouse.move(reducedTarget.x + 22, reducedTarget.y + 22); await page.waitForTimeout(250)
+  for (const box of await boxes()) close(box.height, 44)
   await rafStops()
-  await toggle().click()
+  // Expanding comes from navigating into a management page, not a hidden control.
+  await nav().locator('a[href="/115"]').click(); await page.waitForURL('**/115')
+  await expanded()
   assert.equal(await nav().locator('a > span:visible').count(), 10)
   await toggle().click(); await resting()
   // Role scope stays unchanged, and the mobile drawer keeps its ordinary layout.
   role = 'user'
   await page.goto(origin + '/movie', { waitUntil: 'networkidle' }); await resting()
   assert.deepEqual(await links().allTextContents(), ['我的播放', '我的追更'])
-  assert.ok((await nav().boundingBox()).height < 110)
+  close((await nav().boundingBox()).y, headerHeight)
+  close((await boxes())[0].height, 44)
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await sidebar().count(), 0)
   await page.locator('.workbench-header .brand-link').click()
@@ -212,10 +228,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await touchPage.goto(origin + '/movie', { waitUntil: 'networkidle' })
   assert.equal(await touchPage.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches), false)
   const touchLink = touchPage.locator('.management-nav-link').nth(4), touchBox = await touchLink.boundingBox()
-  await touchPage.mouse.move(touchBox.x + 18, touchBox.y + 18); await touchPage.waitForTimeout(250)
-  assert.equal(await touchPage.locator('.management-nav-link').evaluateAll(elements => elements.every(el => Math.abs(el.getBoundingClientRect().height - 36) < .1)), true)
+  await touchPage.mouse.move(touchBox.x + 22, touchBox.y + 22); await touchPage.waitForTimeout(250)
+  assert.equal(await touchPage.locator('.management-nav-link').evaluateAll(elements => elements.every(el => Math.abs(el.getBoundingClientRect().height - 44) < .1)), true)
   await noOverflow()
   assert.deepEqual(writes, []); assert.deepEqual(errors, [])
-  console.log('Sidebar Dock passed: compact centered capsule, proximity magnification and physical spacing, stable geometry and idle frames, fixed content/header, tooltip, enlarged mouse hitbox and keyboard/native navigation, blur/route/resize/local-scroll cleanup, short viewport scrolling, reduced motion, touch, role scope, mobile drawer and both themes; no service writes')
+  console.log('Sidebar icons passed: transparent full-height rail, original 44px controls and grouped spacing, proximity magnification and physical spacing, stable geometry and idle frames, fixed content/header, tooltip, enlarged mouse hitbox and keyboard/native navigation, blur/route/resize/local-scroll cleanup, short viewport scrolling, reduced motion, touch, role scope, mobile drawer and both themes; no service writes')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

@@ -3,6 +3,13 @@ import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig(({ mode }) => ({
+  resolve: {
+    dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language', '@lezer/highlight'],
+  },
+  optimizeDeps: {
+    // Keep the lazy YAML editor's extensions in the same prebundle from startup.
+    include: ['@codemirror/state', '@codemirror/view', '@codemirror/commands', '@codemirror/language', '@codemirror/lang-yaml', '@codemirror/theme-one-dark', '@lezer/highlight'],
+  },
   plugins: [
     vue(),
     {

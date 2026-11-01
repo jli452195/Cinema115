@@ -30,6 +30,7 @@
     "test:management-sidebar-ui": "node scripts/management-sidebar-ui.cjs",
     "test:sidebar-defaults-ui": "node scripts/sidebar-defaults-ui.cjs",
     "test:sidebar-dock-ui": "node scripts/sidebar-dock-ui.cjs",
+    "test:sidebar-motion-ui": "node scripts/sidebar-motion-ui.cjs",
     "test:account-menu-ui": "node scripts/account-menu-ui.cjs",
     "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",

@@ -6,6 +6,7 @@ import type { AccountLink } from '../utils/accountNavigation'
 import { isPortalAdmin } from '../composables/usePortalAuth'
 import { managementNavigationScroll } from '../composables/useManagementSidebar'
 import { useVerticalDock } from '../composables/useVerticalDock'
+import { useNavigationMotion } from '../composables/useNavigationMotion'
 import NavigationIcon from './NavigationIcon.vue'
 
 defineOptions({ inheritAttrs: false })
@@ -23,8 +24,13 @@ const currentCategory = computed(() => groups.value.flatMap(group => group.links
 const tooltip = ref<{ label: string; top: number; left: number }>()
 const tooltipID = useId()
 let tooltipAnchor: HTMLElement | undefined
-const isDockMode = computed(() => !!props.collapsed && !props.mobile)
-const { onPointerMove, onPointerLeave, reset: resetDock } = useVerticalDock(isDockMode, navigation, () => {
+const { displayedCollapsed, transitioning } = useNavigationMotion(
+  computed(() => !!props.collapsed), computed(() => !!props.mobile), navigation,
+  () => { hideTooltip(); resetDock() }, restoreScroll,
+)
+const isDockMode = computed(() => displayedCollapsed.value && !props.mobile)
+const dockEnabled = computed(() => isDockMode.value && !transitioning.value)
+const { onPointerMove, onPointerLeave, reset: resetDock } = useVerticalDock(dockEnabled, navigation, () => {
   if (tooltip.value && tooltipAnchor?.isConnected) positionTooltip(tooltipAnchor, tooltip.value.label)
 })
 
@@ -32,7 +38,7 @@ function showTooltip(event: MouseEvent | FocusEvent, label: string) {
   if (event.currentTarget instanceof HTMLElement) positionTooltip(event.currentTarget, label)
 }
 function positionTooltip(element: HTMLElement, label: string) {
-  if (!props.collapsed || props.mobile) return
+  if (!isDockMode.value || transitioning.value) return
   const bounds = element.getBoundingClientRect()
   const right = navigation.value?.getBoundingClientRect().right ?? bounds.right
   tooltipAnchor = element
@@ -67,7 +73,6 @@ async function restoreScroll() {
   else if (item.bottom > bounds.bottom) element.scrollTop += item.bottom - bounds.bottom
 }
 watch(() => route.path, () => { resetDock(); hideTooltip(); void restoreScroll() })
-watch(() => props.collapsed, () => { hideTooltip(); void restoreScroll() })
 onMounted(() => {
   void restoreScroll()
   window.addEventListener('resize', hideTooltip)
@@ -85,14 +90,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <nav v-bind="$attrs" ref="navigation" class="management-navigation" :class="{ 'is-collapsed': isDockMode, 'is-mobile': mobile }" aria-label="功能导航" @scroll.passive="onScroll" @keydown="resetDock" @keydown.esc="hideTooltip" @pointermove="onPointerMove" @pointerleave="leaveDock" @focusin="focusDock">
+  <nav v-bind="$attrs" ref="navigation" class="management-navigation" :class="{ 'is-collapsed': isDockMode, 'is-mobile': mobile, 'is-transitioning': transitioning }" aria-label="功能导航" @scroll.passive="onScroll" @keydown="resetDock" @keydown.esc="hideTooltip" @pointermove="onPointerMove" @pointerleave="leaveDock" @focusin="focusDock">
     <section v-for="group in groups" :key="group.label" class="management-nav-group" :aria-label="group.label">
       <p class="management-nav-label">{{ group.label }}</p>
       <div v-for="link in group.links" :key="link.to" class="management-nav-item" :data-section="link.to">
         <div class="management-nav-row ambient-glow" :class="{ 'is-section-active': currentCategory?.to === link.to }">
           <span class="management-nav-marker" aria-hidden="true" />
-          <RouterLink :to="link.to" class="management-nav-link" :title="collapsed ? undefined : link.label" :aria-label="link.label" :aria-describedby="tooltip?.label === link.label ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, link.label)" @mouseleave="hideTooltip" @focus="showTooltip($event, link.label)" @blur="hideTooltip" @click="hideTooltip">
-            <NavigationIcon :name="link.icon" :stroke="collapsed && !mobile && currentCategory?.to === link.to ? 2.25 : 1.75" /><span>{{ link.label }}</span>
+          <RouterLink :to="link.to" class="management-nav-link" :title="isDockMode ? undefined : link.label" :aria-label="link.label" :aria-describedby="tooltip?.label === link.label ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, link.label)" @mouseleave="hideTooltip" @focus="showTooltip($event, link.label)" @blur="hideTooltip" @click="hideTooltip">
+            <NavigationIcon :name="link.icon" :stroke="isDockMode && currentCategory?.to === link.to ? 2.25 : 1.75" /><span>{{ link.label }}</span>
           </RouterLink>
         </div>
       </div>
@@ -124,45 +129,30 @@ onBeforeUnmount(() => {
 .management-navigation:not(.is-mobile) .management-nav-link { gap: 18px; padding-inline: 12.5px; }
 .management-navigation:not(.is-mobile) .management-nav-row { transition: color 180ms ease-out, background-color 180ms ease-out; }
 .management-navigation:not(.is-mobile) .management-nav-link > svg { transition: stroke-width 150ms ease-out, transform 180ms ease-out; }
-.management-navigation:not(.is-mobile) .management-nav-link > span { min-width: 0; opacity: 1; visibility: visible; transition: opacity 150ms linear 100ms, visibility 0s; }
-.management-navigation:not(.is-mobile) .management-nav-label { height: 16px; overflow: hidden; line-height: 16px; opacity: 1; visibility: visible; transition: height var(--management-sidebar-motion), margin-bottom var(--management-sidebar-motion), opacity 150ms linear 100ms, visibility 0s; }
-.management-navigation.is-collapsed {
-  position: fixed;
-  left: 8px;
-  top: calc(var(--workbench-header-height) + (100dvh - var(--workbench-header-height)) / 2);
-  transform: translateY(-50%);
-  display: flex;
+.management-navigation:not(.is-mobile) .management-nav-link > span { min-width: 0; opacity: 1; visibility: visible; }
+.management-navigation:not(.is-mobile) .management-nav-label { height: 16px; overflow: hidden; line-height: 16px; opacity: 1; visibility: visible; }
+.management-navigation.is-transitioning .management-nav-link > span { transition: opacity 150ms linear 100ms, visibility 0s; }
+.management-navigation.is-transitioning .management-nav-label { transition: height var(--management-sidebar-motion), margin-bottom var(--management-sidebar-motion), opacity 150ms linear 100ms, visibility 0s; }
+.management-navigation:not(.is-mobile).is-collapsed {
   width: max-content;
-  max-height: calc(100dvh - var(--workbench-header-height) - 24px);
-  box-sizing: border-box;
-  flex: none;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px;
-  border: 1px solid rgb(var(--color-slate-200) / 80%);
-  border-radius: 18px;
-  background: rgb(255 255 255 / 78%);
-  box-shadow: 0 6px 24px rgb(15 23 42 / 7%);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  align-self: flex-start;
+  overflow-anchor: none;
   scrollbar-width: none;
 }
-.dark .management-navigation.is-collapsed { background: rgb(var(--color-slate-900) / 80%); border-color: rgb(var(--color-slate-700) / 70%); box-shadow: 0 8px 28px rgb(0 0 0 / 25%); }
 .is-collapsed::-webkit-scrollbar { display: none; }
-.management-navigation.is-collapsed .management-nav-group { display: contents; }
-.management-navigation.is-collapsed .management-nav-label,
-.management-navigation.is-collapsed .management-nav-link > span { display: none; }
-.management-navigation.is-collapsed .management-nav-item { flex-shrink: 0; margin: 0; }
+.management-navigation.is-collapsed .management-nav-label { width: 0; height: 0; margin-inline: 0; margin-bottom: 0; opacity: 0; visibility: hidden; }
+.management-navigation.is-collapsed .management-nav-link > span { opacity: 0; visibility: hidden; }
+.management-navigation.is-collapsed.is-transitioning .management-nav-link > span { transition: opacity 100ms linear, visibility 0s linear 100ms; }
+.management-navigation.is-collapsed.is-transitioning .management-nav-label { transition: height var(--management-sidebar-motion), margin-bottom var(--management-sidebar-motion), opacity 100ms linear, visibility 0s linear 100ms; }
 .management-navigation.is-collapsed .management-nav-link {
   box-sizing: border-box;
-  width: 36px;
-  height: 36px;
+  width: max(44px, calc(var(--management-sidebar-width) - 21px));
+  height: 44px;
   min-height: 0;
   flex: none;
-  justify-content: center;
-  gap: 0;
-  padding: 0;
+  justify-content: flex-start;
+  gap: 18px;
+  padding: 0 calc(var(--dock-icon-size, 19px) * 0.6578947368);
   border-radius: 11px;
 }
 .management-nav-tooltip { position: fixed; z-index: 60; transform: translateY(-50%); max-width: 220px; padding: 7px 11px; border-radius: 8px; background: #263346; color: #fff; box-shadow: 0 4px 14px rgb(15 23 42 / 12%); font-size: 12px; line-height: 20px; pointer-events: none; }

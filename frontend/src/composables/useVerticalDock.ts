@@ -1,10 +1,9 @@
 import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 
-const BASE_SIZE = 36
-const MAX_SIZE = 56
+const BASE_SIZE = 44
+const MAX_SIZE = 68
 const RADIUS = 110
-const GAP = 6
-// The cosine field over 42px-spaced centres adds at most about 53px.
+// The cosine field over centres at least 48px apart adds less than 65px.
 const MAX_EXTRA_HEIGHT = 65
 
 export function useVerticalDock(
@@ -43,20 +42,23 @@ export function useVerticalDock(
     }
 
     const style = getComputedStyle(element)
-    const topInset = parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth)
     const bottomInset = parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth)
-    const neutralHeight = topInset + bottomInset + items.length * BASE_SIZE + (items.length - 1) * GAP
-    const extraHeight = Math.min(MAX_EXTRA_HEIGHT, items.length * (MAX_SIZE - BASE_SIZE))
-    const maxHeight = parseFloat(style.maxHeight)
-    // Reserve room for the whole wave, including when the base list already fits.
-    if (!Number.isFinite(maxHeight) || neutralHeight + extraHeight > maxHeight
-      || element.scrollHeight > element.clientHeight + 1) return false
-
     const bounds = element.getBoundingClientRect()
-    const neutralTop = bounds.top + bounds.height / 2 - neutralHeight / 2
-    // Cache the neutral centres: animated dimensions never feed back into targets.
-    // Do not clear current sizes here, so rapid re-entry continues smoothly.
-    centres = items.map((_, i) => neutralTop + topInset + BASE_SIZE / 2 + i * (BASE_SIZE + GAP))
+    let growth = 0, neutralBottom = 0
+    // Remove the current wave's accumulated height from the actual layout.
+    // This preserves group spacing without resetting sizes on rapid re-entry.
+    centres = items.map(item => {
+      const itemBounds = item.getBoundingClientRect()
+      const centre = itemBounds.top + BASE_SIZE / 2 - growth
+      growth += itemBounds.height - BASE_SIZE
+      neutralBottom = itemBounds.bottom - growth
+      return centre
+    })
+    const neutralHeight = neutralBottom - bounds.top + element.scrollTop + bottomInset
+    const extraHeight = Math.min(MAX_EXTRA_HEIGHT, items.length * (MAX_SIZE - BASE_SIZE))
+    // Reserve room for the whole wave, including when the base list already fits.
+    if (neutralHeight + extraHeight > element.clientHeight
+      || element.scrollHeight > element.clientHeight + 1) return false
     return true
   }
 

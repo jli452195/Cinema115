@@ -42,6 +42,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const open = () => page.getByRole('button', { name: '打开功能导航', exact: true })
   const toggle = () => sidebar().locator('.management-brand-toggle')
   const link = to => nav().locator(`a[href="${to}"]`)
+  const settleNavigation = async collapsed => page.waitForFunction(collapsed => {
+   const navigation = document.querySelector('#management-desktop-navigation')
+   return navigation && navigation.classList.contains('is-collapsed') === collapsed
+    && !navigation.classList.contains('is-transitioning')
+    && Math.abs(Number(getComputedStyle(navigation).opacity) - 1) < .001
+    && !navigation.getAnimations({ subtree: true }).some(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime))
+  }, collapsed)
   const active = async (to, current = 'location') => {
    assert.equal(await link(to).getAttribute('aria-current'), current)
    assert.equal(await nav().locator(`[data-section="${to}"] .management-nav-row`).evaluate(el => el.classList.contains('is-section-active')), true)
@@ -49,18 +56,40 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   const brandState = async () => {
-   const brand = page.locator('.management-sidebar .management-brand-toggle'), wordmark = brand.locator('.cinema-logo-wordmark')
+   const brand = page.locator('.management-sidebar .management-sidebar-home'), wordmark = brand.locator('.cinema-logo-wordmark')
+   assert.equal(await brand.getAttribute('href'), '/')
    assert.equal(await wordmark.isVisible(), true)
    assert.equal(await wordmark.innerText(), 'Cinema115')
    assert.equal(await wordmark.evaluate(el => {
     const bounds = el.getBoundingClientRect()
-    return el.closest('button') === document.elementFromPoint(bounds.right - 2, bounds.y + bounds.height / 2)?.closest('button')
-   }), true)
+    return bounds.width > 70 && el.closest('a') === document.elementFromPoint(bounds.right - 2, bounds.y + bounds.height / 2)?.closest('a')
+   }), true, 'The complete wordmark must stay visible and clickable in both desktop states')
    const mark = await brand.locator('.cinema-logo-mark').boundingBox()
-   assert.equal(Math.round(mark.x), 14); assert.equal(Math.round(mark.width), 36)
+   assert.equal(Math.round(mark.width), 36)
+   assert.equal(await brand.locator('.cinema-logo-mark').evaluate(el => {
+    const bounds = el.getBoundingClientRect()
+    return el.closest('a') === document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('a')
+   }), true)
    if (!await sidebar().evaluate(el => el.classList.contains('is-collapsed'))) {
-    const label = await page.locator('.management-sidebar .management-nav-link > span').first().boundingBox()
-    assert.ok(Math.abs(label.x - (await wordmark.boundingBox()).x) < 1)
+    assert.equal(await wordmark.isVisible(), true)
+    assert.equal(await wordmark.innerText(), 'Cinema115')
+    const panel = await nav().boundingBox(), rail = await sidebar().boundingBox()
+    const icon = await nav().locator('.management-nav-link > svg').first().boundingBox()
+    const label = await nav().locator('.management-nav-link > span').first().boundingBox()
+    assert.ok(Math.abs(mark.x + mark.width / 2 - icon.x - icon.width / 2) < 1, 'Logo mark must align with the menu icon column')
+    assert.ok(Math.abs((await wordmark.boundingBox()).x - label.x) < 2, 'Logo wordmark must align with the menu label column')
+    const headerHeight = await page.locator('.workbench-header .header-inner').evaluate(el => el.getBoundingClientRect().height)
+    assert.ok(Math.abs(panel.x) < .5)
+    assert.ok(Math.abs(panel.y - headerHeight) < .5)
+    assert.ok(Math.abs(panel.x + panel.width - rail.x - rail.width) <= 1)
+    assert.ok(Math.abs(panel.y + panel.height - page.viewportSize().height) < .5)
+    const style = await nav().evaluate(el => {
+     const css = getComputedStyle(el)
+     return { padding: css.paddingTop, horizontal: css.paddingLeft, bottom: css.paddingBottom, border: css.borderTopWidth, radius: css.borderTopLeftRadius }
+    })
+    assert.deepEqual(style, { padding: '14px', horizontal: '10px', bottom: '16px', border: '0px', radius: '0px' })
+   } else {
+    assert.ok(Math.abs(mark.x - 14) < .5)
    }
    const headerSurface = await page.locator('.workbench-header .header-background, .workbench-header .header-surface').boundingBox()
    assert.ok(Math.abs(headerSurface.x) < 1)
@@ -77,15 +106,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await page.evaluate(() => Promise.all(
     [...document.querySelectorAll('.management-sidebar, .workbench-header, .portal-workspace')]
      .flatMap(element => element.getAnimations()).map(animation => animation.finished.catch(() => {}))))
+   await settleNavigation(collapsed)
    const bounds = await sidebar().boundingBox()
    assert.equal(bounds.x, 0); assert.equal(bounds.y, 0)
    assert.equal(Math.round(bounds.width), width); assert.equal(Math.round(bounds.height), page.viewportSize().height)
-   assert.equal(await toggle().getAttribute('aria-expanded'), String(!collapsed))
-   assert.equal(await toggle().getAttribute('aria-label'), collapsed ? '展开侧栏' : '收起侧栏')
+   assert.equal(await toggle().isVisible(), !collapsed)
+   assert.equal(await toggle().getAttribute('aria-label'), '收起侧栏')
+   if (!collapsed) assert.equal(await toggle().getAttribute('aria-expanded'), 'true')
    assert.equal(await nav().getAttribute('id'), 'management-desktop-navigation')
    assert.equal(await page.locator('.workbench-header .brand-link').count(), 0)
-   assert.equal(await sidebar().getByRole('link', { name: 'Cinema115 首页', exact: true }).count(), 0)
-   assert.equal(await toggle().locator('.cinema-logo').count(), 1)
+   assert.equal(await sidebar().getByRole('link', { name: 'Cinema115 首页', exact: true }).count(), 1)
+   assert.equal(await toggle().locator('.cinema-logo').count(), 0)
+   assert.equal(await toggle().locator('svg').count(), 1)
    assert.equal(await sidebar().locator('.management-collapse-control:visible').count(), collapsed ? 0 : 1)
    await brandState()
    assert.equal(await page.locator('main').evaluate((el, width) => el.getBoundingClientRect().x >= width, width), true)
@@ -94,9 +126,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     .map(animation => animation.finished.catch(() => {}))))
    if (collapsed) {
     await page.waitForFunction(() => [...document.querySelectorAll('.management-nav-link')]
-     .every(el => Math.abs(el.getBoundingClientRect().height - 36) < .1))
-    assert.equal(await sidebar().evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
-    assert.equal(await sidebar().evaluate(el => getComputedStyle(el).borderRightColor), 'rgba(0, 0, 0, 0)')
+     .every(el => Math.abs(el.getBoundingClientRect().height - 44) < .1))
+    assert.equal(await sidebar().evaluate(el => getComputedStyle(el).backgroundColor.endsWith(', 0)')), true)
+    assert.equal(await sidebar().evaluate(el => getComputedStyle(el).borderRightColor.endsWith(', 0)')), true)
     assert.equal(await nav().locator('a > span:visible').count(), 0)
     assert.equal(await nav().locator('svg').count(), 10)
     assert.equal(await nav().locator('.management-nav-row').evaluateAll(rows => rows.every(row => {
@@ -131,13 +163,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await desktopState(false)
   const collapseControl = sidebar().locator('.management-collapse-control')
   const initialURL = page.url(), controlRequests = requests.length
-  const brandBounds = await toggle().boundingBox(), controlBounds = await collapseControl.boundingBox()
+  const brandBounds = await sidebar().locator('.management-sidebar-home .cinema-logo').boundingBox(), controlBounds = await collapseControl.boundingBox()
   assert.ok(controlBounds.x > brandBounds.x + brandBounds.width)
   assert.ok(controlBounds.x + controlBounds.width <= 240)
   await collapseControl.focus(); await page.keyboard.press('Enter'); await desktopState(true)
-  assert.equal(await toggle().evaluate(el => el === document.activeElement), true)
+  assert.equal(await sidebar().locator('.management-sidebar-home').evaluate(el => el === document.activeElement), true)
   assert.equal(page.url(), initialURL); assert.equal(requests.length, controlRequests)
-  await toggle().click(); await desktopState(false)
+  await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
   // Every page must keep the same groups, destinations, logo and row positions.
   const navigationLayout = () => sidebar().evaluate(el => {
    const bounds = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } }
@@ -151,9 +183,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   })
   const sharedNavigation = await navigationLayout()
   assert.deepEqual(sharedNavigation.groups.map(group => group.label), ['个人', '管理', '服务'])
-  for (const [to, name] of [['/movie?sort=rating', 'homepage'], ['/follows/manage', 'follows-management'], ['/media/organize', 'organize'], ['/115', 'drive']]) {
+  for (const [to, name] of [['/resources', 'resources'], ['/follows/manage', 'follows-management'], ['/media/organize', 'organize'], ['/115', 'drive']]) {
    await go(to); await sidebar().waitFor()
-   if (await toggle().getAttribute('aria-expanded') === 'false') await toggle().click()
    await desktopState(false)
    assert.deepEqual(await navigationLayout(), sharedNavigation, `Navigation moved or changed on ${to}`)
    for (const dark of [false, true]) {
@@ -188,7 +219,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.locator('main a[href="/gying"]').click(); await page.waitForURL('**/gying'); await active('/resources')
   await link('/users').click(); await page.waitForURL('**/users')
   await page.locator('main a[href="/users/list"]').click(); await page.waitForURL('**/users/list'); await active('/users')
-  assert.equal(await sidebar().getByRole('button').count(), 2)
+  assert.equal(await sidebar().getByRole('button').count(), 1)
   await page.reload(); await sidebar().waitFor()
   await desktopState(false)
   assert.equal(await link('/115').getAttribute('aria-label'), '115 网盘')
@@ -196,23 +227,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const expandedContent = await page.locator('main.management-content').boundingBox()
   const collapseRequests = requests.length
   const beforeLogoToggle = page.url()
-  // Sample the middle of the actual transition: the rail, header and content must move together.
+  // Sample actual geometry while the shared width moves, independently of its animation mechanism.
   await page.evaluate(() => {
    window.sidebarMotionSample = new Promise(resolve => {
     document.querySelector('.management-sidebar .management-brand-toggle').addEventListener('click', () => {
-     requestAnimationFrame(() => requestAnimationFrame(() => {
+     const sample = () => {
       const sidebar = document.querySelector('.management-sidebar'), header = document.querySelector('.workbench-header'), shell = document.querySelector('.portal-workspace')
-      const animations = [sidebar, header, shell].flatMap(element => element.getAnimations())
-      for (const animation of animations) { animation.pause(); animation.currentTime = animation.effect.getTiming().duration / 2 }
-      resolve({ width: sidebar.getBoundingClientRect().width, header: header.getBoundingClientRect().x, content: parseFloat(getComputedStyle(shell).paddingLeft), animationCount: animations.length })
-      for (const animation of animations) animation.play()
-     }))
+      const width = sidebar.getBoundingClientRect().width
+      if (width > 90 && width < 220) resolve({ width, header: header.getBoundingClientRect().x, content: parseFloat(getComputedStyle(shell).paddingLeft) })
+      else requestAnimationFrame(sample)
+     }
+     requestAnimationFrame(sample)
     }, { once: true })
    })
   })
   await toggle().click(); await desktopState(true)
   const motion = await page.evaluate(() => window.sidebarMotionSample)
-  assert.ok(motion.animationCount >= 3)
   assert.ok(motion.width > 64 && motion.width < 240)
   assert.ok(Math.abs(motion.header - motion.width) < 1 && Math.abs(motion.content - motion.width) < 1)
   assert.equal(page.url(), beforeLogoToggle)
@@ -296,7 +326,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   assert.ok(await nav().evaluate(el => el.scrollTop) > topBeforeTab)
   assert.equal(await page.getByRole('tooltip', { name: 'Emby', exact: true }).isVisible(), true)
-  await toggle().click(); await desktopState(false)
+  await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
   // Mobile route success closes the drawer; existing unsaved-leave rejection keeps it.
   await go('/emby/proxy'); await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('spinbutton', { name: /反代监听端口/ }).fill('8098')
@@ -334,7 +364,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      await toggle().click(); await desktopState(true); await active('/115', 'page')
      assert.equal(await nav().getByRole('link').count(), 10)
      await screenshot(`${width}-${dark ? 'dark' : 'light'}-collapsed`)
-     await toggle().click(); await desktopState(false)
+     await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
     }
    }
   }
@@ -345,20 +375,21 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.setViewportSize({ width: 1280, height: 800 }); await sidebar().waitFor()
   await toggle().click(); await desktopState(true)
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('.management-sidebar, .workbench-header, .portal-workspace')].flatMap(element => element.getAnimations()).length), 0)
-  await toggle().click(); await desktopState(false)
+  await page.reload({ waitUntil: 'networkidle' }); await desktopState(false)
   // Homepage browsing shares the same desktop SVG rail and animation; mobile keeps its drawer.
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await go('/movie?sort=rating')
   assert.equal(await sidebar().count(), 1); assert.equal(await open().count(), 0)
   const homeSidebar = () => page.getByRole('complementary', { name: '功能侧栏', exact: true })
   const homeToggle = () => homeSidebar().locator('.management-brand-toggle')
-  const settleHomeSidebar = () => page.evaluate(() => Promise.all(
-   [...document.querySelectorAll('.management-sidebar, .workbench-header, .portal-workspace')]
-    .flatMap(element => element.getAnimations()).map(animation => animation.finished.catch(() => {}))))
+  const settleHomeSidebar = async () => {
+   const collapsed = await homeSidebar().evaluate(el => el.classList.contains('is-collapsed'))
+   await page.waitForFunction(width => Math.abs(document.querySelector('.management-sidebar').getBoundingClientRect().width - width) < .1, collapsed ? 64 : 240)
+   await settleNavigation(collapsed)
+  }
   for (const width of [2560, 1920, 1280, 1024, 1023, 768, 390, 320]) {
    await page.setViewportSize({ width, height: 900 })
    if (width >= 1024) {
-    if (await homeToggle().getAttribute('aria-expanded') === 'true') await homeToggle().click()
     await settleHomeSidebar()
    }
    await page.evaluate(() => { document.querySelector('main').style.minHeight = '1400px' })
@@ -378,21 +409,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      assert.equal(await headerLogo().count(), 0)
      const bounds = await homeSidebar().boundingBox()
      assert.deepEqual({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }, { x: 0, y: 0, width: 64, height: 900 })
-     assert.equal(await homeSidebar().evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
+     assert.equal(await homeSidebar().evaluate(el => getComputedStyle(el).backgroundColor.endsWith(', 0)')), true)
      await brandState()
-     assert.equal(await homeSidebar().locator('a > span:visible').count(), 0)
+     assert.equal(await nav().locator('a > span:visible').count(), 0)
      assert.equal(await homeSidebar().locator('nav svg').count(), 10)
-     await homeToggle().click(); await settleHomeSidebar()
-     assert.equal((await homeSidebar().boundingBox()).width, 240)
-     await brandState()
-     assert.equal(await homeSidebar().locator('a > span:visible').count(), 10)
+     assert.equal(await homeToggle().isVisible(), false)
      assert.equal(await page.getByRole('dialog').count(), 0)
      assert.equal(await page.evaluate(() => document.body.style.overflow), '')
-     const expandedContent = await page.locator('main').boundingBox()
-     assert.ok(Math.abs(expandedContent.width - Math.min(viewport - 240, 1600)) < 1)
-     assert.ok(Math.abs(expandedContent.x - 240 - (viewport - 240 - expandedContent.width) / 2) < 1)
-     if (width === 1920) await screenshot(`browse-${width}-${dark ? 'dark' : 'light'}-navigation`)
-     await homeToggle().click(); await settleHomeSidebar()
     } else {
      assert.equal(await homeSidebar().count(), 0)
      assert.ok((await headerLogo().boundingBox()).x <= 24)
@@ -416,12 +439,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   await page.setViewportSize({ width: 1920, height: 900 })
   await settleHomeSidebar()
-  // Rapid reversals settle correctly; navigation uses the destination default.
-  await homeToggle().click(); await homeToggle().click(); await settleHomeSidebar()
-  assert.equal(await homeToggle().getAttribute('aria-expanded'), 'false')
+  // Real route reversals settle correctly; collapsed browsing has no extra expand control.
+  await page.evaluate(async () => {
+   const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router
+   await router.push('/115'); await router.push('/movie')
+  })
+  await settleHomeSidebar()
+  assert.equal(await homeToggle().isVisible(), false)
   await page.getByRole('link', { name: '剧集', exact: true }).click()
   await page.waitForURL(/\/(tv)?$/); await homeSidebar().waitFor()
-  assert.equal(await homeToggle().getAttribute('aria-expanded'), 'false')
+  assert.equal(await homeToggle().isVisible(), false)
   await homeSidebar().getByRole('link', { name: '115 网盘', exact: true }).click()
   await page.waitForURL('**/115'); await drawer().waitFor({ state: 'detached' })
   await sidebar().waitFor()
@@ -435,8 +462,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    for (const dark of [false, true]) {
     await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
     if (width >= 1024) {
-     for (const collapsed of [false, true]) {
-      if ((await homeToggle().getAttribute('aria-expanded') === 'false') !== collapsed) await homeToggle().click()
+     for (const collapsed of [true]) {
       await settleHomeSidebar(); await brandState()
       const backdrop = await page.locator('.detail-backdrop').boundingBox()
       assert.ok(Math.abs(backdrop.x) < 1)
@@ -459,7 +485,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.setViewportSize({ width: 1920, height: 900 })
   role = 'user'; await go('/follows')
   assert.equal(await sidebar().count(), 1); assert.equal(await open().count(), 0)
-  assert.deepEqual(await homeSidebar().getByRole('link').allTextContents(), ['我的播放', '我的追更'])
+  assert.deepEqual(await nav().getByRole('link').allTextContents(), ['我的播放', '我的追更'])
   await page.setViewportSize({ width: 390, height: 844 })
   await headerLogo().click(); await drawer().waitFor()
   assert.deepEqual(await drawer().getByRole('link').allTextContents(), ['我的播放', '我的追更'])

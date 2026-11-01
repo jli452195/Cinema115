@@ -12,14 +12,14 @@ import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigat
 defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute(), sidebar = ref<InstanceType<typeof ManagementSidebar>>()
-const { desktop, collapsed, toggleCollapsed } = useManagementSidebar()
+const { desktop } = useManagementSidebar()
 const showSidebar = computed(() => isPortalAdmin.value && adminAccountGroups.some(group => group.links.some(link => isAccountLinkActive(route, link))))
 const desktopSidebar = computed(() => showSidebar.value && desktop.value)
 </script>
 
 <template>
-  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-management-sidebar': desktopSidebar }" :style="{ '--management-sidebar-width': collapsed ? '64px' : '240px' }">
-    <ManagementSidebar v-if="showSidebar" ref="sidebar" :desktop="desktop" :collapsed="collapsed" @toggle="toggleCollapsed" />
+  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-management-sidebar': desktopSidebar }">
+    <ManagementSidebar v-if="showSidebar" ref="sidebar" mobile-only :desktop="desktop" />
     <WorkbenchHeader :sidebar-layout="desktopSidebar" :tonal-surface="showSidebar" :managed-sidebar="showSidebar" :sidebar-open="sidebar?.opened" :sidebar-controls="sidebar?.drawerID" @toggle-sidebar="sidebar?.toggleDrawer($event)" @logout="$emit('logout')" />
     <div class="management-shell">
       <main :class="contentClass || (desktopSidebar ? 'max-w-[1600px]' : 'max-w-7xl')" class="workbench-content management-content mx-auto w-full min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">

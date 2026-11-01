@@ -13,7 +13,7 @@ import { useManagementSidebar } from '../composables/useManagementSidebar'
 
 const props = defineProps<{ overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string }>()
 const emit = defineEmits<{ logout: []; toggleSidebar: [event: MouseEvent] }>()
-const { desktop, collapsed, toggleCollapsed } = useManagementSidebar()
+const { desktop } = useManagementSidebar()
 const desktopSidebar = computed(() => props.sidebarLayout || !props.managedSidebar && desktop.value)
 const navigationSidebar = ref<InstanceType<typeof ManagementSidebar>>()
 const navigationOpen = computed(() => props.managedSidebar ? !!props.sidebarOpen : !!navigationSidebar.value?.opened)
@@ -23,7 +23,6 @@ function toggleNavigation(event: MouseEvent) {
   if (props.managedSidebar) emit('toggleSidebar', event)
   else navigationSidebar.value?.toggleDrawer(event)
 }
-function toggleDesktopNavigation() { closePanels(); toggleCollapsed() }
 const route = useRoute()
 const notificationController = new AbortController()
 useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
@@ -167,7 +166,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
       </Transition>
     </div>
   </header>
-  <ManagementSidebar v-if="!managedSidebar && !sidebarLayout" ref="navigationSidebar" :desktop="desktop" :collapsed="collapsed" @toggle="toggleDesktopNavigation" />
+  <ManagementSidebar v-if="!managedSidebar && !sidebarLayout" ref="navigationSidebar" mobile-only :desktop="desktop" />
 </template>
 
 
@@ -267,7 +266,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .workbench-header.tonal-surface .top-link { text-shadow: none; }
 .workbench-header.tonal-surface .icon-button svg { filter: none; }
 .workbench-header.tonal-surface :is(a, button):focus-visible { outline-color: rgb(var(--color-accent)); }
-.workbench-header.with-management-sidebar { left: var(--management-sidebar-width); right: 0; width: auto; transition: left var(--management-sidebar-motion); }
+.workbench-header.with-management-sidebar { left: var(--management-sidebar-width); right: 0; width: auto; transition: none; }
 .with-management-sidebar :is(.header-background, .header-surface) { position: fixed; inset: 0 0 auto; height: var(--workbench-header-height); }
 .workbench-header.with-management-sidebar::after { position: fixed; inset: var(--workbench-header-height) 0 auto; }
 a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accent)); outline-offset: 3px; }
