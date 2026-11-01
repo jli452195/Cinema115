@@ -204,12 +204,6 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 	if settings["autoEnabled"] != false {
 		t.Fatal("关闭自动搜索失败", settings)
 	}
-	s.ValidateBot = func(id string, requireNotification bool) error {
-		if id != "follow-bot" || !requireNotification {
-			t.Fatalf("Bot 绑定校验参数错误：%q %v", id, requireNotification)
-		}
-		return nil
-	}
 	if err := db.SaveFollowSettings(ctx, model.FollowSettings{BaseURL: "http://old.example.com", TelegramEnabled: true, BotID: "follow-bot"}); err != nil {
 		t.Fatal(err)
 	}

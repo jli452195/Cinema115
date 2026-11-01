@@ -24,3 +24,10 @@ export interface TelegramBotConfig {
   connected: boolean
   lastError: string
 }
+
+export interface TelegramBotModule {
+  id: 'share_notifications' | 'cloud_download' | 'follow_notifications' | 'pool_notifications'
+  name: string
+  description: string
+  assignedBotId: string
+}

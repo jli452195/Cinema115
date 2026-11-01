@@ -460,8 +460,9 @@ func main() {
 		log.Fatal(err)
 	}
 	telegram.CloudDownloads = cloudDownloads
+	telegram.Follows = follows
+	telegram.Playback = memberPlayback
 	automation.ValidateBot = telegram.ValidateSelection
-	follows.ValidateBot = telegram.ValidateSelection
 	telegramMigrationCtx, telegramMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err = bot.MigrateLegacyBindings(telegramMigrationCtx, telegram.Profiles(), automation, database)
 	telegramMigrationCancel()

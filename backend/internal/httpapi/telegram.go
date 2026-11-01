@@ -71,6 +71,8 @@ func RegisterTelegramHub(admin *gin.RouterGroup, hub *bot.Hub, sinks ...*service
 			code = http.StatusNotFound
 		case errors.Is(err, bot.ErrBotChanged):
 			code = http.StatusConflict
+		case errors.Is(err, bot.ErrModuleAssigned), errors.Is(err, bot.ErrModuleChanged):
+			code = http.StatusConflict
 		case errors.Is(err, bot.ErrConfig):
 			code = http.StatusBadRequest
 		}
@@ -81,6 +83,38 @@ func RegisterTelegramHub(admin *gin.RouterGroup, hub *bot.Hub, sinks ...*service
 		c.JSON(code, gin.H{"error": err.Error()})
 	}
 	group.GET("/bots", func(c *gin.Context) { c.JSON(200, gin.H{"bots": hub.List()}) })
+	group.GET("/modules", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		modules, err := hub.Modules(ctx)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"modules": modules})
+	})
+	group.PUT("/modules/:moduleID", func(c *gin.Context) {
+		var input struct {
+			BotID         *string `json:"botId"`
+			ExpectedBotID *string `json:"expectedBotId"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.BotID == nil || input.ExpectedBotID == nil {
+			fail(c, bot.ErrConfig)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		if err := hub.SetModule(ctx, c.Param("moduleID"), *input.ExpectedBotID, *input.BotID); err != nil {
+			fail(c, err)
+			return
+		}
+		modules, err := hub.Modules(ctx)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"modules": modules})
+	})
 	group.POST("/bots", func(c *gin.Context) {
 		var input struct {
 			Name string `json:"name"`
@@ -113,13 +147,16 @@ func RegisterTelegramHub(admin *gin.RouterGroup, hub *bot.Hub, sinks ...*service
 	})
 	group.DELETE("/bots/:botID", func(c *gin.Context) {
 		var input struct {
-			Revision uint64 `json:"revision"`
+			Revision       uint64 `json:"revision"`
+			ReleaseModules bool   `json:"releaseModules"`
 		}
 		if c.ShouldBindJSON(&input) != nil || input.Revision == 0 {
 			fail(c, bot.ErrConfig)
 			return
 		}
-		if err := hub.Delete(c.Param("botID"), input.Revision); err != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		if err := hub.DeleteWithModules(ctx, c.Param("botID"), input.Revision, input.ReleaseModules); err != nil {
 			fail(c, err)
 			return
 		}

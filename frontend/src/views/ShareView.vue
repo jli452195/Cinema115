@@ -9,9 +9,6 @@ import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
 import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
 import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
-import TelegramBotSelect from '../components/TelegramBotSelect.vue'
-import { telegramRequest } from '../lib/telegram-api'
-import type { TelegramBotConfig } from '../types/telegramBots'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
 import { validSTRMDirectory as validDirectory, strmDirectoryPath as resolvedDirectory, strmDirectoryName as directoryName } from '../utils/strmDirectory'
 
@@ -23,7 +20,6 @@ const passwordExpanded = ref(false)
 let parsedShareURL = ''
 const accounts = ref<P115Account[]>([])
 const accountId = ref('')
-const bots = ref<TelegramBotConfig[]>([])
 const botId = ref('')
 const telegramEnabled = ref(false)
 const tabs = [
@@ -139,7 +135,6 @@ async function saveAutomation() {
   try {
     if (!validDirectory(outputDir.value)) throw new Error('请选择 STRM 生成目录')
     if (!accounts.value.some(account => account.primary && account.id === accountId.value && account.configured)) throw new Error('请先在 115 助手中登录主账号')
-    if (telegramEnabled.value && !bots.value.some(bot => bot.id === botId.value && bot.configured && bot.enabled && bot.notificationChatID)) throw new Error('请先选择已启用且配置了通知聊天的 Telegram Bot')
     if (!Number.isInteger(tgBatchWaitSeconds.value) || tgBatchWaitSeconds.value < 0 || tgBatchWaitSeconds.value > 300) throw new Error('批次收集等待应为 0～300 秒的整数')
     const data = await request('automation-config', { accountId: accountId.value, botId: botId.value, telegramEnabled: telegramEnabled.value, tgBatchWaitSeconds: tgBatchWaitSeconds.value, reshareEnabled: reshareEnabled.value, fixedSharePassword: fixedSharePassword.value.trim(), reviewRetryEnabled: reviewRetryEnabled.value, reviewRetryMinutes: reviewRetryMinutes.value, reviewRetryMax: reviewRetryMax.value, generation: settings() })
     accountId.value = data.settings.accountId ?? ''
@@ -261,10 +256,9 @@ watch([shareURL, password, startCID], () => { files.value = []; browsed.value = 
 onMounted(async () => {
   controller = new AbortController()
   try {
-    const [config, automation, accountData, botData] = await Promise.all([request('generation-config'), request('automation-config'), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: controller.signal }), telegramRequest<{ bots: TelegramBotConfig[] }>(props.token, 'bots', { signal: controller.signal })])
+    const [config, automation, accountData] = await Promise.all([request('generation-config'), request('automation-config'), p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: controller.signal })])
     if (!mounted) return
     accounts.value = accountData.accounts
-    bots.value = botData.bots
     accountId.value = automation.settings.accountId ?? ''
     botId.value = automation.settings.botId ?? ''
     telegramEnabled.value = automation.settings.telegramEnabled ?? false
@@ -377,16 +371,12 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                   </div>
 
                   <div class="space-y-1.5">
-                    <div class="automation-row">
-                      <SettingSwitch v-model="telegramEnabled" label="启用 Telegram Bot" class="automation-switch" />
-                      <div class="share-bot-select min-w-0 basis-full sm:flex-1 sm:basis-0"><TelegramBotSelect id="share-bot" v-model="botId" :bots="bots" :required="telegramEnabled" /></div>
-                      <RouterLink to="/telegram/bot" class="settings-link">管理 Bot</RouterLink>
-                    </div>
+                    <div class="automation-row"><strong class="text-sm font-medium text-slate-700 dark:text-slate-300">分享 Bot 功能</strong><RouterLink to="/telegram/bot" class="settings-link">管理与分配</RouterLink></div>
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p class="settings-help">由所选 Bot 接收分享链接，并将生成结果发送到该 Bot 的通知聊天。</p>
-                      <span class="rounded-full px-2 py-0.5 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'">{{ botConfigured ? '已配置接收器' : '未启用' }}</span>
+                      <p class="settings-help">在 Bot 配置页分配“分享入口与结果通知”，并在那里控制启停。</p>
+                      <span class="rounded px-2 py-0.5 text-xs" :class="botConfigured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'">{{ botConfigured ? '功能可用' : telegramEnabled ? 'Bot 未就绪' : '功能未启用' }}</span>
                     </div>
-                    <details class="settings-details"><summary>Bot 使用说明</summary><p>{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在「Telegram 配置」中填写 Bot Token、允许的聊天 ID，并启用消息接收。' }}修改本页设置后，点击「保存设置」使其对 Bot 生效。<button type="button" class="settings-link ml-1" @click="$emit('openTelegram')">打开 Telegram 配置</button></p></details>
+                    <details class="settings-details"><summary>Bot 使用说明</summary><p>{{ botConfigured ? '在允许的聊天中，一条消息可发送多个 115 分享链接，建议每行一个。Bot 按保存的设置逐条处理并回复结果，单条失败继续下一条。' : '在 Telegram Bot 配置中填写 Token 和允许的聊天 ID，再将分享功能分配给该 Bot。' }} Bot 绑定与启停在<a href="/telegram/bot" class="settings-link ml-1">Bot 配置</a>中统一管理。</p></details>
                   </div>
                 </div>
                 <div class="settings-grid">

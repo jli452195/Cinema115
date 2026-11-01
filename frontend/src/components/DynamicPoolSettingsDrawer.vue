@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue'
+import { RouterLink } from 'vue-router'
 import { memberRequest } from '../types/memberPlayback'
 import type { DynamicPoolSettings } from '../types/dynamicPool'
-import { telegramRequest } from '../lib/telegram-api'
-import type { TelegramBotConfig } from '../types/telegramBots'
 import P115SidePanel from './P115SidePanel.vue'
 import P115ActionDialog from './P115ActionDialog.vue'
 import P115Icon from './P115Icon.vue'
@@ -13,8 +12,8 @@ const emit = defineEmits<{ close: []; saved: [settings: DynamicPoolSettings] }>(
 // A mounted drawer owns its draft. Polling changes the parent's snapshot, never this form.
 const baseline = JSON.stringify(props.settings), draft = ref({ ...props.settings })
 const dirty = computed(() => JSON.stringify(draft.value) !== baseline)
-const busy = ref(false), discard = ref(false), error = ref(''), botError = ref(''), botsLoading = ref(true)
-const bots = ref<TelegramBotConfig[]>([]), formID = useId(), controller = new AbortController()
+const busy = ref(false), discard = ref(false), error = ref('')
+const formID = useId(), controller = new AbortController()
 const form = ref<HTMLFormElement>()
 type FieldKey = Exclude<keyof DynamicPoolSettings, 'notificationBotId'>
 const groups: { title: string; icon: 'pool' | 'clock' | 'settings'; fields: { key: FieldKey; label: string; min: number; max: number; hint: string }[] }[] = [
@@ -34,12 +33,6 @@ const groups: { title: string; icon: 'pool' | 'clock' | 'settings'; fields: { ke
 ]
 function close() { if (!busy.value) { if (dirty.value) discard.value = true; else emit('close') } }
 async function discardChanges() { discard.value = false; await nextTick(); emit('close') }
-async function loadBots() {
-  botsLoading.value = true; botError.value = ''
-  try { bots.value = (await telegramRequest<{ bots: TelegramBotConfig[] }>(props.token, 'bots', { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) })).bots || [] }
-  catch (e) { if (!controller.signal.aborted) botError.value = e instanceof Error ? e.message : '通知配置读取失败' }
-  finally { botsLoading.value = false }
-}
 async function save() {
   if (busy.value || !dirty.value) return
   error.value = ''
@@ -56,7 +49,6 @@ async function save() {
   } catch (e) { if (!controller.signal.aborted) error.value = e instanceof Error ? e.message : '保存失败，请重试' }
   finally { busy.value = false }
 }
-onMounted(loadBots)
 onBeforeUnmount(() => controller.abort())
 </script>
 <template>
@@ -69,18 +61,13 @@ onBeforeUnmount(() => controller.abort())
             <input v-model.number="draft[field.key]" :name="field.key" :aria-label="field.label" type="number" required step="1" :min="field.min" :max="field.max" :aria-describedby="formID + '-' + field.key" class="mt-1.5 block h-10 w-full rounded-lg border border-slate-200 bg-transparent px-3 text-sm dark:border-slate-600" />
             <small :id="formID + '-' + field.key" class="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{{ field.hint }}</small>
           </label>
-          <label v-if="index === 2" class="col-span-full block text-xs leading-5">池健康通知
-            <select v-model="draft.notificationBotId" aria-label="池健康通知" :disabled="botsLoading" class="mt-1.5 block h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900">
-              <option value="">关闭外部通知</option>
-              <option v-if="draft.notificationBotId && !bots.some(b => b.id === draft.notificationBotId)" :value="draft.notificationBotId" disabled>{{ botsLoading || botError ? '保留当前 Bot 配置' : '原 Bot 配置不可用' }}</option>
-              <option v-for="bot in bots" :key="bot.id" :value="bot.id" :disabled="!bot.enabled || !bot.configured || !bot.notificationChatID">{{ bot.name }}</option>
-            </select>
-            <small class="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">仅可选择已启用、已配置且有通知会话的 Telegram Bot。</small>
-          </label>
+          <div v-if="index === 2" class="col-span-full rounded-lg border border-slate-200 px-3 py-2.5 dark:border-slate-700">
+            <p class="text-xs font-medium text-slate-700 dark:text-slate-300">池健康通知由 Bot 功能模块管理</p>
+            <p class="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">Bot 分配与启停不在此表单中修改。<RouterLink to="/telegram/bot" class="text-blue-600 dark:text-blue-400">打开 Bot 配置</RouterLink></p>
+          </div>
         </div>
         <p v-if="index === 0" class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">降低上限不会主动结束已有会话；当前占用达到上限时限制新的名额分配。</p>
       </fieldset>
-      <div v-if="botError" class="mt-4 text-xs text-amber-700 dark:text-amber-300"><p role="alert">通知配置读取失败：{{ botError }}。当前选择将保留。</p><button type="button" :disabled="botsLoading || busy" class="mt-1 text-blue-600 dark:text-blue-400" @click="loadBots">重试读取通知配置</button></div>
       <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}</p>
     </form>
     <template #footer>

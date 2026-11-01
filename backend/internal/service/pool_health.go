@@ -15,6 +15,9 @@ func (s *MemberPlaybackService) configurePoolRequests() {
 	s.PoolRequests.CoolUntil(s.Pool.CoolingUntil())
 }
 func (s *MemberPlaybackService) ConfigurePool(ctx context.Context, c model.PlaybackPoolSettings) error {
+	// The pool form edits capacity and timing only. Bot ownership is managed by
+	// the Telegram module page and is preserved under the pool's write lock.
+	c.NotificationBotID = s.Pool.Settings().NotificationBotID
 	if c.NotificationBotID != "" && (s.ValidatePoolNotifier == nil) {
 		return memberError("通知服务未配置")
 	}
@@ -23,7 +26,7 @@ func (s *MemberPlaybackService) ConfigurePool(ctx context.Context, c model.Playb
 			return err
 		}
 	}
-	if err := s.Pool.Configure(ctx, c); err != nil {
+	if err := s.Pool.ConfigureOptions(ctx, c); err != nil {
 		return err
 	}
 	s.configurePoolRequests()

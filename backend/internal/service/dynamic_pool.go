@@ -107,6 +107,31 @@ func (p *DynamicPool) Configure(ctx context.Context, s model.PlaybackPoolSetting
 	d.Settings = s
 	return p.save(ctx, d)
 }
+
+// ConfigureOptions preserves the notification Bot; assignment is managed by
+// the Telegram module page rather than this broader pool settings form.
+func (p *DynamicPool) ConfigureOptions(ctx context.Context, s model.PlaybackPoolSettings) error {
+	if err := validatePoolSettings(s); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	d := p.clone()
+	s.NotificationBotID = d.Settings.NotificationBotID
+	d.Settings = s
+	return p.save(ctx, d)
+}
+
+func (p *DynamicPool) BindNotificationBot(ctx context.Context, expected, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.doc.Settings.NotificationBotID != expected {
+		return errors.New("播放池通知 Bot 已发生变化，请刷新后重试")
+	}
+	d := p.clone()
+	d.Settings.NotificationBotID = id
+	return p.save(ctx, d)
+}
 func (p *DynamicPool) SetMode(ctx context.Context, id, mode string) error {
 	if mode != "enabled" && mode != "draining" && mode != "disabled" {
 		return memberError("池账号状态无效")

@@ -83,19 +83,38 @@ func validateFollowBaseURL(value string) (string, error) {
 }
 
 func (s *FollowService) SaveSettings(ctx context.Context, value model.FollowSettings) error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	current, err := s.Store.FollowSettings(ctx)
+	if err != nil {
+		return err
+	}
+	// Bot ownership is managed by the Telegram module page. A stale settings
+	// form must not move or disable that assignment.
+	value.BotID, value.TelegramEnabled = current.BotID, current.TelegramEnabled
+	return s.saveSettingsLocked(ctx, value)
+}
+
+func (s *FollowService) BindTelegramBot(ctx context.Context, expected, id string) error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	current, err := s.Store.FollowSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if current.BotID != expected {
+		return errors.New("追更通知 Bot 已发生变化，请刷新后重试")
+	}
+	current.BotID, current.TelegramEnabled = id, id != ""
+	return s.Store.SaveFollowSettings(ctx, current)
+}
+
+func (s *FollowService) saveSettingsLocked(ctx context.Context, value model.FollowSettings) error {
 	baseURL, err := validateFollowBaseURL(value.BaseURL)
 	if err != nil {
 		return err
 	}
 	value.BaseURL = baseURL
-	if value.TelegramEnabled {
-		if s.ValidateBot == nil {
-			return fmt.Errorf("%w：Telegram Bot 校验服务尚未初始化", ErrFollowInput)
-		}
-		if err := s.ValidateBot(value.BotID, true); err != nil {
-			return fmt.Errorf("%w：%v", ErrFollowInput, err)
-		}
-	}
 	if value.AutoEnabled {
 		if s.GenerationSettings == nil {
 			return fmt.Errorf("%w：115分享STRM 服务尚未初始化", ErrFollowInput)

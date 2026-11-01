@@ -206,6 +206,54 @@ func (p *BotProfiles) Update(profile BotProfile, revision uint64) error {
 	return ErrBotMissing
 }
 
+// BindCloudDownload moves the single cloud-download assignment in one profile
+// document commit, leaving each Bot's own account and destination untouched.
+func (p *BotProfiles) BindCloudDownload(expectedOwnerID, targetBotID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	value := p.copy()
+	ownerIndex, targetIndex := -1, -1
+	for i, profile := range value.Profiles {
+		if profile.CloudDownload.Enabled {
+			if ownerIndex >= 0 {
+				return fmt.Errorf("%w：磁力转存存在多个 Bot 归属", ErrConfig)
+			}
+			ownerIndex = i
+		}
+		if profile.ID == targetBotID && targetBotID != "" {
+			targetIndex = i
+		}
+	}
+
+	actualOwnerID := ""
+	if ownerIndex >= 0 {
+		actualOwnerID = value.Profiles[ownerIndex].ID
+	}
+	if actualOwnerID != expectedOwnerID {
+		return ErrModuleChanged
+	}
+	if targetBotID != "" && targetIndex < 0 {
+		return ErrBotMissing
+	}
+	if actualOwnerID == targetBotID {
+		return nil
+	}
+
+	if ownerIndex >= 0 {
+		profile := value.Profiles[ownerIndex]
+		profile.CloudDownload.Enabled = false
+		profile.Revision++
+		value.Profiles[ownerIndex] = profile
+	}
+	if targetIndex >= 0 {
+		profile := value.Profiles[targetIndex]
+		profile.CloudDownload.Enabled = true
+		profile.Revision++
+		value.Profiles[targetIndex] = profile
+	}
+	return p.commit(value)
+}
+
 func (p *BotProfiles) Delete(id string, revision uint64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

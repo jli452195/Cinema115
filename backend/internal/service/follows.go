@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
@@ -22,6 +23,7 @@ type FollowLibrary interface {
 	Matches(context.Context, []model.EmbyMatch, bool) ([]model.EmbyMatch, error)
 }
 type FollowService struct {
+	settingsMu         sync.Mutex
 	Store              *storage.Store
 	TMDB               FollowDetails
 	Library            FollowLibrary
@@ -30,7 +32,6 @@ type FollowService struct {
 	ResourceMatcher    ResourceMatcher
 	ShareRuns          *ShareRuns
 	GenerationSettings *AutomationStore
-	ValidateBot        func(string, bool) error
 	Logs               *GenerationLogs
 }
 

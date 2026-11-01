@@ -16,6 +16,7 @@ import (
 // Hub 管理 Bot 配置库及运行实例。每个 Bot 最多启动一个 getUpdates 消费者。
 type Hub struct {
 	mu             sync.RWMutex
+	moduleMu       sync.Mutex
 	profiles       *BotProfiles
 	dataDir        string
 	generator      ShareGenerator
@@ -25,6 +26,8 @@ type Hub struct {
 	Logs           *service.GenerationLogs
 	Notifications  NotificationStore
 	CloudDownloads *service.CloudDownloadService
+	Follows        *service.FollowService
+	Playback       *service.MemberPlaybackService
 }
 
 func NewHub(dataDir, secret string, generator ShareGenerator, settings *service.AutomationStore) (*Hub, error) {
@@ -121,6 +124,8 @@ func normalizeBotProfile(profile BotProfile) (BotProfile, error) {
 }
 
 func (h *Hub) Update(ctx context.Context, input BotProfile, revision uint64) error {
+	h.moduleMu.Lock()
+	defer h.moduleMu.Unlock()
 	current, err := h.profiles.Get(input.ID)
 	if err != nil {
 		return err
@@ -128,25 +133,11 @@ func (h *Hub) Update(ctx context.Context, input BotProfile, revision uint64) err
 	if input.Token == "" {
 		input.Token = current.Token
 	}
+	// Bot profile edits cannot change the cloud-download module assignment.
+	input.CloudDownload.Enabled = current.CloudDownload.Enabled
 	input, err = normalizeBotProfile(input)
 	if err != nil {
 		return err
-	}
-	if input.CloudDownload.Enabled {
-		if !input.Enabled {
-			return fmt.Errorf("%w：请先启用 Bot，再启用磁力转存", ErrConfig)
-		}
-		if h.CloudDownloads == nil {
-			return fmt.Errorf("%w：云下载服务尚未初始化", ErrConfig)
-		}
-		if err := h.CloudDownloads.ValidateConfig(input.CloudDownload.ServiceConfig()); err != nil {
-			return fmt.Errorf("%w：%s", ErrConfig, err.Error())
-		}
-		account, err := h.CloudDownloads.Accounts.Primary(input.CloudDownload.AccountID)
-		if err != nil {
-			return err
-		}
-		input.CloudDownload.AccountID = account.ID
 	}
 	input.Identity = current.Identity
 	for _, other := range h.profiles.List() {
@@ -214,8 +205,7 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	runtimes := make(map[string]*Manager, len(profiles))
 	for _, profile := range profiles {
 		if profile.Enabled && profile.Token != "" {
-			receive := profile.ID == receiverID || profile.CloudDownload.Enabled
-			runtimes[profile.ID] = h.newManager(profile, receive)
+			runtimes[profile.ID] = h.newManager(profile, profile.ID == receiverID)
 		}
 	}
 	h.mu.Lock()
@@ -230,7 +220,8 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	for id, runtime := range runtimes {
 		wg.Add(1)
 		go func(m *Manager) { defer wg.Done(); m.RunNotifications(workerCtx) }(runtime)
-		if id == receiverID {
+		profile, _ := h.profiles.Get(id)
+		if pollsMessages(profile, receiverID) {
 			wg.Add(1)
 			go func(m *Manager) {
 				defer wg.Done()
@@ -249,6 +240,10 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+func pollsMessages(profile BotProfile, receiverID string) bool {
+	return profile.ID == receiverID || profile.CloudDownload.Enabled
 }
 
 func (h *Hub) Run(ctx context.Context) error {
@@ -346,14 +341,12 @@ func (h *Hub) Add(name string) (string, error) {
 }
 
 func (h *Hub) Delete(id string, revision uint64) error {
-	err := h.profiles.Delete(id, revision)
-	if err == nil {
-		h.Refresh()
-	}
-	return err
+	return h.DeleteWithModules(context.Background(), id, revision, false)
 }
 
 func (h *Hub) ClearToken(id string, revision uint64) error {
+	h.moduleMu.Lock()
+	defer h.moduleMu.Unlock()
 	profile, err := h.profiles.Get(id)
 	if err != nil {
 		return err

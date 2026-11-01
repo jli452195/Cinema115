@@ -29,6 +29,7 @@ type AutomationSettings struct {
 }
 
 type AutomationStore struct {
+	moduleMu  sync.Mutex
 	PrimaryID func() string
 	// 启动时装配，保存时校验账号配置，不在读取旧设置时阻止服务启动。
 	ValidateAccount func(string) error
@@ -198,8 +199,31 @@ func (s *AutomationStore) Save(value AutomationSettings) error {
 // SaveShare updates sharing options without changing another feature's
 // directory or its owning account. The share API cannot set that directory.
 func (s *AutomationStore) SaveShare(value AutomationSettings) error {
+	s.moduleMu.Lock()
+	defer s.moduleMu.Unlock()
+	s.mu.RLock()
+	value.BotID, value.TelegramEnabled = s.value.BotID, s.value.TelegramEnabled
+	s.mu.RUnlock()
 	value.ParentCID, value.ParentPath = "0", "/"
 	return s.save(value, true)
+}
+
+// BindTelegramBot changes only the share-notification Bot binding.
+func (s *AutomationStore) BindTelegramBot(expected, id string) error {
+	s.moduleMu.Lock()
+	defer s.moduleMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.value.BotID != expected {
+		return errors.New("分享通知 Bot 已发生变化，请刷新后重试")
+	}
+	value := s.value
+	value.BotID, value.TelegramEnabled = id, id != ""
+	if err := writeAutomationJSON(s.path, value); err != nil {
+		return err
+	}
+	s.value = value
+	return nil
 }
 
 func (s *AutomationStore) save(value AutomationSettings, shareOnly bool) error {
@@ -237,7 +261,7 @@ func (s *AutomationStore) save(value AutomationSettings, shareOnly bool) error {
 			return err
 		}
 	}
-	if value.TelegramEnabled {
+	if value.TelegramEnabled && !shareOnly {
 		if s.ValidateBot == nil {
 			return generationInputError("Telegram Bot 校验服务尚未初始化")
 		}
