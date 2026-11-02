@@ -10,6 +10,7 @@ require github.com/joho/godotenv v1.5.1
 
 require (
 	github.com/anacrolix/torrent v1.56.1
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gotd/td v0.110.0
 	github.com/pierrec/lz4/v4 v4.1.22
 	golang.org/x/net v0.29.0

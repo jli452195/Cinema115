@@ -50,9 +50,10 @@ type MediaOrganizeCleanup struct {
 	At          time.Time `json:"at"`
 }
 type MediaOrganizeState struct {
-	Rules       []MediaOrganizeRule `json:"rules"`
-	Active      bool                `json:"active"`
-	ActiveRules []string            `json:"activeRules"`
+	Rules       []MediaOrganizeRule                   `json:"rules"`
+	Active      bool                                  `json:"active"`
+	ActiveRules []string                              `json:"activeRules"`
+	Monitoring  map[string]MediaOrganizeMonitorStatus `json:"monitoring"`
 }
 type MediaOrganizeActivity struct {
 	RunID    string    `json:"runId"`
@@ -181,6 +182,14 @@ func (s *MediaOrganizer) State() MediaOrganizeState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Active: s.active != "" || len(s.actions) > 0, ActiveRules: []string{}}
+	state.Monitoring = make(map[string]MediaOrganizeMonitorStatus, len(s.localMonitors))
+	for _, rule := range s.doc.Rules {
+		if rule.Enabled && rule.Storage == "local" {
+			if local := s.localMonitors[rule.ID]; local != nil && mediaSameWatchRule(local.rule, rule) {
+				state.Monitoring[rule.ID] = local.status
+			}
+		}
+	}
 	for _, run := range s.doc.Runs {
 		if mediaRunActive(run.Status) || s.busyRunLocked(run.ID) {
 			state.ActiveRules = append(state.ActiveRules, run.Rule.ID)

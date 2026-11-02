@@ -118,10 +118,25 @@ type MediaOrganizer struct {
 	persistErr     error
 	actions        map[string]string
 	wake           chan struct{}
+	monitorWake    chan struct{}
+	monitorRunning bool
+	localMonitors  map[string]*mediaLocalRuntime
+	monitorOptions mediaLocalMonitorOptions
 }
 
 func (s *MediaOrganizer) persistLocked(changed ...string) error {
 	return s.persistSQLiteLocked(changed)
+}
+
+func (s *MediaOrganizer) persistMonitorRulesLocked(changed ...string) error {
+	err := s.persistLocked(changed...)
+	if err == nil {
+		select {
+		case s.monitorWake <- struct{}{}:
+		default:
+		}
+	}
+	return err
 }
 
 func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
@@ -177,7 +192,7 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 			}
 			old.Enabled = rule.Enabled
 			s.doc.Rules[i] = old
-			err := s.persistLocked()
+			err := s.persistMonitorRulesLocked()
 			s.mu.Unlock()
 			return old, err
 		}
@@ -263,7 +278,7 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 			return rule, ErrMediaOrganizeInput
 		}
 	}
-	return rule, s.persistLocked()
+	return rule, s.persistMonitorRulesLocked()
 }
 
 func (s *MediaOrganizer) DeleteRule(id string) error {
@@ -285,7 +300,7 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 				}
 			}
 			s.doc.Runs = runs
-			return s.persistLocked(removed...)
+			return s.persistMonitorRulesLocked(removed...)
 		}
 	}
 	return ErrMediaOrganizeInput
@@ -380,6 +395,22 @@ func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 }
 
 func (s *MediaOrganizer) Run(ctx context.Context) error {
+	monitorCtx, stopMonitor := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.monitorRunning = true
+	s.monitorWake = make(chan struct{}, 1)
+	s.localMonitors = make(map[string]*mediaLocalRuntime)
+	s.mu.Unlock()
+	var monitors sync.WaitGroup
+	monitors.Add(1)
+	go func() { defer monitors.Done(); s.runLocalMonitor(monitorCtx) }()
+	defer func() {
+		stopMonitor()
+		monitors.Wait()
+		s.mu.Lock()
+		s.monitorRunning = false
+		s.mu.Unlock()
+	}()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	s.notify()
@@ -388,10 +419,10 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := s.schedule(); err != nil {
-				return err
-			}
 		case <-s.wake:
+		}
+		if err := s.schedule(); err != nil {
+			return err
 		}
 		for ctx.Err() == nil {
 			s.mu.Lock()
@@ -428,6 +459,7 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 			err := s.process(work, &run, action)
 			cancel()
 			if err != nil {
+				s.retryLocalScan(run.Rule, err)
 				run.Status = "failed"
 				run.Message = err.Error()
 				if saveErr := s.checkpoint(&run); saveErr != nil {
@@ -444,8 +476,23 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 func (s *MediaOrganizer) schedule() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.localMonitorSettings().now()
 	for _, rule := range s.doc.Rules {
-		if !rule.Enabled || time.Since(rule.LastScan) < time.Duration(rule.IntervalMinutes)*time.Minute {
+		if !rule.Enabled {
+			continue
+		}
+		var local *mediaLocalRuntime
+		fallback := now.Sub(rule.LastScan) >= time.Duration(rule.IntervalMinutes)*time.Minute
+		if rule.Storage == "local" && s.monitorRunning {
+			local = s.localMonitors[rule.ID]
+			if local == nil || !local.initialized {
+				continue
+			}
+			fallback = local.status.LastFallbackAt.IsZero() || now.Sub(local.status.LastFallbackAt) >= time.Duration(rule.IntervalMinutes)*time.Minute
+			if !fallback && !mediaMonitorDue(local.dirtyDue, now) && !mediaMonitorDue(local.settleDue, now) && !mediaMonitorDue(local.retryDue, now) {
+				continue
+			}
+		} else if !fallback {
 			continue
 		}
 		pending := false
@@ -456,8 +503,25 @@ func (s *MediaOrganizer) schedule() error {
 			}
 		}
 		if !pending {
-			if _, err := s.queueScanLocked(rule); err != nil && !errors.Is(err, ErrMediaOrganizeBusy) && !errors.Is(err, ErrClassificationUnavailable) {
-				return err
+			if _, err := s.queueScanLocked(rule); err != nil {
+				if !errors.Is(err, ErrMediaOrganizeBusy) && !errors.Is(err, ErrClassificationUnavailable) {
+					return err
+				}
+				continue
+			}
+			if local != nil {
+				if fallback {
+					local.status.LastFallbackAt = now
+				}
+				if mediaMonitorDue(local.dirtyDue, now) {
+					local.dirtyDue, local.dirtyFirst = time.Time{}, time.Time{}
+				}
+				if mediaMonitorDue(local.settleDue, now) {
+					local.settleDue = time.Time{}
+				}
+				if mediaMonitorDue(local.retryDue, now) {
+					local.retryDue = time.Time{}
+				}
 			}
 		}
 	}

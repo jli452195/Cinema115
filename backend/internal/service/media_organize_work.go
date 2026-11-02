@@ -27,6 +27,12 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 			return err
 		}
 		mediaDiscardOrphanSidecars(files, run, files.scanned)
+		if err = files.recheckLocalCompanions(ctx, run); err != nil {
+			return err
+		}
+		if run.Rule.Storage == "local" {
+			s.localScanSucceeded(run.Rule)
+		}
 	} else if action == "retry" {
 		if err = s.recognize(ctx, run); err != nil {
 			return err
@@ -74,6 +80,9 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 	}
 	entries, err := files.scan(ctx)
 	if err != nil {
+		if run.Rule.Storage == "local" {
+			return &mediaLocalScanError{err}
+		}
 		return err
 	}
 	files.scanned = entries

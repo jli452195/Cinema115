@@ -12,6 +12,7 @@
     "test:organize-workspace-ui": "node scripts/organize-workspace-ui.cjs",
     "test:media-organize-ui": "node scripts/media-organize-ui.cjs",
     "test:media-local-directories-ui": "node scripts/media-local-directories-ui.cjs",
+    "test:media-monitor-ui": "node scripts/media-monitor-ui.cjs",
     "test:media-organize-history-ui": "node scripts/media-organize-history-ui.cjs",
     "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",

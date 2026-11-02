@@ -20,20 +20,28 @@ type mediaOrganizeDrive interface {
 }
 
 type mediaOrganizeFiles struct {
-	rule           MediaOrganizeRule
-	drive          OrganizeDrive
-	cookie         string
-	lists          map[string][]p115.ShareFile
-	unrelated      []MediaOrganizeEntry
-	directories    []MediaOrganizeEntry
-	scanned        []MediaOrganizeEntry
-	localSnapshots map[string]os.FileInfo
-	settlingVideos map[string]bool
-	failureChecked bool
+	rule            MediaOrganizeRule
+	drive           OrganizeDrive
+	cookie          string
+	lists           map[string][]p115.ShareFile
+	unrelated       []MediaOrganizeEntry
+	directories     []MediaOrganizeEntry
+	scanned         []MediaOrganizeEntry
+	localSnapshots  map[string]os.FileInfo
+	settlingVideos  map[string]bool
+	failureChecked  bool
+	localReady      func(string, os.FileInfo) bool
+	localPrune      func(map[string]bool, time.Time)
+	localCandidates []OrganizeFile
+	localPending    map[string]bool
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {
 	f := &mediaOrganizeFiles{rule: rule, drive: s.drive, lists: make(map[string][]p115.ShareFile)}
+	if rule.Storage == "local" && rule.Enabled {
+		f.localReady = s.localTaskReadiness(rule)
+		f.localPrune = func(seen map[string]bool, started time.Time) { s.pruneLocalObservations(rule, seen, started) }
+	}
 	if rule.Storage == "115" {
 		drive, ok := s.drive.(mediaOrganizeDrive)
 		if !ok || rule.AccountID == "" {
@@ -157,7 +165,12 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		if _, err = mediaLocalRoot(f.rule.Target); err != nil {
 			return nil, err
 		}
-		dirs := 0
+		dirs, fileCount := 0, 0
+		seen := make(map[string]bool)
+		started := time.Now()
+		pending := make(map[string]bool)
+		f.localPending = pending
+		f.localCandidates = make([]OrganizeFile, 0, 128)
 		err = filepath.WalkDir(root, func(full string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -173,6 +186,25 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return err
 			}
 			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			if !entry.IsDir() {
+				fileCount++
+				if fileCount > 5000 {
+					return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
+				}
+				seen[full] = true
+			}
+			if mediaTemporaryName(entry.Name()) {
+				f.settlingVideos[filepath.ToSlash(filepath.Dir(rel))] = true
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				candidate := mediaLocalCandidate(filepath.ToSlash(rel), mediaTemporaryBase(entry.Name()), 0)
+				if candidate.MediaType != "" {
+					f.localCandidates = append(f.localCandidates, candidate)
+					pending[candidate.ID] = true
+				}
 				return nil
 			}
 			if entry.IsDir() {
@@ -196,7 +228,17 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			if !info.Mode().IsRegular() {
 				return nil
 			}
-			if time.Since(info.ModTime()) < 30*time.Second {
+			candidate := mediaLocalCandidate(filepath.ToSlash(rel), entry.Name(), info.Size())
+			if candidate.MediaType != "" {
+				f.localCandidates = append(f.localCandidates, candidate)
+				f.localSnapshots[candidate.ID] = info
+			}
+			ready := time.Since(info.ModTime()) >= 30*time.Second
+			if f.localReady != nil {
+				ready = f.localReady(full, info)
+			}
+			if !ready || mediaLocalDownloadPending(full) {
+				pending[candidate.ID] = true
 				if mediaFileType(entry.Name()) == "video" {
 					f.settlingVideos[filepath.ToSlash(filepath.Dir(rel))] = true
 				}
@@ -214,6 +256,10 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		if err != nil {
 			return nil, fmt.Errorf("扫描本地目录: %w", err)
 		}
+		if f.localPrune != nil {
+			f.localPrune(seen, started)
+		}
+		out = f.holdLocalCompanions(out, pending)
 	} else {
 		visited := make(map[string]bool)
 		var walk func(string, string, int) error

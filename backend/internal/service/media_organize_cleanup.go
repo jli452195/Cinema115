@@ -27,6 +27,9 @@ var mediaRetainedExtensions = extensionSet("iso,vob,mts,m2v,mxf,flv,f4v,rm,ogv,d
 
 func mediaDiscardOrphanSidecars(f *mediaOrganizeFiles, run *MediaOrganizeRun, scanned []MediaOrganizeEntry) {
 	original := mediaEntryFiles(scanned)
+	if f.localCandidates != nil {
+		original = f.localCandidates
+	}
 	mediaValidateAttachmentOwners(run, original)
 	owners := make(map[string]string)
 	for _, sub := range organizeSubtitles(original) {

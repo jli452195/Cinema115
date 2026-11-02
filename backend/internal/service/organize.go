@@ -322,7 +322,16 @@ func organizeSubtitleMatcher(files []OrganizeFile) *mediafacts.SubtitleMatcher {
 }
 
 func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) (string, string) {
-	bestID, tail, longest := "", "", -1
+	owners, tail := organizeSubtitleCandidates(sub, files, matcher)
+	if len(owners) == 1 {
+		return owners[0], tail
+	}
+	return "", tail
+}
+
+func organizeSubtitleCandidates(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
+	var owners []string
+	tail, longest := "", -1
 	stem := []rune(strings.TrimSuffix(sub.Name, path.Ext(sub.Name)))
 	for _, video := range files {
 		if video.MediaType != "video" || video.ParentID != sub.ParentID {
@@ -334,18 +343,18 @@ func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *medi
 			continue
 		}
 		if n > longest {
-			bestID, tail, longest = video.ID, string(stem[n:]), n
+			owners, tail, longest = []string{video.ID}, string(stem[n:]), n
 		} else if n == longest {
-			bestID = ""
+			owners = append(owners, video.ID)
 		}
 	}
 	if longest < 0 {
-		owners, tail := matcher.Candidates(sub.ParentID, sub.Name)
-		if len(owners) == 1 {
-			return owners[0], tail
+		owners, tail = matcher.Candidates(sub.ParentID, sub.Name)
+		if len(owners) != 1 {
+			tail = ""
 		}
 	}
-	return bestID, tail
+	return owners, tail
 }
 
 func (s *OrganizeEngine) pruneLocked() {

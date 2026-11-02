@@ -420,19 +420,11 @@ func TestMediaOrganizerSourceRescanAndRollback(t *testing.T) {
 
 func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	s, metadata, store, rule := newMediaOrganizeTest(t)
+	s.monitorOptions = mediaMonitorTestOptions()
 	mediaTestFile(t, rule.Source, "Work.S01E01.strm", "http://unchanged/")
 	rule.Enabled = true
 	if _, err := s.SaveRule(rule); err != nil {
 		t.Fatal(err)
-	}
-	if err := s.schedule(); err != nil {
-		t.Fatal(err)
-	}
-	runID := s.doc.Runs[0].ID
-	lastScan := mediaTestState(s, 1).Rules[0].LastScan
-	rule.Enabled = false
-	if _, err := s.SaveRule(rule); err != nil {
-		t.Fatal("queued work must not prevent pausing", err)
 	}
 	started, release := make(chan struct{}, 1), make(chan struct{})
 	s.metadata = mediaWaitingRecognition{metadata, started, release}
@@ -455,6 +447,14 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("worker did not start")
 	}
+	s.mu.Lock()
+	runID := s.active
+	s.mu.Unlock()
+	lastScan := mediaTestState(s, 1).Rules[0].LastScan
+	rule.Enabled = false
+	if _, err := s.SaveRule(rule); err != nil {
+		t.Fatal("running work must not prevent pausing", err)
+	}
 	for _, enabled := range []bool{true, false} {
 		rule.Enabled = enabled
 		saved, err := s.SaveRule(rule)
@@ -474,6 +474,12 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	if saveErr == nil || mediaTestState(s, 1).Rules[0].Enabled {
 		t.Fatal("failed toggle must preserve the persisted pause", saveErr)
 	}
+	mediaMonitorWait(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, exists := s.localMonitors[rule.ID]
+		return !exists
+	})
 	close(release)
 	for ctx.Err() == nil {
 		run, err := s.Snapshot(runID)

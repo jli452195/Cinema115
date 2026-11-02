@@ -29,7 +29,7 @@ const gate = () => {
     let data = {}, status = 200
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
-    else if (endpoint === '/api/admin/media-organize') data = { rules: state.rules, active: state.active, activeRules: state.activeRules }
+    else if (endpoint === '/api/admin/media-organize') data = { rules: state.rules, active: state.active, activeRules: state.activeRules, monitoring: { [rule.id]: { mode: 'realtime' } } }
     else if (endpoint === '/api/admin/media-organize/history') {
       const q = (u.searchParams.get('q') || '').toLowerCase(), filter = u.searchParams.get('status') || 'all'
       const matches = state.records.filter(item => [item.title, item.name, item.source, item.target].some(value => value?.toLowerCase().includes(q)))
@@ -115,7 +115,7 @@ const gate = () => {
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
     await tab('整理规则').click()
     await page.getByRole('button', { name: '启用NAS 验收的目录监控', exact: true }).click()
-    await page.getByText('定时监控 · 每 5 分钟', { exact: true }).waitFor()
+    await page.getByText('实时监控 · 兜底每 5 分钟', { exact: true }).waitFor()
     rejectRuleSave = true
     await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '模拟保存失败' }).waitFor()
