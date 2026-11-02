@@ -21,20 +21,26 @@ const directory = ref<'source' | 'target' | 'failure'>(), deleting = ref<{ id: s
 const directoryTitle = computed(() => directory.value === 'source' ? '选择来源目录' : directory.value === 'target' ? '选择目标目录' : '选择整理失败目录')
 const leaveDialog = ref(false), editorSnapshot = ref('')
 const unsaved = computed(() => !!editor.value && ruleSignature(editor.value) !== editorSnapshot.value)
+const duplicateCleanup = computed({
+  get: () => editor.value?.deleteDuplicates === true,
+  set: value => { if (editor.value) editor.value.deleteDuplicates = value },
+})
 let leaveDecision: ((value: boolean) => void) | undefined
 const lifecycle = new AbortController()
 let timer: number | undefined, stateGeneration = 0
 const storageOptions = [{ value: 'local', label: 'NAS / 本地挂载' }, { value: '115', label: '115 主账号' }, { value: 'cd2', label: 'CloudDrive2' }]
 const storageLabels: Record<string, string> = { local: '本地挂载', '115': '115 主账号', cd2: 'CloudDrive2' }
 const directoryDescription = computed(() => editor.value?.storage === 'local' ? '选择或填写服务器／容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。' : editor.value?.storage === 'cd2' ? '使用 CloudDrive2 授权范围内的可写目录。来源与目标不能重叠，更换连接后需重新选择目录。' : '使用 115 主账号，来源与目标不能重叠。更换主账号后需重新选择目录。')
-function ruleSignature(rule: MediaRule) { return JSON.stringify([rule.name, rule.storage, rule.source, rule.target, rule.failure || '', rule.sourceId || '', rule.targetId || '', rule.failureId || '', rule.accountId || '', rule.connectionId || '', rule.connectionRevision || 0, rule.classify, rule.enabled, rule.intervalMinutes]) }
+function ruleSignature(rule: MediaRule) { return JSON.stringify([rule.name, rule.storage, rule.source, rule.target, rule.failure || '', rule.sourceId || '', rule.targetId || '', rule.failureId || '', rule.accountId || '', rule.connectionId || '', rule.connectionRevision || 0, rule.classify, rule.enabled, rule.intervalMinutes, rule.storage === 'cd2' ? rule.intervalSeconds || 20 : 0, rule.storage === 'cd2' && rule.deleteDuplicates === true]) }
 function monitoringLabel(rule: MediaRule) {
   if (!rule.enabled) return '监控已暂停'
-  if (rule.storage !== 'local') return `定时监控 · 每 ${rule.intervalMinutes} 分钟`
+  if (rule.storage !== 'local' && rule.storage !== 'cd2') return `定时监控 · 每 ${rule.intervalMinutes} 分钟`
+  const interval = rule.storage === 'cd2' ? `${rule.intervalSeconds || 20} 秒` : `${rule.intervalMinutes} 分钟`
+  const fallback = rule.storage === 'cd2' ? '补查' : '兜底'
   const mode = monitoring.value[rule.id]?.mode
-  if (mode === 'realtime') return `实时监控 · 兜底每 ${rule.intervalMinutes} 分钟`
-  if (mode === 'polling') return `轮询监控 · 每 ${rule.intervalMinutes} 分钟`
-  return `正在建立监听 · 兜底每 ${rule.intervalMinutes} 分钟`
+  if (mode === 'realtime') return `实时监控 · ${fallback}每 ${interval}`
+  if (mode === 'polling') return `轮询监控 · 每 ${interval}`
+  return `正在建立监听 · ${fallback}每 ${interval}`
 }
 async function request<T>(path = '', init: RequestInit = {}) { return mediaOrganizeRequest<T>(props.token, path, { ...init, signal: lifecycle.signal }) }
 async function refresh() {
@@ -56,9 +62,15 @@ async function act(name: string, fn: () => Promise<void>, dialog = false) {
 }
 function edit(rule?: MediaRule) {
   editor.value = rule ? { ...rule } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, enabled: false, intervalMinutes: 5 }
+  if (editor.value.storage === 'cd2') { editor.value.intervalSeconds ||= 20; editor.value.deleteDuplicates ??= false }
   editorSnapshot.value = ruleSignature(editor.value); dialogError.value = ''
 }
-function storageChanged() { if (editor.value) Object.assign(editor.value, { source: '', target: '', failure: '', sourceId: '', targetId: '', failureId: '', accountId: '', connectionId: '', connectionRevision: 0 }) }
+function storageChanged() {
+  if (!editor.value) return
+  Object.assign(editor.value, { source: '', target: '', failure: '', sourceId: '', targetId: '', failureId: '', accountId: '', connectionId: '', connectionRevision: 0 })
+  if (editor.value.storage === 'cd2') { editor.value.intervalSeconds ||= 20; editor.value.deleteDuplicates ??= false }
+  else { delete editor.value.intervalSeconds; delete editor.value.deleteDuplicates }
+}
 function clearFailure() { if (editor.value) { editor.value.failure = ''; editor.value.failureId = '' } }
 async function chooseDirectory(which: 'source' | 'target' | 'failure') {
   if (!editor.value || busy.value) return
@@ -139,13 +151,13 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
               <div class="mo-rule-name"><h3 :title="rule.name">{{ rule.name }}</h3><span>{{ storageLabels[rule.storage] || rule.storage }}</span></div>
               <div class="mo-rule-tools"><button class="mo-icon" :disabled="!!busy || activeRules.includes(rule.id)" :aria-label="`编辑${rule.name}`" @click="edit(rule)"><IconEdit :size="17" /></button><button class="mo-icon mo-rule-delete" :disabled="!!busy || activeRules.includes(rule.id)" :aria-label="`删除${rule.name}`" @click="deleting = { id: rule.id, name: rule.name }"><IconTrash :size="17" /></button></div>
             </header>
-            <div class="mo-rule-schedule" :class="{ 'is-enabled': rule.enabled, 'is-fallback': rule.enabled && rule.storage === 'local' && monitoring[rule.id]?.mode === 'polling' }" role="status" :aria-label="`${rule.name}监控状态`"><component :is="rule.enabled ? IconClock : IconPlayerPause" :size="14" aria-hidden="true" /><span>{{ monitoringLabel(rule) }}</span></div>
-            <p v-if="rule.enabled && rule.storage === 'local' && monitoring[rule.id]?.message" class="mo-rule-monitor-message">{{ monitoring[rule.id]?.message }}</p>
+            <div class="mo-rule-schedule" :class="{ 'is-enabled': rule.enabled, 'is-fallback': rule.enabled && (rule.storage === 'local' || rule.storage === 'cd2') && monitoring[rule.id]?.mode === 'polling' }" role="status" :aria-label="`${rule.name}监控状态`"><component :is="rule.enabled ? IconClock : IconPlayerPause" :size="14" aria-hidden="true" /><span>{{ monitoringLabel(rule) }}</span></div>
+            <p v-if="rule.enabled && (rule.storage === 'local' || rule.storage === 'cd2') && monitoring[rule.id]?.message" class="mo-rule-monitor-message">{{ monitoring[rule.id]?.message }}</p>
             <dl class="mo-rule-details">
               <div class="mo-rule-path"><dt><IconFolder class="mo-rule-source-icon" :size="16" aria-hidden="true" />来源</dt><dd><code :title="rule.source">{{ rule.source }}</code></dd></div>
               <div class="mo-rule-path"><dt><IconFolderCheck class="mo-rule-target-icon" :size="16" aria-hidden="true" />目标</dt><dd><code :title="rule.target">{{ rule.target }}</code></dd></div>
               <div class="mo-rule-path"><dt><IconFolderExclamation class="mo-rule-failure-icon" :size="16" aria-hidden="true" />失败目录</dt><dd><code v-if="rule.failure" :title="rule.failure">{{ rule.failure }}</code><span v-else class="mo-rule-unset">未设置，识别失败的视频留在来源</span></dd></div>
-              <div><dt><IconAdjustmentsHorizontal class="mo-rule-policy-icon" :size="16" aria-hidden="true" />整理策略</dt><dd>{{ rule.classify ? '按类型分类' : '使用目标目录' }}<span class="mo-rule-policy">不覆盖同名文件</span></dd></div>
+              <div><dt><IconAdjustmentsHorizontal class="mo-rule-policy-icon" :size="16" aria-hidden="true" />整理策略</dt><dd>{{ rule.classify ? '按类型分类' : '使用目标目录' }}<span class="mo-rule-policy">{{ rule.storage === 'cd2' && rule.deleteDuplicates ? '同名且 SHA1 相同删除来源' : '不覆盖同名文件' }}</span></dd></div>
               <div><dt><IconTrash class="mo-rule-cleanup-icon" :size="16" aria-hidden="true" />自动清理</dt><dd>{{ rule.storage === 'cd2' ? '无关文件、未归属字幕；保留目录' : '无关文件、未归属字幕及空目录' }}</dd></div>
             </dl>
             <footer class="mo-rule-actions">
@@ -167,10 +179,12 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
         <p class="mo-muted">{{ directoryDescription }}</p>
         <RouterLink v-if="editor.storage === 'cd2'" to="/resources/clouddrive2" class="mo-muted underline">配置 CloudDrive2 连接</RouterLink>
         <SettingSwitch v-model="editor.classify" label="按作品信息分类" description="根据作品信息及当前分类规则，在目标目录下生成分类子目录。" />
-        <SettingSwitch v-model="editor.enabled" label="启用监控" :description="editor.storage === 'local' ? '优先监听目录变化，文件稳定后整理，并定时补扫。保留临时下载文件，清理无关文件、未归属字幕和空文件夹；立即运行同样执行清理。' : editor.storage === 'cd2' ? '按设置间隔扫描并整理媒体及附件，清理无关文件与未归属字幕，保留目录；立即运行同样执行清理。' : '按设置间隔扫描并整理媒体及附件，删除无关文件（含压缩包）、未归属字幕和空文件夹；立即运行同样执行清理。'" />
-        <label v-if="editor.enabled">{{ editor.storage === 'local' ? '兜底扫描间隔（分钟）' : '扫描间隔（分钟）' }}<input v-model.number="editor.intervalMinutes" type="number" min="1" max="1440" required /></label>
+        <SettingSwitch v-if="editor.storage === 'cd2'" v-model="duplicateCleanup" label="自动删除相同文件" description="目标同名且双方 SHA1 一致时删除来源文件；SHA1 不同或缺失时保留冲突。" />
+        <SettingSwitch v-model="editor.enabled" label="启用监控" :description="editor.storage === 'local' ? '优先监听目录变化，文件稳定后整理，并定时补扫。保留临时下载文件，清理无关文件、未归属字幕和空文件夹；立即运行同样执行清理。' : editor.storage === 'cd2' ? '优先接收 CD2 目录变化，文件就绪后边扫描边整理，并按间隔补查。清理无关文件与未归属字幕，保留目录。' : '按设置间隔扫描并整理媒体及附件，删除无关文件（含压缩包）、未归属字幕和空文件夹；立即运行同样执行清理。'" />
+        <label v-if="editor.enabled && editor.storage === 'cd2'">检查间隔（秒）<input v-model.number="editor.intervalSeconds" type="number" min="1" max="86400" required /></label>
+        <label v-else-if="editor.enabled">{{ editor.storage === 'local' ? '兜底扫描间隔（分钟）' : '扫描间隔（分钟）' }}<input v-model.number="editor.intervalMinutes" type="number" min="1" max="1440" required /></label>
         <p v-if="editor.enabled && editor.storage === 'local'" class="mo-muted">网络挂载的远端变更可能无法即时通知，将由定时扫描补齐。</p>
-        <p v-if="editor.enabled && editor.storage === 'cd2'" class="mo-muted">当前通过 CD2 定时读取目录。扫描间隔适用于此整理规则。</p>
+        <p v-if="editor.enabled && editor.storage === 'cd2'" class="mo-muted">CD2 事件及时触发处理，检查间隔用于补查；监听不可用时使用定时扫描。上传中的文件等待就绪后处理。</p>
         <p class="mo-muted">STRM 正文保持原样。已有同名文件不会覆盖，命名沿用全局电影和剧集模板。</p>
       </form>
       <template #footer><div class="mo-footer"><button class="mo-button" :disabled="!!busy" @click="editor = undefined">取消</button><button form="media-rule-form" type="submit" class="mo-button mo-primary" :disabled="!!busy">{{ busy === 'save' ? '保存中…' : '保存规则' }}</button></div></template>

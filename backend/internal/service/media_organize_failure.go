@@ -36,7 +36,7 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 	}
 	transient := mediaTransientGroups(run)
 	for _, e := range run.Entries {
-		if e.File.MediaType == "cleanup" || !mediaInTask(e, run.TaskFileID) {
+		if e.File.MediaType == "cleanup" || !mediaInRunTask(run, e) {
 			continue
 		}
 		if e.Status != "done" && e.Failure != nil && e.Failure.State == "moving" {

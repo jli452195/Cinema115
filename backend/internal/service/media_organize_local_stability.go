@@ -112,7 +112,7 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 	}) {
 		return nil
 	}
-	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2}
+	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2, cd2ScanPaths: f.cd2ScanPaths, cd2Shallow: f.cd2Shallow, cd2Ready: f.cd2Ready}
 	if _, err := current.scan(ctx); err != nil {
 		if f.rule.Storage == "cd2" {
 			return err
@@ -166,7 +166,7 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 				waiting = waiting || blocked[owner]
 			}
 		}
-		if waiting {
+		if waiting && e.Status != "done" && mediaInRunTask(run, *e) {
 			e.Status, e.Message = "retained", "视频或关联文件仍在变化，保留来源待下一轮一起整理"
 			e.Relative, e.Target, e.Result = "", "", nil
 		}

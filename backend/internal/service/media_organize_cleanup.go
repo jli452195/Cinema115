@@ -30,12 +30,26 @@ func mediaDiscardOrphanSidecars(f *mediaOrganizeFiles, run *MediaOrganizeRun, sc
 	if f.localCandidates != nil {
 		original = f.localCandidates
 	}
+	selected := make(map[string]bool, len(scanned))
+	if run.streaming {
+		for _, entry := range scanned {
+			selected[entry.File.ID] = true
+		}
+		for _, entry := range run.Entries {
+			if entry.File.MediaType == "video" && entry.Status == "done" {
+				original = append(original, entry.File)
+			}
+		}
+	}
 	mediaValidateAttachmentOwners(run, original)
 	owners := make(map[string]string)
 	for _, sub := range organizeSubtitles(original) {
 		owners[sub.File.ID] = sub.VideoID
 	}
 	run.Entries = slices.DeleteFunc(run.Entries, func(e MediaOrganizeEntry) bool {
+		if e.Status == "done" || run.streaming && !selected[e.File.ID] {
+			return false
+		}
 		if e.File.MediaType != "subtitle" && e.File.MediaType != "attachment" || f.settlingVideos[e.File.ParentID] {
 			return false
 		}

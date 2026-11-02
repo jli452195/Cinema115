@@ -31,6 +31,9 @@ type testServer struct {
 	across       bool
 	moves        int
 	unauthorized bool
+	lists        int
+	listStarted  chan string
+	listRelease  <-chan struct{}
 }
 
 func (s *testServer) GetSystemInfo(context.Context, *emptypb.Empty) (*pb.CloudDriveSystemInfo, error) {
@@ -46,6 +49,23 @@ func (s *testServer) GetApiTokenInfo(context.Context, *pb.StringValue) (*pb.Toke
 }
 
 func (s *testServer) GetSubFiles(req *pb.ListSubFileRequest, stream grpc.ServerStreamingServer[pb.SubFilesReply]) error {
+	s.mu.Lock()
+	s.lists++
+	s.mu.Unlock()
+	if s.listStarted != nil {
+		select {
+		case s.listStarted <- req.GetPath():
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+	}
+	if s.listRelease != nil {
+		select {
+		case <-s.listRelease:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.unauthorized {

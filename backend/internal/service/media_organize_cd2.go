@@ -41,6 +41,15 @@ func (s *MediaOrganizer) bindCD2Checkpoint(files *mediaOrganizeFiles, run *Media
 		}
 		return ErrMediaOrganizeInput
 	}
+	files.cd2Duplicate = func(entry MediaOrganizeEntry) error {
+		for i := range run.Entries {
+			if run.Entries[i].File.ID == entry.File.ID {
+				run.Entries[i].CD2Duplicate = true
+				return s.checkpoint(run)
+			}
+		}
+		return ErrMediaOrganizeInput
+	}
 }
 
 // SetCD2 在启动时注入共用连接服务；CD2 不读取或关联 115 账号配置。
@@ -97,6 +106,7 @@ func (s *MediaOrganizer) openCD2Files(ctx context.Context, f *mediaOrganizeFiles
 		return fmt.Errorf("获取 CD2 连接: %w", err)
 	}
 	f.cd2Lease, f.cd2 = lease, lease.Client
+	ctx = clouddrive2.WithDirectoryCache(ctx)
 	for _, directory := range []string{f.rule.Source, f.rule.Target, f.rule.Failure} {
 		if directory == "" {
 			continue
@@ -179,8 +189,10 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 			f.cd2Snapshots[file.Path] = file
 			if file.Directory {
 				f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: mediaCD2ShareFile(file), ParentID: directory, SourcePath: relative, MediaType: "cleanup"}, CD2FileID: file.ID})
-				if err := walk(file.Path, relative, depth+1); err != nil {
-					return err
+				if !f.cd2Shallow {
+					if err := walk(file.Path, relative, depth+1); err != nil {
+						return err
+					}
 				}
 				continue
 			}
@@ -195,7 +207,7 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 			modified := int64(0)
 			if !file.Modified.IsZero() {
 				modified = file.Modified.UnixNano()
-				if time.Since(file.Modified) < 30*time.Second {
+				if time.Since(file.Modified) < 30*time.Second && (f.cd2Ready == nil || !f.cd2Ready(file)) {
 					pending[file.Path] = true
 					if candidate.MediaType == "video" {
 						f.settlingVideos[prefix], f.settlingVideos[directory] = true, true
@@ -207,8 +219,21 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 		}
 		return nil
 	}
-	if err := walk(f.rule.Source, ".", 0); err != nil {
-		return nil, err
+	roots := f.cd2ScanPaths
+	if len(roots) == 0 {
+		roots = []string{f.rule.Source}
+	}
+	for _, root := range roots {
+		if !mediaCloudWithin(f.rule.Source, root) {
+			return nil, ErrMediaOrganizeInput
+		}
+		prefix := strings.TrimPrefix(strings.TrimPrefix(root, f.rule.Source), "/")
+		if prefix == "" {
+			prefix = "."
+		}
+		if err := walk(root, prefix, 0); err != nil {
+			return nil, err
+		}
 	}
 	return pending, nil
 }
@@ -259,13 +284,30 @@ func (f *mediaOrganizeFiles) cd2Destination(ctx context.Context, relative string
 }
 
 func (f *mediaOrganizeFiles) cd2Conflict(ctx context.Context, e MediaOrganizeEntry) error {
+	file, err := f.cd2Collision(ctx, e)
+	if err != nil {
+		return err
+	}
+	if file == nil || f.rule.DeleteDuplicates && mediaCD2SameSHA1(e, *file) {
+		return nil
+	}
+	return errMediaTargetExists
+}
+
+func mediaCD2SameSHA1(e MediaOrganizeEntry, target clouddrive2.File) bool {
+	// 仅比较 CD2 已提供的 SHA1，不补查、下载或增加大小判重条件。
+	sourceHash, targetHash := strings.TrimSpace(e.CD2Hashes[2]), strings.TrimSpace(target.Hashes[2])
+	return !target.Directory && !target.ReadOnly && sourceHash != "" && targetHash != "" && strings.EqualFold(sourceHash, targetHash)
+}
+
+func (f *mediaOrganizeFiles) cd2Collision(ctx context.Context, e MediaOrganizeEntry) (*clouddrive2.File, error) {
 	destination, err := f.cd2Destination(ctx, e.Relative, false)
 	if err != nil || destination == "" {
-		return err
+		return nil, err
 	}
 	files, err := f.cd2.List(ctx, path.Dir(destination), true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, file := range files {
 		if strings.EqualFold(file.Name, path.Base(destination)) {
@@ -273,13 +315,13 @@ func (f *mediaOrganizeFiles) cd2Conflict(ctx context.Context, e MediaOrganizeEnt
 				current := e
 				current.Modified = e.CD2Current.Modified
 				if mediaCD2Matches(current, file, e.CD2Current.FileID) {
-					return nil
+					return nil, nil
 				}
 			}
-			return errMediaTargetExists
+			return &file, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func mediaCD2Matches(e MediaOrganizeEntry, file clouddrive2.File, expectedID string) bool {
@@ -361,6 +403,9 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 	if sourceErr != nil {
 		// 仅核验已计划的精确目标；跨云身份变化且没有成功回执时交由人工核对。
 		target, err := f.cd2.Stat(ctx, destination, true)
+		if err == nil && e.CD2Duplicate && f.rule.DeleteDuplicates && mediaCD2SameSHA1(e, target) {
+			return errMediaDuplicateDone
+		}
 		if err == nil && (mediaCD2Matches(e, target, expectedID) || mediaCD2Matches(e, target, "")) {
 			return nil
 		}
@@ -372,8 +417,23 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 	if source == destination {
 		return nil
 	}
-	if err := f.cd2Conflict(ctx, e); err != nil {
+	collision, err := f.cd2Collision(ctx, e)
+	if err != nil {
 		return err
+	}
+	if collision != nil {
+		if !f.rule.DeleteDuplicates || !mediaCD2SameSHA1(e, *collision) {
+			return errMediaTargetExists
+		}
+		if f.cd2Duplicate != nil {
+			if err := f.cd2Duplicate(e); err != nil {
+				return err
+			}
+		}
+		if err := f.cd2.Delete(ctx, []string{source}); err != nil {
+			return err
+		}
+		return errMediaDuplicateDone
 	}
 	if actual.Name != path.Base(destination) {
 		renamed, err := f.cd2.Rename(ctx, source, path.Base(destination))

@@ -57,6 +57,7 @@ type CD2Connections struct {
 	pool      map[uint64]*cd2Pool
 	closed    bool
 	newClient func(clouddrive2.Config) (cd2Client, error)
+	eventHub  *cd2EventHub
 }
 
 type CD2Lease struct {
@@ -146,6 +147,12 @@ func (s *CD2Connections) Save(ctx context.Context, input CD2Input) (CD2View, err
 		return CD2View{}, fmt.Errorf("保存 CloudDrive2 配置: %w", err)
 	}
 	s.doc = doc
+	if s.eventHub != nil {
+		select {
+		case s.eventHub.wake <- struct{}{}:
+		default:
+		}
+	}
 	for revision, entry := range s.pool {
 		if entry.references == 0 && (!doc.Enabled || revision != doc.Revision) {
 			_ = entry.client.Close()
@@ -211,14 +218,21 @@ func (s *CD2Connections) Acquire(ctx context.Context, connectionID string, expec
 
 func (s *CD2Connections) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.closed = true
+	hub := s.eventHub
+	if hub != nil {
+		hub.cancel()
+	}
 	var errs []error
 	for revision, entry := range s.pool {
 		if entry.references == 0 {
 			errs = append(errs, entry.client.Close())
 			delete(s.pool, revision)
 		}
+	}
+	s.mu.Unlock()
+	if hub != nil {
+		<-hub.done
 	}
 	return errors.Join(errs...)
 }

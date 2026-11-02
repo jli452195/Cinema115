@@ -18,6 +18,7 @@ import (
 var ErrMediaOrganizeInput = errors.New("整理参数无效")
 var ErrMediaOrganizeBusy = errors.New("整理任务正在处理，请稍后重试")
 var errMediaTargetExists = errors.New("目标已存在，不覆盖")
+var errMediaDuplicateDone = errors.New("已删除 SHA1 相同的来源重复文件")
 
 type MediaOrganizeRule struct {
 	ID                 string    `json:"id"`
@@ -35,23 +36,27 @@ type MediaOrganizeRule struct {
 	Classify           bool      `json:"classify"`
 	Enabled            bool      `json:"enabled"`
 	IntervalMinutes    int       `json:"intervalMinutes"`
+	IntervalSeconds    int       `json:"intervalSeconds,omitempty"`
+	DeleteDuplicates   bool      `json:"deleteDuplicates,omitempty"`
 	LastScan           time.Time `json:"lastScan"`
 }
 
 type MediaOrganizeEntry struct {
-	File       OrganizeFile          `json:"file"`
-	Modified   int64                 `json:"modified,omitempty"`
-	CD2FileID  string                `json:"cd2FileId,omitempty"`
-	CD2Hashes  map[uint32]string     `json:"cd2Hashes,omitempty"`
-	CD2Current *MediaCD2Location     `json:"cd2Current,omitempty"`
-	Group      string                `json:"group"`
-	VideoID    string                `json:"videoId,omitempty"`
-	Relative   string                `json:"relative,omitempty"`
-	Target     string                `json:"target,omitempty"`
-	Status     string                `json:"status"`
-	Message    string                `json:"message,omitempty"`
-	Result     *MediaOrganizeResult  `json:"result,omitempty"`
-	Failure    *MediaOrganizeFailure `json:"failure,omitempty"`
+	File         OrganizeFile          `json:"file"`
+	Modified     int64                 `json:"modified,omitempty"`
+	CD2FileID    string                `json:"cd2FileId,omitempty"`
+	CD2Hashes    map[uint32]string     `json:"cd2Hashes,omitempty"`
+	CD2Current   *MediaCD2Location     `json:"cd2Current,omitempty"`
+	CD2Reference bool                  `json:"cd2Reference,omitempty"`
+	CD2Duplicate bool                  `json:"cd2Duplicate,omitempty"`
+	Group        string                `json:"group"`
+	VideoID      string                `json:"videoId,omitempty"`
+	Relative     string                `json:"relative,omitempty"`
+	Target       string                `json:"target,omitempty"`
+	Status       string                `json:"status"`
+	Message      string                `json:"message,omitempty"`
+	Result       *MediaOrganizeResult  `json:"result,omitempty"`
+	Failure      *MediaOrganizeFailure `json:"failure,omitempty"`
 }
 
 type MediaOrganizeGroup struct {
@@ -77,6 +82,9 @@ type MediaOrganizeRun struct {
 	ReadyCount     int                    `json:"readyCount"`
 	FailureCount   int                    `json:"failureCount"`
 	TaskFileID     string                 `json:"taskFileId,omitempty"`
+	CD2ScanPaths   []string               `json:"cd2ScanPaths,omitempty"`
+	streaming      bool
+	processing     map[string]bool
 }
 
 // Restore only this batch's rules, never the current global configuration.
@@ -127,6 +135,7 @@ type MediaOrganizer struct {
 	monitorWake    chan struct{}
 	monitorRunning bool
 	localMonitors  map[string]*mediaLocalRuntime
+	cd2Monitors    map[string]*mediaCD2Runtime
 	monitorOptions mediaLocalMonitorOptions
 }
 
@@ -147,7 +156,9 @@ func (s *MediaOrganizer) persistMonitorRulesLocked(changed ...string) error {
 
 func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	*target = source
+	target.processing = nil
 	target.Groups = slices.Clone(source.Groups)
+	target.CD2ScanPaths = slices.Clone(source.CD2ScanPaths)
 	target.Entries = slices.Clone(source.Entries)
 	for i := range target.Entries {
 		target.Entries[i].File.NamingValues = maps.Clone(source.Entries[i].File.NamingValues)
@@ -190,8 +201,21 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 	if err := ctx.Err(); err != nil {
 		return rule, err
 	}
-	if strings.TrimSpace(rule.Name) == "" || len([]rune(rule.Name)) > 80 || rule.IntervalMinutes < 1 || rule.IntervalMinutes > 1440 {
+	if strings.TrimSpace(rule.Name) == "" || len([]rune(rule.Name)) > 80 {
 		return rule, ErrMediaOrganizeInput
+	}
+	if rule.Storage == "cd2" {
+		if rule.IntervalSeconds == 0 {
+			rule.IntervalSeconds = 20
+		}
+		if rule.IntervalSeconds < 1 || rule.IntervalSeconds > 86400 {
+			return rule, ErrMediaOrganizeInput
+		}
+	} else {
+		rule.IntervalSeconds, rule.DeleteDuplicates = 0, false
+		if rule.IntervalMinutes < 1 || rule.IntervalMinutes > 1440 {
+			return rule, ErrMediaOrganizeInput
+		}
 	}
 	if rule.ID != "" {
 		s.mu.Lock()
@@ -428,8 +452,9 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 	s.localMonitors = make(map[string]*mediaLocalRuntime)
 	s.mu.Unlock()
 	var monitors sync.WaitGroup
-	monitors.Add(1)
+	monitors.Add(2)
 	go func() { defer monitors.Done(); s.runLocalMonitor(monitorCtx) }()
+	go func() { defer monitors.Done(); s.runCD2Monitor(monitorCtx) }()
 	defer func() {
 		stopMonitor()
 		monitors.Wait()
@@ -437,7 +462,7 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 		s.monitorRunning = false
 		s.mu.Unlock()
 	}()
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	s.notify()
 	for {
@@ -486,6 +511,7 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 			cancel()
 			if err != nil {
 				s.retryLocalScan(run.Rule, err)
+				s.cd2ScanFailed(run.Rule)
 				run.Status = "failed"
 				run.Message = err.Error()
 				if saveErr := s.checkpoint(&run); saveErr != nil {
@@ -518,6 +544,10 @@ func (s *MediaOrganizer) schedule() error {
 			if !fallback && !mediaMonitorDue(local.dirtyDue, now) && !mediaMonitorDue(local.settleDue, now) && !mediaMonitorDue(local.retryDue, now) {
 				continue
 			}
+		} else if rule.Storage == "cd2" {
+			if !s.cd2ScheduleDueLocked(rule, now) {
+				continue
+			}
 		} else if !fallback {
 			continue
 		}
@@ -529,11 +559,15 @@ func (s *MediaOrganizer) schedule() error {
 			}
 		}
 		if !pending {
-			if _, err := s.queueScanLocked(rule); err != nil {
+			queued, err := s.queueScanLocked(rule)
+			if err != nil {
 				if !errors.Is(err, ErrMediaOrganizeBusy) && !errors.Is(err, ErrClassificationUnavailable) {
 					return err
 				}
 				continue
+			}
+			if rule.Storage == "cd2" {
+				s.cd2QueuedLocked(rule, queued.ID, now)
 			}
 			if local != nil {
 				if fallback {

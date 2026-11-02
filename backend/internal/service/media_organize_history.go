@@ -16,6 +16,7 @@ type MediaOrganizeResult struct {
 	Message string    `json:"message,omitempty"`
 	At      time.Time `json:"at"`
 	Target  string    `json:"target,omitempty"`
+	Action  string    `json:"action,omitempty"`
 }
 type MediaOrganizeHistoryItem struct {
 	RunID           string `json:"runId"`
@@ -91,6 +92,10 @@ type MediaOrganizeTask struct {
 func mediaInTask(e MediaOrganizeEntry, fileID string) bool {
 	return fileID == "" || e.File.ID == fileID || e.VideoID == fileID
 }
+
+func mediaInRunTask(run *MediaOrganizeRun, entry MediaOrganizeEntry) bool {
+	return mediaInTask(entry, run.TaskFileID) && (run.processing == nil || run.processing[entry.File.ID])
+}
 func mediaRunActive(status string) bool {
 	return status == "queued" || status == "scanning" || status == "running"
 }
@@ -109,7 +114,7 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 	}
 	tasks := make([]MediaOrganizeTask, 0, len(run.Entries))
 	for _, e := range run.Entries {
-		if e.File.MediaType != "video" {
+		if e.File.MediaType != "video" || e.CD2Reference && len(companions[e.File.ID]) == 0 {
 			continue
 		}
 		g := groups[e.Group]
@@ -133,6 +138,9 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 		switch {
 		case allDone:
 			result.Status, result.Message = "done", ""
+			if result.Action == "duplicate" {
+				result.Message = "SHA1 一致，已删除来源重复文件"
+			}
 		case mediaRunActive(run.Status) && (run.TaskFileID == e.File.ID || run.TaskFileID == "" && (e.Status == "pending" || e.Status == "ready" || e.Status == "done")):
 			result.Status = run.Status
 		case e.Status == "done":
@@ -184,6 +192,11 @@ func (s *MediaOrganizer) State() MediaOrganizeState {
 	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Active: s.active != "" || len(s.actions) > 0, ActiveRules: []string{}}
 	state.Monitoring = make(map[string]MediaOrganizeMonitorStatus, len(s.localMonitors))
 	for _, rule := range s.doc.Rules {
+		if rule.Enabled && rule.Storage == "cd2" {
+			if monitor := s.cd2Monitors[rule.ID]; monitor != nil {
+				state.Monitoring[rule.ID] = monitor.status
+			}
+		}
 		if rule.Enabled && rule.Storage == "local" {
 			if local := s.localMonitors[rule.ID]; local != nil && mediaSameWatchRule(local.rule, rule) {
 				state.Monitoring[rule.ID] = local.status

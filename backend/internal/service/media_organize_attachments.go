@@ -100,7 +100,7 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" || e.VideoID == "" || !mediaInTask(*e, run.TaskFileID) {
+		if e.File.MediaType != "attachment" || e.Status == "done" || e.VideoID == "" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		owner, longest, _ := mediaAttachmentVideo(e.File, files)
@@ -137,7 +137,7 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 	files := mediaEntryFiles(run.Entries)
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" || !mediaInTask(*e, run.TaskFileID) {
+		if e.File.MediaType != "attachment" || e.Status == "done" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		originalGroup, originalVideo := e.Group, e.VideoID

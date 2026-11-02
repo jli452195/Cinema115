@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"strm115/backend/internal/client/clouddrive2"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
 )
@@ -24,6 +25,9 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 	}
 	defer files.close()
 	s.bindCD2Checkpoint(files, run)
+	if action == "auto" && run.Rule.Storage == "cd2" {
+		return s.processCD2Auto(ctx, files, run)
+	}
 	if action == "auto" {
 		if err = s.scan(ctx, files, run); err != nil {
 			return err
@@ -88,7 +92,33 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 		return err
 	}
 	files.scanned = entries
+	mediaAppendScanEntries(run, entries)
+	if err = s.recognize(ctx, run); err != nil {
+		return err
+	}
+	if err = s.render(ctx, files, run); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for i := range s.doc.Rules {
+		if s.doc.Rules[i].ID == run.Rule.ID {
+			s.doc.Rules[i].LastScan = time.Now()
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func mediaGroupIdentityKey(identity mediafacts.Identity) mediafacts.Identity {
+	identity.Name, identity.ParentName = mediafacts.NameKey(identity.Name), mediafacts.NameKey(identity.ParentName)
+	return identity
+}
+
+func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry) {
 	indices := make(map[mediafacts.Identity]int)
+	for i, group := range run.Groups {
+		indices[mediaGroupIdentityKey(group.Identity)] = i
+	}
 	for _, e := range entries {
 		if e.File.MediaType != "video" {
 			run.Entries = append(run.Entries, e)
@@ -111,8 +141,7 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 				e.File.Season = identity.Season
 			}
 		}
-		key := identity
-		key.Name, key.ParentName = mediafacts.NameKey(identity.Name), mediafacts.NameKey(identity.ParentName)
+		key := mediaGroupIdentityKey(identity)
 		if e.File.Episode == 0 && identity.Kind == "tv" && organizeSpecialFile.MatchString(e.File.Name) {
 			key.Name += ":special"
 		}
@@ -126,26 +155,12 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 		e.Group = run.Groups[indices[key]].ID
 		run.Entries = append(run.Entries, e)
 	}
-	if err = s.recognize(ctx, run); err != nil {
-		return err
-	}
-	if err = s.render(ctx, files, run); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	for i := range s.doc.Rules {
-		if s.doc.Rules[i].ID == run.Rule.ID {
-			s.doc.Rules[i].LastScan = time.Now()
-		}
-	}
-	s.mu.Unlock()
-	return nil
 }
 
 func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) error {
 	byGroup := make(map[string][]int, len(run.Groups))
 	for i, entry := range run.Entries {
-		if entry.File.MediaType == "video" && mediaInTask(entry, run.TaskFileID) {
+		if entry.File.MediaType == "video" && mediaInRunTask(run, entry) {
 			byGroup[entry.Group] = append(byGroup[entry.Group], i)
 		}
 	}
@@ -195,9 +210,12 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) e
 
 func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	prepared := make(map[string]preparedMediaNaming)
+	if files.cd2Naming != nil {
+		prepared = files.cd2Naming
+	}
 	selectedGroups := make(map[string]bool)
 	for _, e := range run.Entries {
-		if e.File.MediaType == "video" && e.Status != "done" && mediaInTask(e, run.TaskFileID) {
+		if e.File.MediaType == "video" && e.Status != "done" && mediaInRunTask(run, e) {
 			selectedGroups[e.Group] = true
 		}
 	}
@@ -206,7 +224,11 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		if g.TMDBID < 1 || !selectedGroups[g.ID] {
 			continue
 		}
-		p, err := (MediaNaming{Templates: s.templates, Metadata: s.metadata}).prepare(ctx, g.Kind, g.TMDBID, nil)
+		p, cached := prepared[g.ID]
+		var err error
+		if !cached {
+			p, err = (MediaNaming{Templates: s.templates, Metadata: s.metadata}).prepare(ctx, g.Kind, g.TMDBID, nil)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -235,7 +257,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType == "cleanup" || !mediaInTask(*e, run.TaskFileID) {
+		if e.File.MediaType == "cleanup" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		if e.File.MediaType != "video" && e.Status != "done" {
@@ -288,7 +310,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	for _, sub := range organizeSubtitles(original) {
 		i := positions[sub.File.ID]
 		e := &run.Entries[i]
-		if e.Status == "done" || !mediaInTask(*e, run.TaskFileID) {
+		if e.Status == "done" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		video, ok := results[sub.VideoID]
@@ -321,9 +343,9 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		duplicates[key] = append(duplicates[key], i)
 	}
 	for _, indices := range duplicates {
-		if len(indices) > 1 {
+		if len(indices) > 1 && !(run.Rule.Storage == "cd2" && run.Rule.DeleteDuplicates) {
 			for _, i := range indices {
-				if !mediaInTask(run.Entries[i], run.TaskFileID) {
+				if !mediaInRunTask(run, run.Entries[i]) {
 					continue
 				}
 				run.Entries[i].Status = "conflict"
@@ -333,7 +355,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.Status != "ready" || !mediaInTask(*e, run.TaskFileID) {
+		if e.Status != "ready" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		if err := files.conflict(ctx, *e); err != nil {
@@ -354,6 +376,9 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 }
 
 func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	if run.Rule.Storage == "cd2" && !run.streaming {
+		ctx = clouddrive2.WithDirectoryCache(ctx)
+	}
 	mediaValidateAttachmentOwners(run, mediaEntryFiles(run.Entries))
 	run.Status = "running"
 	if err := s.checkpoint(run); err != nil {
@@ -363,11 +388,10 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		return err
 	}
 	failures := mediaFailureEntries(run)
-	// A short reservation protects 115 directory writes without reserving cloud
-	// work while scanning, waiting for TMDB, or processing local files.
+	// 仅在实际写入 115 目录时短暂预留，扫描、识别和其他存储不占用该预留。
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if failures[e.File.ID] || !mediaInTask(*e, run.TaskFileID) {
+		if failures[e.File.ID] || !mediaInRunTask(run, *e) {
 			continue
 		}
 		if e.Status != "ready" && e.Status != "error" {
@@ -408,7 +432,7 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		if release != nil {
 			release()
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, errMediaDuplicateDone) {
 			e.Status = "error"
 			if errors.Is(err, errMediaTargetExists) {
 				e.Status = "conflict"
@@ -420,6 +444,9 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 			e.Failure = nil
 		}
 		e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now(), Target: e.Target}
+		if errors.Is(err, errMediaDuplicateDone) {
+			e.Result.Action, e.Result.Message = "duplicate", "SHA1 一致，已删除来源重复文件"
+		}
 		if err := s.checkpoint(run); err != nil {
 			return err
 		}
@@ -427,11 +454,19 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 	if err := s.quarantine(ctx, files, run, false); err != nil {
 		return err
 	}
+	if run.streaming {
+		return nil
+	}
+	mediaFinishRun(run)
+	return nil
+}
+
+func mediaFinishRun(run *MediaOrganizeRun) {
 	run.Status = "completed"
 	run.Message = "整理完成"
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if mediaInTask(*e, run.TaskFileID) && e.Status != "done" && e.Status != "retained" {
+		if mediaInRunTask(run, *e) && e.Status != "done" && e.Status != "retained" {
 			target := e.Target
 			if e.Failure != nil && e.Failure.State == "stored" {
 				target = path.Join(run.Rule.Failure, e.File.SourcePath)
@@ -448,6 +483,8 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 	}
 	if len(run.Entries) == 0 {
 		run.Message = "没有新的可处理文件；新写入文件稳定 30 秒后再扫描"
+		if run.Rule.Storage == "cd2" {
+			run.Message = "没有新的可处理文件"
+		}
 	}
-	return nil
 }

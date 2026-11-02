@@ -23,6 +23,9 @@ type mediaCD2Fake struct {
 	deleted     []string
 	writes      int
 	serial      int
+	onList      func(string) error
+	listed      []string
+	statCalls   []string
 }
 
 func newMediaCD2Fake() *mediaCD2Fake {
@@ -44,6 +47,7 @@ func (f *mediaCD2Fake) add(full string, directory bool, size int64) clouddrive2.
 }
 
 func (f *mediaCD2Fake) Stat(ctx context.Context, full string, force bool) (clouddrive2.File, error) {
+	f.statCalls = append(f.statCalls, full)
 	if err := ctx.Err(); err != nil {
 		return clouddrive2.File{}, err
 	}
@@ -59,6 +63,12 @@ func (f *mediaCD2Fake) Stat(ctx context.Context, full string, force bool) (cloud
 }
 
 func (f *mediaCD2Fake) List(ctx context.Context, directory string, force bool) ([]clouddrive2.File, error) {
+	f.listed = append(f.listed, directory)
+	if f.onList != nil {
+		if err := f.onList(directory); err != nil {
+			return nil, err
+		}
+	}
 	info, err := f.Stat(ctx, directory, force)
 	if err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -25,10 +26,14 @@ import (
 const MaxDirectoryEntries = 20000
 
 type Client struct {
-	conn      *grpc.ClientConn
-	rpc       pb.CloudDriveFileSrvClient
-	token     string
-	writeGate chan struct{}
+	conn              *grpc.ClientConn
+	rpc               pb.CloudDriveFileSrvClient
+	token             string
+	operationsMu      sync.Mutex
+	writePaths        map[string]bool
+	writesChanged     chan struct{}
+	directoryVersions map[string]uint64
+	version           uint64
 }
 
 // New 只创建可复用连接；实际网络请求由带超时的业务调用触发。
@@ -51,22 +56,8 @@ func New(config Config, options ...grpc.DialOption) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("创建 CloudDrive2 连接: %w", err)
 	}
-	return &Client{conn: conn, rpc: pb.NewCloudDriveFileSrvClient(conn), token: config.Token, writeGate: make(chan struct{}, 1)}, nil
+	return &Client{conn: conn, rpc: pb.NewCloudDriveFileSrvClient(conn), token: config.Token}, nil
 }
-
-func (c *Client) lockWrite(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case c.writeGate <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *Client) unlockWrite() { <-c.writeGate }
 
 func (c *Client) Close() error { return c.conn.Close() }
 
@@ -156,6 +147,10 @@ func (c *Client) List(ctx context.Context, directory string, force bool) ([]File
 	if err != nil {
 		return nil, err
 	}
+	return c.cachedList(ctx, directory, force)
+}
+
+func (c *Client) list(ctx context.Context, directory string, force bool) ([]File, error) {
 	ctx, cancel := c.request(ctx)
 	defer cancel()
 	stream, err := c.rpc.GetSubFiles(ctx, &pb.ListSubFileRequest{Path: directory, ForceRefresh: force, CheckExpires: boolValue(true)})
@@ -230,6 +225,7 @@ func (c *Client) Stat(ctx context.Context, full string, force bool) (File, error
 }
 
 func (c *Client) CreateDirectory(ctx context.Context, parent, name string) (File, error) {
+	ctx = withDirectoryCache(ctx)
 	parent, err := CleanPath(parent)
 	if err != nil {
 		return File{}, err
@@ -237,10 +233,11 @@ func (c *Client) CreateDirectory(ctx context.Context, parent, name string) (File
 	if err := cleanName(name); err != nil {
 		return File{}, err
 	}
-	if err := c.lockWrite(ctx); err != nil {
+	release, err := c.lockWrite(ctx, parent)
+	if err != nil {
 		return File{}, err
 	}
-	defer c.unlockWrite()
+	defer release()
 	full := path.Join(parent, name)
 	existing, err := c.Stat(ctx, full, true)
 	if err == nil {
@@ -255,6 +252,7 @@ func (c *Client) CreateDirectory(ctx context.Context, parent, name string) (File
 	ctx, cancel := c.request(ctx)
 	defer cancel()
 	result, err := c.rpc.CreateFolder(ctx, &pb.CreateFolderRequest{ParentPath: parent, FolderName: name})
+	c.invalidateDirectories(parent)
 	if err != nil {
 		return File{}, c.wrap("创建目录", err)
 	}
@@ -272,6 +270,7 @@ func (c *Client) CreateDirectory(ctx context.Context, parent, name string) (File
 }
 
 func (c *Client) Rename(ctx context.Context, source, name string) (string, error) {
+	ctx = withDirectoryCache(ctx)
 	source, err := CleanPath(source)
 	if err != nil {
 		return "", err
@@ -279,10 +278,11 @@ func (c *Client) Rename(ctx context.Context, source, name string) (string, error
 	if err := cleanName(name); err != nil {
 		return "", err
 	}
-	if err := c.lockWrite(ctx); err != nil {
+	release, err := c.lockWrite(ctx, path.Dir(source))
+	if err != nil {
 		return "", err
 	}
-	defer c.unlockWrite()
+	defer release()
 	target := path.Join(path.Dir(source), name)
 	if target == source {
 		return source, nil
@@ -299,6 +299,7 @@ func (c *Client) Rename(ctx context.Context, source, name string) (string, error
 	ctx, cancel := c.request(ctx)
 	defer cancel()
 	result, err := c.rpc.RenameFile(ctx, &pb.RenameFileRequest{TheFilePath: source, NewName: name})
+	c.invalidateDirectories(path.Dir(source))
 	if err != nil {
 		return "", c.wrap("重命名文件", err)
 	}
@@ -356,6 +357,7 @@ func hasHash(file File) bool {
 }
 
 func (c *Client) Move(ctx context.Context, sources []string, destination string) ([]string, error) {
+	ctx = withDirectoryCache(ctx)
 	destination, err := CleanPath(destination)
 	if err != nil {
 		return nil, err
@@ -363,10 +365,20 @@ func (c *Client) Move(ctx context.Context, sources []string, destination string)
 	if len(sources) == 0 || len(sources) > 100 {
 		return nil, fmt.Errorf("%w：每批移动 1 至 100 项", ErrInput)
 	}
-	if err := c.lockWrite(ctx); err != nil {
+	directories := make([]string, 0, len(sources)+1)
+	directories = append(directories, destination)
+	for _, source := range sources {
+		clean, err := CleanPath(source)
+		if err != nil {
+			return nil, err
+		}
+		directories = append(directories, path.Dir(clean))
+	}
+	release, err := c.lockWrite(ctx, directories...)
+	if err != nil {
 		return nil, err
 	}
-	defer c.unlockWrite()
+	defer release()
 	dest, err := c.Stat(ctx, destination, true)
 	if err != nil {
 		return nil, err
@@ -409,6 +421,7 @@ func (c *Client) Move(ctx context.Context, sources []string, destination string)
 	defer cancel()
 	policy := pb.MoveFileRequest_Skip
 	result, err := c.rpc.MoveFile(ctx, &pb.MoveFileRequest{TheFilePaths: paths, DestPath: destination, ConflictPolicy: &policy, MoveAcrossClouds: boolValue(true)})
+	c.invalidateDirectories(directories...)
 	if err != nil {
 		return nil, c.wrap("移动文件", err)
 	}
@@ -438,6 +451,7 @@ func (c *Client) Move(ctx context.Context, sources []string, destination string)
 }
 
 func (c *Client) Delete(ctx context.Context, sources []string) error {
+	ctx = withDirectoryCache(ctx)
 	if len(sources) == 0 || len(sources) > 100 {
 		return fmt.Errorf("%w：每批删除 1 至 100 项", ErrInput)
 	}
@@ -452,13 +466,19 @@ func (c *Client) Delete(ctx context.Context, sources []string) error {
 		}
 		paths = append(paths, full)
 	}
-	if err := c.lockWrite(ctx); err != nil {
+	directories := make([]string, 0, len(paths))
+	for _, full := range paths {
+		directories = append(directories, path.Dir(full))
+	}
+	release, err := c.lockWrite(ctx, directories...)
+	if err != nil {
 		return err
 	}
-	defer c.unlockWrite()
+	defer release()
 	ctx, cancel := c.request(ctx)
 	defer cancel()
 	result, err := c.rpc.DeleteFiles(ctx, &pb.MultiFileRequest{Path: paths})
+	c.invalidateDirectories(directories...)
 	if err != nil {
 		return c.wrap("删除文件", err)
 	}

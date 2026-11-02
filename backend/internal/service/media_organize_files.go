@@ -40,6 +40,12 @@ type mediaOrganizeFiles struct {
 	cd2Lease        *CD2Lease
 	cd2Snapshots    map[string]clouddrive2.File
 	cd2Checkpoint   func(MediaOrganizeEntry, clouddrive2.File) error
+	cd2Duplicate    func(MediaOrganizeEntry) error
+	cd2ScanPaths    []string
+	cd2Shallow      bool
+	cd2Ready        func(clouddrive2.File) bool
+	cd2Recognized   map[string]bool
+	cd2Naming       map[string]preparedMediaNaming
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {
