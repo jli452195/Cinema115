@@ -104,6 +104,9 @@ func (f *mediaOrganizeFiles) checkLocalCleanup(e MediaOrganizeEntry) (string, er
 // Cleanup uses only this auto-scan's exact file snapshots. Nothing here is
 // replayed by task retries, and no nonempty directory is ever recursively deleted.
 func (s *MediaOrganizer) cleanup(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	if run.Rule.Storage == "cd2" {
+		return s.cleanupCD2(ctx, f, run)
+	}
 	if err := s.cleanupEntries(ctx, f, run, f.unrelated); err != nil {
 		return err
 	}

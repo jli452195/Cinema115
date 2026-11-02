@@ -1,5 +1,5 @@
 export interface MediaRule {
-  id: string; name: string; storage: string; source: string; target: string; failure?: string; sourceId?: string; targetId?: string; failureId?: string; accountId?: string
+  id: string; name: string; storage: string; source: string; target: string; failure?: string; sourceId?: string; targetId?: string; failureId?: string; accountId?: string; connectionId?: string; connectionRevision?: number
   classify: boolean; enabled: boolean; intervalMinutes: number; lastScan?: string
 }
 export interface MediaEntry {

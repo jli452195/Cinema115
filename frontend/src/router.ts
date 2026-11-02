@@ -102,6 +102,7 @@ export const router = createRouter({
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources/subtitles', name: 'subtitle-settings', component: SubtitleSettingsView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources/network', name: 'network-proxy', component: () => import('./views/NetworkProxyView.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
+    { path: '/resources/clouddrive2', name: 'clouddrive2', component: () => import('./views/CloudDrive2View.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/logs', name: 'logs', component: LogsView, meta: { defaultSidebarCollapsed: false } },
     { path: '/gying', name: 'gying', component: GyingView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/woniu', name: 'woniu', component: WoniuView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },

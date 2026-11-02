@@ -20,33 +20,38 @@ var ErrMediaOrganizeBusy = errors.New("整理任务正在处理，请稍后重�
 var errMediaTargetExists = errors.New("目标已存在，不覆盖")
 
 type MediaOrganizeRule struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Storage         string    `json:"storage"`
-	Source          string    `json:"source"`
-	Target          string    `json:"target"`
-	Failure         string    `json:"failure,omitempty"`
-	SourceID        string    `json:"sourceId,omitempty"`
-	TargetID        string    `json:"targetId,omitempty"`
-	FailureID       string    `json:"failureId,omitempty"`
-	AccountID       string    `json:"accountId,omitempty"`
-	Classify        bool      `json:"classify"`
-	Enabled         bool      `json:"enabled"`
-	IntervalMinutes int       `json:"intervalMinutes"`
-	LastScan        time.Time `json:"lastScan"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Storage            string    `json:"storage"`
+	Source             string    `json:"source"`
+	Target             string    `json:"target"`
+	Failure            string    `json:"failure,omitempty"`
+	SourceID           string    `json:"sourceId,omitempty"`
+	TargetID           string    `json:"targetId,omitempty"`
+	FailureID          string    `json:"failureId,omitempty"`
+	AccountID          string    `json:"accountId,omitempty"`
+	ConnectionID       string    `json:"connectionId,omitempty"`
+	ConnectionRevision uint64    `json:"connectionRevision,omitempty"`
+	Classify           bool      `json:"classify"`
+	Enabled            bool      `json:"enabled"`
+	IntervalMinutes    int       `json:"intervalMinutes"`
+	LastScan           time.Time `json:"lastScan"`
 }
 
 type MediaOrganizeEntry struct {
-	File     OrganizeFile          `json:"file"`
-	Modified int64                 `json:"modified,omitempty"`
-	Group    string                `json:"group"`
-	VideoID  string                `json:"videoId,omitempty"`
-	Relative string                `json:"relative,omitempty"`
-	Target   string                `json:"target,omitempty"`
-	Status   string                `json:"status"`
-	Message  string                `json:"message,omitempty"`
-	Result   *MediaOrganizeResult  `json:"result,omitempty"`
-	Failure  *MediaOrganizeFailure `json:"failure,omitempty"`
+	File       OrganizeFile          `json:"file"`
+	Modified   int64                 `json:"modified,omitempty"`
+	CD2FileID  string                `json:"cd2FileId,omitempty"`
+	CD2Hashes  map[uint32]string     `json:"cd2Hashes,omitempty"`
+	CD2Current *MediaCD2Location     `json:"cd2Current,omitempty"`
+	Group      string                `json:"group"`
+	VideoID    string                `json:"videoId,omitempty"`
+	Relative   string                `json:"relative,omitempty"`
+	Target     string                `json:"target,omitempty"`
+	Status     string                `json:"status"`
+	Message    string                `json:"message,omitempty"`
+	Result     *MediaOrganizeResult  `json:"result,omitempty"`
+	Failure    *MediaOrganizeFailure `json:"failure,omitempty"`
 }
 
 type MediaOrganizeGroup struct {
@@ -113,6 +118,7 @@ type MediaOrganizer struct {
 	classification ClassificationRules
 	accounts       *P115Accounts
 	drive          OrganizeDrive
+	cd2            mediaCD2Connections
 	reserve        func() (func(), error)
 	active         string
 	persistErr     error
@@ -145,6 +151,11 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	target.Entries = slices.Clone(source.Entries)
 	for i := range target.Entries {
 		target.Entries[i].File.NamingValues = maps.Clone(source.Entries[i].File.NamingValues)
+		target.Entries[i].CD2Hashes = maps.Clone(source.Entries[i].CD2Hashes)
+		if source.Entries[i].CD2Current != nil {
+			location := *source.Entries[i].CD2Current
+			target.Entries[i].CD2Current = &location
+		}
 		if source.Entries[i].Result != nil {
 			result := *source.Entries[i].Result
 			target.Entries[i].Result = &result
@@ -170,6 +181,15 @@ func (s *MediaOrganizer) Snapshot(id string) (MediaOrganizeRun, error) {
 }
 
 func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.SaveRuleContext(ctx, rule)
+}
+
+func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganizeRule) (MediaOrganizeRule, error) {
+	if err := ctx.Err(); err != nil {
+		return rule, err
+	}
 	if strings.TrimSpace(rule.Name) == "" || len([]rune(rule.Name)) > 80 || rule.IntervalMinutes < 1 || rule.IntervalMinutes > 1440 {
 		return rule, ErrMediaOrganizeInput
 	}
@@ -199,6 +219,7 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 		s.mu.Unlock()
 	}
 	if rule.Storage == "local" {
+		rule.ConnectionID, rule.ConnectionRevision = "", 0
 		source, err := mediaLocalRoot(rule.Source)
 		if err != nil {
 			return rule, err
@@ -223,6 +244,7 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 			rule.Failure = failure
 		}
 	} else if rule.Storage == "115" {
+		rule.ConnectionID, rule.ConnectionRevision = "", 0
 		if s.accounts == nil || s.drive == nil || rule.AccountID == "" {
 			return rule, fmt.Errorf("%w：请先配置 115 主账号", ErrMediaOrganizeInput)
 		}
@@ -244,6 +266,10 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 			if mediaCloudWithin(rule.Source, rule.Failure) || mediaCloudWithin(rule.Failure, rule.Source) || mediaCloudWithin(rule.Target, rule.Failure) || mediaCloudWithin(rule.Failure, rule.Target) {
 				return rule, fmt.Errorf("%w：整理失败目录不能与来源、目标目录重叠", ErrMediaOrganizeInput)
 			}
+		}
+	} else if rule.Storage == "cd2" {
+		if err := s.prepareCD2Rule(ctx, &rule); err != nil {
+			return rule, err
 		}
 	} else {
 		return rule, ErrMediaOrganizeInput
@@ -267,7 +293,7 @@ func (s *MediaOrganizer) SaveRule(rule MediaOrganizeRule) (MediaOrganizeRule, er
 			if old.ID == rule.ID {
 				found = true
 				rule.LastScan = old.LastScan
-				if old.Storage != rule.Storage || old.Source != rule.Source || old.Target != rule.Target || old.SourceID != rule.SourceID || old.TargetID != rule.TargetID || old.Failure != rule.Failure || old.FailureID != rule.FailureID || old.Classify != rule.Classify || old.AccountID != rule.AccountID {
+				if old.Storage != rule.Storage || old.Source != rule.Source || old.Target != rule.Target || old.SourceID != rule.SourceID || old.TargetID != rule.TargetID || old.Failure != rule.Failure || old.FailureID != rule.FailureID || old.Classify != rule.Classify || old.AccountID != rule.AccountID || old.ConnectionID != rule.ConnectionID || old.ConnectionRevision != rule.ConnectionRevision {
 					rule.LastScan = time.Time{}
 				}
 				s.doc.Rules[i] = rule

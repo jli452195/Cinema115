@@ -22,6 +22,8 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 	if err != nil {
 		return err
 	}
+	defer files.close()
+	s.bindCD2Checkpoint(files, run)
 	if action == "auto" {
 		if err = s.scan(ctx, files, run); err != nil {
 			return err

@@ -131,6 +131,16 @@ func main() {
 	}
 	defer netproxy.Default.CloseIdleConnections()
 	httpapi.RegisterNetworkProxy(admin, networkProxy)
+	cd2Store, err := service.NewSessionStore(filepath.Join(dataDir, "cd2-config.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cd2Connections, err := service.NewCD2Connections(cd2Store)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cd2Connections.Close()
+	httpapi.RegisterCD2(admin, cd2Connections)
 	admin.GET("/version", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, buildinfo.Current())
@@ -312,6 +322,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	mediaOrganizer.SetCD2(cd2Connections)
 	httpapi.RegisterMediaOrganize(admin, mediaOrganizer)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService

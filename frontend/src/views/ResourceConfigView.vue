@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
-import { IconArrowsShuffle, IconSubtitles } from '@tabler/icons-vue'
+import { IconArrowsShuffle, IconCloud, IconSubtitles } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import NavigationCard from '../components/NavigationCard.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
@@ -14,13 +14,18 @@ import { telegramUserRequest, type TelegramChannelConfig } from '../types/telegr
 import { resourceSources as sources } from '../utils/managementFeatures'
 import { subtitleRequest, type SubtitleConfig } from '../utils/subtitleApi'
 import { networkProxyRequest, type NetworkProxyConfig } from '../lib/network-proxy-api'
+import { cd2Request, type CD2Config } from '../lib/cd2-api'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 type Source = typeof sources[number]['id']
 type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
-const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), subtitles: initial(), network: initial() })
+const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), subtitles: initial(), network: initial(), cd2: initial() })
+const groups = [
+  { title: '资源来源', sources: sources.filter(source => source.id !== 'network' && source.id !== 'cd2') },
+  { title: '服务连接', sources: sources.filter(source => source.id === 'network' || source.id === 'cd2') },
+]
 const lifecycle = new AbortController()
 const toneClasses = {
   neutral: 'text-slate-500 dark:text-slate-400',
@@ -57,6 +62,10 @@ async function load(source: Source) {
     } else if (source === 'network') {
       const config = await networkProxyRequest<NetworkProxyConfig>(props.token, signal)
       summary = { label: config.enabled ? `已启用 ${config.services.length} 项服务` : '未启用', tone: config.enabled ? 'success' : 'neutral' }
+    } else if (source === 'cd2') {
+      const config = await cd2Request<CD2Config>(props.token, '', { signal })
+      const configured = !!config.url && config.tokenConfigured
+      summary = { label: config.enabled ? configured ? '已启用，连接状态请测试确认' : '配置不完整' : configured ? '已配置，未启用' : '未配置', tone: config.enabled && !configured ? 'warning' : 'neutral' }
     } else {
       return
     }
@@ -71,9 +80,11 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <ManagementLayout title="资源配置" description="管理资源来源的账号、连接与搜索设置。" @logout="$emit('logout')">
-    <div class="grid items-start gap-3 sm:gap-4 md:grid-cols-2">
-      <NavigationCard v-for="source in sources" :key="source.id" :to="source.settings" :title="source.title" :description="source.description" :aria-describedby="`source-status-${source.id}`" class="resource-card">
+  <ManagementLayout title="资源配置" description="管理资源来源、共用服务连接与搜索设置。" @logout="$emit('logout')">
+    <section v-for="group in groups" :key="group.title" :aria-label="group.title" class="resource-group">
+      <h2 class="mb-3 text-sm font-semibold text-slate-600 dark:text-slate-300">{{ group.title }}</h2>
+      <div class="grid items-start gap-3 sm:gap-4 md:grid-cols-2">
+      <NavigationCard v-for="source in group.sources" :key="source.id" :to="source.settings" :title="source.title" :description="source.description" :aria-describedby="`source-status-${source.id}`" class="resource-card">
         <template #icon>
           <img v-if="source.id === 'telegram'" :src="telegramIcon" alt="" class="h-6 w-6 object-contain" draggable="false" />
           <img v-else-if="source.id === 'woniu'" :src="woniuLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
@@ -81,6 +92,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <IconSubtitles v-else-if="source.id === 'subtitles'" :size="28" aria-hidden="true" />
           <IconArrowsShuffle v-else-if="source.id === 'network'" :size="28" aria-hidden="true" />
+          <IconCloud v-else-if="source.id === 'cd2'" :size="28" aria-hidden="true" />
         </template>
         <template #trailing>
           <span role="status" :aria-busy="summaries[source.id].loading" :title="summaries[source.id].label" class="inline-flex h-6 w-4 shrink-0 items-center justify-end" :class="toneClasses[summaries[source.id].tone]">
@@ -89,11 +101,13 @@ onBeforeUnmount(() => lifecycle.abort())
           </span>
         </template>
       </NavigationCard>
-    </div>
+      </div>
+    </section>
   </ManagementLayout>
 </template>
 
 <style scoped>
+.resource-group + .resource-group { margin-top: 24px; }
 .resource-status-success {
   --status-glow-color: 16 185 129;
   filter: drop-shadow(0 0 3px rgb(var(--status-glow-color) / 0.45));

@@ -12,10 +12,11 @@ import (
 // MediaOrganizeFailure records a move intent before external writes. File IDs and original
 // paths stay stable so subtitle associations and corrections remain valid.
 type MediaOrganizeFailure struct {
-	State    string `json:"state"`
-	ParentID string `json:"parentId,omitempty"`
-	Reason   string `json:"reason"`
-	Message  string `json:"message,omitempty"`
+	State     string `json:"state"`
+	ParentID  string `json:"parentId,omitempty"`
+	CD2FileID string `json:"cd2FileId,omitempty"`
+	Reason    string `json:"reason"`
+	Message   string `json:"message,omitempty"`
 }
 
 func mediaTransientGroups(run *MediaOrganizeRun) map[string]bool {
@@ -76,7 +77,11 @@ func mediaRunCounts(run *MediaOrganizeRun) {
 
 func (f *mediaOrganizeFiles) failureFiles(ctx context.Context) (*mediaOrganizeFiles, error) {
 	if !f.failureChecked {
-		if f.rule.Storage == "115" {
+		if f.rule.Storage == "cd2" {
+			if err := f.cd2CheckDirectory(ctx, f.rule.Failure); err != nil {
+				return nil, err
+			}
+		} else if f.rule.Storage == "115" {
 			drive, ok := f.drive.(mediaOrganizeDrive)
 			if !ok {
 				return nil, fmt.Errorf("115 目录服务未配置")
@@ -165,7 +170,17 @@ func (s *MediaOrganizer) quarantine(ctx context.Context, files *mediaOrganizeFil
 			if saveErr = s.checkpoint(run); saveErr != nil {
 				return saveErr
 			}
-			return target.move(work, plan)
+			if err := target.move(work, plan); err != nil {
+				return err
+			}
+			if run.Rule.Storage == "cd2" {
+				actual, err := target.cd2.Stat(work, path.Join(run.Rule.Failure, plan.Relative), true)
+				if err != nil {
+					return err
+				}
+				e.Failure.CD2FileID = actual.ID
+			}
+			return nil
 		}()
 		cancel()
 		if saveErr != nil {

@@ -42,6 +42,7 @@
     "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs tests/subtitle-sources.test.mjs",
     "test:subtitle-settings-ui": "node scripts/subtitle-settings-ui.cjs",
     "test:network-proxy-ui": "node scripts/network-proxy-ui.cjs",
+    "test:cd2-ui": "node scripts/cd2-ui.cjs",
     "test:telegram-relay-ui": "node scripts/telegram-relay-ui.cjs",
     "test:telegram-search-ui": "node scripts/telegram-channels-ui.cjs",
     "test:telegram-account-ui": "node scripts/telegram-account-ui.cjs",

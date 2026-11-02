@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"strm115/backend/internal/client/clouddrive2"
 	"strm115/backend/internal/client/p115"
 )
 
@@ -34,10 +36,19 @@ type mediaOrganizeFiles struct {
 	localPrune      func(map[string]bool, time.Time)
 	localCandidates []OrganizeFile
 	localPending    map[string]bool
+	cd2             clouddrive2.Filesystem
+	cd2Lease        *CD2Lease
+	cd2Snapshots    map[string]clouddrive2.File
+	cd2Checkpoint   func(MediaOrganizeEntry, clouddrive2.File) error
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {
 	f := &mediaOrganizeFiles{rule: rule, drive: s.drive, lists: make(map[string][]p115.ShareFile)}
+	if rule.Storage == "cd2" {
+		if err := s.openCD2Files(ctx, f); err != nil {
+			return nil, err
+		}
+	}
 	if rule.Storage == "local" && rule.Enabled {
 		f.localReady = s.localTaskReadiness(rule)
 		f.localPrune = func(seen map[string]bool, started time.Time) { s.pruneLocalObservations(rule, seen, started) }
@@ -140,17 +151,26 @@ func mediaFileType(name string) string {
 func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, error) {
 	out := make([]MediaOrganizeEntry, 0, 128)
 	appendFile := func(file p115.ShareFile, parent, relative string, modified int64) {
+		cd2ID := f.cd2Snapshots[file.ID].ID
+		cd2Hashes := maps.Clone(f.cd2Snapshots[file.ID].Hashes)
 		typeName := mediaFileType(file.Name)
 		if typeName == "" {
 			if !mediaKeepFile(file.Name) {
-				f.unrelated = append(f.unrelated, MediaOrganizeEntry{File: OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: "cleanup"}, Modified: modified})
+				f.unrelated = append(f.unrelated, MediaOrganizeEntry{File: OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: "cleanup"}, Modified: modified, CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
 			}
 			return
 		}
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
 		organizeFileNumbering(&item)
 		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
-		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Status: "pending"})
+		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Status: "pending", CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
+	}
+	if f.rule.Storage == "cd2" {
+		pending, err := f.scanCD2(ctx, appendFile)
+		if err != nil {
+			return nil, err
+		}
+		return f.holdLocalCompanions(out, pending), nil
 	}
 	if f.rule.Storage == "local" {
 		f.localSnapshots = make(map[string]os.FileInfo)
@@ -344,6 +364,9 @@ func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry)
 	if e.Relative == "" {
 		return nil
 	}
+	if f.rule.Storage == "cd2" {
+		return f.cd2Conflict(ctx, e)
+	}
 	if f.rule.Storage == "local" {
 		full := filepath.Join(f.rule.Target, filepath.FromSlash(e.Relative))
 		if !mediaWithin(f.rule.Target, full) {
@@ -376,6 +399,9 @@ func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry)
 }
 
 func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) error {
+	if f.rule.Storage == "cd2" {
+		return f.moveCD2(ctx, e)
+	}
 	if e.Failure != nil && e.Failure.State == "stored" {
 		// Keep the original file identity and subtitle associations in the plan.
 		// Only the actual read location changes after quarantine.

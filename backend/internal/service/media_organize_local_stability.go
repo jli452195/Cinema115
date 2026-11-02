@@ -107,13 +107,16 @@ func (f *mediaOrganizeFiles) holdLocalCompanions(entries []MediaOrganizeEntry, p
 // This listing owns separate cleanup snapshots; the original scan remains the
 // only source of files that this run is allowed to remove.
 func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *MediaOrganizeRun) error {
-	if f.rule.Storage != "local" || !slices.ContainsFunc(run.Entries, func(e MediaOrganizeEntry) bool {
+	if f.rule.Storage != "local" && f.rule.Storage != "cd2" || !slices.ContainsFunc(run.Entries, func(e MediaOrganizeEntry) bool {
 		return e.File.MediaType == "video" && e.Relative != "" && (e.Status == "ready" || e.Status == "error")
 	}) {
 		return nil
 	}
-	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady}
+	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2}
 	if _, err := current.scan(ctx); err != nil {
+		if f.rule.Storage == "cd2" {
+			return err
+		}
 		return &mediaLocalScanError{err}
 	}
 	beforeOwners, currentOwners := mediaLocalCompanionOwners(f.localCandidates), mediaLocalCompanionOwners(current.localCandidates)
@@ -132,6 +135,11 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 			return true
 		}
 		x, y := f.localSnapshots[id], current.localSnapshots[id]
+		if f.rule.Storage == "cd2" {
+			a, before := f.cd2Snapshots[id]
+			b, after := current.cd2Snapshots[id]
+			return !before || !after || a.ID != b.ID || !a.Modified.Equal(b.Modified) || !slices.Equal(beforeOwners[id], currentOwners[id])
+		}
 		return x == nil || y == nil || !x.ModTime().Equal(y.ModTime()) || !slices.Equal(beforeOwners[id], currentOwners[id])
 	}
 	for _, files := range []map[string]OrganizeFile{before, after} {

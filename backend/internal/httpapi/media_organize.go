@@ -67,7 +67,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		if !bindNamingJSON(c, &in) {
 			return
 		}
-		out, err := s.SaveRule(in)
+		out, err := s.SaveRuleContext(c.Request.Context(), in)
 		if err != nil {
 			fail(c, err)
 			return

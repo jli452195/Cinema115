@@ -1,0 +1,3598 @@
+syntax = "proto3";
+
+package clouddrive;
+
+option csharp_namespace = "CloudDriveSrv.Protos";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/descriptor.proto";
+
+// Define a custom option for versioning.
+extend google.protobuf.FileOptions { string version = 50001; }
+
+option (version) = "1.1.2";
+
+service CloudDriveFileSrv {
+  // public methods, no authorization is required
+  // returns if clouddrive has logged in to cloudfs server and the user name
+  rpc GetSystemInfo(google.protobuf.Empty) returns (CloudDriveSystemInfo) {}
+  // get bearer token by username and password
+  rpc GetToken(GetTokenRequest) returns (JWTToken) {}
+  // login to cloudfs server
+  rpc Login(UserLoginRequest) returns (FileOperationResult) {}
+  // login with third party account (e.g., Xunlei)
+  rpc LoginWithThirdPartyAccount(LoginWithThirdPartyAccountRequest) returns (JWTToken) {}
+  // register a new count
+  rpc Register(UserRegisterRequest) returns (FileOperationResult) {}
+  // asks cloudfs server to send reset account email with reset link
+  rpc SendResetAccountEmail(SendResetAccountEmailRequest)
+      returns (google.protobuf.Empty) {}
+  // reset account's data, set new password, with received reset code from email
+  rpc ResetAccount(ResetAccountRequest) returns (google.protobuf.Empty) {}
+  // recovery flow (no authorization): ask cloudfs to email a disable-2FA code to the account
+  rpc SendDisable2FAEmail(SendDisable2FAEmailRequest)
+      returns (google.protobuf.Empty) {}
+  // recovery flow (no authorization): disable 2FA using the emailed code + account password
+  rpc Disable2FAByEmail(Disable2FAByEmailRequest) returns (google.protobuf.Empty) {}
+  // get user created API token info by token string
+  rpc GetApiTokenInfo(StringValue) returns (TokenInfo) {}
+  // login with 2FA code (public method, no authorization required)
+  rpc LoginWith2FA(LoginWith2FARequest) returns (JWTToken) {}
+
+  // authorized methods, Authorization header with Bearer {token} is requirerd
+  // asks cloudfs server to send confirm email with confirm link
+  rpc SendConfirmEmail(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // confirm email by confirm code
+  rpc ConfirmEmail(ConfirmEmailRequest) returns (google.protobuf.Empty) {}
+  // get account status
+  rpc GetAccountStatus(google.protobuf.Empty) returns (AccountStatusResult) {}
+  
+  // ==================== 2FA Methods (Authorized) ====================
+  // Check if 2FA is enabled for the current user
+  rpc Check2FAStatus(google.protobuf.Empty) returns (TwoFactorAuthStatusResult) {}
+  // Setup 2FA - Generate TOTP secret and QR code (requires password)
+  rpc Setup2FA(Setup2FARequest) returns (TwoFactorAuthSetupResult) {}
+  // Enable 2FA by verifying TOTP code - Returns recovery codes
+  rpc Enable2FA(TwoFactorAuthCodeRequest) returns (TwoFactorAuthEnableResult) {}
+  // Disable 2FA - Requires valid TOTP code
+  rpc Disable2FA(TwoFactorAuthCodeRequest) returns (TwoFactorAuthMessageResult) {}
+  // View unused recovery codes - Requires valid TOTP code
+  rpc GetRecoveryCodes(TwoFactorAuthCodeRequest) returns (TwoFactorAuthRecoveryCodesResult) {}
+  // Regenerate recovery codes - Requires valid TOTP code
+  rpc RegenerateRecoveryCodes(TwoFactorAuthCodeRequest) returns (TwoFactorAuthRecoveryCodesResult) {}
+  // Detach all devices bound to the account (lost/sold device). Requires password (+ TOTP if 2FA on)
+  rpc UnbindDevice(UnbindDeviceRequest) returns (google.protobuf.Empty) {}
+  // ==================== End 2FA Methods ====================
+  
+  // ==================== Session Management Methods ====================
+  // Get list of all active refresh token sessions
+  rpc GetSessions(google.protobuf.Empty) returns (GetSessionsResponse) {}
+  // Revoke a specific session by ID
+  rpc RevokeSession(RevokeSessionRequest) returns (google.protobuf.Empty) {}
+  // Revoke all sessions except the current one
+  rpc RevokeOtherSessions(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // ==================== End Session Management Methods ====================
+
+  // ==================== Account Deletion Methods (Authorized) ====================
+  // Step 1: email a one-time deletion code (valid 30 minutes) to the account's registered
+  // address and return what the confirmation screen needs. Re-sends the same code if called
+  // again inside the window. Fails when an auto-renewing store subscription is still active.
+  rpc SendDeleteAccountEmail(google.protobuf.Empty)
+      returns (DeleteAccountPreflightResult) {}
+  // Step 2: permanently delete the signed-in account. IRREVERSIBLE — no grace period, no undo.
+  // On success the backend also wipes local login state, so clients must return to the
+  // login screen and clear their stored credentials.
+  rpc DeleteAccount(DeleteAccountRequest) returns (google.protobuf.Empty) {}
+  // ==================== End Account Deletion Methods ====================
+
+  // get all subfiles by path
+  rpc GetSubFiles(ListSubFileRequest) returns (stream SubFilesReply) {}
+  // search under path
+  rpc GetSearchResults(SearchRequest) returns (stream SubFilesReply) {}
+  // find file info by full path
+  rpc FindFileByPath(FindFileByPathRequest) returns (CloudDriveFile) {}
+  // create a folder under path
+  rpc CreateFolder(CreateFolderRequest) returns (CreateFolderResult) {}
+  // create an encrypted folder under path
+  rpc CreateEncryptedFolder(CreateEncryptedFolderRequest)
+      returns (CreateFolderResult) {}
+  // unlock an encrypted folder/file by setting password
+  rpc UnlockEncryptedFile(UnlockEncryptedFileRequest)
+      returns (FileOperationResult) {}
+  // lock an encrypted folder/file by clearing password
+  rpc LockEncryptedFile(FileRequest) returns (FileOperationResult) {}
+  // rename a single file
+  rpc RenameFile(RenameFileRequest) returns (FileOperationResult) {}
+  // batch rename files
+  rpc RenameFiles(RenameFilesRequest) returns (FileOperationResult) {}
+  // move files to a dest folder
+  rpc MoveFile(MoveFileRequest) returns (FileOperationResult) {}
+  // copy files to a dest folder
+  rpc CopyFile(CopyFileRequest) returns (FileOperationResult) {}
+  // delete a single file
+  rpc DeleteFile(FileRequest) returns (FileOperationResult) {}
+  // delete a single file permanently, only aliyundrive supports this currently
+  rpc DeleteFilePermanently(FileRequest) returns (FileOperationResult) {}
+  // batch delete files
+  rpc DeleteFiles(MultiFileRequest) returns (FileOperationResult) {}
+  // batch delete files permanently, only aliyundrive supports this currently
+  rpc DeleteFilesPermanently(MultiFileRequest) returns (FileOperationResult) {}
+  // add offline files by providing magnet, sha1, ..., applies only with folders
+  // with canOfflineDownload is true
+  rpc AddOfflineFiles(AddOfflineFileRequest) returns (FileOperationResult) {}
+  // remove offline files by info hash
+  rpc RemoveOfflineFiles(RemoveOfflineFilesRequest)
+      returns (FileOperationResult) {}
+  // list offline files
+  rpc ListOfflineFilesByPath(FileRequest) returns (OfflineFileListResult) {}
+  // list all offline files of a cloud with pagination
+  rpc ListAllOfflineFiles(OfflineFileListAllRequest)
+      returns (OfflineFileListAllResult) {}
+  // get offline quota info of a cloud
+  rpc GetOfflineQuotaInfo(OfflineQuotaRequest) returns (OfflineQuotaInfo) {}
+  // clear offline downloads by filter type: All, Finished, Error, Downloading
+  rpc ClearOfflineFiles(ClearOfflineFileRequest)
+      returns (google.protobuf.Empty) {}
+  // restart an offline download task by info hash, url and parent id
+  rpc RestartOfflineTask(RestartOfflineFileRequest)
+      returns (google.protobuf.Empty) {}
+  // add shared link to a folder
+  rpc AddSharedLink(AddSharedLinkRequest) returns (google.protobuf.Empty) {}
+  // get folder properties, applies only with folders with hasDetailProperties
+  // is true
+  rpc GetFileDetailProperties(FileRequest) returns (FileDetailProperties) {}
+  // get total/free/used space of a cloud path
+  rpc GetSpaceInfo(FileRequest) returns (SpaceInfo) {}
+  // get cloud account memberships
+  rpc GetCloudMemberships(FileRequest) returns (CloudMemberships) {}
+  // get server runtime info
+  rpc GetRuntimeInfo(google.protobuf.Empty) returns (RuntimeInfo) {}
+  // file buffer disk cache runtime stats
+  rpc GetFileBufferDiskCacheStats(google.protobuf.Empty) returns (FileBufferDiskCacheStats) {}
+  // purge all disk-cached file buffers
+  rpc PurgeFileBufferDiskCache(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // set disk cache eviction strategy
+  rpc SetDiskCacheEvictionStrategy(SetDiskCacheEvictionStrategyRequest) returns (google.protobuf.Empty) {}
+  // enable file buffer disk cache for a folder
+  rpc SetFolderDiskCache(SetFolderDiskCacheRequest) returns (google.protobuf.Empty) {}
+  // disable file buffer disk cache for a folder
+  rpc RemoveFolderDiskCache(FileRequest) returns (google.protobuf.Empty) {}
+  // list all folders with disk cache enabled
+  rpc ListDiskCacheFolders(google.protobuf.Empty) returns (ListDiskCacheFoldersReply) {}
+  // client-driven cache hints: tell the server to prefetch byte ranges ahead of
+  // actual reads, with a priority that also triages concurrent work
+  rpc PrefetchFileRanges(PrefetchFileRangesRequest) returns (PrefetchFileRangesReply) {}
+  // cancel one or more hints previously registered via PrefetchFileRanges
+  rpc CancelFilePrefetch(CancelFilePrefetchRequest) returns (google.protobuf.Empty) {}
+  // Tell the server: "I won't read this file again — drop the EntryReader
+  // (download buffers + downloader threads) as soon as no open handles
+  // remain, skipping the default 2-second post-close retention window that
+  // serves rapid close/reopen patterns from mounted filesystems. Use for
+  // web thumbnail generation, one-shot metadata probes, and any client that
+  // can guarantee it won't re-open the file in the near future."
+  rpc CloseFileReader(FileRequest) returns (google.protobuf.Empty) {}
+  // diagnostic: list currently-registered prefetch hints and cumulative
+  // telemetry counters (since process start)
+  rpc GetActivePrefetchHints(google.protobuf.Empty) returns (GetActivePrefetchHintsReply) {}
+  // get server stats, including cpu/mem/uptime
+  rpc GetRunningInfo(google.protobuf.Empty) returns (RunInfo) {}
+  // get all opened file handles
+  rpc GetOpenFileHandles(google.protobuf.Empty) returns (OpenFileHandleList) {}
+  // logout from cloudfs server
+  rpc Logout(UserLogoutRequest) returns (FileOperationResult) {}
+  // check if current user can add more mount point
+  rpc CanAddMoreMountPoints(google.protobuf.Empty)
+      returns (FileOperationResult) {}
+  // get all mount points
+  rpc GetMountPoints(google.protobuf.Empty) returns (GetMountPointsResult) {}
+  // add a new mount point
+  rpc AddMountPoint(MountOption) returns (MountPointResult) {}
+  // remove a mountpoint
+  rpc RemoveMountPoint(MountPointRequest) returns (MountPointResult) {}
+  // mount a mount point
+  rpc Mount(MountPointRequest) returns (MountPointResult) {}
+  // unmount a mount point
+  rpc Unmount(MountPointRequest) returns (MountPointResult) {}
+  // change mount point settings
+  rpc UpdateMountPoint(UpdateMountPointRequest) returns (MountPointResult) {}
+  // get all unused drive letters from server's local storage, applies to
+  // windows only
+  rpc GetAvailableDriveLetters(google.protobuf.Empty)
+      returns (GetAvailableDriveLettersResult) {}
+  // check if server has driver letters, returns true only on windows
+  rpc HasDriveLetters(google.protobuf.Empty) returns (HasDriveLettersResult) {}
+  // check if server can mount both local and cloud drives
+  rpc CanMountBothLocalAndCloud(google.protobuf.Empty) returns (BoolResult) {}
+  // get subfiles of a local path, used for adding mountpoint from web ui
+  rpc LocalGetSubFiles(LocalGetSubFilesRequest)
+      returns (stream LocalGetSubFilesResult) {}
+  // create a folder on the local filesystem
+  rpc LocalCreateFolder(LocalCreateFolderRequest) returns (LocalCreateFolderResult) {}
+  // get all transfer tasks' count
+  rpc GetAllTasksCount(google.protobuf.Empty) returns (GetAllTasksCountResult) {
+  }
+  // get download tasks' count
+  rpc GetDownloadFileCount(google.protobuf.Empty)
+      returns (GetDownloadFileCountResult) {}
+  // get all download tasks
+  rpc GetDownloadFileList(google.protobuf.Empty)
+      returns (GetDownloadFileListResult) {}
+  // get all upload tasks' count
+  rpc GetUploadFileCount(google.protobuf.Empty)
+      returns (GetUploadFileCountResult) {}
+  // get upload tasks, paged by providing page number and items per page and
+  // file name filter
+  rpc GetUploadFileList(GetUploadFileListRequest)
+      returns (GetUploadFileListResult) {}
+  // cancel all upload tasks
+  rpc CancelAllUploadFiles(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
+  // cancel selected upload tasks
+  rpc CancelUploadFiles(MultpleUploadFileKeyRequest)
+      returns (google.protobuf.Empty) {}
+  // pause all upload tasks
+  rpc PauseAllUploadFiles(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
+  // pause selected upload tasks
+  rpc PauseUploadFiles(MultpleUploadFileKeyRequest)
+      returns (google.protobuf.Empty) {}
+  // resume all upload tasks
+  rpc ResumeAllUploadFiles(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
+  // resume selected upload tasks
+  rpc ResumeUploadFiles(MultpleUploadFileKeyRequest)
+      returns (google.protobuf.Empty) {}
+
+  // unified remote upload via bidirectional stream
+
+  // get all system tasks
+  rpc GetCopyTasks(google.protobuf.Empty) returns (GetCopyTaskResult) {}
+  // get all merge tasks (folder recursive merges)
+  rpc GetMergeTasks(google.protobuf.Empty) returns (GetMergeTasksResult) {}
+  // cancel a merge task by source and destination paths
+  rpc CancelMergeTask(CancelMergeTaskRequest) returns (google.protobuf.Empty) {}
+  // cancel copy folder task
+  rpc CancelCopyTask(CopyTaskRequest) returns (google.protobuf.Empty) {}
+  // pause copy folder task
+  rpc PauseCopyTask(PauseCopyTaskRequest) returns (google.protobuf.Empty) {}
+  // restart copy folder task
+  rpc RestartCopyTask(CopyTaskRequest) returns (google.protobuf.Empty) {}
+  // remove all completed copy tasks
+  rpc RemoveCompletedCopyTasks(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
+  // batch operations for copy tasks
+  rpc RemoveAllCopyTasks(google.protobuf.Empty) returns (BatchOperationResult) {
+  }
+  rpc RemoveCopyTasks(CopyTaskBatchRequest) returns (BatchOperationResult) {}
+  rpc PauseAllCopyTasks(PauseAllCopyTasksRequest)
+      returns (BatchOperationResult) {}
+  rpc PauseCopyTasks(PauseCopyTasksRequest) returns (BatchOperationResult) {}
+  rpc ResumeAllCopyTasks(google.protobuf.Empty) returns (BatchOperationResult) {
+  }
+  rpc ResumeCopyTasks(CopyTaskBatchRequest) returns (BatchOperationResult) {}
+  // check if current user can add more cloud apis
+  rpc CanAddMoreCloudApis(google.protobuf.Empty) returns (FileOperationResult) {
+  }
+  // add 115 cloud with editthiscookie
+  rpc APILogin115Editthiscookie(Login115EditthiscookieRequest)
+      returns (APILoginResult) {}
+  // add 115 cloud with qr scanning
+  rpc APILogin115QRCode(Login115QrCodeRequest)
+      returns (stream QRCodeScanMessage) {}
+  // add 115 open with OAuth
+  rpc APILogin115OpenOAuth(Login115OpenOAuthRequest) returns (APILoginResult) {}
+  // add 115 open with qr scanning
+  rpc APILogin115OpenQRCode(Login115OpenQRCodeRequest)
+      returns (stream QRCodeScanMessage) {}
+  // add GuangYaPan with qr (device code) scanning
+  rpc APILoginGuangYaPanQRCode(LoginGuangYaPanQRCodeRequest)
+      returns (stream QRCodeScanMessage) {}
+  // add GuangYaPan with web PKCE (authorization code) result
+  rpc APILoginGuangYaPanOAuth(LoginGuangYaPanOAuthRequest)
+      returns (APILoginResult) {}
+  // add AliyunDriveOpen with OAuth result
+  rpc APILoginAliyundriveOAuth(LoginAliyundriveOAuthRequest)
+      returns (APILoginResult) {}
+  // add AliyunDrive with refresh token
+  rpc APILoginAliyundriveRefreshtoken(LoginAliyundriveRefreshtokenRequest)
+      returns (APILoginResult) {}
+  // add AliyunDrive with qr scanning
+  rpc APILoginAliyunDriveQRCode(LoginAliyundriveQRCodeRequest)
+      returns (stream QRCodeScanMessage) {}
+  // add BaiduPan with OAuth result
+  rpc APILoginBaiduPanOAuth(LoginBaiduPanOAuthRequest)
+      returns (APILoginResult) {}
+  // add OneDrive with OAuth result
+  rpc APILoginOneDriveOAuth(LoginOneDriveOAuthRequest)
+      returns (APILoginResult) {}
+  // add Google Drive with OAuth result
+  rpc ApiLoginGoogleDriveOAuth(LoginGoogleDriveOAuthRequest)
+      returns (APILoginResult) {}
+  // add Google Drive with refresh token
+  rpc ApiLoginGoogleDriveRefreshToken(LoginGoogleDriveRefreshTokenRequest)
+      returns (APILoginResult) {}
+  // add Google Drive with the user's own OAuth client (Desktop app type):
+  // returns the Google sign-in address to open in a browser
+  rpc ApiLoginGoogleDriveStart(LoginGoogleDriveStartRequest)
+      returns (LoginGoogleDriveStartResult) {}
+  // finish a sign-in from ApiLoginGoogleDriveStart: pass the address the
+  // browser ended on, or leave it empty to wait for the browser to reach this
+  // backend's loopback page; call again while `done` is false
+  rpc ApiLoginGoogleDriveFinish(LoginGoogleDriveFinishRequest)
+      returns (LoginGoogleDriveFinishResult) {}
+  // add Xunlei Drive with OAuth result
+  rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest) returns (APILoginResult) {}
+  // add XunleiOpen with OAuth result
+  rpc ApiLoginXunleiOpenOAuth(LoginXunleiOpenOAuthRequest)
+      returns (APILoginResult) {}
+  // add 123 cloud with client id and client secret
+  rpc ApiLogin123panOAuth(Login123panOAuthRequest) returns (APILoginResult) {}
+  // mint a short-lived signed OAuth `state` token (relayed to cloudfs server).
+  // The frontend uses the returned token as the OAuth `state` parameter; the
+  // oauth callback server validates it before processing the redirect callback.
+  rpc CreateOAuthState(CreateOAuthStateRequest) returns (CreateOAuthStateResult) {}
+  // add 189 cloud with qr scanning
+  rpc APILogin189QRCode(Login189QRCodeRequest)
+      returns (stream QRCodeScanMessage) {}
+  // add PikPak cloud with username and password
+  // rpc APILoginPikPak(UserLoginRequest) returns (APILoginResult) {}
+  // add webdav
+  rpc APILoginWebDav(LoginWebDavRequest) returns (APILoginResult) {}
+  // add Amazon S3 or S3-compatible storage
+  rpc APILoginS3(LoginS3Request) returns (APILoginResult) {}
+  // add local folder
+  rpc APIAddLocalFolder(AddLocalFolderRequest) returns (APILoginResult) {}
+  // add remote clouddrive
+  rpc APILoginCloudDrive(LoginCloudDriveRequest) returns (APILoginResult) {}
+  // add SFTP server
+  rpc APILoginSftp(LoginSftpRequest) returns (APILoginResult) {}
+  // add FTP/FTPS server
+  rpc APILoginFtp(LoginFtpRequest) returns (APILoginResult) {}
+  // add SMB/CIFS share
+  rpc APILoginSmb(LoginSmbRequest) returns (APILoginResult) {}
+  // discover SMB servers on the local network
+  rpc DiscoverSmbServers(google.protobuf.Empty) returns (DiscoverSmbServersResult) {}
+  // discover SMB shares on a server
+  rpc DiscoverSmbShares(DiscoverSmbSharesRequest) returns (DiscoverSmbSharesResult) {}
+  // remove a cloud
+  rpc RemoveCloudAPI(RemoveCloudAPIRequest) returns (FileOperationResult) {}
+  // get all cloud apis
+  rpc GetAllCloudApis(google.protobuf.Empty) returns (CloudAPIList) {}
+  // get CloudAPI configuration
+  rpc GetCloudAPIConfig(GetCloudAPIConfigRequest) returns (CloudAPIConfig) {}
+  // set CloudAPI configuration
+  rpc SetCloudAPIConfig(SetCloudAPIConfigRequest)
+      returns (google.protobuf.Empty) {}
+  // get all system setings value
+  rpc GetSystemSettings(google.protobuf.Empty) returns (SystemSettings) {}
+  // set selected system settings value
+  rpc SetSystemSettings(SystemSettings) returns (google.protobuf.Empty) {}
+  // set dir cache time
+  rpc SetDirCacheTimeSecs(SetDirCacheTimeRequest)
+      returns (google.protobuf.Empty) {}
+  // get dir cache time in effect (default value will be returned)
+  rpc GetEffectiveDirCacheTimeSecs(GetEffectiveDirCacheTimeRequest)
+      returns (GetEffectiveDirCacheTimeResult) {}
+  // force expire dir cache recursively
+  rpc ForceExpireDirCache(FileRequest) returns (google.protobuf.Empty) {}
+  // vacuum persisted dir cache database (requires persistence enabled)
+  rpc VacuumDirCache(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // get vacuum progress status
+  rpc GetVacuumProgress(google.protobuf.Empty) returns (VacuumProgressResult) {}
+  // get dir cache database file size in bytes (includes WAL and SHM files)
+  rpc GetDirCacheDbSize(google.protobuf.Empty)
+      returns (GetDirCacheDbSizeResult) {}
+  // get open file table
+  // deprecated, use GetOpenFileHandles instead
+  rpc GetOpenFileTable(GetOpenFileTableRequest) returns (OpenFileTable) {}
+  // get dir cache table
+  rpc GetDirCacheTable(google.protobuf.Empty) returns (DirCacheTable) {}
+  // get referenced entry paths of parent path
+  rpc GetReferencedEntryPaths(FileRequest) returns (StringList) {}
+
+  // get temp file table
+  rpc GetTempFileTable(google.protobuf.Empty) returns (TempFileTable) {}
+
+  // [deprecated] use PushMessage instead
+  // push upload/download task count changes to client, also can be used for
+  // client to detect conenction broken
+  rpc PushTaskChange(google.protobuf.Empty)
+      returns (stream GetAllTasksCountResult) {}
+  // general message notification
+  rpc PushMessage(google.protobuf.Empty)
+      returns (stream CloudDrivePushMessage) {}
+  // get CloudDrive1's user data string
+  rpc GetCloudDrive1UserData(google.protobuf.Empty) returns (StringResult) {}
+  // get service capabilities (restart/update availability)
+  rpc GetServiceCapabilities(google.protobuf.Empty) returns (ServiceCapabilities) {}
+  // restart service
+  rpc RestartService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // shutdown service
+  rpc ShutdownService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // check if has updates available
+  rpc HasUpdate(google.protobuf.Empty) returns (UpdateResult) {}
+  // check software updates
+  rpc CheckUpdate(google.protobuf.Empty) returns (UpdateResult) {}
+  // download newest version
+  rpc DownloadUpdate(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // update to newest version
+  rpc UpdateSystem(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // test update process
+  rpc TestUpdate(FileRequest) returns (google.protobuf.Empty) {}
+  // get file metadata
+  rpc GetMetaData(FileRequest) returns (FileMetaData) {}
+  // get file's original path from search result
+  rpc GetOriginalPath(FileRequest) returns (StringResult) {}
+  // change password
+  rpc ChangePassword(ChangePasswordRequest) returns (FileOperationResult) {}
+  // create a new file
+  rpc CreateFile(CreateFileRequest) returns (CreateFileResult) {}
+  // close an opened file
+  rpc CloseFile(CloseFileRequest) returns (FileOperationResult) {}
+  // write a stream to an opened file
+  rpc WriteToFileStream(stream WriteFileRequest) returns (WriteFileResult) {}
+  // write to an opened file
+  rpc WriteToFile(WriteFileRequest) returns (WriteFileResult) {}
+  // get promotions
+  rpc GetPromotions(google.protobuf.Empty) returns (GetPromotionsResult) {}
+  // get promotions of a specific cloud, cloud_name is the name of the cloud
+  rpc GetPromotionsByCloud(CloudAPIRequest) returns (GetPromotionsResult) {}
+  // update promotion result after purchased
+  rpc UpdatePromotionResult(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
+  // update promotion result after purchased with cloud name
+  rpc UpdatePromotionResultByCloud(UpdatePromotionResultByCloudRequest)
+      returns (google.protobuf.Empty) {}
+  // send promotion action when user has purchased a promotion
+  rpc SendPromotionAction(SendPromotionActionRequest)
+      returns (google.protobuf.Empty) {}
+  // get cloudfs plans
+  rpc GetCloudDrivePlans(google.protobuf.Empty)
+      returns (GetCloudDrivePlansResult) {}
+  // join a plan
+  rpc JoinPlan(JoinPlanRequest) returns (JoinPlanResult) {}
+  // bind account to a cloud account id
+  rpc BindCloudAccount(BindCloudAccountRequest)
+      returns (google.protobuf.Empty) {}
+  // transfer balance to another user
+  rpc TransferBalance(TransferBalanceRequest) returns (google.protobuf.Empty) {}
+  rpc SendChangeEmailCode(SendChangeEmailCodeRequest)
+      returns (google.protobuf.Empty) {}
+  // change email
+  rpc ChangeEmail(ChangeEmailRequest) returns (google.protobuf.Empty) {}
+  // change email and password, for trusted devices only
+  rpc ChangeEmailAndPassword(ChangeEmailAndPasswordRequest)
+      returns (google.protobuf.Empty) {}
+  // Cloud sync of the account data (the "sync with cloud" setting) while
+  // logged in. Login still takes synDataToCloud; these change it afterwards
+  // and reconcile this device with the cloud copy instead of just flipping
+  // the flag.
+  rpc GetCloudSyncStatus(google.protobuf.Empty) returns (CloudSyncStatus) {}
+  // fetch the cloud copy and compare it with this device, nothing is changed
+  rpc PreviewCloudSync(google.protobuf.Empty) returns (CloudSyncPreview) {}
+  // turn sync on: one side overwrites the other, then the result is uploaded
+  rpc EnableCloudSync(EnableCloudSyncRequest) returns (CloudSyncResult) {}
+  // turn sync off: pending changes are sent first, the cloud copy is kept
+  // unless clearCloudData is set
+  rpc DisableCloudSync(DisableCloudSyncRequest) returns (DisableCloudSyncResult) {}
+  // chech balance log
+  rpc GetBalanceLog(google.protobuf.Empty) returns (BalanceLogResult) {}
+  // check activation code for a plan
+  rpc CheckActivationCode(StringValue) returns (CheckActivationCodeResult) {}
+  // Activate plan using an activation code
+  rpc ActivatePlan(StringValue) returns (JoinPlanResult) {}
+  // check counpon code for a plan
+  rpc CheckCouponCode(CheckCouponCodeRequest) returns (CouponCodeResult) {}
+  // IAP: quote the in-store price for a store product (server applies coupon/referral + CNY
+  // balance and returns the remainder to charge in-store)
+  rpc GetStorePurchaseQuote(GetStorePurchaseQuoteRequest)
+      returns (StorePurchaseQuote) {}
+  // IAP: submit a store receipt for server validation + plan/entitlement activation
+  rpc VerifyStorePurchase(VerifyStorePurchaseRequest)
+      returns (VerifyStorePurchaseResult) {}
+  // get referral code of current user
+  rpc GetReferralCode(google.protobuf.Empty) returns (StringValue) {}
+  // list all backups
+  rpc BackupGetAll(google.protobuf.Empty) returns (BackupList) {}
+  // get backup status
+  rpc BackupGetStatus(StringValue) returns (BackupStatus) {}
+  // add a backup
+  rpc BackupAdd(Backup) returns (google.protobuf.Empty) {}
+  // remove a backup by it's source path
+  rpc BackupRemove(StringValue) returns (google.protobuf.Empty) {}
+  // update a backup
+  rpc BackupUpdate(Backup) returns (google.protobuf.Empty) {}
+  // add destinations to a backup
+  rpc BackupAddDestination(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // remove destinations from a backup
+  rpc BackupRemoveDestination(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // enable/disable a backup
+  rpc BackupSetEnabled(BackupSetEnabledRequest)
+      returns (google.protobuf.Empty) {}
+  // enable/disable a backup's FileSystemWatch
+  rpc BackupSetFileSystemWatchEnabled(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // deprecated, use BackupUpdate instead
+  rpc BackupUpdateStrategies(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // restart a backup walking through
+  rpc BackupRestartWalkingThrough(StringValue) returns (google.protobuf.Empty) {
+  }
+  // test a path against filter rules being edited (allow_get_backups)
+  rpc BackupTestFileRules(BackupTestFileRulesRequest) returns (BackupTestFileRulesResult) {}
+  // check if current plan can support more backups
+  rpc CanAddMoreBackups(google.protobuf.Empty) returns (FileOperationResult) {}
+  // two-way sync: start a preview job (what would change); returns its id
+  rpc BackupStartTwoWaySyncPreview(BackupSyncPreviewStartRequest) returns (BackupSyncPreviewHandle) {}
+  // two-way sync: current state and counts of a preview job
+  rpc BackupGetTwoWaySyncPreview(BackupSyncPreviewHandle) returns (BackupSyncPreview) {}
+  // two-way sync: cancel a preview job
+  rpc BackupCancelTwoWaySyncPreview(BackupSyncPreviewHandle) returns (google.protobuf.Empty) {}
+  // two-way sync: open and resolved issues of a backup (by source path)
+  rpc BackupGetSyncIssues(StringValue) returns (BackupSyncIssueList) {}
+  // two-way sync: act on issues (dismiss, apply held deletions, restore...)
+  rpc BackupResolveSyncIssue(BackupResolveSyncIssueRequest) returns (FileOperationResult) {}
+  // two-way sync: forget the sync index of a backup (by source path); the next
+  // pass rebuilds it without deleting anything
+  rpc BackupResetSyncIndex(StringValue) returns (google.protobuf.Empty) {}
+  // Two-way sync: undo one pass (allow_modify_backups). The result's
+  // errorMessage lists what could not be undone.
+  rpc BackupUndoSyncPass(BackupUndoSyncPassRequest) returns (FileOperationResult) {}
+  // notify about new photos for backup (iOS/mobile platform integration)
+  rpc NotifyPhotoLibraryChanges(PhotoLibraryChangeList) returns (google.protobuf.Empty) {}
+  // get machine id
+  rpc GetMachineId(google.protobuf.Empty) returns (StringResult) {}
+  // get online devices
+  rpc GetOnlineDevices(google.protobuf.Empty) returns (OnlineDevices) {}
+  // kickout a device
+  rpc KickoutDevice(DeviceRequest) returns (google.protobuf.Empty) {
+  } // kickout a device with deviceId
+  // list log file names
+  rpc ListLogFiles(google.protobuf.Empty) returns (ListLogFileResult) {}
+  // sync file changes from cloud
+  rpc SyncFileChangesFromCloud(FileRequest)
+      returns (FileSystemChangeStatistics) {}
+  // start cloud events listener
+  rpc StartCloudEventListener(FileRequest) returns (google.protobuf.Empty) {}
+  // stop cloud events listener
+  rpc StopCloudEventListener(FileRequest) returns (google.protobuf.Empty) {}
+  // walk through folder test
+  rpc WalkThroughFolderTest(FileRequest) returns (WalkThroughFolderResult) {}
+  // get a webhook config template
+  rpc GetWebhookConfigTemplate(google.protobuf.Empty) returns (StringResult) {}
+  // list all webhook configs
+  rpc GetWebhookConfigs(google.protobuf.Empty) returns (WebhookList) {}
+  // add webhook config
+  rpc AddWebhookConfig(WebhookRequest) returns (google.protobuf.Empty) {}
+  // remove webhook config
+  rpc RemoveWebhookConfig(StringValue) returns (google.protobuf.Empty) {}
+  // change webhook content
+  rpc ChangeWebhookConfig(WebhookRequest) returns (google.protobuf.Empty) {}
+
+  // DAV User Management
+  // add a new DAV user
+  rpc AddDavUser(AddDavUserRequest) returns (google.protobuf.Empty) {}
+  // remove a DAV user
+  rpc RemoveDavUser(StringValue) returns (google.protobuf.Empty) {}
+  // modify DAV user settings
+  rpc ModifyDavUser(ModifyDavUserRequest) returns (google.protobuf.Empty) {}
+  // get DAV user by username
+  rpc GetDavUser(StringValue) returns (DavUser) {}
+  // list all DAV users
+  rpc GetDavServerConfig(google.protobuf.Empty) returns (DavServerConfig) {}
+  // enable/disable DAV server
+  rpc SetDavServerConfig(ModifyDavServerConfigRequest)
+      returns (google.protobuf.Empty) {}
+
+  // Token management (admin only)
+  rpc CreateToken(CreateTokenRequest) returns (TokenInfo) {}
+  rpc ModifyToken(ModifyTokenRequest) returns (TokenInfo) {}
+  rpc RemoveToken(StringValue) returns (google.protobuf.Empty) {}
+  rpc ListTokens(google.protobuf.Empty) returns (ListTokensResult) {}
+
+  // get download URL path and query for a file by path
+  // to assemble complete URL: combine your gRPC server's scheme://host:port
+  // with the returned downloadUrlPath example: if gRPC server is
+  // https://api.example.com:8443 and result is
+  // "/static/{SCHEME}/{HOST}/{PREVIEW}/file.txt?token=abc" then replace
+  // {SCHEME} with "https", {HOST} with "api.example.com:8443", and {PREVIEW}
+  // with "true" or "false" to get:
+  // https://api.example.com:8443/static/https/api.example.com:8443/true/file.txt?token=abc
+  rpc GetDownloadUrlPath(GetDownloadUrlPathRequest)
+      returns (DownloadUrlPathInfo) {}
+
+  // --- Remote Upload Protocol (grpc-web compatible) ---
+  // Start a remote upload session (unary, returns upload_id)
+  rpc StartRemoteUpload(StartRemoteUploadRequest)
+      returns (RemoteUploadStarted) {}
+  // Control command for remote upload (unary). Returns empty on success; errors
+  // via status code.
+  rpc RemoteUploadControl(RemoteUploadControlRequest)
+      returns (google.protobuf.Empty) {}
+  // Server-side streaming channel for server requests (read/hash)
+  rpc RemoteUploadChannel(RemoteUploadChannelRequest)
+      returns (stream RemoteUploadChannelReply) {}
+  // Client sends file data for remote read (unary)
+  rpc RemoteReadData(RemoteReadDataUpload) returns (RemoteReadDataReply) {}
+  // Client reports hash calculation progress (unary)
+  rpc RemoteHashProgress(RemoteHashProgressUpload)
+      returns (RemoteHashProgressReply) {}
+
+  // Web Server Configuration Management
+  // Get current web server configuration
+  rpc GetWebServerConfig(google.protobuf.Empty) returns (WebServerConfig) {}
+  // Set web server configuration and restart servers
+  rpc SetWebServerConfig(SetWebServerConfigRequest)
+      returns (google.protobuf.Empty) {}
+  // Generate self-signed certificate for HTTPS
+  rpc GenerateSelfSignedCert(GenerateSelfSignedCertRequest)
+      returns (google.protobuf.Empty) {}
+
+  // ---- TV remote configuration (docs/TV_REMOTE_CONFIG.md) ----
+  // A phone (the controller) pairs with a TV by scanning a QR code, then
+  // configures it through the TV's backend.
+  // Host app only (device token, from this device): open a pairing ticket and
+  // start the TLS listener controllers connect to.
+  rpc BeginPairing(BeginPairingRequest) returns (PairingTicket) {}
+  // Host app only: close a ticket early (the QR screen was left).
+  rpc CancelPairing(CancelPairingRequest) returns (google.protobuf.Empty) {}
+  // Controller, no token, remote listener only: trade the QR secret for a
+  // controller token.
+  rpc CompletePairing(CompletePairingRequest) returns (CompletePairingResult) {}
+  // Host app only.
+  rpc ListPairedControllers(google.protobuf.Empty)
+      returns (PairedControllerList) {}
+  // Host app (any controller), or a controller removing its own pairing when
+  // its user forgets the TV.
+  rpc RevokePairedController(RevokePairedControllerRequest)
+      returns (google.protobuf.Empty) {}
+  // Host app only: the app's end of the relay. The backend sends controller
+  // calls down; the app sends replies and events up.
+  rpc AppAgentChannel(stream AppAgentUpstream)
+      returns (stream AppAgentDownstream) {}
+  // Controller (allow_app_config): one call to the TV app. The payloads are
+  // RemoteAppRequest / RemoteAppResponse; the backend never decodes them.
+  rpc AppCall(AppCallRequest) returns (AppCallResult) {}
+  // Controller (allow_app_config): events from the TV app.
+  rpc WatchApp(google.protobuf.Empty) returns (stream AppEventMessage) {}
+  // Host app only: this device's own CloudDrive sign-in, so its app can sign a
+  // paired TV in with the same account (the TV needs the password itself: the
+  // sync key comes from it). FAILED_PRECONDITION while signed out.
+  rpc GetLoginHandoff(google.protobuf.Empty) returns (LoginHandoff) {}
+
+  // Archive folders: an archive file opened as a read-only folder inside the
+  // "Archive Folders" folder at the root (shown while any is loaded). Needs
+  // SystemSettings.archiveFoldersEnabled and the plan role
+  // enable_archive_folders. Paths are CloudDrive paths.
+  // What an archive is (format, SACD areas, password, solid parts).
+  rpc ProbeArchive(FileRequest) returns (ArchiveProbe) {}
+  // Opens an archive as a folder (saved; loaded now), or returns the folder
+  // already saved for it.
+  rpc OpenArchiveFolder(OpenArchiveFolderRequest) returns (ArchiveFolder) {}
+  // Every saved archive folder, loaded or not.
+  rpc GetArchiveFolders(google.protobuf.Empty) returns (ArchiveFolderList) {}
+  // Changes auto-load, the solid mode, the password or the cover picture.
+  rpc UpdateArchiveFolder(UpdateArchiveFolderRequest) returns (ArchiveFolder) {}
+  // Shows a saved folder in "Archive Folders" now.
+  rpc LoadArchiveFolder(FileRequest) returns (ArchiveFolder) {}
+  // Hides it, keeping it saved.
+  rpc UnloadArchiveFolder(FileRequest) returns (google.protobuf.Empty) {}
+  // Hides it, forgets it and drops its cached data.
+  rpc RemoveArchiveFolder(FileRequest) returns (google.protobuf.Empty) {}
+}
+message GetTokenRequest {
+  string userName = 1;
+  string password = 2;
+  optional string totpCode = 3; // Optional TOTP code for 2FA-enabled accounts
+}
+message JWTToken {
+  bool success = 1;
+  string errorMessage = 2;
+  string token = 3;
+  google.protobuf.Timestamp expiration = 4;
+}
+message FileRequest {
+  string path = 1;
+  optional bool forceRefresh = 2; // if true, will force refresh the file info
+}
+message MultiFileRequest { repeated string path = 1; }
+message FileOperationResult {
+  bool success = 1;
+  string errorMessage = 2;
+  repeated string resultFilePaths = 3;
+}
+message StringResult { string result = 1; }
+message GetDownloadUrlPathRequest {
+  string path = 1;
+  bool preview = 2;
+  bool lazy_read = 3;
+  bool get_direct_url = 4; // if true, get direct URL of cloud storage if available
+}
+message DownloadUrlPathInfo {
+  string downloadUrlPath = 1; // path and query part of the download URL with placeholders (e.g.,
+                              // "/static/{SCHEME}/{HOST}/{PREVIEW}/path/to/file.txt?token=abc123")
+  optional uint64 expiresIn = 2; // seconds until expiration, none means never expire
+  optional string directUrl = 3; // direct URL for download, if available, this will override downloadUrlPath
+  optional string userAgent = 4; // user agent to be used when accessing directUrl
+  map<string, string> additionalHeaders = 5; // additional headers to be used when accessing directUrl
+}
+message BoolResult { bool result = 1; }
+message UnmountArchiveResult { string result = 1; }
+
+message ListSubFileRequest {
+  string path = 1;
+  bool forceRefresh = 2;
+  optional bool checkExpires = 3;
+}
+message SearchRequest {
+  string path = 1;
+  string searchFor = 2;
+  bool forceRefresh = 3;
+  bool fuzzyMatch = 4;
+  optional bool addResultToMountedSearchFolder = 5; // if true, add search result to a mounted search folder
+  optional bool contentSearch = 6; // if true, also search file content (not just filename), requires canContentSearch
+}
+message AddOfflineFileRequest {
+  string urls = 1;
+  string toFolder = 2;
+  optional uint64 checkFolderAfterSecs = 3; // auto check destination folder after these seconds to see if files are available
+                                            // 0 means no check
+}
+message RemoveOfflineFilesRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  bool deleteFiles = 3;
+  repeated string infoHashes = 4;
+  optional string path = 5;
+}
+message AddSharedLinkRequest {
+  string sharedLinkUrl = 1;
+  optional string sharedPassword = 2;
+  string toFolder = 3;
+}
+message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
+message FindFileByPathRequest {
+  string parentPath = 1;
+  string path = 2;
+}
+
+message CreateFolderRequest {
+  string parentPath = 1;
+  string folderName = 2;
+}
+message CreateEncryptedFolderRequest {
+  string parentPath = 1;
+  string folderName = 2;
+  string password = 3;
+  bool savePassword = 4; // if true, password will be saved to db, else unlock
+  // is required after restart
+}
+message UnlockEncryptedFileRequest {
+  string path = 1;
+  string password = 2;
+  bool permanentUnlock = 3; // if true, password will be saved to db, else
+  // unlock is required after restart
+}
+message CreateFolderResult {
+  CloudDriveFile folderCreated = 1;
+  FileOperationResult result = 2;
+}
+
+message CreateFileRequest {
+  string parentPath = 1;
+  string fileName = 2;
+}
+message CreateFileResult { uint64 fileHandle = 1; }
+message CloseFileRequest {
+  uint64 fileHandle = 1;
+  // see WriteFileRequest.uploadImmediately
+  optional bool uploadImmediately = 2;
+}
+message MoveFileRequest {
+  enum ConflictPolicy {
+    Overwrite = 0;
+    Rename = 1;
+    Skip = 2;
+  }
+  repeated string theFilePaths = 1;
+  string destPath = 2;
+  optional ConflictPolicy conflictPolicy = 3;
+  optional bool moveAcrossClouds = 4;
+  // if true, apply recursive handling for folder-vs-folder conflicts
+  optional bool handleConflictRecursively = 5;
+}
+message CopyFileRequest {
+  enum ConflictPolicy {
+    Overwrite = 0;
+    Rename = 1;
+    Skip = 2;
+  }
+  repeated string theFilePaths = 1;
+  string destPath = 2;
+  optional ConflictPolicy conflictPolicy = 3;
+  optional bool handleConflictRecursively = 5;
+}
+message WriteFileRequest {
+  uint64 fileHandle = 1;
+  uint64 startPos = 2;
+  uint64 length = 3;
+  bytes buffer = 4;
+  bool closeFile = 5;
+  // with closeFile: upload the file to the cloud now, ahead of every queued
+  // upload and without waiting for a free upload slot. Meant for small files
+  // an app writes itself and waits for (e.g. its progress-sync file).
+  optional bool uploadImmediately = 6;
+}
+message WriteFileResult { uint64 bytesWritten = 1; }
+
+message RenameFileRequest {
+  string theFilePath = 1;
+  string newName = 2;
+}
+message RenameFilesRequest { repeated RenameFileRequest renameFiles = 1; }
+message CloudDriveFile {
+  string id = 1;
+  string name = 2;
+  string fullPathName = 3;
+  int64 size = 4;
+  enum FileType {
+    Directory = 0;
+    File = 1;
+    Other = 2;
+  }
+  FileType fileType = 5;
+  google.protobuf.Timestamp createTime = 6;
+  google.protobuf.Timestamp writeTime = 7;
+  google.protobuf.Timestamp accessTime = 8;
+  CloudAPI CloudAPI = 9;
+  string thumbnailUrl = 10;
+  string previewUrl = 11;
+  string originalPath = 14;
+
+  bool isDirectory = 30;
+  bool isRoot = 31;
+  bool isCloudRoot = 32;
+  bool isCloudDirectory = 33;
+  bool isCloudFile = 34;
+  bool isSearchResult = 35;
+  bool isForbidden = 36;
+  bool isLocal = 37;
+
+  bool canMount = 60;
+  bool canUnmount = 61;
+  bool canDirectAccessThumbnailURL = 62;
+  bool canSearch = 63;
+  bool hasDetailProperties = 64;
+  FileDetailProperties detailProperties = 65;
+  bool canOfflineDownload = 66;
+  bool canAddShareLink = 67;
+  optional uint64 dirCacheTimeToLiveSecs = 68;
+  bool canDeletePermanently = 69;
+  // True when the owning cloud is read-only (GuangYaPan, etc.): all write ops
+  // (create/rename/move/copy-into/delete/upload) are unsupported. Frontends hide
+  // write actions on such items and disallow them as copy/move destinations.
+  bool readOnly = 80;
+  // True on an archive folder itself (a folder in "Archive Folders" that
+  // shows an opened archive): clients show an archive badge. Not set on the
+  // items inside it, nor on "Archive Folders" itself; all of them carry
+  // readOnly.
+  bool isArchiveFolder = 81;
+  // Present only when isArchiveFolder: the badge's format and state.
+  optional ArchiveFolderBadge archiveFolderBadge = 82;
+  enum HashType {
+    Unknown = 0;
+    Md5 = 1;
+    Sha1 = 2;
+    PikPakSha1 = 3;
+  }
+  map<uint32, string> fileHashes = 70;
+  enum FileEncryptionType {
+    None = 0; // not encrypted
+    Encrypted = 1; // encrypted, password not provided, a password is required
+    // to unlock the file
+    Unlocked = 2; // encrypted but but password is provided, can access the file
+  }
+  FileEncryptionType fileEncryptionType = 71;
+  bool CanCreateEncryptedFolder = 72;
+  bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+  bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
+  bool supportOfflineDownloadManagement = 75; // can manage offline files
+  bool canContentSearch = 79; // cloud supports content search (not just filename)
+
+  // Download URL path with placeholders and expiration info for direct client
+  // use Client replaces {SCHEME} with "http"/"https", {HOST} with actual
+  // host:port, and {PREVIEW} with "true"/"false"
+  optional DownloadUrlPathInfo downloadUrlPath = 76;
+  // whether file buffer disk cache is enabled for this file/folder (resolved via ancestor)
+  optional bool fileBufferDiskCacheEnabled = 77;
+  // disk cache rules for this file/folder (resolved via ancestor, present only when enabled)
+  optional DiskCacheFolder fileBufferDiskCacheRules = 78;
+}
+
+message SpaceInfo {
+  int64 totalSpace = 1;
+  int64 usedSpace = 2;
+  int64 freeSpace = 3;
+}
+message CloudAPI {
+  string name = 1;
+  string userName = 2;
+  string nickName = 3;
+  bool isLocked = 4; // isLocked means the cloudAPI is set to can't open files,
+  // due to user's membership issue
+  bool supportMultiThreadUploading = 5;
+  bool supportQpsLimit = 6;
+  bool isCloudEventListenerRunning = 7;
+  bool hasPromotions = 8; // if true, this cloud has promotions
+  optional string promotionTitle =
+      9;                     // promotion title, if hasPromotions is true
+  optional string path = 10; // the path of the cloud
+  bool supportHttpDownload = 11; // whether this cloud provider supports HTTP (non-HTTPS) downloads
+  bool readOnly = 12; // true when this cloud is read-only (all write ops unsupported)
+}
+message CloudMembership {
+  string identity = 1;
+  optional google.protobuf.Timestamp expireTime = 2;
+  optional string level = 3;
+}
+message CloudMemberships { repeated CloudMembership memberships = 1; }
+message FileDetailProperties {
+  int64 totalFileCount = 1;
+  int64 totalFolderCount = 2;
+  int64 totalSize = 3;
+  bool isFaved = 4;
+  bool isShared = 5;
+  string originalPath = 6;
+}
+message FileMetaData { map<string, string> metadata = 1; }
+// Device power type — describes power and storage characteristics.
+// Set by the host app via C interface, exposed via GetSystemInfo.
+enum DevicePowerType {
+  // Desktop/server: constant power, fast storage — no restrictions (default)
+  DESKTOP = 0;
+  // TV set / set-top box: constant power, slow flash storage
+  // → local caches disabled, web UI should hide cache-heavy features
+  SLOW_STORAGE = 1;
+  // Phone / tablet: battery-powered, fast storage
+  // → web UI should offer power-saving options when on battery
+  BATTERY = 2;
+}
+message CloudDriveSystemInfo {
+  bool IsLogin = 1;
+  string UserName = 2;
+  bool SystemReady = 3;
+  optional string SystemMessage = 4;
+  optional bool hasError = 5;
+  // device power and storage profile, see DevicePowerType
+  DevicePowerType devicePowerType = 6;
+  // true when dir cache persistence and disk buffer are force-disabled
+  // (by platform config or SLOW_STORAGE device type)
+  optional bool diskCacheDisabled = 7;
+  // this server understands Backup.syncMode and the two-way sync RPCs
+  bool supportsTwoWayBackup = 8;
+  // this server has the archive folder RPCs
+  bool supportsArchiveFolders = 9;
+  // the signed-in user name in full, for callers with a valid token allowed to
+  // read the account. UserName is masked ("abcd***.com"), only a hint for the
+  // login page: anything keyed by the account must use this one.
+  optional string fullUserName = 10;
+  // this server has the path filter rules (FileBackupRule 5, 6) and
+  // BackupTestFileRules
+  bool supportsPathFilterRules = 11;
+}
+message UserLoginRequest {
+  string userName = 1;
+  string password = 2;
+  bool synDataToCloud = 3;
+  optional ProxyInfo cloudfsProxy = 4; // Optional proxy for reaching CloudFS account server
+}
+message LoginWithThirdPartyAccountRequest {
+  string cloudName = 1;
+  string refreshToken = 2;
+  string accessToken = 3;
+  uint64 expiresIn = 4;
+  bool synDataToCloud = 5;
+  optional ProxyInfo cloudfsProxy = 6; // Optional proxy for reaching CloudFS account server
+}
+message UserRegisterRequest {
+  string userName = 1;
+  string password = 2;
+  optional ProxyInfo cloudfsProxy = 3; // Optional proxy for reaching CloudFS account server
+}
+message UserLogoutRequest { bool logoutFromCloudFS = 1; }
+message ChangePasswordRequest {
+  string oldPassword = 1;
+  string newPassword = 2;
+  optional string totpCode = 3;
+}
+message AccountStatusResult {
+  string userName = 1;
+  string emailConfirmed = 2;
+  double accountBalance = 3;
+  AccountPlan accountPlan = 4;
+  repeated AccountRole accountRoles = 5;
+  optional AccountPlan secondPlan = 6;
+  optional string partnerReferralCode = 7;
+  optional bool trustedDevice = 8; // if true, the device is trusted, no need to
+  // provide password for changing email and password
+  optional bool userNameIsDeviceId =
+      9; // if true, the deviceId is used as userName, which can be changed to
+  // a real user name later
+  repeated BoundDevice boundDevices =
+      10; // partner devices this account is bound to (empty if none); drives the unbind UI
+  optional SubscriptionInfo subscription = 11; // present only for a store auto-renew subscription (Apple/Google/Meta); null for Alipay/one-time
+}
+// Auto-renew store subscription details (see iap-server-handoff §6.2).
+message SubscriptionInfo {
+  string store = 1;        // apple | google | meta — where to manage it
+  string productId = 2;    // cd_core_monthly | cd_core_yearly
+  bool autoRenew = 3;      // false after the user cancels (access stays until expiresAt)
+  bool inGracePeriod = 4;
+  string expiresAt = 5;    // next auto-charge date (auto_renew) or access-end (naive UTC string)
+}
+message BoundDevice {
+  string deviceId = 1;
+  string manufacturerId = 2;
+  string status = 3;       // ACTIVE / INACTIVE / DELETED
+  string createTime = 4;   // naive UTC datetime string
+  string partnerName = 5;  // human-readable partner name (empty if missing)
+}
+message AccountPlan {
+  string planName = 1;
+  string description = 2;
+  string fontAwesomeIcon = 3;
+  string durationDescription = 4;
+  google.protobuf.Timestamp endTime = 5;
+  string planId = 6;  // server plan id ("1"=Lifetime VIP, "4"=Lifetime Lite, etc.); "0"/empty if none
+}
+message AccountRole {
+  string roleName = 1;
+  string description = 2;
+  optional int32 value = 3;
+}
+message RuntimeInfo {
+  string productName = 1;
+  string productVersion = 2;
+  string CloudAPIVersion = 3;
+  string osInfo = 4;
+}
+message RunInfo {
+  double cpuUsage = 1;
+  uint64 memUsageKB = 2;
+  double uptime = 3;
+  uint64 fhTableCount = 4;
+  uint64 dirCacheCount = 5;
+  uint64 tempFileCount = 6;
+  uint64 dbDirCacheCount = 7;
+  double downloadBytesPerSecond = 8;
+  double uploadBytesPerSecond = 9;
+  uint64 totalMemoryKB = 10;
+}
+message OpenFileHandle {
+  uint64 fileHandle = 1;
+  uint64 processId = 2;
+  string processPath = 3;
+  string filePath = 4;
+  bool isDirectory = 5;
+  google.protobuf.Timestamp openTime = 6; // open time
+  optional string specialCommand =
+      7; // special open command by clouddrive it self, such as ""
+}
+message OpenFileHandleList { repeated OpenFileHandle openFileHandles = 1; }
+message MountOption {
+  string mountPoint = 1;
+  string sourceDir = 2;
+  bool localMount = 3;
+  bool readOnly = 4;
+  bool autoMount = 5;
+  uint32 uid = 6;
+  uint32 gid = 7;
+  string permissions = 8;
+  string name = 9;
+}
+message MountPoint {
+  string mountPoint = 1;
+  string sourceDir = 2;
+  bool localMount = 3;
+  bool readOnly = 4;
+  bool autoMount = 5;
+  uint32 uid = 6;
+  uint32 gid = 7;
+  string permissions = 8;
+  bool isMounted = 9;
+  string failReason = 10;
+  // Volume label used on Windows drive-letter mounts (interpolated into the
+  // WinFSP UNC path). On non-Windows mounts this is cosmetic — the last
+  // component of mountPoint is what the user actually sees.
+  string name = 11;
+}
+message MountPointRequest { string MountPoint = 1; }
+message GetMountPointsResult { repeated MountPoint mountPoints = 1; }
+message MountPointResult {
+  bool success = 1;
+  string failReason = 2;
+}
+message UpdateMountPointRequest {
+  string mountPoint = 1;
+  MountOption newMountOption = 2;
+}
+message GetAvailableDriveLettersRequest { bool includeCloudDrive = 1; }
+message GetAvailableDriveLettersResult { repeated string driveLetters = 1; }
+message HasDriveLettersResult { bool hasDriveLetters = 1; }
+message LocalGetSubFilesRequest {
+  string parentFolder = 1;
+  bool folderOnly = 2;
+  bool includeCloudDrive = 3;
+  bool includeAvailableDrive = 4;
+}
+message LocalGetSubFilesResult { repeated string subFiles = 1; }
+message LocalCreateFolderRequest {
+  string parentFolder = 1;
+  string folderName = 2;
+}
+message LocalCreateFolderResult {
+  bool success = 1;
+  string errorMessage = 2;
+  string createdPath = 3;
+}
+message PushMessage { string clouddriveVersion = 1; }
+message GetAllTasksCountResult {
+  uint32 downloadCount = 1;
+  uint32 uploadCount = 2;
+  uint32 copyTaskCount = 6;
+  PushMessage pushMessage = 3;
+  bool hasUpdate = 4;
+  repeated UploadFileInfo uploadFileStatusChanges =
+      5; // upload file status changed
+}
+message FileSystemChange {
+  enum ChangeType {
+    CREATE = 0;
+    DELETE = 1;
+    RENAME = 2;
+    // new content written into a file that already existed; a client that
+    // doesn't know this value can treat it as CREATE
+    MODIFY = 3;
+  }
+  ChangeType changeType = 1;
+  bool isDirectory = 2;
+  string path = 3;
+  // only used for RENAME type
+  optional string newPath = 4;
+  // not available for DELETE type
+  optional CloudDriveFile theFile = 5;
+}
+message UpdateStatus {
+  enum UpdatePhase {
+    NO_UPDATE = 0;
+    DOWNLOADING = 1;
+    READY_TO_UPDATE = 2;
+    UPDATING = 3;
+    UPDATE_SUCCESS = 4;
+    UPDATE_FAILED = 5;
+  }
+  UpdatePhase updatePhase = 1;
+  optional string newVersion = 2;
+  optional string message = 3;
+  string clouddriveVersion = 4;
+  optional uint64 downloadedBytes =
+      5; // only available when updatePhase is DOWNLOADING
+  optional uint64 totalBytes =
+      6; // only available when updatePhase is DOWNLOADING
+}
+message TransferTaskStatus {
+  uint32 downloadCount = 1;
+  uint32 uploadCount = 2;
+  string clouddriveVersion = 3;
+  repeated UploadFileInfo uploadFileStatusChanges = 4;
+  bool hasUpdate = 5;
+  uint32 copyTaskCount = 6;
+}
+message ExitedMessage {
+  enum ExitReason {
+    UNKNOWN = 0;
+    KICKEDOUT_BY_USER = 1;
+    KICKEDOUT_BY_SERVER = 2;
+    PASSWORD_CHANGED = 3;
+    RESTART = 4;
+    SHUTDOWN = 5;
+  }
+  ExitReason exitReason = 1;
+  string message = 2;
+}
+message FileSystemChangeList {
+  repeated FileSystemChange fileSystemChanges = 1;
+}
+message MountPointChange {
+  enum ActionType {
+    MOUNT = 0;
+    UNMOUNT = 1;
+  }
+  ActionType actionType = 1;
+  string mountPoint = 2;
+  bool success = 3;
+  string failReason = 4;
+}
+message LogMessage {
+  enum LogLevel {
+    TRACE = 0;
+    DEBUG = 1;
+    INFO = 2;
+    WARN = 3;
+    ERROR = 4;
+  }
+  LogLevel level = 1;
+  string message = 2;
+  string target = 3; // the module/target where the log originated
+  google.protobuf.Timestamp timestamp = 4;
+  map<string, string> fields = 6; // additional fields from the log record
+}
+// Emitted when a cloud storage account is added, removed, or its mount path
+// renamed at runtime.
+message CloudApiChange {
+  enum Action {
+    ADD = 0;
+    REMOVE = 1;
+    RENAME = 2;
+  }
+  Action action = 1;
+  string cloudName = 2;
+  string userName = 3;
+  string mountPath = 4;
+  // only set for RENAME
+  optional string newMountPath = 5;
+}
+message CloudDrivePushMessage {
+  enum MessageType {
+    DOWNLOADER_COUNT = 0;
+    UPLOADER_COUNT = 1;
+    UPDATE_STATUS = 2;
+    FORCE_EXIT = 3;
+    FILE_SYSTEM_CHANGE = 4;
+    MOUNT_POINT_CHANGE = 5;
+    COPY_TASK_COUNT = 6;
+    LOG_MESSAGE = 7;
+    MERGE_TASKS = 8;
+    CLOUD_API_CHANGE = 9;
+    BACKUP_SYNC_ISSUE = 10;  // a two-way backup raised an issue that may need the user
+  }
+  MessageType messageType = 1;
+  oneof data {
+    TransferTaskStatus transferTaskStatus = 2;
+    UpdateStatus updateStatus = 3;
+    ExitedMessage exitedMessage = 4;
+    FileSystemChange fileSystemChange = 5;
+    MountPointChange mountPointChange = 6;
+    LogMessage logMessage = 7;
+    MergeTaskUpdate mergeTaskUpdate = 8;
+    CloudApiChange cloudApiChange = 9;
+    BackupSyncIssuePush backupSyncIssue = 10;
+  }
+}
+// Two-way sync: a new issue of a backup (conflict, held deletions, ...).
+message BackupSyncIssuePush {
+  string sourcePath = 1;
+  BackupSyncIssue issue = 2;
+}
+// Realtime update for merge tasks (folder recursive merges)
+message MergeTaskUpdate {
+  repeated MergeTask mergeTasks = 1;
+  // optional: when a single file is merged, include the file path(s)
+  optional string lastMergedPath = 2;    // source file path
+  optional string lastMergedNewPath = 3; // destination file path
+}
+message GetDownloadFileCountResult { uint32 fileCount = 1; }
+message DownloadFileInfo {
+  string filePath = 1;
+  uint64 fileLength = 2;
+  uint64 totalBufferUsed = 3;
+  uint32 downloadThreadCount = 4;
+  repeated string process = 5;
+  string detailDownloadInfo = 6;
+  optional string lastDownloadError = 7;
+  double bytesPerSecond = 8;
+}
+message GetDownloadFileListResult {
+  double globalBytesPerSecond = 1;
+  repeated DownloadFileInfo downloadFiles = 4;
+}
+message GetUploadFileCountResult { uint32 fileCount = 1; }
+message UploadFileInfo {
+  enum Status {
+    WaitforPreprocessing = 0;
+    Preprocessing = 1;
+    Cancelled = 2;
+    Transfer = 3;
+    Pause = 4;
+    Finish = 5;
+    Skipped = 6;
+    Inqueue = 7;
+    Ignored = 8;
+    Error = 9;
+    FatalError = 10;
+  }
+  enum OperatorType {
+    Mount = 0; // Mount means the file is being uploaded by mounted file system
+               // operations
+    Copy = 1; // Copy means the file is being uploaded by a copy task
+    BackupFile = 2; // BackupFile means the file is being
+                      // uploaded by a backup task
+    RemoteUpload = 3; // RemoteUpload means the file is being uploaded by a
+                      // remote upload task
+  }
+  string key = 1;
+  string destPath = 2;
+  uint64 size = 3;
+  uint64 transferedBytes = 4;
+  string status = 5;
+  string errorMessage = 6;
+  OperatorType operatorType = 7;
+  Status statusEnum = 8;
+}
+message GetUploadFileListRequest {
+  bool getAll = 1;
+  uint32 itemsPerPage = 2;
+  uint32 pageNumber = 3;
+  string filter = 4;
+  optional UploadFileInfo.Status statusFilter = 5;
+  optional UploadFileInfo.OperatorType operatorTypeFilter = 6;
+}
+message GetUploadFileListResult {
+  uint32 totalCount = 1;
+  repeated UploadFileInfo uploadFiles = 2;
+  double globalBytesPerSecond = 3;
+  uint64 totalBytes = 4;
+  uint64 finishedBytes = 5;
+  uint32 totalCountFiltered = 6;
+}
+message TaskError {
+  google.protobuf.Timestamp time = 1;
+  string message = 2;
+}
+message CopyTaskRequest {
+  string sourcePath = 1;
+  string destPath = 2;
+}
+message PauseCopyTaskRequest {
+  string sourcePath = 1;
+  string destPath = 2;
+  bool pause = 3;
+}
+message CopyTaskBatchRequest {
+  // Task key format: "{sourcePath}:{destPath}".
+  // Build each key from the CopyTask returned by GetCopyTasks using the
+  // exact sourcePath and destPath strings (no extra normalization).
+  repeated string taskKeys = 1;
+}
+message PauseAllCopyTasksRequest { bool pause = 1; }
+message PauseCopyTasksRequest {
+  repeated string taskKeys = 1;
+  bool pause = 2;
+}
+message BatchOperationResult {
+  bool success = 1;
+  uint32 affectedCount = 2;
+  string errorMessage = 3;
+}
+// Merge tasks (for recursive folder merges triggered by request with
+// handleConflictRecursively=true)
+message MergeTask {
+  enum TaskStatus {
+    Pending = 0;
+    Running = 1;
+    Completed = 2;
+    Failed = 3;
+    Cancelled = 4;
+  }
+  enum OperationType {
+    Move = 0;
+    Copy = 1;
+  }
+  string sourcePath = 1;
+  string destPath = 2;
+  TaskStatus status = 3;
+  uint64 mergedFiles = 4;
+  uint64 mergedFolders = 5;
+  google.protobuf.Timestamp startTime = 6;
+  optional google.protobuf.Timestamp endTime = 7;
+  optional string errorMessage = 8;
+  // conflict policy used when this task was created
+  MoveFileRequest.ConflictPolicy conflictPolicy = 9;
+  // operation that created this merge task
+  OperationType operationType = 10;
+}
+message GetMergeTasksResult { repeated MergeTask mergeTasks = 1; }
+message CancelMergeTaskRequest {
+  string sourcePath = 1;
+  string destPath = 2;
+}
+message CopyTask {
+  enum TaskMode {
+    Copy = 0;
+    Move = 1;
+  }
+  enum TaskStatus {
+    Pending = 0;
+    Scanning = 1;
+    Scanned = 2;
+    Completed = 3;
+    Failed = 4;
+  }
+  TaskMode taskMode = 2;
+  string sourcePath = 3;
+  string destPath = 4;
+  TaskStatus status = 5;
+  uint64 totalFolders = 6;
+  uint64 totalFiles = 7;
+  uint64 failedFolders = 8;
+  uint64 failedFiles = 9;
+  uint64 uploadedFiles = 10;
+  uint64 cancelledFiles = 11;
+  uint64 skippedFiles = 16;
+  uint64 totalBytes = 12;
+  uint64 uploadedBytes = 13;
+  bool paused = 14;
+  repeated TaskError errors = 15;
+  google.protobuf.Timestamp startTime = 17;
+  optional google.protobuf.Timestamp endTime = 18;
+}
+message GetCopyTaskResult { repeated CopyTask copyTasks = 1; }
+message MultpleUploadFileKeyRequest { repeated string keys = 1; }
+
+// (removed) RapidUploadFileRequest / Response and CompleteRapidUpload* messages
+
+message Login115EditthiscookieRequest { string editThiscookieString = 1; }
+message Login115QrCodeRequest { optional string platformString = 1; }
+message LoginAliyundriveOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginAliyundriveRefreshtokenRequest {
+  string refreshToken = 1;
+  bool useOpenAPI = 2;
+}
+message LoginAliyundriveQRCodeRequest {
+  bool useOpenAPI = 1;
+  optional ProxyInfo apiProxy = 2;
+  optional ProxyInfo dataProxy = 3;
+}
+message Login115OpenQRCodeRequest {
+  optional ProxyInfo apiProxy = 1;
+  optional ProxyInfo dataProxy = 2;
+}
+message LoginGuangYaPanQRCodeRequest {
+  optional ProxyInfo apiProxy = 1;
+  optional ProxyInfo dataProxy = 2;
+}
+// GuangYaPan web PKCE: the oauth_callback redirect server performs the PKCE
+// token exchange and delivers ready-made tokens back to the app (same shape as
+// the other OAuth providers).
+message LoginGuangYaPanOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message Login189QRCodeRequest {
+  optional ProxyInfo apiProxy = 1;
+  optional ProxyInfo dataProxy = 2;
+}
+message LoginBaiduPanOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginOneDriveOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginGoogleDriveOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginGoogleDriveRefreshTokenRequest {
+  string client_id = 1;
+  string client_secret = 2;
+  string refresh_token = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginGoogleDriveStartRequest {
+  string client_id = 1;
+  string client_secret = 2;
+  optional ProxyInfo apiProxy = 3;
+  optional ProxyInfo dataProxy = 4;
+  // clouddrive:// address the loopback page redirects to when the sign-in
+  // ends, so an in-app browser session closes by itself; status=success|error
+  // and kind=<error_kind> are appended. Unset: a "close this tab" page.
+  optional string return_url = 5;
+}
+message LoginGoogleDriveStartResult {
+  bool success = 1;
+  string error_message = 2; // English fallback text
+  string error_kind = 3;    // see LoginGoogleDriveFinishResult.error_kind
+  string session_id = 4;
+  string auth_url = 5;      // open in the system browser or an auth session
+}
+message LoginGoogleDriveFinishRequest {
+  string session_id = 1;
+  // the full address the browser shows after approval
+  // (http://127.0.0.1:PORT/?state=...&code=...)
+  string redirected_url = 2;
+  // without redirected_url: seconds to wait for the loopback page (max 60)
+  uint32 wait_seconds = 3;
+}
+message LoginGoogleDriveFinishResult {
+  bool done = 1; // false: still waiting for the browser; call again
+  bool success = 2;
+  string error_message = 3; // English fallback text
+  // stable failure kind for translated text: invalid_client_id,
+  // access_denied, drive_not_granted, invalid_client, code_expired,
+  // no_refresh_token, drive_api_disabled, network, session_expired,
+  // pasted_url_invalid, other
+  string error_kind = 4;
+}
+message LoginXunleiOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message LoginXunleiOpenOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message Login123panOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message Login115OpenOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+  optional ProxyInfo apiProxy = 4;
+  optional ProxyInfo dataProxy = 5;
+}
+message CreateOAuthStateRequest {
+  string oauth_type = 1; // provider key, e.g. "google_drive", "onedrive"
+  string return_url = 2; // where tokens are delivered after the callback
+  optional string device_id = 3; // carried through the flow for xunlei
+  // PKCE code_verifier, sealed into the signed state for guangyapan so the
+  // oauth_callback server can complete the token exchange (PKCE has no secret).
+  optional string code_verifier = 4;
+}
+message CreateOAuthStateResult {
+  bool success = 1;
+  string error_message = 2;
+  string state = 3; // signed token to use as the OAuth `state` parameter
+  uint64 expires_in = 4; // token lifetime in seconds
+}
+message LoginWebDavRequest {
+  string serverUrl = 1;
+  string userName = 2;
+  string password = 3;
+  bool doNotSyncToCloud = 4; // If true, do NOT sync this API config to cloud (default: false, meaning sync by default)
+  optional ProxyInfo apiProxy = 5; // Optional API proxy for the initial connection and metadata calls
+  optional ProxyInfo dataProxy = 6; // Optional data proxy for file upload/download
+}
+message LoginS3Request {
+  string accessKeyId = 1; // AWS Access Key ID
+  string secretAccessKey = 2; // AWS Secret Access Key
+  string region = 3; // AWS region (e.g., "us-east-1")
+  string bucket = 4; // S3 bucket name
+  optional string endpoint = 5; // Custom endpoint URL for S3-compatible services (e.g., MinIO, Wasabi)
+  bool pathStyle = 6; // Use path-style URLs instead of virtual-hosted style (required for some S3-compatible services)
+  bool doNotSyncToCloud = 7; // If true, do NOT sync this API config to cloud (default: false, meaning sync by default)
+  optional uint32 signatureVersion = 8; // S3 signature version: 2 or 4 (default 4)
+  optional ProxyInfo apiProxy = 9; // Optional API proxy for the initial connection and metadata calls
+  optional ProxyInfo dataProxy = 10; // Optional data proxy for file upload/download
+}
+message APILoginResult {
+  bool success = 1;
+  string errorMessage = 2;
+}
+message AddLocalFolderRequest {
+  string localFolderPath = 1;
+  // Optional name for the account's virtual root folder. Empty = the last path
+  // component, which is the historical behaviour. Removable volumes on Android
+  // mount under a UUID (`/storage/1234-5678`), so the client passes the
+  // system's volume label instead.
+  string displayName = 2;
+}
+message LoginCloudDriveRequest {
+  string grpcUrl = 1;
+  string token = 2;
+  // If true, connect with TLS certificate/hostname validation disabled (for
+  // self-signed certs)
+  bool insecureTls = 3;
+  bool doNotSyncToCloud = 4; // If true, do NOT sync this API config to cloud (default: false, meaning sync by default)
+  optional ProxyInfo apiProxy = 5;
+  optional ProxyInfo dataProxy = 6;
+}
+message LoginSftpRequest {
+  string host = 1;
+  uint32 port = 2; // default 22
+  string userName = 3;
+  string password = 4; // password authentication
+  optional string privateKey = 5;     // PEM-encoded private key for key-based auth
+  optional string passphrase = 6;     // passphrase for encrypted private keys
+  optional string rootPath = 7;       // remote root directory (default: "/")
+  bool doNotSyncToCloud = 8;
+  optional ProxyInfo apiProxy = 9;
+  optional ProxyInfo dataProxy = 10;
+}
+message LoginFtpRequest {
+  string host = 1;
+  uint32 port = 2; // default 21
+  string userName = 3;
+  string password = 4;
+  bool useTls = 5; // enable FTPS (TLS)
+  optional string rootPath = 6;       // remote root directory (default: "/")
+  bool doNotSyncToCloud = 7;
+  optional ProxyInfo apiProxy = 8;
+  optional ProxyInfo dataProxy = 9;
+}
+message LoginSmbRequest {
+  string server = 1; // SMB server hostname or IP
+  string share = 2; // share name (e.g., "SharedDocs")
+  uint32 port = 3; // default 445
+  string userName = 4;
+  string password = 5;
+  optional string workgroup = 6;      // domain/workgroup
+  optional string rootPath = 7;       // path within share (default: "/")
+  bool doNotSyncToCloud = 8;
+  optional ProxyInfo apiProxy = 9;
+  optional ProxyInfo dataProxy = 10;
+}
+message SmbServerInfo {
+  string name = 1; // server name (e.g., "MINIPC-Y10")
+  string address = 2; // IP address or hostname
+}
+message DiscoverSmbServersResult {
+  repeated SmbServerInfo servers = 1;
+}
+message DiscoverSmbSharesRequest {
+  string server = 1;
+  uint32 port = 2; // default 445
+  string userName = 3;
+  string password = 4;
+  optional string workgroup = 5;
+}
+message DiscoverSmbSharesResult {
+  repeated string shareNames = 1;
+}
+message RemoveCloudAPIRequest {
+  string cloudName = 1;
+  string userName = 2;
+  bool permanentRemove = 3;
+}
+message CloudAPIRequest {
+  string cloudName = 1;
+  optional string userName = 2; // unused, but kept for compatibility
+}
+enum ProxyType {
+  SYSTEM = 0;
+  NOPROXY = 1;
+  HTTP = 2;
+  SOCKS5 = 3;
+}
+message ProxyInfo {
+  ProxyType proxyType = 1;
+  string host = 2;
+  uint32 port = 3;
+  optional string username = 4;
+  optional string password = 5;
+}
+message GetCloudAPIConfigRequest {
+  string cloudName = 1;
+  string userName = 2;
+}
+message CloudAPIList { repeated CloudAPI apis = 1; }
+message CloudAPIConfig {
+  uint32 maxDownloadThreads = 1;
+  uint64 minReadLengthKB = 2;
+  uint64 maxReadLengthKB = 3;
+  uint64 defaultReadLengthKB = 4;
+  uint64 maxBufferPoolSizeMB = 5;
+  double maxQueriesPerSecond = 6;
+  bool forceIpv4 = 7;
+  optional ProxyInfo apiProxy = 8;
+  optional ProxyInfo dataProxy = 9;
+  optional string customUserAgent = 10;
+  optional uint32 maxUploadThreads = 11;
+  // for CloudDrive API only: whether to use insecure TLS when connecting
+  optional bool insecureTls = 12;
+  // whether to use HTTP instead of HTTPS for downloads to save CPU (disabled by default)
+  optional bool useHttpDownload = 13;
+  // whether to request direct URLs when available (requires enable_direct_link user role)
+  optional bool supportDirectLink = 14;
+  // whether this cloud API supports direct download URLs (read-only, determined by API implementation)
+  optional bool supportDirectDownloadUrl = 15;
+  // field 16 and 17 removed: disk cache settings moved to per-folder (SetFolderDiskCache)
+  reserved 16, 17;
+  // Read-only caps reported by the server so clients can bound user input.
+  // Each is the effective per-cloud (and platform-clamped, where applicable)
+  // upper bound. Absent / zero means "no advertised cap; client should fall
+  // back to a sensible default". Ignored on SetCloudAPIConfig.
+  optional uint32 maxDownloadThreadsLimit = 18;
+  optional uint64 maxBufferPoolSizeMBLimit = 19;
+  optional double maxQueriesPerSecondLimit = 20;
+  // For files from this cloud, copy/upload tasks read the source bytes via the
+  // legacy multi-thread buffered downloader (ENTRY_READER_MANAGER) instead of
+  // the single long HTTP GET stream. Useful when single-stream throughput is
+  // lower than the destination write/upload speed. Applies to both hash
+  // preprocessing and upload byte streaming.
+  optional bool useMultithreadDownloaderForCopy = 21;
+}
+message SetCloudAPIConfigRequest {
+  string cloudName = 1;
+  string userName = 2;
+  CloudAPIConfig config = 3;
+}
+message CommandRequest { string command = 1; }
+message CommandResult { string result = 1; }
+
+message StringValue { string value = 1; }
+enum QRCodeScanMessageType {
+  SHOW_IMAGE = 0;
+  SHOW_IMAGE_CONTENT = 1;
+  CHANGE_STATUS = 2;
+  CLOSE = 3;
+  ERROR = 4;
+}
+message QRCodeScanMessage {
+  QRCodeScanMessageType messageType = 1;
+  string message = 2;
+}
+message StringList { repeated string values = 1; }
+enum UpdateChannel {
+  Release = 0;
+  Beta = 1;
+  // GetSystemSettings has always reported this for an alpha-channel install;
+  // without it here SetSystemSettings could not name the channel it read back,
+  // so echoing the settings struct silently demoted Alpha to Release.
+  Alpha = 2;
+}
+enum LogLevel {
+  Trace = 0;
+  Debug = 1;
+  Info = 2;
+  Warn = 3;
+  Error = 4;
+}
+message SystemSettings {
+  // 0 means never expire, will live forever
+  optional uint64 dirCacheTimeToLiveSecs = 1;
+  optional uint64 maxPreProcessTasks = 2;
+  optional uint64 maxProcessTasks = 3;
+  optional string tempFileLocation = 4;
+  optional bool syncWithCloud = 5;
+  // time in secs to clear download task when no read operation
+  optional uint64 readDownloaderTimeoutSecs = 6;
+  // time in secs to wait before upload a local temp file
+  optional uint64 uploadDelaySecs = 7;
+  optional StringList processBlackList = 8;
+  optional StringList uploadIgnoredExtensions = 9;
+  optional UpdateChannel updateChannel = 10;
+  optional double maxDownloadSpeedKBytesPerSecond = 11;
+  optional double maxUploadSpeedKBytesPerSecond = 12;
+  optional string deviceName = 13;
+  optional bool dirCachePersistence = 14;
+  optional string dirCacheDbLocation = 15;
+  optional LogLevel fileLogLevel = 16;
+  optional LogLevel terminalLogLevel = 17;
+  optional LogLevel backupLogLevel = 18;
+  optional bool EnableAutoRegisterDevice = 19;
+  optional LogLevel realtimeLogLevel = 20;
+  // Operator priority order for upload scheduling. Use ["Natural"] or empty to
+  // disable priority, default is ["Mount", "Backup", "CopyTask"]
+  optional StringList operatorPriorityOrder = 21;
+  // Standalone proxy settings for downloading update packages
+  optional ProxyInfo updateProxy = 22;
+  // Delay in seconds before starting process (default: 0)
+  optional uint64 startDelaySecs = 23;
+
+  // Root directory for storing cached segments
+  optional string fileBufferDiskCacheLocation = 24;
+  // Max bytes allowed for disk cache; LRU eviction keeps size under this
+  optional uint64 fileBufferDiskCacheMaxBytes = 25;
+  // Proxy settings for reaching CloudFS account server (cloudfs.zhenyunpan.com)
+  optional ProxyInfo cloudfsProxy = 26;
+  // Log file rotation settings.
+  // All 4 fields must be sent together in SetSystemSettings; when any
+  // field is present the server updates all 4, so omitted size fields
+  // are interpreted as "no limit" rather than "don't change".
+  //
+  // Max size in bytes for a single log file before rotation:
+  //   not set (None) = no limit (file grows indefinitely)
+  //   0              = disable logging to file
+  //   > 0            = rotate when the file exceeds this size
+  optional uint64 maxFileLogSizeBytes = 27;
+  optional uint64 maxBackupLogSizeBytes = 28;
+  // Max number of rotated log files to keep (default: 10)
+  optional uint32 maxFileLogFiles = 29;
+  optional uint32 maxBackupLogFiles = 30;
+
+  // Backup full-scan resource bounds (issue #462).
+  // These 3 fields form a group: when maxConcurrentBackupWalkers is present in
+  // SetSystemSettings the server rewrites all 3, so an omitted water mark means
+  // "no limit" rather than "don't change". Omit all 3 to leave them unchanged.
+  //
+  // High/low water marks bound the in-memory transfer queue while a backup scan
+  // enqueues tasks (the walker pauses adding at high, resumes at low):
+  //   not set (None) = no limit (unbounded, legacy behavior)
+  //   > 0            = bound the pending-task queue to this size
+  optional uint64 backupQueueHighWater = 31;
+  optional uint64 backupQueueLowWater = 32;
+  // Max backup scans (source walkers) running concurrently (default 1, min 1).
+  // Extra due scans queue until a slot frees.
+  optional uint32 maxConcurrentBackupWalkers = 33;
+
+  // When copying files across cloud storages, spool the source file to a local
+  // temp file during hash calculation so the upload stage doesn't download the
+  // source a second time. Falls back to double download when local temp space
+  // is insufficient. Default: false.
+  optional bool useTempFileForCrossCloudCopy = 34;
+  // Two-way backup sync: while true every two-way pass only records what it
+  // would do and changes nothing. Default false.
+  optional bool twoWaySyncPaused = 35;
+  // Download links (/static/...) requested without a token must carry the
+  // `sign` parameter from GetDownloadUrlPath or a file listing. Requests from
+  // this device itself are always served. Links in .strm files made before
+  // this was turned on have no signature and stop working from other devices.
+  // Default false.
+  optional bool requireSignedDownloadUrls = 36;
+  // Archive folders (archives opened as read-only folders in "Archive
+  // Folders" at the root). Also
+  // needs the plan role enable_archive_folders. Default false.
+  optional bool archiveFoldersEnabled = 37;
+  // Size limit of the local cache of decoded solid-archive content, shared by
+  // every archive folder whose solid mode is SolidLocalCache. Default 2 GiB.
+  optional uint64 archiveCacheMaxBytes = 38;
+}
+
+// Eviction strategy for disk cache
+enum EvictionStrategy {
+  LRU = 0; // Least Recently Used - evict entries not accessed recently
+  LARGEST_FIRST = 1; // Evict largest files first to free space quickly
+  SMALLEST_FIRST = 2; // Evict smallest files first to keep large files cached
+}
+
+// Request to set disk cache eviction strategy
+message SetDiskCacheEvictionStrategyRequest {
+  EvictionStrategy strategy = 1;
+}
+
+// File buffer disk cache runtime stats
+message FileBufferDiskCacheStats {
+  bool enabled = 1;
+  uint64 totalBytes = 2;
+  uint64 maxBytes = 3;
+  uint64 entryCount = 4;
+  uint64 segmentCount = 5;
+  string rootDir = 6;
+  bool scanCompleted = 7; // Whether initial disk scan has completed after restart
+  EvictionStrategy evictionStrategy = 8; // Current active eviction strategy
+}
+// Extension filter mode for disk cache rules
+enum ExtensionFilterMode {
+  EXTENSION_FILTER_DISABLED = 0; // No extension filtering
+  EXTENSION_FILTER_INCLUDE = 1; // Only cache files with listed extensions
+  EXTENSION_FILTER_EXCLUDE = 2; // Cache all files except those with listed extensions
+}
+
+// Request to set disk cache rules for a folder
+message SetFolderDiskCacheRequest {
+  string path = 1;
+  uint64 maxFileSize = 2; // 0 = no limit
+  uint64 minFileSize = 3; // 0 = no minimum
+  ExtensionFilterMode extensionFilterMode = 4;
+  repeated string extensions = 5; // without dot, lowercase (e.g. "mp4", "mkv")
+  bool enabled = 6; // true = enable cache, false = explicitly disable (blocks parent inheritance)
+}
+
+// A folder with disk cache rules
+message DiskCacheFolder {
+  string path = 1;
+  uint64 maxFileSize = 2;
+  uint64 minFileSize = 3;
+  ExtensionFilterMode extensionFilterMode = 4;
+  repeated string extensions = 5;
+  bool enabled = 6;
+}
+
+// List of folders with disk cache enabled
+message ListDiskCacheFoldersReply {
+  repeated DiskCacheFolder folders = 1;
+}
+
+// Priority of a client-driven cache hint or a Range read.
+// HIGH is served before NORMAL, NORMAL before LOW. LOW is used for
+// best-effort prefetch (e.g. thumbnail batches) that should not
+// stall the main playback read stream.
+enum HintPriority {
+  HINT_PRIORITY_LOW = 0;
+  HINT_PRIORITY_NORMAL = 1;
+  HINT_PRIORITY_HIGH = 2;
+}
+
+message ByteRange {
+  uint64 start = 1;  // inclusive
+  uint64 length = 2; // bytes
+}
+
+message PrefetchFileRangesRequest {
+  string path = 1;
+  repeated ByteRange ranges = 2;
+  HintPriority priority = 3;
+  // 0 = server allocates and returns an id
+  uint64 hint_id = 4;
+  // 0 = server default (clamped to [1, PREFETCH_HINT_TTL_SEC])
+  uint32 ttl_seconds = 5;
+  // if true, cancel any prior hints on this path before adding
+  bool replace_existing = 6;
+}
+
+message PrefetchFileRangesReply {
+  uint64 hint_id = 1;
+  uint32 accepted_range_count = 2;
+  // ranges dropped for being out-of-bounds or already fully cached
+  uint32 rejected_range_count = 3;
+}
+
+message CancelFilePrefetchRequest {
+  string path = 1;
+  // empty = cancel all hints on that path
+  repeated uint64 hint_ids = 2;
+}
+
+message ActivePrefetchHint {
+  string path = 1;
+  uint64 hint_id = 2;
+  HintPriority priority = 3;
+  uint64 total_bytes = 4;
+  uint32 seconds_since_created = 5;
+  uint32 remaining_ttl_seconds = 6;
+  uint32 event_count = 7;
+}
+
+// Diagnostic snapshot + process-lifetime counters for the prefetch system.
+message GetActivePrefetchHintsReply {
+  repeated ActivePrefetchHint hints = 1;
+  uint64 hints_created_total = 2;
+  uint64 hints_cancelled_total = 3;
+  uint64 hints_expired_total = 4;
+  uint64 ranges_rejected_cache_hit_total = 5;
+  uint64 scale_up_events_total = 6;
+  uint64 preempt_events_total = 7;
+}
+
+message SetDirCacheTimeRequest {
+  string path = 1;
+  // if not present, please delete the value to restore default
+  optional uint64 dirCachTimeToLiveSecs = 2;
+}
+message GetEffectiveDirCacheTimeRequest { string path = 1; }
+message GetOpenFileTableRequest { bool includeDir = 1; }
+message GetEffectiveDirCacheTimeResult { uint64 dirCacheTimeSecs = 1; }
+message GetDirCacheDbSizeResult {
+  uint64 totalSizeBytes = 1; // Total size including main db + WAL + SHM files
+  bool isVacuuming = 2; // Whether database is currently being vacuumed
+}
+
+enum VacuumStatus {
+  VACUUM_IDLE = 0;
+  VACUUM_RUNNING = 1;
+  VACUUM_COMPLETED = 2;
+  VACUUM_FAILED = 3;
+}
+
+message VacuumProgressResult {
+  VacuumStatus status = 1;
+  optional google.protobuf.Timestamp startTime = 2;
+  optional google.protobuf.Timestamp endTime = 3;
+  uint64 sizeBefore = 4; // Database size before vacuum
+  uint64 sizeAfter = 5; // Database size after vacuum (only set when completed)
+  optional string errorMessage = 6; // Error message if failed
+}
+
+message UpdateResult {
+  bool hasUpdate = 1;
+  string newVersion = 2;
+  string description = 3;
+}
+message ServiceCapabilities {
+  bool canRestart = 1; // whether service restart is available
+  bool canUpdate = 2; // whether service update is available
+}
+message OpenFileTable {
+  map<uint64, string> openFileTable = 1;
+  uint64 localOpenFileCount = 2;
+}
+message DirCacheItem {
+  google.protobuf.Timestamp insertTime = 1;
+  uint64 timeToLiveSecs = 2;
+  uint64 referencedSubfileLen = 3;
+}
+message DirCacheTable { map<string, DirCacheItem> dirCacheTable = 1; }
+message TempFileTable {
+  uint64 count = 1;
+  repeated string tempFiles = 2;
+}
+message ConfirmEmailRequest { string confirmCode = 1; }
+message SendResetAccountEmailRequest { string email = 1; }
+message ResetAccountRequest {
+  string resetCode = 1;
+  string newPassword = 2;
+}
+message CloudDrivePlan {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  optional int64 duration = 5;
+  string durationDescription = 6;
+  bool isActive = 7;
+  optional string fontAwesomeIcon = 8;
+  optional double originalPrice = 9;      // CNY
+  repeated AccountRole planRoles = 10;
+  optional double priceUsd = 11;          // predefined USD price (App Store price); unset if none
+  optional double originalPriceUsd = 12;  // predefined USD original price; unset if none
+  bool payableByBalance = 13;             // true if the user's CNY balance covers this plan (skip IAP)
+  optional double balancePriceCny = 14;   // CNY deducted from balance if bought directly; unset if none
+  string storeProductId = 15;             // the store SKU to buy for this plan (may be an upgrade SKU)
+}
+message GetCloudDrivePlansResult { repeated CloudDrivePlan plans = 1; }
+message JoinPlanRequest {
+  string planId = 1;
+  optional string couponCode = 2;
+}
+message PaymentInfo {
+  string user_id = 1;
+  string plan_id = 2;
+  map<string, string> paymentMethods = 3;
+  optional string coupon_code = 4;
+  optional string machine_id = 5;
+  optional string check_code = 6;
+}
+message JoinPlanResult {
+  bool success = 1;
+  double balance = 2;
+  string planName = 3;
+  string planDescription = 4;
+  optional google.protobuf.Timestamp expireTime = 5;
+  optional PaymentInfo paymentInfo = 6;
+}
+// IAP (App Store / Google Play / Meta Quest)
+message GetStorePurchaseQuoteRequest {
+  string productId = 1;            // canonical product id, e.g. "cd_app_pro"
+  optional string couponCode = 2;  // coupon or 8-char referral code
+}
+message StorePurchaseQuote {
+  string productId = 1;
+  string planId = 2;
+  double basePriceUsd = 3;          // catalog/reference price
+  double basePriceCny = 4;
+  double couponDiscountCny = 5;
+  double balanceAppliedCny = 6;     // CNY balance spent toward this purchase
+  double finalPriceCny = 7;
+  double finalPriceUsd = 8;         // charge THIS in-store (CNY remainder / 7, rounded up)
+}
+message VerifyStorePurchaseRequest {
+  string store = 1;                 // "apple" | "google" | "meta"
+  string productId = 2;             // canonical product id
+  string receipt = 3;               // Apple JWS / Google purchaseToken / Meta receipt
+  optional string transactionId = 4;
+  optional bool sandbox = 5;
+  optional string couponCode = 6;   // same code used at quote time
+  optional string packageName = 7;  // reserved for Google
+}
+enum VerifyStorePurchaseStatus {
+  VERIFY_STORE_PURCHASE_SUCCESS = 0;        // newly granted/extended
+  VERIFY_STORE_PURCHASE_ALREADY_ACTIVE = 1; // idempotent re-submit / restore
+  VERIFY_STORE_PURCHASE_PENDING = 2;        // reserved (Ask-to-Buy / Google PENDING)
+}
+message VerifyStorePurchaseResult {
+  VerifyStorePurchaseStatus status = 1;
+  optional AccountStatusResult accountStatus = 2; // fresh status on SUCCESS/ALREADY_ACTIVE
+  optional string pendingReason = 3;              // set when status == PENDING
+}
+message Promotion {
+  string id = 1;
+  string cloudName = 2;
+  string title = 3;
+  optional string subTitle = 4;
+  string rules = 5;
+  optional string notice = 6;
+  string url = 7;
+}
+message GetPromotionsResult { repeated Promotion promotions = 1; }
+message UpdatePromotionResultByCloudRequest {
+  string cloudName = 1;
+  optional string cloudAccountId = 2;
+  optional string promotionId = 3;
+}
+message SendPromotionActionRequest {
+  string cloudName = 1;
+  optional string cloudAccountId = 2;
+  optional string promotionId = 3;
+}
+message OfflineStatus {
+  uint32 quota = 1;
+  uint32 total = 2;
+}
+enum OfflineFileStatus {
+  OFFLINE_INIT = 0;
+  OFFLINE_DOWNLOADING = 1;
+  OFFLINE_FINISHED = 2;
+  OFFLINE_ERROR = 3;
+  OFFLINE_UNKNOWN = 4;
+}
+message OfflineFile {
+  string name = 1;
+  uint64 size = 2;
+  string url = 3;
+  OfflineFileStatus status = 4;
+  string infoHash = 5;
+  string fileId = 6;
+  uint64 add_time = 7;
+  string parentId = 8;
+  double percendDone = 9;
+  uint64 peers = 10;
+}
+message OfflineFileListAllRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  uint32 page = 3;
+  optional string path = 4;
+}
+message OfflineFileListAllResult {
+  uint32 pageNo = 1;
+  uint32 pageRowCount = 2;
+  uint32 pageCount = 3;
+  uint32 totalCount = 4;
+  OfflineStatus status = 5;
+  repeated OfflineFile offlineFiles = 6;
+}
+message OfflineFileListResult {
+  repeated OfflineFile offlineFiles = 1;
+  OfflineStatus status = 2;
+}
+message OfflineQuotaRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  optional string path = 3;
+}
+message OfflineQuotaInfo {
+  int32 total = 1;
+  int32 used = 2;
+  int32 left = 3;
+}
+message ClearOfflineFileRequest {
+  enum Filter {
+    All = 0;
+    Finished = 1;
+    Error = 2;
+    Downloading = 3;
+  }
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  Filter filter = 3;
+  bool deleteFiles = 4;
+  optional string path = 5;
+}
+message RestartOfflineFileRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  string infoHash = 3;
+  string url = 4;
+  string parentId = 5;
+  optional string path = 6;
+}
+message BindCloudAccountRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+}
+message TransferBalanceRequest {
+  string toUserName = 1;
+  double amount = 2;
+  string password = 3;
+}
+message SendChangeEmailCodeRequest {
+  string newEmail = 1;
+  string password = 2;
+}
+message ChangeEmailRequest {
+  string newEmail = 1;
+  string password = 2;
+  optional string changeCode = 3;
+  optional string totpCode = 4;
+}
+message ChangeEmailAndPasswordRequest {
+  string newEmail = 1;
+  string newPassword = 2;
+  bool syncUserDataWithCloud = 3;
+}
+// ---- cloud sync of the account data (see GetCloudSyncStatus) ----
+message CloudSyncStatus {
+  bool isLogin = 1;
+  // the "sync with cloud" setting
+  bool syncWithCloud = 2;
+  // local changes are waiting to be sent to the cloud
+  bool pendingUpload = 3;
+  // accounts on this device that take part in sync
+  uint32 syncedAccounts = 4;
+  // accounts on this device marked "do not sync to cloud"
+  uint32 localOnlyAccounts = 5;
+}
+enum CloudSyncAccountState {
+  // on both sides with the same configuration
+  CloudSyncSame = 0;
+  // on both sides, the configuration differs (path or credentials)
+  CloudSyncDiffer = 1;
+  // only on this device
+  CloudSyncOnlyLocal = 2;
+  // only in the cloud copy
+  CloudSyncOnlyCloud = 3;
+}
+message CloudSyncAccountDiff {
+  string cloudName = 1;
+  string userName = 2;
+  // mount path on this device, empty when the account is only in the cloud
+  string localPath = 3;
+  // mount path in the cloud copy, empty when the account is only on this device
+  string cloudPath = 4;
+  CloudSyncAccountState state = 5;
+  // the local account is marked "do not sync to cloud": it stays on this
+  // device whatever the strategy and is never uploaded
+  bool localDoNotSync = 6;
+}
+message CloudSyncPreview {
+  // false when the account has never synced or the cloud copy was cleared;
+  // enabling then uploads this device's accounts whatever the strategy
+  bool cloudHasData = 1;
+  // opaque version of the cloud copy; pass it back in EnableCloudSyncRequest
+  string cloudDataVersion = 2;
+  repeated CloudSyncAccountDiff accounts = 3;
+  uint32 sameCount = 4;
+  uint32 differCount = 5;
+  uint32 onlyLocalCount = 6;
+  uint32 onlyCloudCount = 7;
+}
+enum CloudSyncStrategy {
+  // default: the cloud copy replaces this device's synced accounts
+  CloudSyncRemoteOverwritesLocal = 0;
+  // this device's synced accounts replace the cloud copy (other devices
+  // follow on their next reload)
+  CloudSyncLocalOverwritesRemote = 1;
+}
+message EnableCloudSyncRequest {
+  CloudSyncStrategy strategy = 1;
+  // cloudDataVersion from PreviewCloudSync; when set and the cloud copy has
+  // changed since, the call fails with ABORTED and nothing is changed
+  optional string expectedCloudDataVersion = 2;
+}
+message CloudSyncResult {
+  // accounts added to / replaced on / removed from this device
+  uint32 accountsAdded = 1;
+  uint32 accountsUpdated = 2;
+  uint32 accountsRemoved = 3;
+  // the merged set reached the cloud; false means it is queued and retried
+  bool uploaded = 4;
+}
+message DisableCloudSyncRequest {
+  // also remove the cloud copy from the account server; other devices keep
+  // their local copies but stop receiving updates
+  bool clearCloudData = 1;
+}
+message DisableCloudSyncResult {
+  // pending local changes were sent before sync was turned off (false when
+  // there were none, when clearCloudData was set, or when the send failed)
+  bool pendingChangesSent = 1;
+  bool cloudDataCleared = 2;
+}
+message BalanceLog {
+  double balance_before = 1;
+  double balance_after = 2;
+  double balance_change = 3;
+  enum BalancceChangeOperation {
+    Unknown = 0;
+    Deposit = 1;
+    Refund = 2;
+  }
+  BalancceChangeOperation operation = 4;
+  string operation_source = 5;
+  string operation_id = 6;
+  google.protobuf.Timestamp operation_time = 7;
+}
+message BalanceLogResult { repeated BalanceLog logs = 1; }
+message CheckFinalPriceRequest {
+  string planId = 1;
+  string couponCode = 2;
+}
+message CheckFinalPriceResult {
+  string planId = 1;
+  double planPrice = 2;
+  double userBalance = 3;
+  double couponDiscountAmount = 4;
+  optional string couponError = 5;
+  double finalPrice = 6;
+}
+message CheckActivationCodeResult {
+  string planId = 1;
+  string planName = 2;
+  string planDescription = 3;
+}
+message CheckCouponCodeRequest {
+  string planId = 1;
+  string couponCode = 2;
+}
+message CouponCodeResult {
+  string couponCode = 1;
+  string couponDescription = 2;
+  bool isPercentage = 3;
+  double couponDiscountAmount = 4;
+}
+message FileBackupRule {
+  oneof rule {
+    string extensions = 1;
+    string fileNames = 2;
+    string regex = 3;
+    uint64 minSize = 4;
+    // Paths relative to the source folder, one per line ("/" or backslash
+    // separators). A folder takes everything in it. Applies to files and
+    // folders alike; applyToFolder and applyToFile are not used.
+    string relativePaths = 5;
+    // A regex matched against the path relative to the source folder, with
+    // "/" separators and a trailing "/" on folders ("Users/me/Temp/"). Also
+    // tried on every folder above, so a match takes everything in it.
+    // Applies to files and folders alike; applyToFolder and applyToFile are
+    // not used. The regex rule (3) keeps matching single names.
+    string pathRegex = 6;
+  }
+  bool isEnabled = 100;
+  bool isBlackList = 101;
+  bool applyToFolder = 102;
+  // If present, determines whether rule applies to regular files; default true
+  // when absent
+  optional bool applyToFile = 103;
+}
+enum FileReplaceRule {
+  Skip = 0;
+  Overwrite = 1;
+  KeepHistoryVersion = 2;
+}
+enum FileDeleteRule {
+  Delete = 0;
+  Recycle = 1;
+  Keep = 2;
+  MoveToVersionHistory = 3;
+}
+enum FileCompletionRule {
+  None = 0;
+  DeleteSource = 1;
+  DeleteSourceAndEmptyFolder = 2;
+}
+// Direction of a backup. Two-way sync converges the source and every
+// destination: a change in any of them reaches all the others.
+enum BackupSyncMode {
+  BackupOneWay = 0;
+  BackupTwoWay = 1;
+}
+// What two-way sync does when the same file changed in two places.
+enum BackupConflictPolicy {
+  ConflictKeepBoth = 0;         // the other version is kept as a conflict copy
+  ConflictNewestWins = 1;       // by cloud server time; keeps both where a local folder is involved
+  ConflictSourceWins = 2;
+  ConflictDestinationWins = 3;
+}
+// Two-way sync: what to do with files that exist only in a destination when
+// the sync index is first built.
+enum BackupBootstrapExtrasPolicy {
+  BootstrapCopyExtrasToSource = 0;
+  BootstrapLeaveExtras = 1;     // left in place, not synced
+}
+message BackupDestination {
+  string destinationPath = 1;
+  bool isEnabled = 2;
+  optional google.protobuf.Timestamp lastFinishTime = 3;
+}
+message DaysOfWeek {
+  repeated uint32 daysOfWeek = 1; // Mon: 1, Tue: 2, ..., Sun: 0
+}
+message TimeSchedule {
+  bool isEnabled = 1;
+  uint32 hour = 2;
+  uint32 minute = 3;
+  uint32 second = 4;
+  optional DaysOfWeek daysOfWeek = 5; // none means every day
+}
+message Backup {
+  string sourcePath = 1;
+  repeated BackupDestination destinations = 2;
+  repeated FileBackupRule fileBackupRules = 3;
+  FileReplaceRule fileReplaceRule = 4;
+  FileDeleteRule fileDeleteRule = 5;
+  FileCompletionRule fileCompletionRule = 13;
+  bool isEnabled = 6;
+  bool fileSystemWatchEnabled = 7;
+  int64 walkingThroughIntervalSecs = 8; // 0 means never auto walking through
+  bool forceWalkingThroughOnStart = 9;
+  repeated TimeSchedule timeSchedules = 10;
+  bool isTimeSchedulesEnabled = 11;
+  bool syncDeleteFromDest = 14; // Delete files/folders from destination that don't exist in source while walking through
+  optional bool dontStartScanAfterAdd = 15; // If set to true, don't auto start full scan after backup is added. Default (false/unset) scans immediately.
+  // Two-way sync (fields 16-24). All optional: absent on BackupUpdate keeps the
+  // stored value, so a client that predates them cannot change them.
+  optional BackupSyncMode syncMode = 16;              // default BackupOneWay
+  optional BackupConflictPolicy conflictPolicy = 17;  // default ConflictKeepBoth
+  optional string conflictCopyTag = 18;               // word added to a conflict copy's name; default "conflict copy"
+  optional bool syncDeletionsTwoWay = 19;             // the only deletion switch in two-way sync; default false
+  optional bool twoWayHardDelete = 20;                // required for fileDeleteRule=Delete to delete permanently in two-way sync
+  optional uint32 historyRetentionDays = 21;          // days a replaced version stays in .clfs_history; 0 = forever (the default)
+  optional uint32 massDeleteGuardPercent = 22;        // hold deletions above this share of a folder's files; default 20
+  optional BackupBootstrapExtrasPolicy bootstrapExtrasPolicy = 23;
+  optional bool syncOwnerMarker = 24;                 // write and check .clfs_sync_owner in every folder; default true
+  // Automatic deep scan: a full scan that lists every folder, whatever its
+  // folder time says (on 115, Baidu and 123 an unchanged folder time lets a
+  // scan skip a folder, but a file renamed in another app does not change
+  // its folder's time). A scan the user starts is always deep.
+  optional bool deepScanEnabled = 25;                 // default true
+  optional uint32 deepScanEveryPasses = 26;           // every N full scans; default 8; 0 = not by count
+  optional uint32 deepScanMaxHours = 27;              // at least every N hours; default 24; 0 = not by time
+  // Set by clients that know the path rules (FileBackupRule 5 and 6). An
+  // update without it keeps the stored path rules: an older client shows
+  // them as empty extension rules and would otherwise lose them.
+  optional bool clientKnowsPathRules = 28;
+}
+// Test a path against filter rules while they are being edited.
+message BackupTestFileRulesRequest {
+  // the backup's source folder (also for a backup not added yet)
+  string sourcePath = 1;
+  // the rules as they are in the editor, not the stored ones
+  repeated FileBackupRule fileBackupRules = 2;
+  // a full path inside the source folder, or a path relative to it
+  string testPath = 3;
+  // used when the path is not found: a folder (a trailing "/" also means a
+  // folder) and the file size for a minimum size rule
+  optional bool isFolder = 4;
+  optional uint64 fileSize = 5;
+}
+message BackupTestFileRulesResult {
+  enum Outcome {
+    BackedUp = 0;
+    SkippedByRule = 1;         // ruleIndex skips the path itself
+    SkippedFolderAbove = 2;    // ruleIndex skips skippedFolder, which holds the path
+    SkippedSystemFile = 3;     // temporary files CloudDrive always skips
+    OutsideSource = 4;         // a full path that is not inside the source folder
+    InvalidRule = 5;           // ruleIndex cannot be used; see message
+  }
+  enum RuleVerdict {
+    NotUsed = 0;               // disabled, or does not look at this kind of item
+    Passes = 1;
+    Skips = 2;
+    Invalid = 3;
+  }
+  Outcome outcome = 1;
+  string relativePath = 2;     // the path the rules were tested on, "/" separators
+  bool isFolder = 3;
+  bool foundInSource = 4;      // the path exists; folder and size come from it
+  uint64 fileSize = 5;
+  int32 ruleIndex = 6;         // index in the request's rules; -1 when none
+  string skippedFolder = 7;    // relative path, for SkippedFolderAbove
+  repeated RuleVerdict ruleVerdicts = 8;  // per rule, for the path itself
+  string message = 9;          // an invalid rule's error
+}
+// Two-way sync: the state of one location (the source or a destination).
+message BackupReplicaStatus {
+  enum State {
+    ReplicaIdle = 0;
+    ReplicaScanning = 1;
+    ReplicaOffline = 2;   // not reachable in the last pass
+    ReplicaHeld = 3;      // deletions or changes held for confirmation
+    ReplicaError = 4;
+  }
+  enum Scheme {
+    SchemeObjectId = 0;   // cloud storage: a new file id per content change
+    SchemePathMtime = 1;  // files change in place: size and time
+  }
+  enum Detection {
+    DetectScan = 0;           // changes are found on the scan schedule only
+    DetectScanAndEvents = 1;  // scans plus CloudDrive's own change notifications
+    DetectWatch = 2;          // local folder with a file system watcher
+  }
+  string path = 1;
+  bool isSource = 2;
+  State state = 3;
+  string message = 4;
+  optional google.protobuf.Timestamp lastFinishTime = 5;
+  uint32 pendingChanges = 6;
+  BackupStatus.FileWatchStatus watcherStatus = 7;
+  bool indexReady = 8;
+  Scheme versionScheme = 9;
+  Detection detection = 10;
+  uint32 openIssues = 11;
+  bool onlySyncsOnScan = 12;  // interval 0, no schedule and no accelerators
+}
+message BackupStatus {
+  enum Status {
+    Idle = 0;
+    WalkingThrough = 1;
+    Error = 2;
+    Disabled = 3;
+    Scanned = 4;
+    Finished = 5;
+    // Scan is queued/paused (issue #462): waiting for a walker slot or for the
+    // transfer queue to drain. Clients show this as "Pending".
+    Waiting = 6;
+  }
+  enum FileWatchStatus {
+    WatcherIdle = 0;
+    Watching = 1;
+    WatcherError = 2;
+    WatcherDisabled = 3;
+  }
+  Backup backup = 1;
+  Status status = 2;
+  string statusMessage = 3;
+  FileWatchStatus watcherStatus = 4;
+  string watcherStatusMessage = 5;
+  repeated TaskError errors = 7;
+  // Two-way sync (fields 8-12), filled for every backup; empty for one-way.
+  repeated BackupReplicaStatus replicaStatuses = 8;
+  uint32 openSyncIssues = 9;
+  bool twoWayBootstrapped = 10;
+  uint32 heldDeletionGuards = 11;
+  FileDeleteRule effectiveDeleteRule = 12;  // Delete only when twoWayHardDelete is set
+  optional BackupSyncStats syncStats = 13;  // two-way only: the last pass and totals since start
+}
+// Two-way sync statistics: what the last pass did, and totals since the
+// service started (the journal is the durable record).
+message BackupSyncStats {
+  uint64 generation = 1;             // of the last pass
+  bool lastPassIncremental = 2;
+  google.protobuf.Timestamp lastPassAt = 3;
+  double lastPassSecs = 4;
+  uint32 dirsListed = 5;
+  uint32 dirsServedFromIndex = 6;
+  uint64 bytesHashed = 7;
+  uint32 copiesToSource = 8;
+  uint32 copiesToDestinations = 9;
+  uint32 renames = 10;
+  uint32 deletions = 11;
+  uint32 conflicts = 12;
+  uint32 held = 13;
+  uint32 unknownFolders = 14;
+  // Totals since the service started.
+  uint64 totalPasses = 15;
+  uint64 totalIncrementalPasses = 16;
+  uint64 totalCopies = 17;
+  uint64 totalRenames = 18;
+  uint64 totalDeletions = 19;
+  uint64 totalConflicts = 20;
+  optional google.protobuf.Timestamp lastFullPassAt = 21;
+  optional google.protobuf.Timestamp lastIncrementalPassAt = 22;
+}
+// Undo what one pass did (the last five passes are kept): files the pass
+// replaced or deleted are put back from the history folder, renames are
+// reverted, created folders removed when empty. Needs confirmed = true.
+message BackupUndoSyncPassRequest {
+  string sourcePath = 1;
+  uint64 generation = 2;   // 0 = the last pass
+  bool confirmed = 3;
+}
+message BackupList { repeated BackupStatus backups = 1; }
+message BackupModifyRequest {
+  string sourcePath = 1;
+  repeated BackupDestination destinations = 2;
+  repeated FileBackupRule fileBackupRules = 3;
+  optional FileReplaceRule fileReplaceRule = 4;
+  optional FileDeleteRule fileDeleteRule = 5;
+  optional bool fileSystemWatchEnabled = 6;
+  optional int64 walkingThroughIntervalSecs = 7;
+}
+message BackupSetEnabledRequest {
+  string sourcePath = 1;
+  bool isEnabled = 2;
+}
+// Two-way sync: something the user should know about or decide on.
+message BackupSyncIssue {
+  enum Kind {
+    Conflict = 0;
+    HeldDeletes = 1;
+    StaleReplica = 2;
+    NameCaseClash = 3;
+    ModifiedVsDeleted = 4;
+    IndexRebuilt = 5;
+    ReplaceFailed = 6;
+    RenameCollision = 7;
+    CreatedOnBoth = 8;
+    NotComparable = 9;
+    DeletionsNotMirrored = 10;
+    UnverifiedPairs = 11;
+    HeldChanges = 12;
+    SharedReplica = 13;
+  }
+  uint64 id = 1;
+  Kind kind = 2;
+  string relativePath = 3;
+  string replica = 4;
+  string detail = 5;
+  google.protobuf.Timestamp time = 6;
+  bool resolved = 7;
+  uint32 affectedCount = 8;
+  optional string conflictCopyPath = 9;
+  string resolution = 10;
+  repeated string affectedPaths = 11;  // capped sample
+  FileDeleteRule deleteRule = 12;      // rule that ApplyHeldDeletions would use
+  uint32 affectedFolders = 13;
+}
+message BackupSyncIssueList { repeated BackupSyncIssue issues = 1; }
+message BackupResolveSyncIssueRequest {
+  enum Action {
+    Dismiss = 0;
+    ApplyHeldDeletions = 1;  // needs confirmed = true
+    RestoreHeldFiles = 2;
+    KeepReplicaVersion = 3;
+    AdoptAsIdentical = 4;
+    ApplyStaleVersions = 5;  // needs confirmed = true
+    AcceptHeldChanges = 6;
+    RestoreFromHub = 7;
+  }
+  string sourcePath = 1;
+  repeated uint64 issueIds = 2;
+  Action action = 3;
+  optional string replica = 4;
+  bool confirmed = 5;
+}
+// Two-way sync preview: what enabling (or the next pass of) two-way sync
+// would do, computed without changing anything.
+message BackupSyncPreviewStartRequest {
+  oneof target {
+    Backup proposed = 1;     // an unsaved configuration, for example from a wizard
+    string sourcePath = 2;   // an existing backup
+  }
+  uint32 sampleLimit = 3;
+}
+message BackupSyncPreviewHandle { string previewId = 1; }
+message BackupSyncPreviewReplica {
+  string path = 1;
+  bool isSource = 2;
+  uint64 onlyHere = 3;
+  uint64 missingHere = 4;
+  uint64 differ = 5;
+  uint64 same = 6;
+  uint64 foldersOnlyHere = 7;
+  optional string refusalReason = 8;
+  uint64 wouldDelete = 9;
+  uint64 unverified = 10;
+  bool onlySyncsOnScan = 11;
+}
+message BackupSyncPreviewItem {
+  enum Kind {
+    OnlyHere = 0;
+    MissingHere = 1;
+    Differ = 2;
+  }
+  string relativePath = 1;
+  string replica = 2;
+  Kind kind = 3;
+}
+message BackupSyncPreview {
+  enum State {
+    PreviewRunning = 0;
+    PreviewDone = 1;
+    PreviewFailed = 2;
+    PreviewCancelled = 3;
+  }
+  repeated BackupSyncPreviewReplica replicas = 1;
+  repeated BackupSyncPreviewItem samples = 2;
+  bool truncated = 3;
+  google.protobuf.Timestamp computedAt = 4;
+  bool wouldHold = 5;
+  string holdReason = 6;
+  bool deletionMirroringChanges = 7;
+  string deletionMirroringDetail = 8;
+  State state = 9;
+  uint32 dirsListed = 10;
+  uint32 replicasDone = 11;
+  string previewId = 12;
+  bool fromIndex = 13;
+  string error = 14;
+}
+
+// Photo Library Integration (iOS/Mobile)
+message PhotoLibraryChange {
+  enum ChangeType {
+    Create = 0;
+    Delete = 1;
+  }
+  ChangeType changeType = 1;
+  string localFilePath = 2; // Path in app's sandbox where photo was exported
+  string originalIdentifier = 3; // PHAsset localIdentifier for tracking
+  optional string originalFileName = 4;
+  optional google.protobuf.Timestamp creationDate = 5;
+}
+
+message PhotoLibraryChangeList {
+  repeated PhotoLibraryChange changes = 1;
+  string backupSourcePath = 2; // The backup source path to notify (e.g., "Photos")
+}
+
+message Device {
+  string deviceId = 1;
+  string deviceName = 2;
+  string osType = 3;
+  string version = 4;
+  string ipAddress = 5;
+  google.protobuf.Timestamp lastUpdateTime = 6;
+}
+message OnlineDevices { repeated Device devices = 1; }
+message DeviceRequest { string deviceId = 1; }
+message LogFileRecord {
+  string fileName = 1;
+  google.protobuf.Timestamp lastModifiedTime = 2;
+  uint64 fileSize = 3;
+  string signature = 4;
+}
+message ListLogFileResult { repeated LogFileRecord logFiles = 1; }
+message FileSystemChangeStatistics {
+  uint64 createCount = 1;
+  uint64 deleteCount = 2;
+  uint64 renameCount = 3;
+}
+message WalkThroughFolderResult {
+  uint64 totalFolderCount = 1;
+  uint64 totalFileCount = 2;
+  uint64 totalSize = 3;
+}
+message WebhookRequest {
+  string fileName = 1;
+  string content = 2;
+}
+message WebhookInfo {
+  string fileName = 1;
+  string content = 2;
+  bool isValid = 3;
+}
+message WebhookList { repeated WebhookInfo webhooks = 1; }
+
+// DAV User Management
+message AddDavUserRequest {
+  string userName = 1;
+  string password = 2;
+  optional string rootPath = 3;
+  optional bool readOnly = 4;
+  optional bool enabled = 5;
+  optional bool guest = 6;
+}
+message ModifyDavUserRequest {
+  string userName = 1;
+  optional string password = 2;
+  optional string rootPath = 3;
+  optional bool readOnly = 4;
+  optional bool enabled = 5;
+  optional bool guest = 6;
+}
+message DavUser {
+  string userName = 1;
+  string password = 2;
+  string rootPath = 3;
+  bool readOnly = 4;
+  bool enabled = 5;
+  bool guest = 6;
+}
+message DavServerConfig {
+  bool davServerEnabled = 1; // if true, enable DAV server
+  string davServerPath = 2; // currently fixed to "/dav"
+  bool enableClouddriveAccount =
+      3; // if true, enable cloud drive account as webdav user
+  string clouddriveAccountRootPath =
+      4; // root path for cloud drive account, if empty, use default path "/"
+  bool clouddriveAccountReadOnly =
+      5; // if true, cloud drive account is read-only, default is false
+  bool enableAnonymousAccess = 6; // if true, enable anonymous access
+  string anonymousRootPath =
+      7; // root path for anonymous access, if empty, use default path "/"
+  bool anonymousReadOnly =
+      8; // if true, anonymous access is read-only, default is true
+  repeated DavUser users = 9;
+  bool enableAccessLog = 10; // if true, log WebDAV access to webdav-YYYY-MM-DD.log
+  // Where other devices can reach the server, filled in by the server so that
+  // a client connected through 127.0.0.1 can still show a usable address.
+  // IPv4 addresses of the server's network interfaces, loopback, link-local
+  // and container bridges left out, the interface of the default route first.
+  repeated string lanAddresses = 11;
+  uint32 httpPort = 12;
+  uint32 httpsPort = 13;
+  bool httpsEnabled = 14;
+  // The server runs in a container (Docker and the like): its own addresses
+  // are usually not reachable, the host's address and mapped port are.
+  bool runningInContainer = 15;
+}
+message ModifyDavServerConfigRequest {
+  optional bool enableDavServer = 1;
+  optional bool enableClouddriveAccount =
+      2; // if true, enable cloud drive account as webdav user
+  optional string clouddriveAccountRootPath = 3; // root path for cloud
+  optional bool clouddriveAccountReadOnly =
+      4; // if true, cloud drive account is read-only
+  optional bool enableAnonymousAccess = 5; // if true, enable anonymous access
+  optional string anonymousRootPath = 6;   // if empty, use default path
+  optional bool anonymousReadOnly = 7; // if true, anonymous access is read-only
+  optional bool enableAccessLog = 8; // if true, log WebDAV access
+}
+
+// --- Remote Upload Protocol Messages ---
+
+message RemoteUploadChannelRequest { string device_id = 1; }
+
+// Server-side streaming channel reply (server requests to client)
+message RemoteUploadChannelReply {
+  string upload_id = 1;
+  oneof request {
+    RemoteReadDataRequest read_data = 2;
+    RemoteHashDataRequest hash_data = 3;
+    RemoteUploadStatusChanged status_changed = 4;
+  }
+}
+
+// Control channel request from client to server
+message RemoteUploadControlRequest {
+  string upload_id = 1; // Unique upload session ID
+  oneof control {
+    CancelRemoteUpload cancel = 2;
+    PauseRemoteUpload pause = 3;
+    ResumeRemoteUpload resume = 4;
+  }
+}
+
+// Start upload command
+message StartRemoteUploadRequest {
+  string file_path = 1;
+  uint64 file_size = 2;
+  map<uint32, string> known_hashes = 3;
+  // If true, client has local access to the original file and can compute
+  // required hashes locally; server may rely on client-provided hashes and
+  // request hash work over the channel instead of reading entire file
+  bool client_can_calculate_hashes = 4;
+}
+
+// Cancel upload command
+message CancelRemoteUpload {}
+
+// Removed: GetRemoteUploadStatus; status changes are streamed via
+// RemoteUploadChannelReply.status_changed
+
+// Upload started reply
+message RemoteUploadStarted { string upload_id = 1; }
+
+// Upload progress reply
+message RemoteUploadProgress {
+  uint64 bytes_uploaded = 1;
+  uint64 total_bytes = 2;
+}
+// Rapid upload completed reply (rapid upload process completed, enters
+// uploading state)
+message RemoteRapidUploadCompleted {}
+// Upload completed reply
+message RemoteUploadCompleted {}
+
+// Upload failed reply
+message RemoteUploadFailed { string error_message = 1; }
+
+// Removed: RemoteUploadStatus; use RemoteUploadStatusChanged on channel instead
+
+// Read data request (client sends file data to server)
+message RemoteReadDataRequest {
+  uint64 offset = 1;
+  uint64 length = 2;
+  bool lazy_read = 3;
+}
+message RemoteReadDataUpload {
+  string upload_id = 1;
+  uint64 offset = 3;
+  uint64 length = 4;
+  bool lazy_read = 5;
+  bytes data = 6;
+  bool is_last_chunk = 7;
+}
+// Read data reply (server acks file data)
+message RemoteReadDataReply {
+  bool success = 1;
+  string error_message = 2;
+  uint64 bytes_received = 3;
+  bool is_last_chunk = 4;
+}
+
+// Hash data request (server asks client to compute hash locally and report via
+// RemoteHashProgress)
+message RemoteHashDataRequest {
+  uint32 hash_type = 2;
+  // Optional: when set and > 0 for MD5, client should return per-block MD5s
+  // using this block size
+  optional uint32 block_size = 3;
+}
+
+// Remote upload status changed
+message RemoteUploadStatusChanged {
+  UploadFileInfo.Status status = 1;
+  string error_message = 2;
+}
+// Control messages
+message PauseRemoteUpload {}
+message ResumeRemoteUpload {}
+// Removed legacy RemoteHashDataUpload/Reply; clients must use
+// RemoteHashProgress for progress and final result
+
+// Client-side hash calculation progress (e.g., when computing MD5/SHA1 locally)
+message RemoteHashProgressUpload {
+  string upload_id = 1;
+  // Bytes hashed so far and total bytes to hash (usually the file size)
+  uint64 bytes_hashed = 2;
+  uint64 total_bytes = 3;
+  // Currently computing hash type (matches CloudDriveFile.HashType)
+  CloudDriveFile.HashType hash_type = 4;
+  // When present, indicates the final computed hash value for the given
+  // hash_type
+  optional string hash_value = 5;
+  // Optional per-block hashes (lower-hex) for MD5 when requested via block_size
+  repeated string block_hashes = 6;
+}
+message RemoteHashProgressReply {}
+
+// File data and hash data are sent via separate unary RPCs below
+
+// --- End Remote Upload Protocol Messages ---
+message TokenPermissions {
+  // File Operations
+  bool allow_list = 1; // GetSubFiles, FindFileByPath
+  bool allow_search = 2; // GetSearchResults
+  bool allow_list_local =
+      3; // LocalGetSubFiles, GetAvailableDriveLetters, HasDriveLetters
+  bool allow_create_folder = 4; // CreateFolder, CreateEncryptedFolder
+  bool allow_create_file = 5; // CreateFile, WriteToFile, WriteToFileStream
+  bool allow_write = 6; // File uploads and copy operations
+  bool allow_read = 7; // File downloads
+  bool allow_rename = 8; // RenameFile, RenameFiles
+  bool allow_move = 9; // MoveFile
+  bool allow_copy = 10; // CopyFile
+  bool allow_delete = 11; // DeleteFile, DeleteFiles
+  bool allow_delete_permanently =
+      12; // DeleteFilePermanently, DeleteFilesPermanently
+
+  // Encryption Operations
+  bool allow_create_encrypt = 13; // CreateEncryptedFolder
+  bool allow_unlock_encrypted = 14; // UnlockEncryptedFile
+  bool allow_lock_encrypted = 15; // LockEncryptedFile
+
+  // Cloud Operations
+  bool allow_add_offline_download = 16; // AddOfflineFiles
+  bool allow_list_offline_downloads =
+      17; // ListOfflineFilesByPath, ListAllOfflineFiles, GetOfflineQuotaInfo
+  bool allow_modify_offline_downloads =
+      18; // RemoveOfflineFiles, ClearOfflineFiles, RestartOfflineTask
+  bool allow_shared_links = 19; // AddSharedLink
+
+  // System Information
+  bool allow_view_properties = 20; // GetFileDetailProperties
+  bool allow_get_space_info = 21; // GetSpaceInfo
+  bool allow_view_runtime_info = 22; // GetRuntimeInfo, GetRunningInfo
+  bool allow_push_message = 41; // Receive push messages (file system changes,
+                                // transfer task updates, etc.)
+
+  // Membership Management
+  bool allow_get_memberships = 23; // GetCloudMemberships
+  bool allow_modify_memberships =
+      24; // Future membership modification operations
+
+  // Mount Management
+  bool allow_get_mounts = 25; // GetMountPoints, CanAddMoreMountPoints
+  bool allow_modify_mounts =
+      26; // AddMountPoint, RemoveMountPoint, Mount, Unmount, UpdateMountPoint
+
+  // Transfer Management
+  bool allow_get_transfer_tasks =
+      27; // GetAllTasksCount, GetDownloadFileCount, GetDownloadFileList,
+          // GetUploadFileCount, GetUploadFileList, GetCopyTasks, GetMergeTasks
+  bool allow_modify_transfer_tasks =
+      28; // Cancel/Pause/Resume upload/download/copy operations
+
+  // Cloud API Management
+  bool allow_get_cloud_apis =
+      29; // GetAllCloudApis, GetCloudAPIConfig, CanAddMoreCloudApis
+  bool allow_modify_cloud_apis = 30; // Add/Remove cloud APIs, SetCloudAPIConfig
+
+  // System Settings
+  bool allow_get_system_settings =
+      31; // GetSystemSettings, GetEffectiveDirCacheTimeSecs, GetDirCacheDbSize, GetVacuumProgress
+  bool allow_modify_system_settings =
+      32; // SetSystemSettings, SetDirCacheTimeSecs, ForceExpireDirCache, VacuumDirCache
+
+  // Backup Management
+  bool allow_get_backups =
+      33; // BackupGetAll, BackupGetStatus, CanAddMoreBackups
+  bool allow_modify_backups =
+      34; // BackupAdd, BackupRemove, BackupUpdate, BackupSetEnabled, etc.
+
+  // DAV Management
+  bool allow_get_dav_config = 35; // GetDavUser, GetDavServerConfig
+  bool allow_modify_dav_config =
+      36; // AddDavUser, RemoveDavUser, ModifyDavUser, SetDavServerConfig
+
+  // Token Management (Admin only)
+  bool allow_token_management =
+      37; // CreateToken, ModifyToken, RemoveToken, ListTokens
+
+  // Account Management
+  bool allow_get_account_info =
+      38; // GetAccountStatus, GetBalanceLog, GetReferralCode
+  bool allow_modify_account =
+      39; // ChangePassword, ChangeEmail, TransferBalance
+
+  // Service Control
+  bool allow_service_control = 40; // RestartService, ShutdownService
+
+  // Archive Folders
+  bool allow_get_archive_folders = 42; // GetArchiveFolders, ProbeArchive
+  bool allow_modify_archive_folders =
+      43; // OpenArchiveFolder, UpdateArchiveFolder, Load/Unload/RemoveArchiveFolder
+}
+
+message TokenInfo {
+  string token = 1;
+  string rootDir = 2;
+  TokenPermissions permissions = 3;
+  // seconds from now until expiration. If absent or 0, the token never expires.
+  optional uint64 expires_in = 4;
+  string friendly_name = 5;
+  bool enableGrpcLog = 6; // if true, log gRPC access to api_token-YYYY-MM-DD.log (default: false for admin tokens, true for user tokens)
+  bool enableStreamFileLog = 7; // if true, log stream file access to api_token-YYYY-MM-DD.log (default: false for admin tokens, true for user tokens)
+}
+message CreateTokenRequest {
+  string rootDir = 1;
+  TokenPermissions permissions = 2;
+  string friendly_name = 3;
+  // seconds from now until expiration. If absent or 0, never expires.
+  optional uint64 expires_in = 4;
+  optional bool enableGrpcLog = 5; // if true, log gRPC access (default: true for user tokens)
+  optional bool enableStreamFileLog = 6; // if true, log stream file access (default: true for user tokens)
+}
+message ModifyTokenRequest {
+  string token = 1;
+  optional string rootDir = 2;
+  optional TokenPermissions permissions = 3;
+  optional string friendly_name = 4;
+  // Set a new expiration; if set to 0, it will never expire. If absent, keeps
+  // existing expiration.
+  optional uint64 expires_in = 5;
+  optional bool enableGrpcLog = 6; // if true, log gRPC access
+  optional bool enableStreamFileLog = 7; // if true, log stream file access
+}
+message ListTokensResult { repeated TokenInfo tokens = 1; }
+
+// --- Web Server Configuration Messages ---
+message WebServerConfig {
+  uint32 http_port = 1;
+  uint32 https_port = 2;
+  optional string cert_file = 3;
+  optional string key_file = 4;
+  bool enable_https = 5;
+}
+
+message SetWebServerConfigRequest {
+  optional uint32 http_port = 1;
+  optional uint32 https_port = 2;
+  optional string cert_file = 3;
+  optional string key_file = 4;
+  optional bool enable_https = 5;
+  // Certificate content in PEM format - if provided, will be written to
+  // certs/server.crt
+  optional string cert_content = 6;
+  // Private key content in PEM format - if provided, will be written to
+  // certs/server.key
+  optional string key_content = 7;
+}
+
+message GenerateSelfSignedCertRequest {
+  // If true, restart web servers after generating certificate and updating
+  // config
+  bool restart_servers = 1;
+}
+
+// ==================== 2FA Messages ====================
+
+message TwoFactorAuthStatusResult {
+  bool two_factor_enabled = 1;
+}
+
+message Setup2FARequest {
+  string password = 1;
+}
+
+message TwoFactorAuthSetupResult {
+  string secret = 1;
+  string qr_code = 2; // Base64-encoded PNG image (data URL format)
+  string manual_entry_key = 3;
+}
+
+message TwoFactorAuthCodeRequest {
+  string totp_code = 1; // 6-digit TOTP code or 8-character recovery code
+}
+
+message TwoFactorAuthEnableResult {
+  repeated string recovery_codes = 1;
+  string message = 2;
+}
+
+message TwoFactorAuthMessageResult {
+  string message = 1;
+}
+
+message TwoFactorAuthRecoveryCodesResult {
+  repeated string recovery_codes = 1;
+  uint32 total = 2;
+  string message = 3;
+}
+
+message LoginWith2FARequest {
+  string userName = 1;
+  string password = 2;
+  string totp_code = 3; // 6-digit TOTP code or 8-character recovery code
+  bool synDataToCloud = 4;
+  optional ProxyInfo cloudfsProxy = 5; // Optional proxy for reaching CloudFS account server
+}
+
+message SendDisable2FAEmailRequest {
+  string email = 1;
+  optional ProxyInfo cloudfsProxy = 2; // Optional proxy for reaching CloudFS account server
+}
+
+message Disable2FAByEmailRequest {
+  string disable_code = 1; // UUID code from the recovery email
+  string password = 2;     // clear-text account password; MD5-hashed by the backend before send
+  optional ProxyInfo cloudfsProxy = 3; // Optional proxy for reaching CloudFS account server
+}
+
+message UnbindDeviceRequest {
+  string password = 1;          // clear-text account password; MD5-hashed by the backend
+  optional string totp_code = 2; // required only when 2FA is enabled
+}
+
+// ==================== End 2FA Messages ====================
+
+// ==================== Session Management Messages ====================
+message Session {
+  string id = 1;
+  string device_id = 2;
+  string device_name = 3;
+  string device_os_type = 4;
+  string created_at = 5;
+  string last_used_at = 6;
+  string expires_at = 7;
+  string last_ip_address = 8;
+}
+
+message GetSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string session_id = 1;
+}
+
+// ==================== End Session Management Messages ====================
+
+// ==================== Account Deletion Messages ====================
+message DeleteAccountPreflightResult {
+  // registered address the one-time code was sent to
+  string email = 1;
+  // remaining balance; when > 0 the user must consent and DeleteAccountRequest
+  // must carry forfeit_balance = true
+  double balance = 2;
+  // always false on success; an active subscription fails the preflight instead
+  bool has_active_subscription = 3;
+  // devices that will be released (detached, not deleted) by the deletion
+  uint32 bound_device_count = 4;
+  // lifetime of the emailed code, in minutes
+  uint32 expires_in_minutes = 5;
+}
+
+message DeleteAccountRequest {
+  string delete_code = 1;        // one-time code from the deletion email
+  string password = 2;           // clear-text account password; MD5-hashed by the backend
+  optional string totp_code = 3; // required only when 2FA is enabled
+  bool forfeit_balance = 4;      // must be true when the account holds a balance
+}
+// ==================== End Account Deletion Messages ====================
+
+// ==================== TV remote configuration ====================
+// See docs/TV_REMOTE_CONFIG.md. The TV app is the "host"; a phone that
+// scanned its QR code is a "controller".
+
+message BeginPairingRequest {
+  // What the host app is, as a controller should show it: "tvos",
+  // "androidtv", "android", "ios", "macos", "windows", "visionos".
+  string app_platform = 1;
+  string app_version = 2;
+}
+message PairingTicket {
+  string ticket_id = 1;
+  string secret = 2;              // base64url; one use, expires_at_unix
+  uint64 expires_at_unix = 3;
+  repeated string addresses = 4;  // LAN addresses, best first
+  uint32 port = 5;                // the remote (TLS) listener
+  string cert_sha256 = 6;         // base64url SHA-256 of the certificate DER
+  string device_id = 7;
+  string device_name = 8;
+  string platform = 9;
+  string app_version = 10;
+  string qr_payload = 11;         // the URL to show as a QR code
+}
+message CancelPairingRequest { string ticket_id = 1; }
+
+message RemoteControllerInfo {
+  string device_id = 1;  // stable per controller install
+  string name = 2;       // e.g. "Pixel 9"
+  string platform = 3;   // "ios", "android", "macos", "windows", "web"
+  string app_version = 4;
+}
+message CompletePairingRequest {
+  string secret = 1;
+  RemoteControllerInfo controller = 2;
+}
+message CompletePairingResult {
+  string token = 1;          // controller token; send as Bearer
+  string controller_id = 2;
+  string device_id = 3;      // the TV
+  string device_name = 4;
+  string platform = 5;
+  string app_version = 6;
+}
+message PairedController {
+  string controller_id = 1;
+  RemoteControllerInfo info = 2;
+  google.protobuf.Timestamp paired_at = 3;
+  google.protobuf.Timestamp last_seen = 4;
+  bool connected = 5;        // has a WatchApp stream open now
+}
+message LoginHandoff {
+  string user_name = 1;
+  string password = 2;
+}
+message PairedControllerList { repeated PairedController controllers = 1; }
+message RevokePairedControllerRequest { string controller_id = 1; }
+
+message AppAgentUpstream {
+  oneof kind {
+    AppAgentHello hello = 1;  // first message on the stream
+    AppAgentReply reply = 2;  // answer to an AppAgentCall
+    bytes event = 3;          // RemoteAppEvent, to every watching controller
+  }
+}
+message AppAgentHello {
+  string app_version = 1;
+  uint32 protocol_version = 2;  // 1
+}
+message AppAgentReply {
+  uint64 call_id = 1;
+  bytes payload = 2;            // RemoteAppResponse
+}
+message AppAgentDownstream {
+  oneof kind {
+    AppAgentCall call = 1;
+    AppAgentNotice notice = 2;
+  }
+}
+message AppAgentCall {
+  uint64 call_id = 1;
+  string controller_id = 2;
+  bytes payload = 3;            // RemoteAppRequest
+}
+message AppAgentNotice {
+  enum Kind {
+    CONTROLLER_PAIRED = 0;
+    CONTROLLER_REVOKED = 1;
+    CONTROLLER_CONNECTED = 2;     // opened WatchApp
+    CONTROLLER_DISCONNECTED = 3;  // its last WatchApp stream closed
+    PAIRING_CANCELLED = 4;        // a ticket expired or had too many wrong secrets
+  }
+  Kind kind = 1;
+  PairedController controller = 2;
+  string ticket_id = 3;
+}
+message AppCallRequest { bytes payload = 1; }   // RemoteAppRequest
+message AppCallResult { bytes payload = 1; }    // RemoteAppResponse
+message AppEventMessage {
+  enum AgentState {
+    AGENT_UNKNOWN = 0;
+    AGENT_CONNECTED = 1;     // the TV app is running and answering
+    AGENT_DISCONNECTED = 2;  // CloudDrive is not open on the TV
+  }
+  oneof kind {
+    bytes event = 1;         // RemoteAppEvent from the TV app
+    AgentState agent_state = 2;
+  }
+}
+
+// ---- Payloads of AppCall / WatchApp, carried as bytes by the backend ----
+
+message RemoteAppRequest {
+  string locale = 1;             // e.g. "zh-Hans", "en"
+  oneof kind {
+    RemoteGetPage get_page = 10;
+    RemoteSetValue set_value = 11;
+    RemotePress press = 12;
+    RemoteTextInputReply text_input_reply = 13;
+  }
+}
+message RemoteGetPage { string page_id = 1; }   // "" is the root page
+message RemoteSetValue {
+  string page_id = 1;
+  string key = 2;
+  RemoteValue value = 3;
+  uint64 revision = 4;
+}
+message RemotePress {
+  string page_id = 1;
+  string key = 2;
+}
+message RemoteTextInputReply {
+  string request_id = 1;
+  string text = 2;
+  bool cancelled = 3;
+}
+
+message RemoteAppResponse {
+  oneof kind {
+    RemotePage page = 1;
+    RemoteStep step = 2;
+    RemoteError error = 3;
+    bool ok = 4;
+  }
+}
+message RemoteError { string message = 1; }
+message RemoteStep {
+  oneof kind {
+    RemotePage page = 1;
+    RemoteOpenUrl open_url = 2;
+    bool done = 3;
+  }
+  string message = 10;           // optional note to show
+}
+message RemoteOpenUrl {
+  string url = 1;                // open on the controller
+  string page_id = 2;            // then press return_key on this page
+  string return_key = 3;
+}
+
+message RemotePage {
+  string page_id = 1;
+  string title = 2;
+  repeated RemoteSection sections = 3;
+  uint64 revision = 4;
+}
+message RemoteSection {
+  string title = 1;
+  string footer = 2;
+  repeated RemoteItem items = 3;
+}
+message RemoteItem {
+  string key = 1;
+  string title = 2;
+  string subtitle = 3;          // second line / help
+  bool enabled = 4;
+  string disabled_reason = 5;
+  string error = 6;             // from the last set_value on this row
+  string portable_id = 7;       // same meaning across platforms (phase 2)
+  oneof control {
+    RemoteToggle toggle = 10;
+    RemoteChoice choice = 11;
+    RemoteNumber number = 12;
+    RemoteText text = 13;
+    RemoteLink link = 14;
+    RemoteButton button = 15;
+    RemoteInfo info = 16;
+  }
+}
+message RemoteValue {
+  oneof kind {
+    bool bool_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    string string_value = 4;
+    RemoteStringList list_value = 5;
+  }
+}
+message RemoteStringList { repeated string values = 1; }
+message RemoteToggle { bool on = 1; }
+message RemoteChoiceOption {
+  string value = 1;
+  string label = 2;
+  string detail = 3;
+}
+message RemoteChoice {
+  repeated RemoteChoiceOption options = 1;
+  repeated string selected = 2;
+  bool multiple = 3;
+  bool allow_custom = 4;        // free text allowed besides the options
+}
+message RemoteNumber {
+  double value = 1;
+  double min = 2;
+  double max = 3;
+  double step = 4;
+  string unit = 5;
+  uint32 decimals = 6;
+}
+message RemoteText {
+  enum Hint {
+    PLAIN = 0;
+    URL = 1;
+    EMAIL = 2;
+    NUMBER = 3;
+    PASSWORD = 4;
+  }
+  string value = 1;             // empty for secrets
+  bool secret = 2;
+  bool secret_set = 3;          // a secret has a value on the TV
+  bool multiline = 4;
+  Hint hint = 5;
+  string placeholder = 6;
+}
+message RemoteLink {
+  string page_id = 1;
+  string value_summary = 2;     // e.g. the current choice, shown on the row
+}
+message RemoteButton {
+  bool destructive = 1;
+  string confirm = 2;           // ask this before pressing, when set
+}
+message RemoteInfo { string text = 1; }
+
+message RemoteAppEvent {
+  oneof kind {
+    RemotePageChanged page_changed = 1;
+    RemoteTextInputRequest text_input_request = 2;
+    string text_input_cancelled = 3;   // request_id
+  }
+}
+message RemotePageChanged {
+  string page_id = 1;
+  uint64 revision = 2;
+}
+message RemoteTextInputRequest {
+  string request_id = 1;
+  string title = 2;
+  bool secret = 3;
+  bool multiline = 4;
+  RemoteText.Hint hint = 5;
+  string current_value = 6;     // empty when secret
+}
+// ==================== End TV remote configuration ====================
+
+// ---------------------------------------------------------------------------
+// Archive folders
+
+// How files in the solid (forward-only) parts of an archive are read.
+enum SolidArchiveMode {
+  // Such files are listed but cannot be read.
+  SolidNeverExtract = 0;
+  // Decoded in memory only; reading backwards restarts decoding (slow).
+  SolidInMemory = 1;
+  // Decoded data is also kept in a local cache (global size limit
+  // SystemSettings.archiveCacheMaxBytes, least recently read goes first).
+  SolidLocalCache = 2;
+}
+
+message ArchiveFolder {
+  enum State {
+    Loading = 0;
+    Ready = 1;
+    Indexing = 2;       // first listing of a large archive; see progress
+    NotReady = 3;       // the archive's cloud is not available yet
+    Missing = 4;        // the archive file is gone or was renamed elsewhere
+    NeedsPassword = 5;  // encrypted: UpdateArchiveFolder with the password
+    Unsupported = 6;
+    NoPlan = 7;         // the membership plan does not include archive folders
+    Error = 8;
+    Unloaded = 9;       // saved, not shown
+  }
+  string folderPath = 1;        // "/Archive Folders/Album_iso"
+  string archivePath = 2;
+  bool autoLoad = 3;            // shown again after a restart
+  State state = 4;
+  string message = 5;
+  string format = 6;            // "iso", "sacd", "zip", "7z", "rar", "tar", "tar.gz", "gz"
+  uint64 fileCount = 7;
+  uint64 totalSize = 8;
+  optional double progress = 9; // 0..1 while Indexing
+  optional string coverImagePath = 10;
+  bool hasSolidMembers = 11;    // some files follow solidMode
+  SolidArchiveMode solidMode = 12;
+  uint64 cacheBytes = 13;       // this folder's share of the local cache
+  bool loaded = 14;             // shown in "Archive Folders" now
+}
+message ArchiveFolderList { repeated ArchiveFolder folders = 1; }
+
+message OpenArchiveFolderRequest {
+  string archivePath = 1;
+  optional bool autoLoad = 2;             // default false
+  optional string password = 3;
+  // SACD: picture embedded in every DSF's tags (copied when opened; up to
+  // 2 MB). Clients pick it with their sidecar cover rule.
+  optional string coverImagePath = 4;
+  optional SolidArchiveMode solidMode = 5; // default SolidNeverExtract
+}
+message UpdateArchiveFolderRequest {
+  string folderPath = 1;
+  optional bool autoLoad = 2;
+  optional string password = 3;         // empty clears it
+  optional string coverImagePath = 4;   // empty removes the cover
+  optional SolidArchiveMode solidMode = 5;
+}
+message ArchiveProbe {
+  // Why a file cannot be opened as a folder (when supported is false).
+  enum Problem {
+    Other = 0;                // see message
+    NotAnArchive = 1;
+    NotFirstVolume = 2;       // a later volume of a set: open the first one
+    InsideArchiveFolder = 3;
+    Encrypted = 4;            // the file list is encrypted in a way CloudDrive cannot decrypt
+    Damaged = 5;
+  }
+  bool supported = 1;
+  string format = 2;
+  bool needsPassword = 3;
+  bool isSacd = 4;
+  bool hasStereo = 5;
+  bool hasMultichannel = 6;
+  // Some files are in solid blocks too big to decode at once: reading them
+  // follows solidMode. (Smaller compressed blocks are always readable.)
+  bool hasSolidMembers = 7;
+  string message = 8;
+  Problem problem = 9;
+  // Total size of the files hasSolidMembers is about.
+  uint64 solidBytes = 10;
+  // Files that are listed but cannot be read, by reason.
+  repeated ArchiveUnreadable unreadable = 11;
+}
+message ArchiveUnreadable {
+  enum Reason {
+    Damaged = 0;
+    Encrypted = 1;      // encryption CloudDrive cannot decrypt (zip, RAR)
+    NeedsPassword = 2;  // readable with the archive's password (7z)
+    Method = 3;         // a compression method CloudDrive does not decode
+    MissingVolume = 4;  // part of it is in a volume that is missing
+  }
+  Reason reason = 1;
+  uint64 count = 2;
+  string example = 3; // path inside the archive of one of them
+}
+message ArchiveFolderBadge {
+  string format = 1;
+  ArchiveFolder.State state = 2;
+  bool autoLoad = 3;
+}
