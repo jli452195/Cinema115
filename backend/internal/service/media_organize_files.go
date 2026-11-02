@@ -22,33 +22,34 @@ type mediaOrganizeDrive interface {
 }
 
 type mediaOrganizeFiles struct {
-	rule               MediaOrganizeRule
-	drive              OrganizeDrive
-	cookie             string
-	lists              map[string][]p115.ShareFile
-	unrelated          []MediaOrganizeEntry
-	directories        []MediaOrganizeEntry
-	cleanupDirectories map[string]MediaOrganizeEntry
-	scanned            []MediaOrganizeEntry
-	localSnapshots     map[string]os.FileInfo
-	localSnapshotKeys  map[string]string
-	settlingVideos     map[string]bool
-	failureChecked     bool
-	localReady         func(string, os.FileInfo) bool
-	localPrune         func(map[string]bool, time.Time)
-	localCandidates    []OrganizeFile
-	localPending       map[string]bool
-	cd2                clouddrive2.Filesystem
-	cd2Lease           *CD2Lease
-	cd2Snapshots       map[string]clouddrive2.File
-	cd2Checkpoint      func(MediaOrganizeEntry, clouddrive2.File) error
-	cd2Duplicate       func(MediaOrganizeEntry) error
-	cd2ScanPath        string
-	cd2Shallow         bool
-	cd2Recognized      map[string]bool
-	cd2Naming          map[string]preparedMediaNaming
-	orphanDue          map[string]bool
-	orphanVideos       []OrganizeFile
+	rule                 MediaOrganizeRule
+	drive                OrganizeDrive
+	cookie               string
+	lists                map[string][]p115.ShareFile
+	unrelated            []MediaOrganizeEntry
+	directories          []MediaOrganizeEntry
+	cleanupDirectories   map[string]MediaOrganizeEntry
+	scanned              []MediaOrganizeEntry
+	localSnapshots       map[string]os.FileInfo
+	localSnapshotKeys    map[string]string
+	settlingVideos       map[string]bool
+	failureChecked       bool
+	localReady           func(string, os.FileInfo) bool
+	localPrune           func(map[string]bool, time.Time)
+	localCandidates      []OrganizeFile
+	localPending         map[string]bool
+	cd2                  clouddrive2.Filesystem
+	cd2Lease             *CD2Lease
+	cd2Snapshots         map[string]clouddrive2.File
+	cd2DirectoryChildren map[string]map[string]bool
+	cd2Checkpoint        func(MediaOrganizeEntry, clouddrive2.File) error
+	cd2Duplicate         func(MediaOrganizeEntry) error
+	cd2ScanPath          string
+	cd2Shallow           bool
+	cd2Recognized        map[string]bool
+	cd2Naming            map[string]preparedMediaNaming
+	orphanDue            map[string]bool
+	orphanVideos         []OrganizeFile
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {

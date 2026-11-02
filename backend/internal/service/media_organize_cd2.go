@@ -163,12 +163,12 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 		if err != nil {
 			return fmt.Errorf("读取 CD2 目录: %w", err)
 		}
+		if err := f.rememberCD2Directory(directory, files); err != nil {
+			return err
+		}
 		for _, file := range files {
 			if err := ctx.Err(); err != nil {
 				return err
-			}
-			if file.Path != path.Join(directory, file.Name) || file.Name == "." || file.Name == ".." || strings.Contains(file.Name, "/") {
-				return fmt.Errorf("CD2 返回了无法确认归属的文件路径")
 			}
 			if file.ReadOnly {
 				continue
