@@ -88,6 +88,9 @@ func TestOrganizeFileNumberingSharedByGardenAndCloudFiles(t *testing.T) {
 	for episode := 1; episode <= 52; episode++ {
 		cases = append(cases, example{fmt.Sprintf("陰陽大戰記/陰陽大戰記-%02d.wmv", episode), 1, episode, 0})
 	}
+	for episode := 1; episode <= 24; episode++ {
+		cases = append(cases, example{fmt.Sprintf("冰海战记 (2019) {tmdb-88803}/Season 02/冰海战记 - S02E%02d - 7³ACG.mkv", episode), 2, episode, 0})
+	}
 	s, _, _, _, transport, in := gardenFixture(t)
 	transport.names = make([]string, len(cases))
 	for i, tc := range cases {

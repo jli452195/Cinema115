@@ -55,6 +55,14 @@ func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaO
 			if old < 0 {
 				return MediaOrganizeTask{}, ErrMediaOrganizeInput
 			}
+			// 重试时仅补解析此前缺失的集数，保留已有季数和用户明确填写的修正。
+			if video.File.Episode == 0 && input.Episode == nil {
+				inferred := video.File
+				organizeFileNumbering(&inferred)
+				if inferred.Episode > 0 {
+					video.File.Episode, video.File.EndEpisode = inferred.Episode, inferred.EndEpisode
+				}
+			}
 			group := run.Groups[old]
 			group.ID = "task:" + input.FileID
 			if input.Season != nil {

@@ -3,6 +3,9 @@ package mediafacts
 import (
 	"regexp"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"strm115/backend/internal/releaseparse"
 )
@@ -16,6 +19,8 @@ var (
 	standardNumbering     = regexp.MustCompile(`(?i)S([0-9]{1,4})\s*E([0-9]{1,5})(?:v[0-9]{1,3})?(?:\s*([-~～〜至到+&])\s*E?([0-9]{1,5})(?:v[0-9]{1,3})?)?`)
 	numberingSceneYear    = regexp.MustCompile(`(?i)(S[0-9]{1,4}\s*E[0-9]{1,5}(?:v[0-9]{1,3})?(?:\s*[-~～〜至到+&]\s*E?[0-9]{1,5}(?:v[0-9]{1,3})?)?)\.(19[0-9]{2}|20[0-9]{2}|21[0-9]{2})($|[ ._\-])`)
 	numberingContinuation = regexp.MustCompile(`(?i)^\s*[-~～〜至到+&/、,]\s*(?:(?:SP|OVA|EP?|第)\s*)?[0-9]`)
+	numberingPublisher    = regexp.MustCompile(`\s+-\s+([0-9][\p{L}\p{N}\p{M}]*)`)
+	numberingPart         = regexp.MustCompile(`(?i)^[0-9]+[ab]?(?:v[0-9]*)?(?:[话話集回].*)?$`)
 )
 
 // StandardNumbering reads SxxExx before publisher-number inference. Found means
@@ -26,6 +31,7 @@ func StandardNumbering(stem string) (numbering Numbering, found bool) {
 		return numbering, false
 	}
 	stem = numberingSceneYear.ReplaceAllString(stem, "${1} ${2}${3}")
+	stem = protectNumberingPublishers(stem)
 	// Complete resolution fields cannot extend an episode range. Bracket them
 	// only in the parsing copy; the filename and declared quality stay untouched.
 	spans := resourceQuality.FindAllStringIndex(stem, -1)
@@ -67,6 +73,27 @@ func StandardNumbering(stem string) (numbering Numbering, found bool) {
 		numbering = Numbering{Season: season, Episode: episode, EndEpisode: end}
 	}
 	return numbering, found
+}
+
+// 只在解析副本中保护独立的数字开头发布组词元，避免把 7³ACG 的前缀当作集数。
+func protectNumberingPublishers(stem string) string {
+	spans := numberingPublisher.FindAllStringSubmatchIndex(stem, -1)
+	for i := len(spans) - 1; i >= 0; i-- {
+		start, end := spans[i][2], spans[i][3]
+		if end < len(stem) {
+			next, _ := utf8.DecodeRuneInString(stem[end:])
+			if !unicode.IsSpace(next) {
+				continue
+			}
+		}
+		token := stem[start:end]
+		// 纯编号、分段和修订版本仍按集数校验，中文集数后缀也不能视为发布组。
+		if numberingPart.MatchString(token) || !strings.ContainsFunc(token, func(r rune) bool { return unicode.Is(unicode.Latin, r) }) {
+			continue
+		}
+		stem = stem[:start] + "[" + token + "]" + stem[end:]
+	}
+	return stem
 }
 
 func numberingAlnum(b byte) bool {

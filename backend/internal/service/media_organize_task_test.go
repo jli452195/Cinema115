@@ -133,6 +133,49 @@ func TestMediaOrganizerTaskCorrectionAndRestartScope(t *testing.T) {
 	}
 }
 
+func TestMediaOrganizerTaskRetryNumberingPreservesCorrections(t *testing.T) {
+	correctedEpisode, emptyEpisode := 13, 0
+	for _, tc := range []struct {
+		name    string
+		file    string
+		season  int
+		episode int
+		input   *int
+		want    int
+		wantEnd int
+	}{
+		{name: "missing", file: "Work.S02E07 - 7³ACG.mkv", season: 2, want: 7},
+		{name: "saved-season", file: "Work.S02E07 - 7³ACG.mkv", season: 9, want: 7},
+		{name: "saved-episode", file: "Work.S02E07 - 7³ACG.mkv", season: 2, episode: 3, want: 3},
+		{name: "manual-episode", file: "Work.S02E07 - 7³ACG.mkv", season: 2, input: &correctedEpisode, want: 13},
+		{name: "explicit-empty", file: "Work.S02E07 - 7³ACG.mkv", season: 2, input: &emptyEpisode},
+		{name: "real-range", file: "Work.S02E04-05 - 7³ACG.mkv", season: 2, want: 4, wantEnd: 5},
+		{name: "invalid-range", file: "Work.S02E04-03.mkv", season: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _, rule := newMediaOrganizeTest(t)
+			mediaTestFile(t, rule.Source, tc.file, "video")
+			run, err := s.Start(rule.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mediaTestProcess(t, s, &run, "scan")
+			run.Entries[0].File.Season, run.Entries[0].File.Episode, run.Entries[0].File.EndEpisode = tc.season, tc.episode, 0
+			if err := s.checkpoint(&run); err != nil {
+				t.Fatal(err)
+			}
+			queued, err := s.Retry(run.ID, MediaOrganizeCorrection{FileID: tc.file, Episode: tc.input})
+			if err != nil || len(queued.Entries) != 1 {
+				t.Fatal(queued, err)
+			}
+			file := queued.Entries[0].File
+			if file.Season != tc.season || file.Episode != tc.want || file.EndEpisode != tc.wantEnd {
+				t.Fatal("缺失集数可恢复，已有值、手动修正和歧义校验必须保留", file)
+			}
+		})
+	}
+}
+
 // A small real-filesystem run: classification, STRM content, video, artwork,
 // cleanup, duplicate submission and a second scan use the application's worker.
 func TestMediaOrganizerGrayRun(t *testing.T) {
