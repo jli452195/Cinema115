@@ -1,6 +1,6 @@
 export interface MediaRule {
   id: string; name: string; storage: string; source: string; target: string; failure?: string; sourceId?: string; targetId?: string; failureId?: string; accountId?: string; connectionId?: string; connectionRevision?: number
-  classify: boolean; enabled: boolean; intervalMinutes: number; intervalSeconds?: number; deleteDuplicates?: boolean; lastScan?: string
+  classify: boolean; realtimeEnabled: boolean; scheduleEnabled: boolean; intervalSeconds: number; attachmentCleanupEnabled: boolean; attachmentGraceSeconds: number; nextScanAt?: string; deleteDuplicates?: boolean; lastScan?: string
 }
 export interface MediaEntry {
   file: { id: string; name: string; sourcePath: string; mediaType: string; season: number; episode: number }
@@ -20,7 +20,7 @@ export interface MediaHistory {
 }
 export interface MediaTask extends MediaHistoryItem { rule: MediaRule; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }
-export interface MediaMonitorStatus { mode: 'starting' | 'realtime' | 'polling'; message?: string; lastEventAt?: string; lastFallbackAt?: string }
+export interface MediaMonitorStatus { mode: 'starting' | 'realtime' | 'unavailable' | 'polling'; message?: string; lastEventAt?: string }
 export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; monitoring?: Record<string, MediaMonitorStatus> }
 export interface MediaLocalDirectoryPage {
   path: string; parentPath: string | null; directories: { name: string; path: string }[]; truncated: boolean

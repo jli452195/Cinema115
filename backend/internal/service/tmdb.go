@@ -17,7 +17,7 @@ import (
 	"strm115/backend/internal/storage"
 )
 
-const tmdbDetailCachePrefix = "detail:v3:"
+const tmdbDetailCachePrefix = "detail:v4:"
 
 type TMDBSource interface {
 	SearchPeople(context.Context, string, int) (*tmdb.PersonPage, error)
@@ -231,8 +231,8 @@ func (s *TMDBService) Details(ctx context.Context, kind string, id int) (*tmdb.D
 			return nil, err
 		}
 	}
-	// v3 also includes ISO country codes used by the subtitle-library entry.
-	// Keeping the version in the key makes legacy detail records expire naturally.
+	// v4 包含原产地和原始语言，旧详情可能只有制作国家，不能继续用于分类。
+	// 按需重新读取并保存新版本，每部作品的后续请求继续复用同一份缓存。
 	value, info, err := cachedTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+kind+":"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, kind, id) })
 	if err != nil || value == nil {
 		return nil, err

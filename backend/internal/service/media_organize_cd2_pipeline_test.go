@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"strm115/backend/internal/client/clouddrive2"
 )
 
 func TestMediaOrganizerCD2OrganizesBeforeReadingLaterDirectory(t *testing.T) {
@@ -106,6 +104,8 @@ func TestMediaOrganizerCD2LateSubtitleUsesPersistedVideoMapping(t *testing.T) {
 	}
 	restarted.cd2 = connection
 	late := fs.add(path.Join(rule.Source, "Work.S01E01.zh.ass"), false, 8)
+	late.Modified = time.Now()
+	fs.files[late.Path] = late
 	second, err := restarted.Start(rule.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestMediaOrganizerCD2LocalRecheckDoesNotScanOtherDirectories(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer files.close()
-	files.cd2ScanPaths, files.cd2Shallow = []string{rule.Source}, true
+	files.cd2ScanPath, files.cd2Shallow = rule.Source, true
 	entries, err := files.scan(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -167,95 +167,134 @@ func TestMediaOrganizerCD2LocalRecheckDoesNotScanOtherDirectories(t *testing.T) 
 	}
 }
 
-func TestMediaOrganizerCD2SecondsFallbackAndEventScopedScan(t *testing.T) {
-	s, _, _, _, rule := newMediaCD2Organizer(t)
-	if rule.IntervalSeconds != 20 {
-		t.Fatal("CD2 默认应为 20 秒", rule)
+func TestMediaOrganizerCD2ConfigurablePollingSchedule(t *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		elapsed time.Duration
+		enabled bool
+		initial bool
+		pending string
+		queued  bool
+	}{
+		{name: "initial-scan", enabled: true, initial: true, queued: true},
+		{name: "before-interval", elapsed: 36 * time.Second, enabled: true},
+		{name: "at-interval", elapsed: 37 * time.Second, enabled: true, queued: true},
+		{name: "disabled", elapsed: time.Minute},
+		{name: "queued", elapsed: time.Minute, enabled: true, pending: "queued"},
+		{name: "scanning", elapsed: time.Minute, enabled: true, pending: "scanning"},
+		{name: "running", elapsed: time.Minute, enabled: true, pending: "running"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s, _, _, _, rule := newMediaCD2Organizer(t)
+			rule.IntervalSeconds = 37
+			rule.ScheduleEnabled, rule.LastScan = scenario.enabled, time.Now().Add(-time.Minute)
+			rule.NextScanAt = rule.LastScan.Add(37 * time.Second)
+			if scenario.initial {
+				rule.LastScan, rule.NextScanAt = time.Time{}, time.Time{}
+			}
+			s.doc.Rules = []MediaOrganizeRule{rule}
+			if scenario.pending != "" {
+				s.doc.Runs = []MediaOrganizeRun{{ID: "pending", Rule: rule, Status: scenario.pending}}
+			}
+			now := time.Now()
+			if !scenario.initial {
+				now = rule.LastScan.Add(scenario.elapsed)
+			}
+			s.monitorOptions.now = func() time.Time { return now }
+			if err := s.schedule(); err != nil {
+				t.Fatal(err)
+			}
+			if (len(s.actions) > 0) != scenario.queued {
+				t.Fatal("CD2 应使用规则间隔轮询，停用或已有任务时不能重复入队", s.actions)
+			}
+			status, monitored := s.State().Monitoring[rule.ID]
+			if monitored != scenario.enabled || monitored && status.Mode != "polling" {
+				t.Fatal("启用的 CD2 规则应直接显示轮询状态", status)
+			}
+			if scenario.queued {
+				if !s.doc.Rules[0].LastScan.After(rule.LastScan) {
+					t.Fatal("轮询入队必须记录最近扫描时间")
+				}
+				if err := s.schedule(); err != nil || len(s.actions) != 1 || len(s.doc.Runs) != 1 {
+					t.Fatal("重复调度不能叠加同一规则的扫描", s.doc.Runs, err)
+				}
+			}
+		})
 	}
-	rule.Enabled = true
-	s.doc.Rules[0] = rule
-	s.monitorRunning = true
-	s.reconcileCD2MonitorsLocked()
-	monitor := s.cd2Monitors[rule.ID]
-	now := time.Now()
-	monitor.forceFull, monitor.lastFull = false, now
-	monitor.status.Mode, monitor.status.LastFallbackAt = "polling", now
-	if s.cd2ScheduleDueLocked(rule, now.Add(19*time.Second)) || !s.cd2ScheduleDueLocked(rule, now.Add(20*time.Second)) {
-		t.Fatal("CD2 秒级补查时间错误")
+}
+
+func TestMediaOrganizerCD2FreshVideoAndCompanionsMoveImmediately(t *testing.T) {
+	for _, offset := range []time.Duration{0, time.Minute} {
+		t.Run(offset.String(), func(t *testing.T) {
+			s, _, _, connection, rule := newMediaCD2Organizer(t)
+			fs := connection.filesystem
+			for _, name := range []string{"Work.S01E01.mkv", "Work.S01E01.zh.ass", "Work.S01E01.nfo", "Work.S01E01-poster.jpg"} {
+				file := fs.add(path.Join(rule.Source, name), false, 123)
+				file.Modified = time.Now().Add(offset)
+				fs.files[file.Path] = file
+			}
+			run, err := s.Start(rule.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mediaTestProcess(t, s, &run, "auto")
+			if run.Status != "completed" || len(run.Entries) != 4 || len(fs.deleted) != 0 {
+				t.Fatal("刚写入的视频、字幕及附件应在本轮全部整理，不按修改时间等待", run.Entries, fs.deleted)
+			}
+			for _, entry := range run.Entries {
+				if _, exists := fs.files[entry.File.ID]; exists || entry.Status != "done" {
+					t.Fatal("同批媒体及附件不应遗漏或留在来源", entry)
+				}
+				if target, exists := fs.files[entry.Target]; !exists || target.Size != entry.File.Size {
+					t.Fatal("目标缺少已整理的视频、字幕或附件", entry)
+				}
+			}
+		})
 	}
-	monitor.status.Mode = "realtime"
-	if !s.cd2ScheduleDueLocked(rule, now.Add(time.Minute)) {
-		t.Fatal("实时模式也必须保留配置的全量补查，防止漏事件")
+}
+
+func TestMediaOrganizerCD2CompanionsArrivingBeforeVideoAreRetained(t *testing.T) {
+	s, _, _, connection, rule := newMediaCD2Organizer(t)
+	fs := connection.filesystem
+	for _, name := range []string{"Work.S01E01.zh.ass", "Work.S01E01.nfo", "Work.S01E01-poster.jpg"} {
+		file := fs.add(path.Join(rule.Source, name), false, 8)
+		file.Modified = time.Now()
+		fs.files[file.Path] = file
 	}
-	directory := path.Join(rule.Source, "new")
-	s.handleCD2Event(CD2Event{Mode: "realtime", Revision: rule.ConnectionRevision, Change: &clouddrive2.Change{Type: "create", Path: path.Join(directory, "Work.S01E01.mkv")}})
-	if s.cd2ScheduleDueLocked(rule, now) || !s.cd2ScheduleDueLocked(rule, time.Now().Add(time.Second)) {
-		t.Fatal("事件应在短暂合并后触发整理")
-	}
-	queued, err := s.queueScanLocked(rule)
+	unrelated := fs.add(path.Join(rule.Source, "advertisement.zip"), false, 8)
+	first, err := s.Start(rule.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.cd2QueuedLocked(rule, queued.ID, time.Now().Add(time.Second))
-	actual, err := s.Snapshot(queued.ID)
-	if err != nil || !slices.Equal(actual.CD2ScanPaths, []string{directory}) {
-		t.Fatal("事件应仅补扫变化目录", actual.CD2ScanPaths, err)
+	mediaTestProcess(t, s, &first, "auto")
+	if !slices.Equal(fs.deleted, []string{unrelated.Path}) {
+		t.Fatal("CD2 应只清理普通无关文件，不删除先到的字幕及附件", fs.deleted)
 	}
-}
-
-func TestMediaOrganizerCD2ReadyRequiresUploadCompletion(t *testing.T) {
-	s, _, _, connection, rule := newMediaCD2Organizer(t)
-	rule.Enabled = true
-	s.doc.Rules[0] = rule
-	s.reconcileCD2MonitorsLocked()
-	file := connection.filesystem.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
-	file.Modified = time.Now()
-	ready := s.cd2FileReadiness(rule)
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "create", Path: file.Path}})
-	if ready(file) {
-		t.Fatal("普通创建事件不能作为上传完成证据")
+	for _, entry := range first.Entries {
+		if entry.File.MediaType != "subtitle" && entry.File.MediaType != "attachment" {
+			continue
+		}
+		if _, exists := fs.files[entry.File.ID]; !exists || entry.Status != "retained" {
+			t.Fatal("视频尚未到达时应保留字幕及附件", entry)
+		}
 	}
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "upload_finished", Path: file.Path, Ready: true}})
-	if !ready(file) {
-		t.Fatal("官方上传完成事件应允许立即整理")
+	video := fs.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
+	video.Modified = time.Now()
+	fs.files[video.Path] = video
+	second, err := s.Start(rule.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "modify", Path: file.Path}})
-	if ready(file) {
-		t.Fatal("完成后再次修改应撤销就绪证据")
+	mediaTestProcess(t, s, &second, "auto")
+	if second.Status != "completed" || len(second.Entries) != 4 {
+		t.Fatal("视频到达后应立即补齐此前保留的字幕及附件", second.Entries)
 	}
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "upload_finished", Path: file.Path, Ready: true}})
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "create", Path: file.Path}})
-	if ready(file) {
-		t.Fatal("同路径新文件创建不能继承旧上传完成证据")
-	}
-}
-
-func TestMediaOrganizerCD2UploadCompletionDoesNotCompareRemoteAndLocalClocks(t *testing.T) {
-	s, _, _, connection, rule := newMediaCD2Organizer(t)
-	rule.Enabled = true
-	s.doc.Rules[0] = rule
-	s.reconcileCD2MonitorsLocked()
-	file := connection.filesystem.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
-	file.Modified = time.Now().Add(time.Minute)
-	ready := s.cd2FileReadiness(rule)
-	s.handleCD2Event(CD2Event{Change: &clouddrive2.Change{Type: "upload_finished", Path: file.Path, Ready: true, File: &clouddrive2.File{Path: file.Path, Size: file.Size}}})
-	wrongSize := file
-	wrongSize.Size++
-	if ready(wrongSize) {
-		t.Fatal("首个快照必须匹配官方上传完成的大小")
-	}
-	if !ready(file) {
-		t.Fatal("云端时钟领先本机不能使明确上传完成的文件等待稳定期")
-	}
-	changed := file
-	changed.ID += "-new"
-	if ready(changed) {
-		t.Fatal("同路径的新文件不能继承已绑定文件的完成证据")
-	}
-	changed = file
-	changed.Modified = changed.Modified.Add(time.Second)
-	if ready(changed) {
-		t.Fatal("完成后修改的文件不能复用旧快照")
+	for _, entry := range second.Entries {
+		_, sourceExists := fs.files[entry.File.ID]
+		_, targetExists := fs.files[entry.Target]
+		if sourceExists || !targetExists || entry.Status != "done" {
+			t.Fatal("视频与先到字幕、附件应全部整理到目标", entry)
+		}
 	}
 }
 
@@ -280,13 +319,26 @@ func TestMediaOrganizerCD2RetainedVideoNeverReactivatedByLaterBatch(t *testing.T
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
 	if _, exists := fs.files[first.Path]; !exists {
-		t.Fatal("首目录等待未稳定字幕的视频，不能在下一目录被重新激活", run.Entries)
+		t.Fatal("首目录因新到字幕保留的视频，不能在下一目录被重新激活", run.Entries)
 	}
 	if _, exists := fs.files[second.Path]; exists {
 		t.Fatal("后续目录仍应正常整理", run.Entries)
 	}
 	if !slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.ID == first.Path && entry.Status == "retained" }) {
 		t.Fatal("首目录的保留状态被后续批次覆盖", run.Entries)
+	}
+	next, err := s.Start(rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaTestProcess(t, s, &next, "auto")
+	for _, source := range []string{first.Path, path.Join(rule.Source, "Work.S01E01.ass")} {
+		if _, exists := fs.files[source]; exists || slices.Contains(fs.deleted, source) {
+			t.Fatal("下一轮应把视频与新到字幕一起移走，不能误删字幕", source, next.Entries, fs.deleted)
+		}
+	}
+	if next.Status != "completed" || len(next.Entries) != 2 {
+		t.Fatal("下一轮应补齐此前保留的视频和字幕", next.Entries)
 	}
 }
 
@@ -329,31 +381,41 @@ func TestMediaOrganizerCD2LateSharedArtworkUsesParentScope(t *testing.T) {
 	mediaTestProcess(t, s, &first, "auto")
 	folder := fs.add(path.Join(rule.Source, ".actors"), true, 0)
 	art := fs.add(path.Join(folder.Path, "actor.jpg"), false, 8)
+	art.Modified = time.Now()
+	fs.files[art.Path] = art
 	second, _ := s.Start(rule.ID)
-	second.CD2ScanPaths = []string{folder.Path}
 	mediaTestProcess(t, s, &second, "auto")
 	if _, retained := fs.files[art.Path]; retained || slices.Contains(fs.deleted, art.Path) {
 		t.Fatal("晚到共享附件应按父级作用范围关联历史视频", second.Entries, fs.deleted)
 	}
 }
 
-func TestMediaOrganizerCD2FailedScanRetriesAtConfiguredInterval(t *testing.T) {
-	s, _, _, _, rule := newMediaCD2Organizer(t)
-	rule.Enabled = true
-	s.doc.Rules[0] = rule
-	s.monitorRunning = true
-	s.reconcileCD2MonitorsLocked()
-	monitor := s.cd2Monitors[rule.ID]
-	now := time.Now()
-	monitor.lastFull, monitor.forceFull = now, false
-	s.cd2ScanFailed(rule)
-	if s.cd2ScheduleDueLocked(rule, now.Add(time.Second)) || !s.cd2ScheduleDueLocked(rule, now.Add(21*time.Second)) {
-		t.Fatal("失败扫描应恢复补扫并按配置间隔重试")
+func TestMediaOrganizerCD2FailedScanRetriesAtPollingInterval(t *testing.T) {
+	s, _, _, connection, rule := newMediaCD2Organizer(t)
+	rule.ScheduleEnabled = true
+	s.doc.Rules = []MediaOrganizeRule{rule}
+	connection.filesystem.onList = func(string) error { return errors.New("模拟扫描失败") }
+	if err := s.schedule(); err != nil {
+		t.Fatal(err)
 	}
-	monitor.forceFull, monitor.retryDue, monitor.status.Mode = false, time.Time{}, "polling"
-	s.handleCD2Event(CD2Event{Mode: "polling", Rescan: true})
-	if monitor.forceFull {
-		t.Fatal("持续重连失败不应把 20 秒补查变成每 3 秒全量扫描")
+	run := s.doc.Runs[0]
+	delete(s.actions, run.ID)
+	if err := s.process(context.Background(), &run, "auto"); err == nil {
+		t.Fatal("扫描异常应上报错误")
+	}
+	run.Status = "failed"
+	if err := s.checkpoint(&run); err != nil {
+		t.Fatal(err)
+	}
+	started := s.doc.Rules[0].LastScan
+	now := started.Add(19 * time.Second)
+	s.monitorOptions.now = func() time.Time { return now }
+	if err := s.schedule(); err != nil || len(s.actions) != 0 {
+		t.Fatal("失败扫描不能立即循环重试", s.actions, err)
+	}
+	now = started.Add(20 * time.Second)
+	if err := s.schedule(); err != nil || len(s.actions) != 1 {
+		t.Fatal("失败扫描应在下一个 20 秒轮询周期重试", s.actions, err)
 	}
 }
 

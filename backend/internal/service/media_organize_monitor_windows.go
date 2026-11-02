@@ -9,6 +9,14 @@ import (
 
 func mediaLocalFilesystemReason(string) string { return "" }
 
+func mediaLocalFileIdentityKey(full string, info os.FileInfo) (string, error) {
+	identity, err := mediaLocalIdentityOf(full, info)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%d", identity.volume, identity.index), nil
+}
+
 // os.SameFile loads Windows IDs lazily via an exclusive path handle. Capture
 // IDs immediately with sharing enabled so directory watches and active copies
 // neither change the identity being compared nor conflict with the probe.

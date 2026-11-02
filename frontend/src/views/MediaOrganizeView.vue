@@ -5,6 +5,7 @@ import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolde
 import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
+import DurationInput from '../components/DurationInput.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import MediaLocalDirectoryDialog from '../components/MediaLocalDirectoryDialog.vue'
 import CD2DirectoryDialog from '../components/CD2DirectoryDialog.vue'
@@ -16,7 +17,10 @@ import { cd2Request, type CD2Config, type CD2DirectorySelection } from '../lib/c
 const props = defineProps<{ token: string }>()
 const rules = ref<MediaRule[]>([]), active = ref(false), activeRules = ref<string[]>([]), editor = ref<MediaRule>()
 const monitoring = ref<Record<string, MediaMonitorStatus>>({})
-const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true), refreshing = ref(false)
+const pending = ref<Record<string, string>>({})
+const busy = computed(() => pending.value.editor || (editor.value?.id ? pending.value[editor.value.id] : '') || (deleting.value ? pending.value[deleting.value.id] : '') || '')
+const requesting = computed(() => Object.keys(pending.value).length > 0)
+const error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true), refreshing = ref(false)
 const directory = ref<'source' | 'target' | 'failure'>(), deleting = ref<{ id: string; name: string }>()
 const directoryTitle = computed(() => directory.value === 'source' ? '选择来源目录' : directory.value === 'target' ? '选择目标目录' : '选择整理失败目录')
 const leaveDialog = ref(false), editorSnapshot = ref('')
@@ -31,17 +35,25 @@ let timer: number | undefined, stateGeneration = 0
 const storageOptions = [{ value: 'local', label: 'NAS / 本地挂载' }, { value: '115', label: '115 主账号' }, { value: 'cd2', label: 'CloudDrive2' }]
 const storageLabels: Record<string, string> = { local: '本地挂载', '115': '115 主账号', cd2: 'CloudDrive2' }
 const directoryDescription = computed(() => editor.value?.storage === 'local' ? '选择或填写服务器／容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。' : editor.value?.storage === 'cd2' ? '使用 CloudDrive2 授权范围内的可写目录。来源与目标不能重叠，更换连接后需重新选择目录。' : '使用 115 主账号，来源与目标不能重叠。更换主账号后需重新选择目录。')
-function ruleSignature(rule: MediaRule) { return JSON.stringify([rule.name, rule.storage, rule.source, rule.target, rule.failure || '', rule.sourceId || '', rule.targetId || '', rule.failureId || '', rule.accountId || '', rule.connectionId || '', rule.connectionRevision || 0, rule.classify, rule.enabled, rule.intervalMinutes, rule.storage === 'cd2' ? rule.intervalSeconds || 20 : 0, rule.storage === 'cd2' && rule.deleteDuplicates === true]) }
-function monitoringLabel(rule: MediaRule) {
-  if (!rule.enabled) return '监控已暂停'
-  if (rule.storage !== 'local' && rule.storage !== 'cd2') return `定时监控 · 每 ${rule.intervalMinutes} 分钟`
-  const interval = rule.storage === 'cd2' ? `${rule.intervalSeconds || 20} 秒` : `${rule.intervalMinutes} 分钟`
-  const fallback = rule.storage === 'cd2' ? '补查' : '兜底'
+function ruleSignature(rule: MediaRule) { return JSON.stringify([rule.name, rule.storage, rule.source, rule.target, rule.failure || '', rule.sourceId || '', rule.targetId || '', rule.failureId || '', rule.accountId || '', rule.connectionId || '', rule.connectionRevision || 0, rule.classify, rule.realtimeEnabled, rule.scheduleEnabled, rule.intervalSeconds, rule.attachmentCleanupEnabled, rule.attachmentGraceSeconds, rule.storage !== 'local' && rule.deleteDuplicates === true]) }
+function realtimeLabel(rule: MediaRule) {
+  if (!rule.realtimeEnabled) return '实时监控已关闭'
   const mode = monitoring.value[rule.id]?.mode
-  if (mode === 'realtime') return `实时监控 · ${fallback}每 ${interval}`
-  if (mode === 'polling') return `轮询监控 · 每 ${interval}`
-  return `正在建立监听 · ${fallback}每 ${interval}`
+  if (mode === 'realtime') return '实时监控运行中'
+  if (mode === 'unavailable') return '实时监听不可用'
+  return '正在建立监听'
 }
+function intervalLabel(seconds: number) { return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒` }
+function attachmentCleanupLabel(rule: MediaRule) { return rule.attachmentCleanupEnabled === false ? '保留未匹配附件' : rule.attachmentGraceSeconds === 0 ? '未匹配附件复核后立即清理' : `未匹配附件宽限 ${intervalLabel(rule.attachmentGraceSeconds ?? 60)}` }
+function scheduledLabel(rule: MediaRule) { return rule.scheduleEnabled ? `定时扫描 · 每 ${intervalLabel(rule.intervalSeconds)}` : '定时扫描已暂停' }
+function nextScanLabel(rule: MediaRule) {
+  if (!rule.scheduleEnabled) return ''
+  const next = rule.nextScanAt ? new Date(rule.nextScanAt) : undefined
+  if (!next || !Number.isFinite(next.getTime()) || next.getFullYear() <= 1) return activeRules.value.includes(rule.id) ? '完成后补扫一次' : '即将扫描'
+  if (next.getTime() <= Date.now()) return activeRules.value.includes(rule.id) ? '完成后补扫一次' : '等待扫描'
+  return `下次扫描 ${next.toLocaleTimeString([], { hour12: false })}`
+}
+function ruleBusy(id: string) { return !!pending.value[id] }
 async function request<T>(path = '', init: RequestInit = {}) { return mediaOrganizeRequest<T>(props.token, path, { ...init, signal: lifecycle.signal }) }
 async function refresh() {
   if (refreshing.value || document.hidden || lifecycle.signal.aborted) return
@@ -54,22 +66,26 @@ async function refresh() {
   } catch (reason) { if (version === stateGeneration && !lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取失败' }
   finally { loading.value = false; refreshing.value = false; if (version !== stateGeneration) await refresh() }
 }
-async function act(name: string, fn: () => Promise<void>, dialog = false) {
-  if (busy.value) return
-  busy.value = name; (dialog ? dialogError : error).value = ''; notice.value = ''
+async function act(name: string, fn: () => Promise<void>, dialog = false, scope = 'editor') {
+  if (pending.value[scope]) return
+  pending.value[scope] = name; (dialog ? dialogError : error).value = ''; notice.value = ''
   try { await fn() } catch (reason) { if (!lifecycle.signal.aborted) (dialog ? dialogError : error).value = reason instanceof Error ? reason.message : '操作失败' }
-  finally { busy.value = ''; poll() }
+  finally { delete pending.value[scope]; poll() }
 }
 function edit(rule?: MediaRule) {
-  editor.value = rule ? { ...rule } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, enabled: false, intervalMinutes: 5 }
-  if (editor.value.storage === 'cd2') { editor.value.intervalSeconds ||= 20; editor.value.deleteDuplicates ??= false }
+  editor.value = rule ? { ...rule, attachmentCleanupEnabled: rule.attachmentCleanupEnabled ?? true, attachmentGraceSeconds: rule.attachmentGraceSeconds ?? 60 } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, realtimeEnabled: false, scheduleEnabled: false, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
+  if (editor.value.storage !== 'local') editor.value.deleteDuplicates ??= false
   editorSnapshot.value = ruleSignature(editor.value); dialogError.value = ''
 }
-function storageChanged() {
+function storageChanged(resetInterval = false) {
   if (!editor.value) return
   Object.assign(editor.value, { source: '', target: '', failure: '', sourceId: '', targetId: '', failureId: '', accountId: '', connectionId: '', connectionRevision: 0 })
-  if (editor.value.storage === 'cd2') { editor.value.intervalSeconds ||= 20; editor.value.deleteDuplicates ??= false }
-  else { delete editor.value.intervalSeconds; delete editor.value.deleteDuplicates }
+  if (resetInterval) {
+    editor.value.realtimeEnabled = false
+    editor.value.intervalSeconds = editor.value.storage === 'cd2' ? 20 : 300
+  }
+  if (editor.value.storage === 'local') delete editor.value.deleteDuplicates
+  else editor.value.deleteDuplicates ??= false
 }
 function clearFailure() { if (editor.value) { editor.value.failure = ''; editor.value.failureId = '' } }
 async function chooseDirectory(which: 'source' | 'target' | 'failure') {
@@ -105,27 +121,51 @@ function pickedCD2(value: CD2DirectorySelection) {
   }
   directory.value = undefined
 }
-async function save() { await act('save', async () => { await request('/rules', { method: 'POST', body: JSON.stringify(editor.value) }); stateGeneration++; editor.value = undefined; notice.value = '整理配置已保存'; await refresh() }, true) }
-async function toggleAutomatic(rule: MediaRule) {
-  await act(`toggle-${rule.id}`, async () => {
-    const saved = await request<MediaRule>('/rules', { method: 'POST', body: JSON.stringify({ ...rule, enabled: !rule.enabled }) })
+async function save() {
+  const current = editor.value
+  if (!current || busy.value) return
+  if (!Number.isInteger(current.intervalSeconds) || current.intervalSeconds < 1 || current.intervalSeconds > 86400) { dialogError.value = '扫描间隔须为 1 至 86400 的整数秒数'; return }
+  if (!Number.isInteger(current.attachmentGraceSeconds) || current.attachmentGraceSeconds < 0 || current.attachmentGraceSeconds > 86400) { dialogError.value = '附件宽限须为 0 至 86400 的整数秒数'; return }
+  await act('save', async () => {
+    const saved = await request<MediaRule>('/rules', { method: 'POST', body: JSON.stringify(current) })
+    stateGeneration++; rules.value = rules.value.some(item => item.id === saved.id) ? rules.value.map(item => item.id === saved.id ? saved : item) : [...rules.value, saved]
+    editor.value = undefined; notice.value = '整理配置已保存，后续任务使用新配置'; await refresh()
+  }, true, current.id || 'editor')
+}
+async function toggleAutomatic(rule: MediaRule, field: 'realtimeEnabled' | 'scheduleEnabled') {
+  await act(field, async () => {
+    const settings = { realtimeEnabled: rule.realtimeEnabled, scheduleEnabled: rule.scheduleEnabled, intervalSeconds: rule.intervalSeconds, [field]: !rule[field] }
+    const saved = await request<MediaRule>(`/rules/${rule.id}/schedule`, { method: 'PATCH', body: JSON.stringify(settings) })
     stateGeneration++; rules.value = rules.value.map(item => item.id === saved.id ? saved : item)
-    delete monitoring.value[saved.id]
-    notice.value = saved.enabled ? `已启用${saved.name}的目录监控` : `已暂停${saved.name}的目录监控${active.value ? '，正在执行的任务会继续完成' : ''}`
+    if (editor.value?.id === saved.id) {
+      const previous = { ...editor.value }
+      Object.assign(editor.value, settings)
+      if (ruleSignature(previous) === editorSnapshot.value) editorSnapshot.value = ruleSignature(editor.value)
+    }
+    const kind = field === 'realtimeEnabled' ? '实时监控' : '定时扫描'
+    notice.value = saved[field] ? `已启用${saved.name}的${kind}` : `已暂停${saved.name}的${kind}${activeRules.value.includes(saved.id) ? '，正在执行的批次会继续完成' : ''}`
     await refresh()
-  })
+  }, false, rule.id)
 }
 async function runNow(rule: MediaRule) {
-  await act(rule.id, async () => {
+  await act('run', async () => {
     await request(`/rules/${rule.id}/run`, { method: 'POST' }); stateGeneration++
+    active.value = true; activeRules.value = [...new Set([...activeRules.value, rule.id])]
     notice.value = '已提交，可在整理记录中查看进度与结果'; await refresh()
-  })
+  }, false, rule.id)
 }
-async function remove() { await act('delete', async () => { if (!deleting.value) return; await request(`/rules/${deleting.value.id}`, { method: 'DELETE' }); stateGeneration++; deleting.value = undefined; await refresh() }, true) }
-function poll() { window.clearTimeout(timer); if (lifecycle.signal.aborted || document.hidden || !active.value && !rules.value.some(r => r.enabled)) return; timer = window.setTimeout(async () => { await refresh(); poll() }, active.value ? 5000 : 15000) }
+async function remove() {
+  const current = deleting.value
+  if (!current) return
+  await act('delete', async () => {
+    await request(`/rules/${current.id}`, { method: 'DELETE' }); stateGeneration++
+    rules.value = rules.value.filter(rule => rule.id !== current.id); deleting.value = undefined; await refresh()
+  }, true, current.id)
+}
+function poll() { window.clearTimeout(timer); if (lifecycle.signal.aborted || document.hidden || !active.value && !rules.value.some(r => r.realtimeEnabled || r.scheduleEnabled)) return; timer = window.setTimeout(async () => { await refresh(); poll() }, active.value ? 5000 : 15000) }
 async function visible() { if (!document.hidden) await refresh(); poll() }
 function decideLeave(value: boolean) { leaveDialog.value = false; leaveDecision?.(value); leaveDecision = undefined }
-function beforeUnload(event: BeforeUnloadEvent) { if (busy.value || unsaved.value) { event.preventDefault(); event.returnValue = '' } }
+function beforeUnload(event: BeforeUnloadEvent) { if (requesting.value || unsaved.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteLeave(() => {
   leaveDecision?.(false); leaveDecision = undefined
   if (busy.value) { error.value = '正在处理当前操作，请完成后再切换页面'; if (editor.value || deleting.value) dialogError.value = error.value; return false }
@@ -149,20 +189,25 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
             <header class="mo-rule-heading">
               <span class="mo-rule-symbol" aria-hidden="true"><component :is="rule.storage === 'local' ? IconServer : IconCloud" :size="21" /></span>
               <div class="mo-rule-name"><h3 :title="rule.name">{{ rule.name }}</h3><span>{{ storageLabels[rule.storage] || rule.storage }}</span></div>
-              <div class="mo-rule-tools"><button class="mo-icon" :disabled="!!busy || activeRules.includes(rule.id)" :aria-label="`编辑${rule.name}`" @click="edit(rule)"><IconEdit :size="17" /></button><button class="mo-icon mo-rule-delete" :disabled="!!busy || activeRules.includes(rule.id)" :aria-label="`删除${rule.name}`" @click="deleting = { id: rule.id, name: rule.name }"><IconTrash :size="17" /></button></div>
+              <div class="mo-rule-tools"><button class="mo-icon" :disabled="ruleBusy(rule.id)" :aria-label="`编辑${rule.name}`" @click="edit(rule)"><IconEdit :size="17" /></button><button class="mo-icon mo-rule-delete" :disabled="ruleBusy(rule.id) || activeRules.includes(rule.id)" :aria-label="`删除${rule.name}`" @click="deleting = { id: rule.id, name: rule.name }"><IconTrash :size="17" /></button></div>
             </header>
-            <div class="mo-rule-schedule" :class="{ 'is-enabled': rule.enabled, 'is-fallback': rule.enabled && (rule.storage === 'local' || rule.storage === 'cd2') && monitoring[rule.id]?.mode === 'polling' }" role="status" :aria-label="`${rule.name}监控状态`"><component :is="rule.enabled ? IconClock : IconPlayerPause" :size="14" aria-hidden="true" /><span>{{ monitoringLabel(rule) }}</span></div>
-            <p v-if="rule.enabled && (rule.storage === 'local' || rule.storage === 'cd2') && monitoring[rule.id]?.message" class="mo-rule-monitor-message">{{ monitoring[rule.id]?.message }}</p>
+            <div class="mo-rule-schedules" role="status" :aria-label="`${rule.name}监控状态`">
+              <div v-if="rule.storage === 'local'" class="mo-rule-schedule" :class="{ 'is-enabled': rule.realtimeEnabled, 'is-unavailable': rule.realtimeEnabled && monitoring[rule.id]?.mode === 'unavailable' }"><component :is="rule.realtimeEnabled ? IconClock : IconPlayerPause" :size="14" aria-hidden="true" /><span>{{ realtimeLabel(rule) }}</span></div>
+              <div class="mo-rule-schedule" :class="{ 'is-enabled': rule.scheduleEnabled }"><component :is="rule.scheduleEnabled ? IconClock : IconPlayerPause" :size="14" aria-hidden="true" /><span>{{ scheduledLabel(rule) }}</span></div>
+            </div>
+            <p v-if="rule.storage === 'local' && rule.realtimeEnabled && monitoring[rule.id]?.message" class="mo-rule-monitor-message">{{ monitoring[rule.id]?.message }}</p>
+            <p v-if="rule.scheduleEnabled" class="mo-rule-monitor-message">{{ nextScanLabel(rule) }}</p>
             <dl class="mo-rule-details">
               <div class="mo-rule-path"><dt><IconFolder class="mo-rule-source-icon" :size="16" aria-hidden="true" />来源</dt><dd><code :title="rule.source">{{ rule.source }}</code></dd></div>
               <div class="mo-rule-path"><dt><IconFolderCheck class="mo-rule-target-icon" :size="16" aria-hidden="true" />目标</dt><dd><code :title="rule.target">{{ rule.target }}</code></dd></div>
               <div class="mo-rule-path"><dt><IconFolderExclamation class="mo-rule-failure-icon" :size="16" aria-hidden="true" />失败目录</dt><dd><code v-if="rule.failure" :title="rule.failure">{{ rule.failure }}</code><span v-else class="mo-rule-unset">未设置，识别失败的视频留在来源</span></dd></div>
-              <div><dt><IconAdjustmentsHorizontal class="mo-rule-policy-icon" :size="16" aria-hidden="true" />整理策略</dt><dd>{{ rule.classify ? '按类型分类' : '使用目标目录' }}<span class="mo-rule-policy">{{ rule.storage === 'cd2' && rule.deleteDuplicates ? '同名且 SHA1 相同删除来源' : '不覆盖同名文件' }}</span></dd></div>
-              <div><dt><IconTrash class="mo-rule-cleanup-icon" :size="16" aria-hidden="true" />自动清理</dt><dd>{{ rule.storage === 'cd2' ? '无关文件、未归属字幕；保留目录' : '无关文件、未归属字幕及空目录' }}</dd></div>
+              <div><dt><IconAdjustmentsHorizontal class="mo-rule-policy-icon" :size="16" aria-hidden="true" />整理策略</dt><dd>{{ rule.classify ? '按类型分类' : '使用目标目录' }}<span class="mo-rule-policy">{{ rule.storage !== 'local' && rule.deleteDuplicates ? '同名且 SHA1 相同删除来源' : '不覆盖同名文件' }}</span></dd></div>
+              <div><dt><IconTrash class="mo-rule-cleanup-icon" :size="16" aria-hidden="true" />自动清理</dt><dd>无关文件、空子目录；{{ attachmentCleanupLabel(rule) }}</dd></div>
             </dl>
-            <footer class="mo-rule-actions">
-              <button class="mo-button mo-rule-toggle" :class="{ 'is-start': !rule.enabled }" :disabled="!!busy" :aria-label="`${rule.enabled ? '暂停' : '启用'}${rule.name}的目录监控`" @click="toggleAutomatic(rule)"><component :is="rule.enabled ? IconPlayerPause : IconPlayerPlay" :size="16" aria-hidden="true" />{{ busy === `toggle-${rule.id}` ? '保存中…' : rule.enabled ? '暂停监控' : '启用监控' }}</button>
-              <button class="mo-button mo-rule-scan" :disabled="!!busy || activeRules.includes(rule.id)" @click="runNow(rule)"><IconPlayerPlay :size="16" aria-hidden="true" />{{ activeRules.includes(rule.id) ? '运行中…' : '立即运行' }}</button>
+            <footer class="mo-rule-actions" :class="{ 'has-realtime': rule.storage === 'local' }">
+              <button v-if="rule.storage === 'local'" class="mo-button mo-rule-toggle" :class="{ 'is-start': !rule.realtimeEnabled }" :disabled="ruleBusy(rule.id)" :aria-label="`${rule.realtimeEnabled ? '暂停' : '启用'}${rule.name}的实时监控`" @click="toggleAutomatic(rule, 'realtimeEnabled')"><component :is="rule.realtimeEnabled ? IconPlayerPause : IconPlayerPlay" :size="16" aria-hidden="true" />{{ pending[rule.id] === 'realtimeEnabled' ? '保存中…' : rule.realtimeEnabled ? '暂停实时' : '启用实时' }}</button>
+              <button class="mo-button mo-rule-toggle" :class="{ 'is-start': !rule.scheduleEnabled }" :disabled="ruleBusy(rule.id)" :aria-label="`${rule.scheduleEnabled ? '暂停' : '启用'}${rule.name}的定时扫描`" @click="toggleAutomatic(rule, 'scheduleEnabled')"><component :is="rule.scheduleEnabled ? IconPlayerPause : IconPlayerPlay" :size="16" aria-hidden="true" />{{ pending[rule.id] === 'scheduleEnabled' ? '保存中…' : rule.scheduleEnabled ? '暂停定时' : '启用定时' }}</button>
+              <button class="mo-button mo-rule-scan" :disabled="ruleBusy(rule.id) || activeRules.includes(rule.id)" @click="runNow(rule)"><IconPlayerPlay :size="16" aria-hidden="true" />{{ activeRules.includes(rule.id) ? '运行中…' : pending[rule.id] === 'run' ? '提交中…' : '立即运行' }}</button>
             </footer>
           </article>
         </div>
@@ -171,20 +216,29 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
     <FloatingDialog v-if="editor" title="整理规则" close-label="关闭整理规则" :close-disabled="!!busy" @close="editor = undefined">
       <form id="media-rule-form" class="mo-form" @submit.prevent="save">
         <p v-if="dialogError" role="alert" class="mo-error">{{ dialogError }}</p>
+        <p v-if="activeRules.includes(editor.id)" class="mo-muted">当前批次继续使用启动时的配置，保存的修改从后续任务生效。</p>
         <label>规则名称<input v-model="editor.name" required maxlength="80" placeholder="例如：NAS 下载目录" /></label>
-        <label>存储位置<SelectMenu v-model="editor.storage" :options="storageOptions" :disabled="!!busy" label="存储位置" @change="storageChanged" /></label>
+        <label>存储位置<SelectMenu v-model="editor.storage" :options="storageOptions" :disabled="!!busy" label="存储位置" @change="storageChanged(true)" /></label>
         <label>来源目录<div class="mo-input-action"><input v-model="editor.source" required :readonly="editor.storage !== 'local'" :placeholder="editor.storage === 'local' ? '/media/inbox' : editor.storage === 'cd2' ? '选择 CloudDrive2 来源目录' : '选择 115 来源目录'" /><button type="button" class="mo-icon" aria-label="选择来源目录" :disabled="!!busy" @click="chooseDirectory('source')"><IconFolder :size="19" /></button></div></label>
         <label>目标目录<div class="mo-input-action"><input v-model="editor.target" required :readonly="editor.storage !== 'local'" :placeholder="editor.storage === 'local' ? '/media/library' : editor.storage === 'cd2' ? '选择 CloudDrive2 目标目录' : '选择 115 目标目录'" /><button type="button" class="mo-icon" aria-label="选择目标目录" :disabled="!!busy" @click="chooseDirectory('target')"><IconFolder :size="19" /></button></div></label>
         <label>整理失败目录（可选）<div class="mo-input-action"><input v-model="editor.failure" aria-label="整理失败目录" :readonly="editor.storage !== 'local'" placeholder="留空则保留在来源目录" /><button v-if="editor.failure" type="button" class="mo-icon" aria-label="清空整理失败目录" @click="clearFailure"><IconX :size="17" /></button><button type="button" class="mo-icon" aria-label="选择整理失败目录" :disabled="!!busy" @click="chooseDirectory('failure')"><IconFolder :size="19" /></button></div><span class="mo-muted">执行时将无法匹配、季集不明或冲突文件移入，保留原名与目录层级；网络故障保留原处。</span></label>
         <p class="mo-muted">{{ directoryDescription }}</p>
         <RouterLink v-if="editor.storage === 'cd2'" to="/resources/clouddrive2" class="mo-muted underline">配置 CloudDrive2 连接</RouterLink>
         <SettingSwitch v-model="editor.classify" label="按作品信息分类" description="根据作品信息及当前分类规则，在目标目录下生成分类子目录。" />
-        <SettingSwitch v-if="editor.storage === 'cd2'" v-model="duplicateCleanup" label="自动删除相同文件" description="目标同名且双方 SHA1 一致时删除来源文件；SHA1 不同或缺失时保留冲突。" />
-        <SettingSwitch v-model="editor.enabled" label="启用监控" :description="editor.storage === 'local' ? '优先监听目录变化，文件稳定后整理，并定时补扫。保留临时下载文件，清理无关文件、未归属字幕和空文件夹；立即运行同样执行清理。' : editor.storage === 'cd2' ? '优先接收 CD2 目录变化，文件就绪后边扫描边整理，并按间隔补查。清理无关文件与未归属字幕，保留目录。' : '按设置间隔扫描并整理媒体及附件，删除无关文件（含压缩包）、未归属字幕和空文件夹；立即运行同样执行清理。'" />
-        <label v-if="editor.enabled && editor.storage === 'cd2'">检查间隔（秒）<input v-model.number="editor.intervalSeconds" type="number" min="1" max="86400" required /></label>
-        <label v-else-if="editor.enabled">{{ editor.storage === 'local' ? '兜底扫描间隔（分钟）' : '扫描间隔（分钟）' }}<input v-model.number="editor.intervalMinutes" type="number" min="1" max="1440" required /></label>
-        <p v-if="editor.enabled && editor.storage === 'local'" class="mo-muted">网络挂载的远端变更可能无法即时通知，将由定时扫描补齐。</p>
-        <p v-if="editor.enabled && editor.storage === 'cd2'" class="mo-muted">CD2 事件及时触发处理，检查间隔用于补查；监听不可用时使用定时扫描。上传中的文件等待就绪后处理。</p>
+        <SettingSwitch v-if="editor.storage !== 'local'" v-model="duplicateCleanup" label="自动删除相同文件" description="目标同名且双方 SHA1 一致时删除来源文件；SHA1 不同或缺失时保留冲突。" />
+        <div class="mo-monitor-settings">
+          <SettingSwitch v-if="editor.storage === 'local'" v-model="editor.realtimeEnabled" label="实时监控" :disabled="!!busy" />
+          <div class="mo-schedule-line">
+            <SettingSwitch v-model="editor.scheduleEnabled" label="定时扫描" :disabled="!!busy" />
+            <DurationInput :key="editor.storage" v-model="editor.intervalSeconds" label="扫描间隔" caption="间隔" :disabled="!!busy" />
+          </div>
+          <div class="mo-attachment-line">
+            <SettingSwitch v-model="editor.attachmentCleanupEnabled" label="清理未匹配附件" :disabled="!!busy" />
+            <DurationInput v-model="editor.attachmentGraceSeconds" label="附件宽限" caption="宽限" :minimum="0" :initial-unit="editor.id ? undefined : 'seconds'" :disabled="!!busy || !editor.attachmentCleanupEnabled" />
+          </div>
+        </div>
+        <p class="mo-muted">启用定时扫描后先扫描一次，到期合并补扫。暂停只停止后续触发，当前批次继续完成。{{ editor.storage === 'local' ? '实时监控与定时扫描分别控制。' : '' }}</p>
+        <p class="mo-muted">开启后，未匹配的字幕和附件从首次发现起计时，宽限到期后的下一轮扫描仍无对应视频才删除；0 秒表示复核后立即清理。关闭时保留未匹配附件及首次发现记录，再开启不重置计时；已匹配附件始终立即整理。空子目录始终自动清理，保留来源根目录。</p>
         <p class="mo-muted">STRM 正文保持原样。已有同名文件不会覆盖，命名沿用全局电影和剧集模板。</p>
       </form>
       <template #footer><div class="mo-footer"><button class="mo-button" :disabled="!!busy" @click="editor = undefined">取消</button><button form="media-rule-form" type="submit" class="mo-button mo-primary" :disabled="!!busy">{{ busy === 'save' ? '保存中…' : '保存规则' }}</button></div></template>
@@ -204,7 +258,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
 .mo-rule-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.mo-rule-name{min-width:0;flex:1}.mo-rule-name h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;font-weight:600;line-height:24px;color:#0f172a}.mo-rule-name>span{display:block;margin-top:2px;font-size:11px;line-height:18px;color:#64748b}
 .mo-rule-tools{display:flex;flex:none;gap:2px;margin:-5px -5px 0 0}.mo-rule-tools .mo-icon{width:32px;min-height:32px;color:#64748b}
 .mo-rule-schedule{display:inline-flex;align-items:center;align-self:flex-start;gap:5px;margin-top:10px;padding:3px 8px;border-radius:6px;background:#f1f5f9;color:#475569;font-size:12px;line-height:18px}.mo-rule-schedule.is-enabled{background:#2563eb;color:#fff}
-.mo-rule-schedule svg{flex:none}.mo-rule-schedule span{min-width:0;overflow-wrap:anywhere}.mo-rule-schedule.is-fallback{background:#fff7ed;color:#9a3412}.mo-rule-monitor-message{margin-top:8px;font-size:12px;line-height:1.7;overflow-wrap:anywhere;color:#64748b}:global(.dark .mo-rule-schedule.is-enabled.is-fallback){background:#3b291d;color:#fdba74}:global(.dark .mo-rule-monitor-message){color:#94a3b8}
+.mo-rule-schedules{display:flex;flex-wrap:wrap;gap:6px}.mo-rule-schedule svg{flex:none}.mo-rule-schedule span{min-width:0;overflow-wrap:anywhere}.mo-rule-schedule.is-unavailable{background:#fff7ed;color:#9a3412}.mo-rule-monitor-message{margin-top:8px;font-size:12px;line-height:1.7;overflow-wrap:anywhere;color:#64748b}:global(.dark .mo-rule-schedule.is-enabled.is-unavailable){background:#3b291d;color:#fdba74}:global(.dark .mo-rule-monitor-message){color:#94a3b8}
 .mo-rule-details{display:grid;gap:9px;margin-top:18px}.mo-rule-details>div{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:baseline}.mo-rule-details dt{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;line-height:21px;color:#64748b}.mo-rule-details dt svg{flex:none;color:#6688b5}.mo-rule-details dd{min-width:0;font-size:13px;line-height:21px;color:#334155}.mo-rule-path{min-height:42px}.mo-rule-path code{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere;font-size:13px;line-height:21px;color:#475569}.mo-rule-policy{display:inline-block;margin-left:8px;color:#64748b;font-size:12px}.mo-rule-unset{font-size:12px;color:#64748b}
 .mo-rule-details .mo-rule-source-icon{color:#2563eb}.mo-rule-details .mo-rule-target-icon{color:#7c3aed}.mo-rule-details .mo-rule-failure-icon{color:#b45309}.mo-rule-details .mo-rule-policy-icon{color:#4f46e5}.mo-rule-details .mo-rule-cleanup-icon{color:#64748b}
 :global(.dark .mo-rule-details .mo-rule-source-icon){color:#60a5fa}:global(.dark .mo-rule-details .mo-rule-target-icon){color:#c4b5fd}:global(.dark .mo-rule-details .mo-rule-failure-icon){color:#fbbf24}:global(.dark .mo-rule-details .mo-rule-policy-icon){color:#a5b4fc}:global(.dark .mo-rule-details .mo-rule-cleanup-icon){color:#94a3b8}
@@ -215,4 +269,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
 @media(prefers-reduced-motion:reduce){.mo-rule-card{transition:none}}
 
 .mo-form{display:grid;gap:18px;padding:8px 0}.mo-form label{display:grid;gap:7px;font-size:12px;font-weight:500}.mo-form input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-form input:focus{border-color:#3b82f6}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-input-action>.mo-icon{flex:none}.mo-form :deep(input[role="switch"]:checked + span){background:#2563eb}:global(.dark .mo-form input){background:#1e293b;color:#e2e8f0;border-color:rgb(148 163 184/.3)}:global(.dark .mo-form){color:#e2e8f0}
+.mo-rule-actions.has-realtime .mo-rule-scan{grid-column:1/-1}
+.mo-monitor-settings{display:grid;gap:16px}.mo-schedule-line,.mo-attachment-line{display:flex;align-items:center;flex-wrap:wrap;gap:12px 24px}
 </style>

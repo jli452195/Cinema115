@@ -22,30 +22,33 @@ type mediaOrganizeDrive interface {
 }
 
 type mediaOrganizeFiles struct {
-	rule            MediaOrganizeRule
-	drive           OrganizeDrive
-	cookie          string
-	lists           map[string][]p115.ShareFile
-	unrelated       []MediaOrganizeEntry
-	directories     []MediaOrganizeEntry
-	scanned         []MediaOrganizeEntry
-	localSnapshots  map[string]os.FileInfo
-	settlingVideos  map[string]bool
-	failureChecked  bool
-	localReady      func(string, os.FileInfo) bool
-	localPrune      func(map[string]bool, time.Time)
-	localCandidates []OrganizeFile
-	localPending    map[string]bool
-	cd2             clouddrive2.Filesystem
-	cd2Lease        *CD2Lease
-	cd2Snapshots    map[string]clouddrive2.File
-	cd2Checkpoint   func(MediaOrganizeEntry, clouddrive2.File) error
-	cd2Duplicate    func(MediaOrganizeEntry) error
-	cd2ScanPaths    []string
-	cd2Shallow      bool
-	cd2Ready        func(clouddrive2.File) bool
-	cd2Recognized   map[string]bool
-	cd2Naming       map[string]preparedMediaNaming
+	rule               MediaOrganizeRule
+	drive              OrganizeDrive
+	cookie             string
+	lists              map[string][]p115.ShareFile
+	unrelated          []MediaOrganizeEntry
+	directories        []MediaOrganizeEntry
+	cleanupDirectories map[string]MediaOrganizeEntry
+	scanned            []MediaOrganizeEntry
+	localSnapshots     map[string]os.FileInfo
+	localSnapshotKeys  map[string]string
+	settlingVideos     map[string]bool
+	failureChecked     bool
+	localReady         func(string, os.FileInfo) bool
+	localPrune         func(map[string]bool, time.Time)
+	localCandidates    []OrganizeFile
+	localPending       map[string]bool
+	cd2                clouddrive2.Filesystem
+	cd2Lease           *CD2Lease
+	cd2Snapshots       map[string]clouddrive2.File
+	cd2Checkpoint      func(MediaOrganizeEntry, clouddrive2.File) error
+	cd2Duplicate       func(MediaOrganizeEntry) error
+	cd2ScanPath        string
+	cd2Shallow         bool
+	cd2Recognized      map[string]bool
+	cd2Naming          map[string]preparedMediaNaming
+	orphanDue          map[string]bool
+	orphanVideos       []OrganizeFile
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {
@@ -55,7 +58,7 @@ func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*me
 			return nil, err
 		}
 	}
-	if rule.Storage == "local" && rule.Enabled {
+	if rule.Storage == "local" && rule.RealtimeEnabled {
 		f.localReady = s.localTaskReadiness(rule)
 		f.localPrune = func(seen map[string]bool, started time.Time) { s.pruneLocalObservations(rule, seen, started) }
 	}
@@ -101,6 +104,15 @@ func mediaLocalRoot(value string) (string, error) {
 		return "", fmt.Errorf("%w：路径不是目录", ErrMediaOrganizeInput)
 	}
 	return root, nil
+}
+
+func (f *mediaOrganizeFiles) rememberLocalSnapshot(full, id string, info os.FileInfo) error {
+	identity, err := mediaLocalFileIdentityKey(full, info)
+	if err != nil {
+		return err
+	}
+	f.localSnapshots[id], f.localSnapshotKeys[id] = info, identity
+	return nil
 }
 
 // Check every component, not only the final filename. Symlink traversal is not
@@ -180,6 +192,7 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 	}
 	if f.rule.Storage == "local" {
 		f.localSnapshots = make(map[string]os.FileInfo)
+		f.localSnapshotKeys = make(map[string]string)
 		f.settlingVideos = make(map[string]bool)
 		root, err := mediaLocalRoot(f.rule.Source)
 		if err != nil {
@@ -224,6 +237,15 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			if mediaTemporaryName(entry.Name()) {
 				f.settlingVideos[filepath.ToSlash(filepath.Dir(rel))] = true
 				if entry.IsDir() {
+					info, err := entry.Info()
+					if err != nil {
+						return err
+					}
+					id := filepath.ToSlash(rel)
+					if err := f.rememberLocalSnapshot(full, id, info); err != nil {
+						return err
+					}
+					f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: id, Name: entry.Name(), Directory: true}, ParentID: filepath.ToSlash(filepath.Dir(rel)), SourcePath: id, MediaType: "cleanup"}})
 					return filepath.SkipDir
 				}
 				candidate := mediaLocalCandidate(filepath.ToSlash(rel), mediaTemporaryBase(entry.Name()), 0)
@@ -243,7 +265,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 					return err
 				}
 				id := filepath.ToSlash(rel)
-				f.localSnapshots[id] = info
+				if err := f.rememberLocalSnapshot(full, id, info); err != nil {
+					return err
+				}
 				f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: id, Name: entry.Name(), Directory: true}, ParentID: filepath.ToSlash(filepath.Dir(rel)), SourcePath: id, MediaType: "cleanup"}})
 				return nil
 			}
@@ -254,10 +278,17 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			if !info.Mode().IsRegular() {
 				return nil
 			}
+			id := filepath.ToSlash(rel)
+			if typeName := mediaFileType(entry.Name()); !mediaKeepFile(entry.Name()) || typeName == "subtitle" || typeName == "attachment" {
+				if err := f.rememberLocalSnapshot(full, id, info); err != nil {
+					return err
+				}
+			} else {
+				f.localSnapshots[id] = info
+			}
 			candidate := mediaLocalCandidate(filepath.ToSlash(rel), entry.Name(), info.Size())
 			if candidate.MediaType != "" {
 				f.localCandidates = append(f.localCandidates, candidate)
-				f.localSnapshots[candidate.ID] = info
 			}
 			ready := time.Since(info.ModTime()) >= 30*time.Second
 			if f.localReady != nil {
@@ -271,9 +302,6 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return nil
 			} // Allow uploads/copies to settle.
 			appendFile(p115.ShareFile{ID: filepath.ToSlash(rel), Name: entry.Name(), Size: info.Size()}, filepath.ToSlash(filepath.Dir(rel)), filepath.ToSlash(rel), info.ModTime().UnixNano())
-			if !mediaKeepFile(entry.Name()) || mediaFileType(entry.Name()) == "subtitle" || mediaFileType(entry.Name()) == "attachment" {
-				f.localSnapshots[filepath.ToSlash(rel)] = info
-			}
 			if len(out)+len(f.unrelated) > 5000 {
 				return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
 			}
@@ -287,6 +315,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		}
 		out = f.holdLocalCompanions(out, pending)
 	} else {
+		f.localCandidates = make([]OrganizeFile, 0, 128)
+		f.settlingVideos = make(map[string]bool)
+		f.localPending = make(map[string]bool)
 		visited := make(map[string]bool)
 		var walk func(string, string, int) error
 		walk = func(cid, prefix string, depth int) error {
@@ -311,7 +342,21 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 						return err
 					}
 				} else {
-					appendFile(file, cid, path.Join(prefix, file.Name), 0)
+					relative := path.Join(prefix, file.Name)
+					candidate := OrganizeFile{ShareFile: file, ParentID: cid, SourcePath: relative, MediaType: mediaFileType(file.Name)}
+					if mediaTemporaryName(file.Name) {
+						candidate.Name, candidate.MediaType = mediaTemporaryBase(file.Name), mediaFileType(mediaTemporaryBase(file.Name))
+						f.settlingVideos[cid] = true
+						f.localPending[file.ID] = true
+						if candidate.MediaType != "" {
+							f.localCandidates = append(f.localCandidates, candidate)
+						}
+						continue
+					}
+					if candidate.MediaType != "" {
+						f.localCandidates = append(f.localCandidates, candidate)
+					}
+					appendFile(file, cid, relative, 0)
 				}
 				if len(out)+len(f.unrelated) > 5000 {
 					return fmt.Errorf("单次最多 5000 个文件")
@@ -398,6 +443,9 @@ func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry)
 			return nil
 		}
 		if strings.EqualFold(file.Name, path.Base(e.Relative)) {
+			if f.rule.DeleteDuplicates && media115SameSHA1(e, file) {
+				return nil
+			}
 			return errMediaTargetExists
 		}
 	}
@@ -442,7 +490,7 @@ func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) err
 			return nil
 		}
 		if strings.EqualFold(file.Name, target) {
-			return errMediaTargetExists
+			return f.delete115Duplicate(ctx, e, cid, file)
 		}
 	}
 	source, err := f.list(ctx, e.File.ParentID)

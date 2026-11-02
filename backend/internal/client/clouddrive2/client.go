@@ -357,97 +357,14 @@ func hasHash(file File) bool {
 }
 
 func (c *Client) Move(ctx context.Context, sources []string, destination string) ([]string, error) {
-	ctx = withDirectoryCache(ctx)
-	destination, err := CleanPath(destination)
-	if err != nil {
-		return nil, err
-	}
-	if len(sources) == 0 || len(sources) > 100 {
-		return nil, fmt.Errorf("%w：每批移动 1 至 100 项", ErrInput)
-	}
-	directories := make([]string, 0, len(sources)+1)
-	directories = append(directories, destination)
-	for _, source := range sources {
-		clean, err := CleanPath(source)
-		if err != nil {
-			return nil, err
+	results, err := c.MoveMany(ctx, sources, destination)
+	paths := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.Err == nil {
+			paths = append(paths, result.Target)
 		}
-		directories = append(directories, path.Dir(clean))
 	}
-	release, err := c.lockWrite(ctx, directories...)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	dest, err := c.Stat(ctx, destination, true)
-	if err != nil {
-		return nil, err
-	}
-	if !dest.Directory || dest.ReadOnly {
-		return nil, errors.New("CloudDrive2 目标目录不可写")
-	}
-	before := make([]File, 0, len(sources))
-	paths := make([]string, 0, len(sources))
-	seen := make(map[string]bool, len(sources))
-	for _, source := range sources {
-		source, err = CleanPath(source)
-		if err != nil {
-			return nil, err
-		}
-		target := path.Join(destination, path.Base(source))
-		if source == target || seen[target] {
-			return nil, ErrExists
-		}
-		seen[target] = true
-		if _, err := c.Stat(ctx, target, true); err == nil {
-			return nil, ErrExists
-		} else if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
-		f, err := c.Stat(ctx, source, true)
-		if err != nil {
-			return nil, err
-		}
-		if f.ReadOnly {
-			return nil, errors.New("CloudDrive2 来源不可写")
-		}
-		across := f.CloudName != dest.CloudName || f.CloudAccount != dest.CloudAccount
-		if across && (f.Directory || !hasHash(f)) {
-			return nil, errors.New("CD2 跨存储移动需要可核验的文件哈希，请选择同一存储内的目录")
-		}
-		before, paths = append(before, f), append(paths, source)
-	}
-	ctx, cancel := c.request(ctx)
-	defer cancel()
-	policy := pb.MoveFileRequest_Skip
-	result, err := c.rpc.MoveFile(ctx, &pb.MoveFileRequest{TheFilePaths: paths, DestPath: destination, ConflictPolicy: &policy, MoveAcrossClouds: boolValue(true)})
-	c.invalidateDirectories(directories...)
-	if err != nil {
-		return nil, c.wrap("移动文件", err)
-	}
-	if err := c.result("移动文件", result); err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(paths))
-	for _, f := range before {
-		target := path.Join(destination, f.Name)
-		after, err := c.Stat(ctx, target, true)
-		if err != nil {
-			return nil, fmt.Errorf("移动结果尚未确认: %w", err)
-		}
-		across := f.CloudName != dest.CloudName || f.CloudAccount != dest.CloudAccount
-		if !sameFile(f, after, across) {
-			return nil, errors.New("CloudDrive2 移动结果身份未确认，请检查任务与目标文件")
-		}
-		if _, err := c.Stat(ctx, f.Path, true); !errors.Is(err, ErrNotFound) {
-			if err != nil {
-				return nil, fmt.Errorf("核对移动来源: %w", err)
-			}
-			return nil, errors.New("CloudDrive2 尚未确认来源已移除，请稍后核对任务")
-		}
-		out = append(out, target)
-	}
-	return out, nil
+	return paths, err
 }
 
 func (c *Client) Delete(ctx context.Context, sources []string) error {
@@ -526,7 +443,7 @@ func (c *Client) Probe(ctx context.Context) Probe {
 	}
 	if tokenInfo, err := c.rpc.GetApiTokenInfo(ctx, &pb.StringValue{Value: c.token}); err == nil && tokenInfo.GetPermissions() != nil {
 		p := tokenInfo.GetPermissions()
-		result.Permissions = &Permissions{List: p.GetAllowList(), Read: p.GetAllowRead(), CreateFolder: p.GetAllowCreateFolder(), Rename: p.GetAllowRename(), Move: p.GetAllowMove(), Copy: p.GetAllowCopy(), Delete: p.GetAllowDelete(), Push: p.GetAllowPushMessage()}
+		result.Permissions = &Permissions{List: p.GetAllowList(), Read: p.GetAllowRead(), CreateFolder: p.GetAllowCreateFolder(), Rename: p.GetAllowRename(), Move: p.GetAllowMove(), Copy: p.GetAllowCopy(), Delete: p.GetAllowDelete()}
 	}
 	result.ElapsedMS = time.Since(started).Milliseconds()
 	return result

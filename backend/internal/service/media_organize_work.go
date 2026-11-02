@@ -15,7 +15,7 @@ import (
 	"strm115/backend/internal/naming"
 )
 
-func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, action string) error {
+func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, action string) (processErr error) {
 	if err := run.prepareClassification(); err != nil {
 		return err
 	}
@@ -24,6 +24,22 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 		return err
 	}
 	defer files.close()
+	if action == "auto" {
+		defer func() {
+			if err := ctx.Err(); err != nil {
+				processErr = errors.Join(processErr, err)
+				return
+			}
+			// 收尾检查点不能提前发布终态，目录清理结束后再一次性公布完成结果。
+			status := run.Status
+			run.Status = "running"
+			processErr = errors.Join(processErr, s.cleanupEmptyDirectories(ctx, files, run))
+			if processErr == nil {
+				run.Status = status
+				processErr = s.checkpoint(run)
+			}
+		}()
+	}
 	s.bindCD2Checkpoint(files, run)
 	if action == "auto" && run.Rule.Storage == "cd2" {
 		return s.processCD2Auto(ctx, files, run)
@@ -34,6 +50,9 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 		}
 		mediaDiscardOrphanSidecars(files, run, files.scanned)
 		if err = files.recheckLocalCompanions(ctx, run); err != nil {
+			return err
+		}
+		if err = s.prepareOrphanCleanup(files, run); err != nil {
 			return err
 		}
 		if run.Rule.Storage == "local" {
@@ -50,7 +69,7 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 	if err = s.execute(ctx, files, run); err != nil {
 		return err
 	}
-	if action == "auto" && len(files.unrelated)+len(files.directories) > 0 {
+	if action == "auto" && len(files.unrelated) > 0 {
 		status, message, count := run.Status, run.Message, len(run.Entries)
 		run.Status = "running"
 		if err = s.cleanup(ctx, files, run); err != nil {
@@ -74,6 +93,9 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 				run.Status = "partial"
 			}
 		}
+	}
+	if action == "auto" {
+		return nil
 	}
 	return s.checkpoint(run)
 }
@@ -343,7 +365,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		duplicates[key] = append(duplicates[key], i)
 	}
 	for _, indices := range duplicates {
-		if len(indices) > 1 && !(run.Rule.Storage == "cd2" && run.Rule.DeleteDuplicates) {
+		if len(indices) > 1 && !((run.Rule.Storage == "cd2" || run.Rule.Storage == "115") && run.Rule.DeleteDuplicates) {
 			for _, i := range indices {
 				if !mediaInRunTask(run, run.Entries[i]) {
 					continue
@@ -388,67 +410,73 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		return err
 	}
 	failures := mediaFailureEntries(run)
-	// 仅在实际写入 115 目录时短暂预留，扫描、识别和其他存储不占用该预留。
-	for i := range run.Entries {
-		e := &run.Entries[i]
-		if failures[e.File.ID] || !mediaInRunTask(run, *e) {
-			continue
-		}
-		if e.Status != "ready" && e.Status != "error" {
-			continue
-		}
-		if e.Relative == "" {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
+	if bulk, ok := files.cd2.(clouddrive2.BatchFilesystem); run.Rule.Storage == "cd2" && ok {
+		if err := s.executeCD2Batches(ctx, files, run, bulk, failures); err != nil {
 			return err
 		}
-		if e.VideoID != "" {
-			videoDone := false
-			for _, video := range run.Entries {
-				if video.File.ID == e.VideoID {
-					videoDone = video.Status == "done"
-					break
+	} else {
+		// 仅在实际写入 115 目录时短暂预留，扫描、识别和其他存储不占用该预留。
+		for i := range run.Entries {
+			e := &run.Entries[i]
+			if failures[e.File.ID] || !mediaInRunTask(run, *e) {
+				continue
+			}
+			if e.Status != "ready" && e.Status != "error" {
+				continue
+			}
+			if e.Relative == "" {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if e.VideoID != "" {
+				videoDone := false
+				for _, video := range run.Entries {
+					if video.File.ID == e.VideoID {
+						videoDone = video.Status == "done"
+						break
+					}
+				}
+				if !videoDone {
+					e.Status, e.Message = "error", "对应视频尚未整理成功，关联文件保留来源"
+					e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
+					continue
 				}
 			}
-			if !videoDone {
-				e.Status, e.Message = "error", "对应视频尚未整理成功，关联文件保留来源"
-				e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
-				continue
+			var release func()
+			var err error
+			if run.Rule.Storage == "115" && s.reserve != nil {
+				release, err = s.reserve()
+				if err != nil {
+					e.Status = "error"
+					e.Message = "115 目录忙，请稍后继续"
+					e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
+					continue
+				}
 			}
-		}
-		var release func()
-		var err error
-		if run.Rule.Storage == "115" && s.reserve != nil {
-			release, err = s.reserve()
-			if err != nil {
+			err = files.move(ctx, *e)
+			if release != nil {
+				release()
+			}
+			if err != nil && !errors.Is(err, errMediaDuplicateDone) {
 				e.Status = "error"
-				e.Message = "115 目录忙，请稍后继续"
-				e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
-				continue
+				if errors.Is(err, errMediaTargetExists) {
+					e.Status = "conflict"
+				}
+				e.Message = organizePublicError(err, files.cookie)
+			} else {
+				e.Status = "done"
+				e.Message = ""
+				e.Failure = nil
 			}
-		}
-		err = files.move(ctx, *e)
-		if release != nil {
-			release()
-		}
-		if err != nil && !errors.Is(err, errMediaDuplicateDone) {
-			e.Status = "error"
-			if errors.Is(err, errMediaTargetExists) {
-				e.Status = "conflict"
+			e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now(), Target: e.Target}
+			if errors.Is(err, errMediaDuplicateDone) {
+				e.Result.Action, e.Result.Message = "duplicate", "SHA1 一致，已删除来源重复文件"
 			}
-			e.Message = organizePublicError(err, files.cookie)
-		} else {
-			e.Status = "done"
-			e.Message = ""
-			e.Failure = nil
-		}
-		e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now(), Target: e.Target}
-		if errors.Is(err, errMediaDuplicateDone) {
-			e.Result.Action, e.Result.Message = "duplicate", "SHA1 一致，已删除来源重复文件"
-		}
-		if err := s.checkpoint(run); err != nil {
-			return err
+			if err := s.checkpoint(run); err != nil {
+				return err
+			}
 		}
 	}
 	if err := s.quarantine(ctx, files, run, false); err != nil {

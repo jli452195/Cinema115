@@ -225,7 +225,7 @@ func TestMediaOrganizerClassificationUnavailableDoesNotStopOtherMonitoring(t *te
 		t.Fatal("expected a broken startup configuration")
 	}
 	s.classification = unavailable
-	rule.Classify, rule.Enabled = true, true
+	rule.Classify, rule.ScheduleEnabled = true, true
 	if rule, err = s.SaveRule(rule); err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   let config = { id: 'cd2-test', revision: 1, enabled: false, url: 'http://cd2.example:19798', tokenConfigured: true }
   let rejectSave = false, staleDirectory = false, rejectConfigGet = true, rejectDirectory = false, heldTest, heldDirectory, heldSave
   let savedToken = 'initial-isolated-token'
-  let monitorMode = 'realtime'
   const rules = []
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), endpoint = url.pathname, method = req.method(), body = req.postDataJSON()
@@ -31,7 +30,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else data = config
     } else if (endpoint === '/api/admin/cd2/test') {
       if (heldTest) { const held = heldTest; heldTest = undefined; held.started(); await held.pending }
-      data = { reachable: true, authorized: true, listable: true, version: '1.1.2', elapsedMs: 21, message: '模拟只读连接检查完成', permissions: { list: true, read: true, createFolder: true, rename: true, move: true, copy: false, delete: true, push: false } }
+      data = { reachable: true, authorized: true, listable: true, version: '1.1.2', elapsedMs: 21, message: '模拟只读连接检查完成', permissions: { list: true, read: true, createFolder: true, rename: true, move: true, copy: false, delete: true } }
     } else if (endpoint === '/api/admin/cd2/directories') {
       const folder = url.searchParams.get('path') || '/'
       const children = folder === '/' ? [{ name: '阿里云盘', path: '/Aliyun' }, { name: '其他账号', path: '/Another' }] : folder === '/Aliyun' ? [{ name: '收件箱', path: '/Aliyun/inbox' }, { name: '媒体库', path: '/Aliyun/library' }, { name: '只读目录', path: '/Aliyun/readonly', readOnly: true }] : []
@@ -42,8 +41,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         data = { ...data, directories: [{ id: '/Stale', name: '陈旧目录', path: '/Stale' }] }
         held.started(); await held.pending
       }
-    } else if (endpoint === '/api/admin/media-organize') data = { rules, active: false, activeRules: [], monitoring: Object.fromEntries(rules.filter(rule => rule.enabled && rule.storage === 'cd2').map(rule => [rule.id, { mode: monitorMode, ...(monitorMode === 'polling' ? { message: '模拟事件连接不可用，已使用定时扫描。' } : {}) }])) }
-    else if (endpoint === '/api/admin/media-organize/rules') { data = { ...body, id: body.id || 'cd2-rule' }; rules.splice(0, rules.length, data) }
+    } else if (endpoint === '/api/admin/media-organize') data = { rules, active: false, activeRules: [], monitoring: Object.fromEntries(rules.filter(rule => rule.scheduleEnabled && rule.storage === 'cd2').map(rule => [rule.id, { mode: 'polling' }])) }
+    else if (endpoint === '/api/admin/media-organize/rules') {
+      if (!Number.isInteger(body.intervalSeconds) || body.intervalSeconds < 1 || body.intervalSeconds > 86400) { status = 400; data = { error: '扫描间隔须为 1 至 86400 秒' } }
+      else if (typeof body.attachmentCleanupEnabled !== 'boolean') { status = 400; data = { error: '附件清理开关须为布尔值' } }
+      else if (!Number.isInteger(body.attachmentGraceSeconds) || body.attachmentGraceSeconds < 0 || body.attachmentGraceSeconds > 86400) { status = 400; data = { error: '附件宽限须为 0 至 86400 秒' } }
+      else { data = { ...body, id: body.id || 'cd2-rule' }; rules.splice(0, rules.length, data) }
+    } else if (endpoint.endsWith('/schedule') && method === 'PATCH') {
+      assert.deepEqual(Object.keys(body).sort(), ['intervalSeconds', 'realtimeEnabled', 'scheduleEnabled'])
+      const rule = rules.find(rule => rule.id === endpoint.split('/').at(-2)); Object.assign(rule, body); data = rule
+    }
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
   })
   const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
@@ -79,6 +86,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await token().inputValue(), 'isolated-test-token')
     assert.equal(await page.getByRole('button', { name: '浏览目录', exact: true }).isDisabled(), true)
     assert.equal(await page.locator('.cd2-permission.is-allowed').count(), 6)
+    assert.equal(await page.locator('.cd2-permission').count(), 7)
+    assert.equal(await page.getByText('事件推送', { exact: true }).count(), 0)
+    await page.getByText('自动整理支持自定义轮询间隔，可开关未匹配附件清理并设置宽限；目录读完立即整理，来源空子目录始终清理。', { exact: true }).waitFor()
     rejectSave = true; await save().click(); await page.getByRole('alert').filter({ hasText: '模拟保存失败' }).waitFor()
     assert.equal(await token().inputValue(), 'isolated-test-token')
     let start, release
@@ -141,12 +151,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await editor.getByLabel('规则名称', { exact: true }).fill('CD2 阿里云盘整理')
     await editor.getByRole('combobox', { name: '存储位置', exact: true }).click()
     await page.getByRole('option', { name: 'CloudDrive2', exact: true }).getByRole('button').click()
-    await editor.getByText('优先接收 CD2 目录变化，文件就绪后边扫描边整理，并按间隔补查。清理无关文件与未归属字幕，保留目录。', { exact: true }).waitFor()
+    await editor.getByText('开启后，未匹配的字幕和附件从首次发现起计时，宽限到期后的下一轮扫描仍无对应视频才删除；0 秒表示复核后立即清理。关闭时保留未匹配附件及首次发现记录，再开启不重置计时；已匹配附件始终立即整理。空子目录始终自动清理，保留来源根目录。', { exact: true }).waitFor()
+    assert.equal(await editor.getByRole('switch', { name: '清理未匹配附件', exact: true }).isChecked(), true)
+    assert.equal(await editor.getByRole('spinbutton', { name: '附件宽限', exact: true }).inputValue(), '60')
+    await page.screenshot({ path: 'test-results/media-rule-attachment-default-desktop.png' })
+    await editor.getByRole('combobox', { name: '附件宽限单位', exact: true }).click()
+    await page.getByRole('option', { name: '秒', exact: true }).getByRole('button').click()
+    await editor.getByRole('spinbutton', { name: '附件宽限', exact: true }).fill('45')
     assert.equal(await editor.getByRole('switch', { name: '自动删除相同文件', exact: true }).isChecked(), false)
-    await editor.getByRole('switch', { name: '启用监控', exact: true }).locator('..').click()
-    const seconds = editor.getByRole('spinbutton', { name: '检查间隔（秒）', exact: true })
-    assert.equal(await seconds.inputValue(), '20')
-    await seconds.fill('7')
+    await editor.getByRole('switch', { name: '定时扫描', exact: true }).locator('..').click()
+    assert.equal(await editor.getByRole('spinbutton', { name: '扫描间隔', exact: true }).inputValue(), '20')
+    await editor.getByRole('spinbutton', { name: '扫描间隔', exact: true }).fill('37')
+    assert.doesNotMatch(await editor.innerText(), /稳定 30 秒/)
     await editor.getByRole('switch', { name: '自动删除相同文件', exact: true }).locator('..').click()
     await editor.getByText('目标同名且双方 SHA1 一致时删除来源文件；SHA1 不同或缺失时保留冲突。', { exact: true }).waitFor()
     for (const [which, folder] of [['来源', '收件箱'], ['目标', '媒体库']]) {
@@ -164,42 +180,67 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     }
     await editor.getByRole('button', { name: '保存规则', exact: true }).click()
     await page.getByRole('heading', { name: 'CD2 阿里云盘整理', exact: true }).waitFor()
-    await page.getByText('无关文件、未归属字幕；保留目录', { exact: true }).waitFor()
+    await page.getByText('无关文件、空子目录；未匹配附件宽限 45 秒', { exact: true }).waitFor()
     const submitted = calls.filter(call => call.endpoint === '/api/admin/media-organize/rules').at(-1).body
     assert.equal(submitted.storage, 'cd2'); assert.equal(submitted.connectionId, config.id); assert.equal(submitted.connectionRevision, config.revision)
     assert.equal(submitted.source, '/Aliyun/inbox'); assert.equal(submitted.target, '/Aliyun/library'); assert.ok(!submitted.accountId && !submitted.sourceId)
-    assert.equal(submitted.intervalSeconds, 7); assert.equal(submitted.deleteDuplicates, true)
+    assert.equal(submitted.intervalSeconds, 37); assert.equal(Object.hasOwn(submitted, 'intervalMinutes'), false); assert.equal(submitted.deleteDuplicates, true)
+    assert.equal(submitted.attachmentGraceSeconds, 45)
+    assert.equal(submitted.attachmentCleanupEnabled, true)
     assert.equal(calls.some(call => call.endpoint.startsWith('/api/admin/p115/')), false)
     passed.push('自动整理选择 CD2 原生目录，保存连接标识并独立于 115 账号接口')
 
     const ruleCard = page.getByRole('article', { name: 'CD2 阿里云盘整理整理规则', exact: true })
-    await ruleCard.getByText('实时监控 · 补查每 7 秒', { exact: true }).waitFor()
+    await ruleCard.getByText('定时扫描 · 每 37 秒', { exact: true }).waitFor()
     await ruleCard.getByText('同名且 SHA1 相同删除来源', { exact: true }).waitFor()
-    monitorMode = 'polling'
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await ruleCard.getByText('轮询监控 · 每 7 秒', { exact: true }).waitFor()
-    await ruleCard.getByText('模拟事件连接不可用，已使用定时扫描。', { exact: true }).waitFor()
-    assert.equal(await ruleCard.locator('.mo-rule-schedule.is-fallback').count(), 1)
-    monitorMode = 'realtime'
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await ruleCard.getByText('实时监控 · 补查每 7 秒', { exact: true }).waitFor()
-    assert.equal(await ruleCard.locator('.mo-rule-monitor-message').count(), 0)
+    assert.equal(await ruleCard.locator('.mo-rule-schedule.is-unavailable').count(), 0)
+    await ruleCard.getByRole('button', { name: '暂停CD2 阿里云盘整理的定时扫描', exact: true }).click()
+    await ruleCard.getByText('定时扫描已暂停', { exact: true }).waitFor()
+    await ruleCard.getByRole('button', { name: '启用CD2 阿里云盘整理的定时扫描', exact: true }).click()
+    await ruleCard.getByText('定时扫描 · 每 37 秒', { exact: true }).waitFor()
     await ruleCard.getByRole('button', { name: '编辑CD2 阿里云盘整理', exact: true }).click()
-    assert.equal(await editor.getByRole('spinbutton', { name: '检查间隔（秒）', exact: true }).inputValue(), '7')
+    assert.equal(await editor.getByRole('spinbutton', { name: '扫描间隔', exact: true }).inputValue(), '37')
+    assert.equal(await editor.getByRole('spinbutton', { name: '附件宽限', exact: true }).inputValue(), '45')
     assert.equal(await editor.getByRole('switch', { name: '自动删除相同文件', exact: true }).isChecked(), true)
+    await editor.getByRole('switch', { name: '清理未匹配附件', exact: true }).locator('..').click()
+    await editor.getByRole('button', { name: '保存规则', exact: true }).click()
+    await ruleCard.getByText('无关文件、空子目录；保留未匹配附件', { exact: true }).waitFor()
+    assert.equal(calls.filter(call => call.endpoint === '/api/admin/media-organize/rules').at(-1).body.attachmentGraceSeconds, 45)
+    await ruleCard.getByRole('button', { name: '编辑CD2 阿里云盘整理', exact: true }).click()
+    assert.equal(await editor.getByRole('switch', { name: '清理未匹配附件', exact: true }).isChecked(), false)
+    assert.equal(await editor.getByRole('spinbutton', { name: '附件宽限', exact: true }).isDisabled(), true)
+    await editor.getByRole('link', { name: '配置 CloudDrive2 连接', exact: true }).click()
+    await page.waitForURL('**/resources/clouddrive2')
+    assert.equal(await picker('放弃未保存的整理修改？').count(), 0)
+    await page.goto(origin + '/media/organize')
+    await ruleCard.getByRole('button', { name: '编辑CD2 阿里云盘整理', exact: true }).click()
     await editor.getByRole('combobox', { name: '存储位置', exact: true }).click()
     await page.getByRole('option', { name: 'NAS / 本地挂载', exact: true }).getByRole('button').click()
     assert.equal(await editor.getByRole('spinbutton', { name: '检查间隔（秒）', exact: true }).count(), 0)
     assert.equal(await editor.getByRole('switch', { name: '自动删除相同文件', exact: true }).count(), 0)
-    await editor.getByRole('spinbutton', { name: '兜底扫描间隔（分钟）', exact: true }).waitFor()
+    await editor.getByRole('spinbutton', { name: '扫描间隔', exact: true }).waitFor()
+    await editor.getByText('选择或填写服务器／容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。', { exact: true }).waitFor()
+    assert.equal(await editor.getByRole('spinbutton', { name: '扫描间隔', exact: true }).inputValue(), '5')
+    assert.equal(await editor.getByRole('spinbutton', { name: '附件宽限', exact: true }).inputValue(), '45')
+    await editor.getByRole('button', { name: '取消', exact: true }).click()
+    await ruleCard.getByRole('button', { name: '暂停CD2 阿里云盘整理的定时扫描', exact: true }).click()
+    await ruleCard.getByText('定时扫描已暂停', { exact: true }).waitFor()
+    await ruleCard.getByRole('button', { name: '编辑CD2 阿里云盘整理', exact: true }).click()
+    await editor.getByRole('combobox', { name: '存储位置', exact: true }).click()
+    await page.getByRole('option', { name: 'NAS / 本地挂载', exact: true }).getByRole('button').click()
+    assert.equal(await editor.getByRole('spinbutton').count(), 2)
     await editor.getByLabel('来源目录', { exact: true }).fill('/media/test-inbox')
     await editor.getByLabel('目标目录', { exact: true }).fill('/media/test-library')
     await editor.getByRole('button', { name: '保存规则', exact: true }).click()
     await ruleCard.getByText('本地挂载', { exact: true }).waitFor()
     const localSubmitted = calls.filter(call => call.endpoint === '/api/admin/media-organize/rules').at(-1).body
-    assert.equal(Object.hasOwn(localSubmitted, 'intervalSeconds'), false)
+    assert.equal(localSubmitted.intervalSeconds, 300)
+    assert.equal(localSubmitted.attachmentGraceSeconds, 45)
+    assert.equal(localSubmitted.attachmentCleanupEnabled, false)
     assert.equal(Object.hasOwn(localSubmitted, 'deleteDuplicates'), false)
-    passed.push('CD2 默认20秒、去重开关保存与回显、事件降级恢复、切换存储清除专用设置')
+    assert.equal(Object.hasOwn(localSubmitted, 'intervalMinutes'), false)
+    assert.equal(localSubmitted.scheduleEnabled, false)
+    passed.push('CD2 自定义轮询、附件清理默认开启60秒、关闭保留设置、独立启停、无修改离开及切换存储保留配置')
 
     await page.goto(origin + '/resources/clouddrive2')
     await page.waitForFunction(() => !document.querySelector('.cd2-fields')?.disabled)

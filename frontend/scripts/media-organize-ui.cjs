@@ -13,7 +13,7 @@ const gate = () => {
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
   const page = await context.newPage(), calls = [], errors = []
   page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000)
-  const rule = { id: 'rule1', name: 'NAS 验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, enabled: false, intervalMinutes: 5 }
+  const rule = { id: 'rule1', name: 'NAS 验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, realtimeEnabled: false, scheduleEnabled: false, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
   const entry = (id, mediaType, status, videoId) => ({ file: { id, name: path.basename(id), sourcePath: id, mediaType, season: 1, episode: 1 }, group: '1', videoId, target: '/media/library/' + id, status, message: status === 'error' ? '模拟附件写入失败' : '' })
   const task = (id, status, entries) => ({ runId: 'run1', fileId: id, name: path.basename(id), title: '示例作品', kind: 'tv', mediaType: 'video', season: 1, episode: 1, source: rule.source + '/' + id, target: rule.target + '/' + id, status, at: new Date().toISOString(), attachmentCount: entries.length - 1, canDelete: true, entries, rule: copy(rule), group: { id: '1', identity: { name: 'Unknown' }, kind: 'tv', tmdbId: 42, title: '示例作品' } })
   const first = task('Work.S01E01.strm', 'partial', [entry('Work.S01E01.strm', 'video', 'done'), entry('Work.S01E01.ass', 'subtitle', 'error', 'Work.S01E01.strm'), entry('Work.S01E01.nfo', 'attachment', 'done', 'Work.S01E01.strm')])
@@ -47,6 +47,9 @@ const gate = () => {
       if (selected.entries[0].status === 'done') assert.deepEqual(body, { fileId: first.fileId })
       if (body.tmdbId) { selected.group.tmdbId = body.tmdbId; selected.entries[0].file.season = body.season; selected.entries[0].file.episode = body.episode }
       selected.status = 'done'; selected.entries.forEach(e => { e.status = 'done'; e.message = '' }); data = selected
+    } else if (endpoint.endsWith('/schedule') && method === 'PATCH') {
+      if (rejectRuleSave) { status = 503; data = { error: '模拟保存失败' }; rejectRuleSave = false }
+      else { Object.assign(rule, body); state.rules = [copy(rule)]; data = rule }
     } else if (endpoint.endsWith('/rules') && method === 'POST') {
       if (rejectRuleSave) { status = 503; data = { error: '模拟保存失败' }; rejectRuleSave = false }
       else { Object.assign(rule, body); state.rules = [copy(rule)]; data = rule }
@@ -73,7 +76,7 @@ const gate = () => {
     assert.equal(await detail.count(), 0)
     assert.equal(await page.getByRole('button', { name: '运行中…', exact: true }).isDisabled(), true)
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1)
-    assert.equal(state.rules[0].enabled, false)
+    assert.equal(state.rules[0].scheduleEnabled, false)
     state.active = false; state.activeRules = []
     await tab('整理记录').click()
     await card.waitFor()
@@ -99,7 +102,7 @@ const gate = () => {
     await nextState.ready
     assert.deepEqual(copy(second), before)
     assert.equal(await detail.getByRole('button', { name: '重试此任务', exact: true }).count(), 0)
-    assert.equal(await card.getByText('成功', { exact: true }).count(), 1)
+    await card.getByText('成功', { exact: true }).waitFor()
     nextState.release()
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
     await history.getByRole('button', { name: '查看Work.S01E02.mkv的整理记录', exact: true }).click()
@@ -114,14 +117,14 @@ const gate = () => {
     assert.deepEqual(retry.body, { fileId: second.fileId, season: 1, episode: 13, kind: 'tv', tmdbId: 99 })
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
     await tab('整理规则').click()
-    await page.getByRole('button', { name: '启用NAS 验收的目录监控', exact: true }).click()
-    await page.getByText('实时监控 · 兜底每 5 分钟', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '启用NAS 验收的定时扫描', exact: true }).click()
+    await page.getByText('定时扫描 · 每 5 分钟', { exact: true }).waitFor()
     rejectRuleSave = true
-    await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
+    await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '模拟保存失败' }).waitFor()
-    assert.equal(await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).count(), 1)
-    await page.getByRole('button', { name: '暂停NAS 验收的目录监控', exact: true }).click()
-    await page.getByText('监控已暂停', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).count(), 1)
+    await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).click()
+    await page.getByText('定时扫描已暂停', { exact: true }).waitFor()
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1)
     await page.locator('.mo-rule-card').hover()
     assert.ok((await page.locator('.mo-rule-card').evaluate(el => getComputedStyle(el, '::before').animationName)).includes('ambient-glow'))

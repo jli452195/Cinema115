@@ -53,7 +53,6 @@ type Permissions struct {
 	Move         bool `json:"move"`
 	Copy         bool `json:"copy"`
 	Delete       bool `json:"delete"`
-	Push         bool `json:"push"`
 }
 
 type Probe struct {

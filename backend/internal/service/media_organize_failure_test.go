@@ -141,7 +141,7 @@ func TestMediaOrganizerCloudFailureMoveAndUncertainResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := s.SaveRule(MediaOrganizeRule{Name: "cloud", IntervalMinutes: 5, Storage: "115", AccountID: accountID, SourceID: "10", TargetID: "20", FailureID: "40", Source: "/inbox", Target: "/library", Failure: "/failed"})
+	rule, err := s.SaveRule(MediaOrganizeRule{Name: "cloud", IntervalSeconds: 300, Storage: "115", AccountID: accountID, SourceID: "10", TargetID: "20", FailureID: "40", Source: "/inbox", Target: "/library", Failure: "/failed"})
 	if err != nil {
 		t.Fatal(err)
 	}

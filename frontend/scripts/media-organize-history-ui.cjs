@@ -8,7 +8,7 @@ const gate = () => { let enter, release; const ready = new Promise(resolve => { 
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
-  const rule = { id: 'rule1', name: '目录监控', storage: 'local', source: '/media/inbox', target: '/media/library', enabled: true, classify: true, intervalMinutes: 5 }
+  const rule = { id: 'rule1', name: '目录监控', storage: 'local', source: '/media/inbox', target: '/media/library', realtimeEnabled: true, scheduleEnabled: true, classify: true, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
   const row = (index, status = 'done', extra = {}) => ({ runId: `run-${index}`, fileId: `video-${index}`, name: `Work.S01E${String(index).padStart(2, '0')}.mkv`, title: `作品 ${index}`, kind: 'tv', mediaType: 'video', season: 1, episode: index,
     source: `/media/inbox/Work.S01E${String(index).padStart(2, '0')}.mkv`, target: `/media/library/作品/Season 01/Work.S01E${String(index).padStart(2, '0')}.mkv`, status, canDelete: true, attachmentCount: 1, at: new Date(Date.UTC(2026, 9, 29, 10, 0, index)).toISOString(), ...extra })
   let records = Array.from({ length: 46 }, (_, index) => row(index + 1, index < 34 ? 'done' : 'error'))

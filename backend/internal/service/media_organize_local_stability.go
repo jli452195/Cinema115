@@ -112,7 +112,7 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 	}) {
 		return nil
 	}
-	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2, cd2ScanPaths: f.cd2ScanPaths, cd2Shallow: f.cd2Shallow, cd2Ready: f.cd2Ready}
+	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2, cd2ScanPath: f.cd2ScanPath, cd2Shallow: f.cd2Shallow}
 	if _, err := current.scan(ctx); err != nil {
 		if f.rule.Storage == "cd2" {
 			return err

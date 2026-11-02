@@ -85,7 +85,7 @@ func mediaMonitorRun(t *testing.T, s *MediaOrganizer) func() {
 }
 func mediaMonitorEnable(t *testing.T, s *MediaOrganizer, rule MediaOrganizeRule) MediaOrganizeRule {
 	t.Helper()
-	rule.Enabled = true
+	rule.RealtimeEnabled, rule.ScheduleEnabled = true, true
 	saved, err := s.SaveRule(rule)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestMediaLocalMonitorRealEventsAndMovedTree(t *testing.T) {
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E02.strm") })
 	mediaTestFile(t, rule.Source, "moved/deeper/Work.S01E03.strm", "http://original/three")
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E03.strm") })
-	rule.Enabled = false
+	rule.RealtimeEnabled = false
 	if _, err := s.SaveRule(rule); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestMediaLocalMonitorRootReplacementRebinds(t *testing.T) {
 	oldRoot := rule.Source + ".previous"
 	mediaMonitorWait(t, func() bool {
 		state := s.State()
-		return !state.Active && !state.Monitoring[rule.ID].LastFallbackAt.IsZero()
+		return !state.Active && !state.Rules[0].NextScanAt.IsZero()
 	})
 	// Windows temporarily denies directory renames while a scan handle is
 	// closing. Retry the fixture operation without relaxing monitor behavior.
@@ -249,7 +249,7 @@ func TestMediaLocalMonitorFallbackIndependentOfEvents(t *testing.T) {
 	now := time.Now()
 	s.monitorOptions.now = func() time.Time { return now }
 	s.monitorRunning = true
-	local := &mediaLocalRuntime{rule: rule, initialized: true, status: MediaOrganizeMonitorStatus{Mode: "realtime", LastFallbackAt: now.Add(-5 * time.Minute)}, files: make(map[string]mediaLocalObservation)}
+	local := &mediaLocalRuntime{rule: rule, initialized: true, status: MediaOrganizeMonitorStatus{Mode: "realtime"}, files: make(map[string]mediaLocalObservation)}
 	s.localMonitors = map[string]*mediaLocalRuntime{rule.ID: local}
 	queue := func() {
 		t.Helper()
@@ -262,23 +262,23 @@ func TestMediaLocalMonitorFallbackIndependentOfEvents(t *testing.T) {
 		clear(s.actions)
 	}
 	queue()
-	first := local.status.LastFallbackAt
+	first := s.doc.Rules[0].NextScanAt
 	now = now.Add(time.Minute)
 	local.dirtyDue = now
 	queue()
-	if !local.status.LastFallbackAt.Equal(first) {
-		t.Fatal("event scan postponed fallback", local.status)
+	if !s.doc.Rules[0].NextScanAt.Equal(first) {
+		t.Fatal("event scan postponed scheduled scan")
 	}
 	now = now.Add(4 * time.Minute)
 	queue()
-	if !local.status.LastFallbackAt.Equal(now) {
-		t.Fatal("periodic fallback was suppressed by recent event scan", local.status)
+	if !s.doc.Rules[0].NextScanAt.Equal(now.Add(5 * time.Minute)) {
+		t.Fatal("scheduled scan was suppressed by recent event scan")
 	}
 }
 
 func TestMediaLocalMonitorStabilityAndBoundedDebounce(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
-	rule.Enabled = true
+	rule.RealtimeEnabled = true
 	mediaTestFile(t, rule.Source, "Work.S01E01.strm", "original")
 	full := filepath.Join(rule.Source, "Work.S01E01.strm")
 	info, err := os.Stat(full)
@@ -360,7 +360,7 @@ func TestMediaLocalMonitorScanFailureRetriesWithoutSourceEvents(t *testing.T) {
 		if local == nil || local.scanFailures == 0 || local.retryDue.IsZero() || s.active != "" {
 			return false
 		}
-		fallback = local.status.LastFallbackAt
+		fallback = s.doc.Rules[0].NextScanAt
 		return local.status.Mode == "realtime" && !fallback.IsZero()
 	})
 	if err := os.Rename(missingTarget, rule.Target); err != nil {
@@ -371,7 +371,7 @@ func TestMediaLocalMonitorScanFailureRetriesWithoutSourceEvents(t *testing.T) {
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E01.strm") })
 	s.mu.Lock()
 	local := s.localMonitors[rule.ID]
-	failures, retry, lastFallback := local.scanFailures, local.retryDue, local.status.LastFallbackAt
+	failures, retry, lastFallback := local.scanFailures, local.retryDue, s.doc.Rules[0].NextScanAt
 	s.mu.Unlock()
 	if failures != 0 || !retry.IsZero() || !lastFallback.Equal(fallback) {
 		t.Fatal("recovery failed to clear retries or postponed fallback", failures, retry, lastFallback, fallback)
@@ -380,7 +380,7 @@ func TestMediaLocalMonitorScanFailureRetriesWithoutSourceEvents(t *testing.T) {
 
 func TestMediaLocalMonitorScanRetryBudgetAndClassification(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
-	rule.Enabled = true
+	rule.RealtimeEnabled = true
 	now := time.Now()
 	s.monitorOptions.now = func() time.Time { return now }
 	local := &mediaLocalRuntime{rule: rule, files: make(map[string]mediaLocalObservation), dirtyDue: now.Add(time.Second), settleDue: now.Add(2 * time.Second)}
@@ -469,7 +469,7 @@ func TestMediaLocalMonitorPausedScanKeepsStabilityProtection(t *testing.T) {
 		calls++
 		if calls == 2 {
 			paused := rule
-			paused.Enabled = false
+			paused.RealtimeEnabled = false
 			if _, err := s.SaveRule(paused); err != nil {
 				t.Fatal(err)
 			}
@@ -527,7 +527,7 @@ func TestMediaLocalMonitorPausedBatchKeepsOnlyVerifiedFiles(t *testing.T) {
 				t.Fatal("fixture did not finish recognition with a ready video", run.Entries)
 			}
 			paused := rule
-			paused.Enabled = false
+			paused.RealtimeEnabled = false
 			if _, err := s.SaveRule(paused); err != nil {
 				t.Fatal(err)
 			}
@@ -603,7 +603,7 @@ func TestMediaLocalMonitorFullCacheStillRecordsExistingWrites(t *testing.T) {
 	mediaMonitorRun(t, s)
 	mediaMonitorWait(t, func() bool {
 		state := s.State()
-		return state.Monitoring[rule.ID].Mode == "realtime" && !state.Monitoring[rule.ID].LastFallbackAt.IsZero() && !state.Active
+		return state.Monitoring[rule.ID].Mode == "realtime" && !state.Rules[0].NextScanAt.IsZero() && !state.Active
 	})
 	full := filepath.Join(rule.Source, "Work.S01E01.strm")
 	s.mu.Lock()
@@ -657,7 +657,7 @@ func TestMediaLocalMonitorFailureOverflowRecovery(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("watch error was not consumed")
 	}
-	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "polling" })
+	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "unavailable" })
 	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "realtime" })
 	stop()
 	mu.Lock()
@@ -673,7 +673,7 @@ func TestMediaLocalMonitorFailureOverflowRecovery(t *testing.T) {
 func TestMediaLocalMonitorNetworkFallbackAndTemporaryFiles(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
 	s.monitorOptions = mediaMonitorTestOptions()
-	s.monitorOptions.filesystemReason = func(string) string { return "网络挂载使用定时扫描" }
+	s.monitorOptions.filesystemReason = func(string) string { return "网络挂载的实时监听不可用" }
 	mediaTestFile(t, rule.Source, "Work.S01E01.mkv", "unfinished")
 	for _, name := range []string{"Work.S01E01.mkv.aria2", "Work.S01E01.nfo", "copy.mkv.part", "copy.mkv.!qB", "browser.mkv.crdownload", "cache.tmp"} {
 		mediaTestFile(t, rule.Source, name, "keep")
@@ -681,7 +681,7 @@ func TestMediaLocalMonitorNetworkFallbackAndTemporaryFiles(t *testing.T) {
 	mediaTestFile(t, rule.Source, "Work.S01E02.strm", "http://original/completed")
 	rule = mediaMonitorEnable(t, s, rule)
 	mediaMonitorRun(t, s)
-	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "polling" })
+	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "unavailable" })
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E02.strm") })
 	for _, name := range []string{"Work.S01E01.mkv", "Work.S01E01.mkv.aria2", "Work.S01E01.nfo", "copy.mkv.part", "copy.mkv.!qB", "browser.mkv.crdownload", "cache.tmp"} {
 		if _, err := os.Stat(filepath.Join(rule.Source, name)); err != nil {

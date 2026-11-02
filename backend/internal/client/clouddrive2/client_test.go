@@ -24,16 +24,21 @@ import (
 
 type testServer struct {
 	pb.UnimplementedCloudDriveFileSrvServer
-	mu           sync.Mutex
-	files        map[string]*pb.CloudDriveFile
-	skipMove     bool
-	policy       pb.MoveFileRequest_ConflictPolicy
-	across       bool
-	moves        int
-	unauthorized bool
-	lists        int
-	listStarted  chan string
-	listRelease  <-chan struct{}
+	mu             sync.Mutex
+	files          map[string]*pb.CloudDriveFile
+	skipMove       bool
+	policy         pb.MoveFileRequest_ConflictPolicy
+	across         bool
+	moves          int
+	renameBatches  int
+	renameLimit    int
+	moveLimit      int
+	renameRPCError error
+	moveRPCError   error
+	unauthorized   bool
+	lists          int
+	listStarted    chan string
+	listRelease    <-chan struct{}
 }
 
 func (s *testServer) GetSystemInfo(context.Context, *emptypb.Empty) (*pb.CloudDriveSystemInfo, error) {
@@ -45,7 +50,7 @@ func (s *testServer) GetRuntimeInfo(context.Context, *emptypb.Empty) (*pb.Runtim
 }
 
 func (s *testServer) GetApiTokenInfo(context.Context, *pb.StringValue) (*pb.TokenInfo, error) {
-	return &pb.TokenInfo{Token: "scoped-token", Permissions: &pb.TokenPermissions{AllowList: true, AllowMove: true, AllowRename: true, AllowPushMessage: true}}, nil
+	return &pb.TokenInfo{Token: "scoped-token", Permissions: &pb.TokenPermissions{AllowList: true, AllowMove: true, AllowRename: true}}, nil
 }
 
 func (s *testServer) GetSubFiles(req *pb.ListSubFileRequest, stream grpc.ServerStreamingServer[pb.SubFilesReply]) error {
@@ -121,6 +126,31 @@ func (s *testServer) RenameFile(_ context.Context, req *pb.RenameFileRequest) (*
 	return &pb.FileOperationResult{Success: true, ResultFilePaths: []string{f.FullPathName}}, nil
 }
 
+func (s *testServer) RenameFiles(_ context.Context, req *pb.RenameFilesRequest) (*pb.FileOperationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renameBatches++
+	out := make([]string, 0, len(req.GetRenameFiles()))
+	for i, operation := range req.GetRenameFiles() {
+		if s.renameLimit > 0 && i >= s.renameLimit {
+			break
+		}
+		file := s.files[operation.GetTheFilePath()]
+		if file == nil {
+			return nil, status.Error(codes.NotFound, "missing file")
+		}
+		delete(s.files, operation.GetTheFilePath())
+		file.FullPathName = path.Join(path.Dir(operation.GetTheFilePath()), operation.GetNewName())
+		file.Name = operation.GetNewName()
+		s.files[file.FullPathName] = file
+		out = append(out, file.FullPathName)
+	}
+	if s.renameRPCError != nil {
+		return nil, s.renameRPCError
+	}
+	return &pb.FileOperationResult{Success: len(out) == len(req.GetRenameFiles()), ErrorMessage: "partial rename", ResultFilePaths: out}, nil
+}
+
 func (s *testServer) MoveFile(_ context.Context, req *pb.MoveFileRequest) (*pb.FileOperationResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -129,7 +159,10 @@ func (s *testServer) MoveFile(_ context.Context, req *pb.MoveFileRequest) (*pb.F
 		return &pb.FileOperationResult{Success: true}, nil
 	}
 	out := make([]string, 0, len(req.GetTheFilePaths()))
-	for _, source := range req.GetTheFilePaths() {
+	for i, source := range req.GetTheFilePaths() {
+		if s.moveLimit > 0 && i >= s.moveLimit {
+			break
+		}
 		f := s.files[source]
 		if f == nil {
 			return nil, status.Error(codes.NotFound, "missing file")
@@ -144,7 +177,10 @@ func (s *testServer) MoveFile(_ context.Context, req *pb.MoveFileRequest) (*pb.F
 		s.files[f.FullPathName] = f
 		out = append(out, f.FullPathName)
 	}
-	return &pb.FileOperationResult{Success: true, ResultFilePaths: out}, nil
+	if s.moveRPCError != nil {
+		return nil, s.moveRPCError
+	}
+	return &pb.FileOperationResult{Success: len(out) == len(req.GetTheFilePaths()), ErrorMessage: "partial move", ResultFilePaths: out}, nil
 }
 
 func (s *testServer) DeleteFiles(_ context.Context, req *pb.MultiFileRequest) (*pb.FileOperationResult, error) {

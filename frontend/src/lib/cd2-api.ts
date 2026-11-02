@@ -20,7 +20,6 @@ export interface CD2Permissions {
   move: boolean
   copy: boolean
   delete: boolean
-  push: boolean
 }
 
 export interface CD2Test {

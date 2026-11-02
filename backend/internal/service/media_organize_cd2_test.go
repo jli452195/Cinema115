@@ -170,6 +170,30 @@ func (f *mediaCD2Fake) Delete(ctx context.Context, paths []string) error {
 	return nil
 }
 
+func (f *mediaCD2Fake) RemoveEmptyDirectory(ctx context.Context, full, expectedID string) (bool, error) {
+	file, err := f.Stat(ctx, full, true)
+	if errors.Is(err, clouddrive2.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !file.Directory || file.ReadOnly || expectedID != "" && file.ID != expectedID {
+		return false, nil
+	}
+	children, err := f.List(ctx, full, true)
+	if err != nil {
+		return false, err
+	}
+	if len(children) != 0 {
+		return false, nil
+	}
+	if err := f.Delete(ctx, []string{full}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 type mediaCD2AcquirerFake struct {
 	filesystem *mediaCD2Fake
 	revision   uint64
@@ -193,7 +217,7 @@ func newMediaCD2Organizer(t *testing.T) (*MediaOrganizer, *mediaRecognitionFake,
 	s, recognition, store, _ := newMediaOrganizeTest(t)
 	connection := &mediaCD2AcquirerFake{filesystem: newMediaCD2Fake(), revision: 3}
 	s.cd2 = connection
-	rule, err := s.SaveRule(MediaOrganizeRule{Name: "独立 CD2", Storage: "cd2", Source: "/其他网盘/inbox", Target: "/另一个账号/library", ConnectionID: "independent-cd2", ConnectionRevision: 3, IntervalMinutes: 5, AccountID: "不得使用的115账号", SourceID: "10", TargetID: "20"})
+	rule, err := s.SaveRule(MediaOrganizeRule{Name: "独立 CD2", Storage: "cd2", Source: "/其他网盘/inbox", Target: "/另一个账号/library", ConnectionID: "independent-cd2", ConnectionRevision: 3, IntervalSeconds: 20, AttachmentCleanupEnabled: true, AttachmentGraceSeconds: 600, AccountID: "不得使用的115账号", SourceID: "10", TargetID: "20"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,11 +257,11 @@ func TestMediaOrganizerCD2IndependentNativeScanAndMove(t *testing.T) {
 			t.Fatal("目标缺少媒体或字幕", err)
 		}
 	}
-	if len(fs.deleted) != 1 || fs.deleted[0] != path.Join(rule.Source, "advertisement.zip") {
-		t.Fatal("只清理普通无关文件，目录应保留", fs.deleted)
+	if len(fs.deleted) != 2 || !slices.Contains(fs.deleted, path.Join(rule.Source, "advertisement.zip")) || !slices.Contains(fs.deleted, path.Join(rule.Source, "empty")) {
+		t.Fatal("应清理普通无关文件和空目录", fs.deleted)
 	}
-	if _, ok := fs.files[path.Join(rule.Source, "empty")]; !ok {
-		t.Fatal("CD2 空目录也应保留，避免非原子递归删除")
+	if _, ok := fs.files[path.Join(rule.Source, "empty")]; ok {
+		t.Fatal("CD2 空目录应在复核后清理")
 	}
 	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
 	if err != nil {

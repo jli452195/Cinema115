@@ -266,7 +266,7 @@ func TestMediaOrganizerSQLiteGrayReturnToSourceAndRetention(t *testing.T) {
 	s, _, _ := newMediaSQLiteTest(t)
 	metadata := &mediaRecognitionFake{items: []tmdb.Item{{ID: 42, Kind: "tv", Title: "作品", OriginalTitle: "Work", Date: "2024-01-01"}}}
 	s.metadata = metadata
-	rule, err := s.SaveRule(MediaOrganizeRule{Name: "灰度", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalMinutes: 5})
+	rule, err := s.SaveRule(MediaOrganizeRule{Name: "灰度", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalSeconds: 300})
 	if err != nil {
 		t.Fatal(err)
 	}

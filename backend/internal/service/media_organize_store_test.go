@@ -46,7 +46,7 @@ func (s *testMediaOrganizeStore) LoadMediaOrganize(context.Context) (storage.Med
 			return out, err
 		}
 	}
-	raw, err := json.Marshal(doc.Rules)
+	raw, err := json.Marshal(mediaOrganizeSettings{Rules: doc.Rules, Orphans: doc.Orphans})
 	if err != nil {
 		return out, err
 	}

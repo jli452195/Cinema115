@@ -174,6 +174,13 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 				continue
 			}
 			relative := path.Join(prefix, file.Name)
+			if file.Directory {
+				candidate := MediaOrganizeEntry{File: OrganizeFile{ShareFile: mediaCD2ShareFile(file), ParentID: directory, SourcePath: relative, MediaType: "cleanup"}, CD2FileID: file.ID}
+				if f.cleanupDirectories == nil {
+					f.cleanupDirectories = make(map[string]MediaOrganizeEntry)
+				}
+				f.cleanupDirectories[file.Path] = candidate
+			}
 			if mediaTemporaryName(file.Name) {
 				f.settlingVideos[prefix], f.settlingVideos[directory] = true, true
 				if !file.Directory {
@@ -188,7 +195,8 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 			}
 			f.cd2Snapshots[file.Path] = file
 			if file.Directory {
-				f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: mediaCD2ShareFile(file), ParentID: directory, SourcePath: relative, MediaType: "cleanup"}, CD2FileID: file.ID})
+				candidate := MediaOrganizeEntry{File: OrganizeFile{ShareFile: mediaCD2ShareFile(file), ParentID: directory, SourcePath: relative, MediaType: "cleanup"}, CD2FileID: file.ID}
+				f.directories = append(f.directories, candidate)
 				if !f.cd2Shallow {
 					if err := walk(file.Path, relative, depth+1); err != nil {
 						return err
@@ -207,33 +215,24 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 			modified := int64(0)
 			if !file.Modified.IsZero() {
 				modified = file.Modified.UnixNano()
-				if time.Since(file.Modified) < 30*time.Second && (f.cd2Ready == nil || !f.cd2Ready(file)) {
-					pending[file.Path] = true
-					if candidate.MediaType == "video" {
-						f.settlingVideos[prefix], f.settlingVideos[directory] = true, true
-					}
-					continue
-				}
 			}
 			appendFile(mediaCD2ShareFile(file), directory, relative, modified)
 		}
 		return nil
 	}
-	roots := f.cd2ScanPaths
-	if len(roots) == 0 {
-		roots = []string{f.rule.Source}
+	root := f.cd2ScanPath
+	if root == "" {
+		root = f.rule.Source
 	}
-	for _, root := range roots {
-		if !mediaCloudWithin(f.rule.Source, root) {
-			return nil, ErrMediaOrganizeInput
-		}
-		prefix := strings.TrimPrefix(strings.TrimPrefix(root, f.rule.Source), "/")
-		if prefix == "" {
-			prefix = "."
-		}
-		if err := walk(root, prefix, 0); err != nil {
-			return nil, err
-		}
+	if !mediaCloudWithin(f.rule.Source, root) {
+		return nil, ErrMediaOrganizeInput
+	}
+	prefix := strings.TrimPrefix(strings.TrimPrefix(root, f.rule.Source), "/")
+	if prefix == "" {
+		prefix = "."
+	}
+	if err := walk(root, prefix, 0); err != nil {
+		return nil, err
 	}
 	return pending, nil
 }
@@ -395,8 +394,9 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 			if err != nil && !errors.Is(err, clouddrive2.ErrNotFound) {
 				return err
 			}
-			if err == nil && mediaCD2Matches(e, candidate, expectedID) {
+			if err == nil && (mediaCD2Matches(e, candidate, expectedID) || mediaCD2Matches(e, candidate, "")) {
 				actual, source, sourceErr = candidate, renamed, nil
+				expectedID = candidate.ID
 			}
 		}
 	}
@@ -482,6 +482,15 @@ func (f *mediaOrganizeFiles) cd2CleanupCandidates(ctx context.Context, candidate
 		if entry.File.Directory {
 			continue
 		}
+		if entry.File.MediaType == "subtitle" || entry.File.MediaType == "attachment" {
+			unmatched, err := f.cd2OrphanStillUnmatched(ctx, entry)
+			if err != nil {
+				return nil, err
+			}
+			if !unmatched {
+				continue
+			}
+		}
 		full, err := mediaCD2Relative(f.rule.Source, entry.File.SourcePath)
 		if err != nil || full != entry.File.ID {
 			return nil, fmt.Errorf("CD2 清理路径无法确认")
@@ -504,63 +513,11 @@ func (f *mediaOrganizeFiles) cd2CleanupCandidates(ctx context.Context, candidate
 	return valid, nil
 }
 
-func (f *mediaOrganizeFiles) cd2SidecarStillOrphan(ctx context.Context, entry MediaOrganizeEntry) (bool, error) {
-	if entry.File.MediaType != "subtitle" && entry.File.MediaType != "attachment" {
-		return true, nil
-	}
-	files, err := f.cd2.List(ctx, path.Dir(entry.File.ID), true)
-	if err != nil {
-		return false, err
-	}
-	videos := make([]OrganizeFile, 0, len(files))
-	for _, file := range files {
-		if !file.Directory && (mediaFileType(file.Name) == "video" || mediaTemporaryName(file.Name)) {
-			if mediaTemporaryName(file.Name) {
-				return false, nil
-			}
-			videos = append(videos, OrganizeFile{ShareFile: mediaCD2ShareFile(file), ParentID: entry.File.ParentID, SourcePath: path.Join(path.Dir(entry.File.SourcePath), file.Name), MediaType: "video"})
-		}
-	}
-	if entry.File.MediaType == "subtitle" {
-		owner, _ := organizeSubtitleOwner(entry.File, videos, organizeSubtitleMatcher(videos))
-		return owner == "", nil
-	}
-	if mediaAttachmentHasVideo(entry.File, videos) {
-		return false, nil
-	}
-	scope, _, shared := mediaAttachmentFolder(entry.File)
-	if !shared {
-		return true, nil
-	}
-	full := f.rule.Source
-	if scope != "." {
-		full, err = mediaCD2Relative(f.rule.Source, scope)
-		if err != nil {
-			return false, err
-		}
-	}
-	siblings, err := f.cd2.List(ctx, full, true)
-	if err != nil {
-		return false, err
-	}
-	return !slices.ContainsFunc(siblings, func(file clouddrive2.File) bool {
-		return !file.Directory && (mediaFileType(file.Name) == "video" || mediaTemporaryName(file.Name)) || file.Directory && file.Name != ".actors" && file.Name != "extrafanart"
-	}), nil
-}
-
 func (s *MediaOrganizer) cleanupCD2(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	candidates := slices.Clone(f.unrelated)
-	// CD2 没有仅删除空目录的原子接口，目录统一保留，避免递归删除并发新内容。
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
-		}
-		orphan, err := f.cd2SidecarStillOrphan(ctx, candidate)
-		if err != nil {
-			return fmt.Errorf("复核 CD2 附件: %w", err)
-		}
-		if !orphan {
-			continue
 		}
 		valid, err := f.cd2CleanupCandidates(ctx, []MediaOrganizeEntry{candidate})
 		if err != nil {
@@ -574,7 +531,17 @@ func (s *MediaOrganizer) cleanupCD2(ctx context.Context, f *mediaOrganizeFiles, 
 		entry.Status, entry.Message = "error", "CD2 清理结果待核实；下轮监控会重新扫描"
 		entry.Result = &MediaOrganizeResult{Status: "error", Message: entry.Message, At: time.Now()}
 		index := len(run.Entries)
-		run.Entries = append(run.Entries, entry)
+		for i := range run.Entries {
+			if run.Entries[i].File.ID == entry.File.ID {
+				index = i
+				break
+			}
+		}
+		if index == len(run.Entries) {
+			run.Entries = append(run.Entries, entry)
+		} else {
+			run.Entries[index] = entry
+		}
 		if err := s.checkpoint(run); err != nil {
 			return err
 		}
@@ -583,11 +550,7 @@ func (s *MediaOrganizer) cleanupCD2(ctx context.Context, f *mediaOrganizeFiles, 
 		if err != nil {
 			return err
 		}
-		orphan, err = f.cd2SidecarStillOrphan(ctx, candidate)
-		if err != nil {
-			return err
-		}
-		if len(valid) == 0 || !orphan {
+		if len(valid) == 0 {
 			run.Entries[index].Status, run.Entries[index].Message, run.Entries[index].Result = "retained", "文件或目录已变化，已保留来源", nil
 			if err := s.checkpoint(run); err != nil {
 				return err
@@ -598,13 +561,16 @@ func (s *MediaOrganizer) cleanupCD2(ctx context.Context, f *mediaOrganizeFiles, 
 		result := &run.Entries[index]
 		if err == nil {
 			result.Status, result.Message = "done", "已通过 CD2 删除无关文件"
+			if f.orphanDue[entry.File.ID] {
+				result.Message = "已清理超过附件宽限仍无对应视频的字幕或附件"
+				s.mu.Lock()
+				s.forgetOrphanLocked(run.Rule, entry.File.ID)
+				s.mu.Unlock()
+			}
 		} else {
 			result.Message += "：" + err.Error()
 		}
 		result.Result = &MediaOrganizeResult{Status: result.Status, Message: result.Message, At: time.Now()}
-		if err == nil && entry.File.MediaType == "subtitle" {
-			result.Result.Status = "error"
-		}
 		if saveErr := s.checkpoint(run); saveErr != nil {
 			return saveErr
 		}

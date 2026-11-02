@@ -181,7 +181,7 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 	}
 	run = wait(run.ID)
 	state := mediaTestState(s, 1)
-	if state.History.Total != 2 || len(state.Cleanup) != 1 || state.Rules[0].Enabled {
+	if state.History.Total != 2 || len(state.Cleanup) != 1 || state.Rules[0].RealtimeEnabled {
 		t.Fatal("incorrect task/cleanup projection or monitoring toggled", state)
 	}
 	task, err := s.Task(run.ID, "show/Work.S01E01.strm")

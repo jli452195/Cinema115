@@ -14,10 +14,9 @@ import (
 )
 
 type MediaOrganizeMonitorStatus struct {
-	Mode           string    `json:"mode"`
-	Message        string    `json:"message,omitempty"`
-	LastEventAt    time.Time `json:"lastEventAt,omitempty"`
-	LastFallbackAt time.Time `json:"lastFallbackAt,omitempty"`
+	Mode        string    `json:"mode"`
+	Message     string    `json:"message,omitempty"`
+	LastEventAt time.Time `json:"lastEventAt,omitempty"`
 }
 
 type mediaLocalObservation struct {
@@ -95,8 +94,7 @@ func (s *MediaOrganizer) localMonitorSettings() mediaLocalMonitorOptions {
 	return o
 }
 func mediaSameWatchRule(a, b MediaOrganizeRule) bool {
-	a.LastScan, b.LastScan = time.Time{}, time.Time{}
-	return a == b
+	return a.ID == b.ID && a.Storage == b.Storage && a.Source == b.Source
 }
 func mediaMonitorDue(at, now time.Time) bool { return !at.IsZero() && !at.After(now) }
 func mediaMonitorDirty(local *mediaLocalRuntime, now time.Time, o mediaLocalMonitorOptions) {
@@ -195,7 +193,7 @@ func (s *MediaOrganizer) runLocalMonitor(ctx context.Context) {
 						plan.refresh = true
 					}
 					s.mu.Lock()
-					if local := s.localMonitors[id]; local != nil {
+					if local := s.localMonitors[id]; local != nil && s.realtimeEnabledLocked(id) {
 						local.status.LastEventAt = now
 						mediaMonitorDirty(local, now, o)
 						if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -299,7 +297,7 @@ func mediaReadLocalEvents(ctx context.Context, w mediaFSWatcher, inbox *mediaMon
 			if !ok {
 				events = nil
 				inbox.mu.Lock()
-				inbox.failure = "目录监听已关闭，使用定时扫描"
+				inbox.failure = "实时监听已关闭，正在尝试恢复"
 				inbox.mu.Unlock()
 				inbox.signal()
 				continue
@@ -311,7 +309,7 @@ func mediaReadLocalEvents(ctx context.Context, w mediaFSWatcher, inbox *mediaMon
 			if previous, exists := inbox.events[event.Name]; exists || len(inbox.events) < 5000 {
 				inbox.events[event.Name] = mediaMonitorEvent{op: previous.op | event.Op, at: o.now()}
 			} else {
-				inbox.failure = "目录事件过多，已切换定时扫描并准备重新监听"
+				inbox.failure = "目录事件过多，正在重新建立实时监听"
 			}
 			inbox.mu.Unlock()
 			inbox.signal()
@@ -319,12 +317,12 @@ func mediaReadLocalEvents(ctx context.Context, w mediaFSWatcher, inbox *mediaMon
 			if ctx.Err() != nil {
 				return
 			}
-			message := "目录监听已关闭，使用定时扫描"
+			message := "实时监听已关闭，正在尝试恢复"
 			if !ok {
 				watchErrors = nil
 			}
 			if ok && err != nil {
-				message = "实时监控异常，已切换定时扫描: " + err.Error()
+				message = "实时监听异常，正在尝试恢复: " + err.Error()
 			}
 			inbox.mu.Lock()
 			inbox.failure = message
@@ -355,10 +353,9 @@ func (s *MediaOrganizer) failLocalWatches(o mediaLocalMonitorOptions, plans map[
 		plan.refresh = false
 		if local := s.localMonitors[id]; local != nil {
 			local.initialized = true
-			local.status.Mode = "polling"
+			local.status.Mode = "unavailable"
 			local.status.Message = message
 			clear(local.files)
-			mediaMonitorDirty(local, now, o)
 		}
 	}
 	s.notify()
@@ -369,7 +366,7 @@ func (s *MediaOrganizer) reconcileLocalWatches(ctx context.Context, o mediaLocal
 	s.mu.Lock()
 	rules := make(map[string]MediaOrganizeRule, len(s.doc.Rules))
 	for _, rule := range s.doc.Rules {
-		if rule.Enabled && rule.Storage == "local" {
+		if rule.RealtimeEnabled && rule.Storage == "local" {
 			rules[rule.ID] = rule
 		}
 	}
@@ -437,7 +434,7 @@ func (s *MediaOrganizer) reconcileLocalWatches(ctx context.Context, o mediaLocal
 			}
 		}
 		if err != nil {
-			message = "无法建立实时监听，使用定时扫描: " + err.Error()
+			message = "无法建立实时监听，正在尝试恢复: " + err.Error()
 		}
 		if err == nil {
 			plan.root = identity
@@ -452,16 +449,16 @@ func (s *MediaOrganizer) reconcileLocalWatches(ctx context.Context, o mediaLocal
 		s.mu.Lock()
 		if local := s.localMonitors[id]; local != nil && mediaSameWatchRule(local.rule, rule) {
 			first := !local.initialized
-			wasPolling := local.status.Mode == "polling"
+			wasUnavailable := local.status.Mode == "unavailable"
 			local.initialized = true
 			local.status.Mode, local.status.Message = "realtime", ""
 			if message != "" {
-				local.status.Mode, local.status.Message = "polling", message
+				local.status.Mode, local.status.Message = "unavailable", message
 			}
 			if changed {
 				clear(local.files)
 			}
-			if first || changed || wasPolling && message == "" {
+			if message == "" && (first || changed || wasUnavailable) {
 				local.dirtyDue = now
 				local.dirtyFirst = now
 				s.notify()

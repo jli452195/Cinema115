@@ -21,24 +21,27 @@ var errMediaTargetExists = errors.New("目标已存在，不覆盖")
 var errMediaDuplicateDone = errors.New("已删除 SHA1 相同的来源重复文件")
 
 type MediaOrganizeRule struct {
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	Storage            string    `json:"storage"`
-	Source             string    `json:"source"`
-	Target             string    `json:"target"`
-	Failure            string    `json:"failure,omitempty"`
-	SourceID           string    `json:"sourceId,omitempty"`
-	TargetID           string    `json:"targetId,omitempty"`
-	FailureID          string    `json:"failureId,omitempty"`
-	AccountID          string    `json:"accountId,omitempty"`
-	ConnectionID       string    `json:"connectionId,omitempty"`
-	ConnectionRevision uint64    `json:"connectionRevision,omitempty"`
-	Classify           bool      `json:"classify"`
-	Enabled            bool      `json:"enabled"`
-	IntervalMinutes    int       `json:"intervalMinutes"`
-	IntervalSeconds    int       `json:"intervalSeconds,omitempty"`
-	DeleteDuplicates   bool      `json:"deleteDuplicates,omitempty"`
-	LastScan           time.Time `json:"lastScan"`
+	ID                       string    `json:"id"`
+	Name                     string    `json:"name"`
+	Storage                  string    `json:"storage"`
+	Source                   string    `json:"source"`
+	Target                   string    `json:"target"`
+	Failure                  string    `json:"failure,omitempty"`
+	SourceID                 string    `json:"sourceId,omitempty"`
+	TargetID                 string    `json:"targetId,omitempty"`
+	FailureID                string    `json:"failureId,omitempty"`
+	AccountID                string    `json:"accountId,omitempty"`
+	ConnectionID             string    `json:"connectionId,omitempty"`
+	ConnectionRevision       uint64    `json:"connectionRevision,omitempty"`
+	Classify                 bool      `json:"classify"`
+	RealtimeEnabled          bool      `json:"realtimeEnabled"`
+	ScheduleEnabled          bool      `json:"scheduleEnabled"`
+	IntervalSeconds          int       `json:"intervalSeconds"`
+	AttachmentCleanupEnabled bool      `json:"attachmentCleanupEnabled"`
+	AttachmentGraceSeconds   int       `json:"attachmentGraceSeconds"`
+	NextScanAt               time.Time `json:"nextScanAt,omitempty"`
+	DeleteDuplicates         bool      `json:"deleteDuplicates,omitempty"`
+	LastScan                 time.Time `json:"lastScan"`
 }
 
 type MediaOrganizeEntry struct {
@@ -71,6 +74,7 @@ type MediaOrganizeGroup struct {
 
 type MediaOrganizeRun struct {
 	ID             string                 `json:"id"`
+	Trigger        string                 `json:"trigger,omitempty"`
 	Rule           MediaOrganizeRule      `json:"rule"`
 	Classification ClassificationSnapshot `json:"classification"`
 	Status         string                 `json:"status"`
@@ -82,7 +86,6 @@ type MediaOrganizeRun struct {
 	ReadyCount     int                    `json:"readyCount"`
 	FailureCount   int                    `json:"failureCount"`
 	TaskFileID     string                 `json:"taskFileId,omitempty"`
-	CD2ScanPaths   []string               `json:"cd2ScanPaths,omitempty"`
 	streaming      bool
 	processing     map[string]bool
 }
@@ -111,8 +114,9 @@ type ClassificationRules interface {
 }
 
 type mediaOrganizeDocument struct {
-	Rules []MediaOrganizeRule `json:"rules"`
-	Runs  []MediaOrganizeRun  `json:"runs"`
+	Rules   []MediaOrganizeRule         `json:"rules"`
+	Runs    []MediaOrganizeRun          `json:"runs"`
+	Orphans map[string]mediaOrphanState `json:"orphans,omitempty"`
 }
 
 // MediaOrganizer has its own state and worker; it never updates anime tasks.
@@ -135,7 +139,6 @@ type MediaOrganizer struct {
 	monitorWake    chan struct{}
 	monitorRunning bool
 	localMonitors  map[string]*mediaLocalRuntime
-	cd2Monitors    map[string]*mediaCD2Runtime
 	monitorOptions mediaLocalMonitorOptions
 }
 
@@ -158,7 +161,6 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	*target = source
 	target.processing = nil
 	target.Groups = slices.Clone(source.Groups)
-	target.CD2ScanPaths = slices.Clone(source.CD2ScanPaths)
 	target.Entries = slices.Clone(source.Entries)
 	for i := range target.Entries {
 		target.Entries[i].File.NamingValues = maps.Clone(source.Entries[i].File.NamingValues)
@@ -204,41 +206,22 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 	if strings.TrimSpace(rule.Name) == "" || len([]rune(rule.Name)) > 80 {
 		return rule, ErrMediaOrganizeInput
 	}
-	if rule.Storage == "cd2" {
-		if rule.IntervalSeconds == 0 {
-			rule.IntervalSeconds = 20
-		}
-		if rule.IntervalSeconds < 1 || rule.IntervalSeconds > 86400 {
-			return rule, ErrMediaOrganizeInput
-		}
-	} else {
-		rule.IntervalSeconds, rule.DeleteDuplicates = 0, false
-		if rule.IntervalMinutes < 1 || rule.IntervalMinutes > 1440 {
-			return rule, ErrMediaOrganizeInput
-		}
+	if rule.AttachmentGraceSeconds < 0 || rule.AttachmentGraceSeconds > 86400 {
+		return rule, ErrMediaOrganizeInput
+	}
+	if err := mediaValidateSchedule(rule.Storage, MediaOrganizeSchedule{rule.RealtimeEnabled, rule.ScheduleEnabled, rule.IntervalSeconds}); err != nil {
+		return rule, err
+	}
+	if rule.Storage == "local" {
+		rule.DeleteDuplicates = false
 	}
 	if rule.ID != "" {
 		s.mu.Lock()
-		for i, old := range s.doc.Rules {
-			if old.ID != rule.ID {
-				continue
+		for _, old := range s.doc.Rules {
+			if old.ID == rule.ID && mediaSameRuleSettings(old, rule) {
+				defer s.mu.Unlock()
+				return s.updateScheduleLocked(old.ID, MediaOrganizeSchedule{rule.RealtimeEnabled, rule.ScheduleEnabled, rule.IntervalSeconds})
 			}
-			settings := rule
-			settings.Enabled, settings.LastScan = old.Enabled, old.LastScan
-			if settings != old {
-				break
-			}
-			// Scheduling changes never touch a running task's frozen rule or
-			// require an available mount/account merely to pause monitoring.
-			if old.Enabled == rule.Enabled {
-				s.mu.Unlock()
-				return old, nil
-			}
-			old.Enabled = rule.Enabled
-			s.doc.Rules[i] = old
-			err := s.persistMonitorRulesLocked()
-			s.mu.Unlock()
-			return old, err
 		}
 		s.mu.Unlock()
 	}
@@ -300,46 +283,58 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active != "" || len(s.actions) > 0 {
-		return rule, ErrMediaOrganizeBusy
-	}
+	var changed []string
 	if rule.ID == "" {
 		var err error
 		rule.ID, err = organizeToken()
 		if err != nil {
 			return rule, err
 		}
-		rule.LastScan = time.Time{}
+		rule.LastScan, rule.NextScanAt = time.Time{}, time.Time{}
 		s.doc.Rules = append(s.doc.Rules, rule)
 	} else {
 		found := false
 		for i, old := range s.doc.Rules {
-			if old.ID == rule.ID {
-				found = true
-				rule.LastScan = old.LastScan
-				if old.Storage != rule.Storage || old.Source != rule.Source || old.Target != rule.Target || old.SourceID != rule.SourceID || old.TargetID != rule.TargetID || old.Failure != rule.Failure || old.FailureID != rule.FailureID || old.Classify != rule.Classify || old.AccountID != rule.AccountID || old.ConnectionID != rule.ConnectionID || old.ConnectionRevision != rule.ConnectionRevision {
-					rule.LastScan = time.Time{}
-				}
-				s.doc.Rules[i] = rule
-				break
+			if old.ID != rule.ID {
+				continue
 			}
+			found = true
+			rule.LastScan = old.LastScan
+			rule.NextScanAt = mediaNextScanAfterEdit(old, rule, s.localMonitorSettings().now())
+			changed = s.cancelAutomaticScansLocked(rule.ID)
+			if rule.ScheduleEnabled && len(changed) > 0 {
+				rule.NextScanAt = time.Time{}
+			}
+			s.doc.Rules[i] = rule
+			if !s.doc.Orphans[rule.ID].matches(rule) {
+				delete(s.doc.Orphans, rule.ID)
+			}
+			break
 		}
 		if !found {
 			return rule, ErrMediaOrganizeInput
 		}
 	}
-	return rule, s.persistMonitorRulesLocked()
+	if err := s.persistMonitorRulesLocked(changed...); err != nil {
+		return rule, err
+	}
+	for _, id := range changed {
+		delete(s.actions, id)
+	}
+	s.notify()
+	return rule, nil
 }
 
 func (s *MediaOrganizer) DeleteRule(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active != "" || len(s.actions) > 0 {
+	if s.ruleExecutingLocked(id) {
 		return ErrMediaOrganizeBusy
 	}
 	for i, r := range s.doc.Rules {
 		if r.ID == id {
 			s.doc.Rules = append(s.doc.Rules[:i], s.doc.Rules[i+1:]...)
+			delete(s.doc.Orphans, id)
 			removed := []string{}
 			runs := make([]MediaOrganizeRun, 0, len(s.doc.Runs))
 			for _, run := range s.doc.Runs {
@@ -350,7 +345,13 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 				}
 			}
 			s.doc.Runs = runs
-			return s.persistMonitorRulesLocked(removed...)
+			if err := s.persistMonitorRulesLocked(removed...); err != nil {
+				return err
+			}
+			for _, runID := range removed {
+				delete(s.actions, runID)
+			}
+			return nil
 		}
 	}
 	return ErrMediaOrganizeInput
@@ -359,8 +360,15 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, r := range s.doc.Runs {
+	for i, r := range s.doc.Runs {
 		if r.Rule.ID == id && (r.Status == "queued" || r.Status == "scanning" || r.Status == "running") {
+			if r.Status == "queued" && s.active != r.ID && r.Trigger != "manual" {
+				r.Trigger = "manual"
+				s.doc.Runs[i].Trigger = "manual"
+				if err := s.persistLocked(r.ID); err != nil {
+					return MediaOrganizeRun{}, err
+				}
+			}
 			var copy MediaOrganizeRun
 			cloneMediaRun(r, &copy)
 			return copy, nil
@@ -375,6 +383,10 @@ func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 }
 
 func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeRun, error) {
+	return s.queueTriggeredScanLocked(rule, "manual")
+}
+
+func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigger string) (MediaOrganizeRun, error) {
 	var classification ClassificationSnapshot
 	if rule.Classify {
 		if s.classification == nil {
@@ -390,7 +402,7 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 	if err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	r := MediaOrganizeRun{ID: id, Rule: rule, Classification: classification, Status: "queued", CreatedAt: time.Now(), UpdatedAt: time.Now(), Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, Status: "queued", CreatedAt: time.Now(), UpdatedAt: time.Now(), Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err
 	}
@@ -412,7 +424,11 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
 	for i := range s.doc.Rules {
 		if s.doc.Rules[i].ID == rule.ID {
-			s.doc.Rules[i].LastScan = time.Now()
+			now := s.localMonitorSettings().now()
+			s.doc.Rules[i].LastScan = now
+			if trigger == "schedule" {
+				s.doc.Rules[i].NextScanAt = now.Add(time.Duration(rule.IntervalSeconds) * time.Second)
+			}
 		}
 	}
 	if err := s.persistLocked(append(removed, id)...); err != nil {
@@ -452,9 +468,8 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 	s.localMonitors = make(map[string]*mediaLocalRuntime)
 	s.mu.Unlock()
 	var monitors sync.WaitGroup
-	monitors.Add(2)
+	monitors.Add(1)
 	go func() { defer monitors.Done(); s.runLocalMonitor(monitorCtx) }()
-	go func() { defer monitors.Done(); s.runCD2Monitor(monitorCtx) }()
 	defer func() {
 		stopMonitor()
 		monitors.Wait()
@@ -472,10 +487,10 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 		case <-ticker.C:
 		case <-s.wake:
 		}
-		if err := s.schedule(); err != nil {
-			return err
-		}
 		for ctx.Err() == nil {
+			if err := s.schedule(); err != nil {
+				return err
+			}
 			s.mu.Lock()
 			if s.persistErr != nil {
 				err := s.persistErr
@@ -511,7 +526,6 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 			cancel()
 			if err != nil {
 				s.retryLocalScan(run.Rule, err)
-				s.cd2ScanFailed(run.Rule)
 				run.Status = "failed"
 				run.Message = err.Error()
 				if saveErr := s.checkpoint(&run); saveErr != nil {
@@ -523,69 +537,6 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 			s.mu.Unlock()
 		}
 	}
-}
-
-func (s *MediaOrganizer) schedule() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.localMonitorSettings().now()
-	for _, rule := range s.doc.Rules {
-		if !rule.Enabled {
-			continue
-		}
-		var local *mediaLocalRuntime
-		fallback := now.Sub(rule.LastScan) >= time.Duration(rule.IntervalMinutes)*time.Minute
-		if rule.Storage == "local" && s.monitorRunning {
-			local = s.localMonitors[rule.ID]
-			if local == nil || !local.initialized {
-				continue
-			}
-			fallback = local.status.LastFallbackAt.IsZero() || now.Sub(local.status.LastFallbackAt) >= time.Duration(rule.IntervalMinutes)*time.Minute
-			if !fallback && !mediaMonitorDue(local.dirtyDue, now) && !mediaMonitorDue(local.settleDue, now) && !mediaMonitorDue(local.retryDue, now) {
-				continue
-			}
-		} else if rule.Storage == "cd2" {
-			if !s.cd2ScheduleDueLocked(rule, now) {
-				continue
-			}
-		} else if !fallback {
-			continue
-		}
-		pending := false
-		for _, r := range s.doc.Runs {
-			if r.Rule.ID == rule.ID && (r.Status == "queued" || r.Status == "scanning" || r.Status == "running") {
-				pending = true
-				break
-			}
-		}
-		if !pending {
-			queued, err := s.queueScanLocked(rule)
-			if err != nil {
-				if !errors.Is(err, ErrMediaOrganizeBusy) && !errors.Is(err, ErrClassificationUnavailable) {
-					return err
-				}
-				continue
-			}
-			if rule.Storage == "cd2" {
-				s.cd2QueuedLocked(rule, queued.ID, now)
-			}
-			if local != nil {
-				if fallback {
-					local.status.LastFallbackAt = now
-				}
-				if mediaMonitorDue(local.dirtyDue, now) {
-					local.dirtyDue, local.dirtyFirst = time.Time{}, time.Time{}
-				}
-				if mediaMonitorDue(local.settleDue, now) {
-					local.settleDue = time.Time{}
-				}
-				if mediaMonitorDue(local.retryDue, now) {
-					local.retryDue = time.Time{}
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func mediaWithin(root, child string) bool {

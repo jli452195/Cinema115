@@ -102,7 +102,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
 	}
-	rule := service.MediaOrganizeRule{Name: "API验收", Storage: "local", Source: source, Target: target, Failure: t.TempDir(), Classify: true, IntervalMinutes: 5}
+	rule := service.MediaOrganizeRule{Name: "API验收", Storage: "local", Source: source, Target: target, Failure: t.TempDir(), Classify: true, IntervalSeconds: 300}
 	raw, _ := json.Marshal(rule)
 	response := request("POST", "/rules", string(raw), 200)
 	if err := json.Unmarshal(response.Body.Bytes(), &rule); err != nil {
@@ -196,7 +196,7 @@ func TestMediaOrganizeClassificationUnavailableAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := s.SaveRule(service.MediaOrganizeRule{Name: "分类不可用", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), Classify: true, IntervalMinutes: 5})
+	rule, err := s.SaveRule(service.MediaOrganizeRule{Name: "分类不可用", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), Classify: true, IntervalSeconds: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,5 +209,181 @@ func TestMediaOrganizeClassificationUnavailableAPI(t *testing.T) {
 	}
 	if s.State().Active || !s.State().Rules[0].LastScan.IsZero() {
 		t.Fatal("rejected submission changed monitoring state")
+	}
+}
+
+func TestMediaOrganizeScheduleAPIKeepsManualWorkAndFrozenRules(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "media.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	s, err := service.OpenMediaOrganizerSQLite(ctx, store, t.TempDir(), "test-secret", nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := s.SaveRule(service.MediaOrganizeRule{Name: "独立调度", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalSeconds: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	admin := router.Group("/api/admin", func(c *gin.Context) {
+		if c.GetHeader("Authorization") != "Bearer admin-test" {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
+	})
+	RegisterMediaOrganize(admin, s)
+	request := func(method, path, body string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/admin/media-organize"+path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer admin-test")
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		if w.Code != want || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body)
+		}
+		return w
+	}
+	path := "/rules/" + rule.ID + "/schedule"
+	unauthorized := httptest.NewRecorder()
+	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPatch, "/api/admin/media-organize"+path, strings.NewReader(`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":17}`)))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatal("调度设置缺少管理员鉴权")
+	}
+	for _, body := range []string{
+		`{}`,
+		`{"realtimeEnabled":false,"intervalSeconds":17}`,
+		`{"realtimeEnabled":null,"scheduleEnabled":true,"intervalSeconds":17}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":0}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":86401}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":1.5}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":"20"}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":17,"source":"/other"}`,
+		`{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":17} {}`,
+	} {
+		request(http.MethodPatch, path, body, http.StatusBadRequest)
+		if got := s.State().Rules[0]; got.RealtimeEnabled || got.ScheduleEnabled || got.IntervalSeconds != 300 {
+			t.Fatal("无效请求修改了规则", got)
+		}
+	}
+	response := request(http.MethodPatch, path, `{"realtimeEnabled":true,"scheduleEnabled":true,"intervalSeconds":17}`, http.StatusOK)
+	var enabled service.MediaOrganizeRule
+	if err := json.Unmarshal(response.Body.Bytes(), &enabled); err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.RealtimeEnabled || !enabled.ScheduleEnabled || enabled.IntervalSeconds != 17 || enabled.Source != rule.Source || enabled.Target != rule.Target {
+		t.Fatal("调度设置没有独立保存", enabled)
+	}
+	run, err := s.Start(rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPatch, path, `{"realtimeEnabled":false,"scheduleEnabled":false,"intervalSeconds":23}`, http.StatusOK)
+	if !s.State().Active {
+		t.Fatal("暂停自动扫描取消了手动任务")
+	}
+	edited := s.State().Rules[0]
+	edited.Name, edited.Target = "运行中编辑", t.TempDir()
+	raw, err := json.Marshal(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, "/rules", string(raw), http.StatusOK)
+	frozen, err := s.Snapshot(run.ID)
+	if err != nil || frozen.Rule.Target != rule.Target || frozen.Rule.IntervalSeconds != 17 || !frozen.Rule.RealtimeEnabled || !frozen.Rule.ScheduleEnabled {
+		t.Fatal("排队的手动任务配置被修改", frozen.Rule, err)
+	}
+	other, err := s.SaveRule(service.MediaOrganizeRule{Name: "其他规则", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalSeconds: 20})
+	if err != nil {
+		t.Fatal("其他规则被手动任务锁住", err)
+	}
+	request(http.MethodDelete, "/rules/"+other.ID, "", http.StatusOK)
+	if err := os.Remove(rule.Source); err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPatch, path, `{"realtimeEnabled":false,"scheduleEnabled":false,"intervalSeconds":23}`, http.StatusOK)
+	request(http.MethodPatch, "/rules/missing/schedule", `{"realtimeEnabled":false,"scheduleEnabled":true,"intervalSeconds":23}`, http.StatusBadRequest)
+	request(http.MethodDelete, "/rules/"+rule.ID, "", http.StatusOK)
+	if s.State().Active || len(s.State().Rules) != 0 {
+		t.Fatal("明确删除排队规则后仍残留任务")
+	}
+}
+
+func TestMediaOrganizeAttachmentGraceAPI(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "media.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	s, err := service.OpenMediaOrganizerSQLite(ctx, store, t.TempDir(), "test-secret", nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	RegisterMediaOrganize(router.Group("/api/admin"), s)
+	request := func(path, body string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		method := http.MethodPost
+		if strings.HasSuffix(path, "/schedule") {
+			method = http.MethodPatch
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, "/api/admin/media-organize"+path, strings.NewReader(body)))
+		if w.Code != want {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body)
+		}
+		return w
+	}
+	source, target := t.TempDir(), t.TempDir()
+	for _, test := range []struct {
+		value       any
+		enabled     any
+		want        int
+		wantEnabled bool
+	}{
+		{nil, nil, 60, true},
+		{0, true, 0, true},
+		{37, false, 37, false},
+		{86400, true, 86400, true},
+		{nil, false, 60, false},
+	} {
+		body := map[string]any{"name": "附件宽限", "storage": "local", "source": source, "target": target, "intervalSeconds": 20}
+		if test.value != nil {
+			body["attachmentGraceSeconds"] = test.value
+		}
+		if test.enabled != nil {
+			body["attachmentCleanupEnabled"] = test.enabled
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved service.MediaOrganizeRule
+		if err := json.Unmarshal(request("/rules", string(raw), http.StatusOK).Body.Bytes(), &saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved.AttachmentGraceSeconds != test.want || saved.AttachmentCleanupEnabled != test.wantEnabled {
+			t.Fatal("附件清理默认值、关闭状态或明确的零值未保留", saved)
+		}
+		if err := json.Unmarshal(request("/rules/"+saved.ID+"/schedule", `{"realtimeEnabled":false,"scheduleEnabled":false,"intervalSeconds":31}`, http.StatusOK).Body.Bytes(), &saved); err != nil || saved.AttachmentGraceSeconds != test.want || saved.AttachmentCleanupEnabled != test.wantEnabled {
+			t.Fatal("独立开关接口不应改动附件清理设置", saved, err)
+		}
+	}
+	for _, value := range []any{-1, 86401, 0.5, "20"} {
+		body := map[string]any{"name": "无效宽限", "storage": "local", "source": source, "target": target, "intervalSeconds": 20, "attachmentGraceSeconds": value}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request("/rules", string(raw), http.StatusBadRequest)
+	}
+	request("/rules", `{"name":"无效开关","storage":"local","source":"source","target":"target","intervalSeconds":20,"attachmentCleanupEnabled":"false"}`, http.StatusBadRequest)
+	if len(s.State().Rules) != 5 {
+		t.Fatal("无效宽限不应创建规则", s.State().Rules)
 	}
 }

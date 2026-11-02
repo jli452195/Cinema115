@@ -28,7 +28,7 @@ const canBrowse = computed(() => !!config.value?.enabled && !!config.value?.toke
 const permissionLabels: { key: keyof CD2Permissions; label: string }[] = [
   { key: 'list', label: '列目录' }, { key: 'read', label: '读取文件' }, { key: 'createFolder', label: '创建目录' },
   { key: 'rename', label: '重命名' }, { key: 'move', label: '移动' }, { key: 'copy', label: '复制' },
-  { key: 'delete', label: '删除' }, { key: 'push', label: '事件推送' },
+  { key: 'delete', label: '删除' },
 ]
 watch(signature, () => { testResult.value = undefined; notice.value = ''; error.value = '' }, { flush: 'sync' })
 
@@ -102,7 +102,7 @@ onBeforeUnmount(() => { lifecycle.abort(); testController?.abort(); tokenInput.v
           <p id="cd2-url-help" class="cd2-muted cd2-field-help">填写 Cinema115 后端可访问的 CD2 地址。HTTP 使用明文 gRPC，HTTPS 使用 TLS；反向代理需支持 HTTP/2 gRPC。</p>
           <label class="cd2-field">API Token<input v-model="tokenInput" type="password" autocomplete="new-password" maxlength="16384" :disabled="clearToken" :placeholder="config?.tokenConfigured ? '留空保留已保存 Token' : '填写在 CloudDrive2 中创建的 API Token'" aria-describedby="cd2-token-help" /></label>
           <label v-if="config?.tokenConfigured" class="cd2-check"><input v-model="clearToken" type="checkbox" :disabled="!!tokenInput" /><span>清除已保存 Token</span></label>
-          <p id="cd2-token-help" class="cd2-muted cd2-field-help">Token 加密保存在后端，保存后不回显。按需要在 CD2 中授予目录读取、事件推送、移动、重命名和清理等权限。</p>
+          <p id="cd2-token-help" class="cd2-muted cd2-field-help">Token 加密保存在后端，保存后不回显。按需要在 CD2 中授予目录读取、移动、重命名和清理等权限。</p>
           <div class="cd2-config-state"><span class="cd2-muted">{{ dirty ? '有未保存的修改' : config ? '当前配置已保存' : '' }}</span><span v-if="config" class="cd2-muted">{{ config.tokenConfigured ? '已保存 Token' : '未配置 Token' }}</span></div>
         </fieldset>
       </form>
@@ -129,7 +129,7 @@ onBeforeUnmount(() => { lifecycle.abort(); testController?.abort(); tokenInput.v
         <div class="cd2-section-heading"><div><h2 id="cd2-use-title">目录与功能</h2><p class="cd2-muted">浏览 CD2 中可访问的网盘和账号，在各功能中分别选择业务目录。</p></div></div>
         <div class="cd2-use-actions"><button type="button" class="cd2-button" :disabled="!canBrowse" @click="directoryOpen = true"><IconFolder :size="17" aria-hidden="true" />浏览目录</button><RouterLink to="/media/organize" class="cd2-button">前往自动整理</RouterLink></div>
         <p class="cd2-muted">{{ dirty ? '请先保存当前修改，再浏览目录。' : !config?.enabled ? '启用并保存连接后，可浏览 CD2 目录。' : !config?.tokenConfigured ? '请配置并保存 API Token。' : '目录浏览使用已保存的连接。自动整理中选择 CloudDrive2 即可使用。' }}</p>
-        <p class="cd2-muted mt-2">在自动整理中配置秒级检查间隔和相同文件清理。目录变化由各功能共用的事件连接接收。</p>
+        <p class="cd2-muted mt-2">自动整理支持自定义轮询间隔，可开关未匹配附件清理并设置宽限；目录读完立即整理，来源空子目录始终清理。</p>
         <p class="cd2-muted mt-2">更换地址或 Token 后，已有整理规则需重新选择目录。正在运行的任务使用启动时的连接设置。</p>
       </section>
     </div>

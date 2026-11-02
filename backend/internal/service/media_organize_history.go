@@ -192,12 +192,10 @@ func (s *MediaOrganizer) State() MediaOrganizeState {
 	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Active: s.active != "" || len(s.actions) > 0, ActiveRules: []string{}}
 	state.Monitoring = make(map[string]MediaOrganizeMonitorStatus, len(s.localMonitors))
 	for _, rule := range s.doc.Rules {
-		if rule.Enabled && rule.Storage == "cd2" {
-			if monitor := s.cd2Monitors[rule.ID]; monitor != nil {
-				state.Monitoring[rule.ID] = monitor.status
-			}
+		if rule.ScheduleEnabled && rule.Storage != "local" {
+			state.Monitoring[rule.ID] = MediaOrganizeMonitorStatus{Mode: "polling"}
 		}
-		if rule.Enabled && rule.Storage == "local" {
+		if rule.RealtimeEnabled && rule.Storage == "local" {
 			if local := s.localMonitors[rule.ID]; local != nil && mediaSameWatchRule(local.rule, rule) {
 				state.Monitoring[rule.ID] = local.status
 			}

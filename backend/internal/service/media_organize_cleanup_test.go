@@ -117,7 +117,8 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 	}
 	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	if run.Status != "completed" || !strings.Contains(run.Message, "6 项") {
+	cleanup := mediaRunCleanup(run)
+	if run.Status != "completed" || cleanup.Files+cleanup.Directories != 6 {
 		t.Fatal("cleanup-only pass did not finish", run)
 	}
 	for _, name := range []string{"readme.TXT", "subs.ZIP", "ads/note.rar", "unassigned/cover.jpg"} {
@@ -287,7 +288,7 @@ func newMediaCleanupCloud(t *testing.T) (*MediaOrganizer, *mediaCleanupDrive, Me
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := s.SaveRule(MediaOrganizeRule{Name: "模拟云端", Storage: "115", AccountID: accountID, SourceID: "10", Source: "/inbox", TargetID: "20", Target: "/library", IntervalMinutes: 5})
+	rule, err := s.SaveRule(MediaOrganizeRule{Name: "模拟云端", Storage: "115", AccountID: accountID, SourceID: "10", Source: "/inbox", TargetID: "20", Target: "/library", IntervalSeconds: 300, AttachmentCleanupEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +517,7 @@ func TestMediaOrganizerCloudEmptyDirectoriesRecheck(t *testing.T) {
 					return nil
 				}
 			}
-			if err := s.cleanup(context.Background(), f, &run); err != nil {
+			if err := s.cleanupEmptyDirectories(context.Background(), f, &run); err != nil {
 				t.Fatal(err)
 			}
 			if incoming {
@@ -544,6 +545,9 @@ func TestMediaOrganizerKeepsSidecarsWhenVideoArrivesAfterScan(t *testing.T) {
 	}
 	run.Entries = entries
 	mediaDiscardOrphanSidecars(f, &run, entries)
+	if err := s.prepareOrphanCleanup(f, &run); err != nil {
+		t.Fatal(err)
+	}
 	if len(f.unrelated) != len(names) {
 		t.Fatal("expected orphan sidecar candidates", f.unrelated)
 	}
@@ -585,6 +589,9 @@ func TestMediaOrganizerCloudOrphanAttachments(t *testing.T) {
 			}
 			run.Entries = entries
 			mediaDiscardOrphanSidecars(f, &run, entries)
+			if err := s.prepareOrphanCleanup(f, &run); err != nil {
+				t.Fatal(err)
+			}
 			if scenario == "new video" {
 				d.dirs["10"] = append(d.dirs["10"], p115.ShareFile{ID: "501", Name: "Work.S01E01.mkv", Size: 9})
 			} else {
@@ -615,6 +622,9 @@ func TestMediaOrganizerKeepsSharedArtworkWhenVideoArrivesAfterScan(t *testing.T)
 			}
 			run.Entries = entries
 			mediaDiscardOrphanSidecars(f, &run, entries)
+			if err := s.prepareOrphanCleanup(f, &run); err != nil {
+				t.Fatal(err)
+			}
 			video := "Work.S01E01.mkv"
 			if nested {
 				video = "Season 01/" + video
@@ -654,6 +664,9 @@ func TestMediaOrganizerCloudArtworkScopeRecheck(t *testing.T) {
 				}
 				run.Entries = entries
 				mediaDiscardOrphanSidecars(f, &run, entries)
+				if err := s.prepareOrphanCleanup(f, &run); err != nil {
+					t.Fatal(err)
+				}
 				if scenario == "new video" {
 					d.dirs[scopeID] = append(d.dirs[scopeID], p115.ShareFile{ID: "900", Name: "Work.S01E01.mkv", Size: 9})
 				} else if scenario == "moved scope" {

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"time"
 
 	"strm115/backend/internal/client/clouddrive2"
 )
@@ -21,12 +20,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 	}
 	files.cd2Naming = make(map[string]preparedMediaNaming)
 	files.cd2Recognized = make(map[string]bool)
-	files.cd2Ready = s.cd2FileReadiness(run.Rule)
-	roots := run.CD2ScanPaths
-	if len(roots) == 0 {
-		roots = []string{run.Rule.Source}
-	}
-	queue := slices.Clone(roots)
+	queue := []string{run.Rule.Source}
 	visited := make(map[string]bool)
 	deferred := make([]MediaOrganizeEntry, 0)
 	unrelated := make([]MediaOrganizeEntry, 0)
@@ -48,7 +42,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 			return fmt.Errorf("CD2 扫描范围过大，请缩小来源目录")
 		}
 		visited[directory] = true
-		files.cd2ScanPaths, files.cd2Shallow = []string{directory}, true
+		files.cd2ScanPath, files.cd2Shallow = directory, true
 		files.unrelated, files.directories = nil, nil
 		entries, err := files.scan(ctx)
 		if err != nil {
@@ -86,7 +80,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 	}
 	files.unrelated, files.directories = unrelated, directories
 	files.localCandidates, files.settlingVideos, files.localPending = allCandidates, allSettling, allPending
-	files.cd2ScanPaths, files.cd2Shallow = roots, false
+	files.cd2ScanPath, files.cd2Shallow = "", false
 	if len(deferred) > 0 {
 		deferred = files.holdLocalCompanions(deferred, allPending)
 		if err := s.cd2ProcessBatch(ctx, files, run, deferred, false); err != nil {
@@ -94,6 +88,9 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 		}
 	}
 	// 仅在所有待扫描目录完整读取后清理，后续目录失败不会误删附件。
+	if err := s.prepareOrphanCleanup(files, run); err != nil {
+		return err
+	}
 	if len(files.unrelated) > 0 {
 		if err := s.cleanupCD2(ctx, files, run); err != nil {
 			return err
@@ -102,10 +99,9 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 	run.streaming = false
 	mediaFinishRun(run)
 	if len(run.Entries) == 0 && len(allPending) > 0 {
-		run.Message = fmt.Sprintf("有 %d 个文件仍在写入或等待稳定，稍后继续整理", len(allPending))
+		run.Message = fmt.Sprintf("有 %d 个临时文件尚未完成，留待后续轮询", len(allPending))
 	}
-	s.cd2ScanSucceeded(run.Rule, run.CD2ScanPaths, allPending)
-	return s.checkpoint(run)
+	return nil
 }
 
 func (s *MediaOrganizer) cd2ProcessBatch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry, recheck bool) error {
@@ -249,12 +245,4 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 		run.Entries = append(run.Entries, entry)
 	}
 	return nil
-}
-
-func mediaCD2Interval(rule MediaOrganizeRule) time.Duration {
-	seconds := rule.IntervalSeconds
-	if seconds < 1 {
-		seconds = 20
-	}
-	return time.Duration(seconds) * time.Second
 }

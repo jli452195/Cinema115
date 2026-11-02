@@ -74,7 +74,7 @@ func newMediaOrganizeTest(t *testing.T) (*MediaOrganizer, *mediaRecognitionFake,
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := s.SaveRule(MediaOrganizeRule{Name: "临时验收", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalMinutes: 5})
+	rule, err := s.SaveRule(MediaOrganizeRule{Name: "临时验收", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalSeconds: 300, AttachmentCleanupEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	s, metadata, store, rule := newMediaOrganizeTest(t)
 	s.monitorOptions = mediaMonitorTestOptions()
 	mediaTestFile(t, rule.Source, "Work.S01E01.strm", "http://unchanged/")
-	rule.Enabled = true
+	rule.RealtimeEnabled = true
 	if _, err := s.SaveRule(rule); err != nil {
 		t.Fatal(err)
 	}
@@ -451,27 +451,27 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	runID := s.active
 	s.mu.Unlock()
 	lastScan := mediaTestState(s, 1).Rules[0].LastScan
-	rule.Enabled = false
+	rule.RealtimeEnabled = false
 	if _, err := s.SaveRule(rule); err != nil {
 		t.Fatal("running work must not prevent pausing", err)
 	}
 	for _, enabled := range []bool{true, false} {
-		rule.Enabled = enabled
+		rule.RealtimeEnabled = enabled
 		saved, err := s.SaveRule(rule)
-		if err != nil || saved.Enabled != enabled || !saved.LastScan.Equal(lastScan) {
+		if err != nil || saved.RealtimeEnabled != enabled || !saved.LastScan.Equal(lastScan) {
 			t.Fatal("monitoring toggle changed the scan schedule or was blocked", saved, err)
 		}
 	}
 	changed := rule
 	changed.Target = t.TempDir()
-	if _, err := s.SaveRule(changed); !errors.Is(err, ErrMediaOrganizeBusy) {
-		t.Fatal("running work must still block configuration changes", err)
+	if _, err := s.SaveRule(changed); err != nil {
+		t.Fatal("running work must allow saving the next configuration", err)
 	}
 	store.err = errors.New("disk full")
-	rule.Enabled = true
+	rule.RealtimeEnabled = true
 	_, saveErr := s.SaveRule(rule)
 	store.err = nil
-	if saveErr == nil || mediaTestState(s, 1).Rules[0].Enabled {
+	if saveErr == nil || mediaTestState(s, 1).Rules[0].RealtimeEnabled {
 		t.Fatal("failed toggle must preserve the persisted pause", saveErr)
 	}
 	mediaMonitorWait(t, func() bool {
@@ -484,7 +484,7 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	for ctx.Err() == nil {
 		run, err := s.Snapshot(runID)
 		if err == nil && run.Status == "completed" {
-			if !run.Rule.Enabled || mediaTestState(s, 1).Rules[0].Enabled || run.ReadyCount != 0 || run.FailureCount != 0 {
+			if !run.Rule.RealtimeEnabled || mediaTestState(s, 1).Rules[0].RealtimeEnabled || run.ReadyCount != 0 || run.FailureCount != 0 {
 				t.Fatal("pause changed the frozen task or counts", run)
 			}
 			data, err := os.ReadFile(filepath.Join(rule.Target, filepath.FromSlash(run.Entries[0].Relative)))
@@ -501,15 +501,15 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 	t.Run("missing local directory", func(t *testing.T) {
 		s, _, _, rule := newMediaOrganizeTest(t)
-		rule.Enabled = true
+		rule.RealtimeEnabled = true
 		if _, err := s.SaveRule(rule); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Remove(rule.Source); err != nil { // Empty, isolated t.TempDir only.
 			t.Fatal(err)
 		}
-		rule.Enabled = false
-		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].Enabled {
+		rule.RealtimeEnabled = false
+		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].RealtimeEnabled {
 			t.Fatal("unavailable mounts must still allow pausing", err)
 		}
 		rule.Classify = !rule.Classify
@@ -519,7 +519,7 @@ func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 	})
 	t.Run("removed primary account", func(t *testing.T) {
 		s, drive, rule := newMediaCleanupCloud(t)
-		rule.Enabled = true
+		rule.ScheduleEnabled = true
 		if _, err := s.SaveRule(rule); err != nil {
 			t.Fatal(err)
 		}
@@ -530,8 +530,8 @@ func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 		if err := s.accounts.Delete(a.ID, a.Revision); err != nil {
 			t.Fatal(err)
 		}
-		rule.Enabled = false
-		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].Enabled || len(drive.cookies) != 0 {
+		rule.ScheduleEnabled = false
+		if _, err := s.SaveRule(rule); err != nil || mediaTestState(s, 1).Rules[0].ScheduleEnabled || len(drive.cookies) != 0 {
 			t.Fatal("pausing must not require a primary account or drive request", err)
 		}
 		if _, err := s.files(context.Background(), rule); err == nil {

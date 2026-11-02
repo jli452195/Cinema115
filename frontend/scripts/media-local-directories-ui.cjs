@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
   const page = await context.newPage(), calls = [], errors = [], saves = []
   page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000)
-  const rule = { id: 'local1', name: '本地目录验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, enabled: false, intervalMinutes: 5 }
+  const rule = { id: 'local1', name: '本地目录验收', storage: 'local', source: '/media/inbox', target: '/media/library', failure: '/media/failed', classify: true, realtimeEnabled: false, scheduleEnabled: false, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
   const special = '/media/片源 & #? + 中文', failurePath = '/media/整理失败 # 目录', longName = '很长的目录名称'.repeat(25)
   const directory = (name, path) => ({ name, path })
   const directories = {

@@ -30,11 +30,7 @@ func mediaDiscardOrphanSidecars(f *mediaOrganizeFiles, run *MediaOrganizeRun, sc
 	if f.localCandidates != nil {
 		original = f.localCandidates
 	}
-	selected := make(map[string]bool, len(scanned))
 	if run.streaming {
-		for _, entry := range scanned {
-			selected[entry.File.ID] = true
-		}
 		for _, entry := range run.Entries {
 			if entry.File.MediaType == "video" && entry.Status == "done" {
 				original = append(original, entry.File)
@@ -42,47 +38,13 @@ func mediaDiscardOrphanSidecars(f *mediaOrganizeFiles, run *MediaOrganizeRun, sc
 		}
 	}
 	mediaValidateAttachmentOwners(run, original)
-	owners := make(map[string]string)
-	for _, sub := range organizeSubtitles(original) {
-		owners[sub.File.ID] = sub.VideoID
-	}
-	run.Entries = slices.DeleteFunc(run.Entries, func(e MediaOrganizeEntry) bool {
-		if e.Status == "done" || run.streaming && !selected[e.File.ID] {
-			return false
-		}
-		if e.File.MediaType != "subtitle" && e.File.MediaType != "attachment" || f.settlingVideos[e.File.ParentID] {
-			return false
-		}
-		if e.File.MediaType == "subtitle" && owners[e.File.ID] != "" {
-			return false
-		}
-		if e.File.MediaType == "attachment" {
-			if mediaAttachmentHasVideo(e.File, original) {
-				return false
-			}
-			if parent, _, shared := mediaAttachmentFolder(e.File); shared {
-				if f.settlingVideos[parent] {
-					return false
-				}
-				for _, dir := range f.directories {
-					if f.settlingVideos[dir.File.ID] && (parent == "." || dir.File.SourcePath == parent || strings.HasPrefix(dir.File.SourcePath, parent+"/")) {
-						return false
-					}
-				}
-			}
-		}
-		e.Group, e.VideoID, e.Relative, e.Target = "", "", "", ""
-		f.unrelated = append(f.unrelated, e)
-		return true
-	})
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if (e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") && e.VideoID == "" {
-			e.Status, e.Message = "retained", "对应视频本轮未处理、尚未稳定或归属待确认，留待后续监控"
+		if (e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") && e.VideoID == "" && e.Status != "done" {
+			e.Status, e.Message = "retained", "对应视频本轮未处理或归属待确认，留待后续监控"
 		}
 	}
 }
-
 func (f *mediaOrganizeFiles) checkLocalCleanup(e MediaOrganizeEntry) (string, error) {
 	full, err := mediaLocalPath(f.rule.Source, e.File.SourcePath, false)
 	if err != nil {
@@ -93,7 +55,18 @@ func (f *mediaOrganizeFiles) checkLocalCleanup(e MediaOrganizeEntry) (string, er
 		return "", err
 	}
 	snapshot := f.localSnapshots[e.File.ID]
-	if snapshot == nil || !os.SameFile(snapshot, info) {
+	if snapshot == nil {
+		return "", fmt.Errorf("来源文件已变化，留待下轮监控")
+	}
+	if expected := f.localSnapshotKeys[e.File.ID]; expected != "" {
+		identity, err := mediaLocalFileIdentityKey(full, info)
+		if err != nil {
+			return "", err
+		}
+		if identity != expected {
+			return "", fmt.Errorf("来源文件身份已变化，留待下轮监控")
+		}
+	} else if !os.SameFile(snapshot, info) {
 		return "", fmt.Errorf("来源文件已变化，留待下轮监控")
 	}
 	if e.File.Directory {
@@ -123,16 +96,6 @@ func (s *MediaOrganizer) cleanup(ctx context.Context, f *mediaOrganizeFiles, run
 	}
 	if err := s.cleanupEntries(ctx, f, run, f.unrelated); err != nil {
 		return err
-	}
-	// Children precede their parents; never delete the configured source root.
-	for i := len(f.directories) - 1; i >= 0; i-- {
-		e := f.directories[i]
-		if run.Rule.Storage == "115" && len(f.lists[e.File.ID]) > 0 {
-			continue
-		}
-		if err := s.cleanupEntries(ctx, f, run, []MediaOrganizeEntry{e}); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -224,7 +187,7 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 				valid := make([]MediaOrganizeEntry, 0, len(entries))
 				for _, e := range entries {
 					file, ok := current[e.File.ID]
-					if ok && file.Directory == e.File.Directory && file.Name == e.File.Name && (file.Directory || file.Size == e.File.Size) && (file.Directory || !mediaKeepFile(file.Name) || e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") {
+					if ok && file.Directory == e.File.Directory && file.Name == e.File.Name && (file.Directory || file.Size == e.File.Size && (e.File.SHA1 == "" || strings.EqualFold(file.SHA1, e.File.SHA1))) && (file.Directory || !mediaKeepFile(file.Name) || e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") {
 						valid = append(valid, e)
 					}
 				}
@@ -239,6 +202,14 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 						return err
 					}
 					siblings = files
+				}
+				if slices.ContainsFunc(siblings, func(file p115.ShareFile) bool { return mediaTemporaryName(file.Name) }) {
+					entries = slices.DeleteFunc(entries, func(entry MediaOrganizeEntry) bool {
+						return entry.File.MediaType == "subtitle" || entry.File.MediaType == "attachment"
+					})
+					if len(entries) == 0 {
+						return nil
+					}
 				}
 				videos := make([]OrganizeFile, 0, len(siblings))
 				for _, file := range siblings {
@@ -363,6 +334,11 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 						}
 					}
 					if err == nil {
+						if f.orphanDue[e.File.ID] {
+							s.mu.Lock()
+							s.forgetOrphanLocked(run.Rule, e.File.ID)
+							s.mu.Unlock()
+						}
 						e.Status, e.Message = "done", "已从来源删除无关文件"
 						if e.File.Directory {
 							e.Message = "已删除空文件夹"

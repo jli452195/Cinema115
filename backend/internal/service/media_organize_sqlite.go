@@ -19,6 +19,11 @@ type mediaOrganizeStorage interface {
 	QueryMediaOrganize(context.Context, string, string, int) (storage.MediaOrganizeQuery, error)
 }
 
+type mediaOrganizeSettings struct {
+	Rules   []MediaOrganizeRule         `json:"rules"`
+	Orphans map[string]mediaOrphanState `json:"orphans,omitempty"`
+}
+
 // OpenMediaOrganizerSQLite imports the previous local snapshot only once. The
 // initialized SQLite row is authoritative even if unlinking the old file fails.
 func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secret string, metadata MediaRecognitionSource, templates NamingTemplates, classification ClassificationRules, accounts *P115Accounts, drive OrganizeDrive, reserve func() (func(), error)) (*MediaOrganizer, error) {
@@ -40,6 +45,11 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 			if err := json.Unmarshal([]byte(old.Value()), &s.doc); err != nil {
 				return nil, fmt.Errorf("读取原整理记录: %w", err)
 			}
+			settings, err := mediaStoredSettings([]byte(old.Value()))
+			if err != nil {
+				return nil, err
+			}
+			s.doc.Rules, s.doc.Orphans = settings.Rules, settings.Orphans
 		}
 	}
 	if s.doc.Rules == nil {
@@ -72,19 +82,104 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
 	doc := mediaOrganizeDocument{Rules: []MediaOrganizeRule{}, Runs: make([]MediaOrganizeRun, 0, len(rows.Runs))}
 	if rows.Rules != "" {
-		if err := json.Unmarshal([]byte(rows.Rules), &doc.Rules); err != nil {
-			return fmt.Errorf("解码整理规则: %w", err)
+		settings, err := mediaStoredSettings([]byte(rows.Rules))
+		if err != nil {
+			return err
 		}
+		doc.Rules, doc.Orphans = settings.Rules, settings.Orphans
 	}
 	for _, raw := range rows.Runs {
-		var run MediaOrganizeRun
-		if err := json.Unmarshal([]byte(raw), &run); err != nil {
-			return fmt.Errorf("解码整理批次: %w", err)
+		type runFields MediaOrganizeRun
+		var stored struct {
+			runFields
+			Rule json.RawMessage `json:"rule"`
 		}
+		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+			return fmt.Errorf("解码批次规则: %w", err)
+		}
+		rule, err := mediaStoredRule(stored.Rule)
+		if err != nil {
+			return err
+		}
+		run := MediaOrganizeRun(stored.runFields)
+		run.Rule = rule
 		doc.Runs = append(doc.Runs, run)
 	}
 	s.doc = doc
 	return nil
+}
+
+// 仅在读取工作区存储时转换原有分钟配置，运行接口只接受统一的秒数和独立开关。
+func mediaStoredRule(raw json.RawMessage) (MediaOrganizeRule, error) {
+	type ruleFields MediaOrganizeRule
+	var previous struct {
+		ruleFields
+		Enabled                  bool  `json:"enabled"`
+		IntervalMinutes          int   `json:"intervalMinutes"`
+		IntervalSeconds          *int  `json:"intervalSeconds"`
+		AttachmentCleanupEnabled *bool `json:"attachmentCleanupEnabled"`
+		AttachmentGraceSeconds   *int  `json:"attachmentGraceSeconds"`
+	}
+	if err := json.Unmarshal(raw, &previous); err != nil {
+		return MediaOrganizeRule{}, fmt.Errorf("解码整理规则: %w", err)
+	}
+	rule := MediaOrganizeRule(previous.ruleFields)
+	if previous.AttachmentCleanupEnabled == nil {
+		rule.AttachmentCleanupEnabled = true
+	} else {
+		rule.AttachmentCleanupEnabled = *previous.AttachmentCleanupEnabled
+	}
+	if previous.AttachmentGraceSeconds == nil {
+		rule.AttachmentGraceSeconds = 60
+	} else {
+		rule.AttachmentGraceSeconds = *previous.AttachmentGraceSeconds
+	}
+	if previous.IntervalSeconds != nil {
+		rule.IntervalSeconds = *previous.IntervalSeconds
+		return rule, nil
+	}
+	rule.ScheduleEnabled = previous.Enabled
+	rule.RealtimeEnabled = previous.Enabled && rule.Storage == "local"
+	rule.IntervalSeconds = previous.IntervalMinutes * 60
+	if rule.Storage == "cd2" {
+		rule.IntervalSeconds = 20
+	} else if rule.IntervalSeconds < 1 || rule.IntervalSeconds > 86400 {
+		rule.IntervalSeconds = 300
+	}
+	return rule, nil
+}
+
+func mediaStoredSettings(raw []byte) (mediaOrganizeSettings, error) {
+	var stored struct {
+		Rules      []json.RawMessage           `json:"rules"`
+		Orphans    map[string]mediaOrphanState `json:"orphans"`
+		CD2Orphans map[string]mediaOrphanState `json:"cd2Orphans"`
+	}
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+		if err := json.Unmarshal(raw, &stored.Rules); err != nil {
+			return mediaOrganizeSettings{}, fmt.Errorf("解码整理规则列表: %w", err)
+		}
+	} else {
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			return mediaOrganizeSettings{}, fmt.Errorf("解码整理规则列表: %w", err)
+		}
+	}
+	settings := mediaOrganizeSettings{Rules: make([]MediaOrganizeRule, 0, len(stored.Rules)), Orphans: stored.Orphans}
+	if settings.Orphans == nil {
+		settings.Orphans = stored.CD2Orphans
+		for id, state := range settings.Orphans {
+			state.Storage = "cd2"
+			settings.Orphans[id] = state
+		}
+	}
+	for _, record := range stored.Rules {
+		rule, err := mediaStoredRule(record)
+		if err != nil {
+			return settings, err
+		}
+		settings.Rules = append(settings.Rules, rule)
+	}
+	return settings, nil
 }
 
 func (s *MediaOrganizer) persistSQLiteLocked(changed []string) error {
@@ -101,7 +196,7 @@ func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed
 	if s.persistErr != nil {
 		return s.persistErr
 	}
-	raw, err := json.Marshal(s.doc.Rules)
+	raw, err := json.Marshal(mediaOrganizeSettings{Rules: s.doc.Rules, Orphans: s.doc.Orphans})
 	if err != nil {
 		return err
 	}

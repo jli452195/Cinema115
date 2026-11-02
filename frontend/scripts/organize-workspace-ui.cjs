@@ -11,7 +11,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
   let classification = { yaml: defaults, revision: hash(defaults), activeRevision: hash(defaults) }, loseSave = false
   const templates = Object.fromEntries(['movie', 'tv'].map(kind => [kind, { kind, directories: [[{ field: 'title' }]], filename: [{ field: 'title' }, ...(kind === 'tv' ? [{ field: 'seasonEpisode', separator: '.' }] : [])] }]))
   const fields = [{ id: 'title', label: '作品名称', group: 'work' }, { id: 'seasonEpisode', label: '季集编号', group: 'episode' }]
-  const rule = { id: 'rule1', name: '目录监控', storage: 'local', source: '/media/inbox', target: '/media/library', classify: true, enabled: true, intervalMinutes: 5 }
+  const rule = { id: 'rule1', name: '目录监控', storage: 'local', source: '/media/inbox', target: '/media/library', classify: true, realtimeEnabled: true, scheduleEnabled: true, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
   const calls = [], errors = [], passed = []
   let holdPreview, previewStarted, holdSave, saveStarted
   await context.route('**/api/**', async route => {
@@ -83,12 +83,12 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await tab('分类规则').click(); await namingLeave.getByRole('button', { name: '放弃修改并离开', exact: true }).click()
     await page.locator('.cr-rule').first().waitFor(); assert.equal(await shell(), true)
     assert.equal(await page.locator('.management-nav-link[aria-current]').getAttribute('href'), '/media/organize')
-    await page.getByRole('textbox', { name: '规则名称', exact: true }).fill('未保存分类')
+    await page.getByRole('textbox', { name: '分类名称', exact: true }).fill('未保存分类')
     await tab('整理规则').click()
     const classificationLeave = page.getByRole('dialog', { name: '放弃未保存的修改？', exact: true })
     await classificationLeave.getByRole('button', { name: '取消', exact: true }).click()
     assert.equal(await tab('分类规则').getAttribute('aria-current'), 'page')
-    assert.equal(await page.getByRole('textbox', { name: '规则名称', exact: true }).inputValue(), '未保存分类')
+    assert.equal(await page.getByRole('textbox', { name: '分类名称', exact: true }).inputValue(), '未保存分类')
     loseSave = true; await page.getByRole('button', { name: '保存规则', exact: true }).click()
     await page.getByRole('button', { name: '确认保存结果', exact: true }).waitFor()
     await tab('整理规则').click()
@@ -106,9 +106,15 @@ const hash = text => createHash('sha256').update(text).digest('hex')
 
     await page.getByRole('button', { name: '编辑目录监控', exact: true }).click()
     const ruleEditor = page.getByRole('dialog', { name: '整理规则', exact: true })
+    const mediaLeave = page.getByRole('dialog', { name: '放弃未保存的整理修改？', exact: true })
+    await ruleEditor.getByRole('switch', { name: '清理未匹配附件', exact: true }).locator('..').click()
+    await push('/media/organize/naming')
+    await mediaLeave.getByRole('button', { name: '继续编辑', exact: true }).click()
+    assert.equal(await ruleEditor.getByRole('switch', { name: '清理未匹配附件', exact: true }).isChecked(), false)
+    assert.equal(await ruleEditor.getByRole('spinbutton', { name: '附件宽限', exact: true }).isDisabled(), true)
+    await ruleEditor.getByRole('switch', { name: '清理未匹配附件', exact: true }).locator('..').click()
     await ruleEditor.getByRole('textbox', { name: '规则名称', exact: true }).fill('目录监控修改')
     await push('/media/organize/naming')
-    const mediaLeave = page.getByRole('dialog', { name: '放弃未保存的整理修改？', exact: true })
     await mediaLeave.getByRole('button', { name: '继续编辑', exact: true }).click()
     assert.equal(await ruleEditor.getByRole('textbox', { name: '规则名称', exact: true }).inputValue(), '目录监控修改')
     let releaseSave
