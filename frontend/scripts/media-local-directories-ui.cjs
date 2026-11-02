@@ -54,7 +54,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await editor.getByRole('button', { name, exact: true }).click()
       const dialog = picker(name)
       await dialog.waitFor()
-      if (await dialog.locator('.ld-content').count()) await dialog.locator('.ld-content[aria-busy="false"]').waitFor()
+      await dialog.locator('.dp-content[aria-busy="false"]').waitFor()
       return dialog
     }
     const choose = dialog => dialog.getByRole('button', { name: '选择此目录', exact: true })
@@ -80,7 +80,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     dialog = await open('选择整理失败目录')
     await dialog.getByRole('alert').getByText('模拟挂载暂时不可用', { exact: true }).waitFor()
     await dialog.getByRole('button', { name: '重新读取', exact: true }).click()
-    await dialog.locator('.ld-content[aria-busy="false"]').waitFor()
+    await dialog.locator('.dp-content[aria-busy="false"]').waitFor()
     await dialog.getByRole('textbox', { name: '目录路径' }).fill(failurePath)
     await dialog.getByRole('button', { name: '前往', exact: true }).click()
     await choose(dialog).click()

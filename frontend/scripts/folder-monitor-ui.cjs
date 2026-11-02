@@ -167,8 +167,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await dialog().getByRole('button', { name: '取消', exact: true }).click()
     await page.getByRole('button', { name: '选择目录', exact: true }).click()
     const source = page.getByRole('dialog')
-    await source.getByRole('button', { name: /新目录/ }).click()
+    await source.getByRole('button', { name: '新目录', exact: true }).click()
+    await source.locator('.dp-content[aria-busy="false"]').waitFor()
+    assert.equal(await source.getByRole('textbox', { name: '目录路径', exact: true }).inputValue(), '/新目录')
+    const sourceSaved = page.waitForResponse(response => new URL(response.url()).pathname === endpoint && response.request().method() === 'POST' && response.ok())
     await source.getByRole('button', { name: '选择此目录', exact: true }).click()
+    await sourceSaved
     await source.waitFor({ state: 'hidden' })
     assert.equal(monitor.sourceCID, '20'); assert.equal(monitor.enabled, false)
     passed.push('first-time setup reuses directory selection and permits generation settings before choosing a source')
