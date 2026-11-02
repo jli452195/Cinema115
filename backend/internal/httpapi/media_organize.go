@@ -29,6 +29,14 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 	g.GET("", func(c *gin.Context) {
 		c.JSON(200, s.State())
 	})
+	g.GET("/directories", func(c *gin.Context) {
+		out, err := s.LocalDirectories(c.Request.Context(), c.Query("path"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 	g.GET("/history", func(c *gin.Context) {
 		page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 		if err != nil || page < 1 {

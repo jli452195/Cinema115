@@ -6,6 +6,7 @@ import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
+import MediaLocalDirectoryDialog from '../components/MediaLocalDirectoryDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { mediaOrganizeRequest, type MediaRule, type MediaState } from '../lib/media-organize-api'
 import { p115Request } from '../lib/p115-api'
@@ -14,6 +15,7 @@ const props = defineProps<{ token: string }>()
 const rules = ref<MediaRule[]>([]), active = ref(false), activeRules = ref<string[]>([]), editor = ref<MediaRule>()
 const busy = ref(''), error = ref(''), dialogError = ref(''), notice = ref(''), loading = ref(true), refreshing = ref(false)
 const directory = ref<'source' | 'target' | 'failure'>(), deleting = ref<{ id: string; name: string }>()
+const directoryTitle = computed(() => directory.value === 'source' ? '选择来源目录' : directory.value === 'target' ? '选择目标目录' : '选择整理失败目录')
 const leaveDialog = ref(false), editorSnapshot = ref('')
 const unsaved = computed(() => !!editor.value && ruleSignature(editor.value) !== editorSnapshot.value)
 let leaveDecision: ((value: boolean) => void) | undefined
@@ -46,6 +48,8 @@ function edit(rule?: MediaRule) {
 function storageChanged() { if (editor.value) Object.assign(editor.value, { source: '', target: '', failure: '', sourceId: '', targetId: '', failureId: '', accountId: '' }) }
 function clearFailure() { if (editor.value) { editor.value.failure = ''; editor.value.failureId = '' } }
 async function chooseDirectory(which: 'source' | 'target' | 'failure') {
+  if (!editor.value || busy.value) return
+  if (editor.value.storage === 'local') { dialogError.value = ''; directory.value = which; return }
   await act('directory', async () => {
     const data = await p115Request<{ accounts: { id: string; primary: boolean }[] }>(props.token, 'accounts', { signal: lifecycle.signal })
     const primary = data.accounts.find(a => a.primary)
@@ -120,10 +124,10 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
         <p v-if="dialogError" role="alert" class="mo-error">{{ dialogError }}</p>
         <label>规则名称<input v-model="editor.name" required maxlength="80" placeholder="例如：NAS 下载目录" /></label>
         <label>存储位置<SelectMenu v-model="editor.storage" :options="storageOptions" label="存储位置" @change="storageChanged" /></label>
-        <label>来源目录<div class="mo-input-action"><input v-model="editor.source" required :readonly="editor.storage === '115'" :placeholder="editor.storage === 'local' ? '/media/inbox' : '选择 115 来源目录'" /><button v-if="editor.storage === '115'" type="button" class="mo-icon" aria-label="选择来源目录" @click="chooseDirectory('source')"><IconFolder :size="19" /></button></div></label>
-        <label>目标目录<div class="mo-input-action"><input v-model="editor.target" required :readonly="editor.storage === '115'" :placeholder="editor.storage === 'local' ? '/media/library' : '选择 115 目标目录'" /><button v-if="editor.storage === '115'" type="button" class="mo-icon" aria-label="选择目标目录" @click="chooseDirectory('target')"><IconFolder :size="19" /></button></div></label>
-        <label>整理失败目录（可选）<div class="mo-input-action"><input v-model="editor.failure" aria-label="整理失败目录" :readonly="editor.storage === '115'" placeholder="留空则保留在来源目录" /><button v-if="editor.failure" type="button" class="mo-icon" aria-label="清空整理失败目录" @click="clearFailure"><IconX :size="17" /></button><button v-if="editor.storage === '115'" type="button" class="mo-icon" aria-label="选择整理失败目录" @click="chooseDirectory('failure')"><IconFolder :size="19" /></button></div><span class="mo-muted">执行时将无法匹配、季集不明或冲突文件移入，保留原名与目录层级；网络故障保留原处。</span></label>
-        <p class="mo-muted">{{ editor.storage === 'local' ? '填写容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。' : '使用 115 主账号，来源与目标不能重叠。更换主账号后需重新选择目录。' }}</p>
+        <label>来源目录<div class="mo-input-action"><input v-model="editor.source" required :readonly="editor.storage === '115'" :placeholder="editor.storage === 'local' ? '/media/inbox' : '选择 115 来源目录'" /><button type="button" class="mo-icon" aria-label="选择来源目录" :disabled="!!busy" @click="chooseDirectory('source')"><IconFolder :size="19" /></button></div></label>
+        <label>目标目录<div class="mo-input-action"><input v-model="editor.target" required :readonly="editor.storage === '115'" :placeholder="editor.storage === 'local' ? '/media/library' : '选择 115 目标目录'" /><button type="button" class="mo-icon" aria-label="选择目标目录" :disabled="!!busy" @click="chooseDirectory('target')"><IconFolder :size="19" /></button></div></label>
+        <label>整理失败目录（可选）<div class="mo-input-action"><input v-model="editor.failure" aria-label="整理失败目录" :readonly="editor.storage === '115'" placeholder="留空则保留在来源目录" /><button v-if="editor.failure" type="button" class="mo-icon" aria-label="清空整理失败目录" @click="clearFailure"><IconX :size="17" /></button><button type="button" class="mo-icon" aria-label="选择整理失败目录" :disabled="!!busy" @click="chooseDirectory('failure')"><IconFolder :size="19" /></button></div><span class="mo-muted">执行时将无法匹配、季集不明或冲突文件移入，保留原名与目录层级；网络故障保留原处。</span></label>
+        <p class="mo-muted">{{ editor.storage === 'local' ? '选择或填写服务器／容器内已挂载且可写的目录。来源与目标不能重叠。新文件稳定 30 秒后处理。' : '使用 115 主账号，来源与目标不能重叠。更换主账号后需重新选择目录。' }}</p>
         <SettingSwitch v-model="editor.classify" label="按作品信息分类" description="根据作品信息及当前分类规则，在目标目录下生成分类子目录。" />
         <SettingSwitch v-model="editor.enabled" label="启用监控" description="按设置间隔扫描并整理媒体及附件，删除无关文件（含压缩包）、未归属字幕和空文件夹；立即运行同样执行清理。" />
         <label v-if="editor.enabled">扫描间隔（分钟）<input v-model.number="editor.intervalMinutes" type="number" min="1" max="1440" required /></label>
@@ -131,7 +135,8 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
       </form>
       <template #footer><div class="mo-footer"><button class="mo-button" :disabled="!!busy" @click="editor = undefined">取消</button><button form="media-rule-form" type="submit" class="mo-button mo-primary" :disabled="!!busy">{{ busy === 'save' ? '保存中…' : '保存规则' }}</button></div></template>
     </FloatingDialog>
-    <P115DirectoryDialog v-if="directory && editor?.accountId" :token="token" :account-id="editor.accountId" :title="directory === 'source' ? '选择来源目录' : directory === 'target' ? '选择目标目录' : '选择整理失败目录'" :allow-root="false" @close="directory = undefined" @select="picked" />
+    <MediaLocalDirectoryDialog v-if="directory && editor?.storage === 'local'" :token="token" :title="directoryTitle" :initial-path="editor[directory] || ''" @close="directory = undefined" @select="picked({ id: '', path: $event })" />
+    <P115DirectoryDialog v-if="directory && editor?.storage === '115' && editor.accountId" :token="token" :account-id="editor.accountId" :title="directoryTitle" :allow-root="false" @close="directory = undefined" @select="picked" />
     <FloatingDialog v-if="deleting" title="删除整理规则" close-label="取消删除规则" :close-disabled="!!busy" @close="deleting = undefined"><p class="py-4 text-sm">确认删除{{ deleting.name }}？同时删除该规则的整理记录；实际文件保持不变。</p><p v-if="dialogError" role="alert" class="mo-error">{{ dialogError }}</p><template #footer><div class="mo-footer"><button class="mo-button" :disabled="!!busy" @click="deleting = undefined">取消</button><button class="mo-button mo-primary" :disabled="!!busy" @click="remove">删除规则</button></div></template></FloatingDialog>
     <P115ActionDialog v-if="leaveDialog" title="放弃未保存的整理修改？" @close="decideLeave(false)"><p>整理规则尚未保存，离开后将丢弃这些修改。后台整理任务会继续运行。</p><template #footer><button type="button" class="mo-button" @click="decideLeave(false)">继续编辑</button><button type="button" class="mo-button mo-primary" @click="decideLeave(true)">放弃修改并离开</button></template></P115ActionDialog>
 </template>
@@ -153,5 +158,5 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
 @media(max-width:639px){.mo-rule-grid{gap:12px}.mo-rule-card{padding:16px}.mo-rule-tools .mo-icon{width:40px;min-height:40px}.mo-rule-actions .mo-button{min-height:44px}}
 @media(prefers-reduced-motion:reduce){.mo-rule-card{transition:none}}
 
-.mo-form{display:grid;gap:18px;padding:8px 0}.mo-form label{display:grid;gap:7px;font-size:12px;font-weight:500}.mo-form input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-form input:focus{border-color:#3b82f6}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-form :deep(input[role="switch"]:checked + span){background:#2563eb}:global(.dark .mo-form input){background:#1e293b;color:#e2e8f0;border-color:rgb(148 163 184/.3)}:global(.dark .mo-form){color:#e2e8f0}
+.mo-form{display:grid;gap:18px;padding:8px 0}.mo-form label{display:grid;gap:7px;font-size:12px;font-weight:500}.mo-form input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-form input:focus{border-color:#3b82f6}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-input-action>.mo-icon{flex:none}.mo-form :deep(input[role="switch"]:checked + span){background:#2563eb}:global(.dark .mo-form input){background:#1e293b;color:#e2e8f0;border-color:rgb(148 163 184/.3)}:global(.dark .mo-form){color:#e2e8f0}
 </style>

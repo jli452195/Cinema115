@@ -81,6 +81,7 @@ const gate = () => {
     await card.getByText('部分完成', { exact: true }).waitFor()
     assert.equal(await card.getByText('附件 2', { exact: true }).count(), 1)
     await card.click()
+    await detail.locator('.mo-file').first().waitFor()
     assert.equal(await detail.locator('.mo-file').count(), 3)
     assert.equal(await detail.getByText('Work.S01E02.mkv', { exact: true }).count(), 0)
     assert.equal(await detail.getByRole('spinbutton').count(), 0)

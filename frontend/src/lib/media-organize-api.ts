@@ -21,6 +21,9 @@ export interface MediaHistory {
 export interface MediaTask extends MediaHistoryItem { rule: MediaRule; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }
 export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[] }
+export interface MediaLocalDirectoryPage {
+  path: string; parentPath: string | null; directories: { name: string; path: string }[]; truncated: boolean
+}
 export async function mediaOrganizeRequest<T>(token: string, path = '', init: RequestInit = {}): Promise<T> {
   const signal = AbortSignal.any([...(init.signal ? [init.signal] : []), AbortSignal.timeout(75000)])
   const response = await fetch(`/api/admin/media-organize${path}`, { ...init, signal, cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } })
