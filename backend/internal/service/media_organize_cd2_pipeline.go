@@ -18,8 +18,8 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 	if err := s.checkpoint(run); err != nil {
 		return err
 	}
-	files.cd2Naming = make(map[string]preparedMediaNaming)
-	files.cd2Recognized = make(map[string]bool)
+	files.naming = make(map[string]preparedMediaNaming)
+	files.recognized = make(map[string]bool)
 	queue := []string{run.Rule.Source}
 	visited := make(map[string]bool)
 	deferred := make([]MediaOrganizeEntry, 0)
@@ -73,7 +73,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 			immediate = append(immediate, entry)
 		}
 		files.scanned = entries
-		if err := s.cd2ProcessBatch(ctx, files, run, immediate, true); err != nil {
+		if err := s.processMediaBatch(ctx, files, run, immediate, true); err != nil {
 			return err
 		}
 		unrelated = append(unrelated, files.unrelated...)
@@ -83,7 +83,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 	files.cd2ScanPath, files.cd2Shallow = "", false
 	if len(deferred) > 0 {
 		deferred = files.holdLocalCompanions(deferred, allPending)
-		if err := s.cd2ProcessBatch(ctx, files, run, deferred, false); err != nil {
+		if err := s.processMediaBatch(ctx, files, run, deferred, false); err != nil {
 			return err
 		}
 	}
@@ -102,54 +102,6 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 		run.Message = fmt.Sprintf("有 %d 个临时文件尚未完成，留待后续轮询", len(allPending))
 	}
 	return nil
-}
-
-func (s *MediaOrganizer) cd2ProcessBatch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry, recheck bool) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	run.processing = make(map[string]bool, len(entries))
-	for _, entry := range entries {
-		run.processing[entry.File.ID] = true
-	}
-	defer func() { run.processing = nil }()
-	batchCtx := clouddrive2.WithDirectoryCache(ctx)
-	if err := s.cd2AddReferences(batchCtx, files, run, entries); err != nil {
-		return err
-	}
-	mediaAppendScanEntries(run, entries)
-	oldGroups := run.Groups
-	run.Groups = make([]MediaOrganizeGroup, 0, len(oldGroups))
-	for _, group := range oldGroups {
-		if !files.cd2Recognized[group.ID] {
-			run.Groups = append(run.Groups, group)
-			files.cd2Recognized[group.ID] = true
-		}
-	}
-	err := s.recognize(ctx, run)
-	updated := make(map[string]MediaOrganizeGroup, len(run.Groups))
-	for _, group := range run.Groups {
-		updated[group.ID] = group
-	}
-	run.Groups = oldGroups
-	for i, group := range run.Groups {
-		if current, ok := updated[group.ID]; ok {
-			run.Groups[i] = current
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if err := s.render(batchCtx, files, run); err != nil {
-		return err
-	}
-	mediaDiscardOrphanSidecars(files, run, entries)
-	if recheck {
-		if err := files.recheckLocalCompanions(batchCtx, run); err != nil {
-			return err
-		}
-	}
-	return s.execute(batchCtx, files, run)
 }
 
 // 成功记录提供来源与目标的映射，晚到字幕无需重新识别已经移走的视频。

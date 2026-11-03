@@ -24,33 +24,60 @@ type RenameTarget struct {
 // RenameEntries sends one /files/batch_rename form. An accepted response does
 // not imply every file succeeded; callers must verify each ID after the call.
 func (c *ShareClient) RenameEntries(ctx context.Context, entries []RenameTarget, cookie string) error {
-	return c.renameEntries(ctx, entries, cookie, false)
+	_, err := c.renameEntries(ctx, entries, cookie)
+	return err
 }
 
 func (c *ShareClient) RenameAnimeEntries(ctx context.Context, entries []RenameTarget, cookie string) error {
-	return c.renameEntries(ctx, entries, cookie, true)
+	raw, err := c.renameEntries(ctx, entries, cookie)
+	if err != nil {
+		return err
+	}
+	return animeRenameReceipt(raw, entries)
 }
 
-func (c *ShareClient) renameEntries(ctx context.Context, entries []RenameTarget, cookie string, receipt bool) error {
+// 仅逐项回执完整确认本批编号和名称时返回 true；聚合成功仍需调用方回读核验。
+func (c *ShareClient) RenameEntriesWithReceipt(ctx context.Context, entries []RenameTarget, cookie string) (bool, error) {
+	raw, err := c.renameEntries(ctx, entries, cookie)
+	if err != nil {
+		return false, err
+	}
+	if animeRenameReceipt(raw, entries) != nil {
+		return false, nil
+	}
+	fields, err := animeObject(raw)
+	if err != nil {
+		return false, nil
+	}
+	for _, key := range []string{"msg", "message"} {
+		if value, exists := fields[key]; exists {
+			value = bytes.TrimSpace(value)
+			var message string
+			if len(value) == 0 || value[0] != '"' || json.Unmarshal(value, &message) != nil {
+				return false, nil
+			}
+		}
+	}
+	return animeRenameReport(fields["data"], entries), nil
+}
+
+func (c *ShareClient) renameEntries(ctx context.Context, entries []RenameTarget, cookie string) (json.RawMessage, error) {
 	if len(entries) == 0 || len(entries) > DriveMutationBatchLimit {
-		return fmt.Errorf("批量重命名条目数量无效")
+		return nil, fmt.Errorf("批量重命名条目数量无效")
 	}
 	form := make(url.Values, len(entries))
 	for _, entry := range entries {
 		key := "files_new_name[" + entry.ID + "]"
 		if !validDriveID(entry.ID, false) || strings.TrimSpace(entry.Name) == "" || len([]rune(entry.Name)) > 200 || strings.ContainsAny(entry.Name, "/\\\x00\r\n") || form.Has(key) {
-			return fmt.Errorf("批量重命名参数无效或文件编号重复")
+			return nil, fmt.Errorf("批量重命名参数无效或文件编号重复")
 		}
 		form.Set(key, entry.Name)
 	}
 	raw, err := c.requestEnvelope(ctx, http.MethodPost, c.WebURL+"/files/batch_rename", cookie, form)
 	if err != nil {
-		return fmt.Errorf("115 批量重命名失败: %w", err)
+		return nil, fmt.Errorf("115 批量重命名失败: %w", err)
 	}
-	if receipt {
-		return animeRenameReceipt(raw, entries)
-	}
-	return nil
+	return raw, nil
 }
 
 // MoveEntriesBatch uses the web API's indexed fid fields. Keep MoveEntries

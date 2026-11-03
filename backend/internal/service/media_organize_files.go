@@ -46,10 +46,16 @@ type mediaOrganizeFiles struct {
 	cd2Duplicate         func(MediaOrganizeEntry) error
 	cd2ScanPath          string
 	cd2Shallow           bool
-	cd2Recognized        map[string]bool
-	cd2Naming            map[string]preparedMediaNaming
+	recognized           map[string]bool
+	naming               map[string]preparedMediaNaming
+	scan115ID            string
+	scan115Relative      string
+	shallow115           bool
+	pending115           map[string]bool
+	pending115Dirs       map[string]bool
 	orphanDue            map[string]bool
 	orphanVideos         []OrganizeFile
+	cloudEmpty           *media115EmptyState
 }
 
 func (s *MediaOrganizer) files(ctx context.Context, rule MediaOrganizeRule) (*mediaOrganizeFiles, error) {
@@ -316,9 +322,22 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		}
 		out = f.holdLocalCompanions(out, pending)
 	} else {
+		// 每次扫描重新建立来源账本，失败的再次扫描不能沿用上一次完整证明。
+		if !f.shallow115 {
+			f.cloudEmpty = nil
+			f.lists = make(map[string][]p115.ShareFile)
+		}
 		f.localCandidates = make([]OrganizeFile, 0, 128)
 		f.settlingVideos = make(map[string]bool)
 		f.localPending = make(map[string]bool)
+		var directoryDrive media115DirectoryDrive
+		if f.shallow115 {
+			var supported bool
+			directoryDrive, supported = f.drive.(media115DirectoryDrive)
+			if !supported {
+				return nil, fmt.Errorf("115 完整目录读取服务未配置")
+			}
+		}
 		visited := make(map[string]bool)
 		var walk func(string, string, int) error
 		walk = func(cid, prefix string, depth int) error {
@@ -329,22 +348,51 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return fmt.Errorf("目录循环或范围过大")
 			}
 			visited[cid] = true
-			files, err := f.list(ctx, cid)
+			if f.pending115Dirs[cid] {
+				f.settlingVideos[cid] = true
+			}
+			var files []p115.ShareFile
+			var err error
+			if f.shallow115 {
+				var directory p115.DriveDirectory
+				directory, files, err = directoryDrive.ReadDirectoryFiles(ctx, cid, f.cookie)
+				if err == nil {
+					err = f.check115Directory(directory, cid, prefix)
+				}
+				if err == nil {
+					f.lists[cid] = files
+				}
+			} else {
+				files, err = f.list(ctx, cid)
+			}
 			if err != nil {
 				return err
 			}
+			f.remember115Directory(cid, prefix, files)
 			for _, file := range files {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
 				if file.Directory {
+					if file.ID == f.rule.TargetID || file.ID != "" && file.ID == f.rule.FailureID {
+						return fmt.Errorf("目标或失败目录不能位于来源目录内")
+					}
 					f.directories = append(f.directories, MediaOrganizeEntry{File: OrganizeFile{ShareFile: file, ParentID: cid, SourcePath: path.Join(prefix, file.Name), MediaType: "cleanup"}})
-					if err := walk(file.ID, path.Join(prefix, file.Name), depth+1); err != nil {
-						return err
+					if !f.shallow115 {
+						if err := walk(file.ID, path.Join(prefix, file.Name), depth+1); err != nil {
+							return err
+						}
 					}
 				} else {
 					relative := path.Join(prefix, file.Name)
 					candidate := OrganizeFile{ShareFile: file, ParentID: cid, SourcePath: relative, MediaType: mediaFileType(file.Name)}
+					if f.pending115[file.ID] {
+						f.localPending[file.ID], f.settlingVideos[cid] = true, true
+						if candidate.MediaType != "" {
+							f.localCandidates = append(f.localCandidates, candidate)
+						}
+						continue
+					}
 					if mediaTemporaryName(file.Name) {
 						candidate.Name, candidate.MediaType = mediaTemporaryBase(file.Name), mediaFileType(mediaTemporaryBase(file.Name))
 						f.settlingVideos[cid] = true
@@ -365,8 +413,18 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			}
 			return nil
 		}
-		if err := walk(f.rule.SourceID, "", 0); err != nil {
+		root, relative := f.rule.SourceID, ""
+		if f.shallow115 {
+			root, relative = f.scan115ID, f.scan115Relative
+		}
+		if err := walk(root, relative, 0); err != nil {
 			return nil, err
+		}
+		if !f.shallow115 && f.cloudEmpty != nil {
+			f.cloudEmpty.complete = true
+		}
+		if f.shallow115 {
+			out = f.holdLocalCompanions(out, f.localPending)
 		}
 	}
 	return out, nil

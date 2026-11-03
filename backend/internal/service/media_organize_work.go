@@ -44,6 +44,11 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 	if action == "auto" && run.Rule.Storage == "cd2" {
 		return s.processCD2Auto(ctx, files, run)
 	}
+	if action == "auto" && run.Rule.Storage == "115" {
+		if _, supported := files.drive.(media115DirectoryDrive); supported {
+			return s.process115Auto(ctx, files, run)
+		}
+	}
 	if action == "auto" {
 		if err = s.scan(ctx, files, run); err != nil {
 			return err
@@ -232,12 +237,12 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) e
 
 func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	prepared := make(map[string]preparedMediaNaming)
-	if files.cd2Naming != nil {
-		prepared = files.cd2Naming
+	if files.naming != nil {
+		prepared = files.naming
 	}
 	selectedGroups := make(map[string]bool)
 	for _, e := range run.Entries {
-		if e.File.MediaType == "video" && e.Status != "done" && mediaInRunTask(run, e) {
+		if e.File.MediaType == "video" && e.Status != "done" && e.P115Move == nil && mediaInRunTask(run, e) {
 			selectedGroups[e.Group] = true
 		}
 	}
@@ -249,7 +254,15 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		p, cached := prepared[g.ID]
 		var err error
 		if !cached {
-			p, err = (MediaNaming{Templates: s.templates, Metadata: s.metadata}).prepare(ctx, g.Kind, g.TMDBID, nil)
+			// 不同来源文件夹可形成独立识别分组，已确认的同一作品仍复用命名资料。
+			workKey := "work:" + g.Kind + ":" + strconv.Itoa(g.TMDBID)
+			p, cached = prepared[workKey]
+			if !cached {
+				p, err = (MediaNaming{Templates: s.templates, Metadata: s.metadata}).prepare(ctx, g.Kind, g.TMDBID, nil)
+				if err == nil {
+					prepared[workKey] = p
+				}
+			}
 		}
 		if err != nil {
 			if ctx.Err() != nil {
@@ -280,6 +293,10 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	for i := range run.Entries {
 		e := &run.Entries[i]
 		if e.File.MediaType == "cleanup" || !mediaInRunTask(run, *e) {
+			continue
+		}
+		// 未核实的外部写入继续使用持久化原计划，不能因模板或元数据变化改写目标。
+		if e.P115Move != nil {
 			continue
 		}
 		if e.File.MediaType != "video" && e.Status != "done" {
@@ -332,7 +349,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	for _, sub := range organizeSubtitles(original) {
 		i := positions[sub.File.ID]
 		e := &run.Entries[i]
-		if e.Status == "done" || !mediaInRunTask(run, *e) {
+		if e.Status == "done" || e.P115Move != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		video, ok := results[sub.VideoID]
@@ -358,7 +375,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	mediaOrganizeAttachments(run, results)
 	duplicates := make(map[string][]int)
 	for i, e := range run.Entries {
-		if e.Status != "ready" {
+		if e.Status != "ready" || e.P115Move != nil {
 			continue
 		}
 		key := strings.ToLower(e.Relative)
@@ -377,7 +394,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.Status != "ready" || !mediaInRunTask(run, *e) {
+		if e.Status != "ready" || e.P115Move != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		if err := files.conflict(ctx, *e); err != nil {
@@ -414,67 +431,17 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		if err := s.executeCD2Batches(ctx, files, run, bulk, failures); err != nil {
 			return err
 		}
+	} else if drive, ok := files.drive.(media115DirectoryDrive); run.Rule.Storage == "115" && ok {
+		if err := s.execute115Batches(ctx, files, run, drive, failures); err != nil {
+			return err
+		}
+		s.tryCleanup115EmptyDirectories(ctx, files, run)
 	} else {
-		// 仅在实际写入 115 目录时短暂预留，扫描、识别和其他存储不占用该预留。
 		for i := range run.Entries {
-			e := &run.Entries[i]
-			if failures[e.File.ID] || !mediaInRunTask(run, *e) {
+			if failures[run.Entries[i].File.ID] {
 				continue
 			}
-			if e.Status != "ready" && e.Status != "error" {
-				continue
-			}
-			if e.Relative == "" {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if e.VideoID != "" {
-				videoDone := false
-				for _, video := range run.Entries {
-					if video.File.ID == e.VideoID {
-						videoDone = video.Status == "done"
-						break
-					}
-				}
-				if !videoDone {
-					e.Status, e.Message = "error", "对应视频尚未整理成功，关联文件保留来源"
-					e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
-					continue
-				}
-			}
-			var release func()
-			var err error
-			if run.Rule.Storage == "115" && s.reserve != nil {
-				release, err = s.reserve()
-				if err != nil {
-					e.Status = "error"
-					e.Message = "115 目录忙，请稍后继续"
-					e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now()}
-					continue
-				}
-			}
-			err = files.move(ctx, *e)
-			if release != nil {
-				release()
-			}
-			if err != nil && !errors.Is(err, errMediaDuplicateDone) {
-				e.Status = "error"
-				if errors.Is(err, errMediaTargetExists) {
-					e.Status = "conflict"
-				}
-				e.Message = organizePublicError(err, files.cookie)
-			} else {
-				e.Status = "done"
-				e.Message = ""
-				e.Failure = nil
-			}
-			e.Result = &MediaOrganizeResult{Status: e.Status, Message: e.Message, At: time.Now(), Target: e.Target}
-			if errors.Is(err, errMediaDuplicateDone) {
-				e.Result.Action, e.Result.Message = "duplicate", "SHA1 一致，已删除来源重复文件"
-			}
-			if err := s.checkpoint(run); err != nil {
+			if err := s.executeMediaEntry(ctx, files, run, i); err != nil {
 				return err
 			}
 		}
@@ -511,7 +478,7 @@ func mediaFinishRun(run *MediaOrganizeRun) {
 	}
 	if len(run.Entries) == 0 {
 		run.Message = "没有新的可处理文件；新写入文件稳定 30 秒后再扫描"
-		if run.Rule.Storage == "cd2" {
+		if run.Rule.Storage == "cd2" || run.Rule.Storage == "115" {
 			run.Message = "没有新的可处理文件"
 		}
 	}

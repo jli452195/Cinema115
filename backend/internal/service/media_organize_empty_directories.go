@@ -11,6 +11,20 @@ import (
 
 // 空目录独立收尾，单个文件整理失败不能阻止其他空子目录清理；来源根目录始终保留。
 func (s *MediaOrganizer) cleanupEmptyDirectories(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	if run.Rule.Storage == "115" {
+		if _, supported := files.drive.(media115EmptyDrive); supported {
+			cleanupErr := s.cleanup115EmptyDirectories(ctx, files, run)
+			if state := files.cloudEmpty; state != nil && state.cleaned > state.summarized {
+				message := fmt.Sprintf("已清理 %d 个空目录分支", state.cleaned-state.summarized)
+				if run.Message != "" {
+					message = run.Message + "；" + message
+				}
+				run.Message, state.summarized = message, state.cleaned
+				cleanupErr = errors.Join(cleanupErr, s.checkpoint(run))
+			}
+			return cleanupErr
+		}
+	}
 	candidates := make(map[string]MediaOrganizeEntry, len(files.directories)+len(files.cleanupDirectories))
 	for _, entry := range files.directories {
 		candidates[entry.File.ID] = entry

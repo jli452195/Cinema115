@@ -60,6 +60,7 @@ type MediaOrganizeEntry struct {
 	Message      string                `json:"message,omitempty"`
 	Result       *MediaOrganizeResult  `json:"result,omitempty"`
 	Failure      *MediaOrganizeFailure `json:"failure,omitempty"`
+	P115Move     *Media115MoveIntent   `json:"p115Move,omitempty"`
 }
 
 type MediaOrganizeGroup struct {
@@ -176,6 +177,10 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 		if source.Entries[i].Failure != nil {
 			failure := *source.Entries[i].Failure
 			target.Entries[i].Failure = &failure
+		}
+		if source.Entries[i].P115Move != nil {
+			intent := *source.Entries[i].P115Move
+			target.Entries[i].P115Move = &intent
 		}
 	}
 }

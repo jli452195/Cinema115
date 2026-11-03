@@ -40,7 +40,7 @@ func mediaDiscardOrphanSidecars(f *mediaOrganizeFiles, run *MediaOrganizeRun, sc
 	mediaValidateAttachmentOwners(run, original)
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if (e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") && e.VideoID == "" && e.Status != "done" {
+		if (e.File.MediaType == "subtitle" || e.File.MediaType == "attachment") && e.VideoID == "" && e.Status != "done" && e.P115Move == nil {
 			e.Status, e.Message = "retained", "对应视频本轮未处理或归属待确认，留待后续监控"
 		}
 	}
@@ -362,6 +362,9 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 				}
 				if saveErr := s.checkpoint(run); saveErr != nil {
 					return saveErr
+				}
+				for _, index := range indices {
+					f.forget115SourceEntry(run.Entries[index])
 				}
 				if batchErr != nil {
 					return batchErr

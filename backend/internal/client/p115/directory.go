@@ -20,15 +20,27 @@ type DriveDirectory struct {
 // ReadDirectory reads one row at most, using the returned breadcrumb as the
 // directory identity. Redirects and missing identity never become valid facts.
 func (c *ShareClient) ReadDirectory(ctx context.Context, cid, cookie string) (DriveDirectory, error) {
-	var out DriveDirectory
+	raw, err := c.readDirectory(ctx, cid, cookie)
+	if err != nil {
+		return DriveDirectory{}, err
+	}
+	return decodeDriveDirectory(raw, cid)
+}
+
+func (c *ShareClient) readDirectory(ctx context.Context, cid, cookie string) ([]byte, error) {
 	if !validDriveID(cid, true) {
-		return out, fmt.Errorf("invalid directory ID")
+		return nil, fmt.Errorf("invalid directory ID")
 	}
 	q := url.Values{"cid": {cid}, "offset": {"0"}, "limit": {"1"}, "show_dir": {"1"}}
 	raw, err := c.requestEnvelope(ctx, http.MethodGet, c.WebURL+"/files?"+q.Encode(), cookie, nil)
 	if err != nil {
-		return out, fmt.Errorf("read directory: %w", err)
+		return nil, fmt.Errorf("read directory: %w", err)
 	}
+	return raw, nil
+}
+
+func decodeDriveDirectory(raw []byte, cid string) (DriveDirectory, error) {
+	var out DriveDirectory
 	var data struct {
 		CID  json.Number `json:"cid"`
 		Path []struct {

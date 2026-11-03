@@ -34,9 +34,15 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 	if run.Rule.Failure == "" {
 		return eligible
 	}
+	pending := make(map[string]bool)
+	for _, entry := range run.Entries {
+		if entry.P115Move != nil {
+			pending[entry.File.ID] = true
+		}
+	}
 	transient := mediaTransientGroups(run)
 	for _, e := range run.Entries {
-		if e.File.MediaType == "cleanup" || !mediaInRunTask(run, e) {
+		if e.File.MediaType == "cleanup" || pending[e.File.ID] || pending[e.VideoID] || !mediaInRunTask(run, e) {
 			continue
 		}
 		if e.Status != "done" && e.Failure != nil && e.Failure.State == "moving" {
@@ -195,6 +201,8 @@ func (s *MediaOrganizer) quarantine(ctx context.Context, files *mediaOrganizeFil
 		if err := s.checkpoint(run); err != nil {
 			return err
 		}
+		files.forget115SourceEntry(*e)
+		s.tryCleanup115EmptyDirectories(ctx, files, run)
 		if err != nil && !errors.Is(err, errMediaTargetExists) {
 			// A failed provider or mount must not trigger one request per file.
 			break

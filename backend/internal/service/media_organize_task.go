@@ -47,6 +47,13 @@ func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaO
 		if video.Status == "done" && (input.TMDBID > 0 || input.Season != nil || input.Episode != nil) {
 			return MediaOrganizeTask{}, fmt.Errorf("%w：已完成的主文件不能修改，仅可重试失败附件", ErrMediaOrganizeInput)
 		}
+		if input.TMDBID > 0 || input.Season != nil || input.Episode != nil {
+			for _, entry := range run.Entries {
+				if mediaInTask(entry, input.FileID) && entry.P115Move != nil {
+					return MediaOrganizeTask{}, fmt.Errorf("%w：115 批量写入结果待核实，请先直接重试，核实后再修改作品或季集", ErrMediaOrganizeInput)
+				}
+			}
+		}
 		if err := run.prepareClassification(); err != nil {
 			return MediaOrganizeTask{}, err
 		}

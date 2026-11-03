@@ -84,16 +84,9 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 		Path []struct {
 			CID json.Number `json:"cid"`
 		} `json:"path"`
-		Count  json.Number `json:"count"`
-		Offset json.Number `json:"offset"`
-		Data   []struct {
-			FID      json.Number `json:"fid"`
-			CID      json.Number `json:"cid"`
-			Name     string      `json:"n"`
-			Size     json.Number `json:"s"`
-			SHA1     string      `json:"sha"`
-			PickCode string      `json:"pc"`
-		} `json:"data"`
+		Count  json.Number          `json:"count"`
+		Offset json.Number          `json:"offset"`
+		Data   []driveDirectoryItem `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return nil, fmt.Errorf("解析网盘目录: %w", err)
@@ -118,22 +111,11 @@ func (c *ShareClient) DriveFiles(ctx context.Context, cid string, offset int, co
 		}
 	}
 	for _, item := range response.Data {
-		id := item.FID.String()
-		dir := id == "" || id == "0"
-		if dir {
-			id = item.CID.String()
+		file, err := decodeDriveDirectoryItem(item)
+		if err != nil {
+			return nil, err
 		}
-		if !validDriveID(id, false) {
-			return nil, fmt.Errorf("网盘条目 ID 无效")
-		}
-		var size int64
-		if item.Size != "" {
-			size, err = item.Size.Int64()
-			if err != nil {
-				return nil, fmt.Errorf("网盘文件大小无效: %w", err)
-			}
-		}
-		page.Files = append(page.Files, ShareFile{ID: id, Name: item.Name, Size: size, Directory: dir, SHA1: strings.ToUpper(item.SHA1), PickCode: item.PickCode})
+		page.Files = append(page.Files, file)
 	}
 	return page, nil
 }
