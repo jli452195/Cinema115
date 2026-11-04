@@ -28,9 +28,8 @@ func TestDriveSTRMSettingsDoNotQueueAndFreezeRunningScan(t *testing.T) {
 	original := value.Settings
 	settings := original
 	settings.BaseURL = "https://new.example"
-	settings.EventIntervalSeconds, settings.ReconcileIntervalHours, settings.FullScanIntervalHours = 0, 6, 24
-	settings.ReconcileEnabled, settings.FullScanEnabled = false, true
-	settings.MetadataRateEnabled, settings.MetadataFilesPerSecond = true, 5
+	settings.EventIntervalSeconds = 0
+	settings.MetadataImageMode, settings.MetadataConcurrency, settings.MetadataBatchIntervalSeconds = "original", 2, 10
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -133,25 +132,29 @@ func TestDriveSTRMSettingsValidationAndNormalization(t *testing.T) {
 		t.Fatalf("normalize=%+v err=%v", got, err)
 	}
 	for name, change := range map[string]func(*model.DriveSTRMSettings){
-		"blank URL":        func(v *model.DriveSTRMSettings) { v.BaseURL = "" },
-		"URL path":         func(v *model.DriveSTRMSettings) { v.BaseURL = "https://cinema.example/path" },
-		"blank videos":     func(v *model.DriveSTRMSettings) { v.VideoExtensions = "" },
-		"invalid videos":   func(v *model.DriveSTRMSettings) { v.VideoExtensions = "mk/v" },
-		"overlap":          func(v *model.DriveSTRMSettings) { v.MetadataExtensions = "mkv" },
-		"strm":             func(v *model.DriveSTRMSettings) { v.MetadataExtensions = "strm" },
-		"negative size":    func(v *model.DriveSTRMSettings) { v.MinSizeMB = -1 },
-		"excessive size":   func(v *model.DriveSTRMSettings) { v.MinSizeMB = 1<<30 + 1 },
-		"event period":     func(v *model.DriveSTRMSettings) { v.EventIntervalSeconds = 1 },
-		"reconcile period": func(v *model.DriveSTRMSettings) { v.ReconcileIntervalHours = -1 },
-		"full period":      func(v *model.DriveSTRMSettings) { v.FullScanIntervalHours = 1 },
-		"zero metadata rate": func(v *model.DriveSTRMSettings) {
-			v.MetadataFilesPerSecond = 0
+		"blank URL":      func(v *model.DriveSTRMSettings) { v.BaseURL = "" },
+		"URL path":       func(v *model.DriveSTRMSettings) { v.BaseURL = "https://cinema.example/path" },
+		"blank videos":   func(v *model.DriveSTRMSettings) { v.VideoExtensions = "" },
+		"invalid videos": func(v *model.DriveSTRMSettings) { v.VideoExtensions = "mk/v" },
+		"overlap":        func(v *model.DriveSTRMSettings) { v.MetadataExtensions = "mkv" },
+		"strm":           func(v *model.DriveSTRMSettings) { v.MetadataExtensions = "strm" },
+		"negative size":  func(v *model.DriveSTRMSettings) { v.MinSizeMB = -1 },
+		"excessive size": func(v *model.DriveSTRMSettings) { v.MinSizeMB = 1<<30 + 1 },
+		"event period":   func(v *model.DriveSTRMSettings) { v.EventIntervalSeconds = 1 },
+		"invalid image mode": func(v *model.DriveSTRMSettings) {
+			v.MetadataImageMode = "unknown"
 		},
-		"negative metadata rate": func(v *model.DriveSTRMSettings) {
-			v.MetadataFilesPerSecond = -1
+		"zero metadata concurrency": func(v *model.DriveSTRMSettings) {
+			v.MetadataConcurrency = 0
 		},
-		"excessive metadata rate": func(v *model.DriveSTRMSettings) {
-			v.MetadataFilesPerSecond = 11
+		"excessive metadata concurrency": func(v *model.DriveSTRMSettings) {
+			v.MetadataConcurrency = 9
+		},
+		"negative metadata interval": func(v *model.DriveSTRMSettings) {
+			v.MetadataBatchIntervalSeconds = -1
+		},
+		"excessive metadata interval": func(v *model.DriveSTRMSettings) {
+			v.MetadataBatchIntervalSeconds = 61
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -166,11 +169,11 @@ func TestDriveSTRMSettingsValidationAndNormalization(t *testing.T) {
 			}
 		})
 	}
-	for _, rate := range []int{1, 10} {
-		valid.MetadataRateEnabled, valid.MetadataFilesPerSecond = false, rate
+	for _, concurrency := range []int{1, 8} {
+		valid.MetadataConcurrency, valid.MetadataBatchIntervalSeconds = concurrency, 0
 		saved, err := s.SaveSettings(ctx, valid)
-		if err != nil || saved.MetadataRateEnabled || saved.MetadataFilesPerSecond != rate {
-			t.Fatalf("disabled limiter lost valid rate %d: %+v err=%v", rate, saved, err)
+		if err != nil || saved.MetadataConcurrency != concurrency || saved.MetadataBatchIntervalSeconds != 0 {
+			t.Fatalf("附件并发或取链间隔未保存: %+v err=%v", saved, err)
 		}
 	}
 	if len(client.calls) != 1 { // Only the original mapping creation read 115.

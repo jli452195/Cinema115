@@ -59,7 +59,7 @@ func TestDriveSTRMSettingsPersistIndependentlyOfMappings(t *testing.T) {
 	}
 }
 
-func TestDriveSTRMSettingsMissingPeriodsUseDefaultsAndZeroDisables(t *testing.T) {
+func TestDriveSTRMSettingsMissingEventPeriodUsesDefaultAndZeroDisables(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "drive.db"))
 	if err != nil {
@@ -67,18 +67,18 @@ func TestDriveSTRMSettingsMissingPeriodsUseDefaultsAndZeroDisables(t *testing.T)
 	}
 	defer s.Close()
 	for _, tc := range []struct {
-		raw                    string
-		event, reconcile, full int
+		raw   string
+		event int
 	}{
-		{`{"baseUrl":"https://cinema.example","videoExtensions":"mkv"}`, 20, 24, 720},
-		{`{"eventIntervalSeconds":0,"reconcileIntervalHours":0,"fullScanIntervalHours":0}`, 0, 0, 0},
-		{`{"eventIntervalSeconds":300,"reconcileIntervalHours":6,"fullScanIntervalHours":24}`, 300, 6, 24},
+		{`{"baseUrl":"https://cinema.example","videoExtensions":"mkv"}`, 20},
+		{`{"eventIntervalSeconds":0}`, 0},
+		{`{"eventIntervalSeconds":300}`, 300},
 	} {
 		if _, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO drive_strm_settings(id,record) VALUES(1,?)`, tc.raw); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.GetDriveSTRMSettings(ctx)
-		if err != nil || got.EventIntervalSeconds != tc.event || got.ReconcileIntervalHours != tc.reconcile || got.FullScanIntervalHours != tc.full {
+		if err != nil || got.EventIntervalSeconds != tc.event {
 			t.Fatalf("decode settings=%+v err=%v", got, err)
 		}
 	}
@@ -391,7 +391,7 @@ func TestDriveSTRMAttachmentsPreserveRetryAcrossDiscoveryAndRestart(t *testing.T
 		t.Fatal(err)
 	}
 	discovered := job
-	discovered.Settings.MetadataFilesPerSecond = 9
+	discovered.Settings.MetadataConcurrency = 8
 	discovered.Attempts, discovered.LastError, discovered.NextAttemptAt = 99, "stale state", time.Now()
 	if err := s.QueueDriveSTRMAttachments(ctx, []model.DriveSTRMAttachment{discovered}); err != nil {
 		t.Fatal(err)

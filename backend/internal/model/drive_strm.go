@@ -4,22 +4,31 @@ import "time"
 
 // DriveSTRMSettings applies to directory STRM only. Each scan freezes a copy.
 type DriveSTRMSettings struct {
-	BaseURL                string `json:"baseUrl"`
-	VideoExtensions        string `json:"videoExtensions"`
-	MetadataExtensions     string `json:"metadataExtensions"`
-	MinSizeMB              int64  `json:"minSizeMB"`
-	EventIntervalSeconds   int    `json:"eventIntervalSeconds"`
-	ReconcileEnabled       bool   `json:"reconcileEnabled"`
-	ReconcileIntervalHours int    `json:"reconcileIntervalHours"`
-	FullScanEnabled        bool   `json:"fullScanEnabled"`
-	FullScanIntervalHours  int    `json:"fullScanIntervalHours"`
-	MetadataRateEnabled    bool   `json:"metadataRateEnabled"`
-	MetadataFilesPerSecond int    `json:"metadataFilesPerSecond"`
+	BaseURL                      string `json:"baseUrl"`
+	VideoExtensions              string `json:"videoExtensions"`
+	MetadataExtensions           string `json:"metadataExtensions"`
+	MinSizeMB                    int64  `json:"minSizeMB"`
+	EventIntervalSeconds         int    `json:"eventIntervalSeconds"`
+	MetadataImageMode            string `json:"metadataImageMode"`
+	MetadataConcurrency          int    `json:"metadataConcurrency"`
+	MetadataBatchIntervalSeconds int    `json:"metadataBatchIntervalSeconds"`
 }
 
-// Seed defaults before decoding JSON; switches retain their selected periods.
+// 解码前提供共享事件和附件策略的初始值，目录周期独立保存。
 func DefaultDriveSTRMSettings() DriveSTRMSettings {
-	return DriveSTRMSettings{EventIntervalSeconds: 20, ReconcileEnabled: true, ReconcileIntervalHours: 24, FullScanIntervalHours: 720, MetadataRateEnabled: true, MetadataFilesPerSecond: 2}
+	return DriveSTRMSettings{EventIntervalSeconds: 20, MetadataImageMode: "cdn", MetadataConcurrency: 4, MetadataBatchIntervalSeconds: 3}
+}
+
+// DriveSTRMSchedule 保存当前目录的独立补漏周期；生活事件始终共享全局设置。
+type DriveSTRMSchedule struct {
+	ReconcileEnabled       bool `json:"reconcileEnabled"`
+	ReconcileIntervalHours int  `json:"reconcileIntervalHours"`
+	FullScanEnabled        bool `json:"fullScanEnabled"`
+	FullScanIntervalHours  int  `json:"fullScanIntervalHours"`
+}
+
+func DefaultDriveSTRMSchedule() DriveSTRMSchedule {
+	return DriveSTRMSchedule{ReconcileEnabled: true, ReconcileIntervalHours: 24, FullScanIntervalHours: 720}
 }
 
 // DriveSTRM mirrors an existing primary-account directory without modifying it.
@@ -32,6 +41,7 @@ type DriveSTRM struct {
 	SourcePath         string            `json:"sourcePath"`
 	OutputDir          string            `json:"outputDir"`
 	Enabled            bool              `json:"enabled"`
+	Schedule           DriveSTRMSchedule `json:"schedule"`
 	Settings           DriveSTRMSettings `json:"-"`
 	Status             string            `json:"status"`
 	Mode               string            `json:"mode,omitempty"`
@@ -70,6 +80,9 @@ type DriveSTRMFile struct {
 	Directory bool   `json:"directory"`
 	Digest    string `json:"digest,omitempty"`
 	Signature string `json:"signature,omitempty"`
+	// 预览图的本地大小与源文件分别记录，避免下次核对误判为缺失或把预览当作原件。
+	MetadataPreview bool  `json:"metadataPreview,omitempty"`
+	MetadataSize    int64 `json:"metadataSize,omitempty"`
 }
 
 // DriveSTRMAttachment freezes one accepted download without persisting its
@@ -88,6 +101,8 @@ type DriveSTRMAttachment struct {
 	Attempts      int               `json:"-"`
 	NextAttemptAt time.Time         `json:"-"`
 	LastError     string            `json:"-"`
+	// 列表图片地址可能带临时签名，只在当前进程内交接，禁止写入任务记录。
+	Thumbnail string `json:"-"`
 }
 
 // DriveSTRMCleanup retains previous local ownership after a successful move.

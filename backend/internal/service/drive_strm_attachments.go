@@ -22,7 +22,7 @@ func driveSTRMAttachmentMatches(value model.DriveSTRM, job model.DriveSTRMAttach
 	return value.AccountID == job.AccountID && value.SourceCID == job.SourceCID && value.OutputDir == job.OutputDir && value.Status != "stopped"
 }
 
-func (s *DriveSTRMService) queueAttachments(ctx context.Context, value model.DriveSTRM, jobs []model.DriveSTRMAttachment) error {
+func (s *DriveSTRMService) queueAttachments(ctx context.Context, value model.DriveSTRM, jobs []model.DriveSTRMAttachment, cookies ...string) error {
 	if len(jobs) == 0 {
 		return ctx.Err()
 	}
@@ -41,16 +41,21 @@ func (s *DriveSTRMService) queueAttachments(ctx context.Context, value model.Dri
 	if err := s.Store.QueueDriveSTRMAttachments(ctx, jobs); err != nil {
 		return err
 	}
-	// The scan's finish wakes the downloader once, after all video pages.
+	if len(cookies) > 0 {
+		s.cacheAttachmentThumbnailsLocked(jobs, cookies[0])
+	}
+	// 扫描完成后统一唤醒下载器，不在逐页扫描期间争用网盘请求。
 	return nil
 }
 
-// Only one attachment is downloaded at a time, independently of video scans.
-// The durable queue retains the original deadline and settings on rediscovery.
+// 批次由同一个协调器领取，持久队列保留重试时间和任务设置快照。
 func (s *DriveSTRMService) nextAttachment(ctx context.Context) (model.DriveSTRMAttachment, context.Context, time.Duration, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wait := 30 * time.Second
+	if delay := s.attachmentCooling(); delay > 0 {
+		return model.DriveSTRMAttachment{}, nil, min(wait, delay), false, nil
+	}
 	jobs, err := s.Store.ListDriveSTRMAttachments(ctx, 32)
 	if err != nil {
 		return model.DriveSTRMAttachment{}, nil, wait, false, err
@@ -80,30 +85,6 @@ func (s *DriveSTRMService) nextAttachment(ctx context.Context) (model.DriveSTRMA
 	return model.DriveSTRMAttachment{}, nil, wait, false, nil
 }
 
-// All mappings share the same start-to-start limit; a slow download never
-// earns credit for a later burst. Local skips do not consume the allowance.
-func (s *DriveSTRMService) waitAttachment(ctx context.Context, settings model.DriveSTRMSettings) error {
-	interval := time.Duration(0)
-	if settings.MetadataRateEnabled {
-		interval = time.Second / time.Duration(max(1, settings.MetadataFilesPerSecond))
-	}
-	delay := time.Until(s.metadataStarted.Add(max(interval, s.metadataInterval)))
-	if delay > 0 {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	s.metadataStarted, s.metadataInterval = time.Now(), interval
-	return nil
-}
-
 func (s *DriveSTRMService) attachmentCurrent(ctx context.Context, job model.DriveSTRMAttachment) (model.DriveSTRM, string, error) {
 	if err := ctx.Err(); err != nil {
 		return model.DriveSTRM{}, "", err
@@ -127,107 +108,45 @@ func (s *DriveSTRMService) downloadAttachment(ctx context.Context, job model.Dri
 	if err != nil {
 		return "", err
 	}
-	directory, err := ResolveOutputDirectory(s.Root, job.OutputDir)
+	local, network, err := s.prepareAttachmentLocal(ctx, job)
 	if err != nil {
 		return cookie, err
 	}
-	indexed, err := s.Store.ListDriveSTRMFilesByIDs(ctx, job.Record.MappingID, []string{job.Record.FileID})
-	if err != nil {
-		return cookie, err
-	}
-	previous := model.DriveSTRMFile{}
-	source := model.DriveSTRMFile{}
-	for _, record := range indexed {
-		if record.FileID == job.Record.FileID {
-			source = record
-			if driveSTRMSamePath(record.Path, job.Record.Path) {
-				previous = record
-			}
-			break
+	if network {
+		reader, ok := s.Client.(driveSTRMMetadataReader)
+		if !ok {
+			return cookie, fmt.Errorf("当前客户端不支持下载附件")
 		}
-	}
-	record := job.Record
-	unchanged := driveSTRMAttachmentUnchanged(directory, record, previous, job.Size)
-	var data []byte
-	if unchanged {
-		record.Digest = previous.Digest
-	} else {
-		// A pure cloud move can reuse a verified local attachment. Its source
-		// signature and local digest must both match before skipping 115.
-		if !driveSTRMSamePath(source.Path, record.Path) && source.Digest != "" && source.Signature != "" && source.Signature == record.Signature {
-			cached, _, readErr := readDriveSTRMCleanupOutput(directory, source.Path)
-			if readErr == nil && int64(len(cached)) == job.Size && driveSTRMDigest(cached) == source.Digest {
-				data = cached
-			}
-		}
-		if data == nil {
-			if job.Size <= 0 || job.Size > p115.MaxMetadataSize || job.PickCode == "" || len(job.SHA1) != 40 {
-				return cookie, fmt.Errorf("附件身份、大小或取链信息无效（最大 32 MB）")
-			}
-			reader, ok := s.Client.(driveSTRMMetadataReader)
-			if !ok {
-				return cookie, fmt.Errorf("当前客户端不支持下载附件")
-			}
-			if err := s.waitAttachment(ctx, job.Settings); err != nil {
-				return cookie, err
-			}
-			// Recheck after a throttle wait, without replacing the fixed cookie.
-			if _, _, err := s.attachmentCurrent(ctx, job); err != nil {
-				return cookie, err
-			}
-			data, err = reader.ReadDriveMetadata(ctx, p115.ShareFile{ID: record.FileID, Name: job.Name, PickCode: job.PickCode, SHA1: job.SHA1, Size: job.Size}, cookie)
-			if err != nil {
-				return cookie, err
-			}
-			if int64(len(data)) != job.Size {
-				return cookie, fmt.Errorf("附件下载不完整")
-			}
-		}
-		record.Digest = driveSTRMDigest(data)
-	}
-	// Stop, deletion and root changes cannot race the final local write.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value, _, err := s.attachmentCurrent(ctx, job)
-	if err != nil {
-		return cookie, err
-	}
-	written := false
-	if !unchanged {
-		written, err = writeDriveSTRMOutput(ctx, directory, record, previous, data)
+		settings, err := s.attachmentSafetySettings(ctx, job.Settings)
 		if err != nil {
 			return cookie, err
 		}
+		if err := s.waitAttachment(ctx, settings); err != nil {
+			return cookie, err
+		}
+		if _, _, err := s.attachmentCurrent(ctx, job); err != nil {
+			return cookie, err
+		}
+		data, err := reader.ReadDriveMetadata(ctx, p115.ShareFile{ID: job.Record.FileID, Name: job.Name, PickCode: job.PickCode, SHA1: job.SHA1, Size: job.Size}, cookie)
+		if err != nil {
+			s.coolAttachments(err, "附件下载")
+			return cookie, err
+		}
+		if int64(len(data)) != job.Size {
+			return cookie, fmt.Errorf("附件下载不完整")
+		}
+		local.data, local.record.Digest = data, driveSTRMDigest(data)
+		local.record.MetadataPreview, local.record.MetadataSize = false, int64(len(data))
+		if s.AttachmentState().Probing {
+			s.attachmentProbeSucceeded()
+		}
 	}
-	if err := s.Store.CompleteDriveSTRMAttachment(ctx, job, record); err != nil {
-		return cookie, err
-	}
-	if written {
-		value.Stats.MetadataWritten++
-		value.UpdatedAt = time.Now().UTC()
-		return cookie, s.Store.SaveDriveSTRM(ctx, value)
-	}
-	return cookie, nil
+	return cookie, s.commitAttachment(ctx, job, local, cookie)
 }
 
 func (s *DriveSTRMService) finishAttachment(ctx, workCtx context.Context, job model.DriveSTRMAttachment, cookie string, downloadErr error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.metadataCancel != nil {
-		s.metadataCancel()
-	}
-	s.metadataActive, s.metadataCancel = "", nil
-	s.Wake()
-	if downloadErr == nil || ctx.Err() != nil || workCtx.Err() != nil && errors.Is(downloadErr, context.Canceled) {
-		return nil
-	}
-	detail := monitorLogDetail(downloadErr.Error(), cookie)
-	delay := driveSTRMRetryDelay(job.Attempts + 1)
-	if err := s.Store.RetryDriveSTRMAttachment(ctx, job, detail, time.Now().UTC().Add(delay)); err != nil {
-		return err
-	}
-	s.logDriveSTRM(job.Record.MappingID, "WARNING", fmt.Sprintf("附件下载未完成：%s；将在 %s 后单独重试，不重扫目录；原因：%s", job.Record.Path, delay, detail))
-	return nil
+	s.releaseAttachmentBatch()
+	return s.retryAttachment(ctx, workCtx, job, cookie, downloadErr)
 }
 
 func (s *DriveSTRMService) runAttachments(ctx context.Context) error {
@@ -255,25 +174,49 @@ func (s *DriveSTRMService) runAttachments(ctx context.Context) error {
 		if time.Since(lastLog) >= 15*time.Second {
 			flush()
 		}
-		job, workCtx, wait, found, err := s.nextAttachment(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		if found {
-			cookie, downloadErr := s.downloadAttachment(workCtx, job)
-			if err := s.finishAttachment(ctx, workCtx, job, cookie, downloadErr); err != nil {
+		wait := 30 * time.Second
+		if reader, batchCapable := s.Client.(driveSTRMMetadataBatchReader); batchCapable {
+			jobs, workCtx, nextWait, found, err := s.nextAttachmentBatch(ctx)
+			wait = nextWait
+			if err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
 				return err
 			}
-			if downloadErr == nil {
-				completed++
+			if found {
+				done, err := s.downloadAttachmentBatch(ctx, workCtx, jobs, reader)
+				completed += done
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				continue
 			}
-			continue
+		} else {
+			job, workCtx, nextWait, found, err := s.nextAttachment(ctx)
+			wait = nextWait
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+			if found {
+				cookie, downloadErr := s.downloadAttachment(workCtx, job)
+				if err := s.finishAttachment(ctx, workCtx, job, cookie, downloadErr); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				if downloadErr == nil {
+					completed++
+				}
+				continue
+			}
 		}
 		if cleaned {
 			continue

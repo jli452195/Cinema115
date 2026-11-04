@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/model"
 )
 
-func TestDriveSTRMPeriodsAreIndependentAndChangingSettingsDoesNotQueue(t *testing.T) {
+func TestDriveSTRMPeriodsAreIndependentAndChangingSchedulesDoesNotQueue(t *testing.T) {
 	for _, tc := range []struct {
 		name                          string
 		reconcile, full               int
@@ -38,17 +38,12 @@ func TestDriveSTRMPeriodsAreIndependentAndChangingSettingsDoesNotQueue(t *testin
 			if err := db.SaveDriveSTRM(ctx, value); err != nil {
 				t.Fatal(err)
 			}
-			settings, _ := s.Settings(ctx)
-			settings.ReconcileIntervalHours, settings.FullScanIntervalHours = tc.reconcile, tc.full
-			settings.ReconcileEnabled, settings.FullScanEnabled = tc.reconcileEnabled, tc.fullEnabled
-			if _, err := s.SaveSettings(ctx, settings); err != nil {
+			schedule := model.DriveSTRMSchedule{ReconcileIntervalHours: tc.reconcile, FullScanIntervalHours: tc.full, ReconcileEnabled: tc.reconcileEnabled, FullScanEnabled: tc.fullEnabled}
+			if _, err := s.SaveSchedule(ctx, mapping.ID, schedule); err != nil {
 				t.Fatal(err)
 			}
-			if saved, err := s.Settings(ctx); err != nil || saved != settings {
-				t.Fatalf("switches changed selected periods: %+v err=%v", saved, err)
-			}
 			stored, _ := db.GetDriveSTRM(ctx, mapping.ID)
-			if stored.Queued || stored.Status != "idle" || stored.NextScanAt != value.NextScanAt {
+			if stored.Schedule != schedule || stored.Queued || stored.Status != "idle" || stored.NextScanAt != value.NextScanAt {
 				t.Fatalf("settings save changed idle mapping: %+v", stored)
 			}
 			listed, err := s.List(ctx)
@@ -77,8 +72,12 @@ func TestDriveSTRMDisabledPeriodsKeepAcceptedWorkAndFailedRetries(t *testing.T) 
 	ctx := context.Background()
 	settings, _ := s.Settings(ctx)
 	settings.EventIntervalSeconds = 0
-	settings.ReconcileEnabled, settings.FullScanEnabled = false, false
 	if _, err := s.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	schedule := mapping.Schedule
+	schedule.ReconcileEnabled, schedule.FullScanEnabled = false, false
+	if _, err := s.SaveSchedule(ctx, mapping.ID, schedule); err != nil {
 		t.Fatal(err)
 	}
 	// Creation was already accepted before all automatic periods were closed.
@@ -149,11 +148,7 @@ func TestDriveSTRMPausedDirectoryCompletesAlreadyAcceptedEvent(t *testing.T) {
 func TestDriveSTRMDisabledPeriodsDoNotTreatZeroCheckpointsAsDue(t *testing.T) {
 	s, db, _, mapping, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
-	settings, _ := s.Settings(ctx)
-	settings.ReconcileEnabled, settings.FullScanEnabled = false, false
-	if _, err := s.SaveSettings(ctx, settings); err != nil {
-		t.Fatal(err)
-	}
+	mapping.Schedule.ReconcileEnabled, mapping.Schedule.FullScanEnabled = false, false
 	mapping.Queued, mapping.FullScan, mapping.Status = false, false, "idle"
 	if err := db.SaveDriveSTRM(ctx, mapping); err != nil {
 		t.Fatal(err)
@@ -166,9 +161,9 @@ func TestDriveSTRMDisabledPeriodsDoNotTreatZeroCheckpointsAsDue(t *testing.T) {
 func TestDriveSTRMStoppingDoesNotForceDisabledFullScan(t *testing.T) {
 	s, db, _, mapping, _ := driveSTRMTestSetup(t)
 	ctx := context.Background()
-	settings, _ := s.Settings(ctx)
-	settings.ReconcileEnabled, settings.ReconcileIntervalHours, settings.FullScanEnabled = true, 6, false
-	if _, err := s.SaveSettings(ctx, settings); err != nil {
+	schedule := mapping.Schedule
+	schedule.ReconcileEnabled, schedule.ReconcileIntervalHours, schedule.FullScanEnabled = true, 6, false
+	if _, err := s.SaveSchedule(ctx, mapping.ID, schedule); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Stop(ctx, mapping.ID); err != nil {
@@ -226,14 +221,7 @@ func TestDriveSTRMDueReconciliationWinsOverQueuedEvents(t *testing.T) {
 	if saved.Mode != "tree" || len(client.exportCalls) == 0 {
 		t.Fatalf("queued event starved due tree: %+v", saved)
 	}
-	settings, err := s.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings.FullScanEnabled = true
-	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
-		t.Fatal(err)
-	}
+	saved.Schedule.FullScanEnabled = true
 	saved.LastReconcileAt = time.Now().Add(-25 * time.Hour)
 	saved.LastFullScanAt = time.Now().Add(-721 * time.Hour)
 	if err := db.SaveDriveSTRM(context.Background(), saved); err != nil {

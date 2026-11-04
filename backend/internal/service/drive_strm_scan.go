@@ -154,8 +154,14 @@ func driveSTRMOwnsOutput(record, previous model.DriveSTRMFile) bool {
 	return previous.MappingID == record.MappingID && previous.FileID == record.FileID && driveSTRMSamePath(previous.Path, record.Path) && previous.Digest != ""
 }
 
-func driveSTRMAttachmentUnchanged(directory string, record, previous model.DriveSTRMFile, size int64) bool {
+func driveSTRMAttachmentUnchanged(directory string, record, previous model.DriveSTRMFile, size int64, imageMode ...string) bool {
 	info, err := statDriveSTRMOutput(directory, record.Path)
+	if previous.MetadataPreview {
+		if len(imageMode) == 0 || imageMode[0] != "cdn" || previous.MetadataSize <= 0 {
+			return false
+		}
+		size = previous.MetadataSize
+	}
 	return err == nil && driveSTRMOwnsOutput(record, previous) && previous.Signature != "" && previous.Signature == record.Signature && info.Size() == size
 }
 
@@ -243,14 +249,14 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 				continue
 			}
 			if !r.videos[strings.ToLower(path.Ext(item.file.Name))] {
-				if driveSTRMAttachmentUnchanged(r.directory, item.record, item.previous, item.file.Size) {
+				if driveSTRMAttachmentUnchanged(r.directory, item.record, item.previous, item.file.Size, r.value.Settings.MetadataImageMode) {
 					r.stats.Unchanged++
 					continue
 				}
 				attachments = append(attachments, model.DriveSTRMAttachment{
 					Record: item.record, AccountID: r.value.AccountID,
 					SourceCID: r.value.SourceCID, OutputDir: r.value.OutputDir, Settings: r.value.Settings,
-					Name: item.file.Name, PickCode: item.file.PickCode, SHA1: item.file.SHA1, Size: item.file.Size,
+					Name: item.file.Name, PickCode: item.file.PickCode, SHA1: item.file.SHA1, Size: item.file.Size, Thumbnail: item.file.Thumbnail,
 				})
 				continue
 			}
@@ -270,7 +276,7 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 		if err := r.service.Store.SaveDriveSTRMFiles(ctx, changed); err != nil {
 			return err
 		}
-		if err := r.service.queueAttachments(ctx, r.value, attachments); err != nil {
+		if err := r.service.queueAttachments(ctx, r.value, attachments, r.cookie); err != nil {
 			return err
 		}
 		if err := r.progress(ctx); err != nil {

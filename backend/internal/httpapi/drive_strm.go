@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -15,11 +17,34 @@ import (
 // Accept configuration only; runtime state, statistics and pending work are
 // owned by the service and cannot be replaced by a browser's stale snapshot.
 type driveSTRMInput struct {
-	Name      string `json:"name"`
-	AccountID string `json:"accountId"`
-	SourceCID string `json:"sourceCID"`
-	OutputDir string `json:"outputDir"`
-	Enabled   bool   `json:"enabled"`
+	Name      string          `json:"name"`
+	AccountID string          `json:"accountId"`
+	SourceCID string          `json:"sourceCID"`
+	OutputDir string          `json:"outputDir"`
+	Enabled   bool            `json:"enabled"`
+	Schedule  json.RawMessage `json:"schedule"`
+}
+
+// 目录编辑可省略周期，但一旦提交就必须包含完整策略，避免缺字段静默关闭任务。
+func parseDriveSTRMSchedule(raw json.RawMessage) (*model.DriveSTRMSchedule, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, errors.New("请指定当前目录的完整自动任务策略")
+	}
+	var fields struct {
+		ReconcileEnabled       *bool `json:"reconcileEnabled"`
+		ReconcileIntervalHours *int  `json:"reconcileIntervalHours"`
+		FullScanEnabled        *bool `json:"fullScanEnabled"`
+		FullScanIntervalHours  *int  `json:"fullScanIntervalHours"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&fields) != nil || fields.ReconcileEnabled == nil || fields.ReconcileIntervalHours == nil || fields.FullScanEnabled == nil || fields.FullScanIntervalHours == nil {
+		return nil, errors.New("目录自动任务参数无效")
+	}
+	return &model.DriveSTRMSchedule{ReconcileEnabled: *fields.ReconcileEnabled, ReconcileIntervalHours: *fields.ReconcileIntervalHours, FullScanEnabled: *fields.FullScanEnabled, FullScanIntervalHours: *fields.FullScanIntervalHours}, nil
 }
 
 func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService, events *service.DriveSTRMEvents, defaultBaseURL func() string) {
@@ -61,7 +86,7 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 			fail(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"mappings": values, "primaryAccountId": scanner.Accounts.PrimaryID(), "accountReady": primaryErr == nil && primary.Cookie != "", "events": events.State(), "settings": settings, "settingsSaved": saved})
+		c.JSON(http.StatusOK, gin.H{"mappings": values, "primaryAccountId": scanner.Accounts.PrimaryID(), "accountReady": primaryErr == nil && primary.Cookie != "", "events": events.State(), "attachments": scanner.AttachmentState(), "settings": settings, "settingsSaved": saved})
 	})
 	group.PUT("/settings", func(c *gin.Context) {
 		input := model.DefaultDriveSTRMSettings()
@@ -82,9 +107,14 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 			c.JSON(http.StatusBadRequest, gin.H{"error": "目录 STRM 参数无效"})
 			return
 		}
+		schedule, err := parseDriveSTRMSchedule(input.Schedule)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
-		value, err := scanner.Save(ctx, model.DriveSTRM{ID: c.Param("id"), Name: input.Name, AccountID: input.AccountID, SourceCID: input.SourceCID, OutputDir: input.OutputDir, Enabled: input.Enabled})
+		value, err := scanner.SaveWithSchedule(ctx, model.DriveSTRM{ID: c.Param("id"), Name: input.Name, AccountID: input.AccountID, SourceCID: input.SourceCID, OutputDir: input.OutputDir, Enabled: input.Enabled}, schedule)
 		if err != nil {
 			fail(c, err)
 			return
@@ -113,6 +143,26 @@ func RegisterDriveSTRM(admin *gin.RouterGroup, scanner *service.DriveSTRMService
 			return
 		}
 		value, err := scanner.SetMonitoring(c.Request.Context(), c.Param("id"), *input.Enabled)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, value)
+	})
+	group.PUT("/:id/schedule", func(c *gin.Context) {
+		var input struct {
+			Schedule json.RawMessage `json:"schedule"`
+		}
+		if c.ShouldBindJSON(&input) != nil || len(input.Schedule) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请指定当前目录的完整自动任务策略"})
+			return
+		}
+		schedule, err := parseDriveSTRMSchedule(input.Schedule)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		value, err := scanner.SaveSchedule(c.Request.Context(), c.Param("id"), *schedule)
 		if err != nil {
 			fail(c, err)
 			return

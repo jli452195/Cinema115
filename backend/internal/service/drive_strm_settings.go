@@ -43,13 +43,17 @@ func (s *DriveSTRMService) SaveSettings(ctx context.Context, value model.DriveST
 	if value.MinSizeMB < 0 || value.MinSizeMB > 1<<30 {
 		return value, generationInputError("最小文件大小无效")
 	}
-	if !slices.Contains([]int{0, 20, 60, 300, 900, 1800}, value.EventIntervalSeconds) ||
-		!slices.Contains([]int{0, 6, 12, 24, 72, 168}, value.ReconcileIntervalHours) ||
-		!slices.Contains([]int{0, 24, 72, 168, 336, 720}, value.FullScanIntervalHours) {
-		return value, generationInputError("请选择有效的自动监控周期")
+	if !slices.Contains([]int{0, 20, 60, 300, 900, 1800}, value.EventIntervalSeconds) {
+		return value, generationInputError("请选择有效的共享事件检查间隔")
 	}
-	if value.MetadataFilesPerSecond < 1 || value.MetadataFilesPerSecond > 10 {
-		return value, generationInputError("附件下载频率应为每秒 1 到 10 个文件")
+	if value.MetadataImageMode != "cdn" && value.MetadataImageMode != "original" {
+		return value, generationInputError("请选择有效的图片下载策略")
+	}
+	if value.MetadataConcurrency < 1 || value.MetadataConcurrency > 8 {
+		return value, generationInputError("附件下载并发应为 1 到 8")
+	}
+	if value.MetadataBatchIntervalSeconds < 0 || value.MetadataBatchIntervalSeconds > 60 {
+		return value, generationInputError("附件取链批次间隔应为 0 到 60 秒")
 	}
 	normalize := func(extensions map[string]bool) string {
 		values := make([]string, 0, len(extensions))

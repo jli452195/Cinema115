@@ -87,12 +87,13 @@ func (c *ShareClient) WalkDriveFiles(ctx context.Context, cid, cookie string, vi
 			Offset json.Number                 `json:"offset"`
 			Path   []struct{ CID json.Number } `json:"path"`
 			Data   []struct {
-				FID      json.Number `json:"fid"`
-				CID      json.Number `json:"cid"`
-				Name     string      `json:"n"`
-				Size     json.Number `json:"s"`
-				SHA1     string      `json:"sha"`
-				PickCode string      `json:"pc"`
+				FID       json.Number `json:"fid"`
+				CID       json.Number `json:"cid"`
+				Name      string      `json:"n"`
+				Size      json.Number `json:"s"`
+				SHA1      string      `json:"sha"`
+				PickCode  string      `json:"pc"`
+				Thumbnail string      `json:"thumb"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(raw, &response) != nil {
@@ -117,7 +118,7 @@ func (c *ShareClient) WalkDriveFiles(ctx context.Context, cid, cookie string, vi
 				return fmt.Errorf("%w：文件身份或目录归属无效", ErrDriveTreeIncomplete)
 			}
 			seen[id] = true
-			batch = append(batch, DriveTreeEntry{ShareFile: ShareFile{ID: id, Name: file.Name, Size: size, SHA1: strings.ToUpper(file.SHA1), PickCode: file.PickCode}, ParentCID: parentID, RelativePath: path.Join(parentPath, file.Name)})
+			batch = append(batch, DriveTreeEntry{ShareFile: ShareFile{ID: id, Name: file.Name, Size: size, SHA1: strings.ToUpper(file.SHA1), PickCode: file.PickCode, Thumbnail: file.Thumbnail}, ParentCID: parentID, RelativePath: path.Join(parentPath, file.Name)})
 		}
 		if len(batch) > 0 {
 			if err := visit(batch); err != nil {

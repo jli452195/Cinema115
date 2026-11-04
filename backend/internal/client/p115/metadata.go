@@ -44,7 +44,15 @@ func (c *ShareClient) ReadMetadata(ctx context.Context, share *ShareInfo, fileID
 }
 
 func (c *ShareClient) readMetadataURL(ctx context.Context, link string) ([]byte, error) {
-	if !AllowedMediaURL(link) {
+	return c.readMetadataURLMode(ctx, link, false)
+}
+
+func (c *ShareClient) readMetadataURLMode(ctx context.Context, link string, preview bool) ([]byte, error) {
+	allowed := AllowedMediaURL
+	if preview {
+		allowed = allowedMetadataImageURL
+	}
+	if !allowed(link) {
 		return nil, fmt.Errorf("元数据下载域名不在允许范围内")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -56,9 +64,11 @@ func (c *ShareClient) readMetadataURL(ctx context.Context, link string) ([]byte,
 	req.Header.Set("User-Agent", PlaybackUserAgent)
 	// 独立客户端复用传输层，不使用 API 的 Cookie Jar，也不修改共享客户端。
 	client := &http.Client{Transport: c.requestTransport(), Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !AllowedMediaURL(req.URL.String()) {
+		if len(via) >= 5 || !allowed(req.URL.String()) {
 			return fmt.Errorf("元数据重定向不被允许")
 		}
+		req.Header.Del("Cookie")
+		req.Header.Del("Authorization")
 		return nil
 	}}
 	response, err := client.Do(req)
@@ -70,7 +80,11 @@ func (c *ShareClient) readMetadataURL(ctx context.Context, link string) ([]byte,
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("元数据下载返回 HTTP %d", response.StatusCode)
+		endpoint := req.URL.Host
+		if response.Request != nil && response.Request.URL != nil {
+			endpoint = response.Request.URL.Host
+		}
+		return nil, fmt.Errorf("附件内容下载失败: %w", &HTTPError{Status: response.StatusCode, Method: req.Method, Endpoint: endpoint, RetryAfter: retryAfter(response.Header.Get("Retry-After"))})
 	}
 	if response.ContentLength > MaxMetadataSize {
 		return nil, fmt.Errorf("元数据文件超过 32 MB")

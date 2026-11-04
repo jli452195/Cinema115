@@ -197,7 +197,7 @@ func TestDriveSTRMSlowAttachmentDoesNotBlockOtherMappingSTRM(t *testing.T) {
 func TestDriveSTRMAttachmentThrottleCancellationAndNoCatchUpBurst(t *testing.T) {
 	s := &DriveSTRMService{}
 	settings := model.DefaultDriveSTRMSettings()
-	settings.MetadataFilesPerSecond = 10
+	settings.MetadataBatchIntervalSeconds = 1
 	if err := s.waitAttachment(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -207,9 +207,8 @@ func TestDriveSTRMAttachmentThrottleCancellationAndNoCatchUpBurst(t *testing.T) 
 	if err := s.waitAttachment(ctx, settings); !errors.Is(err, context.DeadlineExceeded) || !s.metadataStarted.Equal(first) {
 		t.Fatalf("canceled wait consumed allowance: %v", err)
 	}
-	// Simulate a slow first request. The next can begin immediately, but the
-	// request after it must still observe a full interval.
-	s.metadataStarted = time.Now().Add(-time.Second)
+	// 慢请求不积攒突发额度；下一批之后仍须等待完整取链间隔。
+	s.metadataStarted = time.Now().Add(-2 * time.Second)
 	if err := s.waitAttachment(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +216,7 @@ func TestDriveSTRMAttachmentThrottleCancellationAndNoCatchUpBurst(t *testing.T) 
 	if err := s.waitAttachment(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
-	if s.metadataStarted.Sub(second) < 95*time.Millisecond {
+	if s.metadataStarted.Sub(second) < 950*time.Millisecond {
 		t.Fatal("slow request permitted a catch-up burst")
 	}
 }

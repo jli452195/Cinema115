@@ -72,6 +72,26 @@ func (s *Store) SaveDriveSTRMSettings(ctx context.Context, value model.DriveSTRM
 	return nil
 }
 
+// 只更新目录策略，避免用页面旧快照覆盖后台进度和待处理任务。
+func (s *Store) SaveDriveSTRMSchedule(ctx context.Context, id string, schedule model.DriveSTRMSchedule) error {
+	raw, err := json.Marshal(schedule)
+	if err != nil {
+		return fmt.Errorf("编码目录 STRM 自动任务: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE drive_strm_mappings SET record=json_set(record,'$.schedule',json(?)) WHERE id=?`, string(raw), id)
+	if err != nil {
+		return fmt.Errorf("保存目录 STRM 自动任务: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("读取目录 STRM 自动任务保存结果: %w", err)
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) LoadDriveSTRMCursor(ctx context.Context, accountID string) (string, error) {
 	var cursor string
 	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM drive_strm_cursors WHERE account_id=?`, accountID).Scan(&cursor)
@@ -183,7 +203,7 @@ func (s *Store) SaveDriveSTRMConfiguration(ctx context.Context, value model.Driv
 }
 
 func (s *Store) GetDriveSTRM(ctx context.Context, id string) (model.DriveSTRM, error) {
-	var out model.DriveSTRM
+	out := model.DriveSTRM{Schedule: model.DefaultDriveSTRMSchedule()}
 	var raw string
 	if err := s.db.QueryRowContext(ctx, `SELECT record FROM drive_strm_mappings WHERE id=?`, id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -206,7 +226,7 @@ func (s *Store) ListDriveSTRM(ctx context.Context) ([]model.DriveSTRM, error) {
 	out := make([]model.DriveSTRM, 0)
 	for rows.Next() {
 		var raw string
-		var value model.DriveSTRM
+		value := model.DriveSTRM{Schedule: model.DefaultDriveSTRMSchedule()}
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}

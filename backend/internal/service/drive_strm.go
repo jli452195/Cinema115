@@ -21,6 +21,7 @@ var ErrDriveSTRMBusy = errors.New("目录 STRM 正在扫描，请完成后再修
 
 type DriveSTRMStore interface {
 	SaveDriveSTRMSettings(context.Context, model.DriveSTRMSettings) error
+	SaveDriveSTRMSchedule(context.Context, string, model.DriveSTRMSchedule) error
 	GetDriveSTRMSettings(context.Context) (model.DriveSTRMSettings, error)
 	SaveDriveSTRM(context.Context, model.DriveSTRM) error
 	SaveDriveSTRMConfiguration(context.Context, model.DriveSTRM, bool) error
@@ -62,23 +63,26 @@ type driveSTRMMetadataReader interface {
 // Tracked scan and attachment workers freeze credentials for accepted work.
 // Life events enqueue directory scopes; reconciliation repairs missed changes.
 type DriveSTRMService struct {
-	Store            DriveSTRMStore
-	Accounts         *P115Accounts
-	Client           DriveSTRMClient
-	Root             string
-	Logs             *GenerationLogs
-	mu               sync.Mutex
-	wake             chan struct{}
-	active           string
-	cancel           context.CancelFunc
-	metadataWake     chan struct{}
-	metadataActive   string
-	metadataCancel   context.CancelFunc
-	metadataStarted  time.Time
-	metadataInterval time.Duration
-	running          bool
-	lastPicked       string
-	scanStarted      time.Time
+	Store              DriveSTRMStore
+	Accounts           *P115Accounts
+	Client             DriveSTRMClient
+	Root               string
+	Logs               *GenerationLogs
+	mu                 sync.Mutex
+	wake               chan struct{}
+	active             string
+	cancel             context.CancelFunc
+	metadataWake       chan struct{}
+	metadataActive     string
+	metadataCancel     context.CancelFunc
+	metadataStarted    time.Time
+	metadataInterval   time.Duration
+	metadataControlMu  sync.Mutex
+	metadataControl    driveSTRMAttachmentControl
+	metadataThumbnails map[string]driveSTRMAttachmentThumbnail
+	running            bool
+	lastPicked         string
+	scanStarted        time.Time
 }
 
 func NewDriveSTRMService(store DriveSTRMStore, accounts *P115Accounts, client DriveSTRMClient, root string) *DriveSTRMService {
@@ -105,7 +109,7 @@ func (s *DriveSTRMService) List(ctx context.Context) ([]model.DriveSTRM, error) 
 		count := counts[values[i].ID]
 		values[i].MetadataPending, values[i].MetadataFailed = count[0], count[1]
 	}
-	settings, err := s.Store.GetDriveSTRMSettings(ctx)
+	_, err = s.Store.GetDriveSTRMSettings(ctx)
 	if errors.Is(err, storage.ErrNotFound) {
 		return values, nil
 	}
@@ -114,7 +118,7 @@ func (s *DriveSTRMService) List(ctx context.Context) ([]model.DriveSTRM, error) 
 	}
 	now := time.Now().UTC()
 	for i := range values {
-		values[i].NextScanAt = driveSTRMNextScan(values[i], settings, now)
+		values[i].NextScanAt = driveSTRMNextScan(values[i], now)
 	}
 	return values, nil
 }
@@ -124,6 +128,18 @@ func driveSTRMExtensions(raw string) (map[string]bool, error) {
 }
 
 func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (model.DriveSTRM, error) {
+	return s.SaveWithSchedule(ctx, value, nil)
+}
+
+// SaveWithSchedule 将目录配置与明确提交的周期同事务保存；省略周期时保留已有策略。
+func (s *DriveSTRMService) SaveWithSchedule(ctx context.Context, value model.DriveSTRM, schedule *model.DriveSTRMSchedule) (model.DriveSTRM, error) {
+	var selected model.DriveSTRMSchedule
+	if schedule != nil {
+		selected = *schedule
+		if err := validateDriveSTRMSchedule(selected); err != nil {
+			return value, err
+		}
+	}
 	value.Name = strings.TrimSpace(value.Name)
 	if value.Name == "" || len([]rune(value.Name)) > 80 || strings.ContainsAny(value.Name, "\r\n\x00") {
 		return value, generationInputError("名称应为 1 到 80 个字符")
@@ -215,9 +231,16 @@ func (s *DriveSTRMService) Save(ctx context.Context, value model.DriveSTRM) (mod
 			value.NextScanAt = time.Time{}
 		}
 	} else {
+		value.Schedule = old.Schedule
+		if old.ID == "" {
+			value.Schedule = model.DefaultDriveSTRMSchedule()
+		}
 		value.Status, value.LastError = "queued", ""
 		value.Queued, value.FullScan, value.PendingDirectories = true, true, nil
 		value.Mode = "full"
+	}
+	if schedule != nil {
+		value.Schedule = selected
 	}
 	value.UpdatedAt = time.Now().UTC()
 	if reset && s.metadataActive == value.ID && s.metadataCancel != nil {
@@ -497,7 +520,7 @@ func (s *DriveSTRMService) next(ctx context.Context) (model.DriveSTRM, context.C
 		if retry && (!value.Enabled || value.NextScanAt.After(now)) {
 			continue
 		}
-		treeAt, fullAt := driveSTRMDeadlines(value, settings, now)
+		treeAt, fullAt := driveSTRMDeadlines(value, now)
 		treeDue, fullDue := driveSTRMDue(treeAt, now), driveSTRMDue(fullAt, now)
 		if !value.Queued && !retry && !treeDue && !fullDue {
 			continue

@@ -121,7 +121,7 @@ func driveSTRMTestSetup(t *testing.T) (*DriveSTRMService, *storage.Store, *drive
 	s := NewDriveSTRMService(db, accounts, client, root)
 	settings := model.DefaultDriveSTRMSettings()
 	settings.BaseURL, settings.VideoExtensions, settings.MetadataExtensions = "https://cinema.example", "mkv,mp4", "ass,nfo,jpg"
-	settings.MetadataRateEnabled = false // Rate behavior is verified separately.
+	settings.MetadataBatchIntervalSeconds = 0
 	if _, err := s.SaveSettings(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}

@@ -15,12 +15,13 @@ import (
 var ErrDriveDirectorySnapshotChanged = errors.New("115 目录分页快照暂不一致")
 
 type driveDirectoryItem struct {
-	FID      json.Number `json:"fid"`
-	CID      json.Number `json:"cid"`
-	Name     string      `json:"n"`
-	Size     json.Number `json:"s"`
-	SHA1     string      `json:"sha"`
-	PickCode string      `json:"pc"`
+	FID       json.Number `json:"fid"`
+	CID       json.Number `json:"cid"`
+	Name      string      `json:"n"`
+	Size      json.Number `json:"s"`
+	SHA1      string      `json:"sha"`
+	PickCode  string      `json:"pc"`
+	Thumbnail string      `json:"thumb"`
 }
 
 func decodeDriveDirectoryItem(item driveDirectoryItem) (ShareFile, error) {
@@ -40,7 +41,7 @@ func decodeDriveDirectoryItem(item driveDirectoryItem) (ShareFile, error) {
 			return ShareFile{}, fmt.Errorf("网盘文件大小无效: %w", err)
 		}
 	}
-	return ShareFile{ID: id, Name: item.Name, Size: size, Directory: directory, SHA1: strings.ToUpper(item.SHA1), PickCode: item.PickCode}, nil
+	return ShareFile{ID: id, Name: item.Name, Size: size, Directory: directory, SHA1: strings.ToUpper(item.SHA1), PickCode: item.PickCode, Thumbnail: item.Thumbnail}, nil
 }
 
 // ReadDirectoryFiles 完整读取目录，身份、分页或条目不完整时不返回可用于删除核验的部分结果。

@@ -50,6 +50,7 @@ type ShareFile struct {
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
 	Directory bool   `json:"directory"`
+	Thumbnail string `json:"-"`
 }
 
 type SharePage struct {
