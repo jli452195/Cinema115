@@ -16,7 +16,7 @@ func TestMediaOrganizeLiveQueryMergesWithoutPersistingRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	run := MediaOrganizeRunRow{ID: "retry", RuleID: "rule", Status: "partial", Record: "run", Tasks: []MediaOrganizeTaskRow{{FileID: "video", Group: "failed", At: "2026-11-03T00:00:00Z", Search: "work", Record: "saved-failure"}}}
+	run := MediaOrganizeRunRow{ID: "retry", RuleID: "rule", Record: "run", Tasks: []MediaOrganizeTaskRow{{FileID: "video", Group: "failed", At: "2026-11-03T00:00:00Z", Search: "work", Record: "saved-failure"}}}
 	if err := s.SaveMediaOrganize(ctx, "{}", []MediaOrganizeRunRow{run}, nil); err != nil {
 		t.Fatal(err)
 	}

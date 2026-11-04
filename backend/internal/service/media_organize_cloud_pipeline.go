@@ -93,7 +93,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 			}
 		}
 		files.scanned = entries
-		if err := s.processMediaBatch(ctx, files, run, immediate, true); err != nil {
+		if err := s.processMediaBatch(ctx, files, run, immediate); err != nil {
 			return err
 		}
 		maps.Copy(pending, files.localPending)
@@ -130,7 +130,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 		files.settlingVideos, files.localPending = settling, pending
 		files.scan115ID, files.scan115Relative, files.shallow115 = "", "", false
 		files.cd2ScanPath, files.cd2Shallow = "", false
-		if err := s.processMediaBatch(ctx, files, run, files.holdLocalCompanions(deferred, pending), false); err != nil {
+		if err := s.processMediaBatch(ctx, files, run, files.holdLocalCompanions(deferred, pending)); err != nil {
 			return err
 		}
 		maps.Copy(pending, files.localPending)

@@ -51,7 +51,7 @@ func TestMedia115PrewriteCheckpointsPublishRunningUntilConfirmed(t *testing.T) {
 			t.Fatal("写入前仅保留可恢复意图，清除旧失败结果", pending)
 		}
 		media115AssertPublishedStatus(t, s, run, entry.File.ID, "running")
-		stored, err := s.db.QueryMediaOrganize(context.Background(), "", "failed", 1)
+		stored, err := s.db.QueryMediaOrganizeLive(context.Background(), "", "failed", 1, nil)
 		if err != nil || stored.Total != 0 {
 			t.Fatal("预写检查点不能写入失败摘要", stored, err)
 		}
@@ -64,7 +64,7 @@ func TestMedia115PrewriteCheckpointsPublishRunningUntilConfirmed(t *testing.T) {
 		t.Fatal("改名和移动前均保持运行态，目标确认后才成功", callbacks, *entry)
 	}
 	media115AssertPublishedStatus(t, s, run, entry.File.ID, "done")
-	stored, err := s.db.QueryMediaOrganize(context.Background(), "", "all", 1)
+	stored, err := s.db.QueryMediaOrganizeLive(context.Background(), "", "all", 1, nil)
 	if err != nil || stored.Total != 1 || stored.Counts["done"] != 1 || stored.Counts["failed"] != 0 {
 		t.Fatal("成功后保存成功摘要，不能遗留失败摘要", stored, err)
 	}
@@ -86,7 +86,7 @@ func TestMedia115ConfirmedBatchFailureStillPublishesFailed(t *testing.T) {
 		t.Fatal("实际移动失败仍保留失败结果和核验意图", entry)
 	}
 	media115AssertPublishedStatus(t, s, run, entry.File.ID, "failed")
-	stored, err := s.db.QueryMediaOrganize(context.Background(), "", "failed", 1)
+	stored, err := s.db.QueryMediaOrganizeLive(context.Background(), "", "failed", 1, nil)
 	if err != nil || stored.Total != 1 {
 		t.Fatal("真实失败应保存失败摘要", stored, err)
 	}
@@ -113,7 +113,7 @@ func TestMedia115CurrentBatchDoesNotHideEarlierFailedIntent(t *testing.T) {
 	drive.beforeMove = func() {
 		media115AssertPublishedStatus(t, s, run, run.Entries[0].File.ID, "running")
 		media115AssertPublishedStatus(t, s, run, previous.File.ID, "failed")
-		stored, err := s.db.QueryMediaOrganize(context.Background(), "", "failed", 1)
+		stored, err := s.db.QueryMediaOrganizeLive(context.Background(), "", "failed", 1, nil)
 		if err != nil || stored.Total != 1 {
 			t.Fatal("当前批次预写不能掩盖先前真实失败", stored, err)
 		}

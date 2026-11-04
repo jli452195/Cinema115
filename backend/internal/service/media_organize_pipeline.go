@@ -8,7 +8,7 @@ import (
 )
 
 // 存储共用识别与命名缓存，文件定位和写入仍交给各自的原生入口。
-func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry, recheck bool) error {
+func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry) error {
 	if err := s.checkOrganizeStop(run); err != nil {
 		return err
 	}
@@ -55,11 +55,6 @@ func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrga
 		return err
 	}
 	mediaDiscardOrphanSidecars(files, run, entries)
-	if recheck {
-		if err := files.recheckLocalCompanions(batchCtx, run); err != nil {
-			return err
-		}
-	}
 	// 部分历史目标核验失败时，共享附件不能被其余成功引用重新激活。
 	for i := range run.Entries {
 		entry := &run.Entries[i]

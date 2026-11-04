@@ -149,7 +149,7 @@ func TestMediaAttachment115InvalidReferenceDoesNotBlockOtherVideo(t *testing.T) 
 		t.Fatal(err)
 	}
 	run.streaming = true
-	if err := s.processMediaBatch(context.Background(), files, &run, entries, false); err != nil {
+	if err := s.processMediaBatch(context.Background(), files, &run, entries); err != nil {
 		t.Fatal("旧目标缺失不应中断同批其他视频", err)
 	}
 	if err := s.prepareOrphanCleanup(files, &run); err != nil {

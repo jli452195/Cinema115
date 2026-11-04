@@ -37,6 +37,35 @@ func animeOrganizeStoreFixture(t *testing.T) (*downloadClaimFixture, model.Anime
 	return f, job
 }
 
+func TestAnimeOrganizeRemoveOriginalNamePreservesRecovery(t *testing.T) {
+	f, job := animeOrganizeStoreFixture(t)
+	ctx := context.Background()
+	op, err := f.store.PrepareAnimeOrganization(ctx, job, "")
+	if err != nil || len(op.Request.Files) == 0 {
+		t.Fatal(op, err)
+	}
+	// 模拟旧计划的重复原名；升级后严格解码和后续检查点仍应正常工作。
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE anime_drive_operations SET request_json=json_set(request_json,'$.files[0].originalName','旧原名.mkv') WHERE id=?`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `PRAGMA user_version=65`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := f.store.GetAnimeOrganization(ctx, job.ID)
+	if err != nil || !reflect.DeepEqual(restored, op) {
+		t.Fatal("计划精简改变了文件、进度或恢复身份", restored, op, err)
+	}
+	progress := restored.Progress
+	progress.Files = append([]model.AnimeOrganizeFileProgress{}, progress.Files...)
+	progress.Files[0].ExistingID = "999"
+	if _, err := f.store.CheckpointAnimeOrganization(ctx, restored, progress, false, ""); err != nil {
+		t.Fatal("旧计划恢复后无法继续保存结果", err)
+	}
+}
+
 func TestAnimeCleanupStepRequiresHandledFilesAndExactIsolatedRoot(t *testing.T) {
 	for _, mode := range []string{"valid", "existing skipped", "unresolved conflict", "unmoved", "unrenamed", "shared download parent", "organize parent", "unknown root", "not our name", "wrong manifest root", "target inside root", "file IDs supplied"} {
 		t.Run(mode, func(t *testing.T) {

@@ -125,7 +125,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 			fail(c, err)
 			return
 		}
-		c.JSON(202, out)
+		c.JSON(202, gin.H{"id": out.ID, "status": out.Status})
 	})
 	g.POST("/rules/:id/stop", func(c *gin.Context) {
 		rule, err := s.Stop(c.Request.Context(), c.Param("id"))
@@ -145,7 +145,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 			fail(c, err)
 			return
 		}
-		c.JSON(200, out)
+		c.JSON(200, mediaOrganizeTaskOutput(out))
 	})
 	g.POST("/runs/:id/retry", func(c *gin.Context) {
 		var in service.MediaOrganizeCorrection
@@ -157,6 +157,6 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 			fail(c, err)
 			return
 		}
-		c.JSON(202, out)
+		c.JSON(202, mediaOrganizeTaskOutput(out))
 	})
 }

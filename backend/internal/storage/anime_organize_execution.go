@@ -85,7 +85,7 @@ func (s *Store) PrepareAnimeOrganization(ctx context.Context, expected model.Ani
 			continue
 		}
 		entry := entries[item.ID]
-		op.Request.Files = append(op.Request.Files, model.AnimeOrganizeFile{ID: item.ID, SourceCID: entry.ParentCID, OriginalName: entry.Name, TargetPath: strings.TrimPrefix(item.TargetPath, strings.TrimRight(op.Request.Target.ParentPath, "/")+"/"), VideoID: item.VideoID})
+		op.Request.Files = append(op.Request.Files, model.AnimeOrganizeFile{ID: item.ID, SourceCID: entry.ParentCID, TargetPath: strings.TrimPrefix(item.TargetPath, strings.TrimRight(op.Request.Target.ParentPath, "/")+"/"), VideoID: item.VideoID})
 		op.Progress.Files = append(op.Progress.Files, model.AnimeOrganizeFileProgress{ID: item.ID, Renamed: entry.Name == path.Base(item.TargetPath)})
 	}
 	state := "prepared"

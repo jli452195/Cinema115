@@ -84,12 +84,11 @@ func mediaPersistentRun(run MediaOrganizeRun) MediaOrganizeRun {
 func mediaMarshalPersistentRun(run MediaOrganizeRun) ([]byte, error) {
 	type storedEntry struct {
 		MediaOrganizeEntry
-		Result    *MediaOrganizeResult `json:"result,omitempty"`
-		UpdatedAt *time.Time           `json:"updatedAt,omitempty"`
+		UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 	}
 	entries := make([]storedEntry, 0, len(run.Entries))
 	for _, entry := range run.Entries {
-		stored := storedEntry{MediaOrganizeEntry: entry, Result: entry.Result}
+		stored := storedEntry{MediaOrganizeEntry: entry}
 		// 成功时间只保存于结果中，目标使用条目字段，避免重复写入同一事实。
 		if !entry.Reference || entry.Status != "done" {
 			at := entry.UpdatedAt

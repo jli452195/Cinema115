@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 65
+const schemaVersion = 66
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -536,8 +536,14 @@ PRAGMA user_version=30;`); err != nil {
 			return fmt.Errorf("创建命名模板存储: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, mediaOrganizeSchema); err != nil {
+	if err := initializeMediaOrganizeSchema(ctx, tx, version); err != nil {
 		return fmt.Errorf("创建整理记录存储: %w", err)
+	}
+	if version < 66 {
+		// 动漫计划使用严格解码，删除重复字段时同步精简已保存的计划，保留其余恢复证据。
+		if _, err := tx.ExecContext(ctx, `UPDATE anime_drive_operations SET request_json=json_set(request_json,'$.files',json((SELECT json_group_array(json_remove(value,'$.originalName')) FROM json_each(request_json,'$.files')))) WHERE kind='organize' AND EXISTS(SELECT 1 FROM json_each(request_json,'$.files') WHERE json_type(value,'$.originalName') IS NOT NULL)`); err != nil {
+			return fmt.Errorf("精简动漫整理计划字段: %w", err)
+		}
 	}
 	if err := initializeDriveSTRMSchema(ctx, tx, version); err != nil {
 		return fmt.Errorf("创建目录 STRM 存储: %w", err)

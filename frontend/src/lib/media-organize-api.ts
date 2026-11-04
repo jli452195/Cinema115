@@ -3,16 +3,15 @@ export interface MediaRule {
   classify: boolean; realtimeEnabled: boolean; scheduleEnabled: boolean; intervalSeconds: number; attachmentCleanupEnabled: boolean; attachmentGraceSeconds: number; nextScanAt?: string; deleteDuplicates?: boolean; lastScan?: string
 }
 export interface MediaIdentity {
-  name: string; year?: string; kind?: string; tmdbId?: number; season?: number; parentName?: string; yearFromParent?: boolean; seasonExplicit?: boolean
-  alternativeName?: string; alternativeYear?: string; contentType?: string; conflict?: string
+  name: string
 }
 export interface MediaEntry {
   file: { id: string; name: string; sourcePath: string; mediaType: string; season: number; episode: number; endEpisode?: number; namingValues?: Record<string, string> }
-  group: string; videoId?: string; relative?: string; target?: string; status: string; message?: string; resultCode?: string
-  failure?: { state: string; parentId?: string; reason: string; message?: string }
+  videoId?: string; target?: string; status: string; message?: string; resultCode?: string
+  failure?: { state: string; message?: string }
   p115Move?: { phase: string }
 }
-export interface MediaGroup { id: string; identity: MediaIdentity; kind?: string; tmdbId?: number; title?: string; year?: string; category?: string; message?: string; matchedSeason?: number }
+export interface MediaGroup { id: string; identity: MediaIdentity; kind?: string; tmdbId?: number; title?: string; year?: string; category?: string; message?: string }
 export interface MediaHistoryItem {
   runId: string; fileId: string; name: string; title: string; kind: string; mediaType: string; season: number; episode: number; attachmentCount: number
   source: string; target?: string; status: string; message?: string; at: string; canDelete: boolean; canRetry: boolean
@@ -23,7 +22,7 @@ export interface MediaHistory {
   items: MediaHistoryItem[]; page: number; pages: number; total: number
   counts: Record<MediaHistoryStatus, number>; active: boolean; activity: MediaActivity[]; cleanup: MediaCleanup[]
 }
-export interface MediaTask extends MediaHistoryItem { rule: MediaRule; group: MediaGroup; entries: MediaEntry[] }
+export interface MediaTask extends MediaHistoryItem { rule: Pick<MediaRule, 'name' | 'source' | 'failure'>; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }
 export interface MediaMonitorStatus { mode: 'starting' | 'connecting' | 'realtime' | 'event' | 'unavailable' | 'polling'; message?: string; lastEventAt?: string }
 export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; stoppingRules?: string[]; monitoring?: Record<string, MediaMonitorStatus> }

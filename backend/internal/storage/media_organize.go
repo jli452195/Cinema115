@@ -10,7 +10,7 @@ import (
 
 const mediaOrganizeSchema = `
 CREATE TABLE IF NOT EXISTS media_organize_settings(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS media_organize_runs(id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,status TEXT NOT NULL,at TEXT NOT NULL,record TEXT NOT NULL,activity TEXT NOT NULL,cleanup TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS media_organize_runs(id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,at TEXT NOT NULL,record TEXT NOT NULL,activity TEXT NOT NULL,cleanup TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS media_organize_run_rule ON media_organize_runs(rule_id,at DESC);
 CREATE TABLE IF NOT EXISTS media_organize_tasks(run_id TEXT NOT NULL REFERENCES media_organize_runs(id) ON DELETE CASCADE,file_id TEXT NOT NULL,status_group TEXT NOT NULL,at TEXT NOT NULL,search TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(run_id,file_id));
 CREATE INDEX IF NOT EXISTS media_organize_task_order ON media_organize_tasks(at DESC,run_id,file_id);
@@ -30,8 +30,8 @@ type MediaOrganizeLiveTaskRow struct {
 	MediaOrganizeTaskRow
 }
 type MediaOrganizeRunRow struct {
-	ID, RuleID, Status, At, Record, Activity, Cleanup string
-	Tasks                                             []MediaOrganizeTaskRow
+	ID, RuleID, At, Record, Activity, Cleanup string
+	Tasks                                     []MediaOrganizeTaskRow
 }
 type MediaOrganizeRows struct {
 	Rules       string
@@ -43,6 +43,25 @@ type MediaOrganizeQuery struct {
 	Counts             map[string]int
 	Page, Pages, Total int
 	Activity, Cleanup  []string
+}
+
+func initializeMediaOrganizeSchema(ctx context.Context, tx *sql.Tx, version int) error {
+	if _, err := tx.ExecContext(ctx, mediaOrganizeSchema); err != nil {
+		return err
+	}
+	if version < 66 {
+		// 运行状态以记录内的完成证据为准，移除开发数据库中未使用的重复列。
+		var hasStatus bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('media_organize_runs') WHERE name='status')`).Scan(&hasStatus); err != nil {
+			return fmt.Errorf("检查整理运行状态列: %w", err)
+		}
+		if hasStatus {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE media_organize_runs DROP COLUMN status`); err != nil {
+				return fmt.Errorf("移除重复整理运行状态列: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) LoadMediaOrganize(ctx context.Context) (MediaOrganizeRows, error) {
@@ -87,7 +106,7 @@ func (s *Store) SaveMediaOrganize(ctx context.Context, rules string, updates []M
 		}
 	}
 	for _, run := range updates {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO media_organize_runs(id,rule_id,status,at,record,activity,cleanup) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rule_id=excluded.rule_id,status=excluded.status,at=excluded.at,record=excluded.record,activity=excluded.activity,cleanup=CASE WHEN excluded.cleanup='' THEN media_organize_runs.cleanup ELSE excluded.cleanup END WHERE media_organize_runs.rule_id!=excluded.rule_id OR media_organize_runs.status!=excluded.status OR media_organize_runs.at!=excluded.at OR media_organize_runs.record!=excluded.record OR media_organize_runs.activity!=excluded.activity OR (excluded.cleanup!='' AND media_organize_runs.cleanup!=excluded.cleanup)`, run.ID, run.RuleID, run.Status, run.At, run.Record, run.Activity, run.Cleanup); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_organize_runs(id,rule_id,at,record,activity,cleanup) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rule_id=excluded.rule_id,at=excluded.at,record=excluded.record,activity=excluded.activity,cleanup=CASE WHEN excluded.cleanup='' THEN media_organize_runs.cleanup ELSE excluded.cleanup END WHERE media_organize_runs.rule_id!=excluded.rule_id OR media_organize_runs.at!=excluded.at OR media_organize_runs.record!=excluded.record OR media_organize_runs.activity!=excluded.activity OR (excluded.cleanup!='' AND media_organize_runs.cleanup!=excluded.cleanup)`, run.ID, run.RuleID, run.At, run.Record, run.Activity, run.Cleanup); err != nil {
 			return err
 		}
 		kept := make(map[string]bool, len(run.Tasks))

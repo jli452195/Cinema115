@@ -18,7 +18,7 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 	if err != nil || rows.Initialized {
 		t.Fatal("new store must not be considered imported", rows, err)
 	}
-	run := MediaOrganizeRunRow{ID: "run", RuleID: "rule", Status: "completed", At: "2026-10-29", Record: "old-run", Tasks: []MediaOrganizeTaskRow{{FileID: "a", Group: "done", At: "2026-10-29", Search: "first", Record: "first"}, {FileID: "b", Group: "done", At: "2026-10-29", Search: "second", Record: "second"}}}
+	run := MediaOrganizeRunRow{ID: "run", RuleID: "rule", At: "2026-10-29", Record: "old-run", Tasks: []MediaOrganizeTaskRow{{FileID: "a", Group: "done", At: "2026-10-29", Search: "first", Record: "first"}, {FileID: "b", Group: "done", At: "2026-10-29", Search: "second", Record: "second"}}}
 	if err := s.SaveMediaOrganize(ctx, "old-rules", []MediaOrganizeRunRow{run}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -93,5 +93,69 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 	query, err = s.QueryMediaOrganize(ctx, "", "all", 1)
 	if err != nil || query.Total != 0 {
 		t.Fatal("run deletion did not cascade to task index", query, err)
+	}
+}
+
+func TestMediaOrganizeRemoveDuplicateStatusPreservesRecords(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "records.db")
+	s, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	})
+	// 重建旧结构，验证状态列移除后完整记录、任务索引及清理摘要仍然保留。
+	if _, err := s.db.ExecContext(ctx, `
+DROP TABLE media_organize_tasks;
+DROP TABLE media_organize_runs;
+CREATE TABLE media_organize_runs(id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,status TEXT NOT NULL,at TEXT NOT NULL,record TEXT NOT NULL,activity TEXT NOT NULL,cleanup TEXT NOT NULL);
+CREATE TABLE media_organize_tasks(run_id TEXT NOT NULL REFERENCES media_organize_runs(id) ON DELETE CASCADE,file_id TEXT NOT NULL,status_group TEXT NOT NULL,at TEXT NOT NULL,search TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(run_id,file_id));
+INSERT INTO media_organize_settings(id,record) VALUES(1,'{"rules":[]}');
+INSERT INTO media_organize_runs(id,rule_id,status,at,record,activity,cleanup) VALUES('run','rule','partial','2026-11-05','{"status":"partial","entries":[{"file":{"id":"video"},"p115Move":{"phase":"moving"}}]}','{"runId":"run","status":"partial"}','{"runId":"run","files":2}');
+INSERT INTO media_organize_tasks(run_id,file_id,status_group,at,search,record) VALUES('run','video','failed','2026-11-05','work','{"fileId":"video","status":"failed"}');
+PRAGMA user_version=65;`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.LoadMediaOrganize(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasStatus bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('media_organize_runs') WHERE name='status')`).Scan(&hasStatus); err != nil || hasStatus {
+		t.Fatal("重复状态列未移除", hasStatus, err)
+	}
+	after, err := s.LoadMediaOrganize(ctx)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatal("结构精简改变了整理记录", after, before, err)
+	}
+	query, err := s.QueryMediaOrganize(ctx, "work", "failed", 1)
+	if err != nil || query.Total != 1 || len(query.Activity) != 1 || len(query.Cleanup) != 1 {
+		t.Fatal("任务索引或运行摘要丢失", query, err)
+	}
+	run := MediaOrganizeRunRow{ID: "run", RuleID: "rule", At: "2026-11-05", Record: `{"status":"completed"}`, Tasks: []MediaOrganizeTaskRow{{FileID: "video", Group: "done", At: "2026-11-05", Search: "work", Record: `{"fileId":"video","status":"done"}`}}}
+	if err := s.SaveMediaOrganize(ctx, before.Rules, []MediaOrganizeRunRow{run}, nil); err != nil {
+		t.Fatal("精简后无法保存任务", err)
+	}
+	query, err = s.QueryMediaOrganize(ctx, "work", "done", 1)
+	if err != nil || query.Total != 1 || len(query.Cleanup) != 1 {
+		t.Fatal("精简后任务无法更新或清理摘要丢失", query, err)
+	}
+	if err := s.SaveMediaOrganize(ctx, before.Rules, nil, []string{"run"}); err != nil {
+		t.Fatal(err)
+	}
+	query, err = s.QueryMediaOrganize(ctx, "", "all", 1)
+	if err != nil || query.Total != 0 {
+		t.Fatal("精简后删除未级联清除任务", query, err)
 	}
 }

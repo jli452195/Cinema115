@@ -34,7 +34,7 @@ func mediaLivePerfFixture(tb testing.TB, failed, done, running int) (*Store, []M
 			Search: strings.ToLower(name + "\n测试作品\n" + prefix + "来源/" + name + "\n" + prefix + "目标/" + name), Record: string(record),
 		}
 	}
-	saved := MediaOrganizeRunRow{ID: "saved", RuleID: "synthetic-rule", Status: "partial", Record: "{}", Tasks: make([]MediaOrganizeTaskRow, 0, failed)}
+	saved := MediaOrganizeRunRow{ID: "saved", RuleID: "synthetic-rule", Record: "{}", Tasks: make([]MediaOrganizeTaskRow, 0, failed)}
 	for i := range failed {
 		saved.Tasks = append(saved.Tasks, row(saved.ID, fmt.Sprintf("failed-%06d", i), "failed", i))
 	}
@@ -95,7 +95,7 @@ func TestMediaOrganizeLiveQueryScaleFiltersAndReplaces(t *testing.T) {
 
 func TestMediaOrganizeLiveQueryPreservesTextIdentity(t *testing.T) {
 	s, _ := mediaLivePerfFixture(t, 0, 0, 0)
-	run := MediaOrganizeRunRow{ID: "text-ids", RuleID: "synthetic-rule", Status: "partial", Record: "{}", Tasks: []MediaOrganizeTaskRow{
+	run := MediaOrganizeRunRow{ID: "text-ids", RuleID: "synthetic-rule", Record: "{}", Tasks: []MediaOrganizeTaskRow{
 		{FileID: "1", Group: "failed", Record: "persisted-one"},
 		{FileID: "01", Group: "failed", Record: "persisted-zero-one"},
 	}}

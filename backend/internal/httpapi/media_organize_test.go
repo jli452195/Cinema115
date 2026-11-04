@@ -133,6 +133,10 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		}
 	}()
 	response = request("POST", "/rules/"+rule.ID+"/run", "", 202)
+	var receipt map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &receipt); err != nil || len(receipt) != 2 || receipt["id"] == nil || receipt["status"] == nil {
+		t.Fatal("启动响应应仅包含批次编号与状态", response.Body.String(), err)
+	}
 	var run service.MediaOrganizeRun
 	if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
@@ -166,9 +170,13 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("成功整理后来源仍存在", err)
 	}
-	var completed service.MediaOrganizeTask
-	if err := json.Unmarshal(request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200).Body.Bytes(), &completed); err != nil || completed.Status != "done" || !completed.At.Equal(completedAt) || len(completed.Entries) != 1 || filepath.Clean(completed.Target) != filepath.Clean(organized) {
+	response = request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200)
+	var completed mediaOrganizeTaskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &completed); err != nil || completed.Status != "done" || !completed.At.Equal(completedAt) || len(completed.Entries) != 1 || filepath.Clean(completed.Target) != filepath.Clean(organized) {
 		t.Fatal("成功历史详情应可查询且保留原完成时间和目标", completed, err)
+	}
+	if strings.Contains(response.Body.String(), `"reference"`) || strings.Contains(response.Body.String(), `"classification"`) || strings.Contains(response.Body.String(), `"storage"`) {
+		t.Fatal("详情接口不应透传内部执行快照", response.Body.String())
 	}
 	request("GET", "/runs/"+run.ID+"/task?fileId=", "", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{\"fileId\":\"Work.2024.strm\",\"season\":-1}", 400)
@@ -203,6 +211,15 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if data, err := os.ReadFile(failedFile); err != nil || string(data) != conflictingBody {
 		t.Fatal("冲突来源应保留原内容进入失败目录", err)
 	}
+	response = request("POST", "/runs/"+run.ID+"/retry", `{"fileId":"Work.2024.strm"}`, 202)
+	var retried mediaOrganizeTaskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &retried); err != nil || retried.RunID != run.ID || retried.FileID != "Work.2024.strm" || retried.Status != "running" || len(retried.Entries) != 1 || retried.Rule.Failure != rule.Failure || retried.Entries[0].Failure == nil || retried.Entries[0].Failure.State != "stored" {
+		t.Fatal("重试响应应保留当前任务与失败目录位置供页面更新", retried, err)
+	}
+	if strings.Contains(response.Body.String(), `"parentId"`) || strings.Contains(response.Body.String(), `"recognitionVersion"`) || strings.Contains(response.Body.String(), `"storage"`) {
+		t.Fatal("重试接口不应透传内部执行身份", response.Body.String())
+	}
+	wait("partial")
 	response = request("DELETE", "/history", `{"status":"failed"}`, 200)
 	if !strings.Contains(response.Body.String(), `"deleted":1`) {
 		t.Fatal("single task deletion did not report count", response.Body.String())

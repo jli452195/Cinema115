@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -129,7 +130,13 @@ type mediaScanFailureCommitStore struct {
 
 func (s *mediaScanFailureCommitStore) SaveMediaOrganize(ctx context.Context, settings string, updates []storage.MediaOrganizeRunRow, removed []string) error {
 	for _, row := range updates {
-		if s.fail && row.Status == "failed" {
+		var record struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(row.Record), &record); err != nil {
+			return err
+		}
+		if s.fail && record.Status == "failed" {
 			return errors.New("模拟扫描最终结果保存失败")
 		}
 	}

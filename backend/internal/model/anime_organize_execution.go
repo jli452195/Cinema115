@@ -3,11 +3,10 @@ package model
 // The existing drive-operation row owns this plan and its checkpoints. These
 // are execution history, never a registry of the files' current locations.
 type AnimeOrganizeFile struct {
-	ID           string `json:"id"`
-	SourceCID    string `json:"sourceCid"`
-	OriginalName string `json:"originalName"`
-	TargetPath   string `json:"targetPath"`
-	VideoID      string `json:"videoId,omitempty"`
+	ID         string `json:"id"`
+	SourceCID  string `json:"sourceCid"`
+	TargetPath string `json:"targetPath"`
+	VideoID    string `json:"videoId,omitempty"`
 }
 
 type AnimeOrganizeRequest struct {

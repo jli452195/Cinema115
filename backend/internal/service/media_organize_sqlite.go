@@ -16,7 +16,6 @@ import (
 type mediaOrganizeStorage interface {
 	LoadMediaOrganize(context.Context) (storage.MediaOrganizeRows, error)
 	SaveMediaOrganize(context.Context, string, []storage.MediaOrganizeRunRow, []string) error
-	QueryMediaOrganize(context.Context, string, string, int) (storage.MediaOrganizeQuery, error)
 	QueryMediaOrganizeLive(context.Context, string, string, int, []storage.MediaOrganizeLiveTaskRow) (storage.MediaOrganizeQuery, error)
 }
 
@@ -62,7 +61,9 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 	changed := make([]string, 0, len(s.doc.Runs))
 	for i := range s.doc.Runs {
 		r := &s.doc.Runs[i]
-		*r = mediaPersistentRun(*r)
+		if !loaded.Initialized {
+			*r = mediaPersistentRun(*r)
+		}
 		if mediaRunActive(r.Status) {
 			r.Status = "interrupted"
 			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
@@ -244,7 +245,7 @@ func mediaRunRow(run MediaOrganizeRun) (storage.MediaOrganizeRunRow, error) {
 	if err != nil {
 		return storage.MediaOrganizeRunRow{}, err
 	}
-	row := storage.MediaOrganizeRunRow{ID: run.ID, RuleID: run.Rule.ID, Status: run.Status, At: mediaSortTime(run.UpdatedAt), Record: string(raw), Tasks: []storage.MediaOrganizeTaskRow{}}
+	row := storage.MediaOrganizeRunRow{ID: run.ID, RuleID: run.Rule.ID, At: mediaSortTime(run.UpdatedAt), Record: string(raw), Tasks: []storage.MediaOrganizeTaskRow{}}
 	for _, task := range mediaTasks(run) {
 		item := task.MediaOrganizeHistoryItem
 		if item.Status != "failed" && item.Status != "done" {

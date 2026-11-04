@@ -13,7 +13,7 @@ func TestMediaCleanupSummarySurvivesCompactIndexRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	run := MediaOrganizeRunRow{ID: "run", RuleID: "rule", Status: "completed", At: "2026-11-04", Record: "compact", Cleanup: `{"runId":"run","files":20}`}
+	run := MediaOrganizeRunRow{ID: "run", RuleID: "rule", At: "2026-11-04", Record: "compact", Cleanup: `{"runId":"run","files":20}`}
 	if err := s.SaveMediaOrganize(ctx, "rules", []MediaOrganizeRunRow{run}, nil); err != nil {
 		t.Fatal(err)
 	}
