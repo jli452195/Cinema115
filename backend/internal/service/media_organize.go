@@ -93,6 +93,7 @@ type MediaOrganizeRun struct {
 	Entries            []MediaOrganizeEntry   `json:"entries"`
 	TaskFileID         string                 `json:"taskFileId,omitempty"`
 	RecognitionVersion string                 `json:"recognitionVersion,omitempty"`
+	StoredScanScopes   []mediaScanScope       `json:"scanScopes,omitempty"`
 	streaming          bool
 	processing         map[string]bool
 	seenTasks          map[string]bool
@@ -416,7 +417,7 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 	return s.queueTriggeredScanLocked(rule, "manual")
 }
 
-func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigger string) (MediaOrganizeRun, error) {
+func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigger string, scopes ...mediaScanScope) (MediaOrganizeRun, error) {
 	for i, run := range s.doc.Runs {
 		if run.Rule.ID != rule.ID || run.TaskFileID != "" || !mediaRunActive(run.Status) && !s.busyRunLocked(run.ID) {
 			continue
@@ -451,6 +452,7 @@ func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigge
 	}
 	now := s.localMonitorSettings().now()
 	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, RecognitionVersion: MediaRecognitionPolicyVersion, Status: "queued", CreatedAt: now, UpdatedAt: now, Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	r.scanScopes = slices.Clone(scopes)
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err
 	}

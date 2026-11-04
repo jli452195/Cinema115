@@ -403,6 +403,7 @@ func main() {
 	driveSTRM.Logs = generationLogs
 	driveEvents := service.NewDriveSTRMEvents(driveSTRM, shareAPI.Client)
 	driveEvents.Organizer = mediaOrganizer
+	mediaOrganizer.EnableLifeEventConsumer()
 	httpapi.RegisterDriveSTRM(admin, driveSTRM, driveEvents, shareAPI.BaseURL)
 	httpapi.RegisterDrivePlayback(r, accounts, shareAPI.Client, shareAPI.MediaHTTP, generationLogs)
 	if err := database.InterruptShareTasks(context.Background()); err != nil {
@@ -491,6 +492,8 @@ func main() {
 	cloudDownloadSettings.OnChange = telegram.Refresh
 	shareTransferSettings.OnChange = telegram.Refresh
 	telegram.Follows = follows
+	telegram.Anime = animeAdmin
+	animeAdmin.Notifications = telegram
 	telegram.Playback = memberPlayback
 	automation.ValidateBot = telegram.ValidateSelection
 	telegramMigrationCtx, telegramMigrationCancel := context.WithTimeout(context.Background(), 10*time.Second)

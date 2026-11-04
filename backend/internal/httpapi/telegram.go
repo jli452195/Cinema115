@@ -64,6 +64,7 @@ func RegisterTelegramHub(admin *gin.RouterGroup, hub *bot.Hub, sinks ...*service
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 		c.Next()
 	})
+	registerAnimeTelegramNotifications(group, hub)
 	fail := func(c *gin.Context, err error) {
 		code := http.StatusInternalServerError
 		switch {

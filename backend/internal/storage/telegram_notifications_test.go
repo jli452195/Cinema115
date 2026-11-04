@@ -59,3 +59,49 @@ func TestNotificationMigrationRetryAndRetention(t *testing.T) {
 		t.Fatal("过期记录未清理", err)
 	}
 }
+
+func TestTelegramNotificationPhotoProgressSurvivesRetryAndInitialization(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	n := model.TelegramNotification{TaskID: "anime:photo", BotID: "123", ChatID: 42, Text: "<b>动漫整理完成</b>", ParseMode: "HTML", PhotoURL: "https://example.org/cover.jpg"}
+	if err := s.EnqueueTelegramNotification(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second)
+	due, err := s.DueTelegramNotifications(ctx, n.BotID, n.ChatID, now)
+	if err != nil || len(due) != 1 || due[0].PhotoURL != n.PhotoURL || due[0].PhotoSent {
+		t.Fatal("图片未入队或提前标记送达", due, err)
+	}
+	id := due[0].ID
+	if _, err := s.db.ExecContext(ctx, `UPDATE telegram_notifications SET attempts=7,due=? WHERE id=?`, now.Add(time.Hour).Unix(), id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkTelegramNotificationPhotoSent(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	due, err = s.DueTelegramNotifications(ctx, n.BotID, n.ChatID, time.Now().Add(time.Second))
+	if err != nil || len(due) != 1 || !due[0].PhotoSent || due[0].Attempts != 0 {
+		t.Fatal("图片阶段结束后正文没有立即获得独立重试预算", due, err)
+	}
+	if err := s.RetryTelegramNotification(ctx, id, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	due, err = s.DueTelegramNotifications(ctx, n.BotID, n.ChatID, now.Add(time.Hour))
+	if err != nil || len(due) != 1 || !due[0].PhotoSent || due[0].PhotoURL != n.PhotoURL || due[0].Text != n.Text || due[0].Attempts != 1 {
+		t.Fatal("正文重试丢失已发送的图片进度", due, err)
+	}
+	if err := s.CompleteTelegramNotification(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkTelegramNotificationPhotoSent(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	var photo string
+	var sent bool
+	if err := s.db.QueryRowContext(ctx, `SELECT photo_url,photo_sent FROM telegram_notifications WHERE id=?`, id).Scan(&photo, &sent); err != nil || photo != "" || sent {
+		t.Fatal("完成的通知仍保留图片或被旧请求标记", photo, sent, err)
+	}
+}

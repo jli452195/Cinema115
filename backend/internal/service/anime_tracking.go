@@ -61,6 +61,7 @@ func (r *AnimeStatusRunner) Run(ctx context.Context) error {
 	}
 	wake := r.Admin.downloadWakeSignal()
 	for ctx.Err() == nil {
+		r.Admin.DeliverAnimeNotifications(ctx)
 		if err := r.PollOnce(ctx); err != nil && ctx.Err() == nil {
 			return err
 		}

@@ -112,6 +112,10 @@ type mediaTaskPermission struct {
 func (s *MediaOrganizer) taskPermissionsLocked(run MediaOrganizeRun) map[string]mediaTaskPermission {
 	busy := s.busyRunLocked(run.ID) || mediaRunActive(run.Status)
 	out := make(map[string]mediaTaskPermission)
+	// 来源补扫接管前保留中断恢复证据，不能作为普通失败历史删除或重试。
+	if s.eventRecoveryPendingLocked(run.ID) {
+		return out
+	}
 	for _, entry := range run.Entries {
 		if entry.File.MediaType == "video" {
 			out[entry.File.ID] = mediaTaskPermission{CanDelete: s.inFlight[run.ID][entry.File.ID] == 0}

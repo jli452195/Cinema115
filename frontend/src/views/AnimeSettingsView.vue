@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { IconArrowLeft, IconBookmark, IconFolder, IconRss } from '@tabler/icons-vue'
+import { IconArrowLeft, IconBell, IconBookmark, IconFolder, IconRss } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeStorageSettingsDialog from '../components/AnimeStorageSettingsDialog.vue'
+import AnimeNotificationSettings from '../components/AnimeNotificationSettings.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { AnimeConfigError, animeConfigMessage, animeConfigRequest, animeRequestKey } from '../lib/anime-config-api'
 import { portalUser } from '../composables/usePortalAuth'
@@ -14,7 +15,9 @@ interface RSSSettings { revision: number; pollMinutes: number; autoArchive: bool
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
-const tab = computed(() => route.query.tab === 'storage' ? 'storage' : 'rss')
+const tab = computed(() => route.query.tab === 'notifications' ? 'notifications' : route.query.tab === 'storage' ? 'storage' : 'rss')
+const notificationsVisited = ref(tab.value === 'notifications'), notificationBlocked = ref(false), notificationDirty = ref(false)
+watch(tab, value => { if (value === 'notifications') notificationsVisited.value = true })
 const returnTo = computed(() => animeReturnPath(route.query.returnTo) || '/anime')
 const data = ref<RSSSettings>(), minutes = ref('15'), archive = ref(true), inactive = ref(60)
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref(''), baseline = ref(''), directoryBlocked = ref(false)
@@ -26,8 +29,8 @@ const dirty = computed(() => !!baseline.value && signature() !== baseline.value)
 const locked = computed(() => loading.value || saving.value || !!pending.value)
 const valid = computed(() => /^\d+$/.test(minutes.value) && Number(minutes.value) >= 10 && Number(minutes.value) <= 1440)
 function chooseTab(value: string) {
-  if (directoryBlocked.value || saving.value || pending.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return }
-  void router.replace({ query: { ...route.query, tab: value === 'storage' ? 'storage' : undefined } })
+  if (directoryBlocked.value || notificationBlocked.value || saving.value || pending.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return }
+  void router.replace({ query: { ...route.query, tab: value === 'rss' ? undefined : value } })
 }
 async function read() {
   const current = ++generation
@@ -72,11 +75,11 @@ function decideLeave(value: boolean) {
   leaveDecision?.(value); leaveDecision = undefined
 }
 onBeforeRouteUpdate(() => {
-  if (saving.value || pending.value || directoryBlocked.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return false }
+  if (saving.value || pending.value || directoryBlocked.value || notificationBlocked.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return false }
   return true
 })
 onBeforeRouteLeave(() => {
-  if (saving.value || pending.value || directoryBlocked.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return false }
+  if (saving.value || pending.value || directoryBlocked.value || notificationBlocked.value) { notice.value = '保存结果尚未确认，请先核对原请求。'; return false }
   if (!dirty.value) return true
   discardReload.value = false; discard.value = true
   return new Promise<boolean>(resolve => { leaveDecision?.(false); leaveDecision = resolve })
@@ -88,10 +91,10 @@ onBeforeUnmount(() => { generation++; controller.abort(); window.removeEventList
 </script>
 
 <template>
-  <ManagementLayout class="ars-layout" title="动漫订阅设置" description="统一管理 RSS 检查、自动归档与下载整理目录。" @logout="$emit('logout')">
+  <ManagementLayout class="ars-layout" title="动漫订阅设置" description="统一管理 RSS 检查、自动归档、下载整理目录与 Telegram 通知。" @logout="$emit('logout')">
     <template #actions><RouterLink :to="returnTo" class="ars-link"><IconArrowLeft :size="17" aria-hidden="true" />返回选番</RouterLink><RouterLink to="/anime/subscriptions" class="ars-link"><IconBookmark :size="17" aria-hidden="true" />我的订阅</RouterLink></template>
     <div class="anime-editor ars-settings">
-      <nav class="ars-tabs" aria-label="动漫设置分类"><button type="button" :aria-current="tab === 'rss' ? 'page' : undefined" :disabled="directoryBlocked || !!pending || saving" @click="chooseTab('rss')"><IconRss :size="18" aria-hidden="true" />RSS 设置<span v-if="dirty" class="ars-dot" aria-hidden="true"></span></button><button type="button" :aria-current="tab === 'storage' ? 'page' : undefined" :disabled="directoryBlocked || !!pending || saving" @click="chooseTab('storage')"><IconFolder :size="18" aria-hidden="true" />下载与整理</button></nav>
+      <nav class="ars-tabs" aria-label="动漫设置分类"><button type="button" :aria-current="tab === 'rss' ? 'page' : undefined" :disabled="directoryBlocked || notificationBlocked || !!pending || saving" @click="chooseTab('rss')"><IconRss :size="18" aria-hidden="true" />RSS 设置<span v-if="dirty" class="ars-dot" aria-hidden="true"></span></button><button type="button" :aria-current="tab === 'storage' ? 'page' : undefined" :disabled="directoryBlocked || notificationBlocked || !!pending || saving" @click="chooseTab('storage')"><IconFolder :size="18" aria-hidden="true" />下载与整理</button><button type="button" :aria-current="tab === 'notifications' ? 'page' : undefined" :disabled="directoryBlocked || notificationBlocked || !!pending || saving" @click="chooseTab('notifications')"><IconBell :size="18" aria-hidden="true" />Telegram 通知<span v-if="notificationDirty" class="ars-dot" aria-hidden="true"></span></button></nav>
       <section v-show="tab === 'rss'" class="ars-panel" aria-labelledby="rss-settings-heading" :aria-busy="loading || saving">
         <header class="ars-heading"><h2 id="rss-settings-heading">RSS 设置</h2><p>所有订阅共用，修改后保存生效。</p></header>
         <p v-if="loading && !data" role="status" class="ae-note">正在读取设置…</p>
@@ -106,6 +109,7 @@ onBeforeUnmount(() => { generation++; controller.abort(); window.removeEventList
         <div class="ars-feedback" role="status" aria-live="polite"><p v-if="error">{{ error }}</p><p v-else-if="notice">{{ notice }}</p><button v-if="pending" type="button" class="ae-button" :disabled="saving" @click="confirmPending">核对原保存请求</button><button v-else-if="error" type="button" class="ae-button" :disabled="loading || saving" @click="reload">重新读取设置</button><p v-if="error && dirty && !pending" class="ae-note">输入已保留。可调整后重试，或重新读取最新设置。</p></div>
       </section>
       <section v-if="tab === 'storage'" class="ars-panel" aria-labelledby="storage-settings-heading"><header class="ars-heading"><h2 id="storage-settings-heading">下载与整理</h2><p>先下载到暂存目录，完成命名并移入整理目录后，清理任务临时目录。</p></header><AnimeStorageSettingsDialog :token="token" inline @blocked="directoryBlocked = $event" /><p v-if="dirty" class="ae-note ars-unsaved">RSS 设置尚未保存，请返回 RSS 设置完成保存。</p></section>
+      <section v-if="notificationsVisited" v-show="tab === 'notifications'" class="ars-panel" aria-label="Telegram 通知设置"><AnimeNotificationSettings :token="token" @blocked="notificationBlocked = $event" @dirty="notificationDirty = $event" /></section>
       <p v-if="tab !== 'rss' && notice" class="ae-note" role="status">{{ notice }}</p>
     </div>
     <P115ActionDialog v-if="discard" title="放弃未保存的 RSS 修改？" @close="decideLeave(false)"><p class="ars-discard">RSS 设置尚未保存。已单独保存的目录不会受影响。</p><template #footer><div class="anime-editor ars-discard-actions"><button type="button" class="ae-button" @click="decideLeave(false)">继续编辑</button><button type="button" class="ae-button ae-primary" @click="decideLeave(true)">{{ discardReload ? '放弃修改并重新读取' : '放弃修改并离开' }}</button></div></template></P115ActionDialog>
@@ -150,7 +154,7 @@ onBeforeUnmount(() => { generation++; controller.abort(); window.removeEventList
 .ars-discard { font-size: 13px; line-height: 1.8; color: rgb(var(--color-slate-600)); }
 .ars-discard-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 10px; }
 .dark .ars-settings { --ae-blue: #93c5fd; }
-@media(max-width: 900px) { .ars-settings { grid-template-columns: 1fr; gap: 16px; max-width: 800px; } .ars-tabs { flex-direction: row; } .ars-tabs button { flex: 1; } }
+@media(max-width: 900px) { .ars-settings { grid-template-columns: 1fr; gap: 16px; max-width: 800px; } .ars-tabs { flex-direction: row; flex-wrap: wrap; } .ars-tabs button { flex: 1; white-space: nowrap; } }
 @media(max-width: 639px) { .ars-layout :deep(.management-heading) { grid-template-columns: minmax(0, 1fr); } .ars-layout :deep(.management-heading > *) { grid-column: 1 / -1; } .ars-panel { padding: 20px 16px; border-radius: 14px; } .ars-row { flex-wrap: wrap; gap: 12px; padding: 18px 0; } .ars-row > div:first-child { flex: 1; min-width: 160px; } .ars-options { flex-basis: 100%; } .ars-options label { flex: 1; min-height: 44px; } .ars-footer { flex-wrap: wrap; } .ars-tabs button { padding-inline: 12px; } }
 @media(prefers-reduced-motion: reduce) { .ars-switch, .ars-switch::after { transition: none; } }
 </style>

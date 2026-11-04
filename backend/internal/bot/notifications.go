@@ -2,11 +2,13 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"strm115/backend/internal/anime/notification"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/service"
 )
@@ -14,7 +16,9 @@ import (
 type NotificationStore interface {
 	EnqueueTelegramNotification(context.Context, model.TelegramNotification) error
 	DueTelegramNotifications(context.Context, string, int64, time.Time) ([]model.TelegramNotification, error)
+	ValidateTelegramNotification(context.Context, model.TelegramNotification) (bool, error)
 	CompleteTelegramNotification(context.Context, int64, bool) error
+	MarkTelegramNotificationPhotoSent(context.Context, int64) error
 	RetryTelegramNotification(context.Context, int64, time.Time) error
 	PruneTelegramNotifications(context.Context, time.Time) error
 }
@@ -107,18 +111,60 @@ func (m *Manager) deliverNotification(ctx context.Context, now time.Time) error 
 	if err != nil || worker == nil {
 		return fmt.Errorf("通知 Bot 配置无效")
 	}
+	// 每次图片或正文发送前复核任务，避免恢复后的旧异常继续重试。
+	valid, err := m.Notifications.ValidateTelegramNotification(ctx, n)
+	if err != nil {
+		return fmt.Errorf("复核通知发送条件: %w", err)
+	}
+	if !valid {
+		m.Logs.Append("Telegram", n.TaskID, logKind, "DEBUG", "通知已失效，已取消发送")
+		return nil
+	}
 	sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	reply := pendingReply{ChatID: n.ChatID, Text: n.Text, PreviewURL: n.PreviewURL}
-	err = worker.call(sendCtx, "sendMessage", reply.request(), nil)
+	reply := pendingReply{ChatID: n.ChatID, Text: n.Text, PreviewURL: n.PreviewURL, ParseMode: n.ParseMode}
+	sendingPhoto := n.PhotoURL != "" && !n.PhotoSent
+	withCaption := sendingPhoto && notification.FitsPhotoCaption(n.Text, n.ParseMode)
+	if sendingPhoto {
+		input := map[string]any{"chat_id": n.ChatID, "photo": n.PhotoURL}
+		if withCaption {
+			input["caption"] = n.Text
+			if n.ParseMode != "" {
+				input["parse_mode"] = n.ParseMode
+			}
+		}
+		err = worker.call(sendCtx, "sendPhoto", input, nil)
+	} else {
+		err = worker.call(sendCtx, "sendMessage", reply.request(), nil)
+	}
 	cancel()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err == nil {
+		if sendingPhoto && !withCaption {
+			// 图片与长正文分两轮发送，已结束的图片阶段持久化后不再重复。
+			if err := m.Notifications.MarkTelegramNotificationPhotoSent(ctx, n.ID); err != nil {
+				return err
+			}
+			m.Logs.Append("Telegram", n.TaskID, logKind, "INFO", "配图已发送，长正文将在下一轮发送")
+			return nil
+		}
 		if err := m.Notifications.CompleteTelegramNotification(ctx, n.ID, true); err != nil {
 			return err
 		}
+		if sendingPhoto {
+			successMessage += "（配图与正文）"
+		} else {
+			successMessage += "（文字）"
+		}
 		m.Logs.Append("Telegram", n.TaskID, logKind, "INFO", successMessage)
+		return nil
+	}
+	if sendingPhoto && (errors.Is(err, errTelegramBadRequest) || n.Attempts >= 7) {
+		if saveErr := m.Notifications.MarkTelegramNotificationPhotoSent(ctx, n.ID); saveErr != nil {
+			return saveErr
+		}
+		m.Logs.Append("Telegram", n.TaskID, logKind, "WARNING", "配图发送未成功，已切换为纯文字通知："+err.Error())
 		return nil
 	}
 	if n.Attempts >= 7 {
@@ -132,6 +178,10 @@ func (m *Manager) deliverNotification(ctx context.Context, now time.Time) error 
 	if saveErr := m.Notifications.RetryTelegramNotification(ctx, n.ID, now.Add(delay)); saveErr != nil {
 		return saveErr
 	}
-	m.Logs.Append("Telegram", n.TaskID, logKind, "WARNING", "通知发送失败，稍后自动重试："+err.Error())
+	stage := "正文"
+	if sendingPhoto {
+		stage = "配图"
+	}
+	m.Logs.Append("Telegram", n.TaskID, logKind, "WARNING", stage+"发送失败，稍后自动重试："+err.Error())
 	return nil
 }

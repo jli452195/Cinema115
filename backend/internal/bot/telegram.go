@@ -113,6 +113,7 @@ type pendingReply struct {
 	UpdateID                       int64  `json:"updateID"`
 	ChatID                         int64  `json:"chatID"`
 	Text                           string `json:"text"`
+	ParseMode                      string `json:"parseMode,omitempty"`
 	MessageID                      int64  `json:"messageID,omitempty"`
 	ThreadID                       int64  `json:"threadID,omitempty"`
 	PreviewURL                     string `json:"previewURL,omitempty"`
@@ -126,6 +127,9 @@ type pendingReply struct {
 // 引用当前聊天收到的原消息，转发来源的消息编号不能用于当前聊天的回复。
 func (p *pendingReply) request() map[string]any {
 	input := map[string]any{"chat_id": p.ChatID, "text": p.Text, "link_preview_options": map[string]any{"is_disabled": true}}
+	if p.ParseMode != "" {
+		input["parse_mode"] = p.ParseMode
+	}
 	if p.MessageID > 0 {
 		input["reply_parameters"] = map[string]any{"message_id": p.MessageID, "allow_sending_without_reply": true}
 	}
@@ -147,6 +151,24 @@ func (p *pendingReply) request() map[string]any {
 }
 
 var errTelegramEditMessageMissing = errors.New("待更新的 Telegram 消息已删除")
+var errTelegramBadRequest = errors.New("Telegram 返回 HTTP 400")
+
+// 图片错误只返回固定分类，禁止将可能含凭据或图片地址的原始描述写入日志。
+func telegramPhotoBadRequest(description string) error {
+	description = strings.ToLower(description)
+	category := "图片请求未被接受"
+	switch {
+	case strings.Contains(description, "caption is too long"), strings.Contains(description, "can't parse entities"), strings.Contains(description, "can't find end of"):
+		category = "图片说明文字或格式无效"
+	case strings.Contains(description, "file is too big"), strings.Contains(description, "photo is too big"), strings.Contains(description, "request entity too large"):
+		category = "图片超过大小限制"
+	case strings.Contains(description, "wrong type of the web page content"), strings.Contains(description, "image_process_failed"), strings.Contains(description, "photo_invalid_dimensions"), strings.Contains(description, "invalid file format"):
+		category = "图片格式或尺寸不受支持"
+	case strings.Contains(description, "failed to get http url content"), strings.Contains(description, "wrong file identifier/http url specified"), strings.Contains(description, "webpage_curl_failed"), strings.Contains(description, "webpage_media_empty"):
+		category = "Telegram 无法读取图片地址"
+	}
+	return fmt.Errorf("%w（%s）", errTelegramBadRequest, category)
+}
 
 type telegramState struct {
 	CloudSelections         []*pendingCloudSelection         `json:"cloudSelections,omitempty"`
@@ -192,6 +214,16 @@ func (b *Telegram) call(ctx context.Context, method string, input, output any) e
 		return fmt.Errorf("Telegram 更新消息失败（HTTP 400）")
 	}
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusBadRequest {
+			if method == "sendPhoto" {
+				var failure struct {
+					Description string `json:"description"`
+				}
+				_ = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&failure)
+				return telegramPhotoBadRequest(failure.Description)
+			}
+			return errTelegramBadRequest
+		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("Bot Token 无效或已被撤销")
 		}
@@ -201,13 +233,21 @@ func (b *Telegram) call(ctx context.Context, method string, input, output any) e
 		return fmt.Errorf("Telegram 返回 HTTP %d", resp.StatusCode)
 	}
 	var envelope struct {
-		OK     bool            `json:"ok"`
-		Result json.RawMessage `json:"result"`
+		OK          bool            `json:"ok"`
+		Result      json.RawMessage `json:"result"`
+		ErrorCode   int             `json:"error_code"`
+		Description string          `json:"description"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&envelope); err != nil {
 		return fmt.Errorf("Telegram 返回无效数据")
 	}
 	if !envelope.OK {
+		if envelope.ErrorCode == http.StatusBadRequest {
+			if method == "sendPhoto" {
+				return telegramPhotoBadRequest(envelope.Description)
+			}
+			return errTelegramBadRequest
+		}
 		return fmt.Errorf("Telegram 拒绝请求")
 	}
 	if output != nil {

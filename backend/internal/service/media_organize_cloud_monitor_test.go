@@ -22,6 +22,8 @@ func TestMediaCloud115ReceivesEventsWithoutSTRMMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, _, _, run, _ := newMedia115PipelineTest(t)
+	s.doc.Runs = nil
+	clear(s.actions)
 	s.accounts = driveSTRM.Accounts
 	rule := run.Rule
 	rule.AccountID, rule.RealtimeEnabled = "main", true
@@ -34,10 +36,10 @@ func TestMediaCloud115ReceivesEventsWithoutSTRMMapping(t *testing.T) {
 		return p115.LifeEventPage{Count: 2, Events: []p115.LifeEvent{{ID: "101", Type: 2, ParentID: "30", FileID: "501"}, {ID: "100", Type: 8}}}, nil
 	}))
 	reader.Organizer = s
-	if err := reader.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, reader); err != nil {
 		t.Fatal(err)
 	}
-	if len(runtime.pending) != 1 || runtime.pending["30"].Relative != "Work" {
+	if len(s.doc.Runs) != 1 || len(s.doc.Runs[0].scanScopes) != 1 || s.doc.Runs[0].scanScopes[0].Relative != "Work" {
 		t.Fatal("organizer event was lost")
 	}
 	if cursor, _ := db.LoadDriveSTRMCursor(ctx, "main"); cursor != "101" {

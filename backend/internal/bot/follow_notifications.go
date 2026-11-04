@@ -42,6 +42,9 @@ func (m *Manager) PrepareFollowNotification(f model.Follow, baseURL string) (*mo
 }
 
 func notificationLabels(taskID string) (string, string) {
+	if strings.HasPrefix(taskID, "anime:") {
+		return "动漫通知", "动漫订阅通知已发送"
+	}
 	if strings.HasPrefix(taskID, "pool-health:") {
 		return "播放池通知", "播放池健康通知已发送"
 	}

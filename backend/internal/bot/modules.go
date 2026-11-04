@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/storage"
 )
 
 var ErrModuleChanged = errors.New("功能模块分配已变化，请刷新后重试")
@@ -28,6 +29,13 @@ var telegramModules = []TelegramModuleView{
 
 func (h *Hub) Modules(ctx context.Context) ([]TelegramModuleView, error) {
 	modules := append([]TelegramModuleView(nil), telegramModules...)
+	if h.Anime != nil && h.Anime.Store != nil {
+		settings, err := h.Anime.Store.GetAnimeNotificationSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		modules = append(modules, TelegramModuleView{ID: "anime_notifications", Name: "动漫订阅通知", Description: "推送动漫下载完成、整理完成及任务异常，支持自定义通知模板。", AssignedBotID: settings.BotID})
+	}
 	if h.settings != nil {
 		settings := h.settings.Value()
 		setStaticModuleOwner(modules, "share_notifications", settings.BotID)
@@ -163,6 +171,14 @@ func (h *Hub) setModuleLocked(ctx context.Context, moduleID, expectedBotID, botI
 			return false, fmt.Errorf("%w：追更设置尚未初始化", ErrConfig)
 		}
 		bindErr = h.Follows.BindTelegramBot(ctx, expectedBotID, botID)
+	case "anime_notifications":
+		if h.Anime == nil || h.Anime.Store == nil {
+			return false, fmt.Errorf("%w：动漫订阅尚未初始化", ErrConfig)
+		}
+		bindErr = h.Anime.Store.BindAnimeNotificationBot(ctx, expectedBotID, botID)
+		if errors.Is(bindErr, storage.ErrAnimeConflict) {
+			return false, ErrModuleChanged
+		}
 	case "pool_notifications":
 		if h.Playback == nil || h.Playback.Pool == nil {
 			return false, fmt.Errorf("%w：播放池设置尚未初始化", ErrConfig)

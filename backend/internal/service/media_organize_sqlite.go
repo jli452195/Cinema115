@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,12 +65,20 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 		if !loaded.Initialized {
 			*r = mediaPersistentRun(*r)
 		}
-		if mediaRunActive(r.Status) {
+		deferInterruptedSave := false
+		if s.resume115EventScanLocked(*r) {
+			s.enqueueActionLocked(r.ID, "auto")
+		} else if mediaRunActive(r.Status) {
+			if s.repair115EventScanLocked(*r) {
+				deferInterruptedSave = true
+			}
 			r.Status = "interrupted"
 			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
 		}
 		// 摘要由当前规则派生，启动时重建以免保留旧的状态分组或操作权限。
-		changed = append(changed, r.ID)
+		if !deferInterruptedSave {
+			changed = append(changed, r.ID)
+		}
 	}
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
 		return nil, err
@@ -79,6 +88,39 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 		log.Printf("整理记录已保存到 SQLite，旧快照未能清理：%v", err)
 	}
 	return s, nil
+}
+
+// 只恢复尚未开始的事件扫描；已开始的外部写入仍走原有中断核对流程。
+func (s *MediaOrganizer) resume115EventScanLocked(run MediaOrganizeRun) bool {
+	if run.Status != "queued" || run.TaskFileID != "" || run.Rule.Storage != "115" || s.accounts == nil {
+		return false
+	}
+	if _, err := s.accounts.Primary(run.Rule.AccountID); err != nil {
+		return false
+	}
+	return slices.ContainsFunc(s.doc.Rules, func(rule MediaOrganizeRule) bool {
+		return rule.ID == run.Rule.ID && rule.RealtimeEnabled && mediaSameRuleSettings(rule, run.Rule)
+	})
+}
+
+// 中断的实时任务只触发来源补扫；旧记录保留到补扫持久化，防止启动期间再次退出丢失恢复证据。
+func (s *MediaOrganizer) repair115EventScanLocked(run MediaOrganizeRun) bool {
+	if run.TaskFileID != "" || run.Rule.Storage != "115" || s.accounts == nil {
+		return false
+	}
+	if _, err := s.accounts.Primary(run.Rule.AccountID); err != nil {
+		return false
+	}
+	for _, rule := range s.doc.Rules {
+		if rule.ID != run.Rule.ID || !rule.RealtimeEnabled || !mediaSameRuleSettings(rule, run.Rule) {
+			continue
+		}
+		runtime := s.cloudRuntimeLocked(rule)
+		runtime.full, runtime.initialized, runtime.due = true, true, s.localMonitorSettings().now()
+		runtime.eventRecoveryIDs = append(runtime.eventRecoveryIDs, run.ID)
+		return true
+	}
+	return false
 }
 
 func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
@@ -105,6 +147,7 @@ func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
 		}
 		run := MediaOrganizeRun(stored.runFields)
 		run.Rule = rule
+		run.scanScopes, run.StoredScanScopes = slices.Clone(run.StoredScanScopes), nil
 		doc.Runs = append(doc.Runs, mediaPersistentRun(run))
 	}
 	s.doc = doc
@@ -195,6 +238,26 @@ func (s *MediaOrganizer) persistSQLiteLocked(changed []string) error {
 func mediaSortTime(at time.Time) string { return at.UTC().Format("2006-01-02T15:04:05.000000000Z") }
 
 func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed []string) error {
+	return s.persistSQLiteRecoveryLockedContext(ctx, changed, nil)
+}
+
+func (s *MediaOrganizer) eventRecoveryPendingLocked(id string) bool {
+	for _, runtime := range s.cloudMonitors {
+		if slices.Contains(runtime.eventRecoveryIDs, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// 只有替代扫描已经安全入队时，才允许同一事务退役旧的中断恢复证据。
+func (s *MediaOrganizer) persist115EventHandoffLocked(runID string, retired []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.persistSQLiteRecoveryLockedContext(ctx, append(slices.Clone(retired), runID), retired)
+}
+
+func (s *MediaOrganizer) persistSQLiteRecoveryLockedContext(ctx context.Context, changed, retired []string) error {
 	if s.persistErr != nil {
 		return s.persistErr
 	}
@@ -205,6 +268,9 @@ func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed
 	updates := make([]storage.MediaOrganizeRunRow, 0, len(changed))
 	removed := []string{}
 	for _, id := range changed {
+		if s.eventRecoveryPendingLocked(id) && !slices.Contains(retired, id) {
+			continue
+		}
 		var found *MediaOrganizeRun
 		for i := range s.doc.Runs {
 			if s.doc.Runs[i].ID == id {
@@ -228,6 +294,19 @@ func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed
 		previous, readErr := s.db.LoadMediaOrganize(restoreCtx)
 		if readErr == nil {
 			readErr = s.decodeSQLite(previous)
+			if readErr == nil {
+				// 延迟覆盖的启动恢复记录仍保留原活动状态，回滚后不能把它误当成正在执行。
+				for _, runtime := range s.cloudMonitors {
+					for _, id := range runtime.eventRecoveryIDs {
+						for i := range s.doc.Runs {
+							run := &s.doc.Runs[i]
+							if run.ID == id && run.ID != s.active && mediaRunActive(run.Status) {
+								run.Status, run.Message = "interrupted", "服务重启，等待来源补扫"
+							}
+						}
+					}
+				}
+			}
 		}
 		if readErr != nil {
 			s.persistErr = fmt.Errorf("保存整理记录失败且无法恢复内存，请重启服务: %w；恢复失败: %v", err, readErr)
@@ -240,6 +319,11 @@ func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed
 
 func mediaRunRow(run MediaOrganizeRun) (storage.MediaOrganizeRunRow, error) {
 	cleanup := mediaRunCleanup(run)
+	if run.Status == "queued" && run.Trigger == "realtime" {
+		run.StoredScanScopes = slices.Clone(run.scanScopes)
+	} else {
+		run.StoredScanScopes = nil
+	}
 	run = mediaPersistentRun(run)
 	raw, err := mediaMarshalPersistentRun(run)
 	if err != nil {

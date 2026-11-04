@@ -64,6 +64,9 @@ type AnimeAdminService struct {
 	OrganizationGateway AnimeOrganizationGateway
 	ReserveOrganization func() (func(), error)
 	Logs                *GenerationLogs
+	Notifications       AnimeNotifier
+	notificationMu      sync.Mutex
+	notificationRetryAt time.Time
 	organizationCache   animeOrganizationCache
 	DownloadCoordinator *CloudDownloadCoordinator
 	downloadWakeOnce    sync.Once

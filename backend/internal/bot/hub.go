@@ -31,6 +31,7 @@ type Hub struct {
 	ShareTransfers        *service.ShareLinkTransferService
 	Follows               *service.FollowService
 	Playback              *service.MemberPlaybackService
+	Anime                 *service.AnimeAdminService
 }
 
 func NewHub(dataDir, secret string, generator ShareGenerator, settings *service.AutomationStore) (*Hub, error) {

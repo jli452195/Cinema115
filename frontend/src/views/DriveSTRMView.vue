@@ -23,7 +23,7 @@ interface Mapping {
 }
 interface State {
   mappings: Mapping[]; settings: Settings; settingsSaved: boolean; primaryAccountId: string; accountReady: boolean
-  events?: { lastCheckedAt?: string; lastError?: string }
+  events?: { lastCheckedAt?: string; lastError?: string; consumers?: Record<string, { pendingBatches: number; lastError?: string }> }
 }
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
@@ -51,6 +51,7 @@ const canStart = computed(() => settingsReady.value && !!state.value?.accountRea
 const startHint = computed(() => !state.value?.settingsSaved ? '请先保存基础设置' : settingsDirty.value ? '请先保存或还原基础设置的修改' : !state.value?.accountReady ? '请先配置并登录主账号' : undefined)
 const strmPreview = computed(() => (settingsDraft.value?.baseUrl.trim().replace(/\/+$/, '') || 'http://NAS_IP:8080') + '/api/drive115/ecjq9ichcb40lzlvx/123456789/0123456789ABCDEF0123456789ABCDEF01234567/1073741824/Example.S01E01.mkv')
 const changedAccount = (m: Mapping) => !!state.value && m.accountId !== state.value.primaryAccountId
+const eventConsumerErrors = computed(() => Object.entries(state.value?.events?.consumers || {}).filter(([, value]) => value.lastError).map(([name, value]) => ({ name, label: name === 'strm' ? 'STRM' : name === 'organize' ? '自动整理' : name, message: value.lastError })))
 const requestSignal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(60000)])
 const request = <T,>(path = '', init: RequestInit = {}) => p115Request<T>(props.token, 'drive-strm' + path, { ...init, signal: requestSignal() })
 const failure = (e: unknown) => e instanceof Error && e.name === 'TimeoutError' ? '请求超时，请重新加载确认结果后再重试' : e instanceof Error ? e.message : '操作失败'
@@ -138,7 +139,7 @@ async function save() {
 }
 async function run(m: Mapping, full: boolean) {
   if (!canStart.value) return
-  await act(m.id, async () => { await request('/' + m.id + (full ? '/scan' : '/check'), { method: 'POST' }); generation++; notice.value = full ? '已安排完整扫描，将补齐本地缺少的文件' : '已检查最新变更，有更新时将生成文件'; await refresh() })
+  await act(m.id, async () => { await request('/' + m.id + (full ? '/scan' : '/check'), { method: 'POST' }); generation++; notice.value = full ? '已安排完整扫描，将补齐本地缺少的文件' : '已请求检查生活事件，变更将由后台处理'; await refresh() })
 }
 async function toggle(m: Mapping, enabled: boolean) {
   if (enabled && !canStart.value) return
@@ -169,6 +170,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
     <p v-if="notice" role="status" class="ds-notice">{{ notice }}</p>
     <p v-if="state && !state.accountReady" class="ds-alert">请先在 <RouterLink to="/helper115" class="underline">115 助手</RouterLink> 配置并登录主账号，基础设置可先保存。</p>
     <p v-if="state?.events?.lastError" role="status" class="ds-alert">事件检查暂不可用：{{ state.events.lastError }}。仍可完整扫描补齐。</p>
+    <p v-for="item in eventConsumerErrors" :key="item.name" role="status" class="ds-alert">{{ item.label }}事件处理暂缓：{{ item.message }}。后台将自动重试，生活事件采集独立运行。</p>
     <div v-if="loading" class="ds-empty" role="status">正在读取配置…</div>
     <template v-else-if="state && settingsDraft">
       <form class="ds-settings" aria-label="基础设置" @submit.prevent="saveSettings">

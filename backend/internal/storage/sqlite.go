@@ -553,6 +553,9 @@ PRAGMA user_version=30;`); err != nil {
 			return fmt.Errorf("simplify anime account ownership: %w", err)
 		}
 	}
+	if err := initializeAnimeNotificationSchema(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)
 	}

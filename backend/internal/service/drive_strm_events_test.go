@@ -17,22 +17,61 @@ import (
 
 type driveSTRMLifeFake func(context.Context, int, int, string) (p115.LifeEventPage, error)
 
+// 同步测试显式消费缓存，生产中的 Check 只等待共享采集完成。
+func checkAndConsumeLifeEvents(ctx context.Context, r *DriveSTRMEvents) error {
+	if err := r.Check(ctx); err != nil {
+		return err
+	}
+	return consumeCachedLifeEvents(ctx, r)
+}
+
+func consumeCachedLifeEvents(ctx context.Context, r *DriveSTRMEvents) error {
+	for {
+		worked := false
+		for _, name := range []string{"strm", "organize"} {
+			s := r.Hub.consumers[name]
+			if _, ok := s.Read(); !ok {
+				continue
+			}
+			worked = true
+			if err := r.ConsumeOnce(ctx, name); err != nil {
+				return err
+			}
+		}
+		if !worked {
+			return r.Hub.checkpoint(ctx)
+		}
+	}
+}
+
 func (f driveSTRMLifeFake) LifeEvents(ctx context.Context, offset, limit int, cookie string) (p115.LifeEventPage, error) {
 	return f(ctx, offset, limit, cookie)
 }
 
 type driveSTRMObservedSettings struct {
 	DriveSTRMStore
-	reads chan struct{}
+	reads    chan struct{}
+	settings atomic.Value
 }
 
-func (s driveSTRMObservedSettings) GetDriveSTRMSettings(ctx context.Context) (model.DriveSTRMSettings, error) {
-	value, err := s.DriveSTRMStore.GetDriveSTRMSettings(ctx)
+func (s *driveSTRMObservedSettings) GetDriveSTRMSettings(ctx context.Context) (model.DriveSTRMSettings, error) {
+	if err := ctx.Err(); err != nil {
+		return model.DriveSTRMSettings{}, err
+	}
+	value := s.settings.Load().(model.DriveSTRMSettings)
 	select {
 	case s.reads <- struct{}{}:
 	default:
 	}
-	return value, err
+	return value, nil
+}
+
+func (s *driveSTRMObservedSettings) SaveDriveSTRMSettings(ctx context.Context, value model.DriveSTRMSettings) error {
+	if err := s.DriveSTRMStore.SaveDriveSTRMSettings(ctx, value); err != nil {
+		return err
+	}
+	s.settings.Store(value)
+	return nil
 }
 
 func TestDriveSTRMEventLoopAppliesPeriodsAndManualCheckRemainsIndependent(t *testing.T) {
@@ -45,7 +84,9 @@ func TestDriveSTRMEventLoopAppliesPeriodsAndManualCheckRemainsIndependent(t *tes
 		t.Fatal(err)
 	}
 	reads := make(chan struct{}, 1)
-	s.Store = driveSTRMObservedSettings{s.Store, reads}
+	observed := &driveSTRMObservedSettings{DriveSTRMStore: s.Store, reads: reads}
+	observed.settings.Store(settings)
+	s.Store = observed
 	var requests atomic.Int32
 	called := make(chan struct{}, 1)
 	r := NewDriveSTRMEvents(s, driveSTRMLifeFake(func(context.Context, int, int, string) (p115.LifeEventPage, error) {
@@ -97,7 +138,7 @@ func TestDriveSTRMEventLoopAppliesPeriodsAndManualCheckRemainsIndependent(t *tes
 	if requests.Load() != 1 {
 		t.Fatal("closing the watcher caused another upstream request")
 	}
-	if err := r.Check(ctx); err != nil || requests.Load() != 2 {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil || requests.Load() != 2 {
 		t.Fatalf("manual check obeyed disabled automatic period: calls=%d err=%v", requests.Load(), err)
 	}
 }
@@ -132,7 +173,11 @@ func driveSTRMEventFixture(t *testing.T) (*DriveSTRMService, *storage.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("关闭事件测试数据库: %v", err)
+		}
+	})
 	accounts := &P115Accounts{value: accountDocument{Accounts: []P115Account{{ID: "main", Primary: true, Cookie: "UID=42_A", Revision: 1}}}}
 	s := NewDriveSTRMService(db, accounts, nil, t.TempDir())
 	settings := model.DefaultDriveSTRMSettings()
@@ -165,7 +210,7 @@ func TestDriveSTRMEventsBaselineThenCoalesceOnlyKnownScopes(t *testing.T) {
 	})
 	r := NewDriveSTRMEvents(s, client)
 	events = []p115.LifeEvent{{ID: "100", Type: 8}}
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := db.GetDriveSTRM(ctx, "mapping")
@@ -183,7 +228,7 @@ func TestDriveSTRMEventsBaselineThenCoalesceOnlyKnownScopes(t *testing.T) {
 		{ID: "101", Type: 8, ParentID: "10", FileID: "33"},
 		{ID: "100", Type: 8},
 	}
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	updated, _ := db.GetDriveSTRM(ctx, "mapping")
@@ -214,14 +259,14 @@ func TestDriveSTRMEventsDoNotAdvancePastUncommittedQueue(t *testing.T) {
 	r := NewDriveSTRMEvents(s, driveSTRMLifeFake(func(context.Context, int, int, string) (p115.LifeEventPage, error) {
 		return p115.LifeEventPage{Count: 1, Events: []p115.LifeEvent{{ID: "100", Type: 2, ParentID: "10"}}}, nil
 	}))
-	if err := r.Check(context.Background()); err == nil {
+	if err := checkAndConsumeLifeEvents(context.Background(), r); err == nil {
 		t.Fatal("queue failure hidden")
 	}
 	if cursor, _ := db.LoadDriveSTRMCursor(context.Background(), "main"); cursor != "" {
 		t.Fatal("cursor advanced without durable queue")
 	}
 	s.Store.(*driveSTRMFailQueueStore).fail = false
-	if err := r.Check(context.Background()); err != nil {
+	if err := checkAndConsumeLifeEvents(context.Background(), r); err != nil {
 		t.Fatal(err)
 	}
 	if cursor, _ := db.LoadDriveSTRMCursor(context.Background(), "main"); cursor != "100" {
@@ -271,7 +316,7 @@ func TestDriveSTRMEventsDisabledMappingsMakeNoUpstreamRequests(t *testing.T) {
 		t.Error("disabled mappings should make no history requests")
 		return p115.LifeEventPage{}, nil
 	}))
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -299,7 +344,7 @@ func TestDriveSTRMEventsPersistHeadAfterAllHistoryPagesAreQueued(t *testing.T) {
 		}
 		return out, nil
 	}))
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	cursor, _ := db.LoadDriveSTRMCursor(ctx, "main")
@@ -323,7 +368,7 @@ func TestDriveSTRMEventsSnapshotDoesNotSkipArrivalsBetweenPages(t *testing.T) {
 		// event 6 appearing on a later page must not advance past that gap.
 		return p115.LifeEventPage{Count: 3, Events: []p115.LifeEvent{{ID: "6", Type: 8}, {ID: "1", Type: 8}}}, nil
 	}))
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	if cursor, _ := db.LoadDriveSTRMCursor(ctx, "main"); cursor != "4" {
@@ -344,7 +389,7 @@ func TestDriveSTRMEventsTruncatedHistoryQueuesFullRepair(t *testing.T) {
 		}
 		return out, nil
 	}))
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	value, _ := db.GetDriveSTRM(ctx, "mapping")
@@ -362,7 +407,7 @@ func TestDriveSTRMEventsClearedHistoryRepairsOnce(t *testing.T) {
 	r := NewDriveSTRMEvents(s, driveSTRMLifeFake(func(context.Context, int, int, string) (p115.LifeEventPage, error) {
 		return p115.LifeEventPage{Count: 0, Events: []p115.LifeEvent{}}, nil
 	}))
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	value, _ := db.GetDriveSTRM(ctx, "mapping")
@@ -374,7 +419,7 @@ func TestDriveSTRMEventsClearedHistoryRepairsOnce(t *testing.T) {
 	if err := db.SaveDriveSTRM(ctx, value); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Check(ctx); err != nil {
+	if err := checkAndConsumeLifeEvents(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	value, _ = db.GetDriveSTRM(ctx, "mapping")

@@ -17,7 +17,7 @@ const availableBots = computed(() => props.bots)
 const moduleKind = computed(() => props.module.kind || (props.module.id.startsWith('cloud_download:') ? 'cloud_download' : props.module.id.startsWith('share_transfer:') ? 'share_transfer' : props.module.id))
 const isCloudDownload = computed(() => moduleKind.value === 'cloud_download')
 const isShareTransfer = computed(() => moduleKind.value === 'share_transfer')
-const icon = computed(() => ({ share_notifications: IconShare, share_transfer: IconDownload, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat }[moduleKind.value as 'share_notifications' | 'share_transfer' | 'cloud_download' | 'follow_notifications' | 'pool_notifications']))
+const icon = computed(() => ({ share_notifications: IconShare, share_transfer: IconDownload, cloud_download: IconCloudDownload, follow_notifications: IconBell, pool_notifications: IconHeartbeat, anime_notifications: IconBell }[moduleKind.value as 'share_notifications' | 'share_transfer' | 'cloud_download' | 'follow_notifications' | 'pool_notifications' | 'anime_notifications']))
 const setupHint = computed(() => {
   const bot = props.assignedBot
   if (!bot) return ''
@@ -86,6 +86,7 @@ function assign() {
         <button type="button" class="rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800" :disabled="busy" @click="choosing = false">取消</button>
       </div>
     </div>
+    <RouterLink v-if="moduleKind === 'anime_notifications'" to="/anime/settings?tab=notifications" class="mt-2 inline-flex min-h-8 items-center text-xs font-medium text-blue-600 hover:underline dark:text-blue-400" draggable="false" @mousedown.stop @dragstart.stop.prevent>编辑通知模板</RouterLink>
   </article>
 </template>
 
